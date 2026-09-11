@@ -13,6 +13,7 @@ import { api, BINDERY_BASE, Book, MediaType } from '../api/client'
 import BulkActionBar from '../components/BulkActionBar'
 import Pagination from '../components/Pagination'
 import { useServerPagination } from '../components/usePagination'
+import AddBookModal from '../components/AddBookModal'
 
 type SortMode =
   | 'title-az' | 'title-za'
@@ -52,7 +53,11 @@ export default function BooksPage() {
   const { needsIndexer, needsClient, needsAny } = useNeedsSetup()
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
+  const [showAddBook, setShowAddBook] = useState(false)
+  const addBookButtonRef = useRef<HTMLButtonElement>(null)
+  const addBookWasOpenRef = useRef(false)
   const selectAllRef = useRef<HTMLInputElement>(null)
+  const loadRequestRef = useRef(0)
 
   const monitoredParam = monitoredFilter === 'monitored' ? true : monitoredFilter === 'unmonitored' ? false : undefined
 
@@ -65,6 +70,7 @@ export default function BooksPage() {
   // and sort are all applied by the API so a library with >100 books is fully
   // reachable (issue #1010). load() refetches the current page after mutations.
   const load = useCallback(() => {
+    const request = ++loadRequestRef.current
     setLoading(true)
     api.listBooks({
       limit: pageSize,
@@ -74,9 +80,15 @@ export default function BooksPage() {
       mediaType: mediaFilter || undefined,
       monitored: monitoredParam,
       sort,
-    }).then(({ items, total }) => { setBooks(items); setTotal(total) })
+    }).then(({ items, total }) => {
+      if (request !== loadRequestRef.current) return
+      setBooks(items)
+      setTotal(total)
+    })
       .catch(console.error)
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (request === loadRequestRef.current) setLoading(false)
+      })
   }, [page, pageSize, debouncedSearch, statusFilter, mediaFilter, monitoredParam, sort])
 
   useEffect(() => { load() }, [load])
@@ -107,6 +119,11 @@ export default function BooksPage() {
     document.title = 'Books · Bindery'
     return () => { document.title = 'Bindery' }
   }, [])
+
+  useEffect(() => {
+    if (addBookWasOpenRef.current && !showAddBook) addBookButtonRef.current?.focus()
+    addBookWasOpenRef.current = showAddBook
+  }, [showAddBook])
 
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => {
@@ -183,11 +200,19 @@ export default function BooksPage() {
   return (
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
       {confirmDialog}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h2 className="text-2xl font-bold">{t('books.title')}</h2>
-        <div className="flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-3 flex-wrap justify-end">
           <span className="text-sm text-fg-muted">{t('books.countLabel', { count: total, defaultValue: '{{count}} books' })}</span>
           <ViewToggle view={view} onChange={setView} />
+          <button
+            ref={addBookButtonRef}
+            type="button"
+            onClick={() => setShowAddBook(true)}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-md text-sm font-medium text-white transition-colors"
+          >
+            {t('addBookModal.title')}
+          </button>
         </div>
       </div>
 
@@ -481,6 +506,16 @@ export default function BooksPage() {
           { label: t('common.delete'), onClick: () => runBulk('delete'), variant: 'danger' },
         ]}
       />
+
+      {showAddBook && (
+        <AddBookModal
+          onClose={() => setShowAddBook(false)}
+          onAdded={() => {
+            setShowAddBook(false)
+            load()
+          }}
+        />
+      )}
     </div>
   )
 }

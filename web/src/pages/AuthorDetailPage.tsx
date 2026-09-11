@@ -12,7 +12,7 @@ import RenameFilesModal from '../components/RenameFilesModal'
 import BulkActionBar from '../components/BulkActionBar'
 import { useView } from '../components/useView'
 import MarkdownDescription from '../components/MarkdownDescription'
-import { canLinkAuthorMetadata, hasSparseMetadata } from '../util/authorMetadata'
+import { canLinkAuthorMetadata } from '../util/authorMetadata'
 import { metadataSourceLink } from '../util/metadataSource'
 import { btn, btnSize } from '../components/buttons'
 import Switch from '../components/Switch'
@@ -473,7 +473,10 @@ export default function AuthorDetailPage() {
   if (!author) return <div className="text-slate-600 dark:text-zinc-500">Author not found</div>
 
   const searchableWantedCount = books.filter(b => b.status === 'wanted' && b.monitored && !b.excluded).length
-  const showMetadataLinkAction = canLinkAuthorMetadata(author) || hasSparseMetadata(author)
+  // Relinking is valid for every author — the backend accepts any record and the
+  // candidate search deliberately does not merge same-person records — so the
+  // action is always offered. The record's fullness only picks the wording below.
+  const showMetadataLinkAction = true
   const metadataLinkLabel = canLinkAuthorMetadata(author)
     ? t('authorMetadataLink.actionLink', 'Link metadata')
     : t('authorMetadataLink.actionFindBetter', 'Find better metadata')

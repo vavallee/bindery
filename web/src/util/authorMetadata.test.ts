@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Author } from '../api/client'
-import { canLinkAuthorMetadata, hasSparseMetadata } from './authorMetadata'
+import { canLinkAuthorMetadata } from './authorMetadata'
 
 const author = (over: Partial<Author>): Author => ({ id: 1, name: 'X', ...over }) as Author
 
@@ -17,19 +17,5 @@ describe('canLinkAuthorMetadata', () => {
   })
   it('defaults to true for a nil author', () => {
     expect(canLinkAuthorMetadata(undefined)).toBe(true)
-  })
-})
-
-describe('hasSparseMetadata', () => {
-  it('is true only when description, image, disambiguation, and ratings are all empty', () => {
-    expect(hasSparseMetadata(author({}))).toBe(true)
-    expect(hasSparseMetadata(author({ description: 'A bio' }))).toBe(false)
-    expect(hasSparseMetadata(author({ imageUrl: 'http://x/y.jpg' }))).toBe(false)
-    expect(hasSparseMetadata(author({ disambiguation: 'the elder' }))).toBe(false)
-    expect(hasSparseMetadata(author({ ratingsCount: 5 }))).toBe(false)
-    expect(hasSparseMetadata(author({ averageRating: 4.2 }))).toBe(false)
-  })
-  it('defaults to true for a nil author', () => {
-    expect(hasSparseMetadata(undefined)).toBe(true)
   })
 })
