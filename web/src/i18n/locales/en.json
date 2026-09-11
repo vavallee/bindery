@@ -228,6 +228,12 @@
     "refreshMetadata": "Refresh metadata"
   },
   "authorDetail": {
+    "nav": {
+      "previous": "‹ Previous",
+      "next": "Next ›",
+      "previousAriaLabel": "Previous author",
+      "nextAriaLabel": "Next author"
+    },
     "description": {
       "showMore": "Show more",
       "showLess": "Show less"
