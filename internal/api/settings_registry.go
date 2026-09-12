@@ -236,6 +236,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingImportWriteOPFSidecar, Type: SettingTypeBool, Default: "false",
+		Description: "Write a Calibre style metadata.opf next to each imported book (and refresh it on Reorganize), carrying Bindery's own canonical metadata regardless of what the source file's embedded tags say.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: "naming.bookTemplate", Type: SettingTypeString, Default: "",
 		Description: "Path template for imported ebooks. Empty uses the built in default.",
 		State:       SettingStateActive,

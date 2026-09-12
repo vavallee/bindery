@@ -449,3 +449,149 @@ func TestReorganize_DestinationInsideSourceIsRefused(t *testing.T) {
 		t.Fatalf("source folder was modified: %v", entries)
 	}
 }
+
+// enableOPFSidecar turns on import.write_opf_sidecar for a reorganize fixture.
+func (env reorgEnv) enableOPFSidecar(t *testing.T, ctx context.Context) {
+	t.Helper()
+	if err := env.s.settings.Set(ctx, "import.write_opf_sidecar", "true"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestReorganize_EbookSidecarFollowsTheMove is the regression test for a
+// sidecar stranding its old folder. An ebook is a single file: when it moves
+// out, its metadata.opf does not follow, which both leaves a stale copy of the
+// book's metadata on disk for a sidecar-reading library app to index and keeps
+// the folder non-empty, so pruneEmptyParents can never reclaim it. Renaming a
+// book (or its author) would then leave one orphan folder behind per rename.
+func TestReorganize_EbookSidecarFollowsTheMove(t *testing.T) {
+	env, libraryDir, _, ctx := reorgFixture(t)
+	env.enableOPFSidecar(t, ctx)
+	book := env.seed(t, ctx, "Jane Doe", "My Book")
+
+	// The book sits at its previous title's templated location, with the
+	// sidecar a previous import wrote there.
+	oldDir := filepath.Join(libraryDir, "Jane Doe", "Old Title (2020)")
+	oldPath := filepath.Join(oldDir, "Old Title - Jane Doe.epub")
+	writeFileAt(t, oldPath)
+	if err := os.WriteFile(filepath.Join(oldDir, "metadata.opf"), []byte("<stale/>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, oldPath); err != nil {
+		t.Fatal(err)
+	}
+
+	moves, err := env.s.PreviewReorganizeBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results := env.s.ApplyReorganize(ctx, []int64{moves[0].FileID}); results[0].Status != ReorgStatusMoved {
+		t.Fatalf("apply = %+v, want moved", results[0])
+	}
+
+	// The sidecar is rewritten beside the book at its new location, carrying
+	// the current title rather than the one it was imported under.
+	newDir := filepath.Join(libraryDir, "Jane Doe", "My Book (2020)")
+	data, err := os.ReadFile(filepath.Join(newDir, "metadata.opf"))
+	if err != nil {
+		t.Fatalf("sidecar missing at the new location: %v", err)
+	}
+	if p := parseOPFProbe(t, data); p.Metadata.Title != "My Book" {
+		t.Errorf("refreshed sidecar title = %q, want the current %q", p.Metadata.Title, "My Book")
+	}
+
+	// And the old folder is gone entirely — not left behind holding the stale
+	// sidecar.
+	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
+		entries, _ := os.ReadDir(oldDir)
+		t.Errorf("old folder should have been pruned, still holds %v (stat err = %v)", entries, err)
+	}
+}
+
+// A folder the moved file shared with something else keeps everything it has,
+// sidecar included: the leftover may well describe whatever is still there.
+func TestReorganize_SidecarKeptWhenTheOldFolderIsNotEmpty(t *testing.T) {
+	env, libraryDir, _, ctx := reorgFixture(t)
+	env.enableOPFSidecar(t, ctx)
+	book := env.seed(t, ctx, "Jane Doe", "My Book")
+
+	oldDir := filepath.Join(libraryDir, "Jane Doe", "Old Title (2020)")
+	oldPath := filepath.Join(oldDir, "Old Title - Jane Doe.epub")
+	writeFileAt(t, oldPath)
+	writeFileAt(t, filepath.Join(oldDir, "Old Title - Jane Doe.mobi"))
+	if err := os.WriteFile(filepath.Join(oldDir, "metadata.opf"), []byte("<stale/>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, oldPath); err != nil {
+		t.Fatal(err)
+	}
+
+	moves, err := env.s.PreviewReorganizeBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results := env.s.ApplyReorganize(ctx, []int64{moves[0].FileID}); results[0].Status != ReorgStatusMoved {
+		t.Fatalf("apply = %+v, want moved", results[0])
+	}
+	if _, err := os.Stat(filepath.Join(oldDir, "metadata.opf")); err != nil {
+		t.Errorf("sidecar in a still-occupied folder must be left alone: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(oldDir, "Old Title - Jane Doe.mobi")); err != nil {
+		t.Errorf("untracked sibling file must be left alone: %v", err)
+	}
+}
+
+// An audiobook is a whole directory, so its sidecar belongs INSIDE the moved
+// folder (and travels with it) rather than beside it in the author folder.
+func TestReorganize_AudiobookSidecarGoesInsideTheFolder(t *testing.T) {
+	env, _, audiobookDir, ctx := reorgFixture(t)
+	env.enableOPFSidecar(t, ctx)
+	book := env.seed(t, ctx, "Jane Doe", "My Book")
+
+	oldDir := filepath.Join(audiobookDir, "unsorted", "My Book audio")
+	writeFileAt(t, filepath.Join(oldDir, "part1.mp3"))
+	if err := env.books.AddBookFile(ctx, book.ID, models.MediaTypeAudiobook, oldDir); err != nil {
+		t.Fatal(err)
+	}
+
+	moves, err := env.s.PreviewReorganizeBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results := env.s.ApplyReorganize(ctx, []int64{moves[0].FileID}); results[0].Status != ReorgStatusMoved {
+		t.Fatalf("apply = %+v, want moved", results[0])
+	}
+
+	want := filepath.Join(audiobookDir, "Jane Doe", "My Book (2020)")
+	if _, err := os.Stat(filepath.Join(want, "metadata.opf")); err != nil {
+		t.Errorf("sidecar should be inside the audiobook folder: %v", err)
+	}
+	// Not in the author folder alongside it.
+	if _, err := os.Stat(filepath.Join(audiobookDir, "Jane Doe", "metadata.opf")); !os.IsNotExist(err) {
+		t.Errorf("sidecar must not be written beside the audiobook folder, stat err = %v", err)
+	}
+}
+
+// With the setting off (the default) Reorganize must not start writing new
+// files into the library.
+func TestReorganize_NoSidecarWhenDisabled(t *testing.T) {
+	env, libraryDir, _, ctx := reorgFixture(t)
+	book := env.seed(t, ctx, "Jane Doe", "My Book")
+
+	oldPath := filepath.Join(libraryDir, "misc", "randomname.epub")
+	writeFileAt(t, oldPath)
+	if err := env.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, oldPath); err != nil {
+		t.Fatal(err)
+	}
+	moves, err := env.s.PreviewReorganizeBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results := env.s.ApplyReorganize(ctx, []int64{moves[0].FileID}); results[0].Status != ReorgStatusMoved {
+		t.Fatalf("apply = %+v, want moved", results[0])
+	}
+	newDir := filepath.Join(libraryDir, "Jane Doe", "My Book (2020)")
+	if _, err := os.Stat(filepath.Join(newDir, "metadata.opf")); !os.IsNotExist(err) {
+		t.Errorf("no sidecar may be written while the setting is off, stat err = %v", err)
+	}
+}

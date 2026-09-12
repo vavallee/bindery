@@ -357,6 +357,11 @@ func TestValidateSettingValue_KnownKeysUnchanged(t *testing.T) {
 		{"plugin url rejects a missing host", SettingCalibrePluginURL, "https://", true},
 		{"plugin url rejects cloud metadata", SettingCalibrePluginURL, "http://169.254.169.254/latest/meta-data", true},
 
+		{"opf sidecar accepts true", SettingImportWriteOPFSidecar, "true", false},
+		{"opf sidecar accepts false", SettingImportWriteOPFSidecar, "false", false},
+		{"opf sidecar accepts empty", SettingImportWriteOPFSidecar, "", false},
+		{"opf sidecar rejects other", SettingImportWriteOPFSidecar, "yes", true},
+
 		{"abs enabled accepts false", SettingABSEnabled, "false", false},
 		{"abs enabled accepts empty", SettingABSEnabled, "", false},
 		{"abs enabled rejects other", SettingABSEnabled, "on", true},
@@ -431,6 +436,7 @@ var webSettingKeys = []string{
 	"import.drop_layout",
 	"import.drop_link_mode",
 	"import.mode",
+	"import.write_opf_sidecar",
 	"library.defaultRootFolderId",
 	"log.retention_days",
 	"metadata.primary_provider",

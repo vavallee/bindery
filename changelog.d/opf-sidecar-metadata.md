@@ -1,0 +1,2 @@
+### Added
+- **Optional `metadata.opf` sidecar per book** — when `import.write_opf_sidecar` is enabled (off by default), Bindery writes a Calibre-style `metadata.opf` next to each imported ebook/audiobook, carrying Bindery's own canonical title, author, series, identifiers, language, publisher, narrator, description, and genres — regardless of what the downloaded file's own embedded tags say. Refreshed by Reorganize too, so a later author rename or metadata edit doesn't leave it stale. Never touches the book file itself, only adds this extra file alongside it.

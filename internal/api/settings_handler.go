@@ -131,6 +131,15 @@ const (
 	// never-arriving second format would wedge the first forever. The importer
 	// reads this key as a string literal; keep the literal in sync.
 	SettingImportDropPairGatingTimeoutHours = "import.drop_pair_gating_timeout_hours"
+	// SettingImportWriteOPFSidecar opts imports (and Reorganize moves) into
+	// writing a Calibre-style metadata.opf sidecar next to each book, using
+	// Bindery's own canonical DB metadata rather than whatever the source
+	// file happened to carry. "true" enables it; unset/"false" (default)
+	// keeps the prior behaviour — Bindery only ever renames files, it never
+	// writes a new one into the library. The importer reads this key as a
+	// string literal to avoid an import cycle; keep the literal in sync with
+	// this constant.
+	SettingImportWriteOPFSidecar = "import.write_opf_sidecar"
 )
 
 // SettingLibraryLastScan is the KV key holding the JSON summary of the most
@@ -673,6 +682,13 @@ func validateSettingValue(key, value string) error {
 			return nil
 		}
 		return fmt.Errorf("import.drop_pair_gating %q is not one of: true, false", value)
+	case SettingImportWriteOPFSidecar:
+		// Boolean flag; empty or "false" = off (default). Only accept the two
+		// canonical values so a typo can't be silently misread as truthy.
+		if value == "" || value == "true" || value == "false" {
+			return nil
+		}
+		return fmt.Errorf("import.write_opf_sidecar %q is not one of: true, false", value)
 	case SettingImportDropPairGatingTimeoutHours:
 		// Empty falls back to the 72h default; a non-empty value must be a
 		// positive integer number of hours so a typo fails loudly here rather

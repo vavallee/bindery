@@ -1912,6 +1912,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 
 		s.pushToCalibre(ctx, book, author, edition, seriesTitle, seriesNum, destDir)
 		s.pushToABS(ctx)
+		s.writeOPFSidecar(ctx, destDir, []string{audiobookRoot}, book, author, edition, seriesTitle, seriesNum)
 
 		historyMeta := map[string]string{"path": destDir, "format": models.MediaTypeAudiobook}
 		if len(mergeSkippedFiles) > 0 {
@@ -1945,6 +1946,15 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// edit outranks it, and that locks the field — in which case the EPUB is
 	// not opened at all.
 	var detectedLang string
+	// sidecarDir records the folder a successfully imported ebook file landed
+	// in, so the OPF sidecar can be written once after the loop rather than
+	// once per file — and, critically, after applyEmbeddedLanguage below has
+	// had a chance to backfill book.Language, so a first-time import of a
+	// book with no catalogue language doesn't write a sidecar missing
+	// dc:language moments before the DB gains one. All files of one book
+	// share a destination directory (only the extension varies), so any
+	// imported file's directory is the right one.
+	var sidecarDir string
 	readLanguage := book != nil && !book.IsFieldLocked(models.BookFieldLanguage)
 	// Resolve the ebook destination root and (auto) placement mode once: the
 	// root is stable for this author across the loop, and choosing hardlink-vs-
@@ -2054,6 +2064,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 		imported++
 		importedSrcFiles = append(importedSrcFiles, srcFile)
+		sidecarDir = filepath.Dir(destPath)
 		// NOTE: StateImported is intentionally NOT set here (issue #705 finding 1).
 		// Writing the terminal "imported" state after the first successful file
 		// would mark an incomplete multi-file download as fully imported; a later
@@ -2074,6 +2085,16 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// rewrite the catalogue from a file that is not in the library.
 	if readLanguage && imported > 0 && detectedLang != "" {
 		s.applyEmbeddedLanguage(ctx, book, detectedLang, dl.Title)
+	}
+
+	// Written once here, after applyEmbeddedLanguage above, rather than once
+	// per file inside the loop: a sidecar written mid-loop could carry a
+	// blank dc:language that the backfill above fills in moments later, and
+	// a multi-file download (epub + mobi + pdf sharing one folder) would
+	// otherwise regenerate the identical sidecar once per format.
+	if imported > 0 && sidecarDir != "" {
+		seriesTitle, seriesNum := s.primarySeriesFor(ctx, book)
+		s.writeOPFSidecar(ctx, sidecarDir, []string{ebookRoot}, book, author, edition, seriesTitle, seriesNum)
 	}
 
 	// If every file failed to copy/move, the destination is likely not writable —

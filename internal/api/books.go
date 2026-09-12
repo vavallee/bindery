@@ -886,6 +886,12 @@ func removeBookPathScoped(p, format string, ownedByOther func(string) bool) erro
 		}
 	}
 
+	// A book file's metadata.opf sidecar (import.write_opf_sidecar) is not a
+	// book file itself, so it survives the sweep above and would otherwise
+	// strand this folder the same way it used to strand a Reorganize move —
+	// reclaim it first so the empty check below actually sees empty.
+	importer.RemoveOrphanedSidecar(parent)
+
 	// Clean up parent directory if it is now empty.
 	remaining, err := os.ReadDir(parent)
 	if err == nil && len(remaining) == 0 {

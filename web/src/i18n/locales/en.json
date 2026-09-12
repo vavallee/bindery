@@ -801,6 +801,8 @@
       "dropLinkMode": "Placement",
       "dropLinkCopy": "Copy",
       "dropLinkHardlink": "Hardlink (same filesystem)",
+      "writeOPFSidecar": "Write a metadata.opf sidecar",
+      "writeOPFSidecarHint": "Write a Calibre-style metadata.opf file next to each imported book, carrying Bindery's own title, author, series, identifiers, and other catalogue metadata — regardless of what the downloaded file's own embedded tags say. Also refreshed when you run Reorganize. Never modifies the book file itself, only adds this extra file. Off by default.",
       "bookTemplate": "Book Naming Template",
       "audiobookTemplate": "Audiobook Folder Template",
       "audiobookTemplateHint": "Audiobooks are imported as whole directories (multi-part m4b/mp3 + cover stay together). Template produces the destination folder; original filenames inside are preserved.",

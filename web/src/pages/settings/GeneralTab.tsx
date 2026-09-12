@@ -320,6 +320,28 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               </div>
             </div>
           )}
+          <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={settings['import.write_opf_sidecar'] === 'true'}
+                onChange={async e => {
+                  const v = e.target.checked ? 'true' : 'false'
+                  setSettings(s => ({ ...s, 'import.write_opf_sidecar': v }))
+                  await api.setSetting('import.write_opf_sidecar', v).catch(console.error)
+                }}
+              />
+              <span>
+                <span className="text-xs font-medium text-slate-700 dark:text-zinc-300">
+                  {t('settings.general.writeOPFSidecar', 'Write a metadata.opf sidecar')}
+                </span>
+                <span className="block text-xs text-slate-600 dark:text-zinc-500">
+                  {t('settings.general.writeOPFSidecarHint', "Write a Calibre-style metadata.opf file next to each imported book, carrying Bindery's own title, author, series, identifiers, and other catalogue metadata — regardless of what the downloaded file's own embedded tags say. Also refreshed when you run Reorganize. Never modifies the book file itself, only adds this extra file. Off by default.")}
+                </span>
+              </span>
+            </label>
+          </div>
           <NamingTemplateField
             label={t('settings.general.bookTemplate')}
             kind="book"

@@ -345,6 +345,34 @@ func TestSafeRemoveBookPath_OwnershipErrorFailsSafe(t *testing.T) {
 	}
 }
 
+// TestSafeRemoveBookPath_ReclaimsFolderWithOrphanedSidecar regression-tests a
+// PR review finding: import.write_opf_sidecar's metadata.opf is not a book
+// file, so it survived the old empty-folder check in removeBookPathScoped
+// and stranded every book's folder on delete, holding nothing but a stale
+// sidecar. removeBookPathScoped now reclaims an orphaned sidecar the same
+// way Reorganize already did (RemoveOrphanedSidecar), before checking empty.
+func TestSafeRemoveBookPath_ReclaimsFolderWithOrphanedSidecar(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Book")
+	ebook := mustWrite(t, filepath.Join(dir, "Book.epub"))
+	if err := os.WriteFile(filepath.Join(dir, "metadata.opf"), []byte("<package/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	skipped, err := safeRemoveBookPath(context.Background(), nil, stubOwner{}, 1, ebook, "ebook")
+	if err != nil {
+		t.Fatalf("safeRemoveBookPath: %v", err)
+	}
+	if skipped {
+		t.Fatal("expected the delete to proceed, not be skipped")
+	}
+	if exists(ebook) {
+		t.Error("ebook file should have been removed")
+	}
+	if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+		t.Errorf("book folder should be gone once only the sidecar was left behind, stat err = %v", statErr)
+	}
+}
+
 // TestSafeRemoveBookPath_SiblingOwnedByAnotherBook is the file branch of the
 // same guard: the same-stem sweep must not take a sibling another book tracks.
 func TestSafeRemoveBookPath_SiblingOwnedByAnotherBook(t *testing.T) {

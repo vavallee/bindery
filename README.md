@@ -134,6 +134,7 @@ Clean-room Go rewrite, modern React UI, MIT-licensed, actively developed.
 - Calibre integration in three modes: `calibredb` CLI hook on import, [Bindery Bridge plugin](https://github.com/vavallee/bindery-plugins) (cross-container), or direct read of an existing Calibre library's `metadata.db` as Bindery's catalogue.
 - **Audiobookshelf import** — pull an existing ABS server's book libraries in as Bindery's catalogue (metadata-first, dry-run, review queue for ambiguous matches, rollback), with an ABS library-scan trigger after every audiobook import. See [docs/ABS-Import-Wiki.md](docs/ABS-Import-Wiki.md).
 - **Grimmory push** (preview) — imported ebooks are sent to a self-hosted [Grimmory](https://grimmory.org) library via its BookDrop inbox, with a bulk **Push all** for existing files.
+- **`metadata.opf` sidecar** (opt-in) — write a Calibre-style `metadata.opf` next to each imported book, carrying Bindery's own canonical title/author/series/identifiers/etc. so a library app that reads sidecar metadata sees consistent data regardless of which source the file came from. Refreshed on Reorganize.
 
 **Metadata sources** — all stable, documented, public APIs. No Goodreads scraping.
 

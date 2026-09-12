@@ -288,6 +288,13 @@ func (s *Scanner) applyOne(ctx context.Context, fileID int64) ReorganizeMove {
 		return m
 	}
 
+	// A single-file ebook leaves its metadata.opf behind when it moves out of a
+	// folder, which both strands a stale sidecar and blocks the prune below
+	// from reclaiming the now-empty folder. An audiobook moves as a whole
+	// directory, so its sidecar travels with it and there is nothing to clean.
+	if file.Format != models.MediaTypeAudiobook {
+		removeOrphanedSidecar(filepath.Dir(file.Path), filepath.Dir(proposed))
+	}
 	pruneEmptyParents(filepath.Dir(file.Path), s.rootsForFormat(ctx, author, file.Format))
 	bookID := book.ID
 	s.createHistoryEvent(ctx, models.HistoryEventBookRenamed, book.Title, &bookID, map[string]string{
@@ -295,6 +302,25 @@ func (s *Scanner) applyOne(ctx context.Context, fileID int64) ReorganizeMove {
 		"to":     proposed,
 		"format": file.Format,
 	})
+
+	// Regenerate the metadata.opf sidecar (when the feature is on) so it
+	// reflects the current metadata — this is Reorganize's normal job for
+	// folder names, and the sidecar is exactly the same kind of "derived from
+	// the DB, stale until something re-derives it" artifact (#1970-adjacent
+	// design note: nothing else in the importer auto-refreshes on a plain
+	// metadata edit either; Reorganize is the one place that already
+	// re-touches disk with current metadata, so it's the natural hook).
+	// Gated here as well as inside writeOPFSidecar so resolveCalibreEdition —
+	// a per-file editions query — is not paid on every reorganized file for a
+	// feature that is off by default.
+	if s.opfSidecarEnabled(ctx) {
+		sidecarDir := proposed
+		if file.Format != models.MediaTypeAudiobook {
+			sidecarDir = filepath.Dir(proposed)
+		}
+		edition := s.resolveCalibreEdition(ctx, nil, book)
+		s.writeOPFSidecar(ctx, sidecarDir, s.rootsForFormat(ctx, author, file.Format), book, author, edition, seriesTitle, seriesNum)
+	}
 
 	m.Status = ReorgStatusMoved
 	return m
