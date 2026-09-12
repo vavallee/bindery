@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import AuthorsPage from './AuthorsPage'
 import { api } from '../api/client'
 import type { Series } from '../api/client'
@@ -668,5 +668,42 @@ describe('AuthorsPage — sortable column headers', () => {
     // always "—", because the field is `json:"statistics,omitempty"` and no
     // code ever set it on a row read back from SQLite.
     expect(await screen.findByText('12')).toBeInTheDocument()
+  })
+})
+
+describe('AuthorsPage — Previous/Next router state (#2548)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [
+        { id: 7, authorName: 'Ursula K. Le Guin', foreignAuthorId: 'OL_U', monitored: true, averageRating: 0, imageUrl: '' },
+        { id: 8, authorName: 'Vernor Vinge', foreignAuthorId: 'OL_V', monitored: true, averageRating: 0, imageUrl: '' },
+      ] as never,
+      total: 2, limit: 50, offset: 0,
+    })
+  })
+
+  it('hands the whole loaded page as router state, so the detail page can step Previous/Next with no server round trip', async () => {
+    let capturedState: unknown = null
+    function StateProbe() {
+      capturedState = useLocation().state
+      return null
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<AuthorsPage />} />
+          <Route path="/author/:id" element={<StateProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    // Vernor Vinge is index 1 of the two-author fixture page — the state
+    // must carry both ids (for a further Next once there) and this row's
+    // own index (for AuthorDetailPage's ids[index] === authorId sanity check).
+    fireEvent.click(await screen.findByText('Vernor Vinge'))
+
+    await waitFor(() => expect(capturedState).toEqual({ ids: [7, 8], index: 1 }))
   })
 })

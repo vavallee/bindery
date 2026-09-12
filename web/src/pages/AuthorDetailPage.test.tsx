@@ -94,7 +94,13 @@ function LocationProbe({ onLocation }: { onLocation?: (location: string) => void
   return null
 }
 
-function renderAuthorDetailPage(books: Book[], view: 'grid' | 'table' = 'grid', authorOverride: Partial<Author> = {}, initialPath = '/author/42', onLocation?: (location: string) => void) {
+function renderAuthorDetailPage(
+  books: Book[],
+  view: 'grid' | 'table' = 'grid',
+  authorOverride: Partial<Author> = {},
+  initialPath: string | { pathname: string; state?: unknown } = '/author/42',
+  onLocation?: (location: string) => void,
+) {
   localStorage.setItem('bindery.view.author-detail', view)
   vi.mocked(api.getAuthor).mockResolvedValue({ ...author, ...authorOverride })
   vi.mocked(api.listAllBooks).mockResolvedValue(books)
@@ -944,5 +950,68 @@ describe('AuthorDetailPage — last sync outcome', () => {
     renderAuthorDetailPage([makeBook({ id: 1, title: 'Only Book', status: 'imported' })])
     await screen.findByRole('heading', { name: 'Only Book' })
     expect(screen.queryByTestId('author-sync-notice')).toBeNull()
+  })
+})
+
+describe('AuthorDetailPage — Previous/Next navigation (#2548, frontend-only)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    installLocalStorageMock()
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([])
+  })
+
+  it('hides the controls when there is no router state at all (opened from a Series tab, a bookmark, or after a refresh)', async () => {
+    renderAuthorDetailPage([])
+    await screen.findByText('Brandon Sanderson')
+    expect(screen.queryByLabelText('Previous author')).toBeNull()
+    expect(screen.queryByLabelText('Next author')).toBeNull()
+  })
+
+  it('renders Previous/Next from router state and follows Next to the right id, carrying the chain state', async () => {
+    let lastLocation = ''
+    renderAuthorDetailPage(
+      [], 'grid', {},
+      { pathname: '/author/42', state: { ids: [40, 42, 43, 44, 45], index: 1 } },
+      loc => { lastLocation = loc },
+    )
+    await screen.findByText('Brandon Sanderson')
+
+    fireEvent.click(screen.getByLabelText('Next author'))
+
+    await waitFor(() => expect(lastLocation).toBe('/author/43'))
+  })
+
+  it('hides Previous at the first position and shows only Next', async () => {
+    renderAuthorDetailPage([], 'grid', {}, { pathname: '/author/42', state: { ids: [42, 43], index: 0 } })
+    await screen.findByText('Brandon Sanderson')
+
+    expect(screen.queryByLabelText('Previous author')).toBeNull()
+    expect(screen.getByLabelText('Next author')).toBeInTheDocument()
+  })
+
+  it('hides the controls for a single-author list (both ends null)', async () => {
+    renderAuthorDetailPage([], 'grid', {}, { pathname: '/author/42', state: { ids: [42], index: 0 } })
+    await screen.findByText('Brandon Sanderson')
+    expect(screen.queryByLabelText('Previous author')).toBeNull()
+    expect(screen.queryByLabelText('Next author')).toBeNull()
+  })
+
+  it('ignores state that does not match this author (stale browser back/forward state)', async () => {
+    // ids[index] is 99, not 42 — a mismatch that must be treated as no
+    // navigation info rather than pointing at the wrong neighbour.
+    renderAuthorDetailPage([], 'grid', {}, { pathname: '/author/42', state: { ids: [98, 99, 100], index: 1 } })
+    await screen.findByText('Brandon Sanderson')
+    expect(screen.queryByLabelText('Previous author')).toBeNull()
+    expect(screen.queryByLabelText('Next author')).toBeNull()
+  })
+
+  it('Back always goes to the Authors list, not browser history', async () => {
+    let lastLocation = ''
+    renderAuthorDetailPage([], 'grid', {}, '/author/42', loc => { lastLocation = loc })
+    await screen.findByText('Brandon Sanderson')
+
+    fireEvent.click(screen.getByText('← Back'))
+
+    await waitFor(() => expect(lastLocation).toBe('/'))
   })
 })

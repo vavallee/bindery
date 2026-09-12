@@ -163,6 +163,7 @@ Cover images are fetched and cached server-side under `<dataDir>/image-cache/` (
 - Modern React 19 + TypeScript + Tailwind CSS SPA with search-first author acquisition and deep-linkable routed `/book/:id` and `/author/:id` pages.
 - Light / dark themes (respecting `prefers-color-scheme` first paint), grid / table view toggles, mobile-friendly responsive layout, hamburger nav, agenda-style mobile Calendar.
 - Full pagination, search, filter, and sort on every list page; preferences persist to `localStorage`.
+- Previous/Next navigation between authors on the author detail page, stepping through the list page you came from.
 - 8 languages — English, French, German, Dutch, Spanish, Filipino (Tagalog), Indonesian, Korean — auto-detected from the browser, override in Settings.
 - **OPDS 1.2 catalogue** at `/opds/` for KOReader, Moon+ Reader, and other reading apps. HTTP Basic auth with the API key as the password.
 

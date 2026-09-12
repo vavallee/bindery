@@ -341,6 +341,11 @@ export default function AuthorsPage() {
   // outright and costing OpenLibrary users a real sort key.
   const anyRating = authors.some(a => a.averageRating > 0)
 
+  // This page's loaded ids, in order — handed to AuthorDetailPage as router
+  // state (#2548) for Previous/Next; see AuthorNavState there.
+  const authorIds = authors.map(a => a.id)
+  const authorNavState = (index: number) => ({ ids: authorIds, index })
+
   return (
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
       {confirmDialog}
@@ -502,7 +507,7 @@ export default function AuthorsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
-                {authors.map(author => (
+                {authors.map((author, i) => (
                   <tr
                     key={author.id}
                     className={`hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 ${selectedIds.has(author.id) ? 'bg-emerald-500/10 dark:bg-emerald-500/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'}`}
@@ -517,7 +522,7 @@ export default function AuthorsPage() {
                       />
                     </td>
                     <td className="px-3 py-2">
-                      <Link to={`/author/${author.id}`} className="flex items-center gap-2">
+                      <Link to={`/author/${author.id}`} state={authorNavState(i)} className="flex items-center gap-2">
                         {author.imageUrl ? (
                           <img src={author.imageUrl} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
                         ) : (
@@ -560,7 +565,7 @@ export default function AuthorsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {authors.map(author => (
+          {authors.map((author, i) => (
             <div
               key={author.id}
               className={`border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden hover:border-emerald-500 transition-colors ${selectedIds.has(author.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800'}`}
@@ -573,7 +578,7 @@ export default function AuthorsPage() {
                   className={`absolute top-2 left-2 z-10 rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 ${selectedIds.has(author.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
                   title={`Select ${author.authorName}`}
                 />
-                <Link to={`/author/${author.id}`} className="flex gap-3 p-4 hover:bg-slate-200/40 dark:hover:bg-zinc-800/40 transition-colors">
+                <Link to={`/author/${author.id}`} state={authorNavState(i)} className="flex gap-3 p-4 hover:bg-slate-200/40 dark:hover:bg-zinc-800/40 transition-colors">
                   {author.imageUrl ? (
                     <img src={author.imageUrl} alt={author.authorName} className="w-16 h-16 rounded-full object-cover flex-shrink-0" />
                   ) : (

@@ -63,6 +63,20 @@ function mediaLabel(mediaType?: Book['mediaType']): string {
   return '📖 Ebook'
 }
 
+// Previous/Next navigation (#2548), entirely client-side: AuthorsPage already
+// has its current page loaded and ordered, so it hands that over as router
+// `state` instead of this page re-fetching it. Not shared as an exported
+// type — AuthorsPage builds the same shape independently, same as the
+// seriesId router state between AuthorsPage and SeriesPage.
+//
+// Trade-off: only reaches as far as the loaded list page, and doesn't
+// survive a refresh or a direct link (router state is gone either way) —
+// Previous/Next just don't render then.
+interface AuthorNavState {
+  ids: number[]
+  index: number
+}
+
 export default function AuthorDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -195,6 +209,19 @@ export default function AuthorDetailPage() {
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [authorId, showExcluded])
+
+  // Validated against authorId: stale state (browser back/forward) or no
+  // state at all (opened from elsewhere) must read as "no nav info", not
+  // point at the wrong neighbour.
+  const navState = (() => {
+    const s = location.state as AuthorNavState | null
+    if (s && Array.isArray(s.ids) && typeof s.index === 'number' && s.ids[s.index] === authorId) {
+      return s
+    }
+    return null
+  })()
+  const prevId = navState && navState.index > 0 ? navState.ids[navState.index - 1] : null
+  const nextId = navState && navState.index < navState.ids.length - 1 ? navState.ids[navState.index + 1] : null
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -680,8 +707,25 @@ export default function AuthorDetailPage() {
     // One width shared with BookDetailPage — see the note there.
     <div className={`max-w-7xl ${selected.size > 0 ? 'pb-20' : ''}`}>
       {confirmDialog}
-      <div className="mb-4 flex items-center gap-3 text-sm">
-        <button onClick={() => navigate(-1)} className="text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">← Back</button>
+      <div className="mb-4 flex items-center justify-between gap-3 text-sm">
+        {/* Always the Authors list, not browser history, which can land
+            elsewhere (a Series tab, a search result, or, after following
+            Previous/Next a few times, one page short of the list). */}
+        <Link to="/" className="text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">← Back</Link>
+        {navState && (prevId !== null || nextId !== null) && (
+          <div className="flex items-center gap-2">
+            {prevId !== null && (
+              <Link to={`/author/${prevId}`} state={{ ids: navState.ids, index: navState.index - 1 }} aria-label={t('authorDetail.nav.previousAriaLabel', 'Previous author')} className={`${btn.ghost} ${btnSize.sm}`}>
+                {t('authorDetail.nav.previous', '‹ Previous')}
+              </Link>
+            )}
+            {nextId !== null && (
+              <Link to={`/author/${nextId}`} state={{ ids: navState.ids, index: navState.index + 1 }} aria-label={t('authorDetail.nav.nextAriaLabel', 'Next author')} className={`${btn.ghost} ${btnSize.sm}`}>
+                {t('authorDetail.nav.next', 'Next ›')}
+              </Link>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col sm:flex-row gap-6 mb-8">
