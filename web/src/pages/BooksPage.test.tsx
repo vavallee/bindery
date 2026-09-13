@@ -401,7 +401,7 @@ describe('BooksPage — book link nav state (#2548)', () => {
     fireEvent.click(card.querySelector('a')!)
 
     await waitFor(() => expect(located?.pathname).toBe('/book/2'))
-    expect(located?.state).toEqual({ ids: [1, 2], index: 1 })
+    expect(located?.state).toEqual({ ids: [1, 2], index: 1, hopDepth: 1 })
   })
 
   it('navigates client-side from anywhere in a table row (not a full page reload) and carries the same nav state as the title link', async () => {
@@ -427,6 +427,6 @@ describe('BooksPage — book link nav state (#2548)', () => {
     fireEvent.click(row.querySelector('td:last-child')!)
 
     await waitFor(() => expect(located?.pathname).toBe('/book/2'))
-    expect(located?.state).toEqual({ ids: [1, 2], index: 1 })
+    expect(located?.state).toEqual({ ids: [1, 2], index: 1, hopDepth: 1 })
   })
 })

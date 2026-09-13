@@ -604,7 +604,10 @@ export default function AuthorDetailPage() {
   // Next/Previous follows this order rather than the visual card-to-card
   // order across group boundaries — a documented trade-off, not fixed further.
   const bookIds = filteredBooks.map(b => b.id)
-  const bookNavState = (book: Book) => ({ ids: bookIds, index: bookIds.indexOf(book.id) })
+  // hopDepth: 1 — this is the first hop into a book detail page from a list,
+  // not a further Previous/Next chain hop; see BookNavState in
+  // BookDetailPage.tsx for how Back uses it to skip the whole chain.
+  const bookNavState = (book: Book) => ({ ids: bookIds, index: bookIds.indexOf(book.id), hopDepth: 1 })
 
   // Render helpers shared by the flat and grouped-by-series (#1125) layouts so
   // each series section and the standalone group reuse the exact same table

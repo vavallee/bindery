@@ -202,7 +202,10 @@ export default function BooksPage() {
   // This page's loaded ids, in order — handed to BookDetailPage as router
   // state (#2548) for Previous/Next; see BookNavState there.
   const bookIds = books.map(b => b.id)
-  const bookNavState = (index: number) => ({ ids: bookIds, index })
+  // hopDepth: 1 — this is the first hop into a book detail page from a list,
+  // not a further Previous/Next chain hop; see BookNavState in
+  // BookDetailPage.tsx for how Back uses it to skip the whole chain.
+  const bookNavState = (index: number) => ({ ids: bookIds, index, hopDepth: 1 })
 
   return (
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>

@@ -252,6 +252,14 @@ const actionBtnCls = `${btn.secondary} ${btnSize.md}`
 interface BookNavState {
   ids: number[]
   index: number
+  // How many consecutive book-detail pages deep this hop is from the
+  // originating list page — 1 on the first hop in from a list, +1 on every
+  // further Previous/Next. Back uses it to jump back over the WHOLE chain in
+  // one step (navigate(-hopDepth)) instead of landing one book short after a
+  // few hops. Generalizes AuthorDetailPage's Back fix (which hard-codes a
+  // jump to "/") without needing a single canonical destination — a book can
+  // be reached from five different lists, so there isn't one.
+  hopDepth: number
 }
 
 export default function BookDetailPage() {
@@ -567,16 +575,21 @@ function BookDetailPageInner() {
 
   // Validated against bookId: stale state (browser back/forward) or no state
   // at all (opened from somewhere that never set it) must read as "no nav
-  // info", not point at the wrong neighbour.
+  // info", not point at the wrong neighbour. hopDepth normalizes to 1 rather
+  // than invalidating the whole state if a producer ever omits it.
   const navState = (() => {
-    const s = location.state as BookNavState | null
+    const s = location.state as Partial<BookNavState> | null
     if (s && Array.isArray(s.ids) && typeof s.index === 'number' && s.ids[s.index] === bookId) {
-      return s
+      const hopDepth = typeof s.hopDepth === 'number' && s.hopDepth > 0 ? s.hopDepth : 1
+      return { ids: s.ids, index: s.index, hopDepth }
     }
     return null
   })()
   const prevId = navState && navState.index > 0 ? navState.ids[navState.index - 1] : null
   const nextId = navState && navState.index < navState.ids.length - 1 ? navState.ids[navState.index + 1] : null
+  // Back skips the entire Previous/Next chain in one jump rather than landing
+  // one book short — see the hopDepth comment on BookNavState above.
+  const backSteps = navState ? navState.hopDepth : 1
 
   if (loading) return <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
   if (!book) return <div className="text-slate-600 dark:text-zinc-500">{t('bookDetail.notFound')}</div>
@@ -673,12 +686,15 @@ function BookDetailPageInner() {
     // left-aligned it mid-navigation.
     <div className="max-w-7xl">
       <div className="mb-4 flex items-center justify-between gap-3 text-sm">
-        {/* Unlike AuthorDetailPage's Back, this always uses browser history:
-            a book can be reached from five different lists (Books, an
-            author's own book list, Wanted, a series, a direct link), so
-            there is no single canonical "the list" to jump to instead. */}
+        {/* Unlike AuthorDetailPage's Back, this doesn't jump to a hard-coded
+            route — a book can be reached from five different lists (Books,
+            an author's own book list, Wanted, a series, a direct link), so
+            there is no single canonical "the list" to name. Instead it walks
+            back exactly as many history entries as the Previous/Next chain
+            is deep (backSteps), landing on whichever list actually started
+            it rather than one book short. */}
         <button
-          onClick={() => navigate(-1)}
+          onClick={() => navigate(-backSteps)}
           className="text-emerald-600 dark:text-emerald-400 hover:underline"
         >
           {t('bookDetail.back')}
@@ -688,7 +704,7 @@ function BookDetailPageInner() {
             {prevId !== null && (
               <Link
                 to={`/book/${prevId}`}
-                state={{ ids: navState.ids, index: navState.index - 1 }}
+                state={{ ids: navState.ids, index: navState.index - 1, hopDepth: navState.hopDepth + 1 }}
                 aria-label={t('bookDetail.nav.previousAriaLabel', 'Previous book')}
                 className={`${btn.ghost} ${btnSize.sm}`}
               >
@@ -698,7 +714,7 @@ function BookDetailPageInner() {
             {nextId !== null && (
               <Link
                 to={`/book/${nextId}`}
-                state={{ ids: navState.ids, index: navState.index + 1 }}
+                state={{ ids: navState.ids, index: navState.index + 1, hopDepth: navState.hopDepth + 1 }}
                 aria-label={t('bookDetail.nav.nextAriaLabel', 'Next book')}
                 className={`${btn.ghost} ${btnSize.sm}`}
               >

@@ -1338,6 +1338,6 @@ describe('AuthorDetailPage — book link nav state (#2548, book side)', () => {
     const row = (await screen.findByText('The Well of Ascension')).closest('tr')!
     fireEvent.click(row)
 
-    await waitFor(() => expect(capturedState).toEqual({ ids: [10, 11], index: 1 }))
+    await waitFor(() => expect(capturedState).toEqual({ ids: [10, 11], index: 1, hopDepth: 1 }))
   })
 })

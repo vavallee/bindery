@@ -487,6 +487,6 @@ describe('WantedPage — book link nav state (#2548, book side)', () => {
     fireEvent.click(screen.getByText('Mistborn'))
 
     await waitFor(() => expect(located?.pathname).toBe('/book/2'))
-    expect(located?.state).toEqual({ ids: [1, 2], index: 1 })
+    expect(located?.state).toEqual({ ids: [1, 2], index: 1, hopDepth: 1 })
   })
 })

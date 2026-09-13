@@ -1451,6 +1451,35 @@ describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () =>
     await waitFor(() => expect(lastLocation).toBe('/books'))
   })
 
+  it('Back skips the entire Previous/Next chain in one jump, not just the immediately previous book, after several hops', async () => {
+    let lastLocation = ''
+    vi.mocked(api.getBook).mockImplementation((id: number) => Promise.resolve(makeBook({
+      id,
+      title: id === 42 ? 'The Final Empire' : id === 43 ? 'The Well of Ascension' : 'The Hero of Ages',
+    })))
+    // History: /books (index 0), then two real hops in via Next (indices 1
+    // and 2) before landing here — hopDepth on the current page reflects
+    // that depth, and Back must walk back all of it in a single navigate(),
+    // not just the one entry a plain navigate(-1) would undo.
+    renderBookDetailPage(
+      ['/books', { pathname: '/book/42', state: { ids: [42, 43, 44], index: 0, hopDepth: 1 } }],
+      loc => { lastLocation = loc },
+    )
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByLabelText('Next book'))
+    await screen.findByRole('heading', { name: 'The Well of Ascension' })
+
+    fireEvent.click(screen.getByLabelText('Next book'))
+    await screen.findByRole('heading', { name: 'The Hero of Ages' })
+
+    fireEvent.click(screen.getByText('← Books'))
+
+    // Without hopDepth, navigate(-1) would only undo the last hop, landing
+    // back on "The Well of Ascension" — one book short of the list.
+    await waitFor(() => expect(lastLocation).toBe('/books'))
+  })
+
   it('clears stale search results from the previous book after Next, proving the key-remount actually resets state', async () => {
     vi.mocked(api.getBook).mockImplementation((id: number) =>
       Promise.resolve(makeBook({ id, title: id === 42 ? 'The Final Empire' : 'The Well of Ascension' })))
