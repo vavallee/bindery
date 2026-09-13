@@ -75,11 +75,22 @@
     "import": "Import",
     "series": "Series",
     "discover": "Discover",
-    "search": "Search",
+    "search": "Search indexers",
     "blocklist": "Blocklist",
     "settings": "Settings",
     "users": "Users",
     "updateAvailable": "Update available"
+  },
+  "librarySearch": {
+    "label": "Search library",
+    "placeholder": "Search library",
+    "authors": "Authors",
+    "books": "Books",
+    "series": "Series",
+    "searching": "Searching…",
+    "noMatches": "Nothing in your library matches",
+    "addToBindery": "Add \"{{query}}\" to Bindery",
+    "failed": "Library search failed"
   },
   "notFound": {
     "title": "Page not found",

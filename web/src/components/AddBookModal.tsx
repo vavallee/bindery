@@ -8,6 +8,10 @@ import MetadataLinksMenu from './MetadataLinksMenu'
 interface Props {
   onClose: () => void
   onAdded: (book: Book) => void
+  // Pre-fills the search box and runs the search on open. The header library
+  // search hands its query over this way (#2551) so a miss in the library
+  // becomes an add without retyping.
+  initialQuery?: string
 }
 
 function basePath(): string {
@@ -24,9 +28,9 @@ function conflictBody(err: unknown): BookConflictBody | null {
   return null
 }
 
-export default function AddBookModal({ onClose, onAdded }: Props) {
+export default function AddBookModal({ onClose, onAdded, initialQuery }: Props) {
   const { t } = useTranslation()
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(initialQuery ?? '')
   const [results, setResults] = useState<Book[]>([])
   const [selectedBook, setSelectedBook] = useState<Book | null>(null)
   const [searching, setSearching] = useState(false)
@@ -45,8 +49,8 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
     if (selectedBook) confirmationHeadingRef.current?.focus()
   }, [selectedBook])
 
-  const search = async () => {
-    const q = query.trim()
+  const search = async (term = query) => {
+    const q = term.trim()
     if (!q || searching) return
     setSearching(true)
     setResults([])
@@ -67,6 +71,13 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
       setSearching(false)
     }
   }
+
+  const initialSearchRan = useRef(false)
+  useEffect(() => {
+    if (initialSearchRan.current || !initialQuery?.trim()) return
+    initialSearchRan.current = true
+    void search(initialQuery)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const addBook = async () => {
     const book = selectedBook
@@ -169,13 +180,13 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
                 type="text"
                 value={query}
                 onChange={e => setQuery(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && search()}
+                onKeyDown={e => e.key === 'Enter' && void search()}
                 placeholder={t('addBookModal.searchPlaceholder')}
                 className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
                 autoFocus
               />
               <button
-                onClick={search}
+                onClick={() => void search()}
                 disabled={searching || !query.trim()}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium text-white"
               >

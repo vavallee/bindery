@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 type SeriesRepo struct {
@@ -1102,4 +1104,98 @@ func (r *SeriesRepo) GetBookBySeriesPosition(ctx context.Context, seriesTitle, p
 		return nil, nil
 	}
 	return found[0], nil
+}
+
+// SearchTitles returns up to limit series whose title contains every word of
+// query, best match first, for the header library search (#2551). userID 0 is
+// unscoped; otherwise only series with at least one book the caller may see
+// (owned by them or unowned, the include-NULL tier every list uses) qualify,
+// so a series made entirely of another user's books never surfaces its title.
+//
+// The series table has no search_key column (migration 083 folded books,
+// authors and aliases only), and the fold is Go code, so the match runs in Go
+// over the id/title pairs rather than in SQL. Series counts are small next to
+// books, the query is two columns, and that is cheaper than a migration plus
+// a backfill for one typeahead. Ranking follows the tiers in searchrank.go:
+// the whole field, a leading whole word, a whole word anywhere, a leading
+// fragment, a fragment anywhere, and finally rows matched only word by word.
+func (r *SeriesRepo) SearchTitles(ctx context.Context, query string, userID int64, limit int) ([]models.Series, error) {
+	folded := textutil.FoldForSearch(query)
+	if folded == "" || limit <= 0 {
+		return []models.Series{}, nil
+	}
+	tokens := strings.Fields(folded)
+
+	q := "SELECT id, title FROM series"
+	var args []any
+	if userID != 0 {
+		q += " WHERE EXISTS (SELECT 1 FROM series_books sb JOIN books b ON b.id = sb.book_id" +
+			" WHERE sb.series_id = series.id AND (b.owner_user_id = ? OR b.owner_user_id IS NULL))"
+		args = append(args, userID)
+	}
+	rows, err := r.db.QueryContext(ctx, q+" ORDER BY title", args...)
+	if err != nil {
+		return nil, fmt.Errorf("search series: %w", err)
+	}
+	defer rows.Close()
+
+	type ranked struct {
+		s    models.Series
+		tier int
+	}
+	var hits []ranked
+	for rows.Next() {
+		var s models.Series
+		if err := rows.Scan(&s.ID, &s.Title); err != nil {
+			return nil, fmt.Errorf("scan series title: %w", err)
+		}
+		key := textutil.FoldForSearch(s.Title)
+		tier, ok := seriesTitleTier(key, folded, tokens)
+		if !ok {
+			continue
+		}
+		hits = append(hits, ranked{s: s, tier: tier})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Stable, so equal tiers keep the title order the query produced.
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].tier != hits[j].tier {
+			return hits[i].tier < hits[j].tier
+		}
+		return len(hits[i].s.Title) < len(hits[j].s.Title)
+	})
+	out := make([]models.Series, 0, min(limit, len(hits)))
+	for _, h := range hits[:min(limit, len(hits))] {
+		out = append(out, h.s)
+	}
+	return out, nil
+}
+
+// seriesTitleTier reports the searchrank.go tier of a folded title against a
+// folded query, and false when a token of the query is missing from it.
+func seriesTitleTier(key, folded string, tokens []string) (int, bool) {
+	for _, tok := range tokens {
+		if !strings.Contains(key, tok) {
+			return 0, false
+		}
+	}
+	padded := " " + key + " "
+	switch {
+	case key == folded:
+		return 0, true
+	case strings.HasPrefix(padded, " "+folded+" "):
+		return 1, true
+	case strings.Contains(padded, " "+folded+" "):
+		return 2, true
+	case strings.HasPrefix(key, folded):
+		return 3, true
+	case strings.Contains(padded, " "+folded):
+		return 4, true
+	case strings.Contains(key, folded):
+		return 5, true
+	default:
+		return searchRankTiers, true
+	}
 }

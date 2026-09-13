@@ -177,6 +177,7 @@ GET    /api/v1/book/{id}/file                     download the imported file (au
 ```
 GET    /api/v1/search/author?term=…               metadata author search
 GET    /api/v1/search/book?term=…                 metadata book search
+GET    /api/v1/search/library?q=…                 your own catalogue: `{authors, books, series}`, up to `limit` rows per group (default 5, max 10), owner scoped like the list endpoints; 400 on an empty `q`
 GET    /api/v1/book/lookup?isbn=… | ?asin=…       single-book lookup by identifier
 GET    /api/v1/wanted/missing                     list wanted-but-missing books
 POST   /api/v1/wanted/bulk                        bulk operations on wanted

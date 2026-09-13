@@ -606,6 +606,7 @@ func main() {
 	userMgmtHandler := api.NewUserManagementHandler(userRepo).
 		WithLocalAuthEnabled(cfg.LocalAuthEnabled)
 	searchHandler := api.NewSearchHandler(metaAgg, bookRepo, authorRepo)
+	librarySearchHandler := api.NewLibrarySearchHandler(authorRepo, bookRepo, seriesRepo)
 	// Library-root containment checker (Wave 1 / Bundle B): used by the book
 	// and author delete handlers to refuse on-disk removal of any path that
 	// isn't inside a configured root. Defaults to the legacy single-root env
@@ -895,6 +896,8 @@ func main() {
 		// Metadata search
 		r.Get("/search/author", searchHandler.SearchAuthors)
 		r.Get("/search/book", searchHandler.SearchBooks)
+		// Library search (header typeahead, #2551): local catalogue only.
+		r.Get("/search/library", librarySearchHandler.Search)
 		r.Get("/book/lookup", searchHandler.Lookup)
 
 		// Authors

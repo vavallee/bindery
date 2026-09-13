@@ -514,4 +514,30 @@ describe('AddBookModal — already in the library (#1227)', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('metadata provider unavailable'))
     expect(screen.queryByRole('link', { name: 'Open existing book' })).not.toBeInTheDocument()
   })
+
+describe('AddBookModal — initialQuery from the header search (#2551)', () => {
+  const onClose = vi.fn()
+  const onAdded = vi.fn()
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('pre-fills the box and runs the search on open', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue([
+      { foreignBookId: 'OL1W', title: 'The Dispossessed', author: { authorName: 'Ursula K. Le Guin' } } as never,
+    ])
+
+    render(<AddBookModal onClose={onClose} onAdded={onAdded} initialQuery="The Dispossessed" />)
+
+    expect(screen.getByPlaceholderText(/Title, ISBN, or ASIN/i)).toHaveValue('The Dispossessed')
+    await waitFor(() => expect(api.searchBooks).toHaveBeenCalledWith('The Dispossessed'))
+    expect(api.searchBooks).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(screen.getByText('The Dispossessed', { selector: 'div' })).toBeInTheDocument())
+  })
+
+  it('does not search on open without an initialQuery', () => {
+    render(<AddBookModal onClose={onClose} onAdded={onAdded} />)
+    expect(api.searchBooks).not.toHaveBeenCalled()
+  })
 })

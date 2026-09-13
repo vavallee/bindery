@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from './auth/AuthContext'
 import AuthGuard from './auth/AuthGuard'
 import PublicOnlyRoute from './auth/PublicOnlyRoute'
 import ErrorBoundary from './components/ErrorBoundary'
+import LibrarySearch from './components/LibrarySearch'
 import Logo from './components/Logo'
 import SetupBanner from './components/SetupBanner'
 import VersionBadge from './components/VersionBadge'
@@ -143,6 +144,7 @@ function Shell() {
             </nav>
 
             <div className="flex items-center gap-3 flex-shrink-0">
+              <LibrarySearch className="hidden lg:block w-40 xl:w-64" />
               <NavLink
                 to="/search"
                 className={({ isActive }) =>
@@ -225,6 +227,9 @@ function Shell() {
 
         {menuOpen && (
           <div className="lg:hidden border-t border-slate-200 dark:border-zinc-800">
+            <div className="px-4 py-3 border-b border-slate-200/50 dark:border-zinc-800/50">
+              <LibrarySearch className="w-full" onNavigate={() => setMenuOpen(false)} />
+            </div>
             <nav>
               {NAV_KEYS.map(item => (
                 <NavLink

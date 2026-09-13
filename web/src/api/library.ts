@@ -1,6 +1,39 @@
 import { request } from './core'
 
+// Header library search (#2551): the caller's own catalogue, grouped, a few
+// rows per group. Rows are deliberately thin; open the entity for the rest.
+export interface LibrarySearchAuthor {
+  id: number
+  name: string
+  imageUrl?: string
+}
+
+export interface LibrarySearchBook {
+  id: number
+  title: string
+  authorId: number
+  authorName?: string
+  imageUrl?: string
+}
+
+export interface LibrarySearchSeries {
+  id: number
+  title: string
+}
+
+export interface LibrarySearchResponse {
+  authors: LibrarySearchAuthor[]
+  books: LibrarySearchBook[]
+  series: LibrarySearchSeries[]
+}
+
 export const libraryApi = {
+  // Library search (local catalogue only; the metadata search is searchBooks / searchAuthors)
+  searchLibrary: (q: string, limit?: number) => {
+    const params = new URLSearchParams({ q })
+    if (limit) params.set('limit', String(limit))
+    return request<LibrarySearchResponse>(`/search/library?${params.toString()}`)
+  },
   // Library
   triggerLibraryScan: () => request<{ message: string }>('/library/scan', { method: 'POST' }),
   libraryScanStatus: () => request<{

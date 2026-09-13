@@ -48,6 +48,14 @@ an arbitrary release is unreliable. The escape hatches:
 
 Both still end by attaching a file to a catalogue record.
 
+The **Search library** box in the header is the other kind of search: it looks
+only at what is already in Bindery. As you type it lists matching authors
+(including pen names), books (by title or author) and series, and selecting a
+row opens it. The last row is always *Add "…" to Bindery*, which opens the Add
+Book dialog with the same text already searched against your metadata
+providers, so a miss in the library turns into an add without retyping. It does
+not query indexers; that stays with the magnifier.
+
 ## Five rules that answer most questions
 
 Almost every "why is Bindery doing that?" question comes down to one of these.
