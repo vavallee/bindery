@@ -11,6 +11,38 @@ import (
 // rules drift, which is the whole subject of #1648 — so they live here now and
 // both packages delegate.
 
+// sortNameParticles encode the LC-PCC MGD "Access Point for Person"
+// (2025-03-04) policy, reduced to the one question this function can answer
+// from the string alone: does the particle travel with the surname or with the
+// forename?
+//
+// trailing: the name files under the following word and the particle goes to
+// the end. Dutch "van", German "von" and "zu", Portuguese "da" and "dos",
+// Spanish "de" and "del". "Johann Wolfgang von Goethe" files as "Goethe,
+// Johann Wolfgang von".
+//
+// leading: the particle stays attached to the surname whatever its case,
+// because the language files it that way. French "Le", "La", "Du", "Des";
+// Spanish "El", "Los"; and the patronymics "Mac", "Mc", "O'", "Fitz", "St.".
+// "Ursula K. Le Guin" files as "Le Guin, Ursula K.", never "Guin, Ursula K. Le".
+var (
+	trailingParticles = map[string]bool{
+		"von": true, "zu": true, "van": true, "der": true, "den": true,
+		"ter": true, "ten": true, "de": true, "del": true, "da": true,
+		"das": true, "dos": true, "do": true, "d'": true, "af": true, "av": true,
+	}
+	leadingParticles = map[string]bool{
+		"le": true, "la": true, "les": true, "du": true, "des": true,
+		"el": true, "los": true, "las": true, "ver": true, "mac": true,
+		"mc": true, "o'": true, "fitz": true, "st": true, "saint": true,
+	}
+	// A generational suffix belongs to neither, and follows the forename:
+	// "Martin Luther King Jr." files as "King, Martin Luther Jr.".
+	generationalSuffixes = map[string]bool{
+		"jr": true, "sr": true, "ii": true, "iii": true, "iv": true,
+	}
+)
+
 // SortName converts a display name to "Last, First Middle" sort form, leaving
 // single-token names untouched. Nine packages delegate here rather than keep a
 // copy: internal/api, internal/abs, openlibrary and hardcover from the first
@@ -20,18 +52,115 @@ import (
 // token, so a change here renames folders on disk, and a divergent copy means
 // the library layout and the UI disagree about the same author.
 //
-// Deliberately naive: it flips on the last whitespace-separated token and does
-// no particle handling ("van", "de", "von") or script awareness. That is fine
-// for a DISPLAY and ordering value — do not compare identities with it. Author
-// identity comparison is MatchAuthorName; ordering is db.authorSortKey.
+// It is a DISPLAY and ordering value. Do not compare identities with it:
+// author identity is MatchAuthorName, ordering is db.authorSortKey.
+//
+// Three kinds of name are returned untouched, because inverting them loses:
+// one already carrying a comma (someone has inverted it, and guessing again
+// destroys the answer), a single token, and an all-CJK name, whose authorised
+// form is surname-first as written.
+//
+// Where the tables cannot decide, case does. That is the BibTeX "von part"
+// rule, and it reproduces the LC outcomes without needing to know the
+// language: a lowercase mid-name particle trails ("Vincent van Gogh" to
+// "Gogh, Vincent van") and a capitalised one leads ("Thomas De Quincey" to
+// "De Quincey, Thomas"). It is a heuristic, and it is wrong for anyone who
+// writes their own particle against their language's convention. The
+// alternative is knowing the language of every name, which we do not.
 func SortName(name string) string {
-	parts := strings.Fields(name)
+	s := strings.TrimSpace(name)
+	if s == "" || strings.Contains(s, ",") {
+		return name
+	}
+	parts := strings.Fields(s)
+	if len(parts) < 2 || isAllCJK(s) {
+		return name
+	}
+
+	suffix := ""
+	if len(parts) > 2 && generationalSuffixes[particleKey(parts[len(parts)-1])] {
+		suffix = parts[len(parts)-1]
+		parts = parts[:len(parts)-1]
+	}
 	if len(parts) < 2 {
 		return name
 	}
-	last := parts[len(parts)-1]
-	rest := strings.Join(parts[:len(parts)-1], " ")
-	return last + ", " + rest
+
+	// Find the contiguous run of particles sitting immediately before the last
+	// token. Index 0 is never a particle: a name beginning with one has no
+	// forename to inherit it.
+	runStart := len(parts) - 1
+	for i := len(parts) - 2; i >= 1; i-- {
+		k := particleKey(parts[i])
+		if !trailingParticles[k] && !leadingParticles[k] {
+			break
+		}
+		runStart = i
+	}
+
+	// The first token of the run decides for the whole run, which is what makes
+	// a compound particle work. Spanish "de la" trails as a unit ("Jose de la
+	// Cruz" to "Cruz, Jose de la"), and reading "la" on its own would file it
+	// under L.
+	surnameStart := len(parts) - 1
+	if runStart < len(parts)-1 {
+		first := parts[runStart]
+		k := particleKey(first)
+		switch {
+		case leadingParticles[k]:
+			surnameStart = runStart
+		case trailingParticles[k] && !startsUpper(first):
+			// Whole run trails.
+		default:
+			surnameStart = runStart
+		}
+	}
+
+	forename := append([]string{}, parts[:runStart]...)
+	forename = append(forename, parts[runStart:surnameStart]...)
+	if suffix != "" {
+		forename = append(forename, suffix)
+	}
+	if len(forename) == 0 {
+		return name
+	}
+	surname := strings.Join(parts[surnameStart:], " ")
+	// A particle that now begins the access point is capitalised, which is what
+	// LC-PCC prints: "Daphne du Maurier" files as "Du Maurier, Daphne".
+	if surnameStart < len(parts)-1 && !startsUpper(parts[surnameStart]) {
+		surname = capitaliseFirst(surname)
+	}
+	return surname + ", " + strings.Join(forename, " ")
+}
+
+// particleKey reduces a token to its table form: lowercased, with a trailing
+// full stop dropped so "St." and "St" agree.
+func particleKey(tok string) string {
+	return strings.TrimSuffix(strings.ToLower(tok), ".")
+}
+
+func startsUpper(tok string) bool {
+	for _, r := range tok {
+		return unicode.IsUpper(r)
+	}
+	return false
+}
+
+// isAllCJK reports whether s has letters and every one of them is Han,
+// Hiragana, Katakana or Hangul.
+func isAllCJK(s string) bool {
+	sawLetter := false
+	for _, r := range s {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+		sawLetter = true
+		if !unicode.Is(unicode.Han, r) && !unicode.Is(unicode.Hiragana, r) &&
+			!unicode.Is(unicode.Katakana, r) && !unicode.Is(unicode.Hangul, r) {
+			return false
+		}
+	}
+	return sawLetter
 }
 
 // AuthorSearchQueries expands an author name into the provider query strings
@@ -133,4 +262,12 @@ func dedupeFold(values []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+// capitaliseFirst upper-cases the first rune of s, leaving the rest alone.
+func capitaliseFirst(s string) string {
+	for i, r := range s {
+		return string(unicode.ToUpper(r)) + s[i+len(string(r)):]
+	}
+	return s
 }

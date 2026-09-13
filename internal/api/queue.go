@@ -135,9 +135,10 @@ func (h *QueueHandler) resolveSeedRatio(ctx context.Context, indexerID *int64) *
 //
 // The web UI sends the release's indexer id back on grab, which names the
 // credential directly. API clients post only {guid, nzbUrl} — nothing carries
-// the id — so with no id (or one that no longer resolves) the key is taken from
-// the configured indexer whose host matches the URL: only an indexer on that
-// host could have produced it, and SignDownloadURLFor's host guard keeps the
+// the id — so with no usable id (none sent, one that no longer resolves, or one
+// whose own host does not match the download URL, which is the #2505 case) the
+// key is taken from the configured indexer whose host matches the URL: only an
+// indexer on that host could have produced it, and SignDownloadURLFor's host guard keeps the
 // credential from travelling anywhere else. Several indexers on one host (the
 // usual Prowlarr layout) are usable while they agree on the key; when they
 // disagree there is nothing to choose between them and the URL is left alone.
@@ -157,9 +158,34 @@ func (h *QueueHandler) signNZBURL(ctx context.Context, rawURL string, indexerID 
 	if h.indexers == nil || rawURL == "" {
 		return rawURL, nil
 	}
+	// Checked before anything tries to sign, because signDownloadURL returns
+	// its input unchanged both for "already signed" and for "could not sign",
+	// and the two need different answers below.
+	if newznab.HasAPIKey(rawURL) {
+		return rawURL, nil
+	}
 	if indexerID != nil {
 		if idx, err := h.indexers.GetByID(ctx, *indexerID); err == nil && idx != nil {
-			return newznab.SignDownloadURLFor(rawURL, idx.URL, idx.APIKey), nil
+			if signed := newznab.SignDownloadURLFor(rawURL, idx.URL, idx.APIKey); signed != rawURL {
+				return signed, nil
+			}
+			// The named indexer could not sign it, so its host does not match
+			// the download URL or it has no key stored. Prowlarr builds
+			// download links from its own application URL, which need not
+			// carry the same host:port as the indexer URL Bindery recorded,
+			// and u.Host includes the port, so "prowlarr:9696" and "prowlarr"
+			// are a mismatch.
+			//
+			// Returning here shipped the URL unsigned, the indexer answered
+			// 401, and the grab was recorded as successful anyway: the queue
+			// item sat at downloading forever with an empty errorMessage and
+			// nothing was logged at any level (#2505). The web UI always sends
+			// an indexer id, so this was the path every browser grab took.
+			// Fall through to the host match, which can still find the right
+			// credential, and say so.
+			slog.Warn("the indexer named on the grab could not sign the download URL, trying a host match",
+				"indexer_id", *indexerID, "indexer_url", idx.URL,
+				"url", newznab.RedactDownloadURL(rawURL))
 		}
 	}
 	idxs, err := h.indexers.List(ctx)

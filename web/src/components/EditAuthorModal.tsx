@@ -240,7 +240,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                   className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
                 >
                   <option value="all">{t('monitorMode.all', 'All books')}</option>
-                  <option value="future">{t('monitorMode.future', 'Future books only')}</option>
+                  <option value="future">{t('monitorMode.future', 'Future books only (grows on refresh)')}</option>
                   <option value="latest">{t('monitorMode.latest', 'Latest only')}</option>
                   <option value="none">{t('monitorMode.none', 'None')}</option>
                   <option value="series">{t('monitorMode.series', 'By series')}</option>
@@ -279,8 +279,13 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                           />
                           <span className="flex-1">
                             <span className="font-medium">{s.title}</span>
+                            {/* A fact about the row, not a warning about it.
+                                It was amber on every unlinked series, which
+                                made a long list look alarming; the aggregate
+                                warning below is where the consequence lives
+                                and it stays amber. */}
                             {!s.hardcoverLink && (
-                              <span className="ml-2 text-xs text-amber-700 dark:text-amber-400">
+                              <span className="ml-2 text-xs text-slate-500 dark:text-zinc-500">
                                 {t('editAuthorModal.seriesNoHardcoverLink', '(no Hardcover link)')}
                               </span>
                             )}

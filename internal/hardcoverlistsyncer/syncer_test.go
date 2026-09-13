@@ -819,7 +819,7 @@ func TestSortName(t *testing.T) {
 		{"", ""},
 		{"Cher", "Cher"},            // single token → unchanged
 		{"Andy Weir", "Weir, Andy"}, // two tokens
-		{"Ursula K. Le Guin", "Guin, Ursula K. Le"}, // 4 tokens: last → front
+		{"Ursula K. Le Guin", "Le Guin, Ursula K."}, // "Le" is a leading particle and stays with the surname
 		{"  Andy   Weir  ", "Weir, Andy"},           // whitespace normalised
 	}
 	for _, tt := range tests {

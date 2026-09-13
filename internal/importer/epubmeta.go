@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -173,23 +174,13 @@ func attrRole(attrs []xml.Attr) string {
 // extractISBN pulls a normalised ISBN out of a dc:identifier value such as
 // "urn:isbn:9780345472199", "isbn:0345472195", or a bare number. Returns
 // (isbn13, isbn10); at most one is non-empty.
+//
+// The scanning lives in isbnutil so that an ISBN reaching Bindery through an
+// EPUB, through a DNB MARC record or through an Audiobookshelf item is reduced
+// to the same string. This wrapper stays because the OPF walk above reads
+// better naming what it is pulling out of a dc:identifier.
 func extractISBN(raw string) (isbn13, isbn10 string) {
-	// Strip everything but digits and X (ISBN-10 check digit).
-	var b strings.Builder
-	for _, r := range raw {
-		if (r >= '0' && r <= '9') || r == 'X' || r == 'x' {
-			b.WriteRune(r)
-		}
-	}
-	digits := strings.ToUpper(b.String())
-	switch {
-	case len(digits) == 13 && (strings.HasPrefix(digits, "978") || strings.HasPrefix(digits, "979")):
-		return digits, ""
-	case len(digits) == 10:
-		return "", digits
-	default:
-		return "", ""
-	}
+	return isbnutil.Extract(raw)
 }
 
 // findZipFile returns the zip entry whose name matches target (case-sensitive,

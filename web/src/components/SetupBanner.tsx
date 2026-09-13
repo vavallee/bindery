@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
+import Alert from './Alert'
 import { useNeedsSetup } from './useNeedsSetup'
 
 // dismissKey encodes WHICH incomplete state was dismissed, so dismissing
@@ -19,6 +20,10 @@ function signature(needsIndexer: boolean, needsClient: boolean): string {
 // (the common Readarr-migrant path) has non-empty pages and previously got
 // no setup guidance anywhere. Dismissible; the dismissal is remembered per
 // missing-state signature in localStorage.
+//
+// Warning tier rather than info: nothing the user asks for will work until
+// this is dealt with. It clears itself the moment useNeedsSetup stops
+// reporting a gap, which is what a warning is supposed to do.
 export default function SetupBanner() {
   const { t } = useTranslation()
   const { needsIndexer, needsClient, needsAny } = useNeedsSetup()
@@ -42,30 +47,29 @@ export default function SetupBanner() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
-      <div className="flex flex-wrap items-center gap-3 px-4 py-3 rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/40 text-sm text-amber-900 dark:text-amber-200">
-        <span className="flex-1 min-w-[16rem]">{message}</span>
-        <Link
-          to={target}
-          className="px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white font-medium transition-colors"
-        >
-          {needsIndexer ? t('gettingStarted.indexers') : t('gettingStarted.downloadClients')}
-        </Link>
-        <button
-          onClick={() => {
-            const sig = signature(needsIndexer, needsClient)
-            try {
-              localStorage.setItem(STORAGE_KEY, sig)
-            } catch {
-              // localStorage unavailable (private mode) — dismiss for this render only.
-            }
-            setDismissed(sig)
-          }}
-          aria-label={t('common.dismiss', 'Dismiss')}
-          className="px-2 py-1 rounded-md hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors"
-        >
-          ✕
-        </button>
-      </div>
+      <Alert
+        tier="warning"
+        className="px-4 py-3"
+        actions={
+          <Link
+            to={target}
+            className="px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white font-medium transition-colors"
+          >
+            {needsIndexer ? t('gettingStarted.indexers') : t('gettingStarted.downloadClients')}
+          </Link>
+        }
+        onDismiss={() => {
+          const sig = signature(needsIndexer, needsClient)
+          try {
+            localStorage.setItem(STORAGE_KEY, sig)
+          } catch {
+            // localStorage unavailable (private mode) — dismiss for this render only.
+          }
+          setDismissed(sig)
+        }}
+      >
+        <span>{message}</span>
+      </Alert>
     </div>
   )
 }

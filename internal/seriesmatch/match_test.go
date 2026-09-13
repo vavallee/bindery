@@ -163,3 +163,125 @@ func TestDifferentVolumes(t *testing.T) {
 		}
 	}
 }
+
+// TestTitleScoreWeightsLengthDifference pins the WRatio weighting. Every row
+// is a rule about what a containment is worth, not an example, so moving one
+// is a change to how confidently two titles are called the same book.
+//
+// The bug it replaces: TitleScore took a flat maximum of four ratios, and
+// partialRatio returns 100 whenever the shorter title appears verbatim in the
+// longer one. So "Dune" scored a perfect 100 against "Dune Messiah".
+func TestTitleScoreWeightsLengthDifference(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+		rule string
+	}{
+		{"Dune", "Dune", 100, "identical"},
+		{"The Hobbit", "Hobbit, The", 100, "article inversion is the same title"},
+		{"The Lord of the Rings", "Lord of the Rings, The", 100, "same"},
+		{"Dune", "Dune Messiah", 90, "containment, 3x length: was 100, a different book scoring perfect"},
+		{"It", "It: A Novel by Stephen King, Complete and Unabridged", 60, "containment, extreme length gap gets the harsher discount"},
+		{"The Way of Kings", "Kings", 90, "sharing one word is not a match"},
+		{"The Way of Kings", "Words of Radiance", 48, "unrelated"},
+		{"Mistborn: The Final Empire", "Mistborn: The Well of Ascension", 57, "same series, different books"},
+	}
+	for _, c := range cases {
+		if got := TitleScore(c.a, c.b); got != c.want {
+			t.Errorf("TitleScore(%q, %q) = %d, want %d (%s)", c.a, c.b, got, c.want, c.rule)
+		}
+	}
+}
+
+// TestTitleScoreQualifierFloor pins the other half: a title differing only by
+// a cataloguing note is the same book, and the length weighting alone would
+// punish it exactly as hard as it punishes "Dune" against "Dune Messiah".
+//
+// The floor is 97 rather than 100 because beets down-weights a parenthetical
+// instead of deleting it: "(Abridged)" really can be a different product, so
+// an exact title still has to win.
+func TestTitleScoreQualifierFloor(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+		rule string
+	}{
+		{"The Hobbit (Illustrated Edition)", "The Hobbit", 97, "parenthesised qualifier"},
+		{"The Hobbit [Unabridged]", "The Hobbit", 97, "bracketed qualifier"},
+		{"The Hobbit (Illustrated Edition) [Unabridged]", "The Hobbit", 97, "both, stripped repeatedly"},
+		{"The Eye of the World [Dramatized Adaptation]", "The Eye of the World", 97, "the ABS shape"},
+		{"The Way of Kings", "The Way of Kings: The Stormlight Archive, Book One", 97, "series position appended by Calibre or ABS scanning"},
+		{"Mistborn: The Final Empire", "The Final Empire", 90, "a subtitle with no position marker is part of the title and is NOT stripped"},
+	}
+	for _, c := range cases {
+		if got := TitleScore(c.a, c.b); got != c.want {
+			t.Errorf("TitleScore(%q, %q) = %d, want %d (%s)", c.a, c.b, got, c.want, c.rule)
+		}
+	}
+}
+
+// TestQualifierFloorNeverMergesVolumes is the guard that makes the strip safe.
+// "Overlord, Vol. 1" and "Overlord, Vol. 13" both reduce to "overlord" once a
+// series-position suffix is removed, and handing them a near-perfect score is
+// the #2343 collapse this package already fights: owning Vol. 13 showed
+// catalog Vol. 1 as present, carrying Vol. 13's title.
+func TestQualifierFloorNeverMergesVolumes(t *testing.T) {
+	for _, c := range [][2]string{
+		{"Overlord, Vol. 1", "Overlord, Vol. 13"},
+		{"Overlord, Vol. 1", "Overlord, Vol. 9"},
+		{"Overlord, Book 2", "Overlord, Book 12"},
+	} {
+		if got := qualifierOnlyScore(c[0], c[1]); got != 0 {
+			t.Errorf("qualifierOnlyScore(%q, %q) = %d, want 0; stripping must never merge two volumes", c[0], c[1], got)
+		}
+	}
+	// And it does fire when the positions agree, which is the whole point.
+	if got := qualifierOnlyScore("Overlord, Vol. 1", "Overlord, Vol. 1 [Unabridged]"); got == 0 {
+		t.Error("qualifierOnlyScore refused a pair at the same position; the volume guard is too wide")
+	}
+}
+
+// TestDifferentVolumesCatchesBareTrailingNumbers covers #2538. #1682 vetoed a
+// fuzzy match between two volumes that both carry an explicit marker
+// ("Vol. 1" against "Vol. 2"). A LitRPG series numbered with no marker at all
+// slipped straight through: "Defiance of the Fall 7" scores 97 against
+// "Defiance of the Fall 17", so series fill resolved a request for volume 17
+// onto the already-imported volume 7 and queued nothing.
+func TestDifferentVolumesCatchesBareTrailingNumbers(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{name: "the reported pair", a: "Defiance of the Fall 7", b: "Defiance of the Fall 17", want: true},
+		{name: "one and eleven", a: "Defiance of the Fall 1", b: "Defiance of the Fall 11", want: true},
+		{name: "adjacent volumes", a: "Defiance of the Fall 7", b: "Defiance of the Fall 8", want: true},
+		{name: "same volume", a: "Defiance of the Fall 7", b: "Defiance of the Fall 7", want: false},
+		{name: "same volume, punctuation differs", a: "Defiance of the Fall: 7", b: "Defiance of the Fall 7", want: false},
+		{name: "decimal side story", a: "Defiance of the Fall 7", b: "Defiance of the Fall 7.5", want: true},
+
+		// The false positives volumeNumberRe's comment names. Different
+		// stems, so the stem equality check never lets these through.
+		{name: "two numeric titles", a: "Fahrenheit 451", b: "Catch 22", want: false},
+		{name: "same numeric title", a: "Fahrenheit 451", b: "Fahrenheit 451", want: false},
+
+		// A title with no trailing number tells us nothing, which is the
+		// conservative behaviour #1682 chose deliberately.
+		{name: "numbered against unnumbered", a: "Defiance of the Fall 7", b: "Defiance of the Fall", want: false},
+		{name: "neither numbered", a: "Dune", b: "Dune Messiah", want: false},
+
+		// The explicit-marker path is unchanged.
+		{name: "explicit markers disagree", a: "Overlord, Vol. 1", b: "Overlord, Vol. 2", want: true},
+		{name: "explicit markers agree", a: "Overlord, Vol. 1", b: "Overlord Volume 1", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DifferentVolumes(tc.a, tc.b); got != tc.want {
+				t.Fatalf("DifferentVolumes(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+			if got := DifferentVolumes(tc.b, tc.a); got != tc.want {
+				t.Fatalf("DifferentVolumes(%q, %q) = %v, want %v (not symmetric)", tc.b, tc.a, got, tc.want)
+			}
+		})
+	}
+}

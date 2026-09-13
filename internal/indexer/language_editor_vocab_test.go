@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"slices"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/models"
 )
 
 // metadataTabPath points at the metadata profile editor relative to this
@@ -63,12 +65,14 @@ func TestMetadataEditorLanguageVocabulary(t *testing.T) {
 		}
 	}
 
-	// The two-letter aliases exist so a hand-edited profile still normalizes
-	// onto this vocabulary; an alias pointing at a code the filter never emits
-	// would silently do nothing.
-	for short, long := range iso639TwoLetterAliases {
-		if !emitted[long] {
-			t.Errorf("iso639TwoLetterAliases maps %q to %q, which no marker in releaseLanguageTags produces", short, long)
+	// FilterByAllowedLanguages reduces each profile entry through
+	// models.NormalizeLanguageCode before comparing it to a release's tags, so
+	// every code the editor offers has to survive that reduction unchanged. A
+	// canonicaliser that rewrote "ger" to "deu" would leave the checkbox
+	// checked and the filter matching nothing.
+	for _, code := range offered {
+		if got := models.NormalizeLanguageCode(code); got != code {
+			t.Errorf("KNOWN_LANGUAGES offers %q but models.NormalizeLanguageCode rewrites it to %q, so ticking that box would filter on a code no release tag produces", code, got)
 		}
 	}
 }

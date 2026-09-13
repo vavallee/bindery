@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -201,8 +202,8 @@ func phraseRegex(phrase []string) *regexp.Regexp {
 		parts[i] = umlautFlexRegex(regexp.QuoteMeta(strings.ToLower(w)))
 	}
 	// wordSep rather than \b/\W so non-ASCII words match (#1642). The inner
-	// separator stays a + run, matching the previous \W+ behaviour.
-	pattern := `(?i)(?:^|` + wordSep + `)` + strings.Join(parts, wordSep+`+`) + `(?:` + wordSep + `|$)`
+	// separator also swallows any word SigWords itself dropped, see phraseGap.
+	pattern := `(?i)(?:^|` + wordSep + `)` + strings.Join(parts, phraseGap()) + `(?:` + wordSep + `|$)`
 	// Load then Store, matching WordBoundaryRegex above. The LoadOrStore form
 	// this replaces compiled the pattern before the lookup and discarded the
 	// result on a hit, so a 500-result search paid 500 compiles (#2341).
@@ -213,6 +214,48 @@ func phraseRegex(phrase []string) *regexp.Regexp {
 	regexCache.store(pattern, re)
 	return re
 }
+
+// phraseGap is the separator phraseRegex puts between the words of a phrase.
+//
+// It is a run of non-word characters, and then optionally a word that SigWords
+// would have dropped followed by another such run, repeated.
+//
+// The optional words are the fix for #2465. SigWords removes stop words and
+// anything under three bytes, so the phrase for both "Foundation & Empire" and
+// "Foundation and Empire" is [foundation empire]. Nothing removed them from the
+// haystack, and the separator was non-word characters only, so a release named
+// Foundation.and.Empire.1952.RETAIL.EPUB-GRP failed the phrase against its own
+// book while Foundation.&.Empire passed. Every stop word spelled out in a
+// release name did this, so The.Rise.of.Endymion and Bury.My.Heart.at.Wounded.Knee
+// were the same miss.
+//
+// It cost the phrase tier rather than the whole match, since titleMatchesResult
+// falls back to unordered keywords, but the phrase tier is what separates a
+// real match from an incidental keyword collision.
+//
+// Two classes, matching the two rules in SigWords. The stop words of three
+// bytes or more come from newznab.LongStopWords so there is one list rather
+// than a second copy here. Everything shorter is covered by a one or two
+// character run, which also picks up the words SigWords drops purely on
+// length: "my", "up", "no". That run is deliberately ASCII: SigWords measures
+// bytes, so a two character Cyrillic or Greek word is four bytes and is kept,
+// and allowing it here would let a real word sit inside a phrase.
+//
+// StripArticles nearby looks like the fix and is not. Its list is a different,
+// smaller set, and stripping the haystack while the phrase keeps its own rules
+// would put the asymmetry back in the other direction.
+func phraseGap() string {
+	phraseGapOnce.Do(func() {
+		alts := append([]string{`[A-Za-z0-9]{1,2}`}, newznab.LongStopWords()...)
+		phraseGapPattern = wordSep + `+(?:(?:` + strings.Join(alts, "|") + `)` + wordSep + `+)*`
+	})
+	return phraseGapPattern
+}
+
+var (
+	phraseGapOnce    sync.Once
+	phraseGapPattern string
+)
 
 // ContainsPhrase returns true if all words in phrase appear in haystack in the
 // given order, separated only by non-word characters. haystack must already be

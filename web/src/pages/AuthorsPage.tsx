@@ -655,7 +655,7 @@ export default function AuthorsPage() {
                   className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-50"
                 >
                   <option value="all">{t('monitorMode.all', 'All books')}</option>
-                  <option value="future">{t('monitorMode.future', 'Future books only')}</option>
+                  <option value="future">{t('monitorMode.future', 'Future books only (grows on refresh)')}</option>
                   <option value="latest">{t('monitorMode.latest', 'Latest only')}</option>
                   <option value="none">{t('monitorMode.none', 'None')}</option>
                 </select>

@@ -14,6 +14,68 @@ import (
 
 const seriesIDPrefix = "hc-series:"
 
+// seriesCatalogQuery fetches a series and the books filed under it.
+//
+// The compilation filter is written as an _or with _is_null rather than a bare
+// _eq: false, because in Hasura an _eq never matches a null. A book whose
+// compilation column is unset would otherwise drop out of every series catalog
+// silently, which is a worse failure than the one this filter is here to fix.
+// Same reasoning as canonical_id above it and authorContributionFilter in
+// client.go.
+//
+// Omnibus editions are excluded here rather than filtered after the fact:
+// Hardcover files a box set under the position of the first book it contains,
+// so "Harry Potter Collection #1-6", "Harry Potter Boxed Set" and "The Harry
+// Potter Trilogy" all arrive at position 1 beside the novel itself, and once
+// they have arrived nothing distinguishes them from a volume. They are books
+// someone may own; they are not volume 1 of the series.
+//
+// Reader count breaks the ties that remain. A translation is its own book
+// sharing the original's position, so a position holds one entry per language
+// and the one most readers hold is the one meant. collapseSeriesPositions
+// applies that; ordering here only makes the result stable.
+const seriesCatalogQuery = `query GetBooksBySeries($seriesId: Int!) {
+		series_by_pk(id: $seriesId) {
+			id
+			name
+			slug
+			author { name }
+			books_count
+			book_series(
+				order_by: [{position: asc}, {book: {users_count: desc_nulls_last}}]
+				where: {
+					book: {
+						canonical_id: {_is_null: true}
+						_or: [
+							{compilation: {_eq: false}}
+							{compilation: {_is_null: true}}
+						]
+					}
+				}
+			) {
+				position
+				book {
+					id
+					title
+					subtitle
+					slug
+					description
+					users_count
+					image { url }
+					release_year
+					ratings_count
+					rating
+					default_audio_edition_id
+					default_ebook_edition_id
+					contributions {
+						contribution
+						author { id name slug }
+					}
+				}
+			}
+		}
+	}`
+
 // SearchSeries searches Hardcover's catalog using the same search endpoint
 // Shelfarr uses for series discovery.
 func (c *Client) SearchSeries(ctx context.Context, query string, limit int) ([]metadata.SeriesSearchResult, error) {
@@ -70,45 +132,12 @@ func (c *Client) GetSeriesCatalog(ctx context.Context, foreignID string) (*metad
 	if err != nil {
 		return nil, err
 	}
-	gql := `query GetBooksBySeries($seriesId: Int!) {
-		series_by_pk(id: $seriesId) {
-			id
-			name
-			slug
-			author { name }
-			books_count
-			book_series(
-				order_by: {position: asc}
-				where: {book: {canonical_id: {_is_null: true}}}
-			) {
-				position
-				book {
-					id
-					title
-					subtitle
-					slug
-					description
-					users_count
-					image { url }
-					release_year
-					ratings_count
-					rating
-					default_audio_edition_id
-					default_ebook_edition_id
-					contributions {
-						contribution
-						author { id name slug }
-					}
-				}
-			}
-		}
-	}`
 	var resp struct {
 		Data struct {
 			Series *hcSeriesCatalog `json:"series_by_pk"`
 		} `json:"data"`
 	}
-	if err := c.query(ctx, gql, map[string]any{"seriesId": seriesID}, &resp); err != nil {
+	if err := c.query(ctx, seriesCatalogQuery, map[string]any{"seriesId": seriesID}, &resp); err != nil {
 		return nil, fmt.Errorf("hardcover get series catalog: %w", err)
 	}
 	if resp.Data.Series == nil {
@@ -261,8 +290,51 @@ func (c *Client) toSeriesCatalog(series hcSeriesCatalog) *metadata.SeriesCatalog
 			Book:       book,
 		})
 	}
-	catalog.Books = dedupeSeriesCatalogBooks(books)
+	catalog.Books = collapseSeriesPositions(dedupeSeriesCatalogBooks(books))
 	return catalog
+}
+
+// collapseSeriesPositions keeps one book per numbered slot.
+//
+// It runs after title dedup, not before. Title dedup handles the same book
+// listed at two positions and keeps the lower one; collapsing first would
+// instead pick that book as the winner of the higher slot and evict whatever
+// genuinely belongs there.
+//
+// Hardcover records a translation as its own book sharing the original's
+// position, so a slot holds one entry per language: position 1 of The
+// Stormlight Archive is the English novel plus its Russian, Bulgarian, Polish
+// and Portuguese counterparts. Their titles all differ, so title dedup alone
+// leaves every one of them in the catalog.
+//
+// The entry most readers hold is the one meant, and the margin is not close —
+// Harry Potter's Philosopher's Stone has some seventeen thousand readers where
+// the others at that position have none. Books with no position are left
+// alone; they are the extras a series accumulates rather than duplicates of a
+// volume.
+func collapseSeriesPositions(books []metadata.SeriesCatalogBook) []metadata.SeriesCatalogBook {
+	if len(books) < 2 {
+		return books
+	}
+	byPosition := make(map[string]int, len(books))
+	out := make([]metadata.SeriesCatalogBook, 0, len(books))
+	for _, book := range books {
+		position := strings.TrimSpace(book.Position)
+		if position == "" {
+			out = append(out, book)
+			continue
+		}
+		at, seen := byPosition[position]
+		if !seen {
+			byPosition[position] = len(out)
+			out = append(out, book)
+			continue
+		}
+		if book.UsersCount > out[at].UsersCount {
+			out[at] = book
+		}
+	}
+	return out
 }
 
 func dedupeSeriesCatalogBooks(books []metadata.SeriesCatalogBook) []metadata.SeriesCatalogBook {

@@ -1,6 +1,7 @@
 package newznab
 
 import (
+	"sort"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -17,7 +18,39 @@ var stopWords = map[string]bool{
 	"as": true, "on": true, "be": true,
 }
 
-// SigWords returns the meaningful (non-stop, 3+ char) words from s.
+// LongStopWords returns the stop words SigWords drops that are three bytes or
+// longer, sorted, so a caller can build a pattern for "a word SigWords would
+// have removed".
+//
+// The shorter ones need no listing: every stop word under three bytes is also
+// dropped by the length rule, along with words like "my" and "up" that are not
+// stop words at all, so a caller covers the whole short class with a character
+// count instead. Exported for indexer.phraseRegex, which has to allow exactly
+// these words to sit inside a phrase (#2465). Keeping one list rather than a
+// second copy over there is the point.
+func LongStopWords() []string {
+	out := make([]string, 0, len(stopWords))
+	for w := range stopWords {
+		if len(w) >= 3 {
+			out = append(out, w)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SigWords returns the meaningful (non-stop, long enough) words from s.
+//
+// "Long enough" is three BYTES of UTF-8, not three characters, and that is
+// deliberate even though it reads like an oversight. The byte threshold scales
+// the character requirement by how much a script packs into one character:
+// three ASCII letters, two Cyrillic or Greek letters, or one CJK ideograph.
+// That matches how much a token actually narrows a search in each script.
+//
+// Do not "fix" this into a rune count. Requiring three runes drops "Мы"
+// (Zamyatin's We) to no significant tokens at all, and requiring one drops the
+// floor under single Cyrillic and Greek letters, which are as weak as single
+// English ones. TestSigWordsThresholdScalesWithScript pins the cases.
 //
 // Tokenisation is kept symmetric with NormalizeRelease
 // (internal/indexer/release.go): both strip apostrophes, transliterate German

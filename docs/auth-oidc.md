@@ -58,6 +58,16 @@ The auto-derive path doesn't know about path prefixes — when Bindery is mounte
 
 The base URL Bindery resolves at `/login` is stored in the (HttpOnly, short-lived) flow cookie and replayed at `/callback`, so the `redirect_uri` in the token exchange always matches the value the IdP saw at the authorize request. If the proxy chain changes between the two hops (extremely unusual), the callback would still use the originally-resolved URL.
 
+The flow cookie is signed with the install's session secret and is bound to the provider the login was started for, so a cookie Bindery did not mint is refused and a flow started for one provider cannot be completed against another. Two consequences worth knowing: a login already in flight when you upgrade, or when you rotate the session secret twice in quick succession, fails once and works on retry; and an install with no session secret cannot start an OIDC login at all, which is the same condition that already stops it issuing sessions.
+
+**On HTTPS the flow cookie is named `__Host-bindery_oidc_flow`.** The prefix is what protects the login against being started by someone else. Signing only stops a cookie being forged, and forging was never required: the login endpoint has to be reachable without a session, because the trip to your IdP happens before you have one, so anyone can ask Bindery for a genuine flow cookie. The attack is to start a real login as the attacker, plant that real cookie in your browser, and send you the callback link, at which point you are signed in to their account and anything you save lands somewhere they can read.
+
+A browser will not store a `__Host-` cookie unless it is `Secure`, has `Path=/`, and carries no `Domain`, and it will not let a plain HTTP response set one at all. That removes both ways the cookie could be planted: another host under your domain cannot scope a cookie onto Bindery, and a plaintext hop cannot inject one. On HTTPS, Bindery accepts the flow cookie **only** under the prefixed name, so a cookie planted under the old name is ignored.
+
+`__Host-` requires `Path=/`, so on HTTPS the cookie is sent on every same-origin request rather than only under `/api/v1/auth/oidc`. It stays HttpOnly and expires after ten minutes.
+
+**Plain HTTP installs cannot use this.** `__Host-` implies `Secure`, so an install served over HTTP keeps the old cookie name and remains open to the attack above. Put Bindery behind TLS if it is reachable by anyone you do not trust, or set `BINDERY_COOKIE_SECURE=always` if you terminate TLS at a proxy that Bindery cannot see.
+
 For example, with `BINDERY_OIDC_REDIRECT_BASE_URL=https://bindery.example.com` and provider id `google`:
 
 ```

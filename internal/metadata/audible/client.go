@@ -250,48 +250,17 @@ func productToBook(p catalogueProduct) *models.Book {
 	return b
 }
 
-// languageAliases maps the full-word language names that Audible returns
-// ("english", "german") to the three-letter ISO 639-2/B codes Bindery uses
+// normalizeLanguage turns the full-word language names Audible returns
+// ("english", "german") into the three-letter ISO 639-2/B codes Bindery uses
 // everywhere else (OpenLibrary, DNB, metadata profiles). Anything unmapped
 // passes through untouched so unusual values still reach the bead without
 // being silently dropped.
-var languageAliases = map[string]string{
-	"english":    "eng",
-	"german":     "ger",
-	"french":     "fre",
-	"spanish":    "spa",
-	"italian":    "ita",
-	"dutch":      "dut",
-	"portuguese": "por",
-	"japanese":   "jpn",
-	"russian":    "rus",
-	"chinese":    "chi",
-	"danish":     "dan",
-	"swedish":    "swe",
-	"norwegian":  "nor",
-	"polish":     "pol",
-	"finnish":    "fin",
-	"hindi":      "hin",
-	"turkish":    "tur",
-	"arabic":     "ara",
-	"korean":     "kor",
-	"czech":      "cze",
-	"greek":      "gre",
-	"hungarian":  "hun",
-	"romanian":   "rum",
-	"catalan":    "cat",
-	"latin":      "lat",
-}
-
+//
+// The name table used to live here. It is now shared with the release-name
+// language filter and the book-level filter (#2463), because four private
+// copies of it disagreed about which languages exist.
 func normalizeLanguage(s string) string {
-	code := strings.ToLower(strings.TrimSpace(s))
-	if code == "" {
-		return ""
-	}
-	if mapped, ok := languageAliases[code]; ok {
-		return mapped
-	}
-	return code
+	return models.NormalizeLanguageCode(s)
 }
 
 // pickLargestCover returns the highest-resolution image URL in the product

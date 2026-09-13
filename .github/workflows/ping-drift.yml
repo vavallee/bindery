@@ -1,20 +1,17 @@
 name: Ping Server drift
 
-# The bindery-ping deployment is applied by hand: it is not in the ArgoCD
-# application (that tracks charts/bindery only) and CI has no kubectl or SSH
-# to that host, just an HTTPS token. So the running container can fall behind
-# the repo indefinitely and nothing says so.
+# api.getbindery.dev runs from a private infrastructure repo, synced by ArgoCD
+# with selfHeal. This repo cannot see, read or change what is deployed. It can
+# see what the running server says it is, and what the newest build from this
+# tree would be, and it can say when those part company.
 #
-# It did. deploy/telemetry-server.yaml pinned the #1521 build from 2026-07-11
-# while main had shipped the new_install ping log (#2155, 2026-08-21), the
-# Debian 13 base and x/crypto v0.56.0 (#2425). The service was serving an
-# end-of-life base with two High advisories for weeks, on the public
-# internet, and it surfaced only because someone went looking in pod logs for
-# a line that could not be there.
+# That gap ran to 41 days once. The service served an end of life Debian 12
+# base with two High advisories for weeks after #2425 fixed it here, because
+# nothing pulled the image forward and nothing was watching. It surfaced only
+# because someone went looking in pod logs for the new_install line from #2155
+# and could not find it.
 #
-# This job asks the running server which build it is and compares that with
-# the pin on main. It cannot deploy; it can make the gap visible the day it
-# opens instead of six weeks later.
+# This cannot deploy. It makes the gap visible the morning it opens.
 
 on:
   schedule:
@@ -26,7 +23,7 @@ permissions:
 
 jobs:
   drift:
-    name: Compare the running build against the pin
+    name: Compare the running build against this tree
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -38,17 +35,31 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # `git log -- <path>` needs history; the default shallow clone has none.
+          fetch-depth: 0
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.26.6"
           cache: true
 
-      # The comparison lives in tools/pingdrift rather than inline here so it
-      # is unit-testable: the parser and deploy/telemetry-server.yaml are a
-      # pair, and a reformat of that file has to break a PR rather than turn
-      # this nightly job into a permanent red nobody reads.
-      - name: Compare the running build against the pin
+      # "the newest commit that would have produced an image" is git's
+      # question, not the tool's, so it is answered here in one command and
+      # everything worth testing stays in tools/pingdrift.
+      - name: Work out the newest bindery-ping build in this tree
+        id: expected
+        run: |
+          set -euo pipefail
+          SHA=$(git log -1 --format=%H -- cmd/telemetry-server)
+          if [ -z "$SHA" ]; then
+            echo "::error::no commit found touching cmd/telemetry-server, so there is nothing to compare against"
+            exit 1
+          fi
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "newest bindery-ping build in this tree: ${SHA}"
+
+      - name: Compare the running build against it
         env:
+          PING_EXPECTED_SHA: ${{ steps.expected.outputs.sha }}
           TELEMETRY_STATS_TOKEN: ${{ secrets.TELEMETRY_STATS_TOKEN }}
         run: go run ./tools/pingdrift

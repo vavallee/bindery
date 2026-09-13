@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/isbnutil"
 )
 
 // --- Test transport helpers ---
@@ -762,19 +764,52 @@ func TestGetAuthor_SyntheticIDsReturnNil(t *testing.T) {
 }
 
 func TestStripISBNQualifier(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"9783499015717", "9783499015717"},
-		{"9783499015717 (pbk.)", "9783499015717"},
-		{"3-499-01571-X", "349901571X"},
-		{"  9783446123456  ", "9783446123456"},
-		{"978 3 446 12345 6", "978"}, // first delimiter ends the run — accepted limitation
-		{"", ""},
-		{"no digits here", ""},
-		{"349901571x", "349901571X"}, // lowercase x normalized
+	cases := []struct{ in, want13, want10 string }{
+		{in: "9783499015717", want13: "9783499015717"},
+		{in: "9783499015717 (pbk.)", want13: "9783499015717"},
+		{in: "3-499-01571-X", want10: "349901571X"},
+		{in: "  9783446123456  ", want13: "9783446123456"},
+		// This used to come back as "978" — the run stopped at the first
+		// delimiter and the ISBN was dropped. Delegating the scan to isbnutil
+		// fixed it, because the EPUB reader had always handled the spaced form.
+		{in: "978 3 446 12345 6", want13: "9783446123456"},
+		// A qualifier carrying its own digits: the ISBN ends at the bracket.
+		{in: "9783499015717 (Bd. 2)", want13: "9783499015717"},
+		{in: "", want13: "", want10: ""},
+		{in: "no digits here", want13: "", want10: ""},
+		{in: "349901571x", want10: "349901571X"}, // lowercase x normalized
 	}
 	for _, tc := range cases {
-		if got := stripISBNQualifier(tc.in); got != tc.want {
-			t.Errorf("stripISBNQualifier(%q) = %q, want %q", tc.in, got, tc.want)
+		got13, got10 := stripISBNQualifier(tc.in)
+		if got13 != tc.want13 || got10 != tc.want10 {
+			t.Errorf("stripISBNQualifier(%q) = (%q, %q), want (%q, %q)", tc.in, got13, got10, tc.want13, tc.want10)
+		}
+	}
+}
+
+// TestStripISBNQualifierMatchesISBNUtil is the guard the convergence is for:
+// this function is now a name for isbnutil.Extract, and the EPUB OPF reader's
+// extractISBN is the same name over the same call. If either grows its own
+// scanning again, the same MARC value and the same dc:identifier will start
+// producing different identifiers for one book, which is exactly the drift
+// that made an ISBN depend on which importer saw the book first.
+func TestStripISBNQualifierMatchesISBNUtil(t *testing.T) {
+	for _, in := range []string{
+		"9783499015717",
+		"9783499015717 (pbk.)",
+		"3-499-01571-X",
+		"978 3 446 12345 6",
+		"urn:isbn:9780345472199",
+		"isbn:0345472195",
+		"urn:uuid:1e2b3c4d-5678-90ab-cdef-1234567890ab",
+		"349901571x",
+		"no digits here",
+		"",
+	} {
+		got13, got10 := stripISBNQualifier(in)
+		want13, want10 := isbnutil.Extract(in)
+		if got13 != want13 || got10 != want10 {
+			t.Errorf("stripISBNQualifier(%q) = (%q, %q), isbnutil.Extract = (%q, %q)", in, got13, got10, want13, want10)
 		}
 	}
 }

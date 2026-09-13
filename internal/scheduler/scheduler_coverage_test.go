@@ -340,7 +340,7 @@ func TestHandleStalledDownload_NoBookID(t *testing.T) {
 		history:   db.NewHistoryRepo(database),
 	}
 	// BookID is nil → handler sets error, records history, skips re-search.
-	s.handleStalledDownload(ctx, dl)
+	s.handleStalledDownload(ctx, dl, nil)
 
 	// Confirm the download was marked failed.
 	got, err := downloads.GetByGUID(ctx, "orphan-guid")
@@ -400,7 +400,7 @@ func TestHandleStalledDownload_AutoGrabDisabled(t *testing.T) {
 		books:     books,
 		settings:  settings,
 	}
-	s.handleStalledDownload(ctx, dl)
+	s.handleStalledDownload(ctx, dl, nil)
 
 	// Download should be marked with an error and book lookup path executed,
 	// then the autoGrab=false early-return should have prevented the re-search.
@@ -438,7 +438,7 @@ func TestHandleStalledDownload_NilHistoryAndBlocklist(t *testing.T) {
 		downloads: downloads,
 		// history nil, blocklist nil, books nil, settings nil.
 	}
-	s.handleStalledDownload(ctx, dl) // must not panic; BookID nil → returns after SetError
+	s.handleStalledDownload(ctx, dl, nil) // must not panic; BookID nil → returns after SetError
 }
 
 // TestRefreshMetadata_CalibreAggregatorNotCalled is a sanity check that the

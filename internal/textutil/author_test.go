@@ -147,3 +147,96 @@ func TestMatchAuthorNameStillRejectsDistinctAuthors(t *testing.T) {
 		}
 	}
 }
+
+// TestNormalizeAuthorNameFoldsCompatibilityForms covers the move from NFD to
+// NFKD. Providers and scraped catalogues carry full-width Latin and
+// typographic ligatures, which NFD leaves standing, so the same author keyed
+// two different ways depending on which source the record came from.
+func TestNormalizeAuthorNameFoldsCompatibilityForms(t *testing.T) {
+	cases := []struct{ full, plain string }{
+		{"Ｈａｒｕｋｉ　Ｍｕｒａｋａｍｉ", "Haruki Murakami"},
+		{"ﬁona ﬂeming", "fiona fleming"},
+		{"Ｊｏｒｇｅ Ｌｕｉｓ Ｂｏｒｇｅｓ", "Jorge Luis Borges"},
+	}
+	for _, c := range cases {
+		got, want := NormalizeAuthorName(c.full), NormalizeAuthorName(c.plain)
+		if got != want {
+			t.Errorf("NormalizeAuthorName(%q) = %q, NormalizeAuthorName(%q) = %q; compatibility forms must fold onto the plain spelling",
+				c.full, got, c.plain, want)
+		}
+	}
+
+	// The ordinary path is unchanged: this must stay a diacritic-stripping,
+	// lower-casing, space-collapsing key.
+	if got := NormalizeAuthorName("  Jörg   Müller  "); got != "jorg muller" {
+		t.Errorf("NormalizeAuthorName = %q, want %q", got, "jorg muller")
+	}
+}
+
+// #2452. NormalizeAuthorName is the identity alphabet, used to decide whether
+// two records are the same person, so a collision merges two authors. It used
+// to drop every non-spacing mark, which is right for an acute on an e and
+// wrong for kana: the dakuten and handakuten change the letter.
+func TestNormalizeAuthorName_KeepsMarksThatChangeTheLetter(t *testing.T) {
+	distinct := []struct {
+		a, b string
+		why  string
+	}{
+		{"ズ", "ス", "katakana dakuten"},
+		{"がっこう", "かっこう", "hiragana dakuten, and two real words"},
+		{"ヴィクトル", "ウィクトル", "the vu kana, which is how Viktor is written"},
+		{"パン", "ハン", "handakuten"},
+		{"Толстой", "Толстои", "Cyrillic breve on й"},
+	}
+	for _, d := range distinct {
+		if got, want := NormalizeAuthorName(d.a), NormalizeAuthorName(d.b); got == want {
+			t.Errorf("NormalizeAuthorName(%q) == NormalizeAuthorName(%q) == %q, so two authors merge (%s)",
+				d.a, d.b, got, d.why)
+		}
+	}
+}
+
+// The Latin and Greek half must not change: those marks decorate the letter,
+// and dropping them is what lets one author be found under either spelling.
+func TestNormalizeAuthorName_StillFoldsLatinAndGreek(t *testing.T) {
+	cases := map[string]string{
+		"Jörg Müller":       "jorg muller",
+		"José Saramago":     "jose saramago",
+		"Ｍｕｒａｋａｍｉ":          "murakami",
+		"ﬁnnegan":           "finnegan",
+		"Ursula K. Le Guin": "ursula k le guin",
+	}
+	for in, want := range cases {
+		if got := NormalizeAuthorName(in); got != want {
+			t.Errorf("NormalizeAuthorName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A mark that follows a separator has no letter to belong to. Attaching it
+// anyway swallowed the boundary and glued two name tokens into one key, which
+// is the opposite of what #2452 is for.
+func TestNormalizeAuthorName_FloatingMarkKeepsTheWordBoundary(t *testing.T) {
+	cases := map[string]string{
+		"Tanaka ゙Suzuki": "tanaka suzuki",
+		"abc ́def":       "abc def",
+		"Ono ́ Yoko":     "ono yoko",
+		"゙abc":           "abc",
+	}
+	for in, want := range cases {
+		if got := NormalizeAuthorName(in); got != want {
+			t.Errorf("NormalizeAuthorName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The mark still attaches when it sits on the letter before it, which is the
+// whole point of the change: ズ must not key as ス.
+func TestNormalizeAuthorName_AttachedMarkStillCounts(t *testing.T) {
+	if NormalizeAuthorName("ズ") == NormalizeAuthorName("ス") {
+		t.Error("ズ and ス share one identity key again")
+	}
+	if got, want := NormalizeAuthorName("ハード"), "ハード"; got != want {
+		t.Errorf("NormalizeAuthorName(ハード) = %q, want %q", got, want)
+	}
+}

@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS builder
+FROM golang:1.27-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -16,9 +16,10 @@ RUN CGO_ENABLED=0 go build -trimpath \
 # sufficient: no runtime sqlite package, no shell, minimal attack surface.
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7
 COPY --from=builder /telemetry-server /telemetry-server
-# Numeric non-root UID, matching runAsUser in deploy/telemetry-server.yaml.
+# Numeric non-root UID, matching runAsUser in the deployment (which lives in
+# the homelab repo at kubernetes/apps/default/bindery-ping).
 USER 1000:1000
 EXPOSE 8080
-# No HEALTHCHECK: distroless has no shell/curl, and deploy/telemetry-server.yaml
-# already defines a readinessProbe on /health.
+# No HEALTHCHECK: distroless has no shell/curl, and the deployment already
+# defines a readinessProbe on /health.
 ENTRYPOINT ["/telemetry-server"]

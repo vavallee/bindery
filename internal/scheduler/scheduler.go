@@ -1565,15 +1565,21 @@ func (s *Scheduler) checkStalledDownloads(ctx context.Context) {
 				"grabbed_at", dl.GrabbedAt,
 				"client", client.Name,
 			)
-			s.handleStalledDownload(ctx, &dl)
+			s.handleStalledDownload(ctx, &dl, client)
 		}
 	}
 }
 
-// handleStalledDownload marks a download as failed, records history, adds the
-// release to the blocklist, and triggers a fresh search for the same book.
-func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Download) {
+// handleStalledDownload removes the stalled release from the download client,
+// marks the download failed, records history, adds the release to the
+// blocklist, and triggers a fresh search for the same book.
+//
+// client is the download client the release lives in; it may be nil for
+// callers that have no client to hand, in which case the removal is skipped.
+func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Download, client *models.DownloadClient) {
 	reason := "stalled: no peers / no download progress"
+
+	s.removeStalledFromClient(ctx, dl, client)
 
 	// Mark failed in DB.
 	if err := s.downloads.SetError(ctx, dl.ID, reason); err != nil {
@@ -1637,6 +1643,38 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 		defer s.bgWg.Done()
 		s.SearchAndGrabBook(indexer.WithSearchOrigin(ctx, indexer.OriginRequeue), *book)
 	}()
+}
+
+// removeStalledFromClient deletes a stalled release from the download client,
+// data included (#2367).
+//
+// Until this existed the stall handler blocklisted the release, grabbed a
+// replacement, and wrote a "stalled release removed, re-searching" history
+// line, while the torrent stayed in the client indefinitely: the poller skips
+// failed rows, so nothing ever looked at it again. A user's queue filled with
+// dead torrents Bindery had already written off.
+//
+// Files are deleted along with it. Only qBittorrent's stalledDL and its
+// equivalents reach here (see downloader.GetStalledIDs) — never a seeding
+// torrent — so there is no completed release to keep sharing, and the partial
+// data belongs to a release that has just been blocklisted and replaced. Per
+// indexer seed-ratio overrides (#883) apply to what a client does with a
+// download it finished; they have nothing to say about one that never started.
+//
+// A removal failure is logged and swallowed: the blocklist and the re-search
+// below are the recovery, and they must not be skipped because the client was
+// unreachable for a moment.
+func (s *Scheduler) removeStalledFromClient(ctx context.Context, dl *models.Download, client *models.DownloadClient) {
+	if client == nil {
+		return
+	}
+	if err := downloader.RemoveDownload(ctx, client, dl, true, s.downloadPathRemap); err != nil {
+		slog.Warn("stall: failed to remove the stalled release from the download client",
+			"download_id", dl.ID, "title", dl.Title, "client", client.Name, "error", err)
+		return
+	}
+	slog.Info("stall: removed the stalled release from the download client",
+		"download_id", dl.ID, "title", dl.Title, "client", client.Name)
 }
 
 // describeIndexerFailures annotates a grab's history payload with the part of

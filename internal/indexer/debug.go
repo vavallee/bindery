@@ -265,18 +265,8 @@ func filterRelevantDebug(results []newznab.SearchResult, title, author string, a
 	fullKws := newznab.SigWords(title)
 	primaryKws := newznab.SigWords(primaryTitle(title))
 	authorKws := newznab.SigWords(author)
-	surname := AuthorSurname(author)
 
-	authorTokenSets := [][]string{authorTokens(author)}
-	if !isAllASCIILower(surname) {
-		for _, alias := range aliases {
-			if s := AuthorSurname(alias); s != "" && isAllASCIILower(s) {
-				if toks := authorTokens(alias); len(toks) > 0 {
-					authorTokenSets = append(authorTokenSets, toks)
-				}
-			}
-		}
-	}
+	authorTokenSets := latinAliasTokenSets(author, aliases)
 
 	tryMatch := func(n string, kws []string) bool {
 		for _, toks := range authorTokenSets {

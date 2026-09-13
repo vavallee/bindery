@@ -103,8 +103,9 @@ func (m *authorMatcher) getAuthor(ctx context.Context, id int64) (*models.Author
 // findAuthorByName looks up a local author whose name matches the supplied
 // name. Matching proceeds in tiers: exact lowercase (author name, then alias),
 // then exact via normalized variants (initials, suffixes, last-first swap),
-// then Jaro-Winkler fuzzy matching. The returned matchedBy string distinguishes
-// these tiers so callers can decide when to record a variant alias.
+// then fuzzy matching on textutil.MatchAuthorName's evidence weight. The
+// returned matchedBy string distinguishes these tiers so callers can decide
+// when to record a variant alias.
 func (i *Importer) findAuthorByName(ctx context.Context, name string) (*models.Author, string, bool, error) {
 	matcher, err := i.newAuthorMatcher(ctx)
 	if err != nil {
@@ -191,39 +192,47 @@ func (m *authorMatcher) findAuthorByName(ctx context.Context, name string) (*mod
 		return nil, "", true, nil
 	}
 
-	// Tier 3: Jaro-Winkler fuzzy match. Collect the best score per author
-	// across both direct name and alias comparisons.
+	// Tier 3: fuzzy match. Collect the best evidence weight per author across
+	// both direct name and alias comparisons.
+	//
+	// Ranking is on MatchAuthorName's Weight, not its Score, because the two no
+	// longer agree: a candidate carried by an exact surname plus compatible
+	// initials ("John Ronald Reuel Tolkien" for "J.R.R. Tolkien") auto-matches
+	// at a whole-name Jaro-Winkler of 0.9040, while one carried by a shared
+	// forename and a near-miss short surname ("Christopher Rose" for
+	// "Christopher Ross") is refused at 0.9750. Ranking on Score would order
+	// the candidates by a number that did not decide any of their bands.
 	type scored struct {
 		author    *models.Author
-		score     float64
+		weight    float64
 		fromAlias bool
 	}
 	best := make(map[int64]*scored)
-	consider := func(a *models.Author, score float64, fromAlias bool) {
+	consider := func(a *models.Author, weight float64, fromAlias bool) {
 		if a == nil {
 			return
 		}
 		existing, ok := best[a.ID]
-		if !ok || score > existing.score {
-			best[a.ID] = &scored{author: a, score: score, fromAlias: fromAlias}
+		if !ok || weight > existing.weight {
+			best[a.ID] = &scored{author: a, weight: weight, fromAlias: fromAlias}
 			return
 		}
-		if score == existing.score && existing.fromAlias && !fromAlias {
-			// Prefer a direct-name match over alias when scores tie.
+		if weight == existing.weight && existing.fromAlias && !fromAlias {
+			// Prefer a direct-name match over alias when weights tie.
 			existing.fromAlias = false
 		}
 	}
 	for _, author := range m.all {
 		res := textutil.MatchAuthorName(name, author.Name)
-		if res.Score < textutil.AuthorMatchAmbiguousMinimum {
+		if res.Kind == textutil.AuthorMatchNone {
 			continue
 		}
 		cp := *author
-		consider(&cp, res.Score, false)
+		consider(&cp, res.Weight, false)
 	}
 	for _, alias := range m.aliases {
 		res := textutil.MatchAuthorName(name, alias.Name)
-		if res.Score < textutil.AuthorMatchAmbiguousMinimum {
+		if res.Kind == textutil.AuthorMatchNone {
 			continue
 		}
 		author, trusted, err := m.trustedAliasAuthor(ctx, alias)
@@ -233,7 +242,7 @@ func (m *authorMatcher) findAuthorByName(ctx context.Context, name string) (*mod
 		if !trusted || author == nil {
 			continue
 		}
-		consider(author, res.Score, true)
+		consider(author, res.Weight, true)
 	}
 	if len(best) == 0 {
 		return nil, "", false, nil
@@ -242,19 +251,22 @@ func (m *authorMatcher) findAuthorByName(ctx context.Context, name string) (*mod
 	var top *scored
 	var second float64
 	for _, s := range best {
-		if top == nil || s.score > top.score {
+		if top == nil || s.weight > top.weight {
 			if top != nil {
-				second = top.score
+				second = top.weight
 			}
 			top = s
-		} else if s.score > second {
-			second = s.score
+		} else if s.weight > second {
+			second = s.weight
 		}
 	}
-	if top.score >= textutil.AuthorMatchAutoThreshold {
+	if top.weight >= textutil.AuthorMatchAutoWeight {
 		// Require a clear margin over any close runner-up before auto-matching.
-		const fuzzyTieMargin = 0.02
-		if len(best) > 1 && top.score-second < fuzzyTieMargin {
+		// One full point of evidence: the per-field weights move in halves, so
+		// anything less than that is two candidates the scorer could not tell
+		// apart, which is what the review queue is for.
+		const fuzzyTieMargin = 1.0
+		if len(best) > 1 && top.weight-second < fuzzyTieMargin {
 			return nil, "", true, nil
 		}
 		matchedBy := "fuzzy_name"
@@ -263,7 +275,7 @@ func (m *authorMatcher) findAuthorByName(ctx context.Context, name string) (*mod
 		}
 		return top.author, matchedBy, false, nil
 	}
-	// Best score is in the ambiguous band (0.88 <= score < 0.94): surface as
+	// Best candidate is in the ambiguous band (weight in [2, 5)): surface as
 	// review rather than silently create or merge.
 	return nil, "", true, nil
 }

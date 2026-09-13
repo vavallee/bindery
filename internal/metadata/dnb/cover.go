@@ -24,7 +24,11 @@ const mvbCoverEndpoint = "https://portal.dnb.de/opac/mvb/cover"
 // Pattern lifted from calibre-dnb's `_get_validated_cover_url` (issue
 // #667). Cheap: HEAD only, no body transfer.
 func (c *Client) CoverByISBN(ctx context.Context, isbn string) string {
-	digits := stripISBNQualifier(isbn)
+	isbn13, isbn10 := stripISBNQualifier(isbn)
+	digits := isbn13
+	if digits == "" {
+		digits = isbn10
+	}
 	if digits == "" {
 		return ""
 	}

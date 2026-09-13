@@ -664,17 +664,11 @@ func (h *BulkHandler) setBookMediaType(ctx context.Context, id int64, mediaType 
 // tracked in the downloads table and never on books.status (#2374). The
 // media-type change is the reason to search again anyway, so flipping it
 // back to 'wanted' is the right answer even mid-download.
+//
+// The rule itself now lives on models.Book so the callers that widen a book
+// outside this package can apply it too (#1634).
 func reevaluateBookStatus(b *models.Book) {
-	if b.Status == models.BookStatusSkipped {
-		return
-	}
-	if b.NeedsEbook() || b.NeedsAudiobook() {
-		b.Status = models.BookStatusWanted
-		return
-	}
-	if b.EbookFilePath != "" || b.AudiobookFilePath != "" {
-		b.Status = models.BookStatusImported
-	}
+	b.ReevaluateStatus()
 }
 
 // setAuthorBooksMediaType applies the given media type to every book in an

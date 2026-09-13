@@ -1,6 +1,11 @@
 package indexer
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/vavallee/bindery/internal/indexer/newznab"
+	"github.com/vavallee/bindery/internal/textutil"
+)
 
 func TestNormalizeTitleForDedup(t *testing.T) {
 	cases := []struct {
@@ -155,5 +160,147 @@ func TestNormalizeTitleForDedup_Symmetric(t *testing.T) {
 		if k1 != k2 {
 			t.Errorf("asymmetric dedup key:\n  %q → %q\n  %q → %q", pair[0], k1, pair[1], k2)
 		}
+	}
+}
+
+// TestNormalizeTitleForDedupExpandsAmpersand pins the ampersand as a spelling
+// of "and" rather than as punctuation. Providers disagree about which form to
+// send for the same book, and as a separator the two spellings produced
+// "foundation empire" and "foundation and empire", which could never meet.
+func TestNormalizeTitleForDedupExpandsAmpersand(t *testing.T) {
+	pairs := [][2]string{
+		{"Foundation & Empire", "Foundation and Empire"},
+		{"Sense & Sensibility", "Sense and Sensibility"},
+		{"Q&A", "Q and A"},
+		{"Crime & Punishment: A Novel", "Crime and Punishment: A Novel"},
+	}
+	for _, p := range pairs {
+		got, want := NormalizeTitleForDedup(p[0]), NormalizeTitleForDedup(p[1])
+		if got != want {
+			t.Errorf("NormalizeTitleForDedup(%q) = %q, NormalizeTitleForDedup(%q) = %q; the two spellings must produce one key",
+				p[0], got, p[1], want)
+		}
+	}
+
+	// The expansion must not weld its neighbours together, which is what a bare
+	// deletion would have done: "Q&A" has to become three tokens, not "qa".
+	if got := NormalizeTitleForDedup("Q&A"); got != "q and a" {
+		t.Errorf("NormalizeTitleForDedup(%q) = %q, want %q", "Q&A", got, "q and a")
+	}
+
+	// And a title with no ampersand is untouched, so the change cannot move a
+	// key it has no business moving.
+	if got := NormalizeTitleForDedup("The Hobbit"); got != "the hobbit" {
+		t.Errorf("NormalizeTitleForDedup(%q) = %q, want %q", "The Hobbit", got, "the hobbit")
+	}
+}
+
+// TestFoldPunctuationUsesTheSharedApostropheSet guards the delegation to
+// textutil.IsApostrophe. The two sets were identical when this file stopped
+// keeping its own copy, and the point of the delegation is that they cannot
+// drift apart again.
+func TestFoldPunctuationUsesTheSharedApostropheSet(t *testing.T) {
+	for _, spelling := range []string{
+		"Poseidon's Arrow", // ASCII
+		"Poseidon’s Arrow", // right single quotation mark
+		"Poseidon‘s Arrow", // left single quotation mark
+		"Poseidon`s Arrow", // backtick
+		"Poseidonʼs Arrow", // modifier letter apostrophe
+	} {
+		if got := NormalizeTitleForDedup(spelling); got != "poseidons arrow" {
+			t.Errorf("NormalizeTitleForDedup(%q) = %q, want %q", spelling, got, "poseidons arrow")
+		}
+	}
+}
+
+// TestDedupAndTitleMatchAlphabetsDifferOnAmpersand pins a deliberate
+// disagreement between two alphabets that otherwise look interchangeable, so
+// that anyone setting out to "fix" the inconsistency finds the reason first.
+//
+// CanonicalDedupKey expands "&" to " and " because it answers "are these the
+// same book", and providers send both spellings for one book.
+//
+// FoldForTitleMatch must not, and the reason is subtler than it first looks.
+// Both the phrase and the haystack fold through it, so expanding on both sides
+// would be symmetric and would cost nothing by itself. What breaks is that the
+// keyword side additionally drops "and" as a stop word and the haystack side
+// does not, while phraseRegex joins its parts with a separator run that no
+// letter may interrupt. TestAmpersandPhraseAsymmetry measures that rather than
+// arguing it.
+//
+// The two are safe only as long as no caller compares a key from one against a
+// key from the other. Nothing does today.
+func TestDedupAndTitleMatchAlphabetsDifferOnAmpersand(t *testing.T) {
+	const title = "Foundation & Empire"
+
+	dedup := NormalizeTitleForDedup(title)
+	if dedup != "foundation and empire" {
+		t.Errorf("NormalizeTitleForDedup(%q) = %q, want %q — the dedup alphabet must expand the ampersand so both provider spellings share a key",
+			title, dedup, "foundation and empire")
+	}
+
+	match := textutil.FoldForTitleMatch(title)
+	if match != "foundation empire" {
+		t.Errorf("FoldForTitleMatch(%q) = %q, want %q — the match alphabet must leave the ampersand a separator, or ContainsPhrase stops finding \"Foundation.&.Empire\"",
+			title, match, "foundation empire")
+	}
+
+	if dedup == match {
+		t.Errorf("the dedup and title-match alphabets agree on %q (%q); they are meant to differ, and a caller comparing across them would now silently pass",
+			title, dedup)
+	}
+}
+
+// TestAmpersandPhraseAsymmetry is the evidence behind the rule that alphabet 1
+// must not expand "&", and it is here because the obvious argument for that
+// rule is wrong. The phrase and the haystack both fold through
+// FoldForTitleMatch, so an expansion would be symmetric; symmetry is not what
+// saves the match.
+//
+// The asymmetry WAS the stop word list. SigWords drops "and" from the keywords
+// and nothing drops it from the haystack, so an expanded haystack gained a word
+// the phrase could not account for, and phraseRegex admitted only separators
+// between its parts.
+//
+// That is no longer true. #2465 fixed the false negative this test used to
+// record: phraseRegex now lets a word SigWords itself dropped sit between the
+// parts, so both spellings match either haystack. The assertions below are the
+// positive ones the old version asked for by name.
+//
+// Which means the rule this test is evidence for now rests on something else.
+// Expanding "&" in alphabet 1 would no longer break the phrase, so the reason
+// not to do it is the one the dedup alphabet was drawn for in the first place
+// rather than this side effect. Changing that rule is not this test's call and
+// #2459 left it alone deliberately; what this records is that the argument
+// FROM here has expired.
+func TestAmpersandPhraseAsymmetry(t *testing.T) {
+	kws := newznab.SigWords("Foundation & Empire")
+	if len(kws) != 2 || kws[0] != "foundation" || kws[1] != "empire" {
+		t.Fatalf(`SigWords("Foundation & Empire") = %q, want ["foundation" "empire"]; "and" is a stop word on this side and that is the whole point`, kws)
+	}
+	if got := newznab.SigWords("Foundation and Empire"); len(got) != 2 {
+		t.Errorf(`SigWords("Foundation and Empire") = %q, want two tokens; both spellings must reduce to the same phrase`, got)
+	}
+
+	// What the haystack looks like today, and what it would look like if
+	// alphabet 1 expanded the ampersand.
+	const today = "foundation empire 1952 retail epub grp"
+	const ifExpanded = "foundation and empire 1952 retail epub grp"
+
+	if got := NormalizeRelease("Foundation.&.Empire.1952.RETAIL.EPUB-GRP"); got != today {
+		t.Fatalf("NormalizeRelease = %q, want %q", got, today)
+	}
+	if !ContainsPhrase(today, kws) {
+		t.Error("the ampersand release stopped matching its own phrase; alphabet 1 must be leaving & as a separator")
+	}
+	if !ContainsPhrase(ifExpanded, kws) {
+		t.Error(`a spelled-out haystack no longer matches [foundation empire]; #2465's gap in phraseRegex has regressed`)
+	}
+
+	// The miss this test used to record, now the positive assertion it asked
+	// to become. A release spelling the word out matches whichever spelling the
+	// user asked for.
+	if !ContainsPhrase(ifExpanded, newznab.SigWords("Foundation and Empire")) {
+		t.Error(`a release named "Foundation and Empire" does not match its own book (#2465)`)
 	}
 }

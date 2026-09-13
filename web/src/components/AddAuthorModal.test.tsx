@@ -10,9 +10,15 @@ vi.mock('react-i18next', () => ({
         'addAuthorModal.search': 'Search',
         'addAuthorModal.select': 'Select',
         'addAuthorModal.confirmAdd': 'Add author',
-        'addAuthorModal.customizeMonitoring': 'Customize monitoring',
+        'addAuthorModal.customizeMonitoring': 'Monitoring',
+        'addAuthorModal.monitorNewItems': 'Monitor newly discovered books',
+        'addAuthorModal.outcome.all': 'Adds up to {{count}} books and searches for all of them.',
+        'addAuthorModal.outcome.none': 'Adds up to {{count}} books and searches for none of them. Grab any of them by hand from the Books page.',
+        'addAuthorModal.outcomeNoCount.all': 'Adds the whole catalogue and searches for all of it.',
+        'addAuthorModal.outcomeNoCount.none': 'Adds the whole catalogue and searches for none of it. Grab any book by hand from the Books page.',
         'addAuthorModal.mediaType': 'Media type',
         'addAuthorModal.monitorMode': 'Monitor mode',
+        'addAuthorModal.monitorModeHint': 'The whole catalogue is added either way. This only decides which of those books Bindery searches for and downloads.',
         'addAuthorModal.monitorLatestCount': 'Latest book count',
         'addAuthorModal.noResults': 'No results found',
         'addAuthorModal.openExisting': 'Open existing author',
@@ -31,7 +37,12 @@ vi.mock('react-i18next', () => ({
       if (key === 'addAuthorModal.providerMismatchNotice') {
         return `This record comes from ${String(options?.linked ?? '')}, not from your primary metadata provider ${String(options?.primary ?? '')}.`
       }
-      return strings[key] ?? key
+      // Generic {{var}} interpolation for the strings above, mirroring i18next.
+      let out = strings[key] ?? key
+      for (const [k, v] of Object.entries(options ?? {})) {
+        out = out.split(`{{${k}}}`).join(String(v))
+      }
+      return out
     },
   }),
 }))
@@ -294,6 +305,50 @@ describe('AddAuthorModal — search error handling', () => {
     alertSpy.mockRestore()
   })
 
+  it('offers find metadata when the conflicting canonical author is already linked with a full record', async () => {
+    vi.mocked(api.searchAuthors).mockResolvedValue([
+      author({
+        id: 0,
+        foreignAuthorId: 'OL13200512A',
+        authorName: 'Emilia Jae',
+      }),
+    ])
+    const err = Object.assign(new Error('author already exists'), {
+      status: 409,
+      body: {
+        error: 'author already exists',
+        canonicalAuthorId: 60,
+        canonicalAuthor: author({
+          id: 60,
+          foreignAuthorId: 'OL13200512A',
+          authorName: 'Emilia Jae',
+          metadataProvider: 'openlibrary',
+          description: 'A bio',
+          imageUrl: 'https://example.com/emilia.jpg',
+          ratingsCount: 12,
+          averageRating: 4.1,
+        }),
+      },
+    })
+    vi.mocked(api.addAuthor).mockRejectedValue(err)
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+
+    render(<AddAuthorModal onClose={onClose} onAdded={onAdded} />)
+
+    fireEvent.change(screen.getByPlaceholderText('Search by author name...'), {
+      target: { value: 'emilia jae' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await waitFor(() => expect(screen.getByText('Emilia Jae')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+
+    await waitFor(() => expect(screen.getByText('author already exists')).toBeInTheDocument())
+    expect(screen.getByRole('link', { name: 'Find metadata' })).toHaveAttribute('href', '/author/60?linkMetadata=1')
+    alertSpy.mockRestore()
+  })
+
   it('loads global monitor defaults and lets the backend apply them when unchanged', async () => {
     vi.mocked(api.getSetting).mockImplementation(async (key: string) => {
       if (key === 'default.media_type') return { key, value: 'ebook' }
@@ -324,7 +379,6 @@ describe('AddAuthorModal — search error handling', () => {
     fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
     await waitFor(() => expect(screen.getByText('J.R.R. Tolkien')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: 'Select' }))
-    fireEvent.click(screen.getByText('Customize monitoring'))
 
     await waitFor(() => expect(screen.getByLabelText('Monitor mode')).toHaveValue('latest'))
     expect(screen.getByLabelText('Latest book count')).toHaveValue(5)
@@ -339,6 +393,103 @@ describe('AddAuthorModal — search error handling', () => {
     const callArg = vi.mocked(api.addAuthor).mock.calls[0][0]
     expect('monitorMode' in callArg).toBe(false)
     expect('monitorLatestCount' in callArg).toBe(false)
+  })
+
+  it('shows the monitoring controls without a disclosure, and says the catalogue arrives whatever the mode is', async () => {
+    // The most common confusion in support: monitor mode reads as "which
+    // books get added". It is not. Every book is catalogued either way and
+    // the mode only decides what gets searched for. The controls used to sit
+    // behind a closed "Customize monitoring" disclosure; now they are simply
+    // on the screen, with Monitor new items beside them.
+    vi.mocked(api.searchAuthors).mockResolvedValue([
+      {
+        id: 0,
+        foreignAuthorId: 'OL26320A',
+        authorName: 'J.R.R. Tolkien',
+        sortName: 'Tolkien, J.R.R.',
+        description: '',
+        imageUrl: '',
+        disambiguation: '',
+        ratingsCount: 0,
+        averageRating: 0,
+        monitored: true,
+      },
+    ])
+
+    render(<AddAuthorModal onClose={onClose} onAdded={onAdded} />)
+    fireEvent.change(screen.getByPlaceholderText('Search by author name...'), {
+      target: { value: 'tolkien' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await waitFor(() => expect(screen.getByText('J.R.R. Tolkien')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+
+    await waitFor(() => expect(screen.getByLabelText('Monitor mode')).toBeInTheDocument())
+    expect(screen.queryByText('Customize monitoring')).toBeNull()
+    expect(screen.getByLabelText('Monitor newly discovered books')).toBeInTheDocument()
+    expect(screen.getByText(/whole catalogue is added either way/i)).toBeInTheDocument()
+  })
+
+  it('states the predicted outcome, with the count, and follows the mode', async () => {
+    // What people are actually asking before they press Add: how many books,
+    // and what Bindery will do about them. Readarr does not say; #1348 and
+    // the user guide's first quick answer are both about being surprised by
+    // exactly this.
+    vi.mocked(api.searchAuthors).mockResolvedValue([
+      {
+        id: 0,
+        foreignAuthorId: 'OL26320A',
+        authorName: 'J.R.R. Tolkien',
+        sortName: 'Tolkien, J.R.R.',
+        description: '',
+        imageUrl: '',
+        disambiguation: '',
+        ratingsCount: 0,
+        averageRating: 0,
+        monitored: true,
+        statistics: { bookCount: 87, availableBookCount: 0, wantedBookCount: 0 },
+      },
+    ])
+    render(<AddAuthorModal onClose={onClose} onAdded={onAdded} />)
+    fireEvent.change(screen.getByPlaceholderText('Search by author name...'), {
+      target: { value: 'tolkien' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await waitFor(() => expect(screen.getByText('J.R.R. Tolkien')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+
+    const outcome = await screen.findByTestId('add-author-outcome')
+    expect(outcome).toHaveTextContent('Adds up to 87 books and searches for all of them.')
+    fireEvent.change(screen.getByLabelText('Monitor mode'), { target: { value: 'none' } })
+    expect(outcome).toHaveTextContent('Adds up to 87 books and searches for none of them.')
+  })
+
+  it('sends monitorNewItems only when it was changed', async () => {
+    vi.mocked(api.searchAuthors).mockResolvedValue([
+      {
+        id: 0,
+        foreignAuthorId: 'OL26320A',
+        authorName: 'J.R.R. Tolkien',
+        sortName: 'Tolkien, J.R.R.',
+        description: '',
+        imageUrl: '',
+        disambiguation: '',
+        ratingsCount: 0,
+        averageRating: 0,
+        monitored: true,
+      },
+    ])
+    render(<AddAuthorModal onClose={onClose} onAdded={onAdded} />)
+    fireEvent.change(screen.getByPlaceholderText('Search by author name...'), {
+      target: { value: 'tolkien' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await waitFor(() => expect(screen.getByText('J.R.R. Tolkien')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+    fireEvent.change(screen.getByLabelText('Monitor newly discovered books'), { target: { value: 'none' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+    await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.addAuthor).mock.calls[0][0]).toMatchObject({ monitorNewItems: 'none' })
   })
 
   it('sends monitor overrides when the controls are changed', async () => {
@@ -365,7 +516,6 @@ describe('AddAuthorModal — search error handling', () => {
     fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
     await waitFor(() => expect(screen.getByText('J.R.R. Tolkien')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: 'Select' }))
-    fireEvent.click(screen.getByText('Customize monitoring'))
     fireEvent.change(screen.getByLabelText('Monitor mode'), { target: { value: 'latest' } })
     fireEvent.change(screen.getByLabelText('Latest book count'), { target: { value: '3' } })
 

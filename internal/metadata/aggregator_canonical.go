@@ -306,13 +306,12 @@ func canonicalTitleVariantKey(title string) string {
 	return b.String()
 }
 
+// isGermanBookLanguage reports whether a book's reported language is German,
+// in any of the spellings a provider might use. It matched only "ger", "deu"
+// and "de" until #2463, so a record whose language arrived as "German",
+// "Deutsch" or "de-DE" missed the German-specific title handling entirely.
 func isGermanBookLanguage(language string) bool {
-	switch strings.ToLower(strings.TrimSpace(language)) {
-	case "ger", "deu", "de":
-		return true
-	default:
-		return false
-	}
+	return models.NormalizeLanguageCode(language) == "ger"
 }
 
 func cleanCanonicalTitleVariant(title string) string {
@@ -708,18 +707,32 @@ func (a *Aggregator) canonicalPrimaryBookFromResults(query primaryBookCanonicalQ
 		return nil, false
 	}
 	best := matches[0]
+	var runnerUp bookMatchCandidate
+	hasRunnerUp := false
 	ambiguous := false
 	for _, candidate := range matches[1:] {
 		switch compareBookCandidate(candidate, best) {
 		case 1:
+			runnerUp, hasRunnerUp = best, true
 			best = candidate
 			ambiguous = false
 		case 0:
 			ambiguous = true
+		case -1:
+			if !hasRunnerUp || compareBookCandidate(candidate, runnerUp) == 1 {
+				runnerUp, hasRunnerUp = candidate, true
+			}
 		}
 	}
 	if ambiguous {
 		slog.Debug("primary canonical book search ambiguous", "query", query.query, "title", source.Title, "author", sourceAuthor)
+		return nil, false
+	}
+	if hasRunnerUp && !canonicalMatchIsDecisive(best, runnerUp) {
+		slog.Debug("primary canonical book match too close to call",
+			"query", query.query, "title", source.Title, "author", sourceAuthor,
+			"best", best.book.Title, "bestScore", best.titleScore,
+			"runnerUp", runnerUp.book.Title, "runnerUpScore", runnerUp.titleScore)
 		return nil, false
 	}
 	if strings.TrimSpace(best.book.ForeignID) == strings.TrimSpace(source.ForeignID) {
@@ -1019,3 +1032,45 @@ func authorMatchRank(kind textutil.AuthorMatchKind) int {
 		return 0
 	}
 }
+
+// canonicalMatchIsDecisive reports whether the winning candidate beat the
+// runner-up by enough to be trusted without a human looking.
+//
+// compareBookCandidate is a lexicographic ordering, so it will happily pick a
+// candidate scoring 91 over one scoring 90 and report no ambiguity at all. That
+// is a confident answer built on one point of fuzzy string similarity. The
+// evidence for a match is not only how well the winner scored, it is also how
+// much better it scored than everything else, which is the runner-up gap beets
+// applies before auto-accepting a release and the "clerical review" middle
+// region of Fellegi-Sunter.
+//
+// Three ways to be decisive, in descending order of how much they prove:
+//
+//   - An identity rather than a resemblance: an ISBN query, or an exact title.
+//     Nothing about a runner-up can weaken those.
+//   - The same work: the two candidates share a dedup key, so whichever is
+//     picked the user gets the book they asked for, in a different edition.
+//   - A real margin: canonicalDecisiveGap points of title score clear of the
+//     runner-up.
+//
+// Anything else returns false and the caller declines rather than guessing.
+// Declining is recoverable, since the book stays unmatched and can be matched
+// by hand; picking the wrong work is not, because the wrong metadata is then
+// attached to the user's book.
+func canonicalMatchIsDecisive(best, runnerUp bookMatchCandidate) bool {
+	if best.isISBN || best.titleExact {
+		return true
+	}
+	if key := indexer.CanonicalDedupKey(best.book.Title); key != "" &&
+		key == indexer.CanonicalDedupKey(runnerUp.book.Title) {
+		return true
+	}
+	return best.titleScore-runnerUp.titleScore >= canonicalDecisiveGap
+}
+
+// canonicalDecisiveGap is how far ahead the winner has to be. Five points on
+// the 0-100 title scale, which is wider than the noise between two spellings of
+// one title and narrower than the distance to a genuinely different book: after
+// #2343's weighting, "Dune" scores 100 against itself and 90 against "Dune
+// Messiah", a gap of 10.
+const canonicalDecisiveGap = 5

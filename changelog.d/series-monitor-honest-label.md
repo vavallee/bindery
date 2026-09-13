@@ -1,0 +1,2 @@
+### Changed
+- **The series monitor toggle now says what it actually does** (#2523) — it was labelled "Monitor series" and "Monitored", which reads as a promise that Bindery watches the series and adds new books as they appear. Nothing did that: the flag was stored, shown back, and read by nothing else, and Fill gaps ignored it. It is now "Add to shortlist" and "Shortlisted", with a tooltip saying Bindery does not yet check a shortlisted series on its own. The control and everything it stores are unchanged, so nothing you have set is lost. Real series tracking is #2523.

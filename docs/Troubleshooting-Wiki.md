@@ -2,6 +2,21 @@
 
 Solutions to recurring problems, organised by symptom. Add new entries here as patterns come up in support.
 
+## A release names a different book or author
+
+Release matching rejects extra meaningful words inside a requested title and
+preserves its numbers: `12 More Rules for Life` cannot satisfy `12 Rules for Life`,
+even when both name the same author. An explicit trailing `by Author` or
+`Title - Author` credit that conflicts with the requested author is also rejected.
+Title-only releases, connecting words, file-format labels and narrator credits
+remain supported. Unrecognised trailing text can be conservatively rejected;
+inspect the release's title and author rather than relying only on shared words.
+
+These checks use the release name. They do not verify the contents of a download
+or repair an existing incorrect import. If a previously imported file is another
+book, use **Fix Match** to assign it to the correct book before requesting a
+replacement for the original.
+
 ## Bindery will not start after upgrading: "foreign_key_check found N violation(s)"
 
 ```
@@ -78,7 +93,7 @@ Clicking **Grab** on a release you already have a Queue entry for is refused wit
 
 The files downloaded fine, but Bindery couldn't tie them to a book in your library, so the item sits in the Queue as `importFailed` with *could not match any book to this download*. This happens when a release was grabbed without a specific book (e.g. from the free-text Search page) or its title didn't parse to a catalogue book.
 
-**Fix:** on the failed Queue item, click **Match to book**, search your library for the correct book, and select it — Bindery imports the already-downloaded files against it and the item flips to **Imported**. If the book isn't in your library yet, add it first (Authors → the author → the book, or Add Book), then match. Once matched, an item shows **Matched to *&lt;book&gt;*** and its **Retry import** button re-runs the import against that book.
+**Fix:** on the failed Queue item, click **Match to book**, search your library for the correct book, and select it — Bindery imports the already-downloaded files against it and the item flips to **Imported**. If the book isn't in your library yet, add it first with **Books → Add Book** (or through its author), then match. Once matched, an item shows **Matched to *&lt;book&gt;*** and its **Retry import** button re-runs the import against that book.
 
 If the item was left unmatched long enough for the scanner to retry it a few times, it turns into `importBlocked` with *import retry limit reached*. That's the same situation — the files are still there — so **Match to book** and **Retry import** work exactly the same on a blocked item; matching it re-imports the recorded files, and Retry import re-arms the scanner with a fresh retry budget.
 

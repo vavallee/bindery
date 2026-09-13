@@ -51,6 +51,14 @@ func (h *stubSeriesRouteHandler) AddBook(w http.ResponseWriter, _ *http.Request)
 	h.record("add-book", w)
 }
 
+func (h *stubSeriesRouteHandler) RemoveBook(w http.ResponseWriter, _ *http.Request) {
+	h.record("remove-book", w)
+}
+
+func (h *stubSeriesRouteHandler) SetPrimaryBook(w http.ResponseWriter, _ *http.Request) {
+	h.record("set-primary-book", w)
+}
+
 func (h *stubSeriesRouteHandler) Fill(w http.ResponseWriter, _ *http.Request) {
 	h.record("fill", w)
 }
@@ -94,6 +102,8 @@ func TestSeriesMutationRoutesRequireAdmin(t *testing.T) {
 		{name: "monitor series", method: http.MethodPatch, path: "/series/1"},
 		{name: "delete series", method: http.MethodDelete, path: "/series/1"},
 		{name: "add book", method: http.MethodPost, path: "/series/1/books"},
+		{name: "remove book", method: http.MethodDelete, path: "/series/1/books/2"},
+		{name: "set primary book", method: http.MethodPut, path: "/series/1/books/2/primary"},
 		{name: "fill series", method: http.MethodPost, path: "/series/1/fill"},
 		{name: "auto link hardcover", method: http.MethodPost, path: "/series/1/hardcover-link/auto"},
 		{name: "put hardcover link", method: http.MethodPut, path: "/series/1/hardcover-link"},
@@ -135,6 +145,8 @@ func TestSeriesMutationRoutesAllowAdmin(t *testing.T) {
 		{name: "monitor series", method: http.MethodPatch, path: "/series/1", called: "monitor"},
 		{name: "delete series", method: http.MethodDelete, path: "/series/1", called: "delete"},
 		{name: "add book", method: http.MethodPost, path: "/series/1/books", called: "add-book"},
+		{name: "remove book", method: http.MethodDelete, path: "/series/1/books/2", called: "remove-book"},
+		{name: "set primary book", method: http.MethodPut, path: "/series/1/books/2/primary", called: "set-primary-book"},
 		{name: "fill series", method: http.MethodPost, path: "/series/1/fill", called: "fill"},
 		{name: "auto link hardcover", method: http.MethodPost, path: "/series/1/hardcover-link/auto", called: "auto-link-hardcover"},
 		{name: "put hardcover link", method: http.MethodPut, path: "/series/1/hardcover-link", called: "put-hardcover-link"},

@@ -335,6 +335,23 @@ describe('AuthorDetailPage', () => {
     }))
   })
 
+  it('shows find-better metadata for linked authors with a full record, not just sparse ones', async () => {
+    renderAuthorDetailPage([], 'grid', {
+      foreignAuthorId: 'OL13200512A',
+      authorName: 'Emilia Jae',
+      sortName: 'Jae, Emilia',
+      metadataProvider: 'openlibrary',
+      description: 'Fantasy author of the Shades of Magic series.',
+      imageUrl: 'https://example.com/emilia.jpg',
+      disambiguation: 'Fantasy author, not the botanist',
+      ratingsCount: 128,
+      averageRating: 4.4,
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: /More/ }))
+    expect(await screen.findByRole('menuitem', { name: 'Find better metadata' })).toBeInTheDocument()
+  })
+
   it('opens link metadata from the query string once and removes the trigger param', async () => {
     const locations: string[] = []
     renderAuthorDetailPage([], 'grid', {
@@ -853,6 +870,7 @@ describe('AuthorDetailPage — last sync outcome', () => {
         completedAt: '2026-08-11T12:00:00Z',
         total: 66,
         added: 1,
+        matched: 0,
         skippedLanguage: 65,
         skippedJunk: 0,
         skippedMediaType: 0,
@@ -867,6 +885,10 @@ describe('AuthorDetailPage — last sync outcome', () => {
 
     const notice = await screen.findByTestId('author-sync-notice')
     expect(notice).toHaveTextContent('Last refresh skipped 65 of this author’s 66 works')
+    // The count leads; the reasons and the examples sit behind the info
+    // alert's disclosure. Opening it here is also the check that none of it
+    // was dropped when the notice stopped being an amber wall.
+    fireEvent.click(within(notice).getByRole('button', { name: 'Show details' }))
     expect(notice).toHaveTextContent('65 skipped by the language filter (allowed: eng)')
     // The unknown-language half of the filter is the part that surprises
     // people, so it is named rather than folded into the count.
@@ -887,6 +909,8 @@ describe('AuthorDetailPage — last sync outcome', () => {
         completedAt: '2026-08-11T12:00:00Z',
         total: 84,
         added: 0,
+        // One work matched the imported book; the other 83 were declined.
+        matched: 1,
         skippedLanguage: 0,
         skippedJunk: 0,
         skippedMediaType: 0,
@@ -895,6 +919,7 @@ describe('AuthorDetailPage — last sync outcome', () => {
     })
 
     const notice = await screen.findByTestId('author-sync-notice')
+    fireEvent.click(within(notice).getByRole('button', { name: 'Show details' }))
     expect(notice).toHaveTextContent('83 not added, because this author is not taking newly discovered books')
     expect(notice).toHaveTextContent(/Books already in your library were still refreshed/)
   })
@@ -905,6 +930,7 @@ describe('AuthorDetailPage — last sync outcome', () => {
         completedAt: '2026-08-11T12:00:00Z',
         total: 1,
         added: 1,
+        matched: 0,
         skippedLanguage: 0,
         skippedJunk: 0,
         skippedMediaType: 0,

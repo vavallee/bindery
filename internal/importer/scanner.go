@@ -964,10 +964,14 @@ func (s *Scanner) blockStaleImportFailures(
 	s.forgetImportSkipsExcept(stillFailing)
 	for i := range allDownloads {
 		dl := allDownloads[i]
-		if dl.Status != models.StateImportFailed {
+		if !belongsToClient(dl) {
 			continue
 		}
-		if !belongsToClient(dl) {
+		if dl.Status == models.StateDownloading {
+			s.failDownloadThatNeverArrived(ctx, &dl, seenSourceIDs, sourceListIsComplete)
+			continue
+		}
+		if dl.Status != models.StateImportFailed {
 			continue
 		}
 		var reason string
@@ -982,6 +986,72 @@ func (s *Scanner) blockStaleImportFailures(
 		slog.Warn("blocking unrecoverable import failure", "title", dl.Title, "download_id", dl.ID, "reason", reason)
 		s.failImport(ctx, &dl, models.StateImportBlocked, reason)
 	}
+}
+
+// neverArrivedGrace is how long a grabbed download may be absent from its
+// client before failDownloadThatNeverArrived gives up on it.
+//
+// It is generous on purpose. The window has to cover a client that accepts an
+// add and takes its time publishing the torrent (qBittorrent does this while it
+// resolves a magnet's metadata), plus the poll interval, plus a restart. Ten
+// minutes is far longer than any of those and still far shorter than "forever",
+// which is what the wait used to be.
+const neverArrivedGrace = 10 * time.Minute
+
+// failDownloadThatNeverArrived fails a download that Bindery reported as
+// grabbed but that never turned up in the download client (#2505).
+//
+// The grab path can report success without the client ever receiving anything:
+// the reporter's case was an unsigned indexer URL answered with 401, but a
+// client that drops the add, or a magnet whose metadata never resolves, land
+// here the same way. Every poll then found the torrent missing, logged
+// "download not found in torrent list" at Debug, and did nothing, because the
+// only thing that acts on a vanished source is the StateImportFailed arm above.
+// The queue item sat at downloading with an empty errorMessage indefinitely,
+// which on screen is indistinguishable from a torrent waiting on peers.
+//
+// Three guards, and all three matter:
+//
+//   - sourceListIsComplete, so absence is definitive. Under a degraded or
+//     category-filtered listing a healthy torrent can be missing from the view
+//     (#1461), and failing on that would be the same mistake in a new place.
+//   - not seen this cycle, the same signal the arm above uses.
+//   - grabbed longer ago than neverArrivedGrace, so a client that is merely
+//     slow to publish the torrent is left alone.
+//
+// The download is failed rather than blocked: nothing was placed on disk and
+// nothing needs unpicking, so this is recoverable by grabbing again. It
+// deliberately does not blocklist the release, because the usual cause is on
+// Bindery's side of the wire and blocklisting a good release for that would
+// cost the user the best copy.
+func (s *Scanner) failDownloadThatNeverArrived(
+	ctx context.Context,
+	dl *models.Download,
+	seenSourceIDs map[int64]bool,
+	sourceListIsComplete bool,
+) {
+	if !sourceListIsComplete || seenSourceIDs[dl.ID] {
+		return
+	}
+	// No recorded source id means absence from the client's list proves
+	// nothing: every poller skips such a row before it reaches seenSourceIDs,
+	// so it is unseen because it was never looked up, not because it is
+	// missing. qBittorrent backfills the hash from a listing match; Deluge and
+	// rTorrent simply continue. Failing on that would kill a healthy download.
+	if dl.TorrentID == nil && dl.SABnzbdNzoID == nil {
+		return
+	}
+	since := dl.AddedAt
+	if dl.GrabbedAt != nil {
+		since = *dl.GrabbedAt
+	}
+	if since.IsZero() || time.Since(since) < neverArrivedGrace {
+		return
+	}
+	const reason = "never reached the download client — the client has no record of it, so nothing was downloaded. Check the indexer and the client are both reachable, then grab it again"
+	slog.Warn("failing a download the client never received",
+		"title", dl.Title, "download_id", dl.ID, "grabbed_at", since)
+	s.markDownloadFailed(ctx, dl, reason)
 }
 
 // alreadyImportedFormat reports whether book already has a tracked, on-disk
@@ -1402,7 +1472,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// EPUB metadata (reliable) over the release filename (which encodes
 	// author/title/series in inconsistent orders) — issue #1014.
 	if book == nil {
-		if b, a := s.matchBookForDownload(ctx, bookFiles); b != nil {
+		if b, a := s.matchBookForDownload(ctx, bookFiles, dl.Title); b != nil {
 			book = b
 			author = a
 			edition = s.resolveCalibreEdition(ctx, dl, book)
@@ -1622,8 +1692,18 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				// attempt instead — but only when the sources still exist.
 				// After a move they do not, and those files are the only
 				// copy, so they stay put and the error tells the user where.
-				if dirErr != nil && len(placed) > 0 {
-					if mode == "move" {
+				//
+				// The rollback runs even when nothing was placed (#2504).
+				// Failing on the FIRST file leaves placed empty, and gating on
+				// it skipped the cleanup for exactly the case where there is
+				// nothing to weigh against removing the folder: the MkdirAll
+				// above had already created it, so the empty directory
+				// survived, and the next attempt's UniqueDir read it as a
+				// collision and built "Title (2)" beside it. In move mode with
+				// files already placed the folder still stays, since removing
+				// it would take the only copy of them with it.
+				if dirErr != nil {
+					if mode == "move" && len(placed) > 0 {
 						slog.Warn("audiobook move failed partway; placed files left in place because their sources are already gone",
 							"dst", destDir, "placed", len(placed))
 					} else {
@@ -1735,7 +1815,8 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				if err := os.MkdirAll(destDir, 0o750); err != nil {
 					dirErr = fmt.Errorf("create audiobook dest dir: %w", err)
 				} else {
-					dstFile := filepath.Join(destDir, filepath.Base(audiobookSource))
+					name := filepath.Base(audiobookSource)
+					dstFile := filepath.Join(destDir, name)
 					switch mode {
 					case "hardlink":
 						dirErr = HardlinkFile(audiobookSource, dstFile)
@@ -1743,6 +1824,23 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 						dirErr = CopyFileCtx(importCtx, audiobookSource, dstFile)
 					default:
 						dirErr = MoveFileCtx(importCtx, audiobookSource, dstFile)
+					}
+					// A lone .m4b had no cleanup at all, so any failure here
+					// left the directory MkdirAll had just made, and the next
+					// attempt's UniqueDir built "Title (2)" beside the empty
+					// original (#2504). Move mode passes no name: the file
+					// either arrived or it did not, and a partial destination
+					// whose source is already gone is not ours to delete.
+					// rollbackPlacedFiles removes the folder through its
+					// parent, which only succeeds while it is empty, so a
+					// shared folder holding this book's ebook is safe either
+					// way.
+					if dirErr != nil {
+						if mode == "move" {
+							rollbackPlacedFiles(destDir, nil)
+						} else {
+							rollbackPlacedFiles(destDir, []string{name})
+						}
 					}
 				}
 			}
@@ -2372,8 +2470,13 @@ var titleStopwords = map[string]bool{
 	"and": true, "in": true, "to": true, "for": true,
 }
 
-// titleSigTokens returns the significant (2+ char, non-stopword) tokens of a
-// title, reduced through the shared title-comparison alphabet.
+// titleSigTokens returns the significant (long enough, non-stopword) tokens of
+// a title, reduced through the shared title-comparison alphabet.
+//
+// The floor is two BYTES of UTF-8, not two characters, and like the three-byte
+// one in newznab.SigWords that is deliberate: it scales the character
+// requirement by how much a script packs into a character. Do not rewrite it as
+// a rune count; see SigWords for what that would break.
 //
 // This used to keep only [a-z0-9] and treat every other rune as a separator,
 // which quietly destroyed non-ASCII titles: "Die Höhle" tokenised to
@@ -3360,7 +3463,10 @@ func (s *Scanner) refreshStaleRenderedPaths(ctx context.Context) {
 // this only suppresses the tag title when the folder hierarchy already resolved
 // a title to fall back to (see the caller), so the worst case is using the
 // folder's title for such a book rather than the tag's.
-var chapterTitleRe = regexp.MustCompile(`(?i)^(\d{1,3}\s*[-._]\s*\D|(chapter|track|part|disc|cd)\b\s*\.?\s*\d)`)
+// The last branch is a bare track counter with nothing else, "001-190" or
+// "07 of 12": some rips tag every track's title that way, and letting it win
+// over a folder-derived book title left every file unmatched (#2547).
+var chapterTitleRe = regexp.MustCompile(`(?i)^(\d{1,3}\s*[-._]\s*\D|(chapter|track|part|disc|cd)\b\s*\.?\s*\d|\d{1,4}\s*(?:-|/|of)\s*\d{1,4}$)`)
 
 // looksLikeChapterTitle reports whether an embedded-tag title looks like a
 // per-track chapter name rather than a book title (#1239).

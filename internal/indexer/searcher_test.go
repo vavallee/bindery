@@ -1411,6 +1411,73 @@ func TestFilterRelevantNonLatinAuthor(t *testing.T) {
 	}
 }
 
+// TestFilterRelevantMixedScriptAuthorExpandsAliases is the search-path half of
+// the fail-before evidence for #2419. The alias write path and the Calibre
+// import path both judged an author latin-or-not on the FULL name, while this
+// path judged it on the surname alone. "村上 Haruki" has a latin surname and a
+// non-latin full name, so aliases were saved for it and bound on import, then
+// silently ignored here — every romanised release for that author was dropped.
+func TestFilterRelevantMixedScriptAuthorExpandsAliases(t *testing.T) {
+	results := toResults(
+		"Haruki.Murakami.Norwegian.Wood.epub",
+		"Unrelated.Noise.epub",
+	)
+
+	// Surname "Haruki" is latin; the full name is not. The alias must expand.
+	got := filterRelevant(results, "Norwegian Wood", "村上 Haruki", []string{"Haruki Murakami"})
+	if !contains(got, "Haruki.Murakami.Norwegian.Wood.epub") {
+		t.Errorf("mixed-script author %q with alias %q: expected %q to pass; got %v",
+			"村上 Haruki", "Haruki Murakami", "Haruki.Murakami.Norwegian.Wood.epub", resultTitles(got))
+	}
+	if contains(got, "Unrelated.Noise.epub") {
+		t.Error("unrelated result should still be filtered out")
+	}
+}
+
+// TestFilterRelevantAccentedLatinAuthorUsesTransliteration is the regression
+// guard for the route #2419 must not break. The release alphabet transliterates
+// German umlauts and nothing else, so "Jo Nesbø" tokenises to ["nesbø"] and
+// never meets a scene release named "Jo.Nesbo.-.…". The ASCII alias is the only
+// path from that release to the author, so it has to keep binding even though
+// both names are latin script.
+func TestFilterRelevantAccentedLatinAuthorUsesTransliteration(t *testing.T) {
+	results := toResults(
+		"Jo.Nesbo.-.The.Snowman.2007.RETAIL.EPUB-GRP",
+		"Karin.Fossum.The.Snowman.epub",
+	)
+
+	// Without the alias the author anchor cannot be met at all: proves the
+	// alias is doing the work rather than the title carrying the match.
+	if got := filterRelevant(results, "The Snowman", "Jo Nesbø", nil); contains(got, "Jo.Nesbo.-.The.Snowman.2007.RETAIL.EPUB-GRP") {
+		t.Error("setup wrong: the transliterated release should not match without the alias")
+	}
+
+	got := filterRelevant(results, "The Snowman", "Jo Nesbø", []string{"Jo Nesbo"})
+	if !contains(got, "Jo.Nesbo.-.The.Snowman.2007.RETAIL.EPUB-GRP") {
+		t.Errorf("author %q with transliterated alias %q: expected %q to pass; got %v",
+			"Jo Nesbø", "Jo Nesbo", "Jo.Nesbo.-.The.Snowman.2007.RETAIL.EPUB-GRP", resultTitles(got))
+	}
+	// The alias widens the anchor to that one name, not to every latin name.
+	if contains(got, "Karin.Fossum.The.Snowman.epub") {
+		t.Errorf("a transliteration alias must not admit an unrelated author; got %v", resultTitles(got))
+	}
+}
+
+// TestFilterRelevantAccentedLatinAuthorIgnoresAliases is the other half of the
+// #2419 rule: an accented latin name is latin script, not "some other script",
+// so an unattributed alias sitting beside it is not evidence of identity and
+// must not widen the author anchor. Before #2419 the surname "nesbø" was
+// non-ASCII, so any alias row expanded and a co-author's releases passed.
+func TestFilterRelevantAccentedLatinAuthorIgnoresAliases(t *testing.T) {
+	results := toResults("Karin.Fossum.The.Caller.epub")
+
+	got := filterRelevant(results, "The Caller", "Jo Nesbø", []string{"Karin Fossum"})
+	if contains(got, "Karin.Fossum.The.Caller.epub") {
+		t.Errorf("latin-script author %q must not be anchored by unattributed alias %q; got %v",
+			"Jo Nesbø", "Karin Fossum", resultTitles(got))
+	}
+}
+
 // TestFilterRelevantCoAuthorSurnameOverlap is the regression test for #563:
 // when the monitored author shares a surname with a co-author of an unrelated
 // release, the surname-only token check used to leak the co-author's work into
@@ -1981,6 +2048,62 @@ func TestVideoMarkerReNoFalsePositives(t *testing.T) {
 	} {
 		if videoMarkerRe.MatchString(title) {
 			t.Errorf("videoMarkerRe should not match book title %q", title)
+		}
+	}
+}
+
+// TestFilterByAllowedLanguagesAgreesWithBookFilter is the drift guard for the
+// two halves of one setting. A metadata profile's allowed_languages list is
+// consulted twice on the way to a grab: models.IsLanguageAllowed decides
+// whether the *book* may be added, and FilterByAllowedLanguages decides
+// whether a *release* of it may be grabbed. Both must read the profile with
+// the same vocabulary, or a profile can accept a book and then reject every
+// release of it, leaving the book permanently wanted with no explanation.
+//
+// The four spellings below are the ones the two sides used to disagree on:
+// a region subtag ("pt-BR"), a script subtag ("zh-Hans"), an ISO 639-2/T code
+// ("deu", "fra", "zho") and a language name ("German"). Only the book filter
+// stripped subtags, and only it knew 639-2/T, so a profile written in any of
+// them filtered releases as if the code were an unknown language and dropped
+// every tagged release.
+func TestFilterByAllowedLanguagesAgreesWithBookFilter(t *testing.T) {
+	cases := []struct {
+		allowed string // one profile entry, as stored in allowed_languages
+		keep    string // a release tagged with that same language
+		drop    string // a release tagged with a different one
+	}{
+		{"pt-BR", "O.Livro.PORTUGUESE.epub", "The.Book.ENGLISH.epub"},
+		{"pt_BR", "O.Livro.PORTUGUESE.epub", "The.Book.ENGLISH.epub"},
+		{"zh-Hans", "Shu.CHINESE.epub", "The.Book.ENGLISH.epub"},
+		{"deu", "Das.Buch.GERMAN.epub", "The.Book.ENGLISH.epub"},
+		{"fra", "Le.Livre.FRENCH.epub", "The.Book.ENGLISH.epub"},
+		{"zho", "Shu.CHINESE.epub", "The.Book.ENGLISH.epub"},
+		{"German", "Das.Buch.GERMAN.epub", "The.Book.ENGLISH.epub"},
+		{"en-US", "The.Book.ENGLISH.epub", "Das.Buch.GERMAN.epub"},
+	}
+	for _, tc := range cases {
+		allowed := models.ParseAllowedLanguages(tc.allowed)
+		kept := resultTitles(FilterByAllowedLanguages(toResults(tc.keep, tc.drop), allowed))
+
+		// What the book filter says about the same profile, for the language
+		// the kept release is tagged with.
+		keepCode := releaseLanguageCodes(NormalizeRelease(tc.keep))
+		if len(keepCode) != 1 {
+			t.Fatalf("%q: test fixture must carry exactly one language tag, got %v", tc.keep, keepCode)
+		}
+		bookAllows := models.IsLanguageAllowed(keepCode[0], allowed, false)
+
+		if !bookAllows {
+			t.Errorf("profile %q: models.IsLanguageAllowed rejects a %s book, so this fixture is wrong", tc.allowed, keepCode[0])
+			continue
+		}
+		if !slices.Contains(kept, tc.keep) {
+			t.Errorf("profile %q accepts a %s book but FilterByAllowedLanguages drops %q (kept %v) — "+
+				"the book would stay wanted forever with every release of it filtered away",
+				tc.allowed, keepCode[0], tc.keep, kept)
+		}
+		if slices.Contains(kept, tc.drop) {
+			t.Errorf("profile %q must still drop %q, kept %v", tc.allowed, tc.drop, kept)
 		}
 	}
 }

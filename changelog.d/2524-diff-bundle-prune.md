@@ -1,0 +1,2 @@
+### Fixed
+- **A linked series no longer counts box sets among its missing books** (#2524) — the Hardcover comparison listed every catalogue entry the library did not already hold, including the box sets and collection sets that adding a book refuses outright. The Add button beside them did nothing, and they kept the missing count above zero on a series that was actually complete. The comparison now applies the same rule the add path does. Thanks magrhino for running a real catalogue against it.

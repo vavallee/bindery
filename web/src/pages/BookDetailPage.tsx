@@ -8,7 +8,7 @@ import MarkdownDescription from '../components/MarkdownDescription'
 import MoreMenu from '../components/MoreMenu'
 import Section from '../components/Section'
 import Switch from '../components/Switch'
-import { btn, btnSize } from '../components/buttons'
+import { btn, btnSize, dangerLink } from '../components/buttons'
 import MediaBadge from '../components/MediaBadge'
 import { bookStatusBadge } from '../components/bookStatus'
 import RebindModal from '../components/RebindModal'
@@ -21,6 +21,7 @@ import { metadataSourceLink, providerDisplayName, providerFromBookForeignId } fr
 import FixMatchModal from '../components/FixMatchModal'
 import EditBookModal from '../components/EditBookModal'
 import { formatBytes } from '../util/format'
+import MetadataLinksMenu from '../components/MetadataLinksMenu'
 
 function formatDuration(seconds?: number): string {
   if (!seconds || seconds <= 0) return ''
@@ -288,8 +289,13 @@ export default function BookDetailPage() {
   const idClipboard = useClipboardCopy()
   const [copiedId, setCopiedId] = useState<string | null>(null)
   // Series membership for the meta row. series_books has been populated since
-  // v0.7.0 but this page never surfaced it.
-  const [series, setSeries] = useState<{ title: string; position: string }[]>([])
+  // v0.7.0 but this page never surfaced it. Carries the series id and the
+  // primary flag as of #2525, because a book in two series needs to say which
+  // one names its files and to leave the one it does not belong in.
+  const [series, setSeries] = useState<{ id: number; title: string; position: string; primary: boolean }[]>([])
+  const [seriesBusy, setSeriesBusy] = useState(false)
+  const [removeSeries, setRemoveSeries] = useState<{ id: number; title: string } | null>(null)
+  const [seriesNonce, setSeriesNonce] = useState(0)
 
   useEffect(() => {
     if (book?.title) {
@@ -323,17 +329,56 @@ export default function BookDetailPage() {
     api.listAuthorSeries(authorId)
       .then((list: Series[]) => {
         if (cancelled) return
-        const mine: { title: string; position: string }[] = []
+        const mine: { id: number; title: string; position: string; primary: boolean }[] = []
         for (const s of list) {
           for (const entry of s.books ?? []) {
-            if (entry.bookId === id) mine.push({ title: s.title, position: entry.positionInSeries })
+            if (entry.bookId === id) {
+              mine.push({
+                id: s.id,
+                title: s.title,
+                position: entry.positionInSeries,
+                primary: entry.primarySeries === true,
+              })
+            }
           }
         }
         setSeries(mine)
       })
       .catch(() => { /* no series row */ })
     return () => { cancelled = true }
-  }, [book?.authorId, book?.id])
+  }, [book?.authorId, book?.id, seriesNonce])
+
+  // #2525: the renamer reads one series per book. When a book sits in both its
+  // real series and an umbrella "Universe" one, these are how the user says
+  // which, and how they leave the one that should never have been linked.
+  const makePrimarySeries = async (seriesId: number) => {
+    if (!book) return
+    setSeriesBusy(true)
+    setError(null)
+    try {
+      await api.setPrimarySeriesForBook(seriesId, book.id)
+      setSeriesNonce(n => n + 1)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('bookDetail.series.setPrimaryFailed'))
+    } finally {
+      setSeriesBusy(false)
+    }
+  }
+
+  const confirmRemoveSeries = async () => {
+    if (!book || !removeSeries) return
+    setSeriesBusy(true)
+    setError(null)
+    try {
+      await api.removeBookFromSeries(removeSeries.id, book.id)
+      setRemoveSeries(null)
+      setSeriesNonce(n => n + 1)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('bookDetail.series.removeFailed'))
+    } finally {
+      setSeriesBusy(false)
+    }
+  }
 
   const saveField = async (patch: Partial<Book>) => {
     if (!book) return
@@ -535,6 +580,7 @@ export default function BookDetailPage() {
     }
     return rows
   })()
+  const sourceLinks = identityRows.flatMap(row => row.link ? [row.link] : [])
 
   // Display truth is the file inventory, never the declared media type.
   const rows = fileRows(book)
@@ -554,18 +600,36 @@ export default function BookDetailPage() {
         ? t('bookDetail.searchBothIndexers')
         : t('bookDetail.searchEbookIndexers')
 
-  // Format-scoped whenever the rows carry a real format: the format-less
-  // endpoint falls back to the legacy file_path, which on a mislabelled book
-  // points at the other format. The one exception is the bare legacy
-  // file_path row (see FileRow.legacyUntyped): its displayed format is only a
-  // proxy, the server resolves ?format= against the path's on-disk shape, and
-  // the two can disagree — so that row's group goes format-less, which is
-  // exact because the row only exists when it is the book's only file.
   const groupIsUntyped = (g: { rows: FileRow[] }) => g.rows.some(r => r.legacyUntyped)
-  const downloadHref = (group: { format: 'ebook' | 'audiobook'; rows: FileRow[] }) =>
-    groupIsUntyped(group)
-      ? `${BINDERY_BASE}/api/v1/book/${book.id}/file`
-      : `${BINDERY_BASE}/api/v1/book/${book.id}/file?format=${group.format}`
+
+  // Download is per ROW, not per format group (#2408).
+  //
+  // It used to be per group, and that was the honest unit while ?format= was
+  // all the endpoint could answer: the server resolved one path out of
+  // ebook_file_path / audiobook_file_path, which are single columns, so a book
+  // holding three epubs had exactly one reachable file and the other two could
+  // not be named at all. A reporter with several ebooks on one book pressed
+  // Download and always got the same one.
+  //
+  // The endpoint now takes ?path= and resolves it against book_files, so each
+  // row can name itself. Three cases, and the fallbacks are not decoration:
+  //
+  //   tracked        ?path=, the exact row. The only case that can disambiguate
+  //                  siblings, and the reason this exists.
+  //   legacyUntyped  format-less. Its displayed format is a proxy the server
+  //                  may contradict (it stats the path's shape), and it has no
+  //                  book_files row for ?path= to resolve. Exact anyway,
+  //                  because this row only exists when it is the book's ONLY
+  //                  file.
+  //   untracked      ?format=. A row read off the legacy per-format columns
+  //                  with no book_files entry, so ?path= would 404. Exact
+  //                  because that fallback yields at most one row per format.
+  const downloadHref = (row: FileRow) => {
+    const base = `${BINDERY_BASE}/api/v1/book/${book.id}/file`
+    if (row.legacyUntyped) return base
+    if (row.tracked) return `${base}?path=${encodeURIComponent(row.path)}`
+    return `${base}?format=${row.format}`
+  }
 
   return (
     // One width shared with AuthorDetailPage. These two pages used to disagree
@@ -675,7 +739,7 @@ export default function BookDetailPage() {
               </>
             ) : null}
             {series.map(s => (
-              <span key={`${s.title}-${s.position}`} className="contents">
+              <span key={s.id} className="contents">
                 <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
                 <span className="text-slate-600 dark:text-zinc-400">
                   {s.position
@@ -688,22 +752,12 @@ export default function BookDetailPage() {
                 </span>
               </span>
             ))}
-            {(() => {
-              const src = metadataSourceLink(book.foreignBookId, 'book')
-              return src ? (
-                <>
-                  <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
-                  <a
-                    href={src.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-emerald-600 dark:text-emerald-400 hover:underline"
-                  >
-                    {t('common.viewOnSource', { source: src.label, defaultValue: 'View on {{source}} ↗' })}
-                  </a>
-                </>
-              ) : null
-            })()}
+            {sourceLinks.length > 0 && (
+              <>
+                <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                <MetadataLinksMenu links={sourceLinks} />
+              </>
+            )}
           </div>
 
           {/* Clamped with show more/less, matching AuthorDetailPage. max-w-prose
@@ -753,6 +807,51 @@ export default function BookDetailPage() {
         </div>
       )}
 
+      {/* ===== Series membership (#2525) =====
+          Only when a book is in more than one series. With a single membership
+          there is nothing to choose and nothing to correct, so the meta row
+          above already says everything. */}
+      {series.length > 1 && (
+        <Section title={t('bookDetail.series.heading')}>
+          <p className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.series.explainer')}</p>
+          <ul className="mt-3 space-y-2">
+            {series.map(s => (
+              <li key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                <span className="text-slate-700 dark:text-zinc-300">
+                  {s.position
+                    ? t('bookDetail.seriesPosition', {
+                        series: s.title,
+                        position: s.position,
+                        defaultValue: '{{series}} #{{position}}',
+                      })
+                    : s.title}
+                </span>
+                {s.primary ? (
+                  <span className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.series.namesFiles')}</span>
+                ) : (
+                  <button
+                    type="button"
+                    className={`${btn.ghost} ${btnSize.sm}`}
+                    disabled={seriesBusy}
+                    onClick={() => makePrimarySeries(s.id)}
+                  >
+                    {t('bookDetail.series.useForNaming')}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={`${dangerLink} text-xs disabled:opacity-50`}
+                  disabled={seriesBusy}
+                  onClick={() => setRemoveSeries({ id: s.id, title: s.title })}
+                >
+                  {t('bookDetail.series.remove')}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
       {/* ===== File section ===== */}
       <Section title={t('bookDetail.fileHeading')}>
         <div>
@@ -792,13 +891,12 @@ export default function BookDetailPage() {
                         <span className="text-xs text-slate-500 dark:text-zinc-500">
                           {t('bookDetail.fileCount', { count: group.rows.length })}
                         </span>
-                        <a
-                          href={downloadHref(group)}
-                          className={`ml-auto ${actionBtnCls}`}
-                          title={t('bookDetail.downloadFormatHint')}
-                        >
-                          {t('bookDetail.download')}
-                        </a>
+                        {/* No Download here any more: a group of three epubs
+                            has no single file to hand back, which is exactly
+                            how #2408 shipped. Each row carries its own. Delete
+                            stays, because deleting the whole format IS a
+                            group-level action and the per-row Deregister in
+                            the overflow menu is a different thing. */}
                         {/* Ghost-danger, not solid red. Deleting the file is
                             reversible by re-downloading; solid red stays
                             reserved for "Delete book + files" in the Danger
@@ -838,10 +936,22 @@ export default function BookDetailPage() {
                                 {formatBytes(row.sizeBytes)}
                               </span>
                             )}
+                            <a
+                              href={downloadHref(row)}
+                              data-testid={`download-${row.path}`}
+                              className={`ml-auto shrink-0 ${actionBtnCls}`}
+                              title={t('bookDetail.downloadFileHint')}
+                              // N links all reading "Download" are
+                              // indistinguishable to a screen reader, same
+                              // reasoning as the row MoreMenu below.
+                              aria-label={t('bookDetail.downloadNamed', { name: baseName(row.path) })}
+                            >
+                              {t('bookDetail.download')}
+                            </a>
                             <button
                               type="button"
                               onClick={() => copyPath(row.path)}
-                              className="ml-auto shrink-0 text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5"
+                              className="shrink-0 text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5"
                               aria-label={t('bookDetail.copyPath')}
                             >
                               <span aria-hidden>⧉</span>{' '}
@@ -943,6 +1053,25 @@ export default function BookDetailPage() {
                   title: t('bookDetail.deleteAllFiles.hint'),
                   disabled: !hasAnyFile || deletingFile || deregistering || deletingBook,
                   onSelect: () => setDeleteTarget({ paths: rows.map(r => r.path) }),
+                },
+                {
+                  // Was a "Danger zone" section of its own: a heading, a
+                  // rose-tinted full-width card and the page's only solid red
+                  // button, for one action. AuthorDetailPage has always put the
+                  // equivalent Delete in this menu with danger styling, so the
+                  // two pages disagreed about what deleting a thing looks like
+                  // and the book page shouted.
+                  //
+                  // Nothing is hidden: the item is one click from where it
+                  // always was, it keeps its own confirm dialog, and unlike
+                  // every other item here it is NOT gated on hasAnyFile,
+                  // because a wanted book with no file is still a book you may
+                  // want to delete.
+                  label: t('bookDetail.deleteBook'),
+                  title: t('bookDetail.dangerBody'),
+                  danger: true,
+                  disabled: deletingBook || deletingFile,
+                  onSelect: () => setShowDeleteBook(true),
                 },
               ]}
             />
@@ -1112,27 +1241,6 @@ export default function BookDetailPage() {
         </Section>
       )}
 
-      {/* ===== Danger zone ===== */}
-      <Section
-        title={t('bookDetail.dangerHeading')}
-        tone="danger"
-        cardClassName="p-4 flex flex-col sm:flex-row sm:items-center gap-4"
-      >
-        <p className="text-sm text-slate-600 dark:text-zinc-400 flex-1">
-          {t('bookDetail.dangerBody')}
-        </p>
-        {/* The only solid-red control on the page. Deleting the book and every
-            file on disk is the one genuinely irreversible action here. */}
-        <button
-          type="button"
-          onClick={() => setShowDeleteBook(true)}
-          disabled={deletingBook || deletingFile}
-          className={`shrink-0 ${btn.dangerSolid} ${btnSize.md}`}
-        >
-          {t('bookDetail.deleteBook')}
-        </button>
-      </Section>
-
       {showEdit && (
         <EditBookModal
           book={book}
@@ -1223,6 +1331,23 @@ export default function BookDetailPage() {
           confirming={deregistering}
           onConfirm={deregisterFile}
           onClose={() => setDeregisterTarget(null)}
+        />
+      )}
+
+      {removeSeries && (
+        <ConfirmDialog
+          title={t('bookDetail.series.removeTitle')}
+          body={
+            <p>
+              {t('bookDetail.series.removeBody1')}{' '}
+              <span className="font-medium text-slate-800 dark:text-zinc-200">{removeSeries.title}</span>{' '}
+              {t('bookDetail.series.removeBody2')}
+            </p>
+          }
+          confirmLabel={t('bookDetail.series.remove')}
+          confirming={seriesBusy}
+          onConfirm={confirmRemoveSeries}
+          onClose={() => setRemoveSeries(null)}
         />
       )}
 

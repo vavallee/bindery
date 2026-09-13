@@ -97,6 +97,13 @@ func TestCriteriaISBN_NoUsableISBN(t *testing.T) {
 		{name: "no editions"},
 		{name: "editions without isbns", editions: []models.Edition{{ID: 1, BookID: 7}}},
 		{name: "unusable isbn", editions: []models.Edition{{ID: 1, BookID: 7, ISBN13: strptr("not-an-isbn")}}},
+		// An ISBN whose check digit does not verify is not a usable search
+		// criterion: it cannot name a real book, and the ISBN-10 case is
+		// worse than useless, because the conversion recomputes the ISBN-13
+		// check digit from a mistyped core and so produces a well-formed
+		// identifier for a book nobody asked for.
+		{name: "isbn13 with a bad check digit", editions: []models.Edition{{ID: 1, BookID: 7, ISBN13: strptr("9780306406152")}}},
+		{name: "isbn10 with a bad check digit", editions: []models.Edition{{ID: 1, BookID: 7, ISBN10: strptr("0441127717")}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := CriteriaISBN(book, tt.editions); got != "" {

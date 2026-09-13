@@ -192,7 +192,7 @@ func doCallback(t *testing.T, h *OIDCHandler) *httptest.ResponseRecorder {
 	state := "test-state"
 	nonce := "test-nonce"
 	verifier := "test-verifier-aaaaaaaaaaaaaaaaaaaaaaaa"
-	flowVal, err := oidc.EncodeFlowState(state, nonce, verifier, "https://bindery.example.com")
+	flowVal, err := oidc.EncodeFlowState(h.flowSecret(context.Background()), "test", state, nonce, verifier, "https://bindery.example.com")
 	if err != nil {
 		t.Fatalf("encode flow state: %v", err)
 	}
@@ -451,6 +451,58 @@ func TestCallback_EmailLink_MissingEmailVerifiedClaim(t *testing.T) {
 	}
 	if got == nil || got.ID == victim.ID {
 		t.Fatal("absent email_verified claim must not link to the victim's account")
+	}
+}
+
+// TestCallback_ForgedFlowCookieRejected is the login-CSRF from #2362 at the
+// handler. The attacker starts a login of their own against the IdP, keeps the
+// state, nonce, verifier and code, writes a flow cookie carrying them into the
+// victim's browser, and walks the victim onto the callback URL. Before the
+// cookie was signed, the callback had no way to tell that flow from one it had
+// started itself, and the victim ended up signed in as the attacker's IdP
+// identity.
+func TestCallback_ForgedFlowCookieRejected(t *testing.T) {
+	idp := newFakeIDP(t)
+	idp.claims = map[string]any{
+		"sub":            "attacker-sub",
+		"nonce":          "attacker-nonce",
+		"email":          "attacker@example.com",
+		"email_verified": true,
+	}
+	h, _, _ := newCallbackTestHandler(t, idp, nil, false)
+
+	// What an attacker can build without the install's session secret: the
+	// old wire format, bare base64 JSON.
+	raw, err := json.Marshal(map[string]any{
+		"s": "attacker-state", "n": "attacker-nonce", "cv": "attacker-verifier",
+		"rb": "https://bindery.example.com", "p": "test",
+		"exp": time.Now().Add(10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := base64.RawURLEncoding.EncodeToString(raw)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/auth/oidc/test/callback?state="+url.QueryEscape("attacker-state")+"&code=attacker-code", nil)
+	req.AddCookie(&http.Cookie{Name: oidcFlowCookie, Value: forged})
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("provider", "test")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	h.Callback(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400 for an unsigned flow cookie; body=%s", rec.Code, rec.Body.String())
+	}
+	if hasSessionCookie(rec) {
+		t.Fatal("a forged flow cookie must never produce a session")
+	}
+	// The refusal is deliberately one message: which server-side check failed
+	// is not the caller's business.
+	if strings.Contains(rec.Body.String(), "signature") || strings.Contains(rec.Body.String(), "not signed") {
+		t.Errorf("body should not name the failing check, got %q", rec.Body.String())
 	}
 }
 

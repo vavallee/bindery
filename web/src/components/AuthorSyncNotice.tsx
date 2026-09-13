@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import type { AuthorSyncSummary } from '../api/client'
+import Alert from './Alert'
 
 // authorSyncSampleLimit mirrors the server's per-filter cap
 // (authorSyncSkippedSampleLimit, internal/api/author_sync_summary.go) — that
@@ -39,6 +40,13 @@ function roundRobinSample(sources: string[][], limit: number): string[] {
 // This is the same information the sync already had, put where the missing
 // books are. It is informational rather than an error — the filter did what it
 // was configured to do — so it reads as a note, not a failure.
+//
+// It shipped in an amber box anyway, which said the opposite: a profile doing
+// its job looked like a fault every time an author page loaded. It is the info
+// tier now. Nothing was cut. The count and the settings link stay on screen,
+// and the per-filter breakdown plus the example titles moved behind the
+// disclosure, which is where the answer to "which books, and why" belongs
+// rather than in a permanent amber wall.
 export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary }) {
   const { t } = useTranslation()
   if (!sync) return null
@@ -46,9 +54,13 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
   const notAccepted = sync.skippedNotAccepted ?? 0
   const partBooks = sync.skippedPartBooks ?? 0
   const missingDate = sync.skippedMissingDate ?? 0
-  const minPopularity = sync.skippedMinPopularity ?? 0
   const minPages = sync.skippedMinPages ?? 0
   const missingIsbn = sync.skippedMissingIsbn ?? 0
+  const failed = sync.failed ?? 0
+  // skippedExcluded is deliberately absent from this sum and from the list
+  // below. The user excluded that book on purpose, so it is not something the
+  // page owes them an explanation for. It is still in the payload, because
+  // total has to reconcile (#2449).
   const skipped =
     sync.skippedLanguage +
     sync.skippedJunk +
@@ -56,12 +68,13 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
     notAccepted +
     partBooks +
     missingDate +
-    minPopularity +
     minPages +
     missingIsbn
-  // A sync that dropped nothing has nothing to explain; the book list already
-  // says what happened.
-  if (skipped <= 0) return null
+  // A sync that dropped nothing and lost nothing has nothing to explain; the
+  // book list already says what happened. A failed write is worth saying even
+  // when no filter fired, because it is the one outcome here that is a fault
+  // rather than a setting.
+  if (skipped <= 0 && failed <= 0) return null
 
   const languages = sync.allowedLanguages?.length
     ? sync.allowedLanguages.join(', ')
@@ -83,7 +96,6 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
       ),
       (sync.skippedPartBooksSample ?? []).map(b => b.title),
       (sync.skippedMissingDateSample ?? []).map(b => b.title),
-      (sync.skippedMinPopularitySample ?? []).map(b => b.title),
       (sync.skippedMinPagesSample ?? []).map(b => b.title),
       (sync.skippedMissingIsbnSample ?? []).map(b => b.title),
     ],
@@ -91,108 +103,153 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
   )
 
   return (
-    <div
-      data-testid="author-sync-notice"
-      className="mb-4 px-3 py-2 rounded border text-sm border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200"
+    // Keyed on the refresh it describes, so a dismissal covers that refresh
+    // and not the next one: a later sync that skips a different set of books
+    // gets its own chance to be seen.
+    <Alert
+      key={sync.completedAt}
+      // The tier follows the worst thing that happened. A filter doing its job
+      // is info; a book the sync failed to save is a fault and reads red,
+      // which is the distinction the tier vocabulary exists to make. An error
+      // tier whose reason was folded into a disclosure would be the weaker
+      // half of both ideas, so the failure line is on screen too.
+      tier={failed > 0 ? 'error' : 'info'}
+      testId="author-sync-notice"
+      dismissible
+      className="mb-4"
+      title={
+        skipped > 0
+          ? t('authorDetail.lastSync.heading', {
+              count: skipped,
+              defaultValue: 'Last refresh skipped {{count}} of this author’s {{total}} works',
+              total: sync.total,
+            })
+          : t('authorDetail.lastSync.headingFailedOnly', {
+              count: failed,
+              defaultValue: 'Last refresh could not save {{count}} of this author’s {{total}} works',
+              total: sync.total,
+            })
+      }
+      details={
+        <>
+          <ul className="list-disc list-inside space-y-0.5">
+            {sync.skippedLanguage > 0 && (
+              <li>
+                {t('authorDetail.lastSync.language', {
+                  count: sync.skippedLanguage,
+                  defaultValue: '{{count}} skipped by the language filter (allowed: {{languages}})',
+                  languages,
+                })}
+                {sync.unknownLanguageFail
+                  ? ' ' +
+                    t(
+                      'authorDetail.lastSync.unknownFail',
+                      'Works the metadata provider reported no language for were skipped too, because this author’s metadata profile is set to reject unknown languages.',
+                    )
+                  : ''}
+              </li>
+            )}
+            {sync.skippedJunk > 0 && (
+              <li>
+                {t('authorDetail.lastSync.junk', {
+                  count: sync.skippedJunk,
+                  defaultValue: '{{count}} skipped as untitled provider records',
+                })}
+              </li>
+            )}
+            {sync.skippedMediaType > 0 && (
+              <li>
+                {t('authorDetail.lastSync.mediaType', {
+                  count: sync.skippedMediaType,
+                  defaultValue: '{{count}} skipped as the wrong format for your default media type',
+                })}
+              </li>
+            )}
+            {/* A refresh only adds books for an author you monitor and have set to
+                take new items (#1815). Saying so here is the difference between
+                "the refresh is broken" and "it did what I configured". */}
+            {notAccepted > 0 && (
+              <li>
+                {t('authorDetail.lastSync.notAccepted', {
+                  count: notAccepted,
+                  defaultValue:
+                    '{{count}} not added, because this author is not taking newly discovered books — the author is unmonitored, or "Monitor newly discovered books" is set to don’t add them. Books already in your library were still refreshed.',
+                })}
+              </li>
+            )}
+            {partBooks > 0 && (
+              <li>
+                {t('authorDetail.lastSync.partBooks', {
+                  count: partBooks,
+                  defaultValue: '{{count}} skipped as box sets, omnibuses, or other multi-book bundles',
+                })}
+              </li>
+            )}
+            {missingDate > 0 && (
+              <li>
+                {t('authorDetail.lastSync.missingDate', {
+                  count: missingDate,
+                  defaultValue: '{{count}} skipped for having no release date',
+                })}
+              </li>
+            )}
+            {minPages > 0 && (
+              <li>
+                {t('authorDetail.lastSync.minPages', {
+                  count: minPages,
+                  defaultValue: '{{count}} skipped for falling below the minimum page count',
+                })}
+              </li>
+            )}
+            {missingIsbn > 0 && (
+              <li>
+                {t('authorDetail.lastSync.missingIsbn', {
+                  count: missingIsbn,
+                  defaultValue: '{{count}} skipped for having no ISBN on any edition',
+                })}
+              </li>
+            )}
+          </ul>
+          {sample.length > 0 && (
+            <div className="mt-1">
+              {t('authorDetail.lastSync.examples', 'For example: {{titles}}', { titles: sample.join(', ') })}
+            </div>
+          )}
+        </>
+      }
     >
-      <div className="font-medium">
-        {t('authorDetail.lastSync.heading', {
-          count: skipped,
-          defaultValue: 'Last refresh skipped {{count}} of this author’s {{total}} works',
-          total: sync.total,
+      {/* The sentence that makes the numbers add up, and it stays on screen
+          rather than folding into the disclosure. Without it the notice
+          reports a skip count against a total and leaves the reader to guess
+          at the gap, which reads as loss even when every one of those works
+          is already on the shelf (#2449). Folding the reconciliation away
+          would recreate that bug in a calmer colour. */}
+      <div>
+        {t('authorDetail.lastSync.accounting', {
+          defaultValue: '{{added}} added, {{matched}} already in your library.',
+          added: sync.added,
+          // `?? 0` despite `matched` being required in AuthorSyncSummary. The
+          // type describes what a current server sends; this value is decoded
+          // from JSON, and `npm run dev` proxies to whatever backend is on
+          // :8787, which may predate the field.
+          matched: sync.matched ?? 0,
         })}
       </div>
-      <ul className="mt-1 list-disc list-inside space-y-0.5">
-        {sync.skippedLanguage > 0 && (
-          <li>
-            {t('authorDetail.lastSync.language', {
-              count: sync.skippedLanguage,
-              defaultValue: '{{count}} skipped by the language filter (allowed: {{languages}})',
-              languages,
-            })}
-            {sync.unknownLanguageFail
-              ? ' ' +
-                t(
-                  'authorDetail.lastSync.unknownFail',
-                  'Works the metadata provider reported no language for were skipped too, because this author’s metadata profile is set to reject unknown languages.',
-                )
-              : ''}
-          </li>
-        )}
-        {sync.skippedJunk > 0 && (
-          <li>
-            {t('authorDetail.lastSync.junk', {
-              count: sync.skippedJunk,
-              defaultValue: '{{count}} skipped as untitled provider records',
-            })}
-          </li>
-        )}
-        {sync.skippedMediaType > 0 && (
-          <li>
-            {t('authorDetail.lastSync.mediaType', {
-              count: sync.skippedMediaType,
-              defaultValue: '{{count}} skipped as the wrong format for your default media type',
-            })}
-          </li>
-        )}
-        {/* A refresh only adds books for an author you monitor and have set to
-            take new items (#1815). Saying so here is the difference between
-            "the refresh is broken" and "it did what I configured". */}
-        {notAccepted > 0 && (
-          <li>
-            {t('authorDetail.lastSync.notAccepted', {
-              count: notAccepted,
-              defaultValue:
-                '{{count}} not added, because this author is not taking newly discovered books — the author is unmonitored, or "Monitor newly discovered books" is set to don’t add them. Books already in your library were still refreshed.',
-            })}
-          </li>
-        )}
-        {partBooks > 0 && (
-          <li>
-            {t('authorDetail.lastSync.partBooks', {
-              count: partBooks,
-              defaultValue: '{{count}} skipped as box sets, omnibuses, or other multi-book bundles',
-            })}
-          </li>
-        )}
-        {missingDate > 0 && (
-          <li>
-            {t('authorDetail.lastSync.missingDate', {
-              count: missingDate,
-              defaultValue: '{{count}} skipped for having no release date',
-            })}
-          </li>
-        )}
-        {minPopularity > 0 && (
-          <li>
-            {t('authorDetail.lastSync.minPopularity', {
-              count: minPopularity,
-              defaultValue: '{{count}} skipped for falling below the minimum popularity floor',
-            })}
-          </li>
-        )}
-        {minPages > 0 && (
-          <li>
-            {t('authorDetail.lastSync.minPages', {
-              count: minPages,
-              defaultValue: '{{count}} skipped for falling below the minimum page count',
-            })}
-          </li>
-        )}
-        {missingIsbn > 0 && (
-          <li>
-            {t('authorDetail.lastSync.missingIsbn', {
-              count: missingIsbn,
-              defaultValue: '{{count}} skipped for having no ISBN on any edition',
-            })}
-          </li>
-        )}
-      </ul>
-      {sample.length > 0 && (
-        <div className="mt-1">
-          {t('authorDetail.lastSync.examples', 'For example: {{titles}}', { titles: sample.join(', ') })}
+      {/* A failed write is the one thing here that is a fault rather than a
+          setting, so it is never folded away and it is what turns the tier
+          red. */}
+      {failed > 0 && (
+        <div className="mt-1 font-medium">
+          {t('authorDetail.lastSync.failed', {
+            count: failed,
+            defaultValue:
+              '{{count}} could not be saved. This is an error rather than a filter, so the details are in Settings, then Logs.',
+          })}
         </div>
       )}
+      {/* Kept on screen rather than folded away: the link is the fix for the
+          count in the title, and the timestamp is what tells you whether the
+          count is stale. */}
       <div className="mt-1 text-xs">
         <Link to="/settings?tab=metadata" className="underline">
           {t('authorDetail.lastSync.settingsLink', 'Metadata profile settings')}
@@ -202,6 +259,6 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
           when: new Date(sync.completedAt).toLocaleString(),
         })}
       </div>
-    </div>
+    </Alert>
   )
 }

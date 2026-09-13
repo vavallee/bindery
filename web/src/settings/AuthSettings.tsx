@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, BINDERY_BASE, OidcProvider, OidcProviderConfig } from '../api/client'
+import Alert from '../components/Alert'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../components/useClipboardCopy'
 import { useConfirmDialog } from '../components/useConfirmDialog'
@@ -117,7 +118,11 @@ export default function AuthSettings() {
           </div>
         ))}
 
-        {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+        {/* Error tier: the add or remove did not happen, the provider list on
+            screen no longer matches what is saved, and nothing clears this but
+            trying again. A red line of 12px text at the bottom of a card was
+            easy to miss and left people believing a provider was gone. */}
+        {error && <Alert tier="error">{error}</Alert>}
 
         {showAdd ? (
           <AddProviderForm onAdd={add} onCancel={() => setShowAdd(false)} saving={saving} />

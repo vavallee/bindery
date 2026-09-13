@@ -319,12 +319,19 @@ export default function SeriesPage() {
 
                 {/* Actions row */}
                 <div className="px-4 pb-3 flex items-center gap-3 flex-wrap" onClick={e => e.stopPropagation()}>
+                  {/* This flag is a shortlist marker, not a schedule. Nothing
+                      reads series.monitored except this page: no job checks a
+                      monitored series for new books, and Fill gaps ignores it.
+                      Labelling it "Monitor series" promised recurring attention
+                      the code never gave, which is what #2523 was filed about.
+                      The control stays, the wording no longer overstates it. */}
                   <Switch
                     checked={series.monitored}
                     onChange={() => toggleMonitor(series)}
-                    label={series.monitored ? 'Stop monitoring' : 'Monitor series'}
+                    label={series.monitored ? 'Remove from shortlist' : 'Add to shortlist'}
+                    title="Marks the series so you can find it again. Bindery does not yet check a shortlisted series for new books on its own; use Fill gaps."
                   >
-                    {series.monitored ? 'Monitored' : 'Not monitored'}
+                    {series.monitored ? 'Shortlisted' : 'Not shortlisted'}
                   </Switch>
                   {enhancedHardcoverApi && (
                     <button

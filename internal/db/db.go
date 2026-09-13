@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/textutil"
 
 	_ "modernc.org/sqlite"
@@ -376,6 +377,18 @@ func migrate(database *sql.DB) error {
 		return fmt.Errorf("backfill search keys: %w", err)
 	}
 
+	// The Audiobookshelf import used to store an ASIN with only its whitespace
+	// trimmed while every metadata provider upper-cased it, so one book could
+	// hold "b08xyz" from ABS and "B08XYZ" from Audible. Both sides now go
+	// through isbnutil.NormalizeASIN, but the rows already written have to be
+	// brought up to it: an ASIN is compared as an exact string (importer.Lookup
+	// matches a filename's ASIN against books.asin with ==), so a stored
+	// lowercase one silently matches nothing and would keep doing so until the
+	// book happened to be re-imported.
+	if err := runBackfillOnce(database, backfillRevKeyASINCase, isbnutil.NormalizeASINRev, backfillASINCase); err != nil {
+		return fmt.Errorf("backfill asin case: %w", err)
+	}
+
 	return nil
 }
 
@@ -419,6 +432,7 @@ const (
 	backfillRevKeySortKeys     = "backfill.sort_key_rev"
 	backfillRevKeyBookSortKeys = "backfill.book_sort_key_rev"
 	backfillRevKeySearchKeys   = "backfill.search_key_rev"
+	backfillRevKeyASINCase     = "backfill.asin_case_rev"
 )
 
 // backfillRevisionCurrent reports whether the stored marker for key already
@@ -1099,6 +1113,100 @@ func backfillSearchKeys(database *sql.DB) error {
 	return nil
 }
 
+// backfillASINCase re-normalizes every stored ASIN through
+// isbnutil.NormalizeASIN, in books.asin and editions.asin.
+//
+// It exists because an ASIN is stored data that is compared as an exact string:
+// importer.Lookup's first matching tier is `books[i].ASIN == parsed.ASIN`, and
+// the parsed side comes from a filename regexp that only ever yields upper
+// case. An ASIN written by the Audiobookshelf import before it normalized
+// casing therefore matches nothing at all, and normalizing new writes alone
+// would leave those rows unreachable until the book was re-imported. Case is
+// the only difference at stake, so re-normalizing is safe: it can turn a dead
+// identifier into a live one but cannot point an existing match somewhere new.
+//
+// The recompute runs in Go rather than as `UPDATE … SET asin = UPPER(asin)` so
+// it stays exactly what the ingest paths apply, including the trim. It is
+// unconditional and idempotent; migrate() gates it on
+// backfill.asin_case_rev against isbnutil.NormalizeASINRev.
+func backfillASINCase(database *sql.DB) error {
+	total := 0
+	for _, table := range []string{"books", "editions"} {
+		n, err := backfillASINColumn(database, table)
+		if err != nil {
+			return err
+		}
+		total += n
+	}
+	if total > 0 {
+		slog.Info("backfilled ASIN casing", "rows", total)
+	}
+	return nil
+}
+
+// backfillASINColumn rewrites <table>.asin for every row whose stored value
+// differs from isbnutil.NormalizeASIN of itself, and reports how many rows it
+// touched. Table names are compile-time constants from this file, never user
+// input, so interpolating them is safe; only the values are bound.
+func backfillASINColumn(database *sql.DB, table string) (int, error) {
+	type pending struct {
+		id   int64
+		asin string
+	}
+	// Read phase in its own scope so the cursor closes before the write tx
+	// opens — holding a read cursor across Begin() risks "database is locked".
+	updates, err := func() ([]pending, error) {
+		rows, err := database.Query(fmt.Sprintf(
+			"SELECT id, COALESCE(asin, '') FROM %s WHERE COALESCE(asin, '') != ''", table))
+		if err != nil {
+			return nil, fmt.Errorf("read %s for asin backfill: %w", table, err)
+		}
+		defer rows.Close()
+		var out []pending
+		for rows.Next() {
+			var id int64
+			var stored string
+			if err := rows.Scan(&id, &stored); err != nil {
+				return nil, fmt.Errorf("scan %s row for asin backfill: %w", table, err)
+			}
+			if want := isbnutil.NormalizeASIN(stored); want != stored {
+				out = append(out, pending{id: id, asin: want})
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate %s for asin backfill: %w", table, err)
+		}
+		return out, nil
+	}()
+	if err != nil {
+		return 0, err
+	}
+	if len(updates) == 0 {
+		return 0, nil
+	}
+
+	tx, err := database.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin %s asin backfill tx: %w", table, err)
+	}
+	stmt, err := tx.Prepare(fmt.Sprintf("UPDATE %s SET asin = ? WHERE id = ?", table))
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, fmt.Errorf("prepare %s asin backfill: %w", table, err)
+	}
+	defer stmt.Close()
+	for _, u := range updates {
+		if _, err := stmt.Exec(u.asin, u.id); err != nil {
+			_ = tx.Rollback()
+			return 0, fmt.Errorf("update asin for %s %d: %w", table, u.id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit %s asin backfill: %w", table, err)
+	}
+	return len(updates), nil
+}
+
 // backfillFoldedSearchColumn rewrites <table>.search_key from <table>.<source>
 // for every row where the two disagree, and reports how many rows it touched.
 func backfillFoldedSearchColumn(database *sql.DB, table, source string) (int, error) {
@@ -1186,4 +1294,5 @@ func stampBackfillRevisions(database *sql.DB) {
 	markBackfillRevision(database, backfillRevKeySortKeys, authorSortKeyRev)
 	markBackfillRevision(database, backfillRevKeyBookSortKeys, bookSortKeyRev)
 	markBackfillRevision(database, backfillRevKeySearchKeys, textutil.FoldForSearchRev)
+	markBackfillRevision(database, backfillRevKeyASINCase, isbnutil.NormalizeASINRev)
 }

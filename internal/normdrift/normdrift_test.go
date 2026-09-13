@@ -324,9 +324,14 @@ var adversarialSearchInputs = []string{
 // with optional region ("en", "en-US"), EPUBs carry whatever dc:language
 // says, DNB emits 639-2 natively, and profiles are written in 639-2/B —
 // plus empty (work-level OpenLibrary data) and plain garbage.
+// Audible and Audnex report a language as a word rather than a code, and
+// providers mix ISO 639-2/B with ISO 639-2/T, so "ger" and "deu" or "fre" and
+// "fra" are the same language spelled two legal ways. All four vocabularies
+// used to reach the filter from different code paths (#2463).
 var adversarialLanguageCodes = []string{
 	"en", "en-US", "EN", "eng", "de", "ger", "deu", "pt-BR", "pt_BR",
 	"zh-Hans", "fr", "fre", " Eng ", "", "xx", "not a language",
+	"fra", "zho", "nld", "ces", "German", "Deutsch", "english", "Português",
 }
 
 // TestLanguageFilterIsInvariantUnderItsOwnCanonicaliser is the language
