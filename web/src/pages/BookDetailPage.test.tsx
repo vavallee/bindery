@@ -1,6 +1,7 @@
+import { useEffect } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import BookDetailPage, { SearchResultsSection } from './BookDetailPage'
 import { api } from '../api/client'
 import type { Author, Book, BookFile, Download, HistoryEvent, Indexer, SearchResult } from '../api/client'
@@ -168,13 +169,32 @@ function makeDownload(overrides: Partial<Download> = {}): Download {
   }
 }
 
-function renderBookDetailPage() {
+type NavEntry = string | { pathname: string; state?: unknown }
+
+function LocationProbe({ onLocation }: { onLocation?: (location: string) => void }) {
+  const location = useLocation()
+  useEffect(() => {
+    onLocation?.(`${location.pathname}${location.search}${location.hash}`)
+  }, [location, onLocation])
+  return null
+}
+
+function renderBookDetailPage(
+  initialPath: NavEntry | NavEntry[] = '/book/42',
+  onLocation?: (location: string) => void,
+) {
+  // A multi-entry array simulates real browser history (e.g. arriving from
+  // the Books list) so Back's navigate(-1) has somewhere to land.
+  const initialEntries = Array.isArray(initialPath) ? initialPath : [initialPath]
+
   return render(
-    <MemoryRouter initialEntries={['/book/42']}>
+    <MemoryRouter initialEntries={initialEntries} initialIndex={initialEntries.length - 1}>
+      <LocationProbe onLocation={onLocation} />
       <Routes>
         <Route path="/book/:id" element={<BookDetailPage />} />
         <Route path="/settings" element={<div>Settings Page</div>} />
         <Route path="/author/:id" element={<div>Author Page</div>} />
+        <Route path="/books" element={<div>Books Page</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -1368,5 +1388,88 @@ describe('BookDetailPage — monitor toggle (#2417)', () => {
 
     await act(async () => { settle?.(makeBook({ monitored: false })) })
     expect(await screen.findByRole('switch', { name: 'Monitor' })).toBeEnabled()
+  })
+})
+
+describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () => {
+  it('hides the controls when there is no router state at all (opened from Wanted, a search result, or after a refresh)', async () => {
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.queryByLabelText('Previous book')).toBeNull()
+    expect(screen.queryByLabelText('Next book')).toBeNull()
+  })
+
+  it('renders Previous/Next from router state and follows Next to the right id, carrying the chain state', async () => {
+    let lastLocation = ''
+    vi.mocked(api.getBook).mockImplementation((id: number) =>
+      Promise.resolve(makeBook({ id, title: id === 42 ? 'The Final Empire' : 'The Well of Ascension' })))
+    renderBookDetailPage(
+      { pathname: '/book/42', state: { ids: [40, 42, 43, 44, 45], index: 1 } },
+      loc => { lastLocation = loc },
+    )
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByLabelText('Next book'))
+
+    await waitFor(() => expect(lastLocation).toBe('/book/43'))
+    await screen.findByRole('heading', { name: 'The Well of Ascension' })
+  })
+
+  it('hides Previous at the first position and shows only Next', async () => {
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [42, 43], index: 0 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.queryByLabelText('Previous book')).toBeNull()
+    expect(screen.getByLabelText('Next book')).toBeInTheDocument()
+  })
+
+  it('hides the controls for a single-book list (both ends null)', async () => {
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [42], index: 0 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.queryByLabelText('Previous book')).toBeNull()
+    expect(screen.queryByLabelText('Next book')).toBeNull()
+  })
+
+  it('ignores state that does not match this book (stale browser back/forward state)', async () => {
+    // ids[index] is 99, not 42 — a mismatch that must be treated as no
+    // navigation info rather than pointing at the wrong neighbour.
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [98, 99, 100], index: 1 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.queryByLabelText('Previous book')).toBeNull()
+    expect(screen.queryByLabelText('Next book')).toBeNull()
+  })
+
+  it('Back always uses browser history, even inside a Previous/Next chain (unlike AuthorDetailPage, there is no single canonical list to jump to)', async () => {
+    let lastLocation = ''
+    renderBookDetailPage(
+      ['/books', { pathname: '/book/42', state: { ids: [40, 42, 43], index: 1 } }],
+      loc => { lastLocation = loc },
+    )
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByText('← Books'))
+
+    await waitFor(() => expect(lastLocation).toBe('/books'))
+  })
+
+  it('clears stale search results from the previous book after Next, proving the key-remount actually resets state', async () => {
+    vi.mocked(api.getBook).mockImplementation((id: number) =>
+      Promise.resolve(makeBook({ id, title: id === 42 ? 'The Final Empire' : 'The Well of Ascension' })))
+    vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
+    vi.mocked(api.searchBook).mockResolvedValue({
+      results: [makeResult({ guid: 'r1', title: 'A Result For Book 42' })],
+      debug: null,
+    })
+
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [42, 43], index: 0 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByRole('button', { name: /Search ebook indexers/ }))
+    expect(await screen.findByText('A Result For Book 42')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Next book'))
+    await screen.findByRole('heading', { name: 'The Well of Ascension' })
+
+    // Without the remount, `results` would still hold book 42's search hit.
+    expect(screen.queryByText('A Result For Book 42')).not.toBeInTheDocument()
   })
 })

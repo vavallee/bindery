@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, BINDERY_BASE, Book, HistoryEvent, MediaType, SearchResult, SearchDebug, Series } from '../api/client'
 import SearchDebugPanel from '../components/SearchDebugPanel'
@@ -244,10 +244,33 @@ export function SearchResultsSection({
 // to prevent.
 const actionBtnCls = `${btn.secondary} ${btnSize.md}`
 
+// Previous/Next navigation (#2548, book side), entirely client-side, same
+// idiom as AuthorDetailPage: BooksPage/AuthorDetailPage/WantedPage already
+// have their current page loaded and ordered, so they hand it over as router
+// `state` instead of this page re-fetching it. Not shared as an exported type
+// — each list page builds the same shape independently.
+interface BookNavState {
+  ids: number[]
+  index: number
+}
+
 export default function BookDetailPage() {
+  const { id } = useParams<{ id: string }>()
+  // Remounts on every id change rather than trying to individually reset the
+  // many book-scoped state variables below (search results, delete/
+  // deregister/fix-match targets, series membership, ASIN draft, clipboard
+  // flags, ...). A Previous/Next hop only changes the :id param — react-router
+  // does not remount the element for that alone — and this page has far more
+  // per-book state than AuthorDetailPage, where each variable was reset
+  // individually; a full remount is simpler and can't miss one.
+  return <BookDetailPageInner key={id} />
+}
+
+function BookDetailPageInner() {
   const { t } = useTranslation()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const bookId = Number(id)
 
   const [book, setBook] = useState<Book | null>(null)
@@ -542,6 +565,19 @@ export default function BookDetailPage() {
     await idClipboard.copy(value)
   }
 
+  // Validated against bookId: stale state (browser back/forward) or no state
+  // at all (opened from somewhere that never set it) must read as "no nav
+  // info", not point at the wrong neighbour.
+  const navState = (() => {
+    const s = location.state as BookNavState | null
+    if (s && Array.isArray(s.ids) && typeof s.index === 'number' && s.ids[s.index] === bookId) {
+      return s
+    }
+    return null
+  })()
+  const prevId = navState && navState.index > 0 ? navState.ids[navState.index - 1] : null
+  const nextId = navState && navState.index < navState.ids.length - 1 ? navState.ids[navState.index + 1] : null
+
   if (loading) return <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
   if (!book) return <div className="text-slate-600 dark:text-zinc-500">{t('bookDetail.notFound')}</div>
 
@@ -636,13 +672,41 @@ export default function BookDetailPage() {
     // (7xl vs 4xl), so author → book collapsed the content by 384px and
     // left-aligned it mid-navigation.
     <div className="max-w-7xl">
-      <div className="mb-4 flex items-center gap-3 text-sm">
+      <div className="mb-4 flex items-center justify-between gap-3 text-sm">
+        {/* Unlike AuthorDetailPage's Back, this always uses browser history:
+            a book can be reached from five different lists (Books, an
+            author's own book list, Wanted, a series, a direct link), so
+            there is no single canonical "the list" to jump to instead. */}
         <button
           onClick={() => navigate(-1)}
           className="text-emerald-600 dark:text-emerald-400 hover:underline"
         >
           {t('bookDetail.back')}
         </button>
+        {navState && (prevId !== null || nextId !== null) && (
+          <div className="flex items-center gap-2">
+            {prevId !== null && (
+              <Link
+                to={`/book/${prevId}`}
+                state={{ ids: navState.ids, index: navState.index - 1 }}
+                aria-label={t('bookDetail.nav.previousAriaLabel', 'Previous book')}
+                className={`${btn.ghost} ${btnSize.sm}`}
+              >
+                {t('bookDetail.nav.previous', '‹ Previous')}
+              </Link>
+            )}
+            {nextId !== null && (
+              <Link
+                to={`/book/${nextId}`}
+                state={{ ids: navState.ids, index: navState.index + 1 }}
+                aria-label={t('bookDetail.nav.nextAriaLabel', 'Next book')}
+                className={`${btn.ghost} ${btnSize.sm}`}
+              >
+                {t('bookDetail.nav.next', 'Next ›')}
+              </Link>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ===== Header: cover + metadata ===== */}

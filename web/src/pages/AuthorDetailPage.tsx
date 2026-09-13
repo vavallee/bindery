@@ -597,6 +597,15 @@ export default function AuthorDetailPage() {
 
   const dateSortIcon = dateSort === 'asc' ? ' ↑' : dateSort === 'desc' ? ' ↓' : ''
 
+  // This author's filtered books, in order — handed to BookDetailPage as
+  // router state (#2548) for Previous/Next; see BookNavState there. Scoped to
+  // filteredBooks (not the grouped-by-series layout) so the chain has one
+  // well-defined order regardless of view: when Group by series is on,
+  // Next/Previous follows this order rather than the visual card-to-card
+  // order across group boundaries — a documented trade-off, not fixed further.
+  const bookIds = filteredBooks.map(b => b.id)
+  const bookNavState = (book: Book) => ({ ids: bookIds, index: bookIds.indexOf(book.id) })
+
   // Render helpers shared by the flat and grouped-by-series (#1125) layouts so
   // each series section and the standalone group reuse the exact same table
   // rows / grid cards instead of duplicating the markup.
@@ -608,7 +617,7 @@ export default function AuthorDetailPage() {
         // Client-side, matching the <Link> in this same row. The row used to do
         // a full page reload while the link inside it routed client-side, so
         // one row had two different navigation behaviours.
-        onClick={() => navigate(`/book/${book.id}`)}
+        onClick={() => navigate(`/book/${book.id}`, { state: bookNavState(book) })}
       >
         <td className="px-3 py-2 w-10 align-middle" onClick={e => e.stopPropagation()}>
           <input
@@ -620,7 +629,7 @@ export default function AuthorDetailPage() {
           />
         </td>
         <td className="px-3 py-2 align-middle">
-          <Link to={`/book/${book.id}`} className="flex items-center gap-2 min-w-0" onClick={e => e.stopPropagation()}>
+          <Link to={`/book/${book.id}`} state={bookNavState(book)} className="flex items-center gap-2 min-w-0" onClick={e => e.stopPropagation()}>
             {book.imageUrl ? (
               <img src={book.imageUrl} alt="" className="w-6 h-9 object-cover rounded flex-shrink-0" />
             ) : (
@@ -733,7 +742,7 @@ export default function AuthorDetailPage() {
             className={`absolute top-2 left-2 z-10 rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 ${selected.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
             aria-label={`Select ${book.title}`}
           />
-          <Link to={`/book/${book.id}`} className="block">
+          <Link to={`/book/${book.id}`} state={bookNavState(book)} className="block">
             <div className="aspect-[2/3] bg-slate-200 dark:bg-zinc-800 relative">
               {book.imageUrl ? (
                 <img src={book.imageUrl} alt={book.title} className="w-full h-full object-cover" />

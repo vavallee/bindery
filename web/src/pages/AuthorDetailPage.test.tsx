@@ -96,6 +96,17 @@ function LocationProbe({ onLocation }: { onLocation?: (location: string) => void
 
 type NavEntry = string | { pathname: string; state?: unknown }
 
+// Unlike LocationProbe above, this also exposes router `state` — needed to
+// verify the {ids, index} payload a book link/row carries, not just where it
+// points.
+function StateProbe({ onState }: { onState: (state: unknown) => void }) {
+  const location = useLocation()
+  useEffect(() => {
+    onState(location.state)
+  }, [location, onState])
+  return null
+}
+
 function renderAuthorDetailPage(
   books: Book[],
   view: 'grid' | 'table' = 'grid',
@@ -1296,5 +1307,37 @@ describe('AuthorDetailPage: manual refresh', () => {
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
     expect(screen.getByText('Provenance')).toBeInTheDocument()
     expect(api.listAllBooks).toHaveBeenLastCalledWith({ authorId: 42, includeExcluded: true })
+  })
+})
+
+describe('AuthorDetailPage — book link nav state (#2548, book side)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    installLocalStorageMock()
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([])
+  })
+
+  it('carries {ids, index} on book links and the row click, scoped to filteredBooks order', async () => {
+    vi.mocked(api.getAuthor).mockResolvedValue(author)
+    vi.mocked(api.listAllBooks).mockResolvedValue([
+      makeBook({ id: 10, title: 'The Final Empire', status: 'imported' }),
+      makeBook({ id: 11, title: 'The Well of Ascension', status: 'imported' }),
+    ])
+    localStorage.setItem('bindery.view.author-detail', 'table')
+
+    let capturedState: unknown
+    render(
+      <MemoryRouter initialEntries={['/author/42']}>
+        <StateProbe onState={s => { capturedState = s }} />
+        <Routes>
+          <Route path="/author/:id" element={<AuthorDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const row = (await screen.findByText('The Well of Ascension')).closest('tr')!
+    fireEvent.click(row)
+
+    await waitFor(() => expect(capturedState).toEqual({ ids: [10, 11], index: 1 }))
   })
 })

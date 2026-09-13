@@ -1285,6 +1285,12 @@
   },
   "bookDetail": {
     "back": "← Books",
+    "nav": {
+      "previous": "‹ Previous",
+      "next": "Next ›",
+      "previousAriaLabel": "Previous book",
+      "nextAriaLabel": "Next book"
+    },
     "notFound": "Book not found",
     "loadFailed": "Failed to load",
     "saveFailed": "Save failed",

@@ -1,7 +1,8 @@
+import { useEffect } from 'react'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, useLocation } from 'react-router'
 import BooksPage from './BooksPage'
 import { apiUrl, server } from '../test/msw'
 import { api, type Book } from '../api/client'
@@ -111,9 +112,20 @@ function stubSetupEndpoints() {
   )
 }
 
-function renderBooksPage() {
+type Located = { pathname: string; state: unknown }
+
+function LocationProbe({ onLocation }: { onLocation: (location: Located) => void }) {
+  const location = useLocation()
+  useEffect(() => {
+    onLocation({ pathname: location.pathname, state: location.state })
+  }, [location, onLocation])
+  return null
+}
+
+function renderBooksPage(onLocation?: (location: Located) => void) {
   return render(
     <MemoryRouter>
+      {onLocation && <LocationProbe onLocation={onLocation} />}
       <BooksPage />
     </MemoryRouter>,
   )
@@ -359,5 +371,62 @@ describe('BooksPage — sortable column headers', () => {
       expect(header.className).toContain('cursor-pointer')
       expect(header).toHaveAttribute('title')
     }
+  })
+})
+
+// Previous/Next navigation (#2548, book side): BookDetailPage reads this
+// page's currently loaded ids/order back as router state to step between
+// books without a round trip to this list.
+describe('BooksPage — book link nav state (#2548)', () => {
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('carries {ids, index} on the grid card link, matching page order', async () => {
+    server.use(
+      http.get(apiUrl('/book'), () =>
+        HttpResponse.json({
+          items: [makeBook({ id: 1, title: 'Dune' }), makeBook({ id: 2, title: 'Hyperion' })],
+          total: 2,
+          limit: 50,
+          offset: 0,
+        }),
+      ),
+    )
+    let located: Located | undefined
+    renderBooksPage(loc => { located = loc })
+
+    await screen.findByRole('heading', { name: 'Hyperion' })
+    const card = screen.getByRole('heading', { name: 'Hyperion' }).closest('div[class*="border"]')!
+    fireEvent.click(card.querySelector('a')!)
+
+    await waitFor(() => expect(located?.pathname).toBe('/book/2'))
+    expect(located?.state).toEqual({ ids: [1, 2], index: 1 })
+  })
+
+  it('navigates client-side from anywhere in a table row (not a full page reload) and carries the same nav state as the title link', async () => {
+    localStorage.setItem('bindery.view.books', 'table')
+    server.use(
+      http.get(apiUrl('/book'), () =>
+        HttpResponse.json({
+          items: [makeBook({ id: 1, title: 'Dune' }), makeBook({ id: 2, title: 'Hyperion' })],
+          total: 2,
+          limit: 50,
+          offset: 0,
+        }),
+      ),
+    )
+    let located: Located | undefined
+    renderBooksPage(loc => { located = loc })
+
+    // Click a cell that is part of the row but not the title <Link> itself —
+    // this only reaches BookDetailPage's router state if the row click is a
+    // client-side navigate(), not the window.location.href hard reload it
+    // used to be.
+    const row = (await screen.findByText('Hyperion')).closest('tr')!
+    fireEvent.click(row.querySelector('td:last-child')!)
+
+    await waitFor(() => expect(located?.pathname).toBe('/book/2'))
+    expect(located?.state).toEqual({ ids: [1, 2], index: 1 })
   })
 })
