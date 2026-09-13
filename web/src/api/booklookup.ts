@@ -28,6 +28,11 @@ export function normalizeISBNInput(raw: string): string {
   return raw.replace(ISBN_SEPARATORS, '')
 }
 
+export function isbnFromQuery(query: string): string | null {
+  const compact = normalizeISBNInput(query.trim())
+  return ISBN_RE.test(compact) ? compact : null
+}
+
 // resolveBookQuery turns one free-text query into provider metadata results,
 // choosing the endpoint by the shape of the query: an ISBN or ASIN goes to
 // /book/lookup (exact, one result), anything else to /search/book.
@@ -38,8 +43,8 @@ export function normalizeISBNInput(raw: string): string {
 export async function resolveBookQuery(query: string): Promise<Book[]> {
   const q = query.trim()
   if (!q) return []
-  const compact = normalizeISBNInput(q)
-  if (ISBN_RE.test(compact)) return [await api.lookupISBN(compact)]
+  const isbn = isbnFromQuery(q)
+  if (isbn) return [await api.lookupISBN(isbn)]
   if (ASIN_RE.test(q)) return [await api.lookupASIN(q.toUpperCase())]
   // A backend that encodes an empty search as `null` rather than `[]` must not
   // reach the callers' `.map()`.

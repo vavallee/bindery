@@ -192,6 +192,23 @@ func SignDownloadURLFor(rawURL, indexerURL, apiKey string) string {
 	return signDownloadURL(rawURL, baseHost, apiKey)
 }
 
+// HasAPIKey reports whether a download URL already carries an apikey.
+//
+// It exists so callers can tell "this URL is already signed" apart from "this
+// URL could not be signed": signDownloadURL returns its input unchanged for
+// both, and a caller that treats the second as the first ships an unsigned URL
+// the indexer answers with 401 (#2505).
+func HasAPIKey(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return u.Query().Get("apikey") != ""
+}
+
 // RedactDownloadURL removes the apikey query parameter from a download URL so it
 // can be returned to API clients without leaking the indexer credential. The
 // grab handler restores it server-side via SignDownloadURLFor before dialing the

@@ -218,6 +218,13 @@ func deriveAudiobookMetadataFromEdition(book *models.Book, edition models.Editio
 			book.MediaType = models.MediaTypeBoth
 			changed = true
 		}
+		if changed {
+			// The promotion adds a monitored format with no file behind it. If
+			// status stays 'imported' the gap is invisible to the wanted page,
+			// the scheduled sweep and the author bulk search, all of which
+			// select on status alone (#1634).
+			book.ReevaluateStatus()
+		}
 	}
 
 	if book.Language == "" {

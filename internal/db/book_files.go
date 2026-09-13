@@ -31,6 +31,29 @@ func (r *BookFileRepo) Add(ctx context.Context, bookID int64, format, path strin
 	return nil
 }
 
+// AddIfMissing records a new on-disk file and reports whether this call is the
+// one that inserted it. The path column is globally UNIQUE and the insert is
+// OR IGNORE, so a row another book (or an earlier run) already owns comes back
+// as false rather than being stolen or duplicated.
+//
+// Callers that need to know what they own use this instead of Add: the Calibre
+// importer may only claim, and later roll back, a file row it actually created
+// (#1635), mirroring SeriesRepo.LinkBookIfMissing.
+func (r *BookFileRepo) AddIfMissing(ctx context.Context, bookID int64, format, path string) (bool, error) {
+	res, err := r.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO book_files (book_id, format, path, size_bytes, created_at)
+		 VALUES (?, ?, ?, 0, ?)`,
+		bookID, format, path, time.Now().UTC())
+	if err != nil {
+		return false, fmt.Errorf("book_files add if missing: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("book_files add if missing rows: %w", err)
+	}
+	return n > 0, nil
+}
+
 // UpdatePath changes the on-disk path of the book_files row with the given id.
 // Used by the library reorganize action (#1181) after a tracked file is moved
 // to the location the current naming template computes. The path column is

@@ -432,7 +432,7 @@ func (i *Importer) upsertHardcoverSeries(ctx context.Context, cfg ImportConfig, 
 		}
 	} else {
 		var err error
-		linkCreated, err = i.series.LinkBookIfMissing(ctx, existing.ID, bookID, strings.TrimSpace(matchedBook.Position), true)
+		linkCreated, err = i.series.LinkBookPreservingPrimary(ctx, existing.ID, bookID, strings.TrimSpace(matchedBook.Position))
 		if err != nil {
 			return seriesUpsertResult{}, err
 		}
@@ -526,7 +526,10 @@ func (i *Importer) linkExistingHardcoverCatalogBooks(ctx context.Context, cfg Im
 		if catalogBook.Book.Author != nil && textutil.MatchAuthorName(author.Name, catalogBook.Book.Author.Name).Kind == textutil.AuthorMatchNone {
 			continue
 		}
-		linkCreated, err := i.series.LinkBookIfMissing(ctx, seriesRow.ID, localBook.ID, strings.TrimSpace(catalogBook.Position), false)
+		// This run is importing a different book, so it must not claim this
+		// sibling's primary series — but a sibling that has none should still
+		// get one, or its files rename with no series at all (#2527).
+		linkCreated, err := i.series.LinkBookPreservingPrimary(ctx, seriesRow.ID, localBook.ID, strings.TrimSpace(catalogBook.Position))
 		if err != nil {
 			return linked, err
 		}

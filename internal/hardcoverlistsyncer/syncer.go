@@ -513,6 +513,12 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		if existing != nil {
 			if shouldWidenMediaType(existing.MediaType, effectiveMediaType) {
 				existing.MediaType = models.MediaTypeBoth
+				// Widening creates a real gap on an owned book: the audiobook
+				// slot is now monitored and empty. Without this the row keeps
+				// status 'imported' and never enters the wanted set, so the
+				// format this sync just decided it wants is never searched
+				// (#1634).
+				existing.ReevaluateStatus()
 				// The ebook-pinned pass clears the audiobook ASIN. Preserve the
 				// audio identifier when the complementary pass supplies it.
 				if (effectiveMediaType == models.MediaTypeAudiobook || effectiveMediaType == models.MediaTypeBoth) && book.ASIN != "" {

@@ -240,3 +240,48 @@ func TestQualifierFloorNeverMergesVolumes(t *testing.T) {
 		t.Error("qualifierOnlyScore refused a pair at the same position; the volume guard is too wide")
 	}
 }
+
+// TestDifferentVolumesCatchesBareTrailingNumbers covers #2538. #1682 vetoed a
+// fuzzy match between two volumes that both carry an explicit marker
+// ("Vol. 1" against "Vol. 2"). A LitRPG series numbered with no marker at all
+// slipped straight through: "Defiance of the Fall 7" scores 97 against
+// "Defiance of the Fall 17", so series fill resolved a request for volume 17
+// onto the already-imported volume 7 and queued nothing.
+func TestDifferentVolumesCatchesBareTrailingNumbers(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{name: "the reported pair", a: "Defiance of the Fall 7", b: "Defiance of the Fall 17", want: true},
+		{name: "one and eleven", a: "Defiance of the Fall 1", b: "Defiance of the Fall 11", want: true},
+		{name: "adjacent volumes", a: "Defiance of the Fall 7", b: "Defiance of the Fall 8", want: true},
+		{name: "same volume", a: "Defiance of the Fall 7", b: "Defiance of the Fall 7", want: false},
+		{name: "same volume, punctuation differs", a: "Defiance of the Fall: 7", b: "Defiance of the Fall 7", want: false},
+		{name: "decimal side story", a: "Defiance of the Fall 7", b: "Defiance of the Fall 7.5", want: true},
+
+		// The false positives volumeNumberRe's comment names. Different
+		// stems, so the stem equality check never lets these through.
+		{name: "two numeric titles", a: "Fahrenheit 451", b: "Catch 22", want: false},
+		{name: "same numeric title", a: "Fahrenheit 451", b: "Fahrenheit 451", want: false},
+
+		// A title with no trailing number tells us nothing, which is the
+		// conservative behaviour #1682 chose deliberately.
+		{name: "numbered against unnumbered", a: "Defiance of the Fall 7", b: "Defiance of the Fall", want: false},
+		{name: "neither numbered", a: "Dune", b: "Dune Messiah", want: false},
+
+		// The explicit-marker path is unchanged.
+		{name: "explicit markers disagree", a: "Overlord, Vol. 1", b: "Overlord, Vol. 2", want: true},
+		{name: "explicit markers agree", a: "Overlord, Vol. 1", b: "Overlord Volume 1", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DifferentVolumes(tc.a, tc.b); got != tc.want {
+				t.Fatalf("DifferentVolumes(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+			if got := DifferentVolumes(tc.b, tc.a); got != tc.want {
+				t.Fatalf("DifferentVolumes(%q, %q) = %v, want %v (not symmetric)", tc.b, tc.a, got, tc.want)
+			}
+		})
+	}
+}

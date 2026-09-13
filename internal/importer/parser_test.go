@@ -250,3 +250,29 @@ func TestParseFilenameSeriesExtraction(t *testing.T) {
 		})
 	}
 }
+
+// TestParseFilenameStripsTrackCounterPrefix covers #2547: numbered audiobook
+// rips name every file "NNN-TOTAL - Title", and the Title - Author split took
+// the counter as the title and the real title as the author, so none of the
+// 193 files matched the catalogued book.
+func TestParseFilenameStripsTrackCounterPrefix(t *testing.T) {
+	cases := []struct {
+		path, wantTitle, wantAuthor string
+	}{
+		{"/lib/girl_with_all_the_gifts/001-190 - The Girl with All the Gifts.mp3", "The Girl with All the Gifts", ""},
+		{"/lib/x/190-190 - The Girl with All the Gifts.mp3", "The Girl with All the Gifts", ""},
+		{"/lib/x/07 of 12 - Dune.m4b", "Dune", ""},
+		{"/lib/x/001-190 - The Girl with All the Gifts - M R Carey.mp3", "The Girl with All the Gifts", "M R Carey"},
+		// Titles that start with numbers are not counters.
+		{"/lib/x/1984 - George Orwell.epub", "1984", "George Orwell"},
+		{"/lib/x/11-22-63 - Stephen King.epub", "11-22-63", "Stephen King"},
+	}
+	for _, c := range cases {
+		t.Run(c.path, func(t *testing.T) {
+			got := ParseFilename(c.path)
+			if got.Title != c.wantTitle || got.Author != c.wantAuthor {
+				t.Fatalf("ParseFilename(%q) = title %q author %q, want %q / %q", c.path, got.Title, got.Author, c.wantTitle, c.wantAuthor)
+			}
+		})
+	}
+}

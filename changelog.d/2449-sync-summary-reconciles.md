@@ -1,2 +1,0 @@
-### Fixed
-- **The author refresh notice now says how many works were already in your library** (#2449). It reported how many the filters skipped and left everything else unexplained, so on an author with a full catalogue the numbers looked like books had gone missing. They had not: a work that is already on your shelf just had no counter. The notice now reads "1 added, 103 already in your library, 2 skipped by the language filter", and a refresh that fails to save a book says so instead of leaving it in the logs.

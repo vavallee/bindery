@@ -2316,6 +2316,55 @@ func TestCreateAuthor_UsesGlobalMonitorDefaultsWhenOmitted(t *testing.T) {
 	}
 }
 
+// TestCreateAuthor_AcceptsMonitorNewItems: the Add Author dialog now offers
+// Monitor new items, so Create has to take it. Before this it was Update only,
+// and "catalogue once, never let a refresh grow it" could not be said at add
+// time. Invalid values are rejected the same way Update rejects them.
+func TestCreateAuthor_AcceptsMonitorNewItems(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+	provider := &fixedAuthorProvider{
+		result: &models.Author{
+			ForeignID:        "OL-MNI-A",
+			Name:             "New Items",
+			SortName:         "Items, New",
+			MetadataProvider: "openlibrary",
+		},
+	}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(provider), settingsRepo, profileRepo, nil)
+
+	post := func(body map[string]any) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/author", bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.Create(rec, req)
+		return rec
+	}
+
+	if rec := post(map[string]any{"foreignAuthorId": "OL-MNI-A", "authorName": "New Items", "monitored": true, "monitorNewItems": "bogus"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid monitorNewItems: expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := post(map[string]any{"foreignAuthorId": "OL-MNI-A", "authorName": "New Items", "monitored": true, "monitorNewItems": "none"}); rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err := authorRepo.GetByForeignID(ctx, "OL-MNI-A")
+	if err != nil || got == nil {
+		t.Fatalf("fetch author: %v, got=%+v", err, got)
+	}
+	if got.MonitorNewItems != models.AuthorMonitorNewItemsNone {
+		t.Fatalf("monitorNewItems = %q, want none", got.MonitorNewItems)
+	}
+}
+
 func TestUpdateAuthor_ApplyMonitorModeToExistingBooks(t *testing.T) {
 	database, err := db.OpenMemory()
 	if err != nil {

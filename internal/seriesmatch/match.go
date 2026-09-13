@@ -313,12 +313,52 @@ func VolumeNumber(title string) (string, bool) {
 // falling through to the similarity score exactly as before.
 func DifferentVolumes(a, b string) bool {
 	av, aok := VolumeNumber(a)
-	if !aok {
-		return false
-	}
 	bv, bok := VolumeNumber(b)
-	if !bok {
+	if aok && bok {
+		return !SamePosition(av, bv)
+	}
+	return differentTrailingNumbers(a, b)
+}
+
+// trailingNumberRe splits a title into everything before a final bare number
+// and the number itself. Anchored at the end, so it only fires on a title that
+// ENDS in a number.
+var trailingNumberRe = regexp.MustCompile(`^(.*?)[\s.,:;-]*(\d+(?:\.\d+)?)\s*$`)
+
+// differentTrailingNumbers reports whether two titles are the same words
+// followed by different bare numbers, e.g. "Defiance of the Fall 7" against
+// "Defiance of the Fall 17".
+//
+// volumeNumberRe deliberately ignores a bare trailing number, because in
+// isolation one is far more often part of the title than a volume marker:
+// "Fahrenheit 451", "Catch 22", "1984". That reasoning holds for one title
+// read alone and stops holding once two are compared. When the words before
+// the number are identical and the numbers are not, the pair is a numbered
+// sequence whatever the individual titles look like, and the risk case the
+// original comment names cannot arise: "Fahrenheit 451" and "Catch 22" have
+// different stems, so this never fires on them.
+//
+// #2538: a LitRPG series numbered without any marker at all ("Defiance of the
+// Fall 17") scored 97 against volume 7 and matched it, so series fill resolved
+// a request for volume 17 onto an already-imported volume 7 and answered
+// queued:0. #1682 caught the "Vol. 1" spelling of the same failure; this is
+// the spelling it did not cover.
+//
+// The stems are compared through CleanTitle so punctuation and case cannot
+// split an otherwise identical pair. An empty stem on both sides still counts:
+// "1984" against "2001" is two different books, and vetoing the match is the
+// right answer there too.
+func differentTrailingNumbers(a, b string) bool {
+	am := trailingNumberRe.FindStringSubmatch(a)
+	if am == nil {
 		return false
 	}
-	return !SamePosition(av, bv)
+	bm := trailingNumberRe.FindStringSubmatch(b)
+	if bm == nil {
+		return false
+	}
+	if CleanTitle(am[1]) != CleanTitle(bm[1]) {
+		return false
+	}
+	return !SamePosition(am[2], bm[2])
 }

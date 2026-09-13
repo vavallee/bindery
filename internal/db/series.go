@@ -737,6 +737,38 @@ func (r *SeriesRepo) LinkBookIfMissing(ctx context.Context, seriesID, bookID int
 	return affected > 0, nil
 }
 
+// LinkBookPreservingPrimary links bookID into seriesID and reports whether it
+// created the membership, marking the new row primary only when the book does
+// not already have a primary series elsewhere (#2525).
+//
+// Callers that link an already-stored book used to pass primary=true
+// unconditionally, so filling an umbrella series stamped a second
+// primary_series=1 row onto books that were already filed under their real
+// series, and the renamer then chose between them by query-plan order. A book
+// created by this same run has no other membership yet, so those sites keep
+// passing true through LinkBookIfMissing.
+func (r *SeriesRepo) LinkBookPreservingPrimary(ctx context.Context, seriesID, bookID int64, position string) (bool, error) {
+	has, err := r.HasPrimarySeries(ctx, bookID)
+	if err != nil {
+		return false, err
+	}
+	return r.LinkBookIfMissing(ctx, seriesID, bookID, position, !has)
+}
+
+// UpdateBookLinkPosition refreshes an existing membership's position without
+// touching primary_series. Re-importing a library must not silently promote a
+// series the user has already demoted (#2525); UpsertBookLink rewrites both
+// columns and is for callers that mean to set the flag.
+func (r *SeriesRepo) UpdateBookLinkPosition(ctx context.Context, seriesID, bookID int64, position string) error {
+	_, err := r.exec.ExecContext(ctx,
+		`UPDATE series_books SET position_in_series = ? WHERE series_id = ? AND book_id = ?`,
+		strings.TrimSpace(position), seriesID, bookID)
+	if err != nil {
+		return fmt.Errorf("update position for book %d in series %d: %w", bookID, seriesID, err)
+	}
+	return nil
+}
+
 func (r *SeriesRepo) UpsertBookLink(ctx context.Context, seriesID, bookID int64, position string, primary bool) error {
 	primaryInt := 0
 	if primary {
@@ -910,20 +942,105 @@ func (r *SeriesRepo) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// GetPrimarySeriesForBook returns the title and position of the primary series
-// for the given book. Returns ("", "", nil) when the book has no primary series.
+// GetPrimarySeriesForBook returns the title and position of the series the
+// renamer should use for the given book. Returns ("", "", nil) only when the
+// book is in no series at all.
+//
+// The ORDER BY is load bearing (#2525). series_books has no unique index on
+// book_id, primary_series defaults to 1, and several link sites stamp 1
+// unconditionally, so a book in an umbrella "Universe" series alongside its
+// real one carries two primary rows. Without an ORDER BY the bare LIMIT 1
+// returned whichever row the query planner reached first, which decided the
+// {Series} segment of every renamed file and could flip on an index or
+// ANALYZE change. The tie break is:
+//
+//  1. a primary membership beats a secondary one;
+//  2. then a membership that carries a position beats one that does not,
+//     because a book with a number in a series is in the sequence rather
+//     than filed under an umbrella;
+//  3. then the lowest series id, which is the earliest linked series.
+//
+// Rule 1 replaced a WHERE on primary_series = 1 (#2527). Filtering meant a
+// book whose every membership was secondary matched nothing and got the same
+// empty answer as a book in no series, so the renamer dropped its series
+// segment entirely while the UI went on showing the series. That is reachable
+// through the ABS sibling-catalog walk, which links books it is not importing
+// with primary = false. primary_series breaks a tie between several
+// memberships; with nothing else to choose it should not be able to suppress
+// the only series a book has.
+//
+// The ordering only decides the cases the user has not decided.
+// SetPrimarySeries demotes every sibling, so once someone picks, one row sorts
+// above every other and the rest of the tie break never comes into play.
 func (r *SeriesRepo) GetPrimarySeriesForBook(ctx context.Context, bookID int64) (seriesTitle, position string, err error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT s.title, sb.position_in_series
 		FROM series_books sb
 		JOIN series s ON s.id = sb.series_id
-		WHERE sb.book_id = ? AND sb.primary_series = 1
+		WHERE sb.book_id = ?
+		ORDER BY sb.primary_series DESC,
+		         CASE WHEN trim(sb.position_in_series) = '' THEN 1 ELSE 0 END,
+		         sb.series_id
 		LIMIT 1`, bookID)
 	err = row.Scan(&seriesTitle, &position)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", nil
 	}
 	return seriesTitle, position, err
+}
+
+// HasPrimarySeries reports whether the book already has a primary series.
+// Link sites call it so that adding a book to a further series does not
+// silently promote that series over the one the book was already filed
+// under (#2525).
+func (r *SeriesRepo) HasPrimarySeries(ctx context.Context, bookID int64) (bool, error) {
+	var one int
+	err := r.exec.QueryRowContext(ctx,
+		`SELECT 1 FROM series_books WHERE book_id = ? AND primary_series = 1 LIMIT 1`, bookID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("primary series lookup for book %d: %w", bookID, err)
+	}
+	return true, nil
+}
+
+// SetPrimarySeries makes seriesID the one primary series for bookID and
+// demotes every other membership the book has. Returns sql.ErrNoRows when
+// the book is not a member of that series, so callers can answer 404 rather
+// than silently creating nothing.
+//
+// The two statements run in one transaction: a demote that committed without
+// its promote would leave the book with no primary series at all, and the
+// renamer would then drop the {Series} segment entirely.
+func (r *SeriesRepo) SetPrimarySeries(ctx context.Context, seriesID, bookID int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set primary series: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var one int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT 1 FROM series_books WHERE series_id = ? AND book_id = ?`, seriesID, bookID).Scan(&one); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return sql.ErrNoRows
+		}
+		return fmt.Errorf("set primary series: membership lookup: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE series_books SET primary_series = 0 WHERE book_id = ? AND series_id != ?`, bookID, seriesID); err != nil {
+		return fmt.Errorf("set primary series: demote siblings: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE series_books SET primary_series = 1 WHERE book_id = ? AND series_id = ?`, bookID, seriesID); err != nil {
+		return fmt.Errorf("set primary series: promote: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set primary series: %w", err)
+	}
+	return nil
 }
 
 // GetBookBySeriesPosition finds the single "wanted" book at the given position

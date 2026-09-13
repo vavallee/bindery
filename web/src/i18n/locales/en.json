@@ -2,6 +2,7 @@
   "common": {
     "loading": "Loading...",
     "viewOnSource": "View on {{source}} ↗",
+    "links": "Links",
     "gridView": "Grid view",
     "tableView": "Table view",
     "cancel": "Cancel",
@@ -13,7 +14,6 @@
     "test": "Test",
     "testing": "Testing…",
     "refresh": "Refresh",
-    "add": "Add",
     "all": "All",
     "search": "Search",
     "yes": "Yes",
@@ -56,7 +56,7 @@
   },
   "monitorMode": {
     "all": "All books",
-    "future": "Future books only",
+    "future": "Future books only (grows on refresh)",
     "latest": "Latest only",
     "none": "None",
     "series": "By series"
@@ -360,7 +360,7 @@
     "filterMonitoredOnly": "Monitored",
     "filterUnmonitored": "Unmonitored",
     "empty": "No books in your library yet",
-    "emptyHint": "Add an author first — books are imported automatically when an author is monitored",
+    "emptyHint": "Add a book directly, or add an author to monitor their catalogue.",
     "noMatch": "No books match your filters",
     "colTitle": "Title",
     "colAuthor": "Author",
@@ -1041,10 +1041,25 @@
     "metadataProfile": "Metadata profile",
     "rootFolder": "Root folder",
     "monitorMode": "Monitor mode",
+    "monitorModeHint": "The whole catalogue is added either way. This only decides which of those books Bindery searches for and downloads.",
+    "monitorNewItems": "Monitor newly discovered books",
+    "monitorNewItemsHint": "For books a later refresh finds. “Don’t add them” keeps this author to the catalogue you add today.",
+    "outcome": {
+      "all": "Adds up to {{count}} books and searches for all of them.",
+      "none": "Adds up to {{count}} books and searches for none of them. Grab any of them by hand from the Books page.",
+      "future": "Adds up to {{count}} books and searches only for the ones not released yet. New releases join the list when you refresh the author, not on their own.",
+      "latest": "Adds up to {{count}} books and searches for the newest {{latest}}."
+    },
+    "outcomeNoCount": {
+      "all": "Adds the whole catalogue and searches for all of it.",
+      "none": "Adds the whole catalogue and searches for none of it. Grab any book by hand from the Books page.",
+      "future": "Adds the whole catalogue and searches only for the books not released yet. New releases join the list when you refresh the author, not on their own.",
+      "latest": "Adds the whole catalogue and searches for the newest {{latest}}."
+    },
     "monitorLatestCount": "Latest book count",
     "mediaType": "Media type",
     "select": "Select",
-    "customizeMonitoring": "Customize monitoring",
+    "customizeMonitoring": "Monitoring",
     "backToResults": "Back to results",
     "confirmAdd": "Add author",
     "autoGrabLabel": "Auto-grab books on add",
@@ -1083,7 +1098,23 @@
     "searching": "Searching...",
     "searchFailed": "Search failed",
     "idMissing": "This result has no book ID and cannot be added",
-    "added": "Added",
+    "select": "Select",
+    "selectBook": "Select {{title}}",
+    "confirmAdd": "Add book",
+    "backToResults": "Back to results",
+    "coverAlt": "{{title}} cover",
+    "noCover": "No cover",
+    "published": "Published",
+    "language": "Language",
+    "resultFormat": "Metadata format",
+    "source": "Source",
+    "providerId": "Source ID",
+    "asin": "ASIN",
+    "searchedIsbn": "Searched ISBN",
+    "isbns": "ISBNs",
+    "identifiersHint": "Identifiers reported by the metadata source.",
+    "showMoreIdentifiers_one": "Show {{count}} more identifier",
+    "showMoreIdentifiers_other": "Show {{count}} more identifiers",
     "adding": "Adding...",
     "addFailed": "Failed to add book"
   },
@@ -1369,6 +1400,18 @@
     },
     "renameFiles": {
       "button": "Rename files"
+    },
+    "series": {
+      "heading": "Series",
+      "explainer": "This book is in more than one series. File names use the one marked below.",
+      "namesFiles": "Names files",
+      "useForNaming": "Use for file naming",
+      "remove": "Remove",
+      "removeTitle": "Remove from series",
+      "removeBody1": "This takes the book out of",
+      "removeBody2": "It does not delete the book, its files, or the series itself.",
+      "setPrimaryFailed": "Could not change the series used for naming",
+      "removeFailed": "Could not remove the book from that series"
     }
   }
 }

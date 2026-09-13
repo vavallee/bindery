@@ -792,6 +792,8 @@ func filterRelevant(results []newznab.SearchResult, title, author string, aliase
 	title = stripPossessivePrefix(title, author)
 	fullKws := newznab.SigWords(title)
 	primaryKws := newznab.SigWords(primaryTitle(title))
+	fullIdentity := titleIdentityWords(title)
+	primaryIdentity := titleIdentityWords(primaryTitle(title))
 	authorKws := newznab.SigWords(author)
 
 	authorTokenSets := latinAliasTokenSets(author, aliases)
@@ -818,13 +820,20 @@ func filterRelevant(results []newznab.SearchResult, title, author string, aliase
 	filtered := make([]newznab.SearchResult, 0, len(results))
 	for i, r := range results {
 		n := normTitles[i]
+		if conflictingTitleAuthor(r.Title, title, authorTokenSets) ||
+			conflictingTitleAuthor(r.Title, primaryTitle(title), authorTokenSets) {
+			continue
+		}
+		// Only insignificant connecting words may separate title keywords.
+		// Author corroboration cannot make inserted title words disappear.
+		identity := strings.Join(titleIdentityWords(r.Title), " ")
 
 		// allowFallback=true: each result gets phrase match first, then keyword
 		// fallback if the phrase fails. No batch-level gate.
-		fullOK := tryMatch(n, fullKws)
+		fullOK := tryMatch(n, fullKws) && (len(fullIdentity) < 2 || ContainsPhrase(identity, fullIdentity))
 		primaryOK := false
 		if !fullOK && len(primaryKws) > 0 && !sameKws(primaryKws, fullKws) {
-			primaryOK = tryMatch(n, primaryKws)
+			primaryOK = tryMatch(n, primaryKws) && (len(primaryIdentity) < 2 || ContainsPhrase(identity, primaryIdentity))
 		}
 		if fullOK || primaryOK {
 			filtered = append(filtered, r)

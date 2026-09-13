@@ -56,6 +56,8 @@ vi.mock('../api/client', async importOriginal => {
       toggleExcluded: vi.fn(),
       enrichAudiobook: vi.fn(),
       listAuthorSeries: vi.fn(),
+      setPrimarySeriesForBook: vi.fn(),
+      removeBookFromSeries: vi.fn(),
     },
   }
 })
@@ -841,7 +843,8 @@ describe('BookDetailPage — danger zone', () => {
   it('opens the confirm modal and keeps confirm disabled until acknowledged', async () => {
     renderBookDetailPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete book + files…' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete book + files…' }))
 
     const confirm = await screen.findByRole('button', { name: 'Delete book + files' })
     expect(confirm).toBeDisabled()
@@ -853,7 +856,8 @@ describe('BookDetailPage — danger zone', () => {
   it('calls api.deleteBook only after acknowledging and confirming', async () => {
     renderBookDetailPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete book + files…' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete book + files…' }))
     fireEvent.click(screen.getByRole('checkbox', { name: /I understand/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Delete book + files' }))
 
@@ -863,7 +867,8 @@ describe('BookDetailPage — danger zone', () => {
   it('does not call api.deleteBook when the modal is cancelled', async () => {
     renderBookDetailPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete book + files…' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete book + files…' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
 
     await waitFor(() =>
@@ -876,7 +881,8 @@ describe('BookDetailPage — danger zone', () => {
     vi.mocked(api.getBook).mockResolvedValue(makeBook({ filePath: '/library/book.epub' }))
     renderBookDetailPage()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete book + files…' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete book + files…' }))
     fireEvent.click(screen.getByRole('checkbox', { name: /I understand/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Delete book + files' }))
 
@@ -967,6 +973,105 @@ describe('BookDetailPage — header', () => {
     expect(screen.queryByText(/Long Earth/)).toBeNull()
   })
 
+  it('offers no membership controls when the book is in one series', async () => {
+    // Nothing to choose between, so the section would be pure noise (#2525).
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([
+      {
+        id: 7,
+        foreignSeriesId: 'ol:s7',
+        title: 'Discworld',
+        description: '',
+        monitored: true,
+        books: [{ seriesId: 7, bookId: 42, positionInSeries: '3', primarySeries: true }],
+      },
+    ] as unknown as Awaited<ReturnType<typeof api.listAuthorSeries>>)
+
+    renderBookDetailPage()
+    await screen.findByText('Discworld #3')
+    expect(screen.queryByText(resolveKey('bookDetail.series.heading')!)).toBeNull()
+  })
+
+  it('names the series the renamer uses and lets you change it', async () => {
+    // #2525: two primary rows meant the renamer picked one by query-plan order
+    // and nothing on the page said which, or let the user say otherwise.
+    const memberships = [
+      {
+        id: 7,
+        foreignSeriesId: 'hc-series:kdt',
+        title: "King's Dark Tidings",
+        description: '',
+        monitored: true,
+        books: [{ seriesId: 7, bookId: 42, positionInSeries: '1', primarySeries: true }],
+      },
+      {
+        id: 8,
+        foreignSeriesId: 'hc-series:universe',
+        title: "King's Dark Tidings Universe",
+        description: '',
+        monitored: true,
+        books: [{ seriesId: 8, bookId: 42, positionInSeries: '', primarySeries: false }],
+      },
+    ]
+    vi.mocked(api.listAuthorSeries).mockResolvedValue(
+      memberships as unknown as Awaited<ReturnType<typeof api.listAuthorSeries>>,
+    )
+    vi.mocked(api.setPrimarySeriesForBook).mockResolvedValue(
+      {} as Awaited<ReturnType<typeof api.setPrimarySeriesForBook>>,
+    )
+
+    renderBookDetailPage()
+    const heading = await screen.findByText(resolveKey('bookDetail.series.heading')!)
+    const section = heading.closest('section')!
+    const rows = within(section).getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    // The primary one is labelled and offers no promote button.
+    expect(within(rows[0]).getByText(resolveKey('bookDetail.series.namesFiles')!)).toBeInTheDocument()
+    expect(
+      within(rows[0]).queryByRole('button', { name: resolveKey('bookDetail.series.useForNaming')! }),
+    ).toBeNull()
+
+    fireEvent.click(
+      within(rows[1]).getByRole('button', { name: resolveKey('bookDetail.series.useForNaming')! }),
+    )
+    await waitFor(() => expect(api.setPrimarySeriesForBook).toHaveBeenCalledWith(8, 42))
+  })
+
+  it('removes a single membership behind a confirmation, without touching the book', async () => {
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([
+      {
+        id: 7,
+        foreignSeriesId: 'hc-series:kdt',
+        title: "King's Dark Tidings",
+        description: '',
+        monitored: true,
+        books: [{ seriesId: 7, bookId: 42, positionInSeries: '1', primarySeries: true }],
+      },
+      {
+        id: 8,
+        foreignSeriesId: 'hc-series:universe',
+        title: "King's Dark Tidings Universe",
+        description: '',
+        monitored: true,
+        books: [{ seriesId: 8, bookId: 42, positionInSeries: '', primarySeries: false }],
+      },
+    ] as unknown as Awaited<ReturnType<typeof api.listAuthorSeries>>)
+    vi.mocked(api.removeBookFromSeries).mockResolvedValue(
+      undefined as Awaited<ReturnType<typeof api.removeBookFromSeries>>,
+    )
+
+    renderBookDetailPage()
+    const heading = await screen.findByText(resolveKey('bookDetail.series.heading')!)
+    const section = heading.closest('section')!
+    const rows = within(section).getAllByRole('listitem')
+    fireEvent.click(within(rows[1]).getByRole('button', { name: resolveKey('bookDetail.series.remove')! }))
+
+    const dialog = await screen.findByTestId('confirm-dialog')
+    expect(within(dialog).getByText("King's Dark Tidings Universe")).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: resolveKey('bookDetail.series.remove')! }))
+    await waitFor(() => expect(api.removeBookFromSeries).toHaveBeenCalledWith(8, 42))
+    expect(api.deleteBook).not.toHaveBeenCalled()
+  })
+
   it('renders no series row when the book is in none', async () => {
     vi.mocked(api.listAuthorSeries).mockResolvedValue([])
     renderBookDetailPage()
@@ -994,14 +1099,32 @@ describe('BookDetailPage — header', () => {
     ).toBeTruthy()
   })
 
-  it('keeps solid red for Delete book and ghost-danger for Delete file', async () => {
+  // Deleting the book used to own a "Danger zone" section: a heading, a
+  // rose-tinted full-width card and the page's only solid red button, for one
+  // action. AuthorDetailPage has always carried the equivalent Delete as a
+  // danger item in its More menu, so the two pages disagreed and the book page
+  // shouted. It now matches: red TEXT in the menu, no solid red anywhere on the
+  // page itself, and the solid red kept for the confirm dialog, which is where
+  // the decision is actually made.
+  it('carries Delete book as a danger menu item, with no solid red on the page', async () => {
     vi.mocked(api.getBook).mockResolvedValue(makeBook({ filePath: '/library/book.epub' }))
     renderBookDetailPage()
+
     const deleteFile = await screen.findByRole('button', { name: /Delete file/ })
-    const deleteBook = screen.getByRole('button', { name: /Delete book/ })
-    // Solid red is reserved for the irreversible one.
-    expect(deleteBook.className).toContain('bg-red-600')
     expect(deleteFile.className).not.toContain('bg-red-600')
+
+    fireEvent.click(screen.getByRole('button', { name: 'More' }))
+    const deleteBook = await screen.findByRole('menuitem', { name: 'Delete book + files…' })
+    expect(deleteBook.className).toContain('text-red-700')
+    expect(deleteBook.className).not.toContain('bg-red-600')
+  })
+
+  // The section is gone, not restyled. A heading that names a zone is the thing
+  // that made one action look like a region of the page.
+  it('no longer renders a Danger zone heading', async () => {
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'File' })
+    expect(screen.queryByRole('heading', { name: /Danger zone/i })).toBeNull()
   })
 })
 
@@ -1061,7 +1184,7 @@ describe('BookDetailPage metadata source (#1707)', () => {
     )
   })
 
-  it('renders a Hardcover-bound book with no link rather than a broken one', async () => {
+  it('keeps an ambiguous numeric Hardcover id visible without linking it', async () => {
     vi.mocked(api.getBook).mockResolvedValue(
       makeBook({ foreignBookId: 'hc:12345', metadataProvider: 'hardcover' }),
     )
@@ -1069,7 +1192,7 @@ describe('BookDetailPage metadata source (#1707)', () => {
 
     const list = await screen.findByTestId('metadata-source-list')
     expect(within(list).getByText('hc:12345')).toBeInTheDocument()
-    expect(within(list).queryByRole('link')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Links' })).not.toBeInTheDocument()
   })
 
   // The identity map from #1705 is what makes "which record am I looking at"
@@ -1108,5 +1231,96 @@ describe('BookDetailPage metadata source (#1707)', () => {
     expect(within(rows[1]).getByText('Hardcover')).toBeInTheDocument()
     expect(within(rows[1]).getByText('hc:12345')).toBeInTheDocument()
     expect(within(rows[1]).queryByText('Current')).not.toBeInTheDocument()
+  })
+
+  it('shows trustworthy upstream links in an operable disclosure', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(
+      makeBook({
+        foreignBookId: 'OL27448W',
+        metadataProvider: 'openlibrary',
+        identifiers: [
+          {
+            bookId: 42,
+            provider: 'hardcover',
+            foreignBookId: 'hc:project-hail-mary',
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+          {
+            bookId: 42,
+            provider: 'dnb',
+            foreignBookId: 'dnb:1234567890',
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+          {
+            bookId: 42,
+            provider: 'audiobookshelf',
+            foreignBookId: 'abs:local-item',
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        ],
+      }),
+    )
+    renderBookDetailPage()
+
+    const trigger = await screen.findByRole('button', { name: 'Links' })
+    expect(trigger).not.toHaveAttribute('aria-haspopup')
+    expect(trigger).toHaveAttribute('aria-controls')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.mouseEnter(trigger.parentElement!)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.pointerDown(document.body)
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.mouseEnter(trigger.parentElement!)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(trigger)
+    fireEvent.mouseLeave(trigger.parentElement!)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.mouseEnter(trigger.parentElement!)
+    fireEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.mouseLeave(trigger.parentElement!)
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.pointerDown(document.body)
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.focus(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    const menu = screen.getByTestId('book-links-menu')
+    expect(trigger).toHaveAttribute('aria-controls', menu.id)
+    expect(menu).not.toHaveAttribute('hidden')
+    const links = within(menu).getAllByRole('link')
+    expect(links).toHaveLength(3)
+    expect(within(menu).getByRole('link', { name: /View on OpenLibrary/ })).toHaveAttribute(
+      'href',
+      'https://openlibrary.org/works/OL27448W',
+    )
+    expect(within(menu).getByRole('link', { name: /View on Hardcover/ })).toHaveAttribute(
+      'href',
+      'https://hardcover.app/books/project-hail-mary',
+    )
+    const dnb = within(menu).getByRole('link', { name: /View on DNB/ })
+    expect(dnb).toHaveAttribute('href', 'https://d-nb.info/1234567890')
+    expect(dnb).toHaveAttribute('target', '_blank')
+    expect(dnb).toHaveAttribute('rel', 'noopener noreferrer')
+    fireEvent.keyDown(dnb, { key: 'Escape' })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(menu).toHaveAttribute('hidden')
+    expect(trigger).toHaveFocus()
+  })
+
+  it('hides the Links control when no trustworthy upstream URL exists', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(
+      makeBook({ foreignBookId: 'abs:local-item', metadataProvider: 'audiobookshelf' }),
+    )
+    renderBookDetailPage()
+
+    await screen.findByTestId('metadata-source-list')
+    expect(screen.queryByRole('button', { name: 'Links' })).not.toBeInTheDocument()
   })
 })

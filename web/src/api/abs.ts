@@ -1,5 +1,5 @@
 import { request } from './core'
-import type { PaginatedResponse } from './common'
+import type { Page } from './common'
 
 export interface ABSConfig {
   featureEnabled: boolean
@@ -225,7 +225,7 @@ export const absApi = {
     const q = new URLSearchParams()
     if (params?.limit) q.set('limit', String(params.limit))
     if (params?.offset) q.set('offset', String(params.offset))
-    return request<PaginatedResponse<ABSReviewItem>>(`/abs/review${q.toString() ? `?${q.toString()}` : ''}`)
+    return request<Page<ABSReviewItem>>(`/abs/review${q.toString() ? `?${q.toString()}` : ''}`)
   },
   approveAbsReviewItem: (id: number) => request<ABSReviewItem>(`/abs/review/${id}/approve`, { method: 'POST' }),
   resolveAbsReviewAuthor: (id: number, data: { foreignAuthorId: string; authorName: string; applyTo?: 'same_author' }) =>
@@ -239,7 +239,7 @@ export const absApi = {
     const q = new URLSearchParams()
     if (params?.limit) q.set('limit', String(params.limit))
     if (params?.offset) q.set('offset', String(params.offset))
-    return request<PaginatedResponse<ABSMetadataConflict>>(`/abs/conflicts${q.toString() ? `?${q.toString()}` : ''}`)
+    return request<Page<ABSMetadataConflict>>(`/abs/conflicts${q.toString() ? `?${q.toString()}` : ''}`)
   },
   resolveAbsConflict: (id: number, source: 'abs' | 'upstream') =>
     request<ABSMetadataConflict>(`/abs/conflicts/${id}/resolve`, { method: 'POST', body: JSON.stringify({ source }) }),

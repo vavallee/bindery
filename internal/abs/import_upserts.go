@@ -1162,7 +1162,7 @@ func (i *Importer) upsertSeries(ctx context.Context, cfg ImportConfig, runID, bo
 			"identity":  true,
 		})
 	}
-	membershipCreated, err := i.series.LinkBookIfMissing(ctx, existing.ID, bookID, strings.TrimSpace(ref.Sequence), true)
+	membershipCreated, err := i.series.LinkBookPreservingPrimary(ctx, existing.ID, bookID, strings.TrimSpace(ref.Sequence))
 	if err != nil {
 		return seriesUpsertResult{}, err
 	}
