@@ -94,19 +94,25 @@ function LocationProbe({ onLocation }: { onLocation?: (location: string) => void
   return null
 }
 
+type NavEntry = string | { pathname: string; state?: unknown }
+
 function renderAuthorDetailPage(
   books: Book[],
   view: 'grid' | 'table' = 'grid',
   authorOverride: Partial<Author> = {},
-  initialPath: string | { pathname: string; state?: unknown } = '/author/42',
+  initialPath: NavEntry | NavEntry[] = '/author/42',
   onLocation?: (location: string) => void,
 ) {
   localStorage.setItem('bindery.view.author-detail', view)
   vi.mocked(api.getAuthor).mockResolvedValue({ ...author, ...authorOverride })
   vi.mocked(api.listAllBooks).mockResolvedValue(books)
 
+  // A multi-entry array simulates real browser history (e.g. arriving from
+  // the Books list) so Back's navigate(-1) fallback has somewhere to land.
+  const initialEntries = Array.isArray(initialPath) ? initialPath : [initialPath]
+
   return render(
-    <MemoryRouter initialEntries={[initialPath]}>
+    <MemoryRouter initialEntries={initialEntries} initialIndex={initialEntries.length - 1}>
       <LocationProbe onLocation={onLocation} />
       <Routes>
         <Route path="/author/:id" element={<AuthorDetailPage />} />
@@ -1005,13 +1011,91 @@ describe('AuthorDetailPage — Previous/Next navigation (#2548, frontend-only)',
     expect(screen.queryByLabelText('Next author')).toBeNull()
   })
 
-  it('Back always goes to the Authors list, not browser history', async () => {
+  it('returns to the Authors list on Back when arrived via a Previous/Next chain', async () => {
     let lastLocation = ''
-    renderAuthorDetailPage([], 'grid', {}, '/author/42', loc => { lastLocation = loc })
+    renderAuthorDetailPage(
+      [], 'grid', {}, { pathname: '/author/42', state: { ids: [40, 42, 43], index: 1 } },
+      loc => { lastLocation = loc },
+    )
     await screen.findByText('Brandon Sanderson')
 
     fireEvent.click(screen.getByText('← Back'))
 
     await waitFor(() => expect(lastLocation).toBe('/'))
+  })
+
+  it('falls back to browser history on Back when there is no nav state, so Wanted/Books/a book page are not stranded on the Authors list', async () => {
+    let lastLocation = ''
+    renderAuthorDetailPage([], 'grid', {}, ['/books/9', '/author/42'], loc => { lastLocation = loc })
+    await screen.findByText('Brandon Sanderson')
+
+    fireEvent.click(screen.getByText('← Back'))
+
+    await waitFor(() => expect(lastLocation).toBe('/books/9'))
+  })
+
+  it("refetches the new author's series after Next instead of reusing the previous author's (state leak)", async () => {
+    localStorage.setItem('bindery.view.author-detail', 'table')
+    vi.mocked(api.getAuthor).mockImplementation((id: number) =>
+      Promise.resolve({ ...author, id, authorName: id === 42 ? 'Brandon Sanderson' : 'Patrick Rothfuss' }))
+    vi.mocked(api.listAllBooks).mockImplementation(({ authorId }: { authorId?: number } = {}) =>
+      Promise.resolve(authorId === 42
+        ? [makeBook({ id: 10, title: 'The Final Empire', status: 'imported' })]
+        : [makeBook({ id: 20, title: 'The Name of the Wind', status: 'imported' })]))
+    vi.mocked(api.listAuthorSeries).mockImplementation((authorId: number) =>
+      Promise.resolve(authorId === 42
+        ? [{
+            id: 1, foreignSeriesId: 'OL-MB', title: 'Mistborn', description: '', monitored: true,
+            books: [{ seriesId: 1, bookId: 10, positionInSeries: '1' }],
+          }]
+        : [{
+            id: 2, foreignSeriesId: 'OL-KING', title: 'Kingkiller Chronicle', description: '', monitored: true,
+            books: [{ seriesId: 2, bookId: 20, positionInSeries: '1' }],
+          }]))
+
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/author/42', state: { ids: [42, 43], index: 0 } }]}>
+        <Routes>
+          <Route path="/author/:id" element={<AuthorDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Brandon Sanderson')
+    fireEvent.click(screen.getByRole('switch', { name: 'Group by series' }))
+    expect(await screen.findByRole('heading', { name: /Mistborn/ })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Next author'))
+    await screen.findByText('Patrick Rothfuss')
+
+    // Without the fix, authorSeries.length > 0 (still 42's Mistborn) skips the
+    // refetch, and book id 20 doesn't match series 1's bookId 10 — so this
+    // would render Standalone only, with the Kingkiller heading missing.
+    expect(await screen.findByRole('heading', { name: /Kingkiller Chronicle/ })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /Mistborn/ })).not.toBeInTheDocument()
+  })
+
+  it('clears a stale error from the previous author after Next', async () => {
+    vi.mocked(api.getAuthor).mockImplementation((id: number) =>
+      Promise.resolve({ ...author, id, authorName: id === 42 ? 'Brandon Sanderson' : 'Patrick Rothfuss' }))
+    vi.mocked(api.listAllBooks).mockResolvedValue([])
+    vi.mocked(api.updateAuthor).mockRejectedValue(new Error('Update failed'))
+
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/author/42', state: { ids: [42, 43], index: 0 } }]}>
+        <Routes>
+          <Route path="/author/:id" element={<AuthorDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Brandon Sanderson')
+    fireEvent.click(screen.getByRole('switch', { name: 'Stop monitoring' }))
+    expect(await screen.findByText('Update failed')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Next author'))
+    await screen.findByText('Patrick Rothfuss')
+
+    expect(screen.queryByText('Update failed')).not.toBeInTheDocument()
   })
 })

@@ -117,6 +117,11 @@ export default function AuthorDetailPage() {
     } catch { return false }
   })
   const [authorSeries, setAuthorSeries] = useState<Series[]>([])
+  // Tracks whose series `authorSeries` currently holds. The page stays
+  // mounted across Previous/Next (only authorId changes), so a plain
+  // "already loaded" check on authorSeries.length kept the previous
+  // author's series and grouped the new author's books against them.
+  const loadedSeriesAuthorId = useRef<number | null>(null)
 
   useEffect(() => {
     try { localStorage.setItem('bindery.group.author-detail.series', String(groupBySeries)) } catch { /* ignore */ }
@@ -126,13 +131,13 @@ export default function AuthorDetailPage() {
   // the default flat view never pays for the extra round trip. Failures fall
   // back to an empty set — every book then lands in the Standalone group.
   useEffect(() => {
-    if (!groupBySeries || authorSeries.length > 0) return
+    if (!groupBySeries || loadedSeriesAuthorId.current === authorId) return
     let cancelled = false
     api.listAuthorSeries(authorId)
-      .then(s => { if (!cancelled) setAuthorSeries(s) })
+      .then(s => { if (!cancelled) { setAuthorSeries(s); loadedSeriesAuthorId.current = authorId } })
       .catch(() => { /* leave empty: books fall into Standalone */ })
     return () => { cancelled = true }
-  }, [groupBySeries, authorId, authorSeries.length])
+  }, [groupBySeries, authorId])
 
   // Filter / sort state — persisted to localStorage under page-scoped keys
   const [typeFilter, setTypeFilter] = useState<MediaFilter>(() => {
@@ -197,6 +202,9 @@ export default function AuthorDetailPage() {
   useEffect(() => {
     let cancelled = false
     setLoading(true)
+    // The page stays mounted across Previous/Next, so a stale error from the
+    // previous author would otherwise still be showing under the new one.
+    setError(null)
     // listAllBooks pages through the server until the author's complete
     // catalogue is loaded — a plain listBooks call silently capped the list at
     // the server default of 100, corrupting counts/filters/select-all (#1467).
@@ -708,10 +716,23 @@ export default function AuthorDetailPage() {
     <div className={`max-w-7xl ${selected.size > 0 ? 'pb-20' : ''}`}>
       {confirmDialog}
       <div className="mb-4 flex items-center justify-between gap-3 text-sm">
-        {/* Always the Authors list, not browser history, which can land
-            elsewhere (a Series tab, a search result, or, after following
-            Previous/Next a few times, one page short of the list). */}
-        <Link to="/" className="text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">← Back</Link>
+        {/* Only inside a Previous/Next chain does Back go to the Authors
+            list rather than browser history: a few hops through Next/Previous
+            land one page short of where the list actually was. Arriving any
+            other way (Wanted, the Books list, a book page, a direct link)
+            must fall back to navigate(-1) or Back would strand those flows
+            on the Authors list instead of where they came from. */}
+        {navState ? (
+          <Link to="/" className="text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">← Back</Link>
+        ) : (
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
+          >
+            ← Back
+          </button>
+        )}
         {navState && (prevId !== null || nextId !== null) && (
           <div className="flex items-center gap-2">
             {prevId !== null && (
