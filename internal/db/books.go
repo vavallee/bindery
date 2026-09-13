@@ -526,6 +526,73 @@ func (r *BookRepo) GetByForeignIDForUser(ctx context.Context, foreignID string, 
 	return &books[0], nil
 }
 
+// GetByForeignIDVisibleTo is GetByForeignID constrained to books the user can
+// see in their library list: owned by userID or with a NULL owner, via
+// QueryScopeForIncludingNull (userID 0 is unscoped). It backs the Add Book
+// conflict gate (#1227), which has to agree with the list the user is looking
+// at: a NULL owned row (anything created by a local only or API key request)
+// is in that list, so re-adding it must be a conflict too. GetByForeignIDForUser
+// stays deliberately strict for its own callers.
+func (r *BookRepo) GetByForeignIDVisibleTo(ctx context.Context, foreignID string, userID int64) (*models.Book, error) {
+	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE books.foreign_id = ?", userID, foreignID)
+	books, err := r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where, args)
+	if err != nil {
+		return nil, err
+	}
+	if len(books) == 0 {
+		return nil, nil
+	}
+	return &books[0], nil
+}
+
+// LibraryIDsByForeignIDsForUser maps each of the given foreign ids that is in
+// the user's library to its book id, in one query. It exists so a metadata
+// search response can say "this result is already in your library" without a
+// lookup per row (#1227). Scoping matches the library list and
+// GetByForeignIDVisibleTo: owner equal to userID or NULL when userID > 0,
+// global otherwise. Ids with no visible row are simply absent from the map.
+func (r *BookRepo) LibraryIDsByForeignIDsForUser(ctx context.Context, foreignIDs []string, userID int64) (map[string]int64, error) {
+	out := make(map[string]int64, len(foreignIDs))
+	ids := make([]string, 0, len(foreignIDs))
+	seen := make(map[string]bool, len(foreignIDs))
+	for _, id := range foreignIDs {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(ids))
+	inArgs := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		inArgs[i] = id
+	}
+	where, args := QueryScopeForIncludingNull("books.owner_user_id",
+		"WHERE books.foreign_id IN ("+strings.Join(placeholders, ",")+")", userID, inArgs...)
+	//nolint:gosec // G202: where is generated ? placeholders plus the fixed QueryScopeForIncludingNull predicate; every foreign id and the user id are bound via args
+	rows, err := r.db.QueryContext(ctx, "SELECT books.foreign_id, books.id FROM books "+where, args...)
+	if err != nil {
+		return nil, fmt.Errorf("library ids by foreign id: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var foreignID string
+		var id int64
+		if err := rows.Scan(&foreignID, &id); err != nil {
+			return nil, fmt.Errorf("scan library id: %w", err)
+		}
+		out[foreignID] = id
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("library ids by foreign id: %w", err)
+	}
+	return out, nil
+}
+
 // lockedOrEmpty normalises a nil LockedFields slice to an empty one so the
 // persisted JSON is always an array ("[]"), never "null".
 func lockedOrEmpty(fields []string) []string {

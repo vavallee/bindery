@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/auth"
+	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/metadata/audnex"
 	"github.com/vavallee/bindery/internal/models"
@@ -80,7 +83,7 @@ func TestWriteUpstreamErrorDoesNotLeakSecrets(t *testing.T) {
 
 func TestSearchAuthors(t *testing.T) {
 	p := &stubProvider{authors: []models.Author{{Name: "Frank Herbert"}}}
-	h := NewSearchHandler(metadata.NewAggregator(p))
+	h := NewSearchHandler(metadata.NewAggregator(p), nil, nil)
 
 	// Missing term
 	rec := httptest.NewRecorder()
@@ -112,7 +115,7 @@ func TestSearchAuthors(t *testing.T) {
 
 func TestSearchBooks(t *testing.T) {
 	p := &stubProvider{books: []models.Book{{Title: "Dune"}}}
-	h := NewSearchHandler(metadata.NewAggregator(p))
+	h := NewSearchHandler(metadata.NewAggregator(p), nil, nil)
 
 	// Missing term
 	rec := httptest.NewRecorder()
@@ -145,7 +148,7 @@ func TestSearchBooksIncludesNormalizedProviderISBNs(t *testing.T) {
 		ProviderISBNs: []string{isbn13, isbn13},
 		Editions:      []models.Edition{{ISBN13: &isbn13, ISBN10: &isbn10}},
 	}}}
-	h := NewSearchHandler(metadata.NewAggregator(p))
+	h := NewSearchHandler(metadata.NewAggregator(p), nil, nil)
 
 	rec := httptest.NewRecorder()
 	h.SearchBooks(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/book?term=dune", nil))
@@ -189,7 +192,7 @@ func TestBookSearchResultCapsISBNs(t *testing.T) {
 // or the Add Book modal crashes calling `.map()` on a null body.
 func TestSearchBooksEmptyIsArray(t *testing.T) {
 	p := &stubProvider{books: nil} // success, but no results
-	h := NewSearchHandler(metadata.NewAggregator(p))
+	h := NewSearchHandler(metadata.NewAggregator(p), nil, nil)
 
 	rec := httptest.NewRecorder()
 	h.SearchBooks(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/book?term=zzznomatch", nil))
@@ -216,7 +219,7 @@ func TestLookup_ISBN(t *testing.T) {
 		Description:   "A long-enough description to skip the enrichment branch in the aggregator.",
 		ProviderISBNs: []string{"9780316769488"},
 	}}
-	h := NewSearchHandler(metadata.NewAggregator(p))
+	h := NewSearchHandler(metadata.NewAggregator(p), nil, nil)
 
 	// Neither isbn nor asin → 400 naming both params.
 	rec := httptest.NewRecorder()
@@ -248,7 +251,7 @@ func TestLookup_ISBN(t *testing.T) {
 
 	// Not found — fresh aggregator so nothing is cached
 	p2 := &stubProvider{byISBN: nil}
-	h2 := NewSearchHandler(metadata.NewAggregator(p2))
+	h2 := NewSearchHandler(metadata.NewAggregator(p2), nil, nil)
 	rec = httptest.NewRecorder()
 	h2.Lookup(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book/lookup?isbn=0000000000", nil))
 	if rec.Code != http.StatusNotFound {
@@ -257,7 +260,7 @@ func TestLookup_ISBN(t *testing.T) {
 
 	// Error
 	p3 := &stubProvider{byISBNErr: errors.New("net down")}
-	h3 := NewSearchHandler(metadata.NewAggregator(p3))
+	h3 := NewSearchHandler(metadata.NewAggregator(p3), nil, nil)
 	rec = httptest.NewRecorder()
 	h3.Lookup(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book/lookup?isbn=fail", nil))
 	if rec.Code != http.StatusBadGateway {
@@ -296,7 +299,7 @@ func TestLookup_ASIN_Success(t *testing.T) {
 		},
 	}}
 	agg := metadata.NewAggregator(primary).WithAudnexClient(audnexClient)
-	h := NewSearchHandler(agg)
+	h := NewSearchHandler(agg, nil, nil)
 
 	rec := httptest.NewRecorder()
 	h.Lookup(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book/lookup?asin=B0DBJBFHGT", nil))
@@ -322,11 +325,206 @@ func TestLookup_ASIN_Success(t *testing.T) {
 // normal empty/error state), not a 500 or a crash.
 func TestLookup_ASIN_Miss(t *testing.T) {
 	agg := metadata.NewAggregator(&stubProvider{}).WithAudnexClient(&stubAudnexClient{})
-	h := NewSearchHandler(agg)
+	h := NewSearchHandler(agg, nil, nil)
 
 	rec := httptest.NewRecorder()
 	h.Lookup(rec, httptest.NewRequest(http.MethodGet, "/api/v1/book/lookup?asin=B0NONEXIST", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("ASIN miss: expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// seedLibraryStampFixture creates two users, gives alice one author (with an
+// alternate identifier) and one book, and returns everything the stamping
+// tests need. Bob owns nothing.
+func seedLibraryStampFixture(t *testing.T) (database *sql.DB, aliceID, bobID int64, author *models.Author, book *models.Book) {
+	t.Helper()
+	// Stamping is scoped like the library list (ListScopeUserID), which only
+	// separates users when tenancy is enforced.
+	auth.SetEnforceTenancyForTests(t, true)
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	ctx := context.Background()
+	users := db.NewUserRepo(database)
+	alice, err := users.Create(ctx, "alice", "h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := users.Create(ctx, "bob", "h2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	author = &models.Author{
+		ForeignID: "OL-ALICE", Name: "Alice Author", SortName: "Author, Alice",
+		MetadataProvider: "openlibrary",
+	}
+	if err := authorRepo.CreateForUser(ctx, author, alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := authorRepo.UpsertAuthorIdentifier(ctx, author.ID, "hc:alice-author"); err != nil {
+		t.Fatal(err)
+	}
+	book = &models.Book{
+		ForeignID: "OL-BOOK-OWNED", Title: "Owned", SortTitle: "Owned", AuthorID: author.ID,
+		Status: models.BookStatusImported, Genres: []string{}, MetadataProvider: "openlibrary",
+		OwnerUserID: alice.ID,
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	return database, alice.ID, bob.ID, author, book
+}
+
+// TestSearchBooksStampsLibraryBookID covers #1227: a metadata result whose
+// foreign id the requesting user already owns carries libraryBookId; an
+// unowned result carries no such field; another user's row does not stamp.
+func TestSearchBooksStampsLibraryBookID(t *testing.T) {
+	database, aliceID, bobID, _, owned := seedLibraryStampFixture(t)
+	p := &stubProvider{books: []models.Book{
+		{ForeignID: "OL-BOOK-OWNED", Title: "Owned"},
+		{ForeignID: "OL-BOOK-NEW", Title: "New"},
+	}}
+	h := NewSearchHandler(metadata.NewAggregator(p), db.NewBookRepo(database), db.NewAuthorRepo(database))
+
+	search := func(userID int64) []map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/search/book?term=x", nil).
+			WithContext(auth.WithUserID(context.Background(), userID))
+		h.SearchBooks(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var got []map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("expected 2 results, got %d", len(got))
+		}
+		return got
+	}
+
+	asAlice := search(aliceID)
+	if id, ok := asAlice[0]["libraryBookId"].(float64); !ok || int64(id) != owned.ID {
+		t.Errorf("owned result libraryBookId = %v, want %d", asAlice[0]["libraryBookId"], owned.ID)
+	}
+	if _, present := asAlice[1]["libraryBookId"]; present {
+		t.Errorf("unowned result should carry no libraryBookId, got %v", asAlice[1]["libraryBookId"])
+	}
+
+	asBob := search(bobID)
+	for i, row := range asBob {
+		if _, present := row["libraryBookId"]; present {
+			t.Errorf("row %d: alice's book stamped for bob: %v", i, row["libraryBookId"])
+		}
+	}
+}
+
+// TestSearchBooksUnstampedWhenRepoMissing: a handler built without repos still
+// answers, just without the stamp.
+func TestSearchBooksUnstampedWhenRepoMissing(t *testing.T) {
+	p := &stubProvider{books: []models.Book{{ForeignID: "OL-BOOK-OWNED", Title: "Owned"}}}
+	h := NewSearchHandler(metadata.NewAggregator(p), nil, nil)
+	rec := httptest.NewRecorder()
+	h.SearchBooks(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/book?term=x", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "libraryBookId") {
+		t.Errorf("no repo wired, yet response carries libraryBookId: %s", rec.Body.String())
+	}
+}
+
+// TestSearchAuthorsStampsLibraryAuthorID: primary foreign id and alternate
+// identifier both resolve to alice's author; an unknown id does not; bob sees
+// no stamp on alice's author.
+func TestSearchAuthorsStampsLibraryAuthorID(t *testing.T) {
+	database, aliceID, bobID, author, _ := seedLibraryStampFixture(t)
+	p := &stubProvider{authors: []models.Author{
+		{ForeignID: "OL-ALICE", Name: "Alice Author"},
+		{ForeignID: "hc:alice-author", Name: "A. Author (alternate identifier)"},
+		{ForeignID: "OL-STRANGER", Name: "Stranger"},
+	}}
+	h := NewSearchHandler(metadata.NewAggregator(p), db.NewBookRepo(database), db.NewAuthorRepo(database))
+
+	search := func(userID int64) []map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/search/author?term=x", nil).
+			WithContext(auth.WithUserID(context.Background(), userID))
+		h.SearchAuthors(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var got []map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("expected 3 results, got %d", len(got))
+		}
+		return got
+	}
+
+	asAlice := search(aliceID)
+	for _, i := range []int{0, 1} {
+		if id, ok := asAlice[i]["libraryAuthorId"].(float64); !ok || int64(id) != author.ID {
+			t.Errorf("result %d libraryAuthorId = %v, want %d", i, asAlice[i]["libraryAuthorId"], author.ID)
+		}
+	}
+	if _, present := asAlice[2]["libraryAuthorId"]; present {
+		t.Errorf("unknown author should carry no libraryAuthorId, got %v", asAlice[2]["libraryAuthorId"])
+	}
+	if asAlice[0]["foreignAuthorId"] != "OL-ALICE" {
+		t.Errorf("embedded author fields lost in wrapper: %v", asAlice[0])
+	}
+
+	asBob := search(bobID)
+	for i, row := range asBob {
+		if _, present := row["libraryAuthorId"]; present {
+			t.Errorf("row %d: alice's author stamped for bob: %v", i, row["libraryAuthorId"])
+		}
+	}
+}
+
+// TestLookupStampsLibraryBookID: the ISBN and ASIN lookups stamp the single
+// hit the same way the list search does.
+func TestLookupStampsLibraryBookID(t *testing.T) {
+	database, aliceID, bobID, _, owned := seedLibraryStampFixture(t)
+	p := &stubProvider{byISBN: &models.Book{
+		ForeignID:     "OL-BOOK-OWNED",
+		Title:         "Owned",
+		Description:   "A long-enough description to skip the enrichment branch in the aggregator.",
+		ProviderISBNs: []string{"9780316769488"},
+	}}
+	h := NewSearchHandler(metadata.NewAggregator(p), db.NewBookRepo(database), db.NewAuthorRepo(database))
+
+	lookup := func(userID int64) map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/book/lookup?isbn=9780316769488", nil).
+			WithContext(auth.WithUserID(context.Background(), userID))
+		h.Lookup(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var got map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	if got := lookup(aliceID); got["libraryBookId"] == nil || int64(got["libraryBookId"].(float64)) != owned.ID {
+		t.Errorf("alice lookup libraryBookId = %v, want %d", got["libraryBookId"], owned.ID)
+	}
+	if got := lookup(bobID); got["libraryBookId"] != nil {
+		t.Errorf("bob lookup stamped with alice's book: %v", got["libraryBookId"])
 	}
 }

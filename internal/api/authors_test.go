@@ -8023,3 +8023,288 @@ func TestSaveAlternateNames_SharedLatinRule(t *testing.T) {
 		t.Fatalf("mixed-script author aliases = %+v, want exactly [Haruki Murakamø]", got)
 	}
 }
+
+// TestAddBook_RefusesBookAlreadyOwned covers #1227. Re-adding a book the
+// requesting user already owns used to reuse the row and force it back to
+// monitored. Now it answers 409 with the existing row, before any author
+// creation or upstream fetch, and leaves the row untouched (monitored stays
+// false). Another user's copy of the same foreign id is not a library
+// conflict for this user, but the guard after the poll still refuses to touch
+// or expose it.
+func TestAddBook_RefusesBookAlreadyOwned(t *testing.T) {
+	// Tenancy on: the conflict gate is scoped to the caller, so bob's request
+	// gets past it and exercises the post poll guard instead.
+	auth.SetEnforceTenancyForTests(t, true)
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	ctx := context.Background()
+	users := db.NewUserRepo(database)
+	alice, err := users.Create(ctx, "alice", "h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := users.Create(ctx, "bob", "h2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	author := &models.Author{
+		ForeignID: "OL-ALICE", Name: "Alice Author", SortName: "Author, Alice",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.CreateForUser(ctx, author, alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	owned := &models.Book{
+		ForeignID: "OL-BOOK-OWNED", Title: "Owned", SortTitle: "Owned", AuthorID: author.ID,
+		Status: models.BookStatusImported, Monitored: false, Genres: []string{},
+		MetadataProvider: "openlibrary", OwnerUserID: alice.ID,
+	}
+	if err := bookRepo.Create(ctx, owned); err != nil {
+		t.Fatal(err)
+	}
+
+	// Buffered so the stub's non-blocking send lands when GetBook is entered;
+	// an empty channel after the request proves no upstream fetch happened.
+	entered := make(chan struct{}, 1)
+	provider := &stubMetaProvider{getBookEntered: entered}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(provider), nil, profileRepo, nil)
+
+	// No foreignAuthorId: the pre-#1227 handler would have gone straight to
+	// the provider to resolve the author. The conflict must come first.
+	body, _ := json.Marshal(map[string]any{"foreignBookId": "OL-BOOK-OWNED"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)).
+		WithContext(auth.WithUserID(context.Background(), alice.ID))
+	rec := httptest.NewRecorder()
+	h.AddBook(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("alice re-add: expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var conflict struct {
+		Error          string       `json:"error"`
+		ExistingBookID int64        `json:"existingBookId"`
+		ExistingBook   *models.Book `json:"existingBook"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&conflict); err != nil {
+		t.Fatal(err)
+	}
+	if conflict.ExistingBookID != owned.ID || conflict.ExistingBook == nil || conflict.ExistingBook.ID != owned.ID {
+		t.Fatalf("conflict body = %+v, want existingBookId %d", conflict, owned.ID)
+	}
+	if conflict.Error == "" {
+		t.Fatalf("conflict body has no error message")
+	}
+	select {
+	case <-entered:
+		t.Fatalf("conflict path reached the metadata provider")
+	default:
+	}
+	after, err := bookRepo.GetByID(ctx, owned.ID)
+	if err != nil || after == nil {
+		t.Fatalf("owned book after conflict = %+v err=%v", after, err)
+	}
+	if after.Monitored {
+		t.Fatalf("conflict flipped the owned book to monitored")
+	}
+	if after.Status != models.BookStatusImported {
+		t.Fatalf("conflict changed status to %q", after.Status)
+	}
+	if n, _ := authorRepo.ListByUser(ctx, alice.ID); len(n) != 1 {
+		t.Fatalf("conflict created an author row: %d authors", len(n))
+	}
+
+	// Bob does not own that book, so the library scoped gate does not fire
+	// for him. books.foreign_id is UNIQUE across users though, so the poll
+	// finds alice's row; the guard after it must refuse without touching or
+	// exposing that row.
+	body, _ = json.Marshal(map[string]any{
+		"foreignBookId": "OL-BOOK-OWNED", "foreignAuthorId": "OL-BOB-AUTHOR", "authorName": "Bob Author",
+	})
+	parent, cancel := context.WithTimeout(auth.WithUserID(context.Background(), bob.ID), 200*time.Millisecond)
+	defer cancel()
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)).WithContext(parent)
+	rec = httptest.NewRecorder()
+	h.AddBook(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("bob adding alice's book: expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var held map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&held); err != nil {
+		t.Fatal(err)
+	}
+	if held["error"] != "book is held by another user" {
+		t.Fatalf("bob conflict error = %v", held["error"])
+	}
+	if _, leaked := held["existingBook"]; leaked {
+		t.Fatalf("bob's 409 carries alice's row: %v", held)
+	}
+	if _, leaked := held["existingBookId"]; leaked {
+		t.Fatalf("bob's 409 carries alice's book id: %v", held)
+	}
+	// Compare against the row as read back before bob's request, not the
+	// fixture struct: Create fills defaults (media type) the struct lacks.
+	beforeBob := *after
+	after, err = bookRepo.GetByID(ctx, owned.ID)
+	if err != nil || after == nil {
+		t.Fatalf("alice's book after bob's add = %+v err=%v", after, err)
+	}
+	if after.Monitored || after.Status != beforeBob.Status || after.MediaType != beforeBob.MediaType || after.OwnerUserID != alice.ID || !after.UpdatedAt.Equal(beforeBob.UpdatedAt) {
+		t.Fatalf("bob's add changed alice's row: monitored=%v status=%q mediaType=%q owner=%d updatedAt=%v (before %v)", after.Monitored, after.Status, after.MediaType, after.OwnerUserID, after.UpdatedAt, beforeBob.UpdatedAt)
+	}
+	// The author row bob's request created is rolled back by the orphan
+	// cleanup defer, since no book was created for it.
+	if bobAuthors, _ := authorRepo.ListByUser(ctx, bob.ID); len(bobAuthors) != 0 {
+		t.Fatalf("bob's refused add left %d author row(s) behind: %+v", len(bobAuthors), bobAuthors)
+	}
+}
+
+// TestAddBook_RefusesNullOwnedBookForLoggedInUser: with tenancy off, a logged
+// in user re-adding a row with no owner (what any local only or API key
+// request creates) must hit the same conflict. The gate is scoped like the
+// library list, where that row is visible, not by strict owner equality.
+func TestAddBook_RefusesNullOwnedBookForLoggedInUser(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, false)
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	ctx := context.Background()
+	users := db.NewUserRepo(database)
+	alice, err := users.Create(ctx, "alice", "h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	author := &models.Author{
+		ForeignID: "OL-NOBODY", Name: "Nobody Author", SortName: "Author, Nobody",
+		MetadataProvider: "openlibrary",
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	unowned := &models.Book{
+		ForeignID: "OL-BOOK-NULL", Title: "Unowned", SortTitle: "Unowned", AuthorID: author.ID,
+		Status: models.BookStatusImported, Monitored: false, Genres: []string{},
+		MetadataProvider: "openlibrary",
+	}
+	if err := bookRepo.Create(ctx, unowned); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := bookRepo.GetByID(ctx, unowned.ID); got == nil || got.OwnerUserID != 0 {
+		t.Fatalf("fixture book should have no owner, got %+v", got)
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(&stubMetaProvider{}), nil, profileRepo, nil)
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId": "OL-BOOK-NULL", "foreignAuthorId": "OL-NOBODY", "authorName": "Nobody Author",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)).
+		WithContext(auth.WithUserID(context.Background(), alice.ID))
+	rec := httptest.NewRecorder()
+	h.AddBook(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var conflict struct {
+		ExistingBookID int64 `json:"existingBookId"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&conflict); err != nil {
+		t.Fatal(err)
+	}
+	if conflict.ExistingBookID != unowned.ID {
+		t.Fatalf("existingBookId = %d, want %d", conflict.ExistingBookID, unowned.ID)
+	}
+	after, err := bookRepo.GetByID(ctx, unowned.ID)
+	if err != nil || after == nil {
+		t.Fatalf("book after conflict = %+v err=%v", after, err)
+	}
+	if after.Monitored {
+		t.Fatalf("conflict flipped the unowned book to monitored")
+	}
+}
+
+// TestAddBook_AdminGetsConflictForOtherUsersBook: with tenancy on, an admin
+// sees every row in the library list, so re-adding another user's book is a
+// library conflict (409 with the row), not a silent 201 that re monitors it.
+func TestAddBook_AdminGetsConflictForOtherUsersBook(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	ctx := context.Background()
+	users := db.NewUserRepo(database)
+	alice, err := users.Create(ctx, "alice", "h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := users.Create(ctx, "admin", "h2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	author := &models.Author{
+		ForeignID: "OL-ALICE", Name: "Alice Author", SortName: "Author, Alice",
+		MetadataProvider: "openlibrary",
+	}
+	if err := authorRepo.CreateForUser(ctx, author, alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	owned := &models.Book{
+		ForeignID: "OL-BOOK-OWNED", Title: "Owned", SortTitle: "Owned", AuthorID: author.ID,
+		Status: models.BookStatusImported, Monitored: false, Genres: []string{},
+		MetadataProvider: "openlibrary", OwnerUserID: alice.ID,
+	}
+	if err := bookRepo.Create(ctx, owned); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(&stubMetaProvider{}), nil, profileRepo, nil)
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId": "OL-BOOK-OWNED", "foreignAuthorId": "OL-ALICE", "authorName": "Alice Author",
+	})
+	adminCtx := auth.WithUserRole(auth.WithUserID(context.Background(), admin.ID), "admin")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)).WithContext(adminCtx)
+	rec := httptest.NewRecorder()
+	h.AddBook(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("admin re-add: expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var conflict struct {
+		ExistingBookID int64 `json:"existingBookId"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&conflict); err != nil {
+		t.Fatal(err)
+	}
+	if conflict.ExistingBookID != owned.ID {
+		t.Fatalf("existingBookId = %d, want %d", conflict.ExistingBookID, owned.ID)
+	}
+	after, err := bookRepo.GetByID(ctx, owned.ID)
+	if err != nil || after == nil {
+		t.Fatalf("book after conflict = %+v err=%v", after, err)
+	}
+	if after.Monitored {
+		t.Fatalf("admin re-add flipped alice's book to monitored")
+	}
+}

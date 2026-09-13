@@ -23,6 +23,9 @@ vi.mock('react-i18next', () => ({
         'addAuthorModal.noResults': 'No results found',
         'addAuthorModal.openExisting': 'Open existing author',
         'addAuthorModal.findMetadata': 'Find metadata',
+        'addAuthorModal.inLibrary': 'In your library',
+        'addAuthorModal.open': 'Open',
+        'addAuthorModal.openInLibrary': 'Open {{name}}',
       }
       if (key === 'addAuthorModal.searchError') {
         return `Could not reach the metadata provider - ${String(options?.error ?? '')}`
@@ -778,4 +781,33 @@ describe('AddAuthorModal — search error handling', () => {
     })
   })
 
+})
+
+describe('AddAuthorModal — already in the library (#1227)', () => {
+  const onClose = vi.fn()
+  const onAdded = vi.fn()
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.listMetadataProfiles).mockResolvedValue([])
+    vi.mocked(api.listRootFolders).mockResolvedValue([])
+    vi.mocked(api.searchBooks).mockResolvedValue([])
+  })
+
+  it('renders an "In your library" badge and an Open link instead of Select for a stamped result', async () => {
+    vi.mocked(api.searchAuthors).mockResolvedValue([
+      author({ id: 0, foreignAuthorId: 'OL-OWNED', authorName: 'Owned Author', libraryAuthorId: 7 }),
+      author({ id: 0, foreignAuthorId: 'OL-NEW', authorName: 'New Author' }),
+    ])
+
+    render(<AddAuthorModal onClose={onClose} onAdded={onAdded} />)
+    fireEvent.change(screen.getByPlaceholderText('Search by author name...'), { target: { value: 'author' } })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+
+    await waitFor(() => expect(screen.getByText('Owned Author')).toBeInTheDocument())
+    expect(screen.getByText('In your library')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open Owned Author' })).toHaveAttribute('href', '/author/7')
+    // Only the unstamped row offers Select.
+    expect(screen.getAllByRole('button', { name: 'Select' })).toHaveLength(1)
+  })
 })

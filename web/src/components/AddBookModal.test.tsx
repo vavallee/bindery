@@ -7,6 +7,7 @@ vi.mock('react-i18next', () => ({
     t: (key: string, options?: Record<string, unknown>) => {
       if (key === 'addBookModal.selectBook') return `Select ${options?.title ?? ''}`
       if (key === 'addBookModal.coverAlt') return `${options?.title ?? ''} cover`
+      if (key === 'addBookModal.openInLibrary') return `Open ${options?.title ?? ''}`
       if (key === 'addBookModal.showMoreIdentifiers') return `Show ${options?.count ?? 0} more identifiers`
       if (key === 'common.viewOnSource') return `View on ${options?.source ?? ''} ↗`
       return ({
@@ -37,6 +38,10 @@ vi.mock('react-i18next', () => ({
       'addBookModal.identifiersHint': 'Identifiers reported by the metadata source.',
       'addBookModal.adding': 'Adding...',
       'addBookModal.addFailed': 'Failed to add book',
+      'addBookModal.alreadyInLibrary': 'Already in your library',
+      'addBookModal.inLibrary': 'In your library',
+      'addBookModal.open': 'Open',
+      'addBookModal.openExisting': 'Open existing book',
       'common.search': 'Search',
       'common.links': 'Links',
       'common.cancel': 'Cancel',
@@ -435,5 +440,78 @@ describe('AddBookModal — media-type selector (#1397)', () => {
     expect(alertSpy).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()
     alertSpy.mockRestore()
+  })
+})
+
+describe('AddBookModal — already in the library (#1227)', () => {
+  const onClose = vi.fn()
+  const onAdded = vi.fn()
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders an "In your library" badge and an Open link instead of Select for a stamped result', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue([
+      { foreignBookId: 'OL-OWNED', title: 'Owned Book', libraryBookId: 42, author: { authorName: 'Someone' } },
+      { foreignBookId: 'OL-NEW', title: 'New Book', author: { authorName: 'Someone' } },
+    ] as never)
+
+    render(<AddBookModal onClose={onClose} onAdded={onAdded} />)
+    fireEvent.change(screen.getByPlaceholderText(/Title, ISBN, or ASIN/i), { target: { value: 'someone' } })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+
+    await waitFor(() => expect(screen.getByText('Owned Book')).toBeInTheDocument())
+    expect(screen.getByText('In your library')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open Owned Book' })).toHaveAttribute('href', '/book/42')
+    expect(screen.queryByRole('button', { name: 'Select Owned Book' })).not.toBeInTheDocument()
+    // The unstamped row keeps its Select button and no badge.
+    expect(screen.getByRole('button', { name: 'Select New Book' })).toBeInTheDocument()
+    expect(screen.getAllByText('In your library')).toHaveLength(1)
+  })
+
+  it('shows "Already in your library" with an open link when the add answers 409', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue([
+      { foreignBookId: 'OL-OWNED', title: 'Owned Book', author: { authorName: 'Someone', foreignAuthorId: 'OL-A' } },
+    ] as never)
+    const err = Object.assign(new Error('book already in your library'), {
+      status: 409,
+      body: {
+        error: 'book already in your library',
+        existingBookId: 42,
+        existingBook: { id: 42, foreignBookId: 'OL-OWNED', title: 'Owned Book', monitored: false },
+      },
+    })
+    vi.mocked(api.addBook).mockRejectedValue(err)
+
+    render(<AddBookModal onClose={onClose} onAdded={onAdded} />)
+    fireEvent.change(screen.getByPlaceholderText(/Title, ISBN, or ASIN/i), { target: { value: 'someone' } })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await waitFor(() => expect(screen.getByText('Owned Book')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Owned Book' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add book' }))
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Already in your library'))
+    expect(screen.getByRole('link', { name: 'Open existing book' })).toHaveAttribute('href', '/book/42')
+    expect(onAdded).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('keeps the plain error for a non-conflict failure', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue([
+      { foreignBookId: 'OL-NEW', title: 'New Book', author: { authorName: 'Someone', foreignAuthorId: 'OL-A' } },
+    ] as never)
+    vi.mocked(api.addBook).mockRejectedValue(Object.assign(new Error('metadata provider unavailable'), { status: 502, body: { error: 'metadata provider unavailable' } }))
+
+    render(<AddBookModal onClose={onClose} onAdded={onAdded} />)
+    fireEvent.change(screen.getByPlaceholderText(/Title, ISBN, or ASIN/i), { target: { value: 'someone' } })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await waitFor(() => expect(screen.getByText('New Book')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Select New Book' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add book' }))
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('metadata provider unavailable'))
+    expect(screen.queryByRole('link', { name: 'Open existing book' })).not.toBeInTheDocument()
   })
 })

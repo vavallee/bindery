@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, Book } from '../api/client'
+import { api, Book, BookConflictBody } from '../api/client'
 import { isbnFromQuery, resolveBookQuery } from '../api/booklookup'
 import { metadataSourceLink, providerDisplayName, providerFromBookForeignId } from '../util/metadataSource'
 import MetadataLinksMenu from './MetadataLinksMenu'
@@ -8,6 +8,20 @@ import MetadataLinksMenu from './MetadataLinksMenu'
 interface Props {
   onClose: () => void
   onAdded: (book: Book) => void
+}
+
+function basePath(): string {
+  return (window as unknown as { __BINDERY_BASE__?: string }).__BINDERY_BASE__ ?? ''
+}
+
+// The 409 from POST /author/book carries the library row (#1227); anything
+// else is a plain failure.
+function conflictBody(err: unknown): BookConflictBody | null {
+  if (err && typeof err === 'object' && 'body' in err) {
+    const body = (err as { body?: unknown }).body
+    if (body && typeof body === 'object' && 'existingBookId' in body) return body as BookConflictBody
+  }
+  return null
 }
 
 export default function AddBookModal({ onClose, onAdded }: Props) {
@@ -18,6 +32,7 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [addError, setAddError] = useState<string | null>(null)
+  const [addConflict, setAddConflict] = useState<BookConflictBody | null>(null)
   const [searchedISBN, setSearchedISBN] = useState<string | null>(null)
   const [adding, setAdding] = useState<string | null>(null)
   const [searchOnAdd, setSearchOnAdd] = useState(true)
@@ -37,6 +52,7 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
     setResults([])
     setSearchError(null)
     setAddError(null)
+    setAddConflict(null)
     try {
       // ISBN / ASIN / free-text dispatch lives in resolveBookQuery so Manual
       // Import's metadata search accepts exactly the same inputs.
@@ -74,7 +90,13 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
       })
       onAdded(created)
     } catch (err: unknown) {
-      setAddError(err instanceof Error ? err.message : t('addBookModal.addFailed'))
+      const conflict = conflictBody(err)
+      setAddConflict(conflict)
+      if (conflict) {
+        setAddError(t('addBookModal.alreadyInLibrary'))
+      } else {
+        setAddError(err instanceof Error ? err.message : t('addBookModal.addFailed'))
+      }
     } finally {
       setAdding(null)
     }
@@ -83,11 +105,13 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
   const selectBook = (book: Book) => {
     setSelectedBook(book)
     setAddError(null)
+    setAddConflict(null)
   }
 
   const backToResults = () => {
     setSelectedBook(null)
     setAddError(null)
+    setAddConflict(null)
   }
 
   const selectedProvider = selectedBook
@@ -177,16 +201,29 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
                         <div className="text-xs text-slate-500 dark:text-zinc-600">{new Date(book.releaseDate).getFullYear()}</div>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => selectBook(book)}
-                      disabled={!canAdd}
-                      aria-label={canAdd ? t('addBookModal.selectBook', { title: book.title }) : undefined}
-                      className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded text-xs font-medium text-white flex-shrink-0"
-                      title={!canAdd ? t('addBookModal.idMissing') : undefined}
-                    >
-                      {t('addBookModal.select')}
-                    </button>
+                    {book.libraryBookId ? (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className="px-2 py-0.5 rounded-full bg-slate-300/70 dark:bg-zinc-700 text-[11px] font-medium text-slate-700 dark:text-zinc-300">{t('addBookModal.inLibrary')}</span>
+                        <a
+                          href={`${basePath()}/book/${book.libraryBookId}`}
+                          aria-label={t('addBookModal.openInLibrary', { title: book.title })}
+                          className="px-3 py-1 rounded text-xs font-medium border border-slate-400 dark:border-zinc-600 hover:bg-slate-200 dark:hover:bg-zinc-800"
+                        >
+                          {t('addBookModal.open')}
+                        </a>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => selectBook(book)}
+                        disabled={!canAdd}
+                        aria-label={canAdd ? t('addBookModal.selectBook', { title: book.title }) : undefined}
+                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded text-xs font-medium text-white flex-shrink-0"
+                        title={!canAdd ? t('addBookModal.idMissing') : undefined}
+                      >
+                        {t('addBookModal.select')}
+                      </button>
+                    )}
                   </div>
                 )
               })}
@@ -306,7 +343,16 @@ export default function AddBookModal({ onClose, onAdded }: Props) {
               </label>
             </div>
 
-            {addError && <div role="alert" className="mt-3 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">{addError}</div>}
+            {addError && (
+              <div role="alert" className="mt-3 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
+                <div>{addError}</div>
+                {addConflict?.existingBookId && (
+                  <div className="mt-2 text-xs font-medium">
+                    <a href={`${basePath()}/book/${addConflict.existingBookId}`} className="underline">{t('addBookModal.openExisting')}</a>
+                  </div>
+                )}
+              </div>
+            )}
           </>}
         </div>
 

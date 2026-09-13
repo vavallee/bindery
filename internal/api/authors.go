@@ -881,6 +881,17 @@ func (h *AuthorHandler) writeCanonicalAuthorConflict(w http.ResponseWriter, cano
 	})
 }
 
+// writeExistingBookConflict is the AddBook counterpart of
+// writeCanonicalAuthorConflict (#1227): 409 with the library row so the client
+// can offer to open it instead of showing a generic failure.
+func (h *AuthorHandler) writeExistingBookConflict(w http.ResponseWriter, existing *models.Book) {
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":          "book already in your library; change its format or monitoring from the book page",
+		"existingBookId": existing.ID,
+		"existingBook":   existing,
+	})
+}
+
 func (h *AuthorHandler) findCanonicalAuthorMatch(ctx context.Context, names ...string) (*models.Author, bool, error) {
 	return h.findCanonicalAuthorMatchExcluding(ctx, 0, names...)
 }
@@ -3043,6 +3054,25 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	// book to guarantee it exists before the cleanup defer runs (#804).
 	authorWasJustCreated := false
 
+	// 0. Refuse to re-add a book the user already owns (#1227). Before this
+	// check the handler reused the existing row and force-monitored it at
+	// step 3, so re-adding an owned book silently flipped it back to wanted.
+	// Runs before any author creation or upstream fetch so a conflict has no
+	// side effects. Scoped like the library list the user is looking at
+	// (ListScopeUserID plus NULL owners): a NULL owned row is in that list,
+	// and an admin under tenancy sees every row, so both are conflicts. A
+	// non admin's request never sees another user's copy here; the guard
+	// after the poll covers that case.
+	userID := auth.UserIDFromContext(ctx)
+	scopeID := auth.ListScopeUserID(ctx)
+	if existing, err := h.books.GetByForeignIDVisibleTo(ctx, req.ForeignBookID, scopeID); err != nil {
+		writeServerError(w, r, err)
+		return
+	} else if existing != nil {
+		h.writeExistingBookConflict(w, existing)
+		return
+	}
+
 	if req.ForeignAuthorID == "" {
 		resolved, err := h.resolveAuthorForBook(ctx, req.ForeignBookID)
 		if err != nil {
@@ -3058,6 +3088,15 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 			req.ForeignAuthorID = resolved.Author.ForeignID
 			if req.AuthorName == "" {
 				req.AuthorName = resolved.Author.Name
+			}
+			// The canonical id may itself already be in the library even though
+			// the id the client sent was not (#1227).
+			if existing, err := h.books.GetByForeignIDVisibleTo(ctx, req.ForeignBookID, scopeID); err != nil {
+				writeServerError(w, r, err)
+				return
+			} else if existing != nil {
+				h.writeExistingBookConflict(w, existing)
+				return
 			}
 		} else if req.AuthorName != "" {
 			// ISBN-based resolution failed (e.g. Google Books: author name, no
@@ -3081,7 +3120,6 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Find or create the author (unmonitored if new so we don't auto-want all books).
-	userID := auth.UserIDFromContext(ctx)
 	author, _ := h.authors.GetByForeignIDForUser(ctx, req.ForeignAuthorID, userID)
 	if author == nil {
 		author, _ = h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignAuthorID, userID)
@@ -3310,6 +3348,17 @@ func (h *AuthorHandler) AddBook(w http.ResponseWriter, r *http.Request) {
 
 	if book == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found after author sync — try again shortly"})
+		return
+	}
+	// The poll looks the row up globally because books.foreign_id is UNIQUE
+	// across users, so under tenancy it can return another user's copy: the
+	// conflict gate above never saw it (scoped to this user), the direct
+	// insert skipped it, and until #1227 the update below then flipped that
+	// user's book to monitored. Refuse instead, with no row in the body since
+	// the caller is not allowed to see it. bookCreated stays false so the
+	// orphan cleanup defer removes any author row this request created.
+	if book.OwnerUserID != 0 && userID != 0 && book.OwnerUserID != userID {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "book is held by another user"})
 		return
 	}
 	bookCreated = true

@@ -6,6 +6,9 @@ import type { Page } from './common'
 export interface Author {
   id: number
   foreignAuthorId: string
+  // Set on metadata search results whose foreign id already matches a library
+  // author visible to the current user (#1227). It is the library row id.
+  libraryAuthorId?: number
   authorName: string
   sortName: string
   description: string

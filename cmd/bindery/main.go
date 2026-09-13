@@ -605,7 +605,7 @@ func main() {
 		WithLifetimeCtx(appCtx)
 	userMgmtHandler := api.NewUserManagementHandler(userRepo).
 		WithLocalAuthEnabled(cfg.LocalAuthEnabled)
-	searchHandler := api.NewSearchHandler(metaAgg)
+	searchHandler := api.NewSearchHandler(metaAgg, bookRepo, authorRepo)
 	// Library-root containment checker (Wave 1 / Bundle B): used by the book
 	// and author delete handlers to refuse on-disk removal of any path that
 	// isn't inside a configured root. Defaults to the legacy single-root env

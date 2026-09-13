@@ -254,16 +254,29 @@ export default function AddAuthorModal({ onClose, onAdded }: Props) {
                     {providerMismatch(author) && <span className="text-amber-600 dark:text-amber-400">{t('addAuthorModal.resultProvider', { provider: providerDisplayName(providerMismatch(author)) })}</span>}
                   </div>
                 </div>
-                <button
-                  onClick={() => {
-                    setSelectedAuthor(author)
-                    setAddError(null)
-                    setAddConflict(null)
-                  }}
-                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-xs font-medium"
-                >
-                  {t('addAuthorModal.select')}
-                </button>
+                {author.libraryAuthorId ? (
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="px-2 py-0.5 rounded-full bg-slate-300/70 dark:bg-zinc-700 text-[11px] font-medium text-slate-700 dark:text-zinc-300">{t('addAuthorModal.inLibrary')}</span>
+                    <a
+                      href={`${basePath()}/author/${author.libraryAuthorId}`}
+                      aria-label={t('addAuthorModal.openInLibrary', { name: author.authorName })}
+                      className="px-3 py-1 rounded text-xs font-medium border border-slate-400 dark:border-zinc-600 hover:bg-slate-200 dark:hover:bg-zinc-800"
+                    >
+                      {t('addAuthorModal.open')}
+                    </a>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setSelectedAuthor(author)
+                      setAddError(null)
+                      setAddConflict(null)
+                    }}
+                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-xs font-medium"
+                  >
+                    {t('addAuthorModal.select')}
+                  </button>
+                )}
               </div>
             ))}
             {hiddenResults.length > 0 && !showHiddenResults && (

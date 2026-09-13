@@ -54,9 +54,20 @@ export interface Book {
   asin?: string
   // Transient ISBNs reported by metadata providers during search/lookup.
   isbns?: string[]
+  // Set on metadata search / lookup results whose foreign id already matches a
+  // book the current user owns (#1227). It is the library row id, not `id`.
+  libraryBookId?: number
   language?: string
   calibre_id?: number
   author?: Author
+}
+
+// Body of the 409 that POST /author/book answers when the book is already in
+// the current user's library (#1227). Mirrors AuthorConflictBody.
+export interface BookConflictBody {
+  error?: string
+  existingBookId?: number
+  existingBook?: Book
 }
 
 export interface SearchResult {

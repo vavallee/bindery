@@ -34,6 +34,7 @@ The API key lives in **Settings → General → Security**. Regenerating it inva
 ```
 GET    /api/v1/author                             list authors (paginated, filterable)
 POST   /api/v1/author                             add an author (triggers async book fetch)
+POST   /api/v1/author/book                        add one book by foreign id (creates its author if needed)
 POST   /api/v1/author/bulk                        bulk add/update
 GET    /api/v1/author/{id}                        author detail
 PUT    /api/v1/author/{id}                        update monitored / metadata profile
@@ -48,6 +49,35 @@ GET    /api/v1/author/{id}/relink-upstream/candidates
 POST   /api/v1/author/{id}/relink-upstream        re-bind to a different foreign ID
 GET    /api/v1/author/{id}/aliases                list merged-in alias rows
 POST   /api/v1/author/{id}/merge                  merge another author into this one
+```
+
+`POST /api/v1/author/book` answers **409 Conflict** when `foreignBookId` (or
+the canonical id it resolves to on the ISBN path) already matches a book in the
+requesting user's library (#1227). "In the library" is scoped exactly like
+`GET /api/v1/book`: rows the user owns plus rows with no owner, and every row
+for an admin or when tenancy is off. The check runs before any author creation
+or provider fetch, so a conflict has no side effects, and the existing row is
+left exactly as it was: an unmonitored book stays unmonitored. The body mirrors
+the Add Author conflict:
+
+```json
+{
+  "error": "book already in your library; change its format or monitoring from the book page",
+  "existingBookId": 42,
+  "existingBook": { "id": 42, "foreignBookId": "OL27448W", "title": "The Hobbit", "monitored": false }
+}
+```
+
+To change the format or monitoring of a book you already have (for example an
+imported ebook you now also want as an audiobook), update it through
+`PUT /api/v1/book/{id}` or the book page rather than re-adding it.
+
+With tenancy enforced, a non admin user whose request reaches a copy of the
+same foreign id held by a different user also gets **409**, with no row in the
+body because the caller may not see it:
+
+```json
+{ "error": "book is held by another user" }
 ```
 
 `GET /api/v1/author/{id}` includes a `lastSync` object when this Bindery process
@@ -145,11 +175,28 @@ GET    /api/v1/book/{id}/file                     download the imported file (au
 ### Search & discovery
 
 ```
-GET    /api/v1/search/author?q=…                  OpenLibrary author search
-GET    /api/v1/search/book?q=…                    OpenLibrary book search
-GET    /api/v1/book/lookup?isbn=…                 ISBN-keyed lookup
+GET    /api/v1/search/author?term=…               metadata author search
+GET    /api/v1/search/book?term=…                 metadata book search
+GET    /api/v1/book/lookup?isbn=… | ?asin=…       single-book lookup by identifier
 GET    /api/v1/wanted/missing                     list wanted-but-missing books
 POST   /api/v1/wanted/bulk                        bulk operations on wanted
+```
+
+Metadata results say when they are already in the caller's library (#1227).
+Each `/search/book` and `/book/lookup` result carries `libraryBookId` when its
+`foreignBookId` matches a book the requesting user owns, and each
+`/search/author` result carries `libraryAuthorId` when its `foreignAuthorId`
+matches a library author visible to the user, by primary id or by an alternate
+identifier. Both fields hold the library row id and are omitted otherwise, so a
+client can offer "open" for those rows and "add" for the rest. The lookup is
+owner scoped: another user's copy does not stamp. If the library lookup itself
+fails the search still succeeds, unstamped.
+
+```json
+[
+  { "foreignBookId": "OL27448W", "title": "The Hobbit", "libraryBookId": 42 },
+  { "foreignBookId": "OL27479W", "title": "The Silmarillion" }
+]
 ```
 
 ### Indexers, Prowlarr, root folders
