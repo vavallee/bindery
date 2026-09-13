@@ -39,22 +39,23 @@ vi.mock('react-i18next', () => ({
         'books.colYear': 'Year',
         'books.colType': 'Type',
         'books.colStatus': 'Status',
-        'addBookModal.title': 'Add Book',
-        'addBookModal.description': 'Search by title, ISBN, or ASIN to add a specific book to your wanted list.',
-        'addBookModal.searchPlaceholder': 'Title, ISBN, or ASIN',
-        'addBookModal.searching': 'Searching...',
-        'addBookModal.select': 'Select',
-        'addBookModal.selectBook': `Select ${(options as Record<string, unknown> | undefined)?.title ?? ''}`,
-        'addBookModal.confirmAdd': 'Add book',
-        'addBookModal.backToResults': 'Back to results',
-        'addBookModal.noCover': 'No cover',
-        'addBookModal.format': 'Format',
-        'addBookModal.formatLabel': 'Format to add',
-        'addBookModal.formatHint': 'Choose which format to add',
-        'addBookModal.defaultFormat': 'Default',
-        'addBookModal.autoSearchLabel': 'Search indexers after adding',
-        'addBookModal.autoSearchHint': 'Try to grab the book automatically after adding it to wanted.',
-        'addBookModal.adding': 'Adding...',
+        'addToLibrary.title': 'Add to library',
+        'addToLibrary.addBook': 'Add Book',
+        'addToLibrary.description': 'Search by author, title, ISBN, or ASIN.',
+        'addToLibrary.searchPlaceholderBook': 'Title, ISBN, or ASIN',
+        'addToLibrary.searching': 'Searching...',
+        'addToLibrary.select': 'Select',
+        'addToLibrary.selectBook': `Select ${(options as Record<string, unknown> | undefined)?.title ?? ''}`,
+        'addToLibrary.book.confirmAdd': 'Add book',
+        'addToLibrary.backToResults': 'Back to results',
+        'addToLibrary.book.noCover': 'No cover',
+        'addToLibrary.book.format': 'Format',
+        'addToLibrary.book.formatLabel': 'Format to add',
+        'addToLibrary.book.formatHint': 'Choose which format to add',
+        'addToLibrary.book.defaultFormat': 'Default',
+        'addToLibrary.book.autoSearchLabel': 'Search indexers after adding',
+        'addToLibrary.book.autoSearchHint': 'Try to grab the book automatically after adding it to wanted.',
+        'addToLibrary.adding': 'Adding...',
         'common.all': 'All',
         'common.loading': 'Loading...',
         'common.ebook': 'Ebook',
@@ -103,6 +104,10 @@ function stubSetupEndpoints() {
   server.use(
     http.get(apiUrl('/indexer'), () => HttpResponse.json([])),
     http.get(apiUrl('/downloadclient'), () => HttpResponse.json([])),
+    // The unified Add dialog (#1227) fans out to the author search alongside
+    // the book search and reads the primary-provider setting on open.
+    http.get(apiUrl('/search/author'), () => HttpResponse.json([])),
+    http.get(apiUrl('/setting/metadata.primary_provider'), () => new HttpResponse(null, { status: 404 })),
   )
 }
 
@@ -218,7 +223,7 @@ describe('BooksPage', () => {
 
     const addBookButton = screen.getByRole('button', { name: 'Add Book' })
     fireEvent.click(addBookButton)
-    expect(screen.getByRole('dialog', { name: 'Add Book' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Add to library' })).toBeInTheDocument()
 
     fireEvent.change(screen.getByPlaceholderText('Title, ISBN, or ASIN'), { target: { value: 'Dune' } })
     fireEvent.click(screen.getByRole('button', { name: 'Search' }))
@@ -227,7 +232,7 @@ describe('BooksPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add book' }))
 
     await waitFor(() => expect(listCalls).toBeGreaterThanOrEqual(2))
-    expect(screen.queryByRole('dialog', { name: 'Add Book' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Add to library' })).not.toBeInTheDocument()
     await waitFor(() => expect(addBookButton).toHaveFocus())
   })
 

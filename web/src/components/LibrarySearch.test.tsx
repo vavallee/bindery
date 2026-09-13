@@ -29,9 +29,9 @@ vi.mock('../api/client', () => ({
 
 // The real modal fans out to the metadata search; stub it so this test only
 // proves the handoff (the prop it receives), not the modal itself.
-vi.mock('./AddBookModal', () => ({
+vi.mock('./AddToLibraryModal', () => ({
   default: ({ initialQuery }: { initialQuery?: string }) => (
-    <div role="dialog" data-testid="add-book-modal">{initialQuery}</div>
+    <div role="dialog" data-testid="add-to-library-modal">{initialQuery}</div>
   ),
 }))
 
@@ -172,7 +172,7 @@ describe('LibrarySearch', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(screen.getByTestId('location')).toHaveTextContent('/')
     expect(screen.getByTestId('location')).not.toHaveTextContent('/book/11')
-    expect(screen.getByTestId('add-book-modal')).toHaveTextContent('zebra')
+    expect(screen.getByTestId('add-to-library-modal')).toHaveTextContent('zebra')
   })
 
   it('Escape closes the dropdown and does not clear the query', async () => {
@@ -191,13 +191,13 @@ describe('LibrarySearch', () => {
     expect(input).toHaveValue('')
   })
 
-  it('the add row opens the Add Book modal with the query', async () => {
+  it('the add row opens the Add to library modal with the query', async () => {
     vi.mocked(api.searchLibrary).mockResolvedValue({ authors: [], books: [], series: [] })
     renderSearch()
     await typeAndWait('The Dispossessed')
     fireEvent.click(screen.getByTestId('library-search-add'))
 
-    const modal = screen.getByTestId('add-book-modal')
+    const modal = screen.getByTestId('add-to-library-modal')
     expect(modal).toHaveTextContent('The Dispossessed')
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
@@ -207,7 +207,7 @@ describe('LibrarySearch', () => {
     renderSearch()
     const input = await typeAndWait('earth')
     fireEvent.keyDown(input, { key: 'Enter' })
-    expect(screen.getByTestId('add-book-modal')).toHaveTextContent('earth')
+    expect(screen.getByTestId('add-to-library-modal')).toHaveTextContent('earth')
   })
 
   it('ignores a stale response that lands after a newer query', async () => {

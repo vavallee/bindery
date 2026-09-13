@@ -607,7 +607,7 @@ auth:
 
 **Schema:** no changes. Drop-in binary or image replacement is safe.
 
-**Behavior change — auto-search on add is on by default.** Adding a new author or flipping a book to `wanted` now immediately fires an indexer search. Previously the scheduler waited up to 12 hours. If this is unwanted (e.g. you want to batch-add many authors before any searches fire), uncheck the new **Start search for books on add** box in the Add Author modal. Books that transition to `wanted` via API always trigger a search; a `search_on_status_change` setting will be added later if opt-out is requested — file an issue if you need it.
+**Behavior change — auto-search on add is on by default.** Adding a new author or flipping a book to `wanted` now immediately fires an indexer search. Previously the scheduler waited up to 12 hours. If this is unwanted (e.g. you want to batch-add many authors before any searches fire), uncheck the **Auto-grab books on add** box on the author step of the Add to library dialog. Books that transition to `wanted` via API always trigger a search; a `search_on_status_change` setting will be added later if opt-out is requested — file an issue if you need it.
 
 **Backfill existing libraries (series data):** The `series` and `series_books` tables have existed since v0.1 but were never populated. Authors added before this release therefore have no series rows. After upgrading, run the one-shot reconcile command to backfill series data from OpenLibrary:
 

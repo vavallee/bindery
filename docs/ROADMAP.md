@@ -28,7 +28,7 @@ Real candidates, not commitments, roughly in order of how much they'd change the
 
 - **Merge books / multiple editions** ([#1358](https://github.com/vavallee/bindery/issues/1358)) — group alternate and non-English editions under one book instead of minting duplicates. Real design work; matters most to non-English users.
 
-- **Unify add and search acquisition flows** ([#1227](https://github.com/vavallee/bindery/issues/1227)) — search-first Add Author / Add Book with configuration on a confirm step.
+- **Unify add and search acquisition flows** ([#1227](https://github.com/vavallee/bindery/issues/1227)) — stage 3 ships as one search-first **Add to library** dialog (authors and their books in one list, configuration on a confirm step, library matches marked in place) plus a header search over your own catalogue that hands misses to it. Indexer release search stays on its own page.
 
 - **slskd as a download client** ([#1717](https://github.com/vavallee/bindery/issues/1717)) — see the note under Won't do; the re-scoped version is an ordinary download client and shares its shape with the rTorrent work above.
 

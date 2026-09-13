@@ -13,7 +13,7 @@ import { api, BINDERY_BASE, Book, MediaType } from '../api/client'
 import BulkActionBar from '../components/BulkActionBar'
 import Pagination from '../components/Pagination'
 import { useServerPagination } from '../components/usePagination'
-import AddBookModal from '../components/AddBookModal'
+import AddToLibraryModal from '../components/AddToLibraryModal'
 
 type SortMode =
   | 'title-az' | 'title-za'
@@ -211,7 +211,7 @@ export default function BooksPage() {
             onClick={() => setShowAddBook(true)}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-md text-sm font-medium text-white transition-colors"
           >
-            {t('addBookModal.title')}
+            {t('addToLibrary.addBook')}
           </button>
         </div>
       </div>
@@ -508,12 +508,10 @@ export default function BooksPage() {
       />
 
       {showAddBook && (
-        <AddBookModal
+        <AddToLibraryModal
+          mode="book"
           onClose={() => setShowAddBook(false)}
-          onAdded={() => {
-            setShowAddBook(false)
-            load()
-          }}
+          onAdded={load}
         />
       )}
     </div>

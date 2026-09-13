@@ -53,8 +53,8 @@ only at what is already in Bindery. As you type it lists matching authors
 (including pen names), books (by title or author) and series, and selecting a
 row opens it (a series row opens the Series page with that series expanded,
 without scrolling to it). The last row is always *Add "…" to Bindery*, which
-opens the Add Book dialog with the same text already searched against your
-metadata providers, so a miss in the library turns into an add without
+opens the **Add to library** dialog with the same text already searched against
+your metadata providers, so a miss in the library turns into an add without
 retyping. Pressing Enter with nothing highlighted opens that dialog too, even
 when the list has library hits; use the arrow keys to pick a hit instead. It
 does not query indexers; that stays with the magnifier.
@@ -148,12 +148,25 @@ monitored.
 
 | Entry point | What it creates |
 |---|---|
-| **Authors → Add Author** | The author **plus their full catalogue** (up to ~100 titles), monitored per the monitor mode you pick |
-| **Books → Add Book** (also available from Authors; title/ISBN/ASIN) | One book, and only that book, silently creating its author if needed. Select a search result to review its cover and identifiers before confirming; ISBN lookups show the searched ISBN separately from identifiers reported by the metadata source |
+| **Add to library → an author row** (the **Add Author** button on Authors) | The author **plus their full catalogue** (up to ~100 titles), monitored per the monitor mode you pick |
+| **Add to library → a book row** (the **Add Book** button on Books or Authors) | One book, and only that book, silently creating its author if needed. Select a search result to review its cover and identifiers before confirming; ISBN lookups show the searched ISBN separately from identifiers reported by the metadata source |
 | **Discover → Add to Wanted** | One recommended book |
 | **Series → Fill gaps** | The missing books of a linked series, wanted + monitored |
 | **Import lists** (Settings → Import, Hardcover reading lists) | Every list item, re-synced on the Hardcover list sync interval (Settings → General, 24h by default). Whether the items are also marked wanted is the per-list **Download books from this list** checkbox: on (the default) creates them monitored and queues downloads; off catalogues them unmonitored, so you can browse a Want to Read shelf in Bindery and fetch books one at a time. Authors created by a list never pull their back-catalogue in — only the listed books are added. **Sync now** starts the sync in the background and the row reports its progress, so a large shelf isn't cut short by a request timeout |
 | **Library imports** (Calibre, Readarr, ABS, Goodreads CSV, author list) | Your existing catalogue — see the next section |
+
+**Add Author** and **Add Book** open the same dialog. Type an author name, a
+title, an ISBN or an ASIN and press Enter; the results list authors first, each
+followed by the books the provider attributes to them, with any remaining books
+under a *Books* divider. Which button you pressed only changes the placeholder.
+What you pick decides what happens next: an author row leads to the monitoring
+step (metadata profile, root folder, media type, monitor mode, auto-grab), a
+book row to the single-book step (cover, identifiers, format, search on add).
+Rows that already match something in your library say **In your library** with
+an **Open** link instead of Select, and adding one anyway is refused with a
+link to the existing record. Searches run against the metadata providers only
+when you press Enter or Search, never as you type; the header library search is
+the one that reacts to keystrokes, because it only reads your own catalogue.
 
 Two settings decide whether an author add stays a trickle or becomes a flood:
 
@@ -377,7 +390,7 @@ Which of those a given book actually came from is on the book page, under
 bound to with a copy button, and lists any other provider ids the same book is
 known by. That is the thing to check before deciding a book needs re-binding,
 and the id is what to quote in a bug report. Hover or activate **Links** while
-confirming an Add Book result or in the book header to open trustworthy
+confirming a book in the Add to library dialog or in the book header to open trustworthy
 upstream pages for OpenLibrary, Google Books, Hardcover, and DNB records.
 Calibre and Audiobookshelf ids remain visible only under **Metadata source**
 because they do not map to stable public pages.

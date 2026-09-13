@@ -93,7 +93,7 @@ Clicking **Grab** on a release you already have a Queue entry for is refused wit
 
 The files downloaded fine, but Bindery couldn't tie them to a book in your library, so the item sits in the Queue as `importFailed` with *could not match any book to this download*. This happens when a release was grabbed without a specific book (e.g. from the free-text Search page) or its title didn't parse to a catalogue book.
 
-**Fix:** on the failed Queue item, click **Match to book**, search your library for the correct book, and select it — Bindery imports the already-downloaded files against it and the item flips to **Imported**. If the book isn't in your library yet, add it first with **Books → Add Book** (or through its author), then match. Once matched, an item shows **Matched to *&lt;book&gt;*** and its **Retry import** button re-runs the import against that book.
+**Fix:** on the failed Queue item, click **Match to book**, search your library for the correct book, and select it — Bindery imports the already-downloaded files against it and the item flips to **Imported**. If the book isn't in your library yet, add it first with **Books → Add Book** (pick the book row, or its author's row to bring the whole catalogue in), then match. Once matched, an item shows **Matched to *&lt;book&gt;*** and its **Retry import** button re-runs the import against that book.
 
 If the item was left unmatched long enough for the scanner to retry it a few times, it turns into `importBlocked` with *import retry limit reached*. That's the same situation — the files are still there — so **Match to book** and **Retry import** work exactly the same on a blocked item; matching it re-imports the recorded files, and Retry import re-arms the scanner with a fresh retry budget.
 
@@ -251,9 +251,9 @@ Bindery's primary metadata provider is OpenLibrary, DNB (the German national lib
 - Behind a VPN: split-tunnel `openlibrary.org` out of the VPN. Metadata lookups do not need VPN protection — only torrent traffic does — so a paid dedicated IP is not required. Switching to a different VPN exit location also often helps, since some exit IPs are blocked and others are not.
 - Not on a VPN: retry later, and check the status of `openlibrary.org` / `archive.org`.
 
-## A book is on hardcover.app but doesn't show up in Add Book / Add Author search
+## A book is on hardcover.app but doesn't show up in the Add to library search
 
-Hardcover does not have to be the primary provider for its titles to show up: it always runs as a **search enricher** too. Add Book and Add Author fan the query out to the primary provider **plus** Hardcover (and Google Books, if an API key is set), then merge in any titles the primary didn't return. Books that only exist on hardcover.app are exactly what that path is meant to surface.
+Hardcover does not have to be the primary provider for its titles to show up: it always runs as a **search enricher** too. The Add to library dialog (behind both **Add Author** and **Add Book**) fans the query out to the primary provider **plus** Hardcover (and Google Books, if an API key is set), then merge in any titles the primary didn't return. Books that only exist on hardcover.app are exactly what that path is meant to surface.
 
 The catch is that **Hardcover's GraphQL API requires an API token for every query, including search** — an unauthenticated request returns `{"error":"Unable to verify token"}`. With no token saved, Bindery skips Hardcover before sending anything, so it contributes nothing silently and you only see OpenLibrary / DNB results. Startup says so too: the log reads `hardcover enrichment idle: no api token configured` instead of `hardcover enrichment enabled`. Saving a token takes effect on the next lookup, with no restart.
 

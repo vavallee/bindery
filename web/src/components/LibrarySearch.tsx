@@ -1,13 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { api, Book, LibrarySearchResponse } from '../api/client'
-import AddBookModal from './AddBookModal'
+import { api, LibrarySearchResponse } from '../api/client'
+import AddToLibraryModal, { AddedToLibrary } from './AddToLibraryModal'
 
 // LibrarySearch is the header typeahead over the caller's own catalogue
 // (#2551). It only ever talks to /search/library; the metadata providers are
 // reached through the trailing "Add … to Bindery" row, which hands the query
-// to AddBookModal. Indexer search stays on /search (the magnifier).
+// to AddToLibraryModal. Indexer search stays on /search (the magnifier).
 //
 // The row model is one flat list so keyboard navigation does not care about
 // the section a row sits in: authors, then books, then series, then the add
@@ -299,13 +299,13 @@ export default function LibrarySearch({ className = '', onNavigate, autoFocus }:
         {open && renderRows()}
       </ul>
       {addQuery !== null && (
-        <AddBookModal
+        <AddToLibraryModal
           initialQuery={addQuery}
           onClose={() => setAddQuery(null)}
-          onAdded={(book: Book) => {
+          onAdded={(added: AddedToLibrary) => {
             setAddQuery(null)
             reset()
-            navigate(`/book/${book.id}`)
+            navigate(added.kind === 'author' ? `/author/${added.author.id}` : `/book/${added.book.id}`)
             onNavigate?.()
           }}
         />

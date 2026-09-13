@@ -3,8 +3,7 @@ import { Link, useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { api, Author, AuthorBulkMonitorMode, MediaType, MonitorNewItems, AuthorRefreshStatus } from '../api/client'
-import AddAuthorModal from '../components/AddAuthorModal'
-import AddBookModal from '../components/AddBookModal'
+import AddToLibraryModal from '../components/AddToLibraryModal'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import SeriesNameModal from '../components/SeriesNameModal'
 import BulkActionBar from '../components/BulkActionBar'
@@ -39,8 +38,9 @@ export default function AuthorsPage() {
   // author, not just the current page.
   const [mergeAuthors, setMergeAuthors] = useState<Author[]>([])
   const [loading, setLoading] = useState(true)
-  const [showAdd, setShowAdd] = useState(false)
-  const [showAddBook, setShowAddBook] = useState(false)
+  // Both Add buttons open the same search-first dialog (#1227); the mode
+  // only seeds the placeholder.
+  const [addMode, setAddMode] = useState<'author' | 'book' | null>(null)
   const [showAddSeries, setShowAddSeries] = useState(false)
   const [showMerge, setShowMerge] = useState(false)
   const [showMonitorModeBulk, setShowMonitorModeBulk] = useState(false)
@@ -370,10 +370,10 @@ export default function AuthorsPage() {
             {t('authors.merge')}
           </button>
           <button
-            onClick={() => setShowAddBook(true)}
+            onClick={() => setAddMode('book')}
             className="px-4 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded-md text-sm font-medium transition-colors"
           >
-            Add Book
+            {t('addToLibrary.addBook')}
           </button>
           <button
             onClick={() => setShowAddSeries(true)}
@@ -382,7 +382,7 @@ export default function AuthorsPage() {
             Add Series
           </button>
           <button
-            onClick={() => setShowAdd(true)}
+            onClick={() => setAddMode('author')}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-md text-sm font-medium transition-colors"
           >
             {t('authors.addAuthor')}
@@ -743,8 +743,7 @@ export default function AuthorsPage() {
         </div>
       )}
 
-      {showAdd && <AddAuthorModal onClose={() => setShowAdd(false)} onAdded={load} />}
-      {showAddBook && <AddBookModal onClose={() => setShowAddBook(false)} onAdded={() => setShowAddBook(false)} />}
+      {addMode && <AddToLibraryModal mode={addMode} onClose={() => setAddMode(null)} onAdded={load} />}
       {showAddSeries && (
         <SeriesNameModal
           title="Add Series"
