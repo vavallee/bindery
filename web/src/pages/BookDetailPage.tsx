@@ -244,9 +244,9 @@ export function SearchResultsSection({
 // to prevent.
 const actionBtnCls = `${btn.secondary} ${btnSize.md}`
 
-// Previous/Next navigation (#2548, book side), entirely client-side, same
-// idiom as AuthorDetailPage: BooksPage/AuthorDetailPage/WantedPage already
-// have their current page loaded and ordered, so they hand it over as router
+// Previous/Next navigation (#2548, book side), entirely client-side:
+// BooksPage, AuthorDetailPage's own book list, and WantedPage already have
+// their current page loaded and ordered, so each hands it over as router
 // `state` instead of this page re-fetching it. Not shared as an exported type
 // — each list page builds the same shape independently.
 interface BookNavState {
@@ -256,9 +256,10 @@ interface BookNavState {
   // originating list page — 1 on the first hop in from a list, +1 on every
   // further Previous/Next. Back uses it to jump back over the WHOLE chain in
   // one step (navigate(-hopDepth)) instead of landing one book short after a
-  // few hops. Generalizes AuthorDetailPage's Back fix (which hard-codes a
-  // jump to "/") without needing a single canonical destination — a book can
-  // be reached from five different lists, so there isn't one.
+  // few hops. Not a hard-coded destination (e.g. always "/") because a book
+  // can be reached from five different lists, so there's no single canonical
+  // one to jump to instead — counting hops and walking back that many history
+  // entries works regardless of where the chain started.
   hopDepth: number
 }
 
@@ -268,9 +269,9 @@ export default function BookDetailPage() {
   // many book-scoped state variables below (search results, delete/
   // deregister/fix-match targets, series membership, ASIN draft, clipboard
   // flags, ...). A Previous/Next hop only changes the :id param — react-router
-  // does not remount the element for that alone — and this page has far more
-  // per-book state than AuthorDetailPage, where each variable was reset
-  // individually; a full remount is simpler and can't miss one.
+  // does not remount the element for that alone — and auditing every one of
+  // those ~10 async handlers for staleness one by one would be easy to get
+  // wrong; a full remount resets all of it at once and can't miss one.
   return <BookDetailPageInner key={id} />
 }
 
@@ -590,6 +591,11 @@ function BookDetailPageInner() {
   // Back skips the entire Previous/Next chain in one jump rather than landing
   // one book short — see the hopDepth comment on BookNavState above.
   const backSteps = navState ? navState.hopDepth : 1
+  // Both Prev/Next Links below carry the same ids and incremented hopDepth,
+  // only the index differs — built once rather than duplicating the object
+  // at each Link.
+  const navStateFor = (index: number): BookNavState | undefined =>
+    navState ? { ids: navState.ids, index, hopDepth: navState.hopDepth + 1 } : undefined
 
   if (loading) return <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
   if (!book) return <div className="text-slate-600 dark:text-zinc-500">{t('bookDetail.notFound')}</div>
@@ -686,13 +692,13 @@ function BookDetailPageInner() {
     // left-aligned it mid-navigation.
     <div className="max-w-7xl">
       <div className="mb-4 flex items-center justify-between gap-3 text-sm">
-        {/* Unlike AuthorDetailPage's Back, this doesn't jump to a hard-coded
-            route — a book can be reached from five different lists (Books,
-            an author's own book list, Wanted, a series, a direct link), so
-            there is no single canonical "the list" to name. Instead it walks
-            back exactly as many history entries as the Previous/Next chain
-            is deep (backSteps), landing on whichever list actually started
-            it rather than one book short. */}
+        {/* No hard-coded destination — a book can be reached from five
+            different lists (Books, an author's own book list, Wanted, a
+            series, a direct link), so there is no single canonical "the
+            list" to name. Instead this walks back exactly as many history
+            entries as the Previous/Next chain is deep (backSteps), landing
+            on whichever list actually started it rather than one book
+            short. */}
         <button
           onClick={() => navigate(-backSteps)}
           className="text-emerald-600 dark:text-emerald-400 hover:underline"
@@ -704,7 +710,7 @@ function BookDetailPageInner() {
             {prevId !== null && (
               <Link
                 to={`/book/${prevId}`}
-                state={{ ids: navState.ids, index: navState.index - 1, hopDepth: navState.hopDepth + 1 }}
+                state={navStateFor(navState.index - 1)}
                 aria-label={t('bookDetail.nav.previousAriaLabel', 'Previous book')}
                 className={`${btn.ghost} ${btnSize.sm}`}
               >
@@ -714,7 +720,7 @@ function BookDetailPageInner() {
             {nextId !== null && (
               <Link
                 to={`/book/${nextId}`}
-                state={{ ids: navState.ids, index: navState.index + 1, hopDepth: navState.hopDepth + 1 }}
+                state={navStateFor(navState.index + 1)}
                 aria-label={t('bookDetail.nav.nextAriaLabel', 'Next book')}
                 className={`${btn.ghost} ${btnSize.sm}`}
               >

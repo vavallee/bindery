@@ -1475,7 +1475,7 @@ describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () =>
     expect(screen.queryByLabelText('Next book')).toBeNull()
   })
 
-  it('Back always uses browser history, even inside a Previous/Next chain (unlike AuthorDetailPage, there is no single canonical list to jump to)', async () => {
+  it('Back always uses browser history, even inside a Previous/Next chain, since there is no single canonical list to jump to', async () => {
     let lastLocation = ''
     renderBookDetailPage(
       ['/books', { pathname: '/book/42', state: { ids: [40, 42, 43], index: 1 } }],
