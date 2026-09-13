@@ -229,8 +229,9 @@ func (r *AuthorRepo) ListPageFiltered(ctx context.Context, f AuthorListFilter, l
 		// the limitation migration 058 already worked around for ordering.
 		//
 		// One clause per token: every word the user typed must appear, in the
-		// name or in one alias.
-		for _, tok := range strings.Fields(folded) {
+		// name or in one alias. Capped at maxSearchTokens (searchrank.go) so
+		// the statement's size is bounded by that constant, not by the input.
+		for _, tok := range searchTokens(folded) {
 			like := "%" + escapeLike(tok) + "%"
 			conds = append(conds, "(authors.search_key LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM author_aliases al WHERE al.author_id = authors.id AND al.search_key LIKE ? ESCAPE '\\'))")
 			args = append(args, like, like)

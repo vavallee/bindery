@@ -268,7 +268,13 @@ export default function LibrarySearch({ className = '', onNavigate, autoFocus }:
           autoFocus={autoFocus}
           value={query}
           placeholder={t('librarySearch.placeholder')}
-          onChange={e => setQuery(e.target.value)}
+          onChange={e => {
+            // Drop the highlight with the text it belonged to: until the new
+            // response lands the rows still show the old query's results,
+            // and Enter inside the debounce window must not pick one of them.
+            setActive(-1)
+            setQuery(e.target.value)
+          }}
           onFocus={() => { if (rows.length) setOpen(true) }}
           onKeyDown={onKeyDown}
           className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md pl-8 pr-3 py-1.5 text-sm focus:outline-none focus:border-emerald-500"

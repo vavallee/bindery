@@ -1124,7 +1124,7 @@ func (r *SeriesRepo) SearchTitles(ctx context.Context, query string, userID int6
 	if folded == "" || limit <= 0 {
 		return []models.Series{}, nil
 	}
-	tokens := strings.Fields(folded)
+	tokens := searchTokens(folded)
 
 	q := "SELECT id, title FROM series"
 	var args []any

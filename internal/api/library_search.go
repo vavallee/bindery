@@ -1,12 +1,14 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // LibrarySearchHandler backs the header search box (#2551): one query against
@@ -26,6 +28,12 @@ func NewLibrarySearchHandler(authors *db.AuthorRepo, books *db.BookRepo, series 
 const (
 	librarySearchDefaultLimit = 5
 	librarySearchMaxLimit     = 10
+	// librarySearchMaxQueryBytes bounds q. Every token becomes a LIKE clause
+	// pair, so an unbounded query is an unbounded SQL expression: a single
+	// 100 KB token trips SQLite's LIKE pattern limit and 100 KB of short
+	// tokens trips its expression depth limit, both of which surface as 500.
+	// Nothing anyone types in a typeahead comes near 200 bytes.
+	librarySearchMaxQueryBytes = 200
 )
 
 // The rows are deliberately narrow: the dropdown shows a name, a cover and a
@@ -69,6 +77,24 @@ func (h *LibrarySearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "q is required"})
 		return
 	}
+	if len(q) > librarySearchMaxQueryBytes {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("q must be at most %d bytes", librarySearchMaxQueryBytes)})
+		return
+	}
+	empty := librarySearchResponse{
+		Authors: []librarySearchAuthor{},
+		Books:   []librarySearchBook{},
+		Series:  []librarySearchSeries{},
+	}
+	// A query that folds to nothing ("?", "...", "%", "_") carries no search
+	// terms. ListPageFiltered treats that as "no filter" and returns the top
+	// of the whole list, which is the right answer for a browse page and the
+	// wrong one for a typeahead, so answer with empty groups instead: the
+	// client then shows only the add row.
+	if textutil.FoldForSearch(q) == "" {
+		writeJSON(w, http.StatusOK, empty)
+		return
+	}
 	limit, _ := parseLimitOffset(r, librarySearchDefaultLimit, librarySearchMaxLimit)
 	userID := auth.ListScopeUserID(ctx)
 
@@ -88,11 +114,7 @@ func (h *LibrarySearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := librarySearchResponse{
-		Authors: make([]librarySearchAuthor, 0, len(authors)),
-		Books:   make([]librarySearchBook, 0, len(books)),
-		Series:  make([]librarySearchSeries, 0, len(series)),
-	}
+	resp := empty
 	for _, a := range authors {
 		resp.Authors = append(resp.Authors, librarySearchAuthor{
 			ID:       a.ID,

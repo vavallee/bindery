@@ -157,6 +157,24 @@ describe('LibrarySearch', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/book/11')
   })
 
+  it('drops a stale highlight when the query changes', async () => {
+    vi.mocked(api.searchLibrary).mockResolvedValue(results)
+    renderSearch()
+    const input = await typeAndWait('earth')
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(screen.getByRole('option', { name: /A Wizard of Earthsea/ })).toHaveAttribute('aria-selected', 'true')
+
+    // Edit the text and press Enter inside the debounce window, while the
+    // old rows are still on screen. The old highlight must not win.
+    fireEvent.change(input, { target: { value: 'zebra' } })
+    expect(input).not.toHaveAttribute('aria-activedescendant')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(screen.getByTestId('location')).toHaveTextContent('/')
+    expect(screen.getByTestId('location')).not.toHaveTextContent('/book/11')
+    expect(screen.getByTestId('add-book-modal')).toHaveTextContent('zebra')
+  })
+
   it('Escape closes the dropdown and does not clear the query', async () => {
     vi.mocked(api.searchLibrary).mockResolvedValue(results)
     renderSearch()

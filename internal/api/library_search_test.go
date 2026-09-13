@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/auth"
@@ -227,6 +228,51 @@ func TestLibrarySearch_EmptyQueryIs400(t *testing.T) {
 	}
 }
 
+// TestLibrarySearch_QueryTooLongIs400 pins the byte cap on q. Every token
+// becomes a LIKE pair and a single long token becomes a long LIKE pattern, so
+// without the cap a 100 KB query reached SQLite's limits and came back 500.
+func TestLibrarySearch_QueryTooLongIs400(t *testing.T) {
+	f := newLibrarySearchFixture(t)
+	oneToken := "q=" + strings.Repeat("a", 100*1024)
+	manyTokens := "q=" + strings.TrimSuffix(strings.Repeat("ab+", 40*1024), "+")
+	atCap := "q=" + strings.Repeat("a", librarySearchMaxQueryBytes)
+	overCap := atCap + "a"
+	for _, tc := range []struct {
+		name  string
+		query string
+		want  int
+	}{
+		{"single 100 KB token", oneToken, http.StatusBadRequest},
+		{"100 KB of short tokens", manyTokens, http.StatusBadRequest},
+		{"one byte over the cap", overCap, http.StatusBadRequest},
+		{"exactly at the cap", atCap, http.StatusOK},
+	} {
+		code, _ := f.search(t, f.alice.ID, tc.query)
+		if code != tc.want {
+			t.Errorf("%s: expected %d, got %d", tc.name, tc.want, code)
+		}
+	}
+}
+
+// TestLibrarySearch_PunctuationOnlyIsEmpty covers a query that folds to
+// nothing. The list repositories treat an empty fold as "no filter" and
+// return the top of the whole library, which for a typeahead would mean "?"
+// lists five of everything. The handler answers with empty groups instead,
+// as a 200, so the client shows only the add row.
+func TestLibrarySearch_PunctuationOnlyIsEmpty(t *testing.T) {
+	f := newLibrarySearchFixture(t)
+	for _, q := range []string{"q=%3F", "q=...", "q=%25", "q=_", "q=%3F%3F%3F"} {
+		code, got := f.search(t, f.alice.ID, q)
+		if code != http.StatusOK {
+			t.Errorf("%s: expected 200, got %d", q, code)
+			continue
+		}
+		if len(got.Authors)+len(got.Books)+len(got.Series) != 0 {
+			t.Errorf("%s: a query with no search terms must match nothing, got %+v", q, got)
+		}
+	}
+}
+
 func TestLibrarySearch_NoMatchesReturnsEmptyArrays(t *testing.T) {
 	f := newLibrarySearchFixture(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/library?q=zzzz", nil)
@@ -267,18 +313,24 @@ func TestLibrarySearch_LimitDefaultsAndClamps(t *testing.T) {
 
 // TestLibrarySearch_RanksExactSeriesFirst pins the ranking so a whole-title
 // hit is not buried under a longer title that merely contains the word.
+//
+// "Dunes" is the case that proves the tiers are doing the work: it is the
+// shortest title in the set, so a length-only order would put it first, but
+// it only matches "dune" as the start of a longer word (tier 3), below every
+// title that has "dune" as a whole word.
 func TestLibrarySearch_RanksExactSeriesFirst(t *testing.T) {
 	f := newLibrarySearchFixture(t)
 	a := f.seedAuthor(t, "OL-herbert", "Frank Herbert", f.alice.ID)
 	b := f.seedBook(t, "OL-dune", a.ID, "Dune", f.alice.ID)
+	f.seedSeries(t, "hc:dunes", "Dunes", b.ID)
 	f.seedSeries(t, "hc:dune-prequels", "Legends of Dune", b.ID)
 	f.seedSeries(t, "hc:dune", "Dune", b.ID)
 	f.seedSeries(t, "hc:dune-chronicles", "Dune Chronicles", b.ID)
 	_, got := f.search(t, f.alice.ID, "q=dune")
-	if len(got.Series) != 3 {
-		t.Fatalf("expected three series, got %+v", got.Series)
+	if len(got.Series) != 4 {
+		t.Fatalf("expected four series, got %+v", got.Series)
 	}
-	want := []string{"Dune", "Dune Chronicles", "Legends of Dune"}
+	want := []string{"Dune", "Dune Chronicles", "Legends of Dune", "Dunes"}
 	for i, w := range want {
 		if got.Series[i].Title != w {
 			t.Errorf("rank %d: want %q, got %q", i, w, got.Series[i].Title)

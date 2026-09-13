@@ -33,6 +33,24 @@ import (
 // than needing three.
 const searchRankTiers = 6
 
+// maxSearchTokens bounds how many words of a query become WHERE clauses. Each
+// token adds a LIKE pair to the statement, so the cost of the search grows
+// with the length of the input rather than the size of the library: a 50,000
+// word `search` param ran for over a minute of SQLite time before it failed
+// on the expression depth limit. Eight tokens is more than any library
+// search needs to disambiguate a title or a name; the rest are ignored.
+const maxSearchTokens = 8
+
+// searchTokens splits a folded query into the words the WHERE clause binds,
+// capped at maxSearchTokens. The ranking still uses the whole folded query.
+func searchTokens(folded string) []string {
+	tokens := strings.Fields(folded)
+	if len(tokens) > maxSearchTokens {
+		tokens = tokens[:maxSearchTokens]
+	}
+	return tokens
+}
+
 // searchRankPatterns returns the value bound at each tier, in tier order. The
 // first is an equality operand; the rest are LIKE patterns over the padded or
 // bare column, matching the WHEN order in searchRankClause.

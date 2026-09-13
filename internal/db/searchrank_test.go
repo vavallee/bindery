@@ -3,6 +3,7 @@ package db
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestSearchRankClauseBindsEveryPlaceholder is the contract between the two
@@ -48,5 +49,41 @@ func TestSearchRankEscapesOnlyThePatterns(t *testing.T) {
 		if !strings.Contains(p, `\%`) || !strings.Contains(p, `\_`) {
 			t.Errorf("LIKE pattern %d = %q, want the metacharacters escaped", i+1, p)
 		}
+	}
+}
+
+// TestSearchTokensCapBoundsQueryCost pins the bound on how many words of a
+// query become WHERE clauses. Without it the statement grows with the input:
+// a 50,000 word search param ran for over a minute before SQLite gave up on
+// expression depth. With it a 1,000 word query is eight LIKE pairs, returns
+// in milliseconds, and still matches on the words that made the cut.
+func TestSearchTokensCapBoundsQueryCost(t *testing.T) {
+	books, authors, _, ctx := seedSearchLibrary(t)
+
+	// Every token must appear in the row, so the filler repeats a word the
+	// expected row has: the query is 1,000 tokens long, the statement binds
+	// eight of them, and the match is decided by the words that made the cut.
+	start := time.Now()
+	got, _, err := books.ListPageFiltered(ctx, BookListFilter{Search: "harry orden" + strings.Repeat(" potter", 998)}, 10, 0)
+	if err != nil {
+		t.Fatalf("books search with 1,000 tokens: %v", err)
+	}
+	if len(got) != 1 || got[0].Title != "Harry Potter und der Orden des Phönix" {
+		t.Errorf("expected the first tokens to still match, got %+v", got)
+	}
+	gotAuthors, _, err := authors.ListPageFiltered(ctx, AuthorListFilter{Search: "holly" + strings.Repeat(" black", 999)}, 10, 0)
+	if err != nil {
+		t.Fatalf("authors search with 1,000 tokens: %v", err)
+	}
+	if len(gotAuthors) != 1 || gotAuthors[0].Name != "Holly Black" {
+		t.Errorf("expected the first tokens to still match, got %+v", gotAuthors)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("two 1,000 token searches took %s; the token cap is not bounding the statement", elapsed)
+	}
+
+	// The ninth word and beyond never reach the WHERE clause.
+	if toks := searchTokens(strings.TrimSpace(strings.Repeat("w ", 20))); len(toks) != maxSearchTokens {
+		t.Errorf("expected %d tokens, got %d", maxSearchTokens, len(toks))
 	}
 }

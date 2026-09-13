@@ -336,8 +336,10 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 		// Every token must appear somewhere in the title or the author, which
 		// is the "words" rule Algolia and Meilisearch both use: it lets
 		// "hobbit tolkien" find the book without the two words being adjacent,
-		// while still requiring evidence for each word the user typed.
-		for _, tok := range strings.Fields(folded) {
+		// while still requiring evidence for each word the user typed. Capped
+		// at maxSearchTokens (searchrank.go) so the statement's size is
+		// bounded by that constant, not by the input.
+		for _, tok := range searchTokens(folded) {
 			like := "%" + escapeLike(tok) + "%"
 			where += " AND (books.search_key LIKE ? ESCAPE '\\' OR COALESCE(au.search_key, '') LIKE ? ESCAPE '\\')"
 			args = append(args, like, like)
