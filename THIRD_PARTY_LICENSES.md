@@ -44,7 +44,7 @@ does ship is the failure that matters.
 | --- | --- | --- | --- |
 | [github.com/beorn7/perks](https://github.com/beorn7/perks/blob/v1.0.1/LICENSE) | v1.0.1 | MIT | — |
 | [github.com/cespare/xxhash/v2](https://github.com/cespare/xxhash/blob/v2.3.0/LICENSE.txt) | v2.3.0 | MIT | — |
-| [github.com/coreos/go-oidc/v3](https://github.com/coreos/go-oidc/blob/v3.20.0/LICENSE) | v3.20.0 | Apache-2.0 | yes |
+| [github.com/coreos/go-oidc/v3](https://github.com/coreos/go-oidc/blob/v3.21.0/LICENSE) | v3.21.0 | Apache-2.0 | yes |
 | [github.com/dhowden/tag](https://github.com/dhowden/tag/blob/3d75831295e8/LICENSE) | v0.0.0-20240417053706-3d75831295e8 | BSD-2-Clause | — |
 | [github.com/dustin/go-humanize](https://github.com/dustin/go-humanize/blob/v1.0.1/LICENSE) | v1.0.1 | MIT | — |
 | [github.com/go-chi/chi/v5](https://github.com/go-chi/chi/blob/v5.3.2/LICENSE) | v5.3.2 | MIT | — |
@@ -64,10 +64,10 @@ does ship is the failure that matters.
 | [golang.org/x/sys](https://cs.opensource.google/go/x/sys/+/v0.47.0:LICENSE) | v0.47.0 | BSD-3-Clause | — |
 | [golang.org/x/text](https://cs.opensource.google/go/x/text/+/v0.41.0:LICENSE) | v0.41.0 | BSD-3-Clause | — |
 | [google.golang.org/protobuf](https://github.com/protocolbuffers/protobuf-go/blob/v1.36.11/LICENSE) | v1.36.11 | BSD-3-Clause | — |
-| [modernc.org/libc](https://gitlab.com/cznic/libc/-/blob/v1.74.4/LICENSE) | v1.74.4 | BSD-3-Clause | — |
+| [modernc.org/libc](https://gitlab.com/cznic/libc/-/blob/v1.74.4/LICENSE) | v1.75.6 | BSD-3-Clause | — |
 | [modernc.org/mathutil](https://gitlab.com/cznic/mathutil/-/blob/v1.7.1/LICENSE) | v1.7.1 | BSD-3-Clause | — |
-| [modernc.org/memory](https://gitlab.com/cznic/memory/blob/v1.11.0/LICENSE-GO) | v1.11.0 | BSD-3-Clause | — |
-| [modernc.org/sqlite](https://gitlab.com/cznic/sqlite/blob/v1.57.0/LICENSE) | v1.57.0 | BSD-3-Clause | — |
+| [modernc.org/memory](https://gitlab.com/cznic/memory/blob/v1.12.1/LICENSE-GO) | v1.12.1 | BSD-3-Clause | — |
+| [modernc.org/sqlite](https://gitlab.com/cznic/sqlite/blob/v1.58.0/LICENSE) | v1.58.0 | BSD-3-Clause | — |
 
 ### Notes on specific modules
 
@@ -165,7 +165,7 @@ SoundCloud Ltd. (http://soundcloud.com/).
 
 Each distinct license text appears once, with the dependencies it covers.
 
-### 1. Apache-2.0 — github.com/coreos/go-oidc/v3@v3.20.0 (LICENSE)
+### 1. Apache-2.0 — github.com/coreos/go-oidc/v3@v3.21.0 (LICENSE)
 
 ```
 Apache License
@@ -1096,7 +1096,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 12. BSD-3-Clause — modernc.org/libc@v1.74.4 (LICENSE)
+### 12. BSD-3-Clause — modernc.org/libc@v1.75.6 (LICENSE)
 
 ```
 Copyright (c) 2017 The Libc Authors. All rights reserved.
@@ -1128,7 +1128,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 13. BSD-3-Clause — modernc.org/libc@v1.74.4 (LICENSE-3RD-PARTY.md)
+### 13. BSD-3-Clause — modernc.org/libc@v1.75.6 (LICENSE-3RD-PARTY.md)
 
 ```
 # Third-Party Software Notices
@@ -1470,7 +1470,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 15. BSD-3-Clause — modernc.org/memory@v1.11.0 (LICENSE-GO)
+### 15. BSD-3-Clause — modernc.org/memory@v1.12.1 (LICENSE-GO)
 
 ```
 Copyright (c) 2009 The Go Authors. All rights reserved.
@@ -1502,7 +1502,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 16. BSD-3-Clause — modernc.org/sqlite@v1.57.0 (LICENSE)
+### 16. BSD-3-Clause — modernc.org/sqlite@v1.58.0 (LICENSE)
 
 ```
 Copyright (c) 2017 The Sqlite Authors. All rights reserved.
