@@ -489,4 +489,27 @@ describe('WantedPage — book link nav state (#2548, book side)', () => {
     await waitFor(() => expect(located?.pathname).toBe('/book/2'))
     expect(located?.state).toEqual({ ids: [1, 2], index: 1, hopDepth: 1 })
   })
+
+  it('narrows the carried ids to the search-filtered set, not every wanted book', async () => {
+    vi.mocked(api.listWanted).mockResolvedValue([
+      makeBook({ id: 1, title: 'Elantris' }),
+      makeBook({ id: 2, title: 'Mistborn' }),
+      makeBook({ id: 3, title: 'Warbreaker' }),
+    ])
+    let located: Located | undefined
+    renderWantedPage(loc => { located = loc })
+
+    await screen.findByText('Mistborn')
+    fireEvent.change(screen.getByPlaceholderText('Search by title or author...'), {
+      target: { value: 'Mist' },
+    })
+    // Narrows the visible list to just Mistborn — Elantris and Warbreaker
+    // must also be dropped from the carried ids, not just hidden.
+    await waitFor(() => expect(screen.queryByText('Elantris')).not.toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('Mistborn'))
+
+    await waitFor(() => expect(located?.pathname).toBe('/book/2'))
+    expect(located?.state).toEqual({ ids: [2], index: 0, hopDepth: 1 })
+  })
 })

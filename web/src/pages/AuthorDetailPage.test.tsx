@@ -1340,4 +1340,72 @@ describe('AuthorDetailPage — book link nav state (#2548, book side)', () => {
 
     await waitFor(() => expect(capturedState).toEqual({ ids: [10, 11], index: 1, hopDepth: 1 }))
   })
+
+  it('carries {ids, index} on the grid card link too, not just the table row', async () => {
+    vi.mocked(api.getAuthor).mockResolvedValue(author)
+    vi.mocked(api.listAllBooks).mockResolvedValue([
+      makeBook({ id: 10, title: 'The Final Empire', status: 'imported' }),
+      makeBook({ id: 11, title: 'The Well of Ascension', status: 'imported' }),
+    ])
+    // No view override — grid is the page default, unlike the table-row test above.
+
+    let capturedState: unknown
+    render(
+      <MemoryRouter initialEntries={['/author/42']}>
+        <StateProbe onState={s => { capturedState = s }} />
+        <Routes>
+          <Route path="/author/:id" element={<AuthorDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const link = (await screen.findByRole('heading', { name: 'The Well of Ascension' })).closest('a')!
+    fireEvent.click(link)
+
+    await waitFor(() => expect(capturedState).toEqual({ ids: [10, 11], index: 1, hopDepth: 1 }))
+  })
+
+  it('follows filteredBooks order for the nav chain even when Group by series changes the visual order', async () => {
+    vi.mocked(api.getAuthor).mockResolvedValue(author)
+    vi.mocked(api.listAllBooks).mockResolvedValue([
+      makeBook({ id: 10, title: 'Elantris', status: 'imported' }),
+      makeBook({ id: 11, title: 'The Final Empire', status: 'imported' }),
+      makeBook({ id: 12, title: 'The Well of Ascension', status: 'imported' }),
+    ])
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([
+      {
+        id: 1, foreignSeriesId: 'OL-MB', title: 'Mistborn', description: '', monitored: true,
+        books: [
+          { seriesId: 1, bookId: 11, positionInSeries: '1' },
+          { seriesId: 1, bookId: 12, positionInSeries: '2' },
+        ],
+      },
+    ])
+    localStorage.setItem('bindery.view.author-detail', 'table')
+
+    let capturedState: unknown
+    render(
+      <MemoryRouter initialEntries={['/author/42']}>
+        <StateProbe onState={s => { capturedState = s }} />
+        <Routes>
+          <Route path="/author/:id" element={<AuthorDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Elantris')
+    fireEvent.click(screen.getByRole('switch', { name: 'Group by series' }))
+    // Confirms grouping is actually active: Elantris (no series) renders
+    // under Standalone, visually last, behind Mistborn's two books.
+    await screen.findByRole('heading', { name: /Standalone/ })
+
+    const row = screen.getByText('Elantris').closest('tr')!
+    fireEvent.click(row)
+
+    // Elantris is index 0 in filteredBooks (load order) despite rendering
+    // last under Standalone — the nav chain follows load/filter order, not
+    // the grouped view's rendering order (a documented trade-off in
+    // AuthorDetailPage.tsx, not a bug).
+    await waitFor(() => expect(capturedState).toEqual({ ids: [10, 11, 12], index: 0, hopDepth: 1 }))
+  })
 })

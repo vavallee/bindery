@@ -179,9 +179,21 @@ function LocationProbe({ onLocation }: { onLocation?: (location: string) => void
   return null
 }
 
+// Unlike LocationProbe above, this also exposes router `state` — needed to
+// verify the exact {ids, index, hopDepth} payload a Previous/Next hop
+// carries, not just where it lands.
+function StateProbe({ onState }: { onState?: (state: unknown) => void }) {
+  const location = useLocation()
+  useEffect(() => {
+    onState?.(location.state)
+  }, [location, onState])
+  return null
+}
+
 function renderBookDetailPage(
   initialPath: NavEntry | NavEntry[] = '/book/42',
   onLocation?: (location: string) => void,
+  onState?: (state: unknown) => void,
 ) {
   // A multi-entry array simulates real browser history (e.g. arriving from
   // the Books list) so Back's navigate(-1) has somewhere to land.
@@ -190,6 +202,7 @@ function renderBookDetailPage(
   return render(
     <MemoryRouter initialEntries={initialEntries} initialIndex={initialEntries.length - 1}>
       <LocationProbe onLocation={onLocation} />
+      <StateProbe onState={onState} />
       <Routes>
         <Route path="/book/:id" element={<BookDetailPage />} />
         <Route path="/settings" element={<div>Settings Page</div>} />
@@ -1401,11 +1414,13 @@ describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () =>
 
   it('renders Previous/Next from router state and follows Next to the right id, carrying the chain state', async () => {
     let lastLocation = ''
+    let capturedState: unknown
     vi.mocked(api.getBook).mockImplementation((id: number) =>
       Promise.resolve(makeBook({ id, title: id === 42 ? 'The Final Empire' : 'The Well of Ascension' })))
     renderBookDetailPage(
-      { pathname: '/book/42', state: { ids: [40, 42, 43, 44, 45], index: 1 } },
+      { pathname: '/book/42', state: { ids: [40, 42, 43, 44, 45], index: 1, hopDepth: 1 } },
       loc => { lastLocation = loc },
+      s => { capturedState = s },
     )
     await screen.findByRole('heading', { name: 'The Final Empire' })
 
@@ -1413,6 +1428,28 @@ describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () =>
 
     await waitFor(() => expect(lastLocation).toBe('/book/43'))
     await screen.findByRole('heading', { name: 'The Well of Ascension' })
+    // index moves 1 -> 2 and hopDepth increments 1 -> 2 — the actual payload
+    // the next hop's Previous/Next links will carry, not just where we landed.
+    expect(capturedState).toEqual({ ids: [40, 42, 43, 44, 45], index: 2, hopDepth: 2 })
+  })
+
+  it('follows Previous to the right id, carrying the chain state (Previous is a separate code path from Next)', async () => {
+    let lastLocation = ''
+    let capturedState: unknown
+    vi.mocked(api.getBook).mockImplementation((id: number) =>
+      Promise.resolve(makeBook({ id, title: id === 42 ? 'The Final Empire' : 'Mistborn Prequel' })))
+    renderBookDetailPage(
+      { pathname: '/book/42', state: { ids: [40, 42, 43, 44, 45], index: 1, hopDepth: 1 } },
+      loc => { lastLocation = loc },
+      s => { capturedState = s },
+    )
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByLabelText('Previous book'))
+
+    await waitFor(() => expect(lastLocation).toBe('/book/40'))
+    await screen.findByRole('heading', { name: 'Mistborn Prequel' })
+    expect(capturedState).toEqual({ ids: [40, 42, 43, 44, 45], index: 0, hopDepth: 2 })
   })
 
   it('hides Previous at the first position and shows only Next', async () => {
@@ -1500,5 +1537,26 @@ describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () =>
 
     // Without the remount, `results` would still hold book 42's search hit.
     expect(screen.queryByText('A Result For Book 42')).not.toBeInTheDocument()
+  })
+
+  it('clears a typed ASIN draft from the previous book after Next (remount resets more than just search results)', async () => {
+    vi.mocked(api.getBook).mockImplementation((id: number) => Promise.resolve(makeBook({
+      id,
+      title: id === 42 ? 'The Final Empire' : 'The Well of Ascension',
+      mediaType: 'audiobook',
+    })))
+
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [42, 43], index: 0 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    const asinInput = screen.getByLabelText('ASIN (Audible identifier)') as HTMLInputElement
+    fireEvent.change(asinInput, { target: { value: 'B0DRAFTVALUE' } })
+    expect(asinInput).toHaveValue('B0DRAFTVALUE')
+
+    fireEvent.click(screen.getByLabelText('Next book'))
+    await screen.findByRole('heading', { name: 'The Well of Ascension' })
+
+    // Without the remount, asinDraft would still hold book 42's typed value.
+    expect(screen.getByLabelText('ASIN (Audible identifier)')).toHaveValue('')
   })
 })
