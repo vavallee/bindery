@@ -46,10 +46,10 @@ func (s *Scanner) opfSidecarEnabled(ctx context.Context) bool {
 // import or reorganize move. dir is the book's folder — the caller passes
 // filepath.Dir(destPath) for a single ebook file or the audiobook
 // destination directory directly. roots is the set of configured library
-// roots dir must resolve inside (see dirWithinRoots) — every caller already
-// derives dir from Renamer.DestPath/AudiobookDestDir, which sanitize and
-// contain it before this is ever reached, but this function does not trust
-// that: it re-verifies independently rather than assuming every future
+// roots dir must resolve inside (see WriteOPFSidecarFile) — every caller
+// already derives dir from Renamer.DestPath/AudiobookDestDir, which sanitize
+// and contain it before this is ever reached, but this function does not
+// trust that: it re-verifies independently rather than assuming every future
 // caller gets that right.
 func (s *Scanner) writeOPFSidecar(ctx context.Context, dir string, roots []string, book *models.Book, author *models.Author, edition *models.Edition, seriesTitle, seriesNum string) {
 	if !s.opfSidecarEnabled(ctx) || book == nil || dir == "" {
@@ -62,44 +62,48 @@ func (s *Scanner) writeOPFSidecar(ctx context.Context, dir string, roots []strin
 	slog.Info("opf sidecar: metadata.opf written", "bookID", book.ID, "dir", dir)
 }
 
-// dirWithinRoots reports whether dir resolves inside at least one of roots,
-// reusing ensureContained's same prefix-after-Clean check that
-// Renamer.DestPath/AudiobookDestDir already apply. WriteOPFSidecarFile calls
-// this itself, independent of any sanitization its caller already did, so a
-// book/author string sourced from remote provider metadata can never steer
-// a library-folder-derived path outside the configured roots — this is the
-// direct guard for what a path-injection static analysis (rightly) cannot
-// verify by tracing through the renamer's own containment check several
-// calls upstream.
-func dirWithinRoots(dir string, roots []string) bool {
+// WriteOPFSidecarFile renders book/author/edition metadata as a
+// Calibre-style OPF package document and writes it to
+// filepath.Join(dir, "metadata.opf"), creating the directory if needed.
+// roots is the set of acceptable library roots dir must resolve inside; a
+// dir outside every root is refused rather than written.
+//
+// The containment check resolves dir against each root with filepath.Rel +
+// filepath.IsLocal, in this function, on the same target variable that then
+// flows into MkdirAll/CreateTemp/Rename below — a prefix-after-Clean check
+// (ensureContained's shape, what Renamer.DestPath/AudiobookDestDir already
+// apply upstream) is not enough on its own: CodeQL's go/path-injection query
+// only recognises a sanitizer that guards the exact variable reaching the
+// sink in the same function, and filepath.IsLocal is one of the few guard
+// shapes it credits (vavallee, PR #2549 review). This is also a strictly
+// better check than a prefix comparison: it does not depend on root having a
+// trailing separator or on string comparison at all, and IsLocal(".") is
+// true so dir == root still passes.
+func WriteOPFSidecarFile(dir string, roots []string, book *models.Book, author *models.Author, edition *models.Edition, seriesTitle, seriesNum string) error {
+	var target string
 	for _, root := range roots {
 		if root == "" {
 			continue
 		}
-		if _, err := ensureContained(dir, root); err == nil {
-			return true
+		rel, relErr := filepath.Rel(filepath.Clean(root), filepath.Clean(dir))
+		if relErr != nil || !filepath.IsLocal(rel) {
+			continue
 		}
+		target = filepath.Join(filepath.Clean(root), rel)
+		break
 	}
-	return false
-}
-
-// WriteOPFSidecarFile renders book/author/edition metadata as a
-// Calibre-style OPF package document and writes it to
-// filepath.Join(dir, "metadata.opf"), creating dir if needed. roots is the
-// set of acceptable library roots dir must resolve inside (see
-// dirWithinRoots); a dir outside every root is refused rather than written.
-func WriteOPFSidecarFile(dir string, roots []string, book *models.Book, author *models.Author, edition *models.Edition, seriesTitle, seriesNum string) error {
-	if !dirWithinRoots(dir, roots) {
+	if target == "" {
 		return fmt.Errorf("opfsidecar: refusing to write outside configured library roots: %q", dir)
 	}
+
 	xmlBytes, err := BuildOPFXML(book, author, edition, seriesTitle, seriesNum)
 	if err != nil {
 		return fmt.Errorf("opfsidecar: build xml: %w", err)
 	}
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return fmt.Errorf("opfsidecar: create dir %q: %w", dir, err)
+	if err := os.MkdirAll(target, 0o750); err != nil {
+		return fmt.Errorf("opfsidecar: create dir %q: %w", target, err)
 	}
-	dest := filepath.Join(dir, opfSidecarFileName)
+	dest := filepath.Join(target, opfSidecarFileName)
 	// Staged write, not os.WriteFile: WriteFile truncates first, so a crash
 	// (or an unlucky reader) mid-write leaves a zero-length or half-written
 	// metadata.opf, which is strictly worse than no sidecar — a library app
@@ -108,9 +112,9 @@ func WriteOPFSidecarFile(dir string, roots []string, book *models.Book, author *
 	// sidecar), so the truncate window is not a one-off. Same temp+rename
 	// shape as calibre.MaterializeCover; the rename is atomic because the temp
 	// file is created in the destination directory.
-	tmp, err := os.CreateTemp(dir, ".metadata.opf-*")
+	tmp, err := os.CreateTemp(target, ".metadata.opf-*")
 	if err != nil {
-		return fmt.Errorf("opfsidecar: create temp in %q: %w", dir, err)
+		return fmt.Errorf("opfsidecar: create temp in %q: %w", target, err)
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.Write(xmlBytes); err != nil {

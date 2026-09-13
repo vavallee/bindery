@@ -282,9 +282,10 @@ func TestWriteOPFSidecarFile(t *testing.T) {
 }
 
 // TestWriteOPFSidecarFile_RefusesOutsideRoots is the direct regression test
-// for dirWithinRoots: WriteOPFSidecarFile must refuse to write when dir does
-// not resolve inside any given root, rather than trusting that a caller
-// already sanitized it. Every real caller derives dir from
+// for the containment check inside WriteOPFSidecarFile: it must refuse to
+// write when dir does not resolve inside any given root, rather than
+// trusting that a caller already sanitized it. Every real caller derives dir
+// from
 // Renamer.DestPath/AudiobookDestDir, which already apply this exact
 // containment check — this test exercises the independent guard
 // WriteOPFSidecarFile itself applies regardless of what the caller did.
