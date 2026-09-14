@@ -1166,9 +1166,12 @@ func (r *SeriesRepo) SearchTitles(ctx context.Context, query string, userID int6
 		}
 		return len(hits[i].s.Title) < len(hits[j].s.Title)
 	})
-	out := make([]models.Series, 0, min(limit, len(hits)))
-	for _, h := range hits[:min(limit, len(hits))] {
-		out = append(out, h.s)
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	out := make([]models.Series, len(hits))
+	for i, h := range hits {
+		out[i] = h.s
 	}
 	return out, nil
 }

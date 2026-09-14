@@ -514,6 +514,7 @@ describe('AddBookModal — already in the library (#1227)', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('metadata provider unavailable'))
     expect(screen.queryByRole('link', { name: 'Open existing book' })).not.toBeInTheDocument()
   })
+})
 
 describe('AddBookModal — initialQuery from the header search (#2551)', () => {
   const onClose = vi.fn()
