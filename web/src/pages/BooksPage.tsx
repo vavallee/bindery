@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import ViewToggle from '../components/ViewToggle'
@@ -33,6 +33,7 @@ const statusLabelKeys: Record<string, string> = {
 
 export default function BooksPage() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const { confirm, confirmDialog } = useConfirmDialog()
   const [books, setBooks] = useState<Book[]>([])
   const [total, setTotal] = useState(0)
@@ -511,7 +512,13 @@ export default function BooksPage() {
         <AddToLibraryModal
           mode="book"
           onClose={() => setShowAddBook(false)}
-          onAdded={load}
+          onAdded={added => {
+            // An author add has nothing on this list until its catalogue
+            // syncs, so land on the author instead of refreshing an unchanged
+            // page.
+            if (added.kind === 'author') navigate(`/author/${added.author.id}`)
+            else load()
+          }}
         />
       )}
     </div>

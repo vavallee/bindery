@@ -173,16 +173,29 @@ describe('AddBookConfirm', () => {
     expect(vi.mocked(api.addBook).mock.calls[0][0]).toMatchObject({ foreignBookId: 'DNB-123', foreignAuthorId: '', authorName: 'Frank Herbert' })
   })
 
-  it('shows "Already in your library" with an open link when the add answers 409', async () => {
+  it('shows the server message with an open link when the add answers 409', async () => {
+    // The server says which library the book is in and whether the format can
+    // be changed from the book page; that is more useful than a fixed string.
     vi.mocked(api.addBook).mockRejectedValue(Object.assign(new Error('book already in your library'), {
       status: 409,
-      body: { error: 'book already in your library', existingBookId: 42 },
+      body: { error: 'book already in your library as an ebook; change the format from the book page', existingBookId: 42 },
     }))
     const { onAdded } = renderConfirm(dune)
     fireEvent.click(screen.getByRole('button', { name: 'Add book' }))
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Already in your library'))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('book already in your library as an ebook; change the format from the book page'))
     expect(screen.getByRole('link', { name: 'Open existing book' })).toHaveAttribute('href', '/book/42')
     expect(onAdded).not.toHaveBeenCalled()
+  })
+
+  it('falls back to "Already in your library" when the 409 body has no message', async () => {
+    vi.mocked(api.addBook).mockRejectedValue(Object.assign(new Error('HTTP 409'), {
+      status: 409,
+      body: { existingBookId: 42 },
+    }))
+    renderConfirm(dune)
+    fireEvent.click(screen.getByRole('button', { name: 'Add book' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Already in your library'))
+    expect(screen.getByRole('link', { name: 'Open existing book' })).toHaveAttribute('href', '/book/42')
   })
 
   it('keeps the plain error for a non-conflict failure', async () => {

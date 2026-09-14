@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import AddAuthorConfirm from './AddAuthorConfirm'
+import { loadAuthorAddDefaults } from './authorAddDefaults'
+import type { AuthorAddDefaults } from './authorAddDefaults'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -71,11 +73,20 @@ function author(overrides: Partial<Author>): Author {
   }
 }
 
+const bareDefaults: AuthorAddDefaults = {
+  profiles: [],
+  rootFolders: [],
+  rootFolderId: null,
+  mediaType: 'ebook',
+  monitorMode: 'all',
+  monitorLatestCount: 1,
+}
+
 function renderConfirm(a: Author, props: Partial<React.ComponentProps<typeof AddAuthorConfirm>> = {}) {
   const onBack = vi.fn()
   const onClose = vi.fn()
   const onAdded = vi.fn()
-  render(<AddAuthorConfirm author={a} primaryProvider={null} onBack={onBack} onClose={onClose} onAdded={onAdded} {...props} />)
+  render(<AddAuthorConfirm author={a} defaults={bareDefaults} primaryProvider={null} onBack={onBack} onClose={onClose} onAdded={onAdded} {...props} />)
   return { onBack, onClose, onAdded }
 }
 
@@ -114,17 +125,11 @@ describe('AddAuthorConfirm', () => {
     expect(screen.getByText(/whole catalogue is added either way/i)).toBeInTheDocument()
   })
 
-  it('loads global monitor defaults and lets the backend apply them when unchanged', async () => {
-    vi.mocked(api.getSetting).mockImplementation(async (key: string) => {
-      if (key === 'default.media_type') return { key, value: 'audiobook' }
-      if (key === 'author.default_monitor_mode') return { key, value: 'latest' }
-      if (key === 'author.default_monitor_latest_count') return { key, value: '5' }
-      throw new Error('setting not found')
-    })
-    renderConfirm(author({}))
-    await waitFor(() => expect(screen.getByLabelText('Monitor mode')).toHaveValue('latest'))
+  it('seeds the controls from the install defaults and lets the backend apply them when unchanged', async () => {
+    renderConfirm(author({}), { defaults: { ...bareDefaults, mediaType: 'audiobook', monitorMode: 'latest', monitorLatestCount: 5 } })
+    expect(screen.getByLabelText('Monitor mode')).toHaveValue('latest')
     expect(screen.getByLabelText('Latest book count')).toHaveValue(5)
-    await waitFor(() => expect(screen.getByLabelText('Media type')).toHaveValue('audiobook'))
+    expect(screen.getByLabelText('Media type')).toHaveValue('audiobook')
 
     fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
     await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
@@ -132,6 +137,30 @@ describe('AddAuthorConfirm', () => {
     expect(callArg.mediaType).toBe('audiobook')
     expect('monitorMode' in callArg).toBe(false)
     expect('monitorLatestCount' in callArg).toBe(false)
+  })
+
+  it('keeps Add disabled until the defaults arrive, then posts the seeded profile and root folder', async () => {
+    // A click before the defaults land used to post a null profile and a null
+    // root folder; the button now waits for them.
+    const onBack = vi.fn()
+    const { rerender } = render(<AddAuthorConfirm author={author({})} defaults={null} primaryProvider={null} onBack={onBack} onClose={vi.fn()} onAdded={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Add author' })).toBeDisabled()
+    // Back stays available while loading.
+    expect(screen.getByRole('button', { name: 'Back to results' })).toBeEnabled()
+
+    const loaded: AuthorAddDefaults = {
+      ...bareDefaults,
+      profiles: [{ id: 3, name: 'Standard' }, { id: 4, name: 'German' }] as never,
+      rootFolders: [{ id: 7, path: '/downloads', freeSpace: 0, createdAt: '' }, { id: 9, path: '/books', freeSpace: 0, createdAt: '' }],
+      rootFolderId: 9,
+    }
+    rerender(<AddAuthorConfirm author={author({})} defaults={loaded} primaryProvider={null} onBack={onBack} onClose={vi.fn()} onAdded={vi.fn()} />)
+    const add = screen.getByRole('button', { name: 'Add author' })
+    await waitFor(() => expect(add).toBeEnabled())
+    expect(screen.getByLabelText('Root folder')).toHaveValue('9')
+    fireEvent.click(add)
+    await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.addAuthor).mock.calls[0][0]).toEqual(expect.objectContaining({ metadataProfileId: 3, rootFolderId: 9 }))
   })
 
   it('states the predicted outcome, with the count, and follows the mode', () => {
@@ -203,7 +232,7 @@ describe('AddAuthorConfirm', () => {
   // explicit per-author rootFolderId, which the scanner resolves ahead of
   // library.defaultRootFolderId, so the install default was unreachable for
   // every author added here.
-  describe('root folder seeding (#2166)', () => {
+  describe('loadAuthorAddDefaults root folder seeding (#2166)', () => {
     const roots = [
       { id: 7, path: '/downloads', freeSpace: 0, createdAt: '2026-08-01T00:00:00Z' },
       { id: 9, path: '/books', freeSpace: 0, createdAt: '2026-08-01T00:00:00Z' },
@@ -220,30 +249,38 @@ describe('AddAuthorConfirm', () => {
       })
     }
 
-    async function addTolkien() {
-      renderConfirm(author({}))
-      await waitFor(() => expect(screen.getByLabelText('Root folder')).toBeInTheDocument())
-      fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
-      await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
-      return vi.mocked(api.addAuthor).mock.calls[0][0]
-    }
-
-    it('posts the configured default root folder, not the first in the list', async () => {
+    it('picks the configured default root folder, not the first in the list', async () => {
       vi.mocked(api.listRootFolders).mockResolvedValue(roots)
       vi.mocked(api.getSetting).mockImplementation(settingsWithDefaultRoot('9'))
-      expect(await addTolkien()).toEqual(expect.objectContaining({ rootFolderId: 9 }))
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ rootFolderId: 9, rootFolders: roots }))
     })
 
     it('falls back to the first root folder when no default is set', async () => {
       vi.mocked(api.listRootFolders).mockResolvedValue(roots)
       vi.mocked(api.getSetting).mockImplementation(settingsWithDefaultRoot(null))
-      expect(await addTolkien()).toEqual(expect.objectContaining({ rootFolderId: 7 }))
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ rootFolderId: 7 }))
     })
 
     it('falls back to the first root folder when the default names a deleted folder', async () => {
       vi.mocked(api.listRootFolders).mockResolvedValue(roots)
       vi.mocked(api.getSetting).mockImplementation(settingsWithDefaultRoot('404'))
-      expect(await addTolkien()).toEqual(expect.objectContaining({ rootFolderId: 7 }))
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ rootFolderId: 7 }))
+    })
+
+    it('reads the install monitor and media defaults, and degrades to the built-in ones', async () => {
+      vi.mocked(api.getSetting).mockImplementation(async (key: string) => {
+        if (key === 'default.media_type') return { key, value: 'audiobook' }
+        if (key === 'author.default_monitor_mode') return { key, value: 'latest' }
+        if (key === 'author.default_monitor_latest_count') return { key, value: '5' }
+        throw new Error('HTTP 404')
+      })
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ mediaType: 'audiobook', monitorMode: 'latest', monitorLatestCount: 5, rootFolderId: null }))
+
+      vi.mocked(api.getSetting).mockRejectedValue(new Error('HTTP 404'))
+      vi.mocked(api.listMetadataProfiles).mockRejectedValue(new Error('HTTP 500'))
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      expect(await loadAuthorAddDefaults()).toEqual({ profiles: [], rootFolders: [], rootFolderId: null, mediaType: 'ebook', monitorMode: 'all', monitorLatestCount: 1 })
+      consoleError.mockRestore()
     })
   })
 })

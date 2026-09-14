@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, AddAuthorRequest, Author, AuthorConflictBody, AuthorMonitorMode, MonitorNewItems, MediaType, MetadataProfile, RootFolder } from '../api/client'
+import { api, AddAuthorRequest, Author, AuthorConflictBody, AuthorMonitorMode, MonitorNewItems, MediaType } from '../api/client'
+import { AuthorAddDefaults, DEFAULT_MONITOR_LATEST_COUNT, DEFAULT_MONITOR_MODE } from './authorAddDefaults'
 import { useNeedsSetup } from './useNeedsSetup'
 import { authorProviderKey } from '../util/authorMetadata'
 import { providerDisplayName } from '../util/metadataSource'
@@ -10,6 +11,12 @@ import { providerDisplayName } from '../util/metadataSource'
 // footer as a fragment so it slots into the modal's flex column.
 interface Props {
   author: Author
+  // Profiles, root folders and the install defaults, loaded once by the modal
+  // when it opens (loadAuthorAddDefaults) so selecting a row does not start
+  // five requests, and null while they are still in flight. The Add button
+  // stays disabled until they arrive: an add posted before them would carry
+  // a null profile and a null root folder.
+  defaults: AuthorAddDefaults | null
   // The configured primary metadata provider, when one is explicitly set, so
   // a record that would sync from elsewhere is flagged before the add (#2237).
   primaryProvider: string | null
@@ -19,12 +26,6 @@ interface Props {
 }
 
 const AUTO_GRAB_STORAGE_KEY = 'addAuthor.autoGrab'
-const DEFAULT_MONITOR_MODE: AuthorMonitorMode = 'all'
-const DEFAULT_MONITOR_LATEST_COUNT = 1
-
-function isAuthorMonitorMode(value: string): value is AuthorMonitorMode {
-  return value === 'all' || value === 'future' || value === 'latest' || value === 'none'
-}
 
 function loadAutoGrabDefault(): boolean {
   try {
@@ -48,14 +49,14 @@ function conflictBody(err: unknown): AuthorConflictBody | null {
   return null
 }
 
-export default function AddAuthorConfirm({ author, primaryProvider, onBack, onClose, onAdded }: Props) {
+export default function AddAuthorConfirm({ author, defaults, primaryProvider, onBack, onClose, onAdded }: Props) {
   const { t } = useTranslation()
   const [addError, setAddError] = useState<string | null>(null)
   const [addConflict, setAddConflict] = useState<AuthorConflictBody | null>(null)
   const [adding, setAdding] = useState(false)
-  const [profiles, setProfiles] = useState<MetadataProfile[]>([])
+  const profiles = defaults?.profiles ?? []
+  const rootFolders = defaults?.rootFolders ?? []
   const [profileId, setProfileId] = useState<number | null>(null)
-  const [rootFolders, setRootFolders] = useState<RootFolder[]>([])
   const [rootFolderId, setRootFolderId] = useState<number | null>(null)
   const [searchOnAdd, setSearchOnAdd] = useState(loadAutoGrabDefault)
   // Preempt the silent auto-search failure: backend auto-search-on-add runs
@@ -76,55 +77,19 @@ export default function AddAuthorConfirm({ author, primaryProvider, onBack, onCl
     headingRef.current?.focus()
   }, [])
 
+  // Seed the controls once the defaults land. Untouched controls keep the
+  // install defaults; the monitor fields are only posted when changed.
   useEffect(() => {
-    api.listMetadataProfiles().then(ps => {
-      setProfiles(ps)
-      // Default to the first profile, which is the seeded "Standard" profile
-      // on a fresh install, so the language filter kicks in without the user
-      // having to pick one.
-      if (ps.length > 0) setProfileId(ps[0].id)
-    }).catch(console.error)
-    // Seed the root-folder picker from the install default rather than from
-    // list position (#2166). The value here is posted as an explicit
-    // per-author rootFolderId, and the scanner resolves an author's own
-    // root_folder_id ahead of library.defaultRootFolderId, so seeding from
-    // rfs[0] did not merely preselect the wrong entry, it made the setting
-    // unreachable for every author added through this dialog. Invisible until
-    // a second root folder exists, which is how it reached #2165: adding
-    // /downloads as a root put it first in the list.
-    Promise.all([
-      api.listRootFolders(),
-      api.getSetting('library.defaultRootFolderId').catch(() => null),
-    ]).then(([rfs, defaultSetting]) => {
-      setRootFolders(rfs)
-      if (rfs.length === 0) return
-      const defaultId = Number(defaultSetting?.value)
-      // Fall back to the first folder when the setting is unset, unparseable,
-      // or still names a root folder that has since been deleted.
-      const preferred = rfs.find(rf => rf.id === defaultId)
-      setRootFolderId(preferred ? preferred.id : rfs[0].id)
-    }).catch(console.error)
-    // Seed the media-type dropdown with the global default setting so the
-    // user only has to override it when they want something different.
-    api.getSetting('default.media_type')
-      .then(s => {
-        if (s.value === 'ebook' || s.value === 'audiobook' || s.value === 'both') {
-          setMediaType(s.value)
-        }
-      })
-      .catch(() => { /* 404 = unset; keep ebook default */ })
-    api.getSetting('author.default_monitor_mode')
-      .then(s => {
-        if (isAuthorMonitorMode(s.value)) setMonitorMode(s.value)
-      })
-      .catch(() => { /* unset; keep all-books default */ })
-    api.getSetting('author.default_monitor_latest_count')
-      .then(s => {
-        const n = Number(s.value)
-        if (Number.isInteger(n) && n > 0) setMonitorLatestCount(n)
-      })
-      .catch(() => { /* unset; keep latest count default */ })
-  }, [])
+    if (!defaults) return
+    // Default to the first profile, which is the seeded "Standard" profile
+    // on a fresh install, so the language filter kicks in without the user
+    // having to pick one.
+    setProfileId(defaults.profiles.length > 0 ? defaults.profiles[0].id : null)
+    setRootFolderId(defaults.rootFolderId)
+    setMediaType(defaults.mediaType)
+    setMonitorMode(defaults.monitorMode)
+    setMonitorLatestCount(defaults.monitorLatestCount)
+  }, [defaults])
 
   const mismatchedProvider = (() => {
     if (!primaryProvider) return null
@@ -134,6 +99,7 @@ export default function AddAuthorConfirm({ author, primaryProvider, onBack, onCl
   })()
 
   const addAuthor = async () => {
+    if (!defaults) return
     setAdding(true)
     setAddError(null)
     setAddConflict(null)
@@ -294,7 +260,7 @@ export default function AddAuthorConfirm({ author, primaryProvider, onBack, onCl
       <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end gap-2">
         <button type="button" onClick={onBack} disabled={adding} className="mr-auto px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{t('addToLibrary.backToResults')}</button>
         <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">{t('common.cancel')}</button>
-        <button type="button" onClick={addAuthor} disabled={adding} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium text-white">{adding ? t('addToLibrary.adding') : t('addToLibrary.author.confirmAdd')}</button>
+        <button type="button" onClick={addAuthor} disabled={adding || !defaults} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium text-white">{adding ? t('addToLibrary.adding') : t('addToLibrary.author.confirmAdd')}</button>
       </div>
     </>
   )

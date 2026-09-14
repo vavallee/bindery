@@ -167,6 +167,29 @@ describe('AddToLibraryModal - dialog contract', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('Escape closes and Tab lands inside even when focus has left the dialog', () => {
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
+    const box = input()
+    // Focus on the body, as after an overlay click.
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    expect(document.activeElement).toBe(document.body)
+    fireEvent.keyDown(document.body, { key: 'Tab' })
+    expect(box).toHaveFocus()
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    fireEvent.keyDown(document.body, { key: 'Tab', shiftKey: true })
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('forward Tab from a non-focusable element inside the dialog goes to the first control', () => {
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
+    const heading = screen.getByRole('heading', { name: 'Add to library' })
+    fireEvent.keyDown(heading, { key: 'Tab' })
+    expect(input()).toHaveFocus()
+  })
+
   it('closes on an overlay click but not on a click inside the dialog', () => {
     render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
     fireEvent.click(screen.getByRole('dialog'))
@@ -333,6 +356,39 @@ describe('AddToLibraryModal - mixed result list', () => {
     expect(divider.compareDocumentPosition(rows[3]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
+  it('groups a book whose author id comes from another provider under the row by name', async () => {
+    // With the default setup every non primary provider is an enricher: a DNB
+    // book carries a dnb: author id while the author row was collapsed to the
+    // OpenLibrary record, so the ids can never agree even for the same person.
+    vi.mocked(api.searchAuthors).mockResolvedValue([author({ foreignAuthorId: 'OL123A', authorName: 'Juli Zeh' })])
+    vi.mocked(api.searchBooks).mockResolvedValue([
+      book({ foreignBookId: 'OL1W', title: 'Unterleuten', author: author({ foreignAuthorId: 'OL123A', authorName: 'Juli Zeh' }) }),
+      book({ foreignBookId: 'dnb:456', title: 'Corpus Delicti', author: author({ foreignAuthorId: 'dnb:789', authorName: 'Juli Zeh' }) }),
+    ])
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
+    typeAndSearch('juli zeh')
+    await waitFor(() => expect(screen.getByText('Corpus Delicti')).toBeInTheDocument())
+    const rows = screen.getAllByTestId(/^add-result-(author|book)$/)
+    expect(rows.map(r => r.getAttribute('data-testid'))).toEqual(['add-result-author', 'add-result-book', 'add-result-book'])
+    expect(within(rows[2]).getByText('Corpus Delicti')).toBeInTheDocument()
+    expect(screen.queryByRole('separator')).not.toBeInTheDocument()
+  })
+
+  it('keeps a same-provider id mismatch decisive even when the names agree', async () => {
+    vi.mocked(api.searchAuthors).mockResolvedValue([author({ foreignAuthorId: 'OL123A', authorName: 'John Smith' })])
+    vi.mocked(api.searchBooks).mockResolvedValue([
+      book({ foreignBookId: 'OL9W', title: 'Another Smith', author: author({ foreignAuthorId: 'OL999A', authorName: 'John Smith' }) }),
+    ])
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
+    typeAndSearch('john smith')
+    await waitFor(() => expect(screen.getByText('Another Smith')).toBeInTheDocument())
+    const rows = screen.getAllByTestId(/^add-result-(author|book)$/)
+    const divider = screen.getByRole('separator')
+    // Author row, divider, then the book: a different OpenLibrary author.
+    expect(rows[0].compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(divider.compareDocumentPosition(rows[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('shows no divider when every book belongs to an author row', async () => {
     vi.mocked(api.searchAuthors).mockResolvedValue([leGuin])
     vi.mocked(api.searchBooks).mockResolvedValue([dispossessed])
@@ -407,6 +463,18 @@ describe('AddToLibraryModal - mixed result list', () => {
     expect(screen.getByText('J.R.R. Tolkien')).toBeInTheDocument()
   })
 
+  it('renders both rows when a provider returns the same id twice', async () => {
+    vi.mocked(api.searchAuthors).mockResolvedValue([author({ foreignAuthorId: 'OL-DUP', authorName: 'Twice' }), author({ foreignAuthorId: 'OL-DUP', authorName: 'Twice' })])
+    vi.mocked(api.searchBooks).mockResolvedValue([book({ foreignBookId: 'OL-DUPW', title: 'Same Work' }), book({ foreignBookId: 'OL-DUPW', title: 'Same Work' })])
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
+    typeAndSearch('twice')
+    await waitFor(() => expect(screen.getAllByTestId('add-result-book')).toHaveLength(2))
+    expect(screen.getAllByTestId('add-result-author')).toHaveLength(2)
+    expect(consoleError).not.toHaveBeenCalled()
+    consoleError.mockRestore()
+  })
+
   it('disables Select on a book row with no foreign id', async () => {
     vi.mocked(api.searchAuthors).mockResolvedValue([])
     vi.mocked(api.searchBooks).mockResolvedValue([book({ foreignBookId: '', title: 'Orphan' })])
@@ -445,7 +513,8 @@ describe('AddToLibraryModal - title guard', () => {
     fireEvent.click(revealButton)
     expect(screen.getByTestId('add-result-author')).toHaveTextContent('Romeo and Juliet')
     fireEvent.click(within(screen.getByTestId('add-result-author')).getByRole('button', { name: 'Select Romeo and Juliet' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Add author' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add author' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
     await waitFor(() => expect(api.addAuthor).toHaveBeenCalledWith(expect.objectContaining({ foreignAuthorId: 'OL_BAD_TITLE_A' })))
     expect(onAdded).toHaveBeenCalledWith({ kind: 'author', author: expect.objectContaining({ id: 5 }) })
     expect(onClose).toHaveBeenCalled()
@@ -504,6 +573,7 @@ describe('AddToLibraryModal - already in the library (#1227)', () => {
     typeAndSearch('emilia jae')
     await waitFor(() => expect(screen.getByText('Emilia Jae')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: 'Select Emilia Jae' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add author' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('author already exists'))
@@ -513,7 +583,7 @@ describe('AddToLibraryModal - already in the library (#1227)', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  it('shows the book 409 as "Already in your library" with an open link', async () => {
+  it('shows the book 409 message with an open link', async () => {
     vi.mocked(api.searchAuthors).mockResolvedValue([])
     vi.mocked(api.searchBooks).mockResolvedValue([book({ foreignBookId: 'OL-OWNED', title: 'Owned Book', author: author({ foreignAuthorId: 'OL-A', authorName: 'Someone' }) })])
     vi.mocked(api.addBook).mockRejectedValue(Object.assign(new Error('book already in your library'), {
@@ -526,7 +596,7 @@ describe('AddToLibraryModal - already in the library (#1227)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Select Owned Book' }))
     fireEvent.click(screen.getByRole('button', { name: 'Add book' }))
 
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Already in your library'))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('book already in your library'))
     expect(screen.getByRole('link', { name: 'Open existing book' })).toHaveAttribute('href', '/book/42')
     expect(onAdded).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()
@@ -555,6 +625,7 @@ describe('AddToLibraryModal - selection and confirm steps', () => {
     expect(screen.queryByPlaceholderText('Author, title, ISBN, or ASIN')).not.toBeInTheDocument()
     expect(screen.getByTestId('add-author-outcome')).toHaveTextContent('Adds up to 87 books and searches for all of them.')
 
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add author' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
     await waitFor(() => expect(onAdded).toHaveBeenCalledWith({ kind: 'author', author: expect.objectContaining({ id: 37 }) }))
     expect(onClose).toHaveBeenCalledTimes(1)
@@ -622,6 +693,35 @@ describe('AddToLibraryModal - selection and confirm steps', () => {
     const notice = await screen.findByRole('alert')
     expect(notice.textContent).toContain('OpenLibrary')
     expect(notice.textContent).toContain('Hardcover')
+  })
+
+  it('does not flag a result from the configured primary provider', async () => {
+    vi.mocked(api.getSetting).mockImplementation(async (key: string) => {
+      if (key === 'metadata.primary_provider') return { key, value: 'openlibrary' }
+      throw new Error('HTTP 404')
+    })
+    vi.mocked(api.searchAuthors).mockResolvedValue([author({ foreignAuthorId: 'OL3101279A', authorName: 'Matt Dinniman', metadataProvider: 'openlibrary' })])
+    vi.mocked(api.searchBooks).mockResolvedValue([])
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
+    typeAndSearch('Matt Dinniman')
+    await waitFor(() => expect(screen.getByText('Matt Dinniman')).toBeInTheDocument())
+    expect(screen.queryByText(/^from /)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Select Matt Dinniman' }))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('loads the author defaults once on open, not on each selection', async () => {
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
+    await waitFor(() => expect(api.listMetadataProfiles).toHaveBeenCalledTimes(1))
+    typeAndSearch('le guin')
+    await waitFor(() => expect(screen.getByText('The Dispossessed')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Select Ursula K. Le Guin' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add author' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Back to results' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select Ursula K. Le Guin' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add author' })).toBeEnabled())
+    expect(api.listMetadataProfiles).toHaveBeenCalledTimes(1)
+    expect(api.listRootFolders).toHaveBeenCalledTimes(1)
   })
 
   it('shows no provider notice when no primary provider is configured', async () => {

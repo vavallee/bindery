@@ -5,6 +5,7 @@ import { isbnFromQuery, resolveBookQuery } from '../api/booklookup'
 import { splitAuthorSearchResults } from './addAuthorTitleGuard'
 import { groupAddResults } from './addToLibraryGrouping'
 import AddAuthorConfirm from './AddAuthorConfirm'
+import { AuthorAddDefaults, loadAuthorAddDefaults } from './authorAddDefaults'
 import AddBookConfirm from './AddBookConfirm'
 import { authorProviderKey } from '../util/authorMetadata'
 import { providerDisplayName } from '../util/metadataSource'
@@ -61,7 +62,17 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
   // The configured primary metadata provider, when one is explicitly set.
   // Used to flag author results that would sync from another provider (#2237).
   const [primaryProvider, setPrimaryProvider] = useState<string | null>(null)
+  // What the author confirm step needs, fetched once per open rather than on
+  // every row selection. Null until it arrives; the step disables Add
+  // meanwhile.
+  const [authorDefaults, setAuthorDefaults] = useState<AuthorAddDefaults | null>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    loadAuthorAddDefaults().then(d => { if (!cancelled) setAuthorDefaults(d) })
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     api.getSetting('metadata.primary_provider')
@@ -162,11 +173,37 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
     if (event.shiftKey && (activeElement === first || !activeIsFocusable)) {
       event.preventDefault()
       last.focus()
-    } else if (!event.shiftKey && activeElement === last) {
+    } else if (!event.shiftKey && (activeElement === last || !activeIsFocusable)) {
       event.preventDefault()
       first.focus()
     }
   }
+
+  // Focus leaves the dialog after an overlay click or when a row that had
+  // focus is replaced, and from the body the dialog's own handler never sees
+  // the key. Escape must still close and Tab must still land inside, so a
+  // document listener covers keys whose target is outside the dialog; keys
+  // inside it stay with handleDialogKeyDown so inner menus can stop them.
+  useEffect(() => {
+    const onDocumentKeyDown = (event: KeyboardEvent) => {
+      const dialog = dialogRef.current
+      if (!dialog || (event.target instanceof Node && dialog.contains(event.target))) return
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const focusable = dialog.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )
+      if (!focusable.length) return
+      event.preventDefault()
+      ;(event.shiftKey ? focusable[focusable.length - 1] : focusable[0]).focus()
+    }
+    document.addEventListener('keydown', onDocumentKeyDown)
+    return () => document.removeEventListener('keydown', onDocumentKeyDown)
+  }, [onClose])
 
   const placeholder = mode === 'author'
     ? t('addToLibrary.searchPlaceholderAuthor')
@@ -181,11 +218,13 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
   const openClass = 'px-3 py-1 rounded text-xs font-medium border border-slate-400 dark:border-zinc-600 hover:bg-slate-200 dark:hover:bg-zinc-800'
   const selectClass = 'px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded text-xs font-medium text-white flex-shrink-0'
 
-  const renderAuthorRow = (author: Author) => {
+  // Keys carry the list index as well as the id: providers occasionally return
+  // the same record twice, and a duplicate key makes React drop a row.
+  const renderAuthorRow = (author: Author, index: number) => {
     const mismatch = mismatchedProvider(author)
     return (
       <div
-        key={`author:${author.foreignAuthorId}`}
+        key={`author:${author.foreignAuthorId}:${index}`}
         data-testid="add-result-author"
         className="flex items-center justify-between gap-3 p-3 rounded-md bg-slate-200/50 dark:bg-zinc-800/50 hover:bg-slate-200 dark:hover:bg-zinc-800"
       >
@@ -227,7 +266,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
     const canAdd = !!book.foreignBookId
     return (
       <div
-        key={`book:${book.foreignBookId || `${book.title}:${index}`}`}
+        key={`book:${book.foreignBookId}:${index}`}
         data-testid="add-result-book"
         className="flex items-center gap-3 p-3 rounded-md bg-slate-200/50 dark:bg-zinc-800/50 hover:bg-slate-200 dark:hover:bg-zinc-800"
       >
@@ -283,6 +322,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
         {selected?.kind === 'author' ? (
           <AddAuthorConfirm
             author={selected.author}
+            defaults={authorDefaults}
             primaryProvider={primaryProvider}
             onBack={() => setSelected(null)}
             onClose={onClose}
@@ -320,7 +360,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
 
             <div className="mt-4 space-y-2 max-h-[50vh] overflow-y-auto">
               {rows.map((row, i) => {
-                if (row.kind === 'author') return renderAuthorRow(row.author)
+                if (row.kind === 'author') return renderAuthorRow(row.author, i)
                 if (row.kind === 'book') return renderBookRow(row.book, i)
                 return (
                   <div key="divider" role="separator" className="flex items-center gap-2 pt-2 text-xs font-medium uppercase tracking-wide text-fg-muted">

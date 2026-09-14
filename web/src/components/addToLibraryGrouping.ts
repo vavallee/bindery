@@ -10,14 +10,28 @@ export type AddResultRow =
   | { kind: 'book'; book: Book }
   | { kind: 'divider' }
 
+// The provider prefix of a foreign id ("dnb:123" gives "dnb"); ids without
+// one are OpenLibrary's bare "OL…A" form and get the empty prefix.
+function providerPrefix(id: string): string {
+  const i = id.indexOf(':')
+  return i === -1 ? '' : id.slice(0, i).toLowerCase()
+}
+
 function bookBelongsTo(book: Book, author: Author): boolean {
   const bookAuthor = book.author
   if (!bookAuthor) return false
-  // The foreign id is authoritative when both sides carry one. Providers do
-  // not always stamp it on book results (DNB, ISBN editions), so fall back to
-  // the folded name, which is the same comparison the title guard uses.
-  if (bookAuthor.foreignAuthorId && author.foreignAuthorId) {
-    return bookAuthor.foreignAuthorId === author.foreignAuthorId
+  const bookId = bookAuthor.foreignAuthorId
+  const rowId = author.foreignAuthorId
+  // Equal ids are a positive match. A mismatch is decisive only when both ids
+  // come from the same provider: with the default setup every non primary
+  // provider is an enricher, so a DNB book carries a dnb: author id while the
+  // author row has been collapsed to the primary provider's record, and the
+  // two ids can never agree even though they name the same person. Anything
+  // else falls back to the folded name, the same comparison the title guard
+  // uses, so those books still group under the row.
+  if (bookId && rowId) {
+    if (bookId === rowId) return true
+    if (providerPrefix(bookId) === providerPrefix(rowId)) return false
   }
   const name = foldForSearch(bookAuthor.authorName)
   return name !== '' && name === foldForSearch(author.authorName)

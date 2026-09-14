@@ -253,7 +253,7 @@ Bindery's primary metadata provider is OpenLibrary, DNB (the German national lib
 
 ## A book is on hardcover.app but doesn't show up in the Add to library search
 
-Hardcover does not have to be the primary provider for its titles to show up: it always runs as a **search enricher** too. The Add to library dialog (behind both **Add Author** and **Add Book**) fans the query out to the primary provider **plus** Hardcover (and Google Books, if an API key is set), then merge in any titles the primary didn't return. Books that only exist on hardcover.app are exactly what that path is meant to surface.
+Hardcover does not have to be the primary provider for its titles to show up: it always runs as a **search enricher** too. The Add to library dialog (behind both **Add Author** and **Add Book**) fans the query out to the primary provider **plus** Hardcover (and Google Books, if an API key is set), then merges in any titles the primary didn't return. Books that only exist on hardcover.app are exactly what that path is meant to surface.
 
 The catch is that **Hardcover's GraphQL API requires an API token for every query, including search** — an unauthenticated request returns `{"error":"Unable to verify token"}`. With no token saved, Bindery skips Hardcover before sending anything, so it contributes nothing silently and you only see OpenLibrary / DNB results. Startup says so too: the log reads `hardcover enrichment idle: no api token configured` instead of `hardcover enrichment enabled`. Saving a token takes effect on the next lookup, with no restart.
 
