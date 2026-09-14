@@ -452,6 +452,21 @@ environment:
 
 Use your actual LAN subnet. If the target services sit on a different subnet than gluetun, list both comma separated. Restart gluetun after changing it.
 
+### Services behind a private certificate authority
+
+Bindery trusts the certificate bundle built into the image and has no option to skip TLS verification. To reach a download client, indexer or Audiobookshelf server whose certificate is signed by your own CA (step-ca, an internal PKI, a homelab root), add that CA to the trust store from outside: mount the CA certificate in PEM form into a directory and point `SSL_CERT_DIR` at it. The built in bundle still loads, so public services keep working and your CA is added on top.
+
+```yaml
+services:
+  bindery:
+    environment:
+      - SSL_CERT_DIR=/certs
+    volumes:
+      - ./step-ca/root_ca.crt:/certs/root_ca.crt:ro
+```
+
+On Kubernetes, mount the CA from a ConfigMap or Secret into the same directory and set the same variable. Restart after changing either. Setting `SSL_CERT_FILE` instead replaces the built in bundle entirely, so only use it with a file that also contains the public roots.
+
 ## First-run setup
 
 On first launch Bindery bootstraps itself — **no environment variables are required for auth.**
