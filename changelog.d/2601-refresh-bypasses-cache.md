@@ -1,0 +1,2 @@
+### Fixed
+- **Refresh metadata fetches current data** (#2601): refreshing an author from their page now asks the metadata provider for their current bio, photo and book list instead of reusing a copy Bindery cached up to 24 hours earlier, so a change made upstream shows up on the first click. Refresh all metadata, the bulk Refresh action and the scheduled refresh still use the cache so a whole library refresh stays gentle on the providers. Thanks magrhino for tracing it.

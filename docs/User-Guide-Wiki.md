@@ -423,6 +423,13 @@ no books at all is populated, which is how bulk **Refresh metadata** repairs
 an import that landed an author but no catalogue.) When a refresh declines to
 add works, the author page says how many and why.
 
+**Refresh metadata** on a single author always asks the provider for current
+data, so a bio, photo or new book added upstream shows up on the first click.
+**Refresh all metadata**, the bulk Refresh action and the scheduled refresh
+reuse what Bindery fetched in the last 24 hours instead, which keeps a whole
+library refresh from hammering the providers; a change upstream reaches them
+within a day.
+
 Changing a provider or tightening a metadata profile does not silently delete
 old catalogue rows during refresh. To apply the new catalogue rules to an
 author's existing rows, open the author, choose **More → Reconcile catalogue…**,

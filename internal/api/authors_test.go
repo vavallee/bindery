@@ -23,6 +23,7 @@ import (
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
+	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -114,6 +115,11 @@ type stubMetaProvider struct {
 	// author, when non-nil, is returned by GetAuthor so tests can exercise
 	// the author-profile refresh path (Discussion #1226).
 	author *models.Author
+	// getAuthorBypass, when non-nil, receives whether each GetAuthor call
+	// carried metadata.WithCacheBypass, so a test can tell a refresh that
+	// reached the provider from one the aggregator cache answered (#2601).
+	// Buffered by the test; a full channel drops the report, never blocks.
+	getAuthorBypass chan bool
 }
 
 func (p *stubMetaProvider) Name() string {
@@ -128,7 +134,13 @@ func (p *stubMetaProvider) SearchAuthors(_ context.Context, _ string) ([]models.
 func (p *stubMetaProvider) SearchBooks(_ context.Context, _ string) ([]models.Book, error) {
 	return nil, nil
 }
-func (p *stubMetaProvider) GetAuthor(_ context.Context, _ string) (*models.Author, error) {
+func (p *stubMetaProvider) GetAuthor(ctx context.Context, _ string) (*models.Author, error) {
+	if p.getAuthorBypass != nil {
+		select {
+		case p.getAuthorBypass <- metadata.CacheBypassed(ctx):
+		default:
+		}
+	}
 	return p.author, nil
 }
 func (p *stubMetaProvider) GetBook(_ context.Context, fid string) (*models.Book, error) {
@@ -8306,5 +8318,123 @@ func TestAddBook_AdminGetsConflictForOtherUsersBook(t *testing.T) {
 	}
 	if after.Monitored {
 		t.Fatalf("admin re-add flipped alice's book to monitored")
+	}
+}
+
+// TestAuthorRefresh_ManualRefreshBypassesMetadataCache pins #2601. The metadata
+// aggregator caches author profiles and catalogues for 24 hours, and the manual
+// Refresh Metadata action used to read through that cache, so a bio, photo or
+// new book that appeared upstream stayed invisible for up to a day after the
+// user explicitly asked for it. The bulk paths (selection refresh and Refresh
+// all, both RefreshAuthorBooks) deliberately keep the cache: they fan out over
+// many authors, and the cache is what stops a repeat run refetching them all.
+func TestAuthorRefresh_ManualRefreshBypassesMetadataCache(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL2601A", Name: "Ann Leckie", SortName: "Leckie, Ann",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	work := func(id, title string) models.Book {
+		return models.Book{ForeignID: id, Title: title, SortTitle: strings.ToLower(title), Language: "eng",
+			Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"}
+	}
+	stub := &stubMetaProvider{
+		works:  []models.Book{work("OL2601W1", "Ancillary Justice")},
+		author: &models.Author{ForeignID: "OL2601A", Name: "Ann Leckie", Description: "old bio", MetadataProvider: "openlibrary"},
+	}
+	agg := metadata.NewAggregator(stub)
+	group := jobs.NewGroup(context.Background())
+	defer group.Shutdown(5 * time.Second) // runs before database.Close
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, nil, profileRepo, nil).WithJobs(group)
+
+	profileAndBooks := func() (string, int) {
+		t.Helper()
+		got, err := authorRepo.GetByID(ctx, author.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		books, err := bookRepo.ListByAuthor(ctx, author.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.Description, len(books)
+	}
+
+	// Warm the aggregator cache the way a bulk refresh does.
+	h.RefreshAuthorBooks(author, false, "")
+	if desc, n := profileAndBooks(); desc != "old bio" || n != 1 {
+		t.Fatalf("after warm refresh: description %q, %d books; want %q and 1", desc, n, "old bio")
+	}
+
+	// Upstream changes: a new bio and a new book.
+	stub.author = &models.Author{ForeignID: "OL2601A", Name: "Ann Leckie", Description: "new bio", MetadataProvider: "openlibrary"}
+	stub.works = []models.Book{work("OL2601W1", "Ancillary Justice"), work("OL2601W2", "Translation State")}
+	stub.getAuthorBypass = make(chan bool, 8)
+
+	// The bulk path keeps reading through the cache.
+	reloaded, err := authorRepo.GetByID(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.RefreshAuthorBooks(reloaded, false, "")
+	if n := len(stub.getAuthorBypass); n != 0 {
+		t.Fatalf("bulk refresh reached the provider %d times; it should be answered by the cache", n)
+	}
+	if desc, n := profileAndBooks(); desc != "old bio" || n != 1 {
+		t.Fatalf("after bulk refresh: description %q, %d books; want the cached %q and 1", desc, n, "old bio")
+	}
+
+	// The manual Refresh Metadata action must go to the provider.
+	id := strconv.FormatInt(author.ID, 10)
+	req := withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/author/"+id+"/refresh", nil), "id", id)
+	rec := httptest.NewRecorder()
+	h.Refresh(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("Refresh status = %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case bypassed := <-stub.getAuthorBypass:
+		if !bypassed {
+			t.Fatal("manual refresh reached the provider without metadata.WithCacheBypass")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("manual refresh never reached the provider: the 24 hour metadata cache answered it (#2601)")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		desc, n := profileAndBooks()
+		if desc == "new bio" && n == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after manual refresh: description %q, %d books; want %q and 2", desc, n, "new bio")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// The fresh profile was written back: an ordinary read serves it from the
+	// cache without another provider call.
+	cached, err := agg.GetAuthor(ctx, author.ForeignID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached == nil || cached.Description != "new bio" {
+		t.Fatalf("ordinary GetAuthor after refresh = %+v, want the refreshed %q from the cache", cached, "new bio")
+	}
+	if n := len(stub.getAuthorBypass); n != 0 {
+		t.Fatalf("ordinary GetAuthor after refresh reached the provider (%d extra calls)", n)
 	}
 }

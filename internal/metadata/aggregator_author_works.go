@@ -154,11 +154,14 @@ func (a *Aggregator) authorWorksSupplement(ctx context.Context, provider authorW
 // enrichers can run author-scoped supplemental queries.
 func (a *Aggregator) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
 	key := "authorworks:" + authorForeignID
-	if cached, ok := a.cache.get(key); ok {
-		return cloneBooks(cached.([]models.Book)), nil
+	ctx, fresh := consumeCacheBypass(ctx)
+	if !fresh {
+		if cached, ok := a.cache.get(key); ok {
+			return cloneBooks(cached.([]models.Book)), nil
+		}
 	}
 
-	books, err := a.rawPrimaryAuthorWorks(ctx, authorForeignID)
+	books, err := a.rawPrimaryAuthorWorks(ctx, authorForeignID, fresh)
 	if err != nil {
 		return nil, err
 	}
@@ -182,10 +185,13 @@ func (a *Aggregator) GetAuthorWorks(ctx context.Context, authorForeignID string)
 // An already-enriched catalogue from GetAuthorWorks is returned when cached,
 // since it is a superset of what the caller needs.
 func (a *Aggregator) GetAuthorWorksUnenriched(ctx context.Context, authorForeignID string) ([]models.Book, error) {
-	if cached, ok := a.cache.get("authorworks:" + authorForeignID); ok {
-		return cloneBooks(cached.([]models.Book)), nil
+	ctx, fresh := consumeCacheBypass(ctx)
+	if !fresh {
+		if cached, ok := a.cache.get("authorworks:" + authorForeignID); ok {
+			return cloneBooks(cached.([]models.Book)), nil
+		}
 	}
-	return a.rawPrimaryAuthorWorks(ctx, authorForeignID)
+	return a.rawPrimaryAuthorWorks(ctx, authorForeignID, fresh)
 }
 
 // GetAuthorWorksForAuthor fetches the primary provider's author works and
@@ -197,11 +203,14 @@ func (a *Aggregator) GetAuthorWorksForAuthor(ctx context.Context, author models.
 	// and serving the pre-relink answer would hide the fix (#1734).
 	key := "authorworks-author:" + author.ForeignID + ":" +
 		strings.ToLower(strings.TrimSpace(author.Name)) + ":" + authorIdentityCacheKey(author)
-	if cached, ok := a.cache.get(key); ok {
-		return cloneBooks(cached.([]models.Book)), nil
+	ctx, fresh := consumeCacheBypass(ctx)
+	if !fresh {
+		if cached, ok := a.cache.get(key); ok {
+			return cloneBooks(cached.([]models.Book)), nil
+		}
 	}
 
-	books, err := a.rawPrimaryAuthorWorks(ctx, author.ForeignID)
+	books, err := a.rawPrimaryAuthorWorks(ctx, author.ForeignID, fresh)
 	if err != nil {
 		return nil, err
 	}
@@ -262,10 +271,16 @@ func (a *Aggregator) mergeAuthorWorksSupplements(ctx context.Context, books []mo
 	return books, complete, cacheable
 }
 
-func (a *Aggregator) rawPrimaryAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
+// rawPrimaryAuthorWorks returns the primary provider's works for an author,
+// cached. fresh skips the cached copy and replaces it. It takes the flag from
+// its caller's consumeCacheBypass instead of reading ctx because the ISBN
+// canonicalisation path reaches it too, and that path keeps its cache (#2601).
+func (a *Aggregator) rawPrimaryAuthorWorks(ctx context.Context, authorForeignID string, fresh bool) ([]models.Book, error) {
 	key := "authorworks-raw:" + authorForeignID
-	if cached, ok := a.cache.get(key); ok {
-		return cloneBooks(cached.([]models.Book)), nil
+	if !fresh {
+		if cached, ok := a.cache.get(key); ok {
+			return cloneBooks(cached.([]models.Book)), nil
+		}
 	}
 
 	books, err := a.primaryAuthorWorks(ctx, authorForeignID)

@@ -39,7 +39,7 @@ POST   /api/v1/author/bulk                        bulk add/update
 GET    /api/v1/author/{id}                        author detail
 PUT    /api/v1/author/{id}                        update monitored / metadata profile
 DELETE /api/v1/author/{id}                        remove (with optional file delete)
-POST   /api/v1/author/{id}/refresh                re-pull works from OpenLibrary
+POST   /api/v1/author/{id}/refresh                re-pull profile and works, skipping the metadata cache
 GET    /api/v1/author/{id}/catalogue-reconciliation
                                                     preview stale metadata-only Wanted rows
 POST   /api/v1/author/{id}/catalogue-reconciliation

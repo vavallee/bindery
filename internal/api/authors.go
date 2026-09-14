@@ -691,6 +691,14 @@ type catalogueSyncOptions struct {
 	// Calibre re-link, sync summary) and the catalogue heuristics that may veto
 	// a work — the strict media-type clamp and the language filter (#1612).
 	onlyForeignID string
+
+	// refreshFromProvider marks the manual per author Refresh Metadata action.
+	// The author's profile and catalogue lookups skip the aggregator's 24 hour
+	// cache (metadata.WithCacheBypass) so the user sees what the provider says
+	// now, not what it said yesterday (#2601). Bulk refresh, Refresh all,
+	// relink and the add flows leave it off: they span many authors, and the
+	// cache is what keeps a repeat run from refetching the whole library.
+	refreshFromProvider bool
 }
 
 func (h *AuthorHandler) fetchAuthorBooksAsync(author *models.Author, opts catalogueSyncOptions) {
@@ -1488,7 +1496,11 @@ func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	// author's monitoring policy's call (see authorAcceptsDiscoveredBooks);
 	// books that do get created inherit the global default media type, and
 	// rows that already exist keep whatever value they were created with.
-	h.fetchAuthorBooksAsync(author, catalogueSyncOptions{mediaType: h.resolveDefaultMediaType(r.Context()), discovery: true})
+	//
+	// It is also the one refresh that asks the provider for current data
+	// rather than a cached copy up to 24 hours old: the user clicked it because
+	// something changed upstream (#2601).
+	h.fetchAuthorBooksAsync(author, catalogueSyncOptions{mediaType: h.resolveDefaultMediaType(r.Context()), discovery: true, refreshFromProvider: true})
 	writeJSON(w, http.StatusAccepted, map[string]string{"message": "refresh started"})
 }
 
@@ -1798,6 +1810,15 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// Calibre re-link, no sync summary — and it is exempt from the
 	// catalogue-sync heuristics that may veto a work (#1612).
 	singleWork := opts.onlyForeignID != ""
+	// A manual Refresh Metadata reads the author's profile and catalogue
+	// past the metadata cache (#2601). Only those two lookups get metaCtx: the
+	// Calibre re-link below resolves an identity the cache has not seen, and
+	// the aggregator stops the bypass at the author lookups, so editions,
+	// covers and ISBN matches keep their cache.
+	metaCtx := ctx
+	if opts.refreshFromProvider {
+		metaCtx = metadata.WithCacheBypass(ctx)
+	}
 	slog.Info("fetching books for author", "author", author.Name, "foreignId", author.ForeignID)
 
 	// Calibre-imported authors carry a synthetic "calibre:author:N" foreign ID
@@ -1843,7 +1864,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// author usually already existed before this request, and an Add Book is
 	// not a request to rewrite their profile.
 	if !wasCalibre && !singleWork {
-		h.refreshAuthorProfile(ctx, author)
+		h.refreshAuthorProfile(metaCtx, author)
 	}
 
 	// Load the author's secondary provider identities so supplemental
@@ -1855,7 +1876,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 
 	// Use the dedicated author works endpoint for accurate results, with
 	// author-scoped supplemental providers when available.
-	books, err := h.meta.GetAuthorWorksForAuthor(ctx, *author)
+	books, err := h.meta.GetAuthorWorksForAuthor(metaCtx, *author)
 	if err != nil {
 		slog.Error("failed to fetch books", "author", author.Name, "error", err)
 		return

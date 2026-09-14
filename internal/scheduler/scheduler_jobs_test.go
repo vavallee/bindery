@@ -775,3 +775,67 @@ func TestRefreshMetadata_SparseRefresh_DoesNotClobber(t *testing.T) {
 		t.Errorf("RatingsCount not updated by populated refresh: %d", got.RatingsCount)
 	}
 }
+
+// bypassRecordingMetaProvider counts GetAuthor calls and how many carried the
+// metadata cache bypass.
+type bypassRecordingMetaProvider struct {
+	mockMetaProvider
+	getAuthorCalls int
+	bypassedCalls  int
+}
+
+func (m *bypassRecordingMetaProvider) GetAuthor(ctx context.Context, id string) (*models.Author, error) {
+	m.getAuthorCalls++
+	if metadata.CacheBypassed(ctx) {
+		m.bypassedCalls++
+	}
+	return m.mockMetaProvider.GetAuthor(ctx, id)
+}
+
+// TestRefreshMetadata_KeepsMetadataCache: the scheduled refresh walks every
+// monitored author, so it keeps reading through the aggregator's cache. Only
+// the manual per author Refresh Metadata action bypasses it (#2601).
+func TestRefreshMetadata_KeepsMetadataCache(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("OpenMemory: %v", err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authRepo := db.NewAuthorRepo(database)
+	author := &models.Author{
+		ForeignID:        "OL2601A",
+		Name:             "Ann Leckie",
+		SortName:         "Leckie, Ann",
+		MetadataProvider: "openlibrary",
+		Monitored:        true,
+	}
+	if err := authRepo.Create(ctx, author); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	provider := &bypassRecordingMetaProvider{mockMetaProvider: mockMetaProvider{
+		author: &models.Author{ForeignID: "OL2601A", Name: "Ann Leckie", Description: "cached bio"},
+	}}
+	agg := metadata.NewAggregator(provider)
+	if _, err := agg.GetAuthor(ctx, "OL2601A"); err != nil {
+		t.Fatalf("warm GetAuthor: %v", err)
+	}
+	provider.author = &models.Author{ForeignID: "OL2601A", Name: "Ann Leckie", Description: "upstream bio"}
+
+	s := &Scheduler{authors: authRepo, meta: agg}
+	s.refreshMetadata()
+
+	if provider.getAuthorCalls != 1 || provider.bypassedCalls != 0 {
+		t.Fatalf("provider GetAuthor calls = %d (bypassed %d), want only the warm call: the scheduled refresh went past the cache",
+			provider.getAuthorCalls, provider.bypassedCalls)
+	}
+	got, err := authRepo.GetByID(ctx, author.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Description != "cached bio" {
+		t.Fatalf("Description = %q, want the cached %q", got.Description, "cached bio")
+	}
+}

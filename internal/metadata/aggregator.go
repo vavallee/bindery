@@ -737,10 +737,18 @@ func searchFormatKey(mediaType string) string {
 	}
 }
 
+// GetAuthor returns an author profile from the provider that owns foreignID,
+// cached for 24 hours. A WithCacheBypass context skips the cached copy and
+// replaces it with the provider's answer (#2601).
 func (a *Aggregator) GetAuthor(ctx context.Context, foreignID string) (*models.Author, error) {
 	key := "author:" + foreignID
-	if cached, ok := a.cache.get(key); ok {
-		return cached.(*models.Author), nil
+	// Read, not consumed: the provider call below is the only lookup this
+	// makes, and leaving the flag on ctx lets tests and logs see it there.
+	fresh := CacheBypassed(ctx)
+	if !fresh {
+		if cached, ok := a.cache.get(key); ok {
+			return cached.(*models.Author), nil
+		}
 	}
 
 	provider := a.providerForForeignID(foreignID)
