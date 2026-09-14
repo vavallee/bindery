@@ -190,6 +190,8 @@ When an item's files are left unattached, Bindery logs one line for that item, `
 
 `abs.path_remap` translates ABS paths into Bindery paths; it does not widen what Bindery accepts. A remapped path still has to sit under one of the effective roots above. For example, with ABS reporting `/audiobooks/...`, `abs.path_remap = /audiobooks:/abs-audiobooks`, and the ABS library mounted into Bindery at `/abs-audiobooks`, files are attached only when `/abs-audiobooks` is one of those roots or sits under one. Otherwise every item imports as metadata only, and the log line above says so with the roots it compared against. Keep in mind that `BINDERY_AUDIOBOOK_DIR` and root folders are also where Bindery places new downloads, so a read only mount is a poor fit for either.
 
+So there are two ways forward. If you want Bindery to own those files, move the audiobooks onto storage Bindery manages as a root, writable, and accept that Bindery will rename and delete files there like any other library. If ABS should stay the owner of the files, leave the mount out of Bindery's roots and accept a metadata only import: the books, authors and series still arrive, and nothing on the ABS side is touched. A dry run logs `abs import: item files would not be attached (dry run)` instead, so you can check which of the two you are in before importing.
+
 ## Storage Model
 
 Config is stored in existing settings rows for the single ABS source:

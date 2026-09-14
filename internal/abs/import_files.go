@@ -84,7 +84,11 @@ func (i *Importer) reconcileOwnedState(ctx context.Context, cfg ImportConfig, au
 		if remap := strings.TrimSpace(cfg.PathRemap); remap != "" {
 			attrs = append(attrs, "pathRemap", remap)
 		}
-		slog.Log(ctx, level, "abs import: item files not attached, imported metadata only", attrs...)
+		msg := "abs import: item files not attached, imported metadata only"
+		if cfg.DryRun {
+			msg = "abs import: item files would not be attached (dry run)"
+		}
+		slog.Log(ctx, level, msg, attrs...)
 	}
 
 	if ownedMarked == 0 && pendingManual == 0 {
