@@ -495,34 +495,51 @@ func TestQueueGrab_ReusedRowBelongsToNewGrabber(t *testing.T) {
 	}
 }
 
-// TestQueueGrab_ReuseWithoutIdentityKeepsOwner covers the one grab that has no
-// better owner to write. An API key caller carries no user, and with no book
-// there is nothing to inherit from, so the reused row keeps the owner it had.
-// Writing 0 would store NULL, and the strict owner scope on the queue would
-// then hide the row from the user who can see it today.
-func TestQueueGrab_ReuseWithoutIdentityKeepsOwner(t *testing.T) {
+// TestQueueGrab_ReuseWithoutIdentityMatchesCreate: a reused row gets exactly
+// the owner a fresh Create would. A grab with no user and no book is stored
+// unowned (NULL) on a new row, so the reused row is stored unowned too rather
+// than keeping the owner of the grab it replaces. API key and trusted local
+// requests do not land here once an admin account exists, because
+// auth.withOperatorUserID stamps them with the first admin's id; this is the
+// no admin (or auth disabled) case.
+func TestQueueGrab_ReuseWithoutIdentityMatchesCreate(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	h, database, downloads, clients, _, ctx := queueFixture(t)
 	indexerURL, _ := regrabDownloadClient(t, clients)
 	alice, _ := regrabUsers(t, database)
 
 	failed := &models.Download{
-		GUID: "guid-2289-apikey", OwnerUserID: alice, Title: "Old Release",
+		GUID: "guid-2289-noident-reuse", OwnerUserID: alice, Title: "Old Release",
 		NZBURL: indexerURL + "/old.nzb", Status: models.StateFailed, Protocol: "usenet",
 	}
 	if err := downloads.Create(ctx, failed); err != nil {
 		t.Fatal(err)
 	}
-	rec := regrabPost(h, `{"guid":"guid-2289-apikey","nzbUrl":"`+indexerURL+`/new.nzb","title":"New Release"}`)
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("grab: got %d: %s", rec.Code, rec.Body.String())
+	for _, guid := range []string{"guid-2289-noident-reuse", "guid-2289-noident-fresh"} {
+		rec := regrabPost(h, `{"guid":"`+guid+`","nzbUrl":"`+indexerURL+`/new.nzb","title":"New Release"}`)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("grab %s: got %d: %s", guid, rec.Code, rec.Body.String())
+		}
 	}
-	owner, _, err := downloads.GetOwnerByID(ctx, failed.ID)
+
+	fresh, err := downloads.GetByGUID(ctx, "guid-2289-noident-fresh")
+	if err != nil || fresh == nil {
+		t.Fatalf("reload fresh download: %v", err)
+	}
+	freshOwner, _, err := downloads.GetOwnerByID(ctx, fresh.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owner != alice {
-		t.Errorf("a grab with no user and no book must keep the row's owner (%d), got %d", alice, owner)
+	reusedOwner, _, err := downloads.GetOwnerByID(ctx, failed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if freshOwner != 0 {
+		t.Fatalf("a fresh grab with no user and no book must be stored unowned, got owner %d", freshOwner)
+	}
+	if reusedOwner != freshOwner {
+		t.Errorf("a reused row must get the owner Create gives a new one (%d), got %d (the old grab's owner is %d)",
+			freshOwner, reusedOwner, alice)
 	}
 }
 

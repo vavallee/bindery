@@ -984,21 +984,21 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		editionID = existing.EditionID
 		indexerFlags = existing.IndexerFlags
 	}
-	// Tenancy (#1457): stamp from the request identity; API-key callers
-	// (uid 0) inherit the target book's owner when one is known.
+	// Tenancy (#1457): stamp from the request identity. API key and trusted
+	// local requests carry the first admin's id (auth.withOperatorUserID), so
+	// they own what they grab like any signed-in user. A request reaches here
+	// with no identity only when auth is disabled or no admin account exists;
+	// it inherits the target book's owner when one is known, and is otherwise
+	// stored unowned.
+	//
+	// A reused row gets exactly the owner a fresh Create would (#2289), since
+	// it is now this grab's download. That includes unowned: the previous
+	// owner is never carried over.
 	grabOwner := auth.UserIDFromContext(ctx)
 	if grabOwner == 0 && bookID != nil {
 		if b, err := h.books.GetByID(ctx, *bookID); err == nil && b != nil {
 			grabOwner = b.OwnerUserID
 		}
-	}
-	// A reused row takes the new grab's owner, since it is now that user's
-	// download (#2289). The exception is a grab that names nobody: no user
-	// identity and no book to inherit from. Writing 0 there would store NULL
-	// and hide the row from its owner under the strict queue scope, so it
-	// keeps the owner it had.
-	if grabOwner == 0 && existing != nil {
-		grabOwner = existing.OwnerUserID
 	}
 	// Re-attach the indexer apikey the search/queue responses strip out
 	// (SEC: the shared credential must not reach non-admin clients). The client
