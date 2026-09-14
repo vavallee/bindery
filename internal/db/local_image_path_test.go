@@ -46,16 +46,18 @@ func TestListWithLocalImagePath(t *testing.T) {
 	mk("calibre:book:3", "", false)
 	mk("calibre:book:4", "bindery-cover:abc.jpg", false)
 	excluded := mk("calibre:book:5", "/mnt/storage/calibre/A/Book (5)/cover.jpg", true)
+	// A library imported on the Windows build stores a drive letter path.
+	windows := mk("calibre:book:6", `C:\Calibre\A\Book (6)\cover.jpg`, false)
 
 	books, err := bookRepo.ListWithLocalImagePath(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(books) != 2 || books[0].ID != hostPath.ID || books[1].ID != excluded.ID {
-		t.Fatalf("books with local image path = %+v, want ids %d and %d", books, hostPath.ID, excluded.ID)
+	if len(books) != 3 || books[0].ID != hostPath.ID || books[1].ID != excluded.ID || books[2].ID != windows.ID {
+		t.Fatalf("books with local image path = %+v, want ids %d, %d and %d", books, hostPath.ID, excluded.ID, windows.ID)
 	}
 
-	for i, image := range []string{"/lib/a/cover.jpg", "https://example.com/a.jpg", "", "bindery-cover:abc.jpg"} {
+	for i, image := range []string{"/lib/a/cover.jpg", "https://example.com/a.jpg", "", "bindery-cover:abc.jpg", `D:\lib\a\cover.jpg`} {
 		e := &models.Edition{
 			ForeignID: "calibre:edition:" + string(rune('a'+i)), BookID: hostPath.ID, Title: "E",
 			Format: "EPUB", Language: "eng", ImageURL: image, IsEbook: true, Monitored: true,
@@ -68,8 +70,11 @@ func TestListWithLocalImagePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(editions) != 1 || editions[0].ImageURL != "/lib/a/cover.jpg" {
-		t.Fatalf("editions with local image path = %+v, want the one host path row", editions)
+	if len(editions) != 2 || editions[0].ImageURL != "/lib/a/cover.jpg" || editions[1].ImageURL != `D:\lib\a\cover.jpg` {
+		t.Fatalf("editions with local image path = %+v, want the two host path rows", editions)
+	}
+	if err := editionRepo.SetImageURL(ctx, editions[1].ID, "bindery-cover:def.jpg"); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := editionRepo.SetImageURL(ctx, editions[0].ID, "bindery-cover:def.jpg"); err != nil {
@@ -80,7 +85,7 @@ func TestListWithLocalImagePath(t *testing.T) {
 	}
 	editions, _ = editionRepo.ListWithLocalImagePath(ctx)
 	books, _ = bookRepo.ListWithLocalImagePath(ctx)
-	if len(editions) != 0 || len(books) != 1 {
+	if len(editions) != 0 || len(books) != 2 {
 		t.Fatalf("after rewrite: %d editions, %d books still listed", len(editions), len(books))
 	}
 	got, _ := bookRepo.GetByID(ctx, hostPath.ID)

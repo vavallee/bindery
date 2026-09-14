@@ -267,7 +267,7 @@ func (r *EditionRepo) ListWithLocalImagePath(ctx context.Context) ([]models.Edit
 		SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
 		       publish_date, format, num_pages, language, image_url, is_ebook,
 		       edition_info, monitored, created_at, updated_at
-		FROM editions WHERE image_url LIKE '/%' ORDER BY id`)
+		FROM editions WHERE image_url LIKE '/%' OR image_url LIKE '_:\%' ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("list editions with local image path: %w", err)
 	}

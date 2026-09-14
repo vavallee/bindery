@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -1003,7 +1004,7 @@ func (i *Importer) applyBookCover(ctx context.Context, book *models.Book, coverR
 		return
 	}
 	current := strings.TrimSpace(book.ImageURL)
-	if current != "" && !strings.HasPrefix(current, "/") && !covers.IsRef(current) {
+	if current != "" && !filepath.IsAbs(current) && !covers.IsRef(current) {
 		return
 	}
 	if err := i.books.SetImageURL(ctx, book.ID, coverRef); err != nil {
@@ -1060,7 +1061,7 @@ func (i *Importer) upsertEdition(ctx context.Context, runID int64, book *models.
 	// is right for a provider cover but wrong for the host path an older
 	// importer stored: that value can never be served, so clear it rather
 	// than let it outlive the fix.
-	if coverRef == "" && prior != nil && strings.HasPrefix(prior.ImageURL, "/") {
+	if coverRef == "" && prior != nil && filepath.IsAbs(prior.ImageURL) {
 		if err := i.editions.SetImageURL(ctx, e.ID, ""); err != nil {
 			return false, nil, err
 		}

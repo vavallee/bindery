@@ -1151,7 +1151,7 @@ func (r *BookRepo) SetImageURL(ctx context.Context, id int64, imageURL string) e
 // books deliberately, but a tampered or hand-edited row is cheap to sweep
 // alongside the editions that did hold one.
 func (r *BookRepo) ListWithLocalImagePath(ctx context.Context) ([]models.Book, error) {
-	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE books.image_url LIKE '/%' ORDER BY books.id", nil)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE (books.image_url LIKE '/%' OR books.image_url LIKE '_:\\%') ORDER BY books.id", nil)
 }
 
 // SetCalibreID stores the Calibre-assigned book id for the given Bindery

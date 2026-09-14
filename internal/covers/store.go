@@ -163,8 +163,10 @@ func (s *Store) Resolve(ref string) (path, contentType string, ok bool) {
 	if err != nil || !filepath.IsLocal(rel) || rel != name {
 		return "", "", false
 	}
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
+	// Lstat, not Stat: a symlink dropped into the store dir under a digest
+	// shaped name must not be followed to whatever it points at.
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
 		return "", "", false
 	}
 	return path, contentTypeFor(filepath.Ext(name)), true

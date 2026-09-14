@@ -91,6 +91,18 @@ func TestStore_ResolveRefusesEscapes(t *testing.T) {
 			t.Errorf("Resolve(%q) ok, want refused", ref)
 		}
 	}
+	// A symlink placed inside the store under a digest shaped name must not
+	// be followed: Resolve serves regular files it wrote, nothing else.
+	if err := os.MkdirAll(s.dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	linkName := strings.Repeat("b", 64) + ".jpg"
+	if err := os.Symlink(outside, filepath.Join(s.dir, linkName)); err != nil {
+		t.Skipf("symlink not supported here: %v", err)
+	}
+	if _, _, ok := s.Resolve(Scheme + linkName); ok {
+		t.Errorf("Resolve followed a symlink inside the store to %q", outside)
+	}
 	if _, _, ok := (*Store)(nil).Resolve(Scheme + strings.Repeat("a", 64) + ".jpg"); ok {
 		t.Error("nil store resolved a reference")
 	}
