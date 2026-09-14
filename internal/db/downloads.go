@@ -157,8 +157,30 @@ func (r *DownloadRepo) Create(ctx context.Context, d *models.Download) error {
 //
 // Keep this in sync with api.regrabbable, which gates the caller.
 func (r *DownloadRepo) RetryFailed(ctx context.Context, d *models.Download) (bool, error) {
-	now := time.Now().UTC()
-	result, err := r.db.ExecContext(ctx, `
+	return r.claimForRegrab(ctx, d,
+		regrabClaimSQL+`(status IN (?, ?) OR (status=? AND book_id IS NULL))`,
+		models.StateFailed, models.StateImportBlocked, models.StateImported)
+}
+
+// RetryOrphanedImport is RetryFailed for the scheduler's auto grab: the same
+// reset, but it claims the row only while it is still an orphaned import
+// (imported, book deleted). The scheduler reuses nothing else, and the claim
+// has to say so in SQL. Between the scheduler reading the row and claiming it,
+// a manual grab can claim it and fail, leaving it failed or importBlocked;
+// RetryFailed would accept that row, and the scheduler would retry a release
+// it deliberately never retries.
+//
+// Keep the condition in sync with models.Download.IsOrphanedImport.
+func (r *DownloadRepo) RetryOrphanedImport(ctx context.Context, d *models.Download) (bool, error) {
+	return r.claimForRegrab(ctx, d,
+		regrabClaimSQL+`status=? AND book_id IS NULL`,
+		models.StateImported)
+}
+
+// regrabClaimSQL is the UPDATE shared by RetryFailed and RetryOrphanedImport.
+// It rewrites or resets every per grab column; each claim appends the states
+// it accepts after the trailing AND.
+const regrabClaimSQL = `
 		UPDATE downloads
 		SET book_id=?,
 		    edition_id=?,
@@ -181,11 +203,19 @@ func (r *DownloadRepo) RetryFailed(ctx context.Context, d *models.Download) (boo
 		    completed_at=NULL,
 		    imported_at=NULL,
 		    import_retry_count=0
-		WHERE id=? AND (status IN (?, ?) OR (status=? AND book_id IS NULL))`,
+		WHERE id=? AND `
+
+// claimForRegrab runs one of the regrabClaimSQL claims and, when it took the
+// row, mirrors the reset onto d.
+func (r *DownloadRepo) claimForRegrab(ctx context.Context, d *models.Download, query string, states ...any) (bool, error) {
+	now := time.Now().UTC()
+	args := []any{
 		d.BookID, d.EditionID, d.IndexerID, d.DownloadClientID,
 		d.Title, d.NZBURL, d.Size, models.StateGrabbed, d.Protocol,
-		d.Quality, d.IndexerFlags, downloadOwnerArg(d.OwnerUserID), now, d.ID, models.StateFailed, models.StateImportBlocked,
-		models.StateImported)
+		d.Quality, d.IndexerFlags, downloadOwnerArg(d.OwnerUserID), now, d.ID,
+	}
+	args = append(args, states...)
+	result, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return false, fmt.Errorf("retry failed download: %w", err)
 	}

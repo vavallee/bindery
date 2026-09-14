@@ -1583,6 +1583,101 @@ func TestDownloadRepoRetryFailedResetsPerGrabFields(t *testing.T) {
 	}
 }
 
+// TestDownloadRepoRetryOrphanedImportClaimsOnlyOrphanedImport pins the
+// scheduler's claim (#2289). It takes an orphaned import and nothing else. In
+// particular it refuses a failed or importBlocked row, which a manual grab can
+// leave behind between the scheduler reading the row and claiming it, and
+// which RetryFailed would accept.
+func TestDownloadRepoRetryOrphanedImportClaimsOnlyOrphanedImport(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewDownloadRepo(database)
+
+	author := &models.Author{ForeignID: "roi-author", Name: "ROI Author", SortName: "Author, ROI", MetadataProvider: "openlibrary"}
+	if err := NewAuthorRepo(database).Create(ctx, author); err != nil {
+		t.Fatalf("create author: %v", err)
+	}
+	book := &models.Book{ForeignID: "roi-book", AuthorID: author.ID, Title: "ROI Book", SortTitle: "roi book",
+		Genres: []string{}, Status: models.BookStatusImported, MetadataProvider: "openlibrary"}
+	if err := NewBookRepo(database).Create(ctx, book); err != nil {
+		t.Fatalf("create book: %v", err)
+	}
+
+	claim := func(id int64) bool {
+		t.Helper()
+		ok, err := repo.RetryOrphanedImport(ctx, &models.Download{ID: id, Title: "New",
+			NZBURL: "https://example.com/new.nzb", Status: models.StateGrabbed, Protocol: "usenet"})
+		if err != nil {
+			t.Fatalf("RetryOrphanedImport(%d): %v", id, err)
+		}
+		return ok
+	}
+
+	var failedID int64
+	for _, tc := range []struct {
+		name   string
+		status models.DownloadState
+		bookID *int64
+	}{
+		{"failed", models.StateFailed, nil},
+		{"importBlocked", models.StateImportBlocked, nil},
+		{"imported with its book", models.StateImported, &book.ID},
+		{"in flight with no book", models.StateDownloading, nil},
+	} {
+		dl := &models.Download{GUID: "roi-" + tc.name, BookID: tc.bookID, Title: "Old",
+			NZBURL: "https://example.com/old.nzb", Status: tc.status, Protocol: "usenet"}
+		if err := repo.Create(ctx, dl); err != nil {
+			t.Fatalf("%s: create: %v", tc.name, err)
+		}
+		if claim(dl.ID) {
+			t.Errorf("%s: the scheduler's claim must refuse this row", tc.name)
+		}
+		got, err := repo.GetByID(ctx, dl.ID)
+		if err != nil || got == nil {
+			t.Fatalf("%s: reload: %v", tc.name, err)
+		}
+		if got.Status != tc.status || got.Title != "Old" {
+			t.Errorf("%s: a refused claim must leave the row alone, got status=%q title=%q", tc.name, got.Status, got.Title)
+		}
+		if tc.status == models.StateFailed {
+			failedID = dl.ID
+		}
+	}
+
+	orphan := &models.Download{GUID: "roi-orphan", Title: "Old", NZBURL: "https://example.com/old.nzb",
+		Status: models.StateImported, Protocol: "usenet"}
+	if err := repo.Create(ctx, orphan); err != nil {
+		t.Fatalf("create orphan: %v", err)
+	}
+	if err := repo.SetImportPath(ctx, orphan.ID, "/downloads/Old"); err != nil {
+		t.Fatalf("set import path: %v", err)
+	}
+	if !claim(orphan.ID) {
+		t.Fatal("an orphaned import must be claimable by the scheduler")
+	}
+	got, err := repo.GetByID(ctx, orphan.ID)
+	if err != nil || got == nil {
+		t.Fatalf("reload orphan: %v", err)
+	}
+	if got.Status != models.StateGrabbed || got.Title != "New" || got.ImportPath != "" || got.ImportedAt != nil {
+		t.Errorf("the claim must reset the row like RetryFailed, got status=%q title=%q import_path=%q imported_at=%v",
+			got.Status, got.Title, got.ImportPath, got.ImportedAt)
+	}
+	if claim(orphan.ID) {
+		t.Error("a row already claimed (now grabbed) must not be claimed again")
+	}
+
+	// The difference from RetryFailed, which is why the scheduler must not use it.
+	if ok, err := repo.RetryFailed(ctx, &models.Download{ID: failedID, Title: "New",
+		NZBURL: "https://example.com/new.nzb", Status: models.StateGrabbed, Protocol: "usenet"}); err != nil || !ok {
+		t.Fatalf("RetryFailed must still accept a failed row for the manual grab: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestDownloadRepoResetImportRetry(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {

@@ -90,8 +90,8 @@ type Download struct {
 // no book, since a free text grab is matched by the importer later.
 //
 // The manual grab (api.regrabbable) and the scheduler's auto grab both gate on
-// this, and db.DownloadRepo.RetryFailed repeats it in SQL. Keep all three in
-// agreement.
+// this, and db.DownloadRepo.RetryFailed and RetryOrphanedImport repeat it in
+// SQL. Keep them in agreement.
 func (d *Download) IsOrphanedImport() bool {
 	return d != nil && d.Status == StateImported && d.BookID == nil
 }

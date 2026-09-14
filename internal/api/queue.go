@@ -99,8 +99,8 @@ func regrabbable(d *models.Download) bool {
 // it later, and that is still live work.
 //
 // The predicate itself is models.Download.IsOrphanedImport, shared with the
-// scheduler's auto grab. Keep it in sync with the SQL guard in
-// db.DownloadRepo.RetryFailed.
+// scheduler's auto grab. Keep it in sync with the SQL guards in
+// db.DownloadRepo.RetryFailed and RetryOrphanedImport.
 func orphanedImport(d *models.Download) bool {
 	return d.IsOrphanedImport()
 }

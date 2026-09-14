@@ -1087,11 +1087,14 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	}
 
 	if existing != nil {
-		// RetryFailed resets every per grab column, owner and import_path
-		// included, and its WHERE clause re-checks the orphaned import, so a
-		// grab that claimed the row first turns this into a skip.
+		// RetryOrphanedImport resets every per grab column, owner and
+		// import_path included, and claims the row only while it is still an
+		// orphaned import. A manual grab that claimed it first turns this into
+		// a skip, including one that has since failed: the failed or
+		// importBlocked row it leaves is not reclaimed here, as RetryFailed
+		// would do.
 		dl.ID = existing.ID
-		ok, err := s.downloads.RetryFailed(ctx, dl)
+		ok, err := s.downloads.RetryOrphanedImport(ctx, dl)
 		if err != nil {
 			slog.Error("SearchAndGrabBook: failed to reuse download record", "download_id", existing.ID, "error", err)
 			outcome = "download record failed"
