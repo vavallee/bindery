@@ -173,16 +173,17 @@ describe('AddBookConfirm', () => {
     expect(vi.mocked(api.addBook).mock.calls[0][0]).toMatchObject({ foreignBookId: 'DNB-123', foreignAuthorId: '', authorName: 'Frank Herbert' })
   })
 
-  it('shows the server message with an open link when the add answers 409', async () => {
-    // The server says which library the book is in and whether the format can
-    // be changed from the book page; that is more useful than a fixed string.
+  it('shows the translated message, not the server English, with an open link when the add answers 409', async () => {
+    // The server always sends an English error with existingBookId; showing
+    // it would leave every other locale untranslated.
     vi.mocked(api.addBook).mockRejectedValue(Object.assign(new Error('book already in your library'), {
       status: 409,
-      body: { error: 'book already in your library as an ebook; change the format from the book page', existingBookId: 42 },
+      body: { error: 'book already in your library; change its format or monitoring from the book page', existingBookId: 42 },
     }))
     const { onAdded } = renderConfirm(dune)
     fireEvent.click(screen.getByRole('button', { name: 'Add book' }))
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('book already in your library as an ebook; change the format from the book page'))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Already in your library'))
+    expect(screen.getByRole('alert')).not.toHaveTextContent('change its format or monitoring')
     expect(screen.getByRole('link', { name: 'Open existing book' })).toHaveAttribute('href', '/book/42')
     expect(onAdded).not.toHaveBeenCalled()
   })

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Author, Book } from '../api/client'
 import { isbnFromQuery, resolveBookQuery } from '../api/booklookup'
@@ -211,7 +211,10 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
       ? t('addToLibrary.searchPlaceholderBook')
       : t('addToLibrary.searchPlaceholder')
 
-  const rows = groupAddResults(showHidden ? [...authors, ...hiddenAuthors] : authors, books)
+  const rows = useMemo(
+    () => groupAddResults(showHidden ? [...authors, ...hiddenAuthors] : authors, books),
+    [showHidden, authors, hiddenAuthors, books],
+  )
   const hasRows = rows.length > 0
 
   const badgeClass = 'px-2 py-0.5 rounded-full bg-slate-300/70 dark:bg-zinc-700 text-[11px] font-medium text-slate-700 dark:text-zinc-300'

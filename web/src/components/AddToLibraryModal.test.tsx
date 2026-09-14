@@ -441,6 +441,22 @@ describe('AddToLibraryModal - mixed result list', () => {
     expect(screen.getByRole('separator')).toHaveTextContent('Books')
   })
 
+  it('counts the same author record returned twice as one person', async () => {
+    vi.mocked(api.searchAuthors).mockResolvedValue([
+      author({ foreignAuthorId: 'OL1A', authorName: 'Ursula K. Le Guin' }),
+      author({ foreignAuthorId: 'OL1A', authorName: 'Ursula K. Le Guin' }),
+    ])
+    vi.mocked(api.searchBooks).mockResolvedValue([
+      book({ foreignBookId: 'dnb:9', title: 'Die Enteigneten', author: author({ foreignAuthorId: 'dnb:77', authorName: 'Ursula K. Le Guin' }) }),
+    ])
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
+    typeAndSearch('le guin')
+    await waitFor(() => expect(screen.getByText('Die Enteigneten')).toBeInTheDocument())
+    const rows = screen.getAllByTestId(/^add-result-(author|book)$/)
+    expect(rows.map(r => r.getAttribute('data-testid'))).toEqual(['add-result-author', 'add-result-book', 'add-result-author'])
+    expect(screen.queryByRole('separator')).not.toBeInTheDocument()
+  })
+
   it('shows no divider when every book belongs to an author row', async () => {
     vi.mocked(api.searchAuthors).mockResolvedValue([leGuin])
     vi.mocked(api.searchBooks).mockResolvedValue([dispossessed])
@@ -648,7 +664,7 @@ describe('AddToLibraryModal - already in the library (#1227)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Select Owned Book' }))
     fireEvent.click(screen.getByRole('button', { name: 'Add book' }))
 
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('book already in your library'))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Already in your library'))
     expect(screen.getByRole('link', { name: 'Open existing book' })).toHaveAttribute('href', '/book/42')
     expect(onAdded).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()

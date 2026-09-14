@@ -284,3 +284,20 @@ describe('AddAuthorConfirm', () => {
     })
   })
 })
+
+describe('AddAuthorConfirm while the defaults are loading', () => {
+  it('disables the monitoring controls and says why, then enables them once the defaults land', () => {
+    const props = { author: author({}), primaryProvider: null, onBack: vi.fn(), onClose: vi.fn(), onAdded: vi.fn() }
+    const { rerender } = render(<AddAuthorConfirm {...props} defaults={null} />)
+    expect(screen.getByLabelText('Media type')).toBeDisabled()
+    expect(screen.getByLabelText('Monitor mode')).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent('addToLibrary.author.loadingDefaults')
+    expect(screen.getByRole('button', { name: 'Add author' })).toBeDisabled()
+
+    rerender(<AddAuthorConfirm {...props} defaults={{ ...bareDefaults, mediaType: 'audiobook' }} />)
+    expect(screen.getByLabelText('Media type')).toBeEnabled()
+    expect(screen.getByLabelText('Media type')).toHaveValue('audiobook')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add author' })).toBeEnabled()
+  })
+})

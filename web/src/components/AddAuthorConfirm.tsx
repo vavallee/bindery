@@ -164,7 +164,12 @@ export default function AddAuthorConfirm({ author, defaults, primaryProvider, on
           <h4 id="add-author-monitoring-heading" className="px-3 py-2 text-sm font-medium">
             {t('addToLibrary.author.customizeMonitoring')}
           </h4>
-          <div className="space-y-3 border-t border-slate-300 dark:border-zinc-700 p-3">
+          {!defaults && (
+            <p role="status" className="px-3 pb-2 text-xs text-fg-muted">{t('addToLibrary.author.loadingDefaults')}</p>
+          )}
+          {/* Disabled until the defaults land, so a late response cannot
+              overwrite a choice the user already made in these controls. */}
+          <fieldset disabled={!defaults} className="min-w-0 space-y-3 border-t border-slate-300 dark:border-zinc-700 p-3">
             {profiles.length > 1 && (
               <div>
                 <label htmlFor="add-author-profile" className="block text-xs text-fg-muted mb-1">{t('addToLibrary.author.metadataProfile')}</label>
@@ -238,7 +243,7 @@ export default function AddAuthorConfirm({ author, defaults, primaryProvider, on
                   : t('addToLibrary.author.autoGrabNoIndexer')}
               </p>
             )}
-          </div>
+          </fieldset>
         </section>
 
         {addError && (

@@ -69,10 +69,9 @@ export default function AddBookConfirm({ book, searchedISBN, onBack, onClose, on
       const conflict = conflictBody(err)
       setAddConflict(conflict)
       if (conflict) {
-        // The server's message carries the useful part (which library it is
-        // in, or that the format can be changed from the book page); the key
-        // is only the fallback for a bodyless 409.
-        setAddError(conflict.error || t('addToLibrary.book.alreadyInLibrary'))
+        // Always the translated string: the server's message is English, and
+        // every 409 that carries existingBookId says the same thing.
+        setAddError(t('addToLibrary.book.alreadyInLibrary'))
       } else {
         setAddError(err instanceof Error ? err.message : t('addToLibrary.book.addFailed'))
       }

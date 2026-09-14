@@ -18,10 +18,11 @@ function providerPrefix(id: string): string {
 }
 
 // bookBelongsTo decides whether book groups under author. nameCounts holds,
-// for each folded author name, how many author rows in this result set carry
-// it: the name fallback is only trusted when exactly one row does, because two
-// rows sharing a name are two people the providers could not tell apart, and
-// guessing the first one hands a stranger's books to the wrong author.
+// for each folded author name, how many distinct authors in this result set
+// carry it (the same record returned twice counts once): the name fallback is
+// only trusted when exactly one does, because two different ids sharing a
+// name are two people the providers could not tell apart, and guessing the
+// first one hands a stranger's books to the wrong author.
 function bookBelongsTo(book: Book, author: Author, nameCounts: Map<string, number>): boolean {
   const bookAuthor = book.author
   if (!bookAuthor) return false
@@ -51,11 +52,16 @@ function bookBelongsTo(book: Book, author: Author, nameCounts: Map<string, numbe
 // after a divider, so a title search whose author did not come back from the
 // author endpoint is still reachable.
 export function groupAddResults(authors: Author[], books: Book[]): AddResultRow[] {
-  const nameCounts = new Map<string, number>()
-  for (const author of authors) {
+  const idsByName = new Map<string, Set<string>>()
+  authors.forEach((author, a) => {
     const n = foldForSearch(author.authorName)
-    if (n !== '') nameCounts.set(n, (nameCounts.get(n) ?? 0) + 1)
-  }
+    if (n === '') return
+    const ids = idsByName.get(n) ?? new Set<string>()
+    ids.add(author.foreignAuthorId || `row:${a}`)
+    idsByName.set(n, ids)
+  })
+  const nameCounts = new Map<string, number>()
+  idsByName.forEach((ids, n) => nameCounts.set(n, ids.size))
   const owner = new Map<number, number>()
   books.forEach((book, i) => {
     const id = book.author?.foreignAuthorId

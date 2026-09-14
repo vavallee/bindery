@@ -1106,6 +1106,7 @@
         "future": "Adds the whole catalogue and searches only for the books not released yet. New releases join the list when you refresh the author, not on their own.",
         "latest": "Adds the whole catalogue and searches for the newest {{latest}}."
       },
+      "loadingDefaults": "Loading your library defaults...",
       "customizeMonitoring": "Monitoring",
       "autoGrabLabel": "Auto-grab books on add",
       "autoGrabHint": "Bindery will always fetch the book catalogue. Enable this to also queue downloads immediately.",
@@ -1138,7 +1139,7 @@
       "autoSearchLabel": "Search indexers after adding",
       "autoSearchHint": "Try to grab the book automatically after adding it to wanted.",
       "addFailed": "Failed to add book",
-      "alreadyInLibrary": "Already in your library",
+      "alreadyInLibrary": "Already in your library. Change its format or monitoring from the book page.",
       "openExisting": "Open existing book"
     }
   },
