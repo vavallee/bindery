@@ -167,6 +167,27 @@ func (a *Aggregator) GetAuthorWorks(ctx context.Context, authorForeignID string)
 	return books, nil
 }
 
+// GetAuthorWorksUnenriched returns the primary provider's works for an author
+// without the per-work cover enrichment GetAuthorWorks runs before answering.
+//
+// That enrichment is one enricher round trip per coverless work (plus an
+// OpenLibrary edition sample each), which is the right cost for an author
+// catalogue sync that stores those covers and the wrong one for a caller that
+// only matches a title against the list. For a prolific author the two differ
+// by thousands of rate-limited requests: OpenLibrary returns up to 2,000 works
+// for Arthur Conan Doyle, most without a work-level cover, and an ABS import
+// that asked GetAuthorWorks to match one audiobook title spent hours on that
+// fan-out, silently, before it moved to the next item (#2578).
+//
+// An already-enriched catalogue from GetAuthorWorks is returned when cached,
+// since it is a superset of what the caller needs.
+func (a *Aggregator) GetAuthorWorksUnenriched(ctx context.Context, authorForeignID string) ([]models.Book, error) {
+	if cached, ok := a.cache.get("authorworks:" + authorForeignID); ok {
+		return cloneBooks(cached.([]models.Book)), nil
+	}
+	return a.rawPrimaryAuthorWorks(ctx, authorForeignID)
+}
+
 // GetAuthorWorksForAuthor fetches the primary provider's author works and
 // merges any author-scoped supplemental catalogs from enrichers before falling
 // back to per-title cover enrichment for remaining gaps.

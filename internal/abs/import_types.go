@@ -223,6 +223,11 @@ type Importer struct {
 	libraryDir             string
 	audiobookDir           string
 
+	// itemTimeout bounds the work for one ABS item; zero means
+	// defaultItemTimeout. A field rather than a constant so tests can use a
+	// short one (#2578).
+	itemTimeout time.Duration
+
 	// jobs, when set, tracks the detached import goroutine so process
 	// shutdown can cancel and drain it before the database closes (#1458).
 	// When nil (tests, non-wired callers) Start falls back to an untracked

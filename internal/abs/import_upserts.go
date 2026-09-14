@@ -586,7 +586,11 @@ func (i *Importer) lookupUpstreamBook(ctx context.Context, author *models.Author
 	if author == nil || author.ForeignID == "" || author.MetadataProvider == providerAudiobookshelf {
 		return nil, "", false, nil
 	}
-	works, err := i.meta.GetAuthorWorks(ctx, author.ForeignID)
+	// Unenriched: this only matches a title against the list. GetAuthorWorks
+	// would first run the aggregator's per-work cover enrichment over every
+	// coverless work, which for a prolific author (OpenLibrary's 2,000 work
+	// cap) is thousands of rate-limited requests inside one ABS item (#2578).
+	works, err := i.meta.GetAuthorWorksUnenriched(ctx, author.ForeignID)
 	if err != nil {
 		return nil, "", false, err
 	}

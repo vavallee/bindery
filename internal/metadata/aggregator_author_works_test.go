@@ -872,3 +872,52 @@ func TestAggregator_FillMissingAuthorWorkLanguages_NoOpWhenUnsupported(t *testin
 		t.Errorf("language should be untouched, got %q", books[0].Language)
 	}
 }
+
+// TestAggregator_GetAuthorWorksUnenriched_SkipsPerWorkCoverEnrichment pins the
+// contract the ABS title lookup relies on (#2578): the unenriched catalogue
+// comes back without one enricher round trip per coverless work, which is what
+// GetAuthorWorks does before answering. Once the enriched catalogue is cached
+// it is served as is, since it is a superset of what the caller needs.
+func TestAggregator_GetAuthorWorksUnenriched_SkipsPerWorkCoverEnrichment(t *testing.T) {
+	primary := &mockWorksProvider{mockProvider: mockProvider{
+		name: "openlibrary",
+		authorWorks: []models.Book{
+			{ForeignID: "OL1W", Title: "Work One"},
+			{ForeignID: "OL2W", Title: "Work Two"},
+			{ForeignID: "OL3W", Title: "Work Three"},
+		},
+	}}
+	enricher := &mockProvider{name: "hardcover"}
+	agg := NewAggregator(primary, enricher)
+	ctx := context.Background()
+
+	works, err := agg.GetAuthorWorksUnenriched(ctx, "OL1A")
+	if err != nil {
+		t.Fatalf("GetAuthorWorksUnenriched: %v", err)
+	}
+	if len(works) != 3 {
+		t.Fatalf("works = %d, want 3", len(works))
+	}
+	if n := len(enricher.searchBookQueries); n != 0 {
+		t.Fatalf("enricher SearchBooks calls = %d, want 0 for the unenriched catalogue", n)
+	}
+
+	// The enriched path does fan out, one lookup per coverless work. This is
+	// the cost the unenriched call exists to avoid.
+	if _, err := agg.GetAuthorWorks(ctx, "OL1A"); err != nil {
+		t.Fatalf("GetAuthorWorks: %v", err)
+	}
+	if n := len(enricher.searchBookQueries); n != 3 {
+		t.Fatalf("enricher SearchBooks calls after GetAuthorWorks = %d, want 3", n)
+	}
+
+	// Cached now: a failing primary is not consulted again.
+	primary.authorWorksErr = context.DeadlineExceeded
+	cached, err := agg.GetAuthorWorksUnenriched(ctx, "OL1A")
+	if err != nil {
+		t.Fatalf("GetAuthorWorksUnenriched after cache fill: %v", err)
+	}
+	if len(cached) != 3 {
+		t.Fatalf("cached works = %d, want 3", len(cached))
+	}
+}

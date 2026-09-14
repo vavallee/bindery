@@ -428,7 +428,34 @@ func (i *Importer) runLibrary(ctx context.Context, cfg ImportConfig, authorMatch
 		i.setProgress(func(p *ImportProgress) {
 			p.Message = importItemMessage(cfg.DryRun, firstNonEmpty(item.Title, item.ItemID))
 		})
-		result := i.importOne(ctx, cfg, run.ID, item, totalStats, allowImmediateImport(item), authorMatcher)
+		// Bound each item. Nothing below has a deadline of its own beyond the
+		// per-request HTTP timeouts, so an item whose upstream work never
+		// converges used to hold the whole run at "importing <title>" with no
+		// log line, and a restart resumed straight back into it (#2578).
+		timeout := i.effectiveItemTimeout()
+		itemCtx, cancelItem := context.WithTimeout(ctx, timeout)
+		result := i.importOne(itemCtx, cfg, run.ID, item, totalStats, allowImmediateImport(item), authorMatcher)
+		itemErr := itemCtx.Err()
+		cancelItem()
+		if err := ctx.Err(); err != nil {
+			// The run itself was cancelled (shutdown) while this item was in
+			// flight. Returning here, before the enumerator records the item
+			// as done, leaves the checkpoint on the previous item so a resume
+			// retries this one instead of skipping it.
+			return err
+		}
+		if errors.Is(itemErr, context.DeadlineExceeded) {
+			result = markItemTimedOut(result, totalStats, timeout)
+			slog.Warn("abs import: item timed out, skipping it and continuing",
+				"runID", run.ID,
+				"libraryID", cfg.LibraryID,
+				"itemID", item.ItemID,
+				"title", item.Title,
+				"timeout", timeout)
+		}
+		// Returning nil for a timed-out item is what moves the checkpoint past
+		// it: the enumerator offers a checkpoint after every item the callback
+		// accepts, so a restart does not resume into the same item.
 		if isMatchedOutcome(result.Outcome) {
 			matchedItemIDs = append(matchedItemIDs, item.ItemID)
 		}
@@ -491,6 +518,31 @@ func (i *Importer) runLibrary(ctx context.Context, cfg ImportConfig, authorMatch
 		"skipped", libStats.Skipped,
 		"failed", libStats.Failed)
 	return libStats, nil
+}
+
+// defaultItemTimeout bounds the work for one ABS item. A normal item takes
+// seconds, and even OpenLibrary's largest author catalogues page in within a
+// minute, so this is a backstop against an item that never converges rather
+// than a budget any healthy item approaches (#2578).
+const defaultItemTimeout = 10 * time.Minute
+
+func (i *Importer) effectiveItemTimeout() time.Duration {
+	if i.itemTimeout > 0 {
+		return i.itemTimeout
+	}
+	return defaultItemTimeout
+}
+
+// markItemTimedOut turns the result of an item whose deadline expired into a
+// failure. Whatever importOne wrote before the deadline stays written, so the
+// message says so and points at the way to retry.
+func markItemTimedOut(result ImportItemResult, stats *ImportStats, timeout time.Duration) ImportItemResult {
+	if result.Outcome != itemOutcomeFailed {
+		stats.Failed++
+	}
+	result.Outcome = itemOutcomeFailed
+	result.Message = fmt.Sprintf("timed out after %s and was skipped so the rest of the import could continue; changes made before the timeout were kept, import again to retry it", timeout)
+	return result
 }
 
 func isMatchedOutcome(outcome string) bool {

@@ -28,10 +28,13 @@ func (i *Importer) reconcileOwnedState(ctx context.Context, cfg ImportConfig, au
 		reconcileMessages []string
 		ownedMarked       int
 		pendingManual     int
+		skipped           []string
+		unreadable        bool
+		rootAttrs         []any
 	)
 
 	if ebookPath := strings.TrimSpace(item.EbookPath); ebookPath != "" {
-		ok, changed, message := i.reconcileFormatPath(ctx, cfg, author, book, models.MediaTypeEbook, ebookPath)
+		ok, changed, message, pathUnreadable := i.reconcileFormatPath(ctx, cfg, author, book, models.MediaTypeEbook, ebookPath)
 		if ok {
 			if changed {
 				ownedMarked++
@@ -40,11 +43,14 @@ func (i *Importer) reconcileOwnedState(ctx context.Context, cfg ImportConfig, au
 		} else {
 			pendingManual++
 			reconcileMessages = append(reconcileMessages, message)
+			skipped = append(skipped, message)
+			unreadable = unreadable || pathUnreadable
+			rootAttrs = append(rootAttrs, "ebookRoots", i.allowedRootsForBook(ctx, author, models.MediaTypeEbook))
 		}
 	}
 
 	if audiobookPath := strings.TrimSpace(item.Path); audiobookPath != "" && len(item.AudioFiles) > 0 {
-		ok, changed, message := i.reconcileFormatPath(ctx, cfg, author, book, models.MediaTypeAudiobook, audiobookPath)
+		ok, changed, message, pathUnreadable := i.reconcileFormatPath(ctx, cfg, author, book, models.MediaTypeAudiobook, audiobookPath)
 		if ok {
 			if changed {
 				ownedMarked++
@@ -53,7 +59,32 @@ func (i *Importer) reconcileOwnedState(ctx context.Context, cfg ImportConfig, au
 		} else {
 			pendingManual++
 			reconcileMessages = append(reconcileMessages, message)
+			skipped = append(skipped, message)
+			unreadable = unreadable || pathUnreadable
+			rootAttrs = append(rootAttrs, "audiobookRoots", i.allowedRootsForBook(ctx, author, models.MediaTypeAudiobook))
 		}
+	}
+
+	if len(skipped) > 0 {
+		// One line per item. The reason used to reach only the item's result
+		// message, so an import that attached no files at all logged nothing
+		// to say why (#2578). An out-of-scope or unmapped path is a
+		// configuration choice and logs at INFO; a path inside Bindery storage
+		// that cannot be read is a missing mount or a permission problem and
+		// logs at WARN.
+		level := slog.LevelInfo
+		if unreadable {
+			level = slog.LevelWarn
+		}
+		attrs := append([]any{
+			"itemID", item.ItemID,
+			"title", item.Title,
+			"reason", strings.Join(skipped, "; "),
+		}, rootAttrs...)
+		if remap := strings.TrimSpace(cfg.PathRemap); remap != "" {
+			attrs = append(attrs, "pathRemap", remap)
+		}
+		slog.Log(ctx, level, "abs import: item files not attached, imported metadata only", attrs...)
 	}
 
 	if ownedMarked == 0 && pendingManual == 0 {
@@ -67,43 +98,59 @@ func (i *Importer) reconcileOwnedState(ctx context.Context, cfg ImportConfig, au
 	}
 }
 
-func (i *Importer) reconcileFormatPath(ctx context.Context, cfg ImportConfig, author *models.Author, book *models.Book, format, candidatePath string) (bool, bool, string) {
+// reconcileFormatPath records candidatePath as the book's file for format when
+// it resolves inside Bindery storage and exists. Otherwise it returns a message
+// saying why not; unreadable is set when the path is inside Bindery storage but
+// could not be stat'd, which is a mount or permission problem rather than a
+// configuration choice.
+func (i *Importer) reconcileFormatPath(ctx context.Context, cfg ImportConfig, author *models.Author, book *models.Book, format, candidatePath string) (ok, changed bool, message string, unreadable bool) {
 	remappedPath := i.remapABSPath(cfg, candidatePath)
 	cleanPath := filepath.Clean(remappedPath)
 	if cleanPath == "." || cleanPath == "" {
-		return false, false, fmt.Sprintf("%s path missing from ABS metadata; imported metadata only", format)
+		return false, false, fmt.Sprintf("%s path missing from ABS metadata; imported metadata only", format), false
 	}
 	if !i.pathAllowedForBook(ctx, author, format, cleanPath) {
 		if remappedPath != strings.TrimSpace(candidatePath) {
-			return false, false, fmt.Sprintf("%s path %q remapped to %q but is still outside Bindery storage; imported metadata only", format, strings.TrimSpace(candidatePath), cleanPath)
+			return false, false, fmt.Sprintf("%s path %q remapped to %q but is still outside Bindery storage; imported metadata only", format, strings.TrimSpace(candidatePath), cleanPath), false
 		}
-		return false, false, fmt.Sprintf("%s path %q is outside Bindery storage; imported metadata only", format, cleanPath)
+		return false, false, fmt.Sprintf("%s path %q is outside Bindery storage%s; imported metadata only", format, cleanPath, unmappedPathHint(cfg)), false
 	}
 	info, err := os.Stat(cleanPath)
 	if err != nil {
 		if remappedPath != strings.TrimSpace(candidatePath) {
-			return false, false, fmt.Sprintf("%s path %q remapped to %q is not visible to Bindery; imported metadata only", format, strings.TrimSpace(candidatePath), cleanPath)
+			return false, false, fmt.Sprintf("%s path %q remapped to %q is not visible to Bindery; imported metadata only", format, strings.TrimSpace(candidatePath), cleanPath), true
 		}
-		return false, false, fmt.Sprintf("%s path %q is not visible to Bindery; imported metadata only", format, cleanPath)
+		return false, false, fmt.Sprintf("%s path %q is not visible to Bindery; imported metadata only", format, cleanPath), true
 	}
 	if format == models.MediaTypeEbook && info.IsDir() {
-		return false, false, fmt.Sprintf("%s path %q is a directory; imported metadata only", format, cleanPath)
+		return false, false, fmt.Sprintf("%s path %q is a directory; imported metadata only", format, cleanPath), false
 	}
 
 	alreadyTracked, err := i.bookAlreadyTracksPath(ctx, book.ID, format, cleanPath)
 	if err != nil {
 		slog.Warn("abs import: file reconciliation lookup failed", "bookID", book.ID, "format", format, "path", cleanPath, "error", err)
-		return false, false, fmt.Sprintf("%s verification could not inspect existing Bindery files; imported metadata only", format)
+		return false, false, fmt.Sprintf("%s verification could not inspect existing Bindery files; imported metadata only", format), false
 	}
 	if cfg.DryRun {
-		return true, !alreadyTracked, ""
+		return true, !alreadyTracked, "", false
 	}
 	if err := i.books.SetFormatFilePath(ctx, book.ID, format, cleanPath); err != nil {
 		slog.Warn("abs import: file reconciliation failed", "bookID", book.ID, "format", format, "path", cleanPath, "error", err)
-		return false, false, fmt.Sprintf("%s path %q could not be registered in Bindery; imported metadata only", format, cleanPath)
+		return false, false, fmt.Sprintf("%s path %q could not be registered in Bindery; imported metadata only", format, cleanPath), false
 	}
 	i.pruneVanishedFormatPaths(ctx, book.ID, format, cleanPath)
-	return true, !alreadyTracked, ""
+	return true, !alreadyTracked, "", false
+}
+
+// unmappedPathHint annotates a skipped path that abs.path_remap is configured
+// for but did not rewrite. Without it "outside Bindery storage" reads the same
+// whether the remap was wrong or the remapped target is simply not a Bindery
+// root, and those are fixed in different places.
+func unmappedPathHint(cfg ImportConfig) string {
+	if strings.TrimSpace(cfg.PathRemap) == "" {
+		return ""
+	}
+	return " (no abs.path_remap rule matched it)"
 }
 
 // pruneVanishedFormatPaths drops this book's other book_files rows OF THE SAME
@@ -163,7 +210,7 @@ func (i *Importer) inspectFormatPath(ctx context.Context, cfg ImportConfig, form
 		if remappedPath != strings.TrimSpace(candidatePath) {
 			return false, fmt.Sprintf("%s path %q remapped to %q but is outside Bindery storage", format, strings.TrimSpace(candidatePath), cleanPath)
 		}
-		return false, fmt.Sprintf("%s path %q is outside Bindery storage", format, cleanPath)
+		return false, fmt.Sprintf("%s path %q is outside Bindery storage%s", format, cleanPath, unmappedPathHint(cfg))
 	}
 	info, err := os.Stat(cleanPath)
 	if err != nil {
