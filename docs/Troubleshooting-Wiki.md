@@ -85,14 +85,17 @@ If the files never appear, it does not wait forever: after about 30 minutes of f
 Clicking **Grab** on a release you already have a Queue entry for is refused with *already grabbed*, and the message now names the state that entry is in.
 
 - **`importFailed`** — the scanner is still working on that download. Use **Queue → Retry import** to re-run the import against the files it already has, or remove the Queue entry if you want to grab the release fresh. If its files are simply not there, it turns into `importBlocked` (see above) and becomes re-grabbable on its own.
-- **`imported`**: you already have it. If you have since deleted that book (or its author), the release is no longer held: grabbing it again goes through and reuses the old Queue entry, and automatic search will pick it too once you add the book back. You do not need to remove anything from your download client first. What happens next depends on the client:
+- **`imported`**: you already have it. If you have since deleted that book (or its author), the release is no longer held: grabbing it again goes through and reuses the old Queue entry, and automatic search will pick it too once you add the book back. Usually you can leave your download client as it is; the two exceptions are under the table. What happens next depends on the client:
 
   | Client | If it still has the release |
   |---|---|
-  | qBittorrent, Transmission, Deluge, rTorrent | Bindery picks up the torrent the client already holds and imports its files. Nothing downloads again. |
+  | qBittorrent, Transmission, Deluge, rTorrent | Bindery picks up the torrent the client already holds and imports its files, as long as they are still in the client's download folder. Nothing downloads again. |
   | SABnzbd, NZBGet | The release downloads again. Bindery adds NZBGet jobs past its duplicate check, and SABnzbd's duplicate detection is off unless you turned it on, in which case SABnzbd may hold or refuse the job. |
 
-  If you removed the torrent from the client, it downloads again like any new grab.
+  If you removed the torrent from the client, it downloads again like any new grab. In two cases you need to do exactly that: remove the torrent from the client first, then grab again.
+
+  - **Import mode `move`.** The earlier import moved the files out of the client's folder, so the torrent Bindery picks up has nothing left to import. The Queue entry never imports, and every later grab picks up the same empty torrent.
+  - **qBittorrent 5.1 or older.** Bindery recognises a torrent qBittorrent already holds from its `409 Conflict` reply, which qBittorrent sends from 5.2 on. Older versions answer with a plain `Fails.`, the same reply as any other refused add, so the grab fails.
 - **downloading / grabbed / importing** — it's in flight; check the Queue.
 - **`importBlocked`** — a re-grab is allowed and reuses the existing Queue row with a fresh retry budget. Use this when the original files are gone; use **Retry import** instead when they're still on disk.
 
