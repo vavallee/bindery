@@ -1,2 +1,0 @@
-### Fixed
-- **Calibre imported books have covers** (#2564): the Calibre import stored each cover as a path on the server's disk, which nothing could display, so an imported library showed no book covers at all. Covers are now copied into Bindery's data directory and served from there, and libraries imported before this release are repaired in the background on the next start. Covers from a metadata provider are kept. Thanks jmerhar for the detailed report.
