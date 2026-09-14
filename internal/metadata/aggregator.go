@@ -67,11 +67,11 @@ func (a *Aggregator) SearchAuthors(ctx context.Context, query string) ([]models.
 }
 
 // SearchAuthorsWithOutcome is SearchAuthors plus which providers dropped out
-// of the fan-out. Callers that PERSIST a provider link from a search result —
-// the Audiobookshelf import, the Calibre relink, the add flow's canonical
-// match — must use this one and consult SearchOutcome.SafeToBind before
-// writing a foreign ID, because the link they write decides which provider
-// that author syncs from forever (#2271).
+// of the fan-out. Callers that PERSIST a provider link from a search result
+// (the Audiobookshelf import, the Calibre relink, the add flow's canonical
+// match, the CSV and Readarr importers) must use this one and consult
+// SearchOutcome.SafeToBind before writing a foreign ID, because the link they
+// write decides which provider that author syncs from forever (#2271, #2332).
 func (a *Aggregator) SearchAuthorsWithOutcome(ctx context.Context, query string) ([]models.Author, SearchOutcome, error) {
 	primary := a.PrimaryProviderName()
 	providers := a.providers()
@@ -81,13 +81,7 @@ func (a *Aggregator) SearchAuthorsWithOutcome(ctx context.Context, query string)
 	results, failed, anySuccess, firstErr := searchFanOutWithFailures(ctx, providers, func(c context.Context, p Provider) ([]models.Author, error) {
 		return p.SearchAuthors(c, query)
 	})
-	outcome := SearchOutcome{Primary: primary, FailedProviders: failed, FirstErr: firstErr}
-	for _, name := range failed {
-		if name == primary {
-			outcome.PrimaryFailed = true
-			break
-		}
-	}
+	outcome := newSearchOutcome(primary, failed, firstErr)
 	if !anySuccess && firstErr != nil {
 		return nil, outcome, firstErr
 	}
@@ -180,18 +174,12 @@ func (a *Aggregator) ResolveCanonicalAuthor(ctx context.Context, name string) (*
 	return &out, nil
 }
 
-// searchFanOut runs fn against the primary and every enricher in parallel (with
-// a per-provider timeout), returning each provider's results in provider order
-// (primary first), whether any provider returned without error, and the first
-// non-"not configured" error seen.
-func searchFanOut[T any](ctx context.Context, providers []Provider, fn func(context.Context, Provider) ([]T, error)) (results [][]T, anySuccess bool, firstErr error) {
-	results, _, anySuccess, firstErr = searchFanOutWithFailures(ctx, providers, fn)
-	return results, anySuccess, firstErr
-}
-
-// searchFanOutWithFailures is searchFanOut with the identity of the providers
-// that dropped out. searchFanOut discarded that, which is the root of #2271: a
-// caller could not tell "the primary provider has no such record" from "the
+// searchFanOutWithFailures runs fn against the primary and every enricher in
+// parallel (with a per-provider timeout), returning each provider's results in
+// provider order (primary first), the providers that dropped out, whether any
+// provider returned without error, and the first non-"not configured" error
+// seen. Its former sibling searchFanOut discarded who dropped out, which is the
+// root of #2271: a caller could not tell "the primary provider has no such record" from "the
 // primary provider would not answer", and one of those is a fact about the
 // world while the other is a fact about the last eight seconds. Binding an
 // author permanently on the strength of the second is the bug.
@@ -469,17 +457,30 @@ const searchProviderTimeout = 8 * time.Second
 // the search; an error is returned only when every provider fails. Duplicates
 // are collapsed across providers by ISBN, then by normalized title+author.
 func (a *Aggregator) SearchBooks(ctx context.Context, query string) ([]models.Book, error) {
+	books, _, err := a.SearchBooksWithOutcome(ctx, query)
+	return books, err
+}
+
+// SearchBooksWithOutcome is SearchBooks plus which providers dropped out of
+// the fan-out. A caller that persists the author identity carried on a result
+// must consult SearchOutcome.SafeToBind(book.Author.ForeignID) first, for the
+// reason SearchAuthorsWithOutcome gives: with the primary timed out, a
+// fallback's record comes back looking exactly like a genuine primary miss
+// (#2332).
+func (a *Aggregator) SearchBooksWithOutcome(ctx context.Context, query string) ([]models.Book, SearchOutcome, error) {
+	primary := a.PrimaryProviderName()
 	providers := a.providers() // primary first, then enrichers
 	if len(providers) == 0 {
-		return []models.Book{}, nil
+		return []models.Book{}, SearchOutcome{Primary: primary}, nil
 	}
-	results, anySuccess, firstErr := searchFanOut(ctx, providers, func(c context.Context, p Provider) ([]models.Book, error) {
+	results, failed, anySuccess, firstErr := searchFanOutWithFailures(ctx, providers, func(c context.Context, p Provider) ([]models.Book, error) {
 		return p.SearchBooks(c, query)
 	})
+	outcome := newSearchOutcome(primary, failed, firstErr)
 	// Only surface an error when no provider succeeded; otherwise return what we
 	// found, even if some providers failed.
 	if !anySuccess && firstErr != nil {
-		return nil, firstErr
+		return nil, outcome, firstErr
 	}
 
 	// Non-nil so an empty result JSON-encodes as `[]`, not `null` — a nil slice
@@ -497,7 +498,7 @@ func (a *Aggregator) SearchBooks(ctx context.Context, query string) ([]models.Bo
 	}
 
 	rerankByRelevance(merged, query)
-	return merged, nil
+	return merged, outcome, nil
 }
 
 // rerankByRelevance reorders merged search results so the best title matches
@@ -961,17 +962,45 @@ func (a *Aggregator) GetBookFromProvider(ctx context.Context, providerName, fore
 // A provider error on one source is logged at debug level and treated as a
 // miss, so a single flaky provider doesn't block resolution.
 func (a *Aggregator) ResolveBookByISBN(ctx context.Context, isbn string) (*models.Book, error) {
-	providers := append([]Provider{a.primary}, a.enrichers...)
-	for _, p := range providers {
+	book, _, err := a.ResolveBookByISBNWithOutcome(ctx, isbn)
+	return book, err
+}
+
+// ResolveBookByISBNWithOutcome is ResolveBookByISBN plus which providers
+// failed during the walk. The walk steps past a provider that errors, so a
+// timed out primary hands the lookup to the next provider and its hit is
+// indistinguishable from one the primary genuinely lacked. A caller that
+// persists the returned author's identity must consult
+// SearchOutcome.SafeToBind(book.Author.ForeignID) first (#2271, #2332).
+//
+// Only providers consulted before the hit are reported: the walk stops there,
+// so a later provider neither failed nor answered.
+func (a *Aggregator) ResolveBookByISBNWithOutcome(ctx context.Context, isbn string) (*models.Book, SearchOutcome, error) {
+	var (
+		failed   []string
+		firstErr error
+	)
+	for _, p := range a.providers() {
+		if p == nil {
+			continue
+		}
 		book, err := p.GetBookByISBN(ctx, isbn)
 		if err != nil {
 			slog.Debug("resolve isbn: provider failed", "provider", p.Name(), "isbn", isbn, "error", err)
+			// As in the search fan out, a provider with no credentials was
+			// never in the running, so it has not failed.
+			if !errors.Is(err, ErrProviderNotConfigured) {
+				failed = append(failed, normalizedProviderName(providerName(p)))
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
 			continue
 		}
 		if book == nil || book.Author == nil || book.Author.ForeignID == "" {
 			continue
 		}
-		return book, nil
+		return book, newSearchOutcome(a.PrimaryProviderName(), failed, firstErr), nil
 	}
-	return nil, nil
+	return nil, newSearchOutcome(a.PrimaryProviderName(), failed, firstErr), nil
 }

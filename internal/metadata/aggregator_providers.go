@@ -123,6 +123,19 @@ type SearchOutcome struct {
 	FirstErr error
 }
 
+// newSearchOutcome builds the outcome of a lookup that lost the providers
+// named in failed, flagging PrimaryFailed when the primary is among them.
+func newSearchOutcome(primary string, failed []string, firstErr error) SearchOutcome {
+	outcome := SearchOutcome{Primary: primary, FailedProviders: failed, FirstErr: firstErr}
+	for _, name := range failed {
+		if name == primary {
+			outcome.PrimaryFailed = true
+			break
+		}
+	}
+	return outcome
+}
+
 // SafeToBind reports whether a match may be written as an author's permanent
 // provider link. It refuses exactly one case: the primary provider failed and
 // the match came from somewhere else, so the fallback won by default rather

@@ -13,6 +13,8 @@ Each imported author's catalogue is populated from metadata. Nothing is auto-gra
 
 The import dedupes by metadata id, so re-running it is safe: authors that already exist are skipped.
 
+Each author is matched against your metadata providers and linked to the provider whose record matched. If your primary metadata provider does not answer during the import, an author that only another provider matched is not linked to that provider, because the link decides for good which provider the author's catalogue syncs from. It is listed as failed with the reason instead, so run the import again once the provider responds. A pasted or uploaded author list (**Settings → Import**) works the same way.
+
 An indexer or download client whose address Bindery will not call (link-local and cloud-metadata addresses) is reported as failed rather than imported, with the same message you would get typing it into the Add form.
 
 ## Two Readarr instances (separate ebook / audiobook)
@@ -68,5 +70,7 @@ The import is a two-step, dry-run-first flow — nothing is written until you co
 ### 5. Failed rows
 
 Rows that could not be matched are listed in the preview under **unresolved**, with a reason (no ISBN match, title+author search found nothing, etc.). Use **Download failed rows** to get a Goodreads-shaped CSV of just those rows, with a `Reason` column. Fix an ISBN or title in that file and re-upload it to retry only the misses.
+
+A row is also left unresolved when your primary metadata provider did not answer and only another provider matched it. Importing it would link its author to that other provider for good, so the reason says the provider did not answer instead. Upload the failed rows again once it responds.
 
 Resolution quality depends on ISBN coverage: rows with a valid ISBN match most reliably. Older or self-published titles often have no ISBN in the export and fall back to title+author search, which can miss — that is expected.

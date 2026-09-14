@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -16,17 +17,36 @@ func isAuthorCreateConflict(err error) bool {
 		errors.Is(err, db.ErrAuthorIdentifierConflict)
 }
 
-// resolveAndCreateAuthor is the author-resolution step every bulk importer
+// boundProvider is the metadata_provider to store for an author about to be
+// created. It is read off the author's foreign ID, the same classifier the
+// aggregator routes catalogue fetches by, so the stored label and the stored
+// id cannot disagree. The importers used to stamp "openlibrary" on whatever
+// record the search returned, which left dnb: and hc: authors claiming to be
+// OpenLibrary's (#2332).
+func boundProvider(a *models.Author) string {
+	return models.AuthorProviderFromForeignID(a.ForeignID)
+}
+
+// refusedBindReason is the per row message for a match the #2271 guard
+// refused: the primary provider did not answer, so the match came from a
+// fallback by default rather than on the merits, and writing it would have
+// made that fallback the author's provider for good.
+func refusedBindReason(o metadata.SearchOutcome, foreignID string) string {
+	return fmt.Sprintf("primary metadata provider %s did not answer, so the %s match was not used; run the import again once it responds",
+		o.Primary, models.AuthorProviderFromForeignID(foreignID))
+}
+
+// resolveAndCreateAuthor is the author resolution step every bulk importer
 // runs: search the metadata providers for a name, take the top match, skip it
-// if the library already has that foreign id, fetch the full record, stamp the
-// monitor defaults, and create it. It records its own outcome on res, so the
-// caller only has to handle the created author.
+// if the library already has that foreign id, refuse it if it only won because
+// the primary provider failed, fetch the full record, stamp the monitor
+// defaults and the provider the record belongs to, and create it. It records
+// its own outcome on res, so the caller only has to handle the created author.
 //
-// The CSV and Readarr importers carried byte-for-byte copies of this block,
-// which meant #2332 (the hardcoded provider stamp below) had to be fixed twice
-// and could be fixed half way. That is why it lives here now (#2366).
+// The CSV and Readarr importers carried identical copies of this block until
+// #2366, which is why #2332 is fixed here once rather than in each.
 //
-// source is the importer's name, used only in the "search failed" log line.
+// source is the importer's name, used only in log lines.
 // Returns nil when the name was skipped or failed; res already carries why.
 func resolveAndCreateAuthor(
 	ctx context.Context,
@@ -37,8 +57,8 @@ func resolveAndCreateAuthor(
 	agg *metadata.Aggregator,
 	res *Result,
 ) *models.Author {
-	// Resolve via OpenLibrary. Top match wins.
-	matches, err := agg.SearchAuthors(ctx, name)
+	// Search every provider. Top match wins, subject to the guard below.
+	matches, outcome, err := agg.SearchAuthorsWithOutcome(ctx, name)
 	if err != nil {
 		slog.Warn(source+" import: search failed", "name", name, "error", err)
 		res.fail(name, "metadata lookup failed: "+err.Error())
@@ -50,9 +70,22 @@ func resolveAndCreateAuthor(
 	}
 	top := matches[0]
 
-	// Skip if already present.
+	// Skip if already present. Nothing is written, so this needs no guard.
 	if existing, _ := authors.GetByAnyForeignID(ctx, top.ForeignID); existing != nil {
 		res.Skipped++
+		return nil
+	}
+
+	// The search only fails outright when every provider does, so with the
+	// primary timed out and a fallback answering it reports success and hands
+	// back the fallback's record. Creating the author from it would bind them
+	// to that provider permanently, and a later lookup by the primary's key
+	// would miss the row and mint a duplicate (#2117, #2271, #2332).
+	if !outcome.SafeToBind(top.ForeignID) {
+		slog.Warn(source+" import: refusing to bind author to a fallback provider",
+			"name", name, "primary", outcome.Primary, "failed", outcome.FailureSummary(),
+			"wouldHaveLinked", top.ForeignID)
+		res.fail(name, refusedBindReason(outcome, top.ForeignID))
 		return nil
 	}
 
@@ -63,10 +96,7 @@ func resolveAndCreateAuthor(
 		full = &top
 	}
 	full.Monitored = monitored
-	// #2332: this stamp is hardcoded and ignores which provider actually
-	// answered, so a provider timeout binds the author to the wrong one. Fix
-	// it here, on this one line, rather than in each importer.
-	full.MetadataProvider = "openlibrary"
+	full.MetadataProvider = boundProvider(full)
 	// The source hands over a monitored flag but no monitor mode, so take the
 	// install-wide default rather than the column default "all" (#1666).
 	db.ApplyAuthorMonitorDefaults(ctx, settings, full)

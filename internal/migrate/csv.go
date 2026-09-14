@@ -103,9 +103,11 @@ func (r *Result) fail(name, reason string) {
 // every author's catalogue is now fetched on add, and the fetch never
 // auto-grabs. Legacy three-column files therefore still import unchanged.
 //
-// Each name is resolved via OpenLibrary SearchAuthors; the top match is
-// created. Duplicates (same foreign ID already in DB) are skipped rather
-// than errored.
+// Each name is searched across the metadata providers and the top match is
+// created, carrying the provider its foreign ID belongs to. Duplicates (same
+// foreign ID already in DB) are skipped rather than errored. A match that
+// only won because the primary provider failed is reported as a failure for
+// that row instead of being bound (#2332).
 //
 // onCatalogueFetch is invoked for EVERY newly-created author so the catalogue
 // is always populated (mirrors the Readarr migrate path and the AddAuthor UI).

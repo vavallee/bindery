@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -116,10 +117,13 @@ func (o GoodreadsImportOptions) shelfList() []string {
 }
 
 // goodreadsResolver is the metadata capability the importer needs. The
-// concrete *metadata.Aggregator satisfies it; tests use a fake.
+// concrete *metadata.Aggregator satisfies it; tests use a fake. Both lookups
+// report which providers failed, because a resolved row's author becomes a
+// permanent provider link on commit and must pass SearchOutcome.SafeToBind
+// first (#2332).
 type goodreadsResolver interface {
-	ResolveBookByISBN(ctx context.Context, isbn string) (*models.Book, error)
-	SearchBooks(ctx context.Context, query string) ([]models.Book, error)
+	ResolveBookByISBNWithOutcome(ctx context.Context, isbn string) (*models.Book, metadata.SearchOutcome, error)
+	SearchBooksWithOutcome(ctx context.Context, query string) ([]models.Book, metadata.SearchOutcome, error)
 }
 
 // ResolveGoodreadsRows runs the dry-run resolution pass: each in-scope row is
@@ -180,7 +184,7 @@ func ResolveGoodreadsRows(
 		}
 
 		pace()
-		book, matchedBy := resolveGoodreadsRow(ctx, row, resolver)
+		book, matchedBy, outcome := resolveGoodreadsRow(ctx, row, resolver)
 		if book == nil {
 			resolved.Outcome = outcomeUnresolved
 			resolved.Reason = goodreadsUnresolvedReason(row)
@@ -200,6 +204,21 @@ func ResolveGoodreadsRows(
 			}
 		}
 
+		// A match that only won because the primary provider failed would,
+		// on commit, make its provider the author's permanent link: #2271's
+		// failure mode, and the duplicate authors in #2117. Leave the row
+		// unresolved with the reason, so the failed rows download carries it
+		// and a later upload can retry it (#2332).
+		if authorID := bookAuthorForeignID(book); !outcome.SafeToBind(authorID) {
+			slog.Warn("goodreads import: refusing to bind author to a fallback provider",
+				"title", row.Title, "primary", outcome.Primary, "failed", outcome.FailureSummary(),
+				"wouldHaveLinked", authorID)
+			resolved.Outcome = outcomeUnresolved
+			resolved.Reason = refusedBindReason(outcome, authorID)
+			out = append(out, resolved)
+			continue
+		}
+
 		resolved.Outcome = outcomeResolved
 		resolved.MatchedBy = matchedBy
 		resolved.book = book
@@ -210,55 +229,82 @@ func ResolveGoodreadsRows(
 
 // resolveGoodreadsRow attempts ISBN-13, then ISBN-10, then a title+author
 // search. Returns the matched book and the path that produced it, or
-// (nil, "") on a complete miss.
-func resolveGoodreadsRow(ctx context.Context, row GoodreadsRow, resolver goodreadsResolver) (*models.Book, string) {
+// (nil, "") on a complete miss, plus the provider outcome the match must be
+// checked against before its author is bound.
+//
+// The lookups are alternative ways of asking for the same row, so one that
+// lost the primary provider taints the row whichever lookup finally matched:
+// a record the primary would have returned for the ISBN is just as missing
+// when the title search is what answers.
+func resolveGoodreadsRow(ctx context.Context, row GoodreadsRow, resolver goodreadsResolver) (*models.Book, string, metadata.SearchOutcome) {
+	var outcome metadata.SearchOutcome
+	note := func(o metadata.SearchOutcome) {
+		if !outcome.PrimaryFailed {
+			outcome = o
+		}
+	}
 	if isbn := strings.TrimSpace(row.ISBN13); isbn != "" {
-		if book, err := resolver.ResolveBookByISBN(ctx, isbn); err != nil {
+		book, o, err := resolver.ResolveBookByISBNWithOutcome(ctx, isbn)
+		note(o)
+		if err != nil {
 			slog.Debug("goodreads import: isbn13 lookup failed", "isbn", isbn, "error", err)
 		} else if book != nil {
-			return book, "isbn13"
+			return book, "isbn13", outcome
 		}
 	}
 	if isbn := strings.TrimSpace(row.ISBN); isbn != "" {
-		if book, err := resolver.ResolveBookByISBN(ctx, isbn); err != nil {
+		book, o, err := resolver.ResolveBookByISBNWithOutcome(ctx, isbn)
+		note(o)
+		if err != nil {
 			slog.Debug("goodreads import: isbn10 lookup failed", "isbn", isbn, "error", err)
 		} else if book != nil {
-			return book, "isbn10"
+			return book, "isbn10", outcome
 		}
 	}
-	// Title+author fallback — the path that carries most ISBN-sparse exports.
-	if book := resolveGoodreadsByTitleAuthor(ctx, row, resolver); book != nil {
-		return book, "title+author"
+	// Title+author fallback, the path that carries most ISBN sparse exports.
+	book, o := resolveGoodreadsByTitleAuthor(ctx, row, resolver)
+	note(o)
+	if book != nil {
+		return book, "title+author", outcome
 	}
-	return nil, ""
+	return nil, "", outcome
 }
 
-// resolveGoodreadsByTitleAuthor searches the primary provider by "title author"
-// and picks the first result whose author carries a usable foreign ID (so the
-// author can be canonicalised the same way manual add-book does). A result
-// with no author identity is unusable for import and is skipped.
-func resolveGoodreadsByTitleAuthor(ctx context.Context, row GoodreadsRow, resolver goodreadsResolver) *models.Book {
+// resolveGoodreadsByTitleAuthor searches the metadata providers by "title
+// author" and picks the first result whose author carries a usable foreign ID
+// (so the author can be canonicalised the same way manual add book does). A
+// result with no author identity is unusable for import and is skipped.
+func resolveGoodreadsByTitleAuthor(ctx context.Context, row GoodreadsRow, resolver goodreadsResolver) (*models.Book, metadata.SearchOutcome) {
 	title := strings.TrimSpace(row.Title)
 	if title == "" {
-		return nil
+		return nil, metadata.SearchOutcome{}
 	}
 	query := title
 	if author := strings.TrimSpace(row.Author); author != "" {
 		query = title + " " + author
 	}
-	results, err := resolver.SearchBooks(ctx, query)
+	results, outcome, err := resolver.SearchBooksWithOutcome(ctx, query)
 	if err != nil {
 		slog.Debug("goodreads import: title+author search failed", "query", query, "error", err)
-		return nil
+		return nil, outcome
 	}
 	for i := range results {
 		book := results[i]
 		if book.Author == nil || strings.TrimSpace(book.Author.ForeignID) == "" {
 			continue
 		}
-		return &book
+		return &book, outcome
 	}
-	return nil
+	return nil, outcome
+}
+
+// bookAuthorForeignID is the author identity a resolved book would bind on
+// commit, or "" when it carries none.
+func bookAuthorForeignID(book *models.Book) string {
+	if book == nil || book.Author == nil {
+		return ""
+	}
+	return strings.TrimSpace(book.Author.ForeignID)
 }
 
 // goodreadsUnresolvedReason produces a human-readable failure reason for a row
@@ -330,7 +376,7 @@ func CommitGoodreadsImport(
 }
 
 // ensureGoodreadsAuthor resolves the book's author to a Bindery author ID,
-// creating a minimal record (canonicalised by OpenLibrary foreign ID) when
+// creating a minimal record (canonicalised by its provider foreign ID) when
 // the author is not yet known. Returns the author's database ID.
 func ensureGoodreadsAuthor(ctx context.Context, authors *db.AuthorRepo, settings *db.SettingsRepo, book *models.Book) (int64, error) {
 	if book.Author == nil || strings.TrimSpace(book.Author.ForeignID) == "" {
@@ -346,9 +392,9 @@ func ensureGoodreadsAuthor(ctx context.Context, authors *db.AuthorRepo, settings
 
 	author := book.Author
 	author.Monitored = true
-	if strings.TrimSpace(author.MetadataProvider) == "" {
-		author.MetadataProvider = "openlibrary"
-	}
+	// The provider the author's foreign ID belongs to, not a blanket
+	// "openlibrary" (#2332).
+	author.MetadataProvider = boundProvider(author)
 	if strings.TrimSpace(author.SortName) == "" {
 		author.SortName = goodreadsSortName(author.Name)
 	}

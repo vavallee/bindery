@@ -663,3 +663,64 @@ func mustOpenReadarr(t *testing.T, path string) *sql.DB {
 	t.Cleanup(func() { src.Close() })
 	return src
 }
+
+// newReadarrDBWithAuthor is newReadarrDB holding one monitored author.
+func newReadarrDBWithAuthor(t *testing.T, name string) string {
+	t.Helper()
+	path := newReadarrDB(t)
+	src, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	if _, err := src.Exec(`INSERT INTO AuthorMetadata (Id, Name) VALUES (1, ?)`, name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.Exec(`INSERT INTO Authors (Monitored, AuthorMetadataId) VALUES (1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// importReadarrAuthorsFor runs a full ImportReadarr of a one author database
+// against agg and returns the author result and the repo it wrote to.
+func importReadarrAuthorsFor(t *testing.T, agg *metadata.Aggregator) (Result, *db.AuthorRepo) {
+	t.Helper()
+	path := newReadarrDBWithAuthor(t, guardAuthorName)
+	database := newTestDB(t)
+	repo := db.NewAuthorRepo(database)
+	res, err := ImportReadarr(context.Background(), path, repo, db.NewIndexerRepo(database),
+		db.NewDownloadClientRepo(database), db.NewBlocklistRepo(database), nil, agg, nil)
+	if err != nil {
+		t.Fatalf("ImportReadarr: %v", err)
+	}
+	return res.Authors, repo
+}
+
+// TestImportReadarr_PrimaryTimeoutDoesNotBindFallback is the Readarr side of
+// #2332: the same OpenLibrary timeout with DNB answering must leave the
+// author reported and unbound, not created from the DNB record.
+func TestImportReadarr_PrimaryTimeoutDoesNotBindFallback(t *testing.T) {
+	res, repo := importReadarrAuthorsFor(t, olTimesOutDNBAnswers())
+	if res.Added != 0 || res.Errors != 1 {
+		t.Errorf("authors result = %+v, want the row failed rather than added", res)
+	}
+	if msg := res.Failures[guardAuthorName]; !strings.Contains(msg, "openlibrary did not answer") {
+		t.Errorf("failure reason = %q, want it to name the provider that did not answer", msg)
+	}
+	assertNoAuthorBound(t, repo, dnbAuthorID)
+}
+
+// TestImportReadarr_StoresResolvedProvider: the stored metadata_provider is
+// the one the record's foreign id belongs to, not "openlibrary" (#2332).
+func TestImportReadarr_StoresResolvedProvider(t *testing.T) {
+	for _, tc := range allowedBindCases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, repo := importReadarrAuthorsFor(t, tc.agg())
+			if res.Added != 1 {
+				t.Fatalf("authors result = %+v, want one added", res)
+			}
+			assertAuthorBound(t, repo, tc.wantID, tc.wantProvider)
+		})
+	}
+}

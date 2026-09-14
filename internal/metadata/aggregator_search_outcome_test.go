@@ -130,3 +130,77 @@ func TestSearchAuthorsAllProvidersFailStillErrors(t *testing.T) {
 		t.Errorf("outcome should name both failures, got %+v", outcome)
 	}
 }
+
+// TestSearchBooksWithOutcomeReportsPrimaryFailure: the book search fan out
+// carries the same distinction as the author search, for the Goodreads
+// importer's title and author fallback (#2332).
+func TestSearchBooksWithOutcomeReportsPrimaryFailure(t *testing.T) {
+	const dnbAuthor = "dnb:gnd:1052464211"
+	dnb := &mockProvider{name: "dnb", searchBooks: []models.Book{{
+		ForeignID: "dnb:bib-1", Title: "Project Hail Mary",
+		Author: &models.Author{ForeignID: dnbAuthor, Name: "Andy Weir"},
+	}}}
+	for _, tc := range []struct {
+		name       string
+		olErr      error
+		wantFailed bool
+	}{
+		{"primary answered with nothing", nil, false},
+		{"primary timed out", context.DeadlineExceeded, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ol := &mockProvider{name: "openlibrary", searchBookErr: tc.olErr}
+			books, outcome, err := NewAggregator(ol, dnb).SearchBooksWithOutcome(context.Background(), "Project Hail Mary")
+			if err != nil {
+				t.Fatalf("one provider failing must not fail the search: %v", err)
+			}
+			if len(books) != 1 {
+				t.Fatalf("books = %d, want the fallback's record either way", len(books))
+			}
+			if outcome.PrimaryFailed != tc.wantFailed {
+				t.Errorf("PrimaryFailed = %v, want %v", outcome.PrimaryFailed, tc.wantFailed)
+			}
+			if got := outcome.SafeToBind(dnbAuthor); got != !tc.wantFailed {
+				t.Errorf("SafeToBind(dnb) = %v, want %v", got, !tc.wantFailed)
+			}
+		})
+	}
+}
+
+// TestResolveBookByISBNWithOutcomeReportsPrimaryFailure: the ISBN walk steps
+// past a failing primary to the next provider, and must say it did, or the
+// Goodreads importer binds the fallback's author (#2332). A provider with no
+// credentials never took part and is not a failure.
+func TestResolveBookByISBNWithOutcomeReportsPrimaryFailure(t *testing.T) {
+	const dnbAuthor = "dnb:gnd:1052464211"
+	dnb := &mockProvider{name: "dnb", getByISBN: &models.Book{
+		ForeignID: "dnb:bib-1", Title: "Project Hail Mary",
+		Author: &models.Author{ForeignID: dnbAuthor, Name: "Andy Weir"},
+	}}
+	for _, tc := range []struct {
+		name       string
+		olErr      error
+		wantFailed bool
+	}{
+		{"primary answered with nothing", nil, false},
+		{"primary timed out", context.DeadlineExceeded, true},
+		{"primary not configured", ErrProviderNotConfigured, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ol := &mockProvider{name: "openlibrary", getByISBNErr: tc.olErr}
+			book, outcome, err := NewAggregator(ol, dnb).ResolveBookByISBNWithOutcome(context.Background(), "9780593135204")
+			if err != nil {
+				t.Fatalf("ResolveBookByISBNWithOutcome: %v", err)
+			}
+			if book == nil || book.Author == nil || book.Author.ForeignID != dnbAuthor {
+				t.Fatalf("book = %+v, want the dnb hit", book)
+			}
+			if outcome.PrimaryFailed != tc.wantFailed {
+				t.Errorf("PrimaryFailed = %v, want %v (failed=%v)", outcome.PrimaryFailed, tc.wantFailed, outcome.FailedProviders)
+			}
+			if got := outcome.SafeToBind(dnbAuthor); got != !tc.wantFailed {
+				t.Errorf("SafeToBind(dnb) = %v, want %v", got, !tc.wantFailed)
+			}
+		})
+	}
+}

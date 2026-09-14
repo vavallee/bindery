@@ -19,18 +19,32 @@ import (
 // stubProvider is a minimal metadata.Provider used to drive the migrate
 // package without reaching any real network service.
 type stubProvider struct {
+	// name is the provider name the aggregator sees; "" means "stub". The
+	// #2332 tests name their stubs so the aggregator can tell a primary from
+	// a fallback and route foreign ids back to the right one.
+	name            string
 	searchAuthorsFn func(ctx context.Context, q string) ([]models.Author, error)
 	getAuthorFn     func(ctx context.Context, id string) (*models.Author, error)
+	searchBooksFn   func(ctx context.Context, q string) ([]models.Book, error)
+	getBookByISBNFn func(ctx context.Context, isbn string) (*models.Book, error)
 }
 
-func (s *stubProvider) Name() string { return "stub" }
+func (s *stubProvider) Name() string {
+	if s.name != "" {
+		return s.name
+	}
+	return "stub"
+}
 func (s *stubProvider) SearchAuthors(ctx context.Context, q string) ([]models.Author, error) {
 	if s.searchAuthorsFn != nil {
 		return s.searchAuthorsFn(ctx, q)
 	}
 	return nil, nil
 }
-func (s *stubProvider) SearchBooks(context.Context, string) ([]models.Book, error) {
+func (s *stubProvider) SearchBooks(ctx context.Context, q string) ([]models.Book, error) {
+	if s.searchBooksFn != nil {
+		return s.searchBooksFn(ctx, q)
+	}
 	return nil, nil
 }
 func (s *stubProvider) GetAuthor(ctx context.Context, id string) (*models.Author, error) {
@@ -43,7 +57,10 @@ func (s *stubProvider) GetBook(context.Context, string) (*models.Book, error) { 
 func (s *stubProvider) GetEditions(context.Context, string) ([]models.Edition, error) {
 	return nil, nil
 }
-func (s *stubProvider) GetBookByISBN(context.Context, string) (*models.Book, error) {
+func (s *stubProvider) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, error) {
+	if s.getBookByISBNFn != nil {
+		return s.getBookByISBNFn(ctx, isbn)
+	}
 	return nil, nil
 }
 
@@ -633,5 +650,44 @@ func TestImportCSVAuthors_CatalogueFetchSurvivesCallerContextCancellation(t *tes
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("catalogue-fetch callback never fired — fan-out was not detached from the caller's context")
+	}
+}
+
+// TestImportCSVAuthors_PrimaryTimeoutDoesNotBindFallback is #2332's repro:
+// OpenLibrary times out, DNB answers, and the search as a whole reports
+// success. The author must not be created from the DNB record, and the row
+// must say why in the same name to reason shape as every other failure.
+func TestImportCSVAuthors_PrimaryTimeoutDoesNotBindFallback(t *testing.T) {
+	repo := db.NewAuthorRepo(newTestDB(t))
+
+	res, err := ImportCSVAuthors(context.Background(), strings.NewReader(guardAuthorName+"\n"), repo, nil, olTimesOutDNBAnswers(), nil)
+	if err != nil {
+		t.Fatalf("ImportCSVAuthors: %v", err)
+	}
+	if res.Added != 0 || res.Errors != 1 {
+		t.Errorf("Added=%d Errors=%d; want 0/1 (failures=%v)", res.Added, res.Errors, res.Failures)
+	}
+	if msg := res.Failures[guardAuthorName]; !strings.Contains(msg, "openlibrary did not answer") {
+		t.Errorf("failure reason = %q, want it to name the provider that did not answer", msg)
+	}
+	assertNoAuthorBound(t, repo, dnbAuthorID)
+}
+
+// TestImportCSVAuthors_StoresResolvedProvider: when binding is allowed, the
+// stored metadata_provider is the one the record's foreign id belongs to,
+// not a hardcoded "openlibrary" (#2332).
+func TestImportCSVAuthors_StoresResolvedProvider(t *testing.T) {
+	for _, tc := range allowedBindCases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := db.NewAuthorRepo(newTestDB(t))
+			res, err := ImportCSVAuthors(context.Background(), strings.NewReader(guardAuthorName+"\n"), repo, nil, tc.agg(), nil)
+			if err != nil {
+				t.Fatalf("ImportCSVAuthors: %v", err)
+			}
+			if res.Added != 1 {
+				t.Fatalf("Added=%d; want 1 (failures=%v)", res.Added, res.Failures)
+			}
+			assertAuthorBound(t, repo, tc.wantID, tc.wantProvider)
+		})
 	}
 }
