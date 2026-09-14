@@ -2741,6 +2741,46 @@ func authorTitleFromLayout(path string, roots ...string) (author, title string, 
 	return "", "", false
 }
 
+// applyLayout reconciles a filename parse with the author and book folders
+// authorTitleFromLayout found for the same path. It is the one place that
+// decides whether the folder or the filename names the author, shared by the
+// library scan and both Manual Import lookups: the bulk import once decided
+// it the other way round from the scan and undid #754 there (#2331).
+//
+// authoritative is true for the library scan, whose root is the library root
+// and whose <Author>/<Book>/ convention names both outright (#754). A Manual
+// Import root is wherever the user pointed it, so the first folder under it is
+// not necessarily an author ("Horror/Title - Author.epub") and needs
+// corroborating; lookups pass false and let the catalogue corroborate the
+// folder later (narrowByAuthor).
+//
+// In order:
+//  1. No author folder (a flat layout): the filename is the only evidence.
+//  2. The filename's title side names the author folder: it is an
+//     "Author - Title" name that ParseFilename read backwards, so the other
+//     side is the title and the folder is the author. The filename itself
+//     confirms the folder, so this holds in every mode.
+//  3. Authoritative, or the filename has no author: the folder names it.
+//  4. Otherwise the filename's author stands.
+//
+// The book folder then replaces the title when authoritative, and otherwise
+// only fills a title the filename lacks.
+func applyLayout(parsed ParsedFile, layoutAuthor, layoutTitle string, authoritative bool) ParsedFile {
+	if layoutAuthor == "" {
+		return parsed
+	}
+	switch {
+	case parsed.Author != "" && lookupAuthorMatch(parsed.Title, layoutAuthor) && !lookupAuthorMatch(parsed.Author, layoutAuthor):
+		parsed.Title, parsed.Author = parsed.Author, layoutAuthor
+	case authoritative || parsed.Author == "":
+		parsed.Author = layoutAuthor
+	}
+	if layoutTitle != "" && (authoritative || parsed.Title == "") {
+		parsed.Title = layoutTitle
+	}
+	return parsed
+}
+
 // ErrScanAlreadyRunning is returned by StartScan when a library scan (manual
 // or scheduled) is already in flight. Matches the ABS importer's
 // ErrAlreadyRunning / Grimmory syncer's ErrSyncAlreadyRunning pattern.
@@ -3206,14 +3246,8 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		parsed := ParseFilename(path)
 		var layoutTitle, layoutAuthor string
 		if a, t, ok := authorTitleFromLayout(path, s.libraryDir, s.audiobookDir); ok {
-			if a != "" {
-				parsed.Author = a
-				layoutAuthor = a
-			}
-			if t != "" {
-				parsed.Title = t
-				layoutTitle = t
-			}
+			layoutAuthor, layoutTitle = a, t
+			parsed = applyLayout(parsed, a, t, true)
 		}
 
 		// Prefer embedded audio tags over filename and folder parsing for

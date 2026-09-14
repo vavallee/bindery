@@ -190,3 +190,113 @@ func TestDetectUnitFormat(t *testing.T) {
 		t.Errorf("m4b file: got %q, want audiobook", got)
 	}
 }
+
+// TestLookupBatchLayout_FolderAuthorBeatsBackwardsFilename is #2331. A bulk
+// import pointed at a library root must not let an "Author - Title" filename,
+// which ParseFilename reads as "Title - Author", override the author folder.
+// That is #754's rule, and the library scan already followed it. Rows 3 and 4
+// are the issue's repro table; row 5 has no book folder, so the title can only
+// come from the filename once it is read the right way round.
+func TestLookupBatchLayout_FolderAuthorBeatsBackwardsFilename(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		rel  []string
+	}{
+		{"title only", []string{"Christopher Pike", "Evil Thirst", "Evil Thirst.epub"}},
+		{"title then author", []string{"Christopher Pike", "Evil Thirst", "Evil Thirst - Christopher Pike.epub"}},
+		{"author then title", []string{"Christopher Pike", "Evil Thirst", "Christopher Pike - Evil Thirst.epub"}},
+		{"inverted author then title", []string{"Christopher Pike", "Evil Thirst", "Pike, Christopher - Evil Thirst.epub"}},
+		{"author then title, author folder only", []string{"Christopher Pike", "Christopher Pike - Evil Thirst.epub"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			s, books, authors, ctx := scannerFixture(t, t.TempDir())
+			book := seedLayoutBook(t, books, authors, ctx, "Christopher Pike", "Evil Thirst")
+
+			root := t.TempDir()
+			p := filepath.Join(append([]string{root}, c.rel...)...)
+			writeFileAt(t, p) // not a real EPUB: no embedded metadata to mask the bug
+
+			res, err := s.LookupBatchLayout(ctx, root, []string{p})
+			if err != nil {
+				t.Fatalf("LookupBatchLayout: %v", err)
+			}
+			if res[0].Match != "confident" || res[0].Book == nil || res[0].Book.ID != book.ID {
+				t.Fatalf("match = %q book = %v, want confident id=%d (parsed %q / %q)",
+					res[0].Match, res[0].Book, book.ID, res[0].ParsedTitle, res[0].ParsedAuthor)
+			}
+			if res[0].ParsedTitle != "Evil Thirst" || res[0].ParsedAuthor != "Christopher Pike" {
+				t.Errorf("parsed = %q / %q, want Evil Thirst / Christopher Pike", res[0].ParsedTitle, res[0].ParsedAuthor)
+			}
+		})
+	}
+}
+
+// TestLookupBatchLayout_FilenameAuthorWhenFolderIsNotAnAuthor is the other half
+// of #2331. A bulk import root is wherever the user pointed it, so the first
+// folder under it is not always an author. When nothing corroborates the folder
+// as an author (no catalogue author by that name, and the filename does not
+// name it) the filename stays the author evidence, as it does for a flat folder.
+func TestLookupBatchLayout_FilenameAuthorWhenFolderIsNotAnAuthor(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		rel  []string
+	}{
+		{"flat", []string{"Evil Thirst - Christopher Pike.epub"}},
+		{"genre folder", []string{"Horror", "Evil Thirst - Christopher Pike.epub"}},
+		{"genre and book folders", []string{"Horror", "Evil Thirst", "Evil Thirst - Christopher Pike.epub"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			s, books, authors, ctx := scannerFixture(t, t.TempDir())
+			book := seedLayoutBook(t, books, authors, ctx, "Christopher Pike", "Evil Thirst")
+
+			root := t.TempDir()
+			p := filepath.Join(append([]string{root}, c.rel...)...)
+			writeFileAt(t, p)
+
+			res, err := s.LookupBatchLayout(ctx, root, []string{p})
+			if err != nil {
+				t.Fatalf("LookupBatchLayout: %v", err)
+			}
+			if res[0].Match != "confident" || res[0].Book == nil || res[0].Book.ID != book.ID {
+				t.Fatalf("match = %q book = %v, want confident id=%d (parsed %q / %q)",
+					res[0].Match, res[0].Book, book.ID, res[0].ParsedTitle, res[0].ParsedAuthor)
+			}
+			if res[0].ParsedAuthor != "Christopher Pike" {
+				t.Errorf("ParsedAuthor = %q, want the filename's Christopher Pike", res[0].ParsedAuthor)
+			}
+		})
+	}
+}
+
+// TestLookup_FolderAuthorBeatsBackwardsFilenameInLibrary covers the single item
+// Manual Import lookup for #2331. It used the filename alone, so a Readarr named
+// file inside the library's <Author>/<Book>/ tree could never match there
+// either. A path under the library root now reads its layout the way the bulk
+// import does.
+func TestLookup_FolderAuthorBeatsBackwardsFilenameInLibrary(t *testing.T) {
+	t.Parallel()
+	libDir := t.TempDir()
+	s, books, authors, ctx := scannerFixture(t, libDir)
+	book := seedLayoutBook(t, books, authors, ctx, "Christopher Pike", "Evil Thirst")
+
+	p := filepath.Join(libDir, "Christopher Pike", "Evil Thirst", "Christopher Pike - Evil Thirst.epub")
+	writeFileAt(t, p)
+
+	res, err := s.Lookup(ctx, p)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if res.Match != "confident" || res.Book == nil || res.Book.ID != book.ID {
+		t.Fatalf("match = %q book = %v, want confident id=%d (parsed %q / %q)",
+			res.Match, res.Book, book.ID, res.ParsedTitle, res.ParsedAuthor)
+	}
+	if res.ParsedTitle != "Evil Thirst" || res.ParsedAuthor != "Christopher Pike" {
+		t.Errorf("parsed = %q / %q, want Evil Thirst / Christopher Pike", res.ParsedTitle, res.ParsedAuthor)
+	}
+}

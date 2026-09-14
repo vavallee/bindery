@@ -169,3 +169,76 @@ func TestScanLibrary_ReadarrSeriesFolderReconcilesNonOpener(t *testing.T) {
 		}
 	}
 }
+
+// TestScanLibrary_AuthorFolderFixesSwappedFilenameWithoutBookFolder extends
+// #754 to a library with author folders but no book folders
+// (<root>/<Author>/<Author> - <Title>.epub). The folder supplied the author,
+// but with no book folder the title came from the filename's left side, which
+// is the author again, so the file never reconciled (#2331).
+func TestScanLibrary_AuthorFolderFixesSwappedFilenameWithoutBookFolder(t *testing.T) {
+	libDir := t.TempDir()
+	authorDir := filepath.Join(libDir, "Cal Newport")
+	if err := os.MkdirAll(authorDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	epub := filepath.Join(authorDir, "Cal Newport - Deep Work.epub")
+	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, books, authors, ctx := scannerFixture(t, libDir)
+	author := &models.Author{ForeignID: "OL-cn", Name: "Cal Newport", SortName: "Newport, Cal"}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{ForeignID: "OL-dw", AuthorID: author.ID, Title: "Deep Work", Status: models.BookStatusWanted}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ScanLibrary(ctx)
+
+	got, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FilePath != epub {
+		t.Errorf("want FilePath=%q, got %q", epub, got.FilePath)
+	}
+}
+
+// TestApplyLayout pins the precedence the library scan and both Manual Import
+// lookups share (#754, #2331). authoritative is the scan's library root, where
+// the folders name author and title outright; the lookups pass false because
+// their root can be any folder.
+func TestApplyLayout(t *testing.T) {
+	cases := []struct {
+		name                     string
+		title, author            string
+		layoutAuthor, layoutBook string
+		authoritative            bool
+		wantTitle, wantAuthor    string
+	}{
+		{"flat layout keeps the filename", "Evil Thirst", "Christopher Pike", "", "", false, "Evil Thirst", "Christopher Pike"},
+		{"backwards filename under its author folder", "Christopher Pike", "Evil Thirst", "Christopher Pike", "", false, "Evil Thirst", "Christopher Pike"},
+		{"inverted backwards filename", "Pike, Christopher", "Evil Thirst", "Christopher Pike", "", false, "Evil Thirst", "Christopher Pike"},
+		{"filename already agrees", "Evil Thirst", "Christopher Pike", "Christopher Pike", "", false, "Evil Thirst", "Christopher Pike"},
+		{"unconfirmed folder does not beat the filename author", "Evil Thirst", "Christopher Pike", "Horror", "", false, "Evil Thirst", "Christopher Pike"},
+		{"folder fills a missing author", "Evil Thirst", "", "Christopher Pike", "", false, "Evil Thirst", "Christopher Pike"},
+		{"book folder fills a missing title", "", "", "Christopher Pike", "Evil Thirst", false, "Evil Thirst", "Christopher Pike"},
+		{"lookup keeps the filename title over a book folder", "Evil Thirst", "", "Christopher Pike", "Books", false, "Evil Thirst", "Christopher Pike"},
+		{"a title that is not the folder author is not swapped", "Christine", "Stephen King", "Christopher Pike", "", false, "Christine", "Stephen King"},
+		{"scan folder beats a disagreeing filename author", "Evil Thirst", "Someone Else", "Christopher Pike", "", true, "Evil Thirst", "Christopher Pike"},
+		{"scan book folder beats the filename title", "Wrong", "Whoever", "Christopher Pike", "Evil Thirst", true, "Evil Thirst", "Christopher Pike"},
+		{"scan backwards filename with no book folder", "Cal Newport", "Deep Work", "Cal Newport", "", true, "Deep Work", "Cal Newport"},
+		{"scan flat layout keeps the filename", "Deep Work", "Cal Newport", "", "", true, "Deep Work", "Cal Newport"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := applyLayout(ParsedFile{Title: c.title, Author: c.author}, c.layoutAuthor, c.layoutBook, c.authoritative)
+			if got.Title != c.wantTitle || got.Author != c.wantAuthor {
+				t.Errorf("applyLayout = %q / %q, want %q / %q", got.Title, got.Author, c.wantTitle, c.wantAuthor)
+			}
+		})
+	}
+}

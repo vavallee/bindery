@@ -34,7 +34,17 @@ type LookupResult struct {
 //
 // Directories are treated as audiobook folders; their format is returned as
 // "audiobook" regardless of content.
+//
+// A path under the library or audiobook root also reads its folder layout, the
+// way the library scan and the bulk import do, so a Readarr named
+// "Author - Title" file in <Author>/<Book>/ matches here too (#754, #2331).
 func (s *Scanner) Lookup(ctx context.Context, path string) (LookupResult, error) {
+	return s.lookup(ctx, path, s.libraryDir, s.audiobookDir)
+}
+
+// lookup is Lookup with the layout roots made explicit. roots anchor
+// authorTitleFromLayout; with none the filename is the only signal.
+func (s *Scanner) lookup(ctx context.Context, path string, roots ...string) (LookupResult, error) {
 	parsed := ParseFilename(path)
 	base := LookupResult{
 		DetectedFormat: lookupDetectFormat(path),
@@ -49,7 +59,7 @@ func (s *Scanner) Lookup(ctx context.Context, path string) (LookupResult, error)
 	if err != nil {
 		return base, fmt.Errorf("lookup: list authors: %w", err)
 	}
-	return lookupWith(path, books, authors), nil
+	return lookupWith(path, books, authors, roots...), nil
 }
 
 // LookupBatch runs the same catalogue match as Lookup over many paths while
@@ -124,8 +134,8 @@ func (s *Scanner) LookupBatchLayout(ctx context.Context, root string, paths []st
 	// Safe to parallelise because lookupUnit only reads: books and
 	// authorNames are loaded once above and never written, results are
 	// written by distinct index, and nothing on the path (ParseFilename,
-	// authorTitleFromLayout, firstEpubIn, ReadEpubMetadata, detectUnitFormat)
-	// keeps package-level state.
+	// authorTitleFromLayout, applyLayout, narrowByAuthor, firstEpubIn,
+	// ReadEpubMetadata, detectUnitFormat) keeps package-level state.
 	idx := make([]int, len(paths))
 	for i := range paths {
 		idx[i] = i
@@ -153,11 +163,18 @@ func (s *Scanner) LookupBatchLayout(ctx context.Context, root string, paths []st
 const lookupBatchConcurrency = 8
 
 // lookupUnit matches one bulk-import unit against the pre-loaded catalogue using
-// the embedded-metadata → folder-layout → filename precedence described on
-// LookupBatchLayout. See that method for the full rationale.
+// the precedence described on LookupBatchLayout: embedded metadata first, then
+// the filename as corrected by the folder layout (applyLayout). See that method
+// for the full rationale.
 func lookupUnit(root, path string, books []models.Book, authorNames map[int64]string) LookupResult {
 	parsed := ParseFilename(path)
 	layoutAuthor, layoutTitle, _ := authorTitleFromLayout(path, root)
+	// Until #2331 this was a plain embedded > filename > folder precedence, so
+	// any " - " filename outranked the folder and a backwards "Author - Title"
+	// name made the author folder useless. applyLayout is the rule the library
+	// scan uses, with the folder corroborated rather than assumed because a
+	// bulk import root is not necessarily a library root.
+	parsed = applyLayout(parsed, layoutAuthor, layoutTitle, false)
 	var embedded EpubMetadata
 	if ep := firstEpubIn(path); ep != "" {
 		if meta, err := ReadEpubMetadata(ep); err == nil {
@@ -167,9 +184,9 @@ func lookupUnit(root, path string, books []models.Book, authorNames map[int64]st
 		}
 	}
 
-	// Effective signals in precedence order: embedded > filename > folder layout.
-	effTitle := firstNonEmpty(embedded.Title, parsed.Title, layoutTitle)
-	effAuthor := firstNonEmpty(embedded.Author, parsed.Author, layoutAuthor)
+	// Effective signals: embedded metadata, then the layout corrected filename.
+	effTitle := firstNonEmpty(embedded.Title, parsed.Title)
+	effAuthor := firstNonEmpty(embedded.Author, parsed.Author)
 
 	result := LookupResult{
 		DetectedFormat: detectUnitFormat(path),
@@ -199,16 +216,14 @@ func lookupUnit(root, path string, books []models.Book, authorNames map[int64]st
 	// so Book.ProviderISBNs is empty for this comparison — it is never persisted
 	// at all (#1893) — and matchByTitleAuthor has the same limitation.
 	// Title+author is the reliable signal against the loaded catalogue.)
-	var matches []models.Book
+	var titled []models.Book
 	for i := range books {
-		if !titleMatch(books[i].Title, effTitle) {
-			continue
+		if titleMatch(books[i].Title, effTitle) {
+			titled = append(titled, books[i])
 		}
-		if effAuthor != "" && !lookupAuthorMatch(effAuthor, authorNames[books[i].AuthorID]) {
-			continue
-		}
-		matches = append(matches, books[i])
 	}
+	matches, effAuthor := narrowByAuthor(titled, effAuthor, layoutAuthor, authorNames)
+	result.ParsedAuthor = effAuthor
 
 	switch len(matches) {
 	case 0:
@@ -242,6 +257,39 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// narrowByAuthor filters title matched books to those by author and returns
+// them with the author that did the narrowing. With no author the candidates
+// pass through untouched.
+//
+// When author rules out every candidate but the folder author keeps some, the
+// folder wins: the catalogue has just confirmed it is an author folder. This is
+// the library scan's resolveAuthors fallback (#1956) for the Manual Import
+// lookups, and it covers a wrong author that applyLayout could not see through,
+// whether it came from the filename or from embedded metadata (#2331).
+func narrowByAuthor(candidates []models.Book, author, layoutAuthor string, authorNames map[int64]string) ([]models.Book, string) {
+	if author == "" {
+		return candidates, author
+	}
+	by := func(name string) []models.Book {
+		var out []models.Book
+		for _, b := range candidates {
+			if lookupAuthorMatch(name, authorNames[b.AuthorID]) {
+				out = append(out, b)
+			}
+		}
+		return out
+	}
+	if m := by(author); len(m) > 0 {
+		return m, author
+	}
+	if layoutAuthor != "" && !strings.EqualFold(layoutAuthor, author) {
+		if m := by(layoutAuthor); len(m) > 0 {
+			return m, layoutAuthor
+		}
+	}
+	return nil, author
 }
 
 // firstEpubIn returns an EPUB to read embedded metadata from for a unit: the
@@ -313,8 +361,13 @@ func detectUnitFormat(path string) string {
 // entries no longer triggers a full-table books+authors query per item — the
 // N+1 that stalled large scans past the server WriteTimeout (issue #1473). The
 // match logic is identical to Lookup's.
-func lookupWith(path string, books []models.Book, authors []models.Author) LookupResult {
+//
+// roots, when given, anchor the folder layout exactly as for the bulk import
+// (applyLayout, narrowByAuthor); with none the filename is the only signal.
+func lookupWith(path string, books []models.Book, authors []models.Author, roots ...string) LookupResult {
 	parsed := ParseFilename(path)
+	layoutAuthor, layoutTitle, _ := authorTitleFromLayout(path, roots...)
+	parsed = applyLayout(parsed, layoutAuthor, layoutTitle, false)
 	detectedFormat := lookupDetectFormat(path)
 
 	result := LookupResult{
@@ -345,16 +398,14 @@ func lookupWith(path string, books []models.Book, authors []models.Author) Looku
 		authorNames[a.ID] = a.Name
 	}
 
-	var matches []models.Book
+	var titled []models.Book
 	for _, b := range books {
-		if !titleMatch(b.Title, parsed.Title) {
-			continue
+		if titleMatch(b.Title, parsed.Title) {
+			titled = append(titled, b)
 		}
-		if parsed.Author != "" && !lookupAuthorMatch(parsed.Author, authorNames[b.AuthorID]) {
-			continue
-		}
-		matches = append(matches, b)
 	}
+	matches, author := narrowByAuthor(titled, parsed.Author, layoutAuthor, authorNames)
+	result.ParsedAuthor = author
 
 	switch len(matches) {
 	case 0:
@@ -402,9 +453,11 @@ func (s *Scanner) matchBookForDownload(ctx context.Context, files []string, rele
 		}
 	}
 
-	// Tier 2: release filename, via the same catalogue lookup manual import uses.
+	// Tier 2: release filename, via the same catalogue lookup manual import
+	// uses, but with no layout roots: the folders above a completed download
+	// are the client's and the release's, never an author's.
 	for _, f := range files {
-		res, err := s.Lookup(ctx, f)
+		res, err := s.lookup(ctx, f)
 		if err != nil {
 			slog.Debug("filename lookup failed", "file", f, "error", err)
 			continue
