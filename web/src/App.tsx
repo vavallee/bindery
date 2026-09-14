@@ -5,6 +5,7 @@ import { api } from './api/client'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import AuthGuard from './auth/AuthGuard'
 import PublicOnlyRoute from './auth/PublicOnlyRoute'
+import AccountMenu from './components/AccountMenu'
 import ErrorBoundary from './components/ErrorBoundary'
 import LibrarySearch from './components/LibrarySearch'
 import Logo from './components/Logo'
@@ -107,6 +108,7 @@ function Shell() {
   const [latestVersion, setLatestVersion] = useState<string | undefined>(undefined)
   const [menuOpen, setMenuOpen] = useState(false)
   const { status, logout, isAdmin } = useAuth()
+  const signedIn = !!status?.authenticated && status.mode !== 'disabled'
 
   useEffect(() => {
     api.status().then(s => {
@@ -116,7 +118,7 @@ function Shell() {
   }, [])
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
-    `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+    `px-2.5 py-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors ${
       isActive ? 'bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/50 dark:hover:bg-zinc-800/50'
     }`
 
@@ -129,13 +131,13 @@ function Shell() {
     <div className="min-h-screen bg-slate-50 dark:bg-zinc-950 text-slate-900 dark:text-zinc-100">
       <header className="border-b border-slate-200 dark:border-zinc-800 sticky top-0 z-40 bg-slate-50 dark:bg-zinc-950">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
+          <div className="flex items-center justify-between gap-4 h-16">
             <Link to="/" className="flex items-center gap-2 flex-shrink-0 group" onClick={() => setMenuOpen(false)}>
               <Logo className="w-14 h-14 rounded-full transition-transform group-hover:scale-105" />
               <h1 className="text-lg font-bold tracking-tight">Bindery</h1>
             </Link>
 
-            <nav className="hidden lg:flex gap-1">
+            <nav className="hidden xl:flex gap-1">
               {NAV_KEYS.map(item => (
                 <NavLink key={item.to} to={item.to} end={item.end} className={linkClass}>
                   {t(`nav.${item.key}`)}
@@ -143,8 +145,8 @@ function Shell() {
               ))}
             </nav>
 
-            <div className="flex items-center gap-3 flex-shrink-0">
-              <LibrarySearch className="hidden lg:block w-40 xl:w-64" />
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <LibrarySearch className="hidden lg:block w-40" />
               <NavLink
                 to="/search"
                 className={({ isActive }) =>
@@ -187,28 +189,18 @@ function Shell() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
                 </svg>
               </NavLink>
-              {isAdmin && version && (
-                <VersionBadge version={version} latestVersion={latestVersion} className="hidden lg:block" />
-              )}
-              {status?.authenticated && status.mode !== 'disabled' && (
-                <>
-                  {status.username && (
-                    <span className="hidden sm:inline text-xs text-fg-muted whitespace-nowrap" title={`${t('login.signedInAs')} ${status.username}`}>
-                      {status.username}
-                    </span>
-                  )}
-                  <button
-                    onClick={logout}
-                    className="hidden lg:block text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white transition-colors"
-                    title={status.username ? `${t('login.signedInAs')} ${status.username}` : t('login.signOut')}
-                  >
-                    {t('login.signOut')}
-                  </button>
-                </>
+              {(signedIn || (isAdmin && version)) && (
+                <AccountMenu
+                  className="hidden lg:block"
+                  username={signedIn ? status?.username : undefined}
+                  version={isAdmin && version ? version : undefined}
+                  latestVersion={latestVersion}
+                  onSignOut={signedIn ? logout : undefined}
+                />
               )}
               <button
                 onClick={() => setMenuOpen(open => !open)}
-                className="lg:hidden p-2 rounded-md text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-zinc-800 transition-colors"
+                className="xl:hidden p-2 rounded-md text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-zinc-800 transition-colors"
                 aria-label="Toggle menu"
               >
                 {menuOpen ? (
@@ -226,8 +218,10 @@ function Shell() {
         </div>
 
         {menuOpen && (
-          <div className="lg:hidden border-t border-slate-200 dark:border-zinc-800">
-            <div className="px-4 py-3 border-b border-slate-200/50 dark:border-zinc-800/50">
+          <div className="xl:hidden border-t border-slate-200 dark:border-zinc-800">
+            {/* From lg up the search, the icons and the account menu stay in
+                the header row, so the menu only carries the nav links. */}
+            <div className="lg:hidden px-4 py-3 border-b border-slate-200/50 dark:border-zinc-800/50">
               <LibrarySearch className="w-full" onNavigate={() => setMenuOpen(false)} />
             </div>
             <nav>
@@ -244,7 +238,7 @@ function Shell() {
               ))}
               <NavLink
                 to="/search"
-                className={mobileLinkClass}
+                className={args => `lg:hidden ${mobileLinkClass(args)}`}
                 onClick={() => setMenuOpen(false)}
               >
                 {t('nav.search')}
@@ -252,7 +246,7 @@ function Shell() {
               {isAdmin && (
                 <NavLink
                   to="/users"
-                  className={mobileLinkClass}
+                  className={args => `lg:hidden ${mobileLinkClass(args)}`}
                   onClick={() => setMenuOpen(false)}
                 >
                   {t('nav.users')}
@@ -260,17 +254,20 @@ function Shell() {
               )}
               <NavLink
                 to="/settings"
-                className={mobileLinkClass}
+                className={args => `lg:hidden ${mobileLinkClass(args)}`}
                 onClick={() => setMenuOpen(false)}
               >
                 {t('nav.settings')}
               </NavLink>
             </nav>
-            <div className="flex items-center justify-between px-4 py-2 border-t border-slate-200 dark:border-zinc-800">
+            <div className="lg:hidden flex items-center justify-between gap-3 px-4 py-2 border-t border-slate-200 dark:border-zinc-800">
+              {signedIn && status?.username && (
+                <span className="text-xs text-fg-muted truncate">{t('login.signedInAs')} {status.username}</span>
+              )}
               {isAdmin && version && (
                 <VersionBadge version={version} latestVersion={latestVersion} />
               )}
-              {status?.authenticated && status.mode !== 'disabled' && (
+              {signedIn && (
                 <button
                   onClick={logout}
                   className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white transition-colors"

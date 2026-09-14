@@ -4,6 +4,19 @@ All notable changes to Bindery are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com) and versions follow
 [Semantic Versioning](https://semver.org).
 
+## [v1.36.1] — 2026-09-14
+
+The header fits again
+
+v1.36.0 added a library search box to the header, and on most desktop screens the row stopped fitting. The logo, the page links and the search box touched each other, and the right side ran past the edge of the page, so the page scrolled sideways on common laptop widths. The header now fits at every width from a 360 pixel phone to a 1920 pixel monitor, checked in Chrome with no sideways scroll anywhere.
+
+### Changed
+- **Your name, the version and Sign out now sit behind one account icon** at the right of the header, with an amber dot on it when an update is available. On a phone they stay at the bottom of the menu, where they were.
+- **Between 1024 and 1279 pixels wide, the page links move into the menu**, while the library search, Search indexers, Users, Settings and the account icon stay in the header. Wider screens show everything in one row; phones are unchanged.
+
+### Fixed
+- **The header no longer overflows on desktop**: the row keeps a fixed gap between the logo, the page links and the right hand controls, and the search box keeps one width instead of growing on wide screens, which is what pushed the row past its container.
+
 ## [v1.36.0] — 2026-09-14
 
 One place to search and add, and a round of series fixes

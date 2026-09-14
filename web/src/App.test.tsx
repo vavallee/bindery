@@ -191,7 +191,7 @@ describe('App — /settings/:tab deep links', () => {
 describe('Shell — desktop navigation', () => {
   it('renders all 9 nav links in the desktop nav bar', () => {
     renderShell()
-    const desktopNav = document.querySelector('nav.hidden.lg\\:flex')
+    const desktopNav = document.querySelector('nav.hidden.xl\\:flex')
     expect(desktopNav).not.toBeNull()
     const links = desktopNav!.querySelectorAll('a')
     expect(links.length).toBe(9)
@@ -204,12 +204,12 @@ describe('Shell — desktop navigation', () => {
     expect(labels).toContain('Calendar')
   })
 
-  it('desktop nav has hidden lg:flex classes for responsive visibility', () => {
+  it('desktop nav shows only from xl, where the whole row fits', () => {
     renderShell()
-    const nav = document.querySelector('nav.hidden.lg\\:flex')
+    const nav = document.querySelector('nav.hidden.xl\\:flex')
     expect(nav).not.toBeNull()
     expect(nav!.className).toContain('hidden')
-    expect(nav!.className).toContain('lg:flex')
+    expect(nav!.className).toContain('xl:flex')
   })
 
   it('settings gear icon is in the desktop header (hidden on mobile)', () => {
@@ -225,28 +225,28 @@ describe('Shell — mobile navigation', () => {
     expect(screen.getByRole('button', { name: /toggle menu/i })).toBeInTheDocument()
   })
 
-  it('hamburger button has lg:hidden class', () => {
+  it('hamburger button hides from xl, when the nav is in the row', () => {
     renderShell()
     const btn = screen.getByRole('button', { name: /toggle menu/i })
-    expect(btn.className).toContain('lg:hidden')
+    expect(btn.className).toContain('xl:hidden')
   })
 
   it('mobile menu is hidden by default', () => {
     renderShell()
-    expect(document.querySelector('div.lg\\:hidden > nav')).toBeNull()
+    expect(document.querySelector('div.xl\\:hidden > nav')).toBeNull()
   })
 
   it('opens mobile menu when hamburger is clicked', () => {
     renderShell()
     fireEvent.click(screen.getByRole('button', { name: /toggle menu/i }))
-    const mobileNav = document.querySelector('div.lg\\:hidden > nav')
+    const mobileNav = document.querySelector('div.xl\\:hidden > nav')
     expect(mobileNav).not.toBeNull()
   })
 
   it('mobile menu contains all nav links including Settings', () => {
     renderShell()
     fireEvent.click(screen.getByRole('button', { name: /toggle menu/i }))
-    const mobileNav = document.querySelector('div.lg\\:hidden > nav')!
+    const mobileNav = document.querySelector('div.xl\\:hidden > nav')!
     const links = Array.from(mobileNav.querySelectorAll('a')).map(l => l.textContent)
     expect(links).toContain('Authors')
     expect(links).toContain('Import')
@@ -259,11 +259,11 @@ describe('Shell — mobile navigation', () => {
   it('closes mobile menu when a nav link is clicked', () => {
     renderShell()
     fireEvent.click(screen.getByRole('button', { name: /toggle menu/i }))
-    const mobileNav = document.querySelector('div.lg\\:hidden > nav')!
+    const mobileNav = document.querySelector('div.xl\\:hidden > nav')!
     expect(mobileNav).not.toBeNull()
 
     fireEvent.click(mobileNav.querySelector('a')!)
-    expect(document.querySelector('div.lg\\:hidden > nav')).toBeNull()
+    expect(document.querySelector('div.xl\\:hidden > nav')).toBeNull()
   })
 
   it('toggles hamburger icon between open/close SVG paths', () => {
