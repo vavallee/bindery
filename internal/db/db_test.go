@@ -1514,6 +1514,75 @@ func TestDownloadRepoRetryFailedClaimsOrphanedImport(t *testing.T) {
 	}
 }
 
+// TestDownloadRepoRetryFailedResetsPerGrabFields pins the columns a reused
+// row must not inherit from the grab it replaces (#2289). The owner is the
+// user whose grab it now is, and the import_path the scanner recorded for the
+// old files is cleared so Match to book cannot import from them. An unowned
+// grab stores NULL, exactly as Create does.
+func TestDownloadRepoRetryFailedResetsPerGrabFields(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewDownloadRepo(database)
+	users := NewUserRepo(database)
+	alice, err := users.Create(ctx, "alice", "h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := users.Create(ctx, "bob", "h2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dl := &models.Download{GUID: "per-grab-guid", Title: "Old", NZBURL: "https://example.com/old.nzb",
+		Status: models.StateImportBlocked, Protocol: "usenet", OwnerUserID: alice.ID}
+	if err := repo.Create(ctx, dl); err != nil {
+		t.Fatalf("create download: %v", err)
+	}
+	if err := repo.SetImportPath(ctx, dl.ID, "/downloads/Old"); err != nil {
+		t.Fatalf("set import path: %v", err)
+	}
+
+	claim := func(owner int64) {
+		t.Helper()
+		ok, err := repo.RetryFailed(ctx, &models.Download{ID: dl.ID, OwnerUserID: owner, Title: "New",
+			NZBURL: "https://example.com/new.nzb", Status: models.StateGrabbed, Protocol: "usenet"})
+		if err != nil || !ok {
+			t.Fatalf("RetryFailed: ok=%v err=%v", ok, err)
+		}
+	}
+
+	claim(bob.ID)
+	owner, _, err := repo.GetOwnerByID(ctx, dl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner != bob.ID {
+		t.Errorf("a reused row must belong to the new grabber (%d), got owner %d", bob.ID, owner)
+	}
+	got, err := repo.GetByID(ctx, dl.ID)
+	if err != nil || got == nil {
+		t.Fatalf("reload download: %v", err)
+	}
+	if got.ImportPath != "" {
+		t.Errorf("a reused row must not keep the old grab's import_path, got %q", got.ImportPath)
+	}
+
+	if err := repo.SetError(ctx, dl.ID, "send failed"); err != nil {
+		t.Fatalf("fail the download: %v", err)
+	}
+	claim(0)
+	if owner, _, err = repo.GetOwnerByID(ctx, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	if owner != 0 {
+		t.Errorf("an unowned grab must store NULL like Create, got owner %d", owner)
+	}
+}
+
 func TestDownloadRepoResetImportRetry(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {

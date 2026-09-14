@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
@@ -400,4 +401,197 @@ func regrabDownloadClient(t *testing.T, clients *db.DownloadClientRepo) (string,
 		t.Fatalf("create client: %v", err)
 	}
 	return indexerSrv.URL, adds
+}
+
+// TestQueueGrab_ReusedRowBelongsToNewGrabber pins the owner half of a reuse
+// (#2289). With tenancy on, alice imports a release and then deletes the book;
+// bob grabs the same release into his own book. The grab reuses alice's row,
+// and unless the reuse writes the owner the row stays hers: it shows in her
+// queue and not his, he gets 404 acting on his own download, and she can
+// delete it, which removes his torrent from the client.
+func TestQueueGrab_ReusedRowBelongsToNewGrabber(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	h, database, downloads, clients, books, ctx := queueFixture(t)
+	indexerURL, adds := regrabDownloadClient(t, clients)
+	alice, bob := regrabUsers(t, database)
+	as := func(r *http.Request, uid int64) *http.Request {
+		return r.WithContext(auth.WithUserRole(auth.WithUserID(r.Context(), uid), "user"))
+	}
+
+	aliceBook := regrabOwnedBook(t, database, books, "alice", alice)
+	row := &models.Download{
+		GUID: "guid-2289-owner", BookID: &aliceBook.ID, OwnerUserID: alice,
+		Title: "Old Release", NZBURL: indexerURL + "/old.nzb",
+		Status: models.StateImported, Protocol: "usenet",
+	}
+	if err := downloads.Create(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.Delete(ctx, aliceBook.ID); err != nil {
+		t.Fatalf("delete book: %v", err)
+	}
+
+	bobBook := regrabOwnedBook(t, database, books, "bob", bob)
+	body := `{"guid":"guid-2289-owner","nzbUrl":"` + indexerURL + `/new.nzb","title":"New Release","bookId":` +
+		strconv.FormatInt(bobBook.ID, 10) + `}`
+	rec := httptest.NewRecorder()
+	h.Grab(rec, as(httptest.NewRequest(http.MethodPost, "/api/v1/queue/grab", bytes.NewBufferString(body)), bob))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("bob's grab: got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := adds.Load(); n != 1 {
+		t.Fatalf("expected one send to the download client, got %d", n)
+	}
+	owner, exists, err := downloads.GetOwnerByID(ctx, row.ID)
+	if err != nil || !exists {
+		t.Fatalf("owner lookup: exists=%v err=%v", exists, err)
+	}
+	if owner != bob {
+		t.Errorf("the reused row must belong to bob (%d), whose grab it now is; owner is %d", bob, owner)
+	}
+
+	queueIDs := func(uid int64) map[int64]bool {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.List(rec, as(httptest.NewRequest(http.MethodGet, "/api/v1/queue", nil), uid))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list as user %d: got %d: %s", uid, rec.Code, rec.Body.String())
+		}
+		var payload struct {
+			Items []struct {
+				ID int64 `json:"id"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		ids := map[int64]bool{}
+		for _, it := range payload.Items {
+			ids[it.ID] = true
+		}
+		return ids
+	}
+	if !queueIDs(bob)[row.ID] {
+		t.Error("bob's queue must list the download his grab created")
+	}
+	if queueIDs(alice)[row.ID] {
+		t.Error("alice's queue must not list bob's download")
+	}
+
+	id := strconv.FormatInt(row.ID, 10)
+	rec = httptest.NewRecorder()
+	h.RetryImport(rec, withURLParam(as(httptest.NewRequest(http.MethodPost, "/api/v1/queue/"+id+"/retry-import", nil), bob), "id", id))
+	if rec.Code == http.StatusNotFound {
+		t.Errorf("bob must be able to act on his own download; Retry import answered 404: %s", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	h.Delete(rec, withURLParam(as(httptest.NewRequest(http.MethodDelete, "/api/v1/queue/"+id, nil), alice), "id", id))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("alice must not be able to delete bob's download; got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got, err := downloads.GetByID(ctx, row.ID); err != nil || got == nil {
+		t.Fatalf("bob's download must survive alice's delete attempt: %v", err)
+	}
+}
+
+// TestQueueGrab_ReuseWithoutIdentityKeepsOwner covers the one grab that has no
+// better owner to write. An API key caller carries no user, and with no book
+// there is nothing to inherit from, so the reused row keeps the owner it had.
+// Writing 0 would store NULL, and the strict owner scope on the queue would
+// then hide the row from the user who can see it today.
+func TestQueueGrab_ReuseWithoutIdentityKeepsOwner(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	h, database, downloads, clients, _, ctx := queueFixture(t)
+	indexerURL, _ := regrabDownloadClient(t, clients)
+	alice, _ := regrabUsers(t, database)
+
+	failed := &models.Download{
+		GUID: "guid-2289-apikey", OwnerUserID: alice, Title: "Old Release",
+		NZBURL: indexerURL + "/old.nzb", Status: models.StateFailed, Protocol: "usenet",
+	}
+	if err := downloads.Create(ctx, failed); err != nil {
+		t.Fatal(err)
+	}
+	rec := regrabPost(h, `{"guid":"guid-2289-apikey","nzbUrl":"`+indexerURL+`/new.nzb","title":"New Release"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("grab: got %d: %s", rec.Code, rec.Body.String())
+	}
+	owner, _, err := downloads.GetOwnerByID(ctx, failed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner != alice {
+		t.Errorf("a grab with no user and no book must keep the row's owner (%d), got %d", alice, owner)
+	}
+}
+
+// TestQueueGrab_ReuseClearsStaleImportPath: a reused row must not carry the
+// import_path the scanner recorded for the previous grab's files. Match to
+// book imports straight from import_path, so a stale one would import the old
+// release folder, or whatever sits there now, instead of the new download.
+func TestQueueGrab_ReuseClearsStaleImportPath(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status models.DownloadState
+	}{
+		{"importBlocked", models.StateImportBlocked},
+		{"orphaned import", models.StateImported},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, downloads, clients, _, ctx := queueFixture(t)
+			indexerURL, _ := regrabDownloadClient(t, clients)
+			old := &models.Download{
+				GUID: "guid-2289-path", Title: "Old Release", NZBURL: indexerURL + "/old.nzb",
+				Status: tc.status, Protocol: "usenet",
+			}
+			if err := downloads.Create(ctx, old); err != nil {
+				t.Fatal(err)
+			}
+			if err := downloads.SetImportPath(ctx, old.ID, "/downloads/Old Release"); err != nil {
+				t.Fatal(err)
+			}
+
+			rec := regrabPost(h, `{"guid":"guid-2289-path","nzbUrl":"`+indexerURL+`/new.nzb","title":"New Release"}`)
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("grab: got %d: %s", rec.Code, rec.Body.String())
+			}
+			got, err := downloads.GetByGUID(ctx, "guid-2289-path")
+			if err != nil || got == nil {
+				t.Fatalf("reload download: %v", err)
+			}
+			if got.ID != old.ID {
+				t.Fatalf("expected the grab to reuse row %d, got %d", old.ID, got.ID)
+			}
+			if got.ImportPath != "" {
+				t.Errorf("the new grab must not inherit the old import_path, got %q", got.ImportPath)
+			}
+		})
+	}
+}
+
+// regrabUsers creates two users and returns their ids.
+func regrabUsers(t *testing.T, database *sql.DB) (alice, bob int64) {
+	t.Helper()
+	users := db.NewUserRepo(database)
+	a, err := users.Create(context.Background(), "alice", "h1")
+	if err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	b, err := users.Create(context.Background(), "bob", "h2")
+	if err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+	return a.ID, b.ID
+}
+
+// regrabOwnedBook is regrabBook with the book stamped to owner.
+func regrabOwnedBook(t *testing.T, database *sql.DB, books *db.BookRepo, slug string, owner int64) *models.Book {
+	t.Helper()
+	book := regrabBook(t, database, books, slug)
+	if _, err := database.ExecContext(context.Background(), "UPDATE books SET owner_user_id=? WHERE id=?", owner, book.ID); err != nil {
+		t.Fatalf("stamp book owner: %v", err)
+	}
+	book.OwnerUserID = owner
+	return book
 }

@@ -990,6 +990,14 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 			grabOwner = b.OwnerUserID
 		}
 	}
+	// A reused row takes the new grab's owner, since it is now that user's
+	// download (#2289). The exception is a grab that names nobody: no user
+	// identity and no book to inherit from. Writing 0 there would store NULL
+	// and hide the row from its owner under the strict queue scope, so it
+	// keeps the owner it had.
+	if grabOwner == 0 && existing != nil {
+		grabOwner = existing.OwnerUserID
+	}
 	// Re-attach the indexer apikey the search/queue responses strip out
 	// (SEC: the shared credential must not reach non-admin clients). The client
 	// hands back an apikey-less download URL plus the indexer id; sign it

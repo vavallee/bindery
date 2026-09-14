@@ -146,6 +146,15 @@ func (r *DownloadRepo) Create(ctx context.Context, d *models.Download) error {
 // in the WHERE clause rather than only in the caller, so an imported row that
 // still has its book can never be claimed, whatever the caller decided.
 //
+// Every per grab column is rewritten or reset, so the claimed row carries
+// nothing of the grab it replaces. Two of them were missed until #2289:
+// owner_user_id takes d's owner, because the row is now that user's download
+// (keeping the old owner showed it in their queue instead, 404ed the new
+// grabber's own actions on it, and let the old owner delete it and the torrent
+// with it); and import_path is cleared, because Match to book imports straight
+// from it and would pick up the previous grab's files. guid is the reuse key;
+// edition_id and indexer_flags are the caller's to pass.
+//
 // Keep this in sync with api.regrabbable, which gates the caller.
 func (r *DownloadRepo) RetryFailed(ctx context.Context, d *models.Download) (bool, error) {
 	now := time.Now().UTC()
@@ -164,7 +173,9 @@ func (r *DownloadRepo) RetryFailed(ctx context.Context, d *models.Download) (boo
 		    protocol=?,
 		    quality=?,
 		    indexer_flags=?,
+		    owner_user_id=?,
 		    error_message='',
+		    import_path='',
 		    added_at=?,
 		    grabbed_at=NULL,
 		    completed_at=NULL,
@@ -173,7 +184,7 @@ func (r *DownloadRepo) RetryFailed(ctx context.Context, d *models.Download) (boo
 		WHERE id=? AND (status IN (?, ?) OR (status=? AND book_id IS NULL))`,
 		d.BookID, d.EditionID, d.IndexerID, d.DownloadClientID,
 		d.Title, d.NZBURL, d.Size, models.StateGrabbed, d.Protocol,
-		d.Quality, d.IndexerFlags, now, d.ID, models.StateFailed, models.StateImportBlocked,
+		d.Quality, d.IndexerFlags, downloadOwnerArg(d.OwnerUserID), now, d.ID, models.StateFailed, models.StateImportBlocked,
 		models.StateImported)
 	if err != nil {
 		return false, fmt.Errorf("retry failed download: %w", err)
@@ -194,6 +205,7 @@ func (r *DownloadRepo) RetryFailed(ctx context.Context, d *models.Download) (boo
 	d.CompletedAt = nil
 	d.ImportedAt = nil
 	d.ImportRetryCount = 0
+	d.ImportPath = ""
 	return true, nil
 }
 
