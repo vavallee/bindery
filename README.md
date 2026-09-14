@@ -138,6 +138,8 @@ Clean-room Go rewrite, modern React UI, MIT-licensed, actively developed.
 
 **Metadata sources** — all stable, documented, public APIs. No Goodreads scraping.
 
+Repeated provider searches use a bounded five-minute cache, and identical in-flight searches and edition lookups share requests. See [metadata request caching](docs/DEPLOYMENT.md#metadata-request-caching).
+
 | Source | Auth | Used for |
 |--------|------|----------|
 | [OpenLibrary](https://openlibrary.org) | None | Default primary: authors, books, editions, covers, ISBN |

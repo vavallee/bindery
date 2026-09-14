@@ -539,6 +539,44 @@ Versions before the #2564 fix stored each Calibre-imported book's cover as the l
 
 **Outbound ABS requests:** ABS probes and imports send `User-Agent: bindery/<version>` to the configured ABS server. Development or unversioned builds use `bindery/dev`.
 
+### Metadata request caching
+
+Author and book searches through the metadata aggregator reuse successful
+provider responses for five minutes, including empty results. The search cache
+is limited to 1,000 entries per aggregator; expired entries and then the
+soonest-expiring entries are replaced as it fills. Search keys include the
+provider instance, operation, exact query (including search syntax/options),
+and any live credential scope. Ordinary searches, canonical matching, and
+cover enrichment share these provider responses without changing their ranking
+or matching rules.
+
+Concurrent identical search, author profile, book, or edition misses share one
+provider fetch. Hardcover throttling uses the remaining callers’ scheduling
+deadlines to avoid reserving slots none can use. Each caller can cancel
+independently; the upstream fetch is canceled when its last caller leaves. Failures are not cached as empty results, and returned values
+are copied so callers cannot modify another request's results. Book responses
+are cached before enrichment; enrichment snapshots also track live credential
+scopes and input metadata, and are not saved after search-provider failures.
+Cover-only providers retain their best-effort empty-result behavior. Raw and
+derived author catalogues also include provider scopes; a catalogue fetch uses
+one configuration snapshot across its primary, supplemental, and cover reads.
+
+Edition responses retain the existing 24-hour in-memory metadata cache and
+10,000-entry shared limit. After provider routing, `hc:dune` and an explicit
+Hardcover lookup of `dune` share an entry. Numeric-looking slugs, case-distinct
+slugs, and different providers remain distinct; Hardcover still tries the slug
+before its numeric-ID fallback. Live Hardcover token changes select a different
+cache namespace, and a fetch uses one token across all pages. Old namespaces
+expire under the same bounds. Direct provider calls remain uncached for callers
+that explicitly fetch fresh metadata.
+
+Caches are discarded on restart. Local edition rows can come from partial
+imports or embedded book metadata and have no complete-provider-snapshot
+freshness marker, so they are not used to satisfy these upstream lookups.
+Persistent edition caching would require tracking both completeness and
+provider/account freshness separately from local book refresh timestamps.
+These caches do not implement daily quota accounting or pause/resume.
+
 ### Enhanced Hardcover series data deployment note
 
 **Schema:** enhanced series data uses migration `035`, which creates `series_hardcover_links` and backfills links for existing series whose foreign ID already points at Hardcover. Take a normal SQLite backup before upgrading, then let Bindery apply the migration on startup.

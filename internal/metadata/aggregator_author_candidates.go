@@ -27,7 +27,7 @@ func (a *Aggregator) SearchAuthorCandidates(ctx context.Context, query string) (
 		if provider == nil {
 			continue
 		}
-		authors, err := provider.SearchAuthors(ctx, query)
+		authors, err := a.searchProviderAuthors(ctx, provider, query)
 		if err != nil {
 			if errors.Is(err, ErrProviderNotConfigured) {
 				continue

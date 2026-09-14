@@ -2,7 +2,10 @@ package metadata
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/isbnutil"
@@ -249,8 +252,42 @@ func enrichBookCacheKey(book *models.Book) string {
 	return "enrich-title:" + title + "|" + author
 }
 
+// A snapshot contains post-enrichment values, so it is reusable only for the
+// same input. Raw metadata may expire or change accounts before this entry.
+// Include matching and cover-lookup inputs as well as every retained field.
+func enrichmentInputKey(book *models.Book) string {
+	author := ""
+	if book.Author != nil {
+		author = book.Author.Name
+	}
+	var isbns []string
+	for _, edition := range book.Editions {
+		isbn := ""
+		if edition.ISBN13 != nil && *edition.ISBN13 != "" {
+			isbn = *edition.ISBN13
+		} else if edition.ISBN10 != nil {
+			isbn = *edition.ISBN10
+		}
+		isbns = append(isbns, isbn)
+	}
+	input := fmt.Sprintf("%q|%q|%q|%q|%g|%d|%q|%q", book.Title, author,
+		book.Description, book.ImageURL, book.AverageRating, book.RatingsCount, book.Genres, isbns)
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(input)))
+}
+
 func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
+	ctx, scope := a.bindCacheProviders(ctx)
 	cacheKey := enrichBookCacheKey(book)
+	if cacheKey != "" {
+		cacheKey += ":" + scope + ":" + enrichmentInputKey(book)
+	}
+	// Bind live configuration once for both the snapshot key and its fetches.
+	enrichers := make([]Provider, len(a.enrichers))
+	scopes := make([]string, len(a.enrichers))
+	for i, p := range a.enrichers {
+		enrichers[i], scopes[i] = resolveCacheProvider(ctx, p)
+
+	}
 	if cacheKey != "" {
 		if cached, ok := a.cache.get(cacheKey); ok {
 			snap := cached.(enrichmentSnapshot)
@@ -259,9 +296,11 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 		}
 	}
 
-	for _, enricher := range a.enrichers {
-		enriched, err := enricher.SearchBooks(ctx, book.Title)
+	cacheable := true
+	for i, enricher := range enrichers {
+		enriched, err := a.searchBoundProviderBooks(ctx, enricher, scopes[i], book.Title)
 		if err != nil {
+			cacheable = false
 			slog.Debug("enrichment failed", "provider", enricher.Name(), "error", err)
 			continue
 		}
@@ -313,13 +352,13 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 		a.fillCoverFromCoverProviders(ctx, book)
 	}
 
-	if cacheKey != "" {
+	if cacheKey != "" && cacheable && ctx.Err() == nil {
 		a.cache.set(cacheKey, enrichmentSnapshot{
 			description:   book.Description,
 			imageURL:      book.ImageURL,
 			averageRating: book.AverageRating,
 			ratingsCount:  book.RatingsCount,
-			genres:        book.Genres,
+			genres:        slices.Clone(book.Genres),
 		})
 	}
 }
@@ -348,7 +387,7 @@ func applyEnrichmentSnapshot(book *models.Book, snap enrichmentSnapshot) {
 	// same source genres; replacing is correct and a no-op when no Hardcover
 	// match ever contributed.
 	if len(snap.genres) > 0 {
-		book.Genres = snap.genres
+		book.Genres = slices.Clone(snap.genres)
 	}
 }
 
@@ -462,6 +501,7 @@ func pickEnrichmentMatch(candidates []models.Book, target *models.Book) *models.
 // provider (e.g. DNB) returns no cover URL in its bibliographic data.
 func (a *Aggregator) fillCoverFromCoverProviders(ctx context.Context, book *models.Book) {
 	for _, p := range a.providers() {
+		p, _ = resolveCacheProvider(ctx, p)
 		cp, ok := p.(CoverProvider)
 		if !ok {
 			continue
