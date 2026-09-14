@@ -132,6 +132,9 @@ export default function AuthorDetailPage() {
   // back to an empty set — every book then lands in the Standalone group.
   useEffect(() => {
     if (!groupBySeries || loadedSeriesAuthorId.current === authorId) return
+    // Drop the previous author's series before fetching, so neither the
+    // in flight window nor a failed fetch groups these books against them.
+    setAuthorSeries([])
     let cancelled = false
     api.listAuthorSeries(authorId)
       .then(s => { if (!cancelled) { setAuthorSeries(s); loadedSeriesAuthorId.current = authorId } })
