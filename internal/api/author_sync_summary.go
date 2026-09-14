@@ -62,3 +62,58 @@ func (s *authorSyncSummaries) forget(authorID int64) {
 	defer s.mu.Unlock()
 	delete(s.byAuthor, authorID)
 }
+
+// authorSyncsRunning counts the catalogue syncs in flight per author. The
+// manual Refresh uses it to refuse a second sync for an author whose first is
+// still running, and the author Get handler reports it so the page can wait
+// for the sync a click started (#2601). A count rather than a set because the
+// add, bulk and scheduled paths can overlap a sync for the same author, and
+// one of them finishing must not clear the other's mark.
+type authorSyncsRunning struct {
+	mu       sync.Mutex
+	byAuthor map[int64]int
+}
+
+// tryStart counts a sync for authorID only when none is running, and reports
+// whether it did.
+func (s *authorSyncsRunning) tryStart(authorID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.byAuthor[authorID] > 0 {
+		return false
+	}
+	s.startLocked(authorID)
+	return true
+}
+
+// start counts a sync for authorID whether or not another is running.
+func (s *authorSyncsRunning) start(authorID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.startLocked(authorID)
+}
+
+func (s *authorSyncsRunning) startLocked(authorID int64) {
+	if s.byAuthor == nil {
+		s.byAuthor = make(map[int64]int)
+	}
+	s.byAuthor[authorID]++
+}
+
+// done ends one counted sync for authorID.
+func (s *authorSyncsRunning) done(authorID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.byAuthor[authorID] <= 1 {
+		delete(s.byAuthor, authorID)
+		return
+	}
+	s.byAuthor[authorID]--
+}
+
+// running reports whether any sync for authorID is in flight.
+func (s *authorSyncsRunning) running(authorID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.byAuthor[authorID] > 0
+}

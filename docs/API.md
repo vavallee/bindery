@@ -39,7 +39,7 @@ POST   /api/v1/author/bulk                        bulk add/update
 GET    /api/v1/author/{id}                        author detail
 PUT    /api/v1/author/{id}                        update monitored / metadata profile
 DELETE /api/v1/author/{id}                        remove (with optional file delete)
-POST   /api/v1/author/{id}/refresh                re-pull profile and works, skipping the metadata cache
+POST   /api/v1/author/{id}/refresh                re-pull profile and works, skipping the metadata cache; 409 while a sync for that author is running
 GET    /api/v1/author/{id}/catalogue-reconciliation
                                                     preview stale metadata-only Wanted rows
 POST   /api/v1/author/{id}/catalogue-reconciliation
@@ -104,6 +104,12 @@ distinguishable from an author who wrote that few books:
 It is held in memory, not stored, so it is absent after a restart until the
 author is synced again. `skippedLanguageSample` is capped at a few titles; the
 counts are exact.
+
+The same response carries `"syncInProgress": true` while a catalogue sync for
+the author is running in this process, and omits it otherwise. The author page
+polls it after **Refresh metadata** to show the result once the sync is done,
+and `POST /api/v1/author/{id}/refresh` answers **409 Conflict** while it is set
+instead of starting a second sync (#2601).
 
 `POST /api/v1/author` responses include a `providerMismatch` object when the
 linked record routes its catalogue syncs to a provider other than the

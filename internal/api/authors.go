@@ -90,6 +90,11 @@ type AuthorHandler struct {
 	// detail endpoint can report it instead of leaving the drops to a Debug
 	// log line nobody reads (#1889).
 	syncSummaries authorSyncSummaries
+
+	// runningSyncs counts the catalogue syncs in flight per author, so a
+	// manual Refresh can refuse to start a second one and the author page can
+	// tell when the one it started has finished (#2601).
+	runningSyncs authorSyncsRunning
 }
 
 func NewAuthorHandler(authors *db.AuthorRepo, aliases *db.AuthorAliasRepo, books *db.BookRepo, series *db.SeriesRepo, meta *metadata.Aggregator, settings *db.SettingsRepo, profiles *db.MetadataProfileRepo, searcher BookSearcher) *AuthorHandler {
@@ -459,6 +464,9 @@ func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// needed: this hangs off the author the ownership guard above already
 	// cleared, so a non-owner gets the 404 and never reaches the counts.
 	author.LastSync = h.syncSummaries.get(id)
+	// And whether a sync is running now, which the page polls after a manual
+	// Refresh so it can show the result instead of the state before it (#2601).
+	author.SyncInProgress = h.runningSyncs.running(id)
 
 	proxyAuthorImages(author)
 	cleanAuthorDescription(author)
@@ -693,12 +701,18 @@ type catalogueSyncOptions struct {
 	onlyForeignID string
 
 	// refreshFromProvider marks the manual per author Refresh Metadata action.
-	// The author's profile and catalogue lookups skip the aggregator's 24 hour
-	// cache (metadata.WithCacheBypass) so the user sees what the provider says
-	// now, not what it said yesterday (#2601). Bulk refresh, Refresh all,
-	// relink and the add flows leave it off: they span many authors, and the
-	// cache is what keeps a repeat run from refetching the whole library.
+	// The author's profile, catalogue and Audible lookups skip the 24 hour
+	// metadata cache (metadata.WithCacheBypass) so the user sees what the
+	// provider says now, not what it said yesterday (#2601). Bulk refresh,
+	// Refresh all, relink and the add flows leave it off: they span many
+	// authors, and the cache is what keeps a repeat run from refetching the
+	// whole library.
 	refreshFromProvider bool
+
+	// syncClaimed marks a run its caller already counted in runningSyncs.
+	// The manual Refresh claims the author before it answers, so a second
+	// click sees the first; fetchAuthorBooks counts every other run itself.
+	syncClaimed bool
 }
 
 func (h *AuthorHandler) fetchAuthorBooksAsync(author *models.Author, opts catalogueSyncOptions) {
@@ -714,9 +728,12 @@ func (h *AuthorHandler) fetchAuthorBooksAsync(author *models.Author, opts catalo
 		if !h.jobs.Go("author-catalogue-sync", func(ctx context.Context) {
 			h.fetchAuthorBooks(ctx, &snapshot, opts)
 		}) {
-			// Go is a documented no-op once the group is shutting down. Nothing
-			// to roll back here (no running flag is published), but the drop is
-			// worth a line: the author was created and its catalogue was not.
+			// Go is a documented no-op once the group is shutting down. The
+			// only state to roll back is a Refresh's running mark, and the drop
+			// is worth a line: the author was created and its catalogue was not.
+			if opts.syncClaimed {
+				h.runningSyncs.done(snapshot.ID)
+			}
 			slog.Warn("author catalogue sync not started: server is shutting down",
 				"author", snapshot.Name, "foreignId", snapshot.ForeignID)
 		}
@@ -1500,7 +1517,16 @@ func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	// It is also the one refresh that asks the provider for current data
 	// rather than a cached copy up to 24 hours old: the user clicked it because
 	// something changed upstream (#2601).
-	h.fetchAuthorBooksAsync(author, catalogueSyncOptions{mediaType: h.resolveDefaultMediaType(r.Context()), discovery: true, refreshFromProvider: true})
+	//
+	// One sync per author at a time: five quick clicks used to start five
+	// concurrent full syncs, each one past the cache. The page waits on the
+	// running sync instead, and a second click gets 409 like the other
+	// "already running" endpoints (Refresh all, imports).
+	if !h.runningSyncs.tryStart(author.ID) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "a refresh for this author is already running"})
+		return
+	}
+	h.fetchAuthorBooksAsync(author, catalogueSyncOptions{mediaType: h.resolveDefaultMediaType(r.Context()), discovery: true, refreshFromProvider: true, syncClaimed: true})
 	writeJSON(w, http.StatusAccepted, map[string]string{"message": "refresh started"})
 }
 
@@ -1810,11 +1836,20 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// Calibre re-link, no sync summary — and it is exempt from the
 	// catalogue-sync heuristics that may veto a work (#1612).
 	singleWork := opts.onlyForeignID != ""
-	// A manual Refresh Metadata reads the author's profile and catalogue
-	// past the metadata cache (#2601). Only those two lookups get metaCtx: the
-	// Calibre re-link below resolves an identity the cache has not seen, and
-	// the aggregator stops the bypass at the author lookups, so editions,
-	// covers and ISBN matches keep their cache.
+	// Count this run in runningSyncs for as long as it lasts (#2601). The
+	// manual Refresh claimed its run before answering; every other caller is
+	// counted here. The ID is copied because the sync can rewrite author.
+	if syncID := author.ID; syncID != 0 {
+		if !opts.syncClaimed {
+			h.runningSyncs.start(syncID)
+		}
+		defer h.runningSyncs.done(syncID)
+	}
+	// A manual Refresh Metadata reads the author's profile, catalogue and
+	// Audible catalogue past the metadata cache (#2601). Only those lookups
+	// get metaCtx: the Calibre re-link below resolves an identity the cache
+	// has not seen, and the aggregator stops the bypass at the author lookups,
+	// so editions, covers and ISBN matches keep their cache.
 	metaCtx := ctx
 	if opts.refreshFromProvider {
 		metaCtx = metadata.WithCacheBypass(ctx)
@@ -1905,7 +1940,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// requested work is identified by foreign ID, which Audible's catalogue
 	// cannot supply.
 	if opts.onlyForeignID == "" && (mediaType == models.MediaTypeAudiobook || mediaType == models.MediaTypeBoth) {
-		if audibleBooks, err := h.meta.GetAuthorAudiobooks(ctx, author.Name); err != nil {
+		if audibleBooks, err := h.meta.GetAuthorAudiobooks(metaCtx, author.Name); err != nil {
 			slog.Warn("audible author lookup failed", "author", author.Name, "error", err)
 		} else if len(audibleBooks) > 0 {
 			slog.Debug("audible author lookup supplemented catalogue", "author", author.Name, "count", len(audibleBooks))

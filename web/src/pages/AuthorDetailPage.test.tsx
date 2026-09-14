@@ -1,9 +1,9 @@
 import { useEffect } from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import AuthorDetailPage from './AuthorDetailPage'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import type { Author, Book } from '../api/client'
 import '../i18n'
 import { acceptConfirm, cancelConfirm, confirmDialog } from '../test-utils'
@@ -1097,5 +1097,109 @@ describe('AuthorDetailPage — Previous/Next navigation (#2548, frontend-only)',
     await screen.findByText('Patrick Rothfuss')
 
     expect(screen.queryByText('Update failed')).not.toBeInTheDocument()
+  })
+})
+
+// #2601: Refresh answers 202 and the sync runs in the background. The page used
+// to re-read the author and books as soon as the 202 landed, which showed the
+// state from before the click, and nothing looked again afterwards.
+describe('AuthorDetailPage: manual refresh', () => {
+  const oldBooks = [makeBook({ id: 1, title: 'Ancillary Justice', status: 'imported' })]
+  const newBooks = [
+    makeBook({ id: 1, title: 'Ancillary Justice', status: 'imported' }),
+    makeBook({ id: 2, title: 'Translation State', status: 'wanted' }),
+  ]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    installLocalStorageMock()
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([])
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  // Serves the author and books the way the server does: the pre-refresh state
+  // with syncInProgress set until the sync finishes at finishAt, then the new
+  // state. Call after vi.useFakeTimers so Date.now is the fake clock.
+  function serveSyncFinishingAt(finishAt: number) {
+    const synced = () => Date.now() >= finishAt
+    vi.mocked(api.getAuthor).mockImplementation(async () =>
+      synced() ? { ...author, description: 'New bio' } : { ...author, description: 'Old bio', syncInProgress: true },
+    )
+    vi.mocked(api.listAllBooks).mockImplementation(async () => (synced() ? newBooks : oldBooks))
+  }
+
+  async function advance(ms: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms)
+    })
+  }
+
+  it('waits for the background sync to finish and then shows its result', async () => {
+    renderAuthorDetailPage(oldBooks, 'grid', { description: 'Old bio' })
+    await screen.findByRole('heading', { name: 'Ancillary Justice' })
+
+    vi.useFakeTimers()
+    serveSyncFinishingAt(Date.now() + 3000)
+    vi.mocked(api.refreshAuthor).mockResolvedValue(undefined)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await advance(0)
+    expect(api.refreshAuthor).toHaveBeenCalledWith(42)
+    expect(screen.getByRole('button', { name: 'Refreshing…' })).toBeDisabled()
+
+    // First poll: the sync is still running, so nothing changes on the page.
+    await advance(2000)
+    expect(screen.queryByRole('heading', { name: 'Translation State' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Refreshing…' })).toBeDisabled()
+
+    // Second poll: the sync is done, so the page shows what it wrote.
+    await advance(2000)
+    expect(screen.getByRole('heading', { name: 'Translation State' })).toBeInTheDocument()
+    expect(screen.getByText('New bio')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+
+    // And it stops polling.
+    const calls = vi.mocked(api.getAuthor).mock.calls.length
+    await advance(10000)
+    expect(vi.mocked(api.getAuthor).mock.calls.length).toBe(calls)
+  })
+
+  it('gives up waiting after a minute and shows whatever the server has', async () => {
+    renderAuthorDetailPage(oldBooks, 'grid', { description: 'Old bio' })
+    await screen.findByRole('heading', { name: 'Ancillary Justice' })
+
+    vi.useFakeTimers()
+    serveSyncFinishingAt(Date.now() + 10 * 60 * 1000)
+    vi.mocked(api.refreshAuthor).mockResolvedValue(undefined)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await advance(58000)
+    expect(screen.getByRole('button', { name: 'Refreshing…' })).toBeDisabled()
+    await advance(2000)
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+
+    const calls = vi.mocked(api.getAuthor).mock.calls.length
+    await advance(10000)
+    expect(vi.mocked(api.getAuthor).mock.calls.length).toBe(calls)
+  })
+
+  it('waits on a sync that was already running instead of reporting the 409', async () => {
+    renderAuthorDetailPage(oldBooks, 'grid', { description: 'Old bio' })
+    await screen.findByRole('heading', { name: 'Ancillary Justice' })
+
+    vi.useFakeTimers()
+    serveSyncFinishingAt(Date.now() + 1000)
+    vi.mocked(api.refreshAuthor).mockRejectedValue(
+      new ApiError(409, { error: 'a refresh for this author is already running' }, 'Conflict'),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await advance(2000)
+    expect(screen.getByRole('heading', { name: 'Translation State' })).toBeInTheDocument()
+    expect(screen.queryByText(/already running/)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
   })
 })

@@ -423,8 +423,23 @@ no books at all is populated, which is how bulk **Refresh metadata** repairs
 an import that landed an author but no catalogue.) When a refresh declines to
 add works, the author page says how many and why.
 
-**Refresh metadata** on a single author always asks the provider for current
-data, so a bio, photo or new book added upstream shows up on the first click.
+**Refresh metadata** on a single author asks the metadata providers for
+current data: the bio, the photo, the book list and, when the default media
+type is audiobook or both, the Audible catalogue. The page waits for the
+refresh to finish and then shows the result, so a bio, photo or new book added
+upstream shows up on the first click. The page waits up to a minute; a refresh
+that takes longer carries on in the background, and reloading the page later
+shows it. Clicking Refresh again while a refresh for that author is still
+running waits for that one instead of starting another.
+
+A refresh never leaves an author worse off than the copy Bindery already had.
+If a provider fails, or returns only part of the catalogue because a request
+failed along the way, Bindery keeps the copy it fetched in the last 24 hours
+and adds any new books the partial answer did include. If the Hardcover
+supplement fails, the refresh uses that earlier copy of the catalogue as it
+is, because Hardcover is what identifies the box sets and omnibus editions to
+leave out.
+
 **Refresh all metadata**, the bulk Refresh action and the scheduled refresh
 reuse what Bindery fetched in the last 24 hours instead, which keeps a whole
 library refresh from hammering the providers; a change upstream reaches them

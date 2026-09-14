@@ -36,6 +36,9 @@ export interface Author {
   // What the last catalogue sync did with the provider's works (#1889).
   // Absent until the server has synced this author since it last started.
   lastSync?: AuthorSyncSummary
+  // True while a catalogue sync for this author is running on the server. Set
+  // on GET /author/{id} only; the page polls it after a manual Refresh (#2601).
+  syncInProgress?: boolean
   // Present on add-flow responses when the linked record syncs from a
   // provider other than the configured primary (#2237).
   providerMismatch?: AuthorProviderMismatch

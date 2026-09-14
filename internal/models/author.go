@@ -72,6 +72,11 @@ type Author struct {
 	// an in-process record, so it is absent until this process has synced the
 	// author at least once.
 	LastSync *AuthorSyncSummary `json:"lastSync,omitempty"`
+	// SyncInProgress reports that a catalogue sync for this author is running
+	// in this process, so the author page can wait for the one a manual
+	// Refresh started and then show its result (#2601). Set by the author Get
+	// handler only.
+	SyncInProgress bool `json:"syncInProgress,omitempty"`
 
 	// Transient: populated from the metadata provider during add/refresh; not stored in DB.
 	// Used to seed author_aliases so non-latin primary names get latin-script alternates.

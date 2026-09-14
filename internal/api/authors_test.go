@@ -120,6 +120,9 @@ type stubMetaProvider struct {
 	// reached the provider from one the aggregator cache answered (#2601).
 	// Buffered by the test; a full channel drops the report, never blocks.
 	getAuthorBypass chan bool
+	// getAuthorGate, when non-nil, blocks every GetAuthor call until it is
+	// closed, after the getAuthorBypass signal. Holds a catalogue sync open.
+	getAuthorGate chan struct{}
 }
 
 func (p *stubMetaProvider) Name() string {
@@ -140,6 +143,9 @@ func (p *stubMetaProvider) GetAuthor(ctx context.Context, _ string) (*models.Aut
 		case p.getAuthorBypass <- metadata.CacheBypassed(ctx):
 		default:
 		}
+	}
+	if p.getAuthorGate != nil {
+		<-p.getAuthorGate
 	}
 	return p.author, nil
 }
@@ -8436,5 +8442,118 @@ func TestAuthorRefresh_ManualRefreshBypassesMetadataCache(t *testing.T) {
 	}
 	if n := len(stub.getAuthorBypass); n != 0 {
 		t.Fatalf("ordinary GetAuthor after refresh reached the provider (%d extra calls)", n)
+	}
+}
+
+// TestAuthorRefresh_RefusesSecondRefreshWhileSyncRuns: five clicks on Refresh
+// used to start five concurrent full syncs, each one bypassing the metadata
+// cache (#2601 review). A click while a sync for that author is running is
+// refused with 409, the author payload says a sync is running so the page can
+// wait for it, and a click after it finishes starts a new one.
+func TestAuthorRefresh_RefusesSecondRefreshWhileSyncRuns(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL2601A", Name: "Ann Leckie", SortName: "Leckie, Ann",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	gate := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(gate) }) }
+	stub := &stubMetaProvider{
+		works: []models.Book{{ForeignID: "OL2601W1", Title: "Ancillary Justice", SortTitle: "ancillary justice", Language: "eng",
+			Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"}},
+		author:          &models.Author{ForeignID: "OL2601A", Name: "Ann Leckie", Description: "bio", MetadataProvider: "openlibrary"},
+		getAuthorBypass: make(chan bool, 8),
+		getAuthorGate:   gate,
+	}
+	group := jobs.NewGroup(context.Background())
+	defer group.Shutdown(5 * time.Second) // runs before database.Close
+	defer release()                       // runs before Shutdown, so a held sync can drain
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(stub), nil, profileRepo, nil).WithJobs(group)
+
+	id := strconv.FormatInt(author.ID, 10)
+	click := func() *httptest.ResponseRecorder {
+		t.Helper()
+		req := withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/author/"+id+"/refresh", nil), "id", id)
+		rec := httptest.NewRecorder()
+		h.Refresh(rec, req)
+		return rec
+	}
+	syncing := func() bool {
+		t.Helper()
+		req := withURLParam(httptest.NewRequest(http.MethodGet, "/api/v1/author/"+id, nil), "id", id)
+		rec := httptest.NewRecorder()
+		h.Get(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET author = %d: %s", rec.Code, rec.Body.String())
+		}
+		var got models.Author
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode author: %v", err)
+		}
+		return got.SyncInProgress
+	}
+	waitForProvider := func() {
+		t.Helper()
+		select {
+		case <-stub.getAuthorBypass:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the refresh sync never reached the provider")
+		}
+	}
+
+	if rec := click(); rec.Code != http.StatusAccepted {
+		t.Fatalf("first Refresh = %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	waitForProvider() // the first sync is now held inside GetAuthor
+
+	rec := click()
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("second Refresh while the first sync runs = %d, want 409: a second concurrent sync was started", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "already running") {
+		t.Fatalf("409 body = %s, want a message saying a refresh is already running", rec.Body.String())
+	}
+	select {
+	case <-stub.getAuthorBypass:
+		t.Fatal("the refused Refresh still reached the provider")
+	default:
+	}
+	if !syncing() {
+		t.Fatal("author payload does not report the running sync; the page cannot tell when it finishes")
+	}
+
+	release()
+	deadline := time.Now().Add(5 * time.Second)
+	for syncing() {
+		if time.Now().After(deadline) {
+			t.Fatal("author payload still reports a running sync after it finished")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if rec := click(); rec.Code != http.StatusAccepted {
+		t.Fatalf("Refresh after the first sync finished = %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	waitForProvider()
+	deadline = time.Now().Add(5 * time.Second)
+	for syncing() {
+		if time.Now().After(deadline) {
+			t.Fatal("the third sync never finished")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
