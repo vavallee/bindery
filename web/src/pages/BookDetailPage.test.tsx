@@ -1459,6 +1459,13 @@ describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () =>
     expect(screen.getByLabelText('Next book')).toBeInTheDocument()
   })
 
+  it('hides Next at the last position and shows only Previous', async () => {
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [41, 42], index: 1 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.getByLabelText('Previous book')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Next book')).toBeNull()
+  })
+
   it('hides the controls for a single-book list (both ends null)', async () => {
     renderBookDetailPage({ pathname: '/book/42', state: { ids: [42], index: 0 } })
     await screen.findByRole('heading', { name: 'The Final Empire' })
