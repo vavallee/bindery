@@ -207,38 +207,60 @@ func TestScanLibrary_AuthorFolderFixesSwappedFilenameWithoutBookFolder(t *testin
 	}
 }
 
-// TestApplyLayout pins the precedence the library scan and both Manual Import
-// lookups share (#754, #2331). authoritative is the scan's library root, where
-// the folders name author and title outright; the lookups pass false because
-// their root can be any folder.
-func TestApplyLayout(t *testing.T) {
+// TestFlipByLayout pins when a filename may be read the other way round
+// (#2331). ok only offers the flip: "It - Stephen King.epub" in It/ offers one
+// too, and it is the catalogue check in every caller that refuses it. An
+// ambiguous author match never flips, since the flip is automatic.
+func TestFlipByLayout(t *testing.T) {
 	cases := []struct {
-		name                     string
-		title, author            string
-		layoutAuthor, layoutBook string
-		authoritative            bool
-		wantTitle, wantAuthor    string
+		name                  string
+		title, author, folder string
+		wantOK                bool
+		wantTitle, wantAuthor string
 	}{
-		{"flat layout keeps the filename", "Evil Thirst", "Christopher Pike", "", "", false, "Evil Thirst", "Christopher Pike"},
-		{"backwards filename under its author folder", "Christopher Pike", "Evil Thirst", "Christopher Pike", "", false, "Evil Thirst", "Christopher Pike"},
-		{"inverted backwards filename", "Pike, Christopher", "Evil Thirst", "Christopher Pike", "", false, "Evil Thirst", "Christopher Pike"},
-		{"filename already agrees", "Evil Thirst", "Christopher Pike", "Christopher Pike", "", false, "Evil Thirst", "Christopher Pike"},
-		{"unconfirmed folder does not beat the filename author", "Evil Thirst", "Christopher Pike", "Horror", "", false, "Evil Thirst", "Christopher Pike"},
-		{"folder fills a missing author", "Evil Thirst", "", "Christopher Pike", "", false, "Evil Thirst", "Christopher Pike"},
-		{"book folder fills a missing title", "", "", "Christopher Pike", "Evil Thirst", false, "Evil Thirst", "Christopher Pike"},
-		{"lookup keeps the filename title over a book folder", "Evil Thirst", "", "Christopher Pike", "Books", false, "Evil Thirst", "Christopher Pike"},
-		{"a title that is not the folder author is not swapped", "Christine", "Stephen King", "Christopher Pike", "", false, "Christine", "Stephen King"},
-		{"scan folder beats a disagreeing filename author", "Evil Thirst", "Someone Else", "Christopher Pike", "", true, "Evil Thirst", "Christopher Pike"},
-		{"scan book folder beats the filename title", "Wrong", "Whoever", "Christopher Pike", "Evil Thirst", true, "Evil Thirst", "Christopher Pike"},
-		{"scan backwards filename with no book folder", "Cal Newport", "Deep Work", "Cal Newport", "", true, "Deep Work", "Cal Newport"},
-		{"scan flat layout keeps the filename", "Deep Work", "Cal Newport", "", "", true, "Deep Work", "Cal Newport"},
+		{"flat layout", "Evil Thirst", "Christopher Pike", "", false, "", ""},
+		{"backwards filename under its author folder", "Christopher Pike", "Evil Thirst", "Christopher Pike", true, "Evil Thirst", "Christopher Pike"},
+		{"inverted backwards filename", "Pike, Christopher", "Evil Thirst", "Christopher Pike", true, "Evil Thirst", "Christopher Pike"},
+		{"surname folder", "Pike", "Evil Thirst", "Pike", true, "Evil Thirst", "Pike"},
+		{"filename already agrees", "Evil Thirst", "Christopher Pike", "Christopher Pike", false, "", ""},
+		{"no filename author", "Evil Thirst", "", "Christopher Pike", false, "", ""},
+		{"title is not the folder author", "Christine", "Stephen King", "Christopher Pike", false, "", ""},
+		{"book folder offers a flip the catalogue must refuse", "It", "Stephen King", "It", true, "Stephen King", "It"},
+		{"ambiguous name match never flips", "Stanley Paul", "Face the Music", "Paul Stanley", false, "", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := applyLayout(ParsedFile{Title: c.title, Author: c.author}, c.layoutAuthor, c.layoutBook, c.authoritative)
-			if got.Title != c.wantTitle || got.Author != c.wantAuthor {
-				t.Errorf("applyLayout = %q / %q, want %q / %q", got.Title, got.Author, c.wantTitle, c.wantAuthor)
+			got, ok := flipByLayout(ParsedFile{Title: c.title, Author: c.author}, c.folder)
+			if ok != c.wantOK {
+				t.Fatalf("flipByLayout ok = %v, want %v", ok, c.wantOK)
+			}
+			if ok && (got.Title != c.wantTitle || got.Author != c.wantAuthor) {
+				t.Errorf("flipByLayout = %q / %q, want %q / %q", got.Title, got.Author, c.wantTitle, c.wantAuthor)
 			}
 		})
+	}
+}
+
+// TestScanLibrary_FilenameNamingItsBookFolderIsNotFlipped is the review
+// finding on #2331: in a library of flat book folders, "It - Stephen King.epub"
+// in It/ has a title side that names the first folder, exactly like a
+// backwards "Author - Title" name in an author folder. The parse as it is
+// reconciles, so the flip must never be taken.
+func TestScanLibrary_FilenameNamingItsBookFolderIsNotFlipped(t *testing.T) {
+	libDir := t.TempDir()
+	s, books, authors, ctx := scannerFixture(t, libDir)
+	book := seedLayoutBook(t, books, authors, ctx, "Stephen King", "It")
+
+	p := filepath.Join(libDir, "It", "It - Stephen King.epub")
+	writeFileAt(t, p)
+
+	s.ScanLibrary(ctx)
+
+	got, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FilePath != p {
+		t.Errorf("want FilePath=%q, got %q", p, got.FilePath)
 	}
 }

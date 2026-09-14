@@ -2741,44 +2741,29 @@ func authorTitleFromLayout(path string, roots ...string) (author, title string, 
 	return "", "", false
 }
 
-// applyLayout reconciles a filename parse with the author and book folders
-// authorTitleFromLayout found for the same path. It is the one place that
-// decides whether the folder or the filename names the author, shared by the
-// library scan and both Manual Import lookups: the bulk import once decided
-// it the other way round from the scan and undid #754 there (#2331).
+// flipByLayout returns the other reading of a two sided filename whose title
+// side names the author folder it sits in. ParseFilename reads a bare "X - Y"
+// as "Title - Author", so a Readarr named "Christopher Pike - Evil Thirst.epub"
+// in Christopher Pike/ parses with author and title swapped (#754, #2331). The
+// flipped reading takes the other side as the title and the folder as the
+// author.
 //
-// authoritative is true for the library scan, whose root is the library root
-// and whose <Author>/<Book>/ convention names both outright (#754). A Manual
-// Import root is wherever the user pointed it, so the first folder under it is
-// not necessarily an author ("Horror/Title - Author.epub") and needs
-// corroborating; lookups pass false and let the catalogue corroborate the
-// folder later (narrowByAuthor).
-//
-// In order:
-//  1. No author folder (a flat layout): the filename is the only evidence.
-//  2. The filename's title side names the author folder: it is an
-//     "Author - Title" name that ParseFilename read backwards, so the other
-//     side is the title and the folder is the author. The filename itself
-//     confirms the folder, so this holds in every mode.
-//  3. Authoritative, or the filename has no author: the folder names it.
-//  4. Otherwise the filename's author stands.
-//
-// The book folder then replaces the title when authoritative, and otherwise
-// only fills a title the filename lacks.
-func applyLayout(parsed ParsedFile, layoutAuthor, layoutTitle string, authoritative bool) ParsedFile {
-	if layoutAuthor == "" {
-		return parsed
+// ok only says a flip is possible, never that it is right. A book folder
+// always names the title side of a correct "Title - Author" name
+// (It/It - Stephen King.epub), so the folder alone cannot tell the two apart.
+// Every caller therefore matches the parse as it is first, and takes this
+// reading only when that finds nothing in the catalogue and this one finds a
+// book. The name comparison is confidentAuthorMatch because the flip is an
+// automatic decision, and an ambiguous author match never auto matches.
+func flipByLayout(parsed ParsedFile, layoutAuthor string) (ParsedFile, bool) {
+	if layoutAuthor == "" || parsed.Title == "" || parsed.Author == "" {
+		return parsed, false
 	}
-	switch {
-	case parsed.Author != "" && lookupAuthorMatch(parsed.Title, layoutAuthor) && !lookupAuthorMatch(parsed.Author, layoutAuthor):
-		parsed.Title, parsed.Author = parsed.Author, layoutAuthor
-	case authoritative || parsed.Author == "":
-		parsed.Author = layoutAuthor
+	if !confidentAuthorMatch(parsed.Title, layoutAuthor) || confidentAuthorMatch(parsed.Author, layoutAuthor) {
+		return parsed, false
 	}
-	if layoutTitle != "" && (authoritative || parsed.Title == "") {
-		parsed.Title = layoutTitle
-	}
-	return parsed
+	parsed.Title, parsed.Author = parsed.Author, layoutAuthor
+	return parsed, true
 }
 
 // ErrScanAlreadyRunning is returned by StartScan when a library scan (manual
@@ -3200,6 +3185,40 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		return true
 	}
 
+	// reconcileByTitle runs the fuzzy title tier for one reading of a file,
+	// returning true once a book is claimed.
+	reconcileByTitle := func(path, cleanPath, detectedFmt, title, author, layoutAuthor string) bool {
+		// normalizeTitle strips leading articles and inverts comma-suffix
+		// sort form ("Title, A" → "title") so librarian-sorted folders
+		// reconcile correctly (#513). Hoisted: computed once per file.
+		normParsed := normalizeTitle(title)
+		// authorMatch is part of the title-tier predicate. Resolving the
+		// matching authors first lets the candidate list be built from just
+		// their books (booksByAuthor), iterated in library order. A nil set
+		// means the parsed author is empty or initials only, so authorMatch
+		// accepts any author and every wanted book is a candidate.
+		authorSet, _ := resolveAuthors(author, layoutAuthor)
+		if authorSet == nil {
+			for i := range wantedBooks {
+				if tryReconcileTitle(&wantedBooks[i], path, cleanPath, normParsed, detectedFmt) {
+					return true
+				}
+			}
+			return false
+		}
+		titleCand = titleCand[:0]
+		for id := range authorSet {
+			titleCand = append(titleCand, booksByAuthor[id]...)
+		}
+		slices.Sort(titleCand) // restore library order across authors
+		for _, idx := range titleCand {
+			if tryReconcileTitle(&wantedBooks[idx], path, cleanPath, normParsed, detectedFmt) {
+				return true
+			}
+		}
+		return false
+	}
+
 	for _, path := range foundFiles {
 		// Files already registered, and sibling tracks inside a tracked
 		// audiobook folder, are counted instead of silently skipped so
@@ -3245,9 +3264,25 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// assume a single filename order (#754).
 		parsed := ParseFilename(path)
 		var layoutTitle, layoutAuthor string
+		// flipped is the filename read the other way round, for an
+		// "Author - Title" name in an author folder with no book folder below
+		// it. The title tier tries it last, and only for an author the
+		// catalogue knows (flipByLayout, #2331). A book folder names the title
+		// outright, so there is nothing to flip under one.
+		var flipped ParsedFile
+		var canFlip bool
 		if a, t, ok := authorTitleFromLayout(path, s.libraryDir, s.audiobookDir); ok {
-			layoutAuthor, layoutTitle = a, t
-			parsed = applyLayout(parsed, a, t, true)
+			if t == "" {
+				flipped, canFlip = flipByLayout(parsed, a)
+			}
+			if a != "" {
+				parsed.Author = a
+				layoutAuthor = a
+			}
+			if t != "" {
+				parsed.Title = t
+				layoutTitle = t
+			}
 		}
 
 		// Prefer embedded audio tags over filename and folder parsing for
@@ -3260,6 +3295,11 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 					"path", path, "error", err)
 				tagReadFailed++
 			} else {
+				// Tags describe the file itself, so once they name a title or
+				// an author there is no filename reading left to flip.
+				if tags.Title != "" || tags.Author != "" {
+					canFlip = false
+				}
 				// Multi-part audiobooks tag each track with its chapter name
 				// ("04 - Sinister Grey Mists..."). When the folder hierarchy
 				// already gave a real book title, don't let a per-chapter tag
@@ -3315,36 +3355,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			}
 		}
 		if !matched && parsed.Title != "" {
-			// normalizeTitle strips leading articles and inverts comma-suffix
-			// sort form ("Title, A" → "title") so librarian-sorted folders
-			// reconcile correctly (#513). Hoisted: computed once per file.
-			normParsed := normalizeTitle(parsed.Title)
-			// authorMatch is part of the title-tier predicate. Resolving the
-			// matching authors first lets the candidate list be built from just
-			// their books (booksByAuthor), iterated in library order. A nil set
-			// means the parsed author is empty/initials-only — authorMatch then
-			// accepts any author, so every wanted book is a candidate.
-			authorSet, _ := resolveAuthors(parsed.Author, layoutAuthor)
-			if authorSet == nil {
-				for i := range wantedBooks {
-					if tryReconcileTitle(&wantedBooks[i], path, cleanPath, normParsed, detectedFmt) {
-						matched = true
-						break
-					}
-				}
-			} else {
-				titleCand = titleCand[:0]
-				for id := range authorSet {
-					titleCand = append(titleCand, booksByAuthor[id]...)
-				}
-				slices.Sort(titleCand) // restore library order across authors
-				for _, idx := range titleCand {
-					if tryReconcileTitle(&wantedBooks[idx], path, cleanPath, normParsed, detectedFmt) {
-						matched = true
-						break
-					}
-				}
-			}
+			matched = reconcileByTitle(path, cleanPath, detectedFmt, parsed.Title, parsed.Author, layoutAuthor)
 		}
 
 		if !matched && s.series != nil && parsed.Series != "" && parsed.SeriesNumber != "" {
@@ -3371,6 +3382,18 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 						matched = true
 					}
 				}
+			}
+		}
+
+		// Last, the #2331 flip: an "Author - Title" filename in its author
+		// folder reads as a title that is the author's own name. Only after the
+		// parse as it is has found nothing, and only for a folder author the
+		// catalogue knows, since It/It - Stephen King.epub in a flat book folder
+		// looks the same and reconciles above.
+		if !matched && canFlip && len(matchingAuthors(flipped.Author)) > 0 {
+			if matched = reconcileByTitle(path, cleanPath, detectedFmt, flipped.Title, flipped.Author, layoutAuthor); matched {
+				slog.Debug("library scan: reconciled a backwards filename in its author folder",
+					"path", path, "title", flipped.Title, "author", flipped.Author)
 			}
 		}
 

@@ -35,15 +35,19 @@ type LookupResult struct {
 // Directories are treated as audiobook folders; their format is returned as
 // "audiobook" regardless of content.
 //
-// A path under the library or audiobook root also reads its folder layout, the
-// way the library scan and the bulk import do, so a Readarr named
-// "Author - Title" file in <Author>/<Book>/ matches here too (#754, #2331).
+// The match is the filename's alone. The one exception is #2331: a path under
+// the library or audiobook root that finds nothing as parsed is tried again
+// read the other way round when its title side names the author folder, and
+// that reading counts only if the catalogue confirms it (flipByLayout). The
+// folder never fills or overrides the author here, because the first folder
+// under a library root is as often "ebooks" or "Fiction" as an author.
 func (s *Scanner) Lookup(ctx context.Context, path string) (LookupResult, error) {
 	return s.lookup(ctx, path, s.libraryDir, s.audiobookDir)
 }
 
-// lookup is Lookup with the layout roots made explicit. roots anchor
-// authorTitleFromLayout; with none the filename is the only signal.
+// lookup is Lookup with the layout roots made explicit. roots only anchor the
+// author folder flipByLayout compares against; with none the filename is the
+// only signal, which is what download matching wants.
 func (s *Scanner) lookup(ctx context.Context, path string, roots ...string) (LookupResult, error) {
 	parsed := ParseFilename(path)
 	base := LookupResult{
@@ -62,8 +66,8 @@ func (s *Scanner) lookup(ctx context.Context, path string, roots ...string) (Loo
 	return lookupWith(path, books, authors, roots...), nil
 }
 
-// LookupBatch runs the same catalogue match as Lookup over many paths while
-// loading the books and authors catalogue exactly ONCE for the whole batch,
+// LookupBatch runs Lookup's filename match over many paths while loading the
+// books and authors catalogue exactly ONCE for the whole batch,
 // instead of re-querying both full tables per path. Bulk Folder Import points
 // this at a folder with hundreds of entries; the old per-item Lookup issued
 // hundreds of full-table scans in a single synchronous request and blew past
@@ -71,6 +75,10 @@ func (s *Scanner) lookup(ctx context.Context, path string, roots ...string) (Loo
 // input paths. It returns an error only if the one-time catalogue load fails,
 // in which case the caller should fail the whole scan loudly rather than
 // swallow it per item.
+//
+// It takes no layout roots, so unlike Lookup it never tries the folder
+// confirmed reading of a backwards filename (#2331). LookupBatchLayout is the
+// batch that reads folders.
 func (s *Scanner) LookupBatch(ctx context.Context, paths []string) ([]LookupResult, error) {
 	books, err := s.books.List(ctx)
 	if err != nil {
@@ -163,18 +171,11 @@ func (s *Scanner) LookupBatchLayout(ctx context.Context, root string, paths []st
 const lookupBatchConcurrency = 8
 
 // lookupUnit matches one bulk-import unit against the pre-loaded catalogue using
-// the precedence described on LookupBatchLayout: embedded metadata first, then
-// the filename as corrected by the folder layout (applyLayout). See that method
-// for the full rationale.
+// the embedded-metadata → folder-layout → filename precedence described on
+// LookupBatchLayout. See that method for the full rationale.
 func lookupUnit(root, path string, books []models.Book, authorNames map[int64]string) LookupResult {
 	parsed := ParseFilename(path)
 	layoutAuthor, layoutTitle, _ := authorTitleFromLayout(path, root)
-	// Until #2331 this was a plain embedded > filename > folder precedence, so
-	// any " - " filename outranked the folder and a backwards "Author - Title"
-	// name made the author folder useless. applyLayout is the rule the library
-	// scan uses, with the folder corroborated rather than assumed because a
-	// bulk import root is not necessarily a library root.
-	parsed = applyLayout(parsed, layoutAuthor, layoutTitle, false)
 	var embedded EpubMetadata
 	if ep := firstEpubIn(path); ep != "" {
 		if meta, err := ReadEpubMetadata(ep); err == nil {
@@ -184,14 +185,35 @@ func lookupUnit(root, path string, books []models.Book, authorNames map[int64]st
 		}
 	}
 
-	// Effective signals: embedded metadata, then the layout corrected filename.
-	effTitle := firstNonEmpty(embedded.Title, parsed.Title)
-	effAuthor := firstNonEmpty(embedded.Author, parsed.Author)
+	result := matchUnit(parsed, embedded, layoutAuthor, layoutTitle, books, authorNames, lookupAuthorMatch)
+	// A Readarr named "Author - Title" file parses backwards, and until #2331
+	// the filename's author outranked the author folder, so it found nothing.
+	// Its flipped reading is tried only now, after the parse as it is has
+	// failed, because a book folder under the root looks exactly the same
+	// (It/It - Stephen King.epub) and that parse is already right.
+	if result.Match == "none" {
+		if flipped, ok := flipByLayout(parsed, layoutAuthor); ok {
+			if alt := matchUnit(flipped, embedded, layoutAuthor, layoutTitle, books, authorNames, confidentAuthorMatch); alt.Match != "none" {
+				result = alt
+			}
+		}
+	}
+	result.DetectedFormat = detectUnitFormat(path)
+	return result
+}
+
+// matchUnit is lookupUnit's catalogue match for one reading of the filename.
+// authorMatch narrows the title matches by the effective author: the parse as
+// it is keeps lookupAuthorMatch, and the flipped reading takes
+// confidentAuthorMatch because taking it is an automatic decision.
+func matchUnit(parsed ParsedFile, embedded EpubMetadata, layoutAuthor, layoutTitle string, books []models.Book, authorNames map[int64]string, authorMatch func(parsed, catalogue string) bool) LookupResult {
+	// Effective signals in precedence order: embedded > filename > folder layout.
+	effTitle := firstNonEmpty(embedded.Title, parsed.Title, layoutTitle)
+	effAuthor := firstNonEmpty(embedded.Author, parsed.Author, layoutAuthor)
 
 	result := LookupResult{
-		DetectedFormat: detectUnitFormat(path),
-		ParsedTitle:    effTitle,
-		ParsedAuthor:   effAuthor,
+		ParsedTitle:  effTitle,
+		ParsedAuthor: effAuthor,
 	}
 
 	// Tier 1: ASIN exact match (filename only — EPUBs rarely carry an ASIN).
@@ -222,7 +244,7 @@ func lookupUnit(root, path string, books []models.Book, authorNames map[int64]st
 			titled = append(titled, books[i])
 		}
 	}
-	matches, effAuthor := narrowByAuthor(titled, effAuthor, layoutAuthor, authorNames)
+	matches, effAuthor := narrowByAuthor(titled, effAuthor, authorMatch, layoutAuthor, authorNames)
 	result.ParsedAuthor = effAuthor
 
 	switch len(matches) {
@@ -259,33 +281,34 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-// narrowByAuthor filters title matched books to those by author and returns
-// them with the author that did the narrowing. With no author the candidates
-// pass through untouched.
+// narrowByAuthor filters title matched books to those whose catalogue author
+// matches author under match, and returns them with the author that did the
+// narrowing. With no author the candidates pass through untouched.
 //
-// When author rules out every candidate but the folder author keeps some, the
-// folder wins: the catalogue has just confirmed it is an author folder. This is
-// the library scan's resolveAuthors fallback (#1956) for the Manual Import
-// lookups, and it covers a wrong author that applyLayout could not see through,
-// whether it came from the filename or from embedded metadata (#2331).
-func narrowByAuthor(candidates []models.Book, author, layoutAuthor string, authorNames map[int64]string) ([]models.Book, string) {
+// When author rules out every candidate but layoutAuthor keeps some, the folder
+// wins: the catalogue has just confirmed it is an author folder. This is the
+// library scan's resolveAuthors fallback (#1956) for the bulk import, and it
+// covers a wrong author from the filename or from embedded metadata (#2331).
+// That override is an automatic decision, so it takes confidentAuthorMatch
+// whatever match is. An empty layoutAuthor turns it off.
+func narrowByAuthor(candidates []models.Book, author string, match func(parsed, catalogue string) bool, layoutAuthor string, authorNames map[int64]string) ([]models.Book, string) {
 	if author == "" {
 		return candidates, author
 	}
-	by := func(name string) []models.Book {
+	by := func(name string, match func(parsed, catalogue string) bool) []models.Book {
 		var out []models.Book
 		for _, b := range candidates {
-			if lookupAuthorMatch(name, authorNames[b.AuthorID]) {
+			if match(name, authorNames[b.AuthorID]) {
 				out = append(out, b)
 			}
 		}
 		return out
 	}
-	if m := by(author); len(m) > 0 {
+	if m := by(author, match); len(m) > 0 {
 		return m, author
 	}
 	if layoutAuthor != "" && !strings.EqualFold(layoutAuthor, author) {
-		if m := by(layoutAuthor); len(m) > 0 {
+		if m := by(layoutAuthor, confidentAuthorMatch); len(m) > 0 {
 			return m, layoutAuthor
 		}
 	}
@@ -362,18 +385,35 @@ func detectUnitFormat(path string) string {
 // N+1 that stalled large scans past the server WriteTimeout (issue #1473). The
 // match logic is identical to Lookup's.
 //
-// roots, when given, anchor the folder layout exactly as for the bulk import
-// (applyLayout, narrowByAuthor); with none the filename is the only signal.
+// roots, when given, anchor the author folder for the #2331 flipped reading,
+// which is tried only when the filename as parsed finds nothing and is kept
+// only when it finds something (flipByLayout).
 func lookupWith(path string, books []models.Book, authors []models.Author, roots ...string) LookupResult {
 	parsed := ParseFilename(path)
-	layoutAuthor, layoutTitle, _ := authorTitleFromLayout(path, roots...)
-	parsed = applyLayout(parsed, layoutAuthor, layoutTitle, false)
-	detectedFormat := lookupDetectFormat(path)
+	authorNames := make(map[int64]string, len(authors))
+	for _, a := range authors {
+		authorNames[a.ID] = a.Name
+	}
 
+	result := lookupParsed(parsed, books, authorNames, lookupAuthorMatch)
+	if result.Match == "none" {
+		layoutAuthor, _, _ := authorTitleFromLayout(path, roots...)
+		if flipped, ok := flipByLayout(parsed, layoutAuthor); ok {
+			if alt := lookupParsed(flipped, books, authorNames, confidentAuthorMatch); alt.Match != "none" {
+				result = alt
+			}
+		}
+	}
+	result.DetectedFormat = lookupDetectFormat(path)
+	return result
+}
+
+// lookupParsed is lookupWith's catalogue match for one reading of a filename:
+// ASIN first, then title narrowed by author under authorMatch.
+func lookupParsed(parsed ParsedFile, books []models.Book, authorNames map[int64]string, authorMatch func(parsed, catalogue string) bool) LookupResult {
 	result := LookupResult{
-		DetectedFormat: detectedFormat,
-		ParsedTitle:    parsed.Title,
-		ParsedAuthor:   parsed.Author,
+		ParsedTitle:  parsed.Title,
+		ParsedAuthor: parsed.Author,
 	}
 
 	if parsed.Title == "" && parsed.ASIN == "" {
@@ -393,19 +433,13 @@ func lookupWith(path string, books []models.Book, authors []models.Author, roots
 	}
 
 	// Tiers 2+: title match with optional author filter.
-	authorNames := make(map[int64]string, len(authors))
-	for _, a := range authors {
-		authorNames[a.ID] = a.Name
-	}
-
 	var titled []models.Book
 	for _, b := range books {
 		if titleMatch(b.Title, parsed.Title) {
 			titled = append(titled, b)
 		}
 	}
-	matches, author := narrowByAuthor(titled, parsed.Author, layoutAuthor, authorNames)
-	result.ParsedAuthor = author
+	matches, _ := narrowByAuthor(titled, parsed.Author, authorMatch, "", authorNames)
 
 	switch len(matches) {
 	case 0:
@@ -668,25 +702,37 @@ func lookupDetectFormat(path string) string {
 // "Nck Lane" both still reach "Nick Lane", and "Tolkien" now reaches
 // "J.R.R. Tolkien", which the 0.80 score never did.
 func lookupAuthorMatch(parsed, catalogue string) bool {
+	return lookupAuthorKind(parsed, catalogue) != textutil.AuthorMatchNone
+}
+
+// confidentAuthorMatch is lookupAuthorMatch without the ambiguous band. The
+// #2331 flipped reading and the folder override in narrowByAuthor decide on
+// their own which author a file belongs to, and textutil.MatchAuthorName's
+// contract is that an ambiguous pairing never auto matches.
+func confidentAuthorMatch(parsed, catalogue string) bool {
+	switch lookupAuthorKind(parsed, catalogue) {
+	case textutil.AuthorMatchExact, textutil.AuthorMatchFuzzyAuto:
+		return true
+	}
+	return false
+}
+
+// lookupAuthorKind classifies parsed against catalogue for lookupAuthorMatch
+// and confidentAuthorMatch. The comma inversions count as exact.
+func lookupAuthorKind(parsed, catalogue string) textutil.AuthorMatchKind {
 	pNorm := strings.ToLower(strings.TrimSpace(parsed))
 	cNorm := strings.ToLower(strings.TrimSpace(catalogue))
 	if pNorm == "" || cNorm == "" {
-		return false
+		return textutil.AuthorMatchNone
 	}
-	if pNorm == cNorm {
-		return true
-	}
-	if invertAuthorName(pNorm) == cNorm {
-		return true
-	}
-	if invertAuthorName(cNorm) == pNorm {
-		return true
+	if pNorm == cNorm || invertAuthorName(pNorm) == cNorm || invertAuthorName(cNorm) == pNorm {
+		return textutil.AuthorMatchExact
 	}
 	// MatchAuthorName also catches the pairs a raw Jaro-Winkler score is far
 	// too low to reach: transliterated diacritics in particular, where
 	// "Boell, Heinrich" against "Heinrich Böll" scores 0.441 because every
 	// character after the shared prefix differs. See internal/textutil/fold.go.
-	return textutil.MatchAuthorName(parsed, catalogue).Kind != textutil.AuthorMatchNone
+	return textutil.MatchAuthorName(parsed, catalogue).Kind
 }
 
 // invertAuthorName converts "Last, First" to "first last".

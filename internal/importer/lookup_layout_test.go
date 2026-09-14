@@ -275,10 +275,10 @@ func TestLookupBatchLayout_FilenameAuthorWhenFolderIsNotAnAuthor(t *testing.T) {
 }
 
 // TestLookup_FolderAuthorBeatsBackwardsFilenameInLibrary covers the single item
-// Manual Import lookup for #2331. It used the filename alone, so a Readarr named
+// Manual Import lookup for #2331. It uses the filename alone, so a Readarr named
 // file inside the library's <Author>/<Book>/ tree could never match there
-// either. A path under the library root now reads its layout the way the bulk
-// import does.
+// either. When that finds nothing, a path under the library root now tries the
+// flipped reading, and keeps it because the catalogue confirms it.
 func TestLookup_FolderAuthorBeatsBackwardsFilenameInLibrary(t *testing.T) {
 	t.Parallel()
 	libDir := t.TempDir()
@@ -298,5 +298,131 @@ func TestLookup_FolderAuthorBeatsBackwardsFilenameInLibrary(t *testing.T) {
 	}
 	if res.ParsedTitle != "Evil Thirst" || res.ParsedAuthor != "Christopher Pike" {
 		t.Errorf("parsed = %q / %q, want Evil Thirst / Christopher Pike", res.ParsedTitle, res.ParsedAuthor)
+	}
+}
+
+// TestLookupBatchLayout_BookFolderIsNotFlipped is the review finding on #2331:
+// a bulk import pointed at one author's folder sees book folders first, and a
+// correct "Title - Author" name has a title side that names its book folder,
+// just as a backwards name names its author folder. Both matched before #2331
+// and must still match as parsed, never flipped.
+func TestLookupBatchLayout_BookFolderIsNotFlipped(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name          string
+		author, title string
+		rel           []string
+	}{
+		{"book folder", "Christopher Pike", "Evil Thirst", []string{"Evil Thirst", "Evil Thirst - Christopher Pike.epub"}},
+		{"short title", "Stephen King", "It", []string{"It", "It - Stephen King.epub"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			s, books, authors, ctx := scannerFixture(t, t.TempDir())
+			book := seedLayoutBook(t, books, authors, ctx, c.author, c.title)
+
+			root := t.TempDir()
+			p := filepath.Join(append([]string{root}, c.rel...)...)
+			writeFileAt(t, p)
+
+			res, err := s.LookupBatchLayout(ctx, root, []string{p})
+			if err != nil {
+				t.Fatalf("LookupBatchLayout: %v", err)
+			}
+			if res[0].Match != "confident" || res[0].Book == nil || res[0].Book.ID != book.ID {
+				t.Fatalf("match = %q book = %v, want confident id=%d (parsed %q / %q)",
+					res[0].Match, res[0].Book, book.ID, res[0].ParsedTitle, res[0].ParsedAuthor)
+			}
+			if res[0].ParsedTitle != c.title || res[0].ParsedAuthor != c.author {
+				t.Errorf("parsed = %q / %q, want %q / %q", res[0].ParsedTitle, res[0].ParsedAuthor, c.title, c.author)
+			}
+		})
+	}
+}
+
+// TestLookup_SingleFileMatchesAsBefore pins the single file Manual Import
+// lookup to its pre #2331 behaviour. It matches on the filename alone, so a
+// first folder under the library root that is a book folder, a category or a
+// misfiled author never enters the match. An earlier draft of #2331 read the
+// folder as the author here, and every one of these went from confident to no
+// match.
+func TestLookup_SingleFileMatchesAsBefore(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name          string
+		author, title string
+		rel           []string
+		wantAuthor    string
+	}{
+		{"flat book folder", "Christopher Pike", "Evil Thirst", []string{"Evil Thirst", "Evil Thirst - Christopher Pike.epub"}, "Christopher Pike"},
+		{"flat book folder, short title", "Stephen King", "It", []string{"It", "It - Stephen King.epub"}, "Stephen King"},
+		{"category folder", "Christopher Pike", "Evil Thirst", []string{"Fiction", "Evil Thirst.epub"}, ""},
+		{"author folder below a category", "Christopher Pike", "Evil Thirst", []string{"ebooks", "Christopher Pike", "Evil Thirst", "Evil Thirst.epub"}, ""},
+		{"misfiled under another author", "Christopher Pike", "Evil Thirst", []string{"Stephen King", "Evil Thirst.epub"}, ""},
+		{"Calibre library below the root", "Christopher Pike", "Evil Thirst", []string{"Calibre Library", "Christopher Pike", "Evil Thirst (12)", "Evil Thirst.epub"}, ""},
+		{"book folder with a year", "Christopher Pike", "Evil Thirst", []string{"Evil Thirst (2012)", "Evil Thirst.epub"}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			libDir := t.TempDir()
+			s, books, authors, ctx := scannerFixture(t, libDir)
+			book := seedLayoutBook(t, books, authors, ctx, c.author, c.title)
+
+			p := filepath.Join(append([]string{libDir}, c.rel...)...)
+			writeFileAt(t, p)
+
+			res, err := s.Lookup(ctx, p)
+			if err != nil {
+				t.Fatalf("Lookup: %v", err)
+			}
+			if res.Match != "confident" || res.Book == nil || res.Book.ID != book.ID {
+				t.Fatalf("match = %q book = %v, want confident id=%d (parsed %q / %q)",
+					res.Match, res.Book, book.ID, res.ParsedTitle, res.ParsedAuthor)
+			}
+			if res.ParsedTitle != c.title || res.ParsedAuthor != c.wantAuthor {
+				t.Errorf("parsed = %q / %q, want %q / %q", res.ParsedTitle, res.ParsedAuthor, c.title, c.wantAuthor)
+			}
+		})
+	}
+}
+
+// TestLookupBatchLayout_AmbiguousAuthorIsNeverAutomatic: the flipped reading
+// and the folder override both pick an author with nobody asked, and
+// textutil.MatchAuthorName's ambiguous band never auto matches. "Stanley Paul"
+// against "Paul Stanley" is its textbook ambiguous pair (an unsignposted order
+// swap), which lookupAuthorMatch accepts.
+func TestLookupBatchLayout_AmbiguousAuthorIsNeverAutomatic(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		rel  []string
+	}{
+		{"folder override", []string{"Stanley Paul", "Face the Music - Someone Else.epub"}},
+		{"flipped reading", []string{"Paul Stanley", "Stanley Paul - Face the Music.epub"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			s, books, authors, ctx := scannerFixture(t, t.TempDir())
+			// The first row's "Stanley Paul" folder is only an ambiguous match
+			// for this catalogue author, and the second row's "Stanley Paul"
+			// title side is only an ambiguous match for its folder.
+			seedLayoutBook(t, books, authors, ctx, "Paul Stanley", "Face the Music")
+
+			root := t.TempDir()
+			p := filepath.Join(append([]string{root}, c.rel...)...)
+			writeFileAt(t, p)
+
+			res, err := s.LookupBatchLayout(ctx, root, []string{p})
+			if err != nil {
+				t.Fatalf("LookupBatchLayout: %v", err)
+			}
+			if res[0].Match != "none" {
+				t.Fatalf("match = %q book = %v, want none (parsed %q / %q)",
+					res[0].Match, res[0].Book, res[0].ParsedTitle, res[0].ParsedAuthor)
+			}
+		})
 	}
 }

@@ -123,17 +123,18 @@ and organises files **it imports itself**. The Library Scan does **not** use
 them — it reads existing files with a fixed parser that prefers an
 `{Author}/{Book Title}/` folder structure and reads a bare `X - Y` filename as
 `Title - Author` (the *opposite* of Readarr's default order). Author folders
-settle the order. Inside an author folder, a filename that starts with that
-folder's name is read as author then title. The Library Scan always takes the
-author from the author folder. Bulk folder import and Manual Import can be
-pointed anywhere, so they take it from the folder when the filename names it or
-when that author is already in your library, and otherwise keep the filename's
-author, so a genre folder such as `Horror/` is never mistaken for one. Point
-Bulk folder import at the folder that holds your author folders, not at a
-single author or book folder, or the first folder below it is read as the
-author. Loose files with no author folder still use the filename alone; if
-those are misread, move them into author folders, or use Manual Import, which
-lets you pick the right book.
+settle the order. The Library Scan always takes the author from the author
+folder. When a file matches nothing read as `Title - Author`, and it sits in a
+folder named after the first part of its name, it is read once more as author
+then title, and that reading is kept only if it matches a book by an author in
+your library. Bulk folder import does this for the folder you point it at,
+Manual Import of a single file does it inside your library folders, and the
+Library Scan does it in author folders with no book folder below them. Bulk
+folder import also takes the author from the folder when the filename has
+none, or when the filename's author matches none of the books with that title
+and the folder name does. Loose files with no author folder still use the
+filename alone; if those are misread, move them into author folders, or use
+Manual Import, which lets you pick the right book.
 
 ### 5. Hardlinks need one mount
 
