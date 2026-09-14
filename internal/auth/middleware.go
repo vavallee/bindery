@@ -187,7 +187,7 @@ func withOperatorUserID(ctx context.Context, p Provider) context.Context {
 	if id == 0 {
 		operatorWarnOnce.Do(func() {
 			slog.Warn("auth: no admin user to attribute install-authenticated requests to; " +
-				"per-user data from local-only and API-key requests stays unattributed")
+				"per-user data from disabled-mode, local-only and API-key requests stays unattributed")
 		})
 		return ctx
 	}

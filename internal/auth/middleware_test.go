@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"time"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -410,5 +411,36 @@ func TestModeGrantsAdmin(t *testing.T) {
 		if got := ModeGrantsAdmin(tc.mode, tc.r, nil); got != tc.want {
 			t.Errorf("ModeGrantsAdmin(%s, %s) = %v, want %v", tc.mode, tc.r.RemoteAddr, got, tc.want)
 		}
+	}
+}
+
+// TestDisabledModeKeepsASignedInUsersOwnID pins that the disabled-mode grant
+// raises a signed-in account to admin without replacing who it is: its writes
+// stay attributed to that account, not to the first admin.
+func TestDisabledModeKeepsASignedInUsersOwnID(t *testing.T) {
+	p := &fakeProvider{mode: ModeDisabled, secret: testSecret32, operatorUserID: 7}
+	var gotID int64
+	var gotRole string
+	stack := Middleware(p)(RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotID = UserIDFromContext(r.Context())
+		gotRole = UserRoleFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})))
+	cookie, err := SignSession(testSecret32, 42, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/storage", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: cookie})
+	rec := httptest.NewRecorder()
+	stack.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if gotRole != "admin" {
+		t.Errorf("role = %q, want admin", gotRole)
+	}
+	if gotID != 42 {
+		t.Errorf("UserIDFromContext = %d, want 42: a signed-in account keeps its own id", gotID)
 	}
 }

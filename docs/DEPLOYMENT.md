@@ -484,6 +484,8 @@ On first launch Bindery bootstraps itself — **no environment variables are req
 
   Every request acts as the administrator (the first admin account), so the admin screens and admin API routes answer to anyone who can reach Bindery. Browser changes still need the page's own request header, which a cross site form cannot send.
 
+  That includes reading the API key from Settings, adding admin accounts and resetting passwords, and all of it stays in place after you turn authentication back on. If anyone else could reach Bindery while it was off, regenerate the API key and check the Users page once authentication is back.
+
 ## Database foreign-key integrity
 
 Bindery ships two offline subcommands that operate on the database **without running migrations**, so they work on an instance that cannot start:
