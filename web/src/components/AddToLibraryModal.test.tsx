@@ -389,6 +389,58 @@ describe('AddToLibraryModal - mixed result list', () => {
     expect(divider.compareDocumentPosition(rows[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
+  it('leaves a book under Books when its name matches two author rows from different providers', async () => {
+    // Two different people named John Smith, one per provider. A third
+    // provider's book carries only the name, so there is no way to tell whose
+    // it is: guessing the first row would hand a stranger's book to him.
+    vi.mocked(api.searchAuthors).mockResolvedValue([
+      author({ foreignAuthorId: 'OL123A', authorName: 'John Smith' }),
+      author({ foreignAuthorId: 'dnb:555', authorName: 'John Smith' }),
+    ])
+    vi.mocked(api.searchBooks).mockResolvedValue([
+      book({ foreignBookId: 'gb:1', title: 'Whose Book', author: author({ foreignAuthorId: 'gb:777', authorName: 'John Smith' }) }),
+    ])
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
+    typeAndSearch('john smith')
+    await waitFor(() => expect(screen.getByText('Whose Book')).toBeInTheDocument())
+    const rows = screen.getAllByTestId(/^add-result-(author|book)$/)
+    expect(rows.map(r => r.getAttribute('data-testid'))).toEqual(['add-result-author', 'add-result-author', 'add-result-book'])
+    const divider = screen.getByRole('separator')
+    expect(rows[1].compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(divider.compareDocumentPosition(rows[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('groups a book under the row its author id names even when another row shares the name', async () => {
+    vi.mocked(api.searchAuthors).mockResolvedValue([
+      author({ foreignAuthorId: 'OL123A', authorName: 'John Smith' }),
+      author({ foreignAuthorId: 'dnb:555', authorName: 'John Smith' }),
+    ])
+    vi.mocked(api.searchBooks).mockResolvedValue([
+      book({ foreignBookId: 'dnb:1', title: 'German Smith', author: author({ foreignAuthorId: 'dnb:555', authorName: 'John Smith' }) }),
+    ])
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
+    typeAndSearch('john smith')
+    await waitFor(() => expect(screen.getByText('German Smith')).toBeInTheDocument())
+    const rows = screen.getAllByTestId(/^add-result-(author|book)$/)
+    // Author OL, author DNB, then the book under the DNB row with no divider.
+    expect(rows.map(r => r.getAttribute('data-testid'))).toEqual(['add-result-author', 'add-result-author', 'add-result-book'])
+    expect(screen.queryByRole('separator')).not.toBeInTheDocument()
+  })
+
+  it('leaves an id less book under Books when its name matches two author rows', async () => {
+    vi.mocked(api.searchAuthors).mockResolvedValue([
+      author({ foreignAuthorId: 'OL123A', authorName: 'John Smith' }),
+      author({ foreignAuthorId: 'dnb:555', authorName: 'John Smith' }),
+    ])
+    vi.mocked(api.searchBooks).mockResolvedValue([
+      book({ foreignBookId: 'hc:1', title: 'Nameonly Smith', author: author({ foreignAuthorId: '', authorName: 'John Smith' }) }),
+    ])
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
+    typeAndSearch('john smith')
+    await waitFor(() => expect(screen.getByText('Nameonly Smith')).toBeInTheDocument())
+    expect(screen.getByRole('separator')).toHaveTextContent('Books')
+  })
+
   it('shows no divider when every book belongs to an author row', async () => {
     vi.mocked(api.searchAuthors).mockResolvedValue([leGuin])
     vi.mocked(api.searchBooks).mockResolvedValue([dispossessed])

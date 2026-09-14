@@ -17,7 +17,12 @@ function providerPrefix(id: string): string {
   return i === -1 ? '' : id.slice(0, i).toLowerCase()
 }
 
-function bookBelongsTo(book: Book, author: Author): boolean {
+// bookBelongsTo decides whether book groups under author. nameCounts holds,
+// for each folded author name, how many author rows in this result set carry
+// it: the name fallback is only trusted when exactly one row does, because two
+// rows sharing a name are two people the providers could not tell apart, and
+// guessing the first one hands a stranger's books to the wrong author.
+function bookBelongsTo(book: Book, author: Author, nameCounts: Map<string, number>): boolean {
   const bookAuthor = book.author
   if (!bookAuthor) return false
   const bookId = bookAuthor.foreignAuthorId
@@ -34,25 +39,45 @@ function bookBelongsTo(book: Book, author: Author): boolean {
     if (providerPrefix(bookId) === providerPrefix(rowId)) return false
   }
   const name = foldForSearch(bookAuthor.authorName)
-  return name !== '' && name === foldForSearch(author.authorName)
+  if (name === '' || name !== foldForSearch(author.authorName)) return false
+  return (nameCounts.get(name) ?? 0) === 1
 }
 
 // groupAddResults interleaves author and book results: each author row is
-// followed by its books, in the order the book search returned them; a book is
-// claimed by the first author it matches. Books that match no author row are
-// listed after a divider, so a title search whose author did not come back
-// from the author endpoint is still reachable.
+// followed by its books, in the order the book search returned them. An exact
+// author id match claims a book first, so a book is never lost to a same name
+// row that happens to come earlier; the name fallback then claims the rest.
+// Books that match no author row, or whose name matches several, are listed
+// after a divider, so a title search whose author did not come back from the
+// author endpoint is still reachable.
 export function groupAddResults(authors: Author[], books: Book[]): AddResultRow[] {
+  const nameCounts = new Map<string, number>()
+  for (const author of authors) {
+    const n = foldForSearch(author.authorName)
+    if (n !== '') nameCounts.set(n, (nameCounts.get(n) ?? 0) + 1)
+  }
+  const owner = new Map<number, number>()
+  books.forEach((book, i) => {
+    const id = book.author?.foreignAuthorId
+    if (!id) return
+    const a = authors.findIndex(x => x.foreignAuthorId === id)
+    if (a !== -1) owner.set(i, a)
+  })
+  books.forEach((book, i) => {
+    if (owner.has(i)) return
+    const a = authors.findIndex(x => bookBelongsTo(book, x, nameCounts))
+    if (a !== -1) owner.set(i, a)
+  })
   const rows: AddResultRow[] = []
   const claimed = new Set<number>()
-  for (const author of authors) {
+  authors.forEach((author, a) => {
     rows.push({ kind: 'author', author })
     books.forEach((book, i) => {
-      if (claimed.has(i) || !bookBelongsTo(book, author)) return
+      if (owner.get(i) !== a) return
       claimed.add(i)
       rows.push({ kind: 'book', book })
     })
-  }
+  })
   const rest = books.filter((_, i) => !claimed.has(i))
   if (rest.length > 0) {
     if (rows.length > 0) rows.push({ kind: 'divider' })

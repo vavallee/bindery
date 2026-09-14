@@ -747,10 +747,7 @@ export default function AuthorsPage() {
         <AddToLibraryModal
           mode={addMode}
           onClose={() => setAddMode(null)}
-          onAdded={added => {
-            if (added.kind === 'author') navigate(`/author/${added.author.id}`)
-            else load()
-          }}
+          onAdded={() => load()}
         />
       )}
       {showAddSeries && (
