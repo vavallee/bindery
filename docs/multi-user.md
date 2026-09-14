@@ -47,6 +47,7 @@ Two roles exist: `admin` and `user`.
 | Configure system-wide settings | Yes | No |
 | View admin settings tabs in UI | Yes | No |
 | Trigger system-level operations (backup, scan, migrate) | Yes | No |
+| See server filesystem paths (storage health, path settings, last library scan) | Yes | No |
 
 ## User management
 
@@ -104,7 +105,7 @@ Everyone sees the **General** tab (appearance, downloads, file naming, storage, 
 - **Integrations** — Calibre, Audiobookshelf, Grimmory, API Keys
 - **System** — Import, Blocklist, Logs
 
-Non-admins who open an admin tab are redirected back to General; admin API routes return 403. Users are managed on the dedicated **Users** page (the people icon in the header), not inside Settings.
+Non-admins who open an admin tab are redirected back to General; admin API routes return 403. Inside General itself, a non admin sees Appearance and Security; the sections that describe or configure the server (file naming, downloads, storage, the library scan panel and the schedule intervals) render for admins only, and the routes behind them, including `GET /system/storage` and `GET /library/scan/status`, answer 403 to anyone else. Users are managed on the dedicated **Users** page (the people icon in the header), not inside Settings.
 
 ## CSRF tokens
 

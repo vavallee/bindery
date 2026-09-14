@@ -366,9 +366,17 @@ GET    /api/v1/backup                             list stored backups
 DELETE /api/v1/backup/{filename}                  delete one backup
 POST   /api/v1/backup/{filename}/restore          stage a backup for the next restart (admin, X-Confirm-Restore: true)
 GET    /api/v1/system/status                      version, uptime, build info
+POST   /api/v1/library/scan                       start a library scan in the background (202)
+GET    /api/v1/library/scan/status                summary of the last library scan, paths included (admin)
 PUT    /api/v1/system/loglevel                    runtime log-level switch (debug/info/warn/error)
 GET    /api/v1/images?url=<encoded>               proxied + cached cover image (30-day TTL)
 ```
+
+`GET /api/v1/library/scan/status` returns the stored summary of the most recent
+scan: the counts, the library roots it walked and the path of every unmatched
+file. That is server filesystem layout, so the route is admin only in the same
+way as `/system/storage`, and a non admin gets `403` (#2361). A `404` means no
+scan has run yet.
 
 #### Webhook payload
 

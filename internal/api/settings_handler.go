@@ -336,10 +336,10 @@ func isAdminOnlySetting(key string) bool {
 	// disclosure in a different shape and are included rather than left for
 	// the next audit to find.
 	//
-	// SettingLibraryLastScan is closed here only as far as this endpoint
-	// reaches: GET /api/v1/library/scan/status serves the same blob and is
-	// not admin gated. That is a separate endpoint with its own callers, so
-	// it is reported on #2361 rather than changed here.
+	// SettingLibraryLastScan has a second door: GET
+	// /api/v1/library/scan/status serves the same blob verbatim. That route is
+	// mounted behind auth.RequireAdmin by registerLibraryScanStatusRoute in
+	// cmd/bindery (#2361), so both ways to the value are admin only.
 	switch key {
 	case SettingCalibreLibraryPath,
 		SettingCalibreBinaryPath,

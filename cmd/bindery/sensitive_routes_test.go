@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,7 +9,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/api"
 	"github.com/vavallee/bindery/internal/auth"
+	"github.com/vavallee/bindery/internal/db"
 )
 
 // stubSensitiveHandler stands in for the indexer, prowlarr, and download
@@ -369,5 +372,79 @@ func TestIndexerPublicReadsAllowNonAdmin(t *testing.T) {
 				t.Fatalf("called = %v; want [%s]", h.called, tt.called)
 			}
 		})
+	}
+}
+
+// pr2361ScanBlob is a library.lastScan value in the shape the scanner writes:
+// counts plus the resolved roots and the absolute path of every unmatched
+// file. Every path shares one marker so a leak is a substring check.
+const pr2361ScanBlob = `{"ran_at":"2026-09-14T10:00:00Z","files_found":3,"reconciled":1,"unmatched":2,` +
+	`"library_dir":"/srv/pr2361-root/books","audiobook_dir":"/srv/pr2361-root/audio",` +
+	`"scanned_paths":["/srv/pr2361-root/books","/srv/pr2361-root/audio"],` +
+	`"unmatched_files":[{"path":"/srv/pr2361-root/books/a.epub","parsed_title":"A","parsed_author":"X"},` +
+	`{"path":"/srv/pr2361-root/audio/b","parsed_title":"B","parsed_author":"Y"}]}`
+
+// newScanStatusRouter mounts the production registrar over the real
+// LibraryHandler backed by an in-memory settings table holding pr2361ScanBlob,
+// so the test exercises the same handler and the same gate as the server.
+func newScanStatusRouter(t *testing.T) chi.Router {
+	t.Helper()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	settings := db.NewSettingsRepo(database)
+	if err := settings.Set(context.Background(), api.SettingLibraryLastScan, pr2361ScanBlob); err != nil {
+		t.Fatal(err)
+	}
+	router := chi.NewRouter()
+	registerLibraryScanStatusRoute(router, api.NewLibraryHandler(nil).WithSettings(settings))
+	return router
+}
+
+// TestLibraryScanStatusRouteRequiresAdmin is the second door on #2361. #2418
+// stopped GET /setting handing library.lastScan to non admins, but GET
+// /library/scan/status served the same blob verbatim to every authenticated
+// role. A non admin, and a request carrying no role at all, must now be refused
+// before the handler runs and must receive none of the paths.
+func TestLibraryScanStatusRouteRequiresAdmin(t *testing.T) {
+	for _, role := range []string{"user", ""} {
+		t.Run("role="+role, func(t *testing.T) {
+			router := newScanStatusRouter(t)
+
+			req := httptest.NewRequest(http.MethodGet, "/library/scan/status", nil)
+			if role != "" {
+				req = req.WithContext(auth.WithUserRole(req.Context(), role))
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d; want %d (RequireAdmin should reject role=%q)", rec.Code, http.StatusForbidden, role)
+			}
+			if body := rec.Body.String(); strings.Contains(body, "/srv/") || strings.Contains(body, "pr2361-root") {
+				t.Fatalf("non admin response carries a server path: %s", body)
+			}
+		})
+	}
+}
+
+// TestLibraryScanStatusRouteAllowsAdmin is the symmetry case: the Settings
+// scan panel is admin UI and needs the whole blob, paths included, so an admin
+// must get it back byte for byte.
+func TestLibraryScanStatusRouteAllowsAdmin(t *testing.T) {
+	router := newScanStatusRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/library/scan/status", nil)
+	req = req.WithContext(auth.WithUserRole(req.Context(), "admin"))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Body.String(); got != pr2361ScanBlob {
+		t.Fatalf("admin body = %s; want the stored blob unchanged", got)
 	}
 }

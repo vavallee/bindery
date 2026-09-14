@@ -67,9 +67,18 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       })
       .catch(console.error)
       .finally(() => setLoading(false))
-    api.libraryScanStatus().then(setLastScan).catch(() => {/* no prior scan — ignore 404 */})
     api.getStorage().then(setStorage).catch(console.error)
   }, [])
+
+  // The last scan summary names the library roots and the absolute path of
+  // every unmatched file, so the endpoint is admin only (#2361) and the panel
+  // that renders it sits inside the isAdmin block below. A non admin never
+  // asks. Keyed on isAdmin so an admin whose auth status resolves after mount
+  // still loads it.
+  useEffect(() => {
+    if (!isAdmin) return
+    api.libraryScanStatus().then(setLastScan).catch(() => {/* no prior scan yet: 404 */})
+  }, [isAdmin])
 
   // Rethrows: the caller wraps this in useSaveResult, which needs a rejected
   // promise to show "Error" instead of a false "Saved ✓" (#1668).
