@@ -128,6 +128,14 @@ func (c *ttlCache) set(key string, value interface{}) {
 	}
 }
 
+// delete drops key. Used when a fresher entry supersedes it under another key
+// and serving it would hide the fresh data (#2601).
+func (c *ttlCache) delete(key string) {
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	delete(c.state.items, key)
+}
+
 // evictEarliestLocked removes the entry with the smallest expiresAt and is
 // invoked with state.mu held in write mode. It refuses to evict the key
 // just inserted by the caller so a single set() can never delete its own

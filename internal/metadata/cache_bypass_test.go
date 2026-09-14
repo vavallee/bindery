@@ -180,6 +180,269 @@ func TestCacheBypass_LeavesBookCacheAlone(t *testing.T) {
 	}
 }
 
+// refreshWorksProvider is a primary that says whether its works answer is
+// intact, the way OpenLibrary's GetAuthorWorksForRefresh does. Its plain
+// GetAuthorWorks returns the same list with the signal dropped, which is what
+// the aggregator saw before it asked.
+type refreshWorksProvider struct {
+	mockWorksProvider
+	intact       bool
+	refreshCalls int
+}
+
+func (m *refreshWorksProvider) GetAuthorWorksForRefresh(_ context.Context, _ string) ([]models.Book, bool, error) {
+	m.refreshCalls++
+	return m.authorWorks, m.intact, m.authorWorksErr
+}
+
+func olWork(id, title string) models.Book {
+	return models.Book{ForeignID: id, Title: title, ImageURL: "cover-" + id, MetadataProvider: "openlibrary"}
+}
+
+// hasTitles reports whether books holds exactly the given titles, in any order.
+func hasTitles(books []models.Book, titles ...string) bool {
+	if len(books) != len(titles) {
+		return false
+	}
+	seen := make(map[string]int, len(books))
+	for _, b := range books {
+		seen[b.Title]++
+	}
+	for _, title := range titles {
+		if seen[title] == 0 {
+			return false
+		}
+		seen[title]--
+	}
+	return true
+}
+
+// A refresh whose works answer came back short because a call failed (an
+// OpenLibrary works page after the first one erroring, which the client
+// returns as success) must not replace a complete cached catalogue: bulk,
+// scheduled and ISBN canonicalisation reads would get the short list for a
+// day. The sync still gets the works the short answer adds.
+func TestGetAuthorWorksForAuthor_CacheBypassPartialAnswerKeepsCachedCatalogue(t *testing.T) {
+	primary := &refreshWorksProvider{
+		mockWorksProvider: mockWorksProvider{mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{
+			olWork("OL1W", "Ancillary Justice"), olWork("OL2W", "Ancillary Sword"), olWork("OL3W", "Ancillary Mercy"),
+		}}},
+		intact: true,
+	}
+	agg := &Aggregator{primary: primary, cache: newTTLCache(time.Hour)}
+	author := models.Author{ForeignID: "OL2611A", Name: "Ann Leckie"}
+	ctx := context.Background()
+
+	if got, err := agg.GetAuthorWorksForAuthor(ctx, author); err != nil || len(got) != 3 {
+		t.Fatalf("warm GetAuthorWorksForAuthor = %v, %v; want 3 works", workTitles(got), err)
+	}
+
+	// Page two fails: the provider answers with page one, which also carries a
+	// work that is new upstream.
+	primary.authorWorks = []models.Book{olWork("OL1W", "Ancillary Justice"), olWork("OL4W", "Translation State")}
+	primary.intact = false
+	got, err := agg.GetAuthorWorksForAuthor(WithCacheBypass(ctx), author)
+	if err != nil {
+		t.Fatalf("bypassed GetAuthorWorksForAuthor: %v", err)
+	}
+	if !hasTitles(got, "Ancillary Justice", "Ancillary Sword", "Ancillary Mercy", "Translation State") {
+		t.Fatalf("bypassed catalogue from a partial answer = %v, want the cached three plus the new Translation State", workTitles(got))
+	}
+
+	// Ordinary readers still get the complete cached catalogue, not the short
+	// answer. The provider now returns nothing, so anything read comes from
+	// the cache.
+	primary.authorWorks = nil
+	primary.intact = true
+	merged, err := agg.GetAuthorWorksForAuthor(ctx, author)
+	if err != nil {
+		t.Fatalf("ordinary GetAuthorWorksForAuthor: %v", err)
+	}
+	raw, err := agg.GetAuthorWorksUnenriched(ctx, author.ForeignID)
+	if err != nil {
+		t.Fatalf("ordinary GetAuthorWorksUnenriched: %v", err)
+	}
+	if !hasTitles(merged, "Ancillary Justice", "Ancillary Sword", "Ancillary Mercy") || !hasTitles(raw, "Ancillary Justice", "Ancillary Sword", "Ancillary Mercy") {
+		t.Fatalf("after one partial bypassed answer, ordinary reads serve %v (merged) and %v (raw); the cache held all 3 before the click",
+			workTitles(merged), workTitles(raw))
+	}
+
+	// An intact answer does replace the cache.
+	primary.authorWorks = []models.Book{
+		olWork("OL1W", "Ancillary Justice"), olWork("OL2W", "Ancillary Sword"), olWork("OL3W", "Ancillary Mercy"), olWork("OL4W", "Translation State"),
+	}
+	if got, err := agg.GetAuthorWorksForAuthor(WithCacheBypass(ctx), author); err != nil || len(got) != 4 {
+		t.Fatalf("intact bypassed read = %v, %v; want 4 works", workTitles(got), err)
+	}
+	primary.authorWorks = nil
+	if got, _ := agg.GetAuthorWorksForAuthor(ctx, author); len(got) != 4 {
+		t.Fatalf("ordinary read after an intact refresh = %v, want the 4 refreshed works from the cache", workTitles(got))
+	}
+	if primary.refreshCalls != 2 {
+		t.Fatalf("GetAuthorWorksForRefresh calls = %d, want 2 (one per bypassed read)", primary.refreshCalls)
+	}
+}
+
+// A refresh that cannot reach the primary at all gives the sync the cached
+// catalogue rather than failing it, so the click is never worse than the
+// cached answer it replaced.
+func TestGetAuthorWorksForAuthor_CacheBypassProviderErrorServesCachedCatalogue(t *testing.T) {
+	primary := &refreshWorksProvider{
+		mockWorksProvider: mockWorksProvider{mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{
+			olWork("OL1W", "Ancillary Justice"), olWork("OL2W", "Ancillary Sword"),
+		}}},
+		intact: true,
+	}
+	agg := &Aggregator{primary: primary, cache: newTTLCache(time.Hour)}
+	author := models.Author{ForeignID: "OL2611A", Name: "Ann Leckie"}
+	ctx := context.Background()
+
+	if _, err := agg.GetAuthorWorksForAuthor(ctx, author); err != nil {
+		t.Fatalf("warm GetAuthorWorksForAuthor: %v", err)
+	}
+	primary.authorWorks = nil
+	primary.authorWorksErr = errors.New("503 from upstream")
+	got, err := agg.GetAuthorWorksForAuthor(WithCacheBypass(ctx), author)
+	if err != nil {
+		t.Fatalf("bypassed GetAuthorWorksForAuthor with a cached catalogue failed the sync: %v", err)
+	}
+	if !hasTitles(got, "Ancillary Justice", "Ancillary Sword") {
+		t.Fatalf("bypassed catalogue after a provider error = %v, want the cached 2 works", workTitles(got))
+	}
+
+	// With nothing cached there is nothing to fall back to.
+	cold := &Aggregator{primary: primary, cache: newTTLCache(time.Hour)}
+	if _, err := cold.GetAuthorWorksForAuthor(WithCacheBypass(ctx), author); err == nil {
+		t.Fatal("bypassed GetAuthorWorksForAuthor with a cold cache swallowed the provider error")
+	}
+}
+
+// With Hardcover throttled, a bypassed catalogue skips the compilation prune
+// only Hardcover can drive, and the manual refresh sync would create box set
+// rows from it. The cached merged catalogue carries the last prune decisions,
+// so it is what the sync gets.
+func TestGetAuthorWorksForAuthor_CacheBypassSupplementFailureServesCachedCatalogue(t *testing.T) {
+	primary := &mockWorksProvider{mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{
+		olWork("OL1W", "Ancillary Justice"), olWork("OL9W", "Moon Harvest"),
+	}}}
+	hc := &mockAuthorWorksByNameProvider{mockProvider: mockProvider{name: "hardcover"},
+		authorWorksByName: []models.Book{{ForeignID: "hc:mh", Title: "Moon Harvest", IsCompilation: true, MetadataProvider: "hardcover"}}}
+	agg := &Aggregator{primary: primary, enrichers: []Provider{hc}, cache: newTTLCache(time.Hour)}
+	author := models.Author{ForeignID: "OL2611A", Name: "Ann Leckie"}
+	ctx := context.Background()
+
+	warm, err := agg.GetAuthorWorksForAuthor(ctx, author)
+	if err != nil || !hasTitles(warm, "Ancillary Justice") {
+		t.Fatalf("warm = %v, %v; want the compilation pruned", workTitles(warm), err)
+	}
+
+	hc.authorWorksByNameErr = errors.New("429 after retries")
+	got, err := agg.GetAuthorWorksForAuthor(WithCacheBypass(ctx), author)
+	if err != nil {
+		t.Fatalf("bypassed GetAuthorWorksForAuthor: %v", err)
+	}
+	if hc.calls != 2 {
+		t.Fatalf("supplement calls = %d, want 2: the bypass should still ask Hardcover", hc.calls)
+	}
+	if !hasTitles(got, "Ancillary Justice") {
+		t.Fatalf("a failed supplement under the bypass hands the sync %v instead of the pruned cached [Ancillary Justice]", workTitles(got))
+	}
+}
+
+// GetAuthorWorksUnenriched prefers the enriched authorworks: entry. A refresh
+// through GetAuthorWorksForAuthor rewrites the raw entry but not that one, so
+// without dropping it the unenriched readers (ABS import title matching) keep
+// the pre-refresh list for a day.
+func TestGetAuthorWorksUnenriched_ServesRefreshedRawOverStaleEnriched(t *testing.T) {
+	primary := &mockWorksProvider{mockProvider: mockProvider{name: "ol", authorWorks: []models.Book{olWork("OL1W", "Ancillary Justice")}}}
+	agg := &Aggregator{primary: primary, cache: newTTLCache(time.Hour)}
+	author := models.Author{ForeignID: "OL2611A", Name: "Ann Leckie"}
+	ctx := context.Background()
+
+	if got, err := agg.GetAuthorWorks(ctx, author.ForeignID); err != nil || len(got) != 1 {
+		t.Fatalf("warm GetAuthorWorks = %v, %v", workTitles(got), err)
+	}
+	primary.authorWorks = []models.Book{olWork("OL1W", "Ancillary Justice"), olWork("OL2W", "Translation State")}
+	if got, err := agg.GetAuthorWorksForAuthor(WithCacheBypass(ctx), author); err != nil || len(got) != 2 {
+		t.Fatalf("bypassed GetAuthorWorksForAuthor = %v, %v; want 2 works", workTitles(got), err)
+	}
+
+	primary.authorWorks = nil
+	raw, err := agg.GetAuthorWorksUnenriched(ctx, author.ForeignID)
+	if err != nil {
+		t.Fatalf("ordinary GetAuthorWorksUnenriched: %v", err)
+	}
+	if !hasTitles(raw, "Ancillary Justice", "Translation State") {
+		t.Fatalf("GetAuthorWorksUnenriched after a refresh = %v, want the 2 refreshed works, not the stale enriched entry", workTitles(raw))
+	}
+	enriched, err := agg.GetAuthorWorks(ctx, author.ForeignID)
+	if err != nil {
+		t.Fatalf("ordinary GetAuthorWorks: %v", err)
+	}
+	if !hasTitles(enriched, "Ancillary Justice", "Translation State") {
+		t.Fatalf("GetAuthorWorks after a refresh = %v, want it rebuilt from the refreshed raw works", workTitles(enriched))
+	}
+	if primary.authorWorksCalls != 2 {
+		t.Fatalf("primary works calls = %d, want 2: the reads after the refresh should come from the cache", primary.authorWorksCalls)
+	}
+}
+
+type mockAudibleCatalogue struct {
+	books []models.Book
+	err   error
+	calls int
+}
+
+func (m *mockAudibleCatalogue) SearchBooksByAuthor(_ context.Context, _ string) ([]models.Book, error) {
+	m.calls++
+	return m.books, m.err
+}
+
+// Audiobook and "both" setups add the author's Audible catalogue to the sync.
+// A manual refresh has to read it past the cache too, or a new Audible only
+// release stays hidden for a day; and a failed Audible call must not cost the
+// sync the cached list.
+func TestGetAuthorAudiobooks_CacheBypassRefetchesAndKeepsCacheOnError(t *testing.T) {
+	aud := &mockAudibleCatalogue{books: []models.Book{{ASIN: "B001", Title: "Ancillary Justice", MediaType: models.MediaTypeAudiobook}}}
+	agg := &Aggregator{audible: aud, cache: newTTLCache(time.Hour)}
+	ctx := context.Background()
+
+	if got, err := agg.GetAuthorAudiobooks(ctx, "Ann Leckie"); err != nil || len(got) != 1 {
+		t.Fatalf("warm GetAuthorAudiobooks = %v, %v", workTitles(got), err)
+	}
+	aud.books = []models.Book{
+		{ASIN: "B001", Title: "Ancillary Justice", MediaType: models.MediaTypeAudiobook},
+		{ASIN: "B002", Title: "Lake of Souls", MediaType: models.MediaTypeAudiobook},
+	}
+	if got, _ := agg.GetAuthorAudiobooks(ctx, "Ann Leckie"); len(got) != 1 || aud.calls != 1 {
+		t.Fatalf("ordinary read = %v with %d Audible calls, want the cached 1 and no new call", workTitles(got), aud.calls)
+	}
+
+	got, err := agg.GetAuthorAudiobooks(WithCacheBypass(ctx), "Ann Leckie")
+	if err != nil {
+		t.Fatalf("bypassed GetAuthorAudiobooks: %v", err)
+	}
+	if !hasTitles(got, "Ancillary Justice", "Lake of Souls") {
+		t.Fatalf("bypassed read = %v, want the new Audible release: it was served from the cache", workTitles(got))
+	}
+	if got, _ := agg.GetAuthorAudiobooks(ctx, "Ann Leckie"); len(got) != 2 || aud.calls != 2 {
+		t.Fatalf("ordinary read after bypass = %v with %d calls, want the 2 refreshed books from the cache", workTitles(got), aud.calls)
+	}
+
+	aud.books = nil
+	aud.err = errors.New("503 from Audible")
+	got, err = agg.GetAuthorAudiobooks(WithCacheBypass(ctx), "Ann Leckie")
+	if err != nil {
+		t.Fatalf("bypassed GetAuthorAudiobooks with a cached list returned the Audible error: %v", err)
+	}
+	if len(got) != 2 || aud.calls != 3 {
+		t.Fatalf("bypassed read after an Audible error = %v with %d calls, want the cached 2 after one attempt", workTitles(got), aud.calls)
+	}
+	if got, _ := agg.GetAuthorAudiobooks(ctx, "Ann Leckie"); len(got) != 2 {
+		t.Fatalf("ordinary read after a failed bypass = %v, want the cached 2 kept", workTitles(got))
+	}
+}
+
 func workTitles(books []models.Book) []string {
 	titles := make([]string, 0, len(books))
 	for _, b := range books {

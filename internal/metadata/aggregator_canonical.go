@@ -656,7 +656,7 @@ func (a *Aggregator) canonicalPrimaryBookAuthorWorks(ctx context.Context, source
 	if _, ok := a.primary.(worksProvider); !ok {
 		return nil, false
 	}
-	works, err := a.rawPrimaryAuthorWorks(ctx, authorID, false)
+	works, err := a.rawPrimaryAuthorWorks(ctx, authorID)
 	if err != nil {
 		slog.Debug("primary canonical author works failed", "author", authorID, "title", source.Title, "error", err)
 		return nil, false

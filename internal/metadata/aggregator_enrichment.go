@@ -158,6 +158,12 @@ func normalizeAudibleLanguage(language string) string {
 	return models.NormalizeLanguageCode(language)
 }
 
+// audibleCatalogue is the part of the Audible client GetAuthorAudiobooks
+// uses, held as an interface so tests can stand in for it.
+type audibleCatalogue interface {
+	SearchBooksByAuthor(ctx context.Context, author string) ([]models.Book, error)
+}
+
 // GetAuthorAudiobooks queries the Audible catalogue directly for the given
 // author name. Returned books carry MediaType=audiobook, an ASIN, and a
 // normalized language code; the caller applies the active metadata
@@ -171,6 +177,11 @@ func normalizeAudibleLanguage(language string) string {
 // authors (Sanderson, King, etc.) are missing a large share of their
 // narrated catalogue without a direct Audible source.
 //
+// A WithCacheBypass context (the manual author refresh) skips the cached list
+// and replaces it, so a new Audible only release shows up on that refresh. If
+// Audible fails then, the cached list is returned instead of the error, so the
+// refresh never gets less than the cache would have given it (#2601).
+//
 // Returns an empty slice when the audible client is unconfigured (test
 // aggregators) rather than nil-derefing. Errors propagate so the caller
 // can log them without failing the broader ingestion.
@@ -183,11 +194,16 @@ func (a *Aggregator) GetAuthorAudiobooks(ctx context.Context, authorName string)
 		return nil, nil
 	}
 	key := "audible-author:" + strings.ToLower(authorName)
-	if cached, ok := a.cache.get(key); ok {
+	cached, haveCached := a.cache.get(key)
+	if haveCached && !CacheBypassed(ctx) {
 		return cached.([]models.Book), nil
 	}
 	books, err := a.audible.SearchBooksByAuthor(ctx, authorName)
 	if err != nil {
+		if haveCached {
+			slog.Warn("audible author refresh failed; using the cached list", "author", authorName, "error", err)
+			return cached.([]models.Book), nil
+		}
 		return nil, err
 	}
 	if books == nil {

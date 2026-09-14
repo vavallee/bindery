@@ -897,7 +897,8 @@ type searchDocForAuthor struct {
 }
 
 type searchRespForAuthor struct {
-	Docs []searchDocForAuthor `json:"docs"`
+	NumFound int                  `json:"numFound,omitempty"`
+	Docs     []searchDocForAuthor `json:"docs"`
 }
 
 func TestGetAuthorWorks_HTTP(t *testing.T) {
@@ -1114,6 +1115,84 @@ func TestGetAuthorWorksSnapshot_HTTP_ReportsInterruptedPaginationAsPartial(t *te
 	if len(books) != authorWorksPageSize {
 		t.Fatalf("expected usable first page of %d books, got %d", authorWorksPageSize, len(books))
 	}
+}
+
+// TestGetAuthorWorksForRefresh_HTTP_IntactOnlyWhenNoCallFailed pins the signal
+// an explicit author refresh uses to decide whether a fresh works answer may
+// replace the cached catalogue (#2601). A failed later page or a failed search
+// call is not intact. A catalogue that is short by design (the search index
+// capped at 200 results for a prolific author) is intact even though the
+// snapshot calls it incomplete, or a refresh of such an author could never
+// write back.
+func TestGetAuthorWorksForRefresh_HTTP_IntactOnlyWhenNoCallFailed(t *testing.T) {
+	page := func(n int) []authorWorkEntry {
+		entries := make([]authorWorkEntry, 0, n)
+		for i := 0; i < n; i++ {
+			entries = append(entries, authorWorkEntry{Key: "/works/OL" + strconv.Itoa(i) + "W", Title: "Book " + strconv.Itoa(i)})
+		}
+		return entries
+	}
+	cappedSearch := searchRespForAuthor{NumFound: 500}
+	for i := 0; i < 200; i++ {
+		cappedSearch.Docs = append(cappedSearch.Docs, searchDocForAuthor{Key: "/works/OL" + strconv.Itoa(i) + "W", Title: "Book " + strconv.Itoa(i)})
+	}
+
+	t.Run("later works page failed", func(t *testing.T) {
+		c := newClientWithPaths(t, map[string]interface{}{
+			"/authors/OL123A/works.json": func(r *http.Request) string {
+				if offset, _ := strconv.Atoi(r.URL.Query().Get("offset")); offset > 0 {
+					return `{broken`
+				}
+				return jsonStr(authorWorksResponse{Size: authorWorksPageSize + 1, Entries: page(authorWorksPageSize)})
+			},
+			"/search.json": jsonStr(searchRespForAuthor{}),
+		})
+		books, intact, err := c.GetAuthorWorksForRefresh(context.Background(), "OL123A")
+		if err != nil {
+			t.Fatalf("GetAuthorWorksForRefresh: %v", err)
+		}
+		if intact {
+			t.Fatal("a failed later works page was reported as intact")
+		}
+		if len(books) != authorWorksPageSize {
+			t.Fatalf("got %d books, want the usable first page of %d", len(books), authorWorksPageSize)
+		}
+	})
+
+	t.Run("search endpoint failed", func(t *testing.T) {
+		c := newClientWithPaths(t, map[string]interface{}{
+			"/authors/OL123A/works.json": jsonStr(authorWorksResponse{Size: 3, Entries: page(3)}),
+			"/search.json":               `{broken`,
+		})
+		_, intact, err := c.GetAuthorWorksForRefresh(context.Background(), "OL123A")
+		if err != nil {
+			t.Fatalf("GetAuthorWorksForRefresh: %v", err)
+		}
+		if intact {
+			t.Fatal("a failed search call was reported as intact: its language and cover fields are missing")
+		}
+	})
+
+	t.Run("search capped by design", func(t *testing.T) {
+		c := newClientWithPaths(t, map[string]interface{}{
+			"/authors/OL123A/works.json": jsonStr(authorWorksResponse{Size: 3, Entries: page(3)}),
+			"/search.json":               jsonStr(cappedSearch),
+		})
+		_, complete, err := c.GetAuthorWorksSnapshot(context.Background(), "OL123A")
+		if err != nil {
+			t.Fatalf("GetAuthorWorksSnapshot: %v", err)
+		}
+		if complete {
+			t.Fatal("precondition: a capped search result should make the snapshot incomplete")
+		}
+		_, intact, err := c.GetAuthorWorksForRefresh(context.Background(), "OL123A")
+		if err != nil {
+			t.Fatalf("GetAuthorWorksForRefresh: %v", err)
+		}
+		if !intact {
+			t.Fatal("a search result capped by design was reported as not intact; a refresh of a prolific author would never write back")
+		}
+	})
 }
 
 // Works present only in the search index (when /authors/{id}/works is empty)

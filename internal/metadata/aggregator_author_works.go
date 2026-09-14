@@ -161,12 +161,14 @@ func (a *Aggregator) GetAuthorWorks(ctx context.Context, authorForeignID string)
 		}
 	}
 
-	books, err := a.rawPrimaryAuthorWorks(ctx, authorForeignID, fresh)
+	books, intact, err := a.primaryAuthorWorksFor(ctx, authorForeignID, fresh)
 	if err != nil {
 		return nil, err
 	}
 	a.enrichMissingAuthorWorkCovers(ctx, books)
-	a.cache.set(key, cloneBooks(books))
+	if intact {
+		a.cache.set(key, cloneBooks(books))
+	}
 	return books, nil
 }
 
@@ -183,7 +185,8 @@ func (a *Aggregator) GetAuthorWorks(ctx context.Context, authorForeignID string)
 // fan-out, silently, before it moved to the next item (#2578).
 //
 // An already-enriched catalogue from GetAuthorWorks is returned when cached,
-// since it is a superset of what the caller needs.
+// since it is a superset of what the caller needs. A refresh that rewrites
+// the raw works drops that entry, so it never shadows fresher raw works.
 func (a *Aggregator) GetAuthorWorksUnenriched(ctx context.Context, authorForeignID string) ([]models.Book, error) {
 	ctx, fresh := consumeCacheBypass(ctx)
 	if !fresh {
@@ -191,7 +194,8 @@ func (a *Aggregator) GetAuthorWorksUnenriched(ctx context.Context, authorForeign
 			return cloneBooks(cached.([]models.Book)), nil
 		}
 	}
-	return a.rawPrimaryAuthorWorks(ctx, authorForeignID, fresh)
+	books, _, err := a.primaryAuthorWorksFor(ctx, authorForeignID, fresh)
+	return books, err
 }
 
 // GetAuthorWorksForAuthor fetches the primary provider's author works and
@@ -210,15 +214,27 @@ func (a *Aggregator) GetAuthorWorksForAuthor(ctx context.Context, author models.
 		}
 	}
 
-	books, err := a.rawPrimaryAuthorWorks(ctx, author.ForeignID, fresh)
+	books, intact, err := a.primaryAuthorWorksFor(ctx, author.ForeignID, fresh)
 	if err != nil {
 		return nil, err
 	}
 
-	books, _, cacheable := a.mergeAuthorWorksSupplements(ctx, books, author)
+	books, complete, cacheable := a.mergeAuthorWorksSupplements(ctx, books, author)
+	if fresh && !complete {
+		// A configured supplement failed, so the prunes only it can drive
+		// (Hardcover's compilation flags) never ran on this list, and the
+		// refresh sync would create box set rows from it. The cached
+		// catalogue carries the last prune decisions, so the sync gets that
+		// instead (#2601). With nothing cached, the unpruned list is what a
+		// cold read gives today, and it is not cached either way.
+		if cached, ok := a.cache.get(key); ok {
+			slog.Warn("author works refresh: a supplement failed, using the cached catalogue", "author", author.Name)
+			return cloneBooks(cached.([]models.Book)), nil
+		}
+	}
 
 	a.enrichMissingAuthorWorkCovers(ctx, books)
-	if cacheable {
+	if cacheable && intact {
 		a.cache.set(key, cloneBooks(books))
 	}
 	return books, nil
@@ -271,16 +287,14 @@ func (a *Aggregator) mergeAuthorWorksSupplements(ctx context.Context, books []mo
 	return books, complete, cacheable
 }
 
-// rawPrimaryAuthorWorks returns the primary provider's works for an author,
-// cached. fresh skips the cached copy and replaces it. It takes the flag from
-// its caller's consumeCacheBypass instead of reading ctx because the ISBN
-// canonicalisation path reaches it too, and that path keeps its cache (#2601).
-func (a *Aggregator) rawPrimaryAuthorWorks(ctx context.Context, authorForeignID string, fresh bool) ([]models.Book, error) {
+// rawPrimaryAuthorWorks returns the primary provider's works for an author
+// through the cache. The ISBN canonicalisation path calls it too, and keeps
+// its cache under a refresh; only the author works entry points switch to
+// refreshPrimaryAuthorWorks, through primaryAuthorWorksFor (#2601).
+func (a *Aggregator) rawPrimaryAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
 	key := "authorworks-raw:" + authorForeignID
-	if !fresh {
-		if cached, ok := a.cache.get(key); ok {
-			return cloneBooks(cached.([]models.Book)), nil
-		}
+	if cached, ok := a.cache.get(key); ok {
+		return cloneBooks(cached.([]models.Book)), nil
 	}
 
 	books, err := a.primaryAuthorWorks(ctx, authorForeignID)
@@ -289,6 +303,96 @@ func (a *Aggregator) rawPrimaryAuthorWorks(ctx context.Context, authorForeignID 
 	}
 	a.cache.set(key, cloneBooks(books))
 	return cloneBooks(books), nil
+}
+
+// primaryAuthorWorksFor is rawPrimaryAuthorWorks, or refreshPrimaryAuthorWorks
+// when the caller consumed a cache bypass. intact is false only when the
+// answer must not be cached (see refreshPrimaryAuthorWorks).
+func (a *Aggregator) primaryAuthorWorksFor(ctx context.Context, authorForeignID string, fresh bool) ([]models.Book, bool, error) {
+	if fresh {
+		return a.refreshPrimaryAuthorWorks(ctx, authorForeignID)
+	}
+	books, err := a.rawPrimaryAuthorWorks(ctx, authorForeignID)
+	return books, true, err
+}
+
+// authorWorksRefreshProvider is the optional capability a refresh uses to
+// tell a whole works answer from one cut short by a failed upstream call
+// (OpenLibrary's GetAuthorWorksForRefresh). A provider without it cannot
+// report a short answer, so its answer gets the same trust a cache miss gives
+// it.
+type authorWorksRefreshProvider interface {
+	GetAuthorWorksForRefresh(ctx context.Context, authorForeignID string) ([]models.Book, bool, error)
+}
+
+// refreshPrimaryAuthorWorks is rawPrimaryAuthorWorks for a WithCacheBypass
+// lookup (#2601). It always asks the provider, and it replaces the cached
+// works only when the answer is intact, meaning no upstream call failed on the
+// way. OpenLibrary returns a failed later works page as a successful short
+// list, and caching that would hand bulk refresh, the scheduled refresh and
+// ISBN canonicalisation a truncated catalogue for a day.
+//
+// When the answer is not intact, or the provider failed outright, the cached
+// works stay, and the caller gets them plus any works the fresh answer has
+// that the cache lacks. The cached copy wins for a work in both, because a
+// thin answer (OpenLibrary's search call failing drops language and covers)
+// must not strip what the cache knew. The returned intact flag tells the
+// caller whether anything built on the result may be cached. With nothing
+// cached, a short answer is returned as it is and an error as the error.
+func (a *Aggregator) refreshPrimaryAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, bool, error) {
+	key := "authorworks-raw:" + authorForeignID
+	books, intact, err := a.primaryAuthorWorksForRefresh(ctx, authorForeignID)
+	if err == nil && intact {
+		a.cache.set(key, cloneBooks(books))
+		// GetAuthorWorksUnenriched prefers the enriched authorworks: entry
+		// over this one. Drop it so it cannot serve the list from before the
+		// refresh; the next GetAuthorWorks rebuilds it from these works.
+		a.cache.delete("authorworks:" + authorForeignID)
+		return cloneBooks(books), true, nil
+	}
+	cached, ok := a.cache.get(key)
+	if !ok {
+		if err != nil {
+			return nil, false, err
+		}
+		return cloneBooks(books), false, nil
+	}
+	kept := cloneBooks(cached.([]models.Book))
+	if err != nil {
+		slog.Warn("author works refresh failed; using the cached works", "author", authorForeignID, "error", err)
+		return kept, false, nil
+	}
+	slog.Warn("author works refresh got a partial answer; keeping the cached works",
+		"author", authorForeignID, "fresh", len(books), "cached", len(kept))
+	return appendNewAuthorWorks(kept, cloneBooks(books)), false, nil
+}
+
+func (a *Aggregator) primaryAuthorWorksForRefresh(ctx context.Context, authorForeignID string) ([]models.Book, bool, error) {
+	if rp, ok := a.providerForForeignID(authorForeignID).(authorWorksRefreshProvider); ok {
+		return rp.GetAuthorWorksForRefresh(ctx, authorForeignID)
+	}
+	books, err := a.primaryAuthorWorks(ctx, authorForeignID)
+	return books, true, err
+}
+
+// appendNewAuthorWorks appends the works in fresh whose ForeignID base does
+// not already hold, keeping base's copy of any work in both.
+func appendNewAuthorWorks(base, fresh []models.Book) []models.Book {
+	seen := make(map[string]struct{}, len(base))
+	for _, b := range base {
+		seen[b.ForeignID] = struct{}{}
+	}
+	for _, b := range fresh {
+		if b.ForeignID == "" {
+			continue
+		}
+		if _, ok := seen[b.ForeignID]; ok {
+			continue
+		}
+		seen[b.ForeignID] = struct{}{}
+		base = append(base, b)
+	}
+	return base
 }
 
 func (a *Aggregator) primaryAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {

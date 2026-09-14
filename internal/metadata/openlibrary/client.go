@@ -365,20 +365,45 @@ func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]
 // normal refresh, but a successful half-result must not be treated as proof
 // that absent local books are stale.
 func (c *Client) GetAuthorWorksSnapshot(ctx context.Context, authorForeignID string) ([]models.Book, bool, error) {
+	books, complete, _, err := c.authorWorks(ctx, authorForeignID)
+	return books, complete, err
+}
+
+// GetAuthorWorksForRefresh is the form of GetAuthorWorks an explicit author
+// refresh uses to decide whether the answer may replace a cached catalogue
+// (#2601). intact is false when an upstream call failed: the works endpoint,
+// the search endpoint, or a later works page. That answer is short or missing
+// the search fields for a reason the next call will not repeat.
+//
+// It differs from the snapshot's complete flag on purpose. complete is also
+// false for a catalogue that is short by design, such as any author with more
+// than 200 works in the search index or more than authorWorksMaxFetch works,
+// and those get the same answer on every call, so replacing a cached copy
+// with it loses nothing.
+func (c *Client) GetAuthorWorksForRefresh(ctx context.Context, authorForeignID string) ([]models.Book, bool, error) {
+	books, _, intact, err := c.authorWorks(ctx, authorForeignID)
+	return books, intact, err
+}
+
+// authorWorks merges the works and search endpoints for GetAuthorWorks and
+// its variants. complete reports that neither list was cut short for any
+// reason; intact reports that no upstream call failed.
+func (c *Client) authorWorks(ctx context.Context, authorForeignID string) (books []models.Book, complete, intact bool, err error) {
 	var (
-		primary         []authorWorkEntry
-		primaryComplete bool
-		primaryErr      error
-		enrichment      []models.Book
-		enrichComplete  bool
-		enrichErr       error
-		wg              sync.WaitGroup
+		primary            []authorWorkEntry
+		primaryComplete    bool
+		primaryInterrupted bool
+		primaryErr         error
+		enrichment         []models.Book
+		enrichComplete     bool
+		enrichErr          error
+		wg                 sync.WaitGroup
 	)
 
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		primary, primaryComplete, primaryErr = c.authorWorksBackfill(ctx, authorForeignID)
+		primary, primaryComplete, primaryInterrupted, primaryErr = c.authorWorksBackfill(ctx, authorForeignID)
 	}()
 	go func() {
 		defer wg.Done()
@@ -393,7 +418,7 @@ func (c *Client) GetAuthorWorksSnapshot(ctx context.Context, authorForeignID str
 		slog.Debug("openlibrary: author search enrichment failed", "author", authorForeignID, "error", enrichErr)
 	}
 	if primaryErr != nil && enrichErr != nil {
-		return nil, false, fmt.Errorf("get author works %s: primary=%w enrichment=%w", authorForeignID, primaryErr, enrichErr)
+		return nil, false, false, fmt.Errorf("get author works %s: primary=%w enrichment=%w", authorForeignID, primaryErr, enrichErr)
 	}
 
 	// Build enrichment index: workID → search result for fast lookup.
@@ -404,7 +429,7 @@ func (c *Client) GetAuthorWorksSnapshot(ctx context.Context, authorForeignID str
 
 	// index maps workID → position in `books`.
 	index := make(map[string]int, len(primary))
-	books := make([]models.Book, 0, len(primary)+len(enrichment))
+	books = make([]models.Book, 0, len(primary)+len(enrichment))
 
 	for _, entry := range primary {
 		workID := strings.TrimPrefix(entry.Key, "/works/")
@@ -481,7 +506,8 @@ func (c *Client) GetAuthorWorksSnapshot(ctx context.Context, authorForeignID str
 		books = append(books, e)
 	}
 
-	return books, primaryErr == nil && enrichErr == nil && primaryComplete && enrichComplete, nil
+	intact = primaryErr == nil && enrichErr == nil && !primaryInterrupted
+	return books, intact && primaryComplete && enrichComplete, intact, nil
 }
 
 // searchAuthorWorks queries the OL search endpoint for all works by the given
@@ -560,21 +586,24 @@ func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) 
 // hard cap of 100 books on prolific authors). We now page through until the
 // catalogue is exhausted, bounded by authorWorksMaxFetch to keep pathological
 // or maliciously large responses from running away.
-func (c *Client) authorWorksBackfill(ctx context.Context, authorForeignID string) ([]authorWorkEntry, bool, error) {
-	var entries []authorWorkEntry
-	complete := false
+//
+// complete reports that the whole list was collected. interrupted reports
+// the one way it can come up short because of a failure rather than by
+// design: a later page erroring after earlier pages succeeded (#2601).
+func (c *Client) authorWorksBackfill(ctx context.Context, authorForeignID string) (entries []authorWorkEntry, complete, interrupted bool, err error) {
 	for offset := 0; offset < authorWorksMaxFetch; offset += authorWorksPageSize {
 		u := fmt.Sprintf("%s/authors/%s/works.json?limit=%d&offset=%d",
 			baseURL, authorForeignID, authorWorksPageSize, offset)
 		var resp authorWorksResponse
 		if err := c.getJSON(ctx, u, &resp); err != nil {
 			if offset == 0 {
-				return nil, false, err
+				return nil, false, false, err
 			}
 			// A later page failing shouldn't discard the works already
 			// collected — return what we have and let enrichment fill gaps.
 			slog.Warn("openlibrary: author works pagination stopped early",
 				"author", authorForeignID, "offset", offset, "error", err)
+			interrupted = true
 			break
 		}
 		entries = append(entries, resp.Entries...)
@@ -600,7 +629,7 @@ func (c *Client) authorWorksBackfill(ctx context.Context, authorForeignID string
 		slog.Warn("openlibrary: author works hit pagination cap; catalogue may be truncated",
 			"author", authorForeignID, "cap", authorWorksMaxFetch)
 	}
-	return entries, complete, nil
+	return entries, complete, interrupted, nil
 }
 
 // pickPreferredLanguage returns "eng" if present in the list, otherwise the

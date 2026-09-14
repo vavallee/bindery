@@ -8,10 +8,17 @@ type cacheBypassKey struct{}
 
 // WithCacheBypass marks ctx as an explicit user refresh: the author profile
 // and catalogue lookups it reaches (GetAuthor, GetAuthorWorks,
-// GetAuthorWorksUnenriched, GetAuthorWorksForAuthor) skip the aggregator's
-// 24 hour cache, ask the provider, and write the answer back so the next
-// ordinary read sees it. A failed provider call leaves the cached entry in
-// place.
+// GetAuthorWorksUnenriched, GetAuthorWorksForAuthor, GetAuthorAudiobooks)
+// skip the aggregator's 24 hour cache, ask the provider, and write the answer
+// back so the next ordinary read sees it.
+//
+// A failed or partial answer never replaces a cached entry. GetAuthor returns
+// the error. The works lookups and GetAuthorAudiobooks hand back the cached
+// copy instead (the works lookups adding any new works a partial answer
+// carried), and GetAuthorWorksForAuthor falls back to the cached catalogue
+// when a configured supplement failed, since that supplement drives the
+// compilation prune. A refresh is never worse off than the cached answer it
+// skipped.
 //
 // Only those entry points honour it, and each one consumes it before making
 // nested lookups, so per work cover enrichment, edition and ISBN lookups keep

@@ -26,7 +26,7 @@ type Aggregator struct {
 	primary   Provider
 	enrichers []Provider
 	audnex    AudnexBookClient
-	audible   *audible.Client
+	audible   audibleCatalogue
 	cache     *ttlCache
 }
 
