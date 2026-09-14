@@ -178,3 +178,27 @@ func registerOIDCDiscoveryRoutes(r chi.Router, h oidcDiscoveryRouteHandler) {
 		r.Post("/auth/oidc/test-discovery", h.TestDiscovery)
 	})
 }
+
+// useAPIAuth installs the auth stack every /api route sits behind: identity
+// and mode resolution, then the two CSRF guards. Shared by both API trees in
+// main.go and by the route tests, so a test cannot pass against a stack the
+// server does not run.
+func useAPIAuth(r chi.Router, p auth.Provider) {
+	r.Use(auth.Middleware(p))
+	r.Use(auth.RequireXRequestedWith)
+	r.Use(auth.RequireCSRFToken(p.SessionSecrets))
+}
+
+type storageRouteHandler interface {
+	Get(http.ResponseWriter, *http.Request)
+}
+
+// registerStorageRoutes mounts the read-only view of the env and config
+// driven directories with their exists, writable and hardlink health (#1183).
+// Admin-only: it reveals the server's filesystem layout and writability.
+func registerStorageRoutes(r chi.Router, h storageRouteHandler) {
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
+		r.Get("/system/storage", h.Get)
+	})
+}

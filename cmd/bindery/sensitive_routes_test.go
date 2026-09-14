@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,7 +9,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/api"
 	"github.com/vavallee/bindery/internal/auth"
+	"github.com/vavallee/bindery/internal/config"
+	"github.com/vavallee/bindery/internal/db"
 )
 
 // stubSensitiveHandler stands in for the indexer, prowlarr, and download
@@ -367,6 +371,94 @@ func TestIndexerPublicReadsAllowNonAdmin(t *testing.T) {
 			}
 			if len(h.called) != 1 || h.called[0] != tt.called {
 				t.Fatalf("called = %v; want [%s]", h.called, tt.called)
+			}
+		})
+	}
+}
+
+// TestAdminRoutesAnswerInDisabledAuthMode drives admin routes through the
+// real auth stack and the real DB backed provider, with the mode read from the
+// same setting PUT /auth/mode writes. In disabled mode /auth/status reports
+// role admin, so the UI renders the admin screens; before the fix every one
+// of them answered 403 "admin role required" because the disabled branch let
+// the request through without a role.
+func TestAdminRoutesAnswerInDisabledAuthMode(t *testing.T) {
+	const apiKey = "route-test-api-key"
+	conn, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	ctx := context.Background()
+	settings := db.NewSettingsRepo(conn)
+	users := db.NewUserRepo(conn)
+	hash, err := auth.HashPassword("route-test-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := users.Create(ctx, "admin", hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := users.PromoteFirstUser(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.Set(ctx, api.SettingAuthAPIKey, apiKey); err != nil {
+		t.Fatal(err)
+	}
+	provider := &dbAuthProvider{settings: settings, users: users}
+
+	dir := t.TempDir()
+	storage := api.NewStorageHandler(&config.Config{DownloadDir: dir, LibraryDir: dir})
+	logs := &stubSensitiveHandler{}
+	var seenID int64
+	router := chi.NewRouter()
+	router.Route("/api/v1", func(r chi.Router) {
+		useAPIAuth(r, provider)
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seenID = auth.UserIDFromContext(r.Context())
+				next.ServeHTTP(w, r)
+			})
+		})
+		registerStorageRoutes(r, storage)
+		registerSystemLogRoutes(r, logs)
+	})
+
+	for _, tc := range []struct {
+		name   string
+		mode   auth.Mode
+		method string
+		path   string
+		apiKey string
+		xrw    bool
+		want   int
+	}{
+		{name: "enabled storage without a cookie", mode: auth.ModeEnabled, method: http.MethodGet, path: "/api/v1/system/storage", want: http.StatusUnauthorized},
+		{name: "disabled storage", mode: auth.ModeDisabled, method: http.MethodGet, path: "/api/v1/system/storage", want: http.StatusOK},
+		{name: "disabled storage with the api key", mode: auth.ModeDisabled, method: http.MethodGet, path: "/api/v1/system/storage", apiKey: apiKey, want: http.StatusOK},
+		{name: "disabled logs", mode: auth.ModeDisabled, method: http.MethodGet, path: "/api/v1/system/logs", want: http.StatusNoContent},
+		{name: "disabled log level change from the UI", mode: auth.ModeDisabled, method: http.MethodPut, path: "/api/v1/system/loglevel", xrw: true, want: http.StatusNoContent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := settings.Set(ctx, api.SettingAuthMode, string(tc.mode)); err != nil {
+				t.Fatal(err)
+			}
+			seenID = 0
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			if tc.apiKey != "" {
+				req.Header.Set("X-Api-Key", tc.apiKey)
+			}
+			if tc.xrw {
+				req.Header.Set("X-Requested-With", "bindery-ui")
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d (body %s)", rec.Code, tc.want, rec.Body.String())
+			}
+			if tc.want < 300 && seenID != admin.ID {
+				t.Errorf("request carried user id %d, want the operator %d", seenID, admin.ID)
 			}
 		})
 	}

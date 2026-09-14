@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -300,5 +301,114 @@ func TestSetEnforceTenancyForTests_RestoresPreviousValue(t *testing.T) {
 	})
 	if EnforceTenancy() != pre {
 		t.Errorf("cleanup did not restore; got %v, want %v", EnforceTenancy(), pre)
+	}
+}
+
+// Disabled mode must carry the admin it promises.
+//
+// With auth.mode = disabled the middleware let every request through without
+// stamping a role, while GET /auth/status (requestHasAdminSemantics) told the
+// UI the caller was an admin. The UI rendered the admin screens and every
+// route behind RequireAdmin answered 403: storage, logs, backups, users. The
+// disabled branch now goes through the same install admin grant as
+// local-only, so the role and the operator id match the key branch.
+
+// TestMiddlewareAdminGrantPerMode walks each auth mode through the stack a
+// RequireAdmin route sits behind in main.go, and pins what reaches the
+// handler: status, role, and the user id per-user writes are stamped with.
+func TestMiddlewareAdminGrantPerMode(t *testing.T) {
+	const key = "per-mode-api-key"
+	for _, tc := range []struct {
+		name     string
+		mode     Mode
+		method   string
+		remote   string
+		apiKey   string
+		xrw      bool
+		operator int64
+		want     int
+		wantID   int64
+	}{
+		{name: "enabled without a cookie is 401", mode: ModeEnabled, method: http.MethodGet, operator: 7, want: http.StatusUnauthorized},
+		{name: "enabled with the api key is admin", mode: ModeEnabled, method: http.MethodGet, apiKey: key, operator: 7, want: http.StatusOK, wantID: 7},
+		{name: "disabled without a cookie reaches an admin route", mode: ModeDisabled, method: http.MethodGet, operator: 7, want: http.StatusOK, wantID: 7},
+		{name: "disabled browser mutation reaches an admin route", mode: ModeDisabled, method: http.MethodPut, xrw: true, operator: 7, want: http.StatusOK, wantID: 7},
+		{name: "disabled with the api key reaches an admin route", mode: ModeDisabled, method: http.MethodGet, apiKey: key, operator: 7, want: http.StatusOK, wantID: 7},
+		// The key branch now runs before the disabled grant, so a keyed
+		// integration earns the CSRF exemption here too, as in #1849.
+		{name: "disabled api key mutation needs no browser header", mode: ModeDisabled, method: http.MethodPost, apiKey: key, operator: 7, want: http.StatusOK, wantID: 7},
+		// Stamping the role must not switch the CSRF guard off: a keyless
+		// mutation without the UI header is still refused.
+		{name: "disabled keyless mutation without the header is still 403", mode: ModeDisabled, method: http.MethodPost, operator: 7, want: http.StatusForbidden},
+		{name: "disabled before any admin exists stays unattributed", mode: ModeDisabled, method: http.MethodGet, operator: 0, want: http.StatusOK, wantID: 0},
+		{name: "local-only from the LAN is admin as before", mode: ModeLocalOnly, method: http.MethodGet, remote: "192.168.1.5:5555", operator: 7, want: http.StatusOK, wantID: 7},
+		{name: "local-only from outside is 401 as before", mode: ModeLocalOnly, method: http.MethodGet, remote: "203.0.113.9:5555", operator: 7, want: http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &fakeProvider{mode: tc.mode, apiKey: key, secret: testSecret32, operatorUserID: tc.operator}
+			var gotID int64
+			var gotRole string
+			called := false
+			stack := Middleware(p)(RequireXRequestedWith(RequireCSRFToken(p.SessionSecrets)(
+				RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					called = true
+					gotID = UserIDFromContext(r.Context())
+					gotRole = UserRoleFromContext(r.Context())
+					w.WriteHeader(http.StatusOK)
+				})))))
+
+			req := httptest.NewRequest(tc.method, "/api/v1/system/storage", nil)
+			if tc.remote != "" {
+				req.RemoteAddr = tc.remote
+			}
+			if tc.apiKey != "" {
+				req.Header.Set("X-Api-Key", tc.apiKey)
+			}
+			if tc.xrw {
+				req.Header.Set("X-Requested-With", "bindery-ui")
+			}
+			rec := httptest.NewRecorder()
+			stack.ServeHTTP(rec, req)
+
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d (body %s)", rec.Code, tc.want, rec.Body.String())
+			}
+			if tc.want != http.StatusOK {
+				if called {
+					t.Fatal("handler ran for a request the stack should have refused")
+				}
+				return
+			}
+			if gotRole != "admin" {
+				t.Errorf("role = %q, want admin", gotRole)
+			}
+			if gotID != tc.wantID {
+				t.Errorf("UserIDFromContext = %d, want %d; per-user writes and owner scoping key off this id", gotID, tc.wantID)
+			}
+		})
+	}
+}
+
+// TestModeGrantsAdmin pins the rule the middleware and /auth/status share.
+func TestModeGrantsAdmin(t *testing.T) {
+	local := httptest.NewRequest(http.MethodGet, "/", nil)
+	local.RemoteAddr = "127.0.0.1:5555"
+	remote := httptest.NewRequest(http.MethodGet, "/", nil)
+	remote.RemoteAddr = "203.0.113.9:5555"
+	for _, tc := range []struct {
+		mode Mode
+		r    *http.Request
+		want bool
+	}{
+		{ModeDisabled, remote, true},
+		{ModeDisabled, local, true},
+		{ModeLocalOnly, local, true},
+		{ModeLocalOnly, remote, false},
+		{ModeEnabled, local, false},
+		{ModeProxy, local, false},
+	} {
+		if got := ModeGrantsAdmin(tc.mode, tc.r, nil); got != tc.want {
+			t.Errorf("ModeGrantsAdmin(%s, %s) = %v, want %v", tc.mode, tc.r.RemoteAddr, got, tc.want)
+		}
 	}
 }

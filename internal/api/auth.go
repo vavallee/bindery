@@ -474,12 +474,17 @@ func authModeFor(ctx context.Context, settings *db.SettingsRepo) auth.Mode {
 	return auth.ParseMode(s.Value)
 }
 
+// requestHasAdminSemantics reports whether r acts as an admin: either the
+// middleware stamped the role, or the auth mode admits the caller as the
+// install's admin. The second half is auth.ModeGrantsAdmin, the rule the
+// middleware itself stamps from, so a route the middleware lets through before
+// its mode branches (GET /auth/status) cannot promise the UI an admin that
+// RequireAdmin then refuses.
 func requestHasAdminSemantics(r *http.Request, settings *db.SettingsRepo) bool {
 	if auth.UserRoleFromContext(r.Context()) == "admin" {
 		return true
 	}
-	mode := authModeFor(r.Context(), settings)
-	return mode == auth.ModeDisabled || (mode == auth.ModeLocalOnly && auth.IsLocalRequest(r))
+	return auth.ModeGrantsAdmin(authModeFor(r.Context(), settings), r, auth.EnvTrustedProxyCIDRs())
 }
 
 func (h *AuthHandler) apiKey(ctx context.Context) string {

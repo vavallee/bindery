@@ -57,9 +57,11 @@ func SetEnforceTenancyForTests(t *testing.T, on bool) {
 // When the gate is on:
 //   - admin users always pass (matches existing RequireAdmin semantics — admins
 //     manage every user's library);
-//   - userID == 0 means there is no authenticated user (API key / disabled /
-//     local-only mode), so the request is treated as admin-equivalent and
-//     allowed through to preserve pre-gate behaviour for those auth modes;
+//   - userID == 0 means there is no authenticated user. Requests the
+//     middleware admits as the install (API key, disabled mode, local-only)
+//     carry the admin role and are already allowed above; this covers
+//     contexts built outside the middleware, which keep their pre-gate
+//     admin-equivalent treatment;
 //   - ownerUserID == 0 means the row has no owner (pre-migration-025 data),
 //     and we also pass to avoid hiding legacy rows from their actual creator.
 //
@@ -74,9 +76,10 @@ func CheckOwnership(ctx context.Context, ownerUserID int64) bool {
 	}
 	uid := UserIDFromContext(ctx)
 	if uid == 0 {
-		// API-key / disabled / local-only requests carry no user identity.
-		// Treat them as admin-equivalent so machine-to-machine integrations
-		// (Harpoon, *arr-style callers) keep working post-gate.
+		// No identity at all: a context built outside the middleware (the
+		// middleware gives API-key, disabled and local-only requests the
+		// admin role, handled above). Treat it as admin-equivalent so
+		// machine-to-machine callers keep working post-gate.
 		return true
 	}
 	if ownerUserID == 0 {
@@ -95,10 +98,10 @@ func CheckOwnership(ctx context.Context, ownerUserID int64) bool {
 //   - admin role        => 0 (admins manage every user's library, matching
 //     CheckOwnership, which already lets an admin open any item by ID);
 //   - otherwise         => the caller's user id, which the DB layer treats as
-//     "owner_user_id = id OR owner_user_id IS NULL". A 0 here (API-key /
-//     disabled / local-only requests, which carry no user identity) already
-//     means unscoped downstream, matching CheckOwnership's admin-equivalent
-//     handling of those auth modes.
+//     "owner_user_id = id OR owner_user_id IS NULL". API-key, disabled and
+//     local-only requests never get here: the middleware gives them the
+//     admin role. A 0 from a context with no identity still means unscoped
+//     downstream, matching CheckOwnership.
 //
 // Use this — not UserIDFromContext — to scope owner-filtered list handlers so
 // admins see the shared library and non-admins stay isolated to their own
@@ -319,6 +322,29 @@ func AllowUnauthPath(method, path string) bool {
 	return false
 }
 
+// ModeGrantsAdmin reports whether the auth mode on its own admits r as the
+// install's admin, with no personal credential: disabled admits everyone,
+// local-only admits a client on a private network (resolved through the
+// trusted proxy set). The API key is the third install admin grant and is
+// checked separately because it also earns the CSRF exemption.
+//
+// This is the single rule behind both the middleware, which stamps the admin
+// role and the operator id when it holds, and GET /auth/status, which has to
+// answer the same question on a path the middleware lets through before any
+// mode branch runs. Two copies of it drifted once already: disabled mode was
+// reported as admin by the status route while the middleware stamped nothing,
+// so the UI rendered admin screens that every RequireAdmin route refused.
+func ModeGrantsAdmin(mode Mode, r *http.Request, trusted []*net.IPNet) bool {
+	switch mode {
+	case ModeDisabled:
+		return true
+	case ModeLocalOnly:
+		return IsLocalRequestTrusted(r, trusted)
+	default:
+		return false
+	}
+}
+
 // Middleware returns the composite auth checker. Precedence per request:
 //
 //  1. Always try to resolve identity from a valid session cookie, so handlers
@@ -326,20 +352,20 @@ func AllowUnauthPath(method, path string) bool {
 //  2. In proxy mode, also try to resolve identity from the configured proxy
 //     header (gated by trusted-proxy CIDR), so /auth/status reports the
 //     proxy-authed user instead of always returning authenticated:false (#560).
-//  3. Health / auth endpoints — always allowed through
-//  4. Mode == disabled            — always allowed
-//  5. Valid X-Api-Key header or ?apikey= query — allowed
-//  6. Mode == local-only + local  — always allowed
-//  7. Valid signed session cookie — allowed
-//  8. Mode == proxy: trusted peer IP + identity header → resolve/provision user
-//  9. Otherwise                   — 401
+//  3. Health / auth endpoints: always allowed through
+//  4. Valid X-Api-Key header or ?apikey= query: admin, as the operator
+//  5. ModeGrantsAdmin (disabled, or local-only and local): admin, as the operator
+//  6. Valid signed session cookie: allowed
+//  7. Mode == proxy: trusted peer IP + identity header → resolve/provision user
+//  8. Otherwise: 401
 //
-// The API-key check deliberately precedes the local-only bypass: both grant
-// admin, but only the key branch marks the request AuthedViaAPIKey, and the
-// CSRF guards downstream key their exemption off that flag. With local-only
-// first, a valid-key mutation from a LAN address short-circuited into the
-// bypass, never got the flag, and was then rejected 403 by
-// RequireXRequestedWith (#1849).
+// The API-key check deliberately precedes the mode grant: both grant admin,
+// but only the key branch marks the request AuthedViaAPIKey, and the CSRF
+// guards downstream key their exemption off that flag. With local-only first,
+// a valid-key mutation from a LAN address short-circuited into the bypass,
+// never got the flag, and was then rejected 403 by RequireXRequestedWith
+// (#1849). Disabled mode used to sit ahead of the key too, with the same
+// result for keyed integrations, and without stamping any role at all.
 func Middleware(p Provider) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -406,18 +432,15 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if mode == ModeDisabled {
-				next.ServeHTTP(w, r)
-				return
-			}
-			// Checked before the local-only bypass below: both branches grant
-			// admin, so for a trusted-local caller the only thing that changes
-			// is the AuthedViaAPIKey flag — and that flag is what exempts the
-			// request from the X-Requested-With / CSRF guards. Running the
-			// bypass first meant a valid-key mutation from the LAN never earned
-			// the exemption and came back 403 (#1849). An absent or wrong key
-			// falls through to the bypass exactly as before, so local-only
-			// callers with no key are unaffected and still need the header.
+			// Checked before the mode grant below: both branches grant admin,
+			// so for a caller the mode already admits the only thing that
+			// changes is the AuthedViaAPIKey flag, and that flag is what
+			// exempts the request from the X-Requested-With / CSRF guards.
+			// Running the bypass first meant a valid-key mutation from the LAN
+			// (or from anywhere, in disabled mode) never earned the exemption
+			// and came back 403 (#1849). An absent or wrong key falls through
+			// to the grant exactly as before, so keyless callers are unaffected
+			// and still need the header.
 			if key := requestAPIKey(r); key != "" && subtle.ConstantTimeCompare([]byte(key), []byte(p.APIKey())) == 1 {
 				// API key authentication is always treated as admin. Set the role
 				// so RequireAdmin-protected endpoints are accessible without a
@@ -434,13 +457,15 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if mode == ModeLocalOnly && IsLocalRequestTrusted(r, p.TrustedProxyCIDRs()) {
-				// Local-only bypass is always treated as admin, mirroring the
-				// API-key branch above. Without this, RequireAdmin-protected
-				// endpoints (auth mode change, user CRUD, settings writes)
-				// return "admin role required" 403 to trusted-local requests
-				// even though the whole point of local-only mode is to grant
-				// frictionless access from a trusted private network (#799).
+			if ModeGrantsAdmin(mode, r, p.TrustedProxyCIDRs()) {
+				// The mode itself admits the caller (disabled: everyone;
+				// local-only: a trusted local client), so the request acts as
+				// the install's admin, mirroring the API-key branch above. It is
+				// the same rule GET /auth/status reports from, so the admin
+				// screens the UI renders are the ones RequireAdmin lets through.
+				// Without the role, RequireAdmin-protected endpoints answer
+				// "admin role required" 403: first for local-only (#799), and
+				// for disabled mode until this branch absorbed it.
 				ctx := context.WithValue(r.Context(), userRoleCtxKey, "admin")
 				ctx = withOperatorUserID(ctx, p)
 				r = r.WithContext(ctx)
