@@ -2,6 +2,7 @@ package deluge_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/vavallee/bindery/internal/downloader/deluge"
+	"github.com/vavallee/bindery/internal/downloader/infohash"
 )
 
 // delugeServer is a minimal Deluge Web UI JSON-RPC stub.
@@ -66,6 +68,35 @@ type delugeServer struct {
 	// passed to the most recent core.add_torrent_file call.
 	addTorrentFileFilename string
 	addTorrentFilePayload  string
+
+	// rejectDuplicates makes both add methods answer an add of a torrent the
+	// session already holds the way Deluge 2.x does: an AddTorrentError RPC
+	// error instead of the hash.
+	rejectDuplicates bool
+	// alwaysDuplicate answers every add with that error, even for a torrent
+	// the session does not hold.
+	alwaysDuplicate bool
+	// nullOnDuplicate answers an add of a known torrent with null, which is
+	// what Deluge 1.3 returns when libtorrent refuses the duplicate.
+	nullOnDuplicate bool
+	// realFileHash makes core.add_torrent_file report the payload's real v1
+	// infohash instead of the fixed placeholder.
+	realFileHash bool
+}
+
+// duplicate answers an add of hash the way the configured Deluge does when
+// the session already holds it, and reports whether it wrote a reply.
+func (s *delugeServer) duplicate(hash string, write func(any), writeErr func(string)) bool {
+	_, known := s.torrents[hash]
+	switch {
+	case s.alwaysDuplicate || (s.rejectDuplicates && known):
+		writeErr("AddTorrentError: Torrent already in session (" + hash + ").")
+		return true
+	case s.nullOnDuplicate && known:
+		write(nil)
+		return true
+	}
+	return false
 }
 
 func (s *delugeServer) handler() http.HandlerFunc {
@@ -151,6 +182,14 @@ func (s *delugeServer) handler() http.HandlerFunc {
 					hash = hash[:i]
 				}
 			}
+			// Deluge stores and reports the hex hash whichever spelling the
+			// magnet used.
+			if n := infohash.Normalize(hash); n != "" {
+				hash = n
+			}
+			if s.duplicate(hash, write, writeErr) {
+				return
+			}
 			s.torrents[hash] = deluge.TorrentStatus{Hash: hash, State: "Downloading", Progress: 0}
 			write(hash)
 
@@ -160,8 +199,19 @@ func (s *delugeServer) handler() http.HandlerFunc {
 				json.Unmarshal(req.Params[0], &s.addTorrentFileFilename)
 				json.Unmarshal(req.Params[1], &s.addTorrentFilePayload)
 			}
-			s.torrents[newHash] = deluge.TorrentStatus{Hash: newHash, State: "Downloading", Progress: 10}
-			write(newHash)
+			hash := newHash
+			if s.realFileHash {
+				if raw, err := base64.StdEncoding.DecodeString(s.addTorrentFilePayload); err == nil {
+					if h := infohash.FromTorrentFile(raw); h != "" {
+						hash = h
+					}
+				}
+			}
+			if s.duplicate(hash, write, writeErr) {
+				return
+			}
+			s.torrents[hash] = deluge.TorrentStatus{Hash: hash, State: "Downloading", Progress: 10}
+			write(hash)
 
 		case "label.set_torrent":
 			write(nil)
@@ -193,7 +243,26 @@ func (s *delugeServer) handler() http.HandlerFunc {
 			write(nil)
 
 		case "core.get_torrents_status":
-			write(s.torrents)
+			// Honour an {"id": [...]} filter the way Deluge does: ids the
+			// session does not hold are dropped, not reported as an error.
+			var filter map[string]any
+			if len(req.Params) > 0 {
+				json.Unmarshal(req.Params[0], &filter)
+			}
+			ids, ok := filter["id"].([]any)
+			if !ok {
+				write(s.torrents)
+				return
+			}
+			out := map[string]deluge.TorrentStatus{}
+			for _, id := range ids {
+				if h, ok := id.(string); ok {
+					if st, ok := s.torrents[h]; ok {
+						out[h] = st
+					}
+				}
+			}
+			write(out)
 
 		case "core.get_torrent_status":
 			if s.statusErr {

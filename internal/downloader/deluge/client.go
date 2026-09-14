@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/downloader/clienthost"
+	"github.com/vavallee/bindery/internal/downloader/infohash"
 	"github.com/vavallee/bindery/internal/downloader/nethint"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
 	"github.com/vavallee/bindery/internal/httpsec"
@@ -237,6 +238,10 @@ func (c *Client) daemonHosts(ctx context.Context) ([]daemonHost, error) {
 // a nil pointer) skips the call entirely, leaving Deluge's global default in
 // place. Ratio-limit errors are non-fatal: the torrent is already added, so a
 // failure to tighten the ratio must not fail the grab.
+//
+// A torrent Deluge already holds resolves to that torrent's hash instead of
+// failing the grab (#2289), and the label and ratio still apply to it; see
+// existingTorrent.
 func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, label string, seedRatio *float64) (string, error) {
 	if err := c.ensureLoggedIn(ctx); err != nil {
 		return "", err
@@ -267,7 +272,7 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, label string, seed
 
 	hash = strings.ToLower(strings.TrimSpace(hash))
 	if hash == "" {
-		return "", fmt.Errorf("deluge accepted torrent but did not return a hash")
+		return "", errNoHashReturned
 	}
 
 	if label != "" {
@@ -302,13 +307,82 @@ func (c *Client) setStopRatio(ctx context.Context, hash string, ratio float64) e
 	return nil
 }
 
-// addMagnet calls core.add_torrent_magnet which returns the hash directly.
+// addMagnet calls core.add_torrent_magnet, which returns the hash directly.
+// When Deluge already holds the torrent, the hash is the magnet's btih
+// instead; see existingTorrent.
 func (c *Client) addMagnet(ctx context.Context, magnet string) (string, error) {
 	var hash string
-	if err := c.call(ctx, true, "core.add_torrent_magnet", []any{magnet, map[string]any{}}, &hash); err != nil {
+	err := c.call(ctx, true, "core.add_torrent_magnet", []any{magnet, map[string]any{}}, &hash)
+	if err == nil && strings.TrimSpace(hash) != "" {
+		return hash, nil
+	}
+	if err != nil && !alreadyInSession(err) {
 		return "", fmt.Errorf("add magnet: %w", err)
 	}
+	existing, err := c.existingTorrent(ctx, infohash.Normalize(infohash.FromMagnet(magnet)), err)
+	if err != nil {
+		return "", fmt.Errorf("add magnet: %w", err)
+	}
+	return existing, nil
+}
+
+// errNoHashReturned is an add that came back with neither a hash nor an
+// error. Deluge 1.3 answers that way when libtorrent refuses a torrent the
+// session already holds.
+var errNoHashReturned = errors.New("deluge accepted torrent but did not return a hash")
+
+// alreadyInSession reports whether err is Deluge refusing an add because the
+// session already holds the torrent. Deluge 2.x raises AddTorrentError
+// ("Torrent already in session (<hash>).") from TorrentManager, and deluge-web
+// relays it as the RPC error message.
+func alreadyInSession(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "already in session")
+}
+
+// existingTorrent finishes an add Deluge did not complete because it already
+// holds the torrent, which is what re-grabbing a release that is still seeding
+// looks like (#2289). The content is there, so the grab succeeds with the
+// existing torrent's hash, the way qBittorrent's 409 does (#769).
+//
+// hash is derived by the caller from the magnet's btih or the .torrent's info
+// dictionary. It is believed only once Deluge lists it; otherwise the grab
+// fails with Deluge's own reason. addErr is the refusal, or nil when Deluge
+// answered null.
+func (c *Client) existingTorrent(ctx context.Context, hash string, addErr error) (string, error) {
+	cause := addErr
+	if cause == nil {
+		cause = errNoHashReturned
+	}
+	if hash == "" {
+		return "", fmt.Errorf("%w, and the torrent's hash could not be derived to look for it", cause)
+	}
+	present, err := c.hasTorrent(ctx, hash)
+	if err != nil {
+		return "", fmt.Errorf("%w, and checking whether Deluge holds %s failed: %w", cause, hash, err)
+	}
+	if !present {
+		return "", fmt.Errorf("%w, and %s is not in Deluge's torrent list", cause, hash)
+	}
+	slog.Info("deluge: torrent already in the session, reusing it", "hash", hash)
 	return hash, nil
+}
+
+// hasTorrent reports whether the session holds hash. core.get_torrents_status
+// with an id filter drops ids the session does not know, so an unknown hash
+// comes back as an empty map rather than an error. The filter must be a list:
+// Deluge iterates it, and a bare string would be read one character at a time.
+func (c *Client) hasTorrent(ctx context.Context, hash string) (bool, error) {
+	var status map[string]json.RawMessage
+	filter := map[string]any{"id": []string{hash}}
+	if err := c.call(ctx, true, "core.get_torrents_status", []any{filter, []string{"hash"}}, &status); err != nil {
+		return false, err
+	}
+	for h := range status {
+		if strings.EqualFold(h, hash) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // addTorrentFile fetches the .torrent bytes inside Bindery (so the request
@@ -318,7 +392,8 @@ func (c *Client) addMagnet(ctx context.Context, magnet string) (string, error) {
 // returns a non-nil magnetURL in that case and the caller switches paths.
 //
 // core.add_torrent_file returns the infohash directly, so no before/after
-// snapshot polling is needed.
+// snapshot polling is needed. When Deluge already holds the torrent, the hash
+// is computed from the file's info dictionary instead; see existingTorrent.
 func (c *Client) addTorrentFile(ctx context.Context, torrentURL string) (hash string, magnetURL string, err error) {
 	fetched, err := c.fetchTorrentContent(ctx, torrentURL)
 	if err != nil {
@@ -335,11 +410,19 @@ func (c *Client) addTorrentFile(ctx context.Context, torrentURL string) (hash st
 	}
 
 	filedump := base64.StdEncoding.EncodeToString(fetched.data)
-	var infohash string
-	if err := c.call(ctx, true, "core.add_torrent_file", []any{filename, filedump, map[string]any{}}, &infohash); err != nil {
+	var added string
+	err = c.call(ctx, true, "core.add_torrent_file", []any{filename, filedump, map[string]any{}}, &added)
+	if err == nil && strings.TrimSpace(added) != "" {
+		return strings.ToLower(strings.TrimSpace(added)), "", nil
+	}
+	if err != nil && !alreadyInSession(err) {
 		return "", "", fmt.Errorf("core.add_torrent_file: %w", err)
 	}
-	return strings.ToLower(strings.TrimSpace(infohash)), "", nil
+	existing, err := c.existingTorrent(ctx, infohash.FromTorrentFile(fetched.data), err)
+	if err != nil {
+		return "", "", fmt.Errorf("core.add_torrent_file: %w", err)
+	}
+	return existing, "", nil
 }
 
 type fetchedTorrentContent struct {
