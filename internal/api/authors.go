@@ -1614,7 +1614,10 @@ func (h *AuthorHandler) relinkCalibreAuthor(ctx context.Context, author *models.
 	}
 
 	author.ForeignID = full.ForeignID
-	author.MetadataProvider = "openlibrary"
+	// The provider the new id belongs to, read the way catalogue fetches
+	// route it. A blanket "openlibrary" mislabelled every dnb: and hc: link,
+	// including the primary's own match on a Hardcover or DNB primary (#2332).
+	author.MetadataProvider = models.AuthorProviderFromForeignID(full.ForeignID)
 	if full.ImageURL != "" {
 		author.ImageURL = full.ImageURL
 	}

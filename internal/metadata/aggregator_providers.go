@@ -115,6 +115,11 @@ type SearchOutcome struct {
 	// A provider skipped for missing credentials is NOT a failure and does
 	// not appear here.
 	FailedProviders []string
+	// Answered names the providers that returned without error, match or
+	// not, in provider order. A provider skipped for missing credentials
+	// neither failed nor answered. An importer's "no match" message names
+	// these rather than assuming which providers were asked (#2332).
+	Answered []string
 	// PrimaryFailed is true when Primary is one of FailedProviders.
 	PrimaryFailed bool
 	// FirstErr is the first provider failure, kept for logging. Results may
@@ -124,9 +129,10 @@ type SearchOutcome struct {
 }
 
 // newSearchOutcome builds the outcome of a lookup that lost the providers
-// named in failed, flagging PrimaryFailed when the primary is among them.
-func newSearchOutcome(primary string, failed []string, firstErr error) SearchOutcome {
-	outcome := SearchOutcome{Primary: primary, FailedProviders: failed, FirstErr: firstErr}
+// named in failed and heard from those in answered, flagging PrimaryFailed
+// when the primary is among the failures.
+func newSearchOutcome(primary string, failed, answered []string, firstErr error) SearchOutcome {
+	outcome := SearchOutcome{Primary: primary, FailedProviders: failed, Answered: answered, FirstErr: firstErr}
 	for _, name := range failed {
 		if name == primary {
 			outcome.PrimaryFailed = true
@@ -138,8 +144,14 @@ func newSearchOutcome(primary string, failed []string, firstErr error) SearchOut
 
 // SafeToBind reports whether a match may be written as an author's permanent
 // provider link. It refuses exactly one case: the primary provider failed and
-// the match came from somewhere else, so the fallback won by default rather
-// than on the merits.
+// the match did not come from it, so a fallback won by default rather than on
+// the merits.
+//
+// An empty foreign ID counts as not the primary's. It names no provider at
+// all, but the classifier files it under openlibrary, so on an OpenLibrary
+// primary it used to pass. Google Books author results carry no ID and win
+// same name ties against the enrichers registered after it, which made that
+// a live bypass (#2332).
 //
 // It deliberately does NOT refuse when the primary simply returned nothing.
 // That is #2237's case, where the record really is absent from the primary's
@@ -149,6 +161,9 @@ func (o SearchOutcome) SafeToBind(foreignID string) bool {
 	if !o.PrimaryFailed || o.Primary == "" {
 		return true
 	}
+	if strings.TrimSpace(foreignID) == "" {
+		return false
+	}
 	return providerNameForForeignID(foreignID) == o.Primary
 }
 
@@ -156,4 +171,10 @@ func (o SearchOutcome) SafeToBind(foreignID string) bool {
 // import message. Empty when nothing failed.
 func (o SearchOutcome) FailureSummary() string {
 	return strings.Join(o.FailedProviders, ", ")
+}
+
+// AnsweredSummary renders the providers that answered, for a user facing
+// "no match" message. Empty when none did.
+func (o SearchOutcome) AnsweredSummary() string {
+	return strings.Join(o.Answered, ", ")
 }

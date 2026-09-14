@@ -516,3 +516,53 @@ func TestGoodreadsImport_StoresResolvedProvider(t *testing.T) {
 		})
 	}
 }
+
+// TestGoodreadsImport_PrimaryDownNoMatchSaysRetry: with the primary down and
+// nothing else matching, the reason must not read as a bad ISBN. The wiki
+// tells users to fix the failed rows and upload them again, so a wrong reason
+// here has them editing correct data.
+func TestGoodreadsImport_PrimaryDownNoMatchSaysRetry(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  GoodreadsRow
+	}{
+		{"row with isbn", goodreadsGuardRow(true)},
+		{"row without isbn", goodreadsGuardRow(false)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agg := metadata.NewAggregator(failingProvider("openlibrary", errOpenLibraryTimeout), failingProvider("dnb", nil))
+			rows := ResolveGoodreadsRows(context.Background(), []GoodreadsRow{tc.row}, GoodreadsImportOptions{}, agg, nil, 0)
+			if len(rows) != 1 || rows[0].Outcome != outcomeUnresolved {
+				t.Fatalf("rows = %+v, want one unresolved", rows)
+			}
+			if rows[0].Reason != wantPrimaryDownReason {
+				t.Errorf("reason = %q, want %q", rows[0].Reason, wantPrimaryDownReason)
+			}
+		})
+	}
+}
+
+// TestGoodreadsImport_NoMatchNamesProviders: a genuine miss names the
+// providers that answered, so a Hardcover primary's miss does not read as
+// OpenLibrary's or as a generic one.
+func TestGoodreadsImport_NoMatchNamesProviders(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  GoodreadsRow
+		want string
+	}{
+		{"row with isbn", goodreadsGuardRow(true), "no match on hardcover, dnb for ISBN or title+author"},
+		{"row without isbn", goodreadsGuardRow(false), "no match on hardcover, dnb (row has no ISBN; title+author search found nothing)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agg := metadata.NewAggregator(failingProvider("hardcover", nil), failingProvider("dnb", nil))
+			rows := ResolveGoodreadsRows(context.Background(), []GoodreadsRow{tc.row}, GoodreadsImportOptions{}, agg, nil, 0)
+			if len(rows) != 1 || rows[0].Outcome != outcomeUnresolved {
+				t.Fatalf("rows = %+v, want one unresolved", rows)
+			}
+			if rows[0].Reason != tc.want {
+				t.Errorf("reason = %q, want %q", rows[0].Reason, tc.want)
+			}
+		})
+	}
+}

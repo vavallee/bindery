@@ -69,3 +69,81 @@ func TestRelinkUpstreamStillLinksWhenPrimaryMerelyMisses(t *testing.T) {
 		t.Errorf("foreignID = %q, want the fallback link to have been written", stored.ForeignID)
 	}
 }
+
+// TestRelinkCalibreAuthorStoresProviderOfMatchedID: the Calibre relink wrote
+// metadata_provider=openlibrary after every match, so a dnb: or hc: link, and
+// even the primary's own match on a Hardcover or DNB primary, claimed to be
+// OpenLibrary's. The label must be the provider the stored id belongs to.
+func TestRelinkCalibreAuthorStoresProviderOfMatchedID(t *testing.T) {
+	const name = "Andy Weir"
+	answering := func(provider, id string) *searchableAuthorProvider {
+		return &searchableAuthorProvider{
+			stubMetaProvider:     stubMetaProvider{name: provider},
+			searchAuthorsByQuery: map[string][]models.Author{name: {{Name: name, ForeignID: id}}},
+			authors:              map[string]*models.Author{id: {Name: name, ForeignID: id}},
+		}
+	}
+	for _, tc := range []struct {
+		name         string
+		primary      *searchableAuthorProvider
+		enricher     *searchableAuthorProvider
+		wantID       string
+		wantProvider string
+	}{
+		{"openlibrary primary misses, dnb answers",
+			&searchableAuthorProvider{stubMetaProvider: stubMetaProvider{name: "openlibrary"}},
+			answering("dnb", "dnb:gnd:1052464211"), "dnb:gnd:1052464211", "dnb"},
+		{"hardcover primary answers", answering("hardcover", "hc:andy-weir"), nil, "hc:andy-weir", "hardcover"},
+		{"dnb primary answers", answering("dnb", "dnb:gnd:1052464211"), nil, "dnb:gnd:1052464211", "dnb"},
+		{"openlibrary primary answers", answering("openlibrary", "OL7373385A"), nil, "OL7373385A", "openlibrary"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newRelinkUpstreamFixture(t, tc.primary)
+			if tc.enricher != nil {
+				fixture = newRelinkUpstreamFixture(t, tc.primary, tc.enricher)
+			}
+			author := fixture.createAuthor(t, &models.Author{Name: name, ForeignID: "calibre:author:1", MetadataProvider: "calibre"})
+
+			if err := fixture.handler.relinkCalibreAuthor(fixture.ctx, author); err != nil {
+				t.Fatalf("relinkCalibreAuthor: %v", err)
+			}
+			stored, err := fixture.authors.GetByID(fixture.ctx, author.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.ForeignID != tc.wantID || stored.MetadataProvider != tc.wantProvider {
+				t.Errorf("stored (%s, %s), want (%s, %s)", stored.ForeignID, stored.MetadataProvider, tc.wantID, tc.wantProvider)
+			}
+		})
+	}
+}
+
+// TestRelinkCalibreAuthorRefusesNameOnlyMatchWhilePrimaryDown: SafeToBind now
+// refuses an empty foreign id when the primary failed. For the Calibre relink
+// that turns a misleading "no metadata match" (GetAuthor("") is routed to the
+// primary that just failed) into the retry later refusal. Nothing was bound
+// either way.
+func TestRelinkCalibreAuthorRefusesNameOnlyMatchWhilePrimaryDown(t *testing.T) {
+	const name = "Andy Weir"
+	primary := &searchableAuthorProvider{
+		stubMetaProvider: stubMetaProvider{name: "openlibrary"},
+		searchAuthorsErr: errors.New("openlibrary: context deadline exceeded"),
+	}
+	nameOnly := &searchableAuthorProvider{
+		stubMetaProvider:     stubMetaProvider{name: "googlebooks"},
+		searchAuthorsByQuery: map[string][]models.Author{name: {{Name: name}}},
+	}
+	fixture := newRelinkUpstreamFixture(t, primary, nameOnly)
+	author := fixture.createAuthor(t, &models.Author{Name: name, ForeignID: "calibre:author:1", MetadataProvider: "calibre"})
+
+	if err := fixture.handler.relinkCalibreAuthor(fixture.ctx, author); !errors.Is(err, errPrimaryProviderUnavailable) {
+		t.Errorf("relinkCalibreAuthor error = %v, want errPrimaryProviderUnavailable", err)
+	}
+	stored, err := fixture.authors.GetByID(fixture.ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ForeignID != "calibre:author:1" {
+		t.Errorf("foreignID = %q, want the calibre id kept", stored.ForeignID)
+	}
+}

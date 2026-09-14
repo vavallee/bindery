@@ -88,7 +88,7 @@ Clean-room Go rewrite, modern React UI, MIT-licensed, actively developed.
 > bindery migrate readarr /path/to/readarr.db
 > ```
 >
-> Authors are resolved again against your metadata providers (Readarr's `bookinfo.club` backend is gone); indexers, download clients, and blocklist port across. Prefer the UI? **Settings → Import**. Full guide: [Migrating from Readarr](docs/Migrating-From-Readarr-Wiki.md).
+> Authors are resolved again against your primary metadata provider and its fallbacks (Readarr's `bookinfo.club` backend is gone); indexers, download clients, and blocklist port across. Prefer the UI? **Settings → Import**. Full guide: [Migrating from Readarr](docs/Migrating-From-Readarr-Wiki.md).
 
 ## How Bindery compares
 
@@ -151,7 +151,7 @@ Cover images are fetched and cached server-side under `<dataDir>/image-cache/` (
 
 **Discover** — personalised recommendations on the **Discover** page from multiple signals: next-in-series for what you're reading, new releases from monitored authors, genre similarity (≥ 20 books in library), OpenLibrary subject popular picks, and Hardcover wishlist cross-reference. Recency scoring is relative to the *median* publication year of your library, so backlist readers aren't penalised. Hard-filters owned, dismissed, excluded-author, wrong-language, fewer-than-50-ratings, sub-3.0-rated, and omnibus titles. Dismiss / exclude actions persist.
 
-**Migration** — upload `readarr.db` directly (authors resolved again against your metadata providers since `bookinfo.club` is dead; indexers, download clients, and blocklist port structurally), or paste a newline-separated list of author names. CLI: `bindery migrate {csv,readarr} <path>` for first-time bulk imports without opening the UI.
+**Migration** — upload `readarr.db` directly (authors resolved again against your primary metadata provider and its fallbacks since `bookinfo.club` is dead; indexers, download clients, and blocklist port structurally), or paste a newline-separated list of author names. CLI: `bindery migrate {csv,readarr} <path>` for first-time bulk imports without opening the UI.
 
 **Operations**
 - **Authentication** — first-run setup creates an admin account (argon2id, signed session cookies). Four modes: **Enabled** / **Local only** (bypass for private IPs) / **Disabled** / **Proxy** (trust upstream `X-Forwarded-User` from a configured trusted proxy — drop-in for Authelia / Authentik / oauth2-proxy). Per-account API key, per-IP login rate limiting, CSRF double-submit (API-key clients exempt).

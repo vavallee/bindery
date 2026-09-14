@@ -13,7 +13,7 @@ Each imported author's catalogue is populated from metadata. Nothing is auto-gra
 
 The import dedupes by metadata id, so re-running it is safe: authors that already exist are skipped.
 
-Each author is matched against your metadata providers and linked to the provider whose record matched. If your primary metadata provider does not answer during the import, an author that only another provider matched is not linked to that provider, because the link decides for good which provider the author's catalogue syncs from. It is listed as failed with the reason instead, so run the import again once the provider responds. A pasted or uploaded author list (**Settings → Import**) works the same way.
+Each author is matched against your primary metadata provider and its fallbacks, and linked to the provider whose record matched. If your primary metadata provider does not answer during the import, an author it did not match is listed as failed rather than linked to another provider, because the link decides for good which provider the author's catalogue syncs from. The reason says the primary did not answer. Nothing is wrong with the name, so run the import again once the provider responds. A name that no provider matched while they were all answering is listed with the providers that were asked. A pasted or uploaded author list (**Settings → Import**) works the same way.
 
 An indexer or download client whose address Bindery will not call (link-local and cloud-metadata addresses) is reported as failed rather than imported, with the same message you would get typing it into the Add form.
 
@@ -69,8 +69,8 @@ The import is a two-step, dry-run-first flow — nothing is written until you co
 
 ### 5. Failed rows
 
-Rows that could not be matched are listed in the preview under **unresolved**, with a reason (no ISBN match, title+author search found nothing, etc.). Use **Download failed rows** to get a Goodreads-shaped CSV of just those rows, with a `Reason` column. Fix an ISBN or title in that file and re-upload it to retry only the misses.
+Rows that could not be matched are listed in the preview under **unresolved**, with a reason naming the providers that were asked, for example `no match on openlibrary, hardcover for ISBN or title+author`. Use **Download failed rows** to get a Goodreads-shaped CSV of just those rows, with a `Reason` column. Fix an ISBN or title in that file and re-upload it to retry only the misses.
 
-A row is also left unresolved when your primary metadata provider did not answer and only another provider matched it. Importing it would link its author to that other provider for good, so the reason says the provider did not answer instead. Upload the failed rows again once it responds.
+A reason that starts `primary metadata provider ... did not answer` is different: the row is fine, so do not edit it. Your primary metadata provider was not answering during the preview, so the row either found nothing or was matched only by another provider, and importing that match would link its author to the other provider for good. Upload the failed rows again, unchanged, once the provider responds.
 
 Resolution quality depends on ISBN coverage: rows with a valid ISBN match most reliably. Older or self-published titles often have no ISBN in the export and fall back to title+author search, which can miss — that is expected.

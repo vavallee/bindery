@@ -36,12 +36,45 @@ func refusedBindReason(o metadata.SearchOutcome, foreignID string) string {
 		o.Primary, models.AuthorProviderFromForeignID(foreignID))
 }
 
+// primaryDownReason is the per row message when the primary provider did not
+// answer and nothing another provider returned could be used. It is not a
+// verdict on the row, which may well match once the primary is back, so it
+// says to retry rather than to fix anything.
+func primaryDownReason(o metadata.SearchOutcome) string {
+	return fmt.Sprintf("primary metadata provider %s did not answer, run the import again once it responds", o.Primary)
+}
+
+// noMatchReason is the per row message when every provider that answered had
+// nothing. It names them rather than assuming OpenLibrary, which a Hardcover
+// or DNB primary may never have asked.
+func noMatchReason(o metadata.SearchOutcome) string {
+	if asked := o.AnsweredSummary(); asked != "" {
+		return "no match on " + asked
+	}
+	return "no metadata match"
+}
+
+// firstLinkableAuthor returns the first match carrying a foreign ID, or nil.
+// A record without one cannot become a provider link: Google Books author
+// results never have one, and one used to reach authors.Create with an empty
+// foreign_id labelled openlibrary. resolveGoodreadsByTitleAuthor applies the
+// same rule to book results.
+func firstLinkableAuthor(matches []models.Author) *models.Author {
+	for i := range matches {
+		if strings.TrimSpace(matches[i].ForeignID) != "" {
+			return &matches[i]
+		}
+	}
+	return nil
+}
+
 // resolveAndCreateAuthor is the author resolution step every bulk importer
-// runs: search the metadata providers for a name, take the top match, skip it
-// if the library already has that foreign id, refuse it if it only won because
-// the primary provider failed, fetch the full record, stamp the monitor
-// defaults and the provider the record belongs to, and create it. It records
-// its own outcome on res, so the caller only has to handle the created author.
+// runs: search the metadata providers for a name, take the first match that
+// carries a foreign id, skip it if the library already has that id, refuse it
+// if it only won because the primary provider failed, fetch the full record,
+// stamp the monitor defaults and the provider the record belongs to, and
+// create it. It records its own outcome on res, so the caller only has to
+// handle the created author.
 //
 // The CSV and Readarr importers carried identical copies of this block until
 // #2366, which is why #2332 is fixed here once rather than in each.
@@ -57,18 +90,29 @@ func resolveAndCreateAuthor(
 	agg *metadata.Aggregator,
 	res *Result,
 ) *models.Author {
-	// Search every provider. Top match wins, subject to the guard below.
+	// Search every provider. The first match that carries a foreign id wins,
+	// subject to the guard below.
 	matches, outcome, err := agg.SearchAuthorsWithOutcome(ctx, name)
 	if err != nil {
 		slog.Warn(source+" import: search failed", "name", name, "error", err)
 		res.fail(name, "metadata lookup failed: "+err.Error())
 		return nil
 	}
-	if len(matches) == 0 {
-		res.fail(name, "no OpenLibrary match")
+	match := firstLinkableAuthor(matches)
+	if match == nil {
+		switch {
+		case outcome.PrimaryFailed:
+			// Whatever came back may be missing the primary's record, so
+			// this is not a verdict on the name.
+			res.fail(name, primaryDownReason(outcome))
+		case len(matches) > 0:
+			res.fail(name, "no linkable match on "+outcome.AnsweredSummary()+": name only results carry no provider id")
+		default:
+			res.fail(name, noMatchReason(outcome))
+		}
 		return nil
 	}
-	top := matches[0]
+	top := *match
 
 	// Skip if already present. Nothing is written, so this needs no guard.
 	if existing, _ := authors.GetByAnyForeignID(ctx, top.ForeignID); existing != nil {

@@ -428,8 +428,81 @@ func TestImportCSVAuthors_NoMatch(t *testing.T) {
 	if res.Added != 0 || res.Errors != 1 {
 		t.Errorf("Added=%d Errors=%d; want 0/1", res.Added, res.Errors)
 	}
-	if msg := res.Failures["Nobody"]; !strings.Contains(msg, "no OpenLibrary match") {
-		t.Errorf("failure reason = %q", msg)
+	if msg := res.Failures["Nobody"]; msg != "no match on stub" {
+		t.Errorf("failure reason = %q, want %q", msg, "no match on stub")
+	}
+}
+
+// TestImportCSVAuthors_NameOnlyMatchDoesNotBypassGuard: with OpenLibrary
+// down, a Google Books name only record used to reach authors.Create with
+// foreign_id "" and metadata_provider=openlibrary, because SafeToBind read
+// the empty id as the primary's. The row must fail and say the primary did
+// not answer.
+func TestImportCSVAuthors_NameOnlyMatchDoesNotBypassGuard(t *testing.T) {
+	repo := db.NewAuthorRepo(newTestDB(t))
+
+	res, err := ImportCSVAuthors(context.Background(), strings.NewReader(guardAuthorName+"\n"), repo, nil, olTimesOutGoogleBooksAndDNBAnswer(), nil)
+	if err != nil {
+		t.Fatalf("ImportCSVAuthors: %v", err)
+	}
+	if res.Added != 0 || res.Errors != 1 {
+		t.Errorf("Added=%d Errors=%d; want 0/1 (failures=%v)", res.Added, res.Errors, res.Failures)
+	}
+	if msg := res.Failures[guardAuthorName]; msg != wantPrimaryDownReason {
+		t.Errorf("failure reason = %q, want %q", msg, wantPrimaryDownReason)
+	}
+	assertNoAuthorBound(t, repo, dnbAuthorID)
+}
+
+// TestImportCSVAuthors_NameOnlyMatchIsNotLinked: a record with no foreign id
+// is not something an author can be linked to, even with every provider
+// answering. It used to be created with an empty foreign id.
+func TestImportCSVAuthors_NameOnlyMatchIsNotLinked(t *testing.T) {
+	repo := db.NewAuthorRepo(newTestDB(t))
+	agg := metadata.NewAggregator(failingProvider("openlibrary", nil), googleBooksNameOnly())
+
+	res, err := ImportCSVAuthors(context.Background(), strings.NewReader(guardAuthorName+"\n"), repo, nil, agg, nil)
+	if err != nil {
+		t.Fatalf("ImportCSVAuthors: %v", err)
+	}
+	if res.Added != 0 || res.Errors != 1 {
+		t.Errorf("Added=%d Errors=%d; want 0/1 (failures=%v)", res.Added, res.Errors, res.Failures)
+	}
+	if msg := res.Failures[guardAuthorName]; !strings.HasPrefix(msg, "no linkable match on openlibrary, googlebooks") {
+		t.Errorf("failure reason = %q, want it to say no linkable match and name the providers asked", msg)
+	}
+	assertNoAuthorBound(t, repo, dnbAuthorID)
+}
+
+// TestImportCSVAuthors_PrimaryDownNoMatchSaysRetry: with the primary down and
+// nothing else matching, the row's reason must say the primary did not
+// answer. "no OpenLibrary match" reads as a verdict on the name.
+func TestImportCSVAuthors_PrimaryDownNoMatchSaysRetry(t *testing.T) {
+	repo := db.NewAuthorRepo(newTestDB(t))
+	agg := metadata.NewAggregator(failingProvider("openlibrary", errOpenLibraryTimeout), failingProvider("dnb", nil))
+
+	res, err := ImportCSVAuthors(context.Background(), strings.NewReader(guardAuthorName+"\n"), repo, nil, agg, nil)
+	if err != nil {
+		t.Fatalf("ImportCSVAuthors: %v", err)
+	}
+	if msg := res.Failures[guardAuthorName]; msg != wantPrimaryDownReason {
+		t.Errorf("failure reason = %q, want %q", msg, wantPrimaryDownReason)
+	}
+}
+
+// TestImportCSVAuthors_NoMatchNamesProviders: a genuine miss names the
+// providers that answered, not OpenLibrary, which a Hardcover or DNB primary
+// never asked.
+func TestImportCSVAuthors_NoMatchNamesProviders(t *testing.T) {
+	repo := db.NewAuthorRepo(newTestDB(t))
+	agg := metadata.NewAggregator(failingProvider("hardcover", nil), failingProvider("dnb", nil))
+
+	res, err := ImportCSVAuthors(context.Background(), strings.NewReader(guardAuthorName+"\n"), repo, nil, agg, nil)
+	if err != nil {
+		t.Fatalf("ImportCSVAuthors: %v", err)
+	}
+	if msg := res.Failures[guardAuthorName]; msg != "no match on hardcover, dnb" {
+		t.Errorf("failure reason = %q, want %q", msg, "no match on hardcover, dnb")
 	}
 }
 

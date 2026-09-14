@@ -66,7 +66,7 @@ type MigrateHandler struct {
 
 	// readarrImporter manages async Readarr DB imports so the HTTP handler
 	// can return 202 immediately instead of blocking for minutes while
-	// OpenLibrary metadata is resolved for each author.
+	// each author is resolved against the metadata providers.
 	readarrImporter *migrate.ReadarrImporter
 
 	// goodreadsImporter coordinates the two-step Goodreads CSV import:
@@ -96,9 +96,11 @@ func NewMigrateHandler(
 }
 
 // ImportCSV accepts a multipart form with a "file" field containing either
-// a newline-separated list of author names or a CSV (name[,monitored]). Top
-// OpenLibrary match is chosen for each name. A third column, if present, is
-// ignored for backward compatibility (#966).
+// a newline-separated list of author names or a CSV (name[,monitored]). Each
+// name is searched across the configured primary metadata provider and its
+// fallbacks, and the first match carrying a provider id is chosen, subject to
+// the primary provider guard (#2332). A third column, if present, is ignored
+// for backward compatibility (#966).
 func (h *MigrateHandler) ImportCSV(w http.ResponseWriter, r *http.Request) {
 	file, err := acceptUpload(w, r, 5<<20) // 5 MB cap — CSV of names is tiny
 	if err != nil {
@@ -119,7 +121,7 @@ func (h *MigrateHandler) ImportCSV(w http.ResponseWriter, r *http.Request) {
 // readarr.db (SQLite). The file is spooled to a temp path and the import
 // is kicked off asynchronously so the HTTP connection is not held open for
 // the duration — large libraries with many authors require one or more
-// OpenLibrary round-trips per author and can easily exceed server write
+// metadata provider round trips per author and can easily exceed server write
 // timeouts, producing a silent "NetworkError" in the browser.
 //
 // Returns 202 Accepted with an initial progress snapshot. The UI must poll
@@ -217,7 +219,7 @@ func acceptUpload(w http.ResponseWriter, r *http.Request, maxBytes int64) (io.Re
 // /migrate/goodreads/commit to actually add the books.
 //
 // Resolution can take a while for a large export — every row makes at least
-// one OpenLibrary call and the importer paces itself. The work runs on a
+// one metadata provider call and the importer paces itself. The work runs on a
 // context detached from the request so a client timeout does not abort it.
 func (h *MigrateHandler) ImportGoodreadsPreview(w http.ResponseWriter, r *http.Request) {
 	file, err := acceptUpload(w, r, 20<<20) // 20 MB cap — a big Goodreads export

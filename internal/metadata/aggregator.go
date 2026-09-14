@@ -78,11 +78,11 @@ func (a *Aggregator) SearchAuthorsWithOutcome(ctx context.Context, query string)
 	if len(providers) == 0 {
 		return nil, SearchOutcome{Primary: primary}, nil
 	}
-	results, failed, anySuccess, firstErr := searchFanOutWithFailures(ctx, providers, func(c context.Context, p Provider) ([]models.Author, error) {
+	results, failed, answered, firstErr := searchFanOutWithFailures(ctx, providers, func(c context.Context, p Provider) ([]models.Author, error) {
 		return p.SearchAuthors(c, query)
 	})
-	outcome := newSearchOutcome(primary, failed, firstErr)
-	if !anySuccess && firstErr != nil {
+	outcome := newSearchOutcome(primary, failed, answered, firstErr)
+	if len(answered) == 0 && firstErr != nil {
 		return nil, outcome, firstErr
 	}
 
@@ -176,14 +176,15 @@ func (a *Aggregator) ResolveCanonicalAuthor(ctx context.Context, name string) (*
 
 // searchFanOutWithFailures runs fn against the primary and every enricher in
 // parallel (with a per-provider timeout), returning each provider's results in
-// provider order (primary first), the providers that dropped out, whether any
-// provider returned without error, and the first non-"not configured" error
-// seen. Its former sibling searchFanOut discarded who dropped out, which is the
+// provider order (primary first), the providers that dropped out, the ones
+// that returned without error (answered, empty when none did), and the first
+// non-"not configured" error seen. Its former sibling searchFanOut discarded
+// who dropped out, which is the
 // root of #2271: a caller could not tell "the primary provider has no such record" from "the
 // primary provider would not answer", and one of those is a fact about the
 // world while the other is a fact about the last eight seconds. Binding an
 // author permanently on the strength of the second is the bug.
-func searchFanOutWithFailures[T any](ctx context.Context, providers []Provider, fn func(context.Context, Provider) ([]T, error)) (results [][]T, failed []string, anySuccess bool, firstErr error) {
+func searchFanOutWithFailures[T any](ctx context.Context, providers []Provider, fn func(context.Context, Provider) ([]T, error)) (results [][]T, failed, answered []string, firstErr error) {
 	results = make([][]T, len(providers))
 	errs := make([]error, len(providers))
 	var wg sync.WaitGroup
@@ -221,9 +222,9 @@ func searchFanOutWithFailures[T any](ctx context.Context, providers []Provider, 
 			results[i] = nil
 			continue
 		}
-		anySuccess = true
+		answered = append(answered, normalizedProviderName(providerName(p)))
 	}
-	return results, failed, anySuccess, firstErr
+	return results, failed, answered, firstErr
 }
 
 // canonicalAuthorKey normalizes an author name to a comparison key, treating
@@ -473,13 +474,13 @@ func (a *Aggregator) SearchBooksWithOutcome(ctx context.Context, query string) (
 	if len(providers) == 0 {
 		return []models.Book{}, SearchOutcome{Primary: primary}, nil
 	}
-	results, failed, anySuccess, firstErr := searchFanOutWithFailures(ctx, providers, func(c context.Context, p Provider) ([]models.Book, error) {
+	results, failed, answered, firstErr := searchFanOutWithFailures(ctx, providers, func(c context.Context, p Provider) ([]models.Book, error) {
 		return p.SearchBooks(c, query)
 	})
-	outcome := newSearchOutcome(primary, failed, firstErr)
+	outcome := newSearchOutcome(primary, failed, answered, firstErr)
 	// Only surface an error when no provider succeeded; otherwise return what we
 	// found, even if some providers failed.
-	if !anySuccess && firstErr != nil {
+	if len(answered) == 0 && firstErr != nil {
 		return nil, outcome, firstErr
 	}
 
@@ -973,12 +974,12 @@ func (a *Aggregator) ResolveBookByISBN(ctx context.Context, isbn string) (*model
 // persists the returned author's identity must consult
 // SearchOutcome.SafeToBind(book.Author.ForeignID) first (#2271, #2332).
 //
-// Only providers consulted before the hit are reported: the walk stops there,
-// so a later provider neither failed nor answered.
+// Only providers consulted up to the hit are reported, as failed or answered:
+// the walk stops there, so a later provider did neither.
 func (a *Aggregator) ResolveBookByISBNWithOutcome(ctx context.Context, isbn string) (*models.Book, SearchOutcome, error) {
 	var (
-		failed   []string
-		firstErr error
+		failed, answered []string
+		firstErr         error
 	)
 	for _, p := range a.providers() {
 		if p == nil {
@@ -997,10 +998,11 @@ func (a *Aggregator) ResolveBookByISBNWithOutcome(ctx context.Context, isbn stri
 			}
 			continue
 		}
+		answered = append(answered, normalizedProviderName(providerName(p)))
 		if book == nil || book.Author == nil || book.Author.ForeignID == "" {
 			continue
 		}
-		return book, newSearchOutcome(a.PrimaryProviderName(), failed, firstErr), nil
+		return book, newSearchOutcome(a.PrimaryProviderName(), failed, answered, firstErr), nil
 	}
-	return nil, newSearchOutcome(a.PrimaryProviderName(), failed, firstErr), nil
+	return nil, newSearchOutcome(a.PrimaryProviderName(), failed, answered, firstErr), nil
 }

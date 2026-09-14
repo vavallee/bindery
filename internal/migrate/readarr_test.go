@@ -724,3 +724,24 @@ func TestImportReadarr_StoresResolvedProvider(t *testing.T) {
 		})
 	}
 }
+
+// TestImportReadarr_PrimaryDownNoMatchSaysRetry: the Readarr import shares
+// the CSV import's reasons, so a primary outage reads as one rather than as
+// "no OpenLibrary match".
+func TestImportReadarr_PrimaryDownNoMatchSaysRetry(t *testing.T) {
+	res, _ := importReadarrAuthorsFor(t, metadata.NewAggregator(
+		failingProvider("openlibrary", errOpenLibraryTimeout), failingProvider("dnb", nil)))
+	if msg := res.Failures[guardAuthorName]; msg != wantPrimaryDownReason {
+		t.Errorf("failure reason = %q, want %q", msg, wantPrimaryDownReason)
+	}
+}
+
+// TestImportReadarr_NameOnlyMatchDoesNotBypassGuard is the review of #2610's
+// Google Books scenario through the Readarr import.
+func TestImportReadarr_NameOnlyMatchDoesNotBypassGuard(t *testing.T) {
+	res, repo := importReadarrAuthorsFor(t, olTimesOutGoogleBooksAndDNBAnswer())
+	if res.Added != 0 || res.Errors != 1 {
+		t.Errorf("authors result = %+v, want the row failed rather than added", res)
+	}
+	assertNoAuthorBound(t, repo, dnbAuthorID)
+}

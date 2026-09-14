@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -187,7 +188,7 @@ func ResolveGoodreadsRows(
 		book, matchedBy, outcome := resolveGoodreadsRow(ctx, row, resolver)
 		if book == nil {
 			resolved.Outcome = outcomeUnresolved
-			resolved.Reason = goodreadsUnresolvedReason(row)
+			resolved.Reason = goodreadsUnresolvedReason(row, outcome)
 			out = append(out, resolved)
 			continue
 		}
@@ -235,13 +236,23 @@ func ResolveGoodreadsRows(
 // The lookups are alternative ways of asking for the same row, so one that
 // lost the primary provider taints the row whichever lookup finally matched:
 // a record the primary would have returned for the ISBN is just as missing
-// when the title search is what answers.
+// when the title search is what answers. The providers that answered are
+// pooled across the lookups, for the reason an unmatched row is given.
 func resolveGoodreadsRow(ctx context.Context, row GoodreadsRow, resolver goodreadsResolver) (*models.Book, string, metadata.SearchOutcome) {
-	var outcome metadata.SearchOutcome
+	var (
+		outcome  metadata.SearchOutcome
+		answered []string
+	)
 	note := func(o metadata.SearchOutcome) {
+		for _, name := range o.Answered {
+			if !slices.Contains(answered, name) {
+				answered = append(answered, name)
+			}
+		}
 		if !outcome.PrimaryFailed {
 			outcome = o
 		}
+		outcome.Answered = answered
 	}
 	if isbn := strings.TrimSpace(row.ISBN13); isbn != "" {
 		book, o, err := resolver.ResolveBookByISBNWithOutcome(ctx, isbn)
@@ -307,18 +318,25 @@ func bookAuthorForeignID(book *models.Book) string {
 	return strings.TrimSpace(book.Author.ForeignID)
 }
 
-// goodreadsUnresolvedReason produces a human-readable failure reason for a row
-// that no provider could match — shown in the preview and the failed-rows CSV.
-func goodreadsUnresolvedReason(row GoodreadsRow) string {
-	if strings.TrimSpace(row.ISBN13) == "" && strings.TrimSpace(row.ISBN) == "" {
-		return "no metadata match (row has no ISBN; title+author search found nothing)"
+// goodreadsUnresolvedReason produces a human readable failure reason for a row
+// that no provider could match, shown in the preview and the failed rows CSV.
+// The wiki tells users to fix the ISBN or title in that CSV and upload it
+// again, so when the primary did not answer the reason must say so instead:
+// the row may be fine, and editing it would change correct data (#2332).
+func goodreadsUnresolvedReason(row GoodreadsRow, outcome metadata.SearchOutcome) string {
+	if outcome.PrimaryFailed {
+		return primaryDownReason(outcome)
 	}
-	return "no metadata match for ISBN or title+author"
+	miss := noMatchReason(outcome)
+	if strings.TrimSpace(row.ISBN13) == "" && strings.TrimSpace(row.ISBN) == "" {
+		return miss + " (row has no ISBN; title+author search found nothing)"
+	}
+	return miss + " for ISBN or title+author"
 }
 
 // CommitGoodreadsImport persists every resolved row as a monitored, wanted
 // book. Authors are looked up by foreign ID and a minimal record is created
-// when missing — the same canonicalisation-by-OL-id path the Hardcover list
+// when missing, the same canonicalisation by provider id the Hardcover list
 // syncer uses, so a Goodreads author and a manually-added author of the same
 // person collapse onto one row. Books are never auto-grabbed here; they land
 // as Wanted and the normal search loop picks them up.

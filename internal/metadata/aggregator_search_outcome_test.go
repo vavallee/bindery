@@ -167,6 +167,47 @@ func TestSearchBooksWithOutcomeReportsPrimaryFailure(t *testing.T) {
 	}
 }
 
+// TestSafeToBindRefusesEmptyIDWhilePrimaryDown: an empty foreign id names no
+// provider at all, so it cannot be the primary's own match. It used to fall
+// into the classifier's openlibrary default and pass on an OpenLibrary
+// primary. With nothing failed it still binds, as before.
+func TestSafeToBindRefusesEmptyIDWhilePrimaryDown(t *testing.T) {
+	failed := SearchOutcome{Primary: "openlibrary", PrimaryFailed: true, FailedProviders: []string{"openlibrary"}}
+	for _, id := range []string{"", "  "} {
+		if failed.SafeToBind(id) {
+			t.Errorf("SafeToBind(%q) = true after a primary failure, want false", id)
+		}
+	}
+	if !(SearchOutcome{Primary: "openlibrary"}).SafeToBind("") {
+		t.Error("SafeToBind(\"\") = false with no primary failure, want true (unchanged)")
+	}
+}
+
+// TestSearchAuthorsNameOnlyWinnerNotSafeToBindWhilePrimaryDown runs the
+// review of #2610's scenario through the real fan out: OpenLibrary times
+// out, Google Books (registered ahead of DNB) and DNB both answer, and
+// Google Books' name only record wins the tie. That winner must not be
+// bindable.
+func TestSearchAuthorsNameOnlyWinnerNotSafeToBindWhilePrimaryDown(t *testing.T) {
+	ol := &mockProvider{name: "openlibrary", searchAuthErr: context.DeadlineExceeded}
+	gb := &mockProvider{name: "googlebooks", searchAuthors: []models.Author{{Name: "Andy Weir"}}}
+	dnb := &mockProvider{name: "dnb", searchAuthors: []models.Author{{Name: "Andy Weir", ForeignID: "dnb:gnd:1052464211"}}}
+
+	results, outcome, err := NewAggregator(ol, gb, dnb).SearchAuthorsWithOutcome(context.Background(), "Andy Weir")
+	if err != nil {
+		t.Fatalf("SearchAuthorsWithOutcome: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("no results")
+	}
+	if results[0].ForeignID != "" {
+		t.Fatalf("top result = %+v; the scenario needs the name only record on top", results[0])
+	}
+	if outcome.SafeToBind(results[0].ForeignID) {
+		t.Error("SafeToBind(\"\") = true with the primary down; the name only winner passed the guard")
+	}
+}
+
 // TestResolveBookByISBNWithOutcomeReportsPrimaryFailure: the ISBN walk steps
 // past a failing primary to the next provider, and must say it did, or the
 // Goodreads importer binds the fallback's author (#2332). A provider with no

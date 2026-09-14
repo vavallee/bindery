@@ -141,3 +141,30 @@ func assertAuthorBound(t *testing.T, repo *db.AuthorRepo, foreignID, wantProvide
 		t.Errorf("metadata_provider = %q for %s, want %q", got.MetadataProvider, got.ForeignID, wantProvider)
 	}
 }
+
+// googleBooksNameOnly answers author search the way the real Google Books
+// client does: it has no author endpoint, so its records carry the name and
+// no foreign id (googlebooks/client.go, volumeToBook). The aggregator stamps
+// them "googlebooks".
+func googleBooksNameOnly() *stubProvider {
+	return &stubProvider{
+		name: "googlebooks",
+		searchAuthorsFn: func(context.Context, string) ([]models.Author, error) {
+			return []models.Author{{Name: guardAuthorName, SortName: "Weir, Andy"}}, nil
+		},
+	}
+}
+
+// olTimesOutGoogleBooksAndDNBAnswer is the scenario the review of #2610
+// found: a Google Books key configured, OpenLibrary black holed, DNB
+// answering. Google Books is registered ahead of DNB (cmd/bindery/main.go),
+// so its name only record wins the same name tie and DNB's is collapsed into
+// it. An empty foreign id used to classify as openlibrary and pass the guard.
+func olTimesOutGoogleBooksAndDNBAnswer() *metadata.Aggregator {
+	return metadata.NewAggregator(failingProvider("openlibrary", errOpenLibraryTimeout),
+		googleBooksNameOnly(), answeringProvider("dnb", dnbAuthorID))
+}
+
+// wantPrimaryDownReason is the row reason every importer gives when the primary
+// did not answer and nothing usable came back from the others.
+const wantPrimaryDownReason = "primary metadata provider openlibrary did not answer, run the import again once it responds"
