@@ -1,0 +1,2 @@
+### Fixed
+- **Series comparison matches your books to the right catalogue volumes** (#2553) — the Hardcover comparison paired books in library order, so a fuzzy title match could take a volume that another of your books already carried by exact id, leaving the real one listed as Local only. Books that carry the catalogue's id now bind first, and a book filed at one position in the series is never matched to a different position. Every pairing decision is logged at DEBUG. Thanks magrhino for the report.
