@@ -1061,7 +1061,13 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		outcome = "duplicate check failed"
 		return
 	}
-	if existing != nil {
+	// Only an import whose book has since been deleted is reused (#2289):
+	// without this, a book deleted and added back never grabs its old release
+	// automatically when that release ranks first. A failed or blocked row is
+	// different. It is a release that already went wrong once, and while a
+	// user clicking Grab may try it again, the scheduler would pick it on
+	// every sweep and loop on it, so it stays skipped here.
+	if existing != nil && !existing.IsOrphanedImport() {
 		outcome = "already grabbed"
 		return
 	}
@@ -1080,7 +1086,22 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		Quality:          indexer.ParseRelease(best.Title).Format,
 	}
 
-	if err := s.downloads.Create(ctx, dl); err != nil {
+	if existing != nil {
+		// RetryFailed resets every per grab column, owner and import_path
+		// included, and its WHERE clause re-checks the orphaned import, so a
+		// grab that claimed the row first turns this into a skip.
+		dl.ID = existing.ID
+		ok, err := s.downloads.RetryFailed(ctx, dl)
+		if err != nil {
+			slog.Error("SearchAndGrabBook: failed to reuse download record", "download_id", existing.ID, "error", err)
+			outcome = "download record failed"
+			return
+		}
+		if !ok {
+			outcome = "already grabbed"
+			return
+		}
+	} else if err := s.downloads.Create(ctx, dl); err != nil {
 		slog.Error("SearchAndGrabBook: failed to create download record", "error", err)
 		outcome = "download record failed"
 		return

@@ -98,9 +98,11 @@ func regrabbable(d *models.Download) bool {
 // book, since the free-text search grabs without one and the importer matches
 // it later, and that is still live work.
 //
-// Keep in sync with the SQL guard in db.DownloadRepo.RetryFailed.
+// The predicate itself is models.Download.IsOrphanedImport, shared with the
+// scheduler's auto grab. Keep it in sync with the SQL guard in
+// db.DownloadRepo.RetryFailed.
 func orphanedImport(d *models.Download) bool {
-	return d != nil && d.Status == models.StateImported && d.BookID == nil
+	return d.IsOrphanedImport()
 }
 
 // alreadyGrabbedDetail explains why a re-grab was refused and what to do

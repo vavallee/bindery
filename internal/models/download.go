@@ -81,6 +81,21 @@ type Download struct {
 	ImportPath string `json:"-"`
 }
 
+// IsOrphanedImport reports whether d finished importing into a book that has
+// since been deleted: status imported with no book (#2289). downloads.book_id
+// is ON DELETE SET NULL, so such a row outlives its book and, unless a grab
+// may reuse it, pins the release's GUID for good.
+//
+// A NULL book_id alone is not enough: an in flight row can legitimately have
+// no book, since a free text grab is matched by the importer later.
+//
+// The manual grab (api.regrabbable) and the scheduler's auto grab both gate on
+// this, and db.DownloadRepo.RetryFailed repeats it in SQL. Keep all three in
+// agreement.
+func (d *Download) IsOrphanedImport() bool {
+	return d != nil && d.Status == StateImported && d.BookID == nil
+}
+
 // Legacy status aliases — callers should prefer the typed State* constants in
 // download_state.go. These are kept for any scanner comparisons that still use
 // the old names; they will be removed in a future cleanup.
