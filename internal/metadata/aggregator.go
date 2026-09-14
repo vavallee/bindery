@@ -320,6 +320,9 @@ func betterAuthorRecord(a, b models.Author, primaryProvider string) bool {
 	if c := preferPrimaryProvider(a, b, primaryProvider); c != 0 {
 		return c > 0
 	}
+	if c := preferLinkableAuthor(a, b); c != 0 {
+		return c > 0
+	}
 	if c := preferKnownGreater(authorBookCount(a), authorBookCount(b)); c != 0 {
 		return c > 0
 	}
@@ -327,6 +330,21 @@ func betterAuthorRecord(a, b models.Author, primaryProvider string) bool {
 		return c > 0
 	}
 	return false
+}
+
+// preferLinkableAuthor prefers a record that carries a provider id over a name
+// only one. Google Books author results have no id, and only a record with an
+// id can be bound, so letting a name only record win the same name tie turned
+// a DNB or Hardcover match into a miss that no retry could fix (#2332).
+func preferLinkableAuthor(a, b models.Author) int {
+	ah, bh := a.ForeignID != "", b.ForeignID != ""
+	if ah == bh {
+		return 0
+	}
+	if ah {
+		return 1
+	}
+	return -1
 }
 
 // preferPrimaryProvider prefers the record carrying the configured primary

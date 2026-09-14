@@ -436,8 +436,9 @@ func TestImportCSVAuthors_NoMatch(t *testing.T) {
 // TestImportCSVAuthors_NameOnlyMatchDoesNotBypassGuard: with OpenLibrary
 // down, a Google Books name only record used to reach authors.Create with
 // foreign_id "" and metadata_provider=openlibrary, because SafeToBind read
-// the empty id as the primary's. The row must fail and say the primary did
-// not answer.
+// the empty id as the primary's. Now the same name merge keeps DNB's record,
+// which has an id, and the guard refuses it because the primary did not
+// answer: the row fails and says so, and nothing is bound.
 func TestImportCSVAuthors_NameOnlyMatchDoesNotBypassGuard(t *testing.T) {
 	repo := db.NewAuthorRepo(newTestDB(t))
 
@@ -448,8 +449,9 @@ func TestImportCSVAuthors_NameOnlyMatchDoesNotBypassGuard(t *testing.T) {
 	if res.Added != 0 || res.Errors != 1 {
 		t.Errorf("Added=%d Errors=%d; want 0/1 (failures=%v)", res.Added, res.Errors, res.Failures)
 	}
-	if msg := res.Failures[guardAuthorName]; msg != wantPrimaryDownReason {
-		t.Errorf("failure reason = %q, want %q", msg, wantPrimaryDownReason)
+	const want = "primary metadata provider openlibrary did not answer, so the dnb match was not used; run the import again once it responds"
+	if msg := res.Failures[guardAuthorName]; msg != want {
+		t.Errorf("failure reason = %q, want %q", msg, want)
 	}
 	assertNoAuthorBound(t, repo, dnbAuthorID)
 }
