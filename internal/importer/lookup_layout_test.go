@@ -426,3 +426,110 @@ func TestLookupBatchLayout_AmbiguousAuthorIsNeverAutomatic(t *testing.T) {
 		})
 	}
 }
+
+// seedAuthorBooks inserts one author with a book per title, for a catalogue
+// where one author has several books (seedLayoutBook makes an author per call).
+func seedAuthorBooks(t *testing.T, books *db.BookRepo, authors *db.AuthorRepo, ctx context.Context, authorName string, titles ...string) map[string]*models.Book {
+	t.Helper()
+	a := &models.Author{Name: authorName, ForeignID: "la-" + authorName, SortName: authorName}
+	if err := authors.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	out := make(map[string]*models.Book, len(titles))
+	for _, title := range titles {
+		b := &models.Book{AuthorID: a.ID, Title: title, ForeignID: "lb-" + title, Status: "wanted"}
+		if err := books.Create(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+		out[title] = b
+	}
+	return out
+}
+
+// TestLookupBatchLayout_TitleNamingItsAuthorIsNotOverridden is the second
+// review finding on #2331. Read as it is, "Tom Clancy - Red Storm Rising.epub"
+// in Tom Clancy/ has "Tom Clancy" for a title, and titleMatch pairs that with
+// any catalogue title carrying the name. The folder override used to run on
+// that reading before the flip was tried, so bulk import took "Tom Clancy
+// Enemy Contact" with confidence, or offered only such titles, where main said
+// none. The flip now comes first, and the override never runs on a reading
+// whose title is its own author folder, even when the flip finds nothing.
+// The single file Lookup has no override and is pinned alongside.
+func TestLookupBatchLayout_TitleNamingItsAuthorIsNotOverridden(t *testing.T) {
+	t.Parallel()
+	const (
+		clancy   = "Tom Clancy"
+		christie = "Agatha Christie"
+		rsr      = "Red Storm Rising"
+		oe       = "Murder on the Orient Express"
+		styles   = "The Mysterious Affair at Styles"
+		contact  = "Tom Clancy Enemy Contact"
+		honor    = "Tom Clancy Code of Honor"
+		autobio  = "Agatha Christie: An Autobiography"
+	)
+	cases := []struct {
+		name   string
+		author string
+		titles []string
+		rel    []string
+		want   string // "" means none
+	}{
+		{"Clancy", clancy, []string{contact, rsr}, []string{clancy, clancy + " - " + rsr + ".epub"}, rsr},
+		{"Clancy with a book folder", clancy, []string{contact, rsr}, []string{clancy, rsr, clancy + " - " + rsr + ".epub"}, rsr},
+		{"Clancy, two titles carry his name", clancy, []string{contact, honor, rsr}, []string{clancy, clancy + " - " + rsr + ".epub"}, rsr},
+		{"Clancy, two titles carry his name, book folder", clancy, []string{contact, honor, rsr}, []string{clancy, rsr, clancy + " - " + rsr + ".epub"}, rsr},
+		{"Christie", christie, []string{autobio, oe}, []string{christie, christie + " - " + oe + ".epub"}, oe},
+		{"Christie with a book folder", christie, []string{autobio, oe}, []string{christie, oe, christie + " - " + oe + ".epub"}, oe},
+		{"Christie, book not in the catalogue", christie, []string{autobio}, []string{christie, christie + " - " + styles + ".epub"}, ""},
+		{"Christie, book not in the catalogue, book folder", christie, []string{autobio}, []string{christie, styles, christie + " - " + styles + ".epub"}, ""},
+		{"Clancy, book not in the catalogue", clancy, []string{contact}, []string{clancy, clancy + " - " + rsr + ".epub"}, ""},
+		{"Clancy, book not in the catalogue, two titles carry his name", clancy, []string{contact, honor}, []string{clancy, clancy + " - " + rsr + ".epub"}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			check := func(t *testing.T, res LookupResult) {
+				t.Helper()
+				got := ""
+				if res.Book != nil {
+					got = res.Book.Title
+				}
+				if c.want == "" {
+					if res.Match != "none" {
+						t.Fatalf("match = %q book = %q candidates = %d, want none (parsed %q / %q)",
+							res.Match, got, len(res.Candidates), res.ParsedTitle, res.ParsedAuthor)
+					}
+					return
+				}
+				if res.Match != "confident" || got != c.want {
+					t.Fatalf("match = %q book = %q candidates = %d, want confident %q (parsed %q / %q)",
+						res.Match, got, len(res.Candidates), c.want, res.ParsedTitle, res.ParsedAuthor)
+				}
+			}
+			t.Run("bulk", func(t *testing.T) {
+				s, books, authors, ctx := scannerFixture(t, t.TempDir())
+				seedAuthorBooks(t, books, authors, ctx, c.author, c.titles...)
+				root := t.TempDir()
+				p := filepath.Join(append([]string{root}, c.rel...)...)
+				writeFileAt(t, p)
+				res, err := s.LookupBatchLayout(ctx, root, []string{p})
+				if err != nil {
+					t.Fatalf("LookupBatchLayout: %v", err)
+				}
+				check(t, res[0])
+			})
+			t.Run("single file", func(t *testing.T) {
+				lib := t.TempDir()
+				s, books, authors, ctx := scannerFixture(t, lib)
+				seedAuthorBooks(t, books, authors, ctx, c.author, c.titles...)
+				p := filepath.Join(append([]string{lib}, c.rel...)...)
+				writeFileAt(t, p)
+				res, err := s.Lookup(ctx, p)
+				if err != nil {
+					t.Fatalf("Lookup: %v", err)
+				}
+				check(t, res)
+			})
+		})
+	}
+}

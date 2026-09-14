@@ -3266,7 +3266,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		var layoutTitle, layoutAuthor string
 		// flipped is the filename read the other way round, for an
 		// "Author - Title" name in an author folder with no book folder below
-		// it. The title tier tries it last, and only for an author the
+		// it. The title tier tries it first, and only for an author the
 		// catalogue knows (flipByLayout, #2331). A book folder names the title
 		// outright, so there is nothing to flip under one.
 		var flipped ParsedFile
@@ -3295,9 +3295,13 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 					"path", path, "error", err)
 				tagReadFailed++
 			} else {
-				// Tags describe the file itself, so once they name a title or
-				// an author there is no filename reading left to flip.
-				if tags.Title != "" || tags.Author != "" {
+				// Tags describe the file itself. A tag title leaves no
+				// filename reading to flip, and neither does a tag author that
+				// is not the folder's. A tag author that is the folder's (an
+				// m4b with only its artist set, an mp3 with album and album
+				// artist) says nothing about which side of the filename is the
+				// title, so the flip stays open, as it is in bulk import.
+				if tags.Title != "" || (tags.Author != "" && !confidentAuthorMatch(tags.Author, layoutAuthor)) {
 					canFlip = false
 				}
 				// Multi-part audiobooks tag each track with its chapter name
@@ -3354,6 +3358,20 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				break
 			}
 		}
+		// The #2331 flip comes before the parse as it is. Read as it is, an
+		// "Author - Title" filename in its author folder has the author's own
+		// name for a title, and the fuzzy title tier pairs that with any of the
+		// author's books named after them ("Tom Clancy Enemy Contact"). The
+		// flip is offered only in an author folder with no book folder below
+		// it, and taken only for a folder author the catalogue knows, so a
+		// flat book folder (It/It - Stephen King.epub) still reconciles as it
+		// is.
+		if !matched && canFlip && len(matchingAuthors(flipped.Author)) > 0 {
+			if matched = reconcileByTitle(path, cleanPath, detectedFmt, flipped.Title, flipped.Author, layoutAuthor); matched {
+				slog.Debug("library scan: reconciled a backwards filename in its author folder",
+					"path", path, "title", flipped.Title, "author", flipped.Author)
+			}
+		}
 		if !matched && parsed.Title != "" {
 			matched = reconcileByTitle(path, cleanPath, detectedFmt, parsed.Title, parsed.Author, layoutAuthor)
 		}
@@ -3382,18 +3400,6 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 						matched = true
 					}
 				}
-			}
-		}
-
-		// Last, the #2331 flip: an "Author - Title" filename in its author
-		// folder reads as a title that is the author's own name. Only after the
-		// parse as it is has found nothing, and only for a folder author the
-		// catalogue knows, since It/It - Stephen King.epub in a flat book folder
-		// looks the same and reconciles above.
-		if !matched && canFlip && len(matchingAuthors(flipped.Author)) > 0 {
-			if matched = reconcileByTitle(path, cleanPath, detectedFmt, flipped.Title, flipped.Author, layoutAuthor); matched {
-				slog.Debug("library scan: reconciled a backwards filename in its author folder",
-					"path", path, "title", flipped.Title, "author", flipped.Author)
 			}
 		}
 

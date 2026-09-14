@@ -142,8 +142,9 @@ func (s *Scanner) LookupBatchLayout(ctx context.Context, root string, paths []st
 	// Safe to parallelise because lookupUnit only reads: books and
 	// authorNames are loaded once above and never written, results are
 	// written by distinct index, and nothing on the path (ParseFilename,
-	// authorTitleFromLayout, applyLayout, narrowByAuthor, firstEpubIn,
-	// ReadEpubMetadata, detectUnitFormat) keeps package-level state.
+	// authorTitleFromLayout, flipByLayout, matchUnit, narrowByAuthor,
+	// firstEpubIn, ReadEpubMetadata, detectUnitFormat) keeps package-level
+	// state.
 	idx := make([]int, len(paths))
 	for i := range paths {
 		idx[i] = i
@@ -185,17 +186,30 @@ func lookupUnit(root, path string, books []models.Book, authorNames map[int64]st
 		}
 	}
 
-	result := matchUnit(parsed, embedded, layoutAuthor, layoutTitle, books, authorNames, lookupAuthorMatch)
-	// A Readarr named "Author - Title" file parses backwards, and until #2331
-	// the filename's author outranked the author folder, so it found nothing.
-	// Its flipped reading is tried only now, after the parse as it is has
-	// failed, because a book folder under the root looks exactly the same
-	// (It/It - Stephen King.epub) and that parse is already right.
+	// Up to three readings, in this order (#2331):
+	//
+	//  1. The parse as it is, narrowed by the author it names: main's match.
+	//  2. A Readarr named "Author - Title" file parses backwards, and until
+	//     #2331 the filename's author outranked the author folder, so it found
+	//     nothing. Its flipped reading comes only after the parse as it is has
+	//     failed, because a book folder under the root looks exactly the same
+	//     (It/It - Stephen King.epub) and that parse is already right.
+	//  3. The parse as it is again, now letting the author folder stand in for
+	//     an author that rules out every title match (narrowByAuthor).
+	//
+	// The override is never tried when a flip was offered. The parse as it is
+	// then has the author's own name for a title, which titleMatch pairs with
+	// any catalogue title carrying the name ("Tom Clancy Enemy Contact",
+	// "Agatha Christie: An Autobiography"), and the override would hand the
+	// file to that book with confidence.
+	result := matchUnit(parsed, embedded, layoutAuthor, layoutTitle, "", books, authorNames, lookupAuthorMatch)
 	if result.Match == "none" {
 		if flipped, ok := flipByLayout(parsed, layoutAuthor); ok {
-			if alt := matchUnit(flipped, embedded, layoutAuthor, layoutTitle, books, authorNames, confidentAuthorMatch); alt.Match != "none" {
+			if alt := matchUnit(flipped, embedded, layoutAuthor, layoutTitle, layoutAuthor, books, authorNames, confidentAuthorMatch); alt.Match != "none" {
 				result = alt
 			}
+		} else if layoutAuthor != "" {
+			result = matchUnit(parsed, embedded, layoutAuthor, layoutTitle, layoutAuthor, books, authorNames, lookupAuthorMatch)
 		}
 	}
 	result.DetectedFormat = detectUnitFormat(path)
@@ -206,7 +220,9 @@ func lookupUnit(root, path string, books []models.Book, authorNames map[int64]st
 // authorMatch narrows the title matches by the effective author: the parse as
 // it is keeps lookupAuthorMatch, and the flipped reading takes
 // confidentAuthorMatch because taking it is an automatic decision.
-func matchUnit(parsed ParsedFile, embedded EpubMetadata, layoutAuthor, layoutTitle string, books []models.Book, authorNames map[int64]string, authorMatch func(parsed, catalogue string) bool) LookupResult {
+// overrideAuthor is the author folder narrowByAuthor may put in place of an
+// author that rules out every title match, or "" for no override.
+func matchUnit(parsed ParsedFile, embedded EpubMetadata, layoutAuthor, layoutTitle, overrideAuthor string, books []models.Book, authorNames map[int64]string, authorMatch func(parsed, catalogue string) bool) LookupResult {
 	// Effective signals in precedence order: embedded > filename > folder layout.
 	effTitle := firstNonEmpty(embedded.Title, parsed.Title, layoutTitle)
 	effAuthor := firstNonEmpty(embedded.Author, parsed.Author, layoutAuthor)
@@ -244,7 +260,7 @@ func matchUnit(parsed ParsedFile, embedded EpubMetadata, layoutAuthor, layoutTit
 			titled = append(titled, books[i])
 		}
 	}
-	matches, effAuthor := narrowByAuthor(titled, effAuthor, authorMatch, layoutAuthor, authorNames)
+	matches, effAuthor := narrowByAuthor(titled, effAuthor, authorMatch, overrideAuthor, authorNames)
 	result.ParsedAuthor = effAuthor
 
 	switch len(matches) {
