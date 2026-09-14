@@ -753,6 +753,7 @@ func restoreBookFromSnapshot(book *models.Book, before, after *bookRollbackSnaps
 	restoreString(&book.MediaType, before.MediaType, after.MediaType, &changed)
 	restoreBool(&book.AnyEditionOK, before.AnyEditionOK, after.AnyEditionOK, &changed)
 	restoreBool(&book.Monitored, before.Monitored, after.Monitored, &changed)
+	restoreString(&book.ImageURL, before.ImageURL, after.ImageURL, &changed)
 	return changed
 }
 

@@ -1,15 +1,18 @@
 package api
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/covers"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -452,5 +455,76 @@ func TestOPDSImageURL_HonoursURLBase(t *testing.T) {
 	want := "/bindery/opds/images?url=https%3A%2F%2Fassets.hardcover.app%2Fcovers%2Fx.png"
 	if got != want {
 		t.Errorf("OPDSImageURL under /bindery = %q, want %q", got, want)
+	}
+}
+
+// TestImageProxy_LocalCover serves a bindery-cover: reference from the
+// covers store (#2564) without touching the fetch path, and refuses every
+// reference that is not a digest sitting directly inside that store: a
+// tampered image_url row must not be able to read the data dir, the library,
+// or anything else on the host.
+func TestImageProxy_LocalCover(t *testing.T) {
+	dataDir := t.TempDir()
+	store := covers.NewStore(filepath.Join(dataDir, "covers"))
+	src := filepath.Join(t.TempDir(), "cover.jpg")
+	jpeg := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00}
+	if err := os.WriteFile(src, jpeg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.Put(src)
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	// A real file outside the store, next to it in the data dir.
+	if err := os.WriteFile(filepath.Join(dataDir, "secret.jpg"), jpeg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewImageProxyHandler(dataDir).WithLocalCovers(store)
+	h.validateURL = func(string) error { t.Error("fetch path reached for a local cover"); return nil }
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/images?url="+url.QueryEscape(ref), nil)
+	rr := httptest.NewRecorder()
+	h.Serve(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("Content-Type = %q, want image/jpeg", ct)
+	}
+	if !bytes.Equal(rr.Body.Bytes(), jpeg) {
+		t.Errorf("body = %x, want the stored cover", rr.Body.Bytes())
+	}
+
+	// The ProxyImageURL rewrite must route a reference through this handler
+	// rather than passing it to the browser as a same-origin path.
+	if got := ProxyImageURL(ref); got != "/api/v1/images?url="+url.QueryEscape(ref) {
+		t.Errorf("ProxyImageURL(ref) = %q", got)
+	}
+
+	escapes := []string{
+		covers.Scheme + "../secret.jpg",
+		covers.Scheme + "../../etc/passwd",
+		covers.Scheme + "/etc/passwd",
+		covers.Scheme + strings.Repeat("0", 64) + ".jpg/../../secret.jpg",
+		covers.Scheme + strings.Repeat("0", 64) + ".jpg", // well formed, absent
+		covers.Scheme,
+	}
+	for _, ref := range escapes {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/images?url="+url.QueryEscape(ref), nil)
+		rr := httptest.NewRecorder()
+		h.Serve(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("ref %q: status = %d, want 404", ref, rr.Code)
+		}
+	}
+
+	// No store wired: the reference is still never fetched.
+	bare := NewImageProxyHandler(t.TempDir())
+	bare.validateURL = func(string) error { t.Error("fetch path reached with no store"); return nil }
+	rr = httptest.NewRecorder()
+	bare.Serve(rr, httptest.NewRequest(http.MethodGet, "/api/v1/images?url="+url.QueryEscape(ref), nil))
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("no store: status = %d, want 404", rr.Code)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/calibre"
+	"github.com/vavallee/bindery/internal/covers"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -611,6 +612,14 @@ func (s *Scanner) calibreMetadata(ctx context.Context, book *models.Book, author
 		}
 	}
 	if mode == calibre.ModeCalibredb {
+		if covers.IsRef(imageURL) {
+			// A cover Bindery stored itself (#2564): hand calibredb the
+			// file directly. MaterializeCover only knows how to fetch URLs.
+			if coverPath, _, ok := s.coverStore.Resolve(imageURL); ok {
+				meta.CoverPath = coverPath
+			}
+			return meta
+		}
 		if coverPath, err := calibre.MaterializeCover(ctx, s.calibreCoverCacheDir, imageURL); err != nil {
 			slog.Debug("calibre: cover materialization skipped", "bookId", book.ID, "error", err)
 		} else if coverPath != "" {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/calibre"
+	"github.com/vavallee/bindery/internal/covers"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -364,6 +365,45 @@ func TestCalibreMetadata_CoverPathOnlyForCalibredb(t *testing.T) {
 	pluginMeta := s.calibreMetadata(ctx, book, nil, nil, "", "", calibre.ModePlugin)
 	if pluginMeta.CoverPath != "" {
 		t.Fatalf("plugin CoverPath = %q, want empty", pluginMeta.CoverPath)
+	}
+}
+
+// TestCalibreMetadata_StoredCoverResolvesFromStore: a bindery-cover:
+// reference (#2564) is handed to calibredb as the stored file, never sent
+// through MaterializeCover, whose SSRF policy would refuse the scheme.
+func TestCalibreMetadata_StoredCoverResolvesFromStore(t *testing.T) {
+	ctx := context.Background()
+	store := covers.NewStore(filepath.Join(t.TempDir(), "covers"))
+	src := filepath.Join(t.TempDir(), "cover.jpg")
+	if err := os.WriteFile(src, []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.Put(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _, _ := store.Resolve(ref)
+
+	book := &models.Book{ID: 42, Title: "Dune", ImageURL: ref, Genres: []string{}}
+	s := NewScanner(nil, nil, nil, nil, nil, t.TempDir(), "", "", "", "").
+		WithCalibreCoverCache(t.TempDir()).
+		WithCoverStore(store)
+
+	meta := s.calibreMetadata(ctx, book, nil, nil, "", "", calibre.ModeCalibredb)
+	if meta.CoverPath != want {
+		t.Fatalf("CoverPath = %q, want stored file %q", meta.CoverPath, want)
+	}
+
+	// The edition's reference wins over the book's, as for any other cover.
+	edition := &models.Edition{ImageURL: covers.Scheme + strings.Repeat("0", 64) + ".jpg"}
+	if meta := s.calibreMetadata(ctx, book, nil, edition, "", "", calibre.ModeCalibredb); meta.CoverPath != "" {
+		t.Fatalf("absent stored cover gave CoverPath %q, want empty", meta.CoverPath)
+	}
+
+	// No store wired: nothing to hand over, and no fetch attempted.
+	bare := NewScanner(nil, nil, nil, nil, nil, t.TempDir(), "", "", "", "").WithCalibreCoverCache(t.TempDir())
+	if meta := bare.calibreMetadata(ctx, book, nil, nil, "", "", calibre.ModeCalibredb); meta.CoverPath != "" {
+		t.Fatalf("no store gave CoverPath %q, want empty", meta.CoverPath)
 	}
 }
 

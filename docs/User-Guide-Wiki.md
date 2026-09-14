@@ -281,6 +281,18 @@ to the records. Things worth knowing before you judge the results:
   those books arrive with their files already attached and do not need a scan
   to find them (#1635). In 1.32.1 and earlier it recorded nothing, which left
   a Calibre-managed book looking imported while Bindery tracked no file for it.
+- The Calibre library import is also the exception on covers. Each book's
+  `cover.jpg` from the library folder is copied into Bindery's data directory
+  (`covers/` under `BINDERY_DATA_DIR`) and shown for the book and every one of
+  its editions, so a Calibre library has covers straight after import, with
+  or without a metadata provider match. A cover a provider has already supplied
+  is kept; the Calibre cover only fills the gap, and **Refresh metadata** can
+  still replace it. Earlier versions recorded the library path instead, which
+  the browser could not load, so Calibre-imported books had no cover at all
+  (#2564). On the first start after upgrading, Bindery copies those covers in
+  and repairs the existing rows in the background; the library must be
+  mounted at the same path for that pass, and any it cannot read are picked
+  up by the next start or the next library import.
 - The scan only matches files whose **author already exists** in Bindery, by
   normalised name — `B. Sanderson/` on disk won't match a "Brandon Sanderson"
   author row.

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vavallee/bindery/internal/covers"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
@@ -68,6 +69,13 @@ type Importer struct {
 	// minimal). Production wires this via WithSeries from cmd/bindery/main.go.
 	series *db.SeriesRepo
 
+	// covers is where a library's cover.jpg files are copied so the image
+	// proxy can serve them (#2564). Nil means no cover is stored at all:
+	// the importer never writes the library path into image_url, because
+	// nothing in Bindery can serve a host path and the row would only look
+	// populated.
+	covers *covers.Store
+
 	openReader func(libraryPath string) (readerIface, error)
 
 	mu       sync.Mutex
@@ -124,6 +132,14 @@ func (i *Importer) WithRunTracking(runs *db.CalibreImportRunRepo, snapshots *db.
 // test wiring that doesn't need series semantics.
 func (i *Importer) WithSeries(series *db.SeriesRepo) *Importer {
 	i.series = series
+	return i
+}
+
+// WithCoverStore attaches the store each imported book's cover.jpg is copied
+// into (#2564). Production wires <DataDir>/covers, the same store the image
+// proxy serves bindery-cover: references from.
+func (i *Importer) WithCoverStore(store *covers.Store) *Importer {
+	i.covers = store
 	return i
 }
 
@@ -332,6 +348,12 @@ func (i *Importer) importOne(ctx context.Context, runID int64, cb CalibreBook, s
 		stats.Skipped++
 		return
 	}
+	// Copy the library's cover.jpg into the covers store once per Calibre
+	// book (every format shares it) and give the book row that cover unless
+	// a metadata provider already supplied one. Done before the after
+	// snapshot below so a rollback can put the previous value back.
+	coverRef := i.storeCover(cb)
+	i.applyBookCover(ctx, book.row, coverRef)
 	if newBook {
 		stats.BooksAdded++
 	} else {
@@ -366,7 +388,7 @@ func (i *Importer) importOne(ctx context.Context, runID int64, cb CalibreBook, s
 	}
 
 	for _, f := range cb.Formats {
-		added, edition, err := i.upsertEdition(ctx, runID, book.row, cb, f)
+		added, edition, err := i.upsertEdition(ctx, runID, book.row, cb, f, coverRef)
 		if err != nil {
 			slog.Warn("calibre import: edition upsert failed",
 				"calibre_id", cb.CalibreID, "format", f.Format, "error", err)
@@ -954,11 +976,49 @@ func (i *Importer) applyBookFields(ctx context.Context, book *models.Book, cb Ca
 	return i.books.Update(ctx, book)
 }
 
+// storeCover copies cb's cover.jpg into the covers store and returns the
+// bindery-cover: reference, or "" when the book has no cover, no store is
+// wired, or the file is not a usable image. Never returns the library path:
+// before #2564 that is exactly what landed in editions.image_url, and it
+// rendered as the SPA shell.
+func (i *Importer) storeCover(cb CalibreBook) string {
+	if i.covers == nil || strings.TrimSpace(cb.CoverPath) == "" {
+		return ""
+	}
+	ref, err := i.covers.Put(cb.CoverPath)
+	if err != nil {
+		slog.Debug("calibre import: cover not stored", "calibre_id", cb.CalibreID, "path", cb.CoverPath, "error", err)
+		return ""
+	}
+	return ref
+}
+
+// applyBookCover sets book.image_url to coverRef when the book has no cover
+// a metadata provider could have supplied: an empty value, a stale host path,
+// or an earlier stored reference (the library's cover may have changed). A
+// provider URL is left alone; Refresh Metadata owns that field once it is
+// populated, and the Calibre cover is only ever the fallback.
+func (i *Importer) applyBookCover(ctx context.Context, book *models.Book, coverRef string) {
+	if book == nil || coverRef == "" || book.ImageURL == coverRef {
+		return
+	}
+	current := strings.TrimSpace(book.ImageURL)
+	if current != "" && !strings.HasPrefix(current, "/") && !covers.IsRef(current) {
+		return
+	}
+	if err := i.books.SetImageURL(ctx, book.ID, coverRef); err != nil {
+		slog.Warn("calibre import: book cover not set", "book_id", book.ID, "error", err)
+		return
+	}
+	book.ImageURL = coverRef
+}
+
 // upsertEdition upserts one Bindery edition for a single Calibre format.
 // Returns (added, edition, err) where added is true only when a brand-new
 // row was created; the returned edition is the resulting row so caller can
-// snapshot it.
-func (i *Importer) upsertEdition(ctx context.Context, runID int64, book *models.Book, cb CalibreBook, f CalibreFormat) (bool, *models.Edition, error) {
+// snapshot it. coverRef is the stored-cover reference for the book (see
+// storeCover), shared by every format.
+func (i *Importer) upsertEdition(ctx context.Context, runID int64, book *models.Book, cb CalibreBook, f CalibreFormat, coverRef string) (bool, *models.Edition, error) {
 	if f.Format == "" {
 		return false, nil, nil
 	}
@@ -989,12 +1049,21 @@ func (i *Importer) upsertEdition(ctx context.Context, runID int64, book *models.
 		PublishDate: cb.PublishDate,
 		Format:      strings.ToUpper(f.Format),
 		Language:    lang,
-		ImageURL:    cb.CoverPath,
+		ImageURL:    coverRef,
 		IsEbook:     true,
 		Monitored:   true,
 	}
 	if err := i.editions.Upsert(ctx, e); err != nil {
 		return false, nil, err
+	}
+	// Upsert keeps the existing image_url when the new one is empty, which
+	// is right for a provider cover but wrong for the host path an older
+	// importer stored: that value can never be served, so clear it rather
+	// than let it outlive the fix.
+	if coverRef == "" && prior != nil && strings.HasPrefix(prior.ImageURL, "/") {
+		if err := i.editions.SetImageURL(ctx, e.ID, ""); err != nil {
+			return false, nil, err
+		}
 	}
 	// Re-fetch to get the assigned ID (Upsert may have created or updated).
 	stored, lookupErr := i.editions.GetByForeignID(ctx, foreignID)

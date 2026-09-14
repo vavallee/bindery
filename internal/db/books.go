@@ -1133,6 +1133,27 @@ func (r *BookRepo) SetLanguage(ctx context.Context, id int64, language string) e
 	return err
 }
 
+// SetImageURL replaces one book's image_url without touching any other
+// column. Used by the Calibre importer to give a book its library cover
+// (#2564) when no metadata provider has supplied one.
+func (r *BookRepo) SetImageURL(ctx context.Context, id int64, imageURL string) error {
+	_, err := r.exec.ExecContext(ctx, "UPDATE books SET image_url=?, updated_at=? WHERE id=?",
+		imageURL, timeValueArg(time.Now().UTC()), id)
+	if err != nil {
+		return fmt.Errorf("set book %d image_url: %w", id, err)
+	}
+	return nil
+}
+
+// ListWithLocalImagePath returns books whose image_url is an absolute
+// filesystem path rather than a URL, including excluded ones, so the #2564
+// startup repair can rewrite them. Nothing in Bindery wrote such a value to
+// books deliberately, but a tampered or hand-edited row is cheap to sweep
+// alongside the editions that did hold one.
+func (r *BookRepo) ListWithLocalImagePath(ctx context.Context) ([]models.Book, error) {
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE books.image_url LIKE '/%' ORDER BY books.id", nil)
+}
+
 // SetCalibreID stores the Calibre-assigned book id for the given Bindery
 // book row. Called from the importer after a successful `calibredb add`.
 func (r *BookRepo) SetCalibreID(ctx context.Context, id, calibreID int64) error {

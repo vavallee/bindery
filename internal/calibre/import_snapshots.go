@@ -48,6 +48,10 @@ type bookRollbackSnapshot struct {
 	MediaType        string     `json:"mediaType"`
 	AnyEditionOK     bool       `json:"anyEditionOk"`
 	Monitored        bool       `json:"monitored"`
+	// ImageURL was added with #2564, when the importer started giving a
+	// book its library cover. Snapshots written before then decode it as
+	// "", which restoreString treats as "no change recorded".
+	ImageURL string `json:"imageUrl,omitempty"`
 }
 
 // authorRollbackSnapshot mirrors bookRollbackSnapshot for the Calibre
@@ -97,6 +101,7 @@ func bookSnapshot(b *models.Book) *bookRollbackSnapshot {
 		MediaType:        b.MediaType,
 		AnyEditionOK:     b.AnyEditionOK,
 		Monitored:        b.Monitored,
+		ImageURL:         b.ImageURL,
 	}
 }
 

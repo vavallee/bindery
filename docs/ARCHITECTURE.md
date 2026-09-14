@@ -84,7 +84,7 @@ A typical container has three logical mounts:
 
 | Mount | Purpose | Default |
 |-------|---------|---------|
-| `/config` | SQLite database, backups, image cache, cookie/CSRF secrets | `BINDERY_DATA_DIR`, `BINDERY_DB_PATH` |
+| `/config` | SQLite database, backups, image cache, Calibre library covers (`covers/`), cookie/CSRF secrets | `BINDERY_DATA_DIR`, `BINDERY_DB_PATH` |
 | `/books` | Imported ebook library (and audiobooks unless split out) | `BINDERY_LIBRARY_DIR` |
 | `/downloads` | Where the download client deposits completed jobs | `BINDERY_DOWNLOAD_DIR` |
 

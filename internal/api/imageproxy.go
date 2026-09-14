@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vavallee/bindery/internal/covers"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/useragent"
@@ -46,6 +47,11 @@ type ImageProxyHandler struct {
 	cacheDir    string
 	client      *http.Client
 	validateURL func(string) error // defaults to httpsec.ValidateOutboundURL; overridable in tests
+
+	// local serves covers Bindery stored itself (Calibre library covers,
+	// #2564). Nil until WithLocalCovers; then a bindery-cover: reference is
+	// answered from disk and never reaches the fetch path.
+	local *covers.Store
 
 	// sizeMu guards the memoised cache total below. It is held across the
 	// directory walk in refreshCacheSizeLocked on purpose: that serialises a
@@ -84,6 +90,12 @@ func NewImageProxyHandler(dataDir string) *ImageProxyHandler {
 		validateURL: func(u string) error { return httpsec.ValidateOutboundURL(u, httpsec.PolicyStrict) },
 	}
 	go h.migrateFlatCache()
+	return h
+}
+
+// WithLocalCovers attaches the store that backs bindery-cover: references.
+func (h *ImageProxyHandler) WithLocalCovers(store *covers.Store) *ImageProxyHandler {
+	h.local = store
 	return h
 }
 
@@ -150,6 +162,25 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	raw := r.URL.Query().Get("url")
 	if raw == "" {
 		http.Error(w, "url parameter required", http.StatusBadRequest)
+		return
+	}
+
+	// A cover Bindery stored itself (a Calibre library's cover.jpg, #2564)
+	// is served straight from the covers store. covers.Store.Resolve is the
+	// only thing that turns the reference into a path, and it refuses any
+	// name that is not a digest sitting directly inside the store directory,
+	// so a tampered image_url row cannot read outside it. There is no
+	// fallback to the fetch path: a malformed or missing reference is a 404,
+	// not a fetch of the literal string.
+	if covers.IsRef(raw) {
+		path, ct, ok := h.local.Resolve(raw)
+		if !ok {
+			http.Error(w, "cover not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", ct)
+		w.Header().Set("Cache-Control", "public, max-age=2592000")
+		http.ServeFile(w, r, path)
 		return
 	}
 

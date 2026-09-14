@@ -379,7 +379,7 @@ Bindery parks the download as *handed off* and reconciles the managed copy the e
 | `BINDERY_PORT` | `8787` | HTTP server port |
 | `BINDERY_URL_BASE` | _(empty)_ | URL path prefix when hosting Bindery under a reverse-proxy subpath (e.g. `/bindery`). Accepts a bare path or full URL — only the path component is used. No trailing slash needed. See the [Reverse-proxy & SSO wiki](https://github.com/vavallee/bindery/wiki/Reverse-proxy-and-SSO) for Nginx / Caddy / Traefik examples. |
 | `BINDERY_DB_PATH` | `/config/bindery.db` on Linux; `%APPDATA%\Bindery\bindery.db` on Windows; `~/Library/Application Support/Bindery/bindery.db` on macOS | SQLite database path |
-| `BINDERY_DATA_DIR` | `/config` on Linux; `%APPDATA%\Bindery` on Windows; `~/Library/Application Support/Bindery` on macOS | Config directory (backups live here) |
+| `BINDERY_DATA_DIR` | `/config` on Linux; `%APPDATA%\Bindery` on Windows; `~/Library/Application Support/Bindery` on macOS | Config directory. Backups live here, as do the proxied cover cache (`image-cache/`, evicted after 30 days and refetched on demand) and the covers Bindery owns outright (`covers/`, the `cover.jpg` copied from each book of an imported Calibre library, never evicted). Keep it on persistent storage. |
 | `BINDERY_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `BINDERY_API_KEY` | _(empty)_ | **Seed only.** Bootstraps the initial API key on first launch if set; after that the key lives in the database and can be regenerated from the UI. |
 | `BINDERY_DOWNLOAD_DIR` | `/downloads` | Where the download client places completed downloads. **Not a watch folder** — per-job import paths come from the client's API; this feeds validation, storage health, the hardlink probe, and qBittorrent save paths (see [above](#bindery_download_dir-is-not-a-watch-folder)). Manual/bulk import may also read from here (and from `BINDERY_AUDIOBOOK_DOWNLOAD_DIR`), so a migration backlog sitting in the download folder can be scanned and attached in bulk. |
@@ -417,7 +417,7 @@ Outbound URLs are validated against an SSRF policy. Two trust levels apply:
 
 - **Indexer-provided download links** — the `.torrent` / `.nzb` URL Bindery fetches from a search result. This is data chosen by the indexer's response rather than an admin-typed value, so it keeps the stricter posture: RFC1918 LAN targets are allowed, but **loopback is blocked** unless you set `BINDERY_DOWNLOAD_ALLOW_LOOPBACK=true`. That is the gotcha when Prowlarr runs on `localhost` — configuring the indexer succeeds (admin-typed URL), but the download link it returns also points at loopback and is rejected at fetch time. Set the env var, or reach Prowlarr by a LAN IP / Docker gateway / service name so the returned links are RFC1918. Link-local and cloud-metadata stay blocked either way.
 
-- **Untrusted / outbound URLs** — proxied cover images (URLs that come from metadata providers and book data) and outbound notification webhooks. These keep blocking loopback, link-local, and cloud-metadata. Webhooks additionally block RFC1918 unless `BINDERY_NOTIFICATIONS_ALLOW_PRIVATE=true`.
+- **Untrusted / outbound URLs** — proxied cover images (URLs that come from metadata providers and book data) and outbound notification webhooks. These keep blocking loopback, link-local, and cloud-metadata. Webhooks additionally block RFC1918 unless `BINDERY_NOTIFICATIONS_ALLOW_PRIVATE=true`. Covers from an imported Calibre library never go through this policy: the import copies each `cover.jpg` into `covers/` under `BINDERY_DATA_DIR` and the image endpoint serves that copy, so no cover server on the LAN and no exception to the policy is needed (#2564).
 
 If a same-host service still isn't reachable, the usual cause is that the service is bound to an interface your URL doesn't match (for example SABnzbd listening only on `127.0.0.1` while you used the LAN IP, or vice versa). Either point Bindery at the interface the service actually listens on, or set the service to listen on `0.0.0.0`.
 
@@ -513,6 +513,10 @@ migration as applied while missing `books.excluded`. On startup, Bindery now
 checks the live schema and restores that additive column automatically. Take a
 normal SQLite backup before upgrading; no manual SQL is required for this
 specific repair.
+
+### Calibre library covers repair
+
+Versions before the #2564 fix stored each Calibre-imported book's cover as the library's absolute path in `editions.image_url`, which nothing could serve. On every start Bindery now runs a background pass over such rows: each readable `cover.jpg` is copied into `covers/` under `BINDERY_DATA_DIR` and the edition (and the book, when it has no provider cover) is repointed at the copy. No schema migration is involved. The Calibre library must be mounted at the path recorded in the rows for the pass to read the files; rows it cannot read are left untouched and retried on the next start, and a library import rewrites them as well. Progress is logged as `calibre cover repair finished` at `info`.
 
 ### ABS import deployment note
 

@@ -257,3 +257,42 @@ func (r *EditionRepo) Delete(ctx context.Context, id int64) error {
 	}
 	return nil
 }
+
+// ListWithLocalImagePath returns the editions whose image_url is an absolute
+// filesystem path rather than a URL. Before #2564 the Calibre importer stored
+// the library's cover.jpg path there verbatim; the startup repair rewrites
+// those rows into servable references.
+func (r *EditionRepo) ListWithLocalImagePath(ctx context.Context) ([]models.Edition, error) {
+	rows, err := r.exec.QueryContext(ctx, `
+		SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
+		       publish_date, format, num_pages, language, image_url, is_ebook,
+		       edition_info, monitored, created_at, updated_at
+		FROM editions WHERE image_url LIKE '/%' ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list editions with local image path: %w", err)
+	}
+	defer rows.Close()
+	var out []models.Edition
+	for rows.Next() {
+		e, err := scanEditionFrom(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan edition: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate editions: %w", err)
+	}
+	return out, nil
+}
+
+// SetImageURL replaces one edition's image_url without touching any other
+// column.
+func (r *EditionRepo) SetImageURL(ctx context.Context, id int64, imageURL string) error {
+	_, err := r.exec.ExecContext(ctx, `UPDATE editions SET image_url = ?, updated_at = ? WHERE id = ?`,
+		imageURL, timeValueArg(time.Now().UTC()), id)
+	if err != nil {
+		return fmt.Errorf("set edition %d image_url: %w", id, err)
+	}
+	return nil
+}

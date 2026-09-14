@@ -26,6 +26,7 @@ import (
 	oidcauth "github.com/vavallee/bindery/internal/auth/oidc"
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/config"
+	"github.com/vavallee/bindery/internal/covers"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/grimmory"
@@ -450,9 +451,25 @@ func main() {
 	// runs. A single instance is shared between the API handler and the
 	// startup-sync branch below — both paths share the "only one import
 	// at a time" guard.
+	// Covers Bindery stores itself (#2564): a Calibre library import copies
+	// each book's cover.jpg here and the image proxy serves it back as a
+	// bindery-cover: reference. Lives beside image-cache in the data dir
+	// but outside it, because the image cache evicts by age and these have
+	// no upstream to refetch from.
+	coverStore := covers.NewStore(filepath.Join(cfg.DataDir, "covers"))
 	calibreImporter := calibre.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, settingsRepo).
 		WithRunTracking(calibreImportRunRepo, calibreSnapshotRepo, calibreProvenanceRepo).
-		WithSeries(seriesRepo)
+		WithSeries(seriesRepo).
+		WithCoverStore(coverStore)
+	// Rows written by importers older than #2564 hold the library's host
+	// path in editions.image_url; rewrite them into servable references now
+	// that the store exists. Runs in the background so a slow or unmounted
+	// library volume never delays startup, and it is safe to run again.
+	bgJobs.Go("calibre-cover-repair", func(ctx context.Context) {
+		if _, err := calibreImporter.RepairLocalCovers(ctx); err != nil {
+			slog.Warn("calibre cover repair failed", "error", err)
+		}
+	})
 	absImporter := abs.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, seriesRepo, settingsRepo, absImportRunRepo, absImportRunEntityRepo, absProvenanceRepo, absReviewRepo, absConflictRepo).
 		WithVersion(version).
 		WithStoragePaths(cfg.LibraryDir, cfg.AudiobookDir, rootFolderRepo).
@@ -665,6 +682,7 @@ func main() {
 	importScanner.WithSeriesRepo(seriesRepo)
 	importScanner.WithEditions(editionRepo)
 	importScanner.WithCalibreCoverCache(filepath.Join(cfg.DataDir, "calibre-covers"))
+	importScanner.WithCoverStore(coverStore)
 
 	// Startup check: warn if the configured default root folder no longer exists on disk.
 	if s, _ := settingsRepo.Get(ctxBoot, api.SettingDefaultLibraryRootFolderID); s != nil && s.Value != "" {
@@ -746,7 +764,7 @@ func main() {
 		WithFinder(seriesRepo, importScanner).
 		WithEditionHydration(editionRepo, metaAgg).
 		WithAppContext(appCtx)
-	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir)
+	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir).WithLocalCovers(coverStore)
 	imageProxyHandler.StartEviction(24 * time.Hour)
 	// Proxied cover URLs must carry the path prefix so they resolve under a
 	// subpath deploy (BINDERY_URL_BASE). No-op when URLBase is empty.

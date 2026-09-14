@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/calibre"
+	"github.com/vavallee/bindery/internal/covers"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/decision"
 	"github.com/vavallee/bindery/internal/importer/formatsniff"
@@ -84,7 +85,11 @@ type Scanner struct {
 	grimmory             grimmoryPusher
 	calibreMode          func() calibre.Mode
 	calibreCoverCacheDir string
-	settings             *db.SettingsRepo
+	// coverStore resolves bindery-cover: references (a Calibre library's
+	// own cover, #2564) to the file on disk so a push to calibredb can hand
+	// it over without an HTTP fetch that the SSRF policy would refuse.
+	coverStore *covers.Store
+	settings   *db.SettingsRepo
 	// qualityProfiles and blocklist back the post-download format check
 	// (#1782). Both nil disables it entirely, which is what every caller that
 	// has not been wired up gets.
@@ -301,6 +306,14 @@ func (s *Scanner) WithGrimmory(p grimmoryPusher) *Scanner {
 // images that need to be materialized before calibredb can consume them.
 func (s *Scanner) WithCalibreCoverCache(dir string) *Scanner {
 	s.calibreCoverCacheDir = dir
+	return s
+}
+
+// WithCoverStore attaches the store that backs bindery-cover: references
+// (#2564), so a book whose cover came from a Calibre library import can be
+// pushed back to calibredb with that cover.
+func (s *Scanner) WithCoverStore(store *covers.Store) *Scanner {
+	s.coverStore = store
 	return s
 }
 
