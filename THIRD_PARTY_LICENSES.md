@@ -83,11 +83,11 @@ does ship is the failure that matters.
 | html-parse-stringify | 4.0.1 | MIT |
 | i18next | 26.4.2 | MIT |
 | i18next-browser-languagedetector | 8.2.1 | MIT |
-| react | 19.2.8 | MIT |
-| react-dom | 19.2.8 | MIT |
+| react | 19.3.0 | MIT |
+| react-dom | 19.3.0 | MIT |
 | react-i18next | 17.0.13 | MIT |
 | react-router | 8.3.1 | MIT |
-| scheduler | 0.27.0 | MIT |
+| scheduler | 0.28.0 | MIT |
 | typescript | 6.0.3 | Apache-2.0 |
 | use-sync-external-store | 1.6.0 | MIT |
 
@@ -1895,14 +1895,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 31. MIT — npm:react-dom@19.2.8 (LICENSE)
+### 31. MIT — npm:react-dom@19.3.0 (LICENSE)
 
 <details>
 <summary>Applies to 4 dependencies</summary>
 
-- npm:react-dom@19.2.8 (LICENSE)
-- npm:react@19.2.8 (LICENSE)
-- npm:scheduler@0.27.0 (LICENSE)
+- npm:react-dom@19.3.0 (LICENSE)
+- npm:react@19.3.0 (LICENSE)
+- npm:scheduler@0.28.0 (LICENSE)
 - npm:use-sync-external-store@1.6.0 (LICENSE)
 
 </details>
