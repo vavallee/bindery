@@ -58,8 +58,49 @@ var errAlreadyGrabbed = errors.New("already grabbed")
 //
 // StateImportFailed deliberately does NOT qualify: the scanner is still working
 // through its retry budget on that row, and a re-grab would race it.
+//
+// The state alone never makes an imported row re-grabbable. The one imported
+// row that is, an import whose book has since been deleted, depends on more
+// than the state and is decided by orphanedImport (#2289).
 func regrabbableState(s models.DownloadState) bool {
 	return s == models.StateFailed || s == models.StateImportBlocked
+}
+
+// regrabbable is the gate grab applies to an existing download row for the
+// same GUID: the row may be reused when its state is dead (regrabbableState)
+// or when it is an orphaned import (orphanedImport).
+func regrabbable(d *models.Download) bool {
+	return regrabbableState(d.Status) || orphanedImport(d)
+}
+
+// orphanedImport reports whether d finished importing into a book that has
+// since been deleted (#2289).
+//
+// downloads.book_id is ON DELETE SET NULL (migration 007), so deleting a book
+// detaches its download rows and leaves them in place. An imported row then
+// outlives the book it imported into, still holding the GUID and still
+// reporting imported, and every later grab of that release answered "already
+// imported" for a book that no longer existed. Nothing automatic ever moves it
+// on: the pollers skip imported rows whether or not the torrent is still in
+// the client, which is why removing the torrent from qBittorrent did not
+// release it either.
+//
+// What the imported state normally guards is "you already have this book", and
+// with the book gone it guards nothing. Deciding at the check, rather than
+// rewriting the row when a book is deleted, covers every way a book goes away
+// (the book page, an author deletion cascading through the books FK, bulk
+// delete, import rollbacks) and the rows already orphaned on existing installs,
+// with no migration. The row is left exactly as it was until a grab actually
+// claims it through RetryFailed, and nothing is sent to the download client
+// until then.
+//
+// A NULL book_id alone is not enough. An in-flight row can legitimately have no
+// book, since the free-text search grabs without one and the importer matches
+// it later, and that is still live work.
+//
+// Keep in sync with the SQL guard in db.DownloadRepo.RetryFailed.
+func orphanedImport(d *models.Download) bool {
+	return d != nil && d.Status == models.StateImported && d.BookID == nil
 }
 
 // alreadyGrabbedDetail explains why a re-grab was refused and what to do
@@ -902,7 +943,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	if err != nil {
 		return nil, err
 	}
-	if existing != nil && !regrabbableState(existing.Status) {
+	if existing != nil && !regrabbable(existing) {
 		return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, alreadyGrabbedDetail(existing.Status))
 	}
 

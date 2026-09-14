@@ -1,0 +1,2 @@
+### Fixed
+- **Deleting a book frees its release to be grabbed again** (#2289): once a release had imported, deleting the book left it marked as imported, so grabbing that release again answered "already grabbed: this release has already been imported" with nothing in Bindery to clear it. Removing the torrent from your download client did not always help either. A release whose book is gone can now be grabbed again, including ones left behind by books deleted before this update. Thanks schmitzkr and Terebi42 for the reports.

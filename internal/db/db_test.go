@@ -1447,6 +1447,73 @@ func TestDownloadRepoRetryFailed(t *testing.T) {
 	}
 }
 
+// TestDownloadRepoRetryFailedClaimsOrphanedImport pins the SQL half of #2289.
+// An imported row may be claimed for a re-grab only once its book is gone:
+// with the book present the claim must fail even if a caller asks, and after
+// the delete (book_id ON DELETE SET NULL) it must succeed. A row with no book
+// that is still in flight is live work and must not be claimed.
+func TestDownloadRepoRetryFailedClaimsOrphanedImport(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewDownloadRepo(database)
+	books := NewBookRepo(database)
+
+	author := &models.Author{ForeignID: "orphan-author", Name: "Orphan Author", SortName: "Author, Orphan", MetadataProvider: "openlibrary"}
+	if err := NewAuthorRepo(database).Create(ctx, author); err != nil {
+		t.Fatalf("create author: %v", err)
+	}
+	book := &models.Book{ForeignID: "orphan-book", AuthorID: author.ID, Title: "Orphan Book", SortTitle: "orphan book",
+		Genres: []string{}, Status: models.BookStatusImported, MetadataProvider: "openlibrary"}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatalf("create book: %v", err)
+	}
+	imported := &models.Download{GUID: "orphan-guid", BookID: &book.ID, Title: "Old", NZBURL: "https://example.com/old.nzb",
+		Status: models.StateImported, Protocol: "usenet"}
+	if err := repo.Create(ctx, imported); err != nil {
+		t.Fatalf("create imported download: %v", err)
+	}
+	inFlight := &models.Download{GUID: "in-flight-guid", Title: "Free text", NZBURL: "https://example.com/f.nzb",
+		Status: models.StateDownloading, Protocol: "usenet"}
+	if err := repo.Create(ctx, inFlight); err != nil {
+		t.Fatalf("create in-flight download: %v", err)
+	}
+
+	claim := func(id int64) bool {
+		t.Helper()
+		ok, err := repo.RetryFailed(ctx, &models.Download{ID: id, Title: "New", NZBURL: "https://example.com/new.nzb",
+			Status: models.StateGrabbed, Protocol: "usenet"})
+		if err != nil {
+			t.Fatalf("RetryFailed(%d): %v", id, err)
+		}
+		return ok
+	}
+
+	if claim(imported.ID) {
+		t.Fatal("an imported row whose book still exists must not be claimed")
+	}
+	if claim(inFlight.ID) {
+		t.Fatal("an in-flight row with no book is live work and must not be claimed")
+	}
+
+	if err := books.Delete(ctx, book.ID); err != nil {
+		t.Fatalf("delete book: %v", err)
+	}
+	if !claim(imported.ID) {
+		t.Fatal("#2289: an imported row whose book was deleted must be claimable for a re-grab")
+	}
+	got, err := repo.GetByGUID(ctx, "orphan-guid")
+	if err != nil || got == nil {
+		t.Fatalf("reload download: %v", err)
+	}
+	if got.Status != models.StateGrabbed || got.ImportedAt != nil || got.Title != "New" {
+		t.Fatalf("expected the claimed row reset to a fresh grab, got status=%q imported_at=%v title=%q", got.Status, got.ImportedAt, got.Title)
+	}
+}
+
 func TestDownloadRepoResetImportRetry(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {

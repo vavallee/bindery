@@ -85,7 +85,7 @@ If the files never appear, it does not wait forever: after about 30 minutes of f
 Clicking **Grab** on a release you already have a Queue entry for is refused with *already grabbed*, and the message now names the state that entry is in.
 
 - **`importFailed`** — the scanner is still working on that download. Use **Queue → Retry import** to re-run the import against the files it already has, or remove the Queue entry if you want to grab the release fresh. If its files are simply not there, it turns into `importBlocked` (see above) and becomes re-grabbable on its own.
-- **`imported`** — you already have it.
+- **`imported`**: you already have it. If you have since deleted that book (or its author), the release is no longer held: grabbing it again goes through and reuses the old Queue entry, and you do not need to remove anything from your download client first.
 - **downloading / grabbed / importing** — it's in flight; check the Queue.
 - **`importBlocked`** — a re-grab is allowed and reuses the existing Queue row with a fresh retry budget. Use this when the original files are gone; use **Retry import** instead when they're still on disk.
 

@@ -138,8 +138,15 @@ func (r *DownloadRepo) Create(ctx context.Context, d *models.Download) error {
 // Two states qualify. StateFailed is the download-side failure. StateImportBlocked
 // (#1955) is the import-side one: terminal to every automatic path, so without
 // this the row pins the GUID forever and every later Grab of that release
-// answers "already grabbed". Keep the set in sync with api.regrabbableState,
-// which gates the caller.
+// answers "already grabbed".
+//
+// So does one further kind of row: an imported download whose book has been
+// deleted (#2289). book_id is ON DELETE SET NULL, so the row outlives its book
+// and would otherwise pin the GUID for good. The book_id IS NULL condition sits
+// in the WHERE clause rather than only in the caller, so an imported row that
+// still has its book can never be claimed, whatever the caller decided.
+//
+// Keep this in sync with api.regrabbable, which gates the caller.
 func (r *DownloadRepo) RetryFailed(ctx context.Context, d *models.Download) (bool, error) {
 	now := time.Now().UTC()
 	result, err := r.db.ExecContext(ctx, `
@@ -163,10 +170,11 @@ func (r *DownloadRepo) RetryFailed(ctx context.Context, d *models.Download) (boo
 		    completed_at=NULL,
 		    imported_at=NULL,
 		    import_retry_count=0
-		WHERE id=? AND status IN (?, ?)`,
+		WHERE id=? AND (status IN (?, ?) OR (status=? AND book_id IS NULL))`,
 		d.BookID, d.EditionID, d.IndexerID, d.DownloadClientID,
 		d.Title, d.NZBURL, d.Size, models.StateGrabbed, d.Protocol,
-		d.Quality, d.IndexerFlags, now, d.ID, models.StateFailed, models.StateImportBlocked)
+		d.Quality, d.IndexerFlags, now, d.ID, models.StateFailed, models.StateImportBlocked,
+		models.StateImported)
 	if err != nil {
 		return false, fmt.Errorf("retry failed download: %w", err)
 	}
