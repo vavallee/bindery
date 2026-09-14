@@ -1,11 +1,11 @@
 package auth
 
 import (
-	"time"
 	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // Regression tests for #560: /api/v1/auth/status was in the AllowUnauthPath
