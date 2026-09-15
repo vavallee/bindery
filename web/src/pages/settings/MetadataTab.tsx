@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
-import { api, AuthorMonitorMode, MetadataProfile } from '../../api/client'
+import { api, AuthorMonitorMode, ClusterFilterPreset, MetadataProfile } from '../../api/client'
 import { inputCls } from './formStyles'
 import { dangerLink } from '../../components/buttons'
 import Toggle from './Toggle'
@@ -291,6 +291,11 @@ export default function MetadataTab() {
                         {p.skipMissingDate && <span className="text-[10px] px-2 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{t('settings.metadata.skipMissingDate')}</span>}
                         {p.skipMissingIsbn && <span className="text-[10px] px-2 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{t('settings.metadata.skipMissingIsbn')}</span>}
                         {p.skipPartBooks && <span className="text-[10px] px-2 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{t('settings.metadata.skipPartBooks')}</span>}
+                        {p.clusterFilterPreset && p.clusterFilterPreset !== 'off' && (
+                          <span className="text-[10px] px-2 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">
+                            {t('settings.metadata.clusterFilterBadge', 'cluster filter: {{preset}}', { preset: p.clusterFilterPreset })}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-3 flex-shrink-0">
@@ -334,6 +339,7 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
   const [skipMissingDate, setSkipMissingDate] = useState(profile?.skipMissingDate ?? false)
   const [skipMissingIsbn, setSkipMissingIsbn] = useState(profile?.skipMissingIsbn ?? false)
   const [skipPartBooks, setSkipPartBooks] = useState(profile?.skipPartBooks ?? false)
+  const [clusterFilterPreset, setClusterFilterPreset] = useState<ClusterFilterPreset>(profile?.clusterFilterPreset ?? 'off')
   const [unknownLanguageBehavior, setUnknownLanguageBehavior] = useState<'pass' | 'fail'>(profile?.unknownLanguageBehavior ?? 'pass')
   const initialLangs = profile?.allowedLanguages
     ? profile.allowedLanguages.split(',').map(c => c.trim().toLowerCase()).filter(Boolean)
@@ -360,6 +366,7 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
         skipPartBooks,
         allowedLanguages: languages.join(','),
         unknownLanguageBehavior,
+        clusterFilterPreset,
       }
       if (profile) {
         await api.updateMetadataProfile(profile.id, payload)
@@ -436,6 +443,25 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
           <input type="checkbox" checked={skipPartBooks} onChange={e => setSkipPartBooks(e.target.checked)} />
           {t('settings.metadata.formSkipPartBooks')}
         </label>
+      </div>
+      <div>
+        <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.metadata.formClusterFilter', 'Cluster-based noise filtering')}</label>
+        <select
+          value={clusterFilterPreset}
+          onChange={e => setClusterFilterPreset(e.target.value as ClusterFilterPreset)}
+          className={inputCls}
+        >
+          <option value="off">{t('settings.metadata.formClusterFilterOff', 'Off (default)')}</option>
+          <option value="conservative">{t('settings.metadata.formClusterFilterConservative', 'Conservative')}</option>
+          <option value="balanced">{t('settings.metadata.formClusterFilterBalanced', 'Balanced (recommended)')}</option>
+          <option value="aggressive">{t('settings.metadata.formClusterFilterAggressive', 'Aggressive')}</option>
+        </select>
+        <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-2">
+          {t(
+            'settings.metadata.formClusterFilterHint',
+            'Cross-checks each work against how well-attested it is across every provider record of the same title, in addition to the filters above. Measured against a 20-author hand-verified dataset: each tier rescues progressively more real books that other filters above would otherwise drop, at close to the same precision. Off changes nothing about your current results.',
+          )}
+        </p>
       </div>
       {err && <div className="text-xs text-red-400">{err}</div>}
       <div className="flex justify-end gap-2">

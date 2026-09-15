@@ -1,0 +1,6 @@
+### Added
+- **Scored-signal catalogue filtering** (#2235) — a new `internal/metadata/filterengine` package replaces the sequential boolean noise-filtering in author catalogue sync (strict media type, junk title, language, part-book, missing date, missing ISBN, min pages) with signals that emit weighted observations, summed into a score and banded into KEEP/EXCLUDE. `metadata_profiles` gains `keep_threshold`/`exclude_threshold` columns, defaulting to 0/0 — the exact value that reproduces the prior boolean-chain behavior for every existing profile. A REVIEW band and graded (non-veto) signals are architected for but not reachable yet: the API rejects any non-zero threshold value at this stage.
+- **`AuthorSyncSkippedBook.Reason`** — the sync summary's per-book skip samples now carry the specific filterengine observation that excluded the work, not just its title/language.
+
+### Changed
+- **`AuthorSyncSummary.Total` is now higher for some OpenLibrary-primary authors.** OpenLibrary's companion-material detection (study guides, summaries, film/TV tie-ins) used to drop a matching work silently inside the provider client, before it ever reached the sync's accounting. It now survives as a flagged candidate and is excluded through the same scored path as everything else — visible in `Total` and counted under `skippedJunk` — rather than invisible.

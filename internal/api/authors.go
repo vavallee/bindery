@@ -24,6 +24,7 @@ import (
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/metadata"
+	"github.com/vavallee/bindery/internal/metadata/filterengine"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/telemetry"
 	"github.com/vavallee/bindery/internal/textutil"
@@ -51,12 +52,13 @@ const authorAutoSearchConcurrency = 4
 // opt-in SkipPartBooks metadata-profile setting has always implied it
 // screened out.
 //
-// The patterns themselves live in internal/metadata (bundle_titles.go), so
-// there is one keyword list rather than two: catalogue ingestion prunes the
-// unambiguous tier of that same list for every profile (#1780), and this
-// call adds the ambiguous tier for profiles that asked for it.
+// Delegates to filterengine.IsPartBookTitle (#2235) so
+// PartBookSignal and this function's own pre-existing caller
+// (catalogue_reconciliation.go) share one implementation rather than two —
+// see that function's doc for the rest of the provenance
+// (internal/metadata's bundle_titles.go keyword list).
 func isPartBookTitle(title string) bool {
-	return metadata.IsBundleTitle(title)
+	return filterengine.IsPartBookTitle(title)
 }
 
 type AuthorHandler struct {
@@ -1955,6 +1957,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// default) and parse its allowed_languages CSV. Nil means "no filter".
 	allowedLangs, unknownFail := h.resolveAllowedLanguages(ctx, author)
 	skipPartBooks := h.resolveSkipPartBooks(ctx, author)
+	clusterPreset := h.resolveClusterFilterPreset(ctx, author)
 	skipMissingDate := h.resolveSkipMissingDate(ctx, author)
 	minPages, skipMissingISBN := h.resolveEditionFilters(ctx, author)
 	// Both minPages>0 and skipMissingISBN require a real edition lookup per
@@ -1978,6 +1981,8 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	var langSampled int
 	if len(allowedLangs) > 0 {
 		langSampled = h.meta.FillMissingAuthorWorkLanguages(ctx, books)
+		slog.Debug("author sync: edition-sampled language for works OL reported none for",
+			"author", author.Name, "sampled", langSampled, "allowed", allowedLangs)
 	}
 
 	// Author-batch majority-language fallback: FillMissingAuthorWorkLanguages
@@ -1996,6 +2001,22 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// foreign-language book.
 	if len(allowedLangs) > 0 {
 		applyAuthorMajorityLanguageFallback(books)
+	}
+
+	// clusterByID groups books by filterengine.ClusterKey once, over the full
+	// batch, so ClusterEditionCountSignal can read each candidate's
+	// Cluster.MaxEditionCount below without a per-candidate re-scan (#2235
+	// Phase 2). Built before any prune stage that could still run below this
+	// point runs, matching the offline grid search this signal's tuning was
+	// validated against (BuildClusters(books) right after the
+	// majority-language fallback, before per-candidate filtering). Gated
+	// behind a non-"off" preset: BuildClusters is a cheap O(n) pass, but
+	// every profile ships "off" by default, and skipping it entirely keeps
+	// that default path exactly as it was before this field existed, not
+	// merely equivalent.
+	var clusterByID map[string]*filterengine.Cluster
+	if clusterPreset != filterengine.ClusterFilterOff {
+		_, clusterByID = filterengine.BuildClusters(books)
 	}
 
 	// Everything above can take minutes for a prolific author (works fetch,
@@ -2153,6 +2174,46 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// (or audiobook-only) user never accumulates rows they can't grab.
 	strictMediaType := h.resolveDefaultMediaTypeStrict(ctx)
 
+	// fCtx is the shared filterengine.Context for every signal scored during
+	// this sync (#2235). Built once here, not per candidate: every field is
+	// either author-run-scoped (allowedLangs, strictMediaType) or already
+	// resolved above. keepThreshold/excludeThreshold default to 0/0 on any
+	// profile-lookup failure, which — with every v1 signal at veto weight —
+	// is the exact value that reproduces the pre-#2235 boolean-chain
+	// behavior; see filterengine's package doc.
+	//
+	// A non-"off" clusterPreset overrides BOTH keepThreshold and
+	// excludeThreshold with the same shared value (filterengine.
+	// ThresholdForPreset's doc explains why it has to be both, not just
+	// excludeThreshold) — the profile's own KeepThreshold/ExcludeThreshold
+	// columns stay locked at 0/0 by validateScoreThresholds and are never
+	// read when a cluster preset is active.
+	keepThreshold, excludeThreshold := h.resolveScoreThresholds(ctx, author)
+	if clusterPreset != filterengine.ClusterFilterOff {
+		keepThreshold = filterengine.ThresholdForPreset(clusterPreset)
+		excludeThreshold = keepThreshold
+	}
+	fCtx := &filterengine.Context{
+		KeepThreshold:    keepThreshold,
+		ExcludeThreshold: excludeThreshold,
+		AllowedLanguages: allowedLangs,
+		UnknownLangFail:  unknownFail,
+		SkipPartBooks:    skipPartBooks,
+		SkipMissingDate:  skipMissingDate,
+		SkipMissingISBN:  skipMissingISBN,
+		MinPages:         minPages,
+		NormalizedAuthor: normalizedAuthor,
+		MediaTypeDefault: mediaType,
+		StrictMediaType:  strictMediaType,
+	}
+
+	// c is carried through both passes below and is the sole place any
+	// Skipped* counter (or its sample) is incremented — see
+	// authors_filterengine.go's authorSyncCounters doc for why this replaced
+	// per-call-site local variables (#2235 rework: accumulate-then-band-once
+	// needs one destination for whichever signal ends up attributed, not a
+	// dozen separately-named counters each tied to one old Decide call site).
+	//
 	// skippedExcluded is carried in AuthorSyncSummary but not rendered by the
 	// notice: the notice explains works the user did NOT expect to lose, and a
 	// book they excluded by hand is not one of them. It is still reported so
@@ -2163,18 +2224,55 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// an established author it is most of the run; failed is a create that lost
 	// the write. Both were invisible, which made Total minus everything else
 	// look like a hole.
-	var added, matched, failed, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
-	var skippedPartBooks, skippedMissingDate, skippedMinPages, skippedMissingISBN int
-	// Names of the first few language-rejected works, reported to the user
-	// alongside the count (#1889): "65 books skipped" is alarming, but it is
-	// the titles and their language codes that tell them whether the profile
-	// is set the way they meant.
-	var skippedLangSample []models.AuthorSyncSkippedBook
-	// The first few page-count- and ISBN-rejected works, same reasoning and
-	// cap as skippedLangSample (#1889 established the pattern; requested
-	// again for these filters specifically in PR review, vavallee).
-	var skippedPartBooksSample, skippedMissingDateSample []models.AuthorSyncSkippedBook
-	var skippedMinPagesSample, skippedMissingISBNSample []models.AuthorSyncSkippedBook
+	c := &authorSyncCounters{}
+
+	// freeSignals, structureSignals, editionSignals are the canonical v1
+	// registry (filterengine.DefaultSignals(), split into the two evaluation
+	// passes below) — see filterEngineSignals's doc for why sourcing both
+	// passes from one DefaultSignals() call, rather than each call site
+	// building its own filterengine.New*Signal() list, is the actual fix
+	// here: TestRegistryIsVetoOnlyAtV1 checks DefaultSignals(), so a signal
+	// this function doesn't also source from DefaultSignals() could drift
+	// out of what that test guards without either one noticing.
+	freeSignals, structureSignals, editionSignals := filterEngineSignals()
+	// clusterSignal is #2235 Phase 2's ClusterEditionCountSignal, nil unless
+	// clusterPreset is non-"off" — ClusterSignalForPreset's doc requires
+	// callers to check for nil rather than appending a no-op signal.
+	// Deliberately not sourced from filterEngineSignals()/DefaultSignals():
+	// that registry backs TestRegistryIsVetoOnlyAtV1, which must stay
+	// pure-veto, so this signal is constructed separately and only joins the
+	// structural/edition pass below (never the free pass), matching where
+	// PartBookSignal already lives — that's what lets this signal's
+	// keep-direction observation offset a structure.partBookTitle veto in
+	// the same combined Decide call, the mechanism its offline validation
+	// depends on.
+	clusterSignal := filterengine.ClusterSignalForPreset(clusterPreset)
+	// mediaTypeSignalApplies/languageSignalApplies are the two free signals
+	// with a caller-level exemption filterengine can't self-check from
+	// Context alone: #1612's "an explicit single-work add must not be vetoed
+	// by catalogue-sync heuristics" exempts both media-type narrowing and the
+	// language filter entirely on a single-work run, not merely from being
+	// the deciding factor. Precomputed once (both conditions are run-scoped,
+	// not per-candidate) and applied when building each candidate's signal
+	// list in the loop below.
+	mediaTypeSignalApplies := !singleWork && strictMediaType && (mediaType == models.MediaTypeEbook || mediaType == models.MediaTypeAudiobook)
+	languageSignalApplies := !singleWork
+	candidateFreeSignals := make([]filterengine.Signal, 0, len(freeSignals))
+	for _, s := range freeSignals {
+		switch s.ID() {
+		case "mediatype.strictMismatch":
+			if mediaTypeSignalApplies {
+				candidateFreeSignals = append(candidateFreeSignals, s)
+			}
+		case "language.notAllowed":
+			if languageSignalApplies {
+				candidateFreeSignals = append(candidateFreeSignals, s)
+			}
+		default:
+			candidateFreeSignals = append(candidateFreeSignals, s)
+		}
+	}
+
 	// candidates accumulates every work that survives the free (in-memory)
 	// filters below and would otherwise reach the MinPages/SkipMissingISBN
 	// check. Splitting the loop here lets the edition lookups those two
@@ -2197,56 +2295,39 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 		// single format, keep the catalogue to that format. A "both" work is
 		// narrowed to the default — its wanted format is still available. A
 		// work that is ONLY the other format has nothing the user asked for,
-		// so it is skipped rather than created as an un-grabbable row. A "both"
-		// default disables the clamp (the user wants everything). Existing rows
-		// are untouched; the Books bulk-edit action migrates those.
+		// so filterengine.MediaTypeSignal below (which sees this final,
+		// already-narrowed MediaType) excludes it rather than creating an
+		// un-grabbable row. A "both" default disables the clamp (the user
+		// wants everything). Existing rows are untouched; the Books bulk-edit
+		// action migrates those.
 		//
-		// A single-work run is exempt. #1612: "an explicit add of one specific
-		// work must not be vetoed by catalogue-sync heuristics" — the direct
-		// insert this run stands in for applies neither clamp nor language
-		// filter, and applying them here would turn an explicitly-picked
-		// audiobook into a 15s poll, a 404 "try again shortly", and an orphan
-		// cleanup that deletes the author the request just created.
-		if !singleWork && strictMediaType && (mediaType == models.MediaTypeEbook || mediaType == models.MediaTypeAudiobook) {
+		// This narrowing mutation stays here rather than moving into the
+		// signal itself — see MediaTypeSignal's doc. The signal's own
+		// applicability (mediaTypeSignalApplies, precomputed above) already
+		// covers the #1612 single-work exemption this block used to gate.
+		if mediaTypeSignalApplies {
 			switch b.MediaType {
 			case models.MediaTypeBoth:
 				b.MediaType = mediaType
 			case mediaType:
 				// already the wanted single format
-			default:
-				skippedMediaType++
-				slog.Debug("skipping media-type-mismatched book under strict default",
-					"title", b.Title, "bookMediaType", b.MediaType, "default", mediaType)
-				continue
 			}
 		}
 
-		// Filter out OpenLibrary "works" whose title is empty or is just the
-		// author name — a recurring OL data-quality problem where the Work
-		// record was never titled and falls back to the author's name.
-		// Letting these through pollutes the Wanted page and produces
-		// nonsense destination folders like "Jared M. Diamond/Jared M. Diamond ()".
-		normalizedTitle := strings.ToLower(strings.TrimSpace(b.Title))
-		if normalizedTitle == "" || normalizedTitle == normalizedAuthor {
-			skippedJunk++
-			slog.Debug("skipping junk-title OL work", "title", b.Title, "foreignId", b.ForeignID)
-			continue
-		}
-
-		// Filter by the author's metadata-profile allowed_languages.
-		// Books whose language is unknown honor the profile's
-		// unknown_language_behavior (pass by default; see #232).
-		//
-		// Exempt on a single-work run, and this is the exact case #1612 was
-		// filed for: a heavily-translated work whose edition-sampled language
-		// falls outside the profile became permanently un-addable, because the
-		// only path that could create it kept refusing to.
-		if !singleWork && !models.IsLanguageAllowed(b.Language, allowedLangs, unknownFail) {
-			skippedLang++
-			if len(skippedLangSample) < authorSyncSkippedSampleLimit {
-				skippedLangSample = append(skippedLangSample, models.AuthorSyncSkippedBook{Title: b.Title, Language: b.Language})
-			}
-			slog.Debug("skipping non-allowed-language book", "title", b.Title, "language", b.Language, "allowed", allowedLangs, "edition_sampled", langSampled)
+		// Evaluate every applicable free signal — media type (#1575), junk
+		// title / provider-flagged noise (#2235's replay of OpenLibrary's
+		// shouldFilterOLNoise, now counted instead of invisibly dropped
+		// before this handler ever saw it), and allowed-language (#232,
+		// exempt on a single-work run per #1612) — together, in one Decide
+		// call, so a candidate tripping more than one records every reason it
+		// failed rather than whichever this loop happened to check first
+		// (the actual #2235 bug this rework fixes). Banded exactly once, from
+		// the full accumulated ledger.
+		if result := filterengine.Decide(filterengine.Candidate{Book: &b}, fCtx, candidateFreeSignals...); result.Band == filterengine.BandExclude {
+			recordExcluded(c, b, result.Observations)
+			slog.Debug("skipping book on a free (pre-edition-fetch) filter",
+				"title", b.Title, "foreignId", b.ForeignID, "language", b.Language,
+				"observations", len(result.Observations), "reason", filterEngineReason(result))
 			continue
 		}
 
@@ -2305,40 +2386,38 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 		// with. Probing it turns a cross-provider duplicate into a match.
 		existing := h.resolveExistingBook(ctx, b.ForeignID, b.HardcoverForeignID)
 
-		// Filter box-set/omnibus/carton "works" when the author's metadata
-		// profile has SkipPartBooks enabled. These are real OL records for a
-		// bundle of other books, not a book of their own, and previously
-		// passed every filter above unchanged (see partBookTitleRe).
-		if existing == nil && skipPartBooks && isPartBookTitle(b.Title) {
-			skippedPartBooks++
-			if len(skippedPartBooksSample) < authorSyncSkippedSampleLimit {
-				skippedPartBooksSample = append(skippedPartBooksSample, models.AuthorSyncSkippedBook{Title: b.Title})
-			}
-			slog.Debug("skipping part-book/box-set title", "title", b.Title, "foreignId", b.ForeignID)
-			continue
-		}
-
-		// Filter works with no release date when the author's metadata profile
-		// has SkipMissingDate enabled. ReleaseDate is already merged in from
-		// the provider's work data by this point (aggregator_author_works.go),
-		// so this is a straight presence check, not a fetch.
-		if existing == nil && skipMissingDate && b.ReleaseDate == nil {
-			skippedMissingDate++
-			if len(skippedMissingDateSample) < authorSyncSkippedSampleLimit {
-				skippedMissingDateSample = append(skippedMissingDateSample, models.AuthorSyncSkippedBook{Title: b.Title})
-			}
-			slog.Debug("skipping work with no release date", "title", b.Title, "foreignId", b.ForeignID)
-			continue
-		}
-
+		// A book the user already owns must never be dropped by a metadata
+		// filter (existing was resolved above, before this point, precisely
+		// so an owned book still reaches the ratings/genres update branch
+		// below even if it would now trip one of these) — see PartBookSignal
+		// through MinPagesSignal's docs. Their applicability is candidate-
+		// scoped (existing==nil, plus the edition-lookup gate below), unlike
+		// the two run-scoped exemptions candidateFreeSignals precomputed
+		// above, so it's built fresh per candidate rather than once per sync.
+		//
+		// This combines with candidateFreeSignals (re-evaluated here, not
+		// just structure/edition signals) into ONE Decide call and ONE
+		// banding decision per candidate — the accumulated ledger this
+		// rework exists for (#2235). Re-running the free signals costs
+		// nothing (pure, in-memory, already proven non-excluding for every
+		// candidate reaching this loop, since pass one above already
+		// dropped anything they would exclude) and is what makes this a
+		// literal combined ledger rather than an assumption that pass one
+		// contributed nothing.
+		//
 		// MinPages / SkipMissingISBN both need edition data (page count and
 		// ISBN live on Edition, not Book) fetched in the prefetch pass above.
 		// A book with no entry in editionsByForeignID is either not gated by
 		// either setting (needsEditionPreview was false) or its lookup
-		// failed — both cases fall through unfiltered.
+		// failed — both cases fall through unfiltered, by simply not adding
+		// editionSignals to this candidate's list at all: MissingISBNSignal
+		// and MinPagesSignal's own docs require they only ever be invoked
+		// when a lookup actually succeeded (comma-ok), matching the
+		// pre-#2235 "not enforcing for this work" behavior for that case
+		// exactly, not "treat as zero editions and exclude it".
 		//
-		// The two filters read a missing/empty edition list differently, and
-		// deliberately so, not by oversight:
+		// The two filters read a missing/empty edition list differently
+		// where a lookup DID succeed, and deliberately so, not by oversight:
 		//   - MinPages treats "no edition reports a page count" as unknown,
 		//     not zero, and lets the work through (see passesMinPagesFilter).
 		//     A size floor shouldn't penalize a work the provider simply
@@ -2352,25 +2431,25 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 		//     per-edition, and a book with zero editions fails the same
 		//     `Editions.Any()` check a book whose editions were all
 		//     filtered out for lacking an identifier would.
+		candidate := filterengine.Candidate{Book: &b}
+		signals := candidateFreeSignals
 		if existing == nil {
+			signals = append(append([]filterengine.Signal{}, candidateFreeSignals...), structureSignals...)
 			if editions, ok := editionsByForeignID[b.ForeignID]; ok {
-				if skipMissingISBN && !anyEditionHasISBN(editions) {
-					skippedMissingISBN++
-					if len(skippedMissingISBNSample) < authorSyncSkippedSampleLimit {
-						skippedMissingISBNSample = append(skippedMissingISBNSample, models.AuthorSyncSkippedBook{Title: b.Title})
-					}
-					slog.Debug("skipping work with no ISBN on any edition", "title", b.Title, "foreignId", b.ForeignID)
-					continue
-				}
-				if minPages > 0 && !passesMinPagesFilter(editions, minPages) {
-					skippedMinPages++
-					if len(skippedMinPagesSample) < authorSyncSkippedSampleLimit {
-						skippedMinPagesSample = append(skippedMinPagesSample, models.AuthorSyncSkippedBook{Title: b.Title})
-					}
-					slog.Debug("skipping work below the minimum page count", "title", b.Title, "foreignId", b.ForeignID, "minPages", minPages)
-					continue
-				}
+				candidate.Editions = editions
+				signals = append(signals, editionSignals...)
 			}
+			if clusterSignal != nil {
+				candidate.Cluster = clusterByID[b.ForeignID]
+				signals = append(signals, clusterSignal)
+			}
+		}
+		if result := filterengine.Decide(candidate, fCtx, signals...); result.Band == filterengine.BandExclude {
+			recordExcluded(c, b, result.Observations)
+			slog.Debug("skipping book on a structural/edition-gated filter",
+				"title", b.Title, "foreignId", b.ForeignID, "minPages", minPages,
+				"observations", len(result.Observations), "reason", filterEngineReason(result))
+			continue
 		}
 
 		b.Monitored = shouldMonitorBookForAuthor(author, b, latestKeys, today)
@@ -2445,7 +2524,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 			// sync from either provider resolves it exactly rather than
 			// relying on a title comparison (#1705).
 			h.recordBookIdentities(ctx, existing, b.ForeignID, b.HardcoverForeignID)
-			matched++
+			c.matched++
 			continue
 		}
 
@@ -2532,7 +2611,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 			// there is no difference worth a separate number: the work is in
 			// their library, Bindery found it, and it did not need creating.
 			// Which of the two lookups got there is an implementation detail.
-			matched++
+			c.matched++
 			continue
 		}
 		// Everything from here on CREATES a book the library does not have.
@@ -2547,13 +2626,13 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 		// re-ided provider work — would otherwise be created afresh as a
 		// title the exclusion was meant to cover (#1815).
 		if _, excluded := excludedKeys.Lookup(b.Title); excluded {
-			skippedExcluded++
+			c.skippedExcluded++
 			slog.Debug("skipping newly-discovered work: an excluded book under this author has the same title",
 				"title", b.Title, "foreignId", b.ForeignID, "author", author.Name)
 			continue
 		}
 		if !allowNewBooks {
-			skippedNotAccepted++
+			c.skippedNotAccepted++
 			slog.Debug("skipping newly-discovered work: author is not accepting new books",
 				"title", b.Title, "foreignId", b.ForeignID, "author", author.Name)
 			continue
@@ -2577,7 +2656,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 				}
 				// A losing race still ends with the book present, so this is a
 				// match and not a failure.
-				matched++
+				c.matched++
 				continue
 			}
 			// A FOREIGN KEY failure here almost always means the author row
@@ -2588,19 +2667,19 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 			if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
 				if current, gerr := h.authors.GetByID(ctx, author.ID); gerr == nil && current == nil {
 					slog.Info("author deleted mid-sync; aborting catalogue sync",
-						"author", author.Name, "authorId", author.ID, "added", added)
+						"author", author.Name, "authorId", author.ID, "added", c.added)
 					return
 				}
 			}
 			slog.Warn("failed to create book", "title", b.Title, "error", err)
-			failed++
+			c.failed++
 			continue
 		}
 		// Hydration and the on-disk check happen in the pass below, once the
 		// whole created set is known, so their provider calls can be made a
 		// few at a time instead of one per book in sequence (#1929).
 		createdBooks = append(createdBooks, b)
-		added++
+		c.added++
 	}
 
 	// Fetch the editions the pass below is about to hydrate with. This is the
@@ -2648,7 +2727,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// catalogue sync's numbers on the author page and hide its skip notice.
 	if singleWork {
 		slog.Info("single-work catalogue fallback complete",
-			"author", author.Name, "foreignId", opts.onlyForeignID, "added", added)
+			"author", author.Name, "foreignId", opts.onlyForeignID, "added", c.added)
 		return
 	}
 
@@ -2659,25 +2738,27 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	summary := models.AuthorSyncSummary{
 		CompletedAt:              time.Now().UTC(),
 		Total:                    len(books),
-		Added:                    added,
-		Matched:                  matched,
-		Failed:                   failed,
-		SkippedExcluded:          skippedExcluded,
-		SkippedLanguage:          skippedLang,
-		SkippedJunk:              skippedJunk,
-		SkippedMediaType:         skippedMediaType,
-		SkippedNotAccepted:       skippedNotAccepted,
-		SkippedPartBooks:         skippedPartBooks,
-		SkippedPartBooksSample:   skippedPartBooksSample,
-		SkippedMissingDate:       skippedMissingDate,
-		SkippedMissingDateSample: skippedMissingDateSample,
-		SkippedMinPages:          skippedMinPages,
-		SkippedMinPagesSample:    skippedMinPagesSample,
-		SkippedMissingISBN:       skippedMissingISBN,
-		SkippedMissingISBNSample: skippedMissingISBNSample,
+		Added:                    c.added,
+		Matched:                  c.matched,
+		Failed:                   c.failed,
+		SkippedExcluded:          c.skippedExcluded,
+		SkippedLanguage:          c.skippedLang,
+		SkippedJunk:              c.skippedJunk,
+		SkippedMediaType:         c.skippedMediaType,
+		SkippedNotAccepted:       c.skippedNotAccepted,
+		SkippedPartBooks:         c.skippedPartBooks,
+		SkippedPartBooksSample:   c.skippedPartBooksSample,
+		SkippedMissingDate:       c.skippedMissingDate,
+		SkippedMissingDateSample: c.skippedMissingDateSample,
+		SkippedMinPages:          c.skippedMinPages,
+		SkippedMinPagesSample:    c.skippedMinPagesSample,
+		SkippedMissingISBN:       c.skippedMissingISBN,
+		SkippedMissingISBNSample: c.skippedMissingISBNSample,
+		SkippedThinCluster:       c.skippedThinCluster,
+		SkippedThinClusterSample: c.skippedThinClusterSample,
 		AllowedLanguages:         allowedLangs,
 		UnknownLanguageFail:      unknownFail,
-		SkippedLanguageSample:    skippedLangSample,
+		SkippedLanguageSample:    c.skippedLangSample,
 	}
 	h.syncSummaries.record(author.ID, summary)
 
@@ -2686,12 +2767,12 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// and Info is the default level the in-app log view captures — a reporter
 	// running rootless couldn't reach the Debug per-book lines at all.
 	logArgs := []any{
-		"author", author.Name, "added", added, "matched", matched, "failed", failed,
-		"skipped_language", skippedLang, "skipped_junk", skippedJunk, "skipped_media_type", skippedMediaType,
-		"skipped_not_accepted", skippedNotAccepted, "skipped_excluded", skippedExcluded,
-		"skipped_part_books", skippedPartBooks,
-		"skipped_missing_date", skippedMissingDate,
-		"skipped_min_pages", skippedMinPages, "skipped_missing_isbn", skippedMissingISBN,
+		"author", author.Name, "added", c.added, "matched", c.matched, "failed", c.failed,
+		"skipped_language", c.skippedLang, "skipped_junk", c.skippedJunk, "skipped_media_type", c.skippedMediaType,
+		"skipped_not_accepted", c.skippedNotAccepted, "skipped_excluded", c.skippedExcluded,
+		"skipped_part_books", c.skippedPartBooks,
+		"skipped_missing_date", c.skippedMissingDate,
+		"skipped_min_pages", c.skippedMinPages, "skipped_missing_isbn", c.skippedMissingISBN,
 		"total", len(books),
 	}
 	// The metadata filters dropping works is the surprising case and stays at
@@ -2702,8 +2783,8 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// failed joins the Warn side, and it is the strongest member of the set: a
 	// filter dropping a work is a setting doing its job, while a create that
 	// lost its write is the run failing at the thing it exists to do.
-	if failed+skippedLang+skippedJunk+skippedMediaType+skippedPartBooks+skippedMissingDate+
-		skippedMinPages+skippedMissingISBN > 0 {
+	if c.failed+c.skippedLang+c.skippedJunk+c.skippedMediaType+c.skippedPartBooks+c.skippedMissingDate+
+		c.skippedMinPages+c.skippedMissingISBN > 0 {
 		slog.Warn("author books synced", logArgs...)
 		return
 	}
@@ -2904,9 +2985,25 @@ func latestBookMonitorKeys(books []models.Book, count int, include func(models.B
 	return keys
 }
 
+// isAuthorWorkMonitorCandidate mirrors, for the "monitor latest N" slot
+// auction, exactly the filters fetchAuthorBooks's create loop applies before a
+// work can become a book: junk title, provider-flagged companion material, and
+// the profile's language set. Anything the loop will refuse to create must not
+// be allowed to occupy one of the N slots first — the slots are awarded from
+// the raw provider list, before the loop runs, so a work that takes one and is
+// then excluded leaves a real book silently unmonitored.
+//
+// The provider-noise clause is #2235's: before it, OpenLibrary's
+// companion-material check ran inside the provider client and these works
+// never reached this function at all. Flagging instead of dropping them (so
+// they count in AuthorSyncSummary.Total) put them into the auction for the
+// first time; this keeps them out of it, which is what the pre-#2235 behavior
+// was.
 func isAuthorWorkMonitorCandidate(book models.Book, normalizedAuthor string, allowedLangs []string, unknownFail bool) bool {
-	normalizedTitle := strings.ToLower(strings.TrimSpace(book.Title))
-	if normalizedTitle == "" || normalizedTitle == normalizedAuthor {
+	if filterengine.IsJunkTitle(book.Title, normalizedAuthor) {
+		return false
+	}
+	if models.HasObservation(book.Observations, models.SignalProviderOpenLibraryNoise) {
 		return false
 	}
 	return models.IsLanguageAllowed(book.Language, allowedLangs, unknownFail)
@@ -3730,11 +3827,24 @@ const authorMajorityLanguageThreshold = 0.9
 // least authorMajorityLanguageMinSample resolved works. Mutates books in
 // place. A no-op when too few works have a resolved language yet, or when
 // no single language dominates strongly enough to trust.
+//
+// Provider-flagged companion material is excluded from the vote (#2235).
+// These works used to be dropped inside the provider client and never reached
+// this function; flagging rather than dropping them (so they count in
+// AuthorSyncSummary.Total) would otherwise let a run of English-language study
+// guides skew both the min-sample gate and the dominance ratio for an author
+// whose real catalogue is another language — changing which real works get a
+// language assigned, and therefore which ones the language filter then drops.
+// They are still ASSIGNED the majority language if they lack one, which costs
+// nothing: the noise signal excludes them before the language check runs.
 func applyAuthorMajorityLanguageFallback(books []models.Book) {
 	counts := make(map[string]int, 4)
 	resolved := 0
 	for _, b := range books {
 		if b.Language == "" {
+			continue
+		}
+		if models.HasObservation(b.Observations, models.SignalProviderOpenLibraryNoise) {
 			continue
 		}
 		counts[b.Language]++
@@ -3794,19 +3904,69 @@ func (h *AuthorHandler) resolveEditionFilters(ctx context.Context, author *model
 	return p.MinPages, p.SkipMissingISBN
 }
 
+// filterEngineReason returns a filterengine.Result's strongest observation's
+// Reason, or "" if none fired — a convenience for slog.Debug call sites that
+// want to log why a candidate was excluded without threading the whole
+// Result through. Since the #2235 accumulated-ledger rework, a Result can
+// carry more than one observation (a candidate tripping several signals at
+// once); this reports the same one recordExcluded attributes the Skipped*
+// counter to (see strongestObservation), not merely the first to fire.
+func filterEngineReason(result filterengine.Result) string {
+	strongest, ok := strongestObservation(result.Observations)
+	if !ok {
+		return ""
+	}
+	return strongest.Reason
+}
+
+// resolveScoreThresholds returns the author's effective metadata profile's
+// filterengine banding thresholds (migration 086, #2235). Defaults to 0/0 on
+// any lookup failure — the exact value that reproduces the pre-#2235
+// boolean-chain behavior, so an unresolvable profile fails toward "filter
+// exactly like before" rather than toward an unpredictable band.
+func (h *AuthorHandler) resolveScoreThresholds(ctx context.Context, author *models.Author) (keep, exclude float64) {
+	id := models.DefaultMetadataProfileID
+	if author.MetadataProfileID != nil {
+		id = *author.MetadataProfileID
+	}
+	p, err := h.profiles.GetByID(ctx, id)
+	if err != nil || p == nil {
+		return 0, 0
+	}
+	return p.KeepThreshold, p.ExcludeThreshold
+}
+
+// resolveClusterFilterPreset returns the author's effective metadata
+// profile's ClusterEditionCountSignal preset (migration 087, #2235 Phase 2).
+// Defaults to ClusterFilterOff on any lookup failure, matching
+// resolveScoreThresholds's fail-toward-unfiltered-behavior stance and this
+// package's general default of "an unresolvable profile filters exactly like
+// no profile at all."
+func (h *AuthorHandler) resolveClusterFilterPreset(ctx context.Context, author *models.Author) filterengine.ClusterFilterPreset {
+	id := models.DefaultMetadataProfileID
+	if author.MetadataProfileID != nil {
+		id = *author.MetadataProfileID
+	}
+	p, err := h.profiles.GetByID(ctx, id)
+	if err != nil || p == nil {
+		return filterengine.ClusterFilterOff
+	}
+	preset := filterengine.ClusterFilterPreset(p.ClusterFilterPreset)
+	if !filterengine.ValidClusterFilterPreset(preset) {
+		return filterengine.ClusterFilterOff
+	}
+	return preset
+}
+
 // anyEditionHasISBN reports whether any edition carries an ISBN-13 or
 // ISBN-10. Returns false for a nil or empty slice — a work with no editions
 // to check has no ISBN to confirm.
+//
+// Delegates to filterengine.AnyEditionHasISBN (#2235) so
+// MissingISBNSignal and this function's own pre-existing caller
+// (catalogue_reconciliation.go) share one implementation.
 func anyEditionHasISBN(editions []models.Edition) bool {
-	for _, e := range editions {
-		if e.ISBN13 != nil && strings.TrimSpace(*e.ISBN13) != "" {
-			return true
-		}
-		if e.ISBN10 != nil && strings.TrimSpace(*e.ISBN10) != "" {
-			return true
-		}
-	}
-	return false
+	return filterengine.AnyEditionHasISBN(editions)
 }
 
 // passesMinPagesFilter reports whether a work satisfies the profile's
@@ -3817,18 +3977,12 @@ func anyEditionHasISBN(editions []models.Edition) bool {
 // pages. (Named to read as "did this pass the filter", not "does the work
 // have enough pages" — the unknown-data case makes those two questions
 // have different answers.)
+//
+// Delegates to filterengine.PassesMinPagesFilter (#2235) so
+// MinPagesSignal and this function's own pre-existing caller
+// (catalogue_reconciliation.go) share one implementation.
 func passesMinPagesFilter(editions []models.Edition, minPages int) bool {
-	anyReported := false
-	for _, e := range editions {
-		if e.NumPages == nil || *e.NumPages <= 0 {
-			continue
-		}
-		anyReported = true
-		if *e.NumPages >= minPages {
-			return true
-		}
-	}
-	return !anyReported
+	return filterengine.PassesMinPagesFilter(editions, minPages)
 }
 
 // resolveSkipPartBooks returns the author's effective metadata profile's

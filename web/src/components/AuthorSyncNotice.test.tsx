@@ -108,6 +108,13 @@ describe('AuthorSyncNotice', () => {
     expect(screen.getByText(/5 skipped for having no ISBN on any edition/)).toBeInTheDocument()
   })
 
+  it('renders when only skippedThinCluster is nonzero', () => {
+    renderNotice(summary({ skippedThinCluster: 4 }))
+    expect(screen.getByTestId('author-sync-notice')).toBeInTheDocument()
+    openDetails()
+    expect(screen.getByText(/4 skipped as thin-catalog noise/)).toBeInTheDocument()
+  })
+
   it('merges samples from every filter into one combined examples line', () => {
     renderNotice(
       summary({

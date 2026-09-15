@@ -20,7 +20,7 @@ func (r *MetadataProfileRepo) List(ctx context.Context) ([]models.MetadataProfil
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, name, min_popularity, min_pages, skip_missing_date, skip_missing_isbn,
 		       skip_part_books, allowed_languages, unknown_language_behavior, created_at,
-		       COALESCE(owner_user_id, 0)
+		       COALESCE(owner_user_id, 0), keep_threshold, exclude_threshold, cluster_filter_preset
 		FROM metadata_profiles ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("list metadata profiles: %w", err)
@@ -42,7 +42,7 @@ func (r *MetadataProfileRepo) GetByID(ctx context.Context, id int64) (*models.Me
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, name, min_popularity, min_pages, skip_missing_date, skip_missing_isbn,
 		       skip_part_books, allowed_languages, unknown_language_behavior, created_at,
-		       COALESCE(owner_user_id, 0)
+		       COALESCE(owner_user_id, 0), keep_threshold, exclude_threshold, cluster_filter_preset
 		FROM metadata_profiles WHERE id=?`, id)
 	if err != nil {
 		return nil, fmt.Errorf("get metadata profile %d: %w", id, err)
@@ -83,6 +83,14 @@ func (r *MetadataProfileRepo) create(ctx context.Context, p *models.MetadataProf
 	if p.UnknownLanguageBehavior == "" {
 		p.UnknownLanguageBehavior = models.UnknownLanguagePass
 	}
+	if p.ClusterFilterPreset == "" {
+		// "off" literal, not filterengine.ClusterFilterOff: this package
+		// stays a plain persistence layer and doesn't import
+		// internal/metadata/filterengine. internal/api/metadata_profiles.go
+		// validates this string against filterengine.ValidClusterFilterPreset
+		// before a row ever reaches here.
+		p.ClusterFilterPreset = "off"
+	}
 	var ownerArg any
 	if ownerUserID != 0 {
 		ownerArg = ownerUserID
@@ -90,11 +98,12 @@ func (r *MetadataProfileRepo) create(ctx context.Context, p *models.MetadataProf
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO metadata_profiles (name, min_popularity, min_pages, skip_missing_date,
 		                               skip_missing_isbn, skip_part_books, allowed_languages,
-		                               unknown_language_behavior, owner_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                               unknown_language_behavior, owner_user_id,
+		                               keep_threshold, exclude_threshold, cluster_filter_preset)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.MinPopularity, p.MinPages,
 		p.SkipMissingDate, p.SkipMissingISBN, p.SkipPartBooks, p.AllowedLanguages,
-		p.UnknownLanguageBehavior, ownerArg)
+		p.UnknownLanguageBehavior, ownerArg, p.KeepThreshold, p.ExcludeThreshold, p.ClusterFilterPreset)
 	if err != nil {
 		return fmt.Errorf("create metadata profile: %w", err)
 	}
@@ -111,14 +120,18 @@ func (r *MetadataProfileRepo) Update(ctx context.Context, p *models.MetadataProf
 	if p.UnknownLanguageBehavior == "" {
 		p.UnknownLanguageBehavior = models.UnknownLanguagePass
 	}
+	if p.ClusterFilterPreset == "" {
+		p.ClusterFilterPreset = "off"
+	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE metadata_profiles SET name=?, min_popularity=?, min_pages=?, skip_missing_date=?,
 		                             skip_missing_isbn=?, skip_part_books=?, allowed_languages=?,
-		                             unknown_language_behavior=?
+		                             unknown_language_behavior=?, keep_threshold=?, exclude_threshold=?,
+		                             cluster_filter_preset=?
 		WHERE id=?`,
 		p.Name, p.MinPopularity, p.MinPages,
 		p.SkipMissingDate, p.SkipMissingISBN, p.SkipPartBooks, p.AllowedLanguages,
-		p.UnknownLanguageBehavior, p.ID)
+		p.UnknownLanguageBehavior, p.KeepThreshold, p.ExcludeThreshold, p.ClusterFilterPreset, p.ID)
 	if err != nil {
 		return fmt.Errorf("update metadata profile %d: %w", p.ID, err)
 	}
@@ -140,6 +153,7 @@ func scanMetadataProfile(rows *sql.Rows) (models.MetadataProfile, error) {
 		&p.ID, &p.Name, &p.MinPopularity, &p.MinPages,
 		&skipDate, &skipISBN, &skipPart, &p.AllowedLanguages,
 		&p.UnknownLanguageBehavior, &p.CreatedAt, &p.OwnerUserID,
+		&p.KeepThreshold, &p.ExcludeThreshold, &p.ClusterFilterPreset,
 	)
 	if err != nil {
 		return p, fmt.Errorf("scan metadata profile: %w", err)

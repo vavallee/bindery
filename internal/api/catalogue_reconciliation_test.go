@@ -644,6 +644,19 @@ func TestReconciliationRejectReason_ProfileReasonsAndIndeterminateEvidence(t *te
 		{name: "provider compilation", work: models.Book{Title: "Stories", IsCompilation: true}, wantReason: reconcileReasonCatalogueFilter},
 		{name: "unambiguous bundle", work: models.Book{Title: "Dune Box Set"}, wantReason: reconcileReasonCatalogueFilter},
 		{
+			// #2235 regression: OpenLibrary's companion-material check used to
+			// run inside the provider client, so a flagged work never reached
+			// the reconciliation snapshot at all. Now that the client flags
+			// instead of dropping, reconciliation has to reject it here or it
+			// silently starts counting a study guide as evidence that the work
+			// it is a guide TO is still in the upstream catalogue.
+			name: "provider-flagged companion material",
+			work: models.Book{Title: "Cliffsnotes on Dune", Observations: []models.FilterObservation{
+				{Signal: models.SignalProviderOpenLibraryNoise, Reason: `title contains the companion-material phrase "cliffsnotes"`},
+			}},
+			wantReason: reconcileReasonCatalogueFilter,
+		},
+		{
 			name: "known language rejected", work: models.Book{Title: "Libro", Language: "spa"},
 			profile: reconciliationProfile{allowedLangs: []string{"eng"}}, wantReason: reconcileReasonLanguage,
 		},

@@ -73,6 +73,21 @@ Public domain catalogue data (CC0). Cover images come from
 `covers.openlibrary.org` and are subject to their rate limits; Bindery serves
 them through the same `/api/v1/images` cache.
 
+## fiction-author-dataset (test fixtures)
+
+Source: <https://github.com/gchahcg/fiction-author-dataset>, `data/` directory,
+commit `1b1751b97fd56e0ae11bbc4a23bd481a160191e3`. License: CC-BY-4.0.
+
+Not runtime-fetched data — this is the source of
+`internal/metadata/filterengine/testdata/works_sample.csv`, an 80-row
+stratified sample vendored into the repo as Go test fixtures for `#2235`'s
+title-shape signals (`JunkTitleSignal`, `PartBookSignal`). Recorded here
+per `CONTRIBUTING.md`'s pointer to this page for any third-party data usage
+terms, even though CC-BY-4.0's only real obligation — attribution — is
+already satisfied at the file itself: see
+`internal/metadata/filterengine/testdata/README.md` for the full notice,
+sampling method, and schema.
+
 ## Audible
 
 `internal/metadata/audible` calls an unpublished Amazon endpoint, and Amazon's

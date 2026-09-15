@@ -529,9 +529,19 @@ var slashJoinedGroupRe = regexp.MustCompile(`\(([^()]+/[^()]+)\)\s*$`)
 // articles together globally would risk a false merge.
 var leadingArticleRe = regexp.MustCompile(`(?i)^(?:the|an?)\s+`)
 
+// StripLeadingArticle strips a leading "The"/"A"/"An" (case-insensitive) plus
+// following whitespace from s. Exported so filterengine/cluster.go's
+// ClusterKey shares this exact normalizer instead of maintaining an
+// independent regex copy (#2235 rework) — this package already imports
+// nothing from filterengine, and filterengine's predicates.go already
+// imports this package (metadata.IsBundleTitle), so there is no import-
+// direction reason left for a second copy of the same pattern to exist.
+func StripLeadingArticle(s string) string {
+	return leadingArticleRe.ReplaceAllString(s, "")
+}
+
 func articleInsensitiveTitleKey(title string) string {
-	key := authorWorkMergeKey(title)
-	return leadingArticleRe.ReplaceAllString(key, "")
+	return StripLeadingArticle(authorWorkMergeKey(title))
 }
 
 // pruneAuthorWorkRedundantTitles drops two shapes of duplicate noise that

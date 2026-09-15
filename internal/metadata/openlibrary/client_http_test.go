@@ -925,6 +925,7 @@ func TestGetAuthorWorks_HTTP(t *testing.T) {
 				Key:              "/works/OL456W",
 				Title:            "Dune",
 				Language:         []string{"eng"},
+				EditionCount:     317,
 				FirstPublishYear: 1965,
 				CoverI:           &coverI,
 				Subject:          []string{"Sci-Fi"},
@@ -954,6 +955,13 @@ func TestGetAuthorWorks_HTTP(t *testing.T) {
 	}
 	if books[0].Language != "eng" {
 		t.Errorf("first book language: want 'eng', got %q", books[0].Language)
+	}
+	// Regression for #2235: EditionCount was decoded from the search
+	// response but never assigned to the resulting models.Book, which left
+	// it at 0 for every OpenLibrary-sourced work regardless of what the
+	// provider actually reported.
+	if books[0].EditionCount != 317 {
+		t.Errorf("first book EditionCount: want 317, got %d", books[0].EditionCount)
 	}
 	if !strings.Contains(books[0].ImageURL, "12345") {
 		t.Errorf("first book ImageURL should contain cover 12345, got %q", books[0].ImageURL)
@@ -1343,6 +1351,13 @@ func TestGetAuthorWorks_HTTP_LangPreferEng(t *testing.T) {
 // before they reach the ingestion pipeline. Subject-based and title-based
 // markers are both exercised here. Noise comes from the works endpoint
 // (primary source) and must be filtered before merging.
+// Regression for #2235: shouldFilterOLNoise used to drop a companion-material
+// work outright, before it ever reached AuthorHandler.fetchAuthorBooks or
+// AuthorSyncSummary.Total's accounting. It now survives, flagged via a
+// models.SignalProviderOpenLibraryNoise observation that
+// filterengine.ProviderNoiseSignal replays at the caller's configured
+// weight — deciding KEEP/EXCLUDE is no longer this client's call to make
+// unilaterally.
 func TestGetAuthorWorks_HTTP_NoiseFilter(t *testing.T) {
 	worksResp := authorWorksResponse{
 		Entries: []authorWorkEntry{
@@ -1362,17 +1377,36 @@ func TestGetAuthorWorks_HTTP_NoiseFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAuthorWorks: %v", err)
 	}
-	if len(books) != 1 {
-		t.Fatalf("expected 1 book to survive noise filter, got %d: %+v", len(books), books)
+	if len(books) != 6 {
+		t.Fatalf("expected all 6 works to survive (flagged, not dropped), got %d: %+v", len(books), books)
 	}
-	if books[0].Title != "The Dutch House" {
-		t.Errorf("surviving book: want 'The Dutch House', got %q", books[0].Title)
+	byTitle := make(map[string]models.Book, len(books))
+	for _, b := range books {
+		byTitle[b.Title] = b
+	}
+	if obs := byTitle["The Dutch House"].Observations; len(obs) != 0 {
+		t.Errorf("the real work should carry no noise observation, got %+v", obs)
+	}
+	for _, title := range []string{
+		"Summary of The Dutch House",
+		"A Reader's Guide to Commonwealth",
+		"Film Companion",
+		"The Dutch House (Audio CD)",
+		"Commonwealth",
+	} {
+		b, ok := byTitle[title]
+		if !ok {
+			t.Fatalf("%q missing from results entirely", title)
+		}
+		if len(b.Observations) != 1 || b.Observations[0].Signal != models.SignalProviderOpenLibraryNoise || b.Observations[0].Reason == "" {
+			t.Errorf("%q: want exactly 1 SignalProviderOpenLibraryNoise observation with a non-empty reason, got %+v", title, b.Observations)
+		}
 	}
 }
 
-// Noise filter also drops entries that come in via the search enrichment
-// source (not just the primary works results) — important because the search
-// index has its own share of tie-in companions.
+// Same regression, via the search-enrichment-only path (works the
+// /authors/{id}/works endpoint hasn't returned, so they're only ever seen
+// through /search.json).
 func TestGetAuthorWorks_HTTP_NoiseFilterSearchEnrichment(t *testing.T) {
 	c := newClientWithPaths(t, map[string]interface{}{
 		"/authors/OL6A/works.json": jsonStr(authorWorksResponse{
@@ -1383,7 +1417,6 @@ func TestGetAuthorWorks_HTTP_NoiseFilterSearchEnrichment(t *testing.T) {
 		"/search.json": jsonStr(searchRespForAuthor{
 			Docs: []searchDocForAuthor{
 				{Key: "/works/OL1W", Title: "Real Book", Language: []string{"eng"}},
-				// These noise entries only appear in search (not in works) and must be dropped.
 				{Key: "/works/OL2W", Title: "CliffsNotes on Real Book"},
 				{Key: "/works/OL3W", Title: "Some Film Tie-in", Subject: []string{"Film adaptations"}},
 			},
@@ -1393,8 +1426,24 @@ func TestGetAuthorWorks_HTTP_NoiseFilterSearchEnrichment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAuthorWorks: %v", err)
 	}
-	if len(books) != 1 || books[0].Title != "Real Book" {
-		t.Fatalf("expected only 'Real Book' to survive, got %+v", books)
+	if len(books) != 3 {
+		t.Fatalf("expected all 3 works to survive (flagged, not dropped), got %d: %+v", len(books), books)
+	}
+	byTitle := make(map[string]models.Book, len(books))
+	for _, b := range books {
+		byTitle[b.Title] = b
+	}
+	if obs := byTitle["Real Book"].Observations; len(obs) != 0 {
+		t.Errorf("the real work should carry no noise observation, got %+v", obs)
+	}
+	for _, title := range []string{"CliffsNotes on Real Book", "Some Film Tie-in"} {
+		b, ok := byTitle[title]
+		if !ok {
+			t.Fatalf("%q missing from results entirely", title)
+		}
+		if len(b.Observations) != 1 || b.Observations[0].Signal != models.SignalProviderOpenLibraryNoise {
+			t.Errorf("%q: want exactly 1 SignalProviderOpenLibraryNoise observation, got %+v", title, b.Observations)
+		}
 	}
 }
 

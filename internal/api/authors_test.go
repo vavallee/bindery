@@ -804,6 +804,18 @@ func TestFetchAuthorBooks_StrictMediaType(t *testing.T) {
 	} else if b.MediaType != models.MediaTypeEbook {
 		t.Errorf("both-format work MediaType = %q, want ebook (narrowed)", b.MediaType)
 	}
+
+	// Direct assertion on the counter itself (#2235 PR review): the outcome
+	// checks above only prove "Audio Only" wasn't created, not that it was
+	// specifically counted as a media-type skip rather than, say, silently
+	// falling through some other path uncounted.
+	sync := h.syncSummaries.get(author.ID)
+	if sync == nil {
+		t.Fatal("no sync summary recorded")
+	}
+	if sync.SkippedMediaType != 1 {
+		t.Errorf("SkippedMediaType = %d, want 1 (exactly the audiobook-only work)", sync.SkippedMediaType)
+	}
 }
 
 // missingDateTestWorks returns a fixed mix of works with and without a
@@ -7719,6 +7731,148 @@ func TestFetchAuthorBooks_SkipPartBooksExemptsAlreadyTrackedBook(t *testing.T) {
 
 	if summary := h.syncSummaries.get(author.ID); summary != nil && summary.SkippedPartBooks != 0 {
 		t.Errorf("summary.SkippedPartBooks = %d, want 0 (already-tracked book must not be counted as skipped)", summary.SkippedPartBooks)
+	}
+}
+
+// TestFetchAuthorBooks_ClusterFilterOffMatchesPreExistingBehavior pins the
+// regression that matters most for #2235 Phase 2: with ClusterFilterPreset
+// left at "off" (the default for every profile after migration 087, and the
+// only value any profile had before that column existed), a part-book title
+// is excluded exactly as it always was — its cluster's edition count is
+// irrelevant, because ClusterSignalForPreset("off") returns nil and
+// authors.go never even attaches a Cluster to the candidate. This is the
+// same fixture TestFetchAuthorBooks_SkipsPartBooks uses (the slash-joined
+// title is the one that reaches PartBookSignal rather than being pruned
+// earlier by the aggregator), given a generous EditionCount specifically to
+// prove that number is not consulted at all under "off".
+func TestFetchAuthorBooks_ClusterFilterOffMatchesPreExistingBehavior(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.SkipPartBooks = true
+	// Explicit, even though "off" is already the zero value / DB default —
+	// this test exists specifically to prove "off" behaves like the column
+	// never existed, so naming it here documents the exact case under test.
+	profile.ClusterFilterPreset = "off"
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL920A", Name: "Cluster Preset Off Author", SortName: "Author, Cluster Preset Off",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	agg := metadata.NewAggregator(&stubMetaProvider{works: []models.Book{
+		{ForeignID: "OL921W", Title: "The Martian / Artemis / Project Hail Mary", SortTitle: "the martian / artemis / project hail mary",
+			Language: "eng", MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted,
+			MetadataProvider: "openlibrary", EditionCount: 5},
+	}})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.GetByForeignID(ctx, "OL921W")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Error("part-book title was created under ClusterFilterPreset=off despite EditionCount=5; the cluster signal must not run at all when the preset is off")
+	}
+
+	summary := h.syncSummaries.get(author.ID)
+	if summary == nil {
+		t.Fatal("expected a recorded sync summary, got nil")
+	}
+	if summary.SkippedPartBooks != 1 {
+		t.Errorf("summary.SkippedPartBooks = %d, want 1", summary.SkippedPartBooks)
+	}
+	if summary.SkippedThinCluster != 0 {
+		t.Errorf("summary.SkippedThinCluster = %d, want 0 (cluster signal must not fire under \"off\")", summary.SkippedThinCluster)
+	}
+}
+
+// TestFetchAuthorBooks_ClusterFilterBalancedRescuesWellAttestedPartBook is the
+// concrete behavior #2235 Phase 2 exists to produce, pinned directly rather
+// than only inferred from the offline dataset numbers: the same part-book
+// title as the "off" test above, with the same EditionCount=5, but under the
+// "balanced" preset. ClusterEditionCountSignal's keep-direction observation
+// (+300 at MaxEditionCount>=3) combines with structure.partBookTitle's veto
+// (-1000) in ONE Decide call — the accumulated-ledger mechanism #2235's
+// original wiring bug (fixed before Phase 2) makes possible at all — for a
+// score of -700, which clears the "balanced" preset's shared threshold of
+// -750 and lands KEEP instead of EXCLUDE.
+func TestFetchAuthorBooks_ClusterFilterBalancedRescuesWellAttestedPartBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.SkipPartBooks = true
+	profile.ClusterFilterPreset = "balanced"
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL922A", Name: "Cluster Preset Balanced Author", SortName: "Author, Cluster Preset Balanced",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	agg := metadata.NewAggregator(&stubMetaProvider{works: []models.Book{
+		{ForeignID: "OL923W", Title: "The Martian / Artemis / Project Hail Mary", SortTitle: "the martian / artemis / project hail mary",
+			Language: "eng", MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted,
+			MetadataProvider: "openlibrary", EditionCount: 5},
+	}})
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.GetByForeignID(ctx, "OL923W")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("part-book title with a well-attested cluster (EditionCount=5) was excluded under ClusterFilterPreset=balanced, want it rescued")
+	}
+
+	summary := h.syncSummaries.get(author.ID)
+	if summary == nil {
+		t.Fatal("expected a recorded sync summary, got nil")
+	}
+	if summary.SkippedPartBooks != 0 {
+		t.Errorf("summary.SkippedPartBooks = %d, want 0 (the cluster signal's keep observation should have rescued this candidate)", summary.SkippedPartBooks)
+	}
+	if summary.SkippedThinCluster != 0 {
+		t.Errorf("summary.SkippedThinCluster = %d, want 0 (MaxEditionCount=5 fires the keep branch, not the exclude branch)", summary.SkippedThinCluster)
 	}
 }
 

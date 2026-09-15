@@ -9,6 +9,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/metadata/filterengine"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -71,6 +72,17 @@ func (h *MetadataProfileHandler) Create(w http.ResponseWriter, r *http.Request) 
 	if p.UnknownLanguageBehavior != models.UnknownLanguageFail {
 		p.UnknownLanguageBehavior = models.UnknownLanguagePass
 	}
+	if p.ClusterFilterPreset == "" {
+		p.ClusterFilterPreset = string(filterengine.ClusterFilterOff)
+	}
+	if msg, ok := validateScoreThresholds(p); !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		return
+	}
+	if msg, ok := validateClusterFilterPreset(p); !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		return
+	}
 	if err := h.repo.CreateForUser(r.Context(), &p, auth.UserIDFromContext(r.Context())); err != nil {
 		writeServerError(w, r, err)
 		return
@@ -103,6 +115,17 @@ func (h *MetadataProfileHandler) Update(w http.ResponseWriter, r *http.Request) 
 	if p.UnknownLanguageBehavior != models.UnknownLanguageFail {
 		p.UnknownLanguageBehavior = models.UnknownLanguagePass
 	}
+	if p.ClusterFilterPreset == "" {
+		p.ClusterFilterPreset = string(filterengine.ClusterFilterOff)
+	}
+	if msg, ok := validateScoreThresholds(p); !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		return
+	}
+	if msg, ok := validateClusterFilterPreset(p); !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		return
+	}
 	if err := h.repo.Update(r.Context(), &p); err != nil {
 		writeServerError(w, r, err)
 		return
@@ -132,4 +155,52 @@ func (h *MetadataProfileHandler) Delete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// validateScoreThresholds enforces internal/metadata/filterengine's v1
+// constraint on a profile's KeepThreshold/ExcludeThreshold pair (#2235,
+// migration 086). An inverted band (exclude above keep) is meaningless in
+// any version of this scheme, so it's always rejected.
+//
+// At v1 specifically, both must be exactly 0 — not merely equal to each
+// other. This is tighter than "keep == exclude" and deliberately so: every
+// shipped signal is a veto (filterengine.TestRegistryIsVetoOnlyAtV1) with
+// Context.Prior hardcoded to 0, so an unfiltered candidate always scores
+// exactly 0 and a vetoed one always scores exactly -vetoWeight. Parity with
+// the pre-#2235 boolean chain depends on the shared threshold sitting
+// exactly at that clean-candidate score: a nonzero equal pair (say
+// keep=exclude=50) would band a perfectly clean candidate (score 0) as
+// EXCLUDE, since 0 < 50 — a real bug caught by
+// TestAuthorSyncParity_EqualThresholdsReproduceBooleanChain rejecting
+// exactly this, not a hypothetical. "keep == exclude" alone is necessary
+// but not sufficient; "== 0" is what the current Prior/veto-weight design
+// actually requires. Relaxing this — to a nonzero equal pair, or further to
+// `exclude <= keep` for real graded filtering — is meaningful only once
+// Context.Prior is itself profile-configurable or a real graded signal
+// (the cluster-level edition-count signal cluster.go's doc describes)
+// exists to justify moving off the veto-only design this locks in.
+// validateClusterFilterPreset rejects any clusterFilterPreset value this
+// package doesn't recognize. #2235 Phase 2 deliberately never relaxes
+// validateScoreThresholds's KeepThreshold/ExcludeThreshold check above (both
+// columns stay locked at exactly 0/0, unchanged) — a profile instead opts
+// into ClusterEditionCountSignal through this separate, closed-set preset
+// field, so a client can never hand-pick a keep/exclude pair nobody has
+// measured. filterengine.ValidClusterFilterPreset is the single source of
+// truth for the known set; this only translates a "no" into the same
+// {msg, ok} shape validateScoreThresholds already uses.
+func validateClusterFilterPreset(p models.MetadataProfile) (msg string, ok bool) {
+	if !filterengine.ValidClusterFilterPreset(filterengine.ClusterFilterPreset(p.ClusterFilterPreset)) {
+		return "clusterFilterPreset must be one of: off, conservative, balanced, aggressive", false
+	}
+	return "", true
+}
+
+func validateScoreThresholds(p models.MetadataProfile) (msg string, ok bool) {
+	if p.ExcludeThreshold > p.KeepThreshold {
+		return "excludeThreshold cannot be greater than keepThreshold", false
+	}
+	if p.KeepThreshold != 0 || p.ExcludeThreshold != 0 {
+		return "keepThreshold and excludeThreshold must both be 0; graded filtering isn't enabled yet", false
+	}
+	return "", true
 }

@@ -101,6 +101,11 @@ export interface AuthorSyncSummary {
   skippedMinPagesSample?: AuthorSyncSkippedBook[]
   skippedMissingIsbn?: number
   skippedMissingIsbnSample?: AuthorSyncSkippedBook[]
+  // #2235 Phase 2 (migration 087): works dropped by ClusterEditionCountSignal's
+  // exclude branch. Always absent/zero unless the author's metadata profile
+  // has a non-"off" clusterFilterPreset.
+  skippedThinCluster?: number
+  skippedThinClusterSample?: AuthorSyncSkippedBook[]
 }
 
 export interface AuthorSyncSkippedBook {

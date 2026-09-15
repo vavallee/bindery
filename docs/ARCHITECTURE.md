@@ -49,6 +49,7 @@ The `internal/` tree is organised by domain, not by layer:
 | `migrate` | Bulk-import of authors and related records from a `readarr.db` or a Goodreads CSV export. |
 | `models` | Domain types (Author, Book, Edition, Series, Indexer, etc.) shared across handlers, repos, and pipelines. |
 | `metadata` | OpenLibrary, Google Books, Hardcover, DNB, Audnex, Audible — fetchers and unifying interfaces. |
+| `metadata/filterengine` | Scored-signal catalogue filtering (#2235): signals emit weighted `Observation`s instead of a bare bool, summed into a score and banded into KEEP/REVIEW/EXCLUDE. Provider-agnostic — providers flag candidates via `Book.Observations` rather than deciding unilaterally. |
 | `indexer` | Newznab/Torznab clients, query builder, four-tier fallback, per-indexer query deduplication, result deduplication, ranking. |
 | `decision` | Quality profiles, language filter, custom formats, delay profiles, blocklist consultation. |
 | `downloader` | SABnzbd, NZBGet, qBittorrent, Transmission, Deluge, rTorrent clients (queue/history polling, submission, deletion). |

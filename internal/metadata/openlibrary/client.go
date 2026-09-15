@@ -352,9 +352,15 @@ func (c *Client) enrichWorkFromSearch(ctx context.Context, foreignID string, b *
 // enriches when available.
 //
 // Noise (study guides, screenplay companions, film adaptations, etc.) is
-// filtered at this layer so the authors-ingestion pipeline never sees it.
-// Both upstream calls are best-effort: as long as one returns, we proceed —
-// the other's failure is logged.
+// flagged, not filtered, at this layer (#2235): each matching work still
+// comes back in the slice, carrying a models.SignalProviderOpenLibraryNoise
+// observation for internal/metadata/filterengine's ProviderNoiseSignal to
+// act on. A caller that title-matches against this result directly, without
+// going through filterengine (internal/abs/import_upserts.go's
+// lookupUpstreamBook is the one that does today), must check
+// models.HasObservation for that signal itself — this layer no longer does
+// it for them. Both upstream calls are best-effort: as long as one returns,
+// we proceed — the other's failure is logged.
 func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
 	books, _, err := c.GetAuthorWorksSnapshot(ctx, authorForeignID)
 	return books, err
@@ -436,9 +442,6 @@ func (c *Client) authorWorks(ctx context.Context, authorForeignID string) (books
 		if workID == "" || entry.Title == "" {
 			continue
 		}
-		if shouldFilterOLNoise(entry.Title, entry.Subjects) {
-			continue
-		}
 		b := models.Book{
 			ForeignID:        workID,
 			Title:            entry.Title,
@@ -453,6 +456,21 @@ func (c *Client) authorWorks(ctx context.Context, authorForeignID string) (books
 				ForeignID:        authorForeignID,
 				MetadataProvider: "openlibrary",
 			},
+		}
+		// Flag rather than drop (#2235): previously shouldFilterOLNoise
+		// dropped the work here, silently, before it ever reached Total —
+		// internal/api/authors.go's AuthorSyncSummary.Total counts only
+		// what a provider returns, so this work was invisible to the sync
+		// accounting entirely. Now it survives as a real candidate carrying
+		// the reason, and internal/metadata/filterengine's
+		// ProviderNoiseSignal decides its fate at the same veto weight the
+		// old inline drop effectively used — checked against entry.Subjects
+		// (the untruncated list), not b.Genres (capped at 10 above).
+		if reason := olNoiseMatchReason(entry.Title, entry.Subjects); reason != "" {
+			b.Observations = append(b.Observations, models.FilterObservation{
+				Signal: models.SignalProviderOpenLibraryNoise,
+				Reason: reason,
+			})
 		}
 		for _, a := range entry.Authors {
 			if key := strings.TrimPrefix(a.Author.Key, "/authors/"); key != "" {
@@ -478,6 +496,16 @@ func (c *Client) authorWorks(ctx context.Context, authorForeignID string) (books
 				b.RatingsCount = e.RatingsCount
 				b.AverageRating = e.AverageRating
 			}
+			// The works endpoint (primary) carries no edition_count at all;
+			// only the search endpoint (enrichment) does. Without this, a
+			// work present in BOTH sources — the common case for an
+			// established author — took the primary-derived b, which never
+			// had EditionCount, and silently discarded enrichment's value
+			// the same way it used to discard it entirely before
+			// searchAuthorWorks itself was fixed to populate it (#2235).
+			if e.EditionCount > 0 {
+				b.EditionCount = e.EditionCount
+			}
 			// Older works records sometimes omit the authors array; the
 			// search index's author_key list fills the gap (#1405).
 			if len(b.CreditedAuthorForeignIDs) == 0 {
@@ -495,8 +523,17 @@ func (c *Client) authorWorks(ctx context.Context, authorForeignID string) (books
 		if _, ok := index[e.ForeignID]; ok {
 			continue // already handled above
 		}
-		if shouldFilterOLNoise(e.Title, e.Genres) {
-			continue
+		// Flag rather than drop (#2235) — see the primary loop above for the
+		// full rationale. e.Genres is already the 10-item-truncated form
+		// (this entry IS a models.Book, built by searchAuthorWorks), same as
+		// the pre-#2235 boolean check here always compared against — no
+		// fidelity regression, just no fidelity gain either, unlike the
+		// primary-entry call site above.
+		if reason := olNoiseMatchReason(e.Title, e.Genres); reason != "" {
+			e.Observations = append(e.Observations, models.FilterObservation{
+				Signal: models.SignalProviderOpenLibraryNoise,
+				Reason: reason,
+			})
 		}
 		e.Author = &models.Author{
 			ForeignID:        authorForeignID,
@@ -549,11 +586,23 @@ func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) 
 			continue
 		}
 		b := models.Book{
-			ForeignID:                workID,
-			Title:                    doc.Title,
-			SortTitle:                doc.Title,
-			Genres:                   truncateSlice(doc.Subject, 10),
-			Language:                 pickPreferredLanguage(doc.Language),
+			ForeignID: workID,
+			Title:     doc.Title,
+			SortTitle: doc.Title,
+			Genres:    truncateSlice(doc.Subject, 10),
+			Language:  pickPreferredLanguage(doc.Language),
+			// EditionCount was decoded from the search response above but
+			// never assigned here — models.Book.EditionCount sat at its zero
+			// value for every OpenLibrary-sourced work, which silently
+			// deadened internal/metadata/aggregator_canonical.go's
+			// EditionCount-based canonical-search ranking branches and left
+			// internal/metadata/filterengine's Cluster.MaxEditionCount (the
+			// prerequisite for #2235's highest-value future signal) at 0 for
+			// every cluster. Assigning it here is a behavior change to
+			// canonical-search ranking (those branches start actually
+			// taking effect), which is expected and correct, not a side
+			// effect to hide.
+			EditionCount:             doc.EditionCount,
 			RatingsCount:             doc.RatingsCount,
 			AverageRating:            doc.RatingsAverage,
 			ProviderISBNs:            doc.ISBN,
@@ -720,22 +769,36 @@ var olNoiseTitleFragments = []string{
 // companion material (study guide, summary, adaptation, audio-CD edition)
 // rather than a real authored work. The goal is to keep an author's
 // catalogue clean without being aggressive enough to drop legitimate works.
+// The boolean form of olNoiseMatchReason.
 func shouldFilterOLNoise(title string, subjects []string) bool {
+	return olNoiseMatchReason(title, subjects) != ""
+}
+
+// olNoiseMatchReason returns the matched noise pattern — a title fragment or
+// a subject phrase — when title/subjects look like companion material, or ""
+// when nothing matched. Same detection as shouldFilterOLNoise; this form
+// exists so a caller that no longer drops the work outright (#2235: the work
+// is kept and flagged via a Book.Observations entry instead — see this
+// file's two callers) can still say WHY it flagged it, at full subject
+// fidelity (the caller passes the untruncated subjects list, not the
+// 10-item-capped models.Book.Genres a downstream signal would otherwise be
+// limited to).
+func olNoiseMatchReason(title string, subjects []string) string {
 	lt := strings.ToLower(title)
 	for _, f := range olNoiseTitleFragments {
 		if strings.Contains(lt, f) {
-			return true
+			return fmt.Sprintf("title contains the companion-material phrase %q", f)
 		}
 	}
 	for _, s := range subjects {
 		ls := strings.ToLower(s)
 		for _, n := range olNoiseSubjects {
 			if strings.Contains(ls, n) {
-				return true
+				return fmt.Sprintf("subject %q matches the companion-material phrase %q", s, n)
 			}
 		}
 	}
-	return false
+	return ""
 }
 
 // GetEditions fetches a work's editions from /works/{id}/editions.json.

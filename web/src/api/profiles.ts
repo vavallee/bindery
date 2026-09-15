@@ -8,6 +8,12 @@ export interface QualityProfile {
   items: Array<{ quality: string; allowed: boolean }>
 }
 
+// ClusterFilterPreset mirrors internal/metadata/filterengine.ClusterFilterPreset
+// (#2235 Phase 2, migration 087) — a closed set of server-tuned
+// ClusterEditionCountSignal configurations, never raw threshold numbers. See
+// that type's doc for what each tier trades off.
+export type ClusterFilterPreset = 'off' | 'conservative' | 'balanced' | 'aggressive'
+
 export interface MetadataProfile {
   id: number
   name: string
@@ -18,6 +24,7 @@ export interface MetadataProfile {
   skipPartBooks: boolean
   allowedLanguages: string
   unknownLanguageBehavior: 'pass' | 'fail'
+  clusterFilterPreset?: ClusterFilterPreset
 }
 
 export interface DelayProfile {
