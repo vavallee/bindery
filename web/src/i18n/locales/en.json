@@ -66,6 +66,7 @@
     "none": "Don’t add them"
   },
   "nav": {
+    "account": "Account",
     "authors": "Authors",
     "books": "Books",
     "wanted": "Wanted",

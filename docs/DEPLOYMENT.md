@@ -482,6 +482,10 @@ On first launch Bindery bootstraps itself — **no environment variables are req
   **Pick this mode only when clients reach Bindery directly, or set `BINDERY_TRUSTED_PROXY`.** Behind a reverse proxy (Traefik, Caddy, nginx) or a Kubernetes ingress, the connecting peer is the proxy, and its address on the container network is private. Unless `BINDERY_TRUSTED_PROXY` names that proxy so the real client IP can be resolved from `X-Forwarded-For`, every request the proxy forwards is treated as a local client and served without a login. Set `BINDERY_TRUSTED_PROXY` to the proxy's IP or CIDR, or choose `enabled` mode. Bindery logs a warning at startup, and when the mode is changed, if it sees local-only with `BINDERY_TRUSTED_PROXY` unset.
 - `disabled` — no auth at all. Only safe behind a trusted reverse proxy that handles authentication upstream.
 
+  Every request acts as the administrator (the first admin account), so the admin screens and admin API routes answer to anyone who can reach Bindery. Browser changes still need the page's own request header, which a cross site form cannot send.
+
+  That includes reading the API key from Settings, adding admin accounts and resetting passwords, and all of it stays in place after you turn authentication back on. If anyone else could reach Bindery while it was off, regenerate the API key and check the Users page once authentication is back.
+
 ## Database foreign-key integrity
 
 Bindery ships two offline subcommands that operate on the database **without running migrations**, so they work on an instance that cannot start:

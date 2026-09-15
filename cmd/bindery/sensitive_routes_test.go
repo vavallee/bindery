@@ -2,16 +2,15 @@ package main
 
 import (
 	"context"
+	"github.com/go-chi/chi/v5"
+	"github.com/vavallee/bindery/internal/api"
+	"github.com/vavallee/bindery/internal/auth"
+	"github.com/vavallee/bindery/internal/config"
+	"github.com/vavallee/bindery/internal/db"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/go-chi/chi/v5"
-
-	"github.com/vavallee/bindery/internal/api"
-	"github.com/vavallee/bindery/internal/auth"
-	"github.com/vavallee/bindery/internal/db"
 )
 
 // stubSensitiveHandler stands in for the indexer, prowlarr, and download
@@ -30,57 +29,75 @@ func (h *stubSensitiveHandler) record(name string, w http.ResponseWriter) {
 func (h *stubSensitiveHandler) List(w http.ResponseWriter, _ *http.Request) {
 	h.record("list", w)
 }
+
 func (h *stubSensitiveHandler) Get(w http.ResponseWriter, _ *http.Request) {
 	h.record("get", w)
 }
+
 func (h *stubSensitiveHandler) Create(w http.ResponseWriter, _ *http.Request) {
 	h.record("create", w)
 }
+
 func (h *stubSensitiveHandler) Update(w http.ResponseWriter, _ *http.Request) {
 	h.record("update", w)
 }
+
 func (h *stubSensitiveHandler) Delete(w http.ResponseWriter, _ *http.Request) {
 	h.record("delete", w)
 }
+
 func (h *stubSensitiveHandler) Test(w http.ResponseWriter, _ *http.Request) {
 	h.record("test", w)
 }
+
 func (h *stubSensitiveHandler) TestConfig(w http.ResponseWriter, _ *http.Request) {
 	h.record("test-config", w)
 }
+
 func (h *stubSensitiveHandler) Sync(w http.ResponseWriter, _ *http.Request) {
 	h.record("sync", w)
 }
+
 func (h *stubSensitiveHandler) SearchQuery(w http.ResponseWriter, _ *http.Request) {
 	h.record("search-query", w)
 }
+
 func (h *stubSensitiveHandler) LastSearchDebug(w http.ResponseWriter, _ *http.Request) {
 	h.record("last-search-debug", w)
 }
+
 func (h *stubSensitiveHandler) ImportCSV(w http.ResponseWriter, _ *http.Request) {
 	h.record("import-csv", w)
 }
+
 func (h *stubSensitiveHandler) ImportReadarr(w http.ResponseWriter, _ *http.Request) {
 	h.record("import-readarr", w)
 }
+
 func (h *stubSensitiveHandler) ImportReadarrStatus(w http.ResponseWriter, _ *http.Request) {
 	h.record("import-readarr-status", w)
 }
+
 func (h *stubSensitiveHandler) ImportGoodreadsPreview(w http.ResponseWriter, _ *http.Request) {
 	h.record("import-goodreads-preview", w)
 }
+
 func (h *stubSensitiveHandler) ImportGoodreadsCommit(w http.ResponseWriter, _ *http.Request) {
 	h.record("import-goodreads-commit", w)
 }
+
 func (h *stubSensitiveHandler) Export(w http.ResponseWriter, _ *http.Request) {
 	h.record("export-logs", w)
 }
+
 func (h *stubSensitiveHandler) TestDiscovery(w http.ResponseWriter, _ *http.Request) {
 	h.record("oidc-test-discovery", w)
 }
+
 func (h *stubSensitiveHandler) GetLevel(w http.ResponseWriter, _ *http.Request) {
 	h.record("get-level", w)
 }
+
 func (h *stubSensitiveHandler) SetLevel(w http.ResponseWriter, _ *http.Request) {
 	h.record("set-level", w)
 }
@@ -375,10 +392,99 @@ func TestIndexerPublicReadsAllowNonAdmin(t *testing.T) {
 	}
 }
 
+// TestAdminRoutesAnswerInDisabledAuthMode drives admin routes through the
+// real auth stack and the real DB backed provider, with the mode read from the
+// same setting PUT /auth/mode writes. In disabled mode /auth/status reports
+// role admin, so the UI renders the admin screens; before the fix every one
+// of them answered 403 "admin role required" because the disabled branch let
+// the request through without a role.
+func TestAdminRoutesAnswerInDisabledAuthMode(t *testing.T) {
+	const apiKey = "route-test-api-key"
+	conn, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	ctx := context.Background()
+	settings := db.NewSettingsRepo(conn)
+	users := db.NewUserRepo(conn)
+	hash, err := auth.HashPassword("route-test-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := users.Create(ctx, "admin", hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := users.PromoteFirstUser(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.Set(ctx, api.SettingAuthAPIKey, apiKey); err != nil {
+		t.Fatal(err)
+	}
+	provider := &dbAuthProvider{settings: settings, users: users}
+
+	dir := t.TempDir()
+	storage := api.NewStorageHandler(&config.Config{DownloadDir: dir, LibraryDir: dir})
+	logs := &stubSensitiveHandler{}
+	var seenID int64
+	router := chi.NewRouter()
+	router.Route("/api/v1", func(r chi.Router) {
+		useAPIAuth(r, provider)
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seenID = auth.UserIDFromContext(r.Context())
+				next.ServeHTTP(w, r)
+			})
+		})
+		registerStorageRoutes(r, storage)
+		registerSystemLogRoutes(r, logs)
+	})
+
+	for _, tc := range []struct {
+		name   string
+		mode   auth.Mode
+		method string
+		path   string
+		apiKey string
+		xrw    bool
+		want   int
+	}{
+		{name: "enabled storage without a cookie", mode: auth.ModeEnabled, method: http.MethodGet, path: "/api/v1/system/storage", want: http.StatusUnauthorized},
+		{name: "disabled storage", mode: auth.ModeDisabled, method: http.MethodGet, path: "/api/v1/system/storage", want: http.StatusOK},
+		{name: "disabled storage with the api key", mode: auth.ModeDisabled, method: http.MethodGet, path: "/api/v1/system/storage", apiKey: apiKey, want: http.StatusOK},
+		{name: "disabled logs", mode: auth.ModeDisabled, method: http.MethodGet, path: "/api/v1/system/logs", want: http.StatusNoContent},
+		{name: "disabled log level change from the UI", mode: auth.ModeDisabled, method: http.MethodPut, path: "/api/v1/system/loglevel", xrw: true, want: http.StatusNoContent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := settings.Set(ctx, api.SettingAuthMode, string(tc.mode)); err != nil {
+				t.Fatal(err)
+			}
+			seenID = 0
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			if tc.apiKey != "" {
+				req.Header.Set("X-Api-Key", tc.apiKey)
+			}
+			if tc.xrw {
+				req.Header.Set("X-Requested-With", "bindery-ui")
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d (body %s)", rec.Code, tc.want, rec.Body.String())
+			}
+			if tc.want < 300 && seenID != admin.ID {
+				t.Errorf("request carried user id %d, want the operator %d", seenID, admin.ID)
+			}
+		})
+	}
+}
+
 // pr2361ScanBlob is a library.lastScan value in the shape the scanner writes:
 // counts plus the resolved roots and the absolute path of every unmatched
 // file. Every path shares one marker so a leak is a substring check.
 const pr2361ScanBlob = `{"ran_at":"2026-09-14T10:00:00Z","files_found":3,"reconciled":1,"unmatched":2,` +
+
 	`"library_dir":"/srv/pr2361-root/books","audiobook_dir":"/srv/pr2361-root/audio",` +
 	`"scanned_paths":["/srv/pr2361-root/books","/srv/pr2361-root/audio"],` +
 	`"unmatched_files":[{"path":"/srv/pr2361-root/books/a.epub","parsed_title":"A","parsed_author":"X"},` +

@@ -830,17 +830,13 @@ func main() {
 	sched.WithOperatorUserID(authProvider.OperatorUserID)
 
 	r.Route("/api", func(r chi.Router) {
-		r.Use(auth.Middleware(authProvider))
-		r.Use(auth.RequireXRequestedWith)
-		r.Use(auth.RequireCSRFToken(authProvider.SessionSecrets))
+		useAPIAuth(r, authProvider)
 
 		r.Get("/queue", queueHandler.ListArrCompatible)
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Use(auth.Middleware(authProvider))
-		r.Use(auth.RequireXRequestedWith)
-		r.Use(auth.RequireCSRFToken(authProvider.SessionSecrets))
+		useAPIAuth(r, authProvider)
 
 		// System
 		r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -1135,14 +1131,8 @@ func main() {
 		// System logs — admin-only (see registerSystemLogRoutes).
 		registerSystemLogRoutes(r, logHandler)
 
-		// Storage paths (read-only view of the env/config-driven dirs plus
-		// exists/writable/hardlink-able health, #1183). Admin-only: it reveals
-		// server filesystem layout and writability probes.
-		storageHandler := api.NewStorageHandler(cfg)
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireAdmin)
-			r.Get("/system/storage", storageHandler.Get)
-		})
+		// Storage paths, admin-only (see registerStorageRoutes).
+		registerStorageRoutes(r, api.NewStorageHandler(cfg))
 
 		// Library. The scan status returns server filesystem paths, so it is
 		// admin only (#2361); see registerLibraryScanStatusRoute.

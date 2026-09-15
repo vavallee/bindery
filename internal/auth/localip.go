@@ -197,6 +197,11 @@ var envTrustedProxyCIDRs = sync.OnceValue(func() []*net.IPNet {
 	return ParseTrustedProxyCIDRs(os.Getenv("BINDERY_TRUSTED_PROXY"))
 })
 
+// EnvTrustedProxyCIDRs returns the trusted proxy set parsed from
+// BINDERY_TRUSTED_PROXY, the same list the auth Provider is built from, for
+// callers outside the middleware that must resolve the client the same way.
+func EnvTrustedProxyCIDRs() []*net.IPNet { return envTrustedProxyCIDRs() }
+
 // ParseTrustedProxyCIDRs parses a comma-separated list of IP/CIDR strings into
 // []*net.IPNet. Bare IPs become /32 (IPv4) or /128 (IPv6). Invalid entries are
 // skipped silently. Exported so callers (and tests) share one parser.

@@ -122,9 +122,22 @@ The templates in Settings → General → File Naming control how Bindery names
 and organises files **it imports itself**. The Library Scan does **not** use
 them — it reads existing files with a fixed parser that prefers an
 `{Author}/{Book Title}/` folder structure and reads a bare `X - Y` filename as
-`Title - Author` (the *opposite* of Readarr's default order). If the scan
-misreads your `Author - Title.epub` files, that is why: rearrange into
-author folders, or use Manual Import, which lets you pick the right book.
+`Title - Author` (the *opposite* of Readarr's default order). Author folders
+settle the order. The Library Scan takes the author from the author folder,
+except for an audiobook whose tags name an author: there the tag wins. A file
+in a folder named after the first part of its name can also be read the other
+way round, as author then title, and that reading is kept only if it matches a
+book by an author in your library. Bulk folder import tries it for the folder
+you point it at, and Manual Import of a single file tries it inside your
+library folders, both only when the usual reading matches nothing. The Library
+Scan tries it first, in author folders with no book folder below them, so a
+Tom Clancy file named author first goes to its own book and not to one with
+Tom Clancy in its title. It skips it for an audiobook whose tags name a title,
+or an author other than the folder's. Bulk folder import also takes the author
+from the folder when the filename has none, or when the filename's author
+matches none of the books with that title and the folder name does. Loose files with no author folder still use the
+filename alone; if those are misread, move them into author folders, or use
+Manual Import, which lets you pick the right book.
 
 ### 5. Hardlinks need one mount
 

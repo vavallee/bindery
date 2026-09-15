@@ -25,7 +25,7 @@ Bindery is a single instance. One author record covers ebook, audiobook, or both
 
 ## Bringing in books already on disk
 
-For files already on disk, use **Library Scan**. It takes the author and title from your folder layout: a file under `{Author}/{Book}/` — Readarr's and Calibre's default structure — is matched on the folder names, so the filename convention (`Author - Title` vs `Title - Author`) does not matter. Loose files with no author/book folders fall back to filename parsing, which can still be ambiguous, so keep an organised folder structure for the most reliable scan.
+For files already on disk, use **Library Scan**. It takes the author and title from your folder layout: a file under `{Author}/{Book}/` — Readarr's and Calibre's default structure — is matched on the folder names, so the filename convention (`Author - Title` vs `Title - Author`) does not matter. Loose files with no author/book folders fall back to filename parsing, which can still be ambiguous, so keep an organised folder structure for the most reliable scan. **Bulk folder import** reads the same author folders when you point it at the folder that holds them.
 
 One difference to know about before you start correcting matches: Readarr's fix-match only changes which record a file is linked to, while Bindery's **Fix match** re-runs the import, so it moves the file into the target book's folder and renames it from your naming template. The confirmation step names the destination path before anything happens, so you can back out if you would rather keep your existing layout. Reassigning without relocating is not available yet (#2055).
 
