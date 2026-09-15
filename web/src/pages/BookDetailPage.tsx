@@ -597,8 +597,72 @@ function BookDetailPageInner() {
   const navStateFor = (index: number): BookNavState | undefined =>
     navState ? { ids: navState.ids, index, hopDepth: navState.hopDepth + 1 } : undefined
 
-  if (loading) return <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
-  if (!book) return <div className="text-slate-600 dark:text-zinc-500">{t('bookDetail.notFound')}</div>
+  // Depends only on navState/backSteps, not on `book`, so it renders the same
+  // above the loading and not-found returns below as it does in the loaded
+  // page — otherwise every hop blanked the header while the next book
+  // loaded, and a book deleted since the list loaded stranded the visitor on
+  // "Book not found" with no Back or Previous to get out with. (Focus itself
+  // lands on <body> on every hop either way, since key={id} on the outer
+  // component remounts this whole subtree regardless of where this row sits
+  // within it — not something this change affects.)
+  const navRow = (
+    <div className="mb-4 flex items-center justify-between gap-3 text-sm">
+      {/* No hard-coded destination — a book can be reached from five
+          different lists (Books, an author's own book list, Wanted, a
+          series, a direct link), so there is no single canonical "the
+          list" to name. Instead this walks back exactly as many history
+          entries as the Previous/Next chain is deep (backSteps), landing
+          on whichever list actually started it rather than one book
+          short. */}
+      <button
+        onClick={() => navigate(-backSteps)}
+        className="text-emerald-600 dark:text-emerald-400 hover:underline"
+      >
+        {t('bookDetail.back')}
+      </button>
+      {navState && (prevId !== null || nextId !== null) && (
+        <div className="flex items-center gap-2">
+          {prevId !== null && (
+            <Link
+              to={`/book/${prevId}`}
+              state={navStateFor(navState.index - 1)}
+              aria-label={t('bookDetail.nav.previousAriaLabel', 'Previous book')}
+              className={`${btn.ghost} ${btnSize.sm}`}
+            >
+              {t('bookDetail.nav.previous', '‹ Previous')}
+            </Link>
+          )}
+          {nextId !== null && (
+            <Link
+              to={`/book/${nextId}`}
+              state={navStateFor(navState.index + 1)}
+              aria-label={t('bookDetail.nav.nextAriaLabel', 'Next book')}
+              className={`${btn.ghost} ${btnSize.sm}`}
+            >
+              {t('bookDetail.nav.next', 'Next ›')}
+            </Link>
+          )}
+        </div>
+      )}
+    </div>
+  )
+
+  if (loading) {
+    return (
+      <div className="max-w-7xl">
+        {navRow}
+        <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
+      </div>
+    )
+  }
+  if (!book) {
+    return (
+      <div className="max-w-7xl">
+        {navRow}
+        <div className="text-slate-600 dark:text-zinc-500">{t('bookDetail.notFound')}</div>
+      </div>
+    )
+  }
 
   const mt: MediaType = book.mediaType || 'ebook'
 
@@ -691,45 +755,7 @@ function BookDetailPageInner() {
     // (7xl vs 4xl), so author → book collapsed the content by 384px and
     // left-aligned it mid-navigation.
     <div className="max-w-7xl">
-      <div className="mb-4 flex items-center justify-between gap-3 text-sm">
-        {/* No hard-coded destination — a book can be reached from five
-            different lists (Books, an author's own book list, Wanted, a
-            series, a direct link), so there is no single canonical "the
-            list" to name. Instead this walks back exactly as many history
-            entries as the Previous/Next chain is deep (backSteps), landing
-            on whichever list actually started it rather than one book
-            short. */}
-        <button
-          onClick={() => navigate(-backSteps)}
-          className="text-emerald-600 dark:text-emerald-400 hover:underline"
-        >
-          {t('bookDetail.back')}
-        </button>
-        {navState && (prevId !== null || nextId !== null) && (
-          <div className="flex items-center gap-2">
-            {prevId !== null && (
-              <Link
-                to={`/book/${prevId}`}
-                state={navStateFor(navState.index - 1)}
-                aria-label={t('bookDetail.nav.previousAriaLabel', 'Previous book')}
-                className={`${btn.ghost} ${btnSize.sm}`}
-              >
-                {t('bookDetail.nav.previous', '‹ Previous')}
-              </Link>
-            )}
-            {nextId !== null && (
-              <Link
-                to={`/book/${nextId}`}
-                state={navStateFor(navState.index + 1)}
-                aria-label={t('bookDetail.nav.nextAriaLabel', 'Next book')}
-                className={`${btn.ghost} ${btnSize.sm}`}
-              >
-                {t('bookDetail.nav.next', 'Next ›')}
-              </Link>
-            )}
-          </div>
-        )}
-      </div>
+      {navRow}
 
       {/* ===== Header: cover + metadata ===== */}
       <div className="flex flex-col sm:flex-row gap-6">

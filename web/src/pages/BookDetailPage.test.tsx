@@ -1592,4 +1592,42 @@ describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () =>
     // be showing here — the load effect never clears `error` on success.
     expect(screen.queryByText('Save failed')).not.toBeInTheDocument()
   })
+
+  // The nav row used to sit below the loading/not-found early returns, so a
+  // book deleted since the list loaded stranded the visitor on "Book not
+  // found" with no way out except a manual URL edit.
+  it('keeps Back and Previous/Next available when the current book in the chain is not found', async () => {
+    vi.mocked(api.getBook).mockImplementation((id: number) =>
+      id === 43 ? Promise.reject(new Error('not found')) : Promise.resolve(makeBook({ id })))
+
+    renderBookDetailPage({ pathname: '/book/43', state: { ids: [42, 43, 44], index: 1, hopDepth: 1 } })
+
+    await screen.findByText('Book not found')
+    expect(screen.getByText('← Books')).toBeInTheDocument()
+    expect(screen.getByLabelText('Previous book')).toBeInTheDocument()
+    expect(screen.getByLabelText('Next book')).toBeInTheDocument()
+  })
+
+  // The loading branch is the one every single hop passes through (briefly),
+  // unlike not-found above which only hits on a deleted book — so this is the
+  // common case the reordered nav row actually fixes.
+  it('keeps Back and Previous/Next available while the next book is still loading', async () => {
+    let settle: ((book: Book) => void) | undefined
+    vi.mocked(api.getBook)
+      .mockResolvedValueOnce(makeBook({ id: 42 }))
+      .mockImplementationOnce(() => new Promise<Book>(resolve => { settle = resolve }))
+
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [42, 43, 44], index: 0 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByLabelText('Next book'))
+
+    expect(await screen.findByText('Loading...')).toBeInTheDocument()
+    expect(screen.getByText('← Books')).toBeInTheDocument()
+    expect(screen.getByLabelText('Previous book')).toBeInTheDocument()
+    expect(screen.getByLabelText('Next book')).toBeInTheDocument()
+
+    await act(async () => { settle?.(makeBook({ id: 43, title: 'The Well of Ascension' })) })
+    await screen.findByRole('heading', { name: 'The Well of Ascension' })
+  })
 })
