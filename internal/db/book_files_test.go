@@ -224,6 +224,31 @@ func TestBookRepo_MigrationBackfill(t *testing.T) {
 	}
 }
 
+// TestBookRepo_RemoveBookFile_KeepsImportedWithSibling verifies removing one
+// of multiple files in a format does not make the book wanted.
+func TestBookRepo_RemoveBookFile_KeepsImportedWithSibling(t *testing.T) {
+	database, _, book := openTestDB(t)
+	ctx := context.Background()
+	repo := NewBookRepo(database)
+
+	for _, path := range []string{"/lib/first.epub", "/lib/second.epub"} {
+		if err := repo.AddBookFile(ctx, book.ID, models.MediaTypeEbook, path); err != nil {
+			t.Fatalf("AddBookFile: %v", err)
+		}
+	}
+	if _, err := repo.RemoveBookFile(ctx, "/lib/first.epub"); err != nil {
+		t.Fatalf("RemoveBookFile: %v", err)
+	}
+
+	got, _ := repo.GetByID(ctx, book.ID)
+	if got.Status != models.BookStatusImported {
+		t.Errorf("status should remain imported while a sibling remains, got %q", got.Status)
+	}
+	if got.EbookFilePath != "/lib/second.epub" {
+		t.Errorf("EbookFilePath should point to the surviving file, got %q", got.EbookFilePath)
+	}
+}
+
 // TestBookRepo_RemoveBookFile_StatusFlips verifies removing the last file
 // flips the book back to "wanted".
 func TestBookRepo_RemoveBookFile_StatusFlips(t *testing.T) {
