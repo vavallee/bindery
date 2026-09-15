@@ -598,12 +598,15 @@ export default function AuthorDetailPage() {
   const dateSortIcon = dateSort === 'asc' ? ' ↑' : dateSort === 'desc' ? ' ↓' : ''
 
   // This author's filtered books, in order — handed to BookDetailPage as
-  // router state (#2548) for Previous/Next; see BookNavState there. Scoped to
-  // filteredBooks (not the grouped-by-series layout) so the chain has one
-  // well-defined order regardless of view: when Group by series is on,
-  // Next/Previous follows this order rather than the visual card-to-card
-  // order across group boundaries — a documented trade-off, not fixed further.
-  const bookIds = filteredBooks.map(b => b.id)
+  // router state (#2548) for Previous/Next; see BookNavState there. #2548
+  // asks for the order the user sees, so when Group by series is on the
+  // chain follows seriesGroups (each series section top-to-bottom, then
+  // Standalone) instead of filteredBooks' load order. A book in more than
+  // one series appears in more than one group's `books`; Set dedupes to its
+  // first occurrence while preserving insertion order, so it counts once.
+  const bookIds = groupBySeries
+    ? Array.from(new Set(seriesGroups.flatMap(group => group.books.map(b => b.id))))
+    : filteredBooks.map(b => b.id)
   // Looked up once per render rather than bookIds.indexOf(book.id) inside
   // bookNavState — that would be an O(n) scan per row, O(n²) across a page.
   const bookIndexById = new Map(bookIds.map((id, i) => [id, i]))
