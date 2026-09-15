@@ -96,6 +96,12 @@ export default function AuthorDetailPage() {
   const [books, setBooks] = useState<Book[]>([])
   const [allAuthors, setAllAuthors] = useState<Author[]>([])
   const [loading, setLoading] = useState(true)
+  // Bumping reloadKey reruns the load effect with the filters in force at
+  // that moment. A manual Refresh reloads this way once its sync ends, so a
+  // filter picked while it waited is honoured (#2601). quietReload keeps the
+  // page on screen for that reload instead of flashing the loading state.
+  const [reloadKey, setReloadKey] = useState(0)
+  const quietReload = useRef(false)
   // Which author a manual Refresh is running for, so moving to another author
   // with Previous/Next does not carry the spinner along (#2601).
   const [refreshingAuthorId, setRefreshingAuthorId] = useState<number | null>(null)
@@ -224,7 +230,9 @@ export default function AuthorDetailPage() {
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
+    const quiet = quietReload.current
+    quietReload.current = false
+    if (!quiet) setLoading(true)
     // The page stays mounted across Previous/Next, so a stale error from the
     // previous author would otherwise still be showing under the new one.
     setError(null)
@@ -239,7 +247,7 @@ export default function AuthorDetailPage() {
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load'))
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [authorId, showExcluded])
+  }, [authorId, showExcluded, reloadKey])
 
   // Validated against authorId: stale state (browser back/forward) or no
   // state at all (opened from elsewhere) must read as "no nav info", not
@@ -277,29 +285,48 @@ export default function AuthorDetailPage() {
     const session = pageSession.current
     const refreshedId = author.id
     setRefreshingAuthorId(refreshedId)
-    try {
+    // Reports whether this click started a sync. 409 means a sync for the
+    // author is already running.
+    const startRefresh = async () => {
       try {
         await api.refreshAuthor(refreshedId)
+        return true
       } catch (e) {
-        // 409: a sync for this author is already running (another tab, or a
-        // bulk or scheduled refresh). Wait for that one the same way.
-        if (!(e instanceof ApiError && e.status === 409)) throw e
+        if (e instanceof ApiError && e.status === 409) return false
+        throw e
       }
+    }
+    // Polls until the author's sync ends: 'done', 'timeout' after a minute,
+    // or 'gone' once the page has moved to another author.
+    const waitForSync = async (): Promise<'done' | 'timeout' | 'gone'> => {
       const deadline = Date.now() + REFRESH_POLL_TIMEOUT_MS
       while (Date.now() < deadline) {
         await new Promise(resolve => setTimeout(resolve, REFRESH_POLL_INTERVAL_MS))
-        if (!session.active) return
+        if (!session.active) return 'gone'
         const latest = await api.getAuthor(refreshedId)
-        if (!session.active) return
-        if (!latest.syncInProgress) break
+        if (!session.active) return 'gone'
+        if (!latest.syncInProgress) return 'done'
       }
-      const [a, bs] = await Promise.all([
-        api.getAuthor(refreshedId),
-        api.listAllBooks({ authorId: refreshedId, includeExcluded: showExcluded }),
-      ])
+      return 'timeout'
+    }
+    try {
+      const started = await startRefresh()
+      let waited = await waitForSync()
+      if (waited === 'gone') return
+      // A 409 means the running sync was not this click's: a scheduled, bulk,
+      // Refresh all or add sync, and none of those read past the metadata
+      // cache. Once it ends, ask once more so the page shows current data. A
+      // second 409 means yet another sync started meanwhile; show what is
+      // there rather than chase it.
+      if (!started && waited === 'done' && await startRefresh()) {
+        waited = await waitForSync()
+        if (waited === 'gone') return
+      }
       if (!session.active) return
-      setAuthor(a)
-      setBooks(bs)
+      // Reload through the load effect, which reads the filters in force now
+      // rather than the ones this click saw.
+      quietReload.current = true
+      setReloadKey(k => k + 1)
     } catch (e) {
       if (session.active) setError(e instanceof Error ? e.message : 'Refresh failed')
     } finally {

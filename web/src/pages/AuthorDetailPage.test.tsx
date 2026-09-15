@@ -1202,4 +1202,99 @@ describe('AuthorDetailPage: manual refresh', () => {
     expect(screen.queryByText(/already running/)).toBeNull()
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
   })
+
+  // The 409 fires for any running sync, and the scheduled, bulk, Refresh all
+  // and add syncs all read the metadata cache. Showing their result would
+  // hand the user the cached data the click was meant to skip, so once that
+  // sync ends the page asks for its own refresh and waits for that one.
+  it('asks again once a background sync that answered 409 ends, and shows that refresh', async () => {
+    renderAuthorDetailPage(oldBooks, 'grid', { description: 'Old bio' })
+    await screen.findByRole('heading', { name: 'Ancillary Justice' })
+
+    vi.useFakeTimers()
+    const backgroundEndsAt = Date.now() + 1000
+    let ownEndsAt: number | null = null
+    const ownDone = () => ownEndsAt !== null && Date.now() >= ownEndsAt
+    vi.mocked(api.getAuthor).mockImplementation(async () => {
+      if (ownDone()) return { ...author, description: 'New bio' }
+      const syncing = Date.now() < backgroundEndsAt || ownEndsAt !== null
+      return { ...author, description: 'Old bio', syncInProgress: syncing }
+    })
+    vi.mocked(api.listAllBooks).mockImplementation(async () => (ownDone() ? newBooks : oldBooks))
+    vi.mocked(api.refreshAuthor)
+      .mockRejectedValueOnce(new ApiError(409, { error: 'a refresh for this author is already running' }, 'Conflict'))
+      .mockImplementationOnce(async () => {
+        ownEndsAt = Date.now() + 3000
+      })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    // First poll: the background sync has ended with cached data. The page
+    // starts its own refresh instead of showing that.
+    await advance(2000)
+    expect(api.refreshAuthor).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('heading', { name: 'Translation State' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Refreshing…' })).toBeDisabled()
+
+    // Its own sync ends at 5 seconds; the poll at 6 seconds sees it.
+    await advance(4000)
+    expect(screen.getByRole('heading', { name: 'Translation State' })).toBeInTheDocument()
+    expect(screen.getByText('New bio')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+  })
+
+  it('stops after a second 409 instead of looping', async () => {
+    renderAuthorDetailPage(oldBooks, 'grid', { description: 'Old bio' })
+    await screen.findByRole('heading', { name: 'Ancillary Justice' })
+
+    vi.useFakeTimers()
+    serveSyncFinishingAt(Date.now() + 1000)
+    vi.mocked(api.refreshAuthor).mockRejectedValue(
+      new ApiError(409, { error: 'a refresh for this author is already running' }, 'Conflict'),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await advance(2000)
+    expect(api.refreshAuthor).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('heading', { name: 'Translation State' })).toBeInTheDocument()
+    expect(screen.queryByText(/already running/)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+
+    const posts = vi.mocked(api.refreshAuthor).mock.calls.length
+    const polls = vi.mocked(api.getAuthor).mock.calls.length
+    await advance(20000)
+    expect(vi.mocked(api.refreshAuthor).mock.calls.length).toBe(posts)
+    expect(vi.mocked(api.getAuthor).mock.calls.length).toBe(polls)
+  })
+
+  // The reload after the wait used the filter captured when Refresh was
+  // clicked, so switching to Excluded meanwhile had its rows overwritten by a
+  // list fetched without them.
+  it('reloads with the status filter picked while it waited', async () => {
+    const excludedBook = makeBook({ id: 3, title: 'Provenance', status: 'wanted', excluded: true })
+    renderAuthorDetailPage(oldBooks, 'table', { description: 'Old bio' })
+    await screen.findByText('Ancillary Justice')
+
+    vi.useFakeTimers()
+    const finishAt = Date.now() + 3000
+    const synced = () => Date.now() >= finishAt
+    vi.mocked(api.getAuthor).mockImplementation(async () =>
+      synced() ? { ...author, description: 'New bio' } : { ...author, description: 'Old bio', syncInProgress: true },
+    )
+    vi.mocked(api.listAllBooks).mockImplementation(async params => {
+      const base = synced() ? newBooks : oldBooks
+      return params?.includeExcluded ? [...base, excludedBook] : base
+    })
+    vi.mocked(api.refreshAuthor).mockResolvedValue(undefined)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await advance(0)
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'excluded' } })
+    await advance(0)
+
+    // The sync ends at 3 seconds; the poll at 4 seconds sees it and reloads.
+    await advance(4000)
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+    expect(screen.getByText('Provenance')).toBeInTheDocument()
+    expect(api.listAllBooks).toHaveBeenLastCalledWith({ authorId: 42, includeExcluded: true })
+  })
 })
