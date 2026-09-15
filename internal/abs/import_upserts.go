@@ -600,9 +600,23 @@ func (i *Importer) lookupUpstreamBook(ctx context.Context, author *models.Author
 	// "Pandora's Star" hold different keys while still being one work (#2042).
 	// Exact matches shadow subtitle-divergent ones, so a near-miss can never
 	// make an otherwise unambiguous lookup ambiguous.
+	//
+	// Skip provider-flagged companion material (#2235). Before #2235,
+	// OpenLibrary's client dropped a study guide / film tie-in / summary
+	// before GetAuthorWorks ever returned it, so this loop never saw one.
+	// Now the client flags rather than drops (so fetchAuthorBooks's
+	// ProviderNoiseSignal can count and report it instead of silently
+	// vanishing it), which means this unrelated lookup — a raw title match
+	// against a locally-owned book, never routed through filterengine —
+	// would otherwise start matching an ABS import to a companion work's
+	// canonical row, or turn a previously-unambiguous match ambiguous. This
+	// restores exactly the pre-#2235 exclusion for this one consumer.
 	var match *models.Book
 	var exactMatches, nearMatches []*models.Book
 	for idx := range works {
+		if models.HasObservation(works[idx].Observations, models.SignalProviderOpenLibraryNoise) {
+			continue
+		}
 		switch indexer.CompareTitles(item.Title, works[idx].Title) {
 		case indexer.TitlesSame:
 			work := works[idx]

@@ -11,16 +11,28 @@ const (
 )
 
 type MetadataProfile struct {
-	ID                      int64     `json:"id"`
-	Name                    string    `json:"name"`
-	MinPopularity           int       `json:"minPopularity"`
-	MinPages                int       `json:"minPages"`
-	SkipMissingDate         bool      `json:"skipMissingDate"`
-	SkipMissingISBN         bool      `json:"skipMissingIsbn"`
-	SkipPartBooks           bool      `json:"skipPartBooks"`
-	AllowedLanguages        string    `json:"allowedLanguages"`
-	UnknownLanguageBehavior string    `json:"unknownLanguageBehavior"`
-	CreatedAt               time.Time `json:"createdAt"`
+	ID                      int64  `json:"id"`
+	Name                    string `json:"name"`
+	MinPopularity           int    `json:"minPopularity"`
+	MinPages                int    `json:"minPages"`
+	SkipMissingDate         bool   `json:"skipMissingDate"`
+	SkipMissingISBN         bool   `json:"skipMissingIsbn"`
+	SkipPartBooks           bool   `json:"skipPartBooks"`
+	AllowedLanguages        string `json:"allowedLanguages"`
+	UnknownLanguageBehavior string `json:"unknownLanguageBehavior"`
+	// KeepThreshold and ExcludeThreshold are internal/metadata/filterengine's
+	// banding thresholds (migration 086, #2235). Both default to 0, which —
+	// with every v1 signal at veto weight and Context.Prior hardcoded to 0 —
+	// reproduces the pre-#2235 boolean filter chain's keep/exclude decision
+	// exactly. At v1 the API layer (internal/api/metadata_profiles.go)
+	// rejects any value where either field is nonzero, not merely where they
+	// disagree: a nonzero EQUAL pair (e.g. both 50) still bands every clean
+	// candidate as EXCLUDE, since a clean candidate's score is always
+	// exactly 0. See validateScoreThresholds's doc for the full reasoning —
+	// this was a real bug in an earlier, looser version of that check.
+	KeepThreshold    float64   `json:"keepThreshold"`
+	ExcludeThreshold float64   `json:"excludeThreshold"`
+	CreatedAt        time.Time `json:"createdAt"`
 	// OwnerUserID is the per-user ownership column added in migration 025.
 	// Zero means "no recorded owner" (legacy pre-backfill rows); auth's
 	// CheckOwnership treats that as visible to every authenticated caller.

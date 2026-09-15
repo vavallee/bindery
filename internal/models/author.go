@@ -236,6 +236,12 @@ type AuthorSyncSkippedBook struct {
 	// Language is the code the provider reported, empty when it reported none
 	// (the unknown-language case).
 	Language string `json:"language"`
+	// Reason is the strongest filterengine observation's Reason text for this
+	// candidate (#2235 accumulated-ledger rework) — e.g. why a work landed in
+	// this particular Skipped* bucket when more than one signal fired.
+	// Purely additive: empty on any sample recorded before this field existed
+	// and omitted from the wire format in that case.
+	Reason string `json:"reason,omitempty"`
 }
 
 // SkippedTotal is the number of provider works this sync dropped for any

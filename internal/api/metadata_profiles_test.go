@@ -45,6 +45,76 @@ func TestMetaProfileCreate_DefaultsAllowedLanguages(t *testing.T) {
 	}
 }
 
+// TestMetaProfileCreate_RejectsInvertedThresholds and
+// TestMetaProfileCreate_RejectsNonEqualThresholds are the regression tests
+// for validateScoreThresholds (#2235, migration 086). At v1 both
+// keep_threshold and exclude_threshold must be exactly 0 — not merely equal
+// to each other, see TestMetaProfileCreate_RejectsNonZeroEqualThresholds
+// below and validateScoreThresholds's own doc for why "equal" alone isn't
+// the actual rule.
+func TestMetaProfileCreate_RejectsInvertedThresholds(t *testing.T) {
+	h, _, _ := metaProfileFixture(t)
+	body := bytes.NewBufferString(`{"name":"Inverted","keepThreshold":-10,"excludeThreshold":10}`)
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/metadata-profile", body))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for exclude > keep, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMetaProfileCreate_RejectsNonEqualThresholds(t *testing.T) {
+	h, _, _ := metaProfileFixture(t)
+	body := bytes.NewBufferString(`{"name":"Graded","keepThreshold":10,"excludeThreshold":-10}`)
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/metadata-profile", body))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for a nonzero threshold pair at v1, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestMetaProfileCreate_RejectsNonZeroEqualThresholds pins the corrected
+// (tightened) validateScoreThresholds rule: equal is not enough, both must
+// be exactly 0 at v1. See TestAuthorSyncParity_NonZeroEqualThresholdsDiverge
+// (authors_parity_test.go) for the end-to-end scenario that caught the
+// original (equal-only) version of this check as insufficient — a
+// keep=exclude=50 profile passed that check yet excluded every candidate,
+// filtered or not.
+func TestMetaProfileCreate_RejectsNonZeroEqualThresholds(t *testing.T) {
+	h, _, _ := metaProfileFixture(t)
+	body := bytes.NewBufferString(`{"name":"StillBroken","keepThreshold":50,"excludeThreshold":50}`)
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/metadata-profile", body))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for a nonzero equal threshold pair, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMetaProfileCreate_AcceptsEqualThresholds(t *testing.T) {
+	h, _, _ := metaProfileFixture(t)
+	body := bytes.NewBufferString(`{"name":"Parity","keepThreshold":0,"excludeThreshold":0}`)
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/metadata-profile", body))
+	if rec.Code != http.StatusCreated {
+		t.Errorf("expected 201 for keep == exclude, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMetaProfileUpdate_RejectsNonEqualThresholds(t *testing.T) {
+	h, repo, ctx := metaProfileFixture(t)
+	p := &models.MetadataProfile{Name: "Original", AllowedLanguages: "eng"}
+	if err := repo.Create(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	body := bytes.NewBufferString(`{"name":"Original","keepThreshold":5,"excludeThreshold":0}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/metadata-profile/"+strconv.FormatInt(p.ID, 10), body)
+	req = withURLParam(req, "id", strconv.FormatInt(p.ID, 10))
+	h.Update(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for a nonzero keepThreshold on update, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestMetaProfileCreate_RequiresName(t *testing.T) {
 	h, _, _ := metaProfileFixture(t)
 	body := bytes.NewBufferString(`{"allowedLanguages":"eng"}`)

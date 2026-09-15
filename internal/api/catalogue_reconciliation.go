@@ -17,6 +17,7 @@ import (
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/metadata"
+	"github.com/vavallee/bindery/internal/metadata/filterengine"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -396,8 +397,18 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 }
 
 func reconciliationRejectReason(work models.Book, normalizedAuthor string, profile reconciliationProfile, evidence editionEvidence) (string, bool) {
-	normalizedTitle := strings.ToLower(strings.TrimSpace(work.Title))
-	if normalizedTitle == "" || normalizedTitle == normalizedAuthor || work.IsCompilation || metadata.IsUnambiguousBundleTitle(work.Title) {
+	if filterengine.IsJunkTitle(work.Title, normalizedAuthor) || work.IsCompilation || metadata.IsUnambiguousBundleTitle(work.Title) {
+		return reconcileReasonCatalogueFilter, false
+	}
+	// Provider-flagged companion material (#2235). Until #2235 OpenLibrary's
+	// client dropped these works before the snapshot was built, so they could
+	// never be counted as evidence that a local book is still in the upstream
+	// catalogue. Now that the client flags rather than drops, this check has
+	// to be made here explicitly or reconciliation silently starts treating a
+	// study guide as the work it is a guide TO. Routed to the same
+	// catalogue_filter bucket a junk title uses, matching how fetchAuthorBooks
+	// attributes the same signal (to SkippedJunk).
+	if models.HasObservation(work.Observations, models.SignalProviderOpenLibraryNoise) {
 		return reconcileReasonCatalogueFilter, false
 	}
 	if len(profile.allowedLangs) > 0 {

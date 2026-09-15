@@ -16,31 +16,43 @@ type SeriesRef struct {
 }
 
 type Book struct {
-	ID                int64      `json:"id"`
-	ForeignID         string     `json:"foreignBookId"`
-	AuthorID          int64      `json:"authorId"`
-	Title             string     `json:"title"`
-	SortTitle         string     `json:"sortTitle"`
-	OriginalTitle     string     `json:"originalTitle"`
-	Description       string     `json:"description"`
-	ImageURL          string     `json:"imageUrl"`
-	ReleaseDate       *time.Time `json:"releaseDate"`
-	Genres            []string   `json:"genres"`
-	AverageRating     float64    `json:"averageRating"`
-	RatingsCount      int        `json:"ratingsCount"`
-	EditionCount      int        `json:"-"`
-	Monitored         bool       `json:"monitored"`
-	Status            string     `json:"status"`
-	AnyEditionOK      bool       `json:"anyEditionOk"`
-	SelectedEditionID *int64     `json:"selectedEditionId"`
-	FilePath          string     `json:"filePath"`
-	Language          string     `json:"language"`
-	MediaType         string     `json:"mediaType"`
-	Narrator          string     `json:"narrator"`
-	DurationSeconds   int        `json:"durationSeconds"`
-	ASIN              string     `json:"asin"`
-	CalibreID         *int64     `json:"calibre_id,omitempty"`
-	MetadataProvider  string     `json:"metadataProvider"`
+	ID            int64      `json:"id"`
+	ForeignID     string     `json:"foreignBookId"`
+	AuthorID      int64      `json:"authorId"`
+	Title         string     `json:"title"`
+	SortTitle     string     `json:"sortTitle"`
+	OriginalTitle string     `json:"originalTitle"`
+	Description   string     `json:"description"`
+	ImageURL      string     `json:"imageUrl"`
+	ReleaseDate   *time.Time `json:"releaseDate"`
+	Genres        []string   `json:"genres"`
+	AverageRating float64    `json:"averageRating"`
+	RatingsCount  int        `json:"ratingsCount"`
+	// EditionCount is the provider's reported count of editions for this
+	// work (populated by internal/metadata/openlibrary's client on author-
+	// works results). Transport-only (json:"-"): it is a ranking input, not
+	// a fact the API surfaces to clients. Two consumers:
+	//   - internal/metadata/aggregator_canonical.go's canonical-search
+	//     ranking, where a thin catalogue (<10 editions) loosens the match
+	//     requirements and catalogDominates uses it as a tie-breaker between
+	//     candidates.
+	//   - internal/metadata/filterengine/cluster.go's Cluster.MaxEditionCount
+	//     aggregation, read but not yet scored by any v1 signal — the
+	//     discriminator a future graded signal (#2235 Phase 2) would use, not
+	//     part of this package's v1 (veto-only) surface.
+	EditionCount      int    `json:"-"`
+	Monitored         bool   `json:"monitored"`
+	Status            string `json:"status"`
+	AnyEditionOK      bool   `json:"anyEditionOk"`
+	SelectedEditionID *int64 `json:"selectedEditionId"`
+	FilePath          string `json:"filePath"`
+	Language          string `json:"language"`
+	MediaType         string `json:"mediaType"`
+	Narrator          string `json:"narrator"`
+	DurationSeconds   int    `json:"durationSeconds"`
+	ASIN              string `json:"asin"`
+	CalibreID         *int64 `json:"calibre_id,omitempty"`
+	MetadataProvider  string `json:"metadataProvider"`
 	// DedupKey is the canonical cross-source title key (#940), computed by
 	// indexer.CanonicalDedupKey at every book-create path. It is the only
 	// signal used to bind the same work imported from different sources
@@ -102,6 +114,15 @@ type Book struct {
 	// from the book's Editions (indexer.CriteriaISBN is the worked example, from
 	// the near-miss in #1724 that prompted the rename from ISBNs).
 	ProviderISBNs []string `json:"-"`
+
+	// Observations carries provider-emitted FilterObservations (#2235) — e.g.
+	// OpenLibrary's noise/companion-material detection, which used to drop the
+	// work silently inside the provider client. Transient like ProviderISBNs:
+	// no column, nothing persists it, populated only when a provider chooses
+	// to flag something about a work rather than dropping it outright, and
+	// consumed by internal/metadata/filterengine's replay signal so the
+	// weight stays profile-configured even for provider-sourced claims.
+	Observations []FilterObservation `json:"-"`
 
 	// Transport-only: the provider author keys credited on this work (e.g.
 	// OpenLibrary author IDs from the work's authors array). Used by the

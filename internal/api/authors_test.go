@@ -804,6 +804,18 @@ func TestFetchAuthorBooks_StrictMediaType(t *testing.T) {
 	} else if b.MediaType != models.MediaTypeEbook {
 		t.Errorf("both-format work MediaType = %q, want ebook (narrowed)", b.MediaType)
 	}
+
+	// Direct assertion on the counter itself (#2235 PR review): the outcome
+	// checks above only prove "Audio Only" wasn't created, not that it was
+	// specifically counted as a media-type skip rather than, say, silently
+	// falling through some other path uncounted.
+	sync := h.syncSummaries.get(author.ID)
+	if sync == nil {
+		t.Fatal("no sync summary recorded")
+	}
+	if sync.SkippedMediaType != 1 {
+		t.Errorf("SkippedMediaType = %d, want 1 (exactly the audiobook-only work)", sync.SkippedMediaType)
+	}
 }
 
 // missingDateTestWorks returns a fixed mix of works with and without a
