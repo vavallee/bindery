@@ -4,9 +4,14 @@ package bookhydrate
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
+	"time"
 
+	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -31,6 +36,7 @@ type AudiobookEnricher interface {
 
 // Options describes a single Hardcover edition hydration attempt.
 type Options struct {
+	Settings          *db.SettingsRepo
 	Book              *models.Book
 	Provider          string
 	ProviderForeignID string
@@ -73,8 +79,7 @@ func IsHardcoverBook(book *models.Book, provider string) bool {
 // HydrateHardcoverEditions fetches and persists Hardcover editions for a
 // confident Hardcover book. All failures are logged and reflected in Result.Err
 // but are non-fatal to callers.
-func HydrateHardcoverEditions(ctx context.Context, opts Options) Result {
-	var result Result
+func HydrateHardcoverEditions(ctx context.Context, opts Options) (result Result) {
 	book := opts.Book
 	if book == nil || book.ID == 0 {
 		return result
@@ -88,6 +93,29 @@ func HydrateHardcoverEditions(ctx context.Context, opts Options) Result {
 	}
 	if opts.Editions == nil || opts.FetchEditions == nil {
 		return result
+	}
+
+	if opts.Settings != nil {
+		defer func() {
+			// A cancelled request must still retain its deferred work.
+			saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			var err error
+			if errors.Is(result.Err, metadata.ErrProviderDeferred) {
+				pending := DeferredEditions{ForeignID: editionForeignID, BookForeignID: book.ForeignID, BookProvider: book.MetadataProvider, MediaTypePinned: opts.MediaTypePinned}
+				raw, marshalErr := json.Marshal(pending)
+				err = marshalErr
+				if err == nil {
+					err = opts.Settings.SetDeferredHardcoverEditions(saveCtx, book.ID, string(raw))
+				}
+			} else if result.Err == nil {
+				err = opts.Settings.DeleteDeferredHardcoverEditions(saveCtx, book.ID)
+			}
+			if err != nil {
+				slog.Error("persist deferred Hardcover editions", "bookID", book.ID, "error", err)
+				result.Err = errors.Join(result.Err, err)
+			}
+		}()
 	}
 
 	editions, err := opts.FetchEditions(ctx, editionForeignID)
@@ -310,4 +338,13 @@ func editionHasAudioMarker(text string) bool {
 		}
 	}
 	return false
+}
+
+// DeferredEditions retains the exact provider target and caller's format choice.
+// Book identity guards against replaying work left behind by a later rebind.
+type DeferredEditions struct {
+	ForeignID       string `json:"foreignID"`
+	BookForeignID   string `json:"bookForeignID"`
+	BookProvider    string `json:"bookProvider"`
+	MediaTypePinned bool   `json:"mediaTypePinned"`
 }

@@ -525,6 +525,12 @@ This has no bearing on backups. Take a copy of `bindery.db` on your own schedule
 
 ## Upgrading
 
+### Hardcover daily quota protection
+
+Migration `086` creates book-owned deferred edition work and removes orphan legacy markers. Take a normal SQLite backup before upgrading; Bindery applies the migration on startup. Quota accounting and cooldowns persist in the database across restarts.
+
+Bindery detects the allowance from supported Hardcover response headers. When detection is unavailable, admins can configure `hardcover.daily_request_limit` through the settings API (default `5000`; Supporter `50000`). Changes apply without restarting. See [Hardcover daily quota protection](Hardcover-Quota.md) for configuration, status, conservative fallback accounting, and resume behavior.
+
 ### Legacy migration-marker repair
 
 Some databases written by an older positional migration runner can report every

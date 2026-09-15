@@ -62,10 +62,7 @@ const (
 // was slow, which is the distinction #2271 turns on.
 var errThrottled = errors.New("rate limited locally, and waiting would exceed the caller's deadline")
 
-// throttle paces requests to one Hardcover account. Client copies made by
-// WithToken/WithTokenSource share the pointer, and every constructor attaches
-// defaultThrottle, because the limit being respected is Hardcover's per
-// account and not any one client instance's.
+// throttle implements adaptive pacing; Quota stores its state per account.
 type throttle struct {
 	mu sync.Mutex
 	// interval is the current spacing between requests. Zero means
@@ -82,9 +79,6 @@ type throttle struct {
 	now   func() time.Time
 	sleep func(context.Context, time.Duration) error
 }
-
-// defaultThrottle is shared by every client this package constructs.
-var defaultThrottle = newThrottle()
 
 func newThrottle() *throttle {
 	return &throttle{now: time.Now, sleep: sleepCtx}

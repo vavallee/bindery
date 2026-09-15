@@ -2,10 +2,12 @@ package bookhydrate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -595,6 +597,102 @@ func TestHydrateHardcoverEditionsRespectsMediaTypePin(t *testing.T) {
 			}
 			if stored.MediaType != want {
 				t.Errorf("persisted MediaType = %q, want %q (pinned=%v)", stored.MediaType, want, pinned)
+			}
+		})
+	}
+}
+
+// Cancellation and transient failures must not lose the durable retry target.
+func TestHydrateHardcoverDeferredWorkLifecycle(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	settings := db.NewSettingsRepo(database)
+	author := &models.Author{ForeignID: "deferred-author", Name: "Author", SortName: "Author"}
+	if err := db.NewAuthorRepo(database).Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{AuthorID: author.ID, ForeignID: "OL123W", MetadataProvider: "openlibrary", Title: "Book", SortTitle: "Book", MediaType: models.MediaTypeEbook}
+	if err := db.NewBookRepo(database).Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	defer cancel()
+	opts := Options{Settings: settings, Book: book, ProviderForeignID: "hc:123", MediaTypePinned: true, Editions: db.NewEditionRepo(database)}
+	opts.FetchEditions = func(context.Context, string) ([]models.Edition, error) {
+		cancel()
+		return nil, metadata.ErrProviderDeferred
+	}
+	result := HydrateHardcoverEditions(cancelled, opts)
+	if !errors.Is(result.Err, metadata.ErrProviderDeferred) {
+		t.Fatalf("lost deferral: %v", result.Err)
+	}
+	pending, err := settings.GetDeferredHardcoverEditions(ctx, book.ID)
+	if err != nil || pending == nil {
+		t.Fatalf("cancelled request lost pending work: %v, %v", pending, err)
+	}
+	var work DeferredEditions
+	if err := json.Unmarshal([]byte(*pending), &work); err != nil {
+		t.Fatal(err)
+	}
+	if work.ForeignID != "hc:123" || work.BookForeignID != "OL123W" || work.BookProvider != "openlibrary" || !work.MediaTypePinned {
+		t.Fatalf("wrong durable retry target: %+v", work)
+	}
+	transient := errors.New("temporary edition fetch failure")
+	opts.FetchEditions = func(context.Context, string) ([]models.Edition, error) { return nil, transient }
+	if result := HydrateHardcoverEditions(ctx, opts); !errors.Is(result.Err, transient) {
+		t.Fatalf("lost retry failure: %v", result.Err)
+	}
+	retained, err := settings.GetDeferredHardcoverEditions(ctx, book.ID)
+	if err != nil || retained == nil || *retained != *pending {
+		t.Fatalf("failed retry changed pending work: %v, %v", retained, err)
+	}
+	opts.FetchEditions = func(context.Context, string) ([]models.Edition, error) { return nil, nil }
+	if result := HydrateHardcoverEditions(ctx, opts); result.Err != nil {
+		t.Fatal(result.Err)
+	}
+	if pending, err := settings.GetDeferredHardcoverEditions(ctx, book.ID); err != nil || pending != nil {
+		t.Fatalf("successful empty result retained work: %v, %v", pending, err)
+	}
+}
+
+func TestHydrateHardcoverDeferredWorkStorageFailure(t *testing.T) {
+	for _, fetchErr := range []error{metadata.ErrProviderDeferred, nil} {
+		name := "clear completed work"
+		if fetchErr != nil {
+			name = "save deferred work"
+		}
+		t.Run(name, func(t *testing.T) {
+			database, err := db.OpenMemory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			result := HydrateHardcoverEditions(context.Background(), Options{
+				Settings: db.NewSettingsRepo(database),
+				Book:     &models.Book{ID: 1, ForeignID: "hc:123", MetadataProvider: "hardcover"},
+				Editions: db.NewEditionRepo(database),
+				FetchEditions: func(context.Context, string) ([]models.Edition, error) {
+					if err := database.Close(); err != nil {
+						t.Fatal(err)
+					}
+					return nil, fetchErr
+				},
+			})
+			if result.Err == nil {
+				t.Fatal("silently lost pending-work storage failure")
+			}
+			if fetchErr != nil {
+				if !errors.Is(result.Err, fetchErr) {
+					t.Fatalf("storage failure hid quota deferral: %v", result.Err)
+				}
+				var joined interface{ Unwrap() []error }
+				if !errors.As(result.Err, &joined) || len(joined.Unwrap()) != 2 {
+					t.Fatalf("storage failure was not retained alongside deferral: %v", result.Err)
+				}
 			}
 		})
 	}

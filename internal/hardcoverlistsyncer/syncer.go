@@ -113,6 +113,12 @@ func New(importLists *db.ImportListRepo, authors *db.AuthorRepo, books *db.BookR
 	}
 }
 
+// WithQuota shares account budgets with interactive Hardcover requests.
+func (s *ListSyncer) WithQuota(q *hardcover.Quota) *ListSyncer {
+	s.clientFactory = func(token string) hardcoverClient { return hardcover.NewAuthenticated(token).WithQuota(q) }
+	return s
+}
+
 // WithSeriesRepo wires the series persistence layer so that books imported
 // from Hardcover lists carry forward their primary-series association.
 // Without it, SeriesRefs on imported books are silently dropped.
@@ -191,6 +197,7 @@ func (s *ListSyncer) Sync(ctx context.Context) error {
 
 // syncAll is Sync's body, split out so the jobs-group wrapper stays readable.
 func (s *ListSyncer) syncAll(ctx context.Context) error {
+	ctx = hardcover.WithBackgroundQuota(ctx)
 	if !s.syncRunning.CompareAndSwap(false, true) {
 		slog.Info("hardcover list sync already running; skipping scheduled run")
 		return nil
@@ -376,6 +383,10 @@ func (s *ListSyncer) finishProgress(err error) {
 	if err != nil {
 		s.progress.Error = err.Error()
 		s.progress.Message = "sync failed"
+		var deferred *hardcover.QuotaDeferredError
+		if errors.As(err, &deferred) {
+			s.progress.Message = deferred.Error()
+		}
 		return
 	}
 	s.progress.Message = "sync complete"

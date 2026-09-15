@@ -120,3 +120,33 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 	_, err := r.db.ExecContext(ctx, "DELETE FROM settings WHERE key=?", key)
 	return err
 }
+
+// GetDeferredHardcoverEditions reads private hydration work owned by a book.
+func (r *SettingsRepo) GetDeferredHardcoverEditions(ctx context.Context, bookID int64) (*string, error) {
+	var value string
+	err := r.db.QueryRowContext(ctx, "SELECT value FROM deferred_hardcover_editions WHERE book_id=?", bookID).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+// SetDeferredHardcoverEditions records work only while its book still exists.
+// The single statement prevents a late hydration result from recreating work
+// after the book and its cascading foreign-key row have been deleted.
+func (r *SettingsRepo) SetDeferredHardcoverEditions(ctx context.Context, bookID int64, value string) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO deferred_hardcover_editions (book_id, value)
+		SELECT ?, ? WHERE EXISTS (SELECT 1 FROM books WHERE id = ?)
+		ON CONFLICT(book_id) DO UPDATE SET value=excluded.value`, bookID, value, bookID)
+	return err
+}
+
+// DeleteDeferredHardcoverEditions clears completed or stale hydration work.
+func (r *SettingsRepo) DeleteDeferredHardcoverEditions(ctx context.Context, bookID int64) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM deferred_hardcover_editions WHERE book_id=?", bookID)
+	return err
+}

@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/vavallee/bindery/internal/abs"
+	"github.com/vavallee/bindery/internal/metadata/hardcover"
 )
 
 // SettingType is the shape of a stored setting value. Every value in the
@@ -411,6 +412,7 @@ var settingDescriptors = []SettingDescriptor{
 	},
 
 	// Hardcover.
+	{Key: hardcover.SettingDailyRequestLimit, Type: SettingTypeInt, Default: "5000", Min: "1", Max: "1000000000", Description: "Fallback daily Hardcover allowance when upstream quota detection is unavailable. Free: 5000; Supporter: 50000. Detected policy takes precedence. Changes apply immediately.", State: SettingStateActive},
 	{
 		Key: SettingHardcoverAPIToken, Type: SettingTypeString, Default: "",
 		Description: "Hardcover API token. Every Hardcover query is authenticated, search included. Stored but never read back over the settings API.",

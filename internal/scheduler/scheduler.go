@@ -23,6 +23,7 @@ import (
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/metadata"
+	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/metrics"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -1456,7 +1457,7 @@ func downloadMediaType(dl *models.Download) string {
 }
 
 func (s *Scheduler) refreshMetadata() {
-	ctx := s.ctx()
+	ctx := hardcover.WithBackgroundQuota(s.ctx())
 
 	authors, err := s.authors.List(ctx)
 	if err != nil {

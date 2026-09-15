@@ -142,6 +142,7 @@ func (h *BookHandler) hydrateHardcoverEditions(ctx context.Context, book *models
 		}
 	}
 	bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
+		Settings:      h.settings,
 		Book:          book,
 		Provider:      providerName,
 		Editions:      h.editions,

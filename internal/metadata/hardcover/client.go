@@ -53,12 +53,10 @@ type Client struct {
 	http        *http.Client
 	token       string // API token; required for all queries (search included)
 	tokenSource func(context.Context) string
-	// throttle paces requests. It is shared, not per-client: Hardcover's
-	// limit is per account, and this process may hold several clients
-	// (aggregator, list syncer, import-list browse, the settings test
-	// button) all spending the same budget. Every copy below carries the
-	// pointer forward; TestThrottleSharedAcrossClientCopies guards that.
+	// Standalone clients use a local pacer; production clients use Quota's
+	// shared account-scoped pacing and persistent daily accounting.
 	throttle *throttle
+	quota    *Quota
 }
 
 // NormalizeAPIToken accepts either the raw token copied from Hardcover or an
@@ -92,21 +90,21 @@ func NormalizeAPIToken(value string) string {
 func New() *Client {
 	return &Client{
 		http:     &http.Client{Timeout: 15 * time.Second, Transport: httpsec.DefaultProxyTransport()},
-		throttle: defaultThrottle,
+		throttle: newThrottle(),
 	}
 }
 
 // WithToken returns a copy of the client configured to use the given API token.
 // Required for authenticated queries such as GetUserWishlist.
 func (c *Client) WithToken(token string) *Client {
-	return &Client{http: c.http, token: token, throttle: c.pacer()}
+	return &Client{http: c.http, token: token, throttle: c.pacer(), quota: c.quota}
 }
 
 // WithTokenSource returns a copy of the client that resolves an API token
 // for each request. It is used for UI-managed credentials that can change
 // while the process is running.
 func (c *Client) WithTokenSource(source func(context.Context) string) *Client {
-	return &Client{http: c.http, token: c.token, tokenSource: source, throttle: c.pacer()}
+	return &Client{http: c.http, token: c.token, tokenSource: source, throttle: c.pacer(), quota: c.quota}
 }
 
 // NewAuthenticated creates a new client that sends Authorization: Bearer <token>
@@ -119,7 +117,7 @@ func NewAuthenticated(token string) *Client {
 		// Hardcover call is proxied (#proxy-bypass).
 		http:     &http.Client{Timeout: 15 * time.Second, Transport: httpsec.DefaultProxyTransport()},
 		token:    token,
-		throttle: defaultThrottle,
+		throttle: newThrottle(),
 	}
 }
 
@@ -661,9 +659,18 @@ func (c *Client) query(ctx context.Context, q string, vars map[string]any, out i
 		return err
 	}
 
+	// Pin the credential for pacing, accounting and transmission of this query.
+	token := c.authorizationToken(ctx)
 	var lastErr error
 	for attempt := 0; attempt <= hardcoverMaxRetries; attempt++ {
-		if err := c.pacer().wait(ctx); err != nil {
+		var pacedAccount string
+		var waitErr error
+		if c.quota != nil {
+			pacedAccount, waitErr = c.quota.wait(ctx, token)
+		} else {
+			waitErr = c.pacer().wait(ctx)
+		}
+		if err := waitErr; err != nil {
 			if errors.Is(err, errThrottled) {
 				if lastErr != nil {
 					return lastErr
@@ -673,11 +680,11 @@ func (c *Client) query(ctx context.Context, q string, vars map[string]any, out i
 			return err
 		}
 
-		status, header, raw, doErr := c.roundTrip(ctx, body)
+		status, header, raw, doErr := c.roundTrip(ctx, token, pacedAccount, body)
 		if doErr != nil {
 			// A cancelled or expired context is never worth retrying, and
 			// neither is the last attempt.
-			if ctx.Err() != nil || attempt == hardcoverMaxRetries {
+			if ctx.Err() != nil || errors.Is(doErr, metadata.ErrProviderDeferred) || errors.Is(doErr, errQuotaStorage) || attempt == hardcoverMaxRetries {
 				return doErr
 			}
 			lastErr = doErr
@@ -693,7 +700,9 @@ func (c *Client) query(ctx context.Context, q string, vars map[string]any, out i
 			if !ok {
 				hint, _ = parseRetryHint(statusErr.Error())
 			}
-			c.pacer().penalize(hint)
+			if c.quota == nil {
+				c.pacer().penalize(hint)
+			}
 			if status == http.StatusTooManyRequests {
 				statusErr = rateLimited(statusErr)
 			}
@@ -706,7 +715,9 @@ func (c *Client) query(ctx context.Context, q string, vars map[string]any, out i
 			continue
 		}
 
-		c.pacer().succeed()
+		if c.quota == nil {
+			c.pacer().succeed()
+		}
 		var envelope struct {
 			Errors []gqlError `json:"errors"`
 		}
@@ -722,14 +733,21 @@ func (c *Client) query(ctx context.Context, q string, vars map[string]any, out i
 
 // roundTrip performs one request and reads the response, returning the status,
 // headers and body separately so query can decide what to do with them.
-func (c *Client) roundTrip(ctx context.Context, body []byte) (int, http.Header, []byte, error) {
+func (c *Client) roundTrip(ctx context.Context, token, pacedAccount string, body []byte) (int, http.Header, []byte, error) {
+	if c.quota != nil {
+		return c.quota.do(ctx, token, pacedAccount, body, func(payload []byte) (int, http.Header, []byte, error) { return c.send(ctx, token, payload) })
+	}
+	return c.send(ctx, token, body)
+}
+
+func (c *Client) send(ctx context.Context, token string, body []byte) (int, http.Header, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, graphqlURL, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", useragent.Get())
-	if token := c.authorizationToken(ctx); token != "" {
+	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
@@ -756,13 +774,8 @@ func (c *Client) roundTrip(ctx context.Context, body []byte) (int, http.Header, 
 	return resp.StatusCode, resp.Header, raw, nil
 }
 
-// pacer returns the throttle this client shares with every other client for
-// the same Hardcover account. Every constructor attaches defaultThrottle, so
-// a nil throttle means a zero-value Client, which only in-package tests build;
-// those run unpaced, and every throttle method is nil-safe to make that work
-// without a branch at each call site. Deliberately NOT falling back to
-// defaultThrottle here: doing so would let one test's rate-limit case pace
-// every later test in the package through shared process state.
+// pacer supplies standalone-client pacing when no shared Quota is attached.
+// A nil throttle keeps zero-value test clients unpaced.
 func (c *Client) pacer() *throttle {
 	if c == nil {
 		return nil

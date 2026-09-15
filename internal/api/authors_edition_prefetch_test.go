@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
@@ -193,5 +195,47 @@ func TestFetchAuthorBooks_NoCreatesFetchesNoEditions(t *testing.T) {
 	provider.editionCallsMu.Unlock()
 	if len(calls) != 0 {
 		t.Errorf("a refresh that creates nothing made %d edition lookups: %v", len(calls), calls)
+	}
+}
+
+func TestEditionPrefetchDeferredDoesNotRetryOrLoseWork(t *testing.T) {
+	provider := newConcurrentEditionProvider(nil, 1)
+	h, author, books := prefetchFixture(t, provider)
+	book := &models.Book{ForeignID: "hc:123", Title: "Deferred", SortTitle: "deferred", AuthorID: author.ID, MetadataProvider: "hardcover", MediaType: models.MediaTypeEbook}
+	ctx := context.Background()
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	cache := newEditionPrefetch()
+	cache.deferred = metadata.ErrProviderDeferred
+	calls := 0
+	h.editionFetcher = func(context.Context, string) ([]models.Edition, error) {
+		calls++
+		return []models.Edition{{ForeignID: "hc-edition:456", Title: "Recovered"}}, nil
+	}
+	h.hydrateHardcoverEditions(ctx, book, cache)
+	if calls != 0 {
+		t.Fatal("hydration retried known exhaustion")
+	}
+	pending, err := h.settings.GetDeferredHardcoverEditions(ctx, book.ID)
+	if err != nil || pending == nil {
+		t.Fatalf("lost deferred work: %+v %v", pending, err)
+	}
+	var work bookhydrate.DeferredEditions
+	if err := json.Unmarshal([]byte(*pending), &work); err != nil || work.ForeignID != "hc:123" {
+		t.Fatalf("wrong deferred target: %+v %v", work, err)
+	}
+	// A later refresh reads the durable marker, independent of the prefetch cache.
+	h.retryDeferredEditions(ctx, book)
+	if calls != 1 {
+		t.Fatal(calls)
+	}
+	pending, err = h.settings.GetDeferredHardcoverEditions(ctx, book.ID)
+	if err != nil || pending != nil {
+		t.Fatalf("did not clear completed work: %+v %v", pending, err)
+	}
+	stored, err := books.GetByID(ctx, book.ID)
+	if err != nil || stored.ForeignID != "hc:123" || stored.MetadataProvider != "hardcover" {
+		t.Fatalf("identity changed: %+v %v", stored, err)
 	}
 }

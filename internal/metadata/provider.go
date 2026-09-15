@@ -11,6 +11,9 @@ import (
 // skipped because credentials or runtime configuration are missing.
 var ErrProviderNotConfigured = errors.New("metadata provider not configured")
 
+// ErrProviderDeferred means the provider cannot answer until its quota resumes.
+var ErrProviderDeferred = errors.New("metadata provider deferred")
+
 // Provider defines the interface that all metadata sources must implement.
 type Provider interface {
 	// Name returns the provider identifier (e.g. "openlibrary", "googlebooks").

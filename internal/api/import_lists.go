@@ -58,6 +58,12 @@ func NewImportListHandler(repo *db.ImportListRepo, settings *db.SettingsRepo, hc
 	}
 }
 
+// WithHardcoverQuota shares account budgets with the other Hardcover clients.
+func (h *ImportListHandler) WithHardcoverQuota(q *hardcover.Quota) *ImportListHandler {
+	h.hcListClient = func(token string) hardcoverUserListClient { return hardcover.NewAuthenticated(token).WithQuota(q) }
+	return h
+}
+
 // errInvalidOwner marks an owner_user_id the client supplied that cannot be
 // accepted (non-positive, or not an existing user). The handler maps it to 400;
 // a wrapped lookup failure (not this sentinel) maps to 500.

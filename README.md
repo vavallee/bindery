@@ -297,6 +297,7 @@ The full endpoint catalogue, authentication rules (API key, session cookie, loca
 | **ABS import (overview)** — what gets imported, setup, review queue, rollback | [docs/ABS-Import-Wiki.md](docs/ABS-Import-Wiki.md) |
 | **ABS import (reference)** — implementation detail, mapping rules, API surface | [docs/abs_import.md](docs/abs_import.md) |
 | **Enhanced Hardcover series** — token setup, series linking, catalog diffs, missing-book fill | [docs/Hardcover-Series-Wiki.md](docs/Hardcover-Series-Wiki.md) |
+| **Hardcover quota protection** — detected allowances, fallback configuration, status and deferred work | [docs/Hardcover-Quota.md](docs/Hardcover-Quota.md) |
 | **Storage & hardlinks** — single-mount layout, import modes, per-author audiobook root | [docs/Storage-And-Hardlinks-Wiki.md](docs/Storage-And-Hardlinks-Wiki.md) |
 | **Migrating from Readarr** — `readarr.db` import, Goodreads CSV import, library scan | [docs/Migrating-From-Readarr-Wiki.md](docs/Migrating-From-Readarr-Wiki.md) |
 | **Metadata editing** — manual edits, field locking, bulk genre overrides | [docs/Metadata-Editing-Wiki.md](docs/Metadata-Editing-Wiki.md) |

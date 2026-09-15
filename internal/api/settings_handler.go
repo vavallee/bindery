@@ -201,6 +201,7 @@ const (
 )
 
 type SettingsHandler struct {
+	hcQuota  *hardcover.Quota
 	settings *db.SettingsRepo
 }
 
@@ -254,7 +255,8 @@ func isSecretSetting(key string) bool {
 		strings.HasSuffix(key, ".password") ||
 		strings.HasSuffix(key, "_password") ||
 		strings.HasSuffix(key, ".client_secret") ||
-		strings.HasPrefix(key, "auth.oidc.") {
+		strings.HasPrefix(key, "auth.oidc.") ||
+		strings.HasPrefix(key, "auth.hardcover_") {
 		return true
 	}
 	// 3. Case-insensitive catch-all for the same idea. The patterns above are
@@ -515,6 +517,26 @@ type HardcoverTestResponse struct {
 	Error            string `json:"error,omitempty"`
 }
 
+// WithHardcoverQuota shares accounting with metadata and list requests.
+func (h *SettingsHandler) WithHardcoverQuota(q *hardcover.Quota) *SettingsHandler {
+	h.hcQuota = q
+	return h
+}
+
+// HardcoverQuota reports the current key without making an upstream request.
+func (h *SettingsHandler) HardcoverQuota(w http.ResponseWriter, r *http.Request) {
+	if h.hcQuota == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Hardcover quota unavailable"})
+		return
+	}
+	status, err := h.hcQuota.Status(r.Context(), GetHardcoverAPIToken(r.Context(), h.settings))
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
 func (h *SettingsHandler) TestHardcover(w http.ResponseWriter, r *http.Request) {
 	token := GetHardcoverAPIToken(r.Context(), h.settings)
 	result := HardcoverTestResponse{TokenConfigured: token != ""}
@@ -527,7 +549,7 @@ func (h *SettingsHandler) TestHardcover(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	client := hardcover.New().WithToken(token)
+	client := hardcover.New().WithQuota(h.hcQuota).WithToken(token)
 	series, err := client.SearchSeries(ctx, "Dune", 3)
 	if err != nil {
 		result.Error = err.Error()
@@ -584,6 +606,14 @@ func validateSettingValue(key, value string) error {
 		return fmt.Errorf("unknown setting key %q: bindery does not read this key, so storing it would change nothing. GET /api/v1/settings/descriptors lists every key it knows", key)
 	}
 	switch key {
+	case hardcover.SettingDailyRequestLimit:
+		if value == "" {
+			return nil
+		}
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > 1_000_000_000 {
+			return fmt.Errorf("hardcover.daily_request_limit must be between 1 and 1000000000")
+		}
 	case SettingHardcoverAPIToken:
 		for _, r := range value {
 			if r < 0x20 || r == 0x7f {

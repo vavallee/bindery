@@ -81,6 +81,7 @@ The format dropdown beside **add all** sets the media type of every book the fil
 ## Known Behavior
 
 - Hardcover-backed controls require outbound HTTPS access to Hardcover.
+- Daily quota exhaustion pauses Hardcover requests until eligible again. Deferred edition hydration preserves the book's provider identity and chosen format for a later author catalogue refresh. See [Hardcover daily quota protection](Hardcover-Quota.md) for allowance detection, configuration, and status.
 - The fill action can also contact configured indexers because it queues searches immediately. Switching **Auto-grab** off in `Settings -> General` stops that, for fill as well as for the scheduled sweep.
 - A linked series can still have local-only or uncertain entries when local metadata does not cleanly match the Hardcover catalog.
 - **View on Hardcover** is built from the series slug, which is the only identifier hardcover.app routes series pages on. Series linked before Bindery started recording the slug have none stored, so their link appears the next time the catalog diff is loaded. If Hardcover reports a series with no slug at all, Bindery shows no link rather than one that leads to a missing page.

@@ -24,6 +24,7 @@ type RecommendationEngine interface {
 
 // RecommendationHandler handles the /api/v1/recommendations endpoints.
 type RecommendationHandler struct {
+	settings *db.SettingsRepo
 	recs     *db.RecommendationRepo
 	engine   RecommendationEngine
 	authors  *db.AuthorRepo
@@ -41,6 +42,12 @@ type RecommendationHandler struct {
 	// kicked off from a handler (which must outlive the request) will derive
 	// from it instead of context.Background() — see #550. Never nil.
 	appCtx context.Context
+}
+
+// WithSettings enables durable recovery when edition hydration is deferred.
+func (h *RecommendationHandler) WithSettings(settings *db.SettingsRepo) *RecommendationHandler {
+	h.settings = settings
+	return h
 }
 
 // WithFinder attaches a LibraryFinder so that Add can check whether the
@@ -76,6 +83,7 @@ func (h *RecommendationHandler) hydrateHardcoverEditions(ctx context.Context, bo
 		}
 	}
 	bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
+		Settings:      h.settings,
 		Book:          book,
 		Provider:      book.MetadataProvider,
 		Editions:      h.editions,

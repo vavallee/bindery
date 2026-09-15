@@ -882,6 +882,9 @@ func (a *Aggregator) GetBookByISBN(ctx context.Context, isbn string) (*models.Bo
 		}
 		book, err := provider.GetBookByISBN(ctx, isbn)
 		if err != nil {
+			if idx == 0 && errors.Is(err, ErrProviderDeferred) {
+				return nil, err
+			}
 			if errors.Is(err, ErrProviderNotConfigured) {
 				skippedUnconfigured = true
 				slog.Debug("isbn provider not configured", "provider", provider.Name())

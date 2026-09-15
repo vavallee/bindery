@@ -24,6 +24,7 @@ import (
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/metadata"
+	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/telemetry"
 	"github.com/vavallee/bindery/internal/textutil"
@@ -232,8 +233,9 @@ func (h *AuthorHandler) resolveEditionTarget(ctx context.Context, book *models.B
 // predicts the wrong set of books the result is a slower sync rather than a
 // wrong one.
 type editionPrefetch struct {
-	mu sync.Mutex
-	by map[string][]models.Edition
+	mu       sync.Mutex
+	by       map[string][]models.Edition
+	deferred error
 }
 
 func newEditionPrefetch() *editionPrefetch {
@@ -273,6 +275,12 @@ func (c *editionPrefetch) wrap(target editionTarget, live bookhydrate.EditionFet
 				return editions, nil
 			}
 		}
+		c.mu.Lock()
+		deferred := c.deferred
+		c.mu.Unlock()
+		if deferred != nil {
+			return nil, deferred
+		}
 		return live(ctx, foreignID)
 	}
 }
@@ -305,6 +313,7 @@ func (h *AuthorHandler) hydrateHardcoverEditionsFrom(ctx context.Context, book *
 		providerForeignID = target.ForeignID
 	}
 	bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
+		Settings:          h.settings,
 		Book:              book,
 		Provider:          book.MetadataProvider,
 		ProviderForeignID: providerForeignID,
@@ -312,6 +321,51 @@ func (h *AuthorHandler) hydrateHardcoverEditionsFrom(ctx context.Context, book *
 		Books:             h.books,
 		FetchEditions:     cache.wrap(target, fetcher),
 		Enricher:          h.meta,
+	})
+}
+
+// retryDeferredEditions keeps a quota failure distinct from an empty edition
+// result across restarts. The saved provider ID is never replaced by a fallback.
+func (h *AuthorHandler) retryDeferredEditions(ctx context.Context, book *models.Book) {
+	if h.settings == nil {
+		return
+	}
+	pending, err := h.settings.GetDeferredHardcoverEditions(ctx, book.ID)
+	if err != nil {
+		slog.Error("read deferred Hardcover editions", "bookID", book.ID, "error", err)
+		return
+	}
+	if pending == nil {
+		return
+	}
+	var work bookhydrate.DeferredEditions
+	if err := json.Unmarshal([]byte(*pending), &work); err != nil {
+		slog.Error("decode deferred Hardcover editions", "bookID", book.ID, "error", err)
+		return
+	}
+	if book.ForeignID != work.BookForeignID || book.MetadataProvider != work.BookProvider {
+		if err := h.settings.DeleteDeferredHardcoverEditions(ctx, book.ID); err != nil {
+			slog.Error("discard stale deferred Hardcover editions", "bookID", book.ID, "error", err)
+		}
+		return
+	}
+	targetID := work.ForeignID
+	if targetID == book.ForeignID {
+		targetID = ""
+	}
+	if _, ok := h.resolveEditionTarget(ctx, book, targetID); !ok {
+		return
+	}
+	fetcher := h.editionFetcher
+	if fetcher == nil && h.meta != nil {
+		fetcher = func(ctx context.Context, id string) ([]models.Edition, error) {
+			return h.meta.GetEditionsFromProvider(ctx, "hardcover", id)
+		}
+	}
+	bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
+		Settings: h.settings, Book: book, Provider: "hardcover",
+		ProviderForeignID: work.ForeignID, MediaTypePinned: work.MediaTypePinned,
+		Editions: h.editions, Books: h.books, FetchEditions: fetcher, Enricher: h.meta,
 	})
 }
 
@@ -360,6 +414,12 @@ func (h *AuthorHandler) prefetchHardcoverEditions(ctx context.Context, targets [
 			editions, err = h.meta.GetEditions(ctx, t.ForeignID)
 		}
 		if err != nil {
+			if errors.Is(err, metadata.ErrProviderDeferred) {
+				cache.mu.Lock()
+				cache.deferred = err
+				cache.mu.Unlock()
+				return
+			}
 			// Leave it out of the cache. Hydration will retry live and log
 			// there, so a transient failure here changes nothing but timing.
 			slog.Debug("edition prefetch failed; hydration will fetch it live",
@@ -753,6 +813,9 @@ func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fal
 	}
 	author, err := h.meta.GetAuthor(ctx, foreignID)
 	if err != nil {
+		if errors.Is(err, metadata.ErrProviderDeferred) {
+			return nil, err
+		}
 		slog.Warn("metadata lookup failed, using provided name", "foreignID", foreignID, "error", err)
 		return &models.Author{
 			ForeignID:        foreignID,
@@ -1832,6 +1895,7 @@ func (h *AuthorHandler) authorAwaitsFirstCatalogue(ctx context.Context, author *
 // ctx is the background context the sync runs on: the jobs group's
 // shutdown-scoped one when the async path launched it, h.bgCtx() otherwise.
 func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Author, opts catalogueSyncOptions) {
+	ctx = hardcover.WithBackgroundQuota(ctx)
 	autoSearch, mediaType, discovery := opts.autoSearch, opts.mediaType, opts.discovery
 	// singleWork: the caller picked one specific book and the direct insert
 	// couldn't produce it. This run exists only to create that one row, so it
@@ -2263,12 +2327,19 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	// below treats that the same as "not enforcing for this work" a live
 	// per-item call would have, so a transient failure never drops a book.
 	var editionsByForeignID map[string][]models.Edition
+	var editionPreviewDeferred error
 	if needsEditionPreview && len(candidates) > 0 {
 		editionsByForeignID = make(map[string][]models.Edition, len(candidates))
 		var mu sync.Mutex
 		concurrency.RunBounded(ctx, candidates, authorAutoSearchConcurrency, func(ctx context.Context, b models.Book) {
 			editions, err := h.meta.GetEditions(ctx, b.ForeignID)
 			if err != nil {
+				if errors.Is(err, metadata.ErrProviderDeferred) {
+					mu.Lock()
+					editionPreviewDeferred = err
+					mu.Unlock()
+					return
+				}
 				slog.Debug("edition lookup failed while checking MinPages/SkipMissingISBN; not enforcing for this work",
 					"title", b.Title, "foreignId", b.ForeignID, "error", err)
 				return
@@ -2279,6 +2350,10 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 		})
 	}
 
+	if editionPreviewDeferred != nil {
+		slog.Warn("author catalogue deferred before edition filters", "author", author.Name, "error", editionPreviewDeferred)
+		return
+	}
 	for _, b := range candidates {
 		// Hoisted here, before the edition-gated filters below, so a filter
 		// that fires after this point can exempt a book the user already
@@ -2445,6 +2520,7 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 			// sync from either provider resolves it exactly rather than
 			// relying on a title comparison (#1705).
 			h.recordBookIdentities(ctx, existing, b.ForeignID, b.HardcoverForeignID)
+			h.retryDeferredEditions(ctx, existing)
 			matched++
 			continue
 		}

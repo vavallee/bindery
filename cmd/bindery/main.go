@@ -287,7 +287,8 @@ func main() {
 	olClient := openlibrary.New()
 	dnbClient := dnb.New()
 
-	hcClient := hardcover.New().WithTokenSource(func(ctx context.Context) string {
+	hcQuota := hardcover.NewQuota(settingsRepo)
+	hcClient := hardcover.New().WithQuota(hcQuota).WithTokenSource(func(ctx context.Context) string {
 		return api.GetHardcoverAPIToken(ctx, settingsRepo)
 	})
 
@@ -559,6 +560,7 @@ func main() {
 
 	// Register the Hardcover list syncer (24-hour job).
 	hcSyncer := hardcoverlistsyncer.New(importListRepo, authorRepo, bookRepo).
+		WithQuota(hcQuota).
 		WithSeriesRepo(seriesRepo).
 		WithTokenSource(func(ctx context.Context) string {
 			return api.GetHardcoverAPIToken(ctx, settingsRepo)
@@ -707,13 +709,13 @@ func main() {
 	blocklistHandler := api.NewBlocklistHandler(blocklistRepo)
 	notificationHandler := api.NewNotificationHandler(notificationRepo, notif)
 	qualityProfileHandler := api.NewQualityProfileHandler(qualityProfileRepo)
-	settingsHandler := api.NewSettingsHandler(settingsRepo)
+	settingsHandler := api.NewSettingsHandler(settingsRepo).WithHardcoverQuota(hcQuota)
 	seriesHandler := api.NewSeriesHandler(seriesRepo, bookRepo, authorRepo, metaAgg, sched).
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
 		WithFinder(importScanner).
 		WithEditionHydration(editionRepo).
 		WithLifetimeCtx(appCtx)
-	importListHandler := api.NewImportListHandler(importListRepo, settingsRepo, hcSyncer, userRepo)
+	importListHandler := api.NewImportListHandler(importListRepo, settingsRepo, hcSyncer, userRepo).WithHardcoverQuota(hcQuota)
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
 	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)
@@ -762,6 +764,7 @@ func main() {
 		func() calibre.Mode { return api.LoadCalibreMode(appCtx, settingsRepo) },
 	)
 	recHandler := api.NewRecommendationHandler(recRepo, recEngine, authorRepo, bookRepo, sched).
+		WithSettings(settingsRepo).
 		WithFinder(seriesRepo, importScanner).
 		WithEditionHydration(editionRepo, metaAgg).
 		WithAppContext(appCtx)
@@ -1039,6 +1042,7 @@ func main() {
 			r.Put("/setting/{key}", settingsHandler.Set)
 			r.Delete("/setting/{key}", settingsHandler.Delete)
 			r.Post("/hardcover/test", settingsHandler.TestHardcover)
+			r.Get("/hardcover/quota", settingsHandler.HardcoverQuota)
 			r.Get("/abs/config", absHandler.GetConfig)
 			r.Put("/abs/config", absHandler.SetConfig)
 			r.Post("/abs/test", absHandler.Test)

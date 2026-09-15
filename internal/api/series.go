@@ -120,6 +120,7 @@ func (h *SeriesHandler) hydrateHardcoverEditions(ctx context.Context, book *mode
 		}
 	}
 	bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
+		Settings:      h.settings,
 		Book:          book,
 		Provider:      "hardcover",
 		Editions:      h.editions,

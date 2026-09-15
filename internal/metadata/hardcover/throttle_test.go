@@ -331,10 +331,7 @@ func TestThrottleSharedAcrossClientCopies(t *testing.T) {
 	if got := base.WithTokenSource(func(context.Context) string { return "t" }).pacer(); got != base.pacer() {
 		t.Error("WithTokenSource must carry the throttle forward")
 	}
-	if NewAuthenticated("t").pacer() != defaultThrottle {
-		t.Error("NewAuthenticated must share the process-wide throttle: the list syncer spends the same account budget as the aggregator")
-	}
-	if New().pacer() != defaultThrottle {
-		t.Error("New must share the process-wide throttle")
+	if NewAuthenticated("other").pacer() == base.pacer() {
+		t.Error("standalone clients must not share cross-account penalties")
 	}
 }
