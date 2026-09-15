@@ -96,6 +96,17 @@ function LocationProbe({ onLocation }: { onLocation?: (location: string) => void
 
 type NavEntry = string | { pathname: string; state?: unknown }
 
+// Unlike LocationProbe above, this also exposes router `state` — needed to
+// verify the {ids, index} payload a book link/row carries, not just where it
+// points.
+function StateProbe({ onState }: { onState: (state: unknown) => void }) {
+  const location = useLocation()
+  useEffect(() => {
+    onState(location.state)
+  }, [location, onState])
+  return null
+}
+
 function renderAuthorDetailPage(
   books: Book[],
   view: 'grid' | 'table' = 'grid',
@@ -1296,5 +1307,151 @@ describe('AuthorDetailPage: manual refresh', () => {
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
     expect(screen.getByText('Provenance')).toBeInTheDocument()
     expect(api.listAllBooks).toHaveBeenLastCalledWith({ authorId: 42, includeExcluded: true })
+  })
+})
+
+describe('AuthorDetailPage — book link nav state (#2548, book side)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    installLocalStorageMock()
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([])
+  })
+
+  it('carries {ids, index} on book links and the row click, scoped to filteredBooks order', async () => {
+    vi.mocked(api.getAuthor).mockResolvedValue(author)
+    vi.mocked(api.listAllBooks).mockResolvedValue([
+      makeBook({ id: 10, title: 'The Final Empire', status: 'imported' }),
+      makeBook({ id: 11, title: 'The Well of Ascension', status: 'imported' }),
+    ])
+    localStorage.setItem('bindery.view.author-detail', 'table')
+
+    let capturedState: unknown
+    render(
+      <MemoryRouter initialEntries={['/author/42']}>
+        <StateProbe onState={s => { capturedState = s }} />
+        <Routes>
+          <Route path="/author/:id" element={<AuthorDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const row = (await screen.findByText('The Well of Ascension')).closest('tr')!
+    fireEvent.click(row)
+
+    await waitFor(() => expect(capturedState).toEqual({ ids: [10, 11], index: 1, hopDepth: 1 }))
+  })
+
+  it('carries {ids, index} on the grid card link too, not just the table row', async () => {
+    vi.mocked(api.getAuthor).mockResolvedValue(author)
+    vi.mocked(api.listAllBooks).mockResolvedValue([
+      makeBook({ id: 10, title: 'The Final Empire', status: 'imported' }),
+      makeBook({ id: 11, title: 'The Well of Ascension', status: 'imported' }),
+    ])
+    // No view override — grid is the page default, unlike the table-row test above.
+
+    let capturedState: unknown
+    render(
+      <MemoryRouter initialEntries={['/author/42']}>
+        <StateProbe onState={s => { capturedState = s }} />
+        <Routes>
+          <Route path="/author/:id" element={<AuthorDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const link = (await screen.findByRole('heading', { name: 'The Well of Ascension' })).closest('a')!
+    fireEvent.click(link)
+
+    await waitFor(() => expect(capturedState).toEqual({ ids: [10, 11], index: 1, hopDepth: 1 }))
+  })
+
+  it('follows the seriesGroups order for the nav chain when Group by series is on', async () => {
+    vi.mocked(api.getAuthor).mockResolvedValue(author)
+    vi.mocked(api.listAllBooks).mockResolvedValue([
+      makeBook({ id: 10, title: 'Elantris', status: 'imported' }),
+      makeBook({ id: 11, title: 'The Final Empire', status: 'imported' }),
+      makeBook({ id: 12, title: 'The Well of Ascension', status: 'imported' }),
+    ])
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([
+      {
+        id: 1, foreignSeriesId: 'OL-MB', title: 'Mistborn', description: '', monitored: true,
+        books: [
+          { seriesId: 1, bookId: 11, positionInSeries: '1' },
+          { seriesId: 1, bookId: 12, positionInSeries: '2' },
+        ],
+      },
+    ])
+    localStorage.setItem('bindery.view.author-detail', 'table')
+
+    let capturedState: unknown
+    render(
+      <MemoryRouter initialEntries={['/author/42']}>
+        <StateProbe onState={s => { capturedState = s }} />
+        <Routes>
+          <Route path="/author/:id" element={<AuthorDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Elantris')
+    fireEvent.click(screen.getByRole('switch', { name: 'Group by series' }))
+    // Confirms grouping is actually active: Elantris (no series) renders
+    // under Standalone, visually last, behind Mistborn's two books.
+    await screen.findByRole('heading', { name: /Standalone/ })
+
+    const row = screen.getByText('Elantris').closest('tr')!
+    fireEvent.click(row)
+
+    // Elantris is index 0 in filteredBooks (load order) but renders last
+    // under Standalone. #2548 asks for the order the user sees, so with
+    // grouping on the chain follows the series section (Mistborn's two
+    // books, in series order) then Standalone — Elantris lands at index 2.
+    await waitFor(() => expect(capturedState).toEqual({ ids: [11, 12, 10], index: 2, hopDepth: 1 }))
+  })
+
+  it('counts a book that appears in two series once, at its first-occurrence position', async () => {
+    vi.mocked(api.getAuthor).mockResolvedValue(author)
+    vi.mocked(api.listAllBooks).mockResolvedValue([
+      makeBook({ id: 10, title: 'Shadows of Self', status: 'imported' }),
+      makeBook({ id: 11, title: 'The Alloy of Law', status: 'imported' }),
+    ])
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([
+      {
+        id: 1, foreignSeriesId: 'OL-MB', title: 'Mistborn', description: '', monitored: true,
+        books: [
+          { seriesId: 1, bookId: 11, positionInSeries: '1' },
+          { seriesId: 1, bookId: 10, positionInSeries: '2' },
+        ],
+      },
+      {
+        id: 2, foreignSeriesId: 'OL-WA', title: 'Wax and Wayne', description: '', monitored: true,
+        books: [
+          { seriesId: 2, bookId: 11, positionInSeries: '1' },
+          { seriesId: 2, bookId: 10, positionInSeries: '2' },
+        ],
+      },
+    ])
+    localStorage.setItem('bindery.view.author-detail', 'table')
+
+    let capturedState: unknown
+    render(
+      <MemoryRouter initialEntries={['/author/42']}>
+        <StateProbe onState={s => { capturedState = s }} />
+        <Routes>
+          <Route path="/author/:id" element={<AuthorDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Shadows of Self')
+    fireEvent.click(screen.getByRole('switch', { name: 'Group by series' }))
+    await screen.findByRole('heading', { name: /Wax and Wayne/ })
+
+    // Both series list the same two books; the row under Mistborn (this
+    // book's first occurrence) is the one that determines its chain index.
+    const row = screen.getAllByText('The Alloy of Law')[0].closest('tr')!
+    fireEvent.click(row)
+
+    await waitFor(() => expect(capturedState).toEqual({ ids: [11, 10], index: 0, hopDepth: 1 }))
   })
 })

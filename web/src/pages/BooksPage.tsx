@@ -198,6 +198,14 @@ export default function BooksPage() {
     )
   }
 
+  // This page's loaded ids, in order — handed to BookDetailPage as router
+  // state (#2548) for Previous/Next; see BookNavState there.
+  const bookIds = books.map(b => b.id)
+  // hopDepth: 1 — this is the first hop into a book detail page from a list,
+  // not a further Previous/Next chain hop; see BookNavState in
+  // BookDetailPage.tsx for how Back uses it to skip the whole chain.
+  const bookNavState = (index: number) => ({ ids: bookIds, index, hopDepth: 1 })
+
   return (
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
       {confirmDialog}
@@ -353,11 +361,17 @@ export default function BooksPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
-                {books.map(book => (
+                {books.map((book, i) => (
                   <tr
                     key={book.id}
                     className={`hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer ${selectedIds.has(book.id) ? 'bg-emerald-500/10 dark:bg-emerald-500/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'}`}
-                    onClick={() => (window.location.href = `${BINDERY_BASE}/book/${book.id}`)}
+                    // Client-side, matching the <Link> in this same row (was a
+                    // full page reload via window.location.href while the
+                    // link inside it routed client-side, so one row had two
+                    // different navigation behaviours — also the reason
+                    // Previous/Next state couldn't reach the detail page from
+                    // anywhere in the row except the title text).
+                    onClick={() => navigate(`/book/${book.id}`, { state: bookNavState(i) })}
                   >
                     <td className="px-3 py-2 w-8" onClick={e => e.stopPropagation()}>
                       <input
@@ -368,7 +382,7 @@ export default function BooksPage() {
                       />
                     </td>
                     <td className="px-3 py-2">
-                      <Link to={`/book/${book.id}`} className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                      <Link to={`/book/${book.id}`} state={bookNavState(i)} className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
                         {book.imageUrl ? (
                           <img src={book.imageUrl} alt="" className="w-6 h-9 object-cover rounded flex-shrink-0" />
                         ) : (
@@ -414,7 +428,7 @@ export default function BooksPage() {
         </div>
         ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {books.map(book => (
+          {books.map((book, i) => (
             <div
               key={book.id}
               className={`border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden group text-left transition-colors ${selectedIds.has(book.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800 hover:border-emerald-500'}`}
@@ -428,7 +442,7 @@ export default function BooksPage() {
                   title={`Select ${book.title}`}
                   onClick={e => e.stopPropagation()}
                 />
-                <Link to={`/book/${book.id}`} className="block w-full h-full">
+                <Link to={`/book/${book.id}`} state={bookNavState(i)} className="block w-full h-full">
                   {book.imageUrl ? (
                     <img src={book.imageUrl} alt={book.title} className="w-full h-full object-cover" />
                   ) : (

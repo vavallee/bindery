@@ -154,6 +154,13 @@ export default function WantedPage() {
 
   const { pageItems, paginationProps, reset } = usePagination(filtered, 50, 'wanted')
 
+  // This page's loaded ids, in order — handed to BookDetailPage as router
+  // state (#2548) for Previous/Next; see BookNavState there. Scoped to
+  // pageItems (this page's client-side-paginated slice), not the full
+  // filtered list — matches the "only as far as what's currently loaded"
+  // rule used by BooksPage/AuthorDetailPage.
+  const pageItemIds = pageItems.map(b => b.id)
+
   useEffect(() => { reset() }, [search, reset])
 
   // Keep the select-all checkbox indeterminate state in sync.
@@ -300,6 +307,9 @@ export default function WantedPage() {
                   <div className="min-w-0">
                     <Link
                       to={`/book/${book.id}`}
+                      // hopDepth: 1 — first hop into a book detail page from
+                      // this list, not a further Previous/Next chain hop.
+                      state={{ ids: pageItemIds, index: i, hopDepth: 1 }}
                       className="block truncate text-sm font-medium text-slate-800 dark:text-zinc-200 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
                     >
                       {book.title}

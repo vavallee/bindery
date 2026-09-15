@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, BINDERY_BASE, Book, HistoryEvent, MediaType, SearchResult, SearchDebug, Series } from '../api/client'
 import SearchDebugPanel from '../components/SearchDebugPanel'
@@ -244,10 +244,42 @@ export function SearchResultsSection({
 // to prevent.
 const actionBtnCls = `${btn.secondary} ${btnSize.md}`
 
+// Previous/Next navigation (#2548, book side), entirely client-side:
+// BooksPage, AuthorDetailPage's own book list, and WantedPage already have
+// their current page loaded and ordered, so each hands it over as router
+// `state` instead of this page re-fetching it. Not shared as an exported type
+// — each list page builds the same shape independently.
+interface BookNavState {
+  ids: number[]
+  index: number
+  // How many consecutive book-detail pages deep this hop is from the
+  // originating list page — 1 on the first hop in from a list, +1 on every
+  // further Previous/Next. Back uses it to jump back over the WHOLE chain in
+  // one step (navigate(-hopDepth)) instead of landing one book short after a
+  // few hops. Not a hard-coded destination (e.g. always "/") because a book
+  // can be reached from five different lists, so there's no single canonical
+  // one to jump to instead — counting hops and walking back that many history
+  // entries works regardless of where the chain started.
+  hopDepth: number
+}
+
 export default function BookDetailPage() {
+  const { id } = useParams<{ id: string }>()
+  // Remounts on every id change rather than trying to individually reset the
+  // many book-scoped state variables below (search results, delete/
+  // deregister/fix-match targets, series membership, ASIN draft, clipboard
+  // flags, ...). A Previous/Next hop only changes the :id param — react-router
+  // does not remount the element for that alone — and auditing every one of
+  // those ~10 async handlers for staleness one by one would be easy to get
+  // wrong; a full remount resets all of it at once and can't miss one.
+  return <BookDetailPageInner key={id} />
+}
+
+function BookDetailPageInner() {
   const { t } = useTranslation()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const bookId = Number(id)
 
   const [book, setBook] = useState<Book | null>(null)
@@ -542,8 +574,95 @@ export default function BookDetailPage() {
     await idClipboard.copy(value)
   }
 
-  if (loading) return <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
-  if (!book) return <div className="text-slate-600 dark:text-zinc-500">{t('bookDetail.notFound')}</div>
+  // Validated against bookId: stale state (browser back/forward) or no state
+  // at all (opened from somewhere that never set it) must read as "no nav
+  // info", not point at the wrong neighbour. hopDepth normalizes to 1 rather
+  // than invalidating the whole state if a producer ever omits it.
+  const navState = (() => {
+    const s = location.state as Partial<BookNavState> | null
+    if (s && Array.isArray(s.ids) && typeof s.index === 'number' && s.ids[s.index] === bookId) {
+      const hopDepth = typeof s.hopDepth === 'number' && s.hopDepth > 0 ? s.hopDepth : 1
+      return { ids: s.ids, index: s.index, hopDepth }
+    }
+    return null
+  })()
+  const prevId = navState && navState.index > 0 ? navState.ids[navState.index - 1] : null
+  const nextId = navState && navState.index < navState.ids.length - 1 ? navState.ids[navState.index + 1] : null
+  // Back skips the entire Previous/Next chain in one jump rather than landing
+  // one book short — see the hopDepth comment on BookNavState above.
+  const backSteps = navState ? navState.hopDepth : 1
+  // Both Prev/Next Links below carry the same ids and incremented hopDepth,
+  // only the index differs — built once rather than duplicating the object
+  // at each Link.
+  const navStateFor = (index: number): BookNavState | undefined =>
+    navState ? { ids: navState.ids, index, hopDepth: navState.hopDepth + 1 } : undefined
+
+  // Depends only on navState/backSteps, not on `book`, so it renders the same
+  // above the loading and not-found returns below as it does in the loaded
+  // page — otherwise every hop blanked the header while the next book
+  // loaded, and a book deleted since the list loaded stranded the visitor on
+  // "Book not found" with no Back or Previous to get out with. (Focus itself
+  // lands on <body> on every hop either way, since key={id} on the outer
+  // component remounts this whole subtree regardless of where this row sits
+  // within it — not something this change affects.)
+  const navRow = (
+    <div className="mb-4 flex items-center justify-between gap-3 text-sm">
+      {/* No hard-coded destination — a book can be reached from five
+          different lists (Books, an author's own book list, Wanted, a
+          series, a direct link), so there is no single canonical "the
+          list" to name. Instead this walks back exactly as many history
+          entries as the Previous/Next chain is deep (backSteps), landing
+          on whichever list actually started it rather than one book
+          short. */}
+      <button
+        onClick={() => navigate(-backSteps)}
+        className="text-emerald-600 dark:text-emerald-400 hover:underline"
+      >
+        {t('bookDetail.back')}
+      </button>
+      {navState && (prevId !== null || nextId !== null) && (
+        <div className="flex items-center gap-2">
+          {prevId !== null && (
+            <Link
+              to={`/book/${prevId}`}
+              state={navStateFor(navState.index - 1)}
+              aria-label={t('bookDetail.nav.previousAriaLabel', 'Previous book')}
+              className={`${btn.ghost} ${btnSize.sm}`}
+            >
+              {t('bookDetail.nav.previous', '‹ Previous')}
+            </Link>
+          )}
+          {nextId !== null && (
+            <Link
+              to={`/book/${nextId}`}
+              state={navStateFor(navState.index + 1)}
+              aria-label={t('bookDetail.nav.nextAriaLabel', 'Next book')}
+              className={`${btn.ghost} ${btnSize.sm}`}
+            >
+              {t('bookDetail.nav.next', 'Next ›')}
+            </Link>
+          )}
+        </div>
+      )}
+    </div>
+  )
+
+  if (loading) {
+    return (
+      <div className="max-w-7xl">
+        {navRow}
+        <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
+      </div>
+    )
+  }
+  if (!book) {
+    return (
+      <div className="max-w-7xl">
+        {navRow}
+        <div className="text-slate-600 dark:text-zinc-500">{t('bookDetail.notFound')}</div>
+      </div>
+    )
+  }
 
   const mt: MediaType = book.mediaType || 'ebook'
 
@@ -636,14 +755,7 @@ export default function BookDetailPage() {
     // (7xl vs 4xl), so author → book collapsed the content by 384px and
     // left-aligned it mid-navigation.
     <div className="max-w-7xl">
-      <div className="mb-4 flex items-center gap-3 text-sm">
-        <button
-          onClick={() => navigate(-1)}
-          className="text-emerald-600 dark:text-emerald-400 hover:underline"
-        >
-          {t('bookDetail.back')}
-        </button>
-      </div>
+      {navRow}
 
       {/* ===== Header: cover + metadata ===== */}
       <div className="flex flex-col sm:flex-row gap-6">

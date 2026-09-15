@@ -1,6 +1,7 @@
+import { useEffect } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import BookDetailPage, { SearchResultsSection } from './BookDetailPage'
 import { api } from '../api/client'
 import type { Author, Book, BookFile, Download, HistoryEvent, Indexer, SearchResult } from '../api/client'
@@ -168,13 +169,45 @@ function makeDownload(overrides: Partial<Download> = {}): Download {
   }
 }
 
-function renderBookDetailPage() {
+type NavEntry = string | { pathname: string; state?: unknown }
+
+function LocationProbe({ onLocation }: { onLocation?: (location: string) => void }) {
+  const location = useLocation()
+  useEffect(() => {
+    onLocation?.(`${location.pathname}${location.search}${location.hash}`)
+  }, [location, onLocation])
+  return null
+}
+
+// Unlike LocationProbe above, this also exposes router `state` — needed to
+// verify the exact {ids, index, hopDepth} payload a Previous/Next hop
+// carries, not just where it lands.
+function StateProbe({ onState }: { onState?: (state: unknown) => void }) {
+  const location = useLocation()
+  useEffect(() => {
+    onState?.(location.state)
+  }, [location, onState])
+  return null
+}
+
+function renderBookDetailPage(
+  initialPath: NavEntry | NavEntry[] = '/book/42',
+  onLocation?: (location: string) => void,
+  onState?: (state: unknown) => void,
+) {
+  // A multi-entry array simulates real browser history (e.g. arriving from
+  // the Books list) so Back's navigate(-1) has somewhere to land.
+  const initialEntries = Array.isArray(initialPath) ? initialPath : [initialPath]
+
   return render(
-    <MemoryRouter initialEntries={['/book/42']}>
+    <MemoryRouter initialEntries={initialEntries} initialIndex={initialEntries.length - 1}>
+      <LocationProbe onLocation={onLocation} />
+      <StateProbe onState={onState} />
       <Routes>
         <Route path="/book/:id" element={<BookDetailPage />} />
         <Route path="/settings" element={<div>Settings Page</div>} />
         <Route path="/author/:id" element={<div>Author Page</div>} />
+        <Route path="/books" element={<div>Books Page</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -1368,5 +1401,233 @@ describe('BookDetailPage — monitor toggle (#2417)', () => {
 
     await act(async () => { settle?.(makeBook({ monitored: false })) })
     expect(await screen.findByRole('switch', { name: 'Monitor' })).toBeEnabled()
+  })
+})
+
+describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () => {
+  it('hides the controls when there is no router state at all (opened from Wanted, a search result, or after a refresh)', async () => {
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.queryByLabelText('Previous book')).toBeNull()
+    expect(screen.queryByLabelText('Next book')).toBeNull()
+  })
+
+  it('renders Previous/Next from router state and follows Next to the right id, carrying the chain state', async () => {
+    let lastLocation = ''
+    let capturedState: unknown
+    vi.mocked(api.getBook).mockImplementation((id: number) =>
+      Promise.resolve(makeBook({ id, title: id === 42 ? 'The Final Empire' : 'The Well of Ascension' })))
+    renderBookDetailPage(
+      { pathname: '/book/42', state: { ids: [40, 42, 43, 44, 45], index: 1, hopDepth: 1 } },
+      loc => { lastLocation = loc },
+      s => { capturedState = s },
+    )
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByLabelText('Next book'))
+
+    await waitFor(() => expect(lastLocation).toBe('/book/43'))
+    await screen.findByRole('heading', { name: 'The Well of Ascension' })
+    // index moves 1 -> 2 and hopDepth increments 1 -> 2 — the actual payload
+    // the next hop's Previous/Next links will carry, not just where we landed.
+    expect(capturedState).toEqual({ ids: [40, 42, 43, 44, 45], index: 2, hopDepth: 2 })
+  })
+
+  it('follows Previous to the right id, carrying the chain state (Previous is a separate code path from Next)', async () => {
+    let lastLocation = ''
+    let capturedState: unknown
+    vi.mocked(api.getBook).mockImplementation((id: number) =>
+      Promise.resolve(makeBook({ id, title: id === 42 ? 'The Final Empire' : 'Mistborn Prequel' })))
+    renderBookDetailPage(
+      { pathname: '/book/42', state: { ids: [40, 42, 43, 44, 45], index: 1, hopDepth: 1 } },
+      loc => { lastLocation = loc },
+      s => { capturedState = s },
+    )
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByLabelText('Previous book'))
+
+    await waitFor(() => expect(lastLocation).toBe('/book/40'))
+    await screen.findByRole('heading', { name: 'Mistborn Prequel' })
+    expect(capturedState).toEqual({ ids: [40, 42, 43, 44, 45], index: 0, hopDepth: 2 })
+  })
+
+  it('hides Previous at the first position and shows only Next', async () => {
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [42, 43], index: 0 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.queryByLabelText('Previous book')).toBeNull()
+    expect(screen.getByLabelText('Next book')).toBeInTheDocument()
+  })
+
+  it('hides Next at the last position and shows only Previous', async () => {
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [41, 42], index: 1 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.getByLabelText('Previous book')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Next book')).toBeNull()
+  })
+
+  it('hides the controls for a single-book list (both ends null)', async () => {
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [42], index: 0 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.queryByLabelText('Previous book')).toBeNull()
+    expect(screen.queryByLabelText('Next book')).toBeNull()
+  })
+
+  it('ignores state that does not match this book (stale browser back/forward state)', async () => {
+    // ids[index] is 99, not 42 — a mismatch that must be treated as no
+    // navigation info rather than pointing at the wrong neighbour.
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [98, 99, 100], index: 1 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.queryByLabelText('Previous book')).toBeNull()
+    expect(screen.queryByLabelText('Next book')).toBeNull()
+  })
+
+  it('Back always uses browser history, even inside a Previous/Next chain, since there is no single canonical list to jump to', async () => {
+    let lastLocation = ''
+    renderBookDetailPage(
+      ['/books', { pathname: '/book/42', state: { ids: [40, 42, 43], index: 1 } }],
+      loc => { lastLocation = loc },
+    )
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByText('← Books'))
+
+    await waitFor(() => expect(lastLocation).toBe('/books'))
+  })
+
+  it('Back skips the entire Previous/Next chain in one jump, not just the immediately previous book, after several hops', async () => {
+    let lastLocation = ''
+    vi.mocked(api.getBook).mockImplementation((id: number) => Promise.resolve(makeBook({
+      id,
+      title: id === 42 ? 'The Final Empire' : id === 43 ? 'The Well of Ascension' : 'The Hero of Ages',
+    })))
+    // History: /books (index 0), then two real hops in via Next (indices 1
+    // and 2) before landing here — hopDepth on the current page reflects
+    // that depth, and Back must walk back all of it in a single navigate(),
+    // not just the one entry a plain navigate(-1) would undo.
+    renderBookDetailPage(
+      ['/books', { pathname: '/book/42', state: { ids: [42, 43, 44], index: 0, hopDepth: 1 } }],
+      loc => { lastLocation = loc },
+    )
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByLabelText('Next book'))
+    await screen.findByRole('heading', { name: 'The Well of Ascension' })
+
+    fireEvent.click(screen.getByLabelText('Next book'))
+    await screen.findByRole('heading', { name: 'The Hero of Ages' })
+
+    fireEvent.click(screen.getByText('← Books'))
+
+    // Without hopDepth, navigate(-1) would only undo the last hop, landing
+    // back on "The Well of Ascension" — one book short of the list.
+    await waitFor(() => expect(lastLocation).toBe('/books'))
+  })
+
+  it('clears stale search results from the previous book after Next, proving the key-remount actually resets state', async () => {
+    vi.mocked(api.getBook).mockImplementation((id: number) =>
+      Promise.resolve(makeBook({ id, title: id === 42 ? 'The Final Empire' : 'The Well of Ascension' })))
+    vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
+    vi.mocked(api.searchBook).mockResolvedValue({
+      results: [makeResult({ guid: 'r1', title: 'A Result For Book 42' })],
+      debug: null,
+    })
+
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [42, 43], index: 0 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByRole('button', { name: /Search ebook indexers/ }))
+    expect(await screen.findByText('A Result For Book 42')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Next book'))
+    await screen.findByRole('heading', { name: 'The Well of Ascension' })
+
+    // Without the remount, `results` would still hold book 42's search hit.
+    expect(screen.queryByText('A Result For Book 42')).not.toBeInTheDocument()
+  })
+
+  // The load effect's own setAsinDraft(b.asin || '') on every id change would
+  // mask a removed key={id} here — asinDraft resets whether or not the page
+  // remounts, so this doesn't actually prove the remount does anything.
+  it('clears a typed ASIN draft from the previous book after Next (remount resets more than just search results)', async () => {
+    vi.mocked(api.getBook).mockImplementation((id: number) => Promise.resolve(makeBook({
+      id,
+      title: id === 42 ? 'The Final Empire' : 'The Well of Ascension',
+      mediaType: 'audiobook',
+    })))
+
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [42, 43], index: 0 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    const asinInput = screen.getByLabelText('ASIN (Audible identifier)') as HTMLInputElement
+    fireEvent.change(asinInput, { target: { value: 'B0DRAFTVALUE' } })
+    expect(asinInput).toHaveValue('B0DRAFTVALUE')
+
+    fireEvent.click(screen.getByLabelText('Next book'))
+    await screen.findByRole('heading', { name: 'The Well of Ascension' })
+
+    // Without the remount, asinDraft would still hold book 42's typed value.
+    expect(screen.getByLabelText('ASIN (Audible identifier)')).toHaveValue('')
+  })
+
+  // Unlike asinDraft above, nothing in the load effect touches `error` on a
+  // successful load — it's only ever cleared by the action that set it. If
+  // key={id} were removed, book 43's page would render with book 42's stale
+  // save-failure banner still up, since nothing else resets it.
+  it('clears a failed-save error banner from the previous book after Next', async () => {
+    vi.mocked(api.getBook).mockImplementation((id: number) =>
+      Promise.resolve(makeBook({ id, title: id === 42 ? 'The Final Empire' : 'The Well of Ascension' })))
+    vi.mocked(api.updateBook).mockRejectedValue(new Error('Save failed'))
+
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [42, 43], index: 0 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Unmonitor' }))
+    expect(await screen.findByText('Save failed')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Next book'))
+    await screen.findByRole('heading', { name: 'The Well of Ascension' })
+
+    // Without the remount, the banner from book 42's failed save would still
+    // be showing here — the load effect never clears `error` on success.
+    expect(screen.queryByText('Save failed')).not.toBeInTheDocument()
+  })
+
+  // The nav row used to sit below the loading/not-found early returns, so a
+  // book deleted since the list loaded stranded the visitor on "Book not
+  // found" with no way out except a manual URL edit.
+  it('keeps Back and Previous/Next available when the current book in the chain is not found', async () => {
+    vi.mocked(api.getBook).mockImplementation((id: number) =>
+      id === 43 ? Promise.reject(new Error('not found')) : Promise.resolve(makeBook({ id })))
+
+    renderBookDetailPage({ pathname: '/book/43', state: { ids: [42, 43, 44], index: 1, hopDepth: 1 } })
+
+    await screen.findByText('Book not found')
+    expect(screen.getByText('← Books')).toBeInTheDocument()
+    expect(screen.getByLabelText('Previous book')).toBeInTheDocument()
+    expect(screen.getByLabelText('Next book')).toBeInTheDocument()
+  })
+
+  // The loading branch is the one every single hop passes through (briefly),
+  // unlike not-found above which only hits on a deleted book — so this is the
+  // common case the reordered nav row actually fixes.
+  it('keeps Back and Previous/Next available while the next book is still loading', async () => {
+    let settle: ((book: Book) => void) | undefined
+    vi.mocked(api.getBook)
+      .mockResolvedValueOnce(makeBook({ id: 42 }))
+      .mockImplementationOnce(() => new Promise<Book>(resolve => { settle = resolve }))
+
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [42, 43, 44], index: 0 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByLabelText('Next book'))
+
+    expect(await screen.findByText('Loading...')).toBeInTheDocument()
+    expect(screen.getByText('← Books')).toBeInTheDocument()
+    expect(screen.getByLabelText('Previous book')).toBeInTheDocument()
+    expect(screen.getByLabelText('Next book')).toBeInTheDocument()
+
+    await act(async () => { settle?.(makeBook({ id: 43, title: 'The Well of Ascension' })) })
+    await screen.findByRole('heading', { name: 'The Well of Ascension' })
   })
 })
