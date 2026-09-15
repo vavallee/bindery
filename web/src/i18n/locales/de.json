@@ -429,6 +429,9 @@
     }
   },
   "addToLibrary": {
+    "inLibrary": "In deiner Bibliothek",
+    "open": "Öffnen",
+    "openBook": "{{title}} öffnen",
     "searching": "Suche läuft...",
     "select": "Auswählen",
     "selectBook": "{{title}} auswählen",
@@ -567,7 +570,7 @@
     "copied": "Copied",
     "copyPath": "Copy file path to clipboard",
     "download": "Download",
-    "rebind": "Re-bind",
+    "rebind": "Neu zuordnen",
     "exclude": "Exclude",
     "unexclude": "Un-exclude",
     "excludeHint": "Exclude this book from searches and the Wanted page",
@@ -606,5 +609,33 @@
       "bookFileRenamed": "File renamed",
       "ignored": "Release ignored"
     }
+  },
+  "bookRebind": {
+    "title": "Metadaten neu zuordnen",
+    "description": "Wähle einen Metadatensatz für „{{title}}“. Dadurch werden die Metadaten und Serienzuordnungen des Buchs aktualisiert, ohne seine Dateien zu verschieben.",
+    "method": "Metadatensatz finden",
+    "search": "Metadaten suchen",
+    "manual": "ID eingeben",
+    "query": "Titel, Autor, ISBN oder ASIN",
+    "searchButton": "Suchen",
+    "searching": "Suche läuft…",
+    "searchHint": "Durchsuche die konfigurierten Metadatenanbieter. Für die Neuzuordnung können OpenLibrary-Werke und Hardcover-Bücher verwendet werden.",
+    "resultCount": "Ergebnisse: {{count}} — wähle das richtige Buch.",
+    "noResults": "Keine passenden Einträge bei OpenLibrary oder Hardcover gefunden. Versuche einen anderen Titel oder gib eine genaue ID ein.",
+    "choose": "Buch auswählen",
+    "unknownAuthor": "Unbekannter Autor",
+    "provider": "Anbieter",
+    "identifier": "Externe ID",
+    "openlibraryHint": "Gib eine OpenLibrary-Werk-ID ein, zum Beispiel OL12345W.",
+    "editionHint": "Dies ist eine Ausgabe. Die Neuzuordnung erfordert ein OpenLibrary-Werk. Suche nach dem Titel oder gib die Werk-ID ein.",
+    "hardcoverHint": "Gib den Slug oder die numerische ID des Hardcover-Buchs mit dem Präfix hc: ein.",
+    "searchFailed": "Suche fehlgeschlagen. Versuche es erneut oder gib eine genaue ID ein.",
+    "conflict": "Dieser Metadatensatz steht im Konflikt mit einem vorhandenen Buch.",
+    "failed": "Neuzuordnung fehlgeschlagen. Versuche es erneut.",
+    "authorMismatch": "Autoren stimmen nicht überein",
+    "authorMismatchHint": "Dieser Datensatz gehört zu {{upstream}}, aber das Buch ist {{current}} zugeordnet. Ordne es trotzdem neu zu oder gehe zurück und wähle einen anderen Datensatz.",
+    "back": "Zurück",
+    "force": "Trotzdem neu zuordnen",
+    "submitting": "Wird neu zugeordnet…"
   }
 }

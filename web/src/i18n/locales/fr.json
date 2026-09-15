@@ -431,6 +431,9 @@
     }
   },
   "addToLibrary": {
+    "inLibrary": "Dans votre bibliothèque",
+    "open": "Ouvrir",
+    "openBook": "Ouvrir {{title}}",
     "searching": "Recherche en cours...",
     "select": "Sélectionner",
     "selectBook": "Sélectionner {{title}}",
@@ -569,7 +572,7 @@
     "copied": "Copied",
     "copyPath": "Copy file path to clipboard",
     "download": "Download",
-    "rebind": "Re-bind",
+    "rebind": "Réassocier",
     "exclude": "Exclude",
     "unexclude": "Un-exclude",
     "excludeHint": "Exclude this book from searches and the Wanted page",
@@ -608,5 +611,33 @@
       "bookFileRenamed": "File renamed",
       "ignored": "Release ignored"
     }
+  },
+  "bookRebind": {
+    "title": "Réassocier les métadonnées",
+    "description": "Choisissez une fiche de métadonnées pour « {{title}} ». Les métadonnées et les séries du livre seront mises à jour sans déplacer ses fichiers.",
+    "method": "Trouver une fiche de métadonnées",
+    "search": "Rechercher des métadonnées",
+    "manual": "Saisir un identifiant",
+    "query": "Titre, auteur, ISBN ou ASIN",
+    "searchButton": "Rechercher",
+    "searching": "Recherche en cours…",
+    "searchHint": "Recherchez auprès des fournisseurs de métadonnées configurés. Vous pouvez réassocier le livre à une œuvre OpenLibrary ou à un livre Hardcover.",
+    "resultCount": "Résultats : {{count}} — choisissez le bon livre.",
+    "noResults": "Aucune correspondance trouvée sur OpenLibrary ou Hardcover. Essayez un autre titre ou saisissez un identifiant exact.",
+    "choose": "Choisir un livre",
+    "unknownAuthor": "Auteur inconnu",
+    "provider": "Fournisseur",
+    "identifier": "Identifiant externe",
+    "openlibraryHint": "Saisissez un identifiant d’œuvre OpenLibrary, par exemple OL12345W.",
+    "editionHint": "Il s’agit d’une édition. La réassociation nécessite une œuvre OpenLibrary ; recherchez par titre ou saisissez l’identifiant de l’œuvre.",
+    "hardcoverHint": "Saisissez le slug ou l’identifiant numérique du livre Hardcover, précédé de hc:.",
+    "searchFailed": "La recherche a échoué. Réessayez ou saisissez un identifiant exact.",
+    "conflict": "Cette fiche de métadonnées entre en conflit avec un livre existant.",
+    "failed": "La réassociation a échoué. Réessayez.",
+    "authorMismatch": "Les auteurs ne correspondent pas",
+    "authorMismatchHint": "Cette fiche correspond à {{upstream}}, mais le livre est attribué à {{current}}. Réassociez quand même, ou revenez en arrière pour choisir une autre fiche.",
+    "back": "Retour",
+    "force": "Réassocier quand même",
+    "submitting": "Réassociation en cours…"
   }
 }

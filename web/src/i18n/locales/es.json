@@ -471,6 +471,9 @@
     }
   },
   "addToLibrary": {
+    "inLibrary": "En tu biblioteca",
+    "open": "Abrir",
+    "openBook": "Abrir {{title}}",
     "searching": "Buscando...",
     "select": "Seleccionar",
     "selectBook": "Seleccionar {{title}}",
@@ -598,7 +601,7 @@
     "copied": "Copied",
     "copyPath": "Copy file path to clipboard",
     "download": "Download",
-    "rebind": "Re-bind",
+    "rebind": "Volver a vincular",
     "exclude": "Exclude",
     "unexclude": "Un-exclude",
     "excludeHint": "Exclude this book from searches and the Wanted page",
@@ -637,5 +640,33 @@
       "bookFileRenamed": "File renamed",
       "ignored": "Release ignored"
     }
+  },
+  "bookRebind": {
+    "title": "Volver a vincular los metadatos",
+    "description": "Elige un registro de metadatos para «{{title}}». Se actualizarán los metadatos y las series del libro sin mover sus archivos.",
+    "method": "Buscar un registro de metadatos",
+    "search": "Buscar metadatos",
+    "manual": "Introducir un ID",
+    "query": "Título, autor, ISBN o ASIN",
+    "searchButton": "Buscar",
+    "searching": "Buscando…",
+    "searchHint": "Busca en los proveedores de metadatos configurados. Puedes volver a vincular el libro a una obra de OpenLibrary o a un libro de Hardcover.",
+    "resultCount": "Resultados: {{count}} — elige el libro correcto.",
+    "noResults": "No se encontraron coincidencias en OpenLibrary ni en Hardcover. Prueba con otro título o introduce un ID exacto.",
+    "choose": "Elegir un libro",
+    "unknownAuthor": "Autor desconocido",
+    "provider": "Proveedor",
+    "identifier": "ID externo",
+    "openlibraryHint": "Introduce un ID de obra de OpenLibrary, como OL12345W.",
+    "editionHint": "Esta es una edición. Para volver a vincular se necesita una obra de OpenLibrary; busca por título o introduce el ID de la obra.",
+    "hardcoverHint": "Introduce el slug o el ID numérico del libro de Hardcover con el prefijo hc:.",
+    "searchFailed": "La búsqueda falló. Inténtalo de nuevo o introduce un ID exacto.",
+    "conflict": "Este registro de metadatos entra en conflicto con un libro existente.",
+    "failed": "No se pudo volver a vincular. Inténtalo de nuevo.",
+    "authorMismatch": "Los autores no coinciden",
+    "authorMismatchHint": "Este registro corresponde a {{upstream}}, pero el libro está atribuido a {{current}}. Vuelve a vincularlo de todos modos o regresa y elige otro registro.",
+    "back": "Atrás",
+    "force": "Volver a vincular de todos modos",
+    "submitting": "Volviendo a vincular…"
   }
 }

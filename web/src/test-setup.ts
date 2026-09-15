@@ -27,6 +27,12 @@ function resolveRelativeApiURL(input: RequestInfo | URL): RequestInfo | URL {
 }
 
 beforeAll(() => {
+  // jsdom lacks native dialog methods. Model the open state for component
+  // tests; browser checks cover focus trapping and Escape behavior.
+  Object.defineProperties(HTMLDialogElement.prototype, {
+    showModal: { configurable: true, value: function (this: HTMLDialogElement) { this.setAttribute('open', '') } },
+    close: { configurable: true, value: function (this: HTMLDialogElement) { this.removeAttribute('open') } },
+  })
   server.listen({ onUnhandledRequest: 'error' })
   mswFetch = globalThis.fetch
 

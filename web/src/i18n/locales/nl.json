@@ -429,6 +429,9 @@
     }
   },
   "addToLibrary": {
+    "inLibrary": "In je bibliotheek",
+    "open": "Openen",
+    "openBook": "{{title}} openen",
     "searching": "Zoeken...",
     "select": "Selecteren",
     "selectBook": "{{title}} selecteren",
@@ -567,7 +570,7 @@
     "copied": "Copied",
     "copyPath": "Copy file path to clipboard",
     "download": "Download",
-    "rebind": "Re-bind",
+    "rebind": "Opnieuw koppelen",
     "exclude": "Exclude",
     "unexclude": "Un-exclude",
     "excludeHint": "Exclude this book from searches and the Wanted page",
@@ -606,5 +609,33 @@
       "bookFileRenamed": "File renamed",
       "ignored": "Release ignored"
     }
+  },
+  "bookRebind": {
+    "title": "Metadata opnieuw koppelen",
+    "description": "Kies een metadatarecord voor ‘{{title}}’. Hiermee worden de metadata en series van het boek bijgewerkt zonder de bestanden te verplaatsen.",
+    "method": "Een metadatarecord zoeken",
+    "search": "Metadata zoeken",
+    "manual": "Een ID invoeren",
+    "query": "Titel, auteur, ISBN of ASIN",
+    "searchButton": "Zoeken",
+    "searching": "Bezig met zoeken…",
+    "searchHint": "Zoek bij de ingestelde metadataproviders. Je kunt het boek opnieuw koppelen aan een OpenLibrary-werk of een Hardcover-boek.",
+    "resultCount": "Resultaten: {{count}} — kies het juiste boek.",
+    "noResults": "Geen overeenkomsten gevonden bij OpenLibrary of Hardcover. Probeer een andere titel of voer een exacte ID in.",
+    "choose": "Een boek kiezen",
+    "unknownAuthor": "Onbekende auteur",
+    "provider": "Provider",
+    "identifier": "Externe ID",
+    "openlibraryHint": "Voer een OpenLibrary-werk-ID in, bijvoorbeeld OL12345W.",
+    "editionHint": "Dit is een editie. Opnieuw koppelen vereist een OpenLibrary-werk; zoek op titel of voer de werk-ID in.",
+    "hardcoverHint": "Voer de slug of numerieke ID van het Hardcover-boek in, voorafgegaan door hc:.",
+    "searchFailed": "Zoeken mislukt. Probeer het opnieuw of voer een exacte ID in.",
+    "conflict": "Dit metadatarecord is in conflict met een bestaand boek.",
+    "failed": "Opnieuw koppelen mislukt. Probeer het opnieuw.",
+    "authorMismatch": "Auteurs komen niet overeen",
+    "authorMismatchHint": "Dit record hoort bij {{upstream}}, maar het boek is toegeschreven aan {{current}}. Koppel toch opnieuw of ga terug en kies een ander record.",
+    "back": "Terug",
+    "force": "Toch opnieuw koppelen",
+    "submitting": "Bezig met opnieuw koppelen…"
   }
 }

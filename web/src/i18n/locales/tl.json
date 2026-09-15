@@ -467,6 +467,9 @@
     }
   },
   "addToLibrary": {
+    "inLibrary": "Nasa iyong aklatan",
+    "open": "Buksan",
+    "openBook": "Buksan ang {{title}}",
     "searching": "Naghahanap...",
     "select": "Piliin",
     "selectBook": "Piliin ang {{title}}",
@@ -592,7 +595,7 @@
     "copied": "Copied",
     "copyPath": "Copy file path to clipboard",
     "download": "Download",
-    "rebind": "Re-bind",
+    "rebind": "Muling iugnay",
     "exclude": "Exclude",
     "unexclude": "Un-exclude",
     "excludeHint": "Exclude this book from searches and the Wanted page",
@@ -631,5 +634,33 @@
       "bookFileRenamed": "File renamed",
       "ignored": "Release ignored"
     }
+  },
+  "bookRebind": {
+    "title": "Muling iugnay ang metadata",
+    "description": "Pumili ng tala ng metadata para sa “{{title}}”. Maa-update nito ang metadata at mga serye ng aklat nang hindi inililipat ang mga file nito.",
+    "method": "Maghanap ng tala ng metadata",
+    "search": "Maghanap ng metadata",
+    "manual": "Maglagay ng ID",
+    "query": "Pamagat, may-akda, ISBN o ASIN",
+    "searchButton": "Maghanap",
+    "searching": "Naghahanap…",
+    "searchHint": "Maghanap sa mga naka-configure na provider ng metadata. Maaaring muling iugnay ang aklat sa isang akda sa OpenLibrary o aklat sa Hardcover.",
+    "resultCount": "Mga resulta: {{count}} — piliin ang tamang aklat.",
+    "noResults": "Walang nakitang tugma sa OpenLibrary o Hardcover. Subukan ang ibang pamagat o maglagay ng eksaktong ID.",
+    "choose": "Pumili ng aklat",
+    "unknownAuthor": "Hindi kilalang may-akda",
+    "provider": "Provider",
+    "identifier": "Panlabas na ID",
+    "openlibraryHint": "Maglagay ng ID ng akda sa OpenLibrary, tulad ng OL12345W.",
+    "editionHint": "Isa itong edisyon. Kailangan ng akda sa OpenLibrary para muling maiugnay; maghanap gamit ang pamagat o ilagay ang ID ng akda.",
+    "hardcoverHint": "Maglagay ng slug o numerong ID ng aklat sa Hardcover, na may hc: sa unahan.",
+    "searchFailed": "Nabigo ang paghahanap. Subukang muli o maglagay ng eksaktong ID.",
+    "conflict": "Sumasalungat ang talang ito ng metadata sa isang umiiral na aklat.",
+    "failed": "Nabigo ang muling pag-uugnay. Subukang muli.",
+    "authorMismatch": "Hindi magkatugma ang mga may-akda",
+    "authorMismatchHint": "Ang talang ito ay para kay {{upstream}}, ngunit ang aklat ay nakatala kay {{current}}. Ituloy ang muling pag-uugnay, o bumalik at pumili ng ibang tala.",
+    "back": "Bumalik",
+    "force": "Ituloy ang muling pag-uugnay",
+    "submitting": "Muling iniuugnay…"
   }
 }

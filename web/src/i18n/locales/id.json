@@ -467,6 +467,9 @@
     }
   },
   "addToLibrary": {
+    "inLibrary": "Di perpustakaan Anda",
+    "open": "Buka",
+    "openBook": "Buka {{title}}",
     "searching": "Mencari...",
     "select": "Pilih",
     "selectBook": "Pilih {{title}}",
@@ -592,7 +595,7 @@
     "copied": "Copied",
     "copyPath": "Copy file path to clipboard",
     "download": "Download",
-    "rebind": "Re-bind",
+    "rebind": "Tautkan ulang",
     "exclude": "Exclude",
     "unexclude": "Un-exclude",
     "excludeHint": "Exclude this book from searches and the Wanted page",
@@ -631,5 +634,33 @@
       "bookFileRenamed": "File renamed",
       "ignored": "Release ignored"
     }
+  },
+  "bookRebind": {
+    "title": "Tautkan ulang metadata",
+    "description": "Pilih rekaman metadata untuk “{{title}}”. Metadata dan seri buku akan diperbarui tanpa memindahkan berkasnya.",
+    "method": "Cari rekaman metadata",
+    "search": "Cari metadata",
+    "manual": "Masukkan ID",
+    "query": "Judul, penulis, ISBN atau ASIN",
+    "searchButton": "Cari",
+    "searching": "Mencari…",
+    "searchHint": "Cari melalui penyedia metadata yang telah dikonfigurasi. Buku dapat ditautkan ulang ke karya OpenLibrary atau buku Hardcover.",
+    "resultCount": "Hasil: {{count}} — pilih buku yang tepat.",
+    "noResults": "Tidak ditemukan kecocokan di OpenLibrary atau Hardcover. Coba judul lain atau masukkan ID yang tepat.",
+    "choose": "Pilih buku",
+    "unknownAuthor": "Penulis tidak diketahui",
+    "provider": "Penyedia",
+    "identifier": "ID eksternal",
+    "openlibraryHint": "Masukkan ID karya OpenLibrary, misalnya OL12345W.",
+    "editionHint": "Ini adalah edisi. Penautan ulang memerlukan karya OpenLibrary; cari berdasarkan judul atau masukkan ID karyanya.",
+    "hardcoverHint": "Masukkan slug atau ID numerik buku Hardcover dengan awalan hc:.",
+    "searchFailed": "Pencarian gagal. Coba lagi atau masukkan ID yang tepat.",
+    "conflict": "Rekaman metadata ini bertentangan dengan buku yang sudah ada.",
+    "failed": "Penautan ulang gagal. Coba lagi.",
+    "authorMismatch": "Penulis tidak cocok",
+    "authorMismatchHint": "Rekaman ini merujuk pada {{upstream}}, tetapi buku tercatat atas nama {{current}}. Tetap tautkan ulang, atau kembali dan pilih rekaman lain.",
+    "back": "Kembali",
+    "force": "Tetap tautkan ulang",
+    "submitting": "Menautkan ulang…"
   }
 }

@@ -1439,5 +1439,33 @@
       "setPrimaryFailed": "Could not change the series used for naming",
       "removeFailed": "Could not remove the book from that series"
     }
+  },
+  "bookRebind": {
+    "title": "Re-bind metadata",
+    "description": "Choose a metadata record for “{{title}}”. This updates the book’s metadata and series without moving its files.",
+    "method": "Find a metadata record",
+    "search": "Search metadata",
+    "manual": "Enter an ID",
+    "query": "Title, author, ISBN or ASIN",
+    "searchButton": "Search",
+    "searching": "Searching…",
+    "searchHint": "Search configured metadata providers. OpenLibrary works and Hardcover books can be used for re-binding.",
+    "resultCount": "Results: {{count}} — choose the correct book.",
+    "noResults": "No OpenLibrary or Hardcover matches found. Try another title or enter an exact ID.",
+    "choose": "Choose a book",
+    "unknownAuthor": "Unknown author",
+    "provider": "Provider",
+    "identifier": "Foreign ID",
+    "openlibraryHint": "Enter an OpenLibrary Work ID, such as OL12345W.",
+    "editionHint": "This is an edition. Re-bind requires an OpenLibrary work; search by title or enter its work ID.",
+    "hardcoverHint": "Enter a Hardcover book slug or numeric ID prefixed with hc:.",
+    "searchFailed": "Search failed. Try again or enter an exact ID.",
+    "conflict": "This metadata record conflicts with an existing book.",
+    "failed": "Re-bind failed. Try again.",
+    "authorMismatch": "Author mismatch",
+    "authorMismatchHint": "This record belongs to {{upstream}}, but the book is attributed to {{current}}. Re-bind anyway, or go back and choose another record.",
+    "back": "Back",
+    "force": "Re-bind anyway",
+    "submitting": "Re-binding…"
   }
 }
