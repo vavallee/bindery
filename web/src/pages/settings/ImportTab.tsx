@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, BatchImportItem, BatchImportResponse, Book, HardcoverList, ImportList, ImportListSyncProgress, ManagedUser, ManualImportLookup, ScanItem } from '../../api/client'
+import { useFolderScan } from '../../components/useFolderScan'
 import { inputCls } from './formStyles'
 import GoodreadsImportSection from './GoodreadsImportSection'
 
@@ -275,36 +276,23 @@ interface ScanRowState {
 // first); unmatched units are listed but cannot be selected. Exported for tests.
 export function FolderScanSection() {
   const { t } = useTranslation()
-  const [path, setPath] = useState('')
-  const [scanning, setScanning] = useState(false)
-  const [items, setItems] = useState<ScanItem[] | null>(null)
-  const [truncated, setTruncated] = useState(false)
   const [rows, setRows] = useState<ScanRowState[]>([])
   const [importing, setImporting] = useState(false)
   const [summary, setSummary] = useState<BatchImportResponse | null>(null)
-  const [err, setErr] = useState<string | null>(null)
+  const [importErr, setImportErr] = useState<string | null>(null)
 
-  const handleScan = async () => {
-    if (!path.trim()) return
-    setScanning(true)
-    setErr(null)
-    setItems(null)
-    setSummary(null)
-    try {
-      const r = await api.scanFolder(path.trim())
-      setItems(r.items)
-      setTruncated(r.truncated)
-      setRows(r.items.map(it => ({
-        include: it.match === 'confident',
-        bookId: it.match === 'confident' && it.book ? it.book.id : null,
-        format: it.detectedFormat || '',
-      })))
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Scan failed')
-    } finally {
-      setScanning(false)
-    }
-  }
+  const folderScan = useFolderScan(items => setRows(items.map(it => ({
+    include: it.match === 'confident' && !it.alreadyImported,
+    bookId: it.match === 'confident' && it.book ? it.book.id : null,
+    format: it.detectedFormat || '',
+  }))))
+  const { path, setPath, scanning, items, truncated, showImported, scan, toggleShowImported } = folderScan
+
+  // A scan attempt (fresh or re-triggered by the toggle) supersedes whatever
+  // the last import attempt reported.
+  const handleScan = () => { setSummary(null); setImportErr(null); scan() }
+  const handleToggleShowImported = (checked: boolean) => { setSummary(null); setImportErr(null); toggleShowImported(checked) }
+  const err = folderScan.error ?? importErr
 
   const patchRow = (i: number, patch: Partial<ScanRowState>) =>
     setRows(prev => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
@@ -319,12 +307,12 @@ export function FolderScanSection() {
     })
     if (batch.length === 0) return
     setImporting(true)
-    setErr(null)
+    setImportErr(null)
     try {
       const res = await api.batchImport(batch)
       setSummary(res)
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Import failed')
+      setImportErr(e instanceof Error ? e.message : 'Import failed')
     } finally {
       setImporting(false)
     }
@@ -346,12 +334,12 @@ export function FolderScanSection() {
         {t('settings.import.bulkDescription', 'Scan a folder (e.g. your download directory) and import every book it can match to your library in one go. Matching is against books already in your library, so add the authors first. Unmatched items are listed but skipped.')}
       </p>
 
-      <div className="flex gap-2 mb-3">
+      <div className="flex gap-2 mb-2">
         <input
           className={inputCls + ' flex-1'}
           placeholder={t('settings.import.bulkPathPlaceholder', '/downloads/books')}
           value={path}
-          onChange={e => { setPath(e.target.value); setItems(null); setSummary(null) }}
+          onChange={e => { setPath(e.target.value); folderScan.clear(); setSummary(null) }}
           onKeyDown={e => { if (e.key === 'Enter') handleScan() }}
         />
         <button
@@ -363,15 +351,27 @@ export function FolderScanSection() {
         </button>
       </div>
 
+      <label className="flex items-center gap-1.5 mb-3 text-xs text-slate-600 dark:text-zinc-400 cursor-pointer select-none w-fit">
+        <input
+          type="checkbox"
+          checked={showImported}
+          onChange={e => handleToggleShowImported(e.target.checked)}
+          disabled={scanning}
+          className="rounded border-slate-400 dark:border-zinc-600 text-emerald-600 focus:ring-emerald-500 focus:ring-offset-0"
+        />
+        {t('settings.import.bulkShowImported', 'Show already imported')}
+      </label>
+
+      {truncated && (
+        <p className="text-xs text-amber-700 dark:text-amber-400 mb-2">{t('settings.import.bulkTruncated', 'Showing the first 1000 items; narrow the folder to see the rest.')}</p>
+      )}
+
       {items && items.length === 0 && (
         <p className="text-sm text-slate-500 dark:text-zinc-600">{t('settings.import.bulkEmpty', 'No book files or folders found here.')}</p>
       )}
 
       {items && items.length > 0 && !summary && (
         <div className="space-y-2">
-          {truncated && (
-            <p className="text-xs text-amber-700 dark:text-amber-400">{t('settings.import.bulkTruncated', 'Showing the first 1000 items; narrow the folder to see the rest.')}</p>
-          )}
           <div className="border border-slate-200 dark:border-zinc-800 rounded divide-y divide-slate-200 dark:divide-zinc-800 max-h-96 overflow-auto">
             {items.map((it, i) => {
               const row = rows[i]
@@ -391,6 +391,11 @@ export function FolderScanSection() {
                       <span className="font-medium truncate">{it.name}</span>
                       {matchBadge(it.match)}
                       <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{it.detectedFormat}</span>
+                      {it.alreadyImported && (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-400 rounded">
+                          {t('settings.import.bulkAlreadyImported', 'already imported')}
+                        </span>
+                      )}
                     </div>
                     {/* Full source path so the user can tell which file a match
                         (or the ambiguous picker below) refers to — the basename

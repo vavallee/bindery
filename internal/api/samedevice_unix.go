@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"github.com/vavallee/bindery/internal/importer"
 )
 
 // statExistingDevice stats p, walking up to the nearest existing ancestor
@@ -44,6 +46,49 @@ func nearestExistingDir(p string) string {
 		p = parent
 	}
 	return ""
+}
+
+// confirmedCrossDevice reports whether a and b are POSITIVELY confirmed to
+// reside on different filesystems, walking up to b's nearest existing
+// ancestor when b does not exist yet. It returns false — "not confirmed
+// cross-device" — on any stat error, deliberately erring toward the more
+// expensive but always-correct path rather than skipping a check we can't
+// actually verify. Used by the manual-import scan's tracked-file stat sweep
+// (#2480) to skip hardlink detection only for tracked paths that could never
+// be a hardlink of a scanned candidate. The device comparison itself is
+// importer.SameDevice — this package already depends on internal/importer
+// throughout (manual_import.go, scan_walk.go, books.go, ...), so there is no
+// dependency reason to keep a second copy of that comparison here.
+func confirmedCrossDevice(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if _, err := os.Stat(a); err != nil {
+		return false
+	}
+	if _, err := statExistingDevice(b); err != nil {
+		return false
+	}
+	return !importer.SameDevice(a, b)
+}
+
+// deviceID returns path's OS device ID as a cache key: two paths returning
+// (id, true) with equal id are stat-confirmed to share a device (compare with
+// confirmedCrossDevice); ok is false when the ID is unknown (stat failed, or
+// the platform doesn't expose one — see the Windows build of this function).
+// Used to key the manual-import scan's tracked-file cache (#2480) by the
+// scanned root's device, since which tracked paths get the expensive
+// hardlink stat/walk during a rebuild depends on that device.
+func deviceID(path string) (uint64, bool) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, false
+	}
+	return uint64(st.Dev), true
 }
 
 // hardlinkableReason reports whether downloads in a can actually be
