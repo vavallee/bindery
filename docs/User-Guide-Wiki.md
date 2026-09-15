@@ -430,15 +430,24 @@ refresh to finish and then shows the result, so a bio, photo or new book added
 upstream shows up on the first click. The page waits up to a minute; a refresh
 that takes longer carries on in the background, and reloading the page later
 shows it. Clicking Refresh again while a refresh for that author is still
-running waits for that one instead of starting another.
+running waits for that one instead of starting another. If the refresh
+already running was a scheduled, bulk or Refresh all one, which read the
+cached copy, the page waits for it to finish and then runs its own refresh.
 
-A refresh never leaves an author worse off than the copy Bindery already had.
-If a provider fails, or returns only part of the catalogue because a request
-failed along the way, Bindery keeps the copy it fetched in the last 24 hours
-and adds any new books the partial answer did include. If the Hardcover
-supplement fails, the refresh uses that earlier copy of the catalogue as it
-is, because Hardcover is what identifies the box sets and omnibus editions to
-leave out.
+When a provider fails outright, Bindery keeps the copy it fetched in the last
+24 hours rather than replacing it. How well a refresh can spot a catalogue
+that came back short depends on the provider:
+
+- **OpenLibrary** reports when a request failed along the way. Bindery then
+  keeps the earlier copy and adds any new books the partial answer did
+  include.
+- **Other providers** (DNB, for example) cannot say their answer is short. An
+  empty book list is treated as a failure while Bindery holds an earlier
+  copy, so it never wipes the catalogue, but a list that is merely shorter
+  than before is taken as the current catalogue.
+- If the **Hardcover** supplement fails, the refresh uses the earlier copy of
+  the catalogue as it is, because Hardcover is what identifies the box sets
+  and omnibus editions to leave out.
 
 **Refresh all metadata**, the bulk Refresh action and the scheduled refresh
 reuse what Bindery fetched in the last 24 hours instead, which keeps a whole

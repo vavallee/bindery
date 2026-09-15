@@ -12,13 +12,21 @@ type cacheBypassKey struct{}
 // skip the aggregator's 24 hour cache, ask the provider, and write the answer
 // back so the next ordinary read sees it.
 //
-// A failed or partial answer never replaces a cached entry. GetAuthor returns
-// the error. The works lookups and GetAuthorAudiobooks hand back the cached
-// copy instead (the works lookups adding any new works a partial answer
-// carried), and GetAuthorWorksForAuthor falls back to the cached catalogue
-// when a configured supplement failed, since that supplement drives the
-// compilation prune. A refresh is never worse off than the cached answer it
-// skipped.
+// An answer the aggregator can tell is failed or short never replaces a
+// cached entry. GetAuthor returns the error. The works lookups and
+// GetAuthorAudiobooks hand back the cached copy instead (the works lookups
+// adding any new works a short answer carried), and GetAuthorWorksForAuthor
+// falls back to the cached catalogue when a configured supplement failed,
+// since that supplement drives the compilation prune.
+//
+// What counts as short depends on the provider. Any error is caught on every
+// provider. OpenLibrary also reports a works answer cut short by a failed
+// later page or search call (GetAuthorWorksForRefresh). For the other primary
+// providers an empty works list is treated as short while works are cached,
+// because DNB answers some failures with an empty list and no error; a non
+// empty list from them is trusted as a cache miss would trust it, so a list
+// that lost some works to an upstream fault they swallow can still replace
+// the cache.
 //
 // Only those entry points honour it, and each one consumes it before making
 // nested lookups, so per work cover enrichment, edition and ISBN lookups keep

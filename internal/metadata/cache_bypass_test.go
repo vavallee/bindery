@@ -450,3 +450,56 @@ func workTitles(books []models.Book) []string {
 	}
 	return titles
 }
+
+// A primary without GetAuthorWorksForRefresh cannot say its answer is short,
+// and DNB answers some upstream failures with an empty list and no error. A
+// bypassed refresh that gets an empty list while works are cached must keep
+// the cached works, hand them to the sync, and leave the cache alone; before
+// this, the empty list was taken as intact and wiped the cached catalogue.
+func TestGetAuthorWorksForAuthor_CacheBypassEmptyAnswerKeepsCachedWorks(t *testing.T) {
+	primary := &mockWorksProvider{mockProvider: mockProvider{name: "dnb", authorWorks: []models.Book{
+		{ForeignID: "dnb:1001", Title: "Der Process", MetadataProvider: "dnb"},
+		{ForeignID: "dnb:1002", Title: "Das Schloss", MetadataProvider: "dnb"},
+	}}}
+	agg := &Aggregator{primary: primary, cache: newTTLCache(time.Hour)}
+	author := models.Author{ForeignID: "dnb:118559230", Name: "Franz Kafka"}
+	ctx := context.Background()
+
+	if got, err := agg.GetAuthorWorksForAuthor(ctx, author); err != nil || len(got) != 2 {
+		t.Fatalf("warm GetAuthorWorksForAuthor = %v, %v; want 2 works", workTitles(got), err)
+	}
+
+	primary.authorWorks = []models.Book{}
+	got, err := agg.GetAuthorWorksForAuthor(WithCacheBypass(ctx), author)
+	if err != nil {
+		t.Fatalf("bypassed GetAuthorWorksForAuthor: %v", err)
+	}
+	if !hasTitles(got, "Der Process", "Das Schloss") {
+		t.Fatalf("bypassed catalogue from an empty answer = %v, want the cached 2 works handed to the sync", workTitles(got))
+	}
+	calls := primary.authorWorksCalls
+	for _, read := range []struct {
+		name string
+		get  func() ([]models.Book, error)
+	}{
+		{"GetAuthorWorksForAuthor", func() ([]models.Book, error) { return agg.GetAuthorWorksForAuthor(ctx, author) }},
+		{"GetAuthorWorksUnenriched", func() ([]models.Book, error) { return agg.GetAuthorWorksUnenriched(ctx, author.ForeignID) }},
+	} {
+		got, err := read.get()
+		if err != nil {
+			t.Fatalf("ordinary %s: %v", read.name, err)
+		}
+		if !hasTitles(got, "Der Process", "Das Schloss") {
+			t.Fatalf("ordinary %s after an empty bypassed answer = %v, want the cached 2 works kept", read.name, workTitles(got))
+		}
+	}
+	if primary.authorWorksCalls != calls {
+		t.Fatalf("ordinary reads after the refresh reached the provider %d more times; the cache should answer them", primary.authorWorksCalls-calls)
+	}
+
+	// With nothing cached, an empty answer is simply the answer.
+	cold := &Aggregator{primary: primary, cache: newTTLCache(time.Hour)}
+	if got, err := cold.GetAuthorWorksForAuthor(WithCacheBypass(ctx), author); err != nil || len(got) != 0 {
+		t.Fatalf("bypassed read with a cold cache = %v, %v; want the empty answer", workTitles(got), err)
+	}
+}

@@ -319,8 +319,11 @@ func (a *Aggregator) primaryAuthorWorksFor(ctx context.Context, authorForeignID 
 // authorWorksRefreshProvider is the optional capability a refresh uses to
 // tell a whole works answer from one cut short by a failed upstream call
 // (OpenLibrary's GetAuthorWorksForRefresh). A provider without it cannot
-// report a short answer, so its answer gets the same trust a cache miss gives
-// it.
+// report a short answer, so a non empty answer from it gets the same trust a
+// cache miss gives it. An empty one does not when works are cached: DNB, for
+// one, falls back to a query that usually matches nothing when its author
+// record lookup fails, and returns that empty list with no error, so
+// refreshPrimaryAuthorWorks treats an empty answer as a short one.
 type authorWorksRefreshProvider interface {
 	GetAuthorWorksForRefresh(ctx context.Context, authorForeignID string) ([]models.Book, bool, error)
 }
@@ -339,9 +342,21 @@ type authorWorksRefreshProvider interface {
 // must not strip what the cache knew. The returned intact flag tells the
 // caller whether anything built on the result may be cached. With nothing
 // cached, a short answer is returned as it is and an error as the error.
+//
+// An empty answer is never intact while the cache holds works for the
+// author. Only OpenLibrary reports a short answer; the other providers
+// (DNB among them) can return an empty list as success when a call failed
+// underneath, and an author losing every work upstream within a day is far
+// less likely than that.
 func (a *Aggregator) refreshPrimaryAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, bool, error) {
 	key := "authorworks-raw:" + authorForeignID
 	books, intact, err := a.primaryAuthorWorksForRefresh(ctx, authorForeignID)
+	emptyOverCache := false
+	if err == nil && intact && len(books) == 0 {
+		if cached, ok := a.cache.get(key); ok && len(cached.([]models.Book)) > 0 {
+			intact, emptyOverCache = false, true
+		}
+	}
 	if err == nil && intact {
 		a.cache.set(key, cloneBooks(books))
 		// GetAuthorWorksUnenriched prefers the enriched authorworks: entry
@@ -360,6 +375,11 @@ func (a *Aggregator) refreshPrimaryAuthorWorks(ctx context.Context, authorForeig
 	kept := cloneBooks(cached.([]models.Book))
 	if err != nil {
 		slog.Warn("author works refresh failed; using the cached works", "author", authorForeignID, "error", err)
+		return kept, false, nil
+	}
+	if emptyOverCache {
+		slog.Warn("author works refresh got an empty answer; keeping the cached works",
+			"author", authorForeignID, "cached", len(kept))
 		return kept, false, nil
 	}
 	slog.Warn("author works refresh got a partial answer; keeping the cached works",
