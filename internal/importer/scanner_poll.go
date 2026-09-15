@@ -586,11 +586,19 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 				// in the torrent name that differ from what the API reports, e.g. ':'→'_').
 				// Do NOT fall back to torrent.SavePath — for multi-file torrents that is
 				// the shared download root and walking it would import every unrelated file.
-				// Leave the status unchanged so the next check cycle retries.
-				slog.Warn("qbittorrent: content path not found, will retry next cycle",
-					"title", dl.Title,
-					"save_path", torrent.SavePath,
-					"name", torrent.Name)
+				//
+				// Record the miss instead of leaving the row in progress (#2616): a row
+				// that sits in grabbed or completed is never revisited by the retry
+				// guard, so it showed as in progress forever while the log repeated.
+				// The state machine has no grabbed/downloading → importFailed edge, so
+				// walk through completed first — the client does report the torrent as
+				// complete on this path. From importFailed the row is treated like any
+				// other source-less failure: the import resumes if the files turn up,
+				// and skipImportRetry blocks it once the skip streak runs out.
+				if dl.Status == models.StateGrabbed || dl.Status == models.StateDownloading {
+					s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
+				}
+				s.failImport(ctx, &dl, models.StateImportFailed, importContentMissingReason(torrent.SavePath))
 				continue
 			}
 			downloadPath := s.remapDownloadClientPath(client, rawPath)
@@ -627,11 +635,13 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 					s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
 					continue
 				}
-				slog.Warn("qbittorrent: content path not found during import retry, will retry next cycle",
-					"title", dl.Title,
-					"save_path", torrent.SavePath,
-					"name", torrent.Name,
-					"attempt", dl.ImportRetryCount+1)
+				// The files are still not here. Count the miss through the same
+				// skip streak the source-less import retries use, so a row whose
+				// content path never appears reaches importBlocked instead of
+				// warning on every cycle forever (#2616). The row's own message
+				// is left alone: recordImportSkip restarts the streak whenever it
+				// changes, and the blocking reason names the missing path.
+				s.skipImportRetry(ctx, &dl, filepath.Join(torrent.SavePath, torrent.Name))
 				continue
 			}
 			downloadPath := s.remapDownloadClientPath(client, rawPath)

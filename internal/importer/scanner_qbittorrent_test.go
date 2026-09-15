@@ -3,10 +3,12 @@ package importer
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -325,12 +327,30 @@ func TestCheckQbittorrentDownloads_MissingContentPathDoesNotFallBackToSaveRoot(t
 		t.Fatalf("get download: %v", err)
 	}
 
-	// The download must still be in StateDownloading. If it moved to
-	// StateCompleted/StateImported/StateImportFailed the fallback-to-SavePath
-	// bug has regressed and files from the shared download root were walked.
-	if got.Status != models.StateDownloading {
-		t.Errorf("Bug #3 regression: expected status to remain %q so the next cycle retries, got %q",
-			models.StateDownloading, got.Status)
+	// The miss is recorded instead of leaving the row in progress (#2616), and
+	// the fallback-to-SavePath bug stays a regression either way: the row must
+	// not come out imported, and nothing from the shared download root may
+	// reach the library. Both are asserted, because an empty import of a
+	// non-book file would end in the same importFailed state as the correct
+	// behavior does.
+	if got.Status != models.StateImportFailed {
+		t.Errorf("expected status %q once the missing content path is recorded, got %q",
+			models.StateImportFailed, got.Status)
+	}
+	if !strings.Contains(got.ErrorMessage, "no content path") {
+		t.Errorf("error message must name the missing content path, got %q", got.ErrorMessage)
+	}
+	err = filepath.WalkDir(libDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			t.Errorf("Bug #3 regression: %q from the shared download root was imported", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk library dir: %v", err)
 	}
 }
 

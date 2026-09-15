@@ -408,8 +408,11 @@ func TestCheckQbittorrentDownloads_1885_SiblingFormatDoesNotCloseGrab(t *testing
 	if got.Status == models.StateImported {
 		t.Errorf("#1885 regression: ebook torrent closed out as %q because the AUDIOBOOK is on disk", models.StateImported)
 	}
-	if got.Status != models.StateGrabbed {
-		t.Errorf("download status = %q, want %q (untouched, retried next cycle)", got.Status, models.StateGrabbed)
+	// The ebook torrent's own content path is gone, so the row records the miss
+	// (#2616) rather than sitting in grabbed forever — still without closing it
+	// out on the audiobook's behalf, which is what #1885 is about.
+	if got.Status != models.StateImportFailed {
+		t.Errorf("download status = %q, want %q once the missing content path is recorded", got.Status, models.StateImportFailed)
 	}
 }
 
