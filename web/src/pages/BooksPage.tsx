@@ -35,7 +35,6 @@ export default function BooksPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const { confirm, confirmDialog } = useConfirmDialog()
-  const navigate = useNavigate()
   const [books, setBooks] = useState<Book[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
