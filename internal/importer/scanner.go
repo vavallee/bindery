@@ -581,6 +581,16 @@ func (s *Scanner) forgetImportSkipsExcept(stillFailing map[int64]bool) {
 	}
 }
 
+// importContentMissingReason is the message recorded the first time the
+// download client reports a complete download whose content path is not on
+// this host. Unlike importSourceGoneReason it is written while the files may
+// still appear, so it names both causes the operator can act on rather than
+// telling them to stop waiting.
+func importContentMissingReason(savePath string) string {
+	return fmt.Sprintf("the download client reports this download as complete, but no content path for it is on this host (client save path %s). The files may have been moved or deleted after the download finished, or the client's paths may not map into Bindery (set PathRemap on the download client). Use Retry import on the Queue page once that is fixed, or grab the release again from search.",
+		savePath)
+}
+
 // importSourceGoneReason is the message a download is blocked with once its
 // skip streak runs out. It must not tell the user to wait: by the time it is
 // written, waiting is precisely what has already failed importSkipLimit times.
