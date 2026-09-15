@@ -1546,6 +1546,9 @@ describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () =>
     expect(screen.queryByText('A Result For Book 42')).not.toBeInTheDocument()
   })
 
+  // The load effect's own setAsinDraft(b.asin || '') on every id change would
+  // mask a removed key={id} here — asinDraft resets whether or not the page
+  // remounts, so this doesn't actually prove the remount does anything.
   it('clears a typed ASIN draft from the previous book after Next (remount resets more than just search results)', async () => {
     vi.mocked(api.getBook).mockImplementation((id: number) => Promise.resolve(makeBook({
       id,
@@ -1565,5 +1568,28 @@ describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () =>
 
     // Without the remount, asinDraft would still hold book 42's typed value.
     expect(screen.getByLabelText('ASIN (Audible identifier)')).toHaveValue('')
+  })
+
+  // Unlike asinDraft above, nothing in the load effect touches `error` on a
+  // successful load — it's only ever cleared by the action that set it. If
+  // key={id} were removed, book 43's page would render with book 42's stale
+  // save-failure banner still up, since nothing else resets it.
+  it('clears a failed-save error banner from the previous book after Next', async () => {
+    vi.mocked(api.getBook).mockImplementation((id: number) =>
+      Promise.resolve(makeBook({ id, title: id === 42 ? 'The Final Empire' : 'The Well of Ascension' })))
+    vi.mocked(api.updateBook).mockRejectedValue(new Error('Save failed'))
+
+    renderBookDetailPage({ pathname: '/book/42', state: { ids: [42, 43], index: 0 } })
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Unmonitor' }))
+    expect(await screen.findByText('Save failed')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Next book'))
+    await screen.findByRole('heading', { name: 'The Well of Ascension' })
+
+    // Without the remount, the banner from book 42's failed save would still
+    // be showing here — the load effect never clears `error` on success.
+    expect(screen.queryByText('Save failed')).not.toBeInTheDocument()
   })
 })
