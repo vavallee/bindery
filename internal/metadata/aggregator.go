@@ -54,6 +54,13 @@ func (a *Aggregator) WithAudnexClient(client AudnexBookClient) *Aggregator {
 	return a
 }
 
+// WithAudibleCatalogue replaces the Audible client GetAuthorAudiobooks asks.
+// Tests outside this package use it to stand in for api.audible.com.
+func (a *Aggregator) WithAudibleCatalogue(catalogue audibleCatalogue) *Aggregator {
+	a.audible = catalogue
+	return a
+}
+
 // SearchAuthors queries the primary provider and every enricher in parallel,
 // then merges: same-person records (by canonical name, treating "Last, First"
 // and "First Last" as equal) collapse to the single most-complete record, and
