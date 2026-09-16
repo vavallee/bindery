@@ -1,0 +1,2 @@
+### Fixed
+- **A qBittorrent download with no content path on this host no longer sits in progress forever** (#2616): when qBittorrent reported a download complete but sent no content path and nothing was at its save path, the Queue showed it as grabbed indefinitely while the log repeated "will retry next cycle". It now fails the import with a message saying the files are missing or the paths don't map into Bindery, retries if the files turn up, and is blocked once they never do, like any other import whose files are gone. Thanks tunglambk, who built the fix.
