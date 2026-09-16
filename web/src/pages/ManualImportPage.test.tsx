@@ -49,6 +49,7 @@ function scanResult(): FolderScanResponse {
         path: '/dl/Confident Book', name: 'Confident Book', match: 'confident',
         parsedTitle: 'Confident Book', parsedAuthor: 'A. Writer', detectedFormat: 'ebook',
         book: { id: 11, title: 'Confident Book', author: { authorName: 'A. Writer' } } as never,
+        alreadyImported: false,
       },
       {
         path: '/dl/Maybe Book', name: 'Maybe Book', match: 'ambiguous',
@@ -57,10 +58,12 @@ function scanResult(): FolderScanResponse {
           { id: 21, title: 'Maybe Book (1)', author: { authorName: 'X' } } as never,
           { id: 22, title: 'Maybe Book (2)', author: { authorName: 'Y' } } as never,
         ],
+        alreadyImported: false,
       },
       {
         path: '/dl/Orphan', name: 'Orphan', match: 'none',
         parsedTitle: 'Orphan', parsedAuthor: '', detectedFormat: 'audiobook',
+        alreadyImported: false,
       },
     ],
   }
@@ -84,7 +87,7 @@ describe('ManualImportPage', () => {
 
   it('renders scan results grouped by match status', async () => {
     await scan()
-    expect(mockScan).toHaveBeenCalledWith('/dl')
+    expect(mockScan).toHaveBeenCalledWith('/dl', { includeImported: false })
 
     // One heading per non-empty group (plus a badge per row using the same key).
     expect(screen.getAllByText(/manualImport\.group\.confident/).length).toBeGreaterThan(0)
@@ -255,5 +258,78 @@ describe('ManualImportPage', () => {
     expect(addBtn.disabled).toBe(true)
     fireEvent.click(addBtn)
     expect(mockAddBook).not.toHaveBeenCalled()
+  })
+
+  it('re-scans with includeImported when "show already imported" is toggled on', async () => {
+    await scan()
+    mockScan.mockClear()
+    mockScan.mockResolvedValue({
+      truncated: false,
+      items: [{
+        path: '/dl/Already Imported', name: 'Already Imported', match: 'confident',
+        parsedTitle: 'Already Imported', parsedAuthor: '', detectedFormat: 'ebook',
+        book: { id: 33, title: 'Already Imported' } as never, alreadyImported: true,
+      }],
+    })
+
+    fireEvent.click(screen.getByLabelText('manualImport.showImported'))
+
+    expect(mockScan).toHaveBeenCalledWith('/dl', { includeImported: true })
+    await waitFor(() => expect(screen.getByText('manualImport.alreadyImported')).toBeInTheDocument())
+  })
+
+  it('shows the truncation banner even when filtering leaves no items (#2480)', async () => {
+    mockScan.mockResolvedValue({ truncated: true, items: [] })
+    render(<ManualImportPage />)
+    fireEvent.change(screen.getByPlaceholderText('manualImport.pathPlaceholder'), { target: { value: '/dl' } })
+    fireEvent.click(screen.getByText('manualImport.scan'))
+
+    await waitFor(() => expect(screen.getByText('manualImport.empty')).toBeInTheDocument())
+    expect(screen.getByText('manualImport.truncated')).toBeInTheDocument()
+  })
+
+  it('clears a stale truncation banner once a later scan reports untruncated', async () => {
+    mockScan.mockResolvedValue({ truncated: true, items: [] })
+    render(<ManualImportPage />)
+    fireEvent.change(screen.getByPlaceholderText('manualImport.pathPlaceholder'), { target: { value: '/dl' } })
+    fireEvent.click(screen.getByText('manualImport.scan'))
+    await waitFor(() => expect(screen.getByText('manualImport.truncated')).toBeInTheDocument())
+
+    // A second scan (e.g. after narrowing the folder) that is NOT truncated
+    // must not leave the earlier banner showing.
+    mockScan.mockResolvedValue({ truncated: false, items: [] })
+    fireEvent.click(screen.getByText('manualImport.scan'))
+    await waitFor(() => expect(screen.queryByText('manualImport.truncated')).not.toBeInTheDocument())
+  })
+
+  it('does not let "select all" re-select an already-imported unit', async () => {
+    await scan()
+    mockScan.mockClear()
+    mockScan.mockResolvedValue({
+      truncated: false,
+      items: [{
+        path: '/dl/Already Imported', name: 'Already Imported', match: 'confident',
+        parsedTitle: 'Already Imported', parsedAuthor: '', detectedFormat: 'ebook',
+        book: { id: 33, title: 'Already Imported' } as never, alreadyImported: true,
+      }],
+    })
+    fireEvent.click(screen.getByLabelText('manualImport.showImported'))
+    await screen.findByText('Already Imported')
+
+    // Starts unchecked and the per-row Import button starts disabled — the
+    // whole point of not preselecting an already-imported match.
+    const rowCheckbox = screen.getByLabelText('manualImport.selectUnit name=Already Imported') as HTMLInputElement
+    expect(rowCheckbox.checked).toBe(false)
+    const importButtons = screen.getAllByText('manualImport.import') as HTMLButtonElement[]
+    expect(importButtons[importButtons.length - 1].disabled).toBe(true)
+
+    // "Select all matched" must not silently sweep it in.
+    fireEvent.click(screen.getByLabelText('manualImport.selectAll'))
+    expect(rowCheckbox.checked).toBe(false)
+
+    // Checking it by hand is still how you'd deliberately re-import it.
+    fireEvent.click(rowCheckbox)
+    expect(rowCheckbox.checked).toBe(true)
+    expect(importButtons[importButtons.length - 1].disabled).toBe(false)
   })
 })
