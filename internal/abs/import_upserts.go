@@ -481,6 +481,16 @@ func (i *Importer) enrichBook(ctx context.Context, cfg ImportConfig, item Normal
 
 	full, matchedBy, ambiguous, err := i.lookupUpstreamBook(ctx, author, item)
 	if err != nil {
+		// Reported on the item, as enrichAuthor does, rather than only logged:
+		// the row keeps its identity and the next import retries (#2642).
+		var unavailable *PrimaryProviderUnavailableError
+		if errors.As(err, &unavailable) {
+			slog.Warn("abs import: book relink skipped, primary metadata provider unavailable",
+				"title", item.Title, "error", err)
+			return metadataMergeResult{Messages: []string{
+				"book relink skipped: " + unavailable.Error() + ", so it was not bound to a fallback provider",
+			}}, nil
+		}
 		slog.Warn("abs import: book metadata lookup failed", "title", item.Title, "error", err)
 		return metadataMergeResult{}, nil
 	}
@@ -566,9 +576,26 @@ func (i *Importer) mergeUpstreamBook(ctx context.Context, cfg ImportConfig, item
 
 func (i *Importer) lookupUpstreamBook(ctx context.Context, author *models.Author, item NormalizedLibraryItem) (*models.Book, string, bool, error) {
 	if isbn := absLookupISBN(item.ISBN); isbn != "" {
-		match, err := i.meta.GetBookByISBN(ctx, isbn)
+		match, outcome, err := i.meta.GetBookByISBNWithOutcome(ctx, isbn)
 		if err != nil {
 			return nil, "", false, err
+		}
+		// With the primary timed out, a fallback's record comes back looking
+		// like the answer, and mergeUpstreamBook would make that fallback the
+		// book's permanent provider. Once the primary is back, a lookup by its
+		// key misses the relinked row, which is how duplicates start (#2642,
+		// the book side of #2271). A primary that answered with no match is
+		// not refused (#2237). Stopping here rather than trying the ASIN and
+		// title paths leaves the row as it was for the next import to retry.
+		if match != nil && !outcome.SafeToBind(match.ForeignID) {
+			slog.Warn("abs import: refusing to relink book to a fallback provider",
+				"title", item.Title, "isbn", isbn, "primary", outcome.Primary,
+				"failed", outcome.FailureSummary(), "wouldHaveLinked", match.ForeignID)
+			return nil, "", false, &PrimaryProviderUnavailableError{
+				Primary: outcome.Primary,
+				Failed:  outcome.FailureSummary(),
+				Err:     outcome.FirstErr,
+			}
 		}
 		if match != nil {
 			return match, "isbn", false, nil

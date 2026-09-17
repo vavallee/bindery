@@ -75,6 +75,7 @@ A good pre-import cleanup pass in ABS is worth it. If your library already has s
 Bindery distinguishes between an item it could not match locally and an item it matched *ambiguously*.
 
 - **Unmatched** authors and books — where Bindery's local matcher finds nothing close — are **not** sent to review. They are created/imported directly, and a confidence-gated upstream lookup still relinks the new row to the metadata provider when it finds a confident match. This is deliberate: an unmatched author is not an uncertain one, and parking every unmatched item in review previously sent the bulk of a folder-backed ABS library to the queue even for well-known authors.
+- That upstream lookup never binds an author or book to a fallback provider because the primary metadata provider timed out or errored. The row keeps its current identity, the item result says the relink was skipped because the primary did not answer, and the next import tries again. A primary that answers with no match still lets a fallback provider's record through.
 - **Ambiguous** matches — a close-but-uncertain local candidate — are the only items sent to the review queue, so you can confirm or correct the author or book match yourself.
 - When ABS metadata and upstream metadata disagree for mapped fields, Bindery keeps the current applied value temporarily and records a conflict so you can choose the winning source.
 - Placeholder ABS authors can be relinked during conflict review when Bindery can confidently connect them to upstream metadata.
