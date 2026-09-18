@@ -461,7 +461,10 @@ function BookDetailPageInner() {
         bookId: book.id,
         indexerId: r.indexerId,
         protocol: r.protocol,
-        mediaType: book.mediaType,
+        // The release's own detected type is authoritative — book.mediaType
+        // is 'both' for dual-format books, which tells a client nothing about
+        // which format this particular result actually is.
+        mediaType: r.mediaType ?? book.mediaType,
       })
       // Refresh book + history
       const [b, h] = await Promise.all([

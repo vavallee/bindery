@@ -64,6 +64,7 @@ func languageFixture(t *testing.T, allowedLanguages string, results []newznab.Se
 	}
 	if err := clients.Create(ctx, &models.DownloadClient{
 		Name: "sab", Type: "sabnzbd", Host: "127.0.0.1", Port: 1, Enabled: true,
+		EnabledForBooks: true, EnabledForAudiobooks: true,
 	}); err != nil {
 		t.Fatalf("client create: %v", err)
 	}

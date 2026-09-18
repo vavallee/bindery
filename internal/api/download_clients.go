@@ -154,8 +154,13 @@ func (h *DownloadClientHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DownloadClientHandler) Create(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
 	var c models.DownloadClient
-	if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
+	if err := json.Unmarshal(body, &c); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -174,6 +179,24 @@ func (h *DownloadClientHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if c.Category == "" {
 		c.Category = "books"
+	}
+	// Eligible for both media types unless the caller explicitly opts a
+	// field out — omitted means "default true", but an explicit false (e.g.
+	// a deliberately book-only or audiobook-only client) must stick. Go's
+	// bool zero value can't tell "omitted" from "false" on its own, so this
+	// checks the raw body instead of the decoded struct (#2401 fallout: a
+	// naive "both false -> default true" at the DB layer silently overrode a
+	// user's genuine "eligible for neither" choice).
+	raw := map[string]json.RawMessage{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if _, ok := raw["enabledForBooks"]; !ok {
+		c.EnabledForBooks = true
+	}
+	if _, ok := raw["enabledForAudiobooks"]; !ok {
+		c.EnabledForAudiobooks = true
 	}
 	if err := httpsec.ValidateOutboundURL(downloadClientURL(&c), httpsec.PolicyLANLoopback); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})

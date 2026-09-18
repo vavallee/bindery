@@ -23,6 +23,15 @@ export interface DownloadClient {
   categoryAudiobook?: string
   pathRemap?: string
   enabled: boolean
+  // Priority orders clients when more than one is eligible for a grab —
+  // lower is tried first. Ties are broken by insertion order.
+  priority: number
+  // Eligibility gates (independent of category/pathRemap): a client not
+  // eligible for a media type is skipped when a grab of that type is routed.
+  // Both default true, so an existing client keeps handling everything until
+  // a user opts it out of one.
+  enabledForBooks: boolean
+  enabledForAudiobooks: boolean
   health?: DownloadClientHealth
 }
 
