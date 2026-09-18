@@ -127,15 +127,15 @@ export default function DiscoverPage() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+        <div className="min-w-0">
           <h2 className="text-2xl font-bold">{t('discover.title')}</h2>
           <p className="text-sm text-slate-500 dark:text-zinc-500">{t('discover.subtitle')}</p>
         </div>
         <button
           onClick={handleRefresh}
           disabled={refreshing}
-          className="px-4 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded-lg text-sm font-medium disabled:opacity-50 transition-colors"
+          className="shrink-0 px-4 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded-lg text-sm font-medium disabled:opacity-50 transition-colors"
         >
           {refreshing ? t('discover.refreshing') : t('discover.refresh')}
         </button>
