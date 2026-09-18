@@ -85,9 +85,9 @@ export default function CalendarPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold">{t('calendar.title')}</h2>
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+        <h2 className="text-2xl font-bold min-w-0">{t('calendar.title')}</h2>
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-start sm:justify-end">
           {!isCurrentMonth && (
             <button
               onClick={goToToday}
@@ -103,7 +103,7 @@ export default function CalendarPage() {
           >
             ‹
           </button>
-          <span className="text-sm font-medium w-36 text-center">
+          <span className="text-sm font-medium w-28 sm:w-36 text-center">
             {MONTH_NAMES[viewMonth]} {viewYear}
           </span>
           <button
