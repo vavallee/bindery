@@ -62,6 +62,13 @@ retyping. Pressing Enter with nothing highlighted opens that dialog too, even
 when the list has library hits; use the arrow keys to pick a hit instead. It
 does not query indexers; that stays with the magnifier.
 
+**Where the pages live.** The top bar carries five entries. **Library** holds
+Authors, Books and Series; **Activity** holds Wanted, Queue and History (plus
+Requests for an admin); **Import**, **Calendar** and **Discover** are pages of
+their own. Opening a group lands on its first page and a row of tabs above the
+content switches between the rest, so every page keeps the address it always
+had. On a phone the menu lists the same pages, indented under their group.
+
 ## Five rules that answer most questions
 
 Almost every "why is Bindery doing that?" question comes down to one of these.

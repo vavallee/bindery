@@ -1,0 +1,2 @@
+### Changed
+- **The top bar is down to five entries**: Library (Authors, Books, Series), Activity (Wanted, Queue, History, and Requests for an admin), Import, Calendar and Discover. Opening a group lands on its first page and a row of tabs above the content switches between the rest. Nothing moved: every page keeps the address it always had, bookmarks and the back button still work, the Import count and the pending requests count are still on the bar, and the phone menu lists the same pages indented under their group.

@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useParams } from 'react-router'
-import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
+import { Fragment, lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from './api/client'
 import { AuthProvider, useAuth } from './auth/AuthContext'
@@ -9,6 +9,8 @@ import AccountMenu from './components/AccountMenu'
 import ErrorBoundary from './components/ErrorBoundary'
 import LibrarySearch from './components/LibrarySearch'
 import Logo from './components/Logo'
+import NavTabs from './components/NavTabs'
+import { activeGroup, isEntryActive, matchesPath, navGroupsFor, type NavItem } from './components/navGroups'
 import SetupBanner from './components/SetupBanner'
 import VersionBadge from './components/VersionBadge'
 import WhatsNewToast from './components/WhatsNewToast'
@@ -49,35 +51,6 @@ const RequesterLibraryPage = lazy(() => import('./pages/requests/RequesterLibrar
 const RequestSearchPage = lazy(() => import('./pages/requests/RequestSearchPage'))
 const MyRequestsPage = lazy(() => import('./pages/requests/MyRequestsPage'))
 const RequestsPage = lazy(() => import('./pages/requests/RequestsPage'))
-
-type NavItem = { to: string; key: string; end?: boolean }
-
-const NAV_KEYS: NavItem[] = [
-  { to: '/', key: 'authors', end: true },
-  { to: '/books', key: 'books' },
-  { to: '/wanted', key: 'wanted' },
-  { to: '/queue', key: 'queue' },
-  { to: '/import', key: 'import' },
-  { to: '/history', key: 'history' },
-  { to: '/series', key: 'series' },
-  { to: '/calendar', key: 'calendar' },
-  { to: '/discover', key: 'discover' },
-]
-
-// A requester's whole shell: the read only library, search and request, and
-// their own requests. Every other page calls routes the server refuses them.
-const REQUESTER_NAV_KEYS: NavItem[] = [
-  { to: '/', key: 'requesterLibrary', end: true },
-  { to: '/request', key: 'request' },
-  { to: '/my-requests', key: 'myRequests' },
-]
-
-// navItemsFor is the nav for a role. Admins get Requests on top of the
-// library pages; its pending count is rendered beside it.
-function navItemsFor(isAdmin: boolean, isRequester: boolean): NavItem[] {
-  if (isRequester) return REQUESTER_NAV_KEYS
-  return isAdmin ? [...NAV_KEYS, { to: '/requests', key: 'requests' }] : NAV_KEYS
-}
 
 // The admin nav badge: pending requests, read once on load and again after
 // each approve or decline. No polling.
@@ -157,8 +130,11 @@ function Shell() {
   // Books the library scan could not match, on the Import nav entry (admins
   // only; the count comes from an admin only route).
   const unmatched = useUnmatchedCount(isAdmin)
-  const navItems = navItemsFor(isAdmin, isRequester)
+  const navEntries = navGroupsFor(isAdmin, isRequester)
   const pendingRequests = usePendingRequestCount(isAdmin)
+  const { pathname } = useLocation()
+  // The group whose tab strip belongs above the current page, if any.
+  const tabGroup = activeGroup(pathname, navEntries)
 
   useEffect(() => {
     // /system/status is closed to requesters, and only admins see the version.
@@ -169,6 +145,9 @@ function Shell() {
     }).catch(() => {})
   }, [isRequester])
 
+  // Both count badges survive the regrouping: Import is still a top level link
+  // and keeps its own, and the admin pending count rides the Activity entry as
+  // well as the Requests tab inside it.
   const navLabel = (item: NavItem) => (
     <>
       {t(`nav.${item.key}`)}
@@ -180,7 +159,7 @@ function Shell() {
           {unmatched > 999 ? '999+' : unmatched}
         </span>
       )}
-      {item.key === 'requests' && pendingRequests > 0 && (
+      {(item.key === 'requests' || item.key === 'activity') && pendingRequests > 0 && (
         <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-semibold" aria-label={t('nav.requestsPending', { count: pendingRequests })}>
           {pendingRequests}
         </span>
@@ -208,11 +187,15 @@ function Shell() {
               <h1 className="text-lg font-bold tracking-tight">Bindery</h1>
             </Link>
 
+            {/* A group link goes to its first member and stays lit on every
+                member, so the bar shows where you are without listing ten
+                pages. Plain Link plus a computed class: NavLink only knows
+                about its own path. */}
             <nav className="hidden xl:flex gap-1">
-              {navItems.map(item => (
-                <NavLink key={item.to} to={item.to} end={item.end} className={linkClass}>
+              {navEntries.map(item => (
+                <Link key={item.to} to={item.to} className={linkClass({ isActive: isEntryActive(pathname, item) })}>
                   {navLabel(item)}
-                </NavLink>
+                </Link>
               ))}
             </nav>
 
@@ -295,17 +278,29 @@ function Shell() {
             {!isRequester && <div className="lg:hidden px-4 py-3 border-b border-slate-200/50 dark:border-zinc-800/50">
               <LibrarySearch className="w-full" onNavigate={() => setMenuOpen(false)} />
             </div>}
+            {/* The menu keeps every page reachable: a group heads its own
+                block and its members are listed indented beneath it. */}
             <nav>
-              {navItems.map(item => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end}
-                  className={mobileLinkClass}
-                  onClick={() => setMenuOpen(false)}
-                >
-                  {navLabel(item)}
-                </NavLink>
+              {navEntries.map(item => (
+                <Fragment key={item.to}>
+                  <Link
+                    to={item.to}
+                    className={mobileLinkClass({ isActive: isEntryActive(pathname, item) })}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    {navLabel(item)}
+                  </Link>
+                  {item.children?.map(child => (
+                    <Link
+                      key={child.to}
+                      to={child.to}
+                      className={`pl-8 ${mobileLinkClass({ isActive: matchesPath(pathname, child) })}`}
+                      onClick={() => setMenuOpen(false)}
+                    >
+                      {navLabel(child)}
+                    </Link>
+                  ))}
+                </Fragment>
               ))}
               {!isRequester && <NavLink
                 to="/search"
@@ -355,6 +350,7 @@ function Shell() {
       <WhatsNewToast version={version} />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {tabGroup && <NavTabs group={tabGroup} renderLabel={navLabel} />}
         <Suspense fallback={<PageLoadingFallback />}>
           <RoutedErrorBoundary>
           {isRequester ? (

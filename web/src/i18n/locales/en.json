@@ -67,6 +67,8 @@
   },
   "nav": {
     "account": "Account",
+    "library": "Library",
+    "activity": "Activity",
     "authors": "Authors",
     "books": "Books",
     "wanted": "Wanted",

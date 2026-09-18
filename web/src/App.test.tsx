@@ -84,6 +84,7 @@ vi.mock('react-i18next', () => ({
         'nav.search': 'Search',
         'nav.requesterLibrary': 'Library', 'nav.request': 'Request', 'nav.myRequests': 'My requests',
         'nav.requests': 'Requests', 'nav.users': 'Users',
+        'nav.library': 'Library', 'nav.activity': 'Activity',
         'login.signOut': 'Sign out', 'login.signedInAs': 'Signed in as',
       }
       if (m[key]) return m[key]
@@ -205,19 +206,42 @@ describe('App — /settings/:tab deep links', () => {
 })
 
 describe('Shell — desktop navigation', () => {
-  it('renders all 9 nav links in the desktop nav bar', () => {
+  // The bar used to list every page, ten links with two count badges beside a
+  // search box and four icons. Authors, Books and Series are now Library and
+  // Wanted, Queue and History are Activity, each with a tab strip on its pages.
+  it('renders the five grouped nav links in the desktop nav bar', () => {
     renderShell()
     const desktopNav = document.querySelector('nav.hidden.xl\\:flex')
     expect(desktopNav).not.toBeNull()
-    const links = desktopNav!.querySelectorAll('a')
-    expect(links.length).toBe(9)
-    const labels = Array.from(links).map(l => l.textContent)
-    expect(labels).toContain('Authors')
-    expect(labels).toContain('Books')
-    expect(labels).toContain('Wanted')
-    expect(labels).toContain('Import')
-    expect(labels).toContain('Discover')
-    expect(labels).toContain('Calendar')
+    const links = Array.from(desktopNav!.querySelectorAll('a'))
+    expect(links.map(l => l.textContent)).toEqual(['Library', 'Activity', 'Import', 'Calendar', 'Discover'])
+    expect(links.map(l => l.getAttribute('href'))).toEqual(['/', '/wanted', '/import', '/calendar', '/discover'])
+  })
+
+  it('marks Library active on the pages it groups, not only on its own href', () => {
+    // The active class is the bare bg-slate-200; an inactive link still
+    // carries hover:bg-slate-200/50, so match the class list, not a substring.
+    const isLit = (label: string) => {
+      const desktopNav = document.querySelector('nav.hidden.xl\\:flex')!
+      const link = Array.from(desktopNav.querySelectorAll('a')).find(a => a.textContent === label)!
+      return link.className.split(' ').includes('bg-slate-200')
+    }
+
+    window.history.pushState(null, '', '/books')
+    const books = renderShell()
+    expect(isLit('Library')).toBe(true)
+    expect(isLit('Activity')).toBe(false)
+    books.unmount()
+
+    window.history.pushState(null, '', '/series')
+    const series = renderShell()
+    expect(isLit('Library')).toBe(true)
+    series.unmount()
+
+    window.history.pushState(null, '', '/queue')
+    renderShell()
+    expect(isLit('Activity')).toBe(true)
+    expect(isLit('Library')).toBe(false)
   })
 
   it('desktop nav shows only from xl, where the whole row fits', () => {
@@ -259,17 +283,26 @@ describe('Shell — mobile navigation', () => {
     expect(mobileNav).not.toBeNull()
   })
 
-  it('mobile menu contains all nav links including Settings', () => {
+  it('mobile menu lists every page, group members under their group', () => {
     renderShell()
     fireEvent.click(screen.getByRole('button', { name: /toggle menu/i }))
     const mobileNav = document.querySelector('div.xl\\:hidden > nav')!
     const links = Array.from(mobileNav.querySelectorAll('a')).map(l => l.textContent)
-    expect(links).toContain('Authors')
-    expect(links).toContain('Import')
-    expect(links).toContain('Discover')
-    expect(links).toContain('Search')
-    expect(links).toContain('Settings')
-    expect(links.length).toBe(11) // 9 main + Search + Settings
+    expect(links).toEqual([
+      'Library', 'Authors', 'Books', 'Series',
+      'Activity', 'Wanted', 'Queue', 'History',
+      'Import', 'Calendar', 'Discover',
+      'Search', 'Settings',
+    ])
+  })
+
+  it('indents the members of a group in the mobile menu', () => {
+    renderShell()
+    fireEvent.click(screen.getByRole('button', { name: /toggle menu/i }))
+    const mobileNav = document.querySelector('div.xl\\:hidden > nav')!
+    const link = (label: string) => Array.from(mobileNav.querySelectorAll('a')).find(a => a.textContent === label)!
+    expect(link('Books').className).toContain('pl-8')
+    expect(link('Library').className).not.toContain('pl-8')
   })
 
   it('closes mobile menu when a nav link is clicked', () => {
@@ -364,15 +397,32 @@ describe('Shell, requester role', () => {
 })
 
 describe('Shell, admin requests entry', () => {
-  it('adds Requests with the pending count for admins', async () => {
+  const asAdmin = () => {
     authState.value = {
       status: { authenticated: true, mode: 'enabled', setupRequired: false, role: 'admin' },
       logout: logoutMock,
       isAdmin: true,
     }
+  }
+
+  // Requests is a page inside Activity now, so its pending count rides the
+  // Activity entry in the top bar. It is the only signal an admin gets that
+  // somebody is waiting, so losing it in the regrouping would be a regression.
+  it('carries the pending count on the Activity entry for admins', async () => {
+    asAdmin()
     renderShell()
     const desktopNav = document.querySelector('nav.hidden.xl\\:flex')!
-    const requests = Array.from(desktopNav.querySelectorAll('a')).find(l => l.getAttribute('href') === '/requests')
+    const activity = Array.from(desktopNav.querySelectorAll('a')).find(l => l.getAttribute('href') === '/wanted')
+    expect(activity).toBeDefined()
+    expect(await within(activity as HTMLElement).findByText('3')).toBeInTheDocument()
+  })
+
+  it('shows Requests as an Activity tab with its count, for admins only', async () => {
+    asAdmin()
+    window.history.pushState(null, '', '/wanted')
+    renderShell()
+    const tabs = screen.getByRole('navigation', { name: 'Activity' })
+    const requests = Array.from(tabs.querySelectorAll('a')).find(a => a.getAttribute('href') === '/requests')
     expect(requests).toBeDefined()
     expect(await within(requests as HTMLElement).findByText('3')).toBeInTheDocument()
   })
@@ -383,9 +433,106 @@ describe('Shell, admin requests entry', () => {
       logout: logoutMock,
       isAdmin: false,
     }
+    window.history.pushState(null, '', '/wanted')
     renderShell()
-    const desktopNav = document.querySelector('nav.hidden.xl\\:flex')!
-    expect(Array.from(desktopNav.querySelectorAll('a')).map(l => l.getAttribute('href'))).not.toContain('/requests')
+    const hrefs = Array.from(document.querySelectorAll('a')).map(l => l.getAttribute('href'))
+    expect(hrefs).not.toContain('/requests')
     expect(api.pendingRequestCount).not.toHaveBeenCalled()
+  })
+})
+
+describe('Shell, group tab strips', () => {
+  it('shows the Library tabs above every Library page and marks the current one', async () => {
+    window.history.pushState(null, '', '/books')
+    renderShell()
+
+    const tabs = screen.getByRole('navigation', { name: 'Library' })
+    const links = Array.from(tabs.querySelectorAll('a'))
+    expect(links.map(l => l.textContent)).toEqual(['Authors', 'Books', 'Series'])
+    expect(links.map(l => l.getAttribute('href'))).toEqual(['/', '/books', '/series'])
+    expect(links.find(l => l.textContent === 'Books')).toHaveAttribute('aria-current', 'page')
+    expect(links.find(l => l.textContent === 'Authors')).not.toHaveAttribute('aria-current')
+    expect(await screen.findByTestId('page-books')).toBeInTheDocument()
+  })
+
+  // Four Activity tabs measure 347px, wider than a 320px phone. Before this the
+  // page itself scrolled sideways and the last tab was only reachable that way.
+  it('scrolls the strip inside itself rather than widening the page', () => {
+    window.history.pushState(null, '', '/wanted')
+    renderShell()
+
+    const tabs = screen.getByRole('navigation', { name: 'Activity' })
+    const classes = tabs.className.split(' ')
+    expect(classes).toContain('overflow-x-auto')
+    expect(classes).toContain('max-w-full')
+    // Each tab must keep its width inside the scroller instead of being
+    // squeezed, which is what would make the row fit without scrolling.
+    for (const tab of Array.from(tabs.querySelectorAll('a'))) {
+      expect(tab.className.split(' ')).toContain('shrink-0')
+      expect(tab.className.split(' ')).toContain('whitespace-nowrap')
+    }
+  })
+
+  it('brings the active tab into view when the strip overflows', () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+    // jsdom reports every element as 0 by 0, so describe an overflowing strip.
+    const scrollWidth = vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(347)
+    const clientWidth = vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(320)
+    try {
+      window.history.pushState(null, '', '/history')
+      renderShell()
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' })
+    } finally {
+      scrollWidth.mockRestore()
+      clientWidth.mockRestore()
+    }
+  })
+
+  it('leaves the scroll position alone when the strip fits', () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+    const scrollWidth = vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(347)
+    const clientWidth = vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(900)
+    try {
+      window.history.pushState(null, '', '/history')
+      renderShell()
+      expect(scrollIntoView).not.toHaveBeenCalled()
+    } finally {
+      scrollWidth.mockRestore()
+      clientWidth.mockRestore()
+    }
+  })
+
+  it('shows the Activity tabs on an Activity page', () => {
+    window.history.pushState(null, '', '/history')
+    renderShell()
+
+    const tabs = screen.getByRole('navigation', { name: 'Activity' })
+    const links = Array.from(tabs.querySelectorAll('a'))
+    expect(links.map(l => l.textContent)).toEqual(['Wanted', 'Queue', 'History'])
+    expect(links.find(l => l.textContent === 'History')).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByRole('navigation', { name: 'Library' })).not.toBeInTheDocument()
+  })
+
+  it('shows no tab strip on a page that belongs to no group', () => {
+    window.history.pushState(null, '', '/calendar')
+    renderShell()
+
+    expect(screen.queryByRole('navigation', { name: 'Library' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: 'Activity' })).not.toBeInTheDocument()
+  })
+
+  it('gives a requester no tab strip', () => {
+    authState.value = {
+      status: { authenticated: true, mode: 'enabled', setupRequired: false, role: 'requester', username: 'reader' },
+      logout: logoutMock,
+      isAdmin: false,
+      isRequester: true,
+    }
+    renderShell()
+
+    expect(screen.queryByRole('navigation', { name: 'Library' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: 'Activity' })).not.toBeInTheDocument()
   })
 })

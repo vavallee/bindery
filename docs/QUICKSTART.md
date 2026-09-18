@@ -205,8 +205,9 @@ row instead adds just that one book.
 
 Monitored books that are still missing become **wanted**. With "Search for
 books on add" enabled (the default), Bindery immediately queries your indexers
-and hands matching releases to the download client. To do it by hand, open the
-**Wanted** page, hit **Search** on a book, and **Grab** a result. The
+and hands matching releases to the download client. To do it by hand, open
+**Activity** in the top bar for the **Wanted** page, hit **Search** on a book,
+and **Grab** a result. The
 completed download is imported into `/books` with metadata.
 
 ---
