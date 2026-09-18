@@ -18,6 +18,10 @@ vi.mock('react-i18next', () => ({
         'requests.status.approved': 'Approved, not here yet',
         'requests.status.authorProgress': '{{imported}} of {{total}} books here',
         'requests.admin.title': 'Requests',
+        'requests.admin.empty': 'No requests here.',
+        'requests.admin.emptyHint': 'Try another filter to see requests that were already decided.',
+        'requests.admin.emptyPending': 'No requests are waiting.',
+        'requests.admin.emptyPendingHint': 'New requests from your users show up here for you to approve or decline.',
         'requests.admin.approveLabel': 'Approve request for {{title}}',
         'requests.admin.declineLabel': 'Decline request for {{title}}',
         'requests.admin.approveFormLabel': 'Approve {{title}}',
@@ -141,5 +145,21 @@ describe('RequestsPage', () => {
     fireEvent.click(within(form).getByRole('button', { name: 'Decline' }))
 
     await waitFor(() => expect(api.declineRequest).toHaveBeenCalledWith(3, 'Not in scope'))
+  })
+
+  it('titles the tab like every other page', async () => {
+    vi.mocked(api.listRequestQueue).mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 })
+    render(<RequestsPage />)
+
+    await waitFor(() => expect(document.title).toBe('Requests \u00b7 Bindery'))
+  })
+
+  it('gives the empty queue a hint instead of a bare left aligned line', async () => {
+    vi.mocked(api.listRequestQueue).mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 })
+    render(<RequestsPage />)
+
+    const empty = await screen.findByText('No requests are waiting.')
+    expect(screen.getByText('New requests from your users show up here for you to approve or decline.')).toBeInTheDocument()
+    expect(empty.parentElement).toHaveClass('text-center')
   })
 })
