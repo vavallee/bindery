@@ -1647,3 +1647,70 @@ func TestReassignPreview_UnknownBookIsBadRequest(t *testing.T) {
 		t.Errorf("body = %q, want the not-found reason", rec.Body.String())
 	}
 }
+
+// TestManualImportOutsideRoots_MessageNamesRoots covers the UX half of the
+// containment refusal: a 403 that only says "outside the configured library
+// roots" leaves an admin guessing what a valid path is, so every handler that
+// refuses now names the configured roots. Scan is the one the folder import
+// screen calls, and Lookup and Import share the same message.
+func TestManualImportOutsideRoots_MessageNamesRoots(t *testing.T) {
+	t.Parallel()
+
+	ebookRoot := t.TempDir()
+	audiobookRoot := t.TempDir()
+	outside := t.TempDir()
+	h := containmentHandler(ebookRoot, audiobookRoot)
+
+	check := func(name, body string) {
+		t.Helper()
+		if !strings.Contains(body, "outside the configured library roots") {
+			t.Errorf("%s body = %q, want the containment error", name, body)
+		}
+		for _, root := range []string{ebookRoot, audiobookRoot} {
+			if !strings.Contains(body, root) {
+				t.Errorf("%s body = %q, want it to name root %q", name, body, root)
+			}
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.Scan(rec, scanRequest(outside))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("Scan status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+	}
+	check("Scan", rec.Body.String())
+
+	p := makeBookPath(t, outside, "book.epub", false)
+
+	rec = httptest.NewRecorder()
+	h.Lookup(rec, lookupRequest(p))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("Lookup status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+	}
+	check("Lookup", rec.Body.String())
+
+	body, _ := json.Marshal(map[string]any{"path": p, "bookId": 1})
+	rec = httptest.NewRecorder()
+	h.Import(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import", bytes.NewReader(body)))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("Import status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+	}
+	check("Import", rec.Body.String())
+}
+
+// TestManualImportOutsideRoots_MessageWithNoRootsConfigured checks the other
+// half: with no root configured at all, ResolveContained fails closed, and the
+// message has to say why rather than listing nothing.
+func TestManualImportOutsideRoots_MessageWithNoRootsConfigured(t *testing.T) {
+	t.Parallel()
+
+	h := containmentHandler()
+	rec := httptest.NewRecorder()
+	h.Scan(rec, scanRequest(t.TempDir()))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "no library root is configured yet") {
+		t.Errorf("body = %q, want the unconfigured hint", rec.Body.String())
+	}
+}
