@@ -29,6 +29,7 @@ vi.mock('react-i18next', () => ({
         'history.title': 'History',
         'history.allEventTypes': 'All event types',
         'history.empty': 'No history events found',
+        'history.emptyHint': 'Grabs, imports and failures land here as they happen.',
         'history.colEvent': 'Event',
         'history.colSourceTitle': 'Source Title',
         'history.colType': 'Type',
@@ -250,6 +251,8 @@ describe('HistoryPage', () => {
     renderHistoryPage()
 
     expect(await screen.findByText('No history events found')).toBeInTheDocument()
+    // The bare line got a hint, so History reads like Queue, Discover and Import.
+    expect(screen.getByText('Grabs, imports and failures land here as they happen.')).toBeInTheDocument()
     expect(api.listHistory).toHaveBeenCalledWith({ eventType: undefined, limit: 100, offset: 0 })
   })
 

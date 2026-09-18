@@ -132,13 +132,21 @@ export default function DiscoverPage() {
           <h2 className="text-2xl font-bold">{t('discover.title')}</h2>
           <p className="text-sm text-slate-500 dark:text-zinc-500">{t('discover.subtitle')}</p>
         </div>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="shrink-0 px-4 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded-lg text-sm font-medium disabled:opacity-50 transition-colors"
-        >
-          {refreshing ? t('discover.refreshing') : t('discover.refresh')}
-        </button>
+        {/* Refresh regenerates recommendations, which is meaningless while the
+            feature is off: the request would succeed and still produce nothing.
+            Hide it in that one state rather than disable it, so there is a
+            single obvious next step (the Settings link below). It stays for
+            every other state, including the "not enough data yet" empty one,
+            where a refresh can genuinely change the result. */}
+        {enabled !== false && (
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="shrink-0 px-4 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded-lg text-sm font-medium disabled:opacity-50 transition-colors"
+          >
+            {refreshing ? t('discover.refreshing') : t('discover.refresh')}
+          </button>
+        )}
       </div>
 
       {/* Toast */}
@@ -157,8 +165,13 @@ export default function DiscoverPage() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5.002 5.002 0 017.072 0" />
           </svg>
           <p className="text-slate-600 dark:text-zinc-400 mb-4">{t('discover.empty.disabled')}</p>
+          {/* The toggle lives on the Metadata tab, not General, which is where
+              everyone looked first. Deep link straight to it: ?tab=… is the
+              established way to open a Settings tab (SetupBanner, AuthorSyncNotice).
+              There is no in-tab anchor or highlight pattern in Settings today,
+              so the tab is as precise as this can get. */}
           <Link
-            to="/settings"
+            to="/settings?tab=metadata"
             className="inline-block px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium transition-colors"
           >
             {t('discover.empty.goToSettings')}
