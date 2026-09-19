@@ -11,14 +11,19 @@ type Torrent struct {
 	// Status is the Transmission RPC status enum (stable since 2.40):
 	//   0=stopped 1=queued-to-check 2=checking
 	//   3=queued-to-download 4=downloading 5=queued-to-seed 6=seeding
-	Status       int      `json:"status"`
-	ErrorString  string   `json:"errorString"`
-	DownloadRate int64    `json:"rateDownload"`
-	UploadRate   int64    `json:"rateUpload"`
-	ETA          int64    `json:"eta"`
-	PercentDone  float64  `json:"percentDone"`
-	DownloadDir  string   `json:"downloadDir"`
-	Labels       []string `json:"labels"`
+	Status       int     `json:"status"`
+	ErrorString  string  `json:"errorString"`
+	DownloadRate int64   `json:"rateDownload"`
+	UploadRate   int64   `json:"rateUpload"`
+	ETA          int64   `json:"eta"`
+	PercentDone  float64 `json:"percentDone"`
+	DownloadDir  string  `json:"downloadDir"`
+	// AddedDate is the Unix time Transmission accepted the torrent. It is the
+	// only field besides hashString that survives a daemon restart unchanged,
+	// which makes it the reconciliation key for downloads grabbed before the
+	// info hash was persisted.
+	AddedDate int64    `json:"addedDate"`
+	Labels    []string `json:"labels"`
 }
 
 // TorrentAddResponse is returned when adding a torrent.
