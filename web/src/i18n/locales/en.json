@@ -1016,6 +1016,7 @@
       "deleteBackupTitle": "Delete backup"
     },
     "general": {
+      "hardcoverPausedUntil": "Hardcover is paused until {{time}} because its daily quota was reached. Retry interrupted imports after this time.",
       "appearance": "Appearance",
       "theme": "Theme",
       "themeHint": "Light or dark interface. Defaults to your OS preference on first visit.",

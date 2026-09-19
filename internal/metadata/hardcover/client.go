@@ -58,7 +58,8 @@ type Client struct {
 	// (aggregator, list syncer, import-list browse, the settings test
 	// button) all spending the same budget. Every copy below carries the
 	// pointer forward; TestThrottleSharedAcrossClientCopies guards that.
-	throttle *throttle
+	throttle   *throttle
+	dailyQuota *DailyQuota
 }
 
 // NormalizeAPIToken accepts either the raw token copied from Hardcover or an
@@ -99,14 +100,14 @@ func New() *Client {
 // WithToken returns a copy of the client configured to use the given API token.
 // Required for authenticated queries such as GetUserWishlist.
 func (c *Client) WithToken(token string) *Client {
-	return &Client{http: c.http, token: token, throttle: c.pacer()}
+	return &Client{http: c.http, token: token, throttle: c.pacer(), dailyQuota: c.dailyQuota}
 }
 
 // WithTokenSource returns a copy of the client that resolves an API token
 // for each request. It is used for UI-managed credentials that can change
 // while the process is running.
 func (c *Client) WithTokenSource(source func(context.Context) string) *Client {
-	return &Client{http: c.http, token: c.token, tokenSource: source, throttle: c.pacer()}
+	return &Client{http: c.http, token: c.token, tokenSource: source, throttle: c.pacer(), dailyQuota: c.dailyQuota}
 }
 
 // NewAuthenticated creates a new client that sends Authorization: Bearer <token>
@@ -662,7 +663,14 @@ func (c *Client) query(ctx context.Context, q string, vars map[string]any, out i
 	}
 
 	var lastErr error
+	// Pin credentials for the whole operation: response headers must update
+	// the same token's hold that admitted the request, even during rotation.
+	bound := c.WithToken(c.authorizationToken(ctx))
+	c = bound
 	for attempt := 0; attempt <= hardcoverMaxRetries; attempt++ {
+		if err := c.CheckQuota(ctx); err != nil {
+			return err
+		}
 		if err := c.pacer().wait(ctx); err != nil {
 			if errors.Is(err, errThrottled) {
 				if lastErr != nil {
@@ -673,7 +681,18 @@ func (c *Client) query(ctx context.Context, q string, vars map[string]any, out i
 			return err
 		}
 
+		if err := c.CheckQuota(ctx); err != nil {
+			return err
+		}
 		status, header, raw, doErr := c.roundTrip(ctx, body)
+		if err := c.dailyQuota.observe(ctx, c.token, header); err != nil {
+			return err
+		}
+		if status == http.StatusTooManyRequests {
+			if err := c.CheckQuota(ctx); err != nil {
+				return err
+			}
+		}
 		if doErr != nil {
 			// A cancelled or expired context is never worth retrying, and
 			// neither is the last attempt.

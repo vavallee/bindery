@@ -92,6 +92,7 @@ export default function ApiKeysTab() {
     try {
       const result = await api.testHardcover()
       setHardcoverTestResult(result)
+      await refreshSystemStatus()
     } catch (err) {
       setHardcoverTestResult({
         ok: false,
@@ -162,6 +163,11 @@ export default function ApiKeysTab() {
           </div>
 
           <div className="border-t border-slate-200 dark:border-zinc-800 pt-4 space-y-3">
+            {systemStatus?.hardcoverPausedUntil && Date.parse(systemStatus.hardcoverPausedUntil) > Date.now() && (
+              <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
+                {t('settings.general.hardcoverPausedUntil', { time: new Date(systemStatus.hardcoverPausedUntil).toLocaleString() })}
+              </p>
+            )}
             <div>
               <div className="flex items-center justify-between gap-3 mb-1">
                 <label className="block text-xs text-slate-600 dark:text-zinc-400">

@@ -98,9 +98,14 @@ func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo,
 	defer rows.Close()
 
 	var newlyAdded []*models.Author
+	defer func() { dispatchCatalogueFetch(ctx, newlyAdded, onSearchOnAdd) }()
 	outage := &primaryOutage{}
 
 	for rows.Next() {
+		if err := agg.CheckQuota(ctx); err != nil {
+			res.fail("Hardcover", err.Error())
+			return err
+		}
 		var name string
 		var monitored bool
 		if err := rows.Scan(&name, &monitored); err != nil {
@@ -113,6 +118,10 @@ func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo,
 		res.Requested++
 
 		full := resolveAndCreateAuthor(ctx, "readarr", name, monitored, repo, settings, agg, outage, res)
+		if err := agg.CheckQuota(ctx); err != nil {
+			res.fail(name, err.Error())
+			return err
+		}
 		if full == nil {
 			continue
 		}
@@ -133,7 +142,6 @@ func importReadarrAuthors(ctx context.Context, src *sql.DB, repo *db.AuthorRepo,
 	// authors already added before it — returning early here on rowsErr
 	// without dispatching first would silently leave those authors with
 	// empty catalogues.
-	dispatchCatalogueFetch(ctx, newlyAdded, onSearchOnAdd)
 	return rowsErr
 }
 

@@ -41,6 +41,10 @@ func refusedBindReason(o metadata.SearchOutcome, foreignID string) string {
 // verdict on the row, which may well match once the primary is back, so it
 // says to retry rather than to fix anything.
 func primaryDownReason(o metadata.SearchOutcome) string {
+	var daily *metadata.DailyQuotaError
+	if errors.As(o.FirstErr, &daily) {
+		return daily.Error()
+	}
 	return fmt.Sprintf("primary metadata provider %s did not answer, run the import again once it responds", o.Primary)
 }
 
@@ -146,6 +150,17 @@ func resolveAndCreateAuthor(
 	// Skip if already present. Nothing is written, so this needs no guard.
 	if existing, _ := authors.GetByAnyForeignID(ctx, top.ForeignID); existing != nil {
 		res.Skipped++
+		// A daily hold can interrupt the initial catalogue after the author was
+		// committed. A rerun must queue it again, without repopulating a catalogue
+		// the user deliberately emptied (the marker survives book deletion).
+		populated, err := authors.CataloguePopulatedAt(ctx, existing.ID)
+		if err != nil {
+			res.fail(name, err.Error())
+			return nil
+		}
+		if populated == nil {
+			return existing
+		}
 		return nil
 	}
 
