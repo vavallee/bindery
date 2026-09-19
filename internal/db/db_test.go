@@ -1583,12 +1583,13 @@ func TestDownloadRepoRetryFailedResetsPerGrabFields(t *testing.T) {
 	}
 }
 
-// TestDownloadRepoRetryOrphanedImportClaimsOnlyOrphanedImport pins the
-// scheduler's claim (#2289). It takes an orphaned import and nothing else. In
-// particular it refuses a failed or importBlocked row, which a manual grab can
-// leave behind between the scheduler reading the row and claiming it, and
-// which RetryFailed would accept.
-func TestDownloadRepoRetryOrphanedImportClaimsOnlyOrphanedImport(t *testing.T) {
+// TestDownloadRepoRetryDeadForAutoGrabConditions pins the scheduler's claim.
+// It takes an orphaned import whatever its age (#2289) and a dead row that has
+// been idle past the cooldown (#2710), and nothing else. In particular it
+// refuses a row that died seconds ago, which a manual grab can leave behind
+// between the scheduler reading the row and claiming it, and which RetryFailed
+// would accept.
+func TestDownloadRepoRetryDeadForAutoGrabConditions(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -1607,14 +1608,22 @@ func TestDownloadRepoRetryOrphanedImportClaimsOnlyOrphanedImport(t *testing.T) {
 		t.Fatalf("create book: %v", err)
 	}
 
+	// Every claim below asks for rows idle for at least an hour.
+	idleBefore := time.Now().UTC().Add(-time.Hour)
 	claim := func(id int64) bool {
 		t.Helper()
-		ok, err := repo.RetryOrphanedImport(ctx, &models.Download{ID: id, Title: "New",
-			NZBURL: "https://example.com/new.nzb", Status: models.StateGrabbed, Protocol: "usenet"})
+		ok, err := repo.RetryDeadForAutoGrab(ctx, &models.Download{ID: id, Title: "New",
+			NZBURL: "https://example.com/new.nzb", Status: models.StateGrabbed, Protocol: "usenet"}, idleBefore)
 		if err != nil {
-			t.Fatalf("RetryOrphanedImport(%d): %v", id, err)
+			t.Fatalf("RetryDeadForAutoGrab(%d): %v", id, err)
 		}
 		return ok
+	}
+	backdate := func(id int64, column string, when time.Time) {
+		t.Helper()
+		if _, err := database.ExecContext(ctx, "UPDATE downloads SET "+column+"=? WHERE id=?", when, id); err != nil {
+			t.Fatalf("backdate %s: %v", column, err)
+		}
 	}
 
 	var failedID int64
@@ -1623,8 +1632,8 @@ func TestDownloadRepoRetryOrphanedImportClaimsOnlyOrphanedImport(t *testing.T) {
 		status models.DownloadState
 		bookID *int64
 	}{
-		{"failed", models.StateFailed, nil},
-		{"importBlocked", models.StateImportBlocked, nil},
+		{"failed seconds ago", models.StateFailed, nil},
+		{"importBlocked seconds ago", models.StateImportBlocked, nil},
 		{"imported with its book", models.StateImported, &book.ID},
 		{"in flight with no book", models.StateDownloading, nil},
 	} {
@@ -1648,6 +1657,36 @@ func TestDownloadRepoRetryOrphanedImportClaimsOnlyOrphanedImport(t *testing.T) {
 		}
 	}
 
+	// An old row whose import failed recently is still inside the cooldown:
+	// completed_at, not added_at, is what says when the attempt ended.
+	recent := &models.Download{GUID: "roi-recently-blocked", Title: "Old",
+		NZBURL: "https://example.com/old.nzb", Status: models.StateImportBlocked, Protocol: "usenet"}
+	if err := repo.Create(ctx, recent); err != nil {
+		t.Fatalf("create recently blocked: %v", err)
+	}
+	backdate(recent.ID, "added_at", time.Now().UTC().Add(-90*24*time.Hour))
+	backdate(recent.ID, "completed_at", time.Now().UTC().Add(-time.Minute))
+	if claim(recent.ID) {
+		t.Error("a row whose attempt ended a minute ago must stay inside the cooldown")
+	}
+
+	// The #2710 row: failed months ago, for a cause that is long gone.
+	stale := &models.Download{GUID: "roi-stale-failure", Title: "Old",
+		NZBURL: "https://example.com/old.nzb", Status: models.StateFailed, Protocol: "usenet"}
+	if err := repo.Create(ctx, stale); err != nil {
+		t.Fatalf("create stale failure: %v", err)
+	}
+	backdate(stale.ID, "added_at", time.Now().UTC().Add(-90*24*time.Hour))
+	if !claim(stale.ID) {
+		t.Fatal("#2710: a row that failed months ago must not block the scheduler's re-grab")
+	}
+	if got, err := repo.GetByID(ctx, stale.ID); err != nil || got == nil {
+		t.Fatalf("reload stale failure: %v", err)
+	} else if got.Status != models.StateGrabbed || got.Title != "New" || got.ErrorMessage != "" {
+		t.Errorf("the claim must reset the reused row, got status=%q title=%q error=%q",
+			got.Status, got.Title, got.ErrorMessage)
+	}
+
 	orphan := &models.Download{GUID: "roi-orphan", Title: "Old", NZBURL: "https://example.com/old.nzb",
 		Status: models.StateImported, Protocol: "usenet"}
 	if err := repo.Create(ctx, orphan); err != nil {
@@ -1656,6 +1695,7 @@ func TestDownloadRepoRetryOrphanedImportClaimsOnlyOrphanedImport(t *testing.T) {
 	if err := repo.SetImportPath(ctx, orphan.ID, "/downloads/Old"); err != nil {
 		t.Fatalf("set import path: %v", err)
 	}
+	// Created seconds ago: an orphaned import is claimable whatever its age.
 	if !claim(orphan.ID) {
 		t.Fatal("an orphaned import must be claimable by the scheduler")
 	}
@@ -1671,10 +1711,10 @@ func TestDownloadRepoRetryOrphanedImportClaimsOnlyOrphanedImport(t *testing.T) {
 		t.Error("a row already claimed (now grabbed) must not be claimed again")
 	}
 
-	// The difference from RetryFailed, which is why the scheduler must not use it.
+	// The difference from RetryFailed, which the manual grab uses: no cooldown.
 	if ok, err := repo.RetryFailed(ctx, &models.Download{ID: failedID, Title: "New",
 		NZBURL: "https://example.com/new.nzb", Status: models.StateGrabbed, Protocol: "usenet"}); err != nil || !ok {
-		t.Fatalf("RetryFailed must still accept a failed row for the manual grab: ok=%v err=%v", ok, err)
+		t.Fatalf("RetryFailed must accept a row that failed seconds ago for the manual grab: ok=%v err=%v", ok, err)
 	}
 }
 

@@ -109,6 +109,14 @@ Clicking **Grab** on a release you already have a Queue entry for is refused wit
 - **downloading / grabbed / importing** — it's in flight; check the Queue.
 - **`importBlocked`** — a re-grab is allowed and reuses the existing Queue row with a fresh retry budget. Use this when the original files are gone; use **Retry import** instead when they're still on disk.
 
+### Automatic search skips a release you have a failed Queue row for
+
+Automatic search applies the same rule, with one addition. A Queue row that is in flight, or imported into a book you still have, stops the sweep from grabbing that release again. A row that failed, or that is `importBlocked`, does not: once it has been sitting untouched for six hours, the next sweep grabs the release again and reuses the same Queue row, with the old error message, import path and client id cleared.
+
+The six hour wait is deliberate. A release that fails at the download client fails again the moment it is re-sent, so without it a bad release would be re-grabbed on every sweep. Clicking **Grab** yourself has no such wait and retries straight away.
+
+Earlier releases let a failed row block the release permanently, and the skip was silent: the log showed `auto-grabbing book` and then nothing, as though the grab had gone ahead. Every skip now writes a line naming the release, its GUID, the blocking Queue row and its status, and the `book search finished` line for that book ends with an `outcome` that says the same thing.
+
 ### "Could not match any book to this download"
 
 The files downloaded fine, but Bindery couldn't tie them to a book in your library, so the item sits in the Queue as `importFailed` with *could not match any book to this download*. This happens when a release was grabbed without a specific book (e.g. from the free-text Search page) or its title didn't parse to a catalogue book.

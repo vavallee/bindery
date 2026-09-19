@@ -90,10 +90,56 @@ type Download struct {
 // no book, since a free text grab is matched by the importer later.
 //
 // The manual grab (api.regrabbable) and the scheduler's auto grab both gate on
-// this, and db.DownloadRepo.RetryFailed and RetryOrphanedImport repeat it in
+// this, and db.DownloadRepo.RetryFailed and RetryDeadForAutoGrab repeat it in
 // SQL. Keep them in agreement.
 func (d *Download) IsOrphanedImport() bool {
 	return d != nil && d.Status == StateImported && d.BookID == nil
+}
+
+// BlocksRegrab reports whether d, the existing row holding a release's GUID,
+// must stop a fresh grab of that release.
+//
+// Only live work blocks: a row that is grabbed, downloading, completed,
+// importing or imported into a book that still exists. Re-grabbing any of
+// those would duplicate a download that is already running or throw away an
+// import that already worked.
+//
+// A dead row does not block (#2710). It is a finished attempt with no
+// automatic path out, and the reason it died is usually gone by the time the
+// release is chosen again: the reporter had twenty five rows failed on a
+// loopback URL refusal and on indexer 429 and 500 responses, all long since
+// fixed, and every automatic re-grab of those releases was dropped on the
+// GUID. An orphaned import does not block either, for the separate reason
+// IsOrphanedImport gives (#2289).
+//
+// This is the whole predicate for the manual grab (api.regrabbable). The
+// scheduler adds a cooldown on top of it so a release that keeps failing is
+// not re-grabbed on every sweep.
+func (d *Download) BlocksRegrab() bool {
+	if d == nil {
+		return false
+	}
+	return !d.Status.IsDeadForRegrab() && !d.IsOrphanedImport()
+}
+
+// LastActivityAt is the most recent moment this download is known to have
+// moved: its completion, else its grab, else the moment the row was written.
+// downloads has no updated_at column, so this is the best available answer to
+// "how long ago did this attempt end", and it is what the scheduler's re-grab
+// cooldown measures. db.DownloadRepo.RetryDeadForAutoGrab computes the same
+// value in SQL as COALESCE(completed_at, grabbed_at, added_at); keep the two
+// in agreement.
+func (d *Download) LastActivityAt() time.Time {
+	switch {
+	case d == nil:
+		return time.Time{}
+	case d.CompletedAt != nil:
+		return *d.CompletedAt
+	case d.GrabbedAt != nil:
+		return *d.GrabbedAt
+	default:
+		return d.AddedAt
+	}
 }
 
 // Legacy status aliases — callers should prefer the typed State* constants in

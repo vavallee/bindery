@@ -71,6 +71,31 @@ var validTransitions = map[DownloadState][]DownloadState{
 	StateImportHeld: {StateImportExternal, StateImportFailed, StateImportBlocked, StateImportPending},
 }
 
+// IsDeadForRegrab reports whether a download in state s is a finished attempt
+// with no automatic path out, so a fresh grab of the same release may reuse
+// its row.
+//
+// StateFailed is the download side failure: the release was never fetched, or
+// the client gave up on it. StateImportBlocked is the import side one (#1955):
+// the retry budget is spent, no poller will revisit the row, and it would
+// otherwise pin the release's GUID forever.
+//
+// StateImportFailed deliberately does NOT qualify: the scanner is still
+// working through its retry budget on that row and a re-grab would race it.
+// Neither do the non terminal hand off states (StateImportExternal,
+// StateImportHeld): the files are still on their way into the library.
+//
+// The state alone never makes an imported row re-grabbable. The one imported
+// row that is, an import whose book has since been deleted, depends on more
+// than the state and is decided by Download.IsOrphanedImport (#2289).
+//
+// Callers: api.regrabbableState, Download.BlocksRegrab, and the SQL in
+// db.DownloadRepo.RetryFailed and RetryDeadForAutoGrab. Keep them in
+// agreement.
+func (s DownloadState) IsDeadForRegrab() bool {
+	return s == StateFailed || s == StateImportBlocked
+}
+
 // CanTransitionTo reports whether a transition from s to next is valid.
 func (s DownloadState) CanTransitionTo(next DownloadState) bool {
 	return slices.Contains(validTransitions[s], next)

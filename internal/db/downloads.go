@@ -162,22 +162,35 @@ func (r *DownloadRepo) RetryFailed(ctx context.Context, d *models.Download) (boo
 		models.StateFailed, models.StateImportBlocked, models.StateImported)
 }
 
-// RetryOrphanedImport is RetryFailed for the scheduler's auto grab: the same
-// reset, but it claims the row only while it is still an orphaned import
-// (imported, book deleted). The scheduler reuses nothing else, and the claim
-// has to say so in SQL. Between the scheduler reading the row and claiming it,
-// a manual grab can claim it and fail, leaving it failed or importBlocked;
-// RetryFailed would accept that row, and the scheduler would retry a release
-// it deliberately never retries.
+// RetryDeadForAutoGrab is RetryFailed for the scheduler's auto grab: the same
+// reset, over the same rows, with one extra condition of its own.
 //
-// Keep the condition in sync with models.Download.IsOrphanedImport.
-func (r *DownloadRepo) RetryOrphanedImport(ctx context.Context, d *models.Download) (bool, error) {
+// A dead row (failed, importBlocked) is claimed only when its last activity is
+// at or before idleBefore. That cooldown is what keeps the auto grab from
+// looping: without it the scheduler would re-grab a release that fails at the
+// client on every sweep, and the sweep can run as often as hourly. A manual
+// grab has no such bound because a person asked for it. An orphaned import
+// (imported, book deleted) is claimed whatever its age, exactly as before
+// (#2289): nothing about it will change with time.
+//
+// COALESCE(completed_at, grabbed_at, added_at) is the row's last activity;
+// downloads has no updated_at column. Times are stored as RFC3339 UTC, so the
+// bound time.Time compares correctly against them. Keep the expression in sync
+// with models.Download.LastActivityAt, and the state conditions with
+// models.DownloadState.IsDeadForRegrab and models.Download.IsOrphanedImport.
+//
+// The cooldown lives in SQL rather than only in the caller for the same reason
+// the states do: between the scheduler reading the row and claiming it, a
+// manual grab can claim it and fail, leaving a row that died seconds ago where
+// the scheduler saw one that died months ago.
+func (r *DownloadRepo) RetryDeadForAutoGrab(ctx context.Context, d *models.Download, idleBefore time.Time) (bool, error) {
 	return r.claimForRegrab(ctx, d,
-		regrabClaimSQL+`status=? AND book_id IS NULL`,
-		models.StateImported)
+		regrabClaimSQL+`((status IN (?, ?) AND COALESCE(completed_at, grabbed_at, added_at) <= ?)
+		       OR (status=? AND book_id IS NULL))`,
+		models.StateFailed, models.StateImportBlocked, idleBefore.UTC(), models.StateImported)
 }
 
-// regrabClaimSQL is the UPDATE shared by RetryFailed and RetryOrphanedImport.
+// regrabClaimSQL is the UPDATE shared by RetryFailed and RetryDeadForAutoGrab.
 // It rewrites or resets every per grab column; each claim appends the states
 // it accepts after the trailing AND.
 const regrabClaimSQL = `

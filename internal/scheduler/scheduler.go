@@ -1061,14 +1061,21 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		outcome = "duplicate check failed"
 		return
 	}
-	// Only an import whose book has since been deleted is reused (#2289):
-	// without this, a book deleted and added back never grabs its old release
-	// automatically when that release ranks first. A failed or blocked row is
-	// different. It is a release that already went wrong once, and while a
-	// user clicking Grab may try it again, the scheduler would pick it on
-	// every sweep and loop on it, so it stays skipped here.
-	if existing != nil && !existing.IsOrphanedImport() {
-		outcome = "already grabbed"
+	// Live work blocks the grab; a finished attempt does not (#2710). A dead
+	// row (failed, importBlocked) is reused once it has been idle for
+	// deadRegrabCooldown, and an import whose book has since been deleted is
+	// reused whatever its age (#2289). blockingRegrabReason decides, and names
+	// the reason so the skip is not silent: the "auto-grabbing book" line
+	// above has already been written by now.
+	if reason := blockingRegrabReason(existing, time.Now().UTC()); reason != "" {
+		outcome = reason + " (" + string(existing.Status) + ")"
+		slog.Info("skipping a release the queue still holds",
+			"book", book.Title,
+			"release", best.Title,
+			"guid", best.GUID,
+			"existing_status", string(existing.Status),
+			"existing_download_id", existing.ID,
+			"reason", reason)
 		return
 	}
 
@@ -1087,21 +1094,23 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	}
 
 	if existing != nil {
-		// RetryOrphanedImport resets every per grab column, owner and
-		// import_path included, and claims the row only while it is still an
-		// orphaned import. A manual grab that claimed it first turns this into
-		// a skip, including one that has since failed: the failed or
-		// importBlocked row it leaves is not reclaimed here, as RetryFailed
-		// would do.
+		// RetryDeadForAutoGrab resets every per grab column, owner and
+		// import_path included, so the reused row carries nothing of the
+		// attempt it replaces, and the history row and the queue entry below
+		// describe this grab alone. It re-checks the same conditions in SQL,
+		// so a row a manual grab claimed between the read above and here is a
+		// skip rather than a second send to the client.
 		dl.ID = existing.ID
-		ok, err := s.downloads.RetryOrphanedImport(ctx, dl)
+		ok, err := s.downloads.RetryDeadForAutoGrab(ctx, dl, time.Now().UTC().Add(-deadRegrabCooldown))
 		if err != nil {
 			slog.Error("SearchAndGrabBook: failed to reuse download record", "download_id", existing.ID, "error", err)
 			outcome = "download record failed"
 			return
 		}
 		if !ok {
-			outcome = "already grabbed"
+			slog.Info("a concurrent grab claimed the release first",
+				"book", book.Title, "guid", best.GUID, "existing_download_id", existing.ID)
+			outcome = "claimed by another grab"
 			return
 		}
 	} else if err := s.downloads.Create(ctx, dl); err != nil {
