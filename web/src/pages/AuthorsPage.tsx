@@ -362,9 +362,14 @@ export default function AuthorsPage() {
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
       {confirmDialog}
       <BulkNotice message={bulkNotice} onDismiss={() => setBulkNotice(null)} />
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-2xl font-bold">{t('authors.title')}</h2>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
+      {/* Page header. The outer row wraps and the toolbar is pinned to the
+          container width below `sm`, so a phone puts the buttons on their own
+          lines under the title instead of letting the group claim more room
+          than the viewport has. Books, Series and History already lay their
+          headers out this way. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h2 className="text-2xl font-bold min-w-0">{t('authors.title')}</h2>
+        <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto justify-start sm:justify-end">
           <ViewToggle view={view} onChange={setView} />
           <button
             onClick={handleRefreshAll}

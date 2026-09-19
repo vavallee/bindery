@@ -79,13 +79,16 @@ export default function SearchPage() {
           value={query}
           onChange={e => setQuery(e.target.value)}
           placeholder={t('search.placeholder')}
-          className="flex-1 bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-500"
+          // min-w-0 matters: a flex item's automatic minimum size is its
+          // min-content width, and an input's is its default 20-character
+          // size, which pushed this row past a phone viewport.
+          className="flex-1 min-w-0 bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-500"
           autoFocus
         />
         <button
           type="submit"
           disabled={searching || !query.trim()}
-          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-sm font-medium"
+          className="shrink-0 whitespace-nowrap px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-sm font-medium"
         >
           {searching ? t('search.searching') : t('search.submit')}
         </button>
