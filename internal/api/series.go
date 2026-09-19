@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1269,10 +1271,7 @@ func buildHardcoverDiff(ctx context.Context, books *db.BookRepo, userID int64, s
 	// every later one (#2343). Without it two locals could resolve to the same
 	// index, which duplicated the row in Present, over-counted PresentCount,
 	// and pushed the second local's real catalog entry into Missing behind an
-	// Add button that ensureHardcoverCatalogBook's guards then refuse. A local
-	// whose best candidate is taken falls through to its next best, and to
-	// LocalOnly when it has none. First local seen wins the tie, matching the
-	// order this loop has always used.
+	// Add button that ensureHardcoverCatalogBook's guards then refuse.
 	matchedCatalog := make(map[int]struct{})
 	// Identities bind first (#2553). Assigning in library order let an
 	// earlier local's fuzzy title match claim the catalogue slot that a later
@@ -1281,6 +1280,9 @@ func buildHardcoverDiff(ctx context.Context, books *db.BookRepo, userID int64, s
 	// was left Local only. An explicit identity is never outranked by a title
 	// heuristic, so it must not be outrun by one either.
 	identity := make(map[int]catalogMatch, len(series.Books))
+	// holder records which local holds each bound catalogue entry, so a local
+	// that lost an entry can be compared with the book that took it.
+	holder := make(map[int]int, len(catalog.Books))
 	for li, local := range series.Books {
 		if local.Book == nil || local.Book.ForeignID == "" {
 			continue
@@ -1292,18 +1294,65 @@ func buildHardcoverDiff(ctx context.Context, books *db.BookRepo, userID int64, s
 			if local.Book.ForeignID == candidate.ForeignID || local.Book.ForeignID == candidate.Book.ForeignID {
 				identity[li] = catalogMatch{index: ci, score: 100, foreignID: true}
 				matchedCatalog[ci] = struct{}{}
+				holder[ci] = li
 				break
 			}
 		}
+	}
+	// Title matches bind in order of each local's best score, ties in library
+	// order. A local whose best entry is already taken falls through to its
+	// next best, as it always has, unless it is a second copy of a book that
+	// already bound, and then it is Local only (#2410). Falling through sent
+	// the second of two rows for The Way of Kings, an ebook and an audiobook,
+	// to "The Way of Kings Prime" at 0.90, which showed Prime as owned and
+	// hid it from Missing and so from series fill.
+	//
+	// Whether a local is a copy is read from the two local titles, not from
+	// the scores, because a real book loses its best entry to a different
+	// book all the time: "He Who Fights with Monsters 4" scores 0.96 against
+	// the umbrella title that volume 1 holds and 0.90 against its own entry,
+	// and has to fall through to it. Refusing every weaker fallback starved
+	// those books, listed owned volumes as Missing, and series fill then
+	// created them again. See boundCopyOf.
+	matches := make(map[int]catalogMatch, len(series.Books))
+	preferred := make(map[int]catalogMatch, len(series.Books))
+	byTitle := make([]int, 0, len(series.Books))
+	for li, local := range series.Books {
+		if local.Book == nil {
+			continue
+		}
+		if match, ok := identity[li]; ok {
+			matches[li] = match
+			continue
+		}
+		preferred[li] = bestCatalogMatch(local, catalog.Books, nil)
+		byTitle = append(byTitle, li)
+	}
+	sort.SliceStable(byTitle, func(a, b int) bool {
+		return preferred[byTitle[a]].score > preferred[byTitle[b]].score
+	})
+	for _, li := range byTitle {
+		local := series.Books[li]
+		match := bestCatalogMatch(local, catalog.Books, matchedCatalog)
+		if entry, twin, score := boundCopyOf(local, series.Books, catalog.Books, holder, match.score); entry >= 0 {
+			c := catalog.Books[entry]
+			slog.Debug("series diff: local book is a second copy of a book already bound, left Local only",
+				"seriesID", series.ID, "localBookID", local.Book.ID, "localTitle", local.Book.Title,
+				"boundBookID", series.Books[twin].Book.ID, "catalogForeignID", firstNonEmpty(c.ForeignID, c.Book.ForeignID),
+				"score", score, "fallbackScore", match.score)
+			match = catalogMatch{index: -1}
+		}
+		if match.index >= 0 && match.score >= 70 {
+			matchedCatalog[match.index] = struct{}{}
+			holder[match.index] = li
+		}
+		matches[li] = match
 	}
 	for li, local := range series.Books {
 		if local.Book == nil {
 			continue
 		}
-		match, byIdentity := identity[li]
-		if !byIdentity {
-			match = bestCatalogMatch(local, catalog.Books, matchedCatalog)
-		}
+		match := matches[li]
 		logDiffDecision(series.ID, local, catalog.Books, match)
 		localItem := localDiffBook(local)
 		if match.index < 0 {
@@ -1438,6 +1487,57 @@ func bestCatalogMatch(local models.SeriesBook, books []metadata.SeriesCatalogBoo
 		}
 	}
 	return best
+}
+
+// boundCopyOf reports whether local is a second copy of a book that already
+// bound (#2410). It is when a catalogue entry that local scores above its
+// fallback is held by a local with the same title: both titles carry the
+// same set of numbers, and they score against each other at least as well as
+// local scores on the entry. The numbers keep "He Who Fights with Monsters:
+// A LitRPG Adventure" from reading as a copy of "He Who Fights with Monsters
+// 12: A LitRPG Adventure", whose entry it scores 0.97 against on the shared
+// subtitle. Every such entry is checked, not only local's best, because a
+// copy's best entry can be held by a different book while its twin holds
+// the next one. It returns the entry, the holder's index into locals and
+// local's score on the entry, or -1s when local is not a copy.
+func boundCopyOf(local models.SeriesBook, locals []models.SeriesBook, books []metadata.SeriesCatalogBook, holder map[int]int, fallback int) (entry, twin, score int) {
+	for ci := range books {
+		hi, held := holder[ci]
+		if !held {
+			continue
+		}
+		// One entry at a time, under bestCatalogMatch's own vetoes and
+		// position rule.
+		s := bestCatalogMatch(local, books[ci:ci+1], nil).score
+		if s <= fallback {
+			continue
+		}
+		other := locals[hi].Book
+		if sameTitleNumbers(local.Book.Title, other.Title) && seriesmatch.TitleScore(local.Book.Title, other.Title) >= s {
+			return ci, hi, s
+		}
+	}
+	return -1, -1, 0
+}
+
+// titleNumberRe matches every number a title carries.
+var titleNumberRe = regexp.MustCompile(`\d+(?:\.\d+)?`)
+
+// sameTitleNumbers reports whether two titles carry the same set of numbers,
+// compared by value so "Book 07" and "Book 7" agree.
+func sameTitleNumbers(a, b string) bool {
+	return maps.Equal(titleNumbers(a), titleNumbers(b))
+}
+
+func titleNumbers(title string) map[string]struct{} {
+	numbers := map[string]struct{}{}
+	for _, n := range titleNumberRe.FindAllString(title, -1) {
+		if f, err := strconv.ParseFloat(n, 64); err == nil {
+			n = strconv.FormatFloat(f, 'f', -1, 64)
+		}
+		numbers[n] = struct{}{}
+	}
+	return numbers
 }
 
 func catalogDiffBook(book metadata.SeriesCatalogBook, fallbackAuthor string) seriesHardcoverDiffBook {
