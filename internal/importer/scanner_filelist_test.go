@@ -121,7 +121,7 @@ func TestImport_SingleFileTorrentSkipsSiblingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	torrentID := "42"
+	torrentID := "h" // matches the fixture torrent's hashString
 	dl := &models.Download{
 		GUID:             "guid-903",
 		Title:            "The Book",
