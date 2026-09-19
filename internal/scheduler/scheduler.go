@@ -1527,9 +1527,15 @@ const stallTimeoutDefault = 120 * time.Minute
 // re-grabbed, and a fresh search is triggered for the same book.
 //
 // Detection uses the download client's native stall signal where available
-// (qBittorrent: stalledDL state; Transmission: stopped with error). For
-// SABnzbd the existing Failed-state detection in CheckDownloads already
-// covers failures, so this job adds nothing for usenet downloads.
+// (qBittorrent: stalledDL state; Transmission: stopped with error), plus the
+// "accepted but never resolved" rule that catches a magnet the client is still
+// holding with no metadata (#2709). For SABnzbd the existing Failed-state
+// detection in CheckDownloads already covers failures, so this job adds
+// nothing for usenet downloads.
+//
+// The grabbed_at cutoff below is what makes the no-metadata rule safe: a
+// healthy magnet is indistinguishable from a dead one until it resolves, so
+// nothing is judged before it has had the whole stall timeout to do so.
 func (s *Scheduler) checkStalledDownloads(ctx context.Context) {
 	timeout := stallTimeoutDefault
 	if s.settings != nil {
@@ -1565,7 +1571,7 @@ func (s *Scheduler) checkStalledDownloads(ctx context.Context) {
 			continue
 		}
 
-		stalledIDs, _, err := downloader.GetStalledIDs(ctx, client)
+		report, err := downloader.GetStalledTorrents(ctx, client)
 		if err != nil {
 			// Warn, not Debug: a persistent failure here silently disables stall
 			// detection for this client (same invisibility class as #1019).
@@ -1573,7 +1579,21 @@ func (s *Scheduler) checkStalledDownloads(ctx context.Context) {
 				"client", client.Name, "error", err)
 			continue
 		}
-		if len(stalledIDs) == 0 {
+		// Breadth guard (#2709). "No metadata" is as much a property of the
+		// network as of the release, so a client that has lost DHT, UDP or its
+		// port forward reports it for everything it is working on at once.
+		// Failing that batch would turn one temporary fault into a pile of
+		// failed downloads. One line per client per run, at Warn, because a
+		// silent skip here looks exactly like a working stall detector.
+		if report.LooksLikeClientOutage() {
+			slog.Warn("stall check: most of this client's unfinished torrents have no metadata, so this is a download client or network fault rather than bad releases. Leaving them alone",
+				"client", client.Name,
+				"no_metadata", len(report.NoMetadata),
+				"incomplete", report.Incomplete,
+			)
+			report.NoMetadata = nil
+		}
+		if len(report.ClientReported) == 0 && len(report.NoMetadata) == 0 {
 			continue
 		}
 
@@ -1581,27 +1601,54 @@ func (s *Scheduler) checkStalledDownloads(ctx context.Context) {
 			if dl.TorrentID == nil {
 				continue
 			}
-			if !stalledIDs[strings.ToLower(*dl.TorrentID)] {
+			id := strings.ToLower(*dl.TorrentID)
+			var kind downloader.StallKind
+			switch {
+			case report.ClientReported[id]:
+				kind = downloader.StallClientReported
+			case report.NoMetadata[id]:
+				kind = downloader.StallNoMetadata
+			default:
 				continue
 			}
 			slog.Warn("stall detected",
 				"title", dl.Title,
 				"grabbed_at", dl.GrabbedAt,
 				"client", client.Name,
+				"kind", kind.String(),
+				"reason", kind.Reason(),
+				"blocklisted", kind.Blocklists(),
 			)
-			s.handleStalledDownload(ctx, &dl, client)
+			s.handleStalledDownload(ctx, &dl, client, kind)
 		}
 	}
 }
 
 // handleStalledDownload removes the stalled release from the download client,
-// marks the download failed, records history, adds the release to the
-// blocklist, and triggers a fresh search for the same book.
+// marks the download failed, records history, blocklists the release when the
+// stall says something about it, and triggers a fresh search for the same
+// book.
 //
 // client is the download client the release lives in; it may be nil for
 // callers that have no client to hand, in which case the removal is skipped.
-func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Download, client *models.DownloadClient) {
-	reason := "stalled: no peers / no download progress"
+//
+// kind decides the wording and whether the release is blocklisted. Only the
+// client's own per torrent signal blocklists: it is the client asserting that
+// something is wrong with this torrent. A no-metadata stall does not, because
+// nothing was learned about the release, and the blocklist is permanent and
+// hand-cleared, so one lost port forward could otherwise ban a run of good
+// releases for ever. See StallKind.Blocklists.
+//
+// kind must be a real stall. StallNone is rejected rather than defaulted,
+// because a caller that forgot to set it would otherwise fail a download with
+// a plausible-looking reason.
+func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Download, client *models.DownloadClient, kind downloader.StallKind) {
+	if kind == downloader.StallNone {
+		slog.Error("stall: handler called with no stall reason, ignoring",
+			"download_id", dl.ID, "title", dl.Title)
+		return
+	}
+	reason := kind.Reason()
 
 	s.removeStalledFromClient(ctx, dl, client)
 
@@ -1621,8 +1668,13 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 		})
 	}
 
-	// Blocklist the release so the next search skips it.
-	if s.blocklist != nil && dl.IndexerID != nil {
+	// Blocklist the release so the next search skips it, but only for a stall
+	// that says something about the release itself.
+	if !kind.Blocklists() {
+		slog.Info("stall: not blocklisting the release, the stall says nothing about it",
+			"download_id", dl.ID, "title", dl.Title, "kind", kind.String())
+	}
+	if kind.Blocklists() && s.blocklist != nil && dl.IndexerID != nil {
 		entry := &models.BlocklistEntry{
 			BookID:    dl.BookID,
 			GUID:      dl.GUID,
@@ -1679,9 +1731,11 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 // dead torrents Bindery had already written off.
 //
 // Files are deleted along with it. Only qBittorrent's stalledDL and its
-// equivalents reach here (see downloader.GetStalledIDs) — never a seeding
+// equivalents reach here (see downloader.GetStalledTorrents) — never a seeding
 // torrent — so there is no completed release to keep sharing, and the partial
-// data belongs to a release that has just been blocklisted and replaced. Per
+// data belongs to a release that has just been blocklisted and replaced. A
+// torrent that never resolved its metadata has no data at all, so for that
+// kind the removal is only the empty entry going away. Per
 // indexer seed-ratio overrides (#883) apply to what a client does with a
 // download it finished; they have nothing to say about one that never started.
 //

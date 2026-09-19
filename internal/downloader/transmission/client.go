@@ -195,7 +195,8 @@ func (c *Client) GetTorrents(ctx context.Context, downloadDir string) ([]Torrent
 	args := map[string]interface{}{
 		"fields": []string{"id", "hashString", "name", "totalSize", "downloadedEver",
 			"leftUntilDone", "status", "errorString", "rateDownload", "rateUpload", "eta",
-			"percentDone", "downloadDir", "labels"},
+			"percentDone", "metadataPercentComplete", "peersConnected", "downloadDir",
+			"labels"},
 	}
 
 	req, err := c.buildRequest(ctx, "torrent-get", args)

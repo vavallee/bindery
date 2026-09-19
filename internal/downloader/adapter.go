@@ -276,84 +276,117 @@ func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *mode
 	}
 }
 
-// GetStalledIDs returns the set of remote IDs the client reports as stalled.
-// For qBittorrent this is the `stalledDL` state; for Transmission it is
-// torrents stopped with a non-empty error string. SABnzbd has no stall
-// concept — its failures are already surfaced as Failed-status NZBs in the
-// existing checkSABnzbdDownloads path.
+// GetStalledTorrents reports what the download client says about its own
+// stalls, split by how far each signal can be trusted on its own. See
+// StallReport: ClientReported is the client asserting that one torrent has
+// gone wrong, NoMetadata is an inference about torrents the client accepted
+// and never resolved (#2709), and the caller owes the NoMetadata half an age
+// gate and the LooksLikeClientOutage breadth check before acting on it.
 //
-// Keys for torrent clients are lower-cased hash strings; for SABnzbd they
-// would be NZO IDs (but SABnzbd always returns nil here). The second return
-// value matches GetLiveStatuses: true when IDs are torrent hashes.
-func GetStalledIDs(ctx context.Context, client *models.DownloadClient) (map[string]bool, bool, error) {
+// SABnzbd has no stall concept — its failures are already surfaced as
+// Failed-status NZBs in the existing checkSABnzbdDownloads path — so it
+// returns a zero report with UsesTorrentID false.
+//
+// Keys for torrent clients are lower-cased hash strings, except Transmission,
+// which is keyed by the client-local torrent id Bindery stores for it.
+func GetStalledTorrents(ctx context.Context, client *models.DownloadClient) (StallReport, error) {
+	report := StallReport{
+		ClientReported: map[string]bool{},
+		NoMetadata:     map[string]bool{},
+	}
 	switch client.Type {
 	case "qbittorrent":
+		report.UsesTorrentID = true
 		qb := QbittorrentFor(client)
 		// Poll every category this client may have grabbed under; categoriesToPoll
 		// returns both Category and CategoryAudiobook when the latter is set
 		// (closes #700).
-		out := make(map[string]bool)
 		for _, cat := range CategoriesToPoll(client) {
 			torrents, err := qb.GetTorrents(ctx, cat)
 			if err != nil {
-				return nil, true, err
+				return StallReport{}, err
 			}
 			for _, t := range torrents {
-				state := strings.ToLower(t.State)
-				if state == "stalleddl" {
-					out[strings.ToLower(t.Hash)] = true
+				if t.Progress < 1 {
+					report.Incomplete++
+				}
+				switch {
+				case strings.ToLower(t.State) == "stalleddl":
+					report.ClientReported[strings.ToLower(t.Hash)] = true
+				case qbittorrentHasNoMetadata(t):
+					report.NoMetadata[strings.ToLower(t.Hash)] = true
 				}
 			}
 		}
-		return out, true, nil
+		return report, nil
 	case "transmission":
+		report.UsesTorrentID = true
 		trans := TransmissionFor(client)
 		torrents, err := trans.GetTorrents(ctx, client.Category)
 		if err != nil {
-			return nil, true, err
+			return StallReport{}, err
 		}
-		out := make(map[string]bool, len(torrents))
 		for _, t := range torrents {
+			if t.PercentDone < 1 {
+				report.Incomplete++
+			}
+			id := strconv.FormatInt(t.ID, 10)
+			switch {
 			// status 0 = stopped; treat stopped+error as stalled
-			if t.Status == 0 && strings.TrimSpace(t.ErrorString) != "" {
-				out[strconv.FormatInt(t.ID, 10)] = true
+			case t.Status == 0 && strings.TrimSpace(t.ErrorString) != "":
+				report.ClientReported[id] = true
+			case transmissionHasNoMetadata(t):
+				report.NoMetadata[id] = true
 			}
 		}
-		return out, true, nil
+		return report, nil
 	case "deluge":
+		report.UsesTorrentID = true
 		dl := DelugeFor(client)
 		torrents, err := dl.GetTorrents(ctx)
 		if err != nil {
-			return nil, true, err
+			return StallReport{}, err
 		}
-		out := make(map[string]bool, len(torrents))
 		for h, t := range torrents {
-			if strings.ToLower(t.State) == "error" {
-				out[h] = true
+			// Deluge reports progress as a percentage, not a fraction.
+			if t.Progress < 100 {
+				report.Incomplete++
+			}
+			switch {
+			case strings.ToLower(t.State) == "error":
+				report.ClientReported[h] = true
+			case delugeHasNoMetadata(t):
+				report.NoMetadata[h] = true
 			}
 		}
-		return out, true, nil
+		return report, nil
 	case "rtorrent":
+		report.UsesTorrentID = true
 		rt := RtorrentFor(client)
 		// One multicall covers every label this client may have grabbed under;
 		// rTorrent has no server-side filter, so the extra label costs nothing.
 		torrents, err := rt.GetTorrents(ctx, CategoriesToPoll(client)...)
 		if err != nil {
-			return nil, true, err
+			return StallReport{}, err
 		}
-		out := make(map[string]bool, len(torrents))
 		for _, t := range torrents {
+			if !t.Complete {
+				report.Incomplete++
+			}
+			switch {
 			// rTorrent has no stall state. d.message is its per-torrent error
 			// slot — a tracker rejection or a failed hash check lands there and
 			// the torrent then sits inactive, which is the shape the stall
 			// detector exists to surface.
-			if t.Message != "" && !t.Complete {
-				out[t.Hash] = true
+			case t.Message != "" && !t.Complete:
+				report.ClientReported[t.Hash] = true
+			case rtorrentHasNoMetadata(t):
+				report.NoMetadata[t.Hash] = true
 			}
 		}
-		return out, true, nil
+		return report, nil
 	default:
-		return nil, false, nil
+		return StallReport{}, nil
 	}
 }
 

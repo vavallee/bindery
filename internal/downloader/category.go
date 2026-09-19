@@ -48,7 +48,7 @@ func FormatForCategory(client *models.DownloadClient, category string) string {
 	return ""
 }
 
-// CategoriesToPoll returns the set of category strings GetTorrents/GetStalledIDs
+// CategoriesToPoll returns the set of category strings GetTorrents/GetStalledTorrents
 // callers must poll to cover both ebook and audiobook downloads on the same
 // client. When CategoryAudiobook is unset, the slice contains only Category
 // (which may itself be empty — qBittorrent treats that as "all torrents").
