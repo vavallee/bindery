@@ -22,6 +22,7 @@ import MoreMenu from '../components/MoreMenu'
 import Section from '../components/Section'
 import AuthorSyncNotice from '../components/AuthorSyncNotice'
 import CatalogueReconciliationModal from '../components/CatalogueReconciliationModal'
+import DuplicateCandidatesModal from '../components/DuplicateCandidatesModal'
 
 type MediaFilter = '' | 'ebook' | 'audiobook'
 // 'excluded' folds in what used to be a separate "Show excluded" checkbox. It
@@ -123,6 +124,7 @@ export default function AuthorDetailPage() {
   const [showRename, setShowRename] = useState(false)
   const [showMetadataLink, setShowMetadataLink] = useState(false)
   const [showCatalogueReconciliation, setShowCatalogueReconciliation] = useState(false)
+  const [showDuplicateCandidates, setShowDuplicateCandidates] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Bulk multi-select state (#791). Selection is keyed by book.id and
@@ -980,6 +982,11 @@ export default function AuthorDetailPage() {
                   onSelect: () => setShowCatalogueReconciliation(true),
                 },
                 {
+                  label: t('authorDetail.actions.reviewDuplicates', 'Review duplicates…'),
+                  title: t('authorDetail.actions.reviewDuplicatesHint', 'Find titles that look like the same book; nothing changes until you exclude a row'),
+                  onSelect: () => setShowDuplicateCandidates(true),
+                },
+                {
                   label: t('authorDetail.actions.delete', 'Delete'),
                   danger: true,
                   onSelect: handleDelete,
@@ -1052,6 +1059,15 @@ export default function AuthorDetailPage() {
           authorName={author.authorName}
           onClose={() => setShowCatalogueReconciliation(false)}
           onApplied={reloadBooks}
+        />
+      )}
+
+      {showDuplicateCandidates && (
+        <DuplicateCandidatesModal
+          authorId={author.id}
+          authorName={author.authorName}
+          onClose={() => setShowDuplicateCandidates(false)}
+          onChanged={reloadBooks}
         />
       )}
 

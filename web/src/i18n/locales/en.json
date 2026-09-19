@@ -475,6 +475,8 @@
       "mergeHint": "Merge another author into this one",
       "reconcileCatalogue": "Reconcile catalogue…",
       "reconcileCatalogueHint": "Preview stale metadata-only Wanted rows before removing them",
+      "reviewDuplicates": "Review duplicates…",
+      "reviewDuplicatesHint": "Find titles that look like the same book; nothing changes until you exclude a row",
       "delete": "Delete"
     },
     "filters": {
@@ -523,6 +525,25 @@
       "below_minimum_pages": "Below the minimum page count",
       "missing_isbn": "No edition has an ISBN",
       "catalogue_filter": "Rejected by the catalogue filter"
+    }
+  },
+  "duplicateCandidates": {
+    "title": "Review duplicate titles",
+    "description": "Titles for {{author}} that look like the same book. Nothing changes until you exclude a row.",
+    "loading": "Scanning the catalogue…",
+    "loadFailed": "Loading duplicates failed",
+    "toggleFailed": "Changing the exclusion failed",
+    "empty": "No duplicate titles found.",
+    "group": "{{count}} row(s)",
+    "excluded": "Excluded",
+    "exclude": "Exclude",
+    "include": "Include",
+    "refresh": "Rescan",
+    "rules": {
+      "alnum-equal": "Identical once punctuation, case, and diacritics are ignored",
+      "article-strip": "Same title with a leading article (The, A, An…) dropped",
+      "edition-suffix": "Same title with an edition marker (Unabridged, Audiobook…) dropped",
+      "substring": "One title is contained in the other"
     }
   },
   "books": {

@@ -185,6 +185,31 @@ export interface CatalogueReconciliation {
   applied?: { requested: number; deleted: number; skipped: number }
 }
 
+// Detection rules for the read-only duplicate-title report (#1970). These are
+// the stable identifiers the API returns and the UI translates; the modal
+// explains each one in plain language.
+export type DuplicateRule =
+  | 'alnum-equal'
+  | 'article-strip'
+  | 'edition-suffix'
+  | 'substring'
+
+export interface DuplicateCandidateMember extends Book {
+  rules: DuplicateRule[]
+}
+
+export interface DuplicateCandidateGroup {
+  key: string
+  rules: DuplicateRule[]
+  books: DuplicateCandidateMember[]
+}
+
+export interface DuplicateCandidates {
+  authorId: number
+  groups: DuplicateCandidateGroup[]
+  count: number
+}
+
 export type MediaType = 'ebook' | 'audiobook' | 'both'
 export type AuthorMonitorMode = 'all' | 'future' | 'latest' | 'none' | 'series'
 export type MonitorNewItems = 'all' | 'none'
@@ -268,6 +293,8 @@ export const authorsApi = {
       method: 'POST',
       body: JSON.stringify({ bookIds }),
     }),
+  listAuthorDuplicateCandidates: (id: number) =>
+    request<DuplicateCandidates>(`/author/${id}/duplicate-candidates`),
   searchAuthorLinkCandidates: (id: number, term: string) =>
     request<RelinkAuthorLinkCandidate[]>(`/author/${id}/relink-upstream/candidates?term=${encodeURIComponent(term)}`),
   relinkAuthorUpstream: (id: number, candidate?: RelinkAuthorCandidate) =>

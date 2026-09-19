@@ -688,6 +688,17 @@ requests at most 200 works (`limit=200`), so authors with more than 200 works
 remain marked partial: the warning may stay visible, and reconciliation will
 not remove their `not_in_current_catalogue` rows.
 
+**Duplicate titles.** The same book often reaches the catalogue twice under
+slightly different titles — "The Martian" and "Martian", "Dune" and "Dune
+(Unabridged)". Open the author and choose **More → Review duplicates…** to see
+groups of titles that look like the same book. Each group shows which rule
+matched (identical after normalisation, a leading article dropped, an edition
+marker dropped, or one title contained in the other), and each row shows the
+rules that pulled it in. Nothing is changed automatically: the only action is
+**Exclude** on a row you judge to be the duplicate, which marks it excluded
+without deleting anything. Excluding a row removes it from the group; when
+every row of a group is excluded the group disappears.
+
 ## What Bindery deliberately does not do
 
 Knowing the edges saves time:
