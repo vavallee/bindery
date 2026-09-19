@@ -167,6 +167,7 @@ export default function HistoryPage() {
       ) : events.length === 0 ? (
         <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
           <p>{t('history.empty')}</p>
+          <p className="mt-1 text-sm">{t('history.emptyHint')}</p>
         </div>
       ) : (
         <>

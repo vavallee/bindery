@@ -399,9 +399,14 @@ export default function AuthorsPage() {
           >
             Add Series
           </button>
+          {/* Below `sm` the five buttons wrap and the primary action used to
+              land on the second row, under Refresh all metadata, Merge and Add
+              Book. `order-first` pulls it to the front of the wrapped group on a
+              phone only; the DOM order is untouched, so the desktop row keeps
+              its usual secondary-then-primary reading order. */}
           <button
             onClick={() => setAddMode('author')}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-md text-sm font-medium transition-colors"
+            className="order-first sm:order-none px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-md text-sm font-medium transition-colors"
           >
             {t('authors.addAuthor')}
           </button>

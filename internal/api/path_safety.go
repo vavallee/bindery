@@ -95,6 +95,20 @@ func (r *LibraryRoots) resolveRoots(ctx context.Context) []string {
 	return out
 }
 
+// Configured returns the resolved library roots, for handlers that need to tell
+// the caller what a valid path looks like after refusing one. It is the
+// exported read-only view of resolveRoots; a nil receiver returns nil (the
+// containment check is opted out, so there is nothing to name).
+//
+// The result is the operator's own root folder configuration and nothing else.
+// Only quote it back on admin-only endpoints.
+func (r *LibraryRoots) Configured(ctx context.Context) []string {
+	if r == nil {
+		return nil
+	}
+	return r.resolveRoots(ctx)
+}
+
 // Contains reports whether p is inside at least one configured library root.
 // The check is deliberately strict:
 //

@@ -614,6 +614,7 @@
       "bookLanguageCorrected": "Language Corrected"
     },
     "empty": "No history events found",
+    "emptyHint": "Grabs, imports and failures land here as they happen.",
     "colEvent": "Event",
     "colSourceTitle": "Source Title",
     "colType": "Type",
@@ -933,6 +934,16 @@
       "onBookAnnouncedToggle": "New book",
       "onRequestCreated": "On Request",
       "requestToggle": "Request",
+      "triggerHintsLabel": "What each trigger means",
+      "eventHints": {
+        "grab": "a release was sent to your download client",
+        "import": "a finished download was added to your library",
+        "failure": "a grab or a download failed, so nothing was added",
+        "upgrade": "reserved for a better file replacing one you already have. Nothing sends it yet.",
+        "health": "an indexer or a download client started failing its checks",
+        "bookAnnounced": "a refresh or the scheduled check found new books for an author you already follow",
+        "requestCreated": "one of your users asked for a book or an author to be added"
+      },
       "testSent": "Test notification sent!",
       "saveFailed": "Couldn't save notification: {{error}}"
     },
@@ -1429,9 +1440,9 @@
     },
     "empty": {
       "noRecs": "Your library doesn't have enough data yet. Add authors and monitor them to get recommendations.",
-      "disabled": "Recommendations are disabled. Enable them in Settings to start discovering new books.",
+      "disabled": "Book recommendations are turned off. Turn them on in Settings, Metadata, and Bindery will start suggesting books from your library.",
       "coldStart": "Add more books to unlock personalized genre recommendations.",
-      "goToSettings": "Go to Settings"
+      "goToSettings": "Go to book recommendations"
     },
     "moreActionsFor": "More actions for {{title}}"
   },
@@ -1561,7 +1572,9 @@
         "all": "All"
       },
       "empty": "No requests here.",
+      "emptyHint": "Try another filter to see requests that were already decided.",
       "emptyPending": "No requests are waiting.",
+      "emptyPendingHint": "New requests from your users show up here for you to approve or decline.",
       "loadFailed": "Could not load requests",
       "requestedBy": "asked by {{username}} on {{date}}",
       "approve": "Approve",

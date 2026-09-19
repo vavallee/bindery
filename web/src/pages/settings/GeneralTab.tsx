@@ -221,8 +221,12 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
           <div>
             <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Import Mode</label>
             <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
-              How Bindery places completed downloads into the library.
-              <strong>Auto</strong> (the default) hardlinks when the download folder and library share a volume, otherwise copies — either way the source stays in place so torrent seeding keeps working.
+              {/* JSX drops the newline between a text line and a following
+                  <strong> on the next line, so each sentence that ends right
+                  before one needs an explicit {' '} or it renders glued
+                  ("the library.Auto (the default)"). */}
+              How Bindery places completed downloads into the library.{' '}
+              <strong>Auto</strong> (the default) hardlinks when the download folder and library share a volume, otherwise copies — either way the source stays in place so torrent seeding keeps working.{' '}
               <strong>Move</strong> relocates the source out of the download folder, which breaks seeding.
               Use <strong>Hardlink</strong> or <strong>Copy</strong> to force keeping the source file intact; Hardlink requires the download folder and library to be on the same filesystem/volume.
               Use <strong>External</strong> if another tool (Calibre, Grimmory, etc.) manages your library — Bindery grabs the download and stops; your tool processes it, then Bindery reconciles on the next library scan.

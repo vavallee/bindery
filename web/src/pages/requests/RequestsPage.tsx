@@ -39,6 +39,11 @@ export default function RequestsPage() {
 
   useEffect(() => { void load(0) }, [load])
 
+  useEffect(() => {
+    document.title = 'Requests · Bindery'
+    return () => { document.title = 'Bindery' }
+  }, [])
+
   const decided = (updated: LibraryRequest) => {
     setApproving(null)
     setDeclining(null)
@@ -81,8 +86,15 @@ export default function RequestsPage() {
       </div>
 
       {error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{error}</p>}
+      {/* Centered, with a hint line, so this reads like the Queue, Discover and
+          Import empty states instead of a stray left aligned sentence. */}
       {!loading && !error && items.length === 0 && (
-        <p className="text-sm text-fg-muted">{filter === 'pending' ? t('requests.admin.emptyPending') : t('requests.admin.empty')}</p>
+        <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
+          <p>{filter === 'pending' ? t('requests.admin.emptyPending') : t('requests.admin.empty')}</p>
+          <p className="mt-1 text-sm">
+            {filter === 'pending' ? t('requests.admin.emptyPendingHint') : t('requests.admin.emptyHint')}
+          </p>
+        </div>
       )}
 
       {items.length > 0 && (
