@@ -210,6 +210,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [pathRemap, setPathRemap] = useState(client.pathRemap || '')
+  const [removeOnImport, setRemoveOnImport] = useState(client.removeOnImport || false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; warn?: string } | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
@@ -256,6 +257,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
       category,
       categoryAudiobook: categoryAudiobook.trim(),
       pathRemap: pathRemap.trim(),
+      removeOnImport: isTorrentClient(type) ? removeOnImport : false,
       useSsl: useSSL,
       urlBase: urlBase.trim(),
     }
@@ -394,6 +396,21 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
         placeholder={type === 'qbittorrent' ? '/downloads:/media/books' : '/media:/books'}
         help={downloadClientPathRemapHelp(type)}
       />
+      {isTorrentClient(type) && (
+        <div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id={`edit-remove-on-import-${client.id}`}
+              checked={removeOnImport}
+              onChange={e => setRemoveOnImport(e.target.checked)}
+              className="rounded border-slate-300 dark:border-zinc-700"
+            />
+            <label htmlFor={`edit-remove-on-import-${client.id}`} className={labelCls}>{t('settings.clients.removeOnImportLabel')}</label>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.removeOnImportHelp')}</p>
+        </div>
+      )}
       {saveError && <p className="text-sm text-red-500">{saveError}</p>}
       {testResult && (
         <div role="status" className={`px-3 py-1.5 rounded text-xs flex items-center gap-2 ${testResult.ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>
@@ -416,6 +433,11 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   )
 }
 
+// Torrent clients only: a usenet client always clears its own history entry
+// once Bindery has imported the job, so there is nothing for the toggle to
+// control there. Mirrors downloader.IsTorrentClient on the server.
+const isTorrentClient = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'deluge' || t === 'rtorrent'
+
 function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c: DownloadClient) => void }) {
   const { t } = useTranslation()
   const [name, setName] = useState('SABnzbd')
@@ -431,6 +453,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [pathRemap, setPathRemap] = useState('')
+  const [removeOnImport, setRemoveOnImport] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; warn?: string } | null>(null)
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
@@ -477,9 +500,15 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
     setPort('8080')
   }
 
-  const buildData = () => isPasswordClient(type)
-    ? { name, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
-    : { name, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
+  // removeOnImport is only sent for a torrent client: a usenet client has no
+  // torrent to remove, and a new row defaults to off anyway, so sending it
+  // there would be noise on the wire.
+  const buildData = () => ({
+    ...(isPasswordClient(type)
+      ? { name, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
+      : { name, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }),
+    ...(isTorrentClient(type) ? { removeOnImport } : {}),
+  })
 
   const submit = async () => {
     const data = buildData()
@@ -594,6 +623,21 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         placeholder={type === 'qbittorrent' ? '/downloads:/media/books' : '/media:/books'}
         help={downloadClientPathRemapHelp(type)}
       />
+      {isTorrentClient(type) && (
+        <div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="add-remove-on-import"
+              checked={removeOnImport}
+              onChange={e => setRemoveOnImport(e.target.checked)}
+              className="rounded border-slate-300 dark:border-zinc-700"
+            />
+            <label htmlFor="add-remove-on-import" className={labelCls}>{t('settings.clients.removeOnImportLabel')}</label>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.removeOnImportHelp')}</p>
+        </div>
+      )}
       {saveError && <p className="text-sm text-red-500">{saveError}</p>}
       {testResult && (
         <div role="status" className={`px-3 py-1.5 rounded text-xs flex items-center gap-2 ${testResult.ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>

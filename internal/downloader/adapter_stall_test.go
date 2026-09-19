@@ -87,7 +87,9 @@ func TestGetStalledIDs_QBittorrent_EmptyList(t *testing.T) {
 
 // TestGetStalledIDs_Transmission_StoppedWithError verifies that Transmission
 // torrents in status 0 (stopped) with a non-empty errorString are reported
-// as stalled, while other states are not.
+// as stalled, while other states are not. Entries are keyed by info hash,
+// which is what a download stores: the caller removes what it matches here,
+// and a renumbered session id would remove the wrong torrent.
 func TestGetStalledIDs_Transmission_StoppedWithError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/transmission/rpc" {
@@ -96,10 +98,10 @@ func TestGetStalledIDs_Transmission_StoppedWithError(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"arguments": map[string]any{
 				"torrents": []map[string]any{
-					{"id": 1, "status": 0, "errorString": "tracker error"},
-					{"id": 2, "status": 0, "errorString": ""},
-					{"id": 3, "status": 2, "errorString": "some error"},
-					{"id": 4, "status": 0, "errorString": "   "},
+					{"id": 1, "hashString": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 0, "errorString": "tracker error"},
+					{"id": 2, "hashString": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "status": 0, "errorString": ""},
+					{"id": 3, "hashString": "cccccccccccccccccccccccccccccccccccccccc", "status": 2, "errorString": "some error"},
+					{"id": 4, "hashString": "dddddddddddddddddddddddddddddddddddddddd", "status": 0, "errorString": "   "},
 				},
 			},
 			"result": "success",
@@ -120,8 +122,10 @@ func TestGetStalledIDs_Transmission_StoppedWithError(t *testing.T) {
 	if len(stalled) != 1 {
 		t.Fatalf("expected 1 stalled entry, got %d: %v", len(stalled), stalled)
 	}
-	if !stalled["1"] {
-		t.Error("expected transmission id '1' to be stalled")
+	// Lower-cased: downloads store the hash lower-cased, and the caller looks
+	// it up that way.
+	if !stalled["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] {
+		t.Errorf("expected the stopped-with-error torrent to be stalled, got %v", stalled)
 	}
 }
 
