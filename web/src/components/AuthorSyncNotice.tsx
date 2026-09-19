@@ -56,6 +56,7 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
   const missingDate = sync.skippedMissingDate ?? 0
   const minPages = sync.skippedMinPages ?? 0
   const missingIsbn = sync.skippedMissingIsbn ?? 0
+  const thinCluster = sync.skippedThinCluster ?? 0
   const failed = sync.failed ?? 0
   // skippedExcluded is deliberately absent from this sum and from the list
   // below. The user excluded that book on purpose, so it is not something the
@@ -69,7 +70,8 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
     partBooks +
     missingDate +
     minPages +
-    missingIsbn
+    missingIsbn +
+    thinCluster
   // A sync that dropped nothing and lost nothing has nothing to explain; the
   // book list already says what happened. A failed write is worth saying even
   // when no filter fired, because it is the one outcome here that is a fault
@@ -98,6 +100,7 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
       (sync.skippedMissingDateSample ?? []).map(b => b.title),
       (sync.skippedMinPagesSample ?? []).map(b => b.title),
       (sync.skippedMissingIsbnSample ?? []).map(b => b.title),
+      (sync.skippedThinClusterSample ?? []).map(b => b.title),
     ],
     authorSyncSampleLimit,
   )
@@ -206,6 +209,15 @@ export default function AuthorSyncNotice({ sync }: { sync?: AuthorSyncSummary })
                 {t('authorDetail.lastSync.missingIsbn', {
                   count: missingIsbn,
                   defaultValue: '{{count}} skipped for having no ISBN on any edition',
+                })}
+              </li>
+            )}
+            {thinCluster > 0 && (
+              <li>
+                {t('authorDetail.lastSync.thinCluster', {
+                  count: thinCluster,
+                  defaultValue:
+                    '{{count}} skipped because their title cluster reported fewer editions than the minimum',
                 })}
               </li>
             )}

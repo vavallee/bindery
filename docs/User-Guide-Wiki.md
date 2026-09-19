@@ -558,8 +558,8 @@ When metadata is wrong, you have three levels of fix:
    never overwrite them ([guide](Metadata-Editing-Wiki.md)).
 2. **Re-bind** the book, or **relink** the author ("Find better match"), to a
    different provider record when the match itself is wrong.
-3. A **metadata profile** (languages, minimum popularity, skip part-books)
-   filters what a catalogue sync lets in.
+3. A **metadata profile** (languages, minimum popularity, minimum edition
+    count, skip part-books) filters what a catalogue sync lets in.
 
 Box sets need no setting. A work whose title plainly names a bundle ("... Box
 Set", "3 Books Set", "Carton of 10 Signed Copies") is dropped from every

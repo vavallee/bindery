@@ -88,9 +88,10 @@ export interface AuthorSyncSummary {
   // The first few dropped titles, capped server-side.
   skippedLanguageSample?: AuthorSyncSkippedBook[]
 
-  // The five fields below back the metadata-profile filters wired into
-  // author sync by PRs #1968, #2005, #2006, #2007, and #2008. Landed here
-  // first so those PRs rebase onto a type and notice that already exist.
+  // The six fields below back the metadata-profile filters wired into
+  // author sync by PRs #1968, #2005, #2006, #2007, #2008, and the
+  // min_edition_count filter (#2235). Landed here first so those PRs
+  // rebase onto a type and notice that already exist.
   skippedPartBooks?: number
   skippedPartBooksSample?: AuthorSyncSkippedBook[]
   skippedMissingDate?: number
@@ -101,6 +102,11 @@ export interface AuthorSyncSummary {
   skippedMinPagesSample?: AuthorSyncSkippedBook[]
   skippedMissingIsbn?: number
   skippedMissingIsbnSample?: AuthorSyncSkippedBook[]
+  // Works dropped because their title cluster reported fewer editions than
+  // the profile's minEditionCount floor. A work with no known edition count
+  // passes (unknown, not zero), matching skippedMinPages' semantics.
+  skippedThinCluster?: number
+  skippedThinClusterSample?: AuthorSyncSkippedBook[]
 }
 
 export interface AuthorSyncSkippedBook {

@@ -11,10 +11,15 @@ const (
 )
 
 type MetadataProfile struct {
-	ID                      int64     `json:"id"`
-	Name                    string    `json:"name"`
-	MinPopularity           int       `json:"minPopularity"`
-	MinPages                int       `json:"minPages"`
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	MinPopularity int    `json:"minPopularity"`
+	MinPages      int    `json:"minPages"`
+	// MinEditionCount is an opt-in floor on the edition count of a work's
+	// title cluster during author sync (see #2235). Zero disables the filter.
+	// Works with no known edition count pass, matching MinPages' "unknown is
+	// not zero" semantics.
+	MinEditionCount         int       `json:"minEditionCount"`
 	SkipMissingDate         bool      `json:"skipMissingDate"`
 	SkipMissingISBN         bool      `json:"skipMissingIsbn"`
 	SkipPartBooks           bool      `json:"skipPartBooks"`

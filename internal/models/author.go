@@ -161,8 +161,9 @@ type AuthorSyncSummary struct {
 	// the user meant.
 	SkippedLanguageSample []AuthorSyncSkippedBook `json:"skippedLanguageSample,omitempty"`
 
-	// The five fields below back the metadata-profile filters wired into
-	// author sync by PRs #1968, #2005, #2006, #2007, and #2008. Landed here
+	// The six fields below back the metadata-profile filters wired into
+	// author sync by PRs #1968, #2005, #2006, #2007, #2008, and the
+	// min_edition_count filter (#2235). Landed here
 	// first (#1889-shaped review feedback, vavallee) so those PRs rebase onto
 	// fields and UI that already exist rather than each adding — and each
 	// needing rebased around the others adding — the same summary/notice
@@ -192,6 +193,13 @@ type AuthorSyncSummary struct {
 	// profile's SkipMissingISBN setting enabled.
 	SkippedMissingISBN       int                     `json:"skippedMissingIsbn,omitempty"`
 	SkippedMissingISBNSample []AuthorSyncSkippedBook `json:"skippedMissingIsbnSample,omitempty"`
+	// SkippedThinCluster is the number of works dropped because every work
+	// sharing their title reports fewer editions than the metadata profile's
+	// MinEditionCount floor, with that setting enabled. A work with no known
+	// edition count is unknown, not zero, and its title cluster passes
+	// (same semantics as SkippedMinPages).
+	SkippedThinCluster       int                     `json:"skippedThinCluster,omitempty"`
+	SkippedThinClusterSample []AuthorSyncSkippedBook `json:"skippedThinClusterSample,omitempty"`
 }
 
 // AccountedFor is the number of works the summary can name an outcome for.
@@ -263,7 +271,8 @@ func (s *AuthorSyncSummary) SkippedTotal() int {
 		return 0
 	}
 	return s.SkippedLanguage + s.SkippedJunk + s.SkippedMediaType + s.SkippedNotAccepted +
-		s.SkippedPartBooks + s.SkippedMissingDate + s.SkippedMinPages + s.SkippedMissingISBN
+		s.SkippedPartBooks + s.SkippedMissingDate + s.SkippedMinPages + s.SkippedMissingISBN +
+		s.SkippedThinCluster
 }
 
 // AuthorProviderFromForeignID returns the metadata provider implied by a

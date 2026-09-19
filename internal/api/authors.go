@@ -1870,6 +1870,7 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	skipPartBooks := h.resolveSkipPartBooks(ctx, author)
 	skipMissingDate := h.resolveSkipMissingDate(ctx, author)
 	minPages, skipMissingISBN := h.resolveEditionFilters(ctx, author)
+	minEditionCount := h.resolveMinEditionCount(ctx, author)
 	// Both minPages>0 and skipMissingISBN require a real edition lookup per
 	// candidate work (page count and ISBN live on Edition, not Book, and
 	// aren't populated until an edition fetch runs). Gate the fetch on
@@ -2118,7 +2119,7 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	// the write. Both were invisible, which made Total minus everything else
 	// look like a hole.
 	var added, matched, failed, skippedLang, skippedJunk, skippedMediaType, skippedNotAccepted, skippedExcluded int
-	var skippedPartBooks, skippedMissingDate, skippedMinPages, skippedMissingISBN int
+	var skippedPartBooks, skippedMissingDate, skippedMinPages, skippedMissingISBN, skippedThinCluster int
 	// Names of the first few language-rejected works, reported to the user
 	// alongside the count (#1889): "65 books skipped" is alarming, but it is
 	// the titles and their language codes that tell them whether the profile
@@ -2129,6 +2130,20 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	// again for these filters specifically in PR review, vavallee).
 	var skippedPartBooksSample, skippedMissingDateSample []models.AuthorSyncSkippedBook
 	var skippedMinPagesSample, skippedMissingISBNSample []models.AuthorSyncSkippedBook
+	var skippedThinClusterSample []models.AuthorSyncSkippedBook
+	// clusterEditions maps a normalised title to the highest known edition
+	// count among the works carrying that title, built as the candidates
+	// accumulate below. It backs the MinEditionCount filter in the loop that
+	// follows (#2235): a title whose works all report fewer editions than the
+	// profile's floor is the noise shape that filter drops. It is only
+	// populated when the filter is actually on, so a profile without it pays
+	// nothing. A title absent from the map, or mapped to 0, means "no work in
+	// the cluster reported an edition count" — unknown, not zero — and the
+	// filter lets it through, the same unknown-passes semantics MinPages uses.
+	var clusterEditions map[string]int
+	if minEditionCount > 0 {
+		clusterEditions = make(map[string]int, len(books))
+	}
 	// candidates accumulates every work that survives the free (in-memory)
 	// filters below and would otherwise reach the MinPages/SkipMissingISBN
 	// check. Splitting the loop here lets the edition lookups those two
@@ -2204,6 +2219,9 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 			continue
 		}
 
+		if clusterEditions != nil && b.EditionCount > clusterEditions[normalizedTitle] {
+			clusterEditions[normalizedTitle] = b.EditionCount
+		}
 		candidates = append(candidates, b)
 	}
 
@@ -2299,6 +2317,37 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 			}
 			slog.Debug("skipping work with no release date", "title", b.Title, "foreignId", b.ForeignID)
 			continue
+		}
+
+		// Filter works whose title cluster is thinner than the profile's
+		// MinEditionCount floor (#2235). Edition count only separates real
+		// works from one-off noise once records are grouped by title, so the
+		// judgement is made on the cluster's best-known count, not each work's
+		// own: a title with at least one well-editioned work is a real book
+		// even if this particular record is thin. The cluster map was built in
+		// the loop above from works that already survived the junk and
+		// language filters.
+		//
+		// The exemptions mirror the other discovery filters: a book the user
+		// already owns (existing != nil) is maintained, never dropped, and a
+		// single-work run is exempt per #1612 — an explicit add of one
+		// specific work must not be vetoed by catalogue-sync heuristics.
+		// A cluster with no known edition count (map miss, or 0) is unknown,
+		// not zero, and passes: only OpenLibrary search results populate
+		// EditionCount, so a Hardcover-primary author's catalogue — where
+		// every work reports none — must survive a profile that turned this
+		// filter on.
+		if existing == nil && !singleWork && minEditionCount > 0 {
+			clusterKey := strings.ToLower(strings.TrimSpace(b.Title))
+			if count, ok := clusterEditions[clusterKey]; ok && count > 0 && count < minEditionCount {
+				skippedThinCluster++
+				if len(skippedThinClusterSample) < authorSyncSkippedSampleLimit {
+					skippedThinClusterSample = append(skippedThinClusterSample, models.AuthorSyncSkippedBook{Title: b.Title})
+				}
+				slog.Debug("skipping work from a title cluster below the edition-count floor",
+					"title", b.Title, "foreignId", b.ForeignID, "clusterEditions", count, "minEditionCount", minEditionCount)
+				continue
+			}
 		}
 
 		// MinPages / SkipMissingISBN both need edition data (page count and
@@ -2686,6 +2735,8 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		SkippedMinPagesSample:    skippedMinPagesSample,
 		SkippedMissingISBN:       skippedMissingISBN,
 		SkippedMissingISBNSample: skippedMissingISBNSample,
+		SkippedThinCluster:       skippedThinCluster,
+		SkippedThinClusterSample: skippedThinClusterSample,
 		AllowedLanguages:         allowedLangs,
 		UnknownLanguageFail:      unknownFail,
 		SkippedLanguageSample:    skippedLangSample,
@@ -2703,6 +2754,7 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		"skipped_part_books", skippedPartBooks,
 		"skipped_missing_date", skippedMissingDate,
 		"skipped_min_pages", skippedMinPages, "skipped_missing_isbn", skippedMissingISBN,
+		"skipped_thin_cluster", skippedThinCluster,
 		"total", len(books),
 	}
 	// The metadata filters dropping works is the surprising case and stays at
@@ -2714,7 +2766,7 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	// filter dropping a work is a setting doing its job, while a create that
 	// lost its write is the run failing at the thing it exists to do.
 	if failed+skippedLang+skippedJunk+skippedMediaType+skippedPartBooks+skippedMissingDate+
-		skippedMinPages+skippedMissingISBN > 0 {
+		skippedMinPages+skippedMissingISBN+skippedThinCluster > 0 {
 		slog.Warn("author books synced", logArgs...)
 		return added, nil
 	}
@@ -3468,6 +3520,22 @@ func (h *AuthorHandler) resolveEditionFilters(ctx context.Context, author *model
 		return 0, false
 	}
 	return p.MinPages, p.SkipMissingISBN
+}
+
+// resolveMinEditionCount returns the author's effective metadata profile's
+// MinEditionCount floor (#2235). Defaults to 0 (filter disabled) on any
+// lookup failure, so an unresolvable profile never turns into unexpected
+// catalogue loss.
+func (h *AuthorHandler) resolveMinEditionCount(ctx context.Context, author *models.Author) int {
+	id := models.DefaultMetadataProfileID
+	if author.MetadataProfileID != nil {
+		id = *author.MetadataProfileID
+	}
+	p, err := h.profiles.GetByID(ctx, id)
+	if err != nil || p == nil {
+		return 0
+	}
+	return p.MinEditionCount
 }
 
 // anyEditionHasISBN reports whether any edition carries an ISBN-13 or

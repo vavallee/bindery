@@ -13,6 +13,7 @@ export interface MetadataProfile {
   name: string
   minPopularity: number
   minPages: number
+  minEditionCount: number
   skipMissingDate: boolean
   skipMissingIsbn: boolean
   skipPartBooks: boolean

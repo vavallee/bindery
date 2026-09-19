@@ -43,8 +43,8 @@ const qualityProfiles: QualityProfile[] = [
 ]
 
 const metadataProfiles: MetadataProfile[] = [
-  { id: 10, name: 'Standard', minPopularity: 0, minPages: 0, skipMissingDate: false, skipMissingIsbn: false, skipPartBooks: false, allowedLanguages: 'eng', unknownLanguageBehavior: 'pass' },
-  { id: 11, name: 'English Only', minPopularity: 0, minPages: 0, skipMissingDate: false, skipMissingIsbn: false, skipPartBooks: false, allowedLanguages: 'eng', unknownLanguageBehavior: 'fail' },
+  { id: 10, name: 'Standard', minPopularity: 0, minPages: 0, minEditionCount: 0, skipMissingDate: false, skipMissingIsbn: false, skipPartBooks: false, allowedLanguages: 'eng', unknownLanguageBehavior: 'pass' },
+  { id: 11, name: 'English Only', minPopularity: 0, minPages: 0, minEditionCount: 0, skipMissingDate: false, skipMissingIsbn: false, skipPartBooks: false, allowedLanguages: 'eng', unknownLanguageBehavior: 'fail' },
 ]
 
 const rootFolders: RootFolder[] = [
