@@ -44,10 +44,12 @@ an arbitrary release is unreliable. The escape hatches:
 - **Import** (`/import`): **In your library** lists the books a library scan
   could not match, for you to adopt in place ([Adopting files already in your
   library](#adopting-files-already-in-your-library)). **From a folder** points
-  at a folder of files you already have and matches them to books. Either way a
-  file with no catalogue match gets a metadata search, which creates the book
-  (and its author, if new) and links the file to it, so an unmatched file is no
-  longer a dead end.
+  at a folder of files you already have and matches them to books; files already
+  tracked in the library are skipped by default, and toggling **Show already
+  imported** surfaces them again, e.g. to spot a corrupted file or relink one.
+  Either way a file with no catalogue match gets a metadata search, which
+  creates the book (and its author, if new) and links the file to it, so an
+  unmatched file is no longer a dead end.
 
 Both still end by attaching a file to a catalogue record.
 

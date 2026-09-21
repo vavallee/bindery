@@ -129,7 +129,7 @@ func TestEnumerateImportUnits_BoundaryHeuristic(t *testing.T) {
 				writeTestFile(t, filepath.Join(root, filepath.FromSlash(f)))
 			}
 
-			units, truncated := enumerateImportUnits(root, 1000)
+			units, truncated := enumerateImportUnits(root, 1000, nil)
 			if truncated {
 				t.Errorf("unexpected truncation for a small tree")
 			}
@@ -165,12 +165,38 @@ func TestEnumerateImportUnits_Truncates(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		writeTestFile(t, filepath.Join(root, "Author", string(rune('a'+i))+".epub"))
 	}
-	units, truncated := enumerateImportUnits(root, 4)
+	units, truncated := enumerateImportUnits(root, 4, nil)
 	if !truncated {
 		t.Errorf("expected truncated=true when units exceed the limit")
 	}
 	if len(units) != 4 {
 		t.Errorf("units = %d, want exactly the limit of 4", len(units))
+	}
+}
+
+// TestEnumerateImportUnits_SkipDoesNotCountTowardLimitOrTruncation verifies a
+// unit skip rejects is neither collected nor counted toward truncation — the
+// walk keeps descending in search of `limit` units skip accepts (#2480: a
+// large folder of already-tracked files must not starve the cap before any
+// new file is even considered).
+func TestEnumerateImportUnits_SkipDoesNotCountTowardLimitOrTruncation(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for i := 0; i < 20; i++ {
+		writeTestFile(t, filepath.Join(root, "Author", string(rune('a'+i))+".epub"))
+	}
+	writeTestFile(t, filepath.Join(root, "Author", "new.epub"))
+
+	skipAllButNew := func(path string, isDir bool) bool {
+		return filepath.Base(path) != "new.epub"
+	}
+	units, truncated := enumerateImportUnits(root, 4, skipAllButNew)
+	if truncated {
+		t.Errorf("expected truncated=false: only one unit passes skip, well under the limit")
+	}
+	got := unitNames(units)
+	if len(got) != 1 || got[0] != "new.epub" {
+		t.Errorf("units = %v, want just [new.epub]", got)
 	}
 }
 
@@ -192,7 +218,7 @@ func TestEnumerateImportUnits_UnreadableDirSkipped(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
-	units, _ := enumerateImportUnits(root, 1000)
+	units, _ := enumerateImportUnits(root, 1000, nil)
 	// The readable book is still enumerated; the locked dir is silently skipped.
 	got := unitNames(units)
 	if len(got) != 1 || got[0] != "book.epub" {

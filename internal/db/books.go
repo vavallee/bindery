@@ -858,6 +858,22 @@ func (r *BookRepo) ListAllBookFilePaths(ctx context.Context) ([]string, error) {
 	return r.files.ListAllPaths(ctx)
 }
 
+// BookFilesFingerprint returns a (count, maxID) snapshot read directly from
+// book_files, so a cache derived from it (the manual-import scan's
+// tracked-file index, #2480) can tell whether it needs to rebuild. See
+// BookFileRepo.Fingerprint for why this reads the table instead of an
+// in-process counter.
+func (r *BookRepo) BookFilesFingerprint(ctx context.Context) (int64, int64, error) {
+	return r.files.Fingerprint(ctx)
+}
+
+// ListFilesForBooks returns every book_files row for the given book IDs in a
+// single query, grouped by book_id. Replaces an N+1 ListFiles-per-book call
+// (the manual-import scan's confident-match format check, #2480).
+func (r *BookRepo) ListFilesForBooks(ctx context.Context, bookIDs []int64) (map[int64][]models.BookFile, error) {
+	return r.files.ListByBooks(ctx, bookIDs)
+}
+
 // ListBookFiles returns the book_files rows for a single book.
 func (r *BookRepo) ListBookFiles(ctx context.Context, bookID int64) ([]models.BookFile, error) {
 	return r.files.ListByBook(ctx, bookID)

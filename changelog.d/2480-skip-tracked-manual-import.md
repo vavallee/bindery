@@ -1,0 +1,2 @@
+### Added
+- **Manual import skips files already tracked in the library** (#2480). Scanning a folder no longer lists files that are already imported — directly, via a hardlink, or as a confident match whose book already has that format on disk — so re-scanning a downloads folder doesn't keep surfacing files you've already brought in. A **Show already imported** toggle on the Import page brings them back into view, labelled, e.g. to spot a corrupted file or relink one.

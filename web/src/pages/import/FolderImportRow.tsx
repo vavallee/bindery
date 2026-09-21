@@ -54,6 +54,11 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400">
               {item.detectedFormat}
             </span>
+            {item.alreadyImported && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-400">
+                {t('manualImport.alreadyImported', 'already imported')}
+              </span>
+            )}
           </div>
           {/* Full source path so the user can tell which file each row refers to;
               the basename alone is ambiguous across folders (#1435). */}
@@ -141,7 +146,7 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
           <button
             type="button"
             onClick={onImport}
-            disabled={!chosen || importing || Boolean(accepted)}
+            disabled={!chosen || !row?.selected || importing || Boolean(accepted)}
             className={`${btn.secondary} ${btnSize.sm}`}
           >
             {importing ? t('manualImport.importing', 'Importing…') : t('manualImport.import', 'Import')}

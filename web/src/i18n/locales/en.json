@@ -116,6 +116,8 @@
     "scanning": "Scanning…",
     "empty": "No book files or folders found here.",
     "truncated": "Showing the first 1000 units; narrow the folder to see the rest.",
+    "showImported": "Show already imported",
+    "alreadyImported": "already imported",
     "selectAll": "Select all matched",
     "importSelected": "Import {{count}} selected",
     "group": {

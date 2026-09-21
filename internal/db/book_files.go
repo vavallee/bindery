@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -17,6 +18,30 @@ type BookFileRepo struct {
 // NewBookFileRepo creates a new BookFileRepo backed by the given database.
 func NewBookFileRepo(db *sql.DB) *BookFileRepo {
 	return &BookFileRepo{db: db}
+}
+
+// Fingerprint reads a cheap snapshot of book_files — its row count and its
+// highest id — for a cache keyed on the table's actual contents rather than a
+// counter this repo maintains itself (the manual-import scan's tracked-file
+// index, #2480).
+//
+// An earlier version of that cache was keyed on an atomic counter bumped by
+// this repo's own mutating methods, which went stale: book_files rows also
+// disappear through the books(id) ON DELETE CASCADE FK when a book or author
+// is deleted (BookRepo.Delete, AuthorRepo.Delete), and through
+// BookRepo.UntrackFilePath's rollback DELETE — neither goes through this repo,
+// so neither could bump its counter. Reading count+maxID directly from the
+// table instead catches every mutation regardless of which code path made it:
+// a row removed without a matching insert changes the count, and any insert
+// hands out a strictly larger AUTOINCREMENT id, so the pair only repeats when
+// nothing actually changed. The query is a single indexed aggregate, cheap
+// enough to run on every scan request.
+func (r *BookFileRepo) Fingerprint(ctx context.Context) (count int64, maxID int64, err error) {
+	err = r.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MAX(id), 0) FROM book_files`).Scan(&count, &maxID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("book_files fingerprint: %w", err)
+	}
+	return count, maxID, nil
 }
 
 // Add inserts a book_files row. Duplicate paths are silently ignored (INSERT OR IGNORE).
@@ -111,6 +136,40 @@ func (r *BookFileRepo) ListByBook(ctx context.Context, bookID int64) ([]models.B
 		files = append(files, f)
 	}
 	return files, rows.Err()
+}
+
+// ListByBooks returns every book_files row for any of the given book IDs, in
+// one query, grouped by book_id. Used by the manual-import scan
+// (ManualImportHandler.Scan, #2480) to replace an N+1 ListByBook call per
+// confident catalogue match with a single round trip. Duplicate IDs collapse
+// naturally (IN ignores repeats); an empty bookIDs returns an empty map.
+func (r *BookFileRepo) ListByBooks(ctx context.Context, bookIDs []int64) (map[int64][]models.BookFile, error) {
+	result := make(map[int64][]models.BookFile, len(bookIDs))
+	if len(bookIDs) == 0 {
+		return result, nil
+	}
+	placeholders := make([]string, len(bookIDs))
+	args := make([]any, len(bookIDs))
+	for i, id := range bookIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := `SELECT id, book_id, format, path, size_bytes, created_at
+		FROM book_files WHERE book_id IN (` + strings.Join(placeholders, ",") + `) ORDER BY id` // #nosec G202 -- placeholders are generated from fixed ? tokens; book IDs remain bound args
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("book_files list by books: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var f models.BookFile
+		if err := rows.Scan(&f.ID, &f.BookID, &f.Format, &f.Path, &f.SizeBytes, &f.CreatedAt); err != nil {
+			return nil, fmt.Errorf("book_files scan: %w", err)
+		}
+		result[f.BookID] = append(result[f.BookID], f)
+	}
+	return result, rows.Err()
 }
 
 // DeleteByBook removes all book_files rows for the given book.

@@ -27,11 +27,13 @@ func statExisting(p string) (os.FileInfo, error) {
 	}
 }
 
-// sameDevice reports whether a and b reside on the same filesystem by
+// SameDevice reports whether a and b reside on the same filesystem by
 // comparing their OS device IDs. When b does not exist, its nearest existing
 // ancestor directory is used so that not-yet-created destination paths are
-// handled correctly. Returns false on any stat error.
-func sameDevice(a, b string) bool {
+// handled correctly. Returns false on any stat error. Exported for reuse by
+// internal/api's manual-import scan (#2480), which already depends on this
+// package elsewhere in the same handler.
+func SameDevice(a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
@@ -73,7 +75,7 @@ func nearestExistingDir(p string) string {
 }
 
 // hardlinkable reports whether a hardlink import from src into dst would
-// actually succeed. Matching device IDs (sameDevice) are necessary but NOT
+// actually succeed. Matching device IDs (SameDevice) are necessary but NOT
 // sufficient: two separate bind mounts — or Unraid /mnt/user shares — report
 // the same st_dev yet os.Link across them fails with EXDEV ("invalid
 // cross-device link"). So after the cheap same-device gate it confirms with a
@@ -82,7 +84,7 @@ func nearestExistingDir(p string) string {
 // read-only download dir), it trusts the same-device result rather than
 // reporting a false negative.
 func hardlinkable(src, dst string) bool {
-	if !sameDevice(src, dst) {
+	if !SameDevice(src, dst) {
 		return false
 	}
 	srcDir := nearestExistingDir(src)

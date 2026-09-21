@@ -41,6 +41,11 @@ export interface ScanItem {
   detectedFormat: string
   book?: Book
   candidates?: Book[]
+  // alreadyImported is true when this unit is already tracked in the library
+  // (directly, via a hardlink, or as a confident match whose book already has
+  // this format). Normally such units are excluded; includeImported surfaces
+  // them instead, labelled (#2480).
+  alreadyImported: boolean
 }
 
 export interface FolderScanResponse {
@@ -145,8 +150,12 @@ export const queueApi = {
   manualImport: (data: { path: string; bookId: number; format?: string }) =>
     request<Download>('/queue/manual-import', { method: 'POST', body: JSON.stringify(data) }),
   // Bulk folder import: scan a folder for book units, then import the selected ones.
-  scanFolder: (path: string) =>
-    request<FolderScanResponse>(`/queue/manual-import/scan?path=${encodeURIComponent(path)}`),
+  // includeImported (default off) surfaces already-imported units instead of
+  // excluding them, labelled via ScanItem.alreadyImported (#2480).
+  scanFolder: (path: string, opts?: { includeImported?: boolean }) => {
+    const qs = opts?.includeImported ? '&includeImported=true' : ''
+    return request<FolderScanResponse>(`/queue/manual-import/scan?path=${encodeURIComponent(path)}${qs}`)
+  },
   batchImport: (items: BatchImportItem[]) =>
     request<BatchImportResponse>('/queue/manual-import/batch', { method: 'POST', body: JSON.stringify(items) }),
 
