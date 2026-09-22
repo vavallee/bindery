@@ -2183,8 +2183,8 @@ func TestRankResultsProfileNoOpinionFallsBackToQualityRank(t *testing.T) {
 
 // TestRankResultsProfileOnlyConsidersCriteriaMediaType: on an ebook search a
 // release that also carries a top ranked audio token gains nothing from it.
-// The same pair with no criteria media type does rank by the audio token,
-// which is what proves the narrowing is the criteria and not an accident.
+// Each release is scored against one list, so every score in one search is on
+// the same scale.
 func TestRankResultsProfileOnlyConsidersCriteriaMediaType(t *testing.T) {
 	profile := orderedProfile(ticked("epub"), ticked("flac"), ticked("m4b"))
 	results := toResults("The.Sparrow.Russell.epub", "The.Sparrow.Russell.flac.epub")
@@ -2194,10 +2194,28 @@ func TestRankResultsProfileOnlyConsidersCriteriaMediaType(t *testing.T) {
 	if results[0].Title != "The.Sparrow.Russell.epub" {
 		t.Errorf("an ebook search must ignore audio tokens, so the two tie and input order holds, got: %v", resultTitles(results))
 	}
+}
 
-	results = toResults("The.Sparrow.Russell.epub", "The.Sparrow.Russell.flac.epub")
-	rankResults(results, MatchCriteria{Title: "The Sparrow", Author: "Russell", Profile: profile})
-	if results[0].Title != "The.Sparrow.Russell.flac.epub" {
-		t.Errorf("with no criteria media type every token counts, got: %v", resultTitles(results))
+// TestRankResultsProfileIgnoredWithoutACriteriaMediaType: a search that names
+// no media type ranks by models.QualityRank even when a profile is present.
+//
+// A profile's ranks are only comparable inside one list: an ebook list of 12
+// entries scores up to 12 and an audiobook list of 5 scores up to 5, so mixing
+// them in one ordering compares two different scales. Scoring each release
+// against the list of its own parsed format has the same flaw one level down.
+// Falling back to the built in ranking keeps one scale per search and reuses
+// the rule that already covers a profile with no opinion.
+//
+// No caller reaches this today: the only MatchCriteria built without a media
+// type is free text SearchQuery, which carries no profile either. This pins
+// the answer for the next caller that does.
+func TestRankResultsProfileIgnoredWithoutACriteriaMediaType(t *testing.T) {
+	results := toResults("The.Sparrow.Russell.epub", "The.Sparrow.Russell.pdf")
+	rankResults(results, MatchCriteria{
+		Title: "The Sparrow", Author: "Russell",
+		Profile: orderedProfile(ticked("pdf"), ticked("epub")),
+	})
+	if results[0].Title != "The.Sparrow.Russell.epub" {
+		t.Errorf("with no criteria media type QualityRank decides, so epub outranks pdf, got: %v", resultTitles(results))
 	}
 }

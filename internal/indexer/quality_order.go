@@ -14,7 +14,9 @@ import (
 // the tokens MediaTypeForFormat maps to M, in stored order. P has an opinion
 // on M when that list is non empty. Without an opinion nothing changes:
 // decision.QualityAllowed fails open and scoreResult ranks by
-// models.QualityRank exactly as it did before the order was read.
+// models.QualityRank exactly as it did before the order was read. A search
+// that names no media type at all takes that same fallback, since a rank is
+// only meaningful against the list it came from.
 //
 // decision.QualityAllowed and the ranker below must not each re derive the
 // list; both go through ProfileList so they cannot drift.
@@ -89,20 +91,22 @@ func (pr *profileRanks) hasOpinion(mediaType string) bool {
 }
 
 // formatScore returns the best rank among formats, considering only tokens
-// whose media type is mediaType, or every token when mediaType is empty. A
-// token is looked up in its own media type's list, so an ebook search never
-// scores a release by an audio token it happens to carry.
+// whose media type is mediaType, so an ebook search never scores a release by
+// an audio token it happens to carry. Every score it returns therefore comes
+// from one list and one scale. mediaType must name a media type: scoring
+// across both lists would compare a rank out of 12 with a rank out of 5, so
+// an empty one scores nothing and the caller falls back to
+// models.QualityRank.
 func (pr *profileRanks) formatScore(formats []string, mediaType string) int {
-	if pr == nil {
+	if pr == nil || mediaType == "" {
 		return 0
 	}
 	best := 0
 	for _, f := range formats {
-		mt := MediaTypeForFormat(f)
-		if mt == "" || (mediaType != "" && mt != mediaType) {
+		if MediaTypeForFormat(f) != mediaType {
 			continue
 		}
-		if r := pr.ranks[mt][strings.ToLower(f)]; r > best {
+		if r := pr.ranks[mediaType][strings.ToLower(f)]; r > best {
 			best = r
 		}
 	}

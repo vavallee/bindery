@@ -17,9 +17,18 @@
 -- unmarshal into []models.QualityItem.
 --
 -- Seeded factory profiles carry '[]' and a single entry list has no order,
--- so both are excluded by the length guard. json_valid and json_type guard a
--- row a third party client wrote badly, which is left as it is rather than
--- failing the whole migration.
+-- so both are excluded by the length guard.
+--
+-- The guards are per row and per element, because both can be wrong. A row
+-- whose items are not valid JSON or not an array is skipped by json_valid and
+-- json_type. A row whose items ARE an array but hold something other than an
+-- object, such as '["epub","pdf"]', is skipped by the NOT EXISTS clause:
+-- json(value) raises "malformed JSON" on a bare SQL scalar, and applyMigration
+-- runs each migration in a transaction whose error aborts startup for the
+-- whole instance, so one corrupted row would stop the process from booting.
+-- Neither shape is reachable through the API, since both writers marshal
+-- []models.QualityItem, but a hand edited or corrupted row is. A row this
+-- skips is left exactly as it was rather than failing the migration.
 --
 -- This is a numbered migration and not a runBackfillOnce hook on purpose: the
 -- Go hooks are documented as re runnable by deleting their marker, and a
@@ -31,7 +40,10 @@ SET items = (
 )
 WHERE json_valid(items)
   AND json_type(items) = 'array'
-  AND json_array_length(items) > 1;
+  AND json_array_length(items) > 1
+  AND NOT EXISTS (
+      SELECT 1 FROM json_each(quality_profiles.items) WHERE type <> 'object'
+  );
 
 -- +migrate Down
 -- Not reversible by the runner: rerunning the UPDATE would flip the lists

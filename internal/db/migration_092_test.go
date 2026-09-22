@@ -40,17 +40,42 @@ func TestMigrate092ReversesQualityProfileItems(t *testing.T) {
 	})
 	b := create("B", []models.QualityItem{{Quality: "m4b", Allowed: true}})
 	c := create("C", nil)
-	// D is written by raw SQL so the JSON text is exactly what a third party
-	// client might have stored: objects with the keys in a different order.
-	res, err := database.ExecContext(ctx,
-		`INSERT INTO quality_profiles (name, upgrade_allowed, cutoff, items) VALUES ('D', 0, '', ?)`,
-		`[{"allowed":true,"quality":"epub"},{"allowed":false,"quality":"mp3"}]`)
-	if err != nil {
-		t.Fatalf("seed D: %v", err)
+	// The rows below are written by raw SQL, so the JSON text is exactly what
+	// a corrupted or hand edited row might hold rather than what marshalling
+	// []models.QualityItem can produce.
+	seedRaw := func(name, items string) int64 {
+		t.Helper()
+		res, err := database.ExecContext(ctx,
+			`INSERT INTO quality_profiles (name, upgrade_allowed, cutoff, items) VALUES (?, 0, '', ?)`,
+			name, items)
+		if err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
 	}
-	d, err := res.LastInsertId()
-	if err != nil {
-		t.Fatal(err)
+	// D: objects with the keys in a different order, as a third party client
+	// might have stored them.
+	d := seedRaw("D", `[{"allowed":true,"quality":"epub"},{"allowed":false,"quality":"mp3"}]`)
+
+	// E, F and G hold elements that are not objects. json(value) raises
+	// "malformed JSON" on a bare SQL scalar, and applyMigration wraps each
+	// migration in a transaction whose error aborts startup for the whole
+	// instance, so a single corrupted row must not be touched rather than
+	// bringing the process down. None of these is reachable through the API
+	// (both writers marshal []models.QualityItem) but a hand edited or
+	// corrupted row is.
+	raw := map[string]string{
+		"E": `["epub","pdf"]`,
+		"F": `[{"quality":"epub","allowed":true},"pdf"]`,
+		"G": `[1,2]`,
+	}
+	skipIDs := map[string]int64{}
+	for name, items := range raw {
+		skipIDs[name] = seedRaw(name, items)
 	}
 
 	v092 := migrationVersionForTest(t, "092_quality_profile_items_best_first.sql")
@@ -59,6 +84,20 @@ func TestMigrate092ReversesQualityProfileItems(t *testing.T) {
 	}
 	if err := migrate(database); err != nil {
 		t.Fatalf("rerun migration 092: %v", err)
+	}
+
+	rawItems := func(id int64) string {
+		t.Helper()
+		var got string
+		if err := database.QueryRowContext(ctx, `SELECT items FROM quality_profiles WHERE id = ?`, id).Scan(&got); err != nil {
+			t.Fatalf("read raw items %d: %v", id, err)
+		}
+		return got
+	}
+	for name, id := range skipIDs {
+		if got := rawItems(id); got != raw[name] {
+			t.Errorf("%s holds an element that is not an object and must be left byte identical, got %s want %s", name, got, raw[name])
+		}
 	}
 
 	order := func(id int64) []string {
@@ -110,6 +149,11 @@ func TestMigrate092ReversesQualityProfileItems(t *testing.T) {
 	// re runnable and is exactly what this migration must not be.
 	if err := migrate(database); err != nil {
 		t.Fatalf("second migrate: %v", err)
+	}
+	for name, id := range skipIDs {
+		if got := rawItems(id); got != raw[name] {
+			t.Errorf("second migrate changed %s to %s", name, got)
+		}
 	}
 	if got := order(a); !equal(got, []string{"azw3", "epub", "mobi", "pdf"}) {
 		t.Errorf("second migrate flipped A back to %v", got)

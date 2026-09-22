@@ -942,18 +942,20 @@ func scoreResult(r newznab.SearchResult, c MatchCriteria, ranks *profileRanks) f
 		quality = detectQuality(r.Title)
 	}
 
-	// Format term. When the profile has an opinion on the media type being
-	// searched (or, with no criteria media type, on the media type of the
-	// parsed format) the release scores by its best ticked token in the
+	// Format term. When the search names a media type and the profile has an
+	// opinion on it, the release scores by its best ticked token in the
 	// profile's order, judged over every token in the title so "azw3 epub"
 	// ranks by azw3 although ParseRelease reduces it to epub. Otherwise the
 	// built in QualityRank applies exactly as it did before #2733.
+	//
+	// A search with no media type takes the QualityRank path even when a
+	// profile is present, because a profile's ranks only compare inside one
+	// list: an ebook list of 12 entries scores up to 12 while an audiobook
+	// list of 5 scores up to 5. Every score in one search must be on one
+	// scale, and the only criteria built without a media type today (free
+	// text SearchQuery) carries no profile anyway.
 	var score float64
-	relevant := c.MediaType
-	if relevant == "" {
-		relevant = MediaTypeForFormat(quality)
-	}
-	if ranks.hasOpinion(relevant) {
+	if c.MediaType != "" && ranks.hasOpinion(c.MediaType) {
 		score = float64(ranks.formatScore(ReleaseFormats(r.Title), c.MediaType)) * 100
 	} else {
 		score = float64(models.QualityRank[quality]) * 100
