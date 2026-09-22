@@ -308,12 +308,24 @@ it; the hold is what happens when it refuses anyway.
 
 **Decision.** Each release is checked against your quality profile (allowed
 formats), delay profile, blocklist, size limits, and language filter. A
-quality profile is an allow list only; the order you put the formats in is
-not read. When more than one allowed format is found, Bindery prefers its
-built in ranking, best first: azw3, epub, mobi and azw, pdf, rtf, txt for
-ebooks, and flac, m4b, m4a, mp3 for audiobooks.
+quality profile is two ordered lists, ebook formats and audiobook formats;
+only ticked formats may be grabbed, and when more than one ticked format is
+found the one nearest the top of its list wins, on the scheduled sweep and on
+the book page alike.
 On indexers marked *freeleech only*, non-freeleech releases are not discarded
 — they are parked as **pending** for manual approval.
+
+**Quality profiles.** Settings → Quality Profiles. Each profile holds an
+ebook list and an audiobook list, numbered from the top, and top is best.
+Tick a format to allow it and untick it to refuse it; an unticked format
+never wins a comparison, wherever it sits. Move a format up or down to change
+which one Bindery prefers. A release that carries several formats, such as
+"azw3 epub", counts as the best ticked one it carries. A list with nothing in
+it means the profile has no opinion on that kind: any format of that kind is
+accepted and ranked by the built in order. A list with entries but nothing
+ticked means nothing of that kind is grabbed for the author. Profiles made
+before this rule existed were reversed once on upgrade, so a profile you
+never reordered now reads best first and prefers what it always did.
 
 **Multi-book packs are not auto-grabbed.** A download is linked to exactly
 one book, and the importer works out one destination folder from it, so there

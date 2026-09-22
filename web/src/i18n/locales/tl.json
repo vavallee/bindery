@@ -287,7 +287,6 @@
       "saveFail": "Failed to save profile",
       "formName": "Name",
       "formNamePlaceholder": "e.g. Ebook Preferred",
-      "formPreference": "Allowed formats and preference order",
       "formAddFormat": "Add format:",
       "saveChanges": "Save changes",
       "createProfile": "Create profile",

@@ -1,0 +1,2 @@
+### Changed
+- **Quality profiles rank releases, top is best** (#2733, #2333): a profile is now two ordered lists, ebook formats and audiobook formats, and when more than one ticked format is found the one nearest the top of its list wins, on the scheduled sweep and on the book page alike. A release that carries several formats counts as the best ticked one it carries. Existing profiles are reversed once on upgrade so a list you never reordered keeps preferring what it always did. Thanks stanko0704, ericsilberberg and yarafie for asking which end was best.
