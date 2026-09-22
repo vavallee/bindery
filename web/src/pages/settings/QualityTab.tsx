@@ -4,36 +4,32 @@ import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, QualityProfile } from '../../api/client'
 import { inputCls, labelCls } from './formStyles'
 import { dangerLink } from '../../components/buttons'
+import FormatList from './FormatList'
+import { EditorItem, partitionItems } from './qualitySummary'
 
 // EBOOK_FORMATS and AUDIOBOOK_FORMATS mirror formatTokens in
 // internal/indexer/release.go, split by indexer.MediaTypeForFormat. Every
-// token release parsing can emit must have a checkbox here: since #1693 the
+// token release parsing can emit must have a row here: since #1693 the
 // allow-list is authoritative, so a format this editor cannot offer can never
 // be allowed for an author with a configured profile (#1700). Within each
-// list the order is worst → best, following models.QualityRank where a rank
-// exists. The drift guard TestQualityEditorFormatVocabulary
+// list the order is best first, following models.QualityRank where a rank
+// exists; it is only the order chips are offered in, the profile's own order
+// is whatever the user saves. The drift guard TestQualityEditorFormatVocabulary
 // (internal/indexer/quality_editor_vocab_test.go) fails the Go suite if
 // either side of this mirror changes without the other.
-// The split matters only for editor focus and the audiobook badge; the model
-// itself has no ebook-vs-audiobook column, and a profile that mixes both is
-// allowed if someone really wants to.
-const EBOOK_FORMATS = ['txt', 'rtf', 'lit', 'djvu', 'cbr', 'cbz', 'fb2', 'pdf', 'azw', 'mobi', 'epub', 'azw3'] as const
-const AUDIOBOOK_FORMATS = ['ogg', 'mp3', 'm4a', 'm4b', 'flac'] as const
-const ALL_FORMATS = [...EBOOK_FORMATS, ...AUDIOBOOK_FORMATS] as const
+// The split is the model (#2733): a profile is one ordered list per media
+// type, ranked from the top, and the server derives the media type of each
+// entry from its token, so the wire shape stays a single items array.
+const EBOOK_FORMATS = ['azw3', 'epub', 'mobi', 'azw', 'pdf', 'fb2', 'lit', 'djvu', 'cbz', 'cbr', 'rtf', 'txt'] as const
+const AUDIOBOOK_FORMATS = ['flac', 'm4b', 'm4a', 'mp3', 'ogg'] as const
 
-// Seed for a brand-new profile: the mainstream ebook containers only, worst →
-// best. The long tail (txt, comic archives, ogg, …) is offered through the
+// Seed for a brand-new profile: the mainstream ebook containers only, best
+// first. The long tail (txt, comic archives, ogg, …) is offered through the
 // "+ Add" chips instead, so a fresh profile does not silently allow plain-text
 // dumps or formats the user never asked for.
-const DEFAULT_EBOOK_ITEMS = ['pdf', 'mobi', 'epub', 'azw3'] as const
-
-interface EditorItem {
-  quality: string
-  allowed: boolean
-}
+const DEFAULT_EBOOK_ITEMS = ['azw3', 'epub', 'mobi', 'pdf'] as const
 
 function defaultItems(): EditorItem[] {
-  // Worst → best for ebooks. The order records the user's stated preference.
   return DEFAULT_EBOOK_ITEMS.map(q => ({ quality: q, allowed: true }))
 }
 
@@ -115,6 +111,7 @@ function ProfileRow({
   const { confirm, confirmDialog } = useConfirmDialog()
   const [deleting, setDeleting] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const lists = partitionItems(profile.items ?? [], EBOOK_FORMATS, AUDIOBOOK_FORMATS)
 
   const handleDelete = async () => {
     if (!await confirm({
@@ -141,20 +138,32 @@ function ProfileRow({
         <div className="min-w-0">
           <h4 className="font-medium text-sm">{profile.name}</h4>
           {profile.items && profile.items.length > 0 && (
-            <div className="mt-2">
-              <p className="text-[10px] text-slate-500 dark:text-zinc-600 mb-1">Worst → best</p>
-              <div className="flex flex-wrap gap-1.5">
-                {profile.items.map((item, i) => (
-                  <span
-                    key={`${item.quality}-${i}`}
-                    className={`text-[10px] px-2 py-0.5 rounded ${item.allowed
-                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                      : 'bg-slate-200 dark:bg-zinc-800 text-slate-500 dark:text-zinc-500'}`}
-                  >
-                    {i + 1}. {item.quality}
-                  </span>
-                ))}
-              </div>
+            <div className="mt-2 space-y-1.5">
+              {(['ebook', 'audio'] as const).map(kind => {
+                const list = lists[kind]
+                if (list.length === 0) return null
+                const heading = kind === 'ebook' ? t('settings.quality.ebookList') : t('settings.quality.audiobookList')
+                return (
+                  <div key={kind}>
+                    <p className="text-[10px] text-slate-500 dark:text-zinc-600 mb-1">
+                      {heading}
+                      {list.length > 1 && <span className="ml-1.5 text-slate-400 dark:text-zinc-700">{t('settings.quality.bestFirst')}</span>}
+                    </p>
+                    <ul aria-label={heading} className="flex flex-wrap gap-1.5">
+                      {list.map((item, i) => (
+                        <li
+                          key={item.quality}
+                          className={`text-[10px] px-2 py-0.5 rounded ${item.allowed
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                            : 'bg-slate-200 dark:bg-zinc-800 text-slate-500 dark:text-zinc-500'}`}
+                        >
+                          {i + 1}. {item.quality}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
@@ -192,39 +201,14 @@ function QualityProfileForm({
 }) {
   const { t } = useTranslation()
   const [name, setName] = useState(profile?.name ?? '')
-  const [items, setItems] = useState<EditorItem[]>(normalisedItems(profile?.items))
+  const [lists, setLists] = useState(() => partitionItems(normalisedItems(profile?.items), EBOOK_FORMATS, AUDIOBOOK_FORMATS))
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
-  const toggleAllowed = (quality: string) => {
-    setItems(prev => {
-      const exists = prev.some(i => i.quality === quality)
-      if (exists) {
-        return prev.map(i => i.quality === quality ? { ...i, allowed: !i.allowed } : i)
-      }
-      return [...prev, { quality, allowed: true }]
-    })
-  }
-
-  const ensureItem = (quality: string) => {
-    setItems(prev => prev.some(i => i.quality === quality)
-      ? prev
-      : [...prev, { quality, allowed: false }])
-  }
-
-  const move = (index: number, direction: -1 | 1) => {
-    const target = index + direction
-    if (target < 0 || target >= items.length) return
-    setItems(prev => {
-      const next = [...prev]
-      ;[next[index], next[target]] = [next[target], next[index]]
-      return next
-    })
-  }
-
-  const removeItem = (quality: string) => {
-    setItems(prev => prev.filter(i => i.quality !== quality))
-  }
+  // Ebook entries first, then audiobook, then anything a third party client
+  // stored that neither list knows. The server derives each entry's media
+  // type from its token, so only the order inside each list matters.
+  const items: EditorItem[] = [...lists.ebook, ...lists.audio, ...lists.other]
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -266,11 +250,6 @@ function QualityProfileForm({
     }
   }
 
-  // Formats not currently in the items list — offered as "+ Add" chips so the
-  // user can extend the preference order without leaving the form.
-  const present = new Set(items.map(i => i.quality))
-  const missing = ALL_FORMATS.filter(f => !present.has(f))
-
   return (
     <form
       onSubmit={submit}
@@ -289,85 +268,23 @@ function QualityProfileForm({
 
       <div>
         <label className={labelCls}>{t('settings.quality.formPreference')}</label>
-        {/* The hint states what the list does today: it is an allow list.
-            Its order is saved but read by nothing; releases are ranked by
-            models.QualityRank (#2733). The old hint promised the opposite and
-            contradicted itself, and two users asked on the same day which end
-            was "best". If the order is ever wired into ranking, change the
-            string with it. */}
         <p className="text-[11px] text-slate-500 dark:text-zinc-500 mb-2">
           {t('settings.quality.formPreferenceHint')}
         </p>
-        <ul className="space-y-1.5">
-          {items.map((item, i) => (
-            <li
-              key={item.quality}
-              className="flex items-center gap-2 px-3 py-1.5 rounded border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900"
-            >
-              <label className="flex items-center gap-2 cursor-pointer text-xs flex-1 min-w-0">
-                <input
-                  type="checkbox"
-                  checked={item.allowed}
-                  onChange={() => toggleAllowed(item.quality)}
-                  className="rounded border-slate-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
-                />
-                <span className={item.allowed ? 'text-slate-800 dark:text-zinc-200' : 'text-slate-500 dark:text-zinc-500'}>
-                  {item.quality}
-                </span>
-                {(AUDIOBOOK_FORMATS as readonly string[]).includes(item.quality) && (
-                  <span
-                    className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300"
-                  >
-                    {t('common.audiobook')}
-                  </span>
-                )}
-              </label>
-              <button
-                type="button"
-                onClick={() => move(i, -1)}
-                disabled={i === 0}
-                aria-label={t('settings.quality.moveUp')}
-                className="text-xs px-1.5 py-0.5 text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-30"
-              >
-                {'↑'}
-              </button>
-              <button
-                type="button"
-                onClick={() => move(i, 1)}
-                disabled={i === items.length - 1}
-                aria-label={t('settings.quality.moveDown')}
-                className="text-xs px-1.5 py-0.5 text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-30"
-              >
-                {'↓'}
-              </button>
-              <button
-                type="button"
-                onClick={() => removeItem(item.quality)}
-                aria-label={t('common.remove')}
-                className={`text-xs px-1.5 py-0.5 ${dangerLink}`}
-              >
-                {'×'}
-              </button>
-            </li>
-          ))}
-        </ul>
-        {missing.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-2">
-            <span className="text-[11px] text-slate-500 dark:text-zinc-500 self-center">
-              {t('settings.quality.formAddFormat')}
-            </span>
-            {missing.map(f => (
-              <button
-                type="button"
-                key={f}
-                onClick={() => ensureItem(f)}
-                className="text-[11px] px-2 py-0.5 rounded border border-slate-300 dark:border-zinc-700 bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 hover:border-slate-400 dark:hover:border-zinc-600"
-              >
-                + {f}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="space-y-4">
+          <FormatList
+            kind="ebook"
+            items={lists.ebook}
+            available={EBOOK_FORMATS}
+            onChange={ebook => setLists(prev => ({ ...prev, ebook }))}
+          />
+          <FormatList
+            kind="audio"
+            items={lists.audio}
+            available={AUDIOBOOK_FORMATS}
+            onChange={audio => setLists(prev => ({ ...prev, audio }))}
+          />
+        </div>
       </div>
 
       {err && <p className="text-xs text-rose-600 dark:text-rose-400">{err}</p>}

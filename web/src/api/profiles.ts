@@ -5,6 +5,9 @@ export interface QualityProfile {
   name: string
   upgradeAllowed: boolean
   cutoff: string
+  // Preference order, best first within each media type. The server derives
+  // each entry's media type from its token, so ebook and audiobook entries
+  // share this one array and only the order inside each kind matters (#2733).
   items: Array<{ quality: string; allowed: boolean }>
 }
 
