@@ -986,6 +986,10 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		ASIN:             book.ASIN,
 		AuthorAliases:    authorAliases,
 		AllowedLanguages: allowedLangs,
+		// Ranked by the profile's order (#2733). The grab below takes the
+		// first approved release in ranked order, so this is what decides
+		// which format the sweep picks.
+		Profile: qualityProfile,
 	}
 	if book.ReleaseDate != nil {
 		crit.Year = book.ReleaseDate.Year()

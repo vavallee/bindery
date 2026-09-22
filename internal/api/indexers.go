@@ -532,6 +532,10 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		ASIN:             book.ASIN,
 		AllowedLanguages: allowedLangs,
 		AuthorAliases:    authorAliases,
+		// The searcher ranks by the profile's order (#2733); the same profile
+		// builds the QualityAllowed annotation below, so the book page's
+		// order and its approved flags come from one definition.
+		Profile: qualityProfile,
 	}
 	if book.ReleaseDate != nil {
 		crit.Year = book.ReleaseDate.Year()
@@ -551,6 +555,8 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	var results []newznab.SearchResult
 	var dbg *indexer.SearchDebug
 	if book.MediaType == models.MediaTypeBoth {
+		// Both legs copy crit, so each carries the profile and ranks by its
+		// own list: ebooks by the ebook list, audiobooks by the audiobook list.
 		ebookCrit := crit
 		ebookCrit.MediaType = models.MediaTypeEbook
 		audioCrit := crit
@@ -581,6 +587,10 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		audioOut := <-audioCh
 		ebookResults, ebookDbg := ebookOut.results, ebookOut.dbg
 		audioResults, audioDbg := audioOut.results, audioOut.dbg
+		// Ebook block first, then audiobook block, each best first by its own
+		// list. The two legs' scores are not comparable (each list ranks n
+		// down to 1 over its own length), so the blocks are concatenated,
+		// never interleaved by score.
 		results = append(ebookResults, audioResults...)
 		results = indexer.DedupeResults(results)
 		// Merge debug info from both searches.
