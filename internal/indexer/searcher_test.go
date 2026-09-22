@@ -433,15 +433,15 @@ func TestScoreResultMediaTypePenalty(t *testing.T) {
 	// Asking for an audiobook: m4b should beat epub even though epub has
 	// higher raw quality rank (5) than m4b (9 in our scale).
 	crit := MatchCriteria{Title: "Dune", Author: "Frank Herbert", MediaType: "audiobook"}
-	aScore := scoreResult(audiobookResult, crit)
-	eScore := scoreResult(ebookResult, crit)
+	aScore := scoreResult(audiobookResult, crit, nil)
+	eScore := scoreResult(ebookResult, crit, nil)
 	if aScore <= eScore {
 		t.Errorf("audiobook score %.1f should exceed ebook score %.1f when MediaType=audiobook", aScore, eScore)
 	}
 	// And vice versa.
 	crit.MediaType = "ebook"
-	aScore = scoreResult(audiobookResult, crit)
-	eScore = scoreResult(ebookResult, crit)
+	aScore = scoreResult(audiobookResult, crit, nil)
+	eScore = scoreResult(ebookResult, crit, nil)
 	if eScore <= aScore {
 		t.Errorf("ebook score %.1f should exceed audiobook score %.1f when MediaType=ebook", eScore, aScore)
 	}
@@ -529,7 +529,7 @@ func TestRankResultsISBNBonus(t *testing.T) {
 	crit := MatchCriteria{Title: "The Sparrow", Author: "Russell", ISBN: isbn}
 
 	// Strong form: matched release must score strictly higher.
-	if ms, ns := scoreResult(match, crit), scoreResult(noISBN, crit); ms <= ns {
+	if ms, ns := scoreResult(match, crit, nil), scoreResult(noISBN, crit, nil); ms <= ns {
 		t.Errorf("ISBN-matching score %.1f should exceed non-matching %.1f", ms, ns)
 	}
 
@@ -544,7 +544,7 @@ func TestRankResultsISBNBonus(t *testing.T) {
 	// releases tie and stable sort keeps insertion order (noISBN first).
 	critNoISBN := crit
 	critNoISBN.ISBN = ""
-	if ms, ns := scoreResult(match, critNoISBN), scoreResult(noISBN, critNoISBN); ms != ns {
+	if ms, ns := scoreResult(match, critNoISBN, nil), scoreResult(noISBN, critNoISBN, nil); ms != ns {
 		t.Errorf("with no criteria ISBN the scores should tie, got %.1f vs %.1f", ms, ns)
 	}
 }
@@ -559,7 +559,7 @@ func TestRankResultsASINBonus(t *testing.T) {
 
 	crit := MatchCriteria{Title: "Dune", Author: "Frank Herbert", ASIN: asin}
 
-	if ms, ns := scoreResult(match, crit), scoreResult(noASIN, crit); ms <= ns {
+	if ms, ns := scoreResult(match, crit, nil), scoreResult(noASIN, crit, nil); ms <= ns {
 		t.Errorf("ASIN-matching score %.1f should exceed non-matching %.1f", ms, ns)
 	}
 
@@ -572,7 +572,7 @@ func TestRankResultsASINBonus(t *testing.T) {
 	// Without an ASIN in the criteria the bonus disappears and the scores tie.
 	critNoASIN := crit
 	critNoASIN.ASIN = ""
-	if ms, ns := scoreResult(match, critNoASIN), scoreResult(noASIN, critNoASIN); ms != ns {
+	if ms, ns := scoreResult(match, critNoASIN, nil), scoreResult(noASIN, critNoASIN, nil); ms != ns {
 		t.Errorf("with no criteria ASIN the scores should tie, got %.1f vs %.1f", ms, ns)
 	}
 }
@@ -585,7 +585,7 @@ func TestRankResultsGrabsBonus(t *testing.T) {
 	low := newznab.SearchResult{Title: "The.Sparrow.Russell.epub", GUID: "low", Grabs: 1}
 	high := newznab.SearchResult{Title: "The.Sparrow.Russell.epub", GUID: "high", Grabs: 1000}
 
-	if ls, hs := scoreResult(low, crit), scoreResult(high, crit); hs <= ls {
+	if ls, hs := scoreResult(low, crit, nil), scoreResult(high, crit, nil); hs <= ls {
 		t.Errorf("higher-grab score %.1f should exceed lower-grab %.1f", hs, ls)
 	}
 
@@ -606,7 +606,7 @@ func TestRankResultsSizeBonus(t *testing.T) {
 	small := newznab.SearchResult{Title: "The.Sparrow.Russell.epub", GUID: "small", Size: 5 * mb}
 	large := newznab.SearchResult{Title: "The.Sparrow.Russell.epub", GUID: "large", Size: 500 * mb}
 
-	if ss, ls := scoreResult(small, crit), scoreResult(large, crit); ls <= ss {
+	if ss, ls := scoreResult(small, crit, nil), scoreResult(large, crit, nil); ls <= ss {
 		t.Errorf("larger-size score %.1f should exceed smaller-size %.1f (code prefers bigger)", ls, ss)
 	}
 

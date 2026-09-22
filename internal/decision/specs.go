@@ -37,6 +37,13 @@ import (
 //
 // A profile that deliberately mixes both media types has items in both buckets,
 // so both narrow to a non-empty set and behaviour is exactly what it was.
+//
+// A release carrying several formats (r.Formats, from indexer.ReleaseFormats)
+// passes when any token is ticked in a list the profile has, is rejected when
+// every token falls in a list the profile has and none is ticked, and passes
+// when no token falls in a list the profile has at all. The list for a media
+// type is indexer.ProfileList, the same definition the ranker uses; keep the
+// two call sites in agreement by never re deriving it here (#2733).
 type QualityAllowed struct {
 	Profile *models.QualityProfile
 }
@@ -45,33 +52,40 @@ func (s QualityAllowed) IsSatisfiedBy(r Release, _ models.Book) (bool, string) {
 	if s.Profile == nil || len(s.Profile.Items) == 0 {
 		return true, ""
 	}
-	if r.Format == "" {
-		return true, ""
+	formats := r.Formats
+	if len(formats) == 0 {
+		if r.Format == "" {
+			return true, ""
+		}
+		formats = []string{r.Format}
 	}
 
-	// indexer.MediaTypeForFormat is the single source of truth for the token →
-	// media-type mapping; a second copy of the token lists here is exactly the
-	// drift that function's doc comment warns about. It returns "" for a token
-	// Bindery does not recognise, on either side, in which case there is nothing
-	// to narrow by and every item is considered, as before.
-	mediaType := indexer.MediaTypeForFormat(r.Format)
-
-	sawSameMediaType := false
-	for _, item := range s.Profile.Items {
-		if mediaType != "" && indexer.MediaTypeForFormat(item.Quality) != mediaType {
+	judged := false
+	for _, f := range formats {
+		// indexer.MediaTypeForFormat is the single source of truth for the
+		// token → media-type mapping. It returns "" for a token Bindery does
+		// not recognise, in which case there is nothing to narrow by and every
+		// item is considered, as before.
+		list := s.Profile.Items
+		if mediaType := indexer.MediaTypeForFormat(f); mediaType != "" {
+			list = indexer.ProfileList(s.Profile, mediaType)
+		}
+		if len(list) == 0 {
 			continue
 		}
 		// Listed but unticked still counts as an opinion: a profile with epub
 		// explicitly turned off has been asked about ebooks and said no.
-		sawSameMediaType = true
-		if item.Allowed && strings.EqualFold(item.Quality, r.Format) {
-			return true, ""
+		judged = true
+		for _, item := range list {
+			if item.Allowed && strings.EqualFold(item.Quality, f) {
+				return true, ""
+			}
 		}
 	}
-	if !sawSameMediaType {
+	if !judged {
 		return true, ""
 	}
-	return false, fmt.Sprintf("format %q not in quality profile %q", r.Format, s.Profile.Name)
+	return false, fmt.Sprintf("format %q not in quality profile %q", strings.Join(formats, "+"), s.Profile.Name)
 }
 
 // --- DelayProfile ---

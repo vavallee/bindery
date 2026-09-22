@@ -96,7 +96,7 @@ func Approved(decisions []Decision) []Decision {
 }
 
 // ReleaseFromSearchResult converts a newznab.SearchResult to a decision.Release.
-// Format is parsed from the release title.
+// Format is parsed from the release title; Formats carries every token in it.
 func ReleaseFromSearchResult(sr newznab.SearchResult) Release {
 	return Release{
 		GUID:        sr.GUID,
@@ -109,6 +109,7 @@ func ReleaseFromSearchResult(sr newznab.SearchResult) Release {
 		Protocol:    sr.Protocol,
 		Language:    sr.Language,
 		Format:      indexer.ParseRelease(sr.Title).Format,
+		Formats:     indexer.ReleaseFormats(sr.Title),
 		MediaType:   sr.MediaType,
 
 		DownloadVolumeFactor: sr.DownloadVolumeFactor,

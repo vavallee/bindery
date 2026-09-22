@@ -219,7 +219,9 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 	// MUST stay in lockstep with SearchBook's pipeline (searcher.go). This stage
 	// was missing here, and since SearchBookWithDebug is the only entrypoint the
 	// API uses, the #1591 video guard was absent from every interactive search
-	// while the scheduler had it (#1644).
+	// while the scheduler had it (#1644). Ranking stays in lockstep by
+	// construction: the quality profile rides on MatchCriteria, so the same
+	// rankResults call below reads it (#2733).
 	results = filterNonBookContent(results)
 	dbg.Pipeline.AfterNonBookContent = len(results)
 

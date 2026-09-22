@@ -909,15 +909,19 @@ func dedupe(results []newznab.SearchResult) []newznab.SearchResult {
 
 // rankResults sorts results in place by a composite score combining format
 // quality, edition markers (RETAIL/UNABRIDGED/ABRIDGED), year match against
-// the book's release year, grabs, size, and an ISBN exact-match boost.
+// the book's release year, grabs, size, and an ISBN exact-match boost. The
+// format term follows c.Profile's stored order when the profile has an
+// opinion on the media type in question (quality_order.go); the profile is
+// compiled once here, not per result.
 func rankResults(results []newznab.SearchResult, c MatchCriteria) {
 	type scored struct {
 		r     newznab.SearchResult
 		score float64
 	}
+	ranks := newProfileRanks(c.Profile)
 	items := make([]scored, len(results))
 	for i, r := range results {
-		items[i] = scored{r, scoreResult(r, c)}
+		items[i] = scored{r, scoreResult(r, c, ranks)}
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		return items[i].score > items[j].score
@@ -928,15 +932,32 @@ func rankResults(results []newznab.SearchResult, c MatchCriteria) {
 }
 
 // scoreResult computes the composite ranking score for a single result.
-// Higher is better. Weights are hardcoded (no profile UI in v0.4.0).
-func scoreResult(r newznab.SearchResult, c MatchCriteria) float64 {
+// Higher is better. ranks is c.Profile compiled by rankResults; nil means no
+// profile.
+func scoreResult(r newznab.SearchResult, c MatchCriteria, ranks *profileRanks) float64 {
 	p := ParseRelease(r.Title)
 
 	quality := p.Format
 	if quality == "" {
 		quality = detectQuality(r.Title)
 	}
-	score := float64(models.QualityRank[quality]) * 100
+
+	// Format term. When the profile has an opinion on the media type being
+	// searched (or, with no criteria media type, on the media type of the
+	// parsed format) the release scores by its best ticked token in the
+	// profile's order, judged over every token in the title so "azw3 epub"
+	// ranks by azw3 although ParseRelease reduces it to epub. Otherwise the
+	// built in QualityRank applies exactly as it did before #2733.
+	var score float64
+	relevant := c.MediaType
+	if relevant == "" {
+		relevant = MediaTypeForFormat(quality)
+	}
+	if ranks.hasOpinion(relevant) {
+		score = float64(ranks.formatScore(ReleaseFormats(r.Title), c.MediaType)) * 100
+	} else {
+		score = float64(models.QualityRank[quality]) * 100
+	}
 
 	// Media-type mismatch penalty. An ebook grab returning an audiobook
 	// format (or vice-versa) is almost certainly the wrong kind of release
