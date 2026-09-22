@@ -35,20 +35,26 @@ export function partitionItems(
 
 export type Summary =
   // Nothing listed: any format of this kind is accepted, ranked by the
-  // built in order.
-  | { kind: 'noOpinion'; never: string[] }
-  // Listed but nothing ticked: nothing of this kind will be grabbed.
-  | { kind: 'noneAllowed'; never: string[] }
+  // built in order. There is nothing to name, so this variant carries no
+  // formats.
+  | { kind: 'noOpinion' }
+  // Listed but nothing ticked: nothing of this kind will be grabbed, which
+  // the line says on its own without listing every refused format.
+  | { kind: 'noneAllowed' }
   // The ticked formats in order, and the unticked ones.
   | { kind: 'prefer'; first: string; rest: string[]; never: string[] }
 
 // summarise describes one list the way the editor's summary line reads it.
 export function summarise(items: EditorItem[]): Summary {
-  const never = items.filter(i => !i.allowed).map(i => i.quality)
-  if (items.length === 0) return { kind: 'noOpinion', never }
+  if (items.length === 0) return { kind: 'noOpinion' }
   const ticked = items.filter(i => i.allowed).map(i => i.quality)
-  if (ticked.length === 0) return { kind: 'noneAllowed', never }
-  return { kind: 'prefer', first: ticked[0], rest: ticked.slice(1), never }
+  if (ticked.length === 0) return { kind: 'noneAllowed' }
+  return {
+    kind: 'prefer',
+    first: ticked[0],
+    rest: ticked.slice(1),
+    never: items.filter(i => !i.allowed).map(i => i.quality),
+  }
 }
 
 // moveWithin swaps the entry at index with its neighbour in direction. At

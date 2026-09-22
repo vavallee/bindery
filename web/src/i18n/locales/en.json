@@ -965,7 +965,7 @@
       "formName": "Name",
       "formNamePlaceholder": "e.g. Ebook Preferred",
       "formPreference": "Formats, best first",
-      "formPreferenceHint": "Each list is ranked from the top: when several ticked formats are found, the highest one wins. Tick a format to allow it, untick one to refuse it. A list with nothing in it means any format of that kind is accepted, ranked by the built in order.",
+      "formPreferenceHint": "Each list is ranked from the top: when several ticked formats are found, the highest one wins. Tick a format to allow it, untick one to refuse it. A list with nothing in it means any format of that kind is accepted, ranked by the built in order: azw3, epub, mobi and azw, pdf, rtf, txt for ebooks; flac, m4b, m4a, mp3 for audiobooks.",
       "formAddFormat": "Add format:",
       "saveChanges": "Save changes",
       "createProfile": "Create profile",

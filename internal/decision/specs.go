@@ -39,13 +39,39 @@ import (
 // so both narrow to a non-empty set and behaviour is exactly what it was.
 //
 // A release carrying several formats (r.Formats, from indexer.ReleaseFormats)
-// passes when any token is ticked in a list the profile has, is rejected when
-// every token falls in a list the profile has and none is ticked, and passes
-// when no token falls in a list the profile has at all. The list for a media
-// type is indexer.ProfileList, the same definition the ranker uses; keep the
-// two call sites in agreement by never re deriving it here (#2733).
+// is judged on the tokens of the media type being SEARCHED, never on the
+// others. "Book.PDF.M4B" is an audiobook with a PDF booklet: on an ebook
+// search the only token of the kind asked for is pdf, so a profile that
+// refuses pdf refuses the release, and the ticked m4b in the audiobook list
+// has no say. Walking every token against its own list instead let one list
+// approve a release the other list refused, and disagreed with the ranker,
+// which narrows to the searched media type and scores such a release 0. The
+// list for a media type is indexer.ProfileList, the same definition the ranker
+// uses; keep the two in agreement by never re deriving it here (#2733).
 type QualityAllowed struct {
 	Profile *models.QualityProfile
+	// MediaType is the media type being searched for, which decides which of
+	// the profile's two lists judges the release. Both search paths know it:
+	// the scheduler sweeps one media type per call and interactive search runs
+	// one leg per media type. A value that is neither media type, including
+	// the "both" of a dual-format book, is ignored in favour of the release's
+	// own MediaType, which those legs stamp on every result. Empty falls back
+	// to the media type of the release's parsed format, which is what the
+	// importer's one-off construction needs (importer/scanner.go allowedFormat).
+	MediaType string
+}
+
+// searchedMediaType picks the list this release must be judged against: what
+// was searched for, else what the result was tagged as, else what its own
+// format says it is.
+func (s QualityAllowed) searchedMediaType(r Release) string {
+	for _, candidate := range []string{s.MediaType, r.MediaType, indexer.MediaTypeForFormat(r.Format)} {
+		switch candidate {
+		case models.MediaTypeEbook, models.MediaTypeAudiobook:
+			return candidate
+		}
+	}
+	return ""
 }
 
 func (s QualityAllowed) IsSatisfiedBy(r Release, _ models.Book) (bool, string) {
@@ -60,32 +86,56 @@ func (s QualityAllowed) IsSatisfiedBy(r Release, _ models.Book) (bool, string) {
 		formats = []string{r.Format}
 	}
 
-	judged := false
-	for _, f := range formats {
-		// indexer.MediaTypeForFormat is the single source of truth for the
-		// token → media-type mapping. It returns "" for a token Bindery does
-		// not recognise, in which case there is nothing to narrow by and every
-		// item is considered, as before.
-		list := s.Profile.Items
-		if mediaType := indexer.MediaTypeForFormat(f); mediaType != "" {
+	// indexer.MediaTypeForFormat is the single source of truth for the token →
+	// media-type mapping. It returns "" for a token Bindery does not recognise,
+	// in which case there is nothing to narrow by, every item is considered and
+	// every token is judged, as before.
+	mediaType := s.searchedMediaType(r)
+	list := s.Profile.Items
+	judged := formats
+	if mediaType != "" {
+		list = indexer.ProfileList(s.Profile, mediaType)
+		judged = tokensOfMediaType(formats, mediaType)
+		if len(judged) == 0 {
+			// The release carries nothing of the kind being searched. There is
+			// no question to answer about the searched list, so fall back to
+			// judging it as what it actually is, which is what this spec did
+			// before it was told what the search was for.
+			mediaType = indexer.MediaTypeForFormat(formats[0])
 			list = indexer.ProfileList(s.Profile, mediaType)
+			judged = tokensOfMediaType(formats, mediaType)
 		}
-		if len(list) == 0 {
-			continue
-		}
-		// Listed but unticked still counts as an opinion: a profile with epub
-		// explicitly turned off has been asked about ebooks and said no.
-		judged = true
+	}
+	// A profile with no entry for this media type has not been asked about it
+	// and says nothing (#2307). Listed but unticked IS an opinion: a profile
+	// with epub explicitly turned off has been asked about ebooks and said no.
+	if len(judged) == 0 || len(list) == 0 {
+		return true, ""
+	}
+	for _, f := range judged {
 		for _, item := range list {
 			if item.Allowed && strings.EqualFold(item.Quality, f) {
 				return true, ""
 			}
 		}
 	}
-	if !judged {
-		return true, ""
+	noun := "format"
+	if len(judged) > 1 {
+		noun = "formats"
 	}
-	return false, fmt.Sprintf("format %q not in quality profile %q", strings.Join(formats, "+"), s.Profile.Name)
+	return false, fmt.Sprintf("%s %q not in quality profile %q", noun, strings.Join(judged, "+"), s.Profile.Name)
+}
+
+// tokensOfMediaType returns the formats belonging to mediaType, in order. An
+// empty mediaType matches nothing, so callers handle that case before calling.
+func tokensOfMediaType(formats []string, mediaType string) []string {
+	out := make([]string, 0, len(formats))
+	for _, f := range formats {
+		if indexer.MediaTypeForFormat(f) == mediaType {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // --- DelayProfile ---

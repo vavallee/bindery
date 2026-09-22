@@ -1053,7 +1053,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	// a release rejected here keeps failing re-evaluation instead of being
 	// grabbed on a later sweep.
 	if qualityProfile != nil {
-		specs = append(specs, decision.QualityAllowed{Profile: qualityProfile})
+		specs = append(specs, decision.QualityAllowed{Profile: qualityProfile, MediaType: mediaType})
 	}
 	var delayProfile *models.DelayProfile
 	if profiles := s.sweepDelayProfiles(ctx, sweep); len(profiles) > 0 {

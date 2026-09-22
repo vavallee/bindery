@@ -277,9 +277,13 @@ type of each entry is derived from its token on the server (`epub`, `azw3`,
 and only the relative order inside each kind matters. The web editor writes
 the ebook entries first and the audiobook entries after them; any interleaving
 is accepted and stored as sent, and a read returns the order that was written.
-An unticked entry (`allowed: false`) is never grabbed and never wins a
-comparison. A media type with no entries at all is not constrained: any format
-of that kind is accepted and ranked by the built in order. A token Bindery
+An unticked entry (`allowed: false`) never makes a release eligible and never
+counts in the ranking. A release is judged and ranked only on the formats of
+the media type being searched, so an audiobook carrying a PDF booklet is
+judged on its audio token for an audiobook search and on its pdf token for an
+ebook one. A media type with no entries at all is not constrained: any format
+of that kind is accepted and ranked by the built in order, which
+`docs/User-Guide-Wiki.md` names. A token Bindery
 does not recognise is stored and ignored. Duplicates, an empty `items` and a
 list with nothing allowed are refused with `400`. `cutoff` and
 `upgradeAllowed` are accepted and stored but read by nothing.

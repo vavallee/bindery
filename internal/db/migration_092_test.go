@@ -8,7 +8,9 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// TestMigrate092ReversesQualityProfileItems covers #2733. Until this release
+// TestMigrate092ReversesQualityProfileItems covers #2733. It asserts the
+// reversal, the rows the guards must skip, and that an ordinary restart does
+// not reverse anything a second time. Until this release
 // the quality profile editor listed formats worst first and the order was read
 // by nothing. Ranking now follows the stored order, top is best, so every
 // existing list is reversed once: a profile nobody ever reordered then reads
@@ -144,9 +146,13 @@ func TestMigrate092ReversesQualityProfileItems(t *testing.T) {
 		t.Errorf("C = %v, want an empty list untouched", got)
 	}
 
-	// One shot: a second migrate call with the marker still present must not
-	// reverse the lists back. A Go backfill hook keyed by revision would be
-	// re runnable and is exactly what this migration must not be.
+	// A second migrate call, the way every restart makes one, must leave the
+	// lists alone. What makes that true is schema_migrations: the runner skips
+	// version 92 because its row is present. The reversal itself is NOT
+	// idempotent, and replaying the UPDATE would flip every list back, which
+	// is exactly why this is a numbered migration rather than a Go backfill
+	// hook that can be re run by deleting its marker. So this pins the restart
+	// path and the absence of a second writer, not a property of the SQL.
 	if err := migrate(database); err != nil {
 		t.Fatalf("second migrate: %v", err)
 	}

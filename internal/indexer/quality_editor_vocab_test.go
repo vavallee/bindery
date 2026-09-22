@@ -42,9 +42,10 @@ func extractTSXStringList(t *testing.T, src, name string) []string {
 // It asserts that EBOOK_FORMATS and AUDIOBOOK_FORMATS in QualityTab.tsx,
 // taken together, are exactly formatTokens, and that each token sits in the
 // list matching MediaTypeForFormat. Membership is compared as sets: the order
-// within each TSX list is a UI concern (worst → best) that this test does not
-// pin. Adding a token to formatTokens without giving it a checkbox, or adding
-// a checkbox for a token release parsing can never emit, fails here.
+// within each TSX list is a UI concern (best first, the order the chips are
+// offered in) that this test does not pin. Adding a token to formatTokens
+// without giving it a checkbox, or adding a checkbox for a token release
+// parsing can never emit, fails here.
 func TestQualityEditorFormatVocabulary(t *testing.T) {
 	raw, err := os.ReadFile(qualityTabPath)
 	if err != nil {

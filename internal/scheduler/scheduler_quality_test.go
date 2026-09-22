@@ -381,3 +381,53 @@ func TestSearchAndGrabFormat_ProfileOrderPicksTopTickedAudiobook(t *testing.T) {
 		t.Errorf("grabbed %q, want the mp3: the profile ranks it above m4b", rows[0].GUID)
 	}
 }
+
+// mixedMediaProfile is the shape that exposed a cross media type leak: the user
+// allows epub, refuses pdf, and allows m4b for the same author.
+func mixedMediaProfile() []models.QualityItem {
+	return []models.QualityItem{
+		{Quality: "epub", Allowed: true},
+		{Quality: "pdf", Allowed: false},
+		{Quality: "m4b", Allowed: true},
+	}
+}
+
+// TestSearchAndGrabFormat_DoesNotGrabAPDFBookletAsTheEbook is the integration
+// test for that leak. "Quality.Book.2024.PDF.M4B" is an audiobook with a PDF
+// booklet: on an ebook sweep the only token of the kind being searched is pdf,
+// which the profile refuses, so nothing may be grabbed. Judging each token
+// against its own list instead approved it on m4b and auto grabbed an audiobook
+// into the ebook slot, overriding an explicit "no pdf".
+func TestSearchAndGrabFormat_DoesNotGrabAPDFBookletAsTheEbook(t *testing.T) {
+	ctx := context.Background()
+	s, downloads, book := qualityFixture(t, true, mixedMediaProfile(), "Quality.Book.2024.PDF.M4B")
+
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
+
+	rows, err := downloads.List(ctx)
+	if err != nil {
+		t.Fatalf("downloads list: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("pdf is unticked, so an ebook sweep must grab nothing, got %d download(s)", len(rows))
+	}
+}
+
+// TestSearchAndGrabFormat_StillGrabsThatReleaseOnTheAudiobookSweep is the
+// control: the same release on an audiobook sweep is judged on m4b, which is
+// ticked, so the narrowing must not turn into a blanket block.
+func TestSearchAndGrabFormat_StillGrabsThatReleaseOnTheAudiobookSweep(t *testing.T) {
+	ctx := context.Background()
+	s, downloads, book := qualityFixture(t, true, mixedMediaProfile(), "Quality.Book.2024.PDF.M4B")
+	book.MediaType = models.MediaTypeAudiobook
+
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeAudiobook, nil)
+
+	rows, err := downloads.List(ctx)
+	if err != nil {
+		t.Fatalf("downloads list: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("m4b is ticked, so the audiobook sweep should grab it, got %d download(s)", len(rows))
+	}
+}

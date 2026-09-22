@@ -317,13 +317,16 @@ On indexers marked *freeleech only*, non-freeleech releases are not discarded
 
 **Quality profiles.** Settings → Quality Profiles. Each profile holds an
 ebook list and an audiobook list, numbered from the top, and top is best.
-Tick a format to allow it and untick it to refuse it; an unticked format
-never wins a comparison, wherever it sits. Move a format up or down to change
+Tick a format to allow it and untick it to refuse it; an unticked format is
+never grabbed and never counts in the ranking, wherever it sits. Move a format up or down to change
 which one Bindery prefers. A release that carries several formats, such as
 "azw3 epub", counts as the best ticked one it carries. A list with nothing in
 it means the profile has no opinion on that kind: any format of that kind is
-accepted and ranked by the built in order. A list with entries but nothing
-ticked means nothing of that kind is grabbed for the author. Profiles made
+accepted and ranked by the built in order, which is azw3, epub, mobi and azw,
+pdf, rtf, txt for ebooks, and flac, m4b, m4a, mp3 for audiobooks. That same
+built in order ranks every search for an author with no quality profile at
+all. A list with entries but nothing ticked means nothing of that kind is
+grabbed for the author. Profiles made
 before this rule existed were reversed once on upgrade, so a profile you
 never reordered now reads best first and prefers what it always did.
 

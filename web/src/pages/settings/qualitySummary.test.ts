@@ -36,12 +36,12 @@ describe('summarise', () => {
   })
 
   it('reports an empty list as no opinion', () => {
-    expect(summarise([])).toEqual({ kind: 'noOpinion', never: [] })
+    expect(summarise([])).toEqual({ kind: 'noOpinion' })
   })
 
   it('reports a list with nothing ticked as none allowed', () => {
     expect(summarise([{ quality: 'epub', allowed: false }, { quality: 'pdf', allowed: false }]))
-      .toEqual({ kind: 'noneAllowed', never: ['epub', 'pdf'] })
+      .toEqual({ kind: 'noneAllowed' })
   })
 })
 
