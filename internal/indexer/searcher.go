@@ -87,6 +87,11 @@ type MatchCriteria struct {
 	MediaType        string   // models.MediaTypeEbook or models.MediaTypeAudiobook
 	AllowedLanguages []string // from author's MetadataProfile; empty = no filter
 	AuthorAliases    []string // alternate names (e.g. latin-script romanisations for non-latin authors)
+	// Profile is the author's quality profile. Its stored order ranks the
+	// results, top is best, per media type (see quality_order.go). nil, or a
+	// profile with no entry for the media type in question, ranks by
+	// models.QualityRank as before.
+	Profile *models.QualityProfile
 }
 
 // CriteriaISBN picks the ISBN to put in MatchCriteria.ISBN for a book, given

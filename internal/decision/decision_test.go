@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/decision"
+	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -629,5 +630,82 @@ func TestQualityAllowed_ListedButNotAllowed(t *testing.T) {
 	}
 	if ok, _ := s.IsSatisfiedBy(release(withFormat("mobi")), emptyBook()); ok {
 		t.Error("a format absent from the list must be rejected")
+	}
+}
+
+// --- QualityAllowed, multi format releases (#2733) ---
+
+func withFormats(f ...string) func(*decision.Release) {
+	return func(r *decision.Release) { r.Formats = f }
+}
+
+// TestQualityAllowed_MultiFormatPassesWhenAnyTokenTicked: a release carrying
+// "epub mobi" parses to epub (first in formatTokens order), and judging that
+// one token rejected the release although mobi is ticked. Any ticked token in
+// a media type the profile has an opinion on lets it through.
+func TestQualityAllowed_MultiFormatPassesWhenAnyTokenTicked(t *testing.T) {
+	s := decision.QualityAllowed{Profile: &models.QualityProfile{
+		Name: "mobi only",
+		Items: []models.QualityItem{
+			{Quality: "mobi", Allowed: true},
+			{Quality: "epub", Allowed: false},
+		},
+	}}
+	ok, reason := s.IsSatisfiedBy(release(withFormat("epub"), withFormats("epub", "mobi")), emptyBook())
+	if !ok {
+		t.Fatalf("mobi is ticked, so a release carrying epub and mobi must pass, got %q", reason)
+	}
+}
+
+// TestQualityAllowed_MultiFormatRejectsWhenNoTokenTicked: none of the tokens
+// is ticked, so the release is rejected, and the reason names every token so
+// the user can see which formats were judged.
+func TestQualityAllowed_MultiFormatRejectsWhenNoTokenTicked(t *testing.T) {
+	s := decision.QualityAllowed{Profile: &models.QualityProfile{
+		Name: "mobi only",
+		Items: []models.QualityItem{
+			{Quality: "mobi", Allowed: true},
+			{Quality: "epub", Allowed: false},
+			{Quality: "pdf", Allowed: false},
+		},
+	}}
+	ok, reason := s.IsSatisfiedBy(release(withFormat("epub"), withFormats("epub", "pdf")), emptyBook())
+	if ok {
+		t.Fatal("neither epub nor pdf is ticked, so the release must be rejected")
+	}
+	if !strings.Contains(reason, "epub+pdf") {
+		t.Errorf("reason should name every judged token joined with +, got %q", reason)
+	}
+}
+
+// TestQualityAllowed_FormatsEmptyFallsBackToFormat: a Release built without
+// Formats (the importer's format check) is judged on Format alone, as before.
+func TestQualityAllowed_FormatsEmptyFallsBackToFormat(t *testing.T) {
+	s := decision.QualityAllowed{Profile: &models.QualityProfile{
+		Name: "epub only",
+		Items: []models.QualityItem{
+			{Quality: "epub", Allowed: true},
+			{Quality: "pdf", Allowed: false},
+		},
+	}}
+	if ok, _ := s.IsSatisfiedBy(release(withFormat("pdf"), withFormats()), emptyBook()); ok {
+		t.Error("pdf is unticked and must be rejected when Formats is empty")
+	}
+	if ok, reason := s.IsSatisfiedBy(release(withFormat("epub"), withFormats()), emptyBook()); !ok {
+		t.Errorf("epub is ticked and must pass when Formats is empty, got %q", reason)
+	}
+}
+
+// TestReleaseFromSearchResultSetsFormats: the conversion the scheduler and the
+// interactive search use fills Formats with every token in the title, in
+// formatTokens order, so the spec above can see all of them.
+func TestReleaseFromSearchResultSetsFormats(t *testing.T) {
+	r := decision.ReleaseFromSearchResult(newznab.SearchResult{Title: "Author - Title (2024) PDF EPUB"})
+	if r.Format != "epub" {
+		t.Errorf("Format = %q, want epub (ParseRelease order)", r.Format)
+	}
+	want := []string{"epub", "pdf"}
+	if len(r.Formats) != len(want) || r.Formats[0] != want[0] || r.Formats[1] != want[1] {
+		t.Errorf("Formats = %v, want %v", r.Formats, want)
 	}
 }

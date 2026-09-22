@@ -310,3 +310,52 @@ func TestQualityProfileDelete_InUse(t *testing.T) {
 		t.Errorf("expected error message to mention Alice, got %q", body.Error)
 	}
 }
+
+// TestQualityProfileItemsOrderRoundTrips pins that the stored order is the
+// order the client sent, per media type and across media types (#2733). The
+// order now ranks releases, top is best, so any normalisation that sorted the
+// list would silently change which release wins.
+func TestQualityProfileItemsOrderRoundTrips(t *testing.T) {
+	h, _, _, _ := qualityProfileFixture(t)
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/qualityprofile",
+		bytes.NewBufferString(`{
+			"name": "Ordered",
+			"items": [
+				{"quality":"mp3","allowed":true},
+				{"quality":"pdf","allowed":true},
+				{"quality":"m4b","allowed":false},
+				{"quality":"epub","allowed":true}
+			]
+		}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created models.QualityProfile
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = httptest.NewRecorder()
+	id := strconv.FormatInt(created.ID, 10)
+	h.Get(rec, withURLParam(httptest.NewRequest(http.MethodGet, "/api/v1/qualityprofile/"+id, nil), "id", id))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var got models.QualityProfile
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"mp3", "pdf", "m4b", "epub"}
+	if len(got.Items) != len(want) {
+		t.Fatalf("items = %v, want %v", got.Items, want)
+	}
+	for i, w := range want {
+		if got.Items[i].Quality != w {
+			t.Errorf("items[%d] = %q, want %q (stored order must survive the round trip)", i, got.Items[i].Quality, w)
+		}
+	}
+	if got.Items[2].Allowed {
+		t.Error("m4b was sent unticked and came back ticked")
+	}
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 
 // i18n: return the key so assertions are stable.
 vi.mock('react-i18next', () => ({
@@ -58,16 +58,90 @@ describe('QualityTab', () => {
     expect(screen.getByText('settings.quality.newProfile')).toBeInTheDocument()
   })
 
-  it('renders existing profiles as worst→best format chips', async () => {
-    mockList.mockResolvedValueOnce([profile()])
+  it('renders existing profiles as best first chips per list', async () => {
+    mockList.mockResolvedValueOnce([profile({
+      items: [
+        { quality: 'epub', allowed: true },
+        { quality: 'mobi', allowed: true },
+        { quality: 'm4b', allowed: true },
+        { quality: 'pdf', allowed: false },
+      ],
+    })])
     render(<QualityTab />)
     await waitFor(() => {
       expect(screen.getByText('Ebook Preferred')).toBeInTheDocument()
     })
-    // Each item is rendered as a worst→best ranked chip ("1. pdf").
-    expect(screen.getByText('1. pdf')).toBeInTheDocument()
-    expect(screen.getByText('2. mobi')).toBeInTheDocument()
-    expect(screen.getByText('3. epub')).toBeInTheDocument()
+    // Numbering restarts per list: m4b is the only audiobook format, so it
+    // is "1." in its own list rather than "3." in a flat one.
+    expect(screen.getByText('1. m4b')).toBeInTheDocument()
+    const ebookList = screen.getByRole('list', { name: 'settings.quality.ebookList' })
+    expect(within(ebookList).getByText('1. epub')).toBeInTheDocument()
+    expect(within(ebookList).getByText('2. mobi')).toBeInTheDocument()
+    expect(within(ebookList).getByText('3. pdf')).toBeInTheDocument()
+    const audioList = screen.getByRole('list', { name: 'settings.quality.audiobookList' })
+    expect(within(audioList).getByText('1. m4b')).toBeInTheDocument()
+    expect(screen.getAllByText('settings.quality.bestFirst').length).toBeGreaterThan(0)
+  })
+
+  it('summary sentence reflects state', async () => {
+    mockList.mockResolvedValueOnce([profile({
+      items: [
+        { quality: 'epub', allowed: true },
+        { quality: 'pdf', allowed: false },
+        { quality: 'azw3', allowed: true },
+      ],
+    })])
+    render(<QualityTab />)
+    await waitFor(() => screen.getByText('Ebook Preferred'))
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    // Ebook list: prefer epub, then azw3; never pdf.
+    expect(screen.getByText('settings.quality.summaryPreferThen first=epub rest=azw3')).toBeInTheDocument()
+    expect(screen.getByText('settings.quality.summaryNever formats=pdf')).toBeInTheDocument()
+    // Audiobook list is empty: no opinion, any audiobook format is accepted.
+    expect(screen.getByText('settings.quality.summaryNoOpinionAudiobook')).toBeInTheDocument()
+
+    // Untick epub: azw3 is the only ticked one left, so no "then".
+    fireEvent.click(screen.getByRole('checkbox', { name: 'epub' }))
+    expect(screen.getByText('settings.quality.summaryPrefer first=azw3')).toBeInTheDocument()
+    expect(screen.getByText('settings.quality.summaryNever formats=epub, pdf')).toBeInTheDocument()
+
+    // Untick azw3 too: nothing ticked, so no ebook will be grabbed.
+    fireEvent.click(screen.getByRole('checkbox', { name: 'azw3' }))
+    expect(screen.getByText('settings.quality.summaryNoneAllowedEbook')).toBeInTheDocument()
+  })
+
+  it('move stays inside its own list', async () => {
+    const mockUpdate = api.updateQualityProfile as ReturnType<typeof vi.fn>
+    mockUpdate.mockResolvedValueOnce(profile())
+    mockList.mockResolvedValue([profile({
+      items: [
+        { quality: 'epub', allowed: true },
+        { quality: 'm4b', allowed: true },
+        { quality: 'pdf', allowed: true },
+      ],
+    })])
+    render(<QualityTab />)
+    await waitFor(() => screen.getByText('Ebook Preferred'))
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    // The first "move down" belongs to epub, the top of the ebook list. It
+    // swaps with pdf, its neighbour in that list, not with m4b, its
+    // neighbour in the stored order.
+    fireEvent.click(screen.getAllByRole('button', { name: 'settings.quality.moveDown' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'settings.quality.saveChanges' }))
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    const sent = mockUpdate.mock.calls[0][1] as QualityProfile
+    expect(sent.items.map(i => i.quality)).toEqual(['pdf', 'epub', 'm4b'])
+  })
+
+  it('new profile seeds azw3 first', async () => {
+    mockList.mockResolvedValueOnce([])
+    render(<QualityTab />)
+    await waitFor(() => screen.getByText('settings.quality.newProfile'))
+    fireEvent.click(screen.getByText('settings.quality.newProfile'))
+    const boxes = screen.getAllByRole('checkbox')
+    expect(boxes.map(b => b.getAttribute('aria-label') ?? (b as HTMLInputElement).labels?.[0]?.textContent))
+      .toEqual(['azw3', 'epub', 'mobi', 'pdf'])
+    expect(boxes.every(b => (b as HTMLInputElement).checked)).toBe(true)
   })
 
   // #2373: cutoff and "upgrades allowed" were removed from the UI because
