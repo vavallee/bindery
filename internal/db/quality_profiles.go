@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -31,7 +32,7 @@ func NewQualityProfileRepo(db *sql.DB) *QualityProfileRepo {
 
 func (r *QualityProfileRepo) List(ctx context.Context) ([]models.QualityProfile, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, name, upgrade_allowed, cutoff, items, created_at, COALESCE(owner_user_id, 0) FROM quality_profiles ORDER BY id")
+		"SELECT id, name, upgrade_allowed, cutoff, items, audiobook_scoring, created_at, COALESCE(owner_user_id, 0) FROM quality_profiles ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("list quality profiles: %w", err)
 	}
@@ -50,7 +51,7 @@ func (r *QualityProfileRepo) List(ctx context.Context) ([]models.QualityProfile,
 
 func (r *QualityProfileRepo) GetByID(ctx context.Context, id int64) (*models.QualityProfile, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, name, upgrade_allowed, cutoff, items, created_at, COALESCE(owner_user_id, 0) FROM quality_profiles WHERE id=?", id)
+		"SELECT id, name, upgrade_allowed, cutoff, items, audiobook_scoring, created_at, COALESCE(owner_user_id, 0) FROM quality_profiles WHERE id=?", id)
 	if err != nil {
 		return nil, fmt.Errorf("get quality profile %d: %w", id, err)
 	}
@@ -94,6 +95,10 @@ func (r *QualityProfileRepo) create(ctx context.Context, p *models.QualityProfil
 	if err != nil {
 		return err
 	}
+	scoringJSON, err := marshalAudiobookScoring(p.AudiobookScoring)
+	if err != nil {
+		return err
+	}
 	upgrade := 0
 	if p.UpgradeAllowed {
 		upgrade = 1
@@ -103,9 +108,9 @@ func (r *QualityProfileRepo) create(ctx context.Context, p *models.QualityProfil
 		ownerArg = ownerUserID
 	}
 	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO quality_profiles (name, upgrade_allowed, cutoff, items, owner_user_id)
-		VALUES (?, ?, ?, ?, ?)`,
-		p.Name, upgrade, p.Cutoff, itemsJSON, ownerArg)
+		INSERT INTO quality_profiles (name, upgrade_allowed, cutoff, items, audiobook_scoring, owner_user_id)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		p.Name, upgrade, p.Cutoff, itemsJSON, scoringJSON, ownerArg)
 	if err != nil {
 		return fmt.Errorf("create quality profile: %w", err)
 	}
@@ -126,14 +131,18 @@ func (r *QualityProfileRepo) Update(ctx context.Context, p *models.QualityProfil
 	if err != nil {
 		return err
 	}
+	scoringJSON, err := marshalAudiobookScoring(p.AudiobookScoring)
+	if err != nil {
+		return err
+	}
 	upgrade := 0
 	if p.UpgradeAllowed {
 		upgrade = 1
 	}
 	res, err := r.db.ExecContext(ctx, `
-		UPDATE quality_profiles SET name=?, upgrade_allowed=?, cutoff=?, items=?
+		UPDATE quality_profiles SET name=?, upgrade_allowed=?, cutoff=?, items=?, audiobook_scoring=?
 		WHERE id=?`,
-		p.Name, upgrade, p.Cutoff, itemsJSON, p.ID)
+		p.Name, upgrade, p.Cutoff, itemsJSON, scoringJSON, p.ID)
 	if err != nil {
 		return fmt.Errorf("update quality profile %d: %w", p.ID, err)
 	}
@@ -230,11 +239,26 @@ func marshalItems(items []models.QualityItem) (string, error) {
 	return string(b), nil
 }
 
+// marshalAudiobookScoring serialises the profile's optional scoring block. A
+// nil block is written as SQL NULL rather than "null" so the column stays
+// empty for the default case and a later read can't confuse the two.
+func marshalAudiobookScoring(s *models.AudiobookScoring) (any, error) {
+	if s == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return nil, fmt.Errorf("marshal quality profile audiobook scoring: %w", err)
+	}
+	return string(b), nil
+}
+
 func scanQualityProfile(rows *sql.Rows) (models.QualityProfile, error) {
 	var p models.QualityProfile
 	var upgradeAllowed int
 	var itemsJSON string
-	if err := rows.Scan(&p.ID, &p.Name, &upgradeAllowed, &p.Cutoff, &itemsJSON, &p.CreatedAt, &p.OwnerUserID); err != nil {
+	var scoringJSON sql.NullString
+	if err := rows.Scan(&p.ID, &p.Name, &upgradeAllowed, &p.Cutoff, &itemsJSON, &scoringJSON, &p.CreatedAt, &p.OwnerUserID); err != nil {
 		return p, fmt.Errorf("scan quality profile: %w", err)
 	}
 	p.UpgradeAllowed = upgradeAllowed == 1
@@ -243,6 +267,13 @@ func scanQualityProfile(rows *sql.Rows) (models.QualityProfile, error) {
 	}
 	if p.Items == nil {
 		p.Items = []models.QualityItem{}
+	}
+	if scoringJSON.Valid && strings.TrimSpace(scoringJSON.String) != "" {
+		var scoring models.AudiobookScoring
+		if err := json.Unmarshal([]byte(scoringJSON.String), &scoring); err != nil {
+			return p, fmt.Errorf("unmarshal quality profile audiobook scoring: %w", err)
+		}
+		p.AudiobookScoring = &scoring
 	}
 	return p, nil
 }

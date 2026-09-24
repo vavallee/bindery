@@ -310,3 +310,95 @@ func TestQualityProfileDelete_InUse(t *testing.T) {
 		t.Errorf("expected error message to mention Alice, got %q", body.Error)
 	}
 }
+
+// The audiobook scoring block (#2740) rides in a JSON column. A profile that
+// carries one must round-trip it, and a profile that carries none must come
+// back with a nil block so an existing row's ranking is provably untouched.
+func TestQualityProfileAudiobookScoringRoundTrips(t *testing.T) {
+	h, repo, _, ctx := qualityProfileFixture(t)
+	body := `{
+		"name":"Audiobooks",
+		"items":[{"quality":"m4b","allowed":true},{"quality":"mp3","allowed":true}],
+		"audiobookScoring":{
+			"codecTargets":{"m4b":1.0,"mp3":0.8},
+			"toleranceMiBPerMinute":0.25,
+			"sizePerMinuteWeight":12,
+			"grabsWeight":4
+		}
+	}`
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/qualityprofile", bytes.NewBufferString(body)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created models.QualityProfile
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetByID(ctx, created.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("GetByID: got=%v err=%v", stored, err)
+	}
+	s := stored.AudiobookScoring
+	if s == nil {
+		t.Fatal("scoring block did not persist")
+	}
+	if s.CodecTargets["m4b"] != 1.0 || s.CodecTargets["mp3"] != 0.8 {
+		t.Errorf("codec targets = %v, want m4b 1.0 and mp3 0.8", s.CodecTargets)
+	}
+	if s.ToleranceMiBPerMinute != 0.25 || s.SizePerMinuteWeight != 12 {
+		t.Errorf("tolerance/weight = %v/%v, want 0.25/12", s.ToleranceMiBPerMinute, s.SizePerMinuteWeight)
+	}
+	if s.GrabsWeight == nil || *s.GrabsWeight != 4 {
+		t.Errorf("grabsWeight = %v, want 4", s.GrabsWeight)
+	}
+}
+
+// The default — no scoring block — must stay nil through a round trip. If it
+// came back as an empty struct, every profile would start taking the scoring
+// path with zero weights, which is exactly the silent re-ranking the opt-in
+// default exists to prevent.
+func TestQualityProfileAudiobookScoringAbsentStaysNil(t *testing.T) {
+	h, repo, _, ctx := qualityProfileFixture(t)
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/qualityprofile", bytes.NewBufferString(validProfileBody("Plain"))))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created models.QualityProfile
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetByID(ctx, created.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("GetByID: got=%v err=%v", stored, err)
+	}
+	if stored.AudiobookScoring != nil {
+		t.Errorf("a profile with no scoring block should load as nil, got %+v", stored.AudiobookScoring)
+	}
+}
+
+func TestQualityProfileAudiobookScoringValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want int
+	}{
+		{"negative size weight", `"sizePerMinuteWeight":-1`, http.StatusBadRequest},
+		{"negative tolerance", `"toleranceMiBPerMinute":-0.1`, http.StatusBadRequest},
+		{"negative grabs weight", `"grabsWeight":-2`, http.StatusBadRequest},
+		{"zero target", `"codecTargets":{"m4b":0}`, http.StatusBadRequest},
+		{"empty codec", `"codecTargets":{" ":1.0}`, http.StatusBadRequest},
+		{"well formed", `"codecTargets":{"m4b":1.0},"sizePerMinuteWeight":5`, http.StatusCreated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, _, _ := qualityProfileFixture(t)
+			body := `{"name":"` + tc.name + `","items":[{"quality":"m4b","allowed":true}],"audiobookScoring":{` + tc.body + `}}`
+			rec := httptest.NewRecorder()
+			h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/qualityprofile", bytes.NewBufferString(body)))
+			if rec.Code != tc.want {
+				t.Errorf("expected %d, got %d: %s", tc.want, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}

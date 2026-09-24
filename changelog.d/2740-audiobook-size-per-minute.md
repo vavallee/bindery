@@ -1,0 +1,2 @@
+### Added
+- **Audiobook size-per-minute scoring in quality profiles** (#2740) — an optional per-codec density target (MiB per minute), a tolerance band, and adjustable size and grabs weights. Releases inside the band are left alone; releases outside it lose points in proportion to the deviation, so a long audiobook at a reasonable bitrate is no longer outranked by a short, oversized encoding. Off unless a profile sets it, and a book with no stored runtime or a codec with no target keeps the previous ranking.

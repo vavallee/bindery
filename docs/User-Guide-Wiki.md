@@ -308,10 +308,18 @@ it; the hold is what happens when it refuses anyway.
 
 **Decision.** Each release is checked against your quality profile (allowed
 formats), delay profile, blocklist, size limits, and language filter. A
-quality profile is an allow list only; the order you put the formats in is
-not read. When more than one allowed format is found, Bindery prefers its
-built in ranking, best first: azw3, epub, mobi and azw, pdf, rtf, txt for
-ebooks, and flac, m4b, m4a, mp3 for audiobooks.
+quality profile is an allow list plus optional audiobook scoring; the order
+you put the formats in is not read. When more than one allowed format is
+found, Bindery prefers its built in ranking, best first: azw3, epub, mobi and
+azw, pdf, rtf, txt for ebooks, and flac, m4b, m4a, mp3 for audiobooks.
+A profile can also set a preferred density per audio codec, in MiB per minute
+(release size divided by the book's runtime), with a tolerance band and a
+weight. A release inside the band is left alone; one outside it loses points in
+proportion to the deviation, and the release's own codec token picks the
+target, so an m4b never scores against an mp3 target. The grabs weight scales
+the existing popularity term. Leave the size weight at zero — the default — to
+keep the previous ranking, and a book with no stored runtime or a codec with no
+target keeps it too, rather than being guessed at or dropped.
 On indexers marked *freeleech only*, non-freeleech releases are not discarded
 — they are parked as **pending** for manual approval.
 

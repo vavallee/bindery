@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
-import { api, QualityProfile } from '../../api/client'
+import { api, QualityProfile, AudiobookScoring } from '../../api/client'
 import { inputCls, labelCls } from './formStyles'
 import { dangerLink } from '../../components/buttons'
 
@@ -196,6 +196,23 @@ function QualityProfileForm({
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
+  // Audiobook scoring (#2740). Off — the default, and what every profile that
+  // predates the feature has — sends no scoring block at all, so the server
+  // keeps the historical ranking. Only an explicitly enabled block is posted.
+  const savedScoring = profile?.audiobookScoring
+  const [scoringOn, setScoringOn] = useState(!!savedScoring)
+  // Keyed by codec, so a Map keeps the profile record and the per-codec input
+  // updates off the computed-member-access path. The saved record is folded in
+  // once here; the payload posted back is still a plain Record<string, number>.
+  const [codecTargets, setCodecTargets] = useState<Map<string, string>>(
+    () => new Map<string, string>(
+      Object.entries(savedScoring?.codecTargets ?? {}).map(([codec, target]) => [codec, String(target)] as [string, string]),
+    ),
+  )
+  const [tolerance, setTolerance] = useState(savedScoring?.toleranceMiBPerMinute != null ? String(savedScoring.toleranceMiBPerMinute) : '0.2')
+  const [sizeWeight, setSizeWeight] = useState(savedScoring?.sizePerMinuteWeight != null ? String(savedScoring.sizePerMinuteWeight) : '10')
+  const [grabsWeight, setGrabsWeight] = useState(savedScoring?.grabsWeight != null ? String(savedScoring.grabsWeight) : '10')
+
   const toggleAllowed = (quality: string) => {
     setItems(prev => {
       const exists = prev.some(i => i.quality === quality)
@@ -246,6 +263,24 @@ function QualityProfileForm({
       const payload: Partial<QualityProfile> = {
         name: name.trim(),
         items,
+      }
+      if (scoringOn) {
+        const targets = new Map<string, number>()
+        for (const codec of AUDIOBOOK_FORMATS) {
+          const raw = codecTargets.get(codec)?.trim()
+          if (!raw) continue
+          const n = Number(raw)
+          if (Number.isFinite(n) && n > 0) targets.set(codec, n)
+        }
+        const scoring: AudiobookScoring = {
+          codecTargets: Object.fromEntries(targets),
+          toleranceMiBPerMinute: Number(tolerance) || 0,
+          sizePerMinuteWeight: Number(sizeWeight) || 0,
+        }
+        // Blank means "leave the default of 10"; 0 is a deliberate "turn
+        // popularity off", so the two must not collapse into one another.
+        if (grabsWeight.trim() !== '') scoring.grabsWeight = Number(grabsWeight)
+        payload.audiobookScoring = scoring
       }
       // cutoff and upgradeAllowed are no longer editable here (#2373): nothing
       // in Bindery has ever read either one. The columns and the API fields
@@ -366,6 +401,79 @@ function QualityProfileForm({
                 + {f}
               </button>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-slate-200 dark:border-zinc-800 pt-4">
+        <label className="flex items-center gap-2 cursor-pointer text-xs">
+          <input
+            type="checkbox"
+            checked={scoringOn}
+            onChange={e => setScoringOn(e.target.checked)}
+            className="rounded border-slate-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+          />
+          <span className="text-slate-800 dark:text-zinc-200">{t('settings.quality.scoringTitle')}</span>
+        </label>
+        <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-1">
+          {t('settings.quality.scoringHint')}
+        </p>
+        {scoringOn && (
+          <div className="mt-3 space-y-3">
+            <div>
+              <label className={labelCls}>{t('settings.quality.scoringTargets')}</label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-1">
+                {AUDIOBOOK_FORMATS.map(codec => (
+                  <label key={codec} className="flex items-center gap-2 text-xs">
+                    <span className="w-9 text-slate-600 dark:text-zinc-400">{codec}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={codecTargets.get(codec) ?? ''}
+                      placeholder={t('settings.quality.scoringTargetPlaceholder')}
+                      onChange={e => setCodecTargets(prev => new Map(prev).set(codec, e.target.value))}
+                      className={inputCls}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div>
+                <label className={labelCls}>{t('settings.quality.scoringTolerance')}</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.05"
+                  value={tolerance}
+                  onChange={e => setTolerance(e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>{t('settings.quality.scoringSizeWeight')}</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={sizeWeight}
+                  onChange={e => setSizeWeight(e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>{t('settings.quality.scoringGrabsWeight')}</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={grabsWeight}
+                  onChange={e => setGrabsWeight(e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+            </div>
           </div>
         )}
       </div>

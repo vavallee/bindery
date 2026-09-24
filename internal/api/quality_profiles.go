@@ -175,6 +175,8 @@ func formatInUseMessage(count int, names []string) string {
 //   - name non-empty
 //   - at least one allowed format
 //   - no duplicate format names in the preference order
+//   - a well-formed optional audiobook scoring block (see
+//     validateAudiobookScoring)
 //
 // Cutoff is deliberately not validated. It was mandatory and had to name an
 // allowed format until #2373, when the control was removed from Settings
@@ -215,5 +217,47 @@ func validateQualityProfile(p *models.QualityProfile) string {
 	if allowedCount == 0 {
 		return "at least one allowed format is required"
 	}
+	if msg := validateAudiobookScoring(p.AudiobookScoring); msg != "" {
+		return msg
+	}
+	return ""
+}
+
+// validateAudiobookScoring normalises and bounds the optional scoring block.
+// It rejects a negative weight or tolerance because either would flip the
+// density term into rewarding releases the user asked it to demote, and a
+// target of zero or less because a density target has to be positive to mean
+// anything. Codec keys are lowercased to match ParseRelease's tokens.
+//
+// A nil block is valid: it is the default, and it is what keeps the feature
+// opt-in.
+func validateAudiobookScoring(s *models.AudiobookScoring) string {
+	if s == nil {
+		return ""
+	}
+	if s.SizePerMinuteWeight < 0 {
+		return "audiobookScoring.sizePerMinuteWeight cannot be negative"
+	}
+	if s.ToleranceMiBPerMinute < 0 {
+		return "audiobookScoring.toleranceMiBPerMinute cannot be negative"
+	}
+	if s.GrabsWeight != nil && *s.GrabsWeight < 0 {
+		return "audiobookScoring.grabsWeight cannot be negative"
+	}
+	if len(s.CodecTargets) == 0 {
+		return ""
+	}
+	normalised := make(map[string]float64, len(s.CodecTargets))
+	for codec, target := range s.CodecTargets {
+		key := strings.ToLower(strings.TrimSpace(codec))
+		if key == "" {
+			return "audiobookScoring.codecTargets has an empty codec name"
+		}
+		if target <= 0 {
+			return "audiobookScoring.codecTargets." + key + " must be greater than zero"
+		}
+		normalised[key] = target
+	}
+	s.CodecTargets = normalised
 	return ""
 }

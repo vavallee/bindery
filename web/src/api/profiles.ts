@@ -1,11 +1,25 @@
 import { request } from './core'
 
+export interface AudiobookScoring {
+  // Preferred density per parsed codec token (m4b, m4a, mp3, flac, ogg), in
+  // MiB/min. A codec left out gets no size-per-minute adjustment.
+  codecTargets?: Record<string, number>
+  // Band around the target that counts as a match. Omitted means 0.2.
+  toleranceMiBPerMinute?: number
+  // Score charged per MiB/min outside the band. 0 or omitted disables the
+  // normalised term and keeps the flat size bonus.
+  sizePerMinuteWeight?: number
+  // Scales the log10(grabs+1) popularity term. Omitted keeps 10; 0 disables it.
+  grabsWeight?: number
+}
+
 export interface QualityProfile {
   id: number
   name: string
   upgradeAllowed: boolean
   cutoff: string
   items: Array<{ quality: string; allowed: boolean }>
+  audiobookScoring?: AudiobookScoring
 }
 
 export interface MetadataProfile {

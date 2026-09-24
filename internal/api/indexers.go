@@ -532,6 +532,12 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		ASIN:             book.ASIN,
 		AllowedLanguages: allowedLangs,
 		AuthorAliases:    authorAliases,
+		DurationSeconds:  book.DurationSeconds,
+	}
+	// Same criteria the scheduler builds: nil scoring leaves the interactive
+	// ranking exactly as it was (#2740).
+	if qualityProfile != nil {
+		crit.Scoring = qualityProfile.AudiobookScoring
 	}
 	if book.ReleaseDate != nil {
 		crit.Year = book.ReleaseDate.Year()

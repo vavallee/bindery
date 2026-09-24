@@ -125,4 +125,44 @@ describe('QualityTab', () => {
     expect(screen.getByText('ogg')).toBeInTheDocument()
     expect(screen.getByText('common.audiobook')).toBeInTheDocument()
   })
+
+  // #2740: the scoring block is optional and must round-trip through the
+  // editor, including a grabs weight the user deliberately set.
+  it('round-trips the audiobook scoring block through the editor', async () => {
+    mockList.mockResolvedValueOnce([profile({
+      items: [{ quality: 'm4b', allowed: true }],
+      audiobookScoring: {
+        codecTargets: { m4b: 1 },
+        toleranceMiBPerMinute: 0.2,
+        sizePerMinuteWeight: 10,
+        grabsWeight: 4,
+      },
+    })])
+    const mockUpdate = api.updateQualityProfile as ReturnType<typeof vi.fn>
+    mockUpdate.mockResolvedValueOnce({})
+    render(<QualityTab />)
+    await waitFor(() => screen.getByText('Ebook Preferred'))
+    fireEvent.click(screen.getByText('common.edit'))
+    expect(screen.getByLabelText('m4b')).toHaveValue(1)
+    fireEvent.click(screen.getByText('settings.quality.saveChanges'))
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    const scoring = mockUpdate.mock.calls[0][1].audiobookScoring
+    expect(scoring.codecTargets).toEqual({ m4b: 1 })
+    expect(scoring.sizePerMinuteWeight).toBe(10)
+    expect(scoring.grabsWeight).toBe(4)
+  })
+
+  // A profile with no scoring block must post none, so the server stores NULL
+  // and keeps the historical ranking rather than switching to zero weights.
+  it('omits the scoring block when it is switched off', async () => {
+    mockList.mockResolvedValueOnce([profile({ items: [{ quality: 'epub', allowed: true }] })])
+    const mockUpdate = api.updateQualityProfile as ReturnType<typeof vi.fn>
+    mockUpdate.mockResolvedValueOnce({})
+    render(<QualityTab />)
+    await waitFor(() => screen.getByText('Ebook Preferred'))
+    fireEvent.click(screen.getByText('common.edit'))
+    fireEvent.click(screen.getByText('settings.quality.saveChanges'))
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1].audiobookScoring).toBeUndefined()
+  })
 })

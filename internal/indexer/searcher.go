@@ -87,6 +87,15 @@ type MatchCriteria struct {
 	MediaType        string   // models.MediaTypeEbook or models.MediaTypeAudiobook
 	AllowedLanguages []string // from author's MetadataProfile; empty = no filter
 	AuthorAliases    []string // alternate names (e.g. latin-script romanisations for non-latin authors)
+	// DurationSeconds is the book's stored runtime, applied to every candidate
+	// for that book. Indexer feeds carry no per-release runtime, so this is the
+	// only figure ranking has. Zero means the runtime is unknown and the
+	// size-per-minute term degrades to the historical ranking rather than
+	// guessing or dividing by zero.
+	DurationSeconds int
+	// Scoring is the author's quality-profile audiobook scoring preferences
+	// (#2740). Nil — the default — leaves ranking exactly as it was.
+	Scoring *models.AudiobookScoring
 }
 
 // CriteriaISBN picks the ISBN to put in MatchCriteria.ISBN for a book, given
@@ -923,7 +932,11 @@ func rankResults(results []newznab.SearchResult, c MatchCriteria) {
 }
 
 // scoreResult computes the composite ranking score for a single result.
-// Higher is better. Weights are hardcoded (no profile UI in v0.4.0).
+// Higher is better. The base weights are hardcoded; a caller can hand in a
+// quality profile's optional audiobook scoring via MatchCriteria.Scoring to
+// replace the flat size bonus with a size-per-minute term and to re-weight
+// grabs (#2740). With no scoring — the default — every term here is the one
+// it has always been.
 func scoreResult(r newznab.SearchResult, c MatchCriteria) float64 {
 	p := ParseRelease(r.Title)
 
@@ -972,11 +985,22 @@ func scoreResult(r newznab.SearchResult, c MatchCriteria) float64 {
 		}
 	}
 
-	if r.Grabs > 0 {
-		score += math.Log10(float64(r.Grabs+1)) * 10
+	grabsWeight := models.DefaultGrabsWeight
+	if c.Scoring != nil && c.Scoring.GrabsWeight != nil {
+		grabsWeight = *c.Scoring.GrabsWeight
+	}
+	if r.Grabs > 0 && grabsWeight != 0 {
+		score += math.Log10(float64(r.Grabs+1)) * grabsWeight
 	}
 
-	if r.Size > 0 {
+	// A size-per-minute term the user configured replaces the flat size bonus
+	// for that release, since rewarding raw bytes and rewarding a density are
+	// opposite signals. When the density can't be computed — unknown runtime,
+	// unlisted codec, or scoring switched off — the flat bonus applies exactly
+	// as it always has.
+	if delta, ok := audiobookSizePerMinuteScore(quality, r.Size, c.DurationSeconds, c.Scoring); ok {
+		score += delta
+	} else if r.Size > 0 {
 		mb := float64(r.Size) / (1024 * 1024)
 		if mb > 1024 {
 			mb = 1024
@@ -998,6 +1022,38 @@ func scoreResult(r newznab.SearchResult, c MatchCriteria) float64 {
 	score += float64(r.IndexerPriority)
 
 	return score
+}
+
+// audiobookSizePerMinuteScore returns the density adjustment for a release and
+// whether it applies. It reports false — leaving the caller on the historical
+// flat size bonus — when the profile has not switched the term on, when the
+// runtime or size is missing, or when the release's codec has no configured
+// target. That is the whole fallback: an unscoreable release keeps the ranking
+// it has always had rather than being rejected or charged an invented value.
+//
+// The release's parsed format is the codec token for audio (m4b, m4a, mp3,
+// flac, ogg), so a container extension alone never satisfies a target it did
+// not name. The result is negative outside the tolerance band and zero within
+// it, so the closest density wins and the sign of the deviation never rewards
+// an oversized or undersized release.
+func audiobookSizePerMinuteScore(codec string, sizeBytes int64, durationSeconds int, scoring *models.AudiobookScoring) (float64, bool) {
+	if scoring == nil || scoring.SizePerMinuteWeight == 0 || sizeBytes <= 0 || durationSeconds <= 0 {
+		return 0, false
+	}
+	target, ok := scoring.CodecTargets[strings.ToLower(codec)]
+	if !ok || target <= 0 {
+		return 0, false
+	}
+	tolerance := scoring.ToleranceMiBPerMinute
+	if tolerance <= 0 {
+		tolerance = models.DefaultSizePerMinuteTolerance
+	}
+	mibPerMinute := (float64(sizeBytes) / (1024 * 1024)) / (float64(durationSeconds) / 60)
+	deviation := math.Abs(mibPerMinute-target) - tolerance
+	if deviation <= 0 {
+		return 0, true
+	}
+	return -scoring.SizePerMinuteWeight * deviation, true
 }
 
 // IsAudiobookFormat reports whether the format token names an audio container.

@@ -957,7 +957,7 @@
     "quality": {
       "heading": "Quality Profiles",
       "newProfile": "+ New Profile",
-      "description": "A profile is the list of file formats Bindery is allowed to grab for an author. It does not rank them.",
+      "description": "A profile is the list of file formats Bindery is allowed to grab for an author, plus optional audiobook scoring. The order of the format list is not used.",
       "empty": "No quality profiles configured.",
       "deleteConfirm": "Delete quality profile \"{{name}}\"?",
       "deleteFail": "Failed to delete profile",
@@ -973,7 +973,14 @@
       "errorNoFormats": "At least one format is required",
       "errorNoAllowed": "At least one format must be allowed",
       "moveUp": "Move up",
-      "moveDown": "Move down"
+      "moveDown": "Move down",
+      "scoringTitle": "Audiobook size-per-minute scoring",
+      "scoringHint": "Optional. For each codec, enter the density you want in MiB per minute (release size divided by runtime). Releases inside the tolerance band are left alone; releases outside it lose points in proportion to how far off they are. Codecs left blank and books with no stored runtime keep the current ranking.",
+      "scoringTargets": "Preferred MiB/min per codec",
+      "scoringTargetPlaceholder": "e.g. 1.0",
+      "scoringTolerance": "Tolerance",
+      "scoringSizeWeight": "Size weight",
+      "scoringGrabsWeight": "Grabs weight"
     },
     "metadata": {
       "heading": "Metadata Profiles",

@@ -1,0 +1,12 @@
+-- +migrate Up
+-- Optional audiobook release-scoring preferences on a quality profile (#2740).
+--
+-- The value is a JSON object describing per-codec preferred MiB/min, a
+-- tolerance band, a size-per-minute weight and a grabs weight. NULL — every
+-- row that predates this migration — means the profile keeps the historical
+-- release ranking exactly, which is what makes the feature opt-in.
+--
+-- Stored as JSON rather than columns because the shape is a per-codec map and
+-- nothing outside ranking reads it, the same reasoning as quality_profiles.items.
+-- NOTE: no semicolons inside comments, the migration runner splits on them.
+ALTER TABLE quality_profiles ADD COLUMN audiobook_scoring TEXT;

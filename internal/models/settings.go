@@ -63,6 +63,10 @@ type QualityProfile struct {
 	Cutoff         string        `json:"cutoff"`
 	Items          []QualityItem `json:"items"`
 	CreatedAt      time.Time     `json:"createdAt"`
+	// AudiobookScoring holds optional release-ranking preferences for
+	// audiobooks (#2740). A nil pointer — the default for every profile that
+	// predates the feature — leaves ranking exactly as it was.
+	AudiobookScoring *AudiobookScoring `json:"audiobookScoring,omitempty"`
 	// OwnerUserID is the per-user ownership column added in migration 025.
 	// See RootFolder for legacy zero-value semantics.
 	OwnerUserID int64 `json:"-"`
@@ -71,6 +75,41 @@ type QualityProfile struct {
 type QualityItem struct {
 	Quality string `json:"quality"`
 	Allowed bool   `json:"allowed"`
+}
+
+// DefaultSizePerMinuteTolerance is the band around a codec's preferred
+// MiB/min that counts as a match when AudiobookScoring.ToleranceMiBPerMinute
+// is left at zero. Roughly a quarter of a typical 0.8-1.2 MiB/min band.
+const DefaultSizePerMinuteTolerance = 0.2
+
+// DefaultGrabsWeight scales the log10(grabs+1) popularity term in release
+// ranking. It is the historical hardcoded value, kept as the default so a
+// profile that turns on audiobook scoring without touching grabsWeight does
+// not silently re-weight popularity.
+const DefaultGrabsWeight = 10.0
+
+// AudiobookScoring carries a quality profile's optional size-per-minute
+// ranking preferences. It is deliberately not a general scoring framework:
+// the only adjustment it can make beyond the historical terms is to charge a
+// release for sitting outside the density the user asked for. Ranking of
+// codec quality, edition markers and identifiers is untouched.
+type AudiobookScoring struct {
+	// CodecTargets maps a parsed codec token ("m4b", "m4a", "mp3", "flac",
+	// "ogg") to the preferred density in MiB per minute. A codec that is not
+	// listed, or a release whose codec could not be parsed, gets no
+	// size-per-minute adjustment at all — the term degrades to the historical
+	// ranking rather than guessing.
+	CodecTargets map[string]float64 `json:"codecTargets,omitempty"`
+	// ToleranceMiBPerMinute is the band around the target that scores as a
+	// match. Zero means DefaultSizePerMinuteTolerance.
+	ToleranceMiBPerMinute float64 `json:"toleranceMiBPerMinute,omitempty"`
+	// SizePerMinuteWeight is the score charged per MiB/min of deviation
+	// beyond the tolerance. Zero (the default) disables the normalised term
+	// entirely and keeps the flat size bonus.
+	SizePerMinuteWeight float64 `json:"sizePerMinuteWeight,omitempty"`
+	// GrabsWeight scales the log10(grabs+1) popularity term. Nil keeps
+	// DefaultGrabsWeight; zero disables the popularity term.
+	GrabsWeight *float64 `json:"grabsWeight,omitempty"`
 }
 
 type HistoryEvent struct {

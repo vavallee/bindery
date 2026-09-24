@@ -986,6 +986,12 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		ASIN:             book.ASIN,
 		AuthorAliases:    authorAliases,
 		AllowedLanguages: allowedLangs,
+		DurationSeconds:  book.DurationSeconds,
+	}
+	// The profile's audiobook scoring block is nil unless the user configured
+	// one, so the scheduler's ranking is untouched for everyone else (#2740).
+	if qualityProfile != nil {
+		crit.Scoring = qualityProfile.AudiobookScoring
 	}
 	if book.ReleaseDate != nil {
 		crit.Year = book.ReleaseDate.Year()
