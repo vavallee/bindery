@@ -1215,7 +1215,23 @@ func (r *BookRepo) FindByAuthorAndTitle(ctx context.Context, authorID int64, tit
 // When several rows qualify, an exact-key match is returned in preference to a
 // subtitle-divergent one; see dedupCandidates.
 func (r *BookRepo) FindByAuthorAndDedupKey(ctx context.Context, authorID int64, title string) (*models.Book, error) {
-	books, err := r.dedupCandidates(ctx, authorID, title)
+	return r.FindByAuthorAndDedupKeyVisibleTo(ctx, authorID, title, 0)
+}
+
+// FindByAuthorAndDedupKeyVisibleTo is FindByAuthorAndDedupKey restricted to the
+// books userID can see: owned by that user or with a NULL owner, via
+// QueryScopeForIncludingNull. userID 0 is unscoped and behaves exactly like
+// FindByAuthorAndDedupKey.
+//
+// Scoping by author alone is not enough for a caller that is about to create a
+// row on one user's behalf: an author can legitimately be shared (NULL owner),
+// and the books hanging off it are not. The Hardcover list syncer uses this so
+// one user's library row cannot silently cancel another user's import (#2766).
+// It matches GetByForeignIDVisibleTo rather than the stricter
+// GetByForeignIDForUser because an unowned book is in everybody's library list,
+// so deduping against it is right for every caller.
+func (r *BookRepo) FindByAuthorAndDedupKeyVisibleTo(ctx context.Context, authorID int64, title string, userID int64) (*models.Book, error) {
+	books, err := r.dedupCandidates(ctx, authorID, title, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -1230,7 +1246,7 @@ func (r *BookRepo) FindByAuthorAndDedupKey(ctx context.Context, authorID int64, 
 // case (more than one local row qualifies) and route to review instead of
 // guessing which row to bind.
 func (r *BookRepo) FindAllByAuthorAndDedupKey(ctx context.Context, authorID int64, title string) ([]models.Book, error) {
-	return r.dedupCandidates(ctx, authorID, title)
+	return r.dedupCandidates(ctx, authorID, title, 0)
 }
 
 // dedupCandidates is the shared two-tier work-identity lookup behind both
@@ -1267,7 +1283,10 @@ func (r *BookRepo) FindAllByAuthorAndDedupKey(ctx context.Context, authorID int6
 // corroborating signal (Calibre, the API add-book path) accept it, which
 // preserves the pre-#2042 behaviour for that case — it is overwhelmingly one
 // work whose publisher subtitle one source omitted.
-func (r *BookRepo) dedupCandidates(ctx context.Context, authorID int64, title string) ([]models.Book, error) {
+// userID scopes the candidate set to the books that user can see (owned or
+// NULL owner); 0 leaves it unscoped, which is what every caller but the
+// Hardcover list syncer passes.
+func (r *BookRepo) dedupCandidates(ctx context.Context, authorID int64, title string, userID int64) ([]models.Book, error) {
 	key := indexer.CanonicalDedupKey(title)
 	if key == "" {
 		return nil, nil
@@ -1276,11 +1295,12 @@ func (r *BookRepo) dedupCandidates(ctx context.Context, authorID int64, title st
 	if mainKey == "" {
 		mainKey = key
 	}
-	books, err := r.query(ctx,
-		bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+
-			" WHERE author_id = ? AND (books.dedup_key = ? OR books.dedup_key = ?"+
+	where, args := QueryScopeForIncludingNull("books.owner_user_id",
+		"WHERE author_id = ? AND (books.dedup_key = ? OR books.dedup_key = ?"+
 			" OR (books.dedup_key >= ? AND books.dedup_key < ?))",
-		[]any{authorID, key, mainKey, mainKey + " ", mainKey + "!"})
+		userID, authorID, key, mainKey, mainKey+" ", mainKey+"!")
+	books, err := r.query(ctx,
+		bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where, args)
 	if err != nil {
 		return nil, err
 	}

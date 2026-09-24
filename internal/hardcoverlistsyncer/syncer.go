@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/jobs"
@@ -452,6 +453,19 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		ownerID = *il.OwnerUserID
 	}
 
+	// Identity the create-versus-skip reads run under, the background-job twin
+	// of auth.ListScopeUserID: the list owner while tenancy enforcement is on,
+	// and 0 (unscoped) otherwise. The write path stamps ownerID whatever the
+	// setting, but the reads that decide whether to write at all were global,
+	// so under enforcement one user's list skipped, widened and re-opened
+	// another user's rows and reused another user's authors (#2766).
+	//
+	// It is deliberately gated rather than always scoped. With enforcement off,
+	// which is the default, every user shares one library view and the two
+	// "users" on a typical install are one person, so scoping here would start
+	// creating a second row for a book the library already has.
+	scopeUserID := listScopeUserID(ownerID)
+
 	// Quality profile to stamp on every author this sync creates. A list already
 	// carries one (models.ImportList.QualityProfileID, set from the per-list
 	// picker), but the syncer used to drop it: authors it created landed with a
@@ -478,7 +492,7 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 	// Index existing authors by normalized name so a Hardcover author already in
 	// the library under a different provider's foreign id (e.g. an OpenLibrary
 	// author imported via ABS) is reused instead of duplicated (#1223).
-	nameIndex := s.buildAuthorNameIndex(ctx)
+	nameIndex := s.buildAuthorNameIndex(ctx, scopeUserID)
 
 	// countStat records one book's outcome on the polled progress snapshot.
 	countStat := func(mutate func(*SyncStats)) {
@@ -509,7 +523,25 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		}
 
 		// Skip if already tracked, except to widen complementary list formats.
-		existing, _ := s.books.GetByForeignID(ctx, book.ForeignID)
+		// Scoped to what the list owner can see: their own rows plus unowned
+		// ones, which stay shared under either setting. scopeUserID 0 makes
+		// this the global lookup it has always been (#2766).
+		existing, _ := s.books.GetByForeignIDVisibleTo(ctx, book.ForeignID, scopeUserID)
+		if existing == nil && scopeUserID != 0 {
+			// The foreign id may still be taken by a row another user owns.
+			// books.foreign_id is globally UNIQUE (migration 001), so there is
+			// no second row to create for this user: creating would fail the
+			// constraint and count the book as a failure on every sync. Skip
+			// it, and unlike the old silent branch say whose row it is, which
+			// is the question the skip line could never answer before.
+			if foreign, ferr := s.books.GetByForeignID(ctx, book.ForeignID); ferr == nil && foreign != nil {
+				slog.Info("hardcover list sync: book skipped, its foreign id belongs to another user",
+					"title", book.Title, "foreignID", book.ForeignID,
+					"owner_user_id", foreign.OwnerUserID, "list_owner_user_id", scopeUserID)
+				countStat(func(st *SyncStats) { st.Skipped++ })
+				continue
+			}
+		}
 		if existing != nil {
 			if shouldWidenMediaType(existing.MediaType, effectiveMediaType) {
 				existing.MediaType = models.MediaTypeBoth
@@ -538,7 +570,13 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		}
 
 		// Look up or create the author
-		authorID, err := s.ensureAuthor(ctx, &book, nameIndex, ownerID, qualityProfileID, rootFolderID)
+		authorID, err := s.ensureAuthor(ctx, &book, nameIndex, ownerID, scopeUserID, qualityProfileID, rootFolderID)
+		if errors.Is(err, errAuthorOwnedByAnotherUser) {
+			slog.Info("hardcover list sync: book skipped, its author belongs to another user",
+				"title", book.Title, "author", book.Author.Name, "list_owner_user_id", scopeUserID)
+			countStat(func(st *SyncStats) { st.Skipped++ })
+			continue
+		}
 		if err != nil {
 			slog.Warn("failed to ensure author for book", "title", book.Title, "error", err)
 			countStat(func(st *SyncStats) { st.Failed++ })
@@ -550,7 +588,11 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		// Bind to that row instead of creating a duplicate "wanted" entry — the
 		// canonical dedup key collapses subtitle/case/foreign-id differences
 		// (#1223), the same cross-source bind the Calibre/ABS importers use.
-		if owned, derr := s.books.FindByAuthorAndDedupKey(ctx, authorID, book.Title); derr != nil {
+		// Scoped like the foreign-id probe above: the author may legitimately
+		// be shared (NULL owner), and the books hanging off it are not, so an
+		// author-only scope would still let one user's row cancel another
+		// user's import (#2766).
+		if owned, derr := s.books.FindByAuthorAndDedupKeyVisibleTo(ctx, authorID, book.Title, scopeUserID); derr != nil {
 			slog.Warn("hardcover list sync: dedup-key lookup failed", "title", book.Title, "error", derr)
 		} else if owned != nil {
 			slog.Debug("book already owned under author, skipping", "title", book.Title, "author_id", authorID, "existing_id", owned.ID)
@@ -669,14 +711,30 @@ func (s *ListSyncer) tokenForList(ctx context.Context, il models.ImportList) str
 	return hardcover.NormalizeAPIToken(s.tokenSource(ctx))
 }
 
+// listScopeUserID is auth.ListScopeUserID for a background job: the owner to
+// scope reads by while tenancy enforcement is on, 0 (unscoped, the historical
+// global behaviour) otherwise. A list with no owner is global under either
+// setting, so it also scopes to 0.
+func listScopeUserID(ownerID int64) int64 {
+	if !auth.EnforceTenancy() {
+		return 0
+	}
+	return ownerID
+}
+
 // buildAuthorNameIndex maps each existing author's normalized name to the
 // matching rows. Used by ensureAuthor to reconcile a Hardcover author against
 // one already in the library under a different provider's foreign id (#1223).
 // A failed list is non-fatal: the index is empty and ensureAuthor falls back to
 // creating authors as before.
-func (s *ListSyncer) buildAuthorNameIndex(ctx context.Context) map[string][]models.Author {
+//
+// scopeUserID restricts the index to the authors the list owner can see, their
+// own plus unowned ones, so a list cannot reuse an author owned by somebody
+// else; 0 indexes every author, which is what enforcement-off installs get and
+// what this always did before #2766.
+func (s *ListSyncer) buildAuthorNameIndex(ctx context.Context, scopeUserID int64) map[string][]models.Author {
 	index := make(map[string][]models.Author)
-	authors, err := s.authors.List(ctx)
+	authors, err := s.authors.ListByUser(ctx, scopeUserID)
 	if err != nil {
 		slog.Warn("hardcover list sync: failed to index authors by name; duplicate-author guard disabled", "error", err)
 		return index
@@ -708,23 +766,47 @@ func uniqueAuthorByName(index map[string][]models.Author, name string) *models.A
 	return &matches[0]
 }
 
+// errAuthorOwnedByAnotherUser reports that the book's author exists but is
+// owned by a user other than the list owner, under tenancy enforcement. It is
+// not a failure: authors.foreign_id is globally UNIQUE (migration 001), so
+// there is no parallel row to create, and the caller skips the book rather
+// than attaching it to an author its owner cannot see.
+var errAuthorOwnedByAnotherUser = errors.New("author is owned by another user")
+
 // ensureAuthor looks up the author by foreign ID, then by normalized name,
 // creating a minimal record only if neither matches. Returns the author's
 // database ID. ownerID (0 = global) and qualityProfileID (nil = the list has
 // none configured) are stamped only on a freshly created author; a reused
 // existing author keeps whatever owner and profile it already had, so a list
 // never silently reassigns another user's — or a shared/global — author.
-func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIndex map[string][]models.Author, ownerID int64, qualityProfileID, rootFolderID *int64) (int64, error) {
+//
+// scopeUserID is the ownership rule for *reuse* (#2766), and it is deliberate:
+// an author is reused when the list owner can see it, meaning they own it or
+// it has no owner at all. Unowned authors are shared infrastructure and stay
+// reusable by everybody under either setting; an author owned by another user
+// carries that user's root folder, quality profile and monitoring, and a book
+// parked under it would not appear on its owner's author page, so it is never
+// reused and never written to. scopeUserID 0 (enforcement off, or a list with
+// no owner) reuses any author, exactly as before.
+func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIndex map[string][]models.Author, ownerID, scopeUserID int64, qualityProfileID, rootFolderID *int64) (int64, error) {
 	if book.Author == nil {
 		return 0, fmt.Errorf("book %q has no author metadata", book.Title)
 	}
 
-	existing, err := s.authors.GetByAnyForeignID(ctx, book.Author.ForeignID)
+	existing, err := s.authors.GetByAnyForeignIDForUser(ctx, book.Author.ForeignID, scopeUserID)
 	if err != nil {
 		return 0, err
 	}
 	if existing != nil {
 		return existing.ID, nil
+	}
+	if scopeUserID != 0 {
+		// Nothing visible carries this foreign id. If another user's author
+		// holds it, creating would fail the UNIQUE constraint, so stop here
+		// with a reason the caller can report instead of a raw SQL error.
+		if foreign, ferr := s.authors.GetByAnyForeignID(ctx, book.Author.ForeignID); ferr == nil && foreign != nil {
+			return 0, errAuthorOwnedByAnotherUser
+		}
 	}
 
 	// Name fallback: reuse an existing author with the same normalized name
