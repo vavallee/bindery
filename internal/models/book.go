@@ -148,6 +148,26 @@ func (b *Book) IsFieldLocked(field string) bool {
 	return false
 }
 
+// CanWrite reports whether a refresh, enrichment or merge path is allowed to
+// write the named field. It is the single way that question is asked in the
+// Hardcover hydration and metadata enrichment paths (#2767), so there is one
+// name to grep for rather than a scatter of negated IsFieldLocked calls.
+//
+// It answers ownership only. Whether the field is empty is a separate test the
+// caller still makes for itself, because "fill when empty" and "overwrite
+// unconditionally" are different merge rules and a lock has to block both.
+// Conflating the two is what produced #2757: a guard that asked whether the
+// value was empty read a deliberate clear as a gap to fill.
+//
+// Nil safe, so a guard can sit in front of a book pointer the caller has not
+// yet checked.
+func (b *Book) CanWrite(field string) bool {
+	if b == nil {
+		return true
+	}
+	return !b.IsFieldLocked(field)
+}
+
 // LockField adds the named field to LockedFields if not already present.
 func (b *Book) LockField(field string) {
 	if !b.IsFieldLocked(field) {

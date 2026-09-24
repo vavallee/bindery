@@ -193,8 +193,10 @@ func preferredAudioEdition(editions []models.Edition) (models.Edition, bool) {
 // Audnex runs (#806). It only ever fills unknown fields — known values are
 // never overwritten ("unknown ⇒ don't clobber known"), and a field the user
 // locked is left alone even when empty, because clearing it was a manual edit
-// (#2757). It also makes sure an audio-bearing book carries an audiobook
-// MediaType so the Audnex path is eligible. Returns whether it changed anything.
+// (#2757). Emptiness and ownership are separate tests: Book.CanWrite answers
+// only the second (#2767). It also makes sure an audio-bearing book carries
+// an audiobook MediaType so the Audnex path is eligible. Returns whether it
+// changed anything.
 //
 // mediaTypePinned means the caller set MediaType deliberately (a list's
 // per-list format override): the promotion below must not run, or an
@@ -228,13 +230,19 @@ func deriveAudiobookMetadataFromEdition(book *models.Book, edition models.Editio
 		}
 	}
 
-	if book.Language == "" && !book.IsFieldLocked(models.BookFieldLanguage) {
+	if book.Language == "" && book.CanWrite(models.BookFieldLanguage) {
 		if lang := strings.TrimSpace(edition.Language); lang != "" {
 			book.Language = lang
 			changed = true
 		}
 	}
 
+	// ImageURL is deliberately unguarded: it is not in
+	// models.LockableBookFields and there is no way for a user to lock it,
+	// because the edit dialog has no cover field to lock by editing. Adding it
+	// to the lockable set would be a user visible capability change needing the
+	// edit UI and docs/Metadata-Editing-Wiki.md to match, so it stays a
+	// fill-empty write (#2767).
 	if book.ImageURL == "" {
 		if cover := strings.TrimSpace(edition.ImageURL); cover != "" {
 			book.ImageURL = cover

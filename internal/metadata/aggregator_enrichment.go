@@ -34,7 +34,12 @@ func (a *Aggregator) EnrichAudiobook(ctx context.Context, book *models.Book) err
 	if book.ImageURL == "" && b.Image != "" {
 		book.ImageURL = b.Image
 	}
-	if book.Description == "" && b.Summary != "" {
+	// Fill only when empty AND the user has not locked the field. The two are
+	// separate tests: clearing a description by hand locks it, so an empty
+	// description can be a decision rather than a gap (#2767, same shape as
+	// #2757 one field over). Narrator, duration and cover are not in
+	// models.LockableBookFields, so they are unguarded.
+	if book.Description == "" && b.Summary != "" && book.CanWrite(models.BookFieldDescription) {
 		book.Description = b.Summary
 	}
 	return nil
@@ -290,7 +295,10 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 		if e == nil {
 			continue
 		}
-		if len(e.Description) > len(book.Description) {
+		// An unconditional overwrite, not a fill, so the lock is the only thing
+		// standing between a hand written description and a longer provider one
+		// (#2767).
+		if len(e.Description) > len(book.Description) && book.CanWrite(models.BookFieldDescription) {
 			book.Description = e.Description
 			slog.Debug("enriched description", "provider", enricher.Name(), "book", book.Title)
 		}
@@ -314,7 +322,11 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 		// names. Replace rather than fill-empty, since OL almost always
 		// supplies *some* subject so fill-empty would never fire. Never blank
 		// existing genres with an empty Hardcover result.
-		if enricher.Name() == "hardcover" && len(e.Genres) > 0 {
+		// A locked genre list is the user's taxonomy, often set in bulk from an
+		// author or series override, and this replace would wipe it. The same
+		// lock is already honoured downstream in the author refresh merge
+		// (internal/api/authors.go); honour it here too (#2767).
+		if enricher.Name() == "hardcover" && len(e.Genres) > 0 && book.CanWrite(models.BookFieldGenres) {
 			book.Genres = e.Genres
 			slog.Debug("enriched genres", "provider", enricher.Name(), "book", book.Title)
 		}
@@ -329,7 +341,14 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 		a.fillCoverFromCoverProviders(ctx, book)
 	}
 
-	if cacheKey != "" {
+	// The snapshot is the post-merge book, not the provider payload, so a book
+	// whose description or genres are locked would seed the shared, process
+	// wide cache with that user's own value under a (provider, foreignID) key
+	// every other book for the same work reads. Refuse to cache from a locked
+	// book rather than hand one user's hand written text to another's library
+	// (#2767). A locked book is rare, so this costs one extra enricher round
+	// trip in a case that barely happens; every unlocked book caches as before.
+	if cacheKey != "" && book.CanWrite(models.BookFieldDescription) && book.CanWrite(models.BookFieldGenres) {
 		a.cache.set(cacheKey, enrichmentSnapshot{
 			description:   book.Description,
 			imageURL:      book.ImageURL,
@@ -344,11 +363,13 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 // enrichBook's live path: replace Description only when the cached one is
 // longer, only fill empty cover/rating fields. Same semantics, different
 // source, so a cache hit produces the same book state a cache miss would
-// have produced. Crucially, we copy primitive values out of the snapshot;
+// have produced, field locks included (#2767): the snapshot holds provider
+// values, and replaying them past a lock would reopen the bug on the next
+// cache hit. Crucially, we copy primitive values out of the snapshot;
 // nothing in the cache is reachable through the input book pointer after
 // this call.
 func applyEnrichmentSnapshot(book *models.Book, snap enrichmentSnapshot) {
-	if len(snap.description) > len(book.Description) {
+	if len(snap.description) > len(book.Description) && book.CanWrite(models.BookFieldDescription) {
 		book.Description = snap.description
 	}
 	if book.ImageURL == "" && snap.imageURL != "" {
@@ -363,7 +384,7 @@ func applyEnrichmentSnapshot(book *models.Book, snap enrichmentSnapshot) {
 	// (provider, foreignID), so a hit reuses the same book identity and the
 	// same source genres; replacing is correct and a no-op when no Hardcover
 	// match ever contributed.
-	if len(snap.genres) > 0 {
+	if len(snap.genres) > 0 && book.CanWrite(models.BookFieldGenres) {
 		book.Genres = snap.genres
 	}
 }

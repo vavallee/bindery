@@ -127,3 +127,36 @@ func TestBook_HasFileForCurrentFormat(t *testing.T) {
 		})
 	}
 }
+
+// CanWrite is the single question the Hardcover hydration and metadata
+// enrichment paths ask before writing a lockable field (#2767). It answers
+// ownership only: emptiness stays a separate test at each call site, because a
+// fill-when-empty rule and an unconditional overwrite are different merge rules
+// and the lock has to stop both.
+func TestBookCanWrite(t *testing.T) {
+	var unlocked Book
+	for _, field := range LockableBookFields {
+		if !unlocked.CanWrite(field) {
+			t.Errorf("CanWrite(%q) on an unlocked book = false, want true", field)
+		}
+	}
+
+	locked := Book{LockedFields: []string{BookFieldDescription}}
+	if locked.CanWrite(BookFieldDescription) {
+		t.Error("CanWrite(description) on a locked field = true, want false")
+	}
+	if !locked.CanWrite(BookFieldGenres) {
+		t.Error("CanWrite(genres) = false, want true: only description is locked")
+	}
+	// An empty value is irrelevant to the answer. That conflation is what
+	// #2757 was.
+	lockedEmpty := Book{Description: "", LockedFields: []string{BookFieldDescription}}
+	if lockedEmpty.CanWrite(BookFieldDescription) {
+		t.Error("CanWrite(description) with an empty locked value = true, want false")
+	}
+
+	var nilBook *Book
+	if !nilBook.CanWrite(BookFieldTitle) {
+		t.Error("CanWrite on a nil book = false, want true")
+	}
+}
