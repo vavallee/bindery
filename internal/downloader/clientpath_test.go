@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/fsutil"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
 )
@@ -39,9 +40,17 @@ func TestFindCaseInsensitivePathUnder(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// On a case-insensitive filesystem the literal lowercase path resolves on
+	// its own, so there is no divergence to report and the helper correctly
+	// answers with nothing. Only a case-sensitive filesystem can produce the
+	// case-corrected answer this helper exists for.
 	resolved, diverged := FindCaseInsensitivePathUnder(base, filepath.Join(base, "books", "audio"))
-	if resolved != filepath.Join(base, "Books", "Audio") || diverged != filepath.Join(base, "Books") {
-		t.Errorf("got (%q, %q)", resolved, diverged)
+	if fsutil.IsCaseSensitiveFSForTests(t, base) {
+		if resolved != filepath.Join(base, "Books", "Audio") || diverged != filepath.Join(base, "Books") {
+			t.Errorf("got (%q, %q)", resolved, diverged)
+		}
+	} else if resolved != "" || diverged != "" {
+		t.Errorf("on a case-insensitive filesystem %q resolves as written, so the helper should report nothing; got (%q, %q)", filepath.Join(base, "books", "audio"), resolved, diverged)
 	}
 
 	// A path outside base is refused without looking.

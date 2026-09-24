@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vavallee/bindery/internal/fsutil"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -261,6 +262,18 @@ func TestDiagnose_CaseDivergenceWarns(t *testing.T) {
 	host, port := qbitDiagServer(t, qbitCategory("books", "/remote/books"))
 	resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads},
 		qbitClient(host, port, "books", "/remote:"+downloads))
+
+	if !fsutil.IsCaseSensitiveFSForTests(t, downloads) {
+		// The filesystem folds the case, so the remapped path really does
+		// reach the folder and a grab would land in it. There is nothing to
+		// warn about, and saying otherwise would send the user chasing a
+		// rename that changes nothing.
+		local := wantDiagStatus(t, resp, diagCodeLocalPath, diagPass)
+		if !strings.Contains(local.Message, filepath.Join(downloads, "books")) {
+			t.Errorf("message should name the folder it reached, got %q", local.Message)
+		}
+		return
+	}
 	local := wantDiagStatus(t, resp, diagCodeLocalPath, diagWarn)
 	if !strings.Contains(local.Fix, `"Books"`) {
 		t.Errorf("fix should name the on-disk case, got %q", local.Fix)
