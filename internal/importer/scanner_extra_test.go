@@ -337,6 +337,7 @@ func TestCheckTransmissionDownloads_StoppedWithoutErrorDoesNotFail(t *testing.T)
 			"arguments": map[string]any{
 				"torrents": []map[string]any{{
 					"id":          7,
+					"hashString":  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 					"status":      0,
 					"percentDone": 0.4,
 					"downloadDir": "/downloads",
@@ -360,7 +361,7 @@ func TestCheckTransmissionDownloads_StoppedWithoutErrorDoesNotFail(t *testing.T)
 		t.Fatalf("create client: %v", err)
 	}
 
-	torrentID := "7"
+	torrentID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	dl := &models.Download{
 		GUID:             "guid-paused",
 		DownloadClientID: &client.ID,
@@ -398,6 +399,7 @@ func TestCheckTransmissionDownloads_StoppedWithErrorMarksFailed(t *testing.T) {
 			"arguments": map[string]any{
 				"torrents": []map[string]any{{
 					"id":          9,
+					"hashString":  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 					"status":      0,
 					"percentDone": 0.2,
 					"downloadDir": "/downloads",
@@ -421,7 +423,7 @@ func TestCheckTransmissionDownloads_StoppedWithErrorMarksFailed(t *testing.T) {
 		t.Fatalf("create client: %v", err)
 	}
 
-	torrentID := "9"
+	torrentID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	dl := &models.Download{
 		GUID:             "guid-errored",
 		DownloadClientID: &client.ID,

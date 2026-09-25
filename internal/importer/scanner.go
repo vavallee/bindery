@@ -1458,6 +1458,11 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			// Walk: importPending → importing → imported.
 			s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
 			s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
+			if cleanupFunc != nil {
+				if err := cleanupFunc(); err != nil {
+					slog.Warn("cleanup failed", cleanupWarnAttrs(cleanupClientType, cleanupRemoteID, err)...)
+				}
+			}
 			return
 		}
 		// Distinguish "path doesn't exist on this host" from "path exists but has

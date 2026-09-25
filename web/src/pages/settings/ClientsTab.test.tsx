@@ -256,3 +256,44 @@ describe('download client diagnose', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('settings.clients.diagnose.failed')
   })
 })
+
+describe('download client remove-on-import toggle', () => {
+  it('is hidden for a usenet client, which always clears its own history', () => {
+    renderTab([makeClient({ type: 'sabnzbd' })])
+    openEditForm()
+
+    expect(screen.queryByLabelText('settings.clients.removeOnImportLabel')).not.toBeInTheDocument()
+  })
+
+  it('is shown for a torrent client and reflects the stored value', () => {
+    renderTab([makeClient({ type: 'transmission', removeOnImport: true })])
+    openEditForm()
+
+    const toggle = screen.getByLabelText('settings.clients.removeOnImportLabel') as HTMLInputElement
+    expect(toggle.checked).toBe(true)
+  })
+
+  it('defaults to off and sends the change on save', async () => {
+    renderTab([makeClient({ type: 'transmission' })])
+    openEditForm()
+
+    const toggle = screen.getByLabelText('settings.clients.removeOnImportLabel') as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+    fireEvent.click(toggle)
+    save()
+
+    await waitFor(() => expect(api.updateDownloadClient).toHaveBeenCalled())
+    const [, payload] = vi.mocked(api.updateDownloadClient).mock.calls[0]
+    expect(payload.removeOnImport).toBe(true)
+  })
+
+  it('never sends it enabled for a usenet client', async () => {
+    renderTab([makeClient({ type: 'sabnzbd', removeOnImport: true })])
+    openEditForm()
+    save()
+
+    await waitFor(() => expect(api.updateDownloadClient).toHaveBeenCalled())
+    const [, payload] = vi.mocked(api.updateDownloadClient).mock.calls[0]
+    expect(payload.removeOnImport).toBe(false)
+  })
+})

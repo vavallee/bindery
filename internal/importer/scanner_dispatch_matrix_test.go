@@ -374,7 +374,7 @@ func TestCheckDownloads_DispatchMatrix_Transmission(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	client := f.createClient(t, &models.DownloadClient{Name: "transmission", Type: "transmission"}, srv.URL)
-	torrentID := "42" // Transmission downloads are matched by numeric torrent id.
+	torrentID := "feedfacefeedfacefeedfacefeedfacefeedface" // Transmission downloads are matched by info hash.
 	f.createDownload(t, &models.Download{
 		GUID: "guid-matrix-transmission", Title: "the-book", Status: models.StateDownloading,
 		Protocol: "torrent", TorrentID: &torrentID, DownloadClientID: &client.ID,
@@ -686,7 +686,7 @@ func TestCheckDownloads_DispatchMatrix_TwoClients(t *testing.T) {
 		GUID: "guid-multi-sab", Title: "book-a", Status: models.StateDownloading,
 		Protocol: "usenet", SABnzbdNzoID: &nzo, DownloadClientID: &sabClient.ID,
 	})
-	torrentID := "42" // transmissionMatrixHandler always returns id=42.
+	torrentID := "feedfacefeedfacefeedfacefeedfacefeedface" // transmissionMatrixHandler's torrent hash.
 	f.createDownload(t, &models.Download{
 		GUID: "guid-multi-trans", Title: "the-book", Status: models.StateDownloading,
 		Protocol: "torrent", TorrentID: &torrentID, DownloadClientID: &transClient.ID,
