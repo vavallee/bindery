@@ -687,6 +687,156 @@ func TestBookUpdate_RejectsRetiredDownloadStatuses(t *testing.T) {
 	}
 }
 
+// TestBookDeleteFile_IndividualPath removes only the selected tracked row and
+// leaves a sibling file untouched.
+func TestBookDeleteFile_IndividualPath(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	tmp := t.TempDir()
+	first := filepath.Join(tmp, "first.epub")
+	second := filepath.Join(tmp, "second.epub")
+	for _, p := range []string{first, second} {
+		if err := os.WriteFile(p, []byte(p), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	book := &models.Book{
+		ForeignID: "B-INDIVIDUAL", AuthorID: author.ID, Title: "Individual", SortTitle: "individual",
+		Status: models.BookStatusImported, Genres: []string{}, MediaType: models.MediaTypeEbook,
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{first, second} {
+		if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	req := withURLParam(httptest.NewRequest(http.MethodDelete,
+		"/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"/file?path="+url.QueryEscape(first)+"&delete=true", nil),
+		"id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.DeleteFile(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(first); !os.IsNotExist(err) {
+		t.Errorf("selected file should be deleted, stat err=%v", err)
+	}
+	if _, err := os.Stat(second); err != nil {
+		t.Errorf("sibling file must survive, stat err=%v", err)
+	}
+	files, err := books.ListFiles(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != second {
+		t.Errorf("expected only sibling row to remain, got %+v", files)
+	}
+}
+
+func TestBookDeleteFile_IndividualPathRequiresTrackedRow(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	book := &models.Book{
+		ForeignID: "B-INDIVIDUAL-MISSING", AuthorID: author.ID, Title: "Missing", SortTitle: "missing",
+		Status: models.BookStatusImported, Genres: []string{}, MediaType: models.MediaTypeEbook,
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	req := withURLParam(httptest.NewRequest(http.MethodDelete,
+		"/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"/file?path=%2Flibrary%2Fmissing.epub&delete=true", nil),
+		"id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.DeleteFile(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for an untracked path, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestBookDeleteFile_IndividualPathRefusedWhenNotRemoved pins the PR #2486
+// review fix: when the containment guard refuses the on-disk unlink, the
+// request must be refused rather than reporting success on a file that is
+// still there. Before this fix the handler dropped the book_files row,
+// answered 200, and wrote a history event claiming the path was deleted even
+// though safeRemoveBookPathExact's skipped result said otherwise.
+func TestBookDeleteFile_IndividualPathRefusedWhenNotRemoved(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	books := db.NewBookRepo(database)
+	authors := db.NewAuthorRepo(database)
+	history := db.NewHistoryRepo(database)
+	h := NewBookHandler(books, nil, history, nil)
+	libRoot := t.TempDir()
+	h.WithRoots(NewLibraryRoots(staticRootLister{paths: []string{libRoot}}))
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL-REFUSE-A", Name: "Test Author", SortName: "Author, Test",
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	// The path is outside the configured library root, so safeRemoveBookPathExact
+	// will refuse the unlink (skipped=true) without erroring.
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "outside.epub")
+	if err := os.WriteFile(outsidePath, []byte("untouchable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "B-REFUSE", AuthorID: author.ID, Title: "Refuse", SortTitle: "refuse",
+		Status: models.BookStatusImported, Genres: []string{}, MediaType: models.MediaTypeEbook,
+		MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, outsidePath); err != nil {
+		t.Fatal(err)
+	}
+
+	req := withURLParam(httptest.NewRequest(http.MethodDelete,
+		"/api/v1/book/"+strconv.FormatInt(book.ID, 10)+"/file?path="+url.QueryEscape(outsidePath)+"&delete=true", nil),
+		"id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.DeleteFile(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 when the file could not be removed, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The file survives, and so does the tracked row — a refused delete must
+	// not orphan the book_files entry.
+	if _, err := os.Stat(outsidePath); err != nil {
+		t.Errorf("file outside library roots must survive: stat err=%v", err)
+	}
+	files, err := books.ListFiles(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != outsidePath {
+		t.Errorf("tracked row must survive a refused delete, got %+v", files)
+	}
+
+	events, err := history.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.EventType == models.HistoryEventBookFileDeleted {
+			t.Errorf("a refused delete must not record a history event claiming the file was deleted: %+v", e)
+		}
+	}
+}
+
 // TestBookDeleteFile_FormatScopedKeepsSibling is the #715 finding 2 data-loss
 // guard: deleting ?format=ebook must leave the same-stem audiobook on disk.
 func TestBookDeleteFile_FormatScopedKeepsSibling(t *testing.T) {
