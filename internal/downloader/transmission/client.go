@@ -108,6 +108,20 @@ func (c *Client) Test(ctx context.Context) error {
 // Transmission RPC rejects a negative seedRatioLimit float. A nil pointer
 // leaves both fields unset so the torrent keeps Transmission's global rule.
 func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, downloadDir string, seedRatio *float64) (int64, error) {
+	added, err := c.AddTorrentDetailed(ctx, magnetOrURL, downloadDir, seedRatio)
+	if err != nil {
+		return 0, err
+	}
+	return added.ID, nil
+}
+
+// AddTorrentDetailed adds a torrent and returns the whole record Transmission
+// reported for it, so the caller can persist the info hash rather than the
+// numeric id. Transmission ids are session-scoped: the daemon renumbers every
+// torrent on restart, so a stored id silently starts pointing at a different
+// torrent (or at nothing). Only hashString is stable for the life of the
+// torrent. See AddTorrent for the argument semantics.
+func (c *Client) AddTorrentDetailed(ctx context.Context, magnetOrURL, downloadDir string, seedRatio *float64) (Torrent, error) {
 	args := map[string]interface{}{}
 	if downloadDir != "" {
 		args["download-dir"] = downloadDir
@@ -119,7 +133,7 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, downloadDir string
 	} else {
 		fetched, err := c.fetchTorrentContent(ctx, magnetOrURL)
 		if err != nil {
-			return 0, err
+			return Torrent{}, err
 		}
 		// An indexer http(s) link can 30x-redirect to a magnet: URI (common
 		// with public trackers like The Pirate Bay / Knaben surfaced via
@@ -136,31 +150,33 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, downloadDir string
 
 	req, err := c.buildRequest(ctx, "torrent-add", args)
 	if err != nil {
-		return 0, err
+		return Torrent{}, err
 	}
 	respBody, err := c.doRequest(req)
 	if err != nil {
-		return 0, err
+		return Torrent{}, err
 	}
 
 	var resp TorrentAddResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return 0, fmt.Errorf("decode add torrent response: %w", err)
+		return Torrent{}, fmt.Errorf("decode add torrent response: %w", err)
 	}
 
 	if resp.Result != "success" {
-		return 0, fmt.Errorf("add torrent failed: %s", resp.Result)
+		return Torrent{}, fmt.Errorf("add torrent failed: %s", resp.Result)
 	}
 
-	// Return the ID of the added torrent (prefer newly added, fall back to duplicate)
+	// Prefer the newly added torrent, fall back to the duplicate: re-adding a
+	// torrent Transmission already holds is reported under torrent-duplicate
+	// and is a successful grab as far as Bindery is concerned.
 	if resp.Arguments.TorrentAdded.ID != 0 {
-		return resp.Arguments.TorrentAdded.ID, nil
+		return resp.Arguments.TorrentAdded, nil
 	}
 	if resp.Arguments.TorrentDuplicate.ID != 0 {
-		return resp.Arguments.TorrentDuplicate.ID, nil
+		return resp.Arguments.TorrentDuplicate, nil
 	}
 
-	return 0, fmt.Errorf("no torrent ID returned")
+	return Torrent{}, fmt.Errorf("no torrent ID returned")
 }
 
 // Transmission seedRatioMode values (RPC spec): 0 = use global limit,
@@ -195,7 +211,7 @@ func (c *Client) GetTorrents(ctx context.Context, downloadDir string) ([]Torrent
 	args := map[string]interface{}{
 		"fields": []string{"id", "hashString", "name", "totalSize", "downloadedEver",
 			"leftUntilDone", "status", "errorString", "rateDownload", "rateUpload", "eta",
-			"percentDone", "downloadDir", "labels"},
+			"percentDone", "downloadDir", "labels", "addedDate"},
 	}
 
 	req, err := c.buildRequest(ctx, "torrent-get", args)
@@ -294,10 +310,28 @@ func (c *Client) Files(ctx context.Context, torrentID int64) ([]File, error) {
 	return out, nil
 }
 
-// RemoveTorrent removes a torrent by ID.
+// RemoveTorrent removes a torrent by its session-scoped numeric ID. Prefer
+// RemoveTorrentByHash when the caller is working from a persisted identifier:
+// a stored numeric id goes stale the moment the daemon restarts, and removing
+// a stale id deletes whichever torrent has inherited that number.
 func (c *Client) RemoveTorrent(ctx context.Context, torrentID int64, deleteFiles bool) error {
+	return c.removeTorrent(ctx, torrentID, fmt.Sprintf("%d", torrentID), deleteFiles)
+}
+
+// RemoveTorrentByHash removes a torrent by its info hash. The Transmission RPC
+// spec accepts a SHA1 hash string anywhere an id is taken, and unlike the
+// numeric id the hash is stable across daemon restarts.
+func (c *Client) RemoveTorrentByHash(ctx context.Context, hash string, deleteFiles bool) error {
+	hash = strings.ToLower(strings.TrimSpace(hash))
+	if hash == "" {
+		return fmt.Errorf("remove torrent: empty info hash")
+	}
+	return c.removeTorrent(ctx, hash, hash, deleteFiles)
+}
+
+func (c *Client) removeTorrent(ctx context.Context, id interface{}, label string, deleteFiles bool) error {
 	args := map[string]interface{}{
-		"ids": []int64{torrentID},
+		"ids": []interface{}{id},
 	}
 	if deleteFiles {
 		args["delete-local-data"] = true
@@ -325,7 +359,7 @@ func (c *Client) RemoveTorrent(ctx context.Context, torrentID int64, deleteFiles
 		if reason == "" {
 			reason = "Transmission gave no reason"
 		}
-		return fmt.Errorf("transmission rejected the removal of torrent %d: %s", torrentID, reason)
+		return fmt.Errorf("transmission rejected the removal of torrent %s: %s", label, reason)
 	}
 	return nil
 }
