@@ -12,10 +12,12 @@ on either side shows up as a failing assertion rather than as drift.
 
 Usage: bridge_harness.py <plugin-root> [--api-key K] [--max-body N]
                                        [--unavailable N]
-Prints "PORT <n>" on stdout once it is listening.
+Prints "PORT <n>" on stdout once it is listening, or "SKIP <reason>" and
+exits when the checkout is too old to serve the contract.
 """
 
 import argparse
+import inspect
 import re
 import sys
 import types
@@ -139,6 +141,26 @@ class FakeDB:
         self.new_api = FakeNewAPI()
 
 
+def split_by_signature(factory, wanted):
+    """Split wanted into what factory accepts and what it does not.
+
+    The bridge's factory grew `ingest_root` and `max_body_bytes` in the commit
+    before 0.5.0 shipped, so every released 0.5.0 and 0.6.0 takes them. An
+    older checkout takes neither, and passing them unconditionally raised
+    TypeError before the socket was ever bound, which surfaced as "harness
+    exited without reporting a port" with the real cause buried in stderr.
+
+    The signature is asked rather than the version string because those two
+    disagree inside the plugin's own history: the development commits between
+    the metadata work and the hardening work already called themselves 0.5.0
+    while still taking three arguments.
+    """
+    accepted = set(inspect.signature(factory).parameters)
+    supported = {name: value for name, value in wanted.items() if name in accepted}
+    missing = sorted(name for name in wanted if name not in accepted)
+    return supported, missing
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("root")
@@ -151,7 +173,9 @@ def main():
     stub_calibre_and_qt()
     register_plugin_package(args.root)
 
-    from calibre_plugins.bindery_bridge.plugin.handlers import make_handler
+    from calibre_plugins.bindery_bridge.plugin import handlers
+
+    version = getattr(handlers, "PLUGIN_VERSION", "an unknown version")
 
     db = FakeDB(args.library)
     remaining = {"unavailable": args.unavailable}
@@ -162,13 +186,31 @@ def main():
             return None
         return db
 
-    handler = make_handler(
-        api_key=args.api_key,
-        get_db=get_db,
-        get_gui=None,
-        ingest_root="",
-        max_body_bytes=args.max_body,
+    supported, missing = split_by_signature(
+        handlers.make_handler,
+        {
+            "api_key": args.api_key,
+            "get_db": get_db,
+            "get_gui": None,
+            "ingest_root": "",
+            "max_body_bytes": args.max_body,
+        },
     )
+    if missing:
+        # Say which arguments were missing and which version the checkout
+        # claims, because that is the pair that disagreed: every released
+        # 0.5.0 takes these, so a checkout that reports 0.5.0 and does not is
+        # parked on a development commit from before they landed.
+        sys.stdout.write(
+            "SKIP the checkout reports calibre-bridge %s, but its make_handler "
+            "does not accept %s, so it predates the released 0.5.0 this "
+            "contract covers. Point %s at the 0.5.0 tag or newer.\n"
+            % (version, ", ".join(missing), "BINDERY_PLUGIN_SRC")
+        )
+        sys.stdout.flush()
+        return
+
+    handler = handlers.make_handler(**supported)
 
     from http.server import ThreadingHTTPServer
 
