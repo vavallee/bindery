@@ -540,6 +540,12 @@ Things worth knowing:
 - **From a folder** (`/import?view=folder`) is the other way in: point it at a
   folder anywhere Bindery can read, such as your downloads, and it imports
   what it matches into the library, moving or copying the files.
+- It lists one row per **book**, the same idea as the list above. A folder of
+  audio is one row, and so is a folder whose audio subfolders are all pieces of
+  one recording (`CD1`, `Disc 2`, `Disk 3`, `Part 4`, `Chapter 5`). Subfolders
+  named `Book 1`, `Vol 2` or a bare `1` are separate books, because a series
+  stored that way is several books rather than one long one, so each gets its
+  own row and its own match.
 
 ## Metadata: where book data comes from
 

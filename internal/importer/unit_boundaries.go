@@ -11,12 +11,26 @@ import (
 // folder import scan (internal/api/scan_walk.go) and the library scan's
 // unmatched grouping (unmatched_units.go) use them, so they live here once.
 
-// discFolderRe matches the disc/part subfolder names ("CD1", "Disc 2",
-// "Part 03", "Vol. 1", or a bare "1"/"02") that split ONE audiobook across
-// several directories. When every subdirectory of a folder looks like a disc,
-// the folder is a single multi-disc audiobook rather than a shelf of separate
-// books.
-var discFolderRe = regexp.MustCompile(`(?i)^(cd|dis[ck]|part|pt|vol|volume|book|chapter|ch)\s*[._-]?\s*\d+$|^\d{1,2}$`)
+// discFolderRe matches the subfolder names ("CD1", "Disc 2", "Part 03",
+// "Chapter 4") that split ONE audiobook across several directories. When every
+// subdirectory of a folder looks like one of these, the folder is a single
+// audiobook rather than a shelf of separate books.
+//
+// The vocabulary is deliberately restricted to words that can only name a
+// PIECE of one recording. It used to also accept "Book N", "Vol N" and a bare
+// "1"/"02", and those name a whole book at least as often as a piece of one:
+// a series laid out as "Mistborn/Book 1", "Mistborn/Book 2" was offered as a
+// single unit and imported three books' audio onto one book row (#2672), which
+// loses the distinction between them. Library adoption already drew the line
+// the same way (discSetNameRe, unmatched_units.go).
+//
+// The error in the other direction costs just as much: splitting one recording
+// into several units sends each piece to a different book, and a second
+// audiobook for a book that already has one is dropped by the idempotency
+// guard. That is why "Part", "Pt", "Chapter" and "Ch" stay, since no series
+// names its separate books that way, and why AllDiscFolders still requires
+// audio beneath every candidate before it merges anything.
+var discFolderRe = regexp.MustCompile(`(?i)^(cd|dis[ck]|part|pt|chapter|ch)\s*[._-]?\s*\d+$`)
 
 // IsDiscFolderName reports whether a directory's base name looks like one disc
 // or part of a multi-disc audiobook. The name alone; see AllDiscFolders for
