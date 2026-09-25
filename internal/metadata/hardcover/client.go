@@ -1730,6 +1730,9 @@ func hardcoverEditionToModel(e hcEdition) models.Edition {
 	ed.ISBN10 = nonEmptyStringPtr(e.ISBN10)
 	ed.ISBN13 = nonEmptyStringPtr(e.ISBN13)
 	ed.ASIN = nonEmptyStringPtr(e.ASIN)
+	if hasPositiveInt(e.AudioSeconds) {
+		ed.DurationSeconds = *e.AudioSeconds
+	}
 	return ed
 }
 

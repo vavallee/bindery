@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -187,7 +188,7 @@ func TestEditionRepo_UpsertMetadataFillsMissingFields(t *testing.T) {
 		Language:  "eng",
 		ImageURL:  "https://img/ed1.jpg",
 		Monitored: true,
-	})
+	}, b.ForeignID, b.MetadataProvider)
 	if err != nil {
 		t.Fatalf("metadata upsert: %v", err)
 	}
@@ -221,7 +222,7 @@ func TestEditionRepo_UpsertMetadataFillsMissingFields(t *testing.T) {
 		ImageURL:  "https://img/new.jpg",
 		Monitored: true,
 	}
-	ok, err = repo.UpsertMetadata(ctx, incoming)
+	ok, err = repo.UpsertMetadata(ctx, incoming, b.ForeignID, b.MetadataProvider)
 	if err != nil {
 		t.Fatalf("metadata conflict upsert: %v", err)
 	}
@@ -243,6 +244,92 @@ func TestEditionRepo_UpsertMetadataFillsMissingFields(t *testing.T) {
 	}
 	if got.Title != "Hardcover Edition" || got.ASIN == nil || *got.ASIN != asin || got.Publisher != "Tor" || got.Format != "Audiobook" || got.Language != "eng" || got.ImageURL != "https://img/ed1.jpg" {
 		t.Fatalf("existing non-empty metadata was overwritten: %+v", got)
+	}
+}
+
+func TestEditionRepo_UpsertMetadataNormalizesBlankText(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+
+	author := &models.Author{ForeignID: "OL-ASIN-A", Name: "A", SortName: "A", MetadataProvider: "openlibrary", Monitored: true}
+	if err := NewAuthorRepo(database).Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{ForeignID: "hc:asin-book", AuthorID: author.ID, Title: "Book", SortTitle: "Book", Status: "wanted", Genres: []string{}, MetadataProvider: "hardcover", Monitored: true}
+	if err := NewBookRepo(database).Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := NewEditionRepo(database)
+	textEdition := func(foreignID, value string) *models.Edition {
+		return &models.Edition{
+			ForeignID: foreignID, BookID: book.ID, Title: value,
+			ISBN13: &value, ISBN10: &value, ASIN: &value,
+			Publisher: value, Format: value, Language: value, ImageURL: value, EditionInfo: value,
+		}
+	}
+	assertText := func(t *testing.T, got *models.Edition, want string) {
+		t.Helper()
+		wantTitle := want
+		if want == "" {
+			wantTitle = "Unknown Edition"
+		}
+		if got.Title != wantTitle {
+			t.Errorf("title = %q, want %q", got.Title, wantTitle)
+		}
+		for name, value := range map[string]string{"publisher": got.Publisher, "format": got.Format, "language": got.Language, "image_url": got.ImageURL, "edition_info": got.EditionInfo} {
+			if value != want {
+				t.Errorf("%s = %q, want %q", name, value, want)
+			}
+		}
+		for name, value := range map[string]*string{"isbn_13": got.ISBN13, "isbn_10": got.ISBN10, "asin": got.ASIN} {
+			if want == "" {
+				if value != nil {
+					t.Errorf("%s = %q, want nil", name, *value)
+				}
+			} else if value == nil || *value != want {
+				t.Errorf("%s = %v, want %q", name, value, want)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		name, stored string
+		want         string
+	}{
+		{name: "empty", stored: "", want: "replacement"},
+		{name: "ASCII whitespace", stored: " \t\n\v\f\r", want: "replacement"},
+		{name: "Unicode whitespace", stored: "\u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000", want: "replacement"},
+		{name: "meaningful stored text", stored: " \u2003curated\t ", want: " \u2003curated\t "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			edition := textEdition("hc:text-"+tc.name, tc.stored)
+			if ok, err := repo.UpsertMetadata(ctx, edition, book.ForeignID, book.MetadataProvider); err != nil || !ok {
+				t.Fatalf("insert: ok=%v err=%v", ok, err)
+			}
+			assertText(t, edition, strings.TrimSpace(tc.stored))
+			// Simulate legacy blank fields and curated text whose spacing must survive.
+			if _, err := database.ExecContext(ctx, `UPDATE editions SET title=?1, isbn_13=?1, isbn_10=?1, asin=?1,
+				publisher=?1, format=?1, language=?1, image_url=?1, edition_info=?1 WHERE id=?2`, tc.stored, edition.ID); err != nil {
+				t.Fatal(err)
+			}
+			incoming := textEdition(edition.ForeignID, " \u2003replacement\t ")
+			if ok, err := repo.UpsertMetadata(ctx, incoming, book.ForeignID, book.MetadataProvider); err != nil || !ok {
+				t.Fatalf("update: ok=%v err=%v", ok, err)
+			}
+			assertText(t, incoming, tc.want)
+			stored, err := repo.GetByForeignID(ctx, edition.ForeignID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored == nil {
+				t.Fatal("edition not persisted")
+			}
+			assertText(t, stored, tc.want)
+		})
 	}
 }
 
@@ -270,10 +357,10 @@ func TestEditionRepo_UpsertMetadataSkipsDifferentBook(t *testing.T) {
 	}
 
 	repo := NewEditionRepo(database)
-	if ok, err := repo.UpsertMetadata(ctx, &models.Edition{ForeignID: "hc:shared-ed", BookID: first.ID, Title: "First Edition"}); err != nil || !ok {
+	if ok, err := repo.UpsertMetadata(ctx, &models.Edition{ForeignID: "hc:shared-ed", BookID: first.ID, Title: "First Edition"}, first.ForeignID, first.MetadataProvider); err != nil || !ok {
 		t.Fatalf("seed metadata edition ok=%v err=%v", ok, err)
 	}
-	ok, err := repo.UpsertMetadata(ctx, &models.Edition{ForeignID: "hc:shared-ed", BookID: second.ID, Title: "Second Edition"})
+	ok, err := repo.UpsertMetadata(ctx, &models.Edition{ForeignID: "hc:shared-ed", BookID: second.ID, Title: "Second Edition"}, second.ForeignID, second.MetadataProvider)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,6 +373,58 @@ func TestEditionRepo_UpsertMetadataSkipsDifferentBook(t *testing.T) {
 	}
 	if got.BookID != first.ID || got.Title != "First Edition" {
 		t.Fatalf("edition moved or changed unexpectedly: %+v", got)
+	}
+}
+
+func TestEditionRepo_UpsertMetadataSkipsReboundParent(t *testing.T) {
+	for _, changeProvider := range []bool{false, true} {
+		name := "foreign ID"
+		if changeProvider {
+			name = "provider"
+		}
+		t.Run(name, func(t *testing.T) {
+			database, err := OpenMemory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			ctx := context.Background()
+			books := NewBookRepo(database)
+			author := mkAuthor(t, NewAuthorRepo(database), ctx, "OL-GUARD-A")
+			book := mkBook(t, books, ctx, author.ID, "hc:original", "Book", models.BookStatusWanted)
+			before := *book
+			repo := NewEditionRepo(database)
+			seed := &models.Edition{ForeignID: "hc:existing", BookID: book.ID, Title: "Existing"}
+			if ok, err := repo.UpsertMetadata(ctx, seed, before.ForeignID, before.MetadataProvider); err != nil || !ok {
+				t.Fatalf("seed: ok=%v err=%v", ok, err)
+			}
+			if changeProvider {
+				book.MetadataProvider = "other-provider"
+			} else {
+				book.ForeignID = "hc:rebound"
+			}
+			if err := books.Update(ctx, book); err != nil {
+				t.Fatal(err)
+			}
+			isbn := "9781234567890"
+			for _, foreignID := range []string{"hc:new", "hc:existing"} {
+				incoming := &models.Edition{ForeignID: foreignID, BookID: book.ID, Title: "Fetched", ISBN13: &isbn}
+				if ok, err := repo.UpsertMetadata(ctx, incoming, before.ForeignID, before.MetadataProvider); err != nil || ok {
+					t.Fatalf("stale %s write: ok=%v err=%v", foreignID, ok, err)
+				}
+			}
+			attached, err := repo.ListByBook(ctx, book.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(attached) != 1 || attached[0].ID != seed.ID || attached[0].ISBN13 != nil || !attached[0].UpdatedAt.Equal(seed.UpdatedAt) {
+				t.Fatalf("stale insert/update changed editions: %+v", attached)
+			}
+			incoming := &models.Edition{ForeignID: seed.ForeignID, BookID: book.ID, ISBN13: &isbn}
+			if ok, err := repo.UpsertMetadata(ctx, incoming, book.ForeignID, book.MetadataProvider); err != nil || !ok || incoming.ISBN13 == nil || *incoming.ISBN13 != isbn {
+				t.Fatalf("current identity write: ok=%v err=%v edition=%+v", ok, err, incoming)
+			}
+		})
 	}
 }
 

@@ -34,6 +34,12 @@ func timeArg(t *time.Time) any {
 // timeValueArg is the non-pointer sibling of timeArg, used for columns that
 // are always populated (created_at, updated_at).
 func timeValueArg(t time.Time) any {
+	return timeValueText(t)
+}
+
+// timeValueText is timeValueArg's string form, for callers that must record
+// the exact text they stored.
+func timeValueText(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
@@ -163,7 +169,7 @@ const bookColumns = `books.id, books.foreign_id, books.author_id, books.title, b
 	books.any_edition_ok, books.selected_edition_id, books.file_path, books.language,
 	books.media_type, books.narrator, books.duration_seconds, books.asin,
 	books.calibre_id, books.metadata_provider, books.last_metadata_refresh_at,
-	books.created_at, books.updated_at,
+	books.created_at, books.updated_at, CAST(books.updated_at AS TEXT),
 	COALESCE(NULLIF(books.ebook_file_path, ''), fe.path, ''),
 	COALESCE(NULLIF(books.audiobook_file_path, ''), fa.path, ''),
 	books.excluded, COALESCE(books.dedup_key, ''),
@@ -666,6 +672,7 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 	b.ID = id
 	b.CreatedAt = now
 	b.UpdatedAt = now
+	b.UpdatedAtRaw = timeValueText(now)
 
 	// Record the identities this book is known by (#1705). The primary id is
 	// always attached; HardcoverForeignID is attached too when the aggregator
@@ -754,7 +761,97 @@ func (r *BookRepo) Update(ctx context.Context, b *models.Book) error {
 		return fmt.Errorf("update book %d: %w", b.ID, err)
 	}
 	b.UpdatedAt = now
+	b.UpdatedAtRaw = timeValueText(now)
 	return nil
+}
+
+// UpdateHydratedMetadata persists only the fields written by edition hydration
+// and audiobook enrichment, provided the book has not changed since fetching
+// began. A concurrent edit wins the entire write; b is reloaded in that case so
+// callers cannot act on discarded ASINs, metadata, or locks.
+//
+// expectedUpdatedAt is the snapshot's UpdatedAtRaw. It is compared as stored
+// text because legacy rows hold shapes a reformatted time.Time never matches.
+func (r *BookRepo) UpdateHydratedMetadata(ctx context.Context, b *models.Book, expectedUpdatedAt string) (bool, error) {
+	if b == nil || b.ID == 0 || expectedUpdatedAt == "" {
+		return false, fmt.Errorf("update hydrated metadata: invalid book snapshot")
+	}
+	mediaType := b.MediaType
+	if mediaType == "" {
+		mediaType = models.MediaTypeEbook
+	}
+	now := time.Now().UTC()
+	res, err := r.exec.ExecContext(ctx, `
+		UPDATE books SET language=?, image_url=?, media_type=?, status=?, asin=?,
+		                 narrator=?, duration_seconds=?, description=?, updated_at=?
+		WHERE id=? AND CAST(updated_at AS TEXT)=?`,
+		b.Language, b.ImageURL, mediaType, b.Status, b.ASIN,
+		b.Narrator, b.DurationSeconds, b.Description, timeValueArg(now),
+		b.ID, expectedUpdatedAt)
+	if err != nil {
+		return false, fmt.Errorf("update hydrated metadata for book %d: %w", b.ID, err)
+	}
+	updated, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check hydrated metadata update for book %d: %w", b.ID, err)
+	}
+	if updated > 0 {
+		b.UpdatedAt = now
+		b.UpdatedAtRaw = timeValueText(now)
+		return true, nil
+	}
+	return false, r.ReloadHydratedBook(ctx, b)
+}
+
+// ReloadHydratedBook refreshes persisted state without dropping the provider
+// context that ingestion still needs after hydration.
+func (r *BookRepo) ReloadHydratedBook(ctx context.Context, b *models.Book) error {
+	current, err := r.GetByID(ctx, b.ID)
+	if err != nil {
+		return fmt.Errorf("reload book %d after hydration: %w", b.ID, err)
+	}
+	if current == nil {
+		return fmt.Errorf("reload book %d after hydration: %w", b.ID, sql.ErrNoRows)
+	}
+	// A concurrent rebind makes the old work's provider context invalid.
+	if current.ForeignID == b.ForeignID && current.MetadataProvider == b.MetadataProvider {
+		current.SeriesRefs = b.SeriesRefs
+		current.ProviderISBNs = b.ProviderISBNs
+		current.CreditedAuthorForeignIDs = b.CreditedAuthorForeignIDs
+		current.HardcoverForeignID = b.HardcoverForeignID
+		current.IsCompilation = b.IsCompilation
+		current.EditionCount = b.EditionCount
+		current.AuthorUnmonitored = b.AuthorUnmonitored
+	}
+	*b = *current
+	return nil
+}
+
+// FillMissingAudiobookDuration persists a duration derived from edition metadata
+// without rewriting a book that may have changed during the provider fetch.
+// After either a successful write or a guarded-write miss, b is refreshed so
+// callers use the current identity, duration, and monitoring state together.
+func (r *BookRepo) FillMissingAudiobookDuration(ctx context.Context, b *models.Book) (bool, error) {
+	if b == nil || b.ID == 0 || b.DurationSeconds <= 0 {
+		return false, fmt.Errorf("fill missing audiobook duration: invalid book")
+	}
+	if b.MediaType != models.MediaTypeAudiobook && b.MediaType != models.MediaTypeBoth {
+		return false, nil
+	}
+	now := time.Now().UTC()
+	res, err := r.exec.ExecContext(ctx, `
+		UPDATE books SET duration_seconds = ?, updated_at = ?
+		WHERE id = ? AND foreign_id = ? AND metadata_provider = ? AND media_type = ?
+		  AND asin = ? AND duration_seconds <= 0`,
+		b.DurationSeconds, timeValueArg(now), b.ID, b.ForeignID, b.MetadataProvider, b.MediaType, b.ASIN)
+	if err != nil {
+		return false, fmt.Errorf("fill missing audiobook duration for book %d: %w", b.ID, err)
+	}
+	updated, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check audiobook duration update for book %d: %w", b.ID, err)
+	}
+	return updated > 0, r.ReloadHydratedBook(ctx, b)
 }
 
 // MarkWantedMonitored updates only the fields needed to queue a book for
@@ -1129,9 +1226,10 @@ func (r *BookRepo) SetFilePath(ctx context.Context, id int64, filePath string) e
 // SetLanguage persists a book's language code. Used by the importer to fill an
 // empty language from an embedded EPUB dc:language at import time (#1160); the
 // caller is responsible for gating on an empty existing value and an unlocked
-// language field, so this only writes the single column.
+// language field. Advance updated_at so pending hydration sees the change.
 func (r *BookRepo) SetLanguage(ctx context.Context, id int64, language string) error {
-	_, err := r.db.ExecContext(ctx, "UPDATE books SET language=? WHERE id=?", language, id)
+	_, err := r.exec.ExecContext(ctx, "UPDATE books SET language=?, updated_at=? WHERE id=?",
+		language, timeValueArg(time.Now().UTC()), id)
 	return err
 }
 
@@ -1413,7 +1511,7 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 			&b.FilePath, &b.Language, &b.MediaType,
 			&b.Narrator, &b.DurationSeconds, &b.ASIN,
 			&b.CalibreID, &b.MetadataProvider, &lastMetadataRefreshAtStr,
-			&createdAtStr, &updatedAtStr,
+			&createdAtStr, &updatedAtStr, &b.UpdatedAtRaw,
 			&b.EbookFilePath, &b.AudiobookFilePath,
 			&excluded, &b.DedupKey,
 			&authorID, &authorForeignID, &authorName, &authorSortName,

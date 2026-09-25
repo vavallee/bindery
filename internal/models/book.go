@@ -57,6 +57,11 @@ type Book struct {
 	LastMetadataRefreshAt *time.Time `json:"lastMetadataRefreshAt"`
 	CreatedAt             time.Time  `json:"createdAt"`
 	UpdatedAt             time.Time  `json:"updatedAt"`
+	// UpdatedAtRaw is books.updated_at exactly as stored. The column holds
+	// several historical shapes (CURRENT_TIMESTAMP, the #914 time.String
+	// form), so reformatting UpdatedAt cannot reproduce it; guarded writes
+	// compare this text instead.
+	UpdatedAtRaw string `json:"-"`
 
 	// OwnerUserID is the per-user ownership column added in migration 025.
 	// See models.Author for the legacy zero-value semantics. Not surfaced

@@ -21,4 +21,6 @@ type Edition struct {
 	Monitored   bool       `json:"monitored"`
 	CreatedAt   time.Time  `json:"createdAt"`
 	UpdatedAt   time.Time  `json:"updatedAt"`
+	// DurationSeconds carries provider audio runtime to book hydration; it is not stored on editions.
+	DurationSeconds int `json:"-"`
 }
