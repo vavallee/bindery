@@ -1607,6 +1607,15 @@ func sanitizeInline(s string) string {
 }
 
 func sanitizePath(s string) string {
+	// A colon that sits on a "Title: Subtitle" boundary is meaningful
+	// punctuation, not a path hazard: normalize it to " - " first so the
+	// rendered name reads "Title - Subtitle" instead of the char replacer's
+	// collided "Title- Subtitle". " : " (OpenLibrary style) must run before
+	// ": ", else "Title : Subtitle" would become "Title  - Subtitle" (double
+	// space). A colon with no adjacent space ("A:B") is untouched here and
+	// falls through to the replacer's "-" as before.
+	s = strings.ReplaceAll(s, " : ", " - ")
+	s = strings.ReplaceAll(s, ": ", " - ")
 	// Remove characters that are problematic in file paths
 	replacer := pathCharReplacer
 	cleaned := strings.TrimSpace(replacer.Replace(s))

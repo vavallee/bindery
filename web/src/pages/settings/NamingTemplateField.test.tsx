@@ -62,8 +62,8 @@ describe('namingTemplate renderer (renamer.go mirror)', () => {
 
   it('sanitizes characters that would break a path inside a field', () => {
     const out = renderTemplate('{Title}', 'book', { ...SAMPLE_BOOK, title: 'A: B / C? <D>' })
-    // ":" and "/" -> "-", "?<>" stripped; result is one segment
-    expect(out).toBe('A- B - C D')
+    // ":" boundary -> " - ", "/" -> "-", "?<>" stripped; result is one segment
+    expect(out).toBe('A - B - C D')
   })
 
   it('drops dangling leading separators when a leading token is empty', () => {
