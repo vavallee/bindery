@@ -45,8 +45,10 @@ POST   /api/v1/author/{id}/refresh                re-pull profile and works, ski
 GET    /api/v1/author/{id}/catalogue-reconciliation
                                                     preview stale metadata-only Wanted rows
 POST   /api/v1/author/{id}/catalogue-reconciliation
-                                                    recheck and remove selected preview rows
-GET    /api/v1/author/{id}/relink-upstream/candidates
+                                                     recheck and remove selected preview rows
+ GET    /api/v1/author/{id}/duplicate-candidates
+                                                     read-only groups of titles that look like the same book (#1970)
+ GET    /api/v1/author/{id}/relink-upstream/candidates
                                                     search metadata candidates for manual relink
 POST   /api/v1/author/{id}/relink-upstream        re-bind to a different foreign ID
 GET    /api/v1/author/{id}/aliases                list merged-in alias rows
@@ -174,6 +176,39 @@ link written while the primary was rate limited would silently and permanently
 move that author onto the fallback (#2271). Retry once the primary is
 answering, or send an explicit `foreignAuthorId`, which skips the search
 entirely.
+
+`GET /api/v1/author/{id}/duplicate-candidates` reports groups of the author's
+books whose titles look like the same book, for human review (#1970). It is
+read-only: it never writes, and the review UI's only action is the existing
+`PUT /book/{id}/exclude`. Titles are compared with an aggressive fold (case,
+punctuation, and diacritics ignored; `&` expanded to "and"), and a pair joins a
+group when any of these match: `alnum-equal` (identical after the fold),
+`article-strip` (identical after dropping a leading article),
+`edition-suffix` (identical after dropping a trailing edition marker), or
+`substring` (one folded title contained in the other, with length guards).
+Groups are linked transitively, so A≈B and B≈C lands in one group. The
+response is:
+
+```json
+{
+  "authorId": 42,
+  "count": 1,
+  "groups": [
+    {
+      "key": "themartian",
+      "rules": ["article-strip", "substring"],
+      "books": [
+        { "id": 101, "title": "The Martian", "excluded": false, "rules": ["article-strip"] },
+        { "id": 102, "title": "Martian", "excluded": true, "rules": ["article-strip"] }
+      ]
+    }
+  ]
+}
+```
+
+Each `books` entry is the full book object plus a per-book `rules` list; the
+group's `rules` is the union across its members. Groups whose members are all
+excluded are omitted, and `count` is the number of groups returned.
 
 ### Books
 
