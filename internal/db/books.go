@@ -757,6 +757,48 @@ func (r *BookRepo) Update(ctx context.Context, b *models.Book) error {
 	return nil
 }
 
+// FillMissingAudiobookDuration persists a duration derived from edition metadata
+// without rewriting a book that may have changed during the provider fetch.
+// On a guarded-write miss, it returns the current duration only if the book's
+// provider, media type, and ASIN still match the source of the fetched runtime.
+func (r *BookRepo) FillMissingAudiobookDuration(ctx context.Context, b *models.Book) (bool, int, error) {
+	if b == nil || b.ID == 0 || b.DurationSeconds <= 0 {
+		return false, 0, fmt.Errorf("fill missing audiobook duration: invalid book")
+	}
+	if b.MediaType != models.MediaTypeAudiobook && b.MediaType != models.MediaTypeBoth {
+		return false, 0, nil
+	}
+	now := time.Now().UTC()
+	res, err := r.exec.ExecContext(ctx, `
+		UPDATE books SET duration_seconds = ?, updated_at = ?
+		WHERE id = ? AND foreign_id = ? AND metadata_provider = ? AND media_type = ?
+		  AND asin = ? AND duration_seconds <= 0`,
+		b.DurationSeconds, timeValueArg(now), b.ID, b.ForeignID, b.MetadataProvider, b.MediaType, b.ASIN)
+	if err != nil {
+		return false, 0, fmt.Errorf("fill missing audiobook duration for book %d: %w", b.ID, err)
+	}
+	updated, err := res.RowsAffected()
+	if err != nil {
+		return false, 0, fmt.Errorf("check audiobook duration update for book %d: %w", b.ID, err)
+	}
+	if updated == 0 {
+		var currentDuration int
+		err := r.exec.QueryRowContext(ctx, `
+			SELECT duration_seconds FROM books
+			WHERE id = ? AND foreign_id = ? AND metadata_provider = ? AND media_type = ? AND asin = ?`,
+			b.ID, b.ForeignID, b.MetadataProvider, b.MediaType, b.ASIN).Scan(&currentDuration)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, 0, nil
+		}
+		if err != nil {
+			return false, 0, fmt.Errorf("read current audiobook duration for book %d: %w", b.ID, err)
+		}
+		return false, currentDuration, nil
+	}
+	b.UpdatedAt = now
+	return true, b.DurationSeconds, nil
+}
+
 // MarkWantedMonitored updates only the fields needed to queue a book for
 // searching, preserving metadata that may not be present on sparse callers.
 func (r *BookRepo) MarkWantedMonitored(ctx context.Context, id int64) error {

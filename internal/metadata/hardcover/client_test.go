@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/bookhydrate"
+	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -1178,6 +1180,9 @@ func TestGetEditions_FormatFallbacks(t *testing.T) {
 	if !ebook.IsEbook {
 		t.Error("Kindle edition should be marked as ebook")
 	}
+	if ebook.DurationSeconds != 0 {
+		t.Errorf("ebook DurationSeconds = %d, want 0", ebook.DurationSeconds)
+	}
 	if ebook.PublishDate == nil || ebook.PublishDate.Format("2006-01-02") != "2021-01-01" {
 		t.Errorf("PublishDate = %v, want 2021-01-01", ebook.PublishDate)
 	}
@@ -1187,6 +1192,49 @@ func TestGetEditions_FormatFallbacks(t *testing.T) {
 	}
 	if audio.IsEbook {
 		t.Error("audiobook should not be marked as ebook")
+	}
+	if audio.DurationSeconds != 3600 {
+		t.Errorf("audiobook DurationSeconds = %d, want 3600", audio.DurationSeconds)
+	}
+}
+
+func TestGetEditions_HydratesBookAudioDuration(t *testing.T) {
+	client := newMockClient(func(r *http.Request) (*http.Response, error) {
+		return gqlResponse(t, http.StatusOK, map[string]interface{}{"editions": []map[string]interface{}{
+			{"id": 101, "title": "Audio Edition", "physical_format": "Audiobook", "audio_seconds": 36000},
+		}}), nil
+	})
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	author := &models.Author{ForeignID: "hc:duration-author", Name: "Author", SortName: "Author", Monitored: true}
+	if err := db.NewAuthorRepo(database).Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	books := db.NewBookRepo(database)
+	book := &models.Book{
+		ForeignID: "hc:duration-book", AuthorID: author.ID, Title: "Duration Book", SortTitle: "Duration Book",
+		MetadataProvider: "hardcover", MediaType: models.MediaTypeAudiobook, Status: models.BookStatusWanted,
+		Monitored: true, Genres: []string{},
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	result := bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
+		Book: book, Provider: "hardcover", Editions: db.NewEditionRepo(database), Books: books, FetchEditions: client.GetEditions,
+	})
+	if result.Err != nil {
+		t.Fatal(result.Err)
+	}
+	stored, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Upserted != 1 || !result.BookUpdated || stored.DurationSeconds != 36000 {
+		t.Fatalf("Hardcover duration was not persisted before grab: duration=%d result=%+v", stored.DurationSeconds, result)
 	}
 }
 
