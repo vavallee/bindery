@@ -250,6 +250,7 @@ func TestSettings_AuthorMonitorDefaultsValidation(t *testing.T) {
 func TestSettings_SecretLeakRegression(t *testing.T) {
 	h, repo, ctx := settingsFixture(t)
 	leaky := map[string]string{
+		"auth.hardcover_daily_holds":     `{"example-fingerprint":"2026-09-19T01:00:00Z"}`,
 		SettingOIDCProviders:             `[{"id":"okta","clientSecret":"S3CRET"}]`,
 		SettingAuthSessionSecretPrevious: "previous-hmac-key",
 		SettingGrimmoryAPIKey:            "grimmory-api-key",

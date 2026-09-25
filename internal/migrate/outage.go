@@ -53,7 +53,10 @@ type primaryOutage struct {
 // provider order with the primary first, so FirstErr is the primary's error
 // whenever PrimaryFailed is set.
 func (p *primaryOutage) observe(source string, o metadata.SearchOutcome) {
+	var daily *metadata.DailyQuotaError
 	switch {
+	case errors.As(o.FirstErr, &daily):
+		p.streak, p.last = primaryOutageThreshold, o
 	case o.Primary != "" && slices.Contains(o.Answered, o.Primary):
 		p.streak = 0
 	case o.PrimaryFailed && errors.Is(o.FirstErr, hardcover.ErrRateLimited):

@@ -209,7 +209,14 @@ const (
 )
 
 type SettingsHandler struct {
-	settings *db.SettingsRepo
+	settings   *db.SettingsRepo
+	dailyQuota *hardcover.DailyQuota
+}
+
+// WithDailyQuota shares the same pause with the API test button.
+func (h *SettingsHandler) WithDailyQuota(q *hardcover.DailyQuota) *SettingsHandler {
+	h.dailyQuota = q
+	return h
 }
 
 func NewSettingsHandler(settings *db.SettingsRepo) *SettingsHandler {
@@ -239,7 +246,8 @@ func NewSettingsHandler(settings *db.SettingsRepo) *SettingsHandler {
 func isSecretSetting(key string) bool {
 	// 1. Explicit one-offs that don't match the patterns below.
 	switch key {
-	case SettingAuthAPIKey,
+	case "auth.hardcover_daily_holds",
+		SettingAuthAPIKey,
 		SettingAuthSessionSecret,
 		SettingAuthSessionSecretPrevious,
 		SettingAuthMode,
@@ -535,7 +543,7 @@ func (h *SettingsHandler) TestHardcover(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	client := hardcover.New().WithToken(token)
+	client := hardcover.New().WithDailyQuota(h.dailyQuota).WithToken(token)
 	series, err := client.SearchSeries(ctx, "Dune", 3)
 	if err != nil {
 		result.Error = err.Error()

@@ -68,6 +68,7 @@ type ListSyncer struct {
 
 	tokenSource   func(context.Context) string
 	clientFactory hardcoverClientFactory
+	dailyQuota    *hardcover.DailyQuota
 	enricher      bookhydrate.AudiobookEnricher
 
 	// jobs, when set, tracks the detached goroutine StartOne launches so
@@ -103,6 +104,13 @@ type seriesLinker interface {
 }
 
 type hardcoverClientFactory func(string) hardcoverClient
+
+// WithDailyQuota shares exhaustion holds with other Hardcover callers.
+func (s *ListSyncer) WithDailyQuota(q *hardcover.DailyQuota) *ListSyncer {
+	s.dailyQuota = q
+	s.clientFactory = func(token string) hardcoverClient { return hardcover.NewAuthenticated(token).WithDailyQuota(q) }
+	return s
+}
 
 // New creates a new ListSyncer.
 func New(importLists *db.ImportListRepo, authors *db.AuthorRepo, books *db.BookRepo) *ListSyncer {
@@ -500,6 +508,9 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 	}
 
 	for _, book := range books {
+		if err := s.dailyQuota.Check(ctx, token); err != nil {
+			return err
+		}
 		// The sync now runs on the shutdown-scoped background context (#1854),
 		// so cancellation means the process is going down: stop walking rather
 		// than grinding through the remaining books with a dead context and a

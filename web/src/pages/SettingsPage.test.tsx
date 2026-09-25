@@ -437,6 +437,14 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('blocklist.title')).toBeInTheDocument()
   })
 
+  it.each([true, false])('shows only an active Hardcover daily pause (%s)', async active => {
+    renderSettings({ status: { ...defaultStatus, hardcoverPausedUntil: new Date(Date.now() + (active ? 3600000 : -3600000)).toISOString() } })
+    await openApiKeysTab()
+    await screen.findByText('Hardcover API Token')
+    if (active) expect(await screen.findByText('settings.general.hardcoverPausedUntil')).toBeInTheDocument()
+    else expect(screen.queryByText('settings.general.hardcoverPausedUntil')).not.toBeInTheDocument()
+  })
+
   it('adds a write-only Hardcover token field with API link', async () => {
     renderSettings()
     await openApiKeysTab()

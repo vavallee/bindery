@@ -1738,7 +1738,9 @@ func (h *AuthorHandler) authorAwaitsFirstCatalogue(ctx context.Context, author *
 // The outcome is logged by runCatalogueSync; callers that need it (scheduled
 // discovery, #2236) call runCatalogueSync directly.
 func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Author, opts catalogueSyncOptions) {
-	_, _ = h.runCatalogueSync(ctx, author, opts)
+	if _, err := h.runCatalogueSync(ctx, author, opts); err != nil {
+		slog.Warn("author catalogue sync stopped", "author", author.Name, "error", err)
+	}
 }
 
 // runCatalogueSync is the catalogue sync behind fetchAuthorBooks. It returns
@@ -1762,6 +1764,9 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 			h.runningSyncs.start(syncID)
 		}
 		defer h.runningSyncs.done(syncID)
+	}
+	if err := h.meta.CheckQuota(ctx); err != nil {
+		return 0, err
 	}
 	// A manual Refresh Metadata reads the author's profile, catalogue and
 	// Audible catalogue past the metadata cache (#2601). Only those lookups
@@ -2250,6 +2255,9 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	}
 
 	for _, b := range candidates {
+		if err := h.meta.CheckQuota(ctx); err != nil {
+			return added, err
+		}
 		// A cancelled or timed out run stops creating books rather than
 		// logging one failed insert per remaining work.
 		if ctx.Err() != nil {
@@ -2625,6 +2633,9 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		seededEditions[editionTarget{ForeignID: foreignID}.cacheKey()] = editions
 	}
 	editionCache := h.prefetchHardcoverEditions(ctx, createdTargets, seededEditions)
+	if err := h.meta.CheckQuota(ctx); err != nil {
+		return added, err
+	}
 
 	for i := range createdBooks {
 		b := createdBooks[i]

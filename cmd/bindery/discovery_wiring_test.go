@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/vavallee/bindery/internal/api"
+	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/metadata/openlibrary"
 	"github.com/vavallee/bindery/internal/models"
@@ -26,6 +27,7 @@ func TestNewAuthorDiscoverer_MapsErrors(t *testing.T) {
 		wantUnavail bool
 	}{
 		{name: "success", created: 3},
+		{name: "daily quota", err: &metadata.DailyQuotaError{}, wantBackoff: true},
 		{name: "ordinary error", err: errors.New("provider 500")},
 		{name: "hardcover rate limit, wrapped", err: fmt.Errorf("author works: %w", hardcover.ErrRateLimited), wantBackoff: true},
 		{name: "openlibrary rate limit, wrapped", err: fmt.Errorf("author works: %w", openlibrary.ErrRateLimited), wantBackoff: true},

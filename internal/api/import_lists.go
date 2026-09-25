@@ -58,6 +58,12 @@ func NewImportListHandler(repo *db.ImportListRepo, settings *db.SettingsRepo, hc
 	}
 }
 
+// WithDailyQuota shares exhaustion holds with list browsing.
+func (h *ImportListHandler) WithDailyQuota(q *hardcover.DailyQuota) *ImportListHandler {
+	h.hcListClient = func(token string) hardcoverUserListClient { return hardcover.NewAuthenticated(token).WithDailyQuota(q) }
+	return h
+}
+
 // errInvalidOwner marks an owner_user_id the client supplied that cannot be
 // accepted (non-positive, or not an existing user). The handler maps it to 400;
 // a wrapped lookup failure (not this sentinel) maps to 500.
