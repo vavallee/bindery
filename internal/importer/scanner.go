@@ -1837,16 +1837,20 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					// above is this same book, not an unrelated one. Merge
 					// into that folder instead, undoing the " (2)" suffix.
 					//
-					// Deliberately scoped to this branch. The flatten paths
-					// above cannot take a pre-existing destDir: they document
-					// and rely on having created it themselves, and remove it
-					// wholesale (os.RemoveAll) to roll back any error — which
-					// against a shared folder would delete the ebook sitting
-					// in it. They keep the historical UniqueDir behaviour, so
-					// a library using an audiobook naming template or
-					// multi-disc flattening still splits into "Title (2)"
-					// until flatten's rollback is reworked to only remove what
-					// it placed.
+					// Deliberately not extended to the flatten paths above,
+					// though the single-file branch below shares it (#2686).
+					// The flatten paths cannot take a pre-existing destDir:
+					// they document and rely on having created it themselves,
+					// and remove it wholesale (os.RemoveAll) to roll back any
+					// error, which against a shared folder would delete the
+					// ebook sitting in it. They keep the historical UniqueDir
+					// behaviour, so a library using an audiobook naming
+					// template or multi-disc flattening still splits into
+					// "Title (2)" until flatten's rollback is reworked to only
+					// remove what it placed. The per-file placement branch
+					// (usePerFile) keeps it for the same reason: it flattens
+					// several sources by basename into one folder, so a merge
+					// there needs a per-file collision story of its own.
 					destDir = existingDir
 					mergedIntoExistingFolder = true
 					slog.Info("merging audiobook into the book's existing shared folder",
@@ -1874,15 +1878,48 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					}
 				}
 			} else {
+				// Shared-folder layout (#1959) for a source that is a single
+				// FILE rather than a folder: a lone .m4b, which is what a
+				// manual import of one audiobook file and a single-file
+				// torrent both resolve to. The merge above sits on the folder
+				// branch only, so this branch always kept UniqueDir's
+				// " (2)" suffix even though the collision is this same book's
+				// own folder (#2686). Unlike the flatten paths, nothing here
+				// needs to own destDir: it places exactly one named file and
+				// rolls back exactly that name, so merging into a folder that
+				// already holds this book's ebook is safe.
+				if existingDir, merging := s.existingEbookDir(ctx, book); merging && filepath.Clean(audiobookDest) == existingDir {
+					destDir = existingDir
+					mergedIntoExistingFolder = true
+					slog.Info("merging audiobook file into the book's existing shared folder",
+						"title", book.Title, "bookID", book.ID, "dst", destDir, "mode", mode)
+				}
 				if err := os.MkdirAll(destDir, 0o750); err != nil {
 					dirErr = fmt.Errorf("create audiobook dest dir: %w", err)
 				} else {
 					name := filepath.Base(audiobookSource)
 					dstFile := filepath.Join(destDir, name)
-					switch mode {
-					case "hardlink":
+					// A merge never overwrites what is already in the book's
+					// folder, the same contract CopyDirMergeCtx and friends
+					// keep on the folder branch. A same-named file there is
+					// skipped and reported rather than clobbered, and the
+					// import still succeeds; in move mode the source stays put
+					// because the skipped file's other copy is the only one.
+					skipped := false
+					if mergedIntoExistingFolder {
+						if _, statErr := os.Stat(dstFile); statErr == nil {
+							skipped = true
+							mergeSkippedFiles = append(mergeSkippedFiles, name)
+							slog.Warn("audiobook merge skipped a same-named file already present in the shared folder",
+								"title", book.Title, "bookID", book.ID, "dst", destDir, "skipped", name)
+						}
+					}
+					switch {
+					case skipped:
+						// nothing to place
+					case mode == "hardlink":
 						dirErr = HardlinkFile(audiobookSource, dstFile)
-					case "copy":
+					case mode == "copy":
 						dirErr = CopyFileCtx(importCtx, audiobookSource, dstFile)
 					default:
 						dirErr = MoveFileCtx(importCtx, audiobookSource, dstFile)
@@ -1896,7 +1933,8 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					// rollbackPlacedFiles removes the folder through its
 					// parent, which only succeeds while it is empty, so a
 					// shared folder holding this book's ebook is safe either
-					// way.
+					// way: the half-placed file goes, the folder and the ebook
+					// in it stay.
 					if dirErr != nil {
 						if mode == "move" {
 							rollbackPlacedFiles(destDir, nil)

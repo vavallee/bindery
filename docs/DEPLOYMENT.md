@@ -267,9 +267,16 @@ places its file in that same folder:
 ```
 
 No extra configuration needed, just don't split the two dirs if you want the
-shared layout. Two settings opt out of it: **Flatten multi-disc audiobooks** and
-a per-file audiobook naming template both keep the historical behaviour and
-place the audiobook in a sibling `Title (2)` folder instead of merging.
+shared layout. It applies whether the audiobook arrives as a folder of tracks
+or as a single file such as a lone `.m4b`. A file already in the book's folder
+is never overwritten by the merge: a same named file is skipped and named on
+the import's History entry.
+
+Two settings opt out of the merge: **Flatten multi-disc audiobooks** and a
+per-file audiobook naming template both keep the historical behaviour and place
+the audiobook in a sibling `Title (2)` folder. So does a download whose
+audiobook files do not share a folder of their own, which Bindery places file
+by file.
 (For handing files to Storyteller's *watch folder* instead,
 see [Handing off to another library tool](#handing-off-to-another-library-tool-cwa-calibre-storyteller).)
 
