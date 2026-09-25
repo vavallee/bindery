@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { api, isNoDownloadClientError, SearchResult } from '../api/client'
+import { api, isNoDownloadClientError, isNoEligibleClientError, SearchResult } from '../api/client'
 import { formatBytes } from '../util/format'
 
 export default function SearchPage() {
@@ -17,6 +17,10 @@ export default function SearchPage() {
   // linking to the client settings — shown regardless of whether the library is
   // empty, which the first-run guidance (#960) didn't cover (#968).
   const [needsClient, setNeedsClient] = useState(false)
+  // Same idea, for a grab that failed because every enabled client of the
+  // right protocol has opted out of this release's media type (book/audiobook
+  // eligibility checkboxes) rather than none being enabled at all.
+  const [needsEligibleClient, setNeedsEligibleClient] = useState<'ebook' | 'audiobook' | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -30,6 +34,7 @@ export default function SearchPage() {
     setSearching(true)
     setError(null)
     setNeedsClient(false)
+    setNeedsEligibleClient(null)
     setResults(null)
     try {
       const r = await api.searchIndexers(q)
@@ -45,6 +50,7 @@ export default function SearchPage() {
     setGrabbing(r.guid)
     setError(null)
     setNeedsClient(false)
+    setNeedsEligibleClient(null)
     try {
       await api.grab({
         guid: r.guid,
@@ -53,10 +59,13 @@ export default function SearchPage() {
         size: r.size,
         indexerId: r.indexerId,
         protocol: r.protocol,
+        mediaType: r.mediaType,
       })
       setGrabbed(prev => new Set(prev).add(r.guid))
     } catch (e) {
-      if (isNoDownloadClientError(e)) {
+      if (isNoEligibleClientError(e)) {
+        setNeedsEligibleClient(r.mediaType === 'audiobook' ? 'audiobook' : 'ebook')
+      } else if (isNoDownloadClientError(e)) {
         setNeedsClient(true)
       } else {
         setError(e instanceof Error ? e.message : 'Grab failed')
@@ -108,6 +117,18 @@ export default function SearchPage() {
             className="inline-block px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-sm font-medium transition-colors"
           >
             {t('search.noClient.action')}
+          </Link>
+        </div>
+      )}
+
+      {needsEligibleClient && (
+        <div className="mb-4 px-4 py-3 bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-900/50 rounded-lg text-sm">
+          <p className="mb-2">{t(needsEligibleClient === 'audiobook' ? 'search.noEligibleClient.bodyAudiobooks' : 'search.noEligibleClient.bodyBooks')}</p>
+          <Link
+            to="/settings?tab=clients"
+            className="inline-block px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-sm font-medium transition-colors"
+          >
+            {t('search.noEligibleClient.action')}
           </Link>
         </div>
       )}

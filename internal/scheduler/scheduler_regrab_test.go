@@ -96,6 +96,7 @@ func newRegrabFixture(t *testing.T) *regrabFixture {
 	}
 	if err := clients.Create(ctx, &models.DownloadClient{
 		Name: "sab", Type: "sabnzbd", Host: u.Hostname(), Port: port, Enabled: true,
+		EnabledForBooks: true, EnabledForAudiobooks: true,
 	}); err != nil {
 		t.Fatalf("client create: %v", err)
 	}

@@ -76,13 +76,15 @@ func TestQueueGrab_NoDownloadClient(t *testing.T) {
 func TestQueueGrab_ProtocolMismatchNamesUsenet(t *testing.T) {
 	h, _, _, clients, _, ctx := queueFixture(t)
 	if err := clients.Create(ctx, &models.DownloadClient{
-		Name:     "qb",
-		Type:     "qbittorrent",
-		Host:     "127.0.0.1",
-		Port:     8080,
-		Username: "user",
-		Password: "pass",
-		Enabled:  true,
+		Name:                 "qb",
+		Type:                 "qbittorrent",
+		Host:                 "127.0.0.1",
+		Port:                 8080,
+		Username:             "user",
+		Password:             "pass",
+		Enabled:              true,
+		EnabledForBooks:      true,
+		EnabledForAudiobooks: true,
 	}); err != nil {
 		t.Fatalf("create torrent client: %v", err)
 	}
@@ -175,11 +177,13 @@ func TestQueueGrab_RetriesFailedGUID(t *testing.T) {
 	h, database, downloads, clients, books, ctx := queueFixture(t)
 	host, port := testServerHostPort(t, srv.URL)
 	client := &models.DownloadClient{
-		Name:    "sab",
-		Type:    "sabnzbd",
-		Host:    host,
-		Port:    port,
-		Enabled: true,
+		Name:                 "sab",
+		Type:                 "sabnzbd",
+		Host:                 host,
+		Port:                 port,
+		Enabled:              true,
+		EnabledForBooks:      true,
+		EnabledForAudiobooks: true,
 	}
 	if err := clients.Create(ctx, client); err != nil {
 		t.Fatalf("create client: %v", err)
@@ -311,11 +315,13 @@ func TestQueueGrab_FailedRetryFailureRemainsRetryable(t *testing.T) {
 	h, _, downloads, clients, _, ctx := queueFixture(t)
 	host, port := testServerHostPort(t, srv.URL)
 	client := &models.DownloadClient{
-		Name:    "sab",
-		Type:    "sabnzbd",
-		Host:    host,
-		Port:    port,
-		Enabled: true,
+		Name:                 "sab",
+		Type:                 "sabnzbd",
+		Host:                 host,
+		Port:                 port,
+		Enabled:              true,
+		EnabledForBooks:      true,
+		EnabledForAudiobooks: true,
 	}
 	if err := clients.Create(ctx, client); err != nil {
 		t.Fatalf("create client: %v", err)
@@ -632,6 +638,7 @@ func TestQueueBulkDelete_HonoursRemoveFromClient(t *testing.T) {
 	client := &models.DownloadClient{
 		Name: "qb", Type: "qbittorrent", Host: host, Port: port,
 		Username: "user", Password: "pass", Enabled: true,
+		EnabledForBooks: true, EnabledForAudiobooks: true,
 	}
 	if err := clients.Create(ctx, client); err != nil {
 		t.Fatalf("create client: %v", err)
@@ -783,6 +790,7 @@ func queueDeleteFilesProbe(t *testing.T, urlSuffix string) string {
 	client := &models.DownloadClient{
 		Name: "qb", Type: "qbittorrent", Host: host, Port: port,
 		Username: "user", Password: "pass", Enabled: true,
+		EnabledForBooks: true, EnabledForAudiobooks: true,
 	}
 	if err := clients.Create(ctx, client); err != nil {
 		t.Fatalf("create client: %v", err)
@@ -854,6 +862,7 @@ func queueClientCallProbe(t *testing.T, urlSuffix string) (clientCalled bool, ro
 	client := &models.DownloadClient{
 		Name: "qb", Type: "qbittorrent", Host: host, Port: port,
 		Username: "user", Password: "pass", Enabled: true,
+		EnabledForBooks: true, EnabledForAudiobooks: true,
 	}
 	if err := clients.Create(ctx, client); err != nil {
 		t.Fatalf("create client: %v", err)
@@ -1824,8 +1833,203 @@ func newQueueTestHandler(t *testing.T) *QueueHandler {
 	return NewQueueHandler(db.NewDownloadRepo(database), db.NewDownloadClientRepo(database), nil, nil)
 }
 
+// sabTestServer starts a fake SABnzbd server whose addfile response reports
+// SAB-side success or failure, and counts how many times it was called.
+func sabTestServer(t *testing.T, ok bool) (*httptest.Server, *int) {
+	t.Helper()
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if !ok {
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": false})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": true, "nzo_ids": []string{"nzo-ok"}})
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+// TestQueueGrab_SkipsClientIneligibleForMediaType verifies that a client
+// opted out of a media type is never sent an audiobook grab, even though it
+// is otherwise enabled and protocol-matched.
+func TestQueueGrab_SkipsClientIneligibleForMediaType(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><nzb></nzb>`))
+	}))
+	defer indexerSrv.Close()
+	bookOnlySrv, bookOnlyCalls := sabTestServer(t, true)
+	audioSrv, audioCalls := sabTestServer(t, true)
+
+	h, _, _, clients, _, ctx := queueFixture(t)
+	bookOnlyHost, bookOnlyPort := testServerHostPort(t, bookOnlySrv.URL)
+	if err := clients.Create(ctx, &models.DownloadClient{
+		Name: "book-only", Type: "sabnzbd", Host: bookOnlyHost, Port: bookOnlyPort,
+		Priority: 1, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: false,
+	}); err != nil {
+		t.Fatalf("create book-only client: %v", err)
+	}
+	audioHost, audioPort := testServerHostPort(t, audioSrv.URL)
+	if err := clients.Create(ctx, &models.DownloadClient{
+		Name: "audio-eligible", Type: "sabnzbd", Host: audioHost, Port: audioPort,
+		Priority: 2, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true,
+	}); err != nil {
+		t.Fatalf("create audiobook-eligible client: %v", err)
+	}
+
+	body := bytes.NewBufferString(`{"guid":"audio-guid","nzbUrl":"` + indexerSrv.URL + `/x.nzb","title":"t","mediaType":"audiobook"}`)
+	rec := httptest.NewRecorder()
+	h.Grab(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/grab", body))
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if *bookOnlyCalls != 0 {
+		t.Errorf("expected the book-only client never to be contacted, got %d calls", *bookOnlyCalls)
+	}
+	if *audioCalls != 1 {
+		t.Errorf("expected the audiobook-eligible client to receive the grab, got %d calls", *audioCalls)
+	}
+}
+
+// TestQueueGrab_FallsBackToNextEligibleClientOnSendFailure verifies that a
+// send failure against the best-ranked eligible client is retried against the
+// next eligible one, rather than failing the grab outright.
+func TestQueueGrab_FallsBackToNextEligibleClientOnSendFailure(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><nzb></nzb>`))
+	}))
+	defer indexerSrv.Close()
+	failingSrv, failingCalls := sabTestServer(t, false)
+	workingSrv, workingCalls := sabTestServer(t, true)
+
+	h, _, downloads, clients, _, ctx := queueFixture(t)
+	failHost, failPort := testServerHostPort(t, failingSrv.URL)
+	failing := &models.DownloadClient{
+		Name: "failing", Type: "sabnzbd", Host: failHost, Port: failPort,
+		Priority: 1, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true,
+	}
+	if err := clients.Create(ctx, failing); err != nil {
+		t.Fatalf("create failing client: %v", err)
+	}
+	workHost, workPort := testServerHostPort(t, workingSrv.URL)
+	working := &models.DownloadClient{
+		Name: "working", Type: "sabnzbd", Host: workHost, Port: workPort,
+		Priority: 2, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true,
+	}
+	if err := clients.Create(ctx, working); err != nil {
+		t.Fatalf("create working client: %v", err)
+	}
+
+	body := bytes.NewBufferString(`{"guid":"fallback-guid","nzbUrl":"` + indexerSrv.URL + `/x.nzb","title":"t"}`)
+	rec := httptest.NewRecorder()
+	h.Grab(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/grab", body))
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if *failingCalls != 1 || *workingCalls != 1 {
+		t.Fatalf("expected exactly one attempt against each client, got failing=%d working=%d", *failingCalls, *workingCalls)
+	}
+	got, err := downloads.GetByGUID(ctx, "fallback-guid")
+	if err != nil || got == nil {
+		t.Fatalf("reload download: %v", err)
+	}
+	if got.DownloadClientID == nil || *got.DownloadClientID != working.ID {
+		t.Fatalf("expected the download to be attributed to the working client %d, got %v", working.ID, got.DownloadClientID)
+	}
+	if got.Status != models.StateDownloading {
+		t.Fatalf("expected downloading after fallback success, got %q", got.Status)
+	}
+}
+
+// TestQueueGrab_AllEligibleClientsFail verifies that when every eligible
+// client's send fails, the error names how many clients were tried.
+func TestQueueGrab_AllEligibleClientsFail(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><nzb></nzb>`))
+	}))
+	defer indexerSrv.Close()
+	firstSrv, firstCalls := sabTestServer(t, false)
+	secondSrv, secondCalls := sabTestServer(t, false)
+
+	h, _, _, clients, _, ctx := queueFixture(t)
+	firstHost, firstPort := testServerHostPort(t, firstSrv.URL)
+	if err := clients.Create(ctx, &models.DownloadClient{
+		Name: "first", Type: "sabnzbd", Host: firstHost, Port: firstPort,
+		Priority: 1, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true,
+	}); err != nil {
+		t.Fatalf("create first client: %v", err)
+	}
+	secondHost, secondPort := testServerHostPort(t, secondSrv.URL)
+	if err := clients.Create(ctx, &models.DownloadClient{
+		Name: "second", Type: "sabnzbd", Host: secondHost, Port: secondPort,
+		Priority: 2, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true,
+	}); err != nil {
+		t.Fatalf("create second client: %v", err)
+	}
+
+	body := bytes.NewBufferString(`{"guid":"all-fail-guid","nzbUrl":"` + indexerSrv.URL + `/x.nzb","title":"t"}`)
+	rec := httptest.NewRecorder()
+	h.Grab(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/grab", body))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if *firstCalls != 1 || *secondCalls != 1 {
+		t.Fatalf("expected exactly one attempt against each client, got first=%d second=%d", *firstCalls, *secondCalls)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !strings.Contains(resp["error"], "trying 2 eligible client(s)") {
+		t.Errorf("expected error to name the number of clients tried, got: %q", resp["error"])
+	}
+}
+
+// TestQueueGrab_NoEligibleClientForMediaTypeNamesIt verifies the actionable
+// 400 when every enabled, protocol-matched client has opted out of the
+// release's media type.
+func TestQueueGrab_NoEligibleClientForMediaTypeNamesIt(t *testing.T) {
+	h, _, _, clients, _, ctx := queueFixture(t)
+	if err := clients.Create(ctx, &models.DownloadClient{
+		Name: "book-only", Type: "sabnzbd", Host: "127.0.0.1", Port: 8080,
+		Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: false,
+	}); err != nil {
+		t.Fatalf("create book-only client: %v", err)
+	}
+
+	body := bytes.NewBufferString(`{"guid":"no-eligible-guid","nzbUrl":"http://example/x.nzb","title":"t","mediaType":"audiobook"}`)
+	rec := httptest.NewRecorder()
+	h.Grab(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/grab", body))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !strings.Contains(resp["error"], "audiobooks") {
+		t.Errorf("expected error to name the media type (audiobooks), got: %q", resp["error"])
+	}
+}
+
+// createTestDownloadClient creates client, defaulting the media-type
+// eligibility fields to true/true when the caller left both at their zero
+// value — most tests here predate eligibility and don't care about it; tests
+// that do exercise eligibility set both fields explicitly, which this leaves
+// untouched.
 func createTestDownloadClient(t *testing.T, h *QueueHandler, client *models.DownloadClient) *models.DownloadClient {
 	t.Helper()
+	if !client.EnabledForBooks && !client.EnabledForAudiobooks {
+		client.EnabledForBooks = true
+		client.EnabledForAudiobooks = true
+	}
 	if err := h.clients.Create(context.Background(), client); err != nil {
 		t.Fatalf("create download client: %v", err)
 	}

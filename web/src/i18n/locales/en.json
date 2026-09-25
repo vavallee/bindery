@@ -319,6 +319,11 @@
     "noClient": {
       "body": "Nothing was grabbed — no enabled download client can handle this release. Add or enable a download client to start downloads.",
       "action": "Set up Download Clients"
+    },
+    "noEligibleClient": {
+      "bodyBooks": "Nothing was grabbed — no enabled download client is eligible for books. Enable a client for books, or add a new one.",
+      "bodyAudiobooks": "Nothing was grabbed — no enabled download client is eligible for audiobooks. Enable a client for audiobooks, or add a new one.",
+      "action": "Manage Download Clients"
     }
   },
   "login": {
@@ -863,6 +868,11 @@
       "audiobookCategoryLabel": "Audiobook Category / Label",
       "audiobookCategoryPlaceholder": "audiobooks",
       "audiobookCategoryHelp": "Optional. When set, audiobook grabs use this category instead of the one above. Leave blank to use the same category as ebooks.",
+      "eligibilityLabel": "Media type eligibility",
+      "enabledForBooks": "Eligible for books",
+      "enabledForAudiobooks": "Eligible for audiobooks",
+      "priorityLabel": "Priority",
+      "priorityHelp": "Lower numbers are tried first when more than one client is eligible for a grab. Ties fall back to the order clients were added in.",
       "pathNotVisible": "Connected, but Bindery can't read the client's completed-downloads folder. Configure a path remap or a shared mount so both point at the same storage, otherwise downloads won't import.",
       "loopbackHint": "The host is localhost — if Bindery runs in Docker, localhost is the Bindery container itself, not the machine. Use the host's LAN IP or the client's container/service name instead.",
       "rtorrentCategoryHelp": "Stored as the ruTorrent label (d.custom1) and used to filter which torrents Bindery polls. Leave blank to poll every torrent in the client.",

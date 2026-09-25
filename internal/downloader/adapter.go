@@ -208,6 +208,25 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 	}
 }
 
+// SendWithFallback tries SendDownload against each candidate in order,
+// returning as soon as one succeeds. Candidates are expected to already be
+// filtered to eligible, protocol-matching clients and ranked by preference
+// (see db.FilterEligibleForMediaType / db.RankClientsForMediaType) — this
+// function does not re-check either. tried names every client attempted, in
+// order, for use in an aggregated error message when all of them fail.
+func SendWithFallback(ctx context.Context, candidates []models.DownloadClient, sourceURL, title string, opts SendOptions) (chosen *models.DownloadClient, res *SendResult, tried []string, err error) {
+	for i := range candidates {
+		c := &candidates[i]
+		tried = append(tried, c.Name)
+		res, err = SendDownload(ctx, c, sourceURL, title, opts)
+		if err == nil {
+			return c, res, tried, nil
+		}
+		slog.Warn("client failed, trying next eligible client", "client", c.Name, "error", err)
+	}
+	return nil, nil, tried, err
+}
+
 // torrentSavePath renders Bindery's target download directory in the download
 // client's own filesystem namespace by running it back through the client's
 // PathRemap. Shared by qBittorrent (savePath) and rTorrent (d.directory.set).

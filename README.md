@@ -256,7 +256,7 @@ The full reference (path remapping, API-key seeding, telemetry, trusted-proxy, r
 | **Authentication** | Local (argon2id), API key, OIDC (Google, GitHub via Dex, Authelia, Keycloak, …), forward-auth proxy |
 | **Reading apps** | OPDS 1.2 catalogue at `/opds/` (KOReader, Moon+ Reader, Aldiko, …) |
 
-All download clients support **Use SSL** and **URL Base** for connections through a reverse-proxy subpath.
+All download clients support **Use SSL** and **URL Base** for connections through a reverse-proxy subpath, plus independent **eligible for books / eligible for audiobooks** toggles (both on by default) so a grab only reaches clients configured for that media type, falling back to the next eligible client (by priority) if sending fails.
 
 ## Architecture
 

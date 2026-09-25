@@ -138,7 +138,10 @@ export default function WantedPage() {
         bookId: book.id,
         indexerId: result.indexerId,
         protocol: result.protocol,
-        mediaType: book.mediaType,
+        // The release's own detected type is authoritative — book.mediaType
+        // is 'both' for dual-format books, which tells a client nothing about
+        // which format this particular result actually is.
+        mediaType: result.mediaType ?? book.mediaType,
       })
       setGrabbedGuid(result.guid)
       setTimeout(() => {

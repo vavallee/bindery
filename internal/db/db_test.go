@@ -911,6 +911,75 @@ func TestPickClientForMediaType(t *testing.T) {
 	}
 }
 
+func TestFilterEligibleForMediaType(t *testing.T) {
+	bookOnly := models.DownloadClient{ID: 1, Name: "book-only", EnabledForBooks: true, EnabledForAudiobooks: false}
+	audiobookOnly := models.DownloadClient{ID: 2, Name: "audiobook-only", EnabledForBooks: false, EnabledForAudiobooks: true}
+	both := models.DownloadClient{ID: 3, Name: "both", EnabledForBooks: true, EnabledForAudiobooks: true}
+	neither := models.DownloadClient{ID: 4, Name: "neither", EnabledForBooks: false, EnabledForAudiobooks: false}
+
+	tests := []struct {
+		name      string
+		clients   []models.DownloadClient
+		mediaType string
+		wantIDs   []int64
+	}{
+		{"ebook keeps book-eligible clients only", []models.DownloadClient{bookOnly, audiobookOnly, both, neither}, models.MediaTypeEbook, []int64{1, 3}},
+		{"audiobook keeps audiobook-eligible clients only", []models.DownloadClient{bookOnly, audiobookOnly, both, neither}, models.MediaTypeAudiobook, []int64{2, 3}},
+		{"empty media type treated as books", []models.DownloadClient{bookOnly, audiobookOnly}, "", []int64{1}},
+		{"none eligible returns empty", []models.DownloadClient{neither}, models.MediaTypeAudiobook, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FilterEligibleForMediaType(tt.clients, tt.mediaType)
+			if len(got) != len(tt.wantIDs) {
+				t.Fatalf("expected %d eligible clients, got %d", len(tt.wantIDs), len(got))
+			}
+			for i, id := range tt.wantIDs {
+				if got[i].ID != id {
+					t.Errorf("expected client %d at position %d, got %d", id, i, got[i].ID)
+				}
+			}
+		})
+	}
+}
+
+func TestRankClientsForMediaType(t *testing.T) {
+	low := models.DownloadClient{ID: 1, Name: "low-priority", Category: "books"}
+	high := models.DownloadClient{ID: 2, Name: "high-priority", Category: "books"}
+	audio := models.DownloadClient{ID: 3, Name: "audio", Category: "audiobooks"}
+
+	// All three share the same (zero) Priority, so with nothing to break the
+	// tie on Priority the legacy category heuristic decides order — this is
+	// the pre-Priority-field behavior, preserved for anyone who never set it.
+	ranked := RankClientsForMediaType([]models.DownloadClient{high, low, audio}, models.MediaTypeEbook)
+	wantOrder := []int64{2, 1, 3}
+	for i, id := range wantOrder {
+		if ranked[i].ID != id {
+			t.Errorf("position %d: expected client %d, got %d", i, id, ranked[i].ID)
+		}
+	}
+
+	// Same tie-on-Priority case: the audio-category client ranks first for an
+	// audiobook grab even though it was listed last.
+	ranked = RankClientsForMediaType([]models.DownloadClient{high, low, audio}, models.MediaTypeAudiobook)
+	if ranked[0].ID != audio.ID {
+		t.Fatalf("expected audio client ranked first for audiobook, got %d", ranked[0].ID)
+	}
+
+	// #2412 regression: a client with an explicit CategoryAudiobook must not
+	// jump ahead of a client with a numerically lower (higher-precedence)
+	// Priority that has no category hint at all. Priority is the primary,
+	// user-controlled signal; the category heuristic only breaks a tie
+	// between clients that share the same Priority.
+	audiobooksPriority := models.DownloadClient{ID: 10, Name: "Audiobooks", Priority: 30}
+	bothCategoryAudiobook := models.DownloadClient{ID: 11, Name: "Both", Priority: 50, CategoryAudiobook: "audiobooks"}
+	ranked = RankClientsForMediaType([]models.DownloadClient{audiobooksPriority, bothCategoryAudiobook}, models.MediaTypeAudiobook)
+	if ranked[0].ID != audiobooksPriority.ID {
+		t.Fatalf("expected the higher-priority client (30) ranked first regardless of the category hint, got client %d first", ranked[0].ID)
+	}
+}
+
 func TestDownloadClientRepoCredentialFields(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {

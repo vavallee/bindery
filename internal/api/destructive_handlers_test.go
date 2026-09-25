@@ -395,7 +395,7 @@ func TestPendingGrab_DispatchesDownloadAndClearsPending(t *testing.T) {
 	pending := db.NewPendingReleaseRepo(database)
 
 	host, port := testServerHostPort(t, srv.URL)
-	client := &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true}
+	client := &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true}
 	if err := clients.Create(ctx, client); err != nil {
 		t.Fatalf("create client: %v", err)
 	}

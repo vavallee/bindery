@@ -396,6 +396,14 @@ secret stays on the row.
 Booleans follow the same rule: omitting `enabled` or `useSsl` leaves them as
 they were, and an explicitly sent `false` still turns them off.
 
+`enabledForBooks` and `enabledForAudiobooks` gate which media type a client is
+considered for at grab time, independent of `category`/`categoryAudiobook`.
+Both default `true` on create when omitted, so a client handles every media
+type until you opt it out of one. A grab is routed only to clients eligible
+for its media type, tried in priority order with the next eligible client
+retried if sending fails; if none are eligible, the grab fails with an error
+naming the media type.
+
 `POST /api/v1/downloadclient/test` probes a config without saving it. Include
 the saved client's `id` and the handler fills in a credential you left blank
 from that row, but only while `type`, `host`, `port`, `useSsl` and `urlBase`

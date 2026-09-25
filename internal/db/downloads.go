@@ -387,6 +387,15 @@ func (r *DownloadRepo) SetNzoID(ctx context.Context, id int64, nzoID string) err
 	return err
 }
 
+// SetDownloadClientID corrects the client attributed to a download after the
+// fact. Used when the client picked at grab time turned out to be
+// unreachable and a later, lower-priority eligible client was the one that
+// actually accepted the send (see downloader.SendWithFallback).
+func (r *DownloadRepo) SetDownloadClientID(ctx context.Context, id, clientID int64) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET download_client_id=? WHERE id=?", clientID, id)
+	return err
+}
+
 func (r *DownloadRepo) SetTorrentID(ctx context.Context, id int64, torrentID string) error {
 	torrentID = strings.ToLower(torrentID)
 	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET torrent_id=? WHERE id=?", torrentID, id)

@@ -1121,15 +1121,16 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		outcome = "download client lookup failed"
 		return
 	}
-	client := db.PickClientForMediaType(candidates, mediaType)
 	// No cross-protocol fallback: a usenet release must not be pushed to a
 	// torrent client (qBittorrent would accept the .nzb URL, fail to parse it
 	// as a torrent, and report "hash could not be determined"), and vice versa.
-	if client == nil {
-		slog.Warn("SearchAndGrabBook: no enabled download client for protocol", "book", book.Title, "protocol", best.Protocol)
-		outcome = "no download client for protocol"
+	eligible := db.FilterEligibleForMediaType(candidates, mediaType)
+	if len(eligible) == 0 {
+		slog.Warn("SearchAndGrabBook: no enabled download client eligible for media type", "book", book.Title, "protocol", best.Protocol, "mediaType", mediaType)
+		outcome = "no eligible download client for media type"
 		return
 	}
+	ranked := db.RankClientsForMediaType(eligible, mediaType)
 
 	slog.Info("auto-grabbing book",
 		"book", book.Title,
@@ -1138,7 +1139,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		"result", best.Title,
 		"indexer", best.IndexerName,
 		"protocol", best.Protocol,
-		"client", client.Name,
+		"client", ranked[0].Name,
 		"size", best.Size,
 	)
 
@@ -1164,7 +1165,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		BookID:           &book.ID,
 		OwnerUserID:      book.OwnerUserID, // tenancy (#1457): background grab inherits the book's owner
 		IndexerID:        &best.IndexerID,
-		DownloadClientID: &client.ID,
+		DownloadClientID: &ranked[0].ID,
 		Title:            best.Title,
 		NZBURL:           best.NZBURL,
 		Size:             best.Size,
@@ -1197,19 +1198,26 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		return
 	}
 
-	sendRes, err := downloader.SendDownload(ctx, client, best.NZBURL, best.Title, downloader.SendOptions{
+	chosen, sendRes, tried, err := downloader.SendWithFallback(ctx, ranked, best.NZBURL, best.Title, downloader.SendOptions{
 		MediaType:            mediaType,
 		DownloadDir:          s.downloadDir,
 		AudiobookDownloadDir: s.audiobookDownloadDir,
 		SeedRatio:            s.resolveSeedRatio(ctx, best.IndexerID),
 	})
 	if err != nil {
-		slog.Error("SearchAndGrabBook: failed to send to downloader", "client", client.Type, "title", best.Title, "error", err)
-		if setErr := s.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {
+		slog.Error("SearchAndGrabBook: failed to send to any eligible client", "tried", tried, "title", best.Title, "error", err)
+		wrapped := fmt.Errorf("failed to send to downloader after trying %d eligible client(s) (%s): %w", len(tried), strings.Join(tried, ", "), err)
+		if setErr := s.downloads.SetError(ctx, dl.ID, wrapped.Error()); setErr != nil {
 			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
 		}
 		outcome = "send to downloader failed"
 		return
+	}
+	client := chosen
+	if client.ID != ranked[0].ID {
+		if setErr := s.downloads.SetDownloadClientID(ctx, dl.ID, client.ID); setErr != nil {
+			slog.Warn("failed to persist fallback download client", "download_id", dl.ID, "error", setErr)
+		}
 	}
 	if sendRes.RemoteID != "" {
 		if sendRes.UsesTorrentID {
