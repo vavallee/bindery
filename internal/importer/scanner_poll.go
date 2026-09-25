@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
 
 	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/downloader/deluge"
@@ -210,6 +212,18 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 		return
 	}
 
+	// Torrents are indexed by info hash, which is stable for the life of the
+	// torrent. The numeric id is not: Transmission renumbers every torrent when
+	// the daemon restarts, so an id stored at grab time either matches nothing
+	// (the download strands at "downloading" forever) or matches whichever
+	// unrelated torrent inherited the number.
+	torrentsByHash := make(map[string]transmission.Torrent, len(torrents))
+	for _, t := range torrents {
+		if hash := strings.ToLower(strings.TrimSpace(t.HashString)); hash != "" {
+			torrentsByHash[hash] = t
+		}
+	}
+
 	// Surface a misconfiguration when the Category filter returns nothing but the
 	// daemon actually holds torrents (#1091). A silent zero-match means every
 	// Bindery grab permanently sits at "downloading" with no indication of why.
@@ -226,21 +240,38 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 		slog.Warn("download poll: failed to list downloads", "client", client.Name, "error", err)
 		return
 	}
-	torrentsMap := make(map[string]transmission.Torrent)
-	for _, t := range torrents {
-		torrentsMap[fmt.Sprintf("%d", t.ID)] = t
-	}
 
 	// Track which downloads' sources we observed this cycle so stale
 	// StateImportFailed downloads (torrent removed) can be terminally blocked
 	// rather than left stuck below the retry limit (issue #706 finding 4).
 	seenSourceIDs := make(map[int64]bool)
 
+	// Every hash some download already owns. A torrent belongs to exactly one
+	// download, so legacy reconciliation may never claim one out from under a
+	// row that already names it, and two legacy rows may not both land on the
+	// same torrent.
+	claimedHashes := make(map[string]bool)
+	for _, dl := range allDownloads {
+		if dl.TorrentID == nil {
+			continue
+		}
+		if ref := strings.ToLower(strings.TrimSpace(*dl.TorrentID)); ref != "" {
+			if _, err := strconv.ParseInt(ref, 10, 64); err != nil {
+				claimedHashes[ref] = true
+			}
+		}
+	}
+
+	legacyMatches := s.reconcileLegacyTransmissionIDs(ctx, client, allDownloads, torrents, claimedHashes)
+
 	for _, dl := range allDownloads {
 		if dl.DownloadClientID == nil || *dl.DownloadClientID != client.ID || dl.TorrentID == nil {
 			continue
 		}
-		torrent, ok := torrentsMap[*dl.TorrentID]
+		torrent, ok := torrentsByHash[strings.ToLower(strings.TrimSpace(*dl.TorrentID))]
+		if !ok {
+			torrent, ok = legacyMatches[dl.ID]
+		}
 		if !ok {
 			continue
 		}
@@ -964,6 +995,159 @@ func (s *Scanner) tryImportSABnzbd(ctx context.Context, sab *sabnzbd.Client, dl 
 // directory walk.
 func (s *Scanner) tryImportTransmission(ctx context.Context, dl *models.Download, downloadPath string, explicitFiles []string) {
 	s.tryImportInternal(ctx, dl, downloadPath, "transmission", safeRemoteID(dl.TorrentID), "", nil, explicitFiles)
+}
+
+// legacyTransmissionMatchWindow is how far apart Bindery's grab timestamp and
+// Transmission's addedDate may be and still describe the same grab. The two are
+// written seconds apart in practice; the window only has to absorb clock skew
+// between Bindery and the daemon.
+const legacyTransmissionMatchWindow = 5 * time.Minute
+
+// reconcileLegacyTransmissionIDs recovers downloads grabbed before the info
+// hash was persisted — their TorrentID holds Transmission's session-scoped
+// numeric id — and backfills the hash so every later poll, import and removal
+// keys on a stable value. Same recovery shape as the qBittorrent hash backfill
+// (#939). It returns the torrent matched for each recovered download and
+// rewrites the passed-in rows so the caller sees the new identifier.
+//
+// The stored id is deliberately never used to find the torrent. Transmission
+// renumbers on restart, so that id either matches nothing or matches an
+// unrelated torrent that inherited the number, and with remove_on_import
+// enabled acting on a wrong match deletes somebody else's torrent.
+//
+// Matching runs from the torrent's side, on addedDate against each download's
+// grab time — the one other field a restart leaves untouched — and a torrent
+// is only claimed when the pairing is unambiguous:
+//
+//   - a torrent no download is within the window of is left alone;
+//   - a torrent exactly one download matches is assigned to it;
+//   - a torrent several downloads match (a batch grabbed minutes apart, which
+//     the window alone cannot separate) is assigned only if the release name
+//     picks out exactly one of them, and otherwise left for manual resolution.
+//
+// Terminal downloads are excluded outright: they will not be imported or
+// removed again, so rewriting their identifier can only ever be wrong, and
+// including them lets a long-finished row outbid the live one for a torrent.
+func (s *Scanner) reconcileLegacyTransmissionIDs(
+	ctx context.Context,
+	client *models.DownloadClient,
+	downloads []models.Download,
+	torrents []transmission.Torrent,
+	claimedHashes map[string]bool,
+) map[int64]transmission.Torrent {
+	// Index of rows still identified by a numeric id, by position, so a match
+	// can write the hash back into the caller's slice.
+	legacy := make([]int, 0, len(downloads))
+	for i := range downloads {
+		dl := &downloads[i]
+		if dl.DownloadClientID == nil || *dl.DownloadClientID != client.ID || dl.TorrentID == nil {
+			continue
+		}
+		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
+			continue
+		}
+		if _, err := strconv.ParseInt(strings.TrimSpace(*dl.TorrentID), 10, 64); err != nil {
+			continue // already a hash
+		}
+		if legacyGrabTime(dl).IsZero() {
+			continue
+		}
+		legacy = append(legacy, i)
+	}
+	if len(legacy) == 0 {
+		return nil
+	}
+
+	matches := make(map[int64]transmission.Torrent)
+	assigned := make(map[int64]bool) // download IDs already matched this pass
+	for _, t := range torrents {
+		hash := strings.ToLower(strings.TrimSpace(t.HashString))
+		if t.AddedDate == 0 || hash == "" || claimedHashes[hash] {
+			continue
+		}
+		addedAt := time.Unix(t.AddedDate, 0)
+
+		var inWindow []int
+		for _, i := range legacy {
+			if assigned[downloads[i].ID] {
+				continue
+			}
+			delta := addedAt.Sub(legacyGrabTime(&downloads[i]))
+			if delta < 0 {
+				delta = -delta
+			}
+			if delta <= legacyTransmissionMatchWindow {
+				inWindow = append(inWindow, i)
+			}
+		}
+		if len(inWindow) > 1 {
+			var named []int
+			for _, i := range inWindow {
+				if releaseNamesMatch(t.Name, downloads[i].Title) {
+					named = append(named, i)
+				}
+			}
+			if len(named) != 1 {
+				slog.Warn("transmission: several downloads were grabbed at this torrent's added time and none is a clear name match — leaving them for manual resolution rather than guessing",
+					"torrent", t.Name, "hash", hash, "candidates", len(inWindow))
+				continue
+			}
+			inWindow = named
+		}
+		if len(inWindow) != 1 {
+			continue
+		}
+
+		dl := &downloads[inWindow[0]]
+		slog.Info("transmission: recovered a download stranded by a renumbered torrent id; backfilling its info hash",
+			"title", dl.Title, "stale_torrent_id", *dl.TorrentID, "current_torrent_id", t.ID, "hash", hash)
+		if err := s.downloads.SetTorrentID(ctx, dl.ID, hash); err != nil {
+			slog.Warn("transmission: failed to backfill info hash", "download_id", dl.ID, "error", err)
+			continue
+		}
+		h := hash
+		dl.TorrentID = &h
+		claimedHashes[hash] = true
+		assigned[dl.ID] = true
+		matches[dl.ID] = t
+	}
+	return matches
+}
+
+// legacyGrabTime is when Bindery handed the release to the client: grabbed_at
+// when it was stamped, the row's creation time otherwise.
+func legacyGrabTime(dl *models.Download) time.Time {
+	if dl.GrabbedAt != nil {
+		return *dl.GrabbedAt
+	}
+	return dl.AddedAt
+}
+
+// releaseNamesMatch compares a torrent name with a download title tolerantly.
+// Trackers routinely hand back URL-ish names where the spaces became '+', '_'
+// or '.', so "The+Lantern+Makers+Daughter+EPUB" and "The Lantern Makers
+// Daughter EPUB" are the same release and a strict compare would reject the
+// match.
+func releaseNamesMatch(torrentName, title string) bool {
+	a := normaliseReleaseName(torrentName)
+	return a != "" && a == normaliseReleaseName(title)
+}
+
+func normaliseReleaseName(s string) string {
+	var b strings.Builder
+	pendingSpace := false
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		if r == '+' || r == '_' || r == '.' || unicode.IsSpace(r) {
+			pendingSpace = b.Len() > 0
+			continue
+		}
+		if pendingSpace {
+			b.WriteRune(' ')
+			pendingSpace = false
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // tryImportQbittorrent attempts to import a completed qBittorrent download. See
