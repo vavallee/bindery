@@ -62,13 +62,20 @@ var errAlreadyGrabbed = errors.New("already grabbed")
 // The state alone never makes an imported row re-grabbable. The one imported
 // row that is, an import whose book has since been deleted, depends on more
 // than the state and is decided by orphanedImport (#2289).
+//
+// The predicate itself is models.DownloadState.IsDeadForRegrab, shared with
+// the scheduler's auto grab since #2710.
 func regrabbableState(s models.DownloadState) bool {
-	return s == models.StateFailed || s == models.StateImportBlocked
+	return s.IsDeadForRegrab()
 }
 
 // regrabbable is the gate grab applies to an existing download row for the
 // same GUID: the row may be reused when its state is dead (regrabbableState)
 // or when it is an orphaned import (orphanedImport).
+//
+// It is models.Download.BlocksRegrab negated, which is what the scheduler's
+// auto grab gates on; the two are spelled out separately here only because
+// each half carries the reasoning for its own case.
 func regrabbable(d *models.Download) bool {
 	return regrabbableState(d.Status) || orphanedImport(d)
 }
@@ -100,7 +107,7 @@ func regrabbable(d *models.Download) bool {
 //
 // The predicate itself is models.Download.IsOrphanedImport, shared with the
 // scheduler's auto grab. Keep it in sync with the SQL guards in
-// db.DownloadRepo.RetryFailed and RetryOrphanedImport.
+// db.DownloadRepo.RetryFailed and RetryDeadForAutoGrab.
 func orphanedImport(d *models.Download) bool {
 	return d.IsOrphanedImport()
 }

@@ -111,6 +111,16 @@ Clicking **Grab** on a release you already have a Queue entry for is refused wit
 - **downloading / grabbed / importing** — it's in flight; check the Queue.
 - **`importBlocked`** — a re-grab is allowed and reuses the existing Queue row with a fresh retry budget. Use this when the original files are gone; use **Retry import** instead when they're still on disk.
 
+### Automatic search skips a release you have a failed Queue row for
+
+Automatic search applies a narrower rule than the Grab button. A Queue row stops the sweep from grabbing that release again when it is in flight, when it is imported into a book you still have, or when it is `importBlocked`. A `failed` row does not: six hours after it failed, the next sweep grabs the release again and reuses the same Queue row, with the old error message, import path and client id cleared.
+
+The six hour wait counts from the failure itself, not from when the download was added or started. A torrent grabbed at noon that your client gives up on at ten in the evening is retried from ten in the evening. The wait is there because a release that fails at the download client usually fails again the moment it is re-sent, and nothing blocklists it automatically, so without the wait a bad release would be re-grabbed on every sweep. Clicking **Grab** yourself has no wait and retries straight away.
+
+`importBlocked` is deliberately left to you. Those files downloaded fine and are still on disk; what failed was the import. The sweep cannot tell whether they are still there, and re-downloading them would fetch bytes you already have and leave the old torrent in your client with nothing tracking it, so a blocked row is only ever re-grabbed when you ask for it. Use **Retry import** if the files are still in place, and **Grab** if they are gone.
+
+Earlier releases let a failed row block the release permanently, and the skip was silent: the log showed `auto-grabbing book` and then nothing, as though the grab had gone ahead. Every skip now writes a line naming the release, its GUID, the blocking Queue row and its status, and the `book search finished` line for that book ends with an `outcome` that says the same thing.
+
 ### "Could not match any book to this download"
 
 The files downloaded fine, but Bindery couldn't tie them to a book in your library, so the item sits in the Queue as `importFailed` with *could not match any book to this download*. This happens when a release was grabbed without a specific book (e.g. from the free-text Search page) or its title didn't parse to a catalogue book.
