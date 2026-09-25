@@ -16,7 +16,7 @@ COPY internal/textutil/testdata/ /app/internal/textutil/testdata/
 RUN npm run build
 
 # Stage 2: Build Go binary (native on BUILDPLATFORM, cross-compile to TARGETOS/TARGETARCH)
-FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine@sha256:4cb7ac979db5fcc41cae44b2227ba5ab8a51e8807f40d9ba4dee20a0ad960b5b AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
