@@ -29,7 +29,7 @@ import (
 // trip api.LiveStatusIsError's "error" substring match on a download that has
 // nothing wrong with it. This matches the two sibling call sites:
 // importer.checkRtorrentDownloads (`!t.Complete && msg != ""`) and
-// GetStalledIDs (`t.Message != "" && !t.Complete`).
+// GetStalledTorrents (`t.Message != "" && !t.Complete`).
 func RtorrentStatus(t rtorrent.Torrent) string {
 	if msg := strings.TrimSpace(t.Message); msg != "" && !t.Complete {
 		return "error: " + msg

@@ -16,6 +16,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -503,7 +504,7 @@ func TestHandleStalledDownload_NoHistoryRepo(t *testing.T) {
 		blocklist: blocklistRepo,
 		settings:  db.NewSettingsRepo(database),
 	}
-	s.handleStalledDownload(ctx, dl, nil)
+	s.handleStalledDownload(ctx, dl, nil, downloader.StallClientReported)
 
 	got, _ := downloadsRepo.GetByGUID(ctx, "g-nb")
 	if got.Status != models.DownloadStatusFailed {
@@ -538,7 +539,7 @@ func TestHandleStalledDownload_NilBlocklistRepo(t *testing.T) {
 		downloads: downloadsRepo,
 		settings:  db.NewSettingsRepo(database),
 	}
-	s.handleStalledDownload(ctx, dl, nil)
+	s.handleStalledDownload(ctx, dl, nil, downloader.StallClientReported)
 }
 
 // TestCheckStalledDownloads_RemovalFailureStillRecovers pins the fallback in

@@ -8,6 +8,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -272,7 +273,7 @@ func TestCheckStalledDownloads_OldEnough_ReachesClientLookup(t *testing.T) {
 	clients := db.NewDownloadClientRepo(database)
 
 	// Create a disabled client so GetByID returns, but the !client.Enabled
-	// guard skips the network call to GetStalledIDs.
+	// guard skips the network call to GetStalledTorrents.
 	client := &models.DownloadClient{
 		Name: "test-qb", Type: "qbittorrent", Host: "localhost", Port: 8080,
 		Enabled: false,
@@ -340,7 +341,7 @@ func TestHandleStalledDownload_NoBookID(t *testing.T) {
 		history:   db.NewHistoryRepo(database),
 	}
 	// BookID is nil → handler sets error, records history, skips re-search.
-	s.handleStalledDownload(ctx, dl, nil)
+	s.handleStalledDownload(ctx, dl, nil, downloader.StallClientReported)
 
 	// Confirm the download was marked failed.
 	got, err := downloads.GetByGUID(ctx, "orphan-guid")
@@ -400,7 +401,7 @@ func TestHandleStalledDownload_AutoGrabDisabled(t *testing.T) {
 		books:     books,
 		settings:  settings,
 	}
-	s.handleStalledDownload(ctx, dl, nil)
+	s.handleStalledDownload(ctx, dl, nil, downloader.StallClientReported)
 
 	// Download should be marked with an error and book lookup path executed,
 	// then the autoGrab=false early-return should have prevented the re-search.
@@ -438,7 +439,7 @@ func TestHandleStalledDownload_NilHistoryAndBlocklist(t *testing.T) {
 		downloads: downloads,
 		// history nil, blocklist nil, books nil, settings nil.
 	}
-	s.handleStalledDownload(ctx, dl, nil) // must not panic; BookID nil → returns after SetError
+	s.handleStalledDownload(ctx, dl, nil, downloader.StallClientReported) // must not panic; BookID nil → returns after SetError
 }
 
 // TestRefreshMetadata_CalibreAggregatorNotCalled is a sanity check that the

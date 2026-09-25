@@ -105,7 +105,7 @@ Registered by `internal/scheduler`. Every job runs under `SkipIfStillRunning`, s
 | Job | Interval | What it does |
 |-----|----------|--------------|
 | `check-downloads` | 15s | Polls download clients and imports finished jobs. |
-| `check-stalled` | 5m | Fails, blocklists and re-searches downloads stuck past the stall timeout. |
+| `check-stalled` | 5m | Fails and re-searches downloads stuck past the stall timeout (`stall.timeout_minutes`, default 120). Stuck means either the client's own per torrent signal (qBittorrent stalledDL, a Transmission errorString, Deluge Error, an rTorrent message), which also blocklists the release, or a torrent the client accepted and never resolved the metadata for: no files, no size, no progress ([#2709](https://github.com/vavallee/bindery/issues/2709)). The second kind does **not** blocklist, because it is as much a property of the network as of the release and the blocklist has no expiry. It is also only applied past the timeout, because a healthy magnet looks the same while it resolves, and it is skipped entirely for a client where more than half the unfinished torrents look that way, which is a connectivity fault rather than a run of bad releases. |
 | `download-client-health` | 15m | Re-probes download client reachability and paths. |
 | `search-wanted` | `search.interval`, default 12h, read at startup | Searches indexers for wanted books and auto-grabs when enabled. |
 | `refresh-metadata` | 24h | Refreshes four profile fields on monitored authors. Creates no books. |

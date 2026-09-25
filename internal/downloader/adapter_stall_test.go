@@ -10,10 +10,10 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// TestGetStalledIDs_QBittorrent_StalledDL verifies that qBittorrent torrents
+// TestGetStalledTorrents_QBittorrent_StalledDL verifies that qBittorrent torrents
 // in the stalledDL state are reported as stalled and that their hashes are
 // lower-cased in the returned map.
-func TestGetStalledIDs_QBittorrent_StalledDL(t *testing.T) {
+func TestGetStalledTorrents_QBittorrent_StalledDL(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v2/auth/login":
@@ -36,30 +36,30 @@ func TestGetStalledIDs_QBittorrent_StalledDL(t *testing.T) {
 		Username: "u", Password: "p",
 	}
 
-	stalled, usesTorrentID, err := GetStalledIDs(context.Background(), client)
+	report, err := GetStalledTorrents(context.Background(), client)
 	if err != nil {
-		t.Fatalf("GetStalledIDs: %v", err)
+		t.Fatalf("GetStalledTorrents: %v", err)
 	}
-	if !usesTorrentID {
-		t.Fatal("expected usesTorrentID=true for qbittorrent")
+	if !report.UsesTorrentID {
+		t.Fatal("expected UsesTorrentID=true for qbittorrent")
 	}
-	if len(stalled) != 2 {
-		t.Fatalf("expected 2 stalled entries, got %d: %v", len(stalled), stalled)
+	if len(report.ClientReported) != 2 {
+		t.Fatalf("expected 2 stalled entries, got %d: %v", len(report.ClientReported), report.ClientReported)
 	}
-	if !stalled["abcdef"] {
+	if !report.ClientReported["abcdef"] {
 		t.Error("expected 'abcdef' (lower-cased) to be stalled")
 	}
-	if !stalled["ffffff"] {
+	if !report.ClientReported["ffffff"] {
 		t.Error("expected case-insensitive match for 'StalledDL'")
 	}
-	if stalled["123abc"] {
+	if report.ClientReported["123abc"] {
 		t.Error("non-stalled torrent incorrectly flagged")
 	}
 }
 
-// TestGetStalledIDs_QBittorrent_EmptyList verifies a well-formed response
+// TestGetStalledTorrents_QBittorrent_EmptyList verifies a well-formed response
 // with no torrents returns an empty (non-nil) map.
-func TestGetStalledIDs_QBittorrent_EmptyList(t *testing.T) {
+func TestGetStalledTorrents_QBittorrent_EmptyList(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v2/auth/login":
@@ -76,19 +76,24 @@ func TestGetStalledIDs_QBittorrent_EmptyList(t *testing.T) {
 		Username: "u", Password: "p",
 	}
 
-	stalled, _, err := GetStalledIDs(context.Background(), client)
+	report, err := GetStalledTorrents(context.Background(), client)
 	if err != nil {
-		t.Fatalf("GetStalledIDs: %v", err)
+		t.Fatalf("GetStalledTorrents: %v", err)
 	}
-	if len(stalled) != 0 {
-		t.Errorf("expected empty map, got %v", stalled)
+	if len(report.ClientReported)+len(report.NoMetadata) != 0 {
+		t.Errorf("expected an empty report, got %+v", report)
 	}
 }
 
-// TestGetStalledIDs_Transmission_StoppedWithError verifies that Transmission
+// TestGetStalledTorrents_Transmission_StoppedWithError verifies that Transmission
 // torrents in status 0 (stopped) with a non-empty errorString are reported
 // as stalled, while other states are not.
-func TestGetStalledIDs_Transmission_StoppedWithError(t *testing.T) {
+//
+// Every torrent in the fixture carries a totalSize, which is what a torrent
+// whose metadata has arrived looks like. Without it they would all also match
+// the no-metadata rule (#2709) and the test would be asserting two things at
+// once; the no-metadata rule has its own test below.
+func TestGetStalledTorrents_Transmission_StoppedWithError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/transmission/rpc" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
@@ -96,10 +101,10 @@ func TestGetStalledIDs_Transmission_StoppedWithError(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"arguments": map[string]any{
 				"torrents": []map[string]any{
-					{"id": 1, "status": 0, "errorString": "tracker error"},
-					{"id": 2, "status": 0, "errorString": ""},
-					{"id": 3, "status": 2, "errorString": "some error"},
-					{"id": 4, "status": 0, "errorString": "   "},
+					{"id": 1, "status": 0, "errorString": "tracker error", "totalSize": 4096, "percentDone": 0.5, "metadataPercentComplete": 1},
+					{"id": 2, "status": 0, "errorString": "", "totalSize": 4096, "percentDone": 0.5, "metadataPercentComplete": 1},
+					{"id": 3, "status": 2, "errorString": "some error", "totalSize": 4096, "percentDone": 0.5, "metadataPercentComplete": 1},
+					{"id": 4, "status": 0, "errorString": "   ", "totalSize": 4096, "percentDone": 0.5, "metadataPercentComplete": 1},
 				},
 			},
 			"result": "success",
@@ -110,39 +115,42 @@ func TestGetStalledIDs_Transmission_StoppedWithError(t *testing.T) {
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{Type: "transmission", Host: host, Port: port}
 
-	stalled, usesTorrentID, err := GetStalledIDs(context.Background(), client)
+	report, err := GetStalledTorrents(context.Background(), client)
 	if err != nil {
-		t.Fatalf("GetStalledIDs: %v", err)
+		t.Fatalf("GetStalledTorrents: %v", err)
 	}
-	if !usesTorrentID {
-		t.Fatal("expected usesTorrentID=true for transmission")
+	if !report.UsesTorrentID {
+		t.Fatal("expected UsesTorrentID=true for transmission")
 	}
-	if len(stalled) != 1 {
-		t.Fatalf("expected 1 stalled entry, got %d: %v", len(stalled), stalled)
+	if len(report.ClientReported) != 1 {
+		t.Fatalf("expected 1 stalled entry, got %d: %v", len(report.ClientReported), report.ClientReported)
 	}
-	if !stalled["1"] {
+	if !report.ClientReported["1"] {
 		t.Error("expected transmission id '1' to be stalled")
 	}
+	if len(report.NoMetadata) != 0 {
+		t.Errorf("no torrent here is missing metadata, got %v", report.NoMetadata)
+	}
 }
 
-// TestGetStalledIDs_Sabnzbd_NotSupported verifies SABnzbd returns nil map
+// TestGetStalledTorrents_Sabnzbd_NotSupported verifies SABnzbd returns nil map
 // with no error — the caller treats this as "nothing stalled".
-func TestGetStalledIDs_Sabnzbd_NotSupported(t *testing.T) {
+func TestGetStalledTorrents_Sabnzbd_NotSupported(t *testing.T) {
 	client := &models.DownloadClient{Type: "sabnzbd", Host: "localhost", Port: 1, APIKey: "k"}
-	stalled, usesTorrentID, err := GetStalledIDs(context.Background(), client)
+	report, err := GetStalledTorrents(context.Background(), client)
 	if err != nil {
-		t.Fatalf("GetStalledIDs sabnzbd: %v", err)
+		t.Fatalf("GetStalledTorrents sabnzbd: %v", err)
 	}
-	if usesTorrentID {
-		t.Error("expected usesTorrentID=false for sabnzbd")
+	if report.UsesTorrentID {
+		t.Error("expected UsesTorrentID=false for sabnzbd")
 	}
-	if stalled != nil {
-		t.Errorf("expected nil map for sabnzbd, got %v", stalled)
+	if len(report.ClientReported) != 0 || len(report.NoMetadata) != 0 {
+		t.Errorf("expected an empty report for sabnzbd, got %+v", report)
 	}
 }
 
-// TestGetStalledIDs_QBittorrent_ServerError surfaces the transport error.
-func TestGetStalledIDs_QBittorrent_ServerError(t *testing.T) {
+// TestGetStalledTorrents_QBittorrent_ServerError surfaces the transport error.
+func TestGetStalledTorrents_QBittorrent_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v2/auth/login":
@@ -158,7 +166,7 @@ func TestGetStalledIDs_QBittorrent_ServerError(t *testing.T) {
 		Type: "qbittorrent", Host: host, Port: port,
 		Username: "u", Password: "p",
 	}
-	if _, _, err := GetStalledIDs(context.Background(), client); err == nil {
+	if _, err := GetStalledTorrents(context.Background(), client); err == nil {
 		t.Fatal("expected error from 500 response, got nil")
 	}
 }

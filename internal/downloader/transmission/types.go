@@ -11,14 +11,25 @@ type Torrent struct {
 	// Status is the Transmission RPC status enum (stable since 2.40):
 	//   0=stopped 1=queued-to-check 2=checking
 	//   3=queued-to-download 4=downloading 5=queued-to-seed 6=seeding
-	Status       int      `json:"status"`
-	ErrorString  string   `json:"errorString"`
-	DownloadRate int64    `json:"rateDownload"`
-	UploadRate   int64    `json:"rateUpload"`
-	ETA          int64    `json:"eta"`
-	PercentDone  float64  `json:"percentDone"`
-	DownloadDir  string   `json:"downloadDir"`
-	Labels       []string `json:"labels"`
+	Status       int     `json:"status"`
+	ErrorString  string  `json:"errorString"`
+	DownloadRate int64   `json:"rateDownload"`
+	UploadRate   int64   `json:"rateUpload"`
+	ETA          int64   `json:"eta"`
+	PercentDone  float64 `json:"percentDone"`
+	// MetadataPercentComplete is how much of the torrent's metadata
+	// Transmission holds, from 0 to 1. A magnet sits at 0 until a peer serves
+	// it the torrent file; a real .torrent is 1 from the start. Reported since
+	// RPC version 14 (Transmission 2.80); an older daemon simply omits it and
+	// it decodes as 0.
+	MetadataPercentComplete float64 `json:"metadataPercentComplete"`
+	// PeersConnected is the number of peers Transmission currently has a
+	// connection to. Bindery only reports it, never decides on it: a magnet
+	// with peers that will not serve its metadata is just as dead as one with
+	// no peers at all.
+	PeersConnected int      `json:"peersConnected"`
+	DownloadDir    string   `json:"downloadDir"`
+	Labels         []string `json:"labels"`
 }
 
 // TorrentAddResponse is returned when adding a torrent.

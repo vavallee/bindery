@@ -131,30 +131,30 @@ func TestGetLiveStatuses_Rtorrent(t *testing.T) {
 	}
 }
 
-func TestGetStalledIDs_Rtorrent(t *testing.T) {
+func TestGetStalledTorrents_Rtorrent(t *testing.T) {
 	t.Run("errored torrent is stalled", func(t *testing.T) {
 		stub := newRtorrentStub(t, "0", "Tracker: unregistered torrent")
-		ids, usesTorrentID, err := GetStalledIDs(context.Background(), stub.client(t, 102))
+		report, err := GetStalledTorrents(context.Background(), stub.client(t, 102))
 		if err != nil {
-			t.Fatalf("GetStalledIDs: %v", err)
+			t.Fatalf("GetStalledTorrents: %v", err)
 		}
-		if !usesTorrentID {
+		if !report.UsesTorrentID {
 			t.Fatal("expected hash keys")
 		}
-		if !ids[rtorrentTestHash] {
-			t.Fatalf("expected the errored torrent to be stalled, got %v", ids)
+		if !report.ClientReported[rtorrentTestHash] {
+			t.Fatalf("expected the errored torrent to be stalled, got %v", report.ClientReported)
 		}
 	})
 
 	t.Run("a message on a complete torrent is not a stall", func(t *testing.T) {
 		// Tracker chatter on a seeding torrent says nothing about its files.
 		stub := newRtorrentStub(t, "1", "Tracker: unregistered torrent")
-		ids, _, err := GetStalledIDs(context.Background(), stub.client(t, 103))
+		report, err := GetStalledTorrents(context.Background(), stub.client(t, 103))
 		if err != nil {
-			t.Fatalf("GetStalledIDs: %v", err)
+			t.Fatalf("GetStalledTorrents: %v", err)
 		}
-		if len(ids) != 0 {
-			t.Fatalf("expected no stalls, got %v", ids)
+		if len(report.ClientReported)+len(report.NoMetadata) != 0 {
+			t.Fatalf("expected no stalls, got %+v", report)
 		}
 	})
 }
@@ -331,7 +331,7 @@ func TestRtorrentStatus(t *testing.T) {
 		// rTorrent parks routine tracker chatter there on healthy, fully
 		// downloaded torrents, and treating that as an error painted a seeding
 		// row red and tripped LiveStatusIsError's "error" substring match. The
-		// importer's poller and GetStalledIDs both already qualify on
+		// importer's poller and GetStalledTorrents both already qualify on
 		// !Complete; this is the third call site agreeing with them.
 		"complete with tracker chatter": {
 			rtorrent.Torrent{Complete: true, IsActive: true, Message: "Tracker: [Failure reason \"Torrent not registered with this tracker\"]"},
