@@ -33,11 +33,12 @@ const ApiKeysTab = lazy(() => import('./settings/ApiKeysTab'))
 const ImportTab = lazy(() => import('./settings/ImportTab'))
 const BlocklistTab = lazy(() => import('./settings/BlocklistTab'))
 const LogsTab = lazy(() => import('./settings/LogsTab'))
+const AdvancedTab = lazy(() => import('./settings/AdvancedTab'))
 const AboutTab = lazy(() => import('./settings/AboutTab'))
 
-type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'grimmory' | 'api-keys' | 'about'
+type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'grimmory' | 'api-keys' | 'advanced' | 'about'
 
-const ADMIN_TABS: Tab[] = ['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'grimmory', 'api-keys']
+const ADMIN_TABS: Tab[] = ['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'grimmory', 'api-keys', 'advanced']
 
 // 'general' and 'about' are visible to every authenticated user — About is where
 // the in-app update message and bug_report.yml ("check Settings → About") point
@@ -156,6 +157,7 @@ export default function SettingsPage() {
       case 'blocklist': return <BlocklistTab />
       case 'logs': return <LogsTab />
       case 'api-keys': return <ApiKeysTab />
+      case 'advanced': return <AdvancedTab />
       case 'about': return <AboutTab />
     }
   }
@@ -224,6 +226,9 @@ export default function SettingsPage() {
                 <SettingsNavLink tab="import" active={tab} onSelect={setTab} label={t('settings.tabs.import')} />
                 <SettingsNavLink tab="blocklist" active={tab} onSelect={setTab} label={t('settings.tabs.blocklist')} />
                 <SettingsNavLink tab="logs" active={tab} onSelect={setTab} label={t('settings.tabs.logs')} />
+                {/* Advanced is last on purpose: it is the escape hatch for the
+                    rare keys, not a place to start (#2311). */}
+                <SettingsNavLink tab="advanced" active={tab} onSelect={setTab} label={t('settings.tabs.advanced', 'Advanced')} />
               </div>
             </>
           )}
