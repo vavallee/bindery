@@ -426,7 +426,9 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 				}
 			} else {
 				bookInserted = true
-				h.hydrateHardcoverEditions(ctx, primary, nil)
+				// An explicit request format is a pin; a provider- or
+				// default-derived one is not (see addBookParams.MediaType above).
+				h.hydrateHardcoverEditions(ctx, primary, nil, req.MediaType != "")
 				// Same post-create work every other creation path does
 				// (recommendations.go, series.go): check the library for a
 				// file we already have and link the book into its series.

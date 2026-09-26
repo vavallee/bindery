@@ -137,6 +137,61 @@ func TestRebind_HydratesHardcoverEditions(t *testing.T) {
 	}
 }
 
+// TestRebind_KeepsAPinnedMediaType is the #2768 regression for the rebind path.
+// Rebind preserves media_type as a user-managed field, so hydration must not
+// widen an ebook the user chose to "both" just because the new record lists an
+// audio edition. Before the fix this handler never forwarded the pin, so the
+// row came back "both" carrying the audiobook's ASIN — the exact shape #1732
+// and #1802 were filed about.
+func TestRebind_KeepsAPinnedMediaType(t *testing.T) {
+	h, books, _, _, author, book, ctx := rebindFixture(t)
+	book.MediaType = models.MediaTypeEbook
+	if err := books.Update(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	audioASIN := "B2768REBIND"
+	h.WithMetaLookup(&stubLookup{book: &models.Book{
+		Title:  "Correct Book",
+		Author: &models.Author{ForeignID: author.ForeignID, Name: author.Name},
+	}})
+	h.WithEditionFetcher(func(context.Context, string) ([]models.Edition, error) {
+		return []models.Edition{{
+			ForeignID: "hc:correct-audio",
+			Title:     "Correct Book",
+			ASIN:      &audioASIN,
+			Format:    "Audiobook",
+			Monitored: true,
+		}}, nil
+	})
+
+	rec := httptest.NewRecorder()
+	h.Rebind(rec, rebindRequest(book.ID, map[string]any{
+		"provider": "hardcover", "foreign_id": "123",
+	}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	updated, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.MediaType != models.MediaTypeEbook {
+		t.Fatalf("MediaType = %q, want ebook (a rebind must not widen the user's format)", updated.MediaType)
+	}
+	if updated.ASIN != "" {
+		t.Fatalf("ASIN = %q, want empty on an ebook-pinned book", updated.ASIN)
+	}
+	// Hydration still ran, so the media type holding is the pin and not a
+	// skipped hydration.
+	editions, err := h.editions.ListByBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(editions) != 1 || editions[0].ForeignID != "hc:correct-audio" {
+		t.Fatalf("expected hydrated edition, got %+v", editions)
+	}
+}
+
 func TestRebind_BookNotFound(t *testing.T) {
 	h, _, _, _, _, _, _ := rebindFixture(t)
 	h.WithMetaLookup(&stubLookup{book: &models.Book{Title: "X"}})

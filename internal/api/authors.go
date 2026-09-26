@@ -286,15 +286,22 @@ func (c *editionPrefetch) wrap(target editionTarget, live bookhydrate.EditionFet
 	}
 }
 
-func (h *AuthorHandler) hydrateHardcoverEditions(ctx context.Context, book *models.Book, cache *editionPrefetch) {
-	h.hydrateHardcoverEditionsFrom(ctx, book, "", cache)
+// hydrateHardcoverEditions and hydrateMatchedHardcoverEditions fill a book's
+// editions from Hardcover. mediaTypePinned forwards the caller's "this format
+// was chosen, not guessed" signal so hydration leaves the media type alone
+// (#2768). The created-books sync passes false (the format is the provider's or
+// default.media_type, the same kind of guess a series fill makes when its
+// request names none); the paths that hydrate an existing library row, or a row
+// an explicit add named a format for, pass true.
+func (h *AuthorHandler) hydrateHardcoverEditions(ctx context.Context, book *models.Book, cache *editionPrefetch, mediaTypePinned bool) {
+	h.hydrateHardcoverEditionsFrom(ctx, book, "", cache, mediaTypePinned)
 }
 
-func (h *AuthorHandler) hydrateMatchedHardcoverEditions(ctx context.Context, book *models.Book, hardcoverForeignID string, cache *editionPrefetch) {
-	h.hydrateHardcoverEditionsFrom(ctx, book, hardcoverForeignID, cache)
+func (h *AuthorHandler) hydrateMatchedHardcoverEditions(ctx context.Context, book *models.Book, hardcoverForeignID string, cache *editionPrefetch, mediaTypePinned bool) {
+	h.hydrateHardcoverEditionsFrom(ctx, book, hardcoverForeignID, cache, mediaTypePinned)
 }
 
-func (h *AuthorHandler) hydrateHardcoverEditionsFrom(ctx context.Context, book *models.Book, hardcoverForeignID string, cache *editionPrefetch) {
+func (h *AuthorHandler) hydrateHardcoverEditionsFrom(ctx context.Context, book *models.Book, hardcoverForeignID string, cache *editionPrefetch, mediaTypePinned bool) {
 	target, ok := h.resolveEditionTarget(ctx, book, hardcoverForeignID)
 	if !ok {
 		return
@@ -321,6 +328,7 @@ func (h *AuthorHandler) hydrateHardcoverEditionsFrom(ctx context.Context, book *
 		Books:             h.books,
 		FetchEditions:     cache.wrap(target, fetcher),
 		Enricher:          h.meta,
+		MediaTypePinned:   mediaTypePinned,
 	})
 }
 
@@ -2508,7 +2516,9 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 			// may not after either side edits one (#1705).
 			h.recordBookIdentities(ctx, existing, b.ForeignID, b.HardcoverForeignID)
 			if hydrateExistingFromMatchedHardcover {
-				h.hydrateMatchedHardcoverEditions(ctx, existing, b.HardcoverForeignID, nil)
+				// The row is already in the library, so its format belongs to
+				// the user and hydration must not widen it (#2768).
+				h.hydrateMatchedHardcoverEditions(ctx, existing, b.HardcoverForeignID, nil, true)
 			}
 			// Same treatment as the id-resolved branch, for the row this run
 			// recognised by title instead: a calibre stub just upgraded to a
@@ -2630,8 +2640,10 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		b := createdBooks[i]
 		// Order within a book is unchanged: hydration can widen MediaType and
 		// promote an ASIN, and the on-disk lookup below matches on media type,
-		// so it has to see the hydrated value.
-		h.hydrateHardcoverEditions(ctx, &b, editionCache)
+		// so it has to see the hydrated value. The format here is the
+		// provider's or default.media_type, not a caller's choice, so the
+		// widening stays available (#2768).
+		h.hydrateHardcoverEditions(ctx, &b, editionCache, false)
 
 		if fileFound := handleNewWantedBook(ctx, h.books, h.series, finder, b, author.Name); fileFound {
 			continue // don't auto-search for a book we already have
@@ -3367,7 +3379,9 @@ func (h *AuthorHandler) adoptDirectInsertMatch(ctx context.Context, match, prima
 			"foreignBookId", foreignID, "bookId", match.ID, "error", err)
 		return
 	}
-	h.hydrateHardcoverEditions(ctx, match, nil)
+	// The matched row is already in the library, so its format belongs to the
+	// user and hydration must not widen it (#2768).
+	h.hydrateHardcoverEditions(ctx, match, nil, true)
 }
 
 func canUpgradeToBoth(existingMediaType, incomingMediaType string) bool {

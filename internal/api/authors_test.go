@@ -5246,6 +5246,120 @@ func TestAddBook_DirectInsertHydratesMatchedHardcoverEditions(t *testing.T) {
 	}
 }
 
+// TestAddBook_MediaTypePinIsForwardedToHydration is the #2768 regression for
+// the add path. The direct insert forwards an explicit request format to
+// hydration as a pin, so an "ebook" the user named stays ebook even though the
+// work has an audio edition; a format the provider supplied (no request value)
+// is still a guess and hydration may widen it to "both" — the behaviour #1732
+// and #1802 added the pin to keep for unpinned rows.
+func TestAddBook_MediaTypePinIsForwardedToHydration(t *testing.T) {
+	cases := []struct {
+		name        string
+		requestType string
+		want        string
+		wantASIN    string
+	}{
+		{
+			name:        "explicit ebook is pinned",
+			requestType: models.MediaTypeEbook,
+			want:        models.MediaTypeEbook,
+		},
+		{
+			name:     "provider ebook with no request value still widens",
+			want:     models.MediaTypeBoth,
+			wantASIN: "B2768DIRECT",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			database, err := db.OpenMemory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			database.SetMaxOpenConns(1)
+
+			authorRepo := db.NewAuthorRepo(database)
+			bookRepo := db.NewBookRepo(database)
+			editionRepo := db.NewEditionRepo(database)
+			settingsRepo := db.NewSettingsRepo(database)
+			profileRepo := db.NewMetadataProfileRepo(database)
+			ctx := context.Background()
+			enableHardcoverFeatureForTest(t, ctx, settingsRepo)
+
+			primaryBook := &models.Book{
+				ForeignID:          "OL-PIN-W",
+				Title:              "Pinned Book",
+				SortTitle:          "Pinned Book",
+				Language:           "eng",
+				Status:             models.BookStatusWanted,
+				Genres:             []string{},
+				MetadataProvider:   "openlibrary",
+				MediaType:          models.MediaTypeEbook,
+				HardcoverForeignID: "hc:pinned-book",
+			}
+			primary := &stubMetaProvider{
+				name: "openlibrary",
+				getBookByID: map[string]*models.Book{
+					"OL-PIN-W": primaryBook,
+				},
+			}
+			audioASIN := "B2768DIRECT"
+			hardcover := &stubMetaProvider{
+				name: "hardcover",
+				editionsByBook: map[string][]models.Edition{
+					"hc:pinned-book": {{
+						ForeignID: "hc:pinned-book-audio",
+						Title:     "Pinned Book",
+						ASIN:      &audioASIN,
+						Format:    "Audiobook",
+						Monitored: true,
+					}},
+				},
+			}
+			agg := metadata.NewAggregator(primary, hardcover).WithAudnexClient(nil)
+			h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil).
+				WithHardcoverFeatureSettings(settingsRepo, true).
+				WithEditionHydration(editionRepo)
+
+			body := map[string]any{
+				"foreignBookId":   "OL-PIN-W",
+				"foreignAuthorId": "OL2768A",
+				"authorName":      "Pin Author",
+			}
+			if tc.requestType != "" {
+				body["mediaType"] = tc.requestType
+			}
+			raw, _ := json.Marshal(body)
+			rec := httptest.NewRecorder()
+			h.AddBook(rec, httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(raw)))
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+			}
+
+			got, err := bookRepo.GetByForeignID(ctx, "OL-PIN-W")
+			if err != nil || got == nil {
+				t.Fatalf("book not persisted: err=%v got=%v", err, got)
+			}
+			if got.MediaType != tc.want {
+				t.Fatalf("MediaType = %q, want %q", got.MediaType, tc.want)
+			}
+			if got.ASIN != tc.wantASIN {
+				t.Fatalf("ASIN = %q, want %q", got.ASIN, tc.wantASIN)
+			}
+			// Hydration still ran in both cases, so the media type holding is
+			// the pin and not a skipped hydration.
+			editions, err := editionRepo.ListByBook(ctx, got.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(editions) != 1 || editions[0].ForeignID != "hc:pinned-book-audio" {
+				t.Fatalf("expected hydrated edition, got %+v", editions)
+			}
+		})
+	}
+}
+
 // TestCanUpgradeToBoth validates the helper that decides whether two
 // complementary media types should be merged into a dual-format row.
 func TestCanUpgradeToBoth(t *testing.T) {

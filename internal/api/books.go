@@ -127,7 +127,10 @@ func (h *BookHandler) WithEditionFetcher(fetcher bookhydrate.EditionFetcher) *Bo
 	return h
 }
 
-func (h *BookHandler) hydrateHardcoverEditions(ctx context.Context, book *models.Book, provider string) {
+// hydrateHardcoverEditions fills the book's editions from Hardcover.
+// mediaTypePinned forwards the caller's "this format was chosen, not guessed"
+// signal so hydration leaves the media type alone (#2768).
+func (h *BookHandler) hydrateHardcoverEditions(ctx context.Context, book *models.Book, provider string, mediaTypePinned bool) {
 	if book == nil || h.editions == nil {
 		return
 	}
@@ -142,12 +145,13 @@ func (h *BookHandler) hydrateHardcoverEditions(ctx context.Context, book *models
 		}
 	}
 	bookhydrate.HydrateHardcoverEditions(ctx, bookhydrate.Options{
-		Book:          book,
-		Provider:      providerName,
-		Editions:      h.editions,
-		Books:         h.books,
-		FetchEditions: fetcher,
-		Enricher:      h.meta,
+		Book:            book,
+		Provider:        providerName,
+		Editions:        h.editions,
+		Books:           h.books,
+		FetchEditions:   fetcher,
+		Enricher:        h.meta,
+		MediaTypePinned: mediaTypePinned,
 	})
 }
 
@@ -1176,7 +1180,10 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	h.hydrateHardcoverEditions(r.Context(), book, req.Provider)
+	// MediaType is in the preserved-fields list above because it belongs to the
+	// user, so a rebind is exactly the case the pin exists for: hydration must
+	// not widen the format the user keeps (#2768).
+	h.hydrateHardcoverEditions(r.Context(), book, req.Provider, true)
 
 	// Re-link series membership: remove all existing links for this book, then
 	// attach whatever the upstream record declares.
