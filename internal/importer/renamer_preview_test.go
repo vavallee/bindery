@@ -203,7 +203,7 @@ func TestRenamerWidthThenLiteralKeepsDefaultText(t *testing.T) {
 // TestSanitizePathPreviewDriftGuard pins sanitizePath for the characters the TS
 // mirror handles, so a change to the Go replacer set is caught here.
 func TestSanitizePathPreviewDriftGuard(t *testing.T) {
-	if got := sanitizePath("A: B / C? <D>"); got != "A- B - C D" {
-		t.Errorf("sanitizePath = %q, want %q", got, "A- B - C D")
+	if got := sanitizePath("A: B / C? <D>"); got != "A - B - C D" {
+		t.Errorf("sanitizePath = %q, want %q", got, "A - B - C D")
 	}
 }

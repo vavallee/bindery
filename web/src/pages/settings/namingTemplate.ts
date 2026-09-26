@@ -71,6 +71,12 @@ export const SAMPLE_BOOK: SampleBook = {
 const SEP = '/'
 
 export function sanitizePath(s: string): string {
+  // Colon as a "Title: Subtitle" boundary renders " - ", mirroring the
+  // strings.ReplaceAll calls at the top of renamer.go sanitizePath. " : "
+  // must run first, else "Title : Subtitle" would become "Title  - Subtitle"
+  // (double space). "A:B" keeps falling through to the char replacer's "-".
+  s = s.split(' : ').join(' - ')
+  s = s.split(': ').join(' - ')
   // strings.NewReplacer: "/"->"-", "\\"->"-", ":"->"-", and *?"<>| -> "".
   let cleaned = ''
   for (const ch of s) {

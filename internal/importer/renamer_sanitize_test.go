@@ -71,6 +71,27 @@ func TestSanitizePath_CapIsRuneSafe(t *testing.T) {
 	}
 }
 
+// TestSanitizePath_ColonSeparator pins the "Title: Subtitle" boundary rule: a
+// colon with whitespace on both sides of at least one side renders as " - "
+// (a natural "Title - Subtitle" separator) instead of the char replacer's
+// collided "Title- Subtitle". " : " (OpenLibrary style) and ": " both
+// normalize; the order matters — " : " first, or "Title : Subtitle" would
+// become "Title  - Subtitle" with a double space. A colon with no adjacent
+// space ("A:B") keeps the historical single "-".
+func TestSanitizePath_ColonSeparator(t *testing.T) {
+	cases := map[string]string{
+		"System Design Interview: Volume 2":  "System Design Interview - Volume 2",
+		"System Design Interview : Volume 2": "System Design Interview - Volume 2",
+		"A:B":                                "A-B",
+		"A: B / C? <D>":                      "A - B - C D",
+	}
+	for in, want := range cases {
+		if got := sanitizePath(in); got != want {
+			t.Errorf("sanitizePath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // TestSanitizePath_ComponentIsCreatableOnDisk is the test the string-length
 // assertions could never be: it actually calls os.Create with the sanitised
 // name plus a realistic extension. The #1982 failure was ENAMETOOLONG

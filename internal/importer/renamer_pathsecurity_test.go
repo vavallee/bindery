@@ -37,7 +37,7 @@ func TestSanitizePathTraversal(t *testing.T) {
 		// isolated path segment and the whole thing collapses to a flat name.
 		{"dotdot_between_segments", "a/../b", "a-..-b"},
 		// Matches the existing preview drift guard so the two stay in sync.
-		{"mixed_specials", "A: B / C? <D>", "A- B - C D"},
+		{"mixed_specials", "A: B / C? <D>", "A - B - C D"},
 	}
 
 	for _, tc := range cases {
