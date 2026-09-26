@@ -791,8 +791,8 @@ func main() {
 		func() calibre.Mode { return api.LoadCalibreMode(appCtx, settingsRepo) },
 	)
 	// Requester requests: approval adds through authorHandler's add cores.
-	requestHandler := api.NewRequestHandler(db.NewRequestRepo(database), bookRepo, authorRepo, settingsRepo, metaAgg, authorHandler).
-		WithNotifier(notif, userRepo)
+	requestHandler := api.NewRequestHandler(db.NewRequestRepo(database), bookRepo, authorRepo, settingsRepo, userRepo, metaAgg, authorHandler).
+		WithNotifier(notif)
 	recHandler := api.NewRecommendationHandler(recRepo, recEngine, authorRepo, bookRepo, sched).
 		WithFinder(seriesRepo, importScanner).
 		WithEditionHydration(editionRepo, metaAgg).
@@ -932,12 +932,8 @@ func main() {
 			r.Post("/auth/session-secret/rotate", authHandler.RotateSessionSecret)
 			r.Put("/auth/oidc/providers", oidcHandler.SetProviders)
 			r.Put("/auth/mode", authHandler.SetMode)
-			r.Get("/auth/users", userMgmtHandler.List)
-			r.Post("/auth/users", userMgmtHandler.Create)
-			r.Delete("/auth/users/{id}", userMgmtHandler.Delete)
-			r.Put("/auth/users/{id}/role", userMgmtHandler.SetRole)
-			r.Put("/auth/users/{id}/reset-password", userMgmtHandler.ResetPassword)
 		})
+		registerUserAdminRoutes(r, userMgmtHandler)
 
 		// Metadata search
 		r.Get("/search/author", searchHandler.SearchAuthors)

@@ -15,6 +15,8 @@ vi.mock('react-i18next', () => ({
         'users.roleUser': 'User',
         'users.roleRequester': 'Requester',
         'users.fieldRole': 'Role',
+        'users.autoApprove': 'Auto',
+        'users.autoApproveFor': 'Auto-approve requests for {{username}}',
       }
       const s = strings[key] ?? key
       return s.replace(/\{\{(\w+)\}\}/g, (_m, name: string) => String(vars[name] ?? ''))
@@ -30,6 +32,7 @@ vi.mock('../api/client', () => ({
   api: {
     listUsers: vi.fn(),
     setUserRole: vi.fn(),
+    setUserAutoApprove: vi.fn(),
     createUser: vi.fn(),
   },
 }))
@@ -40,10 +43,12 @@ describe('UsersPage roles', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(api.listUsers).mockResolvedValue([
-      { id: 1, username: 'admin', role: 'admin', createdAt: '2026-01-01T00:00:00Z' },
-      { id: 2, username: 'reader', role: 'user', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 1, username: 'admin', role: 'admin', createdAt: '2026-01-01T00:00:00Z', autoApproveRequests: false },
+      { id: 2, username: 'reader', role: 'user', createdAt: '2026-01-01T00:00:00Z', autoApproveRequests: false },
+      { id: 3, username: 'guest', role: 'requester', createdAt: '2026-01-01T00:00:00Z', autoApproveRequests: false },
     ])
     vi.mocked(api.setUserRole).mockResolvedValue({ ok: true })
+    vi.mocked(api.setUserAutoApprove).mockResolvedValue({ ok: true })
   })
 
   it('offers all three roles and sets requester', async () => {
@@ -63,5 +68,22 @@ describe('UsersPage roles', () => {
     fireEvent.change(select, { target: { value: 'requester' } })
     expect(await screen.findByText('cannot demote the last admin user')).toBeInTheDocument()
     expect(select).toHaveValue('admin')
+  })
+
+  // The auto-approve toggle is per account and only shown for requesters.
+  it('toggles auto-approve for a requester', async () => {
+    render(<UsersPage />)
+    const box = await screen.findByRole('checkbox', { name: 'Auto-approve requests for guest' })
+    expect(box).not.toBeChecked()
+
+    fireEvent.click(box)
+    await waitFor(() => expect(api.setUserAutoApprove).toHaveBeenCalledWith(3, true))
+    expect(box).toBeChecked()
+  })
+
+  it('does not offer auto-approve for an admin', async () => {
+    render(<UsersPage />)
+    await screen.findByRole('combobox', { name: 'Role for admin' })
+    expect(screen.queryByRole('checkbox', { name: 'Auto-approve requests for admin' })).not.toBeInTheDocument()
   })
 })

@@ -105,6 +105,17 @@ export default function UsersPage() {
     }
   }
 
+  // Per-account request auto approval (#2718). Turning it on only changes what
+  // happens to the account's next request; anything already queued stays.
+  async function handleAutoApproveChange(u: ManagedUser, next: boolean) {
+    try {
+      await api.setUserAutoApprove(u.id, next)
+      setUsers(prev => prev.map(x => x.id === u.id ? { ...x, autoApproveRequests: next } : x))
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : t('users.autoApproveFail'))
+    }
+  }
+
   async function handleReset(id: number) {
     const pw = prompt('New password (min 8 characters):')
     if (!pw) return
@@ -142,6 +153,7 @@ export default function UsersPage() {
 
       {loading && <p className="text-sm text-slate-500 dark:text-zinc-500">{t('common.loading')}</p>}
       {error && <p className="text-sm text-red-500">{error}</p>}
+      {!loading && <p className="text-xs text-slate-500 dark:text-zinc-500">{t('users.autoApproveHint')}</p>}
 
       {!loading && (
         <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg overflow-hidden">
@@ -150,6 +162,7 @@ export default function UsersPage() {
               <tr className="border-b border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950">
                 <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-zinc-400">{t('users.colUsername')}</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-zinc-400">{t('users.colRole')}</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-zinc-400">{t('users.colAutoApprove')}</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-zinc-400">{t('users.colCreated')}</th>
                 <th className="px-4 py-3" />
               </tr>
@@ -180,6 +193,23 @@ export default function UsersPage() {
                       <option value="user">{t('users.roleUser')}</option>
                       <option value="requester">{t('users.roleRequester')}</option>
                     </select>
+                  </td>
+                  <td className="px-4 py-3">
+                    {/* Only a requester queues requests, so the toggle is
+                        shown for that role. The value stays on the account if
+                        the role changes and comes back with it. */}
+                    {u.role === 'requester' && (
+                      <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-zinc-400">
+                        <input
+                          type="checkbox"
+                          checked={u.autoApproveRequests}
+                          onChange={e => void handleAutoApproveChange(u, e.target.checked)}
+                          aria-label={t('users.autoApproveFor', { username: u.username })}
+                          className="accent-emerald-500"
+                        />
+                        {t('users.autoApprove')}
+                      </label>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-slate-500 dark:text-zinc-500">
                     {new Date(u.createdAt).toLocaleDateString()}

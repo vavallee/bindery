@@ -68,7 +68,7 @@ func newRequestsFixture(t *testing.T, provider metadata.Provider, adder requestA
 	}
 	// A private, generous provider bucket so tests in this package do not
 	// share the process wide one; the limit tests set their own.
-	f.h = NewRequestHandler(f.requests, f.books, f.authors, f.settings, agg, adder).
+	f.h = NewRequestHandler(f.requests, f.books, f.authors, f.settings, f.users, agg, adder).
 		WithProviderLimiter(auth.NewRequesterLimiter(1<<20, 1<<20, time.Minute, 64))
 
 	mk := func(name, role string) *db.User {

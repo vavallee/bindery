@@ -704,6 +704,7 @@ GET    /api/v1/auth/users                         list users (admin)
 POST   /api/v1/auth/users                         create (admin)
 DELETE /api/v1/auth/users/{id}                    delete (admin)
 PUT    /api/v1/auth/users/{id}/role               change role (admin), body {"role": "admin"|"user"|"requester"}
+PUT    /api/v1/auth/users/{id}/auto-approve       per-account request auto-approval (admin), body {"enabled": true|false}
 PUT    /api/v1/auth/users/{id}/reset-password     reset (admin)
 ```
 

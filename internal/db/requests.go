@@ -48,6 +48,10 @@ var (
 	// ErrRequestCapReached is a create or reopen that would take the owner
 	// past their cap of pending requests.
 	ErrRequestCapReached = errors.New("pending request cap reached")
+	// ErrRequestAutoApproveQuota is a claim refused because the owner has
+	// already had their daily allowance of automatic approvals. The request
+	// stays pending for a human.
+	ErrRequestAutoApproveQuota = errors.New("daily auto-approve quota reached")
 )
 
 // RequestClaimTTL is how long an approval's claim holds without renewal
@@ -286,16 +290,66 @@ func (r *RequestRepo) CountPending(ctx context.Context) (int, error) {
 // Release act only while the row still holds that token, so an approval whose
 // claim was retaken cannot complete or release another approval's claim.
 func (r *RequestRepo) Claim(ctx context.Context, id, adminID int64) (*models.LibraryRequest, error) {
+	return r.claimPending(ctx, id, adminID, "", nil)
+}
+
+// ClaimAutoApprove claims a pending request for an automatic approval by
+// ownerID, but only while the owner is under their daily auto-approve quota.
+// The quota counts the owner's automatic approvals — the rows with decided_by
+// NULL — at or after since, and it is enforced in the same statement as the
+// claim, the way pendingBelowCap guards Create, so a burst of creates cannot
+// all pass a separate count. Returns ErrRequestAutoApproveQuota when the quota
+// is reached, leaving the request pending for a human.
+func (r *RequestRepo) ClaimAutoApprove(ctx context.Context, id, ownerID int64, since time.Time, quota int) (*models.LibraryRequest, error) {
+	req, err := r.claimPending(ctx, id, 0,
+		`owner_user_id = ? AND (SELECT COUNT(*) FROM requests
+			WHERE owner_user_id = ? AND status = 'approved' AND decided_by IS NULL AND decided_at >= ?) < ?`,
+		[]any{ownerID, ownerID, since, quota})
+	if errors.Is(err, ErrRequestNotPending) {
+		// Tell "no longer pending" apart from "at the quota", so the caller
+		// leaves the latter queued instead of reporting a lost claim.
+		if n, cerr := r.countAutoApprovedSince(ctx, ownerID, since); cerr == nil && n >= quota {
+			return nil, ErrRequestAutoApproveQuota
+		}
+	}
+	return req, err
+}
+
+// countAutoApprovedSince counts ownerID's requests that approved themselves at
+// or after since. decided_by is NULL only on the automatic path (an admin's
+// Claim stamps their id), so this is the auto-approve tally.
+func (r *RequestRepo) countAutoApprovedSince(ctx context.Context, ownerID int64, since time.Time) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM requests
+		WHERE owner_user_id = ? AND status = 'approved' AND decided_by IS NULL AND decided_at >= ?`,
+		ownerID, since).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count auto approved requests: %w", err)
+	}
+	return n, nil
+}
+
+// claimPending runs the compare-and-swap claim. When extraWhere is set it is
+// appended to the WHERE clause with extraArgs bound after the fixed ones; it is
+// only ever a package constant predicate.
+func (r *RequestRepo) claimPending(ctx context.Context, id, adminID int64, extraWhere string, extraArgs []any) (*models.LibraryRequest, error) {
 	now := time.Now().UTC()
 	stale := now.Add(-r.claimTTL).UnixMilli()
 	token, err := claimToken()
 	if err != nil {
 		return nil, err
 	}
-	res, err := r.db.ExecContext(ctx, `
+	query := `
 		UPDATE requests SET status = 'approving', claimed_at = ?, claim_token = ?, decided_by = ?, updated_at = ?
-		WHERE id = ? AND (status = 'pending' OR (status = 'approving' AND COALESCE(claimed_at, 0) < ?))`,
-		now.UnixMilli(), token, nullableID(adminID), now, id, stale)
+		WHERE id = ? AND (status = 'pending' OR (status = 'approving' AND COALESCE(claimed_at, 0) < ?))`
+	args := []any{now.UnixMilli(), token, nullableID(adminID), now, id, stale}
+	if extraWhere != "" {
+		// #nosec G202 -- extraWhere is a package constant predicate, never caller input; its values are bound args.
+		query += " AND " + extraWhere
+		args = append(args, extraArgs...)
+	}
+	res, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("claim request: %w", err)
 	}

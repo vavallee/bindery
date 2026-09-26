@@ -16,6 +16,9 @@ export interface ManagedUser {
   email?: string
   displayName?: string
   createdAt: string
+  // autoApproveRequests is the per-account setting that adds this account's
+  // requests straight away instead of queueing them for an admin (#2718).
+  autoApproveRequests: boolean
 }
 
 export interface AuthConfig {
@@ -154,6 +157,8 @@ export const authApi = {
   },
   setUserRole: (id: number, role: string) =>
     request<{ ok: boolean }>(`/auth/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
+  setUserAutoApprove: (id: number, enabled: boolean) =>
+    request<{ ok: boolean }>(`/auth/users/${id}/auto-approve`, { method: 'PUT', body: JSON.stringify({ enabled }) }),
   resetUserPassword: (id: number, password: string) =>
     request<{ ok: boolean }>(`/auth/users/${id}/reset-password`, { method: 'PUT', body: JSON.stringify({ password }) }),
 }

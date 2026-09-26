@@ -218,11 +218,9 @@ type requestNotifier interface {
 	Send(ctx context.Context, eventType string, payload map[string]interface{})
 }
 
-// WithNotifier sends notifier.EventRequestCreated for every new request, with
-// the requester's username read from users.
-func (h *RequestHandler) WithNotifier(n requestNotifier, users *db.UserRepo) *RequestHandler {
+// WithNotifier sends notifier.EventRequestCreated for every new request.
+func (h *RequestHandler) WithNotifier(n requestNotifier) *RequestHandler {
 	h.notif = n
-	h.users = users
 	return h
 }
 
@@ -276,10 +274,11 @@ func (h *RequestHandler) notifyCreated(ctx context.Context, req models.LibraryRe
 }
 
 // NewRequestHandler wires the requests API. adder is normally the
-// *AuthorHandler the Add dialog uses.
-func NewRequestHandler(requests *db.RequestRepo, books *db.BookRepo, authors *db.AuthorRepo, settings *db.SettingsRepo, meta requestMetadata, adder requestAdder) *RequestHandler {
+// *AuthorHandler the Add dialog uses. users is the account directory Create
+// reads per-account auto approval from.
+func NewRequestHandler(requests *db.RequestRepo, books *db.BookRepo, authors *db.AuthorRepo, settings *db.SettingsRepo, users *db.UserRepo, meta requestMetadata, adder requestAdder) *RequestHandler {
 	return &RequestHandler{
-		requests: requests, books: books, authors: authors, settings: settings, meta: meta, adder: adder,
+		requests: requests, books: books, authors: authors, settings: settings, users: users, meta: meta, adder: adder,
 		providerLimit: auth.DefaultRequesterProviderLimiter(),
 		notified:      newRecentKeys(requestNotifyWindow, requestNotifyMaxKeys),
 		ownerNotifies: newOwnerBudget(requestNotifyPerOwner, requestNotifyWindow, requestNotifyMaxKeys),
@@ -541,8 +540,7 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeServerError(w, r, fmt.Errorf("reload reopened request: %w", err))
 			return
 		}
-		h.notifyCreated(ctx, *existing)
-		writeJSON(w, http.StatusCreated, toRequestResponse(*existing, false))
+		h.writeCreated(ctx, w, *existing, owner)
 		return
 	}
 	if err := h.requests.Create(ctx, &req.LibraryRequest, limit); err != nil {
@@ -557,8 +555,84 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	h.notifyCreated(ctx, req.LibraryRequest)
-	writeJSON(w, http.StatusCreated, toRequestResponse(req.LibraryRequest, false))
+	h.writeCreated(ctx, w, req.LibraryRequest, owner)
+}
+
+// writeCreated answers a create with the request as it stands. If the owner's
+// account auto-approves requests, the request is approved first and the answer
+// is the approved row. An auto approval that fails or is refused logs and
+// leaves the request pending, so a provider hiccup cannot lose what the
+// requester asked for; the admin queue still sees it.
+//
+// requestCreated is sent only when the request stays pending, so an admin is
+// not pinged for an item that was added without them (#2718).
+func (h *RequestHandler) writeCreated(ctx context.Context, w http.ResponseWriter, req models.LibraryRequest, owner int64) {
+	if h.autoApproveRequests(ctx, owner) {
+		switch done, status, msg, err := h.autoApprove(ctx, req, owner); {
+		case err != nil:
+			slog.Error("requests: auto approval failed, leaving the request pending", "id", req.ID, "error", err)
+		case msg != "":
+			slog.Warn("requests: auto approval refused, leaving the request pending", "id", req.ID, "status", status, "reason", msg)
+		case done != nil:
+			writeJSON(w, http.StatusCreated, toRequestResponse(*done, false))
+			return
+		}
+	}
+	h.notifyCreated(ctx, req)
+	writeJSON(w, http.StatusCreated, toRequestResponse(req, false))
+}
+
+// autoApproveRequests reports whether owner's account approves its requests
+// without a human. A missing user repo, an unreadable row or a lookup error
+// all answer false: an auto approval that cannot be confirmed is not run.
+func (h *RequestHandler) autoApproveRequests(ctx context.Context, owner int64) bool {
+	if h.users == nil {
+		return false
+	}
+	u, err := h.users.GetByID(ctx, owner)
+	if err != nil || u == nil {
+		return false
+	}
+	return u.RequestsAutoApprove
+}
+
+// autoApprove claims a request just created for owner and runs the same add an
+// admin's Approve runs. decided_by stays NULL, so the queue can tell an
+// automatic approval from a human one. The approval body is the approve form's
+// own starting point — search on add for a book, the ordinary catalogue sync
+// for an author — because there is no form to fill in.
+//
+// The claim carries the owner's daily auto-approve quota, drawn from the same
+// requests.max_pending_per_user limit as the pending cap: once the owner has
+// had that many requests auto approved since midnight UTC, the claim matches
+// nothing and the request stays pending, so the queue is the only way past the
+// quota just as it is when the setting is off. The count is part of the claim,
+// not a separate read, so a burst of creates cannot all pass it.
+func (h *RequestHandler) autoApprove(ctx context.Context, req models.LibraryRequest, owner int64) (*models.LibraryRequest, int, string, error) {
+	claimed, err := h.requests.ClaimAutoApprove(ctx, req.ID, owner, startOfUTCDay(time.Now()), h.maxPendingPerUser(ctx))
+	if errors.Is(err, db.ErrRequestAutoApproveQuota) {
+		// The request is left pending for an admin, exactly as it would be
+		// with the setting off. Not a failure, so no log and no refusal.
+		return nil, 0, "", nil
+	}
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("claim request %d for auto approval: %w", req.ID, err)
+	}
+	if claimed == nil {
+		return nil, 0, "", fmt.Errorf("claim request %d for auto approval: no row", req.ID)
+	}
+	if claimed.OwnerUserID != owner {
+		return nil, 0, "", fmt.Errorf("request %d is not owned by user %d", req.ID, owner)
+	}
+	search := claimed.Kind == models.RequestKindBook
+	return h.runClaimedApproval(ctx, claimed, approveBody{SearchOnAdd: &search})
+}
+
+// startOfUTCDay is midnight UTC of t's day, where the auto-approve quota
+// resets. UTC matches the timestamps the request rows are written with.
+func startOfUTCDay(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 // builtRequest is a request row plus the payload it serialises.
@@ -797,6 +871,27 @@ func (h *RequestHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	done, status, msg, err := h.runClaimedApproval(ctx, req, body)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	if msg != "" {
+		writeErr(w, status, msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, toRequestResponse(*done, true))
+}
+
+// runClaimedApproval runs the add for a request whose claim the caller already
+// holds and marks it approved. It returns the approved row, or a status and
+// sentence for a refusal, or an error. The claim is released on any failure.
+//
+// It is split out of Approve so auto approval drives the same path: the claim,
+// the payload revalidation, the owner in the context and the release on
+// failure are one implementation, whether a human or the account's own setting
+// asked for the add.
+func (h *RequestHandler) runClaimedApproval(ctx context.Context, req *models.LibraryRequest, body approveBody) (*models.LibraryRequest, int, string, error) {
 	// Keep the claim fresh while the add runs. The cores return once the
 	// author or book row exists and leave the catalogue sync in the
 	// background, but their provider lookups and addBookCore's row poll can
@@ -827,12 +922,7 @@ func (h *RequestHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		if relErr := h.requests.Release(ctx, req.ID, req.ClaimToken); relErr != nil {
 			slog.Error("requests: release claim after failed approval", "id", req.ID, "error", relErr)
 		}
-		if err != nil {
-			writeServerError(w, r, err)
-			return
-		}
-		writeErr(w, status, msg)
-		return
+		return nil, status, msg, err
 	}
 	if err := h.requests.Complete(ctx, req.ID, req.ClaimToken, bookID, authorID); err != nil {
 		if errors.Is(err, db.ErrRequestNotPending) {
@@ -840,18 +930,15 @@ func (h *RequestHandler) Approve(w http.ResponseWriter, r *http.Request) {
 			// unreachable for longer than the TTL). The add has happened;
 			// say so rather than 500.
 			slog.Error("requests: approval finished after losing its claim", "id", req.ID)
-			writeErr(w, http.StatusConflict, "The item was added, but another approval took over this request meanwhile. Reload the queue.")
-			return
+			return nil, http.StatusConflict, "The item was added, but another approval took over this request meanwhile. Reload the queue.", nil
 		}
-		writeServerError(w, r, err)
-		return
+		return nil, 0, "", err
 	}
 	done, err := h.requests.GetByID(ctx, req.ID)
 	if err != nil || done == nil {
-		writeServerError(w, r, fmt.Errorf("reload approved request: %w", err))
-		return
+		return nil, 0, "", fmt.Errorf("reload approved request: %w", err)
 	}
-	writeJSON(w, http.StatusOK, toRequestResponse(*done, true))
+	return done, 0, "", nil
 }
 
 // renewClaim restamps the claim every third of the TTL until the returned

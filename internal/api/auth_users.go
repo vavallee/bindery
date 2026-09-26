@@ -17,6 +17,7 @@ import (
 // POST   /api/v1/auth/users
 // DELETE /api/v1/auth/users/:id
 // PUT    /api/v1/auth/users/:id/role
+// PUT    /api/v1/auth/users/:id/auto-approve
 type UserManagementHandler struct {
 	users            *db.UserRepo
 	localAuthEnabled bool
@@ -54,16 +55,20 @@ type userResponse struct {
 	Email       *string `json:"email,omitempty"`
 	DisplayName *string `json:"displayName,omitempty"`
 	CreatedAt   string  `json:"createdAt"`
+	// AutoApproveRequests makes this account's requests approve themselves
+	// instead of waiting in the queue (#2718).
+	AutoApproveRequests bool `json:"autoApproveRequests"`
 }
 
 func toUserResponse(u db.User) userResponse {
 	return userResponse{
-		ID:          u.ID,
-		Username:    u.Username,
-		Role:        u.Role,
-		Email:       u.Email,
-		DisplayName: u.DisplayName,
-		CreatedAt:   u.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		ID:                  u.ID,
+		Username:            u.Username,
+		Role:                u.Role,
+		Email:               u.Email,
+		DisplayName:         u.DisplayName,
+		CreatedAt:           u.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		AutoApproveRequests: u.RequestsAutoApprove,
 	}
 }
 
@@ -213,6 +218,35 @@ func (h *UserManagementHandler) SetRole(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := h.users.SetRole(r.Context(), id, body.Role); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeOK(w, map[string]any{"ok": true})
+}
+
+// SetAutoApprove turns a user's request auto approval on or off (admin-only).
+// PUT /api/v1/auth/users/:id/auto-approve
+//
+// It changes what happens to the account's next request; requests already in
+// the queue stay there for a human.
+func (h *UserManagementHandler) SetAutoApprove(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := h.users.SetRequestsAutoApprove(r.Context(), id, body.Enabled); err != nil {
+		if errors.Is(err, db.ErrUserNotFound) {
+			writeErr(w, http.StatusNotFound, "No user with that id.")
+			return
+		}
+		writeServerError(w, r, err)
 		return
 	}
 	writeOK(w, map[string]any{"ok": true})

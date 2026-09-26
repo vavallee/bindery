@@ -61,7 +61,7 @@ func TestRequestsCreate_RateLimitedInHandler(t *testing.T) {
 // creates overshoot the cap. Run with -race.
 func TestRequestsCreate_PendingCapHoldsUnderConcurrency(t *testing.T) {
 	f := newRequestsFixture(t, wellsRequestStub(), &fakeAdder{})
-	h := NewRequestHandler(f.requests, f.books, f.authors, f.settings, slowMeta{delay: 50 * time.Millisecond}, &fakeAdder{}).
+	h := NewRequestHandler(f.requests, f.books, f.authors, f.settings, f.users, slowMeta{delay: 50 * time.Millisecond}, &fakeAdder{}).
 		WithProviderLimiter(auth.NewRequesterLimiter(1<<20, 1<<20, time.Minute, 64))
 	if err := f.settings.Set(context.Background(), SettingRequestsMaxPendingPerUser, "3"); err != nil {
 		t.Fatal(err)
@@ -109,7 +109,7 @@ func TestRequestsCreate_PendingCapHoldsUnderConcurrency(t *testing.T) {
 func TestRequestsNotify_RepeatWithinWindowSuppressed(t *testing.T) {
 	f := newRequestsFixture(t, wellsRequestStub(), &fakeAdder{})
 	capture := &countingNotifier{}
-	f.h.WithNotifier(capture, f.users)
+	f.h.WithNotifier(capture)
 
 	for i := 0; i < 5; i++ {
 		rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W"}`)
@@ -276,7 +276,7 @@ func TestRequestsNotify_PerOwnerCap(t *testing.T) {
 	}
 	f := newRequestsFixture(t, stub, &fakeAdder{})
 	capture := &countingNotifier{}
-	f.h.WithNotifier(capture, f.users)
+	f.h.WithNotifier(capture)
 	for i := 0; i < 15; i++ {
 		rec := f.create(t, f.requester, fmt.Sprintf(`{"kind":"book","foreignId":"OL-CAP-%d"}`, i))
 		if rec.Code != http.StatusCreated {

@@ -35,7 +35,7 @@ func TestRequestsCreate_SendsSanitisedRequestCreated(t *testing.T) {
 		Author: &models.Author{ForeignID: "OL1A", Name: "@here\u0000Someone"}}
 	f := newRequestsFixture(t, stub, &fakeAdder{})
 	capture := &capturingNotifier{events: make(chan capturedEvent, 4)}
-	f.h.WithNotifier(capture, f.users)
+	f.h.WithNotifier(capture)
 	if _, err := f.database.ExecContext(context.Background(), "UPDATE users SET username = ? WHERE id = ?", "@channel\u0007boss", f.requester.ID); err != nil {
 		t.Fatal(err)
 	}
