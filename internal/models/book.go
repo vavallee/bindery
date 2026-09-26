@@ -212,6 +212,25 @@ func (b *Book) ReevaluateStatus() {
 	}
 }
 
+// BecameSearchable reports whether a write left this book in the state that
+// earns one immediate indexer search (wanted and monitored) when it was not in
+// that state before it. prevStatus and prevMonitored are the values read before
+// the write; pass an empty status and false for a row that did not exist yet.
+//
+// Every path that can move a book into the wanted set decides from this: the
+// book handler's PATCH, the bulk monitor action and the Hardcover list sync
+// (#2722). Keeping the rule here is the same move ReevaluateStatus made for the
+// wanted/imported boundary in #1634 — the callers live in different packages,
+// and the rule is the part that must not drift. A book that was already wanted
+// and monitored returns false, so a re-sync or a second monitor click does not
+// queue a duplicate search; repeat searches belong to the wanted sweep.
+func (b *Book) BecameSearchable(prevStatus string, prevMonitored bool) bool {
+	if !b.Monitored || b.Status != BookStatusWanted {
+		return false
+	}
+	return prevStatus != BookStatusWanted || !prevMonitored
+}
+
 // HasFileForCurrentFormat reports whether the book already holds a file for the
 // format it is currently set to, i.e. the user owns it as it stands.
 //

@@ -570,7 +570,8 @@ func main() {
 			return api.GetHardcoverAPIToken(ctx, settingsRepo)
 		}).
 		WithAudiobookEnricher(metaAgg).
-		WithJobs(bgJobs) // drain a manual "Sync now" on shutdown (#1854)
+		WithSearcher(sched). // immediate search for books a sync makes wanted (#2722)
+		WithJobs(bgJobs)     // drain a manual "Sync now" on shutdown (#1854)
 	sched.WithHardcoverSyncer(hcSyncer)
 	sched.WithLogRepo(logRepo, cfg.LogRetentionDays)
 

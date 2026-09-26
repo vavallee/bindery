@@ -397,6 +397,7 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	oldStatus := book.Status
+	oldMonitored := book.Monitored
 	oldMediaType := book.MediaType
 
 	// Note: file_path is deliberately NOT accepted here. It's set by the
@@ -531,21 +532,22 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fire an immediate indexer search when a book transitions into wanted
-	// status (e.g. "Delete file" flips imported → wanted, a manual status edit,
-	// or a media-type change that exposes a missing format — #1148). Gate on
-	// searcher to keep tests that don't wire it nil-safe. Detach the request
-	// context so the search outlives the HTTP response but keeps any
-	// request-scoped values.
+	// Fire an immediate indexer search when this write leaves the book wanted
+	// and monitored and it was not both before (e.g. "Delete file" flips
+	// imported → wanted, a manual status edit, a media-type change that exposes
+	// a missing format, or monitoring a book that was already wanted — #1148,
+	// #2722). Gate on searcher to keep tests that don't wire it nil-safe.
+	// Detach the request context so the search outlives the HTTP response but
+	// keeps any request-scoped values.
 	//
-	// Monitored is checked here because this hook is the one place a status
-	// transition grabs without the caller asking for a search. Widening a
-	// book to 'both' exposes a missing format and immediately downloads it;
-	// unmonitoring is the only way a user can say "record this, don't fetch
-	// it", and it was being ignored. The 12h wanted scan already filters on
-	// monitored (ListPageFiltered adds `AND books.monitored = 1` for the
-	// wanted status), so this closes the gap rather than opening a new one.
-	if h.searcher != nil && book.Monitored && book.Status == models.BookStatusWanted && oldStatus != models.BookStatusWanted {
+	// Monitored is part of the gate because this hook is the one place a
+	// status transition grabs without the caller asking for a search.
+	// Widening a book to 'both' exposes a missing format and immediately
+	// downloads it; unmonitoring is the only way a user can say "record this,
+	// don't fetch it", and it was being ignored. The 12h wanted scan already
+	// filters on monitored (ListPageFiltered adds `AND books.monitored = 1` for
+	// the wanted status), so this closes the gap rather than opening a new one.
+	if h.searcher != nil && book.BecameSearchable(oldStatus, oldMonitored) {
 		b := *book
 		bgCtx := h.bgCtx()
 		// Respect the global auto-grab kill-switch.

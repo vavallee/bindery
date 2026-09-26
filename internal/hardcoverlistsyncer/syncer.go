@@ -16,7 +16,9 @@ import (
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/bookhydrate"
+	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
@@ -70,6 +72,12 @@ type ListSyncer struct {
 	clientFactory hardcoverClientFactory
 	enricher      bookhydrate.AudiobookEnricher
 
+	// searcher starts the one immediate indexer search a book earns when a
+	// sync pass moves it into the wanted-and-monitored state (#2722). Nil
+	// means no search is started, which is what tests that only cover the
+	// catalogue bookkeeping get.
+	searcher wantedSearcher
+
 	// jobs, when set, tracks the detached goroutine StartOne launches so
 	// process shutdown can cancel and drain a sync before the database closes
 	// (#1458). When nil, StartOne falls back to an untracked goroutine.
@@ -104,6 +112,23 @@ type seriesLinker interface {
 
 type hardcoverClientFactory func(string) hardcoverClient
 
+// wantedSearcher is the slice of the scheduler the syncer needs to start an
+// immediate search for a book a pass just made wanted. Declared here so this
+// package does not import scheduler; *scheduler.Scheduler satisfies it.
+type wantedSearcher interface {
+	SearchAndGrabBook(ctx context.Context, book models.Book)
+}
+
+// listSyncSearchConcurrency and listSyncSearchPace bound the immediate
+// searches a pass dispatches, matching the scheduled sweep's 2-at-a-time,
+// 3s-apart fan-out. A first sync of a large shelf can move hundreds of books
+// into wanted at once, and an unpaced launch loop is the shape #1515 had to
+// fix for the other search fan-outs.
+const (
+	listSyncSearchConcurrency = 2
+	listSyncSearchPace        = 3 * time.Second
+)
+
 // New creates a new ListSyncer.
 func New(importLists *db.ImportListRepo, authors *db.AuthorRepo, books *db.BookRepo) *ListSyncer {
 	return &ListSyncer{
@@ -132,6 +157,16 @@ func (s *ListSyncer) WithSeriesRepo(repo *db.SeriesRepo) *ListSyncer {
 // condition (a promoted ASIN on an audio-typed book), no edition fetch.
 func (s *ListSyncer) WithAudiobookEnricher(enricher bookhydrate.AudiobookEnricher) *ListSyncer {
 	s.enricher = enricher
+	return s
+}
+
+// WithSearcher wires the indexer search started when a sync pass makes a book
+// wanted and monitored. Without it a synced book waited for the next wanted
+// sweep, up to the configured search.interval (#2722).
+func (s *ListSyncer) WithSearcher(searcher wantedSearcher) *ListSyncer {
+	if searcher != nil {
+		s.searcher = searcher
+	}
 	return s
 }
 
@@ -499,6 +534,12 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		s.setProgress(func(p *SyncProgress) { mutate(&p.Stats) })
 	}
 
+	// Books this pass moved into wanted-and-monitored, searched once at the end
+	// of the pass rather than inline: SearchAndGrabBook is a synchronous indexer
+	// round-trip, and the pass holds the single-flight gate a manual "Sync now"
+	// waits on (#2722).
+	var searchTargets []models.Book
+
 	for _, book := range books {
 		// The sync now runs on the shutdown-scoped background context (#1854),
 		// so cancellation means the process is going down: stop walking rather
@@ -544,6 +585,7 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		}
 		if existing != nil {
 			if shouldWidenMediaType(existing.MediaType, effectiveMediaType) {
+				prevStatus, prevMonitored := existing.Status, existing.Monitored
 				existing.MediaType = models.MediaTypeBoth
 				// Widening creates a real gap on an owned book: the audiobook
 				// slot is now monitored and empty. Without this the row keeps
@@ -560,6 +602,9 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 					slog.Warn("hardcover list sync: failed to widen tracked book media type", "title", book.Title, "error", err)
 					countStat(func(st *SyncStats) { st.Failed++ })
 					continue
+				}
+				if existing.BecameSearchable(prevStatus, prevMonitored) {
+					searchTargets = append(searchTargets, *existing)
 				}
 				s.enrichAudiobook(ctx, existing)
 				slog.Info("widened book media type from hardcover lists", "title", existing.Title, "book_id", existing.ID)
@@ -649,8 +694,24 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		slog.Info("imported book from hardcover list", "title", book.Title, "author_id", authorID)
 
 		s.enrichAudiobook(ctx, &book)
+		// A brand-new row did not exist before, so it counts as a transition
+		// into wanted-and-monitored when the list monitors its books (#2722).
+		// Queued after enrichment so the search sees any ASIN it added.
+		if book.BecameSearchable("", false) {
+			searchTargets = append(searchTargets, book)
+		}
 
 		s.linkSeriesRefs(ctx, &book)
+	}
+
+	// Dispatch after the walk rather than inside it: the caller holds the
+	// single-flight gate a manual "Sync now" waits on, and a search is a
+	// synchronous indexer round-trip. Bounded and paced like the scheduled
+	// sweep so a first sync of a large shelf can't burst a Prowlarr (#1515).
+	if len(searchTargets) > 0 && s.searcher != nil {
+		go concurrency.RunBoundedPaced(ctx, searchTargets, listSyncSearchConcurrency, listSyncSearchPace, func(ctx context.Context, b models.Book) {
+			s.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(ctx, indexer.OriginListSync), b)
+		})
 	}
 
 	return nil
