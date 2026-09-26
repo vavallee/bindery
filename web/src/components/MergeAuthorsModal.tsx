@@ -40,7 +40,7 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
   }, [sourceId])
 
   const sorted = useMemo(
-    () => [...authors].sort((a, b) => a.authorName.localeCompare(b.authorName)),
+    () => [...authors].sort((a, b) => a.sortName.localeCompare(b.sortName) || a.authorName.localeCompare(b.authorName)),
     [authors],
   )
   const target = useMemo(() => authors.find(a => a.id === targetId), [authors, targetId])

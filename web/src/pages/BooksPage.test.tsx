@@ -27,6 +27,9 @@ vi.mock('react-i18next', () => ({
         'books.sortTitleZA': 'Z-A',
         'books.sortNewest': 'Newest',
         'books.sortOldest': 'Oldest',
+        'books.sortAuthorAZ': 'Author A-Z',
+        'books.sortAuthorZA': 'Author Z-A',
+        'common.sort': 'Sort',
         'books.typeLabel': 'Type:',
         'books.empty': 'No books in your library yet',
         'books.emptyHint':
@@ -465,5 +468,29 @@ describe('BooksPage — book link nav state (#2548)', () => {
 
     await waitFor(() => expect(located?.pathname).toBe('/book/2'))
     expect(located?.state).toEqual({ ids: [1, 2], index: 1, hopDepth: 1 })
+  })
+})
+
+describe('BooksPage — grid sort menu (#2805)', () => {
+  it('offers the author sort the table header already had', async () => {
+    const sorts: string[] = []
+    server.use(
+      http.get(apiUrl('/book'), ({ request }) => {
+        sorts.push(new URL(request.url).searchParams.get('sort') ?? '')
+        return HttpResponse.json({
+          items: [makeBook({ id: 1, title: 'Dune' })],
+          total: 1,
+          limit: 50,
+          offset: 0,
+        })
+      }),
+    )
+
+    renderBooksPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Sort:' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Author A-Z' }))
+    await waitFor(() => expect(sorts).toContain('author-az'))
+    fireEvent.click(screen.getByRole('radio', { name: 'Author Z-A' }))
+    await waitFor(() => expect(sorts).toContain('author-za'))
   })
 })
