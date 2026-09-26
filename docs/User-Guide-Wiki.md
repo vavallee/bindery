@@ -374,9 +374,14 @@ audiobook with its own title, author, series and identifiers, and refreshes it
 on Reorganize. The book file itself is never modified.
 
 **Queue and History.** The Queue page shows live downloads and, importantly,
-the recovery actions: **Retry import** (after fixing a path remap), **Match to
+the recovery actions: **Retry import** (after fixing a path remap), **Retry
+download** on a row that failed before its files arrived (this re-sends the same
+release, it does not search for a different one), **Match to
 book** (attach a failed import to the right book and import it from disk), and
-per-row error detail. History records every grab/import/failure and can
+per-row error detail. Tick rows for **Retry selected**, or use **Retry all
+failed** to cover every failed row at once. If a download client does not answer
+in time the page says so above the list, so a short Queue is never mistaken for
+lost downloads. History records every grab/import/failure and can
 blocklist a bad release in one click. Blocked releases are listed under
 Settings → Blocklist, where you can remove one to let it be grabbed again.
 

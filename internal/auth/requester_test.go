@@ -23,6 +23,8 @@ var requesterDeniedRoutes = []struct{ method, path string }{
 	{http.MethodDelete, "/api/v1/queue/7"},
 	{http.MethodPost, "/api/v1/queue/bulk-delete"},
 	{http.MethodPost, "/api/v1/queue/7/retry-import"},
+	{http.MethodPost, "/api/v1/queue/7/retry"},
+	{http.MethodPost, "/api/v1/queue/bulk-retry"},
 	{http.MethodGet, "/api/queue"}, // the Arr compatible tree
 	{http.MethodGet, "/api/v1/pending"},
 	{http.MethodPost, "/api/v1/pending/7/grab"},

@@ -111,6 +111,16 @@ Clicking **Grab** on a release you already have a Queue entry for is refused wit
 - **downloading / grabbed / importing** — it's in flight; check the Queue.
 - **`importBlocked`** — a re-grab is allowed and reuses the existing Queue row with a fresh retry budget. Use this when the original files are gone; use **Retry import** instead when they're still on disk.
 
+### Retrying a download that failed
+
+A Queue row in `failed` never produced a file: the grab did not reach the download client, or the client gave up on it. There is nothing to import, so **Retry import** does not apply and is not offered. Use **Retry download** on the row instead. It sends the same release to your download client again, which is the right move when the cause was transient (the client was down, the indexer answered 429 or 500). It deliberately does not search for a different release; when the release itself is gone, search the book and grab another one, or blocklist this one first.
+
+To retry in bulk, tick the rows and use **Retry selected**, or use **Retry all failed** above the list, which covers both stages: an import failure has its import re-armed, a failed download has its release re-sent. Both ask for confirmation when a re-send is in the batch, because that hands work back to your download client.
+
+### The Queue looks empty, or shorter than it should be
+
+Look for a banner above the list saying *Could not reach `<client>`. This list may be incomplete*. Bindery gives each download client a short deadline when it renders the Queue, and a client that misses it is dropped from that render, so its rows are missing until the next poll succeeds. The rows and the downloads themselves are fine. Check the client is up and reachable at the host and port in **Settings → Download clients** (its **Test** button is the quickest answer), and remember a client that is up but very slow to answer will do this intermittently.
+
 ### "Could not match any book to this download"
 
 The files downloaded fine, but Bindery couldn't tie them to a book in your library, so the item sits in the Queue as `importFailed` with *could not match any book to this download*. This happens when a release was grabbed without a specific book (e.g. from the free-text Search page) or its title didn't parse to a catalogue book.

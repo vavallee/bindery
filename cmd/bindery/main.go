@@ -999,6 +999,11 @@ func main() {
 		r.Get("/queue", queueHandler.List)
 		r.Post("/queue/grab", queueHandler.Grab)
 		r.Post("/queue/{id}/retry-import", queueHandler.RetryImport)
+		// Retry the download itself: re-sends the release the row holds to the
+		// download client (#2295). Distinct from retry-import, which re-runs the
+		// import of files that are already on disk.
+		r.Post("/queue/{id}/retry", queueHandler.RetryDownload)
+		r.Post("/queue/bulk-retry", queueHandler.BulkRetry)
 		r.Post("/queue/bulk-delete", queueHandler.BulkDelete)
 		r.Delete("/queue/{id}", queueHandler.Delete)
 

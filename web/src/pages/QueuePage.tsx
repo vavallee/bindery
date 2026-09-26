@@ -10,12 +10,18 @@ import { usePolling } from '../components/usePolling'
 import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
 import { btn, btnSize } from '../components/buttons'
 import { formatBytes } from '../util/format'
-import { downloadStatusBadge, isFailed, isMatchable, isRetryable } from '../components/downloadStatus'
+import { downloadStatusBadge, isFailed, isMatchable, isResendable, isRetryable } from '../components/downloadStatus'
 
 export default function QueuePage() {
   const { t } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
   const [queue, setQueue] = useState<QueueItem[]>([])
+  // The queue envelope's partial flag and the clients behind it (#2376). The
+  // API has always sent these; the page threw them away, so an unreachable
+  // download client rendered as a short (often empty) queue that reads as data
+  // loss. Kept in state beside the items they qualify.
+  const [partial, setPartial] = useState(false)
+  const [staleClients, setStaleClients] = useState<string[]>([])
   const [pending, setPending] = useState<PendingRelease[]>([])
   const [loading, setLoading] = useState(true)
   const [grabbingPending, setGrabbingPending] = useState<number | null>(null)
@@ -51,7 +57,9 @@ export default function QueuePage() {
       api.listPending(),
     ]).then(([q, p]) => {
       if (!mounted.current) return
-      setQueue(q)
+      setQueue(q.items ?? [])
+      setPartial(!!q.partial)
+      setStaleClients((q.staleClients ?? []).map(c => c.name).filter((n): n is string => !!n))
       setPending(p)
     }).catch(console.error).finally(() => { if (mounted.current) setLoading(false) })
   }, [])
@@ -164,6 +172,29 @@ export default function QueuePage() {
     }
   }
 
+  // handleRetryDownload re-sends this row's own release (#2295). It shares the
+  // per-row busy set and error slot with the import retry: a row has at most one
+  // of the two buttons, so they cannot be in flight together.
+  const handleRetryDownload = async (id: number) => {
+    setRetryingImportIds(prev => new Set(prev).add(id))
+    clearRetryImportError(id)
+    try {
+      await api.retryDownload(id)
+      load()
+    } catch (e) {
+      setRetryImportErrors(prev => ({
+        ...prev,
+        [id]: e instanceof Error ? e.message : 'Retry failed',
+      }))
+    } finally {
+      setRetryingImportIds(prev => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }
+  }
+
   // handleMatch attaches an unmatched download to the picked book and imports its
   // files against it (#1589), then surfaces the outcome inline so the user gets
   // feedback rather than a silent no-op.
@@ -199,6 +230,10 @@ export default function QueuePage() {
   // from one table keyed by every state internal/models/download_state.go
   // defines, so they cannot drift apart (#2342).
   const failedItems = queue.filter(q => isFailed(q.status))
+  // The selected rows a retry can actually do something with. Remove selected
+  // works on anything; a retry only applies to a failed row, so the button is
+  // offered only when the selection holds one (#2295).
+  const retryableSelection = queue.filter(q => selectedIds.has(q.id) && (isRetryable(q.status) || isResendable(q.status)))
 
   // Bulk actions over failed/blocked items, done client-side over the existing
   // per-item endpoints (no new API). Retry covers every state the retry-import
@@ -222,17 +257,51 @@ export default function QueuePage() {
       setBulkBusy(false)
     }
   }
-  const retryAllFailed = async () => {
-    const retryable = queue.filter(q => isRetryable(q.status))
-    if (retryable.length === 0) return
+  // retryMany is the one path for every multi-row retry (#2295). It posts the
+  // whole selection once: the page used to fire one api.retryImport per row from
+  // the browser, so the number of concurrent requests grew with the queue.
+  //
+  // The server decides per row which retry applies, because only it knows the
+  // row's current state. A resend sends the SAME release to the download client
+  // again; it never searches for a different one, which is what keeps a fifty
+  // row retry predictable. The confirm is asked only when a resend is in the
+  // batch, so a pure import retry stays one click.
+  const retryMany = async (items: QueueItem[]) => {
+    if (items.length === 0) return
+    const resends = items.filter(it => isResendable(it.status)).length
+    if (resends > 0 && !await confirm({
+      title: t('common.confirmTitle'),
+      body: t('queue.retryConfirm', {
+        count: items.length,
+        resends,
+        defaultValue: 'Retry {{count}} item(s)? {{resends}} of them will send the same release to your download client again. Use Search on the book to look for a different release.',
+      }),
+      confirmLabel: t('queue.retryConfirmLabel', 'Retry'),
+    })) return
     setBulkBusy(true)
+    setBulkResult(null)
     try {
-      await Promise.all(retryable.map(it => api.retryImport(it.id).catch(() => {})))
+      const { results } = await api.bulkRetryQueue(items.map(it => it.id))
+      const entries = Object.values(results ?? {})
+      const failed = entries.filter(r => !r.ok).length
+      const ok = entries.length - failed
+      if (failed > 0) {
+        setBulkResult(t('queue.retryResult', { ok, failed, defaultValue: '{{ok}} retried, {{failed}} failed' }))
+      }
       load()
+    } catch (e) {
+      console.error(e)
+      setBulkResult(e instanceof Error ? e.message : 'Bulk retry failed')
     } finally {
       setBulkBusy(false)
     }
   }
+
+  // Every failed row, both stages: an import failure re-arms its import, a
+  // failed download has its release re-sent. The button used to cover the import
+  // stage alone while the count beside it included the download stage too.
+  const retryAllFailed = () => retryMany(queue.filter(q => isRetryable(q.status) || isResendable(q.status)))
+  const retrySelected = () => retryMany(retryableSelection)
 
   // Remove the arbitrarily-selected items in one call. unmonitorBooks (default
   // on) also stops monitoring each linked book so the scheduler doesn't
@@ -300,6 +369,24 @@ export default function QueuePage() {
       {confirmDialog}
       <h2 className="text-2xl font-bold mb-6">{t('queue.title')}</h2>
 
+      {/* The API answers with a partial flag when a download client missed its
+          poll deadline, and the rows behind that client are then missing from
+          the list. Said plainly and above the table, because the worst case is
+          an empty list that looks exactly like an empty queue (#2376). */}
+      {!loading && partial && (
+        <div
+          role="status"
+          className="mb-4 px-3 py-2 text-xs text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/40 rounded-lg"
+        >
+          {staleClients.length > 0
+            ? t('queue.partialWarning', {
+                clients: staleClients.join(', '),
+                defaultValue: 'Could not reach {{clients}}. This list may be incomplete, so a download missing from it is not necessarily gone.',
+              })
+            : t('queue.partialWarningUnnamed', 'A download client did not answer. This list may be incomplete, so a download missing from it is not necessarily gone.')}
+        </div>
+      )}
+
       {loading ? (
         <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
       ) : queue.length === 0 && pending.length === 0 ? (
@@ -317,7 +404,7 @@ export default function QueuePage() {
                     {t('queue.failedCount', { count: failedItems.length, defaultValue: '{{count}} failed' })}
                   </span>
                   <div className="flex gap-2">
-                    {queue.some(q => isRetryable(q.status)) && (
+                    {queue.some(q => isRetryable(q.status) || isResendable(q.status)) && (
                       <button
                         onClick={retryAllFailed}
                         disabled={bulkBusy}
@@ -372,6 +459,15 @@ export default function QueuePage() {
                       />
                       {t('queue.deleteFilesLabel', 'Delete downloaded files')}
                     </label>
+                    {retryableSelection.length > 0 && (
+                      <button
+                        onClick={retrySelected}
+                        disabled={bulkBusy}
+                        className="px-2.5 py-1 text-xs rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-medium"
+                      >
+                        {t('queue.retrySelected', 'Retry selected')}
+                      </button>
+                    )}
                     <button
                       onClick={removeSelected}
                       disabled={bulkBusy}
@@ -514,6 +610,16 @@ export default function QueuePage() {
                         className="px-3 py-2 text-xs bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded font-medium touch-manipulation"
                       >
                         {retryingImportIds.has(item.id) ? t('queue.retryingImport') : t('queue.retryImport')}
+                      </button>
+                    )}
+                    {isResendable(item.status) && (
+                      <button
+                        onClick={() => handleRetryDownload(item.id)}
+                        disabled={retryingImportIds.has(item.id)}
+                        title={t('queue.retryDownloadHint')}
+                        className="px-3 py-2 text-xs bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded font-medium touch-manipulation"
+                      >
+                        {retryingImportIds.has(item.id) ? t('queue.retryingDownload') : t('queue.retryDownload')}
                       </button>
                     )}
                     <button

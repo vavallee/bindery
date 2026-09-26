@@ -3,8 +3,10 @@ import {
   DOWNLOAD_STATUSES,
   FAILED_STATUSES,
   RETRYABLE_STATUSES,
+  RESENDABLE_STATUSES,
   downloadStatusBadge,
   isMatchable,
+  isResendable,
   isRetryable,
 } from './downloadStatus'
 
@@ -67,6 +69,18 @@ describe('derived state sets', () => {
     expect(isRetryable('importBlocked')).toBe(true)
     expect(isRetryable('importFailed')).toBe(true)
     expect(isRetryable('failed')).toBe(false)
+  })
+
+  // api.regrabbable (internal/api/queue.go) admits StateFailed and
+  // StateImportBlocked, but only `failed` is offered a resend in the UI: a
+  // blocked import already has Retry import, which reuses the files on disk
+  // rather than downloading them again (#2295).
+  it('offers a resend for the download stage only', () => {
+    expect([...RESENDABLE_STATUSES]).toEqual(['failed'])
+    expect(isResendable('failed')).toBe(true)
+    expect(isResendable('importFailed')).toBe(false)
+    expect(isResendable('importBlocked')).toBe(false)
+    expect(isResendable('downloading')).toBe(false)
   })
 
   it('treats importFailed and importBlocked as matchable and nothing else', () => {
