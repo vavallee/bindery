@@ -315,7 +315,7 @@
     "grab": "Grab",
     "grabbing": "Grabbing…",
     "grabbed": "Grabbed",
-    "autoGrabDisabled": "No search was run. Automatic grabbing is off, which also stops these Search buttons. Turn on Settings > General > Enable automatic grabbing, or open a single book and use Search Indexers there to pick a release yourself.",
+    "autoGrabDisabled": "No search was run. Automatic grabbing is off, which also stops these Search buttons. Turn on Settings > Metadata Profiles > Enable automatic grabbing, or open a single book and use Search Indexers there to pick a release yourself.",
     "autoGrabDisabledSingleBook": "No search was run. Automatic grabbing is off, so Bindery will not pick a release for you. Turn on Settings > Metadata Profiles > Enable automatic grabbing, or use the Search button on this page to see the releases and grab one yourself.",
     "noClient": {
       "body": "Nothing was grabbed — no enabled download client can handle this release. Add or enable a download client to start downloads.",
