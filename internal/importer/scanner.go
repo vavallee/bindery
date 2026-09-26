@@ -2844,12 +2844,25 @@ func cleanLayoutTitle(dir string) string {
 	return stripped
 }
 
-// authorTitleFromLayout derives author and title from a library file's folder
-// hierarchy. A file under <root>/<Author>/<Book>/<file> names both
+// bookFolderFromLayout returns the author and the folder that names the book
+// for a library file. A file under <root>/<Author>/<Book>/<file> names both
 // unambiguously and is dash-safe, unlike splitting an "Author - Title" or
-// "Title - Author" filename (#754). title is "" when only the author folder is
-// present; ok is false when the file is not nested under any root.
-func authorTitleFromLayout(path string, roots ...string) (author, title string, ok bool) {
+// "Title - Author" filename (#754): the first directory under the root is the
+// author, and the file's parent is the book folder.
+//
+// When that parent is one disc of a multi-disc audiobook ("CD1", "Disc 2") it
+// names a part rather than the book, so the folder above it names the book
+// instead (#2723), by the cd/disc rule the library scan's unmatched grouping
+// already uses (discSetNameRe, #2672): "Book 1", "Vol 1" and bare numbers are
+// left alone, because in a library those name separate books of a series as
+// often as they name discs. The folder above counts only when a book folder
+// separates it from the author: in <root>/<Author>/<disc>/<file> the parent is
+// the author folder, which is shared with every other book and never names one.
+//
+// bookFolder is "" for a file with no book folder of its own — directly under a
+// root, or one level down in an author folder. ok is false when the file is
+// not nested under any root.
+func bookFolderFromLayout(path string, roots ...string) (author, bookFolder string, ok bool) {
 	for _, root := range roots {
 		if root == "" {
 			continue
@@ -2860,9 +2873,18 @@ func authorTitleFromLayout(path string, roots ...string) (author, title string, 
 		}
 		switch parts := strings.Split(rel, string(filepath.Separator)); {
 		case len(parts) >= 3:
-			// <root>/<Author>/…/<Book>/<file>: first dir is the author,
-			// the file's immediate parent dir is the book title.
-			return strings.TrimSpace(parts[0]), cleanLayoutTitle(parts[len(parts)-2]), true
+			// <root>/<Author>/…/<Book>/<file>: first dir is the author, the
+			// file's parent names the book — unless it is a disc folder with a
+			// book folder above it.
+			idx := len(parts) - 2
+			if idx > 1 && discSetNameRe.MatchString(parts[idx]) {
+				idx--
+			}
+			folder := filepath.Dir(path)
+			if idx < len(parts)-2 {
+				folder = filepath.Dir(folder)
+			}
+			return strings.TrimSpace(parts[0]), filepath.Clean(folder), true
 		case len(parts) == 2:
 			// <root>/<Author>/<file>: only the author is unambiguous.
 			return strings.TrimSpace(parts[0]), "", true
@@ -2871,23 +2893,37 @@ func authorTitleFromLayout(path string, roots ...string) (author, title string, 
 	return "", "", false
 }
 
+// authorTitleFromLayout derives author and title from a library file's folder
+// hierarchy: the author folder, and the book folder bookFolderFromLayout finds.
+// title is "" when the file has no book folder of its own; ok is false when the
+// file is not nested under any root.
+func authorTitleFromLayout(path string, roots ...string) (author, title string, ok bool) {
+	author, folder, ok := bookFolderFromLayout(path, roots...)
+	if !ok || folder == "" {
+		return author, "", ok
+	}
+	return author, cleanLayoutTitle(filepath.Base(folder)), true
+}
+
 // reconciledAudiobookPath returns what a reconciled audiobook file should be
 // recorded as in book_files. A track that sits in a book folder of its own is
 // recorded as that folder — the shape the importer writes for an audiobook
 // (SetFormatFilePath with the destination folder) and the shape the
 // unmatched-adoption path registers for a folder unit. The folder is the
 // audiobook, so every track inside it moves and deletes with the book instead
-// of only the one track that happened to match first (#2716).
+// of only the one track that happened to match first (#2716). For a disc-split
+// audiobook that is the book folder above CD1/CD2, never the disc folder
+// (#2723).
 //
 // A track with no book folder of its own keeps its own path: directly under the
 // library or audiobook root, or one level down in an author folder, its parent
 // is shared with other books and must not be handed to this one.
 func reconciledAudiobookPath(path string, roots ...string) string {
-	_, title, ok := authorTitleFromLayout(path, roots...)
-	if !ok || title == "" {
+	_, folder, ok := bookFolderFromLayout(path, roots...)
+	if !ok || folder == "" || cleanLayoutTitle(filepath.Base(folder)) == "" {
 		return path
 	}
-	return filepath.Clean(filepath.Dir(path))
+	return folder
 }
 
 // flipByLayout returns the other reading of a two sided filename whose title
@@ -3396,14 +3432,28 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		cleanPath := filepath.Clean(path)
 		detectedFmt := detectDownloadFormat([]string{path})
 		claimBlocked = false
+		// What the file is recorded as in book_files once it reconciles: an
+		// audiobook inside a book folder of its own is the folder, not the
+		// track that matched (see reconciledAudiobookPath). Decided before the
+		// already-tracked check below so that check can see the folder an
+		// earlier track of the same book registered.
+		registeredPath = path
+		if detectedFmt == models.MediaTypeAudiobook {
+			registeredPath = reconciledAudiobookPath(path, s.libraryDir, s.audiobookDir)
+		}
 		// The parent-directory entry in trackedPaths stands for "the sibling
 		// TRACKS of a tracked audiobook", so only an audio file may be absorbed
 		// by it. An ebook sharing that folder is a separate format on a
 		// possibly different book, and swallowing it as already-tracked hid
 		// every epub sitting next to an attached audiobook from the scan
 		// (#1957) — the mirror image of the one-format-per-pass claim below.
+		// The registered folder is the same idea one level up: it stands for
+		// the whole audiobook folder, so the second disc of a disc-split
+		// audiobook is counted with its book instead of re-claiming it
+		// (#2723).
 		if trackedPaths[cleanPath] ||
-			(detectedFmt == models.MediaTypeAudiobook && trackedPaths[filepath.Clean(filepath.Dir(cleanPath))]) {
+			(detectedFmt == models.MediaTypeAudiobook &&
+				(trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] || trackedPaths[filepath.Clean(registeredPath)])) {
 			alreadyTracked++
 			continue
 		}
@@ -3424,14 +3474,6 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				"path", path, "reason", "ebook-extension file in a folder that holds audio")
 			alreadyTracked++
 			continue
-		}
-
-		// What the file is recorded as in book_files once it reconciles: an
-		// audiobook inside a book folder of its own is the folder, not the
-		// track that matched (see reconciledAudiobookPath).
-		registeredPath = path
-		if detectedFmt == models.MediaTypeAudiobook {
-			registeredPath = reconciledAudiobookPath(path, s.libraryDir, s.audiobookDir)
 		}
 
 		// Parse the filename for title/author hints, then let the folder

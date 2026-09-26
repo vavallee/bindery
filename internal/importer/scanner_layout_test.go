@@ -14,7 +14,8 @@ import (
 
 // TestAuthorTitleFromLayout unit-tests the folder-hierarchy resolver: author is
 // the first directory under the root, title is the file's immediate parent
-// directory with bracket/paren annotations stripped (#754).
+// directory with bracket/paren annotations stripped (#754). A disc subfolder is
+// skipped, so the folder above it names the audiobook (#2723).
 func TestAuthorTitleFromLayout(t *testing.T) {
 	root := t.TempDir()
 	cases := []struct {
@@ -52,6 +53,32 @@ func TestAuthorTitleFromLayout(t *testing.T) {
 			name:  "non-series book folder with hyphen is left intact",
 			path:  filepath.Join(root, "Ursula K. Le Guin", "The Dispossessed - An Ambiguous Utopia", "x.epub"),
 			wantA: "Ursula K. Le Guin", wantT: "The Dispossessed - An Ambiguous Utopia", wantOK: true,
+		},
+		{
+			// issue #2723: the disc subfolder of a split audiobook names a part,
+			// not the book, so the title comes from the folder above it.
+			name:  "disc subfolder uses the book folder above it",
+			path:  filepath.Join(root, "Amy Tan", "The Kitchen God's Wife", "CD1", "The Kitchen God's Wife - 01.mp3"),
+			wantA: "Amy Tan", wantT: "The Kitchen God's Wife", wantOK: true,
+		},
+		{
+			name:  "disc subfolder worded as Disc uses the book folder above it",
+			path:  filepath.Join(root, "Amy Tan", "The Kitchen God's Wife", "Disc 2", "track.mp3"),
+			wantA: "Amy Tan", wantT: "The Kitchen God's Wife", wantOK: true,
+		},
+		{
+			// issue #2672: "Book 1", "Vol 1" and bare numbers name separate
+			// books of a series as often as they name discs, so the narrower
+			// cd/disc rule leaves them as the book folder rather than folding
+			// every volume into its series.
+			name:  "numbered book folder keeps its own name",
+			path:  filepath.Join(root, "Brandon Sanderson", "Mistborn", "Book 1", "x.epub"),
+			wantA: "Brandon Sanderson", wantT: "Book 1", wantOK: true,
+		},
+		{
+			name:  "volume book folder keeps its own name",
+			path:  filepath.Join(root, "Brandon Sanderson", "Mistborn", "Vol 1", "x.epub"),
+			wantA: "Brandon Sanderson", wantT: "Vol 1", wantOK: true,
 		},
 		{
 			name:  "author folder only",
