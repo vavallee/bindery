@@ -1100,6 +1100,7 @@
         "tokenSeriesNumber": "{SeriesNumber} — position in series. {SeriesNumber:2} zero-pads to 2 digits; literal text inside braces ({Title}{ - Series}) renders only when the token has a value.",
         "tokenGenre": "{Genre} — primary genre, best with Hardcover enabled. Use {Genre:Unsorted} to set a fallback folder.",
         "tokenLang": "{Lang} — book language code, e.g. en (blank if unknown)",
+        "tokenNarrator": "{Narrator} — audiobook narrator(s) (blank if unknown)",
         "tokenExt": "{ext} — file extension, no leading dot (ebook only)",
         "tokenIgnoredAudiobook": "{{token}} is ignored for the audiobook folder template",
         "errorTraversal": "Template must not contain \".\" or \"..\" path segments.",

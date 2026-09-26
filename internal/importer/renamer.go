@@ -240,6 +240,7 @@ func (r *Renamer) applyWithExtra(template string, author *models.Author, book *m
 		"SeriesNumber": sanitizePath(seriesNumber),
 		"Genre":        sanitizePath(firstGenre(book.Genres)),
 		"Lang":         sanitizePath(book.Language),
+		"Narrator":     sanitizePath(book.Narrator),
 		"ext":          ext,
 	}
 	for k, v := range extra {
