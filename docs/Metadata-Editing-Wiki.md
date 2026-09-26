@@ -29,6 +29,19 @@ Two actions clear locks on their own, deliberately: **Re-bind** and metadata
 **re-map**. Both mean "this is the wrong record, take the new one", so
 Bindery applies the new provider record wholesale.
 
+## What you cannot edit: an author's sort name
+
+The value that decides which letter an author files under, in the Authors list
+and in the `{SortAuthor}` naming token, is the author's sort name, and there is
+no field for it. Bindery derives it from the display name as "Last, First", and
+a metadata refresh replaces it with the provider's own sort name when the
+provider has one. Nothing in the UI or the API accepts a hand written sort
+name, so unlike a book's title this cannot be locked to your own value.
+
+[How author names are filed](User-Guide-Wiki.md#how-author-names-are-filed)
+sets out the rules, including the case rule that files "Vincent van Gogh" under
+G and "Thomas De Quincey" under D, and the limits of the heuristic.
+
 ## Genre overrides in bulk (#1446)
 
 If you keep an opinionated genre taxonomy (say, `{Genre:Unsorted}/…` folder

@@ -784,6 +784,59 @@ requests at most 200 works (`limit=200`), so authors with more than 200 works
 remain marked partial: the warning may stay visible, and reconciliation will
 not remove their `not_in_current_catalogue` rows.
 
+## How author names are filed
+
+One value decides the order of the Authors list, the order of the OPDS author
+feed, and what the `{SortAuthor}` naming token writes: the author's **sort
+name**, which is the display name rewritten as "Last, First". Bindery derives
+it when the author is created, and a metadata refresh replaces it with the
+provider's own sort name whenever the provider supplies one.
+
+So the Authors page is sorted by last name out of the box. **A to Z** in the
+Sort menu gives you Asimov, Atwood, Bardugo; the two **First name** entries are
+the ones that file Isaac under I.
+
+| Display name | Files under | Rule |
+|---|---|---|
+| Isaac Asimov | Asimov, Isaac | the last word is the surname |
+| Robert A. Heinlein | Heinlein, Robert A. | middle names and initials stay with the forename |
+| Martin Luther King Jr. | King, Martin Luther Jr. | a generational suffix (Jr., Sr., II, III, IV) follows the forename |
+| Vincent van Gogh | Gogh, Vincent van | a lowercase particle travels with the forename |
+| Johann Wolfgang von Goethe | Goethe, Johann Wolfgang von | the same rule, German `von` |
+| Ludwig van Beethoven | Beethoven, Ludwig van | the same rule, Dutch `van` |
+| Thomas De Quincey | De Quincey, Thomas | a capitalised particle belongs to the surname |
+| Dick Van Dyke | Van Dyke, Dick | the same rule, so `van` and `Van` file differently |
+| Ursula K. Le Guin | Le Guin, Ursula K. | French `Le` leads whatever its case |
+| Daphne du Maurier | Du Maurier, Daphne | French `Du` leads too |
+| Jose de la Cruz | Cruz, Jose de la | a compound particle moves as one unit, never under L |
+| Seanan McGuire | McGuire, Seanan | `Mac`, `Mc`, `O'`, `Fitz`, `St` and `Saint` are part of the surname |
+| Flannery O'Connor | O'Connor, Flannery | the same rule |
+| Madonna | Madonna | a single word name is left alone |
+| Asimov, Isaac | Asimov, Isaac | a name that already carries a comma is left alone, because someone has already inverted it |
+| 村上春樹 | 村上春樹 | a name written entirely in CJK script is already surname first |
+
+Where the particle tables cannot decide, **case decides**: a lowercase particle
+in the middle of a name travels with the forename, a capitalised one stays with
+the surname. That is the BibTeX "von part" convention, and it reproduces the
+Library of Congress outcome without Bindery having to know which language a
+name belongs to.
+
+It is a heuristic, and the limits are worth knowing:
+
+- Anyone who writes their own particle against their language's convention is
+  filed the other way round.
+- A Chinese, Japanese or Korean name written in Latin letters is read forename
+  first, because the script is the only signal available. "Cixin Liu" files
+  under Liu, and the same name written "Liu Cixin" files under Cixin.
+- **There is no field for it.** The sort name cannot be edited by hand, in the
+  UI or through the API. An author filed under the wrong letter stays there
+  until the metadata provider offers a sort name of its own, which the next
+  refresh adopts.
+
+If your naming template uses `{SortAuthor}`, the same value names the folder on
+disk, so the letter an author files under and the folder it lives in always
+agree.
+
 ## Settings most people never touch
 
 The curated Settings tabs hold the things nearly every install cares about. Behind
@@ -863,6 +916,14 @@ Delete is undone by the next metadata refresh, for an author still set to take
 new items. It is not undone for an author you unmonitored or set to *Don't add
 them* — including one whose books you deleted all of. Use **Exclude** if you
 want the book gone regardless of how the author is monitored later.
+
+**An author is filed under the wrong letter.**
+The Authors list sorts by sort name, the display name rewritten as "Last,
+First" ([How author names are filed](#how-author-names-are-filed)). Particles
+are settled by case, so a lowercase `van` files under the word after it and a
+capitalised `Van` files under V. There is no field to correct it by hand; a
+metadata refresh takes the provider's own sort name when it has one. The two
+**First name** entries in the Sort menu order by display name instead.
 
 **A book is on hardcover.app but doesn't show up in search.**
 No Hardcover token configured — set one in Settings → API Keys.
