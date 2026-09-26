@@ -81,6 +81,25 @@ func TestNormalizeLanguageCode(t *testing.T) {
 	}
 }
 
+func TestLanguageCodeVariants(t *testing.T) {
+	cases := []struct {
+		name  string
+		codes []string
+		want  []string
+	}{
+		{name: "english", codes: []string{"eng"}, want: []string{"en", "eng"}},
+		{name: "bibliographic and terminology", codes: []string{"fre", "ger"}, want: []string{"de", "deu", "fr", "fra", "fre", "ger"}},
+		{name: "normalizes input", codes: []string{"EN-us", "fra"}, want: []string{"en", "en-us", "eng", "fr", "fra", "fre"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := LanguageCodeVariants(tc.codes); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("LanguageCodeVariants(%v) = %v, want %v", tc.codes, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestIsLanguageAllowed(t *testing.T) {
 	cases := []struct {
 		code        string

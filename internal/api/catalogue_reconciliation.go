@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -224,6 +225,13 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 		return CatalogueReconciliation{}, fmt.Errorf("fetch current author catalogue: %w", err)
 	}
 	works := snapshot.Books
+	languageEvidence, languageEvidenceErr := h.meta.GetAuthorWorkLanguageEvidence(ctx, works, profile.allowedLangs)
+	languageEvidenceFailed := languageEvidenceErr != nil
+	if languageEvidenceErr != nil {
+		languageEvidence = nil
+		slog.Warn("catalogue reconciliation language evidence lookup failed; works will be kept as indeterminate",
+			"author", author.Name, "error", languageEvidenceErr)
+	}
 	if len(profile.allowedLangs) > 0 {
 		// Best effort. A still-unknown language is always protected below, even
 		// when the normal ingestion policy says unknown=fail: reconciliation
@@ -261,7 +269,7 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 	rejectedTitles := make(map[string]string)
 	normalizedAuthor := strings.ToLower(strings.TrimSpace(author.Name))
 	for _, work := range works {
-		reason, indeterminate := reconciliationRejectReason(work, normalizedAuthor, profile, editions[work.ForeignID])
+		reason, indeterminate := reconciliationRejectReason(work, normalizedAuthor, profile, editions[work.ForeignID], languageEvidence, languageEvidenceFailed)
 		if reason == "" {
 			if strings.TrimSpace(work.ForeignID) != "" {
 				acceptedIDs[work.ForeignID] = struct{}{}
@@ -395,16 +403,20 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 	return result, nil
 }
 
-func reconciliationRejectReason(work models.Book, normalizedAuthor string, profile reconciliationProfile, evidence editionEvidence) (string, bool) {
+func reconciliationRejectReason(work models.Book, normalizedAuthor string, profile reconciliationProfile, evidence editionEvidence, languageEvidence map[string]metadata.AuthorWorkLanguageEvidence, languageEvidenceFailed bool) (string, bool) {
 	normalizedTitle := strings.ToLower(strings.TrimSpace(work.Title))
 	if normalizedTitle == "" || normalizedTitle == normalizedAuthor || work.IsCompilation || metadata.IsUnambiguousBundleTitle(work.Title) {
 		return reconcileReasonCatalogueFilter, false
 	}
 	if len(profile.allowedLangs) > 0 {
-		if strings.TrimSpace(work.Language) == "" {
-			return "", profile.unknownFail
+		if languageEvidenceFailed {
+			return "", true
 		}
-		if !models.IsLanguageAllowed(work.Language, profile.allowedLangs, profile.unknownFail) {
+		languageAllowed, indeterminate := authorWorkPassesLanguageFilter(&work, profile.allowedLangs, profile.unknownFail, languageEvidence)
+		if indeterminate {
+			return "", true
+		}
+		if !languageAllowed {
 			return reconcileReasonLanguage, false
 		}
 	}

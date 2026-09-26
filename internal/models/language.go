@@ -136,6 +136,42 @@ func NormalizeLanguageCode(code string) string {
 	return code
 }
 
+// LanguageCodeVariants returns the provider-facing ISO spellings that are
+// equivalent to any code in codes. The result includes ISO 639-1, 639-2/B,
+// and 639-2/T variants where Bindery knows them. Metadata providers that can
+// filter remotely should send all variants: a profile stores the /B form,
+// while an upstream catalogue may expose the same language as /T or 639-1.
+func LanguageCodeVariants(codes []string) []string {
+	seen := make(map[string]struct{})
+	add := func(code string) {
+		code = strings.ToLower(strings.TrimSpace(code))
+		if code != "" {
+			seen[code] = struct{}{}
+		}
+	}
+	for _, code := range codes {
+		normalized := NormalizeLanguageCode(code)
+		add(code)
+		add(normalized)
+		for two, bibliographic := range iso639TwoLetterToB {
+			if bibliographic == normalized {
+				add(two)
+			}
+		}
+		for terminology, bibliographic := range iso639TermToB {
+			if bibliographic == normalized {
+				add(terminology)
+			}
+		}
+	}
+	variants := make([]string, 0, len(seen))
+	for code := range seen {
+		variants = append(variants, code)
+	}
+	slices.Sort(variants)
+	return variants
+}
+
 // IsLanguageAllowed reports whether code passes the allowed-language filter.
 // When allowed is empty the filter is disabled and everything passes. When
 // code is empty (source didn't report a language — common with OpenLibrary

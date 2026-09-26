@@ -347,6 +347,119 @@ func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]
 	return c.GetAuthorWorksByIdentity(ctx, authorForeignID)
 }
 
+// GetAuthorWorkLanguageEvidence resolves language-filter evidence in one
+// bounded GraphQL query for the whole author catalogue. It asks only whether
+// each Hardcover work has an edition in one of the profile's allowed
+// languages and uses distinct_on(book_id), so the response contains at most
+// one small row per work. The explicit limit equals the unique requested work
+// count and never exceeds GetAuthorWorks' 500-work catalogue cap.
+//
+// A non-allowed default edition is enough to prove that some language evidence
+// exists, but it is not enough to reject the work. Rejection becomes
+// authoritative only after this complete query finds no allowed-language
+// edition. A query failure returns no evidence so the caller can retain its
+// existing scalar and fallback language behavior.
+func (c *Client) GetAuthorWorkLanguageEvidence(ctx context.Context, books []models.Book, allowed []string) (map[string]metadata.AuthorWorkLanguageEvidence, error) {
+	evidence := make(map[string]metadata.AuthorWorkLanguageEvidence)
+	if len(allowed) == 0 {
+		return evidence, nil
+	}
+
+	slugs := make([]string, 0, len(books))
+	bookIDs := make([]int, 0)
+	for _, book := range books {
+		if !strings.HasPrefix(strings.TrimSpace(book.ForeignID), idPrefix) {
+			continue
+		}
+		key := strings.TrimSpace(book.ForeignID)
+		id := strings.TrimSpace(strings.TrimPrefix(key, idPrefix))
+		if id == "" {
+			continue
+		}
+		if _, exists := evidence[key]; exists {
+			continue
+		}
+		evidence[key] = metadata.AuthorWorkLanguageEvidence{State: metadata.AuthorWorkLanguageIndeterminate}
+		slugs = append(slugs, id)
+		if numericID, ok := hardcoverNumericID(id); ok {
+			bookIDs = append(bookIDs, numericID)
+		}
+	}
+	if len(evidence) == 0 {
+		return evidence, nil
+	}
+	if len(evidence) > authorWorksMaxBooks {
+		return nil, fmt.Errorf("hardcover get author work language evidence: %d unique works exceeds limit %d", len(evidence), authorWorksMaxBooks)
+	}
+	if c.authorizationToken(ctx) == "" {
+		return nil, metadata.ErrProviderNotConfigured
+	}
+
+	const gql = `query GetAuthorWorkLanguageEvidence($slugs: [String!]!, $bookIds: [Int!]!, $languageCodes: [String!]!, $limit: Int!) {
+		editions(
+			where: {
+				_and: [
+					{_or: [{book: {slug: {_in: $slugs}}}, {book_id: {_in: $bookIds}}]},
+					{language: {_or: [{code2: {_in: $languageCodes}}, {code3: {_in: $languageCodes}}]}}
+				]
+			},
+			distinct_on: [book_id],
+			order_by: [{book_id: asc}, {id: asc}],
+			limit: $limit
+		) {
+			book { id slug }
+			language { code2 code3 language }
+		}
+	}`
+	var resp struct {
+		Data struct {
+			Editions []struct {
+				Book     hcBookRef   `json:"book"`
+				Language *hcLanguage `json:"language"`
+			} `json:"editions"`
+		} `json:"data"`
+	}
+	if err := c.query(ctx, gql, map[string]any{
+		"slugs":         slugs,
+		"bookIds":       bookIDs,
+		"languageCodes": models.LanguageCodeVariants(allowed),
+		"limit":         len(evidence),
+	}, &resp); err != nil {
+		return nil, fmt.Errorf("hardcover get author work language evidence: %w", err)
+	}
+
+	// A successful, explicitly bounded distinct query proves absence of an allowed
+	// edition. Preserve the default edition only as known non-allowed evidence;
+	// it never gets to overrule a matching edition returned below.
+	for _, book := range books {
+		key := strings.TrimSpace(book.ForeignID)
+		if _, ok := evidence[key]; !ok {
+			continue
+		}
+		language := models.NormalizeLanguageCode(book.Language)
+		switch {
+		case language == "":
+			evidence[key] = metadata.AuthorWorkLanguageEvidence{State: metadata.AuthorWorkLanguageIndeterminate}
+		case models.IsLanguageAllowed(language, allowed, true):
+			evidence[key] = metadata.AuthorWorkLanguageEvidence{State: metadata.AuthorWorkLanguageAllowed, Language: language}
+		default:
+			evidence[key] = metadata.AuthorWorkLanguageEvidence{State: metadata.AuthorWorkLanguageNotAllowed, Language: language}
+		}
+	}
+	for _, edition := range resp.Data.Editions {
+		key := edition.Book.foreignID()
+		if _, ok := evidence[key]; !ok {
+			continue
+		}
+		language := hardcoverLanguageName(edition.Language)
+		if language == "" {
+			continue
+		}
+		evidence[key] = metadata.AuthorWorkLanguageEvidence{State: metadata.AuthorWorkLanguageAllowed, Language: language}
+	}
+	return evidence, nil
+}
+
 func (c *Client) GetAuthor(ctx context.Context, foreignID string) (*models.Author, error) {
 	if c.authorizationToken(ctx) == "" {
 		return nil, metadata.ErrProviderNotConfigured
@@ -931,7 +1044,25 @@ type hcImage struct {
 }
 
 type hcLanguage struct {
+	Code2    string `json:"code2"`
+	Code3    string `json:"code3"`
 	Language string `json:"language"`
+}
+
+type hcBookRef struct {
+	ID   int    `json:"id"`
+	Slug string `json:"slug"`
+}
+
+func (b hcBookRef) foreignID() string {
+	id := strings.TrimSpace(b.Slug)
+	if id == "" && b.ID > 0 {
+		id = strconv.Itoa(b.ID)
+	}
+	if id == "" {
+		return ""
+	}
+	return idPrefix + id
 }
 
 type hcPublisher struct {
@@ -1639,12 +1770,14 @@ func (c *Client) toBook(b hcBook) models.Book {
 			break
 		}
 	}
-	// Fill Language from the inline edition relations when the book itself
-	// carried none (list/shelf queries — `books` has no language field).
-	// Preference: default ebook edition → default audio edition → any inline
-	// audio edition. An empty Language is "unknown" to IsLanguageAllowed and
-	// can silently drop the book under UnknownLanguageBehavior == fail, which
-	// is why losing this on list sync mattered (#1694 review).
+	// Fill the preferred/display Language from inline edition relations when
+	// the book itself carried none (`books` has no language field). Preference:
+	// default ebook edition → default audio edition → any inline audio edition.
+	// Author catalogue filtering does not treat this scalar as authoritative:
+	// GetAuthorWorkLanguageEvidence separately asks whether any allowed-language
+	// edition exists. Keeping the fallback here preserves list/shelf language
+	// behavior and the original strict-profile fix without letting a translated
+	// default edition classify the abstract work.
 	if bk.Language == "" {
 		candidates := []*hcLanguage{}
 		if b.DefaultEbookEdition != nil {
@@ -1783,14 +1916,17 @@ func hardcoverLanguageName(language *hcLanguage) string {
 	if language == nil {
 		return ""
 	}
-	code := strings.ToLower(strings.TrimSpace(language.Language))
-	if code == "" {
-		return ""
+	for _, value := range []string{language.Code3, language.Code2, language.Language} {
+		code := strings.ToLower(strings.TrimSpace(value))
+		if code == "" {
+			continue
+		}
+		if mapped, ok := hardcoverLanguageAliases[code]; ok {
+			return mapped
+		}
+		return models.NormalizeLanguageCode(code)
 	}
-	if mapped, ok := hardcoverLanguageAliases[code]; ok {
-		return mapped
-	}
-	return code
+	return ""
 }
 
 var hardcoverLanguageAliases = map[string]string{

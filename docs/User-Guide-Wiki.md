@@ -632,6 +632,18 @@ like everything else on that tab that names server paths.
   — obscure, self-published, and very old titles are more likely to be missing
   — and the API token becomes load-bearing rather than optional, so the
   selector stays disabled until you save one.
+
+  When a metadata profile restricts languages, Bindery checks Hardcover's
+  editions for each author work in one batched request. A translated default
+  edition is not treated as the language of the whole work: any edition in an
+  allowed language keeps the work, while a work is rejected as non-allowed
+  only when the lookup completes and finds no allowed edition. This filtering
+  evidence does not rewrite the displayed language, which remains the
+  provider's preferred/default language or the user's locked value. If the
+  evidence is indeterminate or its lookup fails, normal refreshes fall through
+  to the existing edition-sampled, author-majority, and scalar language before
+  applying **When book language is unknown**. **Reconcile catalogue** treats a
+  failed lookup as indeterminate rather than offering the row for removal.
 - **Google Books** (free API key) and **Audnexus/Audible** (audiobook
   narrator, duration, by ASIN) enrich further.
 

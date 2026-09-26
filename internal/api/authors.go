@@ -1875,6 +1875,16 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	skipPartBooks := h.resolveSkipPartBooks(ctx, author)
 	skipMissingDate := h.resolveSkipMissingDate(ctx, author)
 	minPages, skipMissingISBN := h.resolveEditionFilters(ctx, author)
+	var languageEvidence map[string]metadata.AuthorWorkLanguageEvidence
+	if !singleWork {
+		var languageEvidenceErr error
+		languageEvidence, languageEvidenceErr = h.meta.GetAuthorWorkLanguageEvidence(ctx, books, allowedLangs)
+		if languageEvidenceErr != nil {
+			languageEvidence = nil
+			slog.Warn("author work language evidence lookup failed; using existing language fallbacks",
+				"author", author.Name, "error", languageEvidenceErr)
+		}
+	}
 	// Both minPages>0 and skipMissingISBN require a real edition lookup per
 	// candidate work (page count and ISBN live on Edition, not Book, and
 	// aren't populated until an edition fetch runs). Gate the fetch on
@@ -2200,7 +2210,8 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		// filed for: a heavily-translated work whose edition-sampled language
 		// falls outside the profile became permanently un-addable, because the
 		// only path that could create it kept refusing to.
-		if !singleWork && !models.IsLanguageAllowed(b.Language, allowedLangs, unknownFail) {
+		languageAllowed, _ := authorWorkPassesLanguageFilter(&b, allowedLangs, unknownFail, languageEvidence)
+		if !singleWork && !languageAllowed {
 			skippedLang++
 			if len(skippedLangSample) < authorSyncSkippedSampleLimit {
 				skippedLangSample = append(skippedLangSample, models.AuthorSyncSkippedBook{Title: b.Title, Language: b.Language})
@@ -3439,6 +3450,29 @@ func applyAuthorMajorityLanguageFallback(books []models.Book) {
 			books[i].Language = majorityLang
 		}
 	}
+}
+
+// authorWorkPassesLanguageFilter applies provider-supplied edition evidence
+// when it is definitive and otherwise falls through to the work's scalar
+// language. Evidence is filter-only: it never rewrites the preferred/display
+// language, and an indeterminate result cannot discard edition sampling or the
+// author-majority fallback that already resolved the scalar.
+func authorWorkPassesLanguageFilter(book *models.Book, allowed []string, unknownFail bool, evidence map[string]metadata.AuthorWorkLanguageEvidence) (bool, bool) {
+	if len(allowed) == 0 {
+		return true, false
+	}
+	if resolved, ok := evidence[strings.TrimSpace(book.ForeignID)]; ok {
+		switch resolved.State {
+		case metadata.AuthorWorkLanguageAllowed:
+			return true, false
+		case metadata.AuthorWorkLanguageNotAllowed:
+			return false, false
+		}
+	}
+	if strings.TrimSpace(book.Language) == "" {
+		return !unknownFail, true
+	}
+	return models.IsLanguageAllowed(book.Language, allowed, unknownFail), false
 }
 
 // resolveSkipMissingDate returns the author's effective metadata profile's
