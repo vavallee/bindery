@@ -51,6 +51,12 @@ function eventDetail(type: string, parsed: ReturnType<typeof parseEventData>): s
     const to = typeof parsed.to === 'string' ? parsed.to : ''
     if (from && to) return `${from} → ${to}`
   }
+  // An import is one row per download (#2764), so the formats it delivered are
+  // the part worth reading. `formats` is absent on rows written before that,
+  // which fall through to the path they always showed.
+  if (type === 'bookImported' && typeof parsed.formats === 'string' && parsed.formats) {
+    return parsed.path ? `${parsed.formats} · ${parsed.path}` : parsed.formats
+  }
   return parsed.message || parsed.path || ''
 }
 

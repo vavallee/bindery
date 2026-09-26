@@ -906,6 +906,56 @@ func (s *Scanner) createHistoryEvent(ctx context.Context, eventType string, sour
 	}
 }
 
+// ebookImportHistoryData builds the data payload of the one bookImported
+// history row an ebook download writes (#2764), from the library paths of
+// every file it placed.
+//
+// Shape, and why:
+//
+//   - "format" stays the media type ("ebook"), unchanged from the per-file
+//     rows and from the audiobook branch, so anything reading it (the Bug #13
+//     ebook-vs-audiobook check, the History filter) keeps working. Rows
+//     written by older versions carry exactly this key and still read the same.
+//   - "path" stays the thing the History page renders as the row's detail
+//     line. A single-format download records the file itself, exactly as
+//     before. Several formats share one folder, so the row records the folder
+//     rather than picking one file arbitrarily, which is what the audiobook
+//     row already does.
+//   - "formats" is the new part: the extensions that landed, sorted, e.g.
+//     "azw3, epub, mobi". Which formats arrived is the useful content of this
+//     event and it was the thing lost when three rows collapsed into one.
+//   - "fileCount" is the number of files behind that list.
+//
+// Older rows have no "formats"/"fileCount"; readers must treat them as
+// optional.
+func ebookImportHistoryData(destPaths []string) map[string]string {
+	data := map[string]string{"format": models.MediaTypeEbook}
+	if len(destPaths) == 0 {
+		return data
+	}
+	if len(destPaths) == 1 {
+		data["path"] = destPaths[0]
+	} else {
+		data["path"] = filepath.Dir(destPaths[0])
+	}
+	seen := make(map[string]bool, len(destPaths))
+	formats := make([]string, 0, len(destPaths))
+	for _, p := range destPaths {
+		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(p), "."))
+		if ext == "" || seen[ext] {
+			continue
+		}
+		seen[ext] = true
+		formats = append(formats, ext)
+	}
+	sort.Strings(formats)
+	if len(formats) > 0 {
+		data["formats"] = strings.Join(formats, ", ")
+	}
+	data["fileCount"] = strconv.Itoa(len(destPaths))
+	return data
+}
+
 // applyEmbeddedLanguage reconciles the language recorded for a book with the
 // one embedded in the EPUB just imported for it.
 //
@@ -2017,6 +2067,17 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// share a destination directory (only the extension varies), so any
 	// imported file's directory is the right one.
 	var sidecarDir string
+	// importedDestPaths records the library path of every ebook file this
+	// download put in the library, so the single bookImported history event
+	// written after the loop can name the formats that landed (#2764). The
+	// history row used to be written inside the loop, which gave a three format
+	// bundle three rows with the same title and the same second and nothing to
+	// tell them apart. One download is one import event, the same rule the
+	// bookImported notification below and the audiobook branch above already
+	// follow. Files the idempotency guard counts are appended too: a previous
+	// attempt placed them, they are in the library, so a retry's row still lists
+	// every format the download delivered.
+	var importedDestPaths []string
 	readLanguage := book != nil && !book.IsFieldLocked(models.BookFieldLanguage)
 	// Resolve the ebook destination root and (auto) placement mode once: the
 	// root is stable for this author across the loop, and choosing hardlink-vs-
@@ -2075,6 +2136,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			slog.Info("book file already imported — skipping re-import (idempotency guard)",
 				"src", srcFile, "dst", destPath)
 			imported++
+			importedDestPaths = append(importedDestPaths, destPath)
 			continue
 		}
 
@@ -2126,6 +2188,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 		imported++
 		importedSrcFiles = append(importedSrcFiles, srcFile)
+		importedDestPaths = append(importedDestPaths, destPath)
 		sidecarDir = filepath.Dir(destPath)
 		// NOTE: StateImported is intentionally NOT set here (issue #705 finding 1).
 		// Writing the terminal "imported" state after the first successful file
@@ -2139,7 +2202,9 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		s.pushToCWA(ctx, destPath)
 		s.pushToGrimmory(ctx, book, destPath)
 
-		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, map[string]string{"path": destPath, "format": models.MediaTypeEbook})
+		// NOTE: the bookImported history event is deliberately NOT written here
+		// (#2764). It is written once after the loop, beside the notification,
+		// for the reason stated there.
 	}
 
 	// Reconcile the book's language with the file that just landed (#1160,
@@ -2202,9 +2267,19 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// download imported exactly once, then clean up.
 	if imported > 0 && failed == 0 {
 		s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
-		// One bookImported notification per download (not per file): a
-		// multi-format ebook bundle (epub + mobi + pdf) is conceptually one
-		// import event from the user's perspective.
+		// One bookImported history row and one bookImported notification per
+		// download (not per file): a multi-format ebook bundle (epub + mobi +
+		// pdf) is conceptually one import event from the user's perspective.
+		//
+		// Only the clean run writes the row. A partial import (some files
+		// landed, some did not) is not an import from the user's side: it is
+		// left retryable and failImport already records an importFailed row
+		// saying how many files failed. A later retry re-walks the same files,
+		// counts the ones already placed through the idempotency guard, and
+		// lands here, so the download still ends up with exactly one
+		// bookImported row naming every format.
+		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID,
+			ebookImportHistoryData(importedDestPaths))
 		s.notify(ctx, notifierEventBookImported, importedPayload(book, dl, models.MediaTypeEbook, "", nil))
 
 		// For "move" mode bindery has no further use for the source files. The
