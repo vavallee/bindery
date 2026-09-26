@@ -222,6 +222,10 @@ The image is distroless and cannot switch users at runtime, so `user:` is how yo
 
 Pre-built binaries for Linux (amd64, arm64, armv7, armv6), macOS and Windows (amd64, arm64), Kubernetes (Helm chart at `charts/bindery/`), and the Unraid Community Applications template are all covered in **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** — including UID/GID setup, path remapping for multi-container deployments, the full environment-variable reference, and per-version upgrade notes.
 
+## ☁️ One-Click Deploy
+
+[![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploylobe.svg)](https://repocloud.io/details/bindery/)
+
 ## Configuration
 
 Bindery is configured through the web UI under **Settings** — indexers, download clients, quality profiles, naming, notifications, auth, and everything else runtime-tunable lives there. A small set of bootstrap-only knobs are environment variables:
