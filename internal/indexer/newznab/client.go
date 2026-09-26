@@ -642,14 +642,39 @@ func authorSurname(author string) string {
 //
 // Single-sig-word titles (e.g. "Dune") remain inherently ambiguous: there is
 // no second word to disambiguate a coincidental canned-feed match.
+// titleHasRelevantResult is the query-side gate: it decides whether an
+// indexer's response is worth keeping at all, before the cascade advances.
+// See wordsPresentInAll for the empty-word-list contract.
 func titleHasRelevantResult(queryTitle string, results []SearchResult) bool {
-	words := SigWords(queryTitle)
-	if len(words) == 0 {
-		return true // query has no checkable words; assume results are valid
-	}
 	combined := make([]string, len(results))
 	for i, r := range results {
 		combined[i] = foldForSigWordMatch(r.Title + " " + r.BookTitle)
+	}
+	if wordsPresentInAll(SigWords(queryTitle), combined) {
+		return true
+	}
+	// Elision fallback, the same second pass as the indexer filters. An elided
+	// title folds to the single token "loutsider", which foldForSigWordMatch
+	// never produces from "L.Outsider.2018": note that this fold deliberately
+	// does NOT split on punctuation, so the release's separators survive and
+	// the token is absent. The whole response was judged irrelevant on that
+	// basis and discarded before any result could reach filterRelevant.
+	//
+	// Gated on a non-empty word list: SigWordsElided returns nil for a title
+	// with no apostrophe, and an empty list means "nothing checkable" (true)
+	// upstream — letting it through here would accept junk for every title.
+	if elided := SigWordsElided(queryTitle); len(elided) > 0 {
+		return wordsPresentInAll(elided, combined)
+	}
+	return false
+}
+
+// wordsPresentInAll reports whether every word appears in at least one of the
+// haystacks. An empty word list carries no evidence either way and is treated
+// as satisfied, matching titleHasRelevantResult's original contract.
+func wordsPresentInAll(words, combined []string) bool {
+	if len(words) == 0 {
+		return true
 	}
 	for _, w := range words {
 		found := false

@@ -797,8 +797,17 @@ func filterRelevant(results []newznab.SearchResult, title, author string, aliase
 	title = stripPossessivePrefix(title, author)
 	fullKws := newznab.SigWords(title)
 	primaryKws := newznab.SigWords(primaryTitle(title))
+	// Elision fallback (see newznab.SigWordsElided): an elided title folds to
+	// a single token no release name contains, because release names keep the
+	// separator ("L'Outsider" vs "L.Outsider"). Tried only after the strict
+	// set fails, so possessive matching ("Ender's Game" vs "Enders.Game") is
+	// untouched.
+	fullElided := newznab.SigWordsElided(title)
+	primaryElided := newznab.SigWordsElided(primaryTitle(title))
 	fullIdentity := titleIdentityWords(title)
 	primaryIdentity := titleIdentityWords(primaryTitle(title))
+	fullIdentityElided := titleIdentityWords(newznab.ElideApostrophes(title))
+	primaryIdentityElided := titleIdentityWords(newznab.ElideApostrophes(primaryTitle(title)))
 	authorKws := newznab.SigWords(author)
 
 	authorTokenSets := latinAliasTokenSets(author, aliases)
@@ -810,6 +819,31 @@ func filterRelevant(results []newznab.SearchResult, title, author string, aliase
 			}
 		}
 		return false
+	}
+
+	// tryMatchElided retries a FAILED strict match with the apostrophe-
+	// separated reading of the same title. Never tried first, and skipped
+	// when the two readings are identical, so every result that matches today
+	// still matches for the same reason.
+	tryMatchElided := func(n string, elided, kws []string) bool {
+		if len(elided) == 0 || sameKws(elided, kws) {
+			return false
+		}
+		return tryMatch(n, elided)
+	}
+
+	// identityOK applies the title-identity gate, accepting the elided reading
+	// as well. "Sac d'os" folds to the identity words [sac dos], which
+	// "Sac.d.os.2015.FR" ([sac 2015]) cannot satisfy; the separated reading
+	// yields [sac], which it can.
+	identityOK := func(haystack string, ident, elided []string) bool {
+		if len(ident) < 2 {
+			return true
+		}
+		if ContainsPhrase(haystack, ident) {
+			return true
+		}
+		return len(elided) > 0 && ContainsPhrase(haystack, elided)
 	}
 
 	if len(fullKws) == 0 && len(primaryKws) == 0 && len(authorKws) == 0 {
@@ -835,10 +869,12 @@ func filterRelevant(results []newznab.SearchResult, title, author string, aliase
 
 		// allowFallback=true: each result gets phrase match first, then keyword
 		// fallback if the phrase fails. No batch-level gate.
-		fullOK := tryMatch(n, fullKws) && (len(fullIdentity) < 2 || ContainsPhrase(identity, fullIdentity))
+		fullOK := (tryMatch(n, fullKws) || tryMatchElided(n, fullElided, fullKws)) &&
+			identityOK(identity, fullIdentity, fullIdentityElided)
 		primaryOK := false
 		if !fullOK && len(primaryKws) > 0 && !sameKws(primaryKws, fullKws) {
-			primaryOK = tryMatch(n, primaryKws) && (len(primaryIdentity) < 2 || ContainsPhrase(identity, primaryIdentity))
+			primaryOK = (tryMatch(n, primaryKws) || tryMatchElided(n, primaryElided, primaryKws)) &&
+				identityOK(identity, primaryIdentity, primaryIdentityElided)
 		}
 		if fullOK || primaryOK {
 			filtered = append(filtered, r)

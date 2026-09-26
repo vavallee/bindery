@@ -267,6 +267,12 @@ func filterRelevantDebug(results []newznab.SearchResult, title, author string, a
 	fullKws := newznab.SigWords(title)
 	primaryKws := newznab.SigWords(primaryTitle(title))
 	authorKws := newznab.SigWords(author)
+	// Elision fallback, identical to filterRelevant: this path serves the
+	// interactive search AND auto-grab (SearchBookWithOutcomes projects
+	// SearchBookWithDebug), so a fix applied to one filter and not the other
+	// is invisible here and live there. See newznab.SigWordsElided.
+	fullElided := newznab.SigWordsElided(title)
+	primaryElided := newznab.SigWordsElided(primaryTitle(title))
 
 	authorTokenSets := latinAliasTokenSets(author, aliases)
 
@@ -277,6 +283,15 @@ func filterRelevantDebug(results []newznab.SearchResult, title, author string, a
 			}
 		}
 		return false
+	}
+
+	// tryMatchElided retries a FAILED strict match with the apostrophe-
+	// separated reading. Never tried first, skipped when the readings agree.
+	tryMatchElided := func(n string, elided, kws []string) bool {
+		if len(elided) == 0 || sameKws(elided, kws) {
+			return false
+		}
+		return tryMatch(n, elided)
 	}
 
 	if len(fullKws) == 0 && len(primaryKws) == 0 && len(authorKws) == 0 {
@@ -292,10 +307,10 @@ func filterRelevantDebug(results []newznab.SearchResult, title, author string, a
 	var dropped []FilterDebug
 	for i, r := range results {
 		n := normTitles[i]
-		fullOK := tryMatch(n, fullKws)
+		fullOK := tryMatch(n, fullKws) || tryMatchElided(n, fullElided, fullKws)
 		primaryOK := false
 		if !fullOK && len(primaryKws) > 0 && !sameKws(primaryKws, fullKws) {
-			primaryOK = tryMatch(n, primaryKws)
+			primaryOK = tryMatch(n, primaryKws) || tryMatchElided(n, primaryElided, primaryKws)
 		}
 		if fullOK || primaryOK {
 			filtered = append(filtered, r)

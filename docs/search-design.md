@@ -201,6 +201,41 @@ Within a tier the shorter title wins, which is what BM25's length normalisation
 (`b`) does and for the same reason. FTS5's `bm25()` is not used: its `k1` and
 `b` are hard-coded, and it would only rank rows the tiers have already separated.
 
+### Apostrophes: deleted for possessives, separated as a second pass
+
+`FoldForTitleMatch` deletes both apostrophe forms (`'` and `’`) rather than
+turning them into separators, so a possessive collapses to one token:
+`Ender's` → `enders`, which is the form most release names write. The alphabets
+table above is unchanged by this — the fold still deletes.
+
+That choice costs every language that ELIDES with an apostrophe. French
+`L'Outsider`, `L'Institut`, Italian `l'isola`: the title folds to the single
+token `loutsider`, which no release name contains, because a release name keeps
+the separator (`Stephen.King.L.Outsider.2018.FRENCH`). The search then returned
+zero results, silently, at three separate points:
+
+1. `newznab.titleHasRelevantResult` — the query-side gate, which judges an
+   indexer's whole response before the cascade advances. Its fold
+   (`foldForSigWordMatch`) deliberately does not split on punctuation, so the
+   token was absent and the response was discarded before any result could be
+   filtered.
+2. `filterRelevantDebug` — the interactive search, and auto-grab
+   (`SearchBookWithOutcomes` projects it).
+3. `filterRelevant` — the searcher's own ladder. It is the only one of the three
+   that also applies the title-identity gate, which is why the elided reading is
+   applied there too.
+
+All three now try a second pass built on `newznab.SigWordsElided`, which folds
+the same title with the apostrophe as a separator (`loutsider` → `outsider`), and
+only after the strict reading has already failed. Nothing that matched before
+matches for a different reason: the strict reading is attempted first, the second
+pass is skipped when the two readings are identical, and it offers nothing at all
+for a title with no apostrophe.
+
+This is not a new alphabet. No fold changes and no stored key changes, so there is
+no `Rev` bump and no backfill: it is a second reading of an existing alphabet, at
+the matching layer.
+
 ### What we deliberately did not do
 
 - **`golang.org/x/text/collate`.** Its tables are Unicode 6.2 / CLDR 23 and
