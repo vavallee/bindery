@@ -436,6 +436,9 @@ function BookDetailPageInner() {
     setResults(null)
     setSearchDebug(null)
     setError(null)
+    // A leftover "automatic search started" banner over a fresh list of
+    // releases reads as if the automatic run produced the list (#2668).
+    setAutoSearchNotice(null)
     try {
       const [r, indexers] = await Promise.all([
         api.searchBook(book.id),

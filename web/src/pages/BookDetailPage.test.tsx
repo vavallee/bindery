@@ -1694,6 +1694,21 @@ describe('BookDetailPage automatic search (#2668)', () => {
     expect(await screen.findByText('book not found')).toBeInTheDocument()
   })
 
+  it('clears the started notice when the interactive search is run next', async () => {
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(autoLabel) }))
+    expect(await screen.findByText(translate('bookDetail.autoSearchStarted'))).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(translate('bookDetail.searchEbookIndexers')) }))
+
+    await waitFor(() => expect(api.searchBook).toHaveBeenCalled())
+    // A stale "automatic search started" banner above a fresh list of releases
+    // reads as if the list came from the automatic run.
+    await waitFor(() => expect(screen.queryByText(translate('bookDetail.autoSearchStarted'))).toBeNull())
+  })
+
   it('hides the automatic search when every monitored format is already on disk', async () => {
     vi.mocked(api.getBook).mockResolvedValue(makeBook({
       status: 'imported',
