@@ -49,6 +49,7 @@ vi.mock('../api/client', async importOriginal => {
       getBook: vi.fn(),
       listHistory: vi.fn(),
       searchBook: vi.fn(),
+      searchBookAutomatic: vi.fn(),
       listIndexers: vi.fn(),
       grab: vi.fn(),
       updateBook: vi.fn(),
@@ -221,6 +222,7 @@ beforeEach(() => {
   vi.mocked(api.getBook).mockResolvedValue(makeBook())
   vi.mocked(api.listHistory).mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 })
   vi.mocked(api.searchBook).mockResolvedValue({ results: [], debug: null })
+  vi.mocked(api.searchBookAutomatic).mockResolvedValue({ results: { '42': { ok: true } } })
   vi.mocked(api.listIndexers).mockResolvedValue([])
   vi.mocked(api.grab).mockResolvedValue(makeDownload())
   vi.mocked(api.updateBook).mockImplementation(async (_id, patch) => makeBook(patch))
@@ -1629,5 +1631,108 @@ describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () =>
 
     await act(async () => { settle?.(makeBook({ id: 43, title: 'The Well of Ascension' })) })
     await screen.findByRole('heading', { name: 'The Well of Ascension' })
+  })
+})
+
+// #2668 (ThatDeltaGuy): the book page's only search button is the interactive
+// one (POST /book/{id}/search returns releases and never grabs), so there was
+// no way to fire the automatic search for a single book. The automatic path is
+// scheduler.SearchAndGrabBook, reachable from the API only through
+// POST /book/bulk with action "search", which already checks ownership and
+// already refuses with code auto_grab_disabled when the global switch is off.
+describe('BookDetailPage automatic search (#2668)', () => {
+  const autoLabel = translate('bookDetail.autoSearch')
+
+  it('offers an automatic search alongside the interactive one', async () => {
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    expect(screen.getByRole('button', { name: new RegExp(translate('bookDetail.searchEbookIndexers')) })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: new RegExp(autoLabel) })).toBeInTheDocument()
+  })
+
+  it('runs the automatic path for this book and not the interactive one', async () => {
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(autoLabel) }))
+
+    await waitFor(() => expect(api.searchBookAutomatic).toHaveBeenCalledWith(42))
+    expect(api.searchBook).not.toHaveBeenCalled()
+    expect(await screen.findByText(translate('bookDetail.autoSearchStarted'))).toBeInTheDocument()
+  })
+
+  it('says nothing was searched when automatic grabbing is off', async () => {
+    vi.mocked(api.searchBookAutomatic).mockResolvedValue({
+      results: { '42': { ok: false, code: 'auto_grab_disabled', error: 'automatic grabbing is disabled' } },
+    })
+
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(autoLabel) }))
+
+    expect(await screen.findByText(translate('search.autoGrabDisabledSingleBook'))).toBeInTheDocument()
+    // Never both: a refusal must not also read as a started search.
+    expect(screen.queryByText(translate('bookDetail.autoSearchStarted'))).toBeNull()
+    // The refusal names the tab the switch actually lives on, and points at
+    // the interactive button on this very page rather than telling the reader
+    // to open a single book, which is where they already are.
+    expect(translate('search.autoGrabDisabledSingleBook')).toContain('Metadata Profiles')
+  })
+
+  it('surfaces a per book error from the automatic path', async () => {
+    vi.mocked(api.searchBookAutomatic).mockResolvedValue({
+      results: { '42': { ok: false, error: 'book not found' } },
+    })
+
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(autoLabel) }))
+
+    expect(await screen.findByText('book not found')).toBeInTheDocument()
+  })
+
+  it('clears the started notice when the interactive search is run next', async () => {
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(autoLabel) }))
+    expect(await screen.findByText(translate('bookDetail.autoSearchStarted'))).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(translate('bookDetail.searchEbookIndexers')) }))
+
+    await waitFor(() => expect(api.searchBook).toHaveBeenCalled())
+    // A stale "automatic search started" banner above a fresh list of releases
+    // reads as if the list came from the automatic run.
+    await waitFor(() => expect(screen.queryByText(translate('bookDetail.autoSearchStarted'))).toBeNull())
+  })
+
+  it('hides the automatic search when every monitored format is already on disk', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({
+      status: 'imported',
+      ebookFilePath: '/books/Sanderson/The Final Empire.epub',
+    }))
+
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    // SearchAndGrabBook computes neededFormats() and returns without searching
+    // when nothing is needed, so a button here could only ever do nothing.
+    expect(screen.queryByRole('button', { name: new RegExp(autoLabel) })).toBeNull()
+    expect(screen.getByRole('button', { name: new RegExp(translate('bookDetail.searchEbookIndexers')) })).toBeInTheDocument()
+  })
+
+  it('still offers it when only the audiobook half of a dual format book is missing', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({
+      mediaType: 'both',
+      ebookFilePath: '/books/Sanderson/The Final Empire.epub',
+    }))
+
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    expect(screen.getByRole('button', { name: new RegExp(autoLabel) })).toBeInTheDocument()
   })
 })

@@ -9,6 +9,7 @@ import ClipboardManualFallback from '../../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../../components/useClipboardCopy'
 import { useAuth } from '../../auth/AuthContext'
 import { inputCls } from './formStyles'
+import RenameFilesModal from '../../components/RenameFilesModal'
 import NamingTemplateField from './NamingTemplateField'
 import SaveButton from './SaveButton'
 import { useSaveResult } from './useSaveResult'
@@ -38,6 +39,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const [dropErr, setDropErr] = useState<string | null>(null)
   const [langErr, setLangErr] = useState<string | null>(null)
   const [scanningLibrary, setScanningLibrary] = useState(false)
+  const [showReorganize, setShowReorganize] = useState(false)
   const [scanMessage, setScanMessage] = useState<string | null>(null)
   const scanStartedAt = useRef<number>(0)
   const [lastScan, setLastScan] = useState<{
@@ -587,7 +589,32 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               )}
             </div>
           )}
+          {/* #2296: reorganize has had a library scope on the server since
+              #1181 but was only ever mounted per author and per book. It sits
+              below the scan on purpose: reorganize moves files that are
+              already attached to a book, so a file no scan has matched is
+              invisible to it. */}
+          <div className="mt-3 border-t border-slate-200 dark:border-zinc-800 pt-3 flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm text-slate-700 dark:text-zinc-300">{t('settings.general.reorganizeLibrary')}</p>
+              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.reorganizeLibraryHint')}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowReorganize(true)}
+              className="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
+            >
+              {t('settings.general.reorganizeLibraryButton')}
+            </button>
+          </div>
         </div>
+        {showReorganize && (
+          <RenameFilesModal
+            scope="library"
+            label={t('settings.general.reorganizeLibraryLabel')}
+            onClose={() => setShowReorganize(false)}
+          />
+        )}
       </section>
 
       {/* Wanted search interval */}
