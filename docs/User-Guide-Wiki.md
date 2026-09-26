@@ -730,6 +730,30 @@ requests at most 200 works (`limit=200`), so authors with more than 200 works
 remain marked partial: the warning may stay visible, and reconciliation will
 not remove their `not_in_current_catalogue` rows.
 
+## Settings most people never touch
+
+The curated Settings tabs hold the things nearly every install cares about. Behind
+them Bindery stores its whole configuration as plain key/value rows, and
+**Settings, Advanced** shows all of them: the key, what it holds, its default, the
+values it accepts, and whether the change takes effect now or at the next restart.
+
+Reach for it when a guide or an issue names a key rather than a screen, when you
+want to confirm what an install has actually stored, or for the rare knob that
+never earned a control of its own. Three things it will not let you do, all on
+purpose:
+
+- **Credentials are never shown.** An API key or a session secret is stored, not
+  displayed, and the ones with their own screen are only editable there.
+- **Rows Bindery writes for itself are read only.** Resume points, last run
+  timestamps and one shot guards are shown so you can see them, and hand editing
+  them corrupts whatever wrote them.
+- **Keys nothing reads are labelled as such**, rather than quietly accepting a
+  value that changes nothing. A key Bindery does not recognise at all is flagged
+  and can be removed.
+
+Every entry carries its own description, in English, written where the setting is
+defined rather than translated per language.
+
 ## What Bindery deliberately does not do
 
 Knowing the edges saves time:

@@ -390,6 +390,8 @@ Bindery parks the download as *handed off* and reconciles the managed copy the e
 
 ## Environment variables
 
+Several variables below have a database equivalent that overrides them once it is set. **Settings, Advanced tab** lists every setting Bindery stores, with its type, its default, the values it accepts and whether a change needs a restart, so you can see which keys an install actually has a row for. It is admin only, it never shows a credential's value, and the keys most installs need still have their own tab.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BINDERY_PORT` | `8787` | HTTP server port |

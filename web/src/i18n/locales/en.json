@@ -724,7 +724,8 @@
       "grimmory": "Grimmory",
       "blocklist": "Blocklist",
       "apiKeys": "API Keys",
-      "about": "About"
+      "about": "About",
+      "advanced": "Advanced"
     },
     "about": {
       "title": "About",
@@ -1309,6 +1310,34 @@
       "testDiscoveryMismatch": "Issuer mismatch: you entered {{entered}} but the IdP reports {{discovered}}. Use the discovered value as the Issuer URL.",
       "testDiscoveryFail": "Discovery failed",
       "testDiscoveryUnknown": "unknown error"
+    },
+    "advanced": {
+      "title": "Advanced",
+      "intro": "Every setting Bindery stores, straight from its key/value store. The settings most people need have their own tab; this screen is for the rare ones, and for seeing what a key actually holds. Descriptions come from the server and are not translated.",
+      "filterLabel": "Filter settings",
+      "filterPlaceholder": "Filter by key or description",
+      "adminOnly": "Advanced settings are available to administrators only.",
+      "loadError": "Could not load the settings registry: {{error}}",
+      "restartRequired": "Restart required",
+      "secret": "Value hidden",
+      "internal": "Bindery writes this",
+      "inert": "Nothing reads this",
+      "unknown": "Unrecognised",
+      "secretPlaceholder": "Hidden. Type a new value to replace it",
+      "secretElsewhere": "Set on its own settings screen, never through this tab.",
+      "internalNote": "Bindery writes this value itself. Editing it by hand corrupts whatever wrote it.",
+      "inertNote": "Nothing reads this key any more. The row is kept so an upgrade does not turn it into an unrecognised key.",
+      "unknownNote": "Bindery does not recognise this key, so nothing reads it. It was probably written by another version. Saving it is refused; removing it is safe.",
+      "defaultOption": "Default ({{value}})",
+      "notSet": "Not set",
+      "min": "Minimum",
+      "max": "Maximum",
+      "saveKey": "Save {{key}}",
+      "reset": "Reset to default",
+      "remove": "Remove row",
+      "sectionInternal": "Bindery's own bookkeeping",
+      "sectionInert": "No longer used",
+      "sectionUnknown": "Unrecognised keys"
     }
   },
   "addToLibrary": {
