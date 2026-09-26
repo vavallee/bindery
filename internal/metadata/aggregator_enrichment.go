@@ -3,6 +3,7 @@ package metadata
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/isbnutil"
@@ -230,7 +231,14 @@ func (a *Aggregator) GetAuthorAudiobooks(ctx context.Context, authorName string)
 // hand it back; aliasing a *models.Book into the cache would let those
 // mutations leak into the next cache hit (e.g. a downstream call could
 // blank out ImageURL on the cached book and poison every subsequent
-// hit). A value type is impossible to alias.
+// hit).
+//
+// The value type covers the scalar fields, but a slice field still aliases:
+// storing book.Genres as-is puts the caller's backing array in the cache, and
+// assigning snap.genres back to a book puts the cache's array in the caller's
+// hands. Either way an in-place edit (book.Genres[0] = ...) rewrites the cache
+// entry for every book of that work, which is why genres is cloned at both
+// boundaries (#2783).
 type enrichmentSnapshot struct {
 	description   string
 	imageURL      string
@@ -354,7 +362,7 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 			imageURL:      book.ImageURL,
 			averageRating: book.AverageRating,
 			ratingsCount:  book.RatingsCount,
-			genres:        book.Genres,
+			genres:        slices.Clone(book.Genres),
 		})
 	}
 }
@@ -365,9 +373,10 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 // source, so a cache hit produces the same book state a cache miss would
 // have produced, field locks included (#2767): the snapshot holds provider
 // values, and replaying them past a lock would reopen the bug on the next
-// cache hit. Crucially, we copy primitive values out of the snapshot;
-// nothing in the cache is reachable through the input book pointer after
-// this call.
+// cache hit. Crucially, every value is copied out of the snapshot — the
+// scalars by assignment and genres with slices.Clone — so nothing in the cache
+// is reachable through the input book pointer after this call, and a caller
+// editing the genres it is handed cannot rewrite the cached entry (#2783).
 func applyEnrichmentSnapshot(book *models.Book, snap enrichmentSnapshot) {
 	if len(snap.description) > len(book.Description) && book.CanWrite(models.BookFieldDescription) {
 		book.Description = snap.description
@@ -383,9 +392,10 @@ func applyEnrichmentSnapshot(book *models.Book, snap enrichmentSnapshot) {
 	// genres (Hardcover's when a match supplied them). The cache key is
 	// (provider, foreignID), so a hit reuses the same book identity and the
 	// same source genres; replacing is correct and a no-op when no Hardcover
-	// match ever contributed.
+	// match ever contributed. Clone rather than assign so the book and the
+	// cache do not share one backing array (#2783).
 	if len(snap.genres) > 0 && book.CanWrite(models.BookFieldGenres) {
-		book.Genres = snap.genres
+		book.Genres = slices.Clone(snap.genres)
 	}
 }
 
