@@ -187,6 +187,12 @@ func formatInUseMessage(count int, names []string) string {
 // The profile is normalised in place (trimmed name, lowercased format keys and
 // cutoff). Returns "" when the profile is valid; otherwise a user-facing
 // message.
+//
+// The order of items is preserved exactly as sent: it ranks releases, best
+// first within each media type (#2733), so nothing here may sort or regroup
+// it. Unknown tokens are deliberately not rejected. A third party client may
+// store one, and an unknown token belongs to no media type, so it neither
+// ranks nor blocks anything (indexer.ProfileList).
 func validateQualityProfile(p *models.QualityProfile) string {
 	p.Name = strings.TrimSpace(p.Name)
 	if p.Name == "" {

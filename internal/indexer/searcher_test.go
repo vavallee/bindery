@@ -433,15 +433,15 @@ func TestScoreResultMediaTypePenalty(t *testing.T) {
 	// Asking for an audiobook: m4b should beat epub even though epub has
 	// higher raw quality rank (5) than m4b (9 in our scale).
 	crit := MatchCriteria{Title: "Dune", Author: "Frank Herbert", MediaType: "audiobook"}
-	aScore := scoreResult(audiobookResult, crit)
-	eScore := scoreResult(ebookResult, crit)
+	aScore := scoreResult(audiobookResult, crit, nil)
+	eScore := scoreResult(ebookResult, crit, nil)
 	if aScore <= eScore {
 		t.Errorf("audiobook score %.1f should exceed ebook score %.1f when MediaType=audiobook", aScore, eScore)
 	}
 	// And vice versa.
 	crit.MediaType = "ebook"
-	aScore = scoreResult(audiobookResult, crit)
-	eScore = scoreResult(ebookResult, crit)
+	aScore = scoreResult(audiobookResult, crit, nil)
+	eScore = scoreResult(ebookResult, crit, nil)
 	if eScore <= aScore {
 		t.Errorf("ebook score %.1f should exceed audiobook score %.1f when MediaType=ebook", eScore, aScore)
 	}
@@ -529,7 +529,7 @@ func TestRankResultsISBNBonus(t *testing.T) {
 	crit := MatchCriteria{Title: "The Sparrow", Author: "Russell", ISBN: isbn}
 
 	// Strong form: matched release must score strictly higher.
-	if ms, ns := scoreResult(match, crit), scoreResult(noISBN, crit); ms <= ns {
+	if ms, ns := scoreResult(match, crit, nil), scoreResult(noISBN, crit, nil); ms <= ns {
 		t.Errorf("ISBN-matching score %.1f should exceed non-matching %.1f", ms, ns)
 	}
 
@@ -544,7 +544,7 @@ func TestRankResultsISBNBonus(t *testing.T) {
 	// releases tie and stable sort keeps insertion order (noISBN first).
 	critNoISBN := crit
 	critNoISBN.ISBN = ""
-	if ms, ns := scoreResult(match, critNoISBN), scoreResult(noISBN, critNoISBN); ms != ns {
+	if ms, ns := scoreResult(match, critNoISBN, nil), scoreResult(noISBN, critNoISBN, nil); ms != ns {
 		t.Errorf("with no criteria ISBN the scores should tie, got %.1f vs %.1f", ms, ns)
 	}
 }
@@ -559,7 +559,7 @@ func TestRankResultsASINBonus(t *testing.T) {
 
 	crit := MatchCriteria{Title: "Dune", Author: "Frank Herbert", ASIN: asin}
 
-	if ms, ns := scoreResult(match, crit), scoreResult(noASIN, crit); ms <= ns {
+	if ms, ns := scoreResult(match, crit, nil), scoreResult(noASIN, crit, nil); ms <= ns {
 		t.Errorf("ASIN-matching score %.1f should exceed non-matching %.1f", ms, ns)
 	}
 
@@ -572,7 +572,7 @@ func TestRankResultsASINBonus(t *testing.T) {
 	// Without an ASIN in the criteria the bonus disappears and the scores tie.
 	critNoASIN := crit
 	critNoASIN.ASIN = ""
-	if ms, ns := scoreResult(match, critNoASIN), scoreResult(noASIN, critNoASIN); ms != ns {
+	if ms, ns := scoreResult(match, critNoASIN, nil), scoreResult(noASIN, critNoASIN, nil); ms != ns {
 		t.Errorf("with no criteria ASIN the scores should tie, got %.1f vs %.1f", ms, ns)
 	}
 }
@@ -585,7 +585,7 @@ func TestRankResultsGrabsBonus(t *testing.T) {
 	low := newznab.SearchResult{Title: "The.Sparrow.Russell.epub", GUID: "low", Grabs: 1}
 	high := newznab.SearchResult{Title: "The.Sparrow.Russell.epub", GUID: "high", Grabs: 1000}
 
-	if ls, hs := scoreResult(low, crit), scoreResult(high, crit); hs <= ls {
+	if ls, hs := scoreResult(low, crit, nil), scoreResult(high, crit, nil); hs <= ls {
 		t.Errorf("higher-grab score %.1f should exceed lower-grab %.1f", hs, ls)
 	}
 
@@ -606,7 +606,7 @@ func TestRankResultsSizeBonus(t *testing.T) {
 	small := newznab.SearchResult{Title: "The.Sparrow.Russell.epub", GUID: "small", Size: 5 * mb}
 	large := newznab.SearchResult{Title: "The.Sparrow.Russell.epub", GUID: "large", Size: 500 * mb}
 
-	if ss, ls := scoreResult(small, crit), scoreResult(large, crit); ls <= ss {
+	if ss, ls := scoreResult(small, crit, nil), scoreResult(large, crit, nil); ls <= ss {
 		t.Errorf("larger-size score %.1f should exceed smaller-size %.1f (code prefers bigger)", ls, ss)
 	}
 
@@ -2105,5 +2105,117 @@ func TestFilterByAllowedLanguagesAgreesWithBookFilter(t *testing.T) {
 		if slices.Contains(kept, tc.drop) {
 			t.Errorf("profile %q must still drop %q, kept %v", tc.allowed, tc.drop, kept)
 		}
+	}
+}
+
+// The profile order tests below pin #2733: a quality profile's stored order
+// ranks releases, top is best, and only ticked entries score. Every test above
+// them runs without a profile and must keep passing unchanged, which is the
+// evidence that the QualityRank path is untouched for authors without one.
+
+func orderedProfile(items ...models.QualityItem) *models.QualityProfile {
+	return &models.QualityProfile{Name: "ordered", Items: items}
+}
+
+func ticked(q string) models.QualityItem   { return models.QualityItem{Quality: q, Allowed: true} }
+func unticked(q string) models.QualityItem { return models.QualityItem{Quality: q, Allowed: false} }
+
+// TestRankResultsProfileOrderBeatsQualityRank: pdf above epub in the profile
+// puts the pdf release first, although QualityRank says the opposite.
+func TestRankResultsProfileOrderBeatsQualityRank(t *testing.T) {
+	results := toResults("The.Sparrow.Russell.epub", "The.Sparrow.Russell.pdf")
+	crit := MatchCriteria{
+		Title: "The Sparrow", Author: "Russell", MediaType: models.MediaTypeEbook,
+		Profile: orderedProfile(ticked("pdf"), ticked("epub")),
+	}
+	rankResults(results, crit)
+	if results[0].Title != "The.Sparrow.Russell.pdf" {
+		t.Errorf("profile lists pdf first so pdf should rank first, got order: %v", resultTitles(results))
+	}
+}
+
+// TestRankResultsProfileUntickedScoresZero: an unticked entry contributes
+// nothing, wherever it sits. azw3 is unticked at the top and pdf unticked at
+// the bottom, so they tie on the format term and stable sort keeps their
+// input order; only the ticked epub is lifted.
+func TestRankResultsProfileUntickedScoresZero(t *testing.T) {
+	results := toResults("The.Sparrow.Russell.pdf", "The.Sparrow.Russell.azw3", "The.Sparrow.Russell.epub")
+	crit := MatchCriteria{
+		Title: "The Sparrow", Author: "Russell", MediaType: models.MediaTypeEbook,
+		Profile: orderedProfile(unticked("azw3"), ticked("epub"), unticked("pdf")),
+	}
+	rankResults(results, crit)
+	want := []string{"The.Sparrow.Russell.epub", "The.Sparrow.Russell.pdf", "The.Sparrow.Russell.azw3"}
+	if got := resultTitles(results); !slices.Equal(got, want) {
+		t.Errorf("unticked entries must score zero regardless of position, got %v want %v", got, want)
+	}
+}
+
+// TestRankResultsProfileMultiFormatUsesBestTicked: a release carrying several
+// formats ranks by its best ticked one. ParseRelease reduces "azw3 epub" to
+// epub, so without ReleaseFormats the two releases tie.
+func TestRankResultsProfileMultiFormatUsesBestTicked(t *testing.T) {
+	results := toResults("The.Sparrow.Russell.epub", "The.Sparrow.Russell.azw3.epub")
+	crit := MatchCriteria{
+		Title: "The Sparrow", Author: "Russell", MediaType: models.MediaTypeEbook,
+		Profile: orderedProfile(ticked("azw3"), ticked("epub")),
+	}
+	rankResults(results, crit)
+	if results[0].Title != "The.Sparrow.Russell.azw3.epub" {
+		t.Errorf("the release that also carries azw3 should rank first, got order: %v", resultTitles(results))
+	}
+}
+
+// TestRankResultsProfileNoOpinionFallsBackToQualityRank: a profile that lists
+// only audiobook formats has no opinion on ebooks, so ebooks rank by the
+// built in QualityRank exactly as they do without a profile.
+func TestRankResultsProfileNoOpinionFallsBackToQualityRank(t *testing.T) {
+	results := toResults("The.Sparrow.Russell.pdf", "The.Sparrow.Russell.epub")
+	crit := MatchCriteria{
+		Title: "The Sparrow", Author: "Russell", MediaType: models.MediaTypeEbook,
+		Profile: orderedProfile(ticked("m4b")),
+	}
+	rankResults(results, crit)
+	if results[0].Title != "The.Sparrow.Russell.epub" {
+		t.Errorf("without an ebook opinion epub should still outrank pdf, got order: %v", resultTitles(results))
+	}
+}
+
+// TestRankResultsProfileOnlyConsidersCriteriaMediaType: on an ebook search a
+// release that also carries a top ranked audio token gains nothing from it.
+// Each release is scored against one list, so every score in one search is on
+// the same scale.
+func TestRankResultsProfileOnlyConsidersCriteriaMediaType(t *testing.T) {
+	profile := orderedProfile(ticked("epub"), ticked("flac"), ticked("m4b"))
+	results := toResults("The.Sparrow.Russell.epub", "The.Sparrow.Russell.flac.epub")
+	rankResults(results, MatchCriteria{
+		Title: "The Sparrow", Author: "Russell", MediaType: models.MediaTypeEbook, Profile: profile,
+	})
+	if results[0].Title != "The.Sparrow.Russell.epub" {
+		t.Errorf("an ebook search must ignore audio tokens, so the two tie and input order holds, got: %v", resultTitles(results))
+	}
+}
+
+// TestRankResultsProfileIgnoredWithoutACriteriaMediaType: a search that names
+// no media type ranks by models.QualityRank even when a profile is present.
+//
+// A profile's ranks are only comparable inside one list: an ebook list of 12
+// entries scores up to 12 and an audiobook list of 5 scores up to 5, so mixing
+// them in one ordering compares two different scales. Scoring each release
+// against the list of its own parsed format has the same flaw one level down.
+// Falling back to the built in ranking keeps one scale per search and reuses
+// the rule that already covers a profile with no opinion.
+//
+// No caller reaches this today: the only MatchCriteria built without a media
+// type is free text SearchQuery, which carries no profile either. This pins
+// the answer for the next caller that does.
+func TestRankResultsProfileIgnoredWithoutACriteriaMediaType(t *testing.T) {
+	results := toResults("The.Sparrow.Russell.epub", "The.Sparrow.Russell.pdf")
+	rankResults(results, MatchCriteria{
+		Title: "The Sparrow", Author: "Russell",
+		Profile: orderedProfile(ticked("pdf"), ticked("epub")),
+	})
+	if results[0].Title != "The.Sparrow.Russell.epub" {
+		t.Errorf("with no criteria media type QualityRank decides, so epub outranks pdf, got: %v", resultTitles(results))
 	}
 }

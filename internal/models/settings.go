@@ -7,6 +7,10 @@ import (
 )
 
 // QualityRank maps file format names to a quality ordering (higher is better).
+// It is the fallback ranking: an author whose quality profile lists formats of
+// the media type being searched is ranked by that profile's order instead
+// (internal/indexer/quality_order.go, #2733). Free text search and authors
+// without a profile rank by this map alone.
 var QualityRank = map[string]int{
 	"unknown": 0,
 	"txt":     1,
@@ -59,10 +63,19 @@ type QualityProfile struct {
 	// that did not exist. The quality_profiles columns and these JSON fields
 	// stay so existing rows still load and a third-party client that sends
 	// them still works. Wiring an upgrade path is tracked separately.
-	UpgradeAllowed bool          `json:"upgradeAllowed"`
-	Cutoff         string        `json:"cutoff"`
-	Items          []QualityItem `json:"items"`
-	CreatedAt      time.Time     `json:"createdAt"`
+	UpgradeAllowed bool   `json:"upgradeAllowed"`
+	Cutoff         string `json:"cutoff"`
+	// Items is the profile's format list in preference order, best first
+	// within each media type. The media type of an entry is derived from its
+	// token (indexer.MediaTypeForFormat), so the one slice holds an ebook list
+	// and an audiobook list and only the relative order within each matters;
+	// the editor writes ebook entries then audiobook entries, and any
+	// interleaving is accepted. A format absent from a list the profile has
+	// entries for is not allowed; an empty list means no opinion on that media
+	// type. The wire shape is unchanged from before the order was read:
+	// [{quality, allowed}], nothing else.
+	Items     []QualityItem `json:"items"`
+	CreatedAt time.Time     `json:"createdAt"`
 	// OwnerUserID is the per-user ownership column added in migration 025.
 	// See RootFolder for legacy zero-value semantics.
 	OwnerUserID int64 `json:"-"`

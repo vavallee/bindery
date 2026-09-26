@@ -462,7 +462,6 @@
       "saveFail": "프로필 저장 실패",
       "formName": "이름",
       "formNamePlaceholder": "예: 전자책 선호",
-      "formPreference": "허용 포맷 및 우선순위 순서",
       "formAddFormat": "포맷 추가:",
       "saveChanges": "변경 사항 저장",
       "createProfile": "프로필 생성",

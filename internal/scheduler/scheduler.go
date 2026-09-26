@@ -986,6 +986,10 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		ASIN:             book.ASIN,
 		AuthorAliases:    authorAliases,
 		AllowedLanguages: allowedLangs,
+		// Ranked by the profile's order (#2733). The grab below takes the
+		// first approved release in ranked order, so this is what decides
+		// which format the sweep picks.
+		Profile: qualityProfile,
 	}
 	if book.ReleaseDate != nil {
 		crit.Year = book.ReleaseDate.Year()
@@ -1049,7 +1053,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	// a release rejected here keeps failing re-evaluation instead of being
 	// grabbed on a later sweep.
 	if qualityProfile != nil {
-		specs = append(specs, decision.QualityAllowed{Profile: qualityProfile})
+		specs = append(specs, decision.QualityAllowed{Profile: qualityProfile, MediaType: mediaType})
 	}
 	var delayProfile *models.DelayProfile
 	if profiles := s.sweepDelayProfiles(ctx, sweep); len(profiles) > 0 {

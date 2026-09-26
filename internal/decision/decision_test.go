@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/decision"
+	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -629,5 +630,142 @@ func TestQualityAllowed_ListedButNotAllowed(t *testing.T) {
 	}
 	if ok, _ := s.IsSatisfiedBy(release(withFormat("mobi")), emptyBook()); ok {
 		t.Error("a format absent from the list must be rejected")
+	}
+}
+
+// --- QualityAllowed, multi format releases (#2733) ---
+
+func withFormats(f ...string) func(*decision.Release) {
+	return func(r *decision.Release) { r.Formats = f }
+}
+
+// TestQualityAllowed_MultiFormatPassesWhenAnyTokenTicked: a release carrying
+// "epub mobi" parses to epub (first in formatTokens order), and judging that
+// one token rejected the release although mobi is ticked. Any ticked token in
+// a media type the profile has an opinion on lets it through.
+func TestQualityAllowed_MultiFormatPassesWhenAnyTokenTicked(t *testing.T) {
+	s := decision.QualityAllowed{Profile: &models.QualityProfile{
+		Name: "mobi only",
+		Items: []models.QualityItem{
+			{Quality: "mobi", Allowed: true},
+			{Quality: "epub", Allowed: false},
+		},
+	}}
+	ok, reason := s.IsSatisfiedBy(release(withFormat("epub"), withFormats("epub", "mobi")), emptyBook())
+	if !ok {
+		t.Fatalf("mobi is ticked, so a release carrying epub and mobi must pass, got %q", reason)
+	}
+}
+
+// TestQualityAllowed_MultiFormatRejectsWhenNoTokenTicked: none of the tokens
+// is ticked, so the release is rejected, and the reason names every token so
+// the user can see which formats were judged.
+func TestQualityAllowed_MultiFormatRejectsWhenNoTokenTicked(t *testing.T) {
+	s := decision.QualityAllowed{Profile: &models.QualityProfile{
+		Name: "mobi only",
+		Items: []models.QualityItem{
+			{Quality: "mobi", Allowed: true},
+			{Quality: "epub", Allowed: false},
+			{Quality: "pdf", Allowed: false},
+		},
+	}}
+	ok, reason := s.IsSatisfiedBy(release(withFormat("epub"), withFormats("epub", "pdf")), emptyBook())
+	if ok {
+		t.Fatal("neither epub nor pdf is ticked, so the release must be rejected")
+	}
+	if !strings.Contains(reason, "epub+pdf") {
+		t.Errorf("reason should name every judged token joined with +, got %q", reason)
+	}
+}
+
+// TestQualityAllowed_FormatsEmptyFallsBackToFormat: a Release built without
+// Formats (the importer's format check) is judged on Format alone, as before.
+func TestQualityAllowed_FormatsEmptyFallsBackToFormat(t *testing.T) {
+	s := decision.QualityAllowed{Profile: &models.QualityProfile{
+		Name: "epub only",
+		Items: []models.QualityItem{
+			{Quality: "epub", Allowed: true},
+			{Quality: "pdf", Allowed: false},
+		},
+	}}
+	if ok, _ := s.IsSatisfiedBy(release(withFormat("pdf"), withFormats()), emptyBook()); ok {
+		t.Error("pdf is unticked and must be rejected when Formats is empty")
+	}
+	if ok, reason := s.IsSatisfiedBy(release(withFormat("epub"), withFormats()), emptyBook()); !ok {
+		t.Errorf("epub is ticked and must pass when Formats is empty, got %q", reason)
+	}
+}
+
+// TestReleaseFromSearchResultSetsFormats: the conversion the scheduler and the
+// interactive search use fills Formats with every token in the title, in
+// formatTokens order, so the spec above can see all of them.
+func TestReleaseFromSearchResultSetsFormats(t *testing.T) {
+	r := decision.ReleaseFromSearchResult(newznab.SearchResult{Title: "Author - Title (2024) PDF EPUB"})
+	if r.Format != "epub" {
+		t.Errorf("Format = %q, want epub (ParseRelease order)", r.Format)
+	}
+	want := []string{"epub", "pdf"}
+	if len(r.Formats) != len(want) || r.Formats[0] != want[0] || r.Formats[1] != want[1] {
+		t.Errorf("Formats = %v, want %v", r.Formats, want)
+	}
+}
+
+// TestQualityAllowed_JudgesOnlyTheSearchedMediaType: an ebook search must judge
+// an "audiobook plus PDF booklet" release on its pdf token, not wave it through
+// because its m4b token is ticked in the audiobook list.
+//
+// The profile says no pdf. Before the media type was threaded in, the spec
+// walked every token against that token's own list and returned on the first
+// ticked hit, so m4b approved a release the user was being told could not be
+// grabbed, and the ranker disagreed: it narrows to the searched media type and
+// scored the same release 0 on format.
+func TestQualityAllowed_JudgesOnlyTheSearchedMediaType(t *testing.T) {
+	profile := &models.QualityProfile{
+		Name: "Mixed",
+		Items: []models.QualityItem{
+			{Quality: "epub", Allowed: true},
+			{Quality: "pdf", Allowed: false},
+			{Quality: "m4b", Allowed: true},
+		},
+	}
+	r := release(withFormat("pdf"), withFormats("pdf", "m4b"))
+
+	ok, reason := decision.QualityAllowed{Profile: profile, MediaType: models.MediaTypeEbook}.IsSatisfiedBy(r, emptyBook())
+	if ok {
+		t.Fatal("an ebook search must judge the pdf token, which is unticked")
+	}
+	if !strings.Contains(reason, "pdf") {
+		t.Errorf("reason should name the token that was judged, got %q", reason)
+	}
+	// The profile name is deliberately free of format tokens, so this can only
+	// match a token the spec judged.
+	if strings.Contains(reason, "m4b") {
+		t.Errorf("reason should not name a token from the other media type's list, got %q", reason)
+	}
+
+	// The control: the same release on an audiobook search is judged on m4b,
+	// which is ticked.
+	if ok, reason := (decision.QualityAllowed{Profile: profile, MediaType: models.MediaTypeAudiobook}).IsSatisfiedBy(r, emptyBook()); !ok {
+		t.Errorf("an audiobook search must judge the m4b token, which is ticked, got %q", reason)
+	}
+}
+
+// TestQualityAllowed_FallsBackToTheReleasesOwnMediaType: with no searched media
+// type (the importer's constructor) and with a release carrying nothing of the
+// searched kind, the release is judged against its own format's list, which is
+// what it did before the field existed.
+func TestQualityAllowed_FallsBackToTheReleasesOwnMediaType(t *testing.T) {
+	profile := &models.QualityProfile{
+		Name:  "audio",
+		Items: []models.QualityItem{{Quality: "m4b", Allowed: true}, {Quality: "mp3", Allowed: false}},
+	}
+	// No media type at all: judged as the audiobook it is.
+	if ok, _ := (decision.QualityAllowed{Profile: profile}).IsSatisfiedBy(release(withFormat("mp3"), withFormats("mp3")), emptyBook()); ok {
+		t.Error("mp3 is unticked and must be rejected when no media type is supplied")
+	}
+	// An ebook search over a release carrying no ebook token at all: nothing of
+	// the searched kind, so it is still judged as the audiobook it is.
+	if ok, _ := (decision.QualityAllowed{Profile: profile, MediaType: models.MediaTypeEbook}).IsSatisfiedBy(release(withFormat("mp3"), withFormats("mp3")), emptyBook()); ok {
+		t.Error("a release with no ebook token must still be judged against its own media type")
 	}
 }

@@ -2,9 +2,14 @@ package scheduler
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -272,5 +277,157 @@ func TestSearchAndGrabFormat_AudiobookProfileStillFiltersAudiobooks(t *testing.T
 	}
 	if len(rows) != 0 {
 		t.Errorf("m4a is unticked in the profile and must stay rejected, got %d download(s)", len(rows))
+	}
+}
+
+// rankedQualityFixture is qualityFixture with a real indexer.Searcher in front
+// of an httptest Newznab server, so the results pass through rankResults the
+// way a live sweep's do. The stub searcher above returns its slice as given
+// and cannot show which release the ranking put first.
+func rankedQualityFixture(t *testing.T, items []models.QualityItem, mediaType string, titles ...string) (*Scheduler, *db.DownloadRepo, models.Book) {
+	t.Helper()
+	s, downloads, book := qualityFixture(t, true, items, titles...)
+
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+  <channel>
+    <newznab:response offset="0" total="` + strconv.Itoa(len(titles)) + `"/>`)
+	for _, title := range titles {
+		b.WriteString(`
+    <item>
+      <title>` + title + `</title>
+      <guid isPermaLink="false">guid-` + title + `</guid>
+      <enclosure url="http://127.0.0.1:1/nzb" length="1000" type="application/x-nzb"/>
+    </item>`)
+	}
+	b.WriteString(`
+  </channel>
+</rss>`)
+	rss := b.String()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(rss))
+	}))
+	t.Cleanup(srv.Close)
+
+	ctx := context.Background()
+	idxs, err := s.indexers.List(ctx)
+	if err != nil {
+		t.Fatalf("list indexers: %v", err)
+	}
+	for i := range idxs {
+		idxs[i].URL = srv.URL
+		if mediaType == models.MediaTypeAudiobook {
+			idxs[i].Categories = []int{3030}
+		} else {
+			idxs[i].Categories = []int{7020}
+		}
+		if err := s.indexers.Update(ctx, &idxs[i]); err != nil {
+			t.Fatalf("point indexer at the stub server: %v", err)
+		}
+	}
+	if mediaType == models.MediaTypeAudiobook {
+		book.MediaType = models.MediaTypeAudiobook
+	}
+	s.searcher = indexer.NewSearcher()
+	return s, downloads, book
+}
+
+// TestSearchAndGrabFormat_ProfileOrderPicksTopTicked is the headline #2733
+// case: the profile lists pdf above epub, both ticked, so the sweep grabs the
+// pdf. QualityRank alone would grab the epub.
+func TestSearchAndGrabFormat_ProfileOrderPicksTopTicked(t *testing.T) {
+	ctx := context.Background()
+	s, downloads, book := rankedQualityFixture(t, []models.QualityItem{
+		{Quality: "pdf", Allowed: true},
+		{Quality: "epub", Allowed: true},
+	}, models.MediaTypeEbook, "Quality.Book.2024.epub", "Quality.Book.2024.pdf")
+
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
+
+	rows, err := downloads.List(ctx)
+	if err != nil {
+		t.Fatalf("downloads list: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly one grab, got %d", len(rows))
+	}
+	if rows[0].GUID != "guid-Quality.Book.2024.pdf" {
+		t.Errorf("grabbed %q, want the pdf: the profile ranks it above epub", rows[0].GUID)
+	}
+}
+
+// TestSearchAndGrabFormat_ProfileOrderPicksTopTickedAudiobook is the audio
+// twin: mp3 above m4b in the profile grabs the mp3, although QualityRank puts
+// m4b above mp3.
+func TestSearchAndGrabFormat_ProfileOrderPicksTopTickedAudiobook(t *testing.T) {
+	ctx := context.Background()
+	s, downloads, book := rankedQualityFixture(t, []models.QualityItem{
+		{Quality: "mp3", Allowed: true},
+		{Quality: "m4b", Allowed: true},
+	}, models.MediaTypeAudiobook, "Quality.Book.2024.m4b", "Quality.Book.2024.mp3")
+
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeAudiobook, nil)
+
+	rows, err := downloads.List(ctx)
+	if err != nil {
+		t.Fatalf("downloads list: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly one grab, got %d", len(rows))
+	}
+	if rows[0].GUID != "guid-Quality.Book.2024.mp3" {
+		t.Errorf("grabbed %q, want the mp3: the profile ranks it above m4b", rows[0].GUID)
+	}
+}
+
+// mixedMediaProfile is the shape that exposed a cross media type leak: the user
+// allows epub, refuses pdf, and allows m4b for the same author.
+func mixedMediaProfile() []models.QualityItem {
+	return []models.QualityItem{
+		{Quality: "epub", Allowed: true},
+		{Quality: "pdf", Allowed: false},
+		{Quality: "m4b", Allowed: true},
+	}
+}
+
+// TestSearchAndGrabFormat_DoesNotGrabAPDFBookletAsTheEbook is the integration
+// test for that leak. "Quality.Book.2024.PDF.M4B" is an audiobook with a PDF
+// booklet: on an ebook sweep the only token of the kind being searched is pdf,
+// which the profile refuses, so nothing may be grabbed. Judging each token
+// against its own list instead approved it on m4b and auto grabbed an audiobook
+// into the ebook slot, overriding an explicit "no pdf".
+func TestSearchAndGrabFormat_DoesNotGrabAPDFBookletAsTheEbook(t *testing.T) {
+	ctx := context.Background()
+	s, downloads, book := qualityFixture(t, true, mixedMediaProfile(), "Quality.Book.2024.PDF.M4B")
+
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
+
+	rows, err := downloads.List(ctx)
+	if err != nil {
+		t.Fatalf("downloads list: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("pdf is unticked, so an ebook sweep must grab nothing, got %d download(s)", len(rows))
+	}
+}
+
+// TestSearchAndGrabFormat_StillGrabsThatReleaseOnTheAudiobookSweep is the
+// control: the same release on an audiobook sweep is judged on m4b, which is
+// ticked, so the narrowing must not turn into a blanket block.
+func TestSearchAndGrabFormat_StillGrabsThatReleaseOnTheAudiobookSweep(t *testing.T) {
+	ctx := context.Background()
+	s, downloads, book := qualityFixture(t, true, mixedMediaProfile(), "Quality.Book.2024.PDF.M4B")
+	book.MediaType = models.MediaTypeAudiobook
+
+	s.searchAndGrabFormat(ctx, book, models.MediaTypeAudiobook, nil)
+
+	rows, err := downloads.List(ctx)
+	if err != nil {
+		t.Fatalf("downloads list: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("m4b is ticked, so the audiobook sweep should grab it, got %d download(s)", len(rows))
 	}
 }

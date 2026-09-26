@@ -26,6 +26,11 @@ type Release struct {
 	Protocol    string // "usenet" | "torrent"
 	Language    string // ISO 639-1 or empty
 	Format      string // epub, pdf, m4b, … (parsed from title)
+	// Formats is every format token in the title, in formatTokens order, so a
+	// release carrying "epub mobi" can be judged on both. Empty when the
+	// caller knows one format only (the importer), in which case Format alone
+	// is judged.
+	Formats     []string
 	MediaType   string // "ebook" | "audiobook" | "" — set for dual-format book searches
 	CustomScore int    // cumulative custom-format score
 	// DownloadVolumeFactor is the torznab downloadvolumefactor: the fraction of
@@ -91,7 +96,7 @@ func Approved(decisions []Decision) []Decision {
 }
 
 // ReleaseFromSearchResult converts a newznab.SearchResult to a decision.Release.
-// Format is parsed from the release title.
+// Format is parsed from the release title; Formats carries every token in it.
 func ReleaseFromSearchResult(sr newznab.SearchResult) Release {
 	return Release{
 		GUID:        sr.GUID,
@@ -104,6 +109,7 @@ func ReleaseFromSearchResult(sr newznab.SearchResult) Release {
 		Protocol:    sr.Protocol,
 		Language:    sr.Language,
 		Format:      indexer.ParseRelease(sr.Title).Format,
+		Formats:     indexer.ReleaseFormats(sr.Title),
 		MediaType:   sr.MediaType,
 
 		DownloadVolumeFactor: sr.DownloadVolumeFactor,

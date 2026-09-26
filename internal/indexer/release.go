@@ -355,10 +355,13 @@ func IsArticle(w string) bool { return articleSet[strings.ToLower(w)] }
 
 // ReleaseFormats returns every recognised format token in title, in
 // formatTokens order and without duplicates. ParsedRelease.Format keeps only
-// the first, which is enough for quality ranking but wrong for deciding what
-// KIND of release this is: a "… M4B + PDF" audiobook (an audio file plus a PDF
-// booklet) reduces to "pdf" there, so a caller asking "ebook or audiobook?"
-// gets "ebook" for an audiobook.
+// the first, which is enough for the built in QualityRank fallback but wrong
+// for deciding what KIND of release this is: a "… M4B + PDF" audiobook (an
+// audio file plus a PDF booklet) reduces to "pdf" there, so a caller asking
+// "ebook or audiobook?" gets "ebook" for an audiobook. Ranking by a quality
+// profile's order and the profile allow list both judge every token through
+// this function (quality_order.go, decision.QualityAllowed), so "azw3 epub"
+// counts as azw3 when the profile prefers it.
 func ReleaseFormats(title string) []string {
 	normalized := NormalizeRelease(title)
 	var out []string
