@@ -35,6 +35,13 @@ export interface DownloadStatusEntry {
    * match/retry controls apply.
    */
   matchable?: boolean
+  /**
+   * The download stage itself failed, so the row's own release can be sent to
+   * the download client again (POST /queue/{id}/retry, #2295). Mirrors
+   * api.regrabbable, minus importBlocked: a blocked import has its files on
+   * disk already and Retry import is the action that suits it.
+   */
+  resendable?: boolean
 }
 
 // Saturated red is reserved for these small chips. Error detail below a row is
@@ -68,6 +75,7 @@ export const DOWNLOAD_STATUSES: Record<string, DownloadStatusEntry> = {
     labelKey: 'queue.status.failed',
     chip: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300',
     failed: true,
+    resendable: true,
   },
   importFailed: {
     labelKey: 'history.events.importFailed',
@@ -113,8 +121,17 @@ export const RETRYABLE_STATUSES: ReadonlySet<string> = new Set(
   Object.entries(DOWNLOAD_STATUSES).filter(([, e]) => e.retryable).map(([k]) => k),
 )
 
+/**
+ * States whose own release can be re-sent to the download client. Derived,
+ * never hand-listed.
+ */
+export const RESENDABLE_STATUSES: ReadonlySet<string> = new Set(
+  Object.entries(DOWNLOAD_STATUSES).filter(([, e]) => e.resendable).map(([k]) => k),
+)
+
 export const isFailed = (status: string): boolean => FAILED_STATUSES.has(status)
 export const isRetryable = (status: string): boolean => RETRYABLE_STATUSES.has(status)
+export const isResendable = (status: string): boolean => RESENDABLE_STATUSES.has(status)
 export const isMatchable = (status: string): boolean => DOWNLOAD_STATUSES[status]?.matchable === true
 
 /**

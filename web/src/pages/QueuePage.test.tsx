@@ -5,7 +5,7 @@ import QueuePage, { MatchBookControl } from './QueuePage'
 import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
 import { api } from '../api/client'
 import { acceptConfirm } from '../test-utils'
-import type { Download, PendingRelease, QueueItem } from '../api/client'
+import type { Download, PendingRelease, QueueItem, QueueListResponse } from '../api/client'
 
 vi.mock('../api/client', async importOriginal => {
   const actual = await importOriginal<typeof import('../api/client')>()
@@ -18,6 +18,8 @@ vi.mock('../api/client', async importOriginal => {
       deleteFromQueue: vi.fn(),
       bulkDeleteQueue: vi.fn(),
       retryImport: vi.fn(),
+      retryDownload: vi.fn(),
+      bulkRetryQueue: vi.fn(),
       dismissPending: vi.fn(),
       grabPending: vi.fn(),
       listAllBooks: vi.fn(),
@@ -30,6 +32,7 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) => {
       if (key === 'queue.remaining') return `${String(options?.time)} remaining`
+      if (key === 'queue.selectItem') return `Select ${String(options?.title)}`
       const labels: Record<string, string> = {
         'common.loading': 'Loading...',
         'queue.title': 'Queue',
@@ -42,6 +45,13 @@ vi.mock('react-i18next', () => ({
         'queue.errorDetails': 'Show full error',
         'queue.clearAllFailed': 'Clear all failed',
         'queue.retryAllFailed': 'Retry all failed',
+        'queue.retrySelected': 'Retry selected',
+        'queue.retryDownload': 'Retry download',
+        'queue.retryingDownload': 'Retrying…',
+        'queue.retryDownloadHint': 'Sends this same release to your download client again. It does not search for a different release; use Search on the book for that.',
+        'queue.retryResult': `${String(options?.ok)} retried, ${String(options?.failed)} failed`,
+        'queue.partialWarning': `Could not reach ${String(options?.clients)}. This list may be incomplete, so a download missing from it is not necessarily gone.`,
+        'queue.partialWarningUnnamed': 'A download client did not answer. This list may be incomplete, so a download missing from it is not necessarily gone.',
         // Download-state chip labels now come from the shared table in
         // components/downloadStatus.ts (#2342), so the mock has to resolve them.
         'history.events.grabbed': 'Grabbed',
@@ -139,11 +149,13 @@ function renderQueuePage() {
 beforeEach(() => {
   vi.clearAllMocks()
   document.title = 'Bindery'
-  vi.mocked(api.listQueue).mockResolvedValue([])
+  vi.mocked(api.listQueue).mockResolvedValue({ items: [] })
   vi.mocked(api.listPending).mockResolvedValue([])
   vi.mocked(api.deleteFromQueue).mockResolvedValue(undefined)
   vi.mocked(api.bulkDeleteQueue).mockResolvedValue({ results: {} })
   vi.mocked(api.retryImport).mockResolvedValue({ ok: true })
+  vi.mocked(api.retryDownload).mockResolvedValue(makeDownload())
+  vi.mocked(api.bulkRetryQueue).mockResolvedValue({ results: {} })
   vi.mocked(api.dismissPending).mockResolvedValue(undefined)
   vi.mocked(api.grabPending).mockResolvedValue(makeDownload())
 })
@@ -168,7 +180,7 @@ describe('summarizeError', () => {
 
 describe('QueuePage', () => {
   it('renders loading and then the empty queue state', async () => {
-    const queueLoad = deferred<QueueItem[]>()
+    const queueLoad = deferred<QueueListResponse>()
     const pendingLoad = deferred<PendingRelease[]>()
     vi.mocked(api.listQueue).mockReturnValue(queueLoad.promise)
     vi.mocked(api.listPending).mockReturnValue(pendingLoad.promise)
@@ -178,7 +190,7 @@ describe('QueuePage', () => {
     expect(screen.getByText('Loading...')).toBeInTheDocument()
 
     await act(async () => {
-      queueLoad.resolve([])
+      queueLoad.resolve({ items: [] })
       pendingLoad.resolve([])
       await Promise.resolve()
     })
@@ -197,7 +209,7 @@ describe('QueuePage', () => {
   })
 
   it('renders queue statuses, progress, fallback errors, and error prefixes', async () => {
-    vi.mocked(api.listQueue).mockResolvedValue([
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
       makeQueueItem({
         id: 1,
         title: 'Dune EPUB',
@@ -228,7 +240,7 @@ describe('QueuePage', () => {
         size: 1048576,
         errorMessage: 'Client rejected download',
       }),
-    ])
+    ] })
 
     const { container } = renderQueuePage()
 
@@ -257,9 +269,9 @@ describe('QueuePage', () => {
   it('shows a "full error" expander for a long raw-HTML error body', async () => {
     const htmlBody = 'fetch nzb: indexer returned HTTP 403: <!DOCTYPE html><html><head><title>Forbidden</title></head><body>' +
       '<h1>403 Forbidden</h1>'.repeat(40) + '</body></html>'
-    vi.mocked(api.listQueue).mockResolvedValue([
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
       makeQueueItem({ id: 9, title: 'Huge Error', status: 'failed', errorMessage: htmlBody }),
-    ])
+    ] })
 
     renderQueuePage()
     await screen.findByText('Huge Error')
@@ -268,11 +280,11 @@ describe('QueuePage', () => {
   })
 
   it('clears all failed items via the bulk action', async () => {
-    vi.mocked(api.listQueue).mockResolvedValue([
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
       makeQueueItem({ id: 1, title: 'OK', status: 'downloading' }),
       makeQueueItem({ id: 2, title: 'Bad A', status: 'importFailed', errorMessage: 'x' }),
       makeQueueItem({ id: 3, title: 'Bad B', status: 'failed', errorMessage: 'y' }),
-    ])
+    ] })
     renderQueuePage()
     fireEvent.click(await screen.findByRole('button', { name: 'Clear all failed' }))
     await acceptConfirm()
@@ -285,12 +297,12 @@ describe('QueuePage', () => {
 
   it('bulk-removes arbitrarily selected items and unmonitors their books by default', async () => {
     vi.mocked(api.listQueue)
-      .mockResolvedValueOnce([
+      .mockResolvedValueOnce({ items: [
         makeQueueItem({ id: 1, title: 'Flood A', status: 'downloading' }),
         makeQueueItem({ id: 2, title: 'Flood B', status: 'downloading' }),
         makeQueueItem({ id: 3, title: 'Keep', status: 'downloading' }),
-      ])
-      .mockResolvedValueOnce([])
+      ] })
+      .mockResolvedValueOnce({ items: [] })
 
     renderQueuePage()
 
@@ -308,10 +320,10 @@ describe('QueuePage', () => {
   })
 
   it('select-all covers the whole queue and can also delete downloaded files', async () => {
-    vi.mocked(api.listQueue).mockResolvedValue([
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
       makeQueueItem({ id: 1, title: 'A', status: 'downloading' }),
       makeQueueItem({ id: 2, title: 'B', status: 'downloading' }),
-    ])
+    ] })
 
     renderQueuePage()
 
@@ -327,13 +339,13 @@ describe('QueuePage', () => {
   it('retries an import-failed queue item and reloads the queue', async () => {
     const retry = deferred<{ ok: boolean }>()
     vi.mocked(api.listQueue)
-      .mockResolvedValueOnce([makeQueueItem({
+      .mockResolvedValueOnce({ items: [makeQueueItem({
         id: 3,
         title: 'Retry Me',
         status: 'importFailed',
         errorMessage: 'Missing target folder',
-      })])
-      .mockResolvedValueOnce([])
+      })] })
+      .mockResolvedValueOnce({ items: [] })
     vi.mocked(api.retryImport).mockReturnValue(retry.promise)
 
     renderQueuePage()
@@ -353,12 +365,12 @@ describe('QueuePage', () => {
   })
 
   it('shows an inline error when retrying an import fails', async () => {
-    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [makeQueueItem({
       id: 4,
       title: 'Retry Fails',
       status: 'importFailed',
       errorMessage: 'Missing target folder',
-    })])
+    })] })
     vi.mocked(api.retryImport).mockRejectedValue(new Error('download is not in importFailed state'))
 
     renderQueuePage()
@@ -416,8 +428,8 @@ describe('QueuePage', () => {
 
   it('deletes a queue item via the confirmation modal and reloads the queue', async () => {
     vi.mocked(api.listQueue)
-      .mockResolvedValueOnce([makeQueueItem({ id: 7, title: 'Remove Me' })])
-      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({ items: [makeQueueItem({ id: 7, title: 'Remove Me' })] })
+      .mockResolvedValueOnce({ items: [] })
 
     renderQueuePage()
 
@@ -437,8 +449,8 @@ describe('QueuePage', () => {
 
   it('passes deleteFiles=true when the modal "delete files" checkbox is ticked', async () => {
     vi.mocked(api.listQueue)
-      .mockResolvedValueOnce([makeQueueItem({ id: 7, title: 'Remove Me' })])
-      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({ items: [makeQueueItem({ id: 7, title: 'Remove Me' })] })
+      .mockResolvedValueOnce({ items: [] })
 
     renderQueuePage()
 
@@ -460,7 +472,7 @@ describe('QueuePage', () => {
     vi.useFakeTimers()
 
     const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval')
-    vi.mocked(api.listQueue).mockResolvedValue([])
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [] })
     vi.mocked(api.listPending).mockResolvedValue([])
 
     const { unmount } = renderQueuePage()
@@ -493,12 +505,12 @@ describe('QueuePage', () => {
 
 describe('QueuePage manual match (#1589)', () => {
   it('matches an unmatched download to a book and shows feedback', async () => {
-    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [makeQueueItem({
       id: 7,
       title: 'Unmatched Release',
       status: 'importFailed',
       errorMessage: 'could not match any book to this download',
-    })])
+    })] })
     vi.mocked(api.listAllBooks).mockResolvedValue([
       { id: 55, title: 'The Right Book', author: { authorName: 'A. Writer' } },
     ] as never)
@@ -522,12 +534,12 @@ describe('QueuePage manual match (#1589)', () => {
     // Retry import clears error_message, so between the click and the next
     // scanner check the row would otherwise show an "Import Failed" pill with
     // nothing under it and no hint that anything is going to happen.
-    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [makeQueueItem({
       id: 12,
       title: 'Re-armed Release',
       status: 'importFailed',
       errorMessage: '',
-    })])
+    })] })
 
     renderQueuePage()
 
@@ -538,12 +550,12 @@ describe('QueuePage manual match (#1589)', () => {
   it('matches a download blocked after exhausting its retry budget', async () => {
     // "Stuck after three attempts": the scanner terminally blocked it, but the
     // files are still there — the match controls must render and work (#1589).
-    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [makeQueueItem({
       id: 8,
       title: 'Blocked Release',
       status: 'importBlocked',
       errorMessage: 'import retry limit reached (3 attempts)',
-    })])
+    })] })
     vi.mocked(api.listAllBooks).mockResolvedValue([
       { id: 55, title: 'The Right Book', author: { authorName: 'A. Writer' } },
     ] as never)
@@ -562,13 +574,13 @@ describe('QueuePage manual match (#1589)', () => {
   })
 
   it('shows a persistent matched indicator (survives reload) for an already-matched failed item', async () => {
-    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [makeQueueItem({
       id: 9,
       title: 'Already Matched Release',
       status: 'importFailed',
       errorMessage: 'could not match any book to this download',
       book: { id: 3, title: 'Assigned Book', authorId: 1, authorName: 'A. Writer' },
-    })])
+    })] })
 
     renderQueuePage()
 
@@ -579,12 +591,12 @@ describe('QueuePage manual match (#1589)', () => {
   })
 
   it('routes Retry import on a matched item to a direct re-import of its book', async () => {
-    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [makeQueueItem({
       id: 9,
       title: 'Already Matched Release',
       status: 'importFailed',
       book: { id: 3, title: 'Assigned Book', authorId: 1, authorName: 'A. Writer' },
-    })])
+    })] })
     vi.mocked(api.matchDownload).mockResolvedValue({ imported: true })
 
     renderQueuePage()
@@ -597,11 +609,11 @@ describe('QueuePage manual match (#1589)', () => {
   })
 
   it('routes Retry import on an unmatched item to the client retry-reset', async () => {
-    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [makeQueueItem({
       id: 10,
       title: 'Unmatched Release',
       status: 'importFailed',
-    })])
+    })] })
 
     renderQueuePage()
 
@@ -610,27 +622,133 @@ describe('QueuePage manual match (#1589)', () => {
     expect(api.matchDownload).not.toHaveBeenCalled()
   })
 
-  it('retries every state the retry endpoint accepts, not just importFailed (#2336)', async () => {
-    vi.mocked(api.listQueue).mockResolvedValue([
+  it('retries every failed row in ONE request, import stage and download stage alike (#2295, #2336)', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
       makeQueueItem({ id: 20, title: 'Failed Import', status: 'importFailed' }),
       makeQueueItem({ id: 21, title: 'Blocked Import', status: 'importBlocked' }),
-      // A plain failed grab produced no file, so there is nothing to re-import.
+      // A plain failed grab has no files to import, so it is retried by
+      // re-sending its release. The server picks the retry per row.
       makeQueueItem({ id: 22, title: 'Failed Grab', status: 'failed' }),
-    ])
+      makeQueueItem({ id: 23, title: 'Still Going', status: 'downloading' }),
+    ] })
 
     renderQueuePage()
 
     fireEvent.click(await screen.findByRole('button', { name: 'Retry all failed' }))
-    await waitFor(() => expect(api.retryImport).toHaveBeenCalledWith(20))
-    expect(api.retryImport).toHaveBeenCalledWith(21)
-    expect(api.retryImport).not.toHaveBeenCalledWith(22)
-    expect(api.retryImport).toHaveBeenCalledTimes(2)
+    // A resend is in the batch, so the click is confirmed before anything is
+    // sent to the download client.
+    await acceptConfirm()
+    // One request for the whole batch: the page used to fire one POST per row.
+    await waitFor(() => expect(api.bulkRetryQueue).toHaveBeenCalledWith([20, 21, 22]))
+    expect(api.bulkRetryQueue).toHaveBeenCalledTimes(1)
+    expect(api.retryImport).not.toHaveBeenCalled()
+  })
+
+  it('warns that the list is incomplete and names the client that did not answer (#2376)', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({
+      items: [],
+      partial: true,
+      staleClients: [{ clientId: 1, name: 'qBittorrent' }],
+    })
+
+    renderQueuePage()
+
+    // The dangerous case: nothing came back at all, so without this the page is
+    // indistinguishable from a genuinely empty queue.
+    expect(await screen.findByText(/Could not reach qBittorrent/)).toBeInTheDocument()
+  })
+
+  it('falls back to an unnamed warning when the API gives no client name (#2376)', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({
+      items: [makeQueueItem({ id: 60, title: 'Only Row' })],
+      partial: true,
+    })
+
+    renderQueuePage()
+
+    expect(await screen.findByText(/A download client did not answer/)).toBeInTheDocument()
+  })
+
+  it('does not warn when the queue came back whole (#2376)', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [makeQueueItem({ id: 61, title: 'Only Row' })] })
+
+    renderQueuePage()
+
+    await screen.findByText('Only Row')
+    expect(screen.queryByText(/may be incomplete/)).not.toBeInTheDocument()
+  })
+
+  it('re-sends a failed row\'s own release, and offers no import retry for it (#2295)', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
+      makeQueueItem({ id: 40, title: 'Grab Failed', status: 'failed', errorMessage: 'connection refused' }),
+    ] })
+
+    renderQueuePage()
+
+    await screen.findByText('Grab Failed')
+    // The files never arrived, so Retry import does not apply to this row.
+    expect(screen.queryByRole('button', { name: 'Retry import' })).not.toBeInTheDocument()
+    const retry = screen.getByRole('button', { name: 'Retry download' })
+    // The copy has to say it re-sends the same release rather than searching.
+    expect(retry).toHaveAttribute('title', expect.stringContaining('same release'))
+    fireEvent.click(retry)
+    await waitFor(() => expect(api.retryDownload).toHaveBeenCalledWith(40))
+  })
+
+  it('offers no download retry for a row that is still live (#2295)', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
+      makeQueueItem({ id: 41, title: 'Downloading Now', status: 'downloading' }),
+    ] })
+
+    renderQueuePage()
+
+    await screen.findByText('Downloading Now')
+    expect(screen.queryByRole('button', { name: 'Retry download' })).not.toBeInTheDocument()
+  })
+
+  it('retries the selection in one request and reports partial failure (#2295)', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
+      makeQueueItem({ id: 50, title: 'Failed Grab', status: 'failed' }),
+      makeQueueItem({ id: 51, title: 'Failed Import', status: 'importFailed' }),
+      makeQueueItem({ id: 52, title: 'Untouched', status: 'downloading' }),
+    ] })
+    vi.mocked(api.bulkRetryQueue).mockResolvedValue({
+      results: {
+        '50': { ok: true, action: 'resend' },
+        '51': { ok: false, error: 'download not found' },
+      },
+    })
+
+    renderQueuePage()
+
+    await screen.findByText('Failed Grab')
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Failed Grab' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Failed Import' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Retry selected' }))
+    await acceptConfirm()
+
+    await waitFor(() => expect(api.bulkRetryQueue).toHaveBeenCalledWith([50, 51]))
+    expect(api.bulkRetryQueue).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText('1 retried, 1 failed')).toBeInTheDocument()
+  })
+
+  it('offers no Retry selected when nothing selected can be retried (#2295)', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
+      makeQueueItem({ id: 53, title: 'Downloading Now', status: 'downloading' }),
+    ] })
+
+    renderQueuePage()
+
+    await screen.findByText('Downloading Now')
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all' }))
+    expect(screen.getByRole('button', { name: 'Remove selected' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry selected' })).not.toBeInTheDocument()
   })
 
   it('offers Retry all failed when only blocked imports are queued (#2336)', async () => {
-    vi.mocked(api.listQueue).mockResolvedValue([
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
       makeQueueItem({ id: 23, title: 'Blocked Import', status: 'importBlocked' }),
-    ])
+    ] })
 
     renderQueuePage()
 
@@ -638,10 +756,10 @@ describe('QueuePage manual match (#1589)', () => {
   })
 
   it('labels importExternal and importHeld instead of showing the raw enum (#2339)', async () => {
-    vi.mocked(api.listQueue).mockResolvedValue([
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
       makeQueueItem({ id: 30, title: 'Handed Off', status: 'importExternal' }),
       makeQueueItem({ id: 31, title: 'Waiting For Sibling', status: 'importHeld' }),
-    ])
+    ] })
 
     renderQueuePage()
 
@@ -657,12 +775,12 @@ describe('QueuePage manual match (#1589)', () => {
   })
 
   it('surfaces an error when the match request fails', async () => {
-    vi.mocked(api.listQueue).mockResolvedValue([makeQueueItem({
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [makeQueueItem({
       id: 11,
       title: 'Match Fails',
       status: 'importFailed',
       book: { id: 3, title: 'Assigned Book', authorId: 1, authorName: 'A. Writer' },
-    })])
+    })] })
     vi.mocked(api.matchDownload).mockRejectedValue(new Error('nope'))
 
     renderQueuePage()

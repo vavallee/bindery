@@ -859,11 +859,262 @@ func (h *QueueHandler) RetryImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !accepted {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "download is not in importFailed state"})
+		// The old message read "download is not in importFailed state", which
+		// described neither what was refused nor what would be accepted:
+		// ResetImportRetry takes importFailed AND importBlocked, and the row
+		// the user clicked on could be in any other state. Name the state that
+		// was refused and the two that are taken, and point a plain `failed`
+		// row at the retry that suits it (#2295).
+		status := models.DownloadState("unknown")
+		if d, err := h.downloads.GetByID(r.Context(), id); err == nil && d != nil {
+			status = d.Status
+		}
+		writeJSON(w, http.StatusConflict, map[string]string{"error": retryImportConflictDetail(status)})
 		return
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
+}
+
+// Retry actions. A queue row has exactly one retry available to it, decided by
+// the state it is in, and these name which one ran so a bulk retry over a mixed
+// selection can report per row instead of a flat "ok" (#2295).
+//
+//   - retryActionImport re-arms the import of files that are already on disk
+//     (POST /queue/{id}/retry-import, ResetImportRetry).
+//   - retryActionResend sends the SAME release to the download client again.
+const (
+	retryActionImport = "import"
+	retryActionResend = "resend"
+)
+
+// errRetryNotResendable is returned when a retry was asked for a row whose
+// state is not dead, so re-sending it would duplicate live work.
+var errRetryNotResendable = errors.New("download cannot be retried")
+
+// retryImportConflictDetail explains a refused import retry. It reaches the
+// user verbatim, so it names the state that was refused as well as the two
+// ResetImportRetry accepts.
+func retryImportConflictDetail(status models.DownloadState) string {
+	detail := fmt.Sprintf("download is %s, so it has no failed import to retry: only importFailed and importBlocked downloads do", status)
+	if status == models.StateFailed {
+		detail += ". This download never finished, so there are no files to import; retry the download to send the release again"
+	}
+	return detail
+}
+
+// retryNotResendableDetail explains a refused re-send, in the same voice as
+// alreadyGrabbedDetail: what the row is, and what to do from that screen.
+func retryNotResendableDetail(status models.DownloadState) string {
+	switch status {
+	case models.StateImportFailed:
+		return fmt.Sprintf("download is %s: the files are already downloaded, so retry the import rather than the download", status)
+	case models.StateImported:
+		return fmt.Sprintf("download is %s: this release is already in the library", status)
+	default:
+		return fmt.Sprintf("download is %s, which is live work: only a finished, failed download can be sent again", status)
+	}
+}
+
+// retryableImportState mirrors the status filter in
+// db.DownloadRepo.ResetImportRetry: the states whose import can be re-armed.
+// Keep the two in sync. The frontend's RETRYABLE_STATUSES is the third copy
+// (web/src/components/downloadStatus.ts).
+func retryableImportState(s models.DownloadState) bool {
+	return s == models.StateImportFailed || s == models.StateImportBlocked
+}
+
+// retryGrabRequest rebuilds the grab that produced a dead queue row.
+//
+// This is the whole design of the failed-stage retry (#2295): the row already
+// holds the release it failed on (guid, title, nzb_url, size, indexer, book),
+// so a retry RE-SENDS THAT RELEASE. It deliberately does not re-search. A fresh
+// search is what the book page's Search button does, and folding the two
+// together would make a fifty row bulk retry unpredictable: some rows sending
+// the release the user is looking at, others silently swapping in a different
+// one, which is the reporter's actual complaint.
+//
+// MediaType is recovered from the row's parsed format so the retry picks the
+// same kind of client and category the original grab did (an audiobook client
+// has its own category, see selectClient). Quality is what grab() stored from
+// indexer.ParseRelease; an unrecognised or empty format yields "", which
+// selectClient treats as "no preference", exactly as a free-text grab does.
+//
+// NZBURL is the stored value, which still carries the indexer apikey. grab's
+// signNZBURL is a no-op on an already-signed URL, and the value is redacted
+// again before the record leaves grab().
+func retryGrabRequest(d models.Download) grabRequest {
+	return grabRequest{
+		GUID:      d.GUID,
+		Title:     d.Title,
+		NZBURL:    d.NZBURL,
+		Size:      d.Size,
+		BookID:    d.BookID,
+		IndexerID: d.IndexerID,
+		Protocol:  d.Protocol,
+		MediaType: indexer.MediaTypeForFormat(d.Quality),
+	}
+}
+
+// resendRelease re-sends the release a dead row holds. The state gate is
+// regrabbable, the same one the search page's Grab applies, and RetryFailed
+// re-checks it in SQL, so two concurrent retries of one row cannot both send.
+func (h *QueueHandler) resendRelease(ctx context.Context, d models.Download) (*models.Download, error) {
+	if !regrabbable(&d) {
+		return nil, fmt.Errorf("%w: %s", errRetryNotResendable, retryNotResendableDetail(d.Status))
+	}
+	return h.grab(ctx, retryGrabRequest(d))
+}
+
+// RetryDownload handles POST /api/v1/queue/{id}/retry: send this row's release
+// to the download client again (#2295).
+//
+// Until this existed the only retry on the queue was retry-import, which covers
+// the import stage alone. A row in `failed` (a grab that never reached the
+// client, or a download the client gave up on) had no retry at all: the user
+// had to go back to search and find the release again, which is not a bulk
+// action and loses the row.
+func (h *QueueHandler) RetryDownload(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r)
+	if !ok {
+		return
+	}
+
+	// Per-user scoping (D3): 404 rather than 403 on someone else's row, so the
+	// id space stays unprobeable. GetByID rather than GetOwnerByID because the
+	// retry needs the whole row (the release it re-sends).
+	target, err := h.downloads.GetByID(r.Context(), id)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	if target == nil || !auth.CheckOwnership(r.Context(), target.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
+		return
+	}
+
+	dl, err := h.resendRelease(r.Context(), *target)
+	switch {
+	case errors.Is(err, errRetryNotResendable), errors.Is(err, errAlreadyGrabbed):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	case err != nil:
+		status := http.StatusBadGateway
+		if strings.Contains(err.Error(), "no enabled") && strings.Contains(err.Error(), "download client configured") {
+			status = http.StatusBadRequest
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
+		return
+	}
+
+	slog.Info("download retried", "download_id", id, "title", target.Title)
+	writeJSON(w, http.StatusAccepted, dl)
+}
+
+// queueRetryResult is the per-ID result entry of a bulk retry. It is
+// bulkItemResult plus Action, because which retry a row got is decided by the
+// row's state and the page has to be able to say so ("3 imports re-queued,
+// 2 releases sent again") rather than claim one action for a mixed selection.
+type queueRetryResult struct {
+	OK     bool   `json:"ok"`
+	Error  string `json:"error,omitempty"`
+	Action string `json:"action,omitempty"`
+}
+
+// queueRetryResponse mirrors bulkResponse: keys are stringified IDs and every
+// requested ID has an entry.
+type queueRetryResponse struct {
+	Results map[string]queueRetryResult `json:"results"`
+}
+
+// bulkRetryConcurrency bounds how many rows a single bulk retry works on at
+// once. A resend makes one indexer fetch plus one download-client call, so this
+// is the same kind of bound as bulkDeleteConcurrency and deliberately lower:
+// the retried releases are going to the client all at once.
+const bulkRetryConcurrency = 4
+
+// BulkRetry retries many queue rows in one request. Body: {"ids": [1,2,3]}.
+//
+// It exists because the page had no bulk endpoint and fanned out one POST per
+// selected row from the browser (Promise.all over retry-import), so the number
+// of concurrent requests grew with the queue. One request now covers the whole
+// selection, bounded server-side.
+//
+// Each row gets the one retry its state has, and the result says which:
+//
+//   - importFailed / importBlocked → "import", re-arms the import of files that
+//     are already on disk. Checked first, because importBlocked is also
+//     re-grabbable and re-importing what is already downloaded is both cheaper
+//     and what the user means by retrying an import failure.
+//   - failed (and the orphaned-import row regrabbable admits) → "resend", sends
+//     the same release to the download client again. Never a fresh search, see
+//     retryGrabRequest.
+//   - anything else → a per-ID refusal, as in BulkDelete, rather than failing
+//     the batch.
+func (h *QueueHandler) BulkRetry(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ids required"})
+		return
+	}
+
+	// One List, as BulkDelete does: it already sources the full Download state
+	// a resend needs, and ownership is enforced per item against the loaded row.
+	downloads, err := h.downloads.List(r.Context())
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	byID := make(map[int64]models.Download, len(downloads))
+	for _, d := range downloads {
+		byID[d.ID] = d
+	}
+
+	results := make(map[string]queueRetryResult, len(req.IDs))
+	var mu sync.Mutex
+	setResult := func(id int64, res queueRetryResult) {
+		mu.Lock()
+		results[strconv.FormatInt(id, 10)] = res
+		mu.Unlock()
+	}
+
+	concurrency.RunBounded(r.Context(), req.IDs, bulkRetryConcurrency, func(ctx context.Context, id int64) {
+		target, ok := byID[id]
+		// Same opaque message as the single paths under tenancy: a caller must
+		// not learn that an id exists from a bulk call either.
+		if !ok || !auth.CheckOwnership(ctx, target.OwnerUserID) {
+			setResult(id, queueRetryResult{Error: "download not found"})
+			return
+		}
+		if retryableImportState(target.Status) {
+			accepted, found, err := h.downloads.ResetImportRetry(ctx, id)
+			switch {
+			case err != nil:
+				setResult(id, queueRetryResult{Error: err.Error()})
+			case !found:
+				setResult(id, queueRetryResult{Error: "download not found"})
+			case !accepted:
+				// The row moved between the List above and the claim.
+				setResult(id, queueRetryResult{Error: retryImportConflictDetail(target.Status)})
+			default:
+				setResult(id, queueRetryResult{OK: true, Action: retryActionImport})
+			}
+			return
+		}
+		if _, err := h.resendRelease(ctx, target); err != nil {
+			setResult(id, queueRetryResult{Error: err.Error()})
+			return
+		}
+		setResult(id, queueRetryResult{OK: true, Action: retryActionResend})
+	})
+
+	writeJSON(w, http.StatusOK, queueRetryResponse{Results: results})
 }
 
 // selectClient picks the best enabled client for the given protocol and media type.
