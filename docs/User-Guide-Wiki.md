@@ -256,14 +256,29 @@ Wanted page and auto-grabs the best release. The **Auto-grab** toggle in
 Settings → Metadata Profiles → Library Defaults turns grabbing off entirely if you prefer to grab by hand
 from the Wanted page. It covers every path that can start a download: the
 scheduled sweep, the searches an author add fires, a series fill, adding a
-single book, adding from recommendations, a bulk **Search** action, a book
-flipping to wanted, and the re-search after a stalled download. A bulk
-**Search** refuses while the switch is off and says which setting to change,
-keeping your selection; a single book's **Search Indexers** still runs, which
+single book, adding from recommendations, a bulk **Search** action, a book's own
+**Automatic search**, a book flipping to wanted, and the re-search after a
+stalled download. A bulk **Search** refuses while the switch is off and says
+which setting to change, keeping your selection; so does a book's
+**Automatic search**. A single book's **Search** still runs, which
 is how you search and grab by hand with grabbing off. Books are
 still created and still marked wanted, so the Wanted page is complete when
 you come back to it. Searches also fire when an author is added
 ("Search for books on add") and when a book flips to wanted.
+
+**Two search buttons on a book page.** They do different things, and for a
+long time only the first one existed (#2668). **Search ebook indexers** (the
+wording follows the book's media type) is interactive: it queries every
+indexer, shows you the releases with their scores, and grabs nothing until you
+press Grab. **Automatic search** is the sweep's own behaviour for this one
+book: Bindery picks the best release itself, sends it to your download client,
+and tells you to watch the Queue and History. Use the first when you want a
+particular release or a particular format, the second when you just want the
+book. Automatic search appears only while the book still needs a format it is
+monitored for, because that is the point at which the automatic path has
+something to look for; once every monitored format is on disk it would do
+nothing, and the interactive button is the one that can still get you a
+different copy.
 
 **Two language titles.** A translated book whose title is stored as
 "translated / original", such as "El imperio final / The Final Empire", is
@@ -556,6 +571,40 @@ Things worth knowing:
   folder anywhere Bindery can read, such as your downloads, and it imports
   what it matches into the library, moving or copying the files.
 
+## Restyling files you already have
+
+Your naming template only applies to files Bindery places itself, so changing
+it leaves everything already on disk where it was. **Rename files** is the
+catch-up: it recomputes where every file Bindery tracks should live under the
+current template and moves it there. It reaches the same renamer the import
+path uses, so a reorganized library and a freshly imported one come out
+identical.
+
+Nothing moves until you say so. The preview lists every tracked file with its
+current path, the path the template computes, and why it will or will not move:
+**Will move**, **Already correct**, **Destination exists** (something else is
+already there, so it is skipped rather than overwritten), **Not on disk**, or
+**Error**. Pressing the button applies only the clean moves, and it recomputes
+each destination on the server rather than trusting the list you were shown, so
+a file that changed under you is skipped instead of moved somewhere stale. A
+move is always a move, never a copy, so hardlinks survive and nothing is
+duplicated. Bindery also prunes the folder a file left behind when it empties,
+and refreshes the `metadata.opf` sidecar when you have that turned on.
+
+Three scopes, all the same preview:
+
+| Scope | Where |
+|---|---|
+| One book | the book page, **More** → Rename files |
+| One author | the author page, **More** → Rename files |
+| Your whole library | Settings → General → Library → **Reorganize Library** (#2296) |
+
+**Run Scan library first.** Reorganize only knows about files already attached
+to a book, so anything sitting in your library that no scan has matched is
+invisible to it and stays where it is. That is why the library scoped button
+lives directly below the scan button rather than beside it. It is admin only,
+like everything else on that tab that names server paths.
+
 ## Metadata: where book data comes from
 
 - **OpenLibrary** is the default primary provider — it decides what an
@@ -770,7 +819,8 @@ Fixed (#2186). A book now shows whichever of its tracked files still exists,
 and a **Scan Library** run repairs books that were already stuck on a dead
 path. The old entry stays listed under the book's **Files**; **Forget this
 file** clears it without touching the disk. Use **Rename files** rather than
-moving things by hand and it never happens.
+moving things by hand and it never happens
+([Restyling files you already have](#restyling-files-you-already-have)).
 ([troubleshooting](Troubleshooting-Wiki.md))
 
 **I added one book and got the author's whole back catalogue.**
