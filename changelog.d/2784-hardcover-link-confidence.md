@@ -1,0 +1,2 @@
+### Fixed
+- **A series linked from a provider id no longer claims a perfect match** ([#2784](https://github.com/vavallee/bindery/issues/2784)): a Hardcover series link created from a provider-supplied `hc-series:` id recorded confidence 1, the same value a link you confirmed against the catalogue earns, even though nothing about it had been matched or scored. It now records 0.8, which is what the other unscored auto paths already use, so the two stay distinguishable.

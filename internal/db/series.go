@@ -538,7 +538,11 @@ const HardcoverSeriesIDPrefix = "hc-series:"
 // Fill silently did nothing on every one of them (#2245).
 //
 // No matching and no confidence score are involved: the id came from the
-// provider, so the link is exact. Title, author name, slug and book count are
+// provider, so the link is exact. That identity is all it is, though, so it
+// records the same 0.8 the other unscored auto paths use (migration 035's
+// backfill and internal/abs's catalogue link) rather than the 1 a link
+// confirmed against a catalogue earns, which keeps the two apart for anything
+// reading Confidence (#2784). Title, author name, slug and book count are
 // left for the diff path to backfill lazily, which keeps this free of any
 // upstream call at sync time. Existing links are never overwritten, so a
 // manual link the user chose deliberately survives.
@@ -557,7 +561,7 @@ func (r *SeriesRepo) EnsureHardcoverLinkFromForeignID(ctx context.Context, serie
 		SeriesID:          seriesID,
 		HardcoverSeriesID: foreignID,
 		HardcoverTitle:    strings.TrimSpace(title),
-		Confidence:        1,
+		Confidence:        0.8,
 		LinkedBy:          "auto",
 	})
 	if err != nil {

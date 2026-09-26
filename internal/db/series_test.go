@@ -932,8 +932,11 @@ func TestEnsureHardcoverLinkFromForeignID(t *testing.T) {
 	if got.HardcoverTitle != "Children of Time" {
 		t.Errorf("hardcover title = %q, want the trimmed title", got.HardcoverTitle)
 	}
-	if got.Confidence != 1 {
-		t.Errorf("confidence = %v, want 1 for a provider-supplied identity", got.Confidence)
+	// An auto link that no catalogue scored records the same 0.8 the other
+	// unscored auto paths use, not the 1 a link confirmed against a catalogue
+	// earns (#2784).
+	if got.Confidence != 0.8 {
+		t.Errorf("confidence = %v, want 0.8 for a prefix-derived link", got.Confidence)
 	}
 	if got.LinkedBy != "auto" {
 		t.Errorf("linked_by = %q, want auto", got.LinkedBy)
@@ -953,6 +956,60 @@ func TestEnsureHardcoverLinkFromForeignID(t *testing.T) {
 	}
 	if again == nil || again.ID != got.ID || !again.LinkedAt.Equal(got.LinkedAt) {
 		t.Errorf("second call altered the row: first %+v, second %+v", got, again)
+	}
+}
+
+// TestEnsureHardcoverLinkFromForeignIDConfidenceIsBelowACatalogueMatch pins
+// the other half of #2784: the confidence a prefix-derived link records has to
+// stay below the 1 a link the user confirmed against a catalogue earns, or
+// nothing downstream can tell the two apart.
+func TestEnsureHardcoverLinkFromForeignIDConfidenceIsBelowACatalogueMatch(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	repo := NewSeriesRepo(database)
+
+	derived := &models.Series{ForeignID: "hc-series:1017", Title: "Children of Time"}
+	if err := repo.Create(ctx, derived); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.EnsureHardcoverLinkFromForeignID(ctx, derived.ID, "hc-series:1017", "Children of Time"); err != nil {
+		t.Fatalf("ensure link: %v", err)
+	}
+
+	confirmed := &models.Series{ForeignID: "hc-series:2024", Title: "Children of Ruin"}
+	if err := repo.Create(ctx, confirmed); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertHardcoverLink(ctx, &models.SeriesHardcoverLink{
+		SeriesID:            confirmed.ID,
+		HardcoverSeriesID:   "hc-series:2024",
+		HardcoverProviderID: "2024",
+		HardcoverTitle:      "Children of Ruin",
+		Confidence:          1,
+		LinkedBy:            "manual",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	derivedLink, err := repo.GetHardcoverLink(ctx, derived.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmedLink, err := repo.GetHardcoverLink(ctx, confirmed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if derivedLink == nil || confirmedLink == nil {
+		t.Fatal("expected both links to be stored")
+	}
+	if derivedLink.Confidence >= confirmedLink.Confidence {
+		t.Errorf("prefix-derived confidence %v is not below the catalogue-confirmed %v, so the two cannot be told apart",
+			derivedLink.Confidence, confirmedLink.Confidence)
 	}
 }
 

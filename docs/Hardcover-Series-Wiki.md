@@ -53,7 +53,7 @@ Refreshing an author links the series of the books you already have, not only th
 
 Two more limits are worth knowing:
 
-- A series that came from Hardcover metadata is linked to the Hardcover catalog as it is created, because the provider supplied the catalog id exactly. Series from other providers are local series like any other, and linking them is the manual step described below.
+- A series that came from Hardcover metadata is linked to the Hardcover catalog as it is created, because the provider supplied the catalog id exactly. The link records 80% confidence rather than a perfect score, since only that identity is known at that point and nothing about it was matched against the catalog. Series from other providers are local series like any other, and linking them is the manual step described below.
 - Series created before this behaviour existed keep no link. Use **Search** on the series to link them, which also unlocks the catalog diff and missing-book fill for them.
 
 ## Automatic Links
