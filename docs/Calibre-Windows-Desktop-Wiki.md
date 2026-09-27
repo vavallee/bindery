@@ -94,15 +94,21 @@ Changes take effect on the next import; Bindery does not need a restart.
 
 ## 7. Run Test connection
 
-Click **Test connection** under the Calibre settings. With a 0.6.0 or later plugin it also asks Calibre whether it can see Bindery's library through your remap.
+Click **Test connection** under the Calibre settings. It checks three things in turn: that the plugin answers, that Calibre can see the library root through your remap, and that Calibre can read one real book from your library through the same remap. The last check matters because a remap can reach the root and still produce broken paths for the books under it.
 
 | Message | What it means | Fix |
 |---|---|---|
 | `plugin client: health: ...` followed by `connection refused`, `i/o timeout` or `Client.Timeout exceeded` | Bindery could not reach the plugin | Check that Calibre is open, the firewall rule from step 4 covers the active profile, the Plugin URL has the right address and port, and that neither the PC nor Bindery sits behind a VPN that drops LAN traffic ([Running Bindery behind a VPN](DEPLOYMENT.md#running-bindery-behind-a-vpn-network_mode-service)) |
 | `plugin client: authentication failed, check api_key in Settings then Calibre` | The plugin answered but rejected the key | Copy the key from the plugin's Customize dialog into Bindery again |
 | `the plugin answered but is not serving the API: ...` | The plugin refused to start its API, usually because the key is empty on a `0.0.0.0` bind | Generate a key in the plugin and restart Calibre |
-| `plugin reachable, but the Calibre container cannot see "..."` | Calibre cannot open the path your remap produces | Check the right side of the remap is the share address from step 1, not a drive letter, and that it opens in Explorer on the PC. The path in the message may show every backslash doubled; that is quoting, not your remap |
-| `plugin reachable, and it can read ...` or `plugin reachable` | It works | Carry on |
+| `plugin reachable, but the Calibre container cannot see "..."` | Calibre cannot open the library root your remap produces | Check the right side of the remap is the share address from step 1, not a drive letter, and that it opens in Explorer on the PC |
+| `... but not the book at "..."` | The root works but a real book path does not | The remap covers the root but not where your books are. Check the remap pair, and add a pair for any other root folder your books are stored under |
+| `... can see the book at "..." but cannot read it` | The file is there but Calibre cannot open it | Check the share permissions for the Windows account Calibre runs as |
+| Any failure ending `S: is a drive letter. A mapped drive belongs to one Windows logon session...` | The remap points at a mapped drive | Use the share address, like `\\nas\share\books`, as described in step 1 |
+| `plugin reachable, and it can read ... and the book at "..."` | It works | Carry on |
+| `... No imported book was found to test, so only the library root was checked.` | It works as far as it can tell | Test again after the first import |
+
+If the result also carries a warning that the Bindery Bridge version is older than 0.6.2, update the plugin (step 2) before pushing: 0.6.1 fixes long network share paths and 0.6.2 fixes the empty books a failed add can leave behind.
 
 The message says "container" whatever Calibre runs in. On Windows read it as "the PC".
 
