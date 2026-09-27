@@ -810,7 +810,12 @@ skipped. If the provider returns a partial catalogue, missing works are kept
 rather than guessed stale. OpenLibrary's `searchAuthorWorks` lookup currently
 requests at most 200 works (`limit=200`), so authors with more than 200 works
 remain marked partial: the warning may stay visible, and reconciliation will
-not remove their `not_in_current_catalogue` rows.
+not remove their `not_in_current_catalogue` rows. With a complete catalogue,
+an absent row from that same provider may be actionable. A row from a different
+provider is kept as indeterminate when Bindery cannot correlate it to the
+current catalogue; changing providers alone is not evidence that a work is
+obsolete. A correlated work that the metadata profile explicitly rejects can
+still be removed for that rejection reason.
 
 ## How author names are filed
 

@@ -12,7 +12,6 @@ interface Props {
 }
 
 const reasonDefaults: Record<CatalogueReconciliationReason, string> = {
-  provider_changed: 'From the previous metadata provider',
   not_in_current_catalogue: 'No longer in the current provider catalogue',
   language_not_allowed: 'Rejected by the language filter',
   part_book: 'Rejected as a box set or part-book',

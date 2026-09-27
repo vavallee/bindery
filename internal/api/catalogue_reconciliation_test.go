@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -123,7 +124,7 @@ func TestPreviewCatalogueReconciliation_ReportsOnlySafeCandidates(t *testing.T) 
 	f := newReconciliationFixture(t, provider)
 	keep := f.createBook(t, "hc:keep", "Keep", "hardcover", models.BookStatusWanted)
 	spanish := f.createBook(t, "hc:spanish", "Spanish", "hardcover", models.BookStatusWanted)
-	staleProvider := f.createBook(t, "OL-stale", "Old OpenLibrary Work", "openlibrary", models.BookStatusWanted)
+	f.createBook(t, "OL-stale", "Old OpenLibrary Work", "openlibrary", models.BookStatusWanted)
 	missing := f.createBook(t, "hc:missing", "Removed Upstream", "hardcover", models.BookStatusWanted)
 	unknown := f.createBook(t, "hc:unknown", "Unknown", "hardcover", models.BookStatusWanted)
 	imported := f.createBook(t, "hc:owned", "Owned", "hardcover", models.BookStatusImported)
@@ -153,9 +154,8 @@ func TestPreviewCatalogueReconciliation_ReportsOnlySafeCandidates(t *testing.T) 
 		t.Errorf("provider status = %q complete=%v", got.Provider, got.ProviderComplete)
 	}
 	wantReasons := map[int64]string{
-		spanish.ID:       reconcileReasonLanguage,
-		staleProvider.ID: reconcileReasonProviderChanged,
-		missing.ID:       reconcileReasonNotInCatalogue,
+		spanish.ID: reconcileReasonLanguage,
+		missing.ID: reconcileReasonNotInCatalogue,
 	}
 	if len(got.Candidates) != len(wantReasons) {
 		t.Fatalf("candidates = %+v, want %d", got.Candidates, len(wantReasons))
@@ -168,13 +168,120 @@ func TestPreviewCatalogueReconciliation_ReportsOnlySafeCandidates(t *testing.T) 
 	if got.Summary.ProtectedFiles != 1 || got.Summary.ProtectedImported != 1 || got.Summary.ProtectedExcluded != 1 {
 		t.Errorf("protection summary = %+v", got.Summary)
 	}
-	if got.Summary.Indeterminate != 1 {
-		t.Errorf("indeterminate = %d, want 1 for unknown language", got.Summary.Indeterminate)
+	if got.Summary.Indeterminate != 2 {
+		t.Errorf("indeterminate = %d, want unknown-language and unmatched previous-provider rows", got.Summary.Indeterminate)
 	}
-	if got.Summary.Kept != 2 {
-		t.Errorf("kept = %d, want 2 (%q and %q)", got.Summary.Kept, keep.Title, unknown.Title)
+	if got.Summary.Kept != 3 {
+		t.Errorf("kept = %d, want accepted, unknown-language, and unmatched previous-provider rows (%q and %q included)", got.Summary.Kept, keep.Title, unknown.Title)
 	}
 	_ = imported
+}
+
+func TestPreviewCatalogueReconciliation_UnmatchedCrossProviderRowsAreIndeterminate(t *testing.T) {
+	provider := &partialSnapshotProvider{
+		stubMetaProvider: stubMetaProvider{name: "hardcover"},
+		complete:         true,
+	}
+	f := newReconciliationFixture(t, provider)
+	titles := []string{
+		"HellBound Books’ Anthology of Science Fiction: Volume One",
+		"Shallow River",
+		"Where’s Molly",
+	}
+	for i, title := range titles {
+		f.createBook(t, fmt.Sprintf("audible:hdc-%d", i), title, "audible", models.BookStatusWanted)
+	}
+
+	preview, err := f.handler.buildCatalogueReconciliation(context.Background(), f.author)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Candidates) != 0 {
+		t.Fatalf("unmatched Audible rows became removal candidates: %+v", preview.Candidates)
+	}
+	if preview.Summary.Kept != len(titles) || preview.Summary.Indeterminate != len(titles) {
+		t.Fatalf("summary = %+v, want %d kept and indeterminate rows", preview.Summary, len(titles))
+	}
+}
+
+func TestPreviewCatalogueReconciliation_SameProviderAbsenceRemainsCandidate(t *testing.T) {
+	provider := &partialSnapshotProvider{
+		stubMetaProvider: stubMetaProvider{name: "hardcover"},
+		complete:         true,
+	}
+	f := newReconciliationFixture(t, provider)
+	local := f.createBook(t, "hc:missing", "Missing Hardcover Work", "hardcover", models.BookStatusWanted)
+
+	preview, err := f.handler.buildCatalogueReconciliation(context.Background(), f.author)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Candidates) != 1 || preview.Candidates[0].BookID != local.ID ||
+		preview.Candidates[0].Reason != reconcileReasonNotInCatalogue {
+		t.Fatalf("candidates = %+v, want same-provider absence with reason %q", preview.Candidates, reconcileReasonNotInCatalogue)
+	}
+}
+
+func TestPreviewCatalogueReconciliation_ExplicitRejectionWinsAcrossProviders(t *testing.T) {
+	provider := &partialSnapshotProvider{
+		stubMetaProvider: stubMetaProvider{name: "hardcover", works: []models.Book{
+			{ForeignID: "hc:foreign", Title: "Matched Foreign Work", Language: "spa", MetadataProvider: "hardcover"},
+		}},
+		complete: true,
+	}
+	f := newReconciliationFixture(t, provider)
+	local := f.createBook(t, "audible:foreign", "Matched Foreign Work", "audible", models.BookStatusWanted)
+
+	preview, err := f.handler.buildCatalogueReconciliation(context.Background(), f.author)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Candidates) != 1 || preview.Candidates[0].BookID != local.ID ||
+		preview.Candidates[0].Reason != reconcileReasonLanguage {
+		t.Fatalf("candidates = %+v, want cross-provider candidate with explicit reason %q", preview.Candidates, reconcileReasonLanguage)
+	}
+}
+
+func TestApplyCatalogueReconciliation_CannotDeleteUnmatchedCrossProviderRow(t *testing.T) {
+	provider := &partialSnapshotProvider{
+		stubMetaProvider: stubMetaProvider{name: "hardcover"},
+		complete:         true,
+	}
+	f := newReconciliationFixture(t, provider)
+	local := f.createBook(t, "audible:underland", "Gregor the Overlander", "audible", models.BookStatusWanted)
+
+	preview, err := f.handler.buildCatalogueReconciliation(context.Background(), f.author)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Candidates) != 0 || preview.Summary.Kept != 1 || preview.Summary.Indeterminate != 1 {
+		t.Fatalf("preview = %+v, want one indeterminate kept row", preview)
+	}
+
+	body, err := json.Marshal(applyCatalogueReconciliationRequest{BookIDs: []int64{local.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	f.handler.ApplyCatalogueReconciliation(rec, reconciliationRequest(
+		http.MethodPost,
+		"/api/v1/author/1/catalogue-reconciliation",
+		f.author.ID,
+		body,
+	))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var applied CatalogueReconciliation
+	if err := json.NewDecoder(rec.Body).Decode(&applied); err != nil {
+		t.Fatal(err)
+	}
+	if applied.Applied == nil || applied.Applied.Requested != 1 || applied.Applied.Deleted != 0 || applied.Applied.Skipped != 1 {
+		t.Fatalf("apply summary = %+v, want requested=1 deleted=0 skipped=1", applied.Applied)
+	}
+	if book, err := f.books.GetByID(context.Background(), local.ID); err != nil || book == nil {
+		t.Fatalf("unmatched cross-provider row was deleted: book=%+v err=%v", book, err)
+	}
 }
 
 func TestPreviewCatalogueReconciliation_TranslatedDefaultKeepsEnglishAudibleRow(t *testing.T) {
@@ -686,9 +793,8 @@ func TestBuildCatalogueReconciliation_UsesConservativeEditionAndIdentityEvidence
 		t.Fatal(err)
 	}
 	wantCandidates := map[int64]string{
-		short.ID:            reconcileReasonPages,
-		rejectedTitle.ID:    reconcileReasonLanguage,
-		fallbackProvider.ID: reconcileReasonProviderChanged,
+		short.ID:         reconcileReasonPages,
+		rejectedTitle.ID: reconcileReasonLanguage,
 	}
 	if len(got.Candidates) != len(wantCandidates) {
 		t.Fatalf("candidates = %+v, want %d", got.Candidates, len(wantCandidates))
@@ -698,13 +804,13 @@ func TestBuildCatalogueReconciliation_UsesConservativeEditionAndIdentityEvidence
 			t.Errorf("candidate %d reason = %q, want %q", candidate.BookID, candidate.Reason, want)
 		}
 	}
-	if got.Summary.Indeterminate < 3 {
-		t.Errorf("indeterminate = %d, want no-ID, DNB, and edition-error rows protected", got.Summary.Indeterminate)
+	if got.Summary.Indeterminate < 4 {
+		t.Errorf("indeterminate = %d, want no-ID, DNB, edition-error, and unmatched previous-provider rows kept", got.Summary.Indeterminate)
 	}
 	if got.Summary.ProtectedStatus < 2 {
 		t.Errorf("protected status = %d, want skipped and other-owner rows", got.Summary.ProtectedStatus)
 	}
-	for _, protected := range []*models.Book{noID, dnb, editionUnknown, alias, titleMatch, skippedStatus, nonOwner} {
+	for _, protected := range []*models.Book{noID, dnb, editionUnknown, alias, titleMatch, fallbackProvider, skippedStatus, nonOwner} {
 		if book, err := f.books.GetByID(context.Background(), protected.ID); err != nil || book == nil {
 			t.Errorf("protected book %q missing: book=%+v err=%v", protected.Title, book, err)
 		}

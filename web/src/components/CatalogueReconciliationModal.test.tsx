@@ -30,7 +30,7 @@ const preview: CatalogueReconciliation = {
   profileName: 'English only',
   candidates: [
     { bookId: 11, title: 'Libro', metadataProvider: 'hardcover', reason: 'language_not_allowed' },
-    { bookId: 12, title: 'Old Work', metadataProvider: 'openlibrary', reason: 'provider_changed' },
+    { bookId: 12, title: 'Old Work', metadataProvider: 'hardcover', reason: 'not_in_current_catalogue' },
   ],
   summary: {
     total: 8,
@@ -42,7 +42,7 @@ const preview: CatalogueReconciliation = {
     protectedStatus: 0,
     protectedExcluded: 0,
     indeterminate: 1,
-    reasons: { language_not_allowed: 1, provider_changed: 1 },
+    reasons: { language_not_allowed: 1, not_in_current_catalogue: 1 },
   },
 }
 

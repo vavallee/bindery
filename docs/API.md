@@ -138,7 +138,11 @@ Catalogue reconciliation is deliberately separate from refresh. The GET route
 queries the current primary provider without using its cached author catalogue
 and returns `candidates`, a reason-count summary, protection counts, and
 `providerComplete`. A partial provider result never treats absence as a reason
-to remove a row. The POST route accepts the IDs from the preview:
+to remove a row. A complete result can make an absent same-provider row a
+candidate, but an unmatched row from another provider is kept as indeterminate:
+provider migration alone is not deletion evidence. Explicit profile rejections
+still apply when the row can be correlated across providers. The POST route
+accepts the IDs from the preview:
 
 ```json
 { "bookIds": [12, 19] }

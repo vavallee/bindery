@@ -22,7 +22,6 @@ import (
 )
 
 const (
-	reconcileReasonProviderChanged = "provider_changed"
 	reconcileReasonNotInCatalogue  = "not_in_current_catalogue"
 	reconcileReasonLanguage        = "language_not_allowed"
 	reconcileReasonPartBook        = "part_book"
@@ -381,10 +380,11 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 				continue
 			}
 			if bookProvider(book) != snapshot.Provider {
-				reason = reconcileReasonProviderChanged
-			} else {
-				reason = reconcileReasonNotInCatalogue
+				result.Summary.Kept++
+				result.Summary.Indeterminate++
+				continue
 			}
+			reason = reconcileReasonNotInCatalogue
 		}
 
 		result.Candidates = append(result.Candidates, CatalogueReconciliationCandidate{

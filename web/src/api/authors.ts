@@ -150,7 +150,6 @@ export interface MergeAuthorsResult {
 }
 
 export type CatalogueReconciliationReason =
-  | 'provider_changed'
   | 'not_in_current_catalogue'
   | 'language_not_allowed'
   | 'part_book'
