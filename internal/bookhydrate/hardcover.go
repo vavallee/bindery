@@ -5,6 +5,7 @@ package bookhydrate
 import (
 	"context"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -376,10 +377,14 @@ func isLikelyAudioEdition(edition models.Edition) bool {
 }
 
 func editionHasAudioMarker(text string) bool {
-	for _, marker := range []string{"audio", "audible", "mp3", "cd", "cassette"} {
+	text = strings.ToLower(text)
+
+	for _, marker := range []string{"audio", "audible", "mp3", "cassette"} {
 		if strings.Contains(text, marker) {
 			return true
 		}
 	}
-	return false
+
+	reg := regexp.MustCompile(`(?i)\bcd\b`)
+	return reg.MatchString(text)
 }

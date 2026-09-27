@@ -967,3 +967,25 @@ func TestHydrateHardcoverEditionsRespectsMediaTypePin(t *testing.T) {
 		})
 	}
 }
+
+func TestEditionHasAudioMarker(t *testing.T) {
+	if got := editionHasAudioMarker("2 cd edition"); got != true {
+		t.Errorf("editionHasAudioMarker(\"2 cd edition\") = %v; want true", got)
+	}
+
+	if got := editionHasAudioMarker("Audio CD"); got != true {
+		t.Errorf("editionHasAudioMarker(\"Audio CD\") = %v; want true", got)
+	}
+
+	if got := editionHasAudioMarker("mp3 edition"); got != true {
+		t.Errorf("editionHasAudioMarker(\"mp3 edition\") = %v; want true", got)
+	}
+
+	if got := editionHasAudioMarker("mcdermott edition"); got != false {
+		t.Errorf("editionHasAudioMarker(\"mcdermott edition\") = %v; want false", got)
+	}
+
+	if got := editionHasAudioMarker("arcadia publishing"); got != false {
+		t.Errorf("editionHasAudioMarker(\"arcadia publishing\") = %v; want false", got)
+	}
+}
