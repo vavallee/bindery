@@ -39,7 +39,7 @@ Only one process should write a Calibre library at a time. If the Calibre deskto
 
 ### Calibre Bridge plugin
 
-The [Bindery Bridge plugin](https://github.com/vavallee/bindery-plugins) runs inside a Calibre process (desktop or server) in another container or on another host, and Bindery POSTs to it. Points that decide whether it works:
+The [Bindery Bridge plugin](https://github.com/vavallee/bindery-plugins) runs inside a Calibre process (desktop or server) in another container or on another host, and Bindery POSTs to it. Running the Calibre desktop app on Windows? Follow [Calibre on a Windows desktop](Calibre-Windows-Desktop-Wiki.md), which covers the share path, the firewall and reading the Push all results. Points that decide whether it works:
 
 - **The file is not uploaded.** Bindery sends the file's path (plus the book's metadata; an older plugin that rejects the metadata payload gets a path only retry) and Calibre opens that path itself. So the Bindery library must be mounted into the Calibre container too. If it sits at a different path there, set **Push path remap** (`calibre.push_path_remap`) as `from:to` pairs, for example `/books:/mnt/user/media/books`. The remap applies to the cover path as well as the book file, so a bridge that can apply covers needs to see both.
 - **A 409 from the plugin counts as success.** It means Calibre already has the book; Bindery records the returned Calibre id and moves on. This is what makes re pushing idempotent. How the bridge decides it already has the book depends on its version. From 0.6.0 it tries the `bindery` identifier Bindery stamps on every push, then `isbn`, `asin`, `google` and `hardcover`, then Calibre's own identical book check. Before 0.6.0 it tried the `bindery` identifier alone, so a book Calibre already held from anywhere else was added a second time, and the first **Push all to Calibre** into a library Calibre had already filled duplicated all of it.
@@ -119,4 +119,5 @@ Separate from all of the above, and it works alongside any topology: **Library i
 - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md), section "Handing off to another library tool"
 - [`docs/Storage-And-Hardlinks-Wiki.md`](./Storage-And-Hardlinks-Wiki.md) for the import modes
 - [`docs/User-Guide-Wiki.md`](./User-Guide-Wiki.md) for the catalogue first model
+- [`docs/Calibre-Windows-Desktop-Wiki.md`](./Calibre-Windows-Desktop-Wiki.md) for the plugin with Calibre desktop on Windows, step by step
 - [Bindery Bridge plugin](https://github.com/vavallee/bindery-plugins)

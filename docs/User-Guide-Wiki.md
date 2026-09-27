@@ -1004,6 +1004,51 @@ Nowhere (rule 3). Use **Import** (`/import`) for files it didn't download:
 **From a folder** for files elsewhere, **In your library** for files a library
 scan found but could not match.
 
+**Test connection says the Calibre container cannot see my library path.**
+Calibre cannot open the path your **Push path remap** produces. With Calibre
+on a Windows desktop, the right side of the remap must be the share address,
+for example `/books:\\nas\media\books`, not a mapped drive letter: a mapped
+drive belongs to one logon session and the running Calibre may not see it.
+Check the share opens in Explorer on that PC
+([step 1 of the Windows runbook](Calibre-Windows-Desktop-Wiki.md#1-find-the-share-address-calibre-can-open)).
+
+**Pushing to Calibre fails with `[Errno 22] Invalid argument`.**
+The path starts with `\\?\\\` and is over about 200 characters: Calibre
+builds an invalid long path for a network share. Bindery Bridge 0.6.1 works
+around it. Upgrade the plugin, restart Calibre, and run **Push all to
+Calibre** again
+([troubleshooting](Calibre-Windows-Desktop-Wiki.md#troubleshooting)).
+
+**Push all says a book is already in Calibre, but it has no file there.**
+An earlier failed add left an empty record, and the next push matched it.
+Bindery Bridge 0.6.2 removes the record when an add fails and attaches the
+file on the next push. Upgrade, restart Calibre, push again
+([troubleshooting](Calibre-Windows-Desktop-Wiki.md#troubleshooting)).
+
+**Calibre says `Cannot determine book format from extension` with a folder.**
+Bindery recorded a folder as the book's ebook file, and Calibre cannot add a
+folder. Fix the book in Bindery rather than the plugin: check its **Files**,
+use **Forget this file** on the wrong entry and import the right ebook. In the
+case this came from, the folder held an audiobook of a different book.
+
+**Books imported while Calibre was closed never reached it.**
+Expected for now. The plugin runs inside Calibre, so nothing receives the push
+while Calibre is closed, and Bindery does not retry it later. Open Calibre and
+run **Push all to Calibre**; books already there are skipped. Automatic retry
+is tracked in [#2832](https://github.com/vavallee/bindery/issues/2832).
+
+**Audiobooks never appear in Calibre.**
+Expected. The Calibre write integration sends ebooks only, and **Push all to
+Calibre** lists an audiobook with no ebook under Skipped. Use Audiobookshelf
+for audiobooks
+([Calibre integration](Calibre-Integration-Wiki.md#troubleshooting)).
+
+**How do I get books onto a Kobo?**
+Through Calibre: connect the Kobo by USB and use **Send to device**. Kobo
+renders KEPUB better than EPUB; recent Calibre converts to it, and the
+KoboTouchExtended plugin adds it if yours does not
+([step 9](Calibre-Windows-Desktop-Wiki.md#9-get-books-onto-a-kobo)).
+
 ---
 
 More depth: [QUICKSTART.md](QUICKSTART.md) ·
@@ -1012,4 +1057,5 @@ More depth: [QUICKSTART.md](QUICKSTART.md) ·
 [Troubleshooting](Troubleshooting-Wiki.md) ·
 [Migrating from Readarr](Migrating-From-Readarr-Wiki.md) ·
 [ABS import](ABS-Import-Wiki.md) ·
+[Calibre on Windows](Calibre-Windows-Desktop-Wiki.md) ·
 [Multi-user](multi-user.md)
