@@ -36,7 +36,7 @@ its type definitions) is listed anyway, and modules that only build on one of
 the three release platforms are listed for all of them. Omitting something that
 does ship is the failure that matters.
 
-26 Go modules, 12 npm packages.
+26 Go modules, 13 npm packages.
 
 ## Go modules
 
@@ -79,14 +79,15 @@ does ship is the failure that matters.
 | Package | Version | License |
 | --- | --- | --- |
 | @babel/runtime | 7.29.7 | MIT |
+| @remix-run/route-pattern | 0.22.1 | MIT |
 | cookie-es | 3.1.1 | MIT |
 | html-parse-stringify | 4.0.1 | MIT |
 | i18next | 26.4.2 | MIT |
 | i18next-browser-languagedetector | 8.2.1 | MIT |
 | react | 19.3.0 | MIT |
 | react-dom | 19.3.0 | MIT |
-| react-i18next | 17.0.13 | MIT |
-| react-router | 8.3.1 | MIT |
+| react-i18next | 17.0.14 | MIT |
+| react-router | 8.4.0 | MIT |
 | scheduler | 0.28.0 | MIT |
 | typescript | 6.0.3 | Apache-2.0 |
 | use-sync-external-store | 1.6.0 | MIT |
@@ -1729,7 +1730,33 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### 25. MIT — npm:cookie-es@3.1.1 (LICENSE)
+### 25. MIT — npm:@remix-run/route-pattern@0.22.1 (LICENSE)
+
+```
+MIT License
+
+Copyright (c) 2025 Shopify Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### 26. MIT — npm:cookie-es@3.1.1 (LICENSE)
 
 ```
 MIT License
@@ -1762,7 +1789,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 26. MIT — npm:html-parse-stringify@4.0.1 (LICENSE)
+### 27. MIT — npm:html-parse-stringify@4.0.1 (LICENSE)
 
 ```
 MIT License
@@ -1789,7 +1816,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 27. MIT — npm:i18next-browser-languagedetector@8.2.1 (LICENSE)
+### 28. MIT — npm:i18next-browser-languagedetector@8.2.1 (LICENSE)
 
 ```
 The MIT License (MIT)
@@ -1815,7 +1842,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 28. MIT — npm:i18next@26.4.2 (LICENSE)
+### 29. MIT — npm:i18next@26.4.2 (LICENSE)
 
 ```
 The MIT License (MIT)
@@ -1841,7 +1868,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 29. MIT — npm:react-i18next@17.0.13 (LICENSE)
+### 30. MIT — npm:react-i18next@17.0.14 (LICENSE)
 
 ```
 The MIT License (MIT)
@@ -1867,7 +1894,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 30. MIT — npm:react-router@8.3.1 (LICENSE.md)
+### 31. MIT — npm:react-router@8.4.0 (LICENSE.md)
 
 ```
 MIT License
@@ -1895,7 +1922,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 31. MIT — npm:react-dom@19.3.0 (LICENSE)
+### 32. MIT — npm:react-dom@19.3.0 (LICENSE)
 
 <details>
 <summary>Applies to 4 dependencies</summary>
