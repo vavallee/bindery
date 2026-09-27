@@ -64,10 +64,10 @@ does ship is the failure that matters.
 | [golang.org/x/sys](https://cs.opensource.google/go/x/sys/+/v0.48.0:LICENSE) | v0.48.0 | BSD-3-Clause | — |
 | [golang.org/x/text](https://cs.opensource.google/go/x/text/+/v0.42.0:LICENSE) | v0.42.0 | BSD-3-Clause | — |
 | [google.golang.org/protobuf](https://github.com/protocolbuffers/protobuf-go/blob/v1.36.11/LICENSE) | v1.36.11 | BSD-3-Clause | — |
-| [modernc.org/libc](https://gitlab.com/cznic/libc/-/blob/v1.74.4/LICENSE) | v1.75.6 | BSD-3-Clause | — |
+| [modernc.org/libc](https://gitlab.com/cznic/libc/-/blob/v1.74.4/LICENSE) | v1.75.7 | BSD-3-Clause | — |
 | [modernc.org/mathutil](https://gitlab.com/cznic/mathutil/-/blob/v1.7.1/LICENSE) | v1.7.1 | BSD-3-Clause | — |
 | [modernc.org/memory](https://gitlab.com/cznic/memory/blob/v1.12.1/LICENSE-GO) | v1.12.1 | BSD-3-Clause | — |
-| [modernc.org/sqlite](https://gitlab.com/cznic/sqlite/blob/v1.58.0/LICENSE) | v1.58.0 | BSD-3-Clause | — |
+| [modernc.org/sqlite](https://gitlab.com/cznic/sqlite/blob/v1.59.0/LICENSE) | v1.59.0 | BSD-3-Clause | — |
 
 ### Notes on specific modules
 
@@ -1096,7 +1096,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 12. BSD-3-Clause — modernc.org/libc@v1.75.6 (LICENSE)
+### 12. BSD-3-Clause — modernc.org/libc@v1.75.7 (LICENSE)
 
 ```
 Copyright (c) 2017 The Libc Authors. All rights reserved.
@@ -1128,7 +1128,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 13. BSD-3-Clause — modernc.org/libc@v1.75.6 (LICENSE-3RD-PARTY.md)
+### 13. BSD-3-Clause — modernc.org/libc@v1.75.7 (LICENSE-3RD-PARTY.md)
 
 ```
 # Third-Party Software Notices
@@ -1502,7 +1502,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 16. BSD-3-Clause — modernc.org/sqlite@v1.58.0 (LICENSE)
+### 16. BSD-3-Clause — modernc.org/sqlite@v1.59.0 (LICENSE)
 
 ```
 Copyright (c) 2017 The Sqlite Authors. All rights reserved.
