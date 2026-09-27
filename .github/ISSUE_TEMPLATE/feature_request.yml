@@ -29,6 +29,14 @@ body:
       required: true
 
   - type: textarea
+    id: who
+    attributes:
+      label: Who is this for
+      description: Roughly how many Bindery users would use this, and how often? Bindery deliberately stays focused, so a feature that serves one setup may be better as a script or a plugin.
+    validations:
+      required: false
+
+  - type: textarea
     id: alternatives
     attributes:
       label: Alternatives considered
