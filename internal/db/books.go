@@ -1153,13 +1153,15 @@ func (r *BookRepo) SetFormatFilePath(ctx context.Context, id int64, mediaType, f
 // infers the format from the book's current media_type. Callers that know the
 // explicit format should use SetFormatFilePath directly.
 func (r *BookRepo) SetFilePath(ctx context.Context, id int64, filePath string) error {
+	// No fallback write when the book can't be loaded: a bare UPDATE of
+	// books.file_path would skip book_files and refreshBookStatus, and for a
+	// missing row it matched nothing yet still reported success (#2819).
 	b, err := r.GetByID(ctx, id)
-	if err != nil || b == nil {
-		// Fall back to the legacy single-column update so existing code paths
-		// never break even if the book can't be loaded.
-		_, err2 := r.db.ExecContext(ctx, "UPDATE books SET file_path=?, status=? WHERE id=?",
-			filePath, models.BookStatusImported, id)
-		return err2
+	if err != nil {
+		return fmt.Errorf("load book %d: %w", id, err)
+	}
+	if b == nil {
+		return fmt.Errorf("book %d not found", id)
 	}
 	mediaType := b.MediaType
 	if mediaType == models.MediaTypeBoth {
