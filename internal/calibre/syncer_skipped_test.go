@@ -52,15 +52,17 @@ func TestSyncer_SkippedBooksAreCountedAndExplained(t *testing.T) {
 	if p.Stats.Total != 1 {
 		t.Errorf("Total = %d, want 1", p.Stats.Total)
 	}
-	if p.Stats.Skipped != 4 {
-		t.Errorf("Skipped = %d, want 4", p.Stats.Skipped)
+	if p.Stats.Skipped != 3 {
+		t.Errorf("Skipped = %d, want 3", p.Stats.Skipped)
 	}
 	got := map[int64]string{}
 	for _, s := range p.Skips {
 		got[s.BookID] = s.Reason
 	}
+	if reason, ok := got[2]; ok {
+		t.Errorf("wanted book listed as skipped with %q; a book with no file was never a candidate", reason)
+	}
 	want := map[int64]string{
-		2: SkipReasonNotImported,
 		3: SkipReasonAudiobookOnly,
 		4: SkipReasonNoFile,
 		5: SkipReasonNotMonitored,
@@ -96,11 +98,37 @@ func TestSyncer_ZeroCaseNamesTheReason(t *testing.T) {
 	if p.Stats.Total != 0 {
 		t.Fatalf("Total = %d, want 0", p.Stats.Total)
 	}
-	if !strings.Contains(p.Message, SkipReasonNotImported) || !strings.Contains(p.Message, SkipReasonAudiobookOnly) {
-		t.Errorf("message = %q, want it to name both skip reasons", p.Message)
+	if !strings.Contains(p.Message, "1 "+SkipReasonAudiobookOnly) {
+		t.Errorf("message = %q, want it to name the skip reason with its count", p.Message)
 	}
-	if !strings.Contains(p.Message, "2") {
-		t.Errorf("message = %q, want it to carry the counts", p.Message)
+	if strings.Contains(p.Message, "not imported") {
+		t.Errorf("message = %q, wanted books have no file and are not a skip reason", p.Message)
+	}
+}
+
+// TestSyncer_WantedBooksDoNotCrowdOutActionableSkips: the skip list is a
+// 50 row sample, and a large wanted list used to fill it with "not imported"
+// rows before any unmonitored or missing file book was reached, so the
+// reasons a user could act on never showed.
+func TestSyncer_WantedBooksDoNotCrowdOutActionableSkips(t *testing.T) {
+	books := &fakeBookLister{}
+	for i := int64(1); i <= 3*maxSyncErrors; i++ {
+		books.all = append(books.all, models.Book{ID: i, Title: "Wanted", Status: models.BookStatusWanted})
+	}
+	books.all = append(books.all, models.Book{ID: 999, Title: "Unmonitored", Status: models.BookStatusImported, EbookFilePath: "/l/u.epub"})
+	s := NewSyncer(books)
+	s.newClient = func(_ Config) pluginPusher { return &fakePusher{} }
+	if err := s.Start(context.Background(), Config{}, ModePlugin); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitUntil(t, 2*time.Second, func() bool { return !s.Running() })
+
+	p := s.Progress()
+	if p.Stats.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1 (only the unmonitored book)", p.Stats.Skipped)
+	}
+	if len(p.Skips) != 1 || p.Skips[0].BookID != 999 || p.Skips[0].Reason != SkipReasonNotMonitored {
+		t.Errorf("skips = %+v, want only book 999 as %q", p.Skips, SkipReasonNotMonitored)
 	}
 }
 

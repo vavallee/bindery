@@ -33,12 +33,12 @@ type SyncSkip struct {
 	Reason string `json:"reason"`
 }
 
-// Skip reasons. Kept free of commas so they read correctly when the zero-case
+// Skip reasons. A book that has not been imported is not among them: it has
+// no file, so it was never a candidate, and listing it drowned the reasons a
+// user can act on (a 3,000 book wanted list filled the 50 row sample before
+// any unmonitored or missing file book was reached). Kept free of commas so they read correctly when the zero-case
 // message joins several of them into one sentence.
 const (
-	// SkipReasonNotImported is a book whose status is not "imported": there
-	// is nothing on disk to hand to Calibre yet.
-	SkipReasonNotImported = "not imported"
 	// SkipReasonNotMonitored is an imported book that is unmonitored. The
 	// bulk push has always inherited this filter from ListByStatus; it was
 	// simply invisible.
@@ -284,10 +284,10 @@ func (s *Syncer) run(ctx context.Context, cfg Config) {
 			if _, ok := considered[b.ID]; ok {
 				continue
 			}
+			// A book with no import has no file and was never a candidate,
+			// so it is left out of the skips rather than reported as one.
 			if b.Status == models.BookStatusImported {
 				recordSkip(b, SkipReasonNotMonitored)
-			} else {
-				recordSkip(b, SkipReasonNotImported)
 			}
 		}
 	}
@@ -449,7 +449,7 @@ func (s *Syncer) primarySeries(ctx context.Context, b *models.Book) (string, str
 func nothingToPushMessage(counts map[string]int) string {
 	summary := skipSummary(counts)
 	if summary == "" {
-		return "no books to push: the library is empty"
+		return "no books to push: no imported book has an ebook file yet"
 	}
 	return "no books to push: " + summary
 }

@@ -112,7 +112,7 @@ Separate from all of the above, and it works alongside any topology: **Library i
 
 **Audiobooks never reach Calibre either.** Also expected, and this page used to claim otherwise. The write integration hands over one book file; an audiobook import produces a folder. The bridge derives the format from the file extension and rejects a folder outright, and `calibredb add` on a folder scans it for the formats in Calibre's own book extension list, which carries no audio format, so it finds nothing to add. Bindery no longer sends either one: up to v1.37.x every audiobook import in plugin mode produced two doomed requests and a misleading `calibre: add failed, continuing` warning. Use Audiobookshelf or External mode for audiobooks.
 
-**Push all to Calibre reports zero.** The progress modal now has a fourth tile, **Skipped**, and a table naming why each book was left out. The reasons are `not imported` (the book has no file yet), `not monitored` (the bulk push has always inherited this filter, it was simply invisible), `no file on disk` (an imported row whose file went missing) and `audiobook only with no ebook`. A run with nothing to do says which of those it hit instead of a generic message.
+**Push all to Calibre reports zero.** The progress modal now has a fourth tile, **Skipped**, and a table naming why each book was left out. Books that have not been imported yet are not listed, because with no file they were never candidates. The reasons are `not monitored` (the bulk push has always inherited this filter, it was simply invisible), `no file on disk` (an imported row whose file went missing) and `audiobook only with no ebook`. A run with nothing to do says which of those it hit instead of a generic message.
 
 ## See Also
 

@@ -1,0 +1,2 @@
+### Fixed
+- **Push all to Calibre stops listing wanted books as skipped**: a book that has not been imported has no file, so it was never going to be pushed, and listing every one of them under Skipped as "not imported" buried the books you could actually do something about. On a library with a few thousand wanted books the sample of 50 filled up with them before any unmonitored book or missing file was reached. Skipped now counts only imported books the run left out, with the reason for each.

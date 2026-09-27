@@ -25,7 +25,7 @@ describe('CalibreSyncModal', () => {
         progress={progress({
           stats: { total: 1, processed: 1, pushed: 1, alreadyInCalibre: 0, failed: 0, skipped: 3 },
           skips: [
-            { bookId: 2, title: 'Wanted', reason: 'not imported' },
+            { bookId: 2, title: 'Unmonitored', reason: 'not monitored' },
             { bookId: 3, title: 'Audio Only', reason: 'audiobook only with no ebook' },
             { bookId: 4, title: 'Ghost', reason: 'no file on disk' },
           ],
@@ -44,16 +44,16 @@ describe('CalibreSyncModal', () => {
     render(
       <CalibreSyncModal
         progress={progress({
-          message: 'no books to push: 2 not imported; 1 audiobook only with no ebook',
+          message: 'no books to push: 2 not monitored; 1 audiobook only with no ebook',
           stats: { total: 0, processed: 0, pushed: 0, alreadyInCalibre: 0, failed: 0, skipped: 3 },
-          skips: [{ bookId: 2, title: 'Wanted', reason: 'not imported' }],
+          skips: [{ bookId: 2, title: 'Unmonitored', reason: 'not monitored' }],
         })}
         error={null}
         onClose={vi.fn()}
       />
     )
     expect(
-      screen.getByText('no books to push: 2 not imported; 1 audiobook only with no ebook')
+      screen.getByText('no books to push: 2 not monitored; 1 audiobook only with no ebook')
     ).toBeInTheDocument()
   })
 
