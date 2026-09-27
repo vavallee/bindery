@@ -792,9 +792,9 @@ name**, which is the display name rewritten as "Last, First". Bindery derives
 it when the author is created, and a metadata refresh replaces it with the
 provider's own sort name whenever the provider supplies one.
 
-So the Authors page is sorted by last name out of the box. **A to Z** in the
-Sort menu gives you Asimov, Atwood, Bardugo; the two **First name** entries are
-the ones that file Isaac under I.
+So the Authors page is sorted by last name out of the box. **Last name A to Z**
+in the Sort menu gives you Asimov, Atwood, Bardugo; the two **First name**
+entries are the ones that file Isaac under I.
 
 | Display name | Files under | Rule |
 |---|---|---|
