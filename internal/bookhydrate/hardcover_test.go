@@ -969,23 +969,31 @@ func TestHydrateHardcoverEditionsRespectsMediaTypePin(t *testing.T) {
 }
 
 func TestEditionHasAudioMarker(t *testing.T) {
-	if got := editionHasAudioMarker("2 cd edition"); got != true {
-		t.Errorf("editionHasAudioMarker(\"2 cd edition\") = %v; want true", got)
+	cases := []struct {
+		text string
+		want bool
+	}{
+		{"Audio CD", true},
+		{"audio cd", true},
+		{"CD", true},
+		{"2 CD edition", true},
+		{"2 CDs", true},
+		{"Unabridged CD", true},
+		{"MP3 CD", true},
+		{"CD-ROM", true},
+		{"Audiobook", true},
+		{"Audible Studios", true},
+		{"mp3 edition", true},
+		{"Cassette", true},
+		{"hardcover, mcdermott edition", false},
+		{"McDonald & Co", false},
+		{"Hardcover", false},
+		{"Paperback, cdn edition", false},
+		{"", false},
 	}
-
-	if got := editionHasAudioMarker("Audio CD"); got != true {
-		t.Errorf("editionHasAudioMarker(\"Audio CD\") = %v; want true", got)
-	}
-
-	if got := editionHasAudioMarker("mp3 edition"); got != true {
-		t.Errorf("editionHasAudioMarker(\"mp3 edition\") = %v; want true", got)
-	}
-
-	if got := editionHasAudioMarker("mcdermott edition"); got != false {
-		t.Errorf("editionHasAudioMarker(\"mcdermott edition\") = %v; want false", got)
-	}
-
-	if got := editionHasAudioMarker("arcadia publishing"); got != false {
-		t.Errorf("editionHasAudioMarker(\"arcadia publishing\") = %v; want false", got)
+	for _, tc := range cases {
+		if got := editionHasAudioMarker(tc.text); got != tc.want {
+			t.Errorf("editionHasAudioMarker(%q) = %v; want %v", tc.text, got, tc.want)
+		}
 	}
 }
