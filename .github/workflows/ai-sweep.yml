@@ -34,6 +34,8 @@ permissions:
 jobs:
   sweep:
     name: Nightly backlog sweep
+    # Needs the upstream instance's secrets/infra; forks would fail nightly.
+    if: github.repository == 'vavallee/bindery'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

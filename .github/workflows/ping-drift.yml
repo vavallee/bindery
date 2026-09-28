@@ -24,6 +24,8 @@ permissions:
 jobs:
   drift:
     name: Compare the running build against this tree
+    # Needs the upstream instance's secrets/infra; forks would fail nightly.
+    if: github.repository == 'vavallee/bindery'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
