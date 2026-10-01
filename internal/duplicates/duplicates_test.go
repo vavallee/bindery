@@ -581,8 +581,14 @@ func TestScanScale(t *testing.T) {
 	groups := Scan(books, nil)
 	elapsed := time.Since(start)
 
-	if elapsed > 100*time.Millisecond {
-		t.Errorf("Scan(500 books) took %s, budget 100ms", elapsed)
+	// The race detector slows Scan several fold, so the budget scales with it;
+	// a fixed 100ms failed on a shared CI runner under -race.
+	budget := 100 * time.Millisecond
+	if raceEnabled {
+		budget *= 10
+	}
+	if elapsed > budget {
+		t.Errorf("Scan(500 books) took %s, budget %s", elapsed, budget)
 	}
 	if len(groups) != 2 {
 		t.Fatalf("Scan = %d groups, want 2", len(groups))
