@@ -28,12 +28,13 @@ func newAuthorDiscoverer(discover authorDiscoverFunc, bulkRunning func() bool) s
 	return scheduler.AuthorDiscovererFuncs{
 		Discover: func(ctx context.Context, author *models.Author) scheduler.DiscoveryOutcome {
 			created, err := discover(ctx, author)
+			var daily *metadata.DailyQuotaError
 			out := scheduler.DiscoveryOutcome{
 				Created: created,
 				Err:     err,
 				// hardcover.ErrRateLimited is checked too: the bare sentinel does
 				// not carry the shared mark, only its throttle errors do.
-				Backoff: errors.Is(err, metadata.ErrRateLimited) || errors.Is(err, hardcover.ErrRateLimited),
+				Backoff: errors.As(err, &daily) || errors.Is(err, metadata.ErrRateLimited) || errors.Is(err, hardcover.ErrRateLimited),
 				Busy:    errors.Is(err, api.ErrAuthorSyncRunning),
 			}
 			out.Unavailable = !out.Backoff && !out.Busy && metadata.IsProviderUnavailable(err)
