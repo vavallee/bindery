@@ -198,7 +198,7 @@ jobs:
         run: helm lint --strict charts/bindery
 
       - name: Checkov
-        uses: bridgecrewio/checkov-action@5659ddea96102e16d8f221b3d8402453c0b1c150 # master
+        uses: bridgecrewio/checkov-action@5798bad4f6dd9c1fb67ae3ec10d42d8fb67037c4 # master
         with:
           directory: .
           file: Dockerfile
