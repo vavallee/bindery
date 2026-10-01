@@ -165,6 +165,20 @@ export interface CatalogueReconciliationCandidate {
   reason: CatalogueReconciliationReason
 }
 
+export type CatalogueReconciliationIndeterminateReason =
+  | 'language_unknown'
+  | 'language_evidence_lookup_failed'
+  | 'edition_evidence_unavailable'
+  | 'partial_catalogue'
+  | 'unmatched_cross_provider'
+
+export interface CatalogueReconciliationIndeterminateRow {
+  bookId: number
+  title: string
+  metadataProvider: string
+  reason: CatalogueReconciliationIndeterminateReason
+}
+
 export interface CatalogueReconciliationSummary {
   total: number
   candidates: number
@@ -186,6 +200,7 @@ export interface CatalogueReconciliation {
   profileName: string
   warning?: string
   candidates: CatalogueReconciliationCandidate[]
+  indeterminateRows: CatalogueReconciliationIndeterminateRow[]
   summary: CatalogueReconciliationSummary
   applied?: { requested: number; deleted: number; skipped: number }
 }

@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import Alert from './Alert'
-import { api, CatalogueReconciliation, CatalogueReconciliationReason } from '../api/client'
+import {
+  api,
+  CatalogueReconciliation,
+  CatalogueReconciliationIndeterminateReason,
+  CatalogueReconciliationReason,
+} from '../api/client'
 import { btn, btnSize } from './buttons'
 
 interface Props {
@@ -19,6 +24,14 @@ const reasonDefaults: Record<CatalogueReconciliationReason, string> = {
   below_minimum_pages: 'Below the minimum page count',
   missing_isbn: 'No edition has an ISBN',
   catalogue_filter: 'Rejected by the catalogue filter',
+}
+
+const indeterminateReasonDefaults: Record<CatalogueReconciliationIndeterminateReason, string> = {
+  language_unknown: 'Language could not be confirmed',
+  language_evidence_lookup_failed: 'Language evidence could not be retrieved',
+  edition_evidence_unavailable: 'Edition evidence could not be confirmed',
+  partial_catalogue: 'The provider returned only part of its catalogue',
+  unmatched_cross_provider: 'Could not match this row to the current provider',
 }
 
 export default function CatalogueReconciliationModal({ authorId, authorName, onClose, onApplied }: Props) {
@@ -68,6 +81,7 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
   }
 
   const candidates = result?.candidates ?? []
+  const indeterminateRows = result?.indeterminateRows ?? []
   const applied = result?.applied
   const selectedCount = candidates.reduce(
     (count, candidate) => count + (selectedBookIds.has(candidate.bookId) ? 1 : 0),
@@ -148,49 +162,73 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
               </Alert>
             )}
 
-            {applied ? (
-              <div className="mt-4 rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
-                {t('catalogueReconciliation.applied', {
-                  deleted: applied.deleted,
-                  skipped: applied.skipped,
-                  defaultValue: 'Removed {{deleted}} row(s). {{skipped}} were skipped because they were no longer eligible.',
-                })}
-              </div>
-            ) : candidates.length === 0 ? (
-              <p className="mt-4 text-sm text-slate-600 dark:text-zinc-400">
-                {t('catalogueReconciliation.clean', 'No metadata-only Wanted rows need reconciliation.')}
-              </p>
-            ) : (
-              <div className="mt-4 min-h-0 flex-1 overflow-y-auto rounded border border-slate-200 dark:border-zinc-800">
-                <ul className="divide-y divide-slate-200 dark:divide-zinc-800">
-                  {candidates.map(candidate => (
-                    <li key={candidate.bookId} className="px-3 py-2 text-xs">
-                      <label className="flex cursor-pointer items-start gap-3">
-                        <input
-                          type="checkbox"
-                          checked={selectedBookIds.has(candidate.bookId)}
-                          onChange={() => toggleCandidate(candidate.bookId)}
-                          disabled={applying}
-                          aria-label={t('catalogueReconciliation.selectCandidate', {
-                            title: candidate.title,
-                            defaultValue: 'Select {{title}}',
-                          })}
-                          className="mt-0.5 h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500 dark:border-zinc-600 dark:bg-zinc-800"
-                        />
-                        <span>
-                          <span className="block font-medium text-slate-800 dark:text-zinc-200">{candidate.title}</span>
-                          <span className="mt-0.5 flex flex-wrap gap-x-2 text-slate-500 dark:text-zinc-500">
-                            <span>{t(`catalogueReconciliation.reasons.${candidate.reason}`, reasonDefaults[candidate.reason])}</span>
-                            <span aria-hidden="true">·</span>
-                            <span>{candidate.metadataProvider}</span>
+            <div className="mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto">
+              {applied ? (
+                <div className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
+                  {t('catalogueReconciliation.applied', {
+                    deleted: applied.deleted,
+                    skipped: applied.skipped,
+                    defaultValue: 'Removed {{deleted}} row(s). {{skipped}} were skipped because they were no longer eligible.',
+                  })}
+                </div>
+              ) : candidates.length === 0 ? (
+                <p className="text-sm text-slate-600 dark:text-zinc-400">
+                  {t('catalogueReconciliation.noSafeCandidates', 'No metadata-only Wanted rows are safe to remove.')}
+                </p>
+              ) : (
+                <div className="rounded border border-slate-200 dark:border-zinc-800">
+                  <ul className="divide-y divide-slate-200 dark:divide-zinc-800">
+                    {candidates.map(candidate => (
+                      <li key={candidate.bookId} className="px-3 py-2 text-xs">
+                        <label className="flex cursor-pointer items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedBookIds.has(candidate.bookId)}
+                            onChange={() => toggleCandidate(candidate.bookId)}
+                            disabled={applying}
+                            aria-label={t('catalogueReconciliation.selectCandidate', {
+                              title: candidate.title,
+                              defaultValue: 'Select {{title}}',
+                            })}
+                            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500 dark:border-zinc-600 dark:bg-zinc-800"
+                          />
+                          <span>
+                            <span className="block font-medium text-slate-800 dark:text-zinc-200">{candidate.title}</span>
+                            <span className="mt-0.5 flex flex-wrap gap-x-2 text-slate-500 dark:text-zinc-500">
+                              <span>{t(`catalogueReconciliation.reasons.${candidate.reason}`, reasonDefaults[candidate.reason])}</span>
+                              <span aria-hidden="true">·</span>
+                              <span>{candidate.metadataProvider}</span>
+                            </span>
                           </span>
-                        </span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {indeterminateRows.length > 0 && (
+                <section aria-labelledby="catalogue-reconciliation-indeterminate-heading">
+                  <h3 id="catalogue-reconciliation-indeterminate-heading" className="text-xs font-semibold text-slate-700 dark:text-zinc-300">
+                    {t('catalogueReconciliation.indeterminateHeading', 'Kept because evidence is incomplete')}
+                  </h3>
+                  <div className="mt-2 rounded border border-amber-200 bg-amber-50/50 dark:border-amber-950 dark:bg-amber-950/20">
+                    <ul className="divide-y divide-amber-200/70 dark:divide-amber-950">
+                      {indeterminateRows.map(row => (
+                        <li key={row.bookId} className="px-3 py-2 text-xs">
+                          <span className="block font-medium text-slate-800 dark:text-zinc-200">{row.title}</span>
+                          <span className="mt-0.5 flex flex-wrap gap-x-2 text-slate-500 dark:text-zinc-500">
+                            <span>{t(`catalogueReconciliation.indeterminateReasons.${row.reason}`, indeterminateReasonDefaults[row.reason])}</span>
+                            <span aria-hidden="true">·</span>
+                            <span>{row.metadataProvider}</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </section>
+              )}
               </div>
-            )}
           </>
         ) : null}
 

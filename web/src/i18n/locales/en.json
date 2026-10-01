@@ -525,7 +525,8 @@
     "indeterminate": "{{count}} row(s) were kept because provider or profile evidence was incomplete.",
     "partialWarning": "The provider returned a partial catalogue. Missing works are protected; only explicit profile rejections can be removed.",
     "applied": "Removed {{deleted}} row(s). {{skipped}} were skipped because they were no longer eligible.",
-    "clean": "No metadata-only Wanted rows need reconciliation.",
+    "noSafeCandidates": "No metadata-only Wanted rows are safe to remove.",
+    "indeterminateHeading": "Kept because evidence is incomplete",
     "selectCandidate": "Select {{title}}",
     "applying": "Rechecking and removing…",
     "apply": "Remove {{count}} stale row(s)",
@@ -537,6 +538,13 @@
       "below_minimum_pages": "Below the minimum page count",
       "missing_isbn": "No edition has an ISBN",
       "catalogue_filter": "Rejected by the catalogue filter"
+    },
+    "indeterminateReasons": {
+      "language_unknown": "Language could not be confirmed",
+      "language_evidence_lookup_failed": "Language evidence could not be retrieved",
+      "edition_evidence_unavailable": "Edition evidence could not be confirmed",
+      "partial_catalogue": "The provider returned only part of its catalogue",
+      "unmatched_cross_provider": "Could not match this row to the current provider"
     }
   },
   "duplicateCandidates": {

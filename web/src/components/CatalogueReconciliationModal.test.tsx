@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, CatalogueReconciliation } from '../api/client'
 import CatalogueReconciliationModal from './CatalogueReconciliationModal'
@@ -32,6 +32,10 @@ const preview: CatalogueReconciliation = {
     { bookId: 11, title: 'Libro', metadataProvider: 'hardcover', reason: 'language_not_allowed' },
     { bookId: 12, title: 'Old Work', metadataProvider: 'hardcover', reason: 'not_in_current_catalogue' },
   ],
+  indeterminateRows: [
+    { bookId: 21, title: 'Ból za ból', metadataProvider: 'hardcover', reason: 'language_unknown' },
+    { bookId: 22, title: 'Legacy Audible Work', metadataProvider: 'audible', reason: 'unmatched_cross_provider' },
+  ],
   summary: {
     total: 8,
     candidates: 2,
@@ -41,7 +45,7 @@ const preview: CatalogueReconciliation = {
     protectedImported: 1,
     protectedStatus: 0,
     protectedExcluded: 0,
-    indeterminate: 1,
+    indeterminate: 2,
     reasons: { language_not_allowed: 1, not_in_current_catalogue: 1 },
   },
 }
@@ -60,7 +64,16 @@ describe('CatalogueReconciliationModal', () => {
     expect(screen.getByText('Old Work')).toBeInTheDocument()
     expect(screen.getByText('Provider: hardcover · Profile: English only')).toBeInTheDocument()
     expect(screen.getByText(/2 file-bearing, 1 imported, 0 other-status, and 0 excluded/)).toBeInTheDocument()
-    expect(screen.getByText('1 row(s) were kept because provider or profile evidence was incomplete.')).toBeInTheDocument()
+    expect(screen.getByText('2 row(s) were kept because provider or profile evidence was incomplete.')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Kept because evidence is incomplete' })).toBeInTheDocument()
+    const indeterminateRow = screen.getByText('Ból za ból').closest('li')
+    expect(indeterminateRow).not.toBeNull()
+    expect(within(indeterminateRow!).getByText('hardcover')).toBeInTheDocument()
+    expect(within(indeterminateRow!).queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(screen.getByText('Language could not be confirmed')).toBeInTheDocument()
+    expect(screen.getByText('Legacy Audible Work')).toBeInTheDocument()
+    expect(screen.getByText('Could not match this row to the current provider')).toBeInTheDocument()
+    expect(screen.getAllByRole('checkbox')).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Remove 2 stale row(s)' })).toBeInTheDocument()
   })
 
@@ -106,7 +119,7 @@ describe('CatalogueReconciliationModal', () => {
     expect(screen.getByRole('button', { name: 'Remove 0 stale row(s)' })).toBeDisabled()
   })
 
-  it('does not offer apply when the preview is clean', async () => {
+  it('shows indeterminate rows without offering a removal action for them', async () => {
     vi.mocked(api.previewAuthorCatalogueReconciliation).mockResolvedValue({
       ...preview,
       candidates: [],
@@ -114,7 +127,10 @@ describe('CatalogueReconciliationModal', () => {
     })
     render(<CatalogueReconciliationModal authorId={7} authorName="Test Author" onClose={() => {}} />)
 
-    expect(await screen.findByText('No metadata-only Wanted rows need reconciliation.')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Remove .* stale/ })).toBeDisabled()
+    expect(await screen.findByText('No metadata-only Wanted rows are safe to remove.')).toBeInTheDocument()
+    expect(screen.getByText('Ból za ból')).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Remove 0 stale row(s)' })).toBeDisabled()
+    expect(api.applyAuthorCatalogueReconciliation).not.toHaveBeenCalled()
   })
 })

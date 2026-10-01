@@ -140,8 +140,14 @@ The field is absent when the providers match or no primary is configured.
 
 Catalogue reconciliation is deliberately separate from refresh. The GET route
 queries the current primary provider without using its cached author catalogue
-and returns `candidates`, a reason-count summary, protection counts, and
-`providerComplete`. A partial provider result never treats absence as a reason
+and returns `candidates`, `indeterminateRows`, a reason-count summary,
+protection counts, and `providerComplete`. Each `indeterminateRows` entry has a
+`bookId`, `title`, `metadataProvider`, and display-only `reason`. These rows are
+informational: they are kept because evidence is incomplete and are never
+deletion candidates. Stable indeterminate reasons are `language_unknown`,
+`language_evidence_lookup_failed`, `edition_evidence_unavailable`,
+`partial_catalogue`, and `unmatched_cross_provider`. A partial provider result
+never treats absence as a reason
 to remove a row. A complete result can make an absent same-provider row a
 candidate, but an unmatched row from another provider is kept as indeterminate:
 provider migration alone is not deletion evidence. Explicit profile rejections

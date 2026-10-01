@@ -834,7 +834,10 @@ an absent row from that same provider may be actionable. A row from a different
 provider is kept as indeterminate when Bindery cannot correlate it to the
 current catalogue; changing providers alone is not evidence that a work is
 obsolete. A correlated work that the metadata profile explicitly rejects can
-still be removed for that rejection reason.
+still be removed for that rejection reason. The preview lists each
+indeterminate row separately with its provider and the incomplete-evidence
+reason so it can be reviewed manually; these informational rows have no
+selection control and cannot be sent for removal.
 
 **Duplicate titles.** The same book often reaches the catalogue twice under
 slightly different titles — "The Martian" and "Martian", "Dune" and "Dune
