@@ -736,6 +736,74 @@ func TestReorganize_SingleFileAudiobookJoinsItsEbookFolder(t *testing.T) {
 			if m.Status != ReorgStatusMove || m.Proposed != want {
 				t.Errorf("audiobook: %+v, want move to %q", m, want)
 			}
+			if results := s.ApplyReorganize(ctx, []int64{m.FileID}); results[0].Status != ReorgStatusMoved {
+				t.Fatalf("apply = %+v, want moved", results[0])
+			}
 		}
+	}
+	for _, p := range []string{ebook, want} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%q should be in the shared folder after apply: %v", p, err)
+		}
+	}
+}
+
+// A file already flattened by the old #2894 behaviour sits on the folder path
+// itself (or its " (N)" variant) with no extension. Proposing a move from there
+// would push it, still extensionless, into "My Book (2020) (2)/My Book (2020)".
+// It must be reported as an error with the recovery steps and left untouched.
+func TestReorganize_SingleFileAudiobookFlattenedOntoFolderIsReported(t *testing.T) {
+	for _, name := range []string{"My Book (2020)", "My Book (2020) (2)"} {
+		t.Run(name, func(t *testing.T) {
+			env, _, audiobookDir, ctx := reorgFixture(t)
+			book := env.seed(t, ctx, "Jane Doe", "My Book")
+
+			path := filepath.Join(audiobookDir, "Jane Doe", name)
+			writeFileAt(t, path)
+			if err := env.books.AddBookFile(ctx, book.ID, models.MediaTypeAudiobook, path); err != nil {
+				t.Fatal(err)
+			}
+
+			moves, err := env.s.PreviewReorganizeBook(ctx, book.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(moves) != 1 || moves[0].Status != ReorgStatusError || !strings.Contains(moves[0].Message, "#2894") {
+				t.Fatalf("preview = %+v, want an error naming #2894", moves)
+			}
+			if results := env.s.ApplyReorganize(ctx, []int64{moves[0].FileID}); results[0].Status != ReorgStatusError {
+				t.Fatalf("apply = %+v, want it left alone", results[0])
+			}
+			if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+				t.Errorf("flattened file must stay where it is: %v", err)
+			}
+		})
+	}
+}
+
+// A lone audiobook file moving out of an old folder leaves that folder's
+// metadata.opf behind, the same as an ebook. It must be cleaned up so the old
+// folder can be pruned.
+func TestReorganize_SingleFileAudiobookLeavesNoOrphanSidecar(t *testing.T) {
+	env, _, audiobookDir, ctx := reorgFixture(t)
+	book := env.seed(t, ctx, "Jane Doe", "My Book")
+
+	oldDir := filepath.Join(audiobookDir, "Jane Doe", "Old Title (2020)")
+	oldPath := filepath.Join(oldDir, "My Book.m4b")
+	writeFileAt(t, oldPath)
+	writeFileAt(t, filepath.Join(oldDir, "metadata.opf"))
+	if err := env.books.AddBookFile(ctx, book.ID, models.MediaTypeAudiobook, oldPath); err != nil {
+		t.Fatal(err)
+	}
+
+	moves, err := env.s.PreviewReorganizeBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results := env.s.ApplyReorganize(ctx, []int64{moves[0].FileID}); results[0].Status != ReorgStatusMoved {
+		t.Fatalf("apply = %+v, want moved", results[0])
+	}
+	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
+		t.Errorf("old folder should be pruned once its stale sidecar is removed, stat err = %v", err)
 	}
 }

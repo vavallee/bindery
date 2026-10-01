@@ -161,6 +161,9 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 	// files and are not uniquified at import, so they skip this.
 	if audiobook {
 		if isSingleFile(f.Path) {
+			if flattenedOntoFolderPath(f.Path, dest) {
+				return dest, ReorgStatusError, flattenedOntoFolderMsg
+			}
 			dest = s.singleFileAudiobookDest(ctx, book, dest, f.Path)
 		} else {
 			dest = uniqueDirExcluding(dest, f.Path)
@@ -217,6 +220,24 @@ func (s *Scanner) singleFileAudiobookDest(ctx context.Context, book *models.Book
 		destDir = uniqueDirExcluding(destDir, filepath.Dir(current))
 	}
 	return filepath.Join(destDir, filepath.Base(current))
+}
+
+const flattenedOntoFolderMsg = "this audiobook file sits where its folder belongs and has lost its extension (#2894). " +
+	"Move it into a folder and restore its extension, use Forget this file on the book for the old path, then run a library scan"
+
+// flattenedOntoFolderPath reports whether a tracked single audiobook file is
+// what Rename files left behind before #2894 was fixed: the file was moved onto
+// its templated folder path itself (or the " (N)" variant it uniquified to), so
+// it has the folder's name and no audio extension. Older releases read this as
+// a noop. Proposing a move from here would bury the extensionless file one
+// level down in a " (2)" folder, so it is reported instead and left for the
+// manual recovery the message describes.
+func flattenedOntoFolderPath(path, destDir string) bool {
+	if IsAudioFile(path) {
+		return false
+	}
+	p, d := filepath.Clean(path), filepath.Clean(destDir)
+	return p == d || strings.HasPrefix(p, d+" (")
 }
 
 // uniqueDirExcluding mirrors UniqueDir but treats keep as if it were absent, so
