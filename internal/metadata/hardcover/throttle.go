@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/metadata/providererr"
 )
 
@@ -130,7 +131,7 @@ func (t *throttle) reserve(ctx context.Context) (time.Duration, bool) {
 	}
 	delay := start.Sub(now)
 	if delay > 0 {
-		if deadline, hasDeadline := ctx.Deadline(); hasDeadline && start.After(deadline) {
+		if deadline, hasDeadline := metadata.SchedulingDeadline(ctx); hasDeadline && start.After(deadline) {
 			return 0, false
 		}
 	}

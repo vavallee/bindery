@@ -556,7 +556,7 @@ func canonicalTitleDescriptorWord(word string) bool {
 }
 
 func (a *Aggregator) canonicalPrimaryBookSearch(ctx context.Context, query primaryBookCanonicalQuery, source models.Book, sourceAuthor string) (*canonicalPrimaryBookMatch, bool) {
-	results, err := a.primary.SearchBooks(ctx, query.query)
+	results, err := a.searchProviderBooks(ctx, a.primary, query.query)
 	if err != nil {
 		slog.Debug("primary canonical book search failed", "query", query.query, "title", source.Title, "author", sourceAuthor, "error", err)
 		return nil, false

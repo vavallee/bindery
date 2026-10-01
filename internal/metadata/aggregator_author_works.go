@@ -194,7 +194,8 @@ func (a *Aggregator) authorWorksSupplement(ctx context.Context, provider authorW
 // and existing callers; author ingestion should use GetAuthorWorksForAuthor so
 // enrichers can run author-scoped supplemental queries.
 func (a *Aggregator) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
-	key := "authorworks:" + authorForeignID
+	ctx, scope := a.bindCacheProviders(ctx)
+	key := "authorworks:" + scope + ":" + authorForeignID
 	ctx, fresh := consumeCacheBypass(ctx)
 	if !fresh {
 		if cached, ok := a.cache.get(key); ok {
@@ -229,9 +230,10 @@ func (a *Aggregator) GetAuthorWorks(ctx context.Context, authorForeignID string)
 // since it is a superset of what the caller needs. A refresh that rewrites
 // the raw works drops that entry, so it never shadows fresher raw works.
 func (a *Aggregator) GetAuthorWorksUnenriched(ctx context.Context, authorForeignID string) ([]models.Book, error) {
+	ctx, scope := a.bindCacheProviders(ctx)
 	ctx, fresh := consumeCacheBypass(ctx)
 	if !fresh {
-		if cached, ok := a.cache.get("authorworks:" + authorForeignID); ok {
+		if cached, ok := a.cache.get("authorworks:" + scope + ":" + authorForeignID); ok {
 			return cloneBooks(cached.([]models.Book)), nil
 		}
 	}
@@ -246,7 +248,8 @@ func (a *Aggregator) GetAuthorWorksForAuthor(ctx context.Context, author models.
 	// The identity is part of the key: a relink changes which upstream author
 	// the supplements query without changing ForeignID or Name in every case,
 	// and serving the pre-relink answer would hide the fix (#1734).
-	key := "authorworks-author:" + author.ForeignID + ":" +
+	ctx, scope := a.bindCacheProviders(ctx)
+	key := "authorworks-author:" + scope + ":" + author.ForeignID + ":" +
 		strings.ToLower(strings.TrimSpace(author.Name)) + ":" + authorIdentityCacheKey(author)
 	ctx, fresh := consumeCacheBypass(ctx)
 	if !fresh {
@@ -292,7 +295,7 @@ func (a *Aggregator) mergeAuthorWorksSupplements(ctx context.Context, books []mo
 	cacheable := true
 	compilationTitles := map[string]struct{}{}
 	if authorName != "" {
-		for _, provider := range a.authorWorksByNameProviders() {
+		for _, provider := range a.authorWorksByNameProviders(ctx) {
 			supplemental, err := a.authorWorksSupplement(ctx, provider, author, authorName)
 			if err != nil {
 				cacheable = false
@@ -338,17 +341,13 @@ func (a *Aggregator) mergeAuthorWorksSupplements(ctx context.Context, books []mo
 // its cache under a refresh; only the author works entry points switch to
 // refreshPrimaryAuthorWorks, through primaryAuthorWorksFor (#2601).
 func (a *Aggregator) rawPrimaryAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
-	key := "authorworks-raw:" + authorForeignID
-	if cached, ok := a.cache.get(key); ok {
-		return cloneBooks(cached.([]models.Book)), nil
+	provider, scope, key := a.primaryAuthorWorksSource(ctx, authorForeignID)
+	if provider == nil {
+		return nil, nil
 	}
-
-	books, err := a.primaryAuthorWorks(ctx, authorForeignID)
-	if err != nil {
-		return nil, err
-	}
-	a.cache.set(key, cloneBooks(books))
-	return cloneBooks(books), nil
+	return cachedRequest(ctx, a, a.cache, key, func(ctx context.Context) ([]models.Book, error) {
+		return a.primaryAuthorWorks(ctx, provider, scope, authorForeignID)
+	}, cloneBooks)
 }
 
 // primaryAuthorWorksFor is rawPrimaryAuthorWorks, or refreshPrimaryAuthorWorks
@@ -395,8 +394,11 @@ type authorWorksRefreshProvider interface {
 // underneath, and an author losing every work upstream within a day is far
 // less likely than that.
 func (a *Aggregator) refreshPrimaryAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, bool, error) {
-	key := "authorworks-raw:" + authorForeignID
-	books, intact, err := a.primaryAuthorWorksForRefresh(ctx, authorForeignID)
+	provider, scope, key := a.primaryAuthorWorksSource(ctx, authorForeignID)
+	if provider == nil {
+		return nil, true, nil
+	}
+	books, intact, err := a.primaryAuthorWorksForRefresh(ctx, provider, scope, authorForeignID)
 	emptyOverCache := false
 	if err == nil && intact && len(books) == 0 {
 		if cached, ok := a.cache.get(key); ok && len(cached.([]models.Book)) > 0 {
@@ -407,8 +409,11 @@ func (a *Aggregator) refreshPrimaryAuthorWorks(ctx context.Context, authorForeig
 		a.cache.set(key, cloneBooks(books))
 		// GetAuthorWorksUnenriched prefers the enriched authorworks: entry
 		// over this one. Drop it so it cannot serve the list from before the
-		// refresh; the next GetAuthorWorks rebuilds it from these works.
-		a.cache.delete("authorworks:" + authorForeignID)
+		// refresh; the next GetAuthorWorks rebuilds it from these works. ctx
+		// is already bound by the entry point, so this is the scope it keys
+		// that entry under.
+		_, enrichedScope := a.bindCacheProviders(ctx)
+		a.cache.delete("authorworks:" + enrichedScope + ":" + authorForeignID)
 		return cloneBooks(books), true, nil
 	}
 	cached, ok := a.cache.get(key)
@@ -433,11 +438,11 @@ func (a *Aggregator) refreshPrimaryAuthorWorks(ctx context.Context, authorForeig
 	return appendNewAuthorWorks(kept, cloneBooks(books)), false, nil
 }
 
-func (a *Aggregator) primaryAuthorWorksForRefresh(ctx context.Context, authorForeignID string) ([]models.Book, bool, error) {
-	if rp, ok := a.providerForForeignID(authorForeignID).(authorWorksRefreshProvider); ok {
+func (a *Aggregator) primaryAuthorWorksForRefresh(ctx context.Context, provider Provider, scope, authorForeignID string) ([]models.Book, bool, error) {
+	if rp, ok := provider.(authorWorksRefreshProvider); ok {
 		return rp.GetAuthorWorksForRefresh(ctx, authorForeignID)
 	}
-	books, err := a.primaryAuthorWorks(ctx, authorForeignID)
+	books, err := a.primaryAuthorWorks(ctx, provider, scope, authorForeignID)
 	return books, true, err
 }
 
@@ -461,26 +466,34 @@ func appendNewAuthorWorks(base, fresh []models.Book) []models.Book {
 	return base
 }
 
-func (a *Aggregator) primaryAuthorWorks(ctx context.Context, authorForeignID string) ([]models.Book, error) {
+// primaryAuthorWorksSource resolves the provider that owns authorForeignID,
+// bound to the live configuration, and the raw works cache key for it.
+func (a *Aggregator) primaryAuthorWorksSource(ctx context.Context, authorForeignID string) (Provider, string, string) {
 	provider := a.providerForForeignID(authorForeignID)
 	if provider == nil {
-		return nil, nil
+		return nil, "", ""
 	}
+	provider, scope := resolveCacheProvider(ctx, provider)
+	return provider, scope, "authorworks-raw:" + scope + ":" + authorForeignID
+}
+
+func (a *Aggregator) primaryAuthorWorks(ctx context.Context, provider Provider, scope, authorForeignID string) ([]models.Book, error) {
 	if wp, ok := provider.(worksProvider); ok {
 		return wp.GetAuthorWorks(ctx, authorForeignID)
 	}
 	if !sameProvider(provider, a.primary) {
 		return nil, nil
 	}
-	return a.primary.SearchBooks(ctx, authorForeignID)
+	return a.searchBoundProviderBooks(ctx, provider, scope, authorForeignID)
 }
 
-func (a *Aggregator) authorWorksByNameProviders() []authorWorksByNameProvider {
+func (a *Aggregator) authorWorksByNameProviders(ctx context.Context) []authorWorksByNameProvider {
 	if a == nil {
 		return nil
 	}
 	providers := make([]authorWorksByNameProvider, 0, len(a.enrichers))
 	for _, enricher := range a.enrichers {
+		enricher, _ = resolveCacheProvider(ctx, enricher)
 		if provider, ok := enricher.(authorWorksByNameProvider); ok {
 			providers = append(providers, provider)
 		}
@@ -786,15 +799,6 @@ func hasFictionSubjectSignal(book models.Book) bool {
 	return false
 }
 
-func cloneBooks(books []models.Book) []models.Book {
-	if books == nil {
-		return nil
-	}
-	cloned := make([]models.Book, len(books))
-	copy(cloned, books)
-	return cloned
-}
-
 // authorWorkCoverEnrichConcurrency bounds the per-work enricher fan-out below.
 // This loop used to be strictly serial, so an author whose works mostly lack a
 // work-level cover — the normal case for OpenLibrary — spent one enricher
@@ -824,7 +828,8 @@ func (a *Aggregator) enrichMissingAuthorWorkCovers(ctx context.Context, books []
 	// edition list (#1748). Bounded and memoized per work inside the provider.
 	// Runs on both add and refresh — both reach here through GetAuthorWorks /
 	// GetAuthorWorksForAuthor.
-	if filler, ok := a.primary.(workCoverFiller); ok {
+	primary, _ := resolveCacheProvider(ctx, a.primary)
+	if filler, ok := primary.(workCoverFiller); ok {
 		filler.FillMissingWorkCovers(ctx, books)
 	}
 }
