@@ -1,0 +1,2 @@
+### Changed
+- **Easier multi select on the author page** (#2456, #2457): picked books now stay picked after a bulk action, so you can run several actions on the same books in a row and clear them with the Clear button when you're done. While books are selected, clicking anywhere on a book card or row adds or removes it instead of opening the book. Deleted books drop out of the selection on their own. Thanks flaevers for both requests.

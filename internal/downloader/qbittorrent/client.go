@@ -186,9 +186,7 @@ func (c *Client) Test(ctx context.Context) error {
 // convention: a positive float is the target ratio, -1 means "no limit"
 // (seed forever) and -2 means "use the global limit". seedingTimeLimit and
 // inactiveSeedingTimeLimit are left at -2 (use global) so this call only ever
-// touches the ratio rule. Callers resolve the value from the indexer's
-// SeedRatio override (#883); a nil override skips this call entirely so the
-// torrent keeps the client's global rule.
+// touches the ratio rule; SetShareLimitsDetailed sets those as well (#2206).
 //
 // qBittorrent 5.2.0 made shareLimitAction a required parameter of this
 // endpoint; without it the whole call is rejected with HTTP 400 and the
@@ -206,14 +204,54 @@ func (c *Client) Test(ctx context.Context) error {
 // absent, so both fields are safe to send unconditionally to 5.1.x and
 // older.
 func (c *Client) SetShareLimits(ctx context.Context, hash string, ratioLimit float64) error {
+	return c.SetShareLimitsDetailed(ctx, hash, ShareLimits{Ratio: &ratioLimit})
+}
+
+// ShareLimits is the set of per-torrent overrides SetShareLimitsDetailed
+// applies. A nil field is sent as -2, qBittorrent's "use the global rule", so
+// only the limits that carry a value change anything.
+type ShareLimits struct {
+	// Ratio follows qBittorrent's convention: a positive ratio, or -1 for no
+	// limit.
+	Ratio *float64
+	// SeedingTimeMinutes is the total seeding time limit (seedingTimeLimit),
+	// in minutes, which is the unit qBittorrent's API and its torrent logic
+	// both use.
+	SeedingTimeMinutes *int
+	// InactiveSeedingTimeMinutes is the inactive seeding time limit
+	// (inactiveSeedingTimeLimit, qBittorrent 4.6 and later), in minutes. An
+	// older qBittorrent ignores the field and keeps its global behaviour.
+	InactiveSeedingTimeMinutes *int
+}
+
+// IsZero reports whether no limit is set, in which case callers skip the
+// call so the torrent keeps every global rule untouched.
+func (l ShareLimits) IsZero() bool {
+	return l.Ratio == nil && l.SeedingTimeMinutes == nil && l.InactiveSeedingTimeMinutes == nil
+}
+
+// SetShareLimitsDetailed is SetShareLimits for all three limits (#2206). The
+// request shape, including the required shareLimitAction and shareLimitsMode,
+// is the one documented on SetShareLimits.
+func (c *Client) SetShareLimitsDetailed(ctx context.Context, hash string, limits ShareLimits) error {
 	if err := c.ensureLoggedIn(ctx); err != nil {
 		return err
 	}
+	ratio, seeding, inactive := "-2", "-2", "-2"
+	if limits.Ratio != nil {
+		ratio = strconv.FormatFloat(*limits.Ratio, 'f', -1, 64)
+	}
+	if limits.SeedingTimeMinutes != nil {
+		seeding = strconv.Itoa(*limits.SeedingTimeMinutes)
+	}
+	if limits.InactiveSeedingTimeMinutes != nil {
+		inactive = strconv.Itoa(*limits.InactiveSeedingTimeMinutes)
+	}
 	form := url.Values{
 		"hashes":                   {hash},
-		"ratioLimit":               {strconv.FormatFloat(ratioLimit, 'f', -1, 64)},
-		"seedingTimeLimit":         {"-2"},
-		"inactiveSeedingTimeLimit": {"-2"},
+		"ratioLimit":               {ratio},
+		"seedingTimeLimit":         {seeding},
+		"inactiveSeedingTimeLimit": {inactive},
 		"shareLimitAction":         {"Default"},
 		"shareLimitsMode":          {"Default"},
 	}

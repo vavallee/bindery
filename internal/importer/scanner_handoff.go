@@ -65,6 +65,54 @@ func (s *Scanner) configuredImportMode(ctx context.Context) string {
 	return ""
 }
 
+// configuredImportModeFor returns the operator-set import mode for one media
+// format (#1632). Ebooks always use "import.mode". Audiobooks use
+// "import.audiobook.mode" when it names a mode, so a Calibre-Web-Automated +
+// Audiobookshelf library can drop ebooks into an ingest folder while
+// audiobooks are placed by copy or hardlink in the audiobook root. An unset,
+// empty or unrecognised override means "same as import.mode", which keeps
+// every existing install behaving exactly as before. An explicit "auto"
+// override returns "" (the auto default) even when import.mode is set,
+// because that is what the operator asked for. Keep the literal in sync with
+// api.SettingImportAudiobookMode.
+func (s *Scanner) configuredImportModeFor(ctx context.Context, format string) string {
+	if format == models.MediaTypeAudiobook && s.settings != nil {
+		if setting, err := s.settings.Get(ctx, "import.audiobook.mode"); err == nil && setting != nil {
+			switch v := strings.TrimSpace(setting.Value); v {
+			case "move", "copy", "hardlink", "external":
+				return v
+			case "auto":
+				return ""
+			}
+		}
+	}
+	return s.configuredImportMode(ctx)
+}
+
+// downloadImportMode resolves the configured import mode for one download,
+// before any placement decision is taken (#1632). When ebooks and audiobooks
+// share a mode, which is every install that never set the audiobook override,
+// it returns that mode without touching the filesystem. Only when they differ
+// does it work out the download's format, with exactly the inputs the
+// placement branches use later (the caller's format hint, else the
+// extensions of the discovered book files), so the mode chosen here and the
+// branch the download ends up in agree.
+func (s *Scanner) downloadImportMode(ctx context.Context, downloadPath, formatHint string, explicitFiles []string) string {
+	ebookMode := s.configuredImportModeFor(ctx, models.MediaTypeEbook)
+	audiobookMode := s.configuredImportModeFor(ctx, models.MediaTypeAudiobook)
+	if ebookMode == audiobookMode {
+		return ebookMode
+	}
+	format := formatHint
+	if format != models.MediaTypeAudiobook && format != models.MediaTypeEbook {
+		format = detectDownloadFormat(discoverBookFiles(downloadPath, explicitFiles))
+	}
+	if format == models.MediaTypeAudiobook {
+		return audiobookMode
+	}
+	return ebookMode
+}
+
 // isUsenetClient reports whether clientType names a usenet download client.
 // Completed usenet job folders have no post-import purpose — nothing seeds
 // from them — which is what justifies effectiveConfiguredMode's remapping.
@@ -161,6 +209,29 @@ func (s *Scanner) audiobookFileTemplate(ctx context.Context) string {
 		return ""
 	}
 	return strings.TrimSpace(setting.Value)
+}
+
+// singleAudiobookFileName is the name a single-file audiobook takes inside its
+// folder: the source file's own name, or, when naming.audiobook_file_template
+// is set, that template rendered the way the folder branch renders a track,
+// with {Part} left out as AudiobookSingleFileName describes (#2900). The
+// import's single-file branch and Rename files both call it, so a reorganized
+// file lands where a fresh import would put it. The extension is lowercased
+// for the template, the same as flattenAudiobookDirNamed does for each track.
+// A template that renders to nothing usable keeps the source name rather than
+// placing a file called "." or with no name at all.
+func (s *Scanner) singleAudiobookFileName(ctx context.Context, author *models.Author, book *models.Book, seriesTitle, seriesNum, src string) string {
+	name := filepath.Base(src)
+	tmpl := s.audiobookFileTemplate(ctx)
+	if tmpl == "" {
+		return name
+	}
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(src)), ".")
+	rendered := s.renamer.AudiobookSingleFileName(tmpl, author, book, seriesTitle, seriesNum, ext)
+	if rendered == "" || rendered == "." || rendered == ".." || rendered == string(filepath.Separator) {
+		return name
+	}
+	return rendered
 }
 
 // pushToCWA copies the just-imported file into the directory watched by a
@@ -271,18 +342,18 @@ func importableSourceFile(p string) bool {
 	return fi.Mode()&os.ModeSymlink == 0
 }
 
-// dropSettings reads the external-mode drop-folder configuration (#941).
-// Defaults: layout "flat", link mode "copy". An empty folder means the feature
-// is off. Keep the literal keys in sync with the api.SettingImportDrop*
-// constants (the importer can't import the api package — cycle).
-func (s *Scanner) dropSettings(ctx context.Context) (folder, layout, linkMode string) {
+// dropSettings reads the external-mode drop-folder configuration (#941) for
+// one media format. Defaults: layout "flat", link mode "copy". An empty folder
+// means the feature is off for that format. Layout and link mode are shared by
+// both formats; the folder comes from dropFolderFor. Keep the literal keys in
+// sync with the api.SettingImportDrop* constants (the importer can't import
+// the api package, cycle).
+func (s *Scanner) dropSettings(ctx context.Context, format string) (folder, layout, linkMode string) {
 	layout, linkMode = "flat", "copy"
 	if s.settings == nil {
 		return "", layout, linkMode
 	}
-	if v, err := s.settings.Get(ctx, "import.drop_folder"); err == nil && v != nil {
-		folder = strings.TrimSpace(v.Value)
-	}
+	folder = s.dropFolderFor(ctx, format)
 	if v, err := s.settings.Get(ctx, "import.drop_layout"); err == nil && v != nil && v.Value == "templated" {
 		layout = "templated"
 	}
@@ -290,6 +361,37 @@ func (s *Scanner) dropSettings(ctx context.Context) (folder, layout, linkMode st
 		linkMode = "hardlink"
 	}
 	return folder, layout, linkMode
+}
+
+// dropFolderFor returns the drop folder one media format is handed off into,
+// or "" when that format has none. Audiobooks use import.audiobook.drop_folder
+// when it is set and fall back to import.drop_folder otherwise (#1632), so an
+// install that never set the audiobook folder drops both formats into the one
+// folder exactly as before, which is what Storyteller pair gating (#942)
+// relies on. Keep the literal in sync with api.SettingImportAudiobookDropFolder.
+func (s *Scanner) dropFolderFor(ctx context.Context, format string) string {
+	if s.settings == nil {
+		return ""
+	}
+	if format == models.MediaTypeAudiobook {
+		if v, err := s.settings.Get(ctx, "import.audiobook.drop_folder"); err == nil && v != nil {
+			if folder := strings.TrimSpace(v.Value); folder != "" {
+				return folder
+			}
+		}
+	}
+	if v, err := s.settings.Get(ctx, "import.drop_folder"); err == nil && v != nil {
+		return strings.TrimSpace(v.Value)
+	}
+	return ""
+}
+
+// formatDrops reports whether a format, under the current settings, is handed
+// off into a drop folder: its effective import mode is external AND it has a
+// drop folder. Pair gating (#942) uses it to decide whether waiting for the
+// sibling format can ever end with the pair landing together.
+func (s *Scanner) formatDrops(ctx context.Context, format string) bool {
+	return s.configuredImportModeFor(ctx, format) == "external" && s.dropFolderFor(ctx, format) != ""
 }
 
 // dropToFolder handles import.mode=external WHEN a drop folder is configured:
@@ -302,12 +404,25 @@ func (s *Scanner) dropSettings(ctx context.Context) (folder, layout, linkMode st
 // whether it succeeded or failed via failImport), false when no drop folder is
 // configured so the caller falls back to plain external mode.
 func (s *Scanner) dropToFolder(ctx context.Context, dl *models.Download, downloadPath, formatHint string, explicitFiles []string) bool {
-	folder, layout, linkMode := s.dropSettings(ctx)
+	// No drop folder for either format: plain external mode, decided before
+	// touching the download, which may not even be mounted on this host.
+	if s.dropFolderFor(ctx, models.MediaTypeEbook) == "" && s.dropFolderFor(ctx, models.MediaTypeAudiobook) == "" {
+		return false
+	}
+
+	// The format decides the destination (#1632): audiobooks may have a drop
+	// folder of their own, so it is resolved before the folder is read.
+	bookFiles := discoverBookFiles(downloadPath, explicitFiles)
+	detectedFormat := detectDownloadFormat(bookFiles)
+	if formatHint == models.MediaTypeAudiobook || formatHint == models.MediaTypeEbook {
+		detectedFormat = formatHint
+	}
+
+	folder, layout, linkMode := s.dropSettings(ctx, detectedFormat)
 	if folder == "" {
 		return false
 	}
 
-	bookFiles := discoverBookFiles(downloadPath, explicitFiles)
 	if len(bookFiles) == 0 {
 		if _, statErr := os.Stat(downloadPath); os.IsNotExist(statErr) {
 			s.failImport(ctx, dl, models.StateImportFailed,
@@ -326,16 +441,14 @@ func (s *Scanner) dropToFolder(ctx context.Context, dl *models.Download, downloa
 		return true
 	}
 
-	detectedFormat := detectDownloadFormat(bookFiles)
-	if formatHint == models.MediaTypeAudiobook || formatHint == models.MediaTypeEbook {
-		detectedFormat = formatHint
-	}
-
 	// Pair gating (#942): a media_type=both book only hands off once BOTH
 	// formats are present, so the drop of this format may be held back until its
 	// sibling arrives. Single-format books, and everything when gating is off,
-	// fall through to the immediate placement below unchanged.
-	if s.dropPairGatingEnabled(ctx) && book.MediaType == models.MediaTypeBoth {
+	// fall through to the immediate placement below unchanged. So does a book
+	// whose sibling format is not handed off at all (#1632: audiobooks imported
+	// into the library while ebooks drop): nothing but the timeout would ever
+	// release the hold, so holding would only delay this format by days.
+	if s.dropPairGatingEnabled(ctx) && book.MediaType == models.MediaTypeBoth && s.formatDrops(ctx, siblingFormatOf(detectedFormat)) {
 		return s.dropPairGated(ctx, dl, book, author, downloadPath, bookFiles, explicitFiles, detectedFormat, folder, layout, linkMode)
 	}
 

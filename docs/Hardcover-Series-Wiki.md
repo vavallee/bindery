@@ -32,6 +32,14 @@ If either requirement is missing, Bindery hides the enhanced controls and the en
 
 Use **Search series...** at the top of the Series page to filter your local series by title instead of using browser Find in a large collection. Matching ignores case and accents; clear the field to show all series again. This local search is available without enhanced Hardcover data.
 
+Next to the search, the filter buttons narrow the list without changing anything:
+
+- **Missing books** shows series whose card has a missing badge. **Complete** shows series with at least one book and no missing badge. Both use exactly the count on the badge. Without enhanced Hardcover data that is the books in the series you have not imported, leaving out excluded books. With it, the badge can also count Hardcover catalog books that are not in your library: the linked series' book count until you open the card, then the exact catalog diff. Bindery never loads a diff per series just to filter, so opening a card can move it between the two; the open card stays listed until you pick another filter.
+- **Not linked to Hardcover** shows series with no Hardcover link. It appears only when enhanced Hardcover data is on.
+- **Shortlisted** shows series you added to your shortlist.
+
+The filter combines with the title search and is kept in the page address (`?filter=missing`), so reloading, going back or sharing the link keeps it. Filtering never marks books wanted, monitors them, runs searches or fills gaps.
+
 1. Open **Library → Series**.
 2. Create a series manually, or open an existing series populated from your library metadata.
 3. Use **Add Book** to attach existing Bindery books and set their series positions.

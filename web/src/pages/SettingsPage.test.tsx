@@ -733,6 +733,52 @@ describe('SettingsPage', () => {
     await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('import.mode', 'auto'))
   })
 
+  it('defaults the audiobook import mode to Same as ebooks and shows only the drop folders that apply (#1632)', async () => {
+    renderSettings({
+    settings: [
+      { key: 'import.mode', value: 'external' },
+      { key: 'import.drop_folder', value: '/cwa-book-ingest' },
+    ],
+    })
+
+    expect(await screen.findByText('Import Mode')).toBeInTheDocument()
+    const fileNaming = sectionForHeading('settings.general.fileNaming')
+
+    // Unset override: "same as ebooks", and since both formats are external
+    // the audiobook drop folder input is offered alongside the ebook one.
+    const select = fileNaming.getByTestId('import-audiobook-mode') as HTMLSelectElement
+    expect(select.value).toBe('')
+    expect(fileNaming.getByText('settings.general.audiobookImportModeSame')).toBeInTheDocument()
+    expect(fileNaming.getByDisplayValue('/cwa-book-ingest')).toBeInTheDocument()
+    expect(fileNaming.getByTestId('import-audiobook-drop-folder')).toBeInTheDocument()
+
+    // The CWA + Audiobookshelf split: audiobooks copy into the library, so the
+    // audiobook drop folder goes away while the ebook one stays.
+    fireEvent.change(select, { target: { value: 'copy' } })
+    await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('import.audiobook.mode', 'copy'))
+    expect(fileNaming.queryByTestId('import-audiobook-drop-folder')).not.toBeInTheDocument()
+    expect(fileNaming.getByDisplayValue('/cwa-book-ingest')).toBeInTheDocument()
+  })
+
+  it('shows only the audiobook drop folder when just audiobooks are external (#1632)', async () => {
+    renderSettings({
+    settings: [
+      { key: 'import.mode', value: 'copy' },
+      { key: 'import.audiobook.mode', value: 'external' },
+    ],
+    })
+
+    expect(await screen.findByText('Import Mode')).toBeInTheDocument()
+    const fileNaming = sectionForHeading('settings.general.fileNaming')
+
+    expect(fileNaming.queryByPlaceholderText('/cwa-book-ingest')).not.toBeInTheDocument()
+    const input = fileNaming.getByTestId('import-audiobook-drop-folder')
+    fireEvent.change(input, { target: { value: '/audiobook-ingest' } })
+    const row = input.parentElement as HTMLElement
+    fireEvent.click(within(row).getByRole('button'))
+    await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('import.audiobook.drop_folder', '/audiobook-ingest'))
+  })
+
   it('refreshes library scan status', async () => {
     vi.mocked(api.libraryScanStatus)
     .mockResolvedValueOnce({ ran_at: new Date(Date.now() - 10_000).toISOString(), files_found: 2, reconciled: 1, unmatched: 1 })
@@ -895,6 +941,55 @@ describe('SettingsPage', () => {
     await waitFor(() => {
     expect(api.setSetting).toHaveBeenCalledWith('library.defaultRootFolderId', '')
     })
+  })
+
+  // #2166: the audiobook twin of the default root folder picker. Before it the
+  // only install wide audiobook location was BINDERY_AUDIOBOOK_DIR.
+  it('persists the default audiobook root folder from the Root Folders tab', async () => {
+    renderSettings({
+    rootFolders: [makeRootFolder({ id: 7, path: '/mnt/books' }), makeRootFolder({ id: 8, path: '/mnt/audiobooks' })],
+    settings: [
+      { key: 'library.defaultRootFolderId', value: '7' },
+      { key: 'hardcover.enhanced_series_enabled', value: 'false' },
+    ],
+    })
+
+    await openRootFoldersTab()
+    const select = await screen.findByLabelText('settings.rootfolders.audiobookDefaultLabel')
+    expect(select).toHaveValue('')
+    fireEvent.change(select, { target: { value: '8' } })
+    await waitFor(() => {
+    expect(api.setSetting).toHaveBeenCalledWith('library.defaultAudiobookRootFolderId', '8')
+    })
+    // The ebook default is left alone.
+    expect(api.setSetting).not.toHaveBeenCalledWith('library.defaultRootFolderId', expect.anything())
+    expect(screen.getByLabelText('settings.rootfolders.defaultLabel')).toHaveValue('7')
+    expect(screen.getByText('settings.rootfolders.audiobookDefaultBadge')).toBeInTheDocument()
+  })
+
+  it('clears the default audiobook root folder when that folder is deleted', async () => {
+    const a = makeRootFolder({ id: 7, path: '/mnt/books' })
+    const b = makeRootFolder({ id: 8, path: '/mnt/audiobooks' })
+    vi.mocked(api.deleteRootFolder).mockResolvedValue(undefined)
+
+    renderSettings({
+    rootFolders: [a, b],
+    settings: [
+      { key: 'library.defaultRootFolderId', value: '7' },
+      { key: 'library.defaultAudiobookRootFolderId', value: '8' },
+      { key: 'hardcover.enhanced_series_enabled', value: 'false' },
+    ],
+    })
+
+    await openRootFoldersTab()
+    await waitFor(() => expect(screen.getByLabelText('settings.rootfolders.audiobookDefaultLabel')).toHaveValue('8'))
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'common.remove' })[1])
+    await waitFor(() => expect(api.deleteRootFolder).toHaveBeenCalledWith(8))
+    await waitFor(() => {
+    expect(api.setSetting).toHaveBeenCalledWith('library.defaultAudiobookRootFolderId', '')
+    })
+    expect(api.setSetting).not.toHaveBeenCalledWith('library.defaultRootFolderId', '')
   })
 
   it('persists author/metadata default choices from the Metadata tab', async () => {
@@ -1354,6 +1449,8 @@ describe('SettingsPage', () => {
         priority: 0,
         enabled: true,
         seedRatio: null,
+        seedTimeMinutes: null,
+        inactiveSeedTimeMinutes: null,
         freeleechOnly: false,
         dailyQueryLimit: null,
       })
@@ -1385,6 +1482,8 @@ describe('SettingsPage', () => {
         categories: [7020, 3030],
         includeParentCategories: false,
         seedRatio: null,
+        seedTimeMinutes: null,
+        inactiveSeedTimeMinutes: null,
         freeleechOnly: false,
         dailyQueryLimit: null,
       })
@@ -1444,6 +1543,68 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
     expect(screen.getByLabelText('settings.indexers.form.seedRatioUnlimited')).toBeChecked()
+  })
+
+  it('saves per-indexer seed time and inactive seed time in minutes (#2206)', async () => {
+    const indexer = makeIndexer({ id: 31, name: 'TimedIdx' })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    expect(screen.getByText('settings.indexers.form.seedTimeHint')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('settings.indexers.form.seedTime'), { target: { value: '4320' } })
+    // A fraction rounds down to whole minutes.
+    fireEvent.change(screen.getByLabelText('settings.indexers.form.inactiveSeedTime'), { target: { value: '90.7' } })
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => {
+      expect(api.updateIndexer).toHaveBeenCalledWith(31, expect.objectContaining({ seedTimeMinutes: 4320, inactiveSeedTimeMinutes: 90 }))
+    })
+  })
+
+  it('clears stored seed times to null, and reads zero as blank rather than a limit', async () => {
+    const indexer = makeIndexer({ id: 32, name: 'ClearIdx', seedTimeMinutes: 600, inactiveSeedTimeMinutes: 60 })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    const seedTime = screen.getByLabelText('settings.indexers.form.seedTime')
+    const inactive = screen.getByLabelText('settings.indexers.form.inactiveSeedTime')
+    expect(seedTime).toHaveValue(600)
+    expect(inactive).toHaveValue(60)
+    fireEvent.change(seedTime, { target: { value: '' } })
+    fireEvent.change(inactive, { target: { value: '0' } })
+    fireEvent.blur(inactive)
+    expect(inactive).toHaveValue(null)
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => {
+      expect(api.updateIndexer).toHaveBeenCalledWith(32, expect.objectContaining({ seedTimeMinutes: null, inactiveSeedTimeMinutes: null }))
+    })
+  })
+
+  it('marks a seed time that came from Prowlarr', async () => {
+    const indexer = makeIndexer({ id: 33, name: 'ProwlarrTimed', seedTimeMinutes: 2880, seedTimeSource: 'prowlarr' })
+    renderSettings({ indexers: [indexer] })
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
+    expect(screen.getByText('settings.indexers.form.seedTimeFromProwlarr')).toBeInTheDocument()
+  })
+
+  it('sends seed times when adding an indexer', async () => {
+    renderSettings()
+    await openIndexersTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.indexers.addButton' }))
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.namePlaceholderExample'), { target: { value: 'Tracker' } })
+    fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.urlPlaceholderExample'), { target: { value: 'http://prowlarr:9696/2/api' } })
+    fireEvent.change(screen.getByLabelText('settings.indexers.form.seedTime'), { target: { value: '10080' } })
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => {
+      expect(api.addIndexer).toHaveBeenCalledWith(expect.objectContaining({ seedTimeMinutes: 10080, inactiveSeedTimeMinutes: null }))
+    })
   })
 
   it('saves a per-indexer daily query limit', async () => {
@@ -1780,6 +1941,10 @@ describe('SettingsPage', () => {
         enabled: true,
         useSsl: false,
         urlBase: '',
+        // qBittorrent and Transmission carry the remove-on-import toggle, off
+        // by default. The other clients have no removal wired up, so the form
+        // omits it.
+        ...(type === 'qbittorrent' || type === 'transmission' ? { removeOnImport: false } : {}),
       })
     })
   })
@@ -1819,6 +1984,9 @@ describe('SettingsPage', () => {
         category: 'ebooks',
         categoryAudiobook: '',
         pathRemap: '/media:/books',
+        // The type switched to a torrent client, so the toggle is now part of
+        // the payload; the form leaves it off unless the user ticks it.
+        removeOnImport: false,
         useSsl: true,
         urlBase: '/qbittorrent',
       })

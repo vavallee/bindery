@@ -136,6 +136,9 @@ Choose this when CWA, Calibre auto ingest or Storyteller should be the only thin
 - **Placement** (`import.drop_link_mode`): `copy` (the default, safest since the tool usually deletes what it consumes) or `hardlink` (no extra disk, same filesystem only). The download itself is never moved, so torrents keep seeding.
 - **Pair gating** (`import.drop_pair_gating`, off by default) holds the first format of a book wanted in both formats until its sibling arrives, so a tool such as Storyteller that pairs an ebook with its audiobook ingests them together. `import.drop_pair_gating_timeout_hours` (default 72) releases a held format that waited alone too long. There is no toggle for it in the UI yet; set it with `PUT /api/v1/setting/import.drop_pair_gating` and body `{"value": "true"}`, which is an admin only route, so use an admin session cookie or an admin API key.
 
+- **Audiobook import mode** (`import.audiobook.mode`) sits under the Import Mode buttons and defaults to **Same as ebooks**. Set it when audiobooks belong somewhere else. CWA ingests `m4b` too, so in a CWA plus Audiobookshelf setup a shared External mode files audiobooks into the Calibre library; set this to `Copy` (or `Hardlink` or `Auto`) and audiobooks are placed in `BINDERY_AUDIOBOOK_DIR` instead, with the usual Audiobookshelf scan trigger, while ebooks still drop into CWA's folder.
+- **Audiobook drop folder** (`import.audiobook.drop_folder`) is where audiobooks go when their mode is External, for example a folder Audiobookshelf or Storyteller watches. Empty uses the drop folder above. Pair gating only holds a format when its sibling is handed off too, and releases each format into its own folder.
+
 After the drop Bindery parks the download as *handed off* and the book stays Wanted until the next **library scan** finds the managed copy the tool produced. That only works if `BINDERY_LIBRARY_DIR` (and `BINDERY_AUDIOBOOK_DIR`) point at where the tool finally writes, not at the drop folder and not at `metadata.db`.
 
 The write integration and the CWA mirror do not run in this mode; the drop folder is the whole hand off.
@@ -170,6 +173,8 @@ Separate from all of the above, and it works alongside any topology: **Library i
 **Books land in the drop folder and stay there.** The external tool is not watching that folder, or has no permission to delete from it. That is a tool side problem; Bindery has done its part once the file is in the folder.
 
 **Audiobooks never reach CWA.** Expected. The ingest mirror is ebook only. For audiobooks use Audiobookshelf's library scan trigger or the drop folder in External mode.
+
+**Audiobooks end up in the Calibre library.** Import Mode is External and audiobooks follow it into CWA's ingest folder, which accepts `m4b`. Set **Audiobook import mode** to `Copy`, `Hardlink` or `Auto` so audiobooks go to the audiobook folder, or give them their own **Audiobook drop folder**.
 
 **Audiobooks never reach Calibre either.** Also expected, and this page used to claim otherwise. The write integration hands over one book file; an audiobook import produces a folder. The bridge derives the format from the file extension and rejects a folder outright, and `calibredb add` on a folder scans it for the formats in Calibre's own book extension list, which carries no audio format, so it finds nothing to add. Bindery no longer sends either one, and audiobooks are never queued for delivery: up to v1.37.x every audiobook import in plugin mode produced two doomed requests and a misleading `calibre: add failed, continuing` warning. Use Audiobookshelf or External mode for audiobooks.
 

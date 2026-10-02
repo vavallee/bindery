@@ -22,6 +22,10 @@ export interface DownloadClient {
   // fall back to `category`.
   categoryAudiobook?: string
   pathRemap?: string
+  // removeOnImport removes the torrent from the client once Bindery has
+  // imported it (the data is left on disk). Torrent clients only: usenet
+  // clients always clear their own history entry on import.
+  removeOnImport?: boolean
   enabled: boolean
   health?: DownloadClientHealth
 }

@@ -140,8 +140,14 @@ The field is absent when the providers match or no primary is configured.
 
 Catalogue reconciliation is deliberately separate from refresh. The GET route
 queries the current primary provider without using its cached author catalogue
-and returns `candidates`, a reason-count summary, protection counts, and
-`providerComplete`. A partial provider result never treats absence as a reason
+and returns `candidates`, `indeterminateRows`, a reason-count summary,
+protection counts, and `providerComplete`. Each `indeterminateRows` entry has a
+`bookId`, `title`, `metadataProvider`, and display-only `reason`. These rows are
+informational: they are kept because evidence is incomplete and are never
+deletion candidates. Stable indeterminate reasons are `language_unknown`,
+`language_evidence_lookup_failed`, `edition_evidence_unavailable`,
+`partial_catalogue`, and `unmatched_cross_provider`. A partial provider result
+never treats absence as a reason
 to remove a row. A complete result can make an absent same-provider row a
 candidate, but an unmatched row from another provider is kept as indeterminate:
 provider migration alone is not deletion evidence. Explicit profile rejections
@@ -341,6 +347,30 @@ rolling 24 hours (#2312). Omitted, `null` and `0` all mean no cap. A negative
 value is rejected with 400. `GET /indexer` and `GET /indexer/{id}` also return
 `dailyQueriesUsed` on capped indexers, which is a display figure summed from the
 stored hourly buckets and lags the live tally by up to one flush interval.
+
+#### Per-indexer seed limits
+
+Three optional overrides are applied to a torrent grabbed from the indexer:
+
+| Field | Meaning | Accepted values |
+|---|---|---|
+| `seedRatio` | stop seeding at this upload ratio | a ratio, or `-1` for unlimited |
+| `seedTimeMinutes` | stop seeding after this many minutes in total (#2206) | 1 to 5256000 |
+| `inactiveSeedTimeMinutes` | stop seeding after this many minutes without upload (#2206) | 1 to 5256000 |
+
+Omitted on `PUT` keeps the stored value, and `null` clears it so the download
+client's own rule applies. A seed time below 1 or above 5256000 (ten years) is
+rejected with 400. qBittorrent applies all three; Transmission the ratio and the
+inactive time; Deluge the ratio only; rTorrent none of them. A limit the client
+cannot apply is logged at debug and skipped.
+
+`seedRatioSource` and `seedTimeSource` are read only provenance: `prowlarr`
+when a Prowlarr sync filled the value from that indexer's `seedRatio` or
+`seedTime`, `user` when the value was sent on create or the indexer has been
+updated with `PUT` since, and absent when unset. Anything a client sends in
+either source field is ignored. A Prowlarr sync never overwrites a `user` value, including a value
+cleared to `null`. Prowlarr has no inactive seed time, so that field has no
+source.
 
 #### Rate limit holds
 

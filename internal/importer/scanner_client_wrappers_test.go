@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/downloader/nzbget"
 	"github.com/vavallee/bindery/internal/downloader/sabnzbd"
 	"github.com/vavallee/bindery/internal/models"
@@ -55,8 +56,10 @@ func TestTryImportTransmission_Delegates(t *testing.T) {
 		Title:     "Transmission Delegate Test",
 		Status:    models.StateCompleted,
 	}
-	// Transmission wrapper passes nil cleanupFunc; empty dir → fails fast.
-	s.tryImportTransmission(ctx, dl, t.TempDir(), nil)
+	client := &models.DownloadClient{Type: "transmission"}
+	trans := downloader.TransmissionFor(client)
+	// RemoveOnImport left unset (false) → nil cleanupFunc; empty dir → fails fast.
+	s.tryImportTransmission(ctx, trans, client, dl, t.TempDir(), nil)
 }
 
 // TestTryImportNZBGet_CleanupCalledOnSuccess verifies that the cleanup closure

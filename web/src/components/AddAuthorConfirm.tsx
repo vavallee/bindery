@@ -85,6 +85,7 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
   const rootFolders = defaults?.rootFolders ?? []
   const [profileId, setProfileId] = useState<number | null>(null)
   const [rootFolderId, setRootFolderId] = useState<number | null>(null)
+  const [audiobookRootFolderId, setAudiobookRootFolderId] = useState<number | null>(null)
   const [searchOnAdd, setSearchOnAdd] = useState(loadAutoGrabDefault)
   // Preempt the silent auto-search failure: backend auto-search-on-add runs
   // async, so a missing indexer/client fails with no visible error anywhere.
@@ -113,6 +114,7 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
     // having to pick one.
     setProfileId(defaults.profiles.length > 0 ? defaults.profiles[0].id : null)
     setRootFolderId(defaults.rootFolderId)
+    setAudiobookRootFolderId(defaults.audiobookRootFolderId)
     setMediaType(defaults.mediaType)
     setMonitorMode(defaults.monitorMode)
     setMonitorLatestCount(defaults.monitorLatestCount)
@@ -139,6 +141,13 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
         metadataProfileId: profileId,
         rootFolderId: rootFolderId,
         mediaType,
+      }
+      // Only when the author will have audiobooks, which is also when the
+      // picker shows: a choice the user never saw is not posted. Explicit for
+      // the same reason as rootFolderId, so changing the default later does not
+      // split an author's audiobooks across two folders.
+      if (mediaType !== 'ebook' && audiobookRootFolderId !== null) {
+        request.audiobookRootFolderId = audiobookRootFolderId
       }
       if (monitorOptionsChanged) {
         request.monitorMode = monitorMode
@@ -221,6 +230,15 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
                 <option value="both">{t('mediaType.both', 'Both')}</option>
               </select>
             </div>
+            {rootFolders.length > 0 && mediaType !== 'ebook' && (
+              <div>
+                <label htmlFor="add-author-audiobook-root" className="block text-xs text-fg-muted mb-1">{t('addToLibrary.author.audiobookRootFolder')}</label>
+                <select id="add-author-audiobook-root" value={audiobookRootFolderId ?? ''} onChange={e => setAudiobookRootFolderId(e.target.value ? Number(e.target.value) : null)} className={selectClass}>
+                  <option value="">{t('addToLibrary.author.audiobookRootFolderDefault')}</option>
+                  {rootFolders.map(rf => <option key={rf.id} value={rf.id}>{rf.path}</option>)}
+                </select>
+              </div>
+            )}
             <div>
               <label htmlFor="add-author-monitor-mode" className="block text-xs text-fg-muted mb-1">{t('addToLibrary.author.monitorMode')}</label>
               <select id="add-author-monitor-mode" value={monitorMode} onChange={e => { setMonitorMode(e.target.value as AuthorMonitorMode); setMonitorOptionsChanged(true) }} className={selectClass}>

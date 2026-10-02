@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/vavallee/bindery/internal/downloader/nzbget"
+	"github.com/vavallee/bindery/internal/downloader/qbittorrent"
 	"github.com/vavallee/bindery/internal/downloader/transmission"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
@@ -56,6 +57,91 @@ type SendOptions struct {
 	// global rule); -1 is the unlimited sentinel. Only honored by torrent
 	// clients; SAB/NZBGet ignore it (ratio is a torrent concept).
 	SeedRatio *float64
+	// SeedTimeMinutes and InactiveSeedTimeMinutes are the per-indexer seed time
+	// overrides (#2206), in minutes, nil for no override. qBittorrent honours
+	// both, Transmission only the inactive one; see unappliedSeedLimits for
+	// the full table. Usenet clients ignore them.
+	SeedTimeMinutes         *int
+	InactiveSeedTimeMinutes *int
+}
+
+// SeedLimits is the set of per-indexer seeding overrides resolved for a grab.
+type SeedLimits struct {
+	Ratio                   *float64
+	SeedTimeMinutes         *int
+	InactiveSeedTimeMinutes *int
+}
+
+// SeedLimitsFor reads the seeding overrides off the indexer a release was
+// grabbed from. A nil indexer (unknown, or the lookup failed) has none.
+func SeedLimitsFor(idx *models.Indexer) SeedLimits {
+	if idx == nil {
+		return SeedLimits{}
+	}
+	return SeedLimits{
+		Ratio:                   idx.SeedRatio,
+		SeedTimeMinutes:         idx.SeedTimeMinutes,
+		InactiveSeedTimeMinutes: idx.InactiveSeedTimeMinutes,
+	}
+}
+
+// WithSeedLimits returns the options with the given seeding overrides set.
+func (o SendOptions) WithSeedLimits(l SeedLimits) SendOptions {
+	o.SeedRatio = l.Ratio
+	o.SeedTimeMinutes = l.SeedTimeMinutes
+	o.InactiveSeedTimeMinutes = l.InactiveSeedTimeMinutes
+	return o
+}
+
+// unappliedSeedLimits names the seed time overrides (#2206) a torrent client
+// has no per-torrent way to apply, so the grab can say so in the log instead
+// of quietly pretending:
+//
+//	client        seed ratio  seed time  inactive seed time
+//	qBittorrent   yes         yes        yes (4.6 and later)
+//	Transmission  yes         no         yes (seedIdleLimit)
+//	Deluge        yes         no         no
+//	rTorrent      no          no         no
+//
+// The ratio column is not reported here: rTorrent's client already warns about
+// an ignored ratio itself. Usenet clients have no seeding at all and report
+// nothing.
+func unappliedSeedLimits(clientType string, opts SendOptions) []string {
+	var seedTime, inactive bool
+	switch clientType {
+	case "transmission":
+		seedTime = true
+	case "deluge", "rtorrent":
+		seedTime, inactive = true, true
+	}
+	var out []string
+	if seedTime && opts.SeedTimeMinutes != nil {
+		out = append(out, "seedTimeMinutes")
+	}
+	if inactive && opts.InactiveSeedTimeMinutes != nil {
+		out = append(out, "inactiveSeedTimeMinutes")
+	}
+	return out
+}
+
+// logValue dereferences an optional override for a log line, which would
+// otherwise print the pointer's address. nil logs as nil ("not set").
+func logValue[T any](p *T) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// logUnappliedSeedLimits records, at debug, any seed time override the
+// client cannot carry. Debug rather than warn because nothing is wrong with
+// the grab: the torrent seeds under the client's own rule, which is what the
+// settings help text says will happen for that client.
+func logUnappliedSeedLimits(clientType string, opts SendOptions) {
+	if skipped := unappliedSeedLimits(clientType, opts); len(skipped) > 0 {
+		slog.Debug("seed time override not supported by this download client; the client's own rule applies",
+			"client_type", clientType, "limits", skipped)
+	}
 }
 
 func IsTorrentClient(clientType string) bool {
@@ -130,10 +216,14 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		if !strings.HasPrefix(transDL, "/") {
 			transDL = ""
 		}
-		added, err := trans.AddTorrentDetailed(ctx, sourceURL, transDL, opts.SeedRatio)
+		added, err := trans.AddTorrentWithLimits(ctx, sourceURL, transDL, transmission.SeedLimits{
+			Ratio:       opts.SeedRatio,
+			IdleMinutes: opts.InactiveSeedTimeMinutes,
+		})
 		if err != nil {
 			return nil, err
 		}
+		logUnappliedSeedLimits(client.Type, opts)
 		if added.ID == 0 {
 			return nil, fmt.Errorf("downloader accepted request but did not return a trackable torrent ID")
 		}
@@ -161,14 +251,21 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		if hash == "" {
 			return nil, fmt.Errorf("downloader accepted request but did not return a trackable torrent ID")
 		}
-		// Apply the per-indexer seed-ratio override (#883). qBittorrent has no
-		// ratioLimit param on /torrents/add, so it is a separate setShareLimits
-		// call once the hash is known. nil = no override; -1/-2 are valid
-		// sentinels qBit recognizes. A failure here must not fail the grab — the
-		// torrent is already added — so the error is logged, not returned.
-		if opts.SeedRatio != nil {
-			if err := qb.SetShareLimits(ctx, hash, *opts.SeedRatio); err != nil {
-				slog.Warn("qbittorrent: failed to set seed-ratio limit", "hash", hash, "ratio", *opts.SeedRatio, "error", err)
+		// Apply the per-indexer seed ratio (#883) and seed time (#2206)
+		// overrides with one setShareLimits call once the hash is known. An
+		// unset limit is sent as -2 so it keeps qBittorrent's global rule, and
+		// with nothing set the call is skipped. A failure here must not fail
+		// the grab, since the torrent is already added, so it is logged.
+		limits := qbittorrent.ShareLimits{
+			Ratio:                      opts.SeedRatio,
+			SeedingTimeMinutes:         opts.SeedTimeMinutes,
+			InactiveSeedingTimeMinutes: opts.InactiveSeedTimeMinutes,
+		}
+		if !limits.IsZero() {
+			if err := qb.SetShareLimitsDetailed(ctx, hash, limits); err != nil {
+				slog.Warn("qbittorrent: failed to set seed limits", "hash", hash,
+					"ratio", logValue(opts.SeedRatio), "seed_time_minutes", logValue(opts.SeedTimeMinutes),
+					"inactive_seed_time_minutes", logValue(opts.InactiveSeedTimeMinutes), "error", err)
 			}
 		}
 		result.RemoteID = hash
@@ -179,6 +276,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		if err != nil {
 			return nil, err
 		}
+		logUnappliedSeedLimits(client.Type, opts)
 		if hash == "" {
 			return nil, fmt.Errorf("downloader accepted request but did not return a trackable torrent ID")
 		}
@@ -193,6 +291,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		if err != nil {
 			return nil, err
 		}
+		logUnappliedSeedLimits(client.Type, opts)
 		hash = strings.ToLower(strings.TrimSpace(hash))
 		if hash == "" {
 			return nil, fmt.Errorf("downloader accepted request but did not return a trackable torrent ID")

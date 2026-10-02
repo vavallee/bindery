@@ -177,6 +177,29 @@ func umlautFlexRegex(kw string) string {
 	return kw
 }
 
+// volumeMarkerPattern matches any spelling of a volume marker: vol, vols,
+// volume, volumes. See keywordPattern.
+const volumeMarkerPattern = `(?:vol(?:ume)?s?)`
+
+// keywordPattern returns the regex fragment for one keyword, shared by every
+// title matcher (WordBoundaryRegex, phraseRegex, inOrderRegex) so they agree.
+//
+// A volume marker keyword (newznab.IsVolumeMarker) matches any of its
+// spellings, so a title saying "Volume 17" matches a release saying "Vol 17"
+// and the other way round. The callers put a word boundary on both sides, so
+// "vol" still cannot match inside "volcano" or "revolution". Which VOLUME a
+// cross spelling match names is checked separately, see volumeNumberAgrees.
+//
+// Every other keyword is QuoteMeta'd with the umlaut flex, exactly as before.
+// lower is the keyword lowercased for the marker lookup only; the fragment
+// keeps the caller's own casing so the umlaut flex sees what it always saw.
+func keywordPattern(kw, lower string) string {
+	if newznab.IsVolumeMarker(lower) {
+		return volumeMarkerPattern
+	}
+	return umlautFlexRegex(regexp.QuoteMeta(kw))
+}
+
 // WordBoundaryRegex returns a cached case-insensitive regex matching kw as a
 // whole token in a normalized haystack. Safe for concurrent use. German umlaut
 // expansions (ae/oe/ue) produced by transliterateUmlauts are treated as
@@ -186,7 +209,7 @@ func WordBoundaryRegex(kw string) *regexp.Regexp {
 	if re, ok := regexCache.load(kw); ok {
 		return re
 	}
-	re := compileRegex(`(?i)(?:^|` + wordSep + `)` + umlautFlexRegex(regexp.QuoteMeta(kw)) + `(?:` + wordSep + `|$)`)
+	re := compileRegex(`(?i)(?:^|` + wordSep + `)` + keywordPattern(kw, strings.ToLower(kw)) + `(?:` + wordSep + `|$)`)
 	regexCache.store(kw, re)
 	return re
 }
@@ -199,7 +222,8 @@ func WordBoundaryRegex(kw string) *regexp.Regexp {
 func phraseRegex(phrase []string) *regexp.Regexp {
 	parts := make([]string, len(phrase))
 	for i, w := range phrase {
-		parts[i] = umlautFlexRegex(regexp.QuoteMeta(strings.ToLower(w)))
+		lw := strings.ToLower(w)
+		parts[i] = keywordPattern(lw, lw)
 	}
 	// wordSep rather than \b/\W so non-ASCII words match (#1642). The inner
 	// separator also swallows any word SigWords itself dropped, see phraseGap.

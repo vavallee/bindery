@@ -22,7 +22,7 @@ Real candidates, not commitments, roughly in order of how much they'd change the
 
 - **slskd as a download client** ([#1717](https://github.com/vavallee/bindery/issues/1717)) — see the note under Won't do; the re-scoped version is an ordinary download client and shares its shape with the rTorrent client that shipped in v1.31.0.
 
-- **Dual-format storage and routing** — keep multiple formats rather than upgrade-replacing ([#1357](https://github.com/vavallee/bindery/issues/1357)), and route per-format on external import so a Calibre/CWA + Audiobookshelf split can be expressed ([#1632](https://github.com/vavallee/bindery/issues/1632)). Handling dual-format properly is Bindery's clearest advantage over running two Readarr instances, so this cluster is worth doing as a set. Sharing one book folder between the two formats already shipped (see **Delivered**).
+- **Dual-format storage and routing** — keep multiple formats rather than upgrade-replacing ([#1357](https://github.com/vavallee/bindery/issues/1357)). Routing per format on import, so a Calibre/CWA + Audiobookshelf split can be expressed, shipped as the audiobook import mode and drop folder ([#1632](https://github.com/vavallee/bindery/issues/1632)). Handling dual-format properly is Bindery's clearest advantage over running two Readarr instances, so this cluster is worth doing as a set. Sharing one book folder between the two formats already shipped (see **Delivered**).
 
 - **Ebook language handling** ([#1160](https://github.com/vavallee/bindery/issues/1160)) — make a book's language filterable in the library, and stop authors pulling in foreign-language editions. Editing a book's language by hand (v1.25.0) and reading `dc:language` from the imported EPUB (v1.28.0) have shipped.
 

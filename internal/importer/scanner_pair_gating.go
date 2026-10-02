@@ -76,10 +76,7 @@ func siblingFormatOnDisk(book *models.Book, format string) bool {
 // if the sibling was held, it is released into the drop folder too so the pair
 // lands together. Returns true — it always takes ownership of the download.
 func (s *Scanner) dropPairGated(ctx context.Context, dl *models.Download, book *models.Book, author *models.Author, downloadPath string, bookFiles, explicitFiles []string, format, folder, layout, linkMode string) bool {
-	siblingFormat := models.MediaTypeAudiobook
-	if format == models.MediaTypeAudiobook {
-		siblingFormat = models.MediaTypeEbook
-	}
+	siblingFormat := siblingFormatOf(format)
 
 	heldSibling := s.findHeldSibling(ctx, book.ID, dl.ID, siblingFormat)
 	if !siblingFormatOnDisk(book, siblingFormat) && heldSibling == nil {
@@ -96,13 +93,27 @@ func (s *Scanner) dropPairGated(ctx context.Context, dl *models.Download, book *
 		return true
 	}
 
-	// Release the held sibling alongside it so the pair lands together.
+	// Release the held sibling alongside it so the pair lands together, into
+	// the sibling's own drop folder: audiobooks can have one of their own
+	// (#1632), and then the pair lands in two folders at once.
 	if heldSibling != nil {
-		s.releaseHeldSibling(ctx, heldSibling, book, author, siblingFormat, folder, layout, linkMode)
+		siblingFolder := s.dropFolderFor(ctx, siblingFormat)
+		if siblingFolder == "" {
+			siblingFolder = folder
+		}
+		s.releaseHeldSibling(ctx, heldSibling, book, author, siblingFormat, siblingFolder, layout, linkMode)
 	}
 
 	s.finishDrop(ctx, dl, layout, linkMode, format, dest)
 	return true
+}
+
+// siblingFormatOf returns the other format of a media_type=both pair.
+func siblingFormatOf(format string) string {
+	if format == models.MediaTypeAudiobook {
+		return models.MediaTypeEbook
+	}
+	return models.MediaTypeAudiobook
 }
 
 // parkHeldFormat holds a completed format under pair gating: it records the
@@ -195,12 +206,6 @@ func (s *Scanner) sweepHeldPairGating(ctx context.Context) {
 	if len(held) == 0 {
 		return
 	}
-	folder, layout, linkMode := s.dropSettings(ctx)
-	if folder == "" {
-		// No drop folder configured any more — nowhere to release to. Leave the
-		// held rows as-is; a manual retry can recover them.
-		return
-	}
 	timeout := s.dropPairGatingTimeout(ctx)
 	now := time.Now()
 	for i := range held {
@@ -220,6 +225,14 @@ func (s *Scanner) sweepHeldPairGating(ctx context.Context) {
 		}
 		files := discoverBookFiles(h.ImportPath, nil)
 		format := detectDownloadFormat(files)
+		// The drop folder is per format (#1632). When this format no longer
+		// drops at all (no drop folder any more, or its import mode is no
+		// longer external) there is nowhere to release it to. Leave the held
+		// row as-is; a manual retry imports it under the current settings.
+		if !s.formatDrops(ctx, format) {
+			continue
+		}
+		folder, layout, linkMode := s.dropSettings(ctx, format)
 		slog.Warn("drop: pair gating timeout — releasing held format alone; its sibling never arrived",
 			"title", h.Title, "format", format, "held_for", age.Truncate(time.Minute).String(), "timeout", timeout.String())
 		if len(files) == 0 {

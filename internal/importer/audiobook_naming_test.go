@@ -55,7 +55,7 @@ func TestFlattenAudiobookDirNamed_Ordering(t *testing.T) {
 	r := NewRenamer("")
 	book := &models.Book{Title: "Recursion"}
 	author := &models.Author{Name: "Blake Crouch"}
-	namer := func(index int, ext string) string {
+	namer := func(index, _ int, ext string) string {
 		return r.AudiobookFileName("{Title} - Part {Part:3}.{ext}", author, book, "", "", trimDot(ext), index+1)
 	}
 
@@ -86,7 +86,7 @@ func TestFlattenAudiobookDirNamed_Ordering(t *testing.T) {
 func TestFlattenAudiobookDirNamed_DuplicateNameFails(t *testing.T) {
 	src := buildMultiDiscTree(t)
 	dst := filepath.Join(t.TempDir(), "out")
-	namer := func(index int, ext string) string { return "same" + ext } // no {Part}
+	namer := func(_, _ int, ext string) string { return "same" + ext } // no {Part}
 	if err := flattenAudiobookDirNamed(context.Background(), "copy", src, dst, namer); err == nil {
 		t.Error("expected a duplicate-name error when the namer omits Part")
 	}

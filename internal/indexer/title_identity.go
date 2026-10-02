@@ -21,16 +21,21 @@ func titleIdentityWords(s string) []string {
 // conflictingTitleAuthor recognises explicit trailing attribution only when
 // the left side names the requested title. Title-only releases remain valid;
 // release metadata and narrator credits are not treated as authors.
+//
+// Both sides are compared with volume markers folded to one spelling
+// (foldVolumeMarkers), because the keyword matchers accept "Vol 17" for a
+// "Volume 17" title: without the fold, "Title Vol 17 - Other Author" would be
+// accepted on its title while its attribution went unread.
 func conflictingTitleAuthor(release, title string, authorSets [][]string) bool {
-	normalizedTitle := NormalizeRelease(title)
-	normalizedRelease := NormalizeRelease(release)
+	normalizedTitle := foldVolumeMarkers(NormalizeRelease(title))
+	normalizedRelease := foldVolumeMarkers(NormalizeRelease(release))
 	var attribution string
 	if after, ok := strings.CutPrefix(normalizedRelease, normalizedTitle+" by "); ok {
 		attribution = after
 	} else {
 		for _, separator := range []string{" - ", " – ", " — "} {
 			before, after, ok := strings.Cut(release, separator)
-			if ok && NormalizeRelease(before) == normalizedTitle {
+			if ok && foldVolumeMarkers(NormalizeRelease(before)) == normalizedTitle {
 				attribution = NormalizeRelease(after)
 				break
 			}
@@ -61,6 +66,24 @@ func conflictingTitleAuthor(release, title string, authorSets [][]string) bool {
 		}
 	}
 	return knownAuthor
+}
+
+// foldVolumeMarkers rewrites every volume marker spelling in a
+// NormalizeRelease string to "vol", so two strings that differ only in how
+// they spell the marker compare equal. Used for equality tests only.
+func foldVolumeMarkers(s string) string {
+	toks := strings.Fields(s)
+	changed := false
+	for i, tok := range toks {
+		if newznab.IsVolumeMarker(tok) && tok != "vol" {
+			toks[i] = "vol"
+			changed = true
+		}
+	}
+	if !changed {
+		return s
+	}
+	return strings.Join(toks, " ")
 }
 
 // maxSeriesLabelTokens caps how many words may sit between the requested title

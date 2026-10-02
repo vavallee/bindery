@@ -1472,3 +1472,180 @@ describe('AuthorDetailPage — book link nav state (#2548, book side)', () => {
     await waitFor(() => expect(capturedState).toEqual({ ids: [11, 10], index: 0, hopDepth: 1 }))
   })
 })
+
+// #2457: a bulk action used to clear the selection, so running two actions on
+// the same books meant picking them all again. #2456: while picking, a click
+// that missed the small checkbox opened the book and threw the selection away.
+describe('AuthorDetailPage — selection (#2456, #2457)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    installLocalStorageMock()
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([])
+  })
+
+  function checkboxFor(title: string): HTMLInputElement {
+    return screen.getByRole('checkbox', { name: `Select ${title}` }) as HTMLInputElement
+  }
+
+  it('keeps the selection after a bulk action so a second action reuses it (#2457)', async () => {
+    vi.mocked(api.bulkActionBooks).mockResolvedValue({
+      results: { '501': { ok: true }, '502': { ok: true } },
+    })
+    renderAuthorDetailPage(
+      [
+        makeBook({ id: 501, title: 'Keep One', status: 'wanted' }),
+        makeBook({ id: 502, title: 'Keep Two', status: 'wanted' }),
+        makeBook({ id: 503, title: 'Not Picked', status: 'wanted' }),
+      ],
+      'table',
+    )
+    await screen.findByText('Keep One')
+    fireEvent.click(checkboxFor('Keep One'))
+    fireEvent.click(checkboxFor('Keep Two'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Unmonitor' }))
+    await waitFor(() => expect(api.bulkActionBooks).toHaveBeenCalledWith([501, 502], 'unmonitor', undefined))
+    // Wait for the post-action reload, which is where the clear used to land.
+    await waitFor(() => expect(api.listAllBooks).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Monitor' })).not.toBeNull())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Monitor' })).not.toBeDisabled())
+
+    expect(checkboxFor('Keep One')).toBeChecked()
+    expect(checkboxFor('Keep Two')).toBeChecked()
+    expect(checkboxFor('Not Picked')).not.toBeChecked()
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '📖🎧 Set Both' }))
+    await waitFor(() => expect(api.bulkActionBooks).toHaveBeenLastCalledWith([501, 502], 'set_media_type', 'both'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Clear' })).not.toBeDisabled())
+
+    // Clear is still the way out.
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(screen.queryByText(/selected$/)).toBeNull()
+  })
+
+  it('drops deleted books from the selection and never sends them again (#2457)', async () => {
+    vi.mocked(api.bulkActionBooks).mockResolvedValueOnce({
+      results: { '601': { ok: true }, '602': { ok: false, error: 'locked' } },
+    })
+    renderAuthorDetailPage(
+      [
+        makeBook({ id: 601, title: 'Gone Book', status: 'wanted' }),
+        makeBook({ id: 602, title: 'Stuck Book', status: 'wanted' }),
+        makeBook({ id: 603, title: 'Other Book', status: 'wanted' }),
+      ],
+      'table',
+    )
+    await screen.findByText('Gone Book')
+    // After the delete the server no longer returns 601.
+    vi.mocked(api.listAllBooks).mockResolvedValue([
+      makeBook({ id: 602, title: 'Stuck Book', status: 'wanted' }),
+      makeBook({ id: 603, title: 'Other Book', status: 'wanted' }),
+    ])
+    fireEvent.click(checkboxFor('Gone Book'))
+    fireEvent.click(checkboxFor('Stuck Book'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(within(await screen.findByTestId('confirm-dialog')).getByText(/Delete 2 book/)).toBeInTheDocument()
+    await acceptConfirm()
+    await waitFor(() => expect(api.bulkActionBooks).toHaveBeenCalledWith([601, 602], 'delete', undefined))
+    await waitFor(() => expect(screen.queryByText('Gone Book')).toBeNull())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).not.toBeDisabled())
+
+    // The book that failed to delete is still picked, so retrying is one click.
+    expect(checkboxFor('Stuck Book')).toBeChecked()
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+
+    vi.mocked(api.bulkActionBooks).mockResolvedValueOnce({ results: { '602': { ok: true } } })
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(within(await screen.findByTestId('confirm-dialog')).getByText(/Delete 1 book/)).toBeInTheDocument()
+    await acceptConfirm()
+    await waitFor(() => expect(api.bulkActionBooks).toHaveBeenLastCalledWith([602], 'delete', undefined))
+  })
+
+  it('drops deleted books from the selection even when the reload fails (#2457)', async () => {
+    vi.mocked(api.bulkActionBooks).mockResolvedValue({
+      results: { '701': { ok: true } },
+    })
+    renderAuthorDetailPage(
+      [
+        makeBook({ id: 701, title: 'Doomed Book', status: 'wanted' }),
+        makeBook({ id: 702, title: 'Bystander', status: 'wanted' }),
+      ],
+      'table',
+    )
+    await screen.findByText('Doomed Book')
+    vi.mocked(api.listAllBooks).mockRejectedValue(new Error('offline'))
+    fireEvent.click(checkboxFor('Doomed Book'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await acceptConfirm()
+    await waitFor(() => expect(api.bulkActionBooks).toHaveBeenCalledWith([701], 'delete', undefined))
+    // The stale row is still on screen, but it must not stay selected: a
+    // second action would send an id the server already deleted.
+    await waitFor(() => expect(screen.queryByText(/selected$/)).toBeNull())
+    expect(checkboxFor('Doomed Book')).not.toBeChecked()
+  })
+
+  it('toggles a grid card on click while a selection exists, and opens it otherwise (#2456)', async () => {
+    let seen = ''
+    renderAuthorDetailPage(
+      [
+        makeBook({ id: 801, title: 'First Card', status: 'wanted' }),
+        makeBook({ id: 802, title: 'Second Card', status: 'wanted' }),
+      ],
+      'grid',
+      {},
+      '/author/42',
+      loc => { seen = loc },
+    )
+    const second = await screen.findByRole('heading', { name: 'Second Card' })
+    fireEvent.click(checkboxFor('First Card'))
+
+    // Anywhere on the card (here the title, well away from the checkbox)
+    // adds it to the selection instead of opening the book.
+    fireEvent.click(second)
+    expect(checkboxFor('Second Card')).toBeChecked()
+    expect(seen).toBe('/author/42')
+
+    // And a second click takes it back out.
+    fireEvent.click(second)
+    expect(checkboxFor('Second Card')).not.toBeChecked()
+
+    // Ctrl-click is the browser's open-in-new-tab gesture; leave it alone.
+    fireEvent.click(second, { ctrlKey: true })
+    expect(checkboxFor('Second Card')).not.toBeChecked()
+
+    // With nothing selected, a click opens the book exactly as before.
+    fireEvent.click(checkboxFor('First Card'))
+    fireEvent.click(second)
+    await waitFor(() => expect(seen).toBe('/book/802'))
+  })
+
+  it('toggles a table row on click while a selection exists (#2456)', async () => {
+    let seen = ''
+    renderAuthorDetailPage(
+      [
+        makeBook({ id: 901, title: 'Row One', status: 'wanted' }),
+        makeBook({ id: 902, title: 'Row Two', status: 'wanted' }),
+      ],
+      'table',
+      {},
+      '/author/42',
+      loc => { seen = loc },
+    )
+    await screen.findByText('Row One')
+    fireEvent.click(checkboxFor('Row One'))
+
+    // The title link inside the row and the bare row both toggle.
+    fireEvent.click(screen.getByText('Row Two'))
+    expect(checkboxFor('Row Two')).toBeChecked()
+    fireEvent.click(rowForTitle('Row Two'))
+    expect(checkboxFor('Row Two')).not.toBeChecked()
+    expect(seen).toBe('/author/42')
+
+    fireEvent.click(checkboxFor('Row One'))
+    fireEvent.click(rowForTitle('Row Two'))
+    await waitFor(() => expect(seen).toBe('/book/902'))
+  })
+})

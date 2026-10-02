@@ -12,7 +12,7 @@ import (
 // ptrFloat is a test helper for building *float64 literals inline.
 func ptrFloat(v float64) *float64 { return &v }
 
-// TestResolveSeedRatio covers each branch of resolveSeedRatio: the nil-repo
+// TestResolveSeedRatio covers each branch of resolveSeedLimits for the ratio: the nil-repo
 // guard, the zero-id guard, a missing indexer, an indexer with no override
 // (nil SeedRatio), and an indexer carrying an explicit override (including the
 // -1 "unlimited" sentinel).
@@ -103,7 +103,7 @@ func TestResolveSeedRatio(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &Scheduler{indexers: tt.repo}
-			got := s.resolveSeedRatio(ctx, tt.id)
+			got := s.resolveSeedLimits(ctx, tt.id).Ratio
 			if tt.wantNil {
 				if got != nil {
 					t.Fatalf("expected nil ratio, got %v", *got)

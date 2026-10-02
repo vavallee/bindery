@@ -120,7 +120,7 @@ Clean-room Go rewrite, modern React UI, MIT-licensed, actively developed.
 - Library scan matching in five passes: exact ASIN, then a backwards `Author - Title` filename whose folder author the catalogue already knows, then the filename's title, then the book folder's title, and finally series name plus position. Every title pass is one fuzzy comparison that has to agree on the author as well. Honours librarian sort-suffix form (`Title, The`) and series-annotated filenames (`[Mistborn, Book 1]`).
 - **Library adoption**: whatever the scan could not match waits on the Import page as one row per book (an audiobook folder or disc set is one row), with suggested matches (one click Confirm only for a strong match), one "Add author" decision per missing author, and Undo. Files are registered where they are, never moved.
 - Author aliases (`RR Haywood` / `R.R. Haywood` / `R R Haywood` merge into one canonical row), and metadata re-bind to correct a wrong match without delete-and-re-add. On a book’s **File → Re-bind** dialog, search configured metadata providers and select an OpenLibrary work or Hardcover book, or enter an exact provider ID and press Enter. Results already in the library are marked and link to the existing book; records belonging to another library book cannot be selected. Each result’s **Links** menu opens its upstream page when available; OpenLibrary editions can be viewed but require a work ID for re-binding. Re-binding updates metadata and series without moving files; author mismatches require confirmation.
-- Explicit author-catalogue reconciliation with a selectable preview: remove chosen stale metadata-only Wanted rows after changing provider or metadata profile while always protecting imported books and every row with a tracked file.
+- Explicit author-catalogue reconciliation with a selectable preview: remove chosen stale metadata-only Wanted rows after changing provider or metadata profile, review rows kept because evidence is incomplete, and always protect imported books and every row with a tracked file.
 - Manual metadata editing with field locks: edit a book's title, description, genres, language or release date and the edit survives every refresh. **Fix match** reassigns a file that was attached to the wrong book. See [docs/Metadata-Editing-Wiki.md](docs/Metadata-Editing-Wiki.md).
 
 **Search & downloads**
@@ -231,9 +231,9 @@ Bindery is configured through the web UI under **Settings** — indexers, downlo
 | `BINDERY_PORT` | `8787` | HTTP server port |
 | `BINDERY_DB_PATH` | platform-default | SQLite database path |
 | `BINDERY_DATA_DIR` | platform-default | Config directory (backups, image cache, secrets) |
-| `BINDERY_LIBRARY_DIR` | `/books` | Imported ebook destination |
+| `BINDERY_LIBRARY_DIR` | `/books` (set a real folder on Windows) | Imported ebook destination |
 | `BINDERY_AUDIOBOOK_DIR` | inherits library | Imported audiobook destination |
-| `BINDERY_DOWNLOAD_DIR` | `/downloads` | Where the download client deposits completed jobs |
+| `BINDERY_DOWNLOAD_DIR` | `/downloads` (unset on Windows) | Where the download client deposits completed jobs |
 | `BINDERY_AUDIOBOOK_DOWNLOAD_DIR` | inherits download dir | Separate watch folder for audiobook downloads |
 | `BINDERY_URL_BASE` | _(empty)_ | Reverse-proxy subpath (e.g. `/bindery`) |
 | `BINDERY_OUTBOUND_PROXY` | _(empty)_ | Route outbound HTTP (indexers, metadata, covers, notifications, telemetry) through an `http`/`https`/`socks5` proxy. LAN/loopback destinations bypass it by default — see [DEPLOYMENT.md](docs/DEPLOYMENT.md#environment-variables) |

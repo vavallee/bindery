@@ -184,7 +184,7 @@ func statRemappedPath(client *models.DownloadClient, clientPath, expectedHint, g
 	}
 	msg := fmt.Sprintf("Connected, but Bindery can't read the client's completed-downloads folder at %q — %s.", localPath, hint)
 	if local := strings.TrimSpace(clientPath); local != "" && filepath.Clean(local) != localPath {
-		msg = fmt.Sprintf("Connected, but Bindery can't read the client's completed-downloads folder. The client writes to %q, which maps to %q inside Bindery, but that path does not exist — %s.", filepath.Clean(local), localPath, hint)
+		msg = fmt.Sprintf("Connected, but Bindery can't read the client's completed-downloads folder. The client writes to %q, which maps to %q inside Bindery, but that path does not exist — %s.", pathmap.CleanClientPath(local), localPath, hint)
 	}
 	if expected := strings.TrimSpace(expectedHint); expected != "" {
 		msg += fmt.Sprintf(" Bindery is configured to read from %s.", expected)

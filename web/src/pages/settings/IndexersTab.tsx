@@ -92,6 +92,83 @@ function SeedRatioField({ value, onChange, source }: { value: number | null | un
   )
 }
 
+// MinutesField is one whole-minute seed time override (#2206). Blank means no
+// override. Anything below one minute is not a limit the server accepts, so it
+// reads as blank too, and the text settles onto that on blur so the field never
+// shows a value that will not be saved. Fractions round down, as the daily
+// query limit does.
+function MinutesField({ label, placeholder, value, onChange }: { label: string; placeholder: string; value: number | null | undefined; onChange: (v: number | null) => void }) {
+  const [text, setText] = useState(value != null && value >= 1 ? String(value) : '')
+
+  const parse = (raw: string): number | null => {
+    if (raw.trim() === '') return null
+    const n = Math.floor(Number(raw))
+    return Number.isFinite(n) && n >= 1 ? n : null
+  }
+
+  const handleText = (raw: string) => {
+    setText(raw)
+    onChange(parse(raw))
+  }
+
+  const normalise = () => {
+    const n = parse(text)
+    setText(n == null ? '' : String(n))
+  }
+
+  return (
+    <div className="flex-1">
+      <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{label}</label>
+      <input
+        type="number"
+        min="1"
+        step="1"
+        value={text}
+        onChange={e => handleText(e.target.value)}
+        onBlur={normalise}
+        placeholder={placeholder}
+        aria-label={label}
+        className={inputCls}
+      />
+    </div>
+  )
+}
+
+// SeedTimeFields renders the total and inactive seed time overrides (#2206)
+// next to the seed ratio. The hint names which clients honour which limit,
+// because unlike the ratio they are not supported everywhere.
+function SeedTimeFields({ seedTime, onSeedTime, inactive, onInactive, source }: {
+  seedTime: number | null | undefined
+  onSeedTime: (v: number | null) => void
+  inactive: number | null | undefined
+  onInactive: (v: number | null) => void
+  source?: string
+}) {
+  const { t } = useTranslation()
+  return (
+    <div>
+      <div className="flex gap-3">
+        <MinutesField
+          label={t('settings.indexers.form.seedTime')}
+          placeholder={t('settings.indexers.form.seedTimePlaceholder')}
+          value={seedTime}
+          onChange={onSeedTime}
+        />
+        <MinutesField
+          label={t('settings.indexers.form.inactiveSeedTime')}
+          placeholder={t('settings.indexers.form.inactiveSeedTimePlaceholder')}
+          value={inactive}
+          onChange={onInactive}
+        />
+      </div>
+      {source === 'prowlarr' && (
+        <p className="text-xs text-amber-600 dark:text-amber-500 mt-1">{t('settings.indexers.form.seedTimeFromProwlarr')}</p>
+      )}
+      <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.seedTimeHint')}</p>
+    </div>
+  )
+}
+
 // DailyQueryLimitField caps how many requests Bindery sends this indexer in a
 // rolling 24 hours (#2312). Blank means no cap, which is what every indexer had
 // before the field existed.
@@ -492,6 +569,8 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
   const [includeParentCategories, setIncludeParentCategories] = useState(indexer.includeParentCategories ?? false)
   const [priority, setPriority] = useState(String(indexer.priority ?? 0))
   const [seedRatio, setSeedRatio] = useState<number | null>(indexer.seedRatio ?? null)
+  const [seedTimeMinutes, setSeedTimeMinutes] = useState<number | null>(indexer.seedTimeMinutes ?? null)
+  const [inactiveSeedTimeMinutes, setInactiveSeedTimeMinutes] = useState<number | null>(indexer.inactiveSeedTimeMinutes ?? null)
   const [freeleechOnly, setFreeleechOnly] = useState(indexer.freeleechOnly ?? false)
   const [dailyQueryLimit, setDailyQueryLimit] = useState<number | null>(indexer.dailyQueryLimit ?? null)
   const [testing, setTesting] = useState(false)
@@ -499,7 +578,7 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
-    const payload: Partial<Indexer> = { ...indexer, name, type, url, categories: parseCats(categories), includeParentCategories, priority: parsePriority(priority), seedRatio, freeleechOnly, dailyQueryLimit }
+    const payload: Partial<Indexer> = { ...indexer, name, type, url, categories: parseCats(categories), includeParentCategories, priority: parsePriority(priority), seedRatio, seedTimeMinutes, inactiveSeedTimeMinutes, freeleechOnly, dailyQueryLimit }
     delete payload.apiKey
     if (apiKey) payload.apiKey = apiKey
     const updated = await api.updateIndexer(indexer.id, payload)
@@ -563,6 +642,7 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.priorityHint')}</p>
       </div>
       <SeedRatioField value={seedRatio} onChange={setSeedRatio} source={indexer.seedRatioSource} />
+      <SeedTimeFields seedTime={seedTimeMinutes} onSeedTime={setSeedTimeMinutes} inactive={inactiveSeedTimeMinutes} onInactive={setInactiveSeedTimeMinutes} source={indexer.seedTimeSource} />
       <FreeleechOnlyField value={freeleechOnly} onChange={setFreeleechOnly} />
       <DailyQueryLimitField value={dailyQueryLimit} onChange={setDailyQueryLimit} />
       {testResult && <IndexerTestResultBanner r={testResult} />}
@@ -585,6 +665,8 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
   const [includeParentCategories, setIncludeParentCategories] = useState(false)
   const [priority, setPriority] = useState('0')
   const [seedRatio, setSeedRatio] = useState<number | null>(null)
+  const [seedTimeMinutes, setSeedTimeMinutes] = useState<number | null>(null)
+  const [inactiveSeedTimeMinutes, setInactiveSeedTimeMinutes] = useState<number | null>(null)
   const [freeleechOnly, setFreeleechOnly] = useState(false)
   const [dailyQueryLimit, setDailyQueryLimit] = useState<number | null>(null)
   const [testing, setTesting] = useState(false)
@@ -592,7 +674,7 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
   const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
 
   const submit = async () => {
-    const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), includeParentCategories, priority: parsePriority(priority), enabled: true, seedRatio, freeleechOnly, dailyQueryLimit })
+    const idx = await api.addIndexer({ name, url, apiKey, type, categories: parseCats(categories), includeParentCategories, priority: parsePriority(priority), enabled: true, seedRatio, seedTimeMinutes, inactiveSeedTimeMinutes, freeleechOnly, dailyQueryLimit })
     onAdded(idx)
   }
 
@@ -645,6 +727,7 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.priorityHint')}</p>
       </div>
       <SeedRatioField value={seedRatio} onChange={setSeedRatio} />
+      <SeedTimeFields seedTime={seedTimeMinutes} onSeedTime={setSeedTimeMinutes} inactive={inactiveSeedTimeMinutes} onInactive={setInactiveSeedTimeMinutes} />
       <FreeleechOnlyField value={freeleechOnly} onChange={setFreeleechOnly} />
       <DailyQueryLimitField value={dailyQueryLimit} onChange={setDailyQueryLimit} />
       {testResult && <IndexerTestResultBanner r={testResult} />}

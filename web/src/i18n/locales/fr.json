@@ -349,7 +349,7 @@
       "apiKeys": "Clés API externes",
       "googleBooksKey": "Clé API Google Books",
       "storage": "Stockage",
-      "storageHint": "Chemins que Bindery lit et dans lesquels il écrit. Configurez via les variables d'environnement (ou votre fichier de configuration) avant le démarrage ; le processus les lit au lancement.",
+      "storageHint": "Chemins que Bindery lit et dans lesquels il écrit. Configurez via les variables d'environnement avant le démarrage ; le processus les lit au lancement.",
       "downloadDir": "Répertoire des téléchargements",
       "audiobookDownloadDir": "Répertoire de téléchargement des livres audio",
       "audiobookDownloadDirFallback": "Non défini — les téléchargements de livres audio utilisent le répertoire de téléchargement principal.",

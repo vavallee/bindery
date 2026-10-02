@@ -1,0 +1,2 @@
+### Added
+- **Pick a default audiobook folder in the UI** (#2166): Settings, Root Folders now has a Default audiobook root folder next to the ebook one, so you no longer need the BINDERY_AUDIOBOOK_DIR environment variable to choose where audiobooks go. That is mostly a relief on the Windows build. When both are set the UI choice wins, and an author's own audiobook root folder still comes first. The Add Author dialog gains an Audiobook root folder picker, shown when the media type includes audiobooks and preselected with the new default. Thanks Fear Vector for raising it.

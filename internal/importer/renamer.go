@@ -166,15 +166,79 @@ func (r *Renamer) DestPath(rootFolder string, author *models.Author, book *model
 // ext is the source extension WITHOUT a leading dot (the template supplies the
 // dot before {ext}, matching the ebook template convention).
 func (r *Renamer) AudiobookFileName(template string, author *models.Author, book *models.Book, series, seriesNumber, ext string, part int) string {
+	return r.audiobookFileName(template, author, book, series, seriesNumber, ext, strconv.Itoa(part))
+}
+
+// AudiobookSingleFileName renders the per-file audiobook naming template for
+// an audiobook that is one audio file (#2900): a lone .m4b, or a folder holding
+// a single track. It is the same render AudiobookFileName does for a track of a
+// multi-file book, so the two differ only in the part.
+//
+// {Part} renders empty when every {Part} in the template sits in a conditional
+// group with its own text, so the #1127 collapse drops the whole group:
+// "{Title}{ - Pt. Part:3}.{ext}" gives "Title.m4b" here and "Title - Pt. 001.m4b"
+// for each track of a multi-file book. A bare "{Part}" or "{Part:3}" has its
+// glue outside the braces, and an empty value there leaves it dangling
+// ("Title - Part .m4b" from the default template), so such a template numbers
+// the lone file as part 1, exactly as it would the first of several.
+func (r *Renamer) AudiobookSingleFileName(template string, author *models.Author, book *models.Book, series, seriesNumber, ext string) string {
+	if template == "" {
+		template = defaultAudiobookFileTemplate
+	}
+	part := ""
+	if !audiobookPartIsConditional(template) {
+		part = "1"
+	}
+	return r.audiobookFileName(template, author, book, series, seriesNumber, ext, part)
+}
+
+func (r *Renamer) audiobookFileName(template string, author *models.Author, book *models.Book, series, seriesNumber, ext, part string) string {
 	if template == "" {
 		template = defaultAudiobookFileTemplate
 	}
 	name := r.applyWithExtra(template, author, book, series, seriesNumber, ext, map[string]string{
-		"Part": strconv.Itoa(part),
+		"Part": part,
 	})
 	// Defensive: collapse any separator a hand-edited template might introduce
 	// so a track can never escape the destination directory.
 	return filepath.Base(name)
+}
+
+// audiobookPartIsConditional reports whether every {Part} in template is in a
+// conditional group, one renderGroup collapses to "" when the part is empty.
+// It is the negation of renderGroup's simple-form test: a group whose content
+// is "Part" with an optional default or width modifier renders the bare value,
+// so an empty part there cannot take its surrounding text with it. A template
+// with no {Part} at all is trivially conditional.
+func audiobookPartIsConditional(template string) bool {
+	for _, g := range templateGroupRe.FindAllStringSubmatch(template, -1) {
+		if m := simpleGroupRe.FindStringSubmatch(g[1]); m != nil && !widthThenLiteralRe.MatchString(m[2]) && m[1] == "Part" {
+			return false
+		}
+	}
+	return true
+}
+
+// AudiobookTemplateHasPart reports whether template carries a {Part} token the
+// renderer substitutes, either as a group of its own ("{Part:3}") or inside a
+// conditional group with literal text ("{ - Pt. Part:3}"). The settings
+// validator uses it so the conditional form a single-file audiobook collapses
+// (#2900) can be saved; a plain substring test for "{Part" rejected it.
+func AudiobookTemplateHasPart(template string) bool {
+	for _, g := range templateGroupRe.FindAllStringSubmatch(template, -1) {
+		if m := simpleGroupRe.FindStringSubmatch(g[1]); m != nil && !widthThenLiteralRe.MatchString(m[2]) {
+			if m[1] == "Part" {
+				return true
+			}
+			continue
+		}
+		for _, w := range groupWordRe.FindAllStringSubmatch(g[1], -1) {
+			if w[1] == "Part" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // AudiobookDestDir computes the destination directory into which an audiobook

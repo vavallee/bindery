@@ -119,6 +119,17 @@ func TestDefaultDataDir_FallsBackOnDirError(t *testing.T) {
 	}
 }
 
+// TestDefaultDownloadDir pins `/downloads` for Linux and macOS, where existing
+// installs rely on it, and no default on Windows, where `/downloads` is a
+// drive relative path nobody created (#2902).
+func TestDefaultDownloadDir(t *testing.T) {
+	for goos, want := range map[string]string{"linux": "/downloads", "darwin": "/downloads", "freebsd": "/downloads", "windows": ""} {
+		if got := defaultDownloadDir(goos); got != want {
+			t.Errorf("defaultDownloadDir(%q) = %q, want %q", goos, got, want)
+		}
+	}
+}
+
 func TestRateLimitDefaults(t *testing.T) {
 	// Ensure no relevant env vars are set.
 	t.Setenv("BINDERY_RATE_LIMIT_MAX_FAILURES", "")

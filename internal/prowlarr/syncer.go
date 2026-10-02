@@ -105,12 +105,17 @@ func (s *Syncer) Sync(ctx context.Context, instanceID int64) (SyncResult, error)
 			// an unset or previously Prowlarr-sourced row tracks Prowlarr's
 			// current ratio so a later Prowlarr change refreshes it.
 			ratioChanged := applyProwlarrSeedRatio(ex, ri.SeedRatio)
+			// The seed time (#2206) follows the same rules with its own
+			// provenance, so a user owned ratio does not block it.
+			// Both are called unconditionally, never in one short circuited
+			// expression, so each one reconciles on every sync.
+			seedTimeChanged := applyProwlarrSeedTime(ex, ri.SeedTimeMinutes)
 			// Update only if something meaningful changed. Type is included so
 			// rows created by older versions (which hardcoded "torznab" for
 			// every indexer, misrouting usenet grabs to torrent clients) are
 			// corrected on the next sync. Categories are included so that
 			// re-syncing propagates removed parent categories (7000, 3000).
-			if ratioChanged || ex.Name != ri.Name || ex.URL != ri.TorznabURL || ex.Type != idxType || !intSliceEqual(ex.Categories, cats) {
+			if ratioChanged || seedTimeChanged || ex.Name != ri.Name || ex.URL != ri.TorznabURL || ex.Type != idxType || !intSliceEqual(ex.Categories, cats) {
 				ex.Name = ri.Name
 				ex.URL = ri.TorznabURL
 				ex.Type = idxType
@@ -140,6 +145,7 @@ func (s *Syncer) Sync(ctx context.Context, instanceID int64) (SyncResult, error)
 			ProwlarrIndexerID:  &pID,
 		}
 		applyProwlarrSeedRatio(idx, ri.SeedRatio)
+		applyProwlarrSeedTime(idx, ri.SeedTimeMinutes)
 		if err := s.indexers.Create(ctx, idx); err != nil {
 			slog.Warn("prowlarr sync: create indexer failed",
 				"name", ri.Name, "error", err)
@@ -256,6 +262,35 @@ func applyProwlarrSeedRatio(idx *models.Indexer, prowlarrRatio *float64) bool {
 	idx.SeedRatio = prowlarrRatio
 	idx.SeedRatioSource = sourceForRatio(prowlarrRatio)
 	return true
+}
+
+// applyProwlarrSeedTime reconciles an indexer's seed time override (#2206) with
+// the seed time Prowlarr reports, returning whether the row changed. The rules
+// are applyProwlarrSeedRatio's, applied to SeedTimeMinutes and SeedTimeSource:
+// a user owned value (including a clear to null) is never touched, and an
+// unset or Prowlarr sourced value tracks Prowlarr, cleared when Prowlarr's is.
+// The inactive seed time has no Prowlarr counterpart and is not touched.
+func applyProwlarrSeedTime(idx *models.Indexer, prowlarrMinutes *int) bool {
+	if idx.SeedTimeSource == models.SeedRatioSourceUser {
+		return false
+	}
+	source := models.SeedRatioSourceProwlarr
+	if prowlarrMinutes == nil {
+		source = models.SeedRatioSourceUnset
+	}
+	if intPtrEqual(idx.SeedTimeMinutes, prowlarrMinutes) && idx.SeedTimeSource == source {
+		return false
+	}
+	idx.SeedTimeMinutes = prowlarrMinutes
+	idx.SeedTimeSource = source
+	return true
+}
+
+func intPtrEqual(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // sourceForRatio is the provenance to record when auto-populating from Prowlarr:

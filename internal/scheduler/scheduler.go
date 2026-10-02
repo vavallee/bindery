@@ -911,19 +911,20 @@ func (s *Scheduler) resolveAllowedLanguages(ctx context.Context, author *models.
 	return models.ParseAllowedLanguages(p.AllowedLanguages)
 }
 
-// resolveSeedRatio looks up the per-indexer seed-ratio override (#883) for the
-// indexer a release was grabbed from. Returns nil (no override) when the
-// indexer repo is unset, the id is zero, the lookup fails, or the indexer has
-// no override stored, so the download client keeps its global ratio rule.
-func (s *Scheduler) resolveSeedRatio(ctx context.Context, indexerID int64) *float64 {
+// resolveSeedLimits looks up the per-indexer seed ratio (#883) and seed time
+// (#2206) overrides for the indexer a release was grabbed from. Each is nil
+// (no override) when the indexer repo is unset, the id is zero, the lookup
+// fails, or the indexer has none stored, so the download client keeps its own
+// rule.
+func (s *Scheduler) resolveSeedLimits(ctx context.Context, indexerID int64) downloader.SeedLimits {
 	if s.indexers == nil || indexerID == 0 {
-		return nil
+		return downloader.SeedLimits{}
 	}
 	idx, err := s.indexers.GetByID(ctx, indexerID)
-	if err != nil || idx == nil {
-		return nil
+	if err != nil {
+		return downloader.SeedLimits{}
 	}
-	return idx.SeedRatio
+	return downloader.SeedLimitsFor(idx)
 }
 
 // freeleechOnlyIndexerIDs returns the set of indexer ids whose freeleech-only
@@ -1011,6 +1012,10 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		// first approved release in ranked order, so this is what decides
 		// which format the sweep picks.
 		Profile: qualityProfile,
+		// The book's stored runtime lets the size term score an audio release
+		// by its density instead of its total size; zero keeps the flat bonus
+		// (#2740).
+		DurationSeconds: book.DurationSeconds,
 	}
 	if book.ReleaseDate != nil {
 		crit.Year = book.ReleaseDate.Year()
@@ -1236,8 +1241,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		MediaType:            mediaType,
 		DownloadDir:          s.downloadDir,
 		AudiobookDownloadDir: s.audiobookDownloadDir,
-		SeedRatio:            s.resolveSeedRatio(ctx, best.IndexerID),
-	})
+	}.WithSeedLimits(s.resolveSeedLimits(ctx, best.IndexerID)))
 	if err != nil {
 		slog.Error("SearchAndGrabBook: failed to send to downloader", "client", client.Type, "title", best.Title, "error", err)
 		if setErr := s.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {

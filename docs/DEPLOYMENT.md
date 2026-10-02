@@ -148,6 +148,49 @@ bindery.exe
 
 SmartScreen will warn about the unsigned binary on first launch — choose **More info → Run anyway**. Signed Windows builds are on the roadmap.
 
+#### Setting environment variables on Windows
+
+Paths without a drive letter, such as the `/books` default, resolve against whichever drive Bindery started on. Set `BINDERY_LIBRARY_DIR` (and `BINDERY_AUDIOBOOK_DIR` if you keep audiobooks apart) to real folders before your first import. If editing environment variables is a hassle, you can instead add your folders under Settings > Root Folders and pick them as the **Default root folder** and **Default audiobook root folder**; those UI defaults take priority over the env vars. The Windows binary has no default `BINDERY_DOWNLOAD_DIR`. Left unset, Bindery sends no save path with a grab, so the client uses its category or default folder, and the qBittorrent health check only asks that the category's folder exists on this machine. Set it when you want Bindery to check that the client saves where you expect, or to bulk import from that folder.
+
+Pick one of these:
+
+- **Command Prompt**, saved for your account:
+
+  ```cmd
+  setx BINDERY_LIBRARY_DIR "D:\Books"
+  setx BINDERY_DOWNLOAD_DIR "H:\Downloads"
+  ```
+
+- **PowerShell**, saved for your account:
+
+  ```powershell
+  [Environment]::SetEnvironmentVariable('BINDERY_LIBRARY_DIR', 'D:\Books', 'User')
+  [Environment]::SetEnvironmentVariable('BINDERY_DOWNLOAD_DIR', 'H:\Downloads', 'User')
+  ```
+
+- **The settings dialog**: open Start, type `environment`, choose **Edit environment variables for your account**, and add each variable under *User variables*.
+
+- **A launcher**: save this as `bindery.bat` next to `bindery.exe` and start Bindery from it. The values apply to that launch only.
+
+  ```bat
+  @echo off
+  set "BINDERY_LIBRARY_DIR=D:\Books"
+  set "BINDERY_DOWNLOAD_DIR=H:\Downloads"
+  "%~dp0bindery.exe"
+  ```
+
+`setx`, PowerShell and the dialog only reach programs started afterwards, and `setx` does not change the window it ran in. Close that window and open a new one (or sign out and back in) before starting Bindery, and restart Bindery if it was already running. Bindery reads its environment once, at startup.
+
+#### Download client in Docker, Bindery native on Windows
+
+A client running in Docker reports paths from inside its container, such as `/downloads/.Completed/Some Book`. Bindery on Windows sees the same folder under a drive letter, so give the download client a path remap (**Settings → Download clients**) from the container path to the Windows folder:
+
+```
+/downloads:H:\Downloads
+```
+
+With that rule, `/downloads/.Completed/Some Book/book.epub` is read from `H:\Downloads\.Completed\Some Book\book.epub`. Write the container side exactly as the client reports it, forward slashes and letter case included. The same pair in `BINDERY_DOWNLOAD_PATH_REMAP` covers every client at once.
+
 ### Resolved paths logged at startup
 
 Every launch emits a `"starting bindery"` JSON log line containing the resolved `dbPath` and `dataDir`. If the binary can't write to them, `db.Open`'s preflight will name the directory and the required UID so you can fix the permission without guesswork.
@@ -276,9 +319,22 @@ Two settings opt out of the merge: **Flatten multi-disc audiobooks** and a
 per-file audiobook naming template both keep the historical behaviour and place
 the audiobook in a sibling `Title (2)` folder. So does a download whose
 audiobook files do not share a folder of their own, which Bindery places file
-by file.
+by file. A lone audiobook file such as a single `.m4b` still merges with a
+naming template set; it is named from the template, and a file already there
+under that name is skipped the same way.
 (For handing files to Storyteller's *watch folder* instead,
 see [Handing off to another library tool](#handing-off-to-another-library-tool-cwa-calibre-storyteller).)
+
+The per-file audiobook naming template (`naming.audiobook_file_template`)
+renames a single-file audiobook too, whether it arrives as a lone `.m4b` or as
+a folder holding one track, and **Rename files** proposes the same name for one
+already in the library. `{Part}` decides how it reads. In a group with its own
+text, such as `{Title}{ - Pt. Part:3}.{ext}`, the group is left out for a single
+file (`The Shining.m4b`) and numbered for several (`Doctor Sleep - Pt. 001.m4b`).
+Written bare, as in the default `{Title} - Part {Part:3}.{ext}`, the single file
+is numbered as part 1 (`The Shining - Part 001.m4b`). Inside a group every word
+that is a token name is read as the token, so write `Pt.` rather than `Part` for
+the label there.
 
 ### `BINDERY_DOWNLOAD_DIR` is not a watch folder
 
@@ -395,7 +451,9 @@ Covers are one extra mount. When the bridge supports them Bindery sends a cover 
 - **Layout**: `flat` (each book file the download carries, sanely named, in the folder root, what most watch folder tools expect) or `templated` (recreate the `{Author}/{Title (Year)}/…` tree inside the drop folder).
 - **Placement**: `copy` (default; safest, since the ingesting tool usually deletes what it consumes) or `hardlink` (disk free, same filesystem only). The download source is never moved, so torrents keep seeding.
 
-Bindery parks the download as *handed off* and reconciles the managed copy the external tool lands in `BINDERY_LIBRARY_DIR` on the next **library scan** (so the library dir must still point at where the external tool ultimately writes). For a book wanted in both formats, `import.drop_pair_gating` (off by default, `import.drop_pair_gating_timeout_hours` as the escape hatch) holds the first format until its sibling arrives so a paired reader such as Storyteller ingests them together (#942).
+Ebooks and audiobooks do not have to share this. **Audiobook import mode** (`import.audiobook.mode`, default **Same as ebooks**) gives audiobooks their own mode, and **Audiobook drop folder** (`import.audiobook.drop_folder`, empty uses the drop folder above) gives them their own folder when that mode is External. For Calibre-Web-Automated plus Audiobookshelf, set Import Mode `External` with the CWA ingest folder as the drop folder, and the audiobook import mode to `Copy` (works on any storage, including mergerfs) or `Hardlink`: ebooks go to CWA, audiobooks go to `BINDERY_AUDIOBOOK_DIR` and Bindery triggers the Audiobookshelf scan. See [Storage and hardlinks](Storage-And-Hardlinks-Wiki.md#a-different-mode-for-audiobooks).
+
+Bindery parks the download as *handed off* and reconciles the managed copy the external tool lands in `BINDERY_LIBRARY_DIR` on the next **library scan** (so the library dir must still point at where the external tool ultimately writes). For a book wanted in both formats, `import.drop_pair_gating` (off by default, `import.drop_pair_gating_timeout_hours` as the escape hatch) holds the first format until its sibling arrives so a paired reader such as Storyteller ingests them together (#942). Gating only holds a format when its sibling is also handed off; with audiobooks imported into the library, ebooks drop straight away.
 
 ## Environment variables
 
@@ -409,10 +467,10 @@ Several variables below have a database equivalent that overrides them once it i
 | `BINDERY_DATA_DIR` | `/config` on Linux; `%APPDATA%\Bindery` on Windows; `~/Library/Application Support/Bindery` on macOS | Config directory. Backups live here, as do the proxied cover cache (`image-cache/`, evicted after 30 days and refetched on demand) and the covers Bindery owns outright (`covers/`, the `cover.jpg` copied from each book of an imported Calibre library, never evicted). Keep it on persistent storage. |
 | `BINDERY_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `BINDERY_API_KEY` | _(empty)_ | **Seed only.** Bootstraps the initial API key on first launch if set; after that the key lives in the database and can be regenerated from the UI. |
-| `BINDERY_DOWNLOAD_DIR` | `/downloads` | Where the download client places completed downloads. **Not a watch folder** — per-job import paths come from the client's API; this feeds validation, storage health, the hardlink probe, and qBittorrent save paths (see [above](#bindery_download_dir-is-not-a-watch-folder)). Manual/bulk import may also read from here (and from `BINDERY_AUDIOBOOK_DOWNLOAD_DIR`), so a migration backlog sitting in the download folder can be scanned and attached in bulk. |
+| `BINDERY_DOWNLOAD_DIR` | `/downloads` on Linux and macOS; unset on Windows (see [Setting environment variables on Windows](#setting-environment-variables-on-windows)) | Where the download client places completed downloads. **Not a watch folder** — per-job import paths come from the client's API; this feeds validation, storage health, the hardlink probe, and qBittorrent save paths (see [above](#bindery_download_dir-is-not-a-watch-folder)). Manual/bulk import may also read from here (and from `BINDERY_AUDIOBOOK_DOWNLOAD_DIR`), so a migration backlog sitting in the download folder can be scanned and attached in bulk. |
 | `BINDERY_AUDIOBOOK_DOWNLOAD_DIR` | falls back to `BINDERY_DOWNLOAD_DIR` | Separate watch folder for audiobook downloads; set this when your download client routes audiobook grabs to a dedicated category/path |
-| `BINDERY_LIBRARY_DIR` | `/books` | Destination for imported ebook files. **In `External` import mode this is not a write target** — Bindery does not place files here; it scans this directory to reconcile the managed copy your external tool produces, so it must point at where that tool ultimately writes (not the drop/ingest folder, and not `metadata.db`). See [Handing off to another library tool](#handing-off-to-another-library-tool-cwa-calibre-storyteller). |
-| `BINDERY_AUDIOBOOK_DIR` | falls back to `BINDERY_LIBRARY_DIR` | Destination for imported audiobook folders. Same `External`-mode caveat as `BINDERY_LIBRARY_DIR`: in external mode it is the directory Bindery scans to reconcile audiobooks the external tool places, not a write target. |
+| `BINDERY_LIBRARY_DIR` | `/books` (on Windows this has no drive letter, so set it to a real folder) | Destination for imported ebook files. **In `External` import mode this is not a write target** — Bindery does not place files here; it scans this directory to reconcile the managed copy your external tool produces, so it must point at where that tool ultimately writes (not the drop/ingest folder, and not `metadata.db`). See [Handing off to another library tool](#handing-off-to-another-library-tool-cwa-calibre-storyteller). |
+| `BINDERY_AUDIOBOOK_DIR` | falls back to `BINDERY_LIBRARY_DIR` | Destination for imported audiobook folders. Same `External`-mode caveat as `BINDERY_LIBRARY_DIR`: in external mode it is the directory Bindery scans to reconcile audiobooks the external tool places, not a write target. You can skip it and pick a **Default audiobook root folder** under Settings > Root Folders instead; when both are set the UI default wins. Audiobooks go to the author's own audiobook root folder first, then the Default audiobook root folder, then `BINDERY_AUDIOBOOK_DIR`, then `BINDERY_LIBRARY_DIR`. The ebook default root folder is never used for audiobooks. The library scan still walks only the two env var dirs, so a root folder outside them is a place to put files, not a place Bindery scans for untracked ones. |
 | `BINDERY_ENHANCED_HARDCOVER_API` | `true` | Set to `false` to disable token-backed Hardcover series search, linking, catalog diffs, and missing-book fill even when an admin enables the feature in Settings. |
 | `BINDERY_DOWNLOAD_PATH_REMAP` | _(empty)_ | Global comma-separated `from:to` pairs rewriting paths reported by download clients into paths Bindery can access. Per-client path remaps in Settings take precedence when they match. Longest-prefix match wins. See [Path remapping](#path-remapping-multi-container--multi-pod-setups). |
 | `BINDERY_PUID` | _(unset)_ | Sanity check — see [Running as a specific UID/GID](#running-as-a-specific-uidgid) |

@@ -332,6 +332,9 @@ jobs:
   # ── Docker image — runs after test passes ──────────────────────────────────
   image:
     needs: test
+    # Publishes vavallee/bindery images; forks have no credentials for it and
+    # skipping it here also skips the deploy/notify jobs that need it.
+    if: github.repository == 'vavallee/bindery'
     timeout-minutes: 45
     runs-on: ubuntu-latest
     permissions:
@@ -360,7 +363,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         id: meta
         with:
           images: |
@@ -488,7 +491,7 @@ jobs:
   # ── GoReleaser — runs after test passes, tag pushes only ───────────────────
   goreleaser:
     needs: test
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.repository == 'vavallee/bindery' && startsWith(github.ref, 'refs/tags/v')
     timeout-minutes: 45
     runs-on: ubuntu-latest
     permissions:
@@ -768,7 +771,7 @@ jobs:
   notify-discord:
     name: Notify Discord
     needs: [goreleaser, image]
-    if: startsWith(github.ref, 'refs/tags/v') && needs.goreleaser.result == 'success'
+    if: github.repository == 'vavallee/bindery' && startsWith(github.ref, 'refs/tags/v') && needs.goreleaser.result == 'success'
     timeout-minutes: 45
     runs-on: ubuntu-latest
     # A broken/expired webhook should never fail the release workflow.

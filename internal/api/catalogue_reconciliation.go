@@ -31,6 +31,20 @@ const (
 	reconcileReasonCatalogueFilter = "catalogue_filter"
 )
 
+// CatalogueReconciliationIndeterminateReason identifies why a local row was
+// kept because the available provider or profile evidence was not conclusive.
+// These reasons are informational only and never make a row eligible for
+// deletion.
+type CatalogueReconciliationIndeterminateReason string
+
+const (
+	reconcileIndeterminateReasonLanguageUnknown        CatalogueReconciliationIndeterminateReason = "language_unknown"
+	reconcileIndeterminateReasonLanguageLookupFailed   CatalogueReconciliationIndeterminateReason = "language_evidence_lookup_failed"
+	reconcileIndeterminateReasonEditionUnavailable     CatalogueReconciliationIndeterminateReason = "edition_evidence_unavailable"
+	reconcileIndeterminateReasonPartialCatalogue       CatalogueReconciliationIndeterminateReason = "partial_catalogue"
+	reconcileIndeterminateReasonUnmatchedCrossProvider CatalogueReconciliationIndeterminateReason = "unmatched_cross_provider"
+)
+
 // CatalogueReconciliationCandidate is a local, metadata-only Wanted row that
 // the current primary-provider catalogue and metadata profile no longer
 // accept. It contains no file operation: reconciliation deletes database rows
@@ -40,6 +54,17 @@ type CatalogueReconciliationCandidate struct {
 	Title            string `json:"title"`
 	MetadataProvider string `json:"metadataProvider"`
 	Reason           string `json:"reason"`
+}
+
+// CatalogueReconciliationIndeterminateRow is a local row that reconciliation
+// kept because provider or profile evidence was incomplete. It is deliberately
+// separate from CatalogueReconciliationCandidate so it cannot be mistaken for
+// a safe deletion target.
+type CatalogueReconciliationIndeterminateRow struct {
+	BookID           int64                                      `json:"bookId"`
+	Title            string                                     `json:"title"`
+	MetadataProvider string                                     `json:"metadataProvider"`
+	Reason           CatalogueReconciliationIndeterminateReason `json:"reason"`
 }
 
 type CatalogueReconciliationSummary struct {
@@ -66,15 +91,16 @@ type CatalogueReconciliationApplySummary struct {
 // only a partial author catalogue; in that case absence is never used as a
 // deletion reason.
 type CatalogueReconciliation struct {
-	AuthorID         int64                                `json:"authorId"`
-	AuthorName       string                               `json:"authorName"`
-	Provider         string                               `json:"provider"`
-	ProviderComplete bool                                 `json:"providerComplete"`
-	ProfileName      string                               `json:"profileName"`
-	Warning          string                               `json:"warning,omitempty"`
-	Candidates       []CatalogueReconciliationCandidate   `json:"candidates"`
-	Summary          CatalogueReconciliationSummary       `json:"summary"`
-	Applied          *CatalogueReconciliationApplySummary `json:"applied,omitempty"`
+	AuthorID          int64                                     `json:"authorId"`
+	AuthorName        string                                    `json:"authorName"`
+	Provider          string                                    `json:"provider"`
+	ProviderComplete  bool                                      `json:"providerComplete"`
+	ProfileName       string                                    `json:"profileName"`
+	Warning           string                                    `json:"warning,omitempty"`
+	Candidates        []CatalogueReconciliationCandidate        `json:"candidates"`
+	IndeterminateRows []CatalogueReconciliationIndeterminateRow `json:"indeterminateRows"`
+	Summary           CatalogueReconciliationSummary            `json:"summary"`
+	Applied           *CatalogueReconciliationApplySummary      `json:"applied,omitempty"`
 }
 
 type applyCatalogueReconciliationRequest struct {
@@ -261,24 +287,24 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 	}
 
 	acceptedIDs := make(map[string]struct{}, len(works))
-	indeterminateIDs := make(map[string]struct{})
+	indeterminateIDs := make(map[string]CatalogueReconciliationIndeterminateReason)
 	rejectedIDs := make(map[string]string, len(works))
 	acceptedTitles := indexer.NewTitleIndex[struct{}]()
-	indeterminateTitles := indexer.NewTitleIndex[struct{}]()
+	indeterminateTitles := indexer.NewTitleIndex[CatalogueReconciliationIndeterminateReason]()
 	rejectedTitles := make(map[string]string)
 	normalizedAuthor := strings.ToLower(strings.TrimSpace(author.Name))
 	for _, work := range works {
-		reason, indeterminate := reconciliationRejectReason(work, normalizedAuthor, profile, editions[work.ForeignID], languageEvidence, languageEvidenceFailed)
+		reason, indeterminateReason := reconciliationRejectReason(work, normalizedAuthor, profile, editions[work.ForeignID], languageEvidence, languageEvidenceFailed)
 		if reason == "" {
 			if strings.TrimSpace(work.ForeignID) != "" {
 				acceptedIDs[work.ForeignID] = struct{}{}
 			}
 			acceptedTitles.Add(work.Title, struct{}{})
-			if indeterminate {
+			if indeterminateReason != "" {
 				if strings.TrimSpace(work.ForeignID) != "" {
-					indeterminateIDs[work.ForeignID] = struct{}{}
+					indeterminateIDs[work.ForeignID] = indeterminateReason
 				}
-				indeterminateTitles.Add(work.Title, struct{}{})
+				indeterminateTitles.Add(work.Title, indeterminateReason)
 			}
 			continue
 		}
@@ -299,12 +325,13 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 		return CatalogueReconciliation{}, fmt.Errorf("list identifiers for author %d: %w", author.ID, err)
 	}
 	result := CatalogueReconciliation{
-		AuthorID:         author.ID,
-		AuthorName:       author.Name,
-		Provider:         snapshot.Provider,
-		ProviderComplete: snapshot.Complete,
-		ProfileName:      profile.name,
-		Candidates:       []CatalogueReconciliationCandidate{},
+		AuthorID:          author.ID,
+		AuthorName:        author.Name,
+		Provider:          snapshot.Provider,
+		ProviderComplete:  snapshot.Complete,
+		ProfileName:       profile.name,
+		Candidates:        []CatalogueReconciliationCandidate{},
+		IndeterminateRows: []CatalogueReconciliationIndeterminateRow{},
 		Summary: CatalogueReconciliationSummary{
 			Total:   len(localBooks),
 			Reasons: map[string]int{},
@@ -354,15 +381,15 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 		}
 		if anyReconciliationIDAccepted(ids, acceptedIDs) {
 			result.Summary.Kept++
-			if anyReconciliationIDAccepted(ids, indeterminateIDs) {
-				result.Summary.Indeterminate++
+			if indeterminateReason := reconciliationIndeterminateReasonForIDs(ids, indeterminateIDs); indeterminateReason != "" {
+				result.IndeterminateRows = append(result.IndeterminateRows, catalogueReconciliationIndeterminateRow(book, indeterminateReason))
 			}
 			continue
 		}
 		if _, accepted := acceptedTitles.Lookup(book.Title); accepted {
 			result.Summary.Kept++
-			if _, indeterminate := indeterminateTitles.Lookup(book.Title); indeterminate {
-				result.Summary.Indeterminate++
+			if indeterminateReason, indeterminate := indeterminateTitles.Lookup(book.Title); indeterminate {
+				result.IndeterminateRows = append(result.IndeterminateRows, catalogueReconciliationIndeterminateRow(book, indeterminateReason))
 			}
 			continue
 		}
@@ -376,12 +403,12 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 		if reason == "" {
 			if !snapshot.Complete {
 				result.Summary.Kept++
-				result.Summary.Indeterminate++
+				result.IndeterminateRows = append(result.IndeterminateRows, catalogueReconciliationIndeterminateRow(book, reconcileIndeterminateReasonPartialCatalogue))
 				continue
 			}
 			if bookProvider(book) != snapshot.Provider {
 				result.Summary.Kept++
-				result.Summary.Indeterminate++
+				result.IndeterminateRows = append(result.IndeterminateRows, catalogueReconciliationIndeterminateRow(book, reconcileIndeterminateReasonUnmatchedCrossProvider))
 				continue
 			}
 			reason = reconcileReasonNotInCatalogue
@@ -399,45 +426,58 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 	sort.Slice(result.Candidates, func(i, j int) bool {
 		return strings.ToLower(result.Candidates[i].Title) < strings.ToLower(result.Candidates[j].Title)
 	})
+	sort.Slice(result.IndeterminateRows, func(i, j int) bool {
+		return strings.ToLower(result.IndeterminateRows[i].Title) < strings.ToLower(result.IndeterminateRows[j].Title)
+	})
 	result.Summary.Candidates = len(result.Candidates)
+	result.Summary.Indeterminate = len(result.IndeterminateRows)
 	return result, nil
 }
 
-func reconciliationRejectReason(work models.Book, normalizedAuthor string, profile reconciliationProfile, evidence editionEvidence, languageEvidence map[string]metadata.AuthorWorkLanguageEvidence, languageEvidenceFailed bool) (string, bool) {
+func reconciliationRejectReason(work models.Book, normalizedAuthor string, profile reconciliationProfile, evidence editionEvidence, languageEvidence map[string]metadata.AuthorWorkLanguageEvidence, languageEvidenceFailed bool) (string, CatalogueReconciliationIndeterminateReason) {
 	normalizedTitle := strings.ToLower(strings.TrimSpace(work.Title))
 	if normalizedTitle == "" || normalizedTitle == normalizedAuthor || work.IsCompilation || metadata.IsUnambiguousBundleTitle(work.Title) {
-		return reconcileReasonCatalogueFilter, false
+		return reconcileReasonCatalogueFilter, ""
 	}
 	if len(profile.allowedLangs) > 0 {
 		if languageEvidenceFailed {
-			return "", true
+			return "", reconcileIndeterminateReasonLanguageLookupFailed
 		}
 		languageAllowed, indeterminate := authorWorkPassesLanguageFilter(&work, profile.allowedLangs, profile.unknownFail, languageEvidence)
 		if indeterminate {
-			return "", true
+			return "", reconcileIndeterminateReasonLanguageUnknown
 		}
 		if !languageAllowed {
-			return reconcileReasonLanguage, false
+			return reconcileReasonLanguage, ""
 		}
 	}
 	if profile.skipPartBooks && isPartBookTitle(work.Title) {
-		return reconcileReasonPartBook, false
+		return reconcileReasonPartBook, ""
 	}
 	if profile.skipMissingDate && work.ReleaseDate == nil {
-		return reconcileReasonMissingDate, false
+		return reconcileReasonMissingDate, ""
 	}
 	if profile.minPages > 0 || profile.skipMissingISBN {
 		if !evidence.known {
-			return "", true
+			return "", reconcileIndeterminateReasonEditionUnavailable
 		}
 		if profile.skipMissingISBN && !anyEditionHasISBN(evidence.editions) {
-			return reconcileReasonISBN, false
+			return reconcileReasonISBN, ""
 		}
 		if profile.minPages > 0 && !passesMinPagesFilter(evidence.editions, profile.minPages) {
-			return reconcileReasonPages, false
+			return reconcileReasonPages, ""
 		}
 	}
-	return "", false
+	return "", ""
+}
+
+func catalogueReconciliationIndeterminateRow(book *models.Book, reason CatalogueReconciliationIndeterminateReason) CatalogueReconciliationIndeterminateRow {
+	return CatalogueReconciliationIndeterminateRow{
+		BookID:           book.ID,
+		Title:            book.Title,
+		MetadataProvider: bookProvider(book),
+		Reason:           reason,
+	}
 }
 
 func anyReconciliationIDAccepted(ids []string, accepted map[string]struct{}) bool {
@@ -447,6 +487,15 @@ func anyReconciliationIDAccepted(ids []string, accepted map[string]struct{}) boo
 		}
 	}
 	return false
+}
+
+func reconciliationIndeterminateReasonForIDs(ids []string, reasons map[string]CatalogueReconciliationIndeterminateReason) CatalogueReconciliationIndeterminateReason {
+	for _, id := range ids {
+		if reason := reasons[id]; reason != "" {
+			return reason
+		}
+	}
+	return ""
 }
 
 func reconciliationReasonForIDs(ids []string, rejected map[string]string) string {

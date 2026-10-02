@@ -2,9 +2,10 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 // Vite's ?raw import rather than node:fs, so this needs no @types/node.
 // src/i18n/inlineDefaults.test.ts reads sources the same way.
 import html from '../index.html?raw'
+import bootstrap from '../public/theme-bootstrap.js?raw'
 
-// index.html carries an inline script that sets the `dark` class before the
-// first paint. It exists because useTheme applies the class from an effect,
+// index.html loads public/theme-bootstrap.js, a script that sets the `dark`
+// class before the first paint. It exists because useTheme applies the class from an effect,
 // which runs after the browser has already painted the light background.
 //
 // The bootstrap duplicates readInitial()'s rule by necessity: it runs before
@@ -18,10 +19,10 @@ function bootstrapSource(): string {
   // Sliced between the two markers rather than matched with an HTML-ish
   // regexp: the markers are an explicit contract with index.html and there is
   // no tag parsing to get wrong.
-  const from = html.indexOf(START)
-  const to = html.indexOf(END)
-  if (from < 0 || to < from) throw new Error('no theme bootstrap markers found in index.html')
-  return html.slice(from + START.length, to)
+  const from = bootstrap.indexOf(START)
+  const to = bootstrap.indexOf(END)
+  if (from < 0 || to < from) throw new Error('no theme bootstrap markers found in public/theme-bootstrap.js')
+  return bootstrap.slice(from + START.length, to)
 }
 
 /** Runs the real bootstrap source against a fake document and returns the resulting class state. */
@@ -56,12 +57,22 @@ function expectedDark(saved: string | null, prefersDark: boolean): boolean {
 afterEach(() => vi.restoreAllMocks())
 
 describe('index.html theme bootstrap', () => {
+  it('has no inline script, because the CSP (script-src \'self\') blocks one (#2911)', () => {
+    // Every <script> in index.html must load from a src. An inline one is
+    // refused by the browser and logs a CSP violation on every page load.
+    const scripts = html.match(/<script\b[^>]*>/g) ?? []
+    expect(scripts.length).toBeGreaterThan(0)
+    for (const tag of scripts) expect(tag).toMatch(/\ssrc=/)
+  })
+
   it('is present, and is a plain script so it runs before the first paint', () => {
     expect(() => bootstrapSource()).not.toThrow()
     // A module script is deferred and would run after paint, defeating the point.
-    expect(html).not.toMatch(/<script type="module">[\s\S]*bindery\.theme/)
+    const tag = html.match(/<script\b[^>]*theme-bootstrap\.js[^>]*>/)?.[0]
+    expect(tag).toBeDefined()
+    expect(tag).not.toMatch(/type="module"|\sdefer|\sasync/)
     // It must come before the app bundle, or the effect wins the race anyway.
-    expect(html.indexOf('bindery.theme')).toBeLessThan(html.indexOf('src/main.tsx'))
+    expect(html.indexOf('theme-bootstrap.js')).toBeLessThan(html.indexOf('src/main.tsx'))
   })
 
   it.each([

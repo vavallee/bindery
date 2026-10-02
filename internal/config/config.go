@@ -103,7 +103,7 @@ func Load() *Config {
 		DataDir:                  envOr("BINDERY_DATA_DIR", defaultDataDir(runtime.GOOS, os.UserConfigDir)),
 		LogLevel:                 envOr("BINDERY_LOG_LEVEL", "info"),
 		APIKey:                   envOr("BINDERY_API_KEY", ""),
-		DownloadDir:              envOr("BINDERY_DOWNLOAD_DIR", "/downloads"),
+		DownloadDir:              envOr("BINDERY_DOWNLOAD_DIR", defaultDownloadDir(runtime.GOOS)),
 		AudiobookDownloadDir:     envOr("BINDERY_AUDIOBOOK_DOWNLOAD_DIR", ""),
 		LibraryDir:               envOr("BINDERY_LIBRARY_DIR", "/books"),
 		AudiobookDir:             envOr("BINDERY_AUDIOBOOK_DIR", ""),
@@ -153,6 +153,21 @@ func normalizeURLBase(raw string) string {
 		s = "/" + s
 	}
 	return s
+}
+
+// defaultDownloadDir is the BINDERY_DOWNLOAD_DIR used when the variable is not
+// set. Linux and macOS keep the historical `/downloads`. Windows has none: a
+// path with no drive letter there resolves against whatever drive Bindery
+// started on, so `/downloads` named a folder nobody created, and the health
+// check then insisted every client save under it (#2902). Unset is a state
+// the rest of Bindery already handles: no save path is sent, the health check
+// only asks that the client's folder exist, and Manual Import still allows the
+// library and root folders.
+func defaultDownloadDir(goos string) string {
+	if goos == "windows" {
+		return ""
+	}
+	return "/downloads"
 }
 
 // defaultDBPath resolves the platform-appropriate SQLite path. Linux keeps the

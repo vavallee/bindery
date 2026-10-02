@@ -14,6 +14,8 @@ vi.mock('react-i18next', () => ({
         'addToLibrary.author.customizeMonitoring': 'Monitoring',
         'addToLibrary.author.metadataProfile': 'Metadata profile',
         'addToLibrary.author.rootFolder': 'Root folder',
+        'addToLibrary.author.audiobookRootFolder': 'Audiobook root folder',
+        'addToLibrary.author.audiobookRootFolderDefault': 'Use global audiobook folder',
         'addToLibrary.author.mediaType': 'Media type',
         'addToLibrary.author.monitorMode': 'Monitor mode',
         'addToLibrary.author.monitorModeHint': 'The whole catalogue is added either way. This only decides which of those books Bindery searches for and downloads.',
@@ -77,6 +79,7 @@ const bareDefaults: AuthorAddDefaults = {
   profiles: [],
   rootFolders: [],
   rootFolderId: null,
+  audiobookRootFolderId: null,
   mediaType: 'ebook',
   monitorMode: 'all',
   monitorLatestCount: 1,
@@ -161,6 +164,30 @@ describe('AddAuthorConfirm', () => {
     fireEvent.click(add)
     await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
     expect(vi.mocked(api.addAuthor).mock.calls[0][0]).toEqual(expect.objectContaining({ metadataProfileId: 3, rootFolderId: 9 }))
+  })
+
+  // #2166: an audiobook root picker sits beside the ebook one, seeded from
+  // library.defaultAudiobookRootFolderId. It only shows, and is only posted,
+  // when the author will have audiobooks.
+  it('offers an audiobook root folder seeded from the default when audiobooks are wanted', async () => {
+    const roots = [{ id: 7, path: '/books', freeSpace: 0, createdAt: '' }, { id: 9, path: '/audiobooks', freeSpace: 0, createdAt: '' }]
+    renderConfirm(author({}), { defaults: { ...bareDefaults, rootFolders: roots, rootFolderId: 7, audiobookRootFolderId: 9, mediaType: 'both' } })
+    const picker = await screen.findByLabelText('Audiobook root folder')
+    expect(picker).toHaveValue('9')
+    // "Use global audiobook folder" stays available as the empty choice.
+    expect(screen.getByRole('option', { name: 'Use global audiobook folder' })).toHaveValue('')
+    fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+    await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.addAuthor).mock.calls[0][0]).toEqual(expect.objectContaining({ rootFolderId: 7, audiobookRootFolderId: 9, mediaType: 'both' }))
+  })
+
+  it('hides the audiobook root folder for an ebook only author and does not post it', async () => {
+    const roots = [{ id: 7, path: '/books', freeSpace: 0, createdAt: '' }, { id: 9, path: '/audiobooks', freeSpace: 0, createdAt: '' }]
+    renderConfirm(author({}), { defaults: { ...bareDefaults, rootFolders: roots, rootFolderId: 7, audiobookRootFolderId: 9, mediaType: 'ebook' } })
+    expect(screen.queryByLabelText('Audiobook root folder')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+    await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.addAuthor).mock.calls[0][0]).not.toHaveProperty('audiobookRootFolderId')
   })
 
   it('states the predicted outcome, with the count, and follows the mode', () => {
@@ -267,6 +294,31 @@ describe('AddAuthorConfirm', () => {
       expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ rootFolderId: 7 }))
     })
 
+    it('seeds the audiobook root folder from its own default, never from the ebook one', async () => {
+      vi.mocked(api.listRootFolders).mockResolvedValue(roots)
+      vi.mocked(api.getSetting).mockImplementation(async (key: string) => {
+        if (key === 'library.defaultRootFolderId') return { key, value: '7' }
+        if (key === 'library.defaultAudiobookRootFolderId') return { key, value: '9' }
+        throw new Error('HTTP 404')
+      })
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ rootFolderId: 7, audiobookRootFolderId: 9 }))
+    })
+
+    it('leaves the audiobook root unset (global folder) when no audiobook default is set or it names a deleted folder', async () => {
+      vi.mocked(api.listRootFolders).mockResolvedValue(roots)
+      vi.mocked(api.getSetting).mockImplementation(async (key: string) => {
+        if (key === 'library.defaultRootFolderId') return { key, value: '9' }
+        throw new Error('HTTP 404')
+      })
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ rootFolderId: 9, audiobookRootFolderId: null }))
+
+      vi.mocked(api.getSetting).mockImplementation(async (key: string) => {
+        if (key === 'library.defaultAudiobookRootFolderId') return { key, value: '404' }
+        throw new Error('HTTP 404')
+      })
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ audiobookRootFolderId: null }))
+    })
+
     it('reads the install monitor and media defaults, and degrades to the built-in ones', async () => {
       vi.mocked(api.getSetting).mockImplementation(async (key: string) => {
         if (key === 'default.media_type') return { key, value: 'audiobook' }
@@ -279,7 +331,7 @@ describe('AddAuthorConfirm', () => {
       vi.mocked(api.getSetting).mockRejectedValue(new Error('HTTP 404'))
       vi.mocked(api.listMetadataProfiles).mockRejectedValue(new Error('HTTP 500'))
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-      expect(await loadAuthorAddDefaults()).toEqual({ profiles: [], rootFolders: [], rootFolderId: null, mediaType: 'ebook', monitorMode: 'all', monitorLatestCount: 1 })
+      expect(await loadAuthorAddDefaults()).toEqual({ profiles: [], rootFolders: [], rootFolderId: null, audiobookRootFolderId: null, mediaType: 'ebook', monitorMode: 'all', monitorLatestCount: 1 })
       consoleError.mockRestore()
     })
   })

@@ -17,6 +17,10 @@ export interface AuthorAddDefaults {
   rootFolders: RootFolder[]
   // The root folder to preselect, or null when there are none.
   rootFolderId: number | null
+  // The audiobook root folder to preselect: the install audiobook default when
+  // it names an existing folder, otherwise null, meaning "use the global
+  // audiobook folder" (#2166).
+  audiobookRootFolderId: number | null
   mediaType: MediaType
   monitorMode: AuthorMonitorMode
   monitorLatestCount: number
@@ -26,10 +30,11 @@ export interface AuthorAddDefaults {
 // add can be posted. Every lookup degrades to its default on failure, so the
 // step is usable on an install with nothing configured.
 export async function loadAuthorAddDefaults(): Promise<AuthorAddDefaults> {
-  const [profiles, rootFolders, defaultRootSetting, mediaTypeSetting, monitorModeSetting, latestCountSetting] = await Promise.all([
+  const [profiles, rootFolders, defaultRootSetting, defaultAudiobookRootSetting, mediaTypeSetting, monitorModeSetting, latestCountSetting] = await Promise.all([
     api.listMetadataProfiles().catch((err: unknown) => { console.error(err); return [] as MetadataProfile[] }),
     api.listRootFolders().catch((err: unknown) => { console.error(err); return [] as RootFolder[] }),
     api.getSetting('library.defaultRootFolderId').catch(() => null),
+    api.getSetting('library.defaultAudiobookRootFolderId').catch(() => null),
     api.getSetting('default.media_type').catch(() => null),
     api.getSetting('author.default_monitor_mode').catch(() => null),
     api.getSetting('author.default_monitor_latest_count').catch(() => null),
@@ -47,11 +52,16 @@ export async function loadAuthorAddDefaults(): Promise<AuthorAddDefaults> {
   const defaultRootId = Number(defaultRootSetting?.value)
   const preferredRoot = rootFolders.find(rf => rf.id === defaultRootId)
   const rootFolderId = rootFolders.length === 0 ? null : (preferredRoot ? preferredRoot.id : rootFolders[0].id)
+  // No first folder fallback for audiobooks: unlike the ebook picker this one
+  // has an explicit "use the global audiobook folder" choice, which is what an
+  // unset audiobook default means.
+  const defaultAudiobookRootId = Number(defaultAudiobookRootSetting?.value)
+  const audiobookRootFolderId = rootFolders.find(rf => rf.id === defaultAudiobookRootId)?.id ?? null
   const mediaValue = mediaTypeSetting?.value
   const mediaType: MediaType = mediaValue === 'ebook' || mediaValue === 'audiobook' || mediaValue === 'both' ? mediaValue : 'ebook'
   const modeValue = monitorModeSetting?.value ?? ''
   const monitorMode = isAuthorMonitorMode(modeValue) ? modeValue : DEFAULT_MONITOR_MODE
   const latest = Number(latestCountSetting?.value)
   const monitorLatestCount = Number.isInteger(latest) && latest > 0 ? latest : DEFAULT_MONITOR_LATEST_COUNT
-  return { profiles, rootFolders, rootFolderId, mediaType, monitorMode, monitorLatestCount }
+  return { profiles, rootFolders, rootFolderId, audiobookRootFolderId, mediaType, monitorMode, monitorLatestCount }
 }

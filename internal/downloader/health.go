@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -246,10 +247,9 @@ func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadCl
 	if category == "" {
 		return healthError("qBittorrent category is empty; configure a category with a save path")
 	}
-	expected := filepath.Clean(ExpectedDownloadDirForClient(client, models.MediaTypeEbook, downloadDir, audiobookDownloadDir))
-	if expected == "." || expected == "" {
-		return healthError("Bindery download directory is empty; check BINDERY_DOWNLOAD_DIR")
-	}
+	// An unset download directory is not an error: the Windows binary has no
+	// built in default (#2902). The save path then only has to exist here.
+	expected := cleanConfiguredDir(ExpectedDownloadDirForClient(client, models.MediaTypeEbook, downloadDir, audiobookDownloadDir))
 
 	qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
 	categories, err := qb.GetCategories(ctx)
@@ -266,10 +266,7 @@ func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadCl
 
 	audioCategory := strings.TrimSpace(client.CategoryAudiobook)
 	if audioCategory != "" && audioCategory != category {
-		expectedAudio := filepath.Clean(ExpectedDownloadDirForClient(client, models.MediaTypeAudiobook, downloadDir, audiobookDownloadDir))
-		if expectedAudio == "." || expectedAudio == "" {
-			return healthError("Bindery audiobook download directory is empty; check BINDERY_AUDIOBOOK_DOWNLOAD_DIR")
-		}
+		expectedAudio := cleanConfiguredDir(ExpectedDownloadDirForClient(client, models.MediaTypeAudiobook, downloadDir, audiobookDownloadDir))
 		if h := validateQbittorrentCategorySavePath(ctx, qb, client, audioCategory, expectedAudio, categories); h.Status != HealthOK {
 			return h
 		}
@@ -281,10 +278,26 @@ func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadCl
 			Message: fmt.Sprintf("qBittorrent categories %q and %q (audiobook) both validated", category, audioCategory),
 		}
 	}
+	if expected == "" {
+		return models.DownloadClientHealth{
+			Status:  HealthOK,
+			Message: fmt.Sprintf("qBittorrent category %q saves to a folder Bindery can read", category),
+		}
+	}
 	return models.DownloadClientHealth{
 		Status:  HealthOK,
 		Message: fmt.Sprintf("qBittorrent category %q saves under %q", category, expected),
 	}
+}
+
+// cleanConfiguredDir is filepath.Clean for a configured download directory,
+// returning "" rather than "." when it is not set.
+func cleanConfiguredDir(dir string) string {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return ""
+	}
+	return filepath.Clean(dir)
 }
 
 // validateQbittorrentCategorySavePath checks that a single qBittorrent category
@@ -292,20 +305,30 @@ func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadCl
 func validateQbittorrentCategorySavePath(ctx context.Context, qb *qbittorrent.Client, client *models.DownloadClient, category, expected string, categories map[string]qbittorrent.Category) models.DownloadClientHealth {
 	qbCategory, ok := categories[category]
 	if !ok {
+		if expected == "" {
+			return healthError(fmt.Sprintf("qBittorrent category %q was not found; create it with a save path", category))
+		}
 		return healthError(fmt.Sprintf("qBittorrent category %q was not found; create it with save path %q", category, expected))
 	}
 
 	savePath := strings.TrimSpace(qbCategory.SavePath)
 	if savePath == "" {
-		message := fmt.Sprintf("qBittorrent category %q has no save path; expected %q", category, expected)
+		message := fmt.Sprintf("qBittorrent category %q has no save path", category)
+		if expected != "" {
+			message += fmt.Sprintf("; expected %q", expected)
+		}
 		if defaultPath, err := qb.GetDefaultSavePath(ctx); err == nil && strings.TrimSpace(defaultPath) != "" {
 			message += fmt.Sprintf(" and qBittorrent default is %q", strings.TrimSpace(defaultPath))
 		}
 		return healthError(message)
 	}
 
+	// The remap runs on the save path exactly as qBittorrent reports it; only
+	// its result is a path on this host.
 	localPath := filepath.Clean(pathmap.Parse(client.PathRemap).Apply(savePath))
-	if !pathIsAtOrUnder(localPath, expected) {
+	// With no download directory configured there is nothing to be under, and
+	// the stat below is the whole check (#2902).
+	if expected != "" && !pathIsAtOrUnder(localPath, expected) {
 		// #800: the error message above told the user where the paths
 		// disagreed but never named the fix. Most users hit this when
 		// qBittorrent and Bindery mount the same storage at different paths
@@ -412,14 +435,22 @@ func healthError(message string) models.DownloadClientHealth {
 // and Bindery at "/downloads" gets "/torrents/complete:/downloads", which
 // also covers any sibling category save paths under the same root. When
 // either path is "/" the hint falls back to the full strings.
+//
+// savePath is qBittorrent's own path, so its parent is taken in the client's
+// namespace: on a Windows Bindery filepath would turn a Docker client's
+// "/downloads/x" into "\downloads", a remap source nothing matches (#2902).
 func remapHint(savePath, expected string) string {
-	src := strings.TrimRight(filepath.Dir(filepath.Clean(savePath)), string(filepath.Separator))
+	src := pathmap.ClientPathDir(savePath)
 	dst := strings.TrimRight(filepath.Clean(expected), string(filepath.Separator))
-	if src == "" || src == "." {
-		src = filepath.Clean(savePath)
+	if src == "." || pathmap.ClientPathBase(src) == "" {
+		src = pathmap.CleanClientPath(savePath)
 	}
 	if dst == "" {
 		dst = "/"
+	}
+	if len(dst) == 2 && dst[1] == ':' {
+		// A drive root such as `H:\` would otherwise lose its separator.
+		dst += string(filepath.Separator)
 	}
 	return src + ":" + dst
 }
@@ -429,8 +460,23 @@ func remapHint(savePath, expected string) string {
 // A trailing separator is added to base before the prefix check so that
 // "/data/downloads-extra" is not mistakenly accepted as "under" "/data/downloads".
 func pathIsAtOrUnder(candidate, base string) bool {
+	return pathIsAtOrUnderOn(runtime.GOOS, candidate, base)
+}
+
+// pathIsAtOrUnderOn is pathIsAtOrUnder for the named host OS. Windows paths
+// compare case-insensitively and with either separator, the way Windows
+// resolves them, so `H:\Downloads\x` is under `h:\downloads`. Everywhere else
+// the comparison stays exact, because Linux filesystems are case-sensitive.
+func pathIsAtOrUnderOn(goos, candidate, base string) bool {
+	sep := "/"
+	if goos == "windows" {
+		fold := strings.NewReplacer("/", `\`)
+		candidate = strings.ToLower(fold.Replace(candidate))
+		base = strings.ToLower(fold.Replace(base))
+		sep = `\`
+	}
 	if candidate == base {
 		return true
 	}
-	return strings.HasPrefix(candidate, base+string(filepath.Separator))
+	return strings.HasPrefix(candidate, base+sep)
 }

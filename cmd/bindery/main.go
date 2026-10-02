@@ -709,18 +709,27 @@ func main() {
 	importScanner.WithSeriesRepo(seriesRepo)
 	importScanner.WithEditions(editionRepo)
 
-	// Startup check: warn if the configured default root folder no longer exists on disk.
-	if s, _ := settingsRepo.Get(ctxBoot, api.SettingDefaultLibraryRootFolderID); s != nil && s.Value != "" {
-		if id, err := strconv.ParseInt(s.Value, 10, 64); err == nil && id > 0 {
-			if rf, err := rootFolderRepo.GetByID(ctxBoot, id); err == nil && rf != nil {
-				if _, statErr := os.Stat(rf.Path); statErr != nil {
-					slog.Warn("default library root folder does not exist on disk — falling back to BINDERY_LIBRARY_DIR",
-						"path", rf.Path, "rootFolderId", id, "error", statErr)
-				}
-			} else {
-				slog.Warn("default library root folder ID not found in database — falling back to BINDERY_LIBRARY_DIR",
-					"rootFolderId", id)
+	// Startup check: warn if a configured default root folder no longer exists on disk.
+	for _, d := range []struct{ key, kind, fallback string }{
+		{api.SettingDefaultLibraryRootFolderID, "library", "BINDERY_LIBRARY_DIR"},
+		{api.SettingDefaultAudiobookRootFolderID, "audiobook", "BINDERY_AUDIOBOOK_DIR"},
+	} {
+		s, _ := settingsRepo.Get(ctxBoot, d.key)
+		if s == nil || s.Value == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(s.Value, 10, 64)
+		if err != nil || id <= 0 {
+			continue
+		}
+		if rf, err := rootFolderRepo.GetByID(ctxBoot, id); err == nil && rf != nil {
+			if _, statErr := os.Stat(rf.Path); statErr != nil {
+				slog.Warn("default "+d.kind+" root folder does not exist on disk, falling back to "+d.fallback,
+					"path", rf.Path, "rootFolderId", id, "error", statErr)
 			}
+		} else {
+			slog.Warn("default "+d.kind+" root folder ID not found in database, falling back to "+d.fallback,
+				"rootFolderId", id)
 		}
 	}
 

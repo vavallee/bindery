@@ -167,8 +167,9 @@ explicit-address spellings, which ignore them. Put anything valid there
 
 Two rTorrent-specific limits, both from the protocol rather than Bindery:
 
-- **Per-indexer seed ratios are ignored.** rTorrent has no per-torrent ratio
-  limit over XML-RPC; configure a ratio group in `.rtorrent.rc` instead.
+- **Per-indexer seed ratios and seed times are ignored.** rTorrent has no
+  per-torrent ratio or seeding time limit over XML-RPC; configure a ratio group
+  in `.rtorrent.rc` instead.
 - **Removing a download with its data** deletes the files from *Bindery's*
   side, because rTorrent's `d.erase` deliberately leaves the payload on disk.
   That needs a path remap that resolves — either the client's own, or the

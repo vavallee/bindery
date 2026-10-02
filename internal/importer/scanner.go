@@ -240,33 +240,51 @@ func (s *Scanner) effectiveLibraryDir(ctx context.Context, author *models.Author
 			return rf.Path
 		}
 	}
-	if s.settings != nil && s.rootFolders != nil {
-		if setting, err := s.settings.Get(ctx, "library.defaultRootFolderId"); err == nil && setting != nil && setting.Value != "" {
-			if id, err := strconv.ParseInt(setting.Value, 10, 64); err == nil && id > 0 {
-				if rf, err := s.rootFolders.GetByID(ctx, id); err == nil && rf != nil {
-					return rf.Path
-				}
-			}
-		}
+	if path := s.defaultRootFolderPath(ctx, "library.defaultRootFolderId"); path != "" {
+		return path
 	}
 	return s.libraryDir
 }
 
 // effectiveAudiobookDir returns the audiobook root to use for the given author.
-// Priority: (1) author's explicit AudiobookRootFolderID, (2) global
-// audiobookDir from env-var. It deliberately mirrors effectiveLibraryDir but
-// consults a separate per-author field: routing audiobooks through the ebook
-// RootFolderID would send them into the ebook root whenever an author has any
-// custom ebook root folder assigned, silently ignoring BINDERY_AUDIOBOOK_DIR
-// (#421). There is no audiobook equivalent of library.defaultRootFolderId, so
-// the only override is the per-author column.
+// Priority: (1) author's explicit AudiobookRootFolderID, (2)
+// library.defaultAudiobookRootFolderId setting (#2166), (3) global audiobookDir
+// from env-var. It deliberately mirrors effectiveLibraryDir but consults a
+// separate per-author field and a separate default: routing audiobooks through
+// the ebook RootFolderID or the ebook default would send them into the ebook
+// root whenever either is set, silently ignoring BINDERY_AUDIOBOOK_DIR (#421).
 func (s *Scanner) effectiveAudiobookDir(ctx context.Context, author *models.Author) string {
 	if author != nil && author.AudiobookRootFolderID != nil && s.rootFolders != nil {
 		if rf, err := s.rootFolders.GetByID(ctx, *author.AudiobookRootFolderID); err == nil && rf != nil {
 			return rf.Path
 		}
 	}
+	if path := s.defaultRootFolderPath(ctx, "library.defaultAudiobookRootFolderId"); path != "" {
+		return path
+	}
 	return s.audiobookDir
+}
+
+// defaultRootFolderPath resolves a default root folder setting to its path.
+// Empty when the setting is unset, malformed, or names a root folder that no
+// longer exists, so callers fall through to the env-var default.
+func (s *Scanner) defaultRootFolderPath(ctx context.Context, key string) string {
+	if s.settings == nil || s.rootFolders == nil {
+		return ""
+	}
+	setting, err := s.settings.Get(ctx, key)
+	if err != nil || setting == nil || setting.Value == "" {
+		return ""
+	}
+	id, err := strconv.ParseInt(setting.Value, 10, 64)
+	if err != nil || id <= 0 {
+		return ""
+	}
+	rf, err := s.rootFolders.GetByID(ctx, id)
+	if err != nil || rf == nil {
+		return ""
+	}
+	return rf.Path
 }
 
 // effectiveRootForFormat picks the correct root (ebook or audiobook) to
@@ -1391,7 +1409,13 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// mount (#1254). Usenet downloads remap auto/hardlink to move first —
 	// nothing seeds from a finished usenet job, so leaving the source behind
 	// is a pure disk leak (#1542); see effectiveConfiguredMode.
-	configuredMode := effectiveConfiguredMode(s.configuredImportMode(ctx), cleanupClientType)
+	//
+	// The mode is per format (#1632): audiobooks can override import.mode, so
+	// a CWA + Audiobookshelf library drops ebooks into CWA's ingest folder
+	// (external) while audiobooks land in the audiobook root. With no override
+	// both formats share import.mode and this is the same single read as
+	// before.
+	configuredMode := effectiveConfiguredMode(s.downloadImportMode(ctx, downloadPath, formatHint, explicitFiles), cleanupClientType)
 
 	// External mode: skip all file operations and leave the book Wanted so the
 	// library scan can reconcile it after the user's external tool (Calibre,
@@ -1453,6 +1477,11 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			// Walk: importPending → importing → imported.
 			s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
 			s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
+			if cleanupFunc != nil {
+				if err := cleanupFunc(); err != nil {
+					slog.Warn("cleanup failed", cleanupWarnAttrs(cleanupClientType, cleanupRemoteID, err)...)
+				}
+			}
 			return
 		}
 		// Distinguish "path doesn't exist on this host" from "path exists but has
@@ -1648,8 +1677,9 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			return
 		}
 		// effectiveAudiobookDir resolves the per-author audiobook root folder
-		// (#579) and falls back to BINDERY_AUDIOBOOK_DIR. It deliberately does
-		// NOT consult the author's ebook RootFolderID: routing audiobooks
+		// (#579), then the default audiobook root folder setting (#2166), and
+		// falls back to BINDERY_AUDIOBOOK_DIR. It deliberately does NOT consult
+		// the author's ebook RootFolderID or the ebook default: routing audiobooks
 		// through that would send them into the ebook root whenever an author
 		// has any custom ebook root folder assigned (#421).
 		audiobookRoot := s.effectiveAudiobookDir(ctx, author)
@@ -1789,7 +1819,13 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					if mode == "move" {
 						flattenMode = "copy"
 					}
-					namer := func(index int, ext string) string {
+					namer := func(index, count int, ext string) string {
+						// A folder holding one track is a single-file
+						// audiobook too, so it gets the same name a lone
+						// .m4b does on the branch below (#2900).
+						if count == 1 {
+							return s.renamer.AudiobookSingleFileName(tmpl, author, book, seriesTitle, seriesNum, strings.TrimPrefix(ext, "."))
+						}
 						return s.renamer.AudiobookFileName(tmpl, author, book, seriesTitle, seriesNum, strings.TrimPrefix(ext, "."), index+1)
 					}
 					slog.Info("renaming audiobook files per template", "src", audiobookSource, "dst", destDir, "mode", flattenMode, "template", tmpl)
@@ -1892,7 +1928,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				if err := os.MkdirAll(destDir, 0o750); err != nil {
 					dirErr = fmt.Errorf("create audiobook dest dir: %w", err)
 				} else {
-					name := filepath.Base(audiobookSource)
+					name := s.singleAudiobookFileName(ctx, author, book, seriesTitle, seriesNum, audiobookSource)
+					if name != filepath.Base(audiobookSource) {
+						slog.Info("renaming audiobook file per template", "src", audiobookSource, "dst", destDir, "name", name, "mode", mode)
+					}
 					dstFile := filepath.Join(destDir, name)
 					// A merge never overwrites what is already in the book's
 					// folder, the same contract CopyDirMergeCtx and friends

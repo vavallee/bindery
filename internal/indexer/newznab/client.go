@@ -569,7 +569,35 @@ func primaryTitleForQuery(title string) string {
 	if i := strings.Index(title, ":"); i > 0 {
 		title = title[:i]
 	}
-	return NormalizeQueryTitle(title)
+	return StripFormatQualifiers(NormalizeQueryTitle(title))
+}
+
+// formatQualifierRe matches a parenthesised FORMAT qualifier anywhere in a
+// title: "(Light Novel)", "(Novel)", "(Manga)", "(Graphic Novel)", "(Comic)".
+// Metadata providers put these mid title for series volumes ("The Rising of
+// the Shield Hero (Light Novel) Vol. 17"), where parenSuffixRe, being anchored
+// at the end, never reaches them. Release names do not carry them, so they
+// zeroed the query and became relevance keywords no release could satisfy.
+//
+// The list is closed on purpose. Arbitrary parentheses mid title are often
+// real title content ("The (Mis)Adventures of ..."), so only these known
+// qualifiers, filling the whole parenthesis, are removed.
+var formatQualifierRe = regexp.MustCompile(`(?i)\(\s*(?:light\s+novels?|graphic\s+novels?|novels?|manga|comics?)\s*\)`)
+
+// StripFormatQualifiers removes the known format qualifiers in parentheses
+// (see formatQualifierRe) from anywhere in title and collapses the whitespace
+// left behind. It is applied to the outgoing query (primaryTitleForQuery) and
+// to the title both indexer relevance filters tokenise, so the three agree.
+//
+// It is NOT part of NormalizeQueryTitle on purpose: that function feeds
+// indexer.CanonicalDedupKey, which is persisted as books.dedup_key, and
+// changing it would need a key revision bump and a backfill for a change that
+// is only about searching.
+func StripFormatQualifiers(title string) string {
+	if !strings.Contains(title, "(") {
+		return title
+	}
+	return strings.Join(strings.Fields(formatQualifierRe.ReplaceAllString(title, " ")), " ")
 }
 
 // parenSuffixRe matches a trailing parenthesised qualifier used by metadata
@@ -677,6 +705,12 @@ func wordsPresentInAll(words, combined []string) bool {
 		return true
 	}
 	for _, w := range words {
+		// A volume marker is satisfied by any of its spellings. Every
+		// spelling contains "vol", and this is a substring test, so that is
+		// the whole check (see IsVolumeMarker).
+		if IsVolumeMarker(w) {
+			w = "vol"
+		}
 		found := false
 		for _, c := range combined {
 			if strings.Contains(c, w) {

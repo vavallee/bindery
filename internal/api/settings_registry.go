@@ -145,6 +145,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingDefaultAudiobookRootFolderID, Type: SettingTypeInt, Default: "", Min: "1",
+		Description: "root_folder.id used as the audiobook path for authors with no audiobook root folder of their own. Empty falls back to BINDERY_AUDIOBOOK_DIR, then BINDERY_LIBRARY_DIR.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: SettingMetadataPrimaryProvider, Type: SettingTypeEnum, Default: "openlibrary",
 		Values:          MetadataPrimaryProviders,
 		Description:     "Provider that decides what an author catalogue looks like. The others stay wired as enrichers. Selecting hardcover requires a stored Hardcover API token.",
@@ -209,8 +214,19 @@ var settingDescriptors = []SettingDescriptor{
 	// Import placement and naming.
 	{
 		Key: SettingImportMode, Type: SettingTypeEnum, Default: "auto",
-		Values:      []string{"auto", "move", "copy", "hardlink", "external"},
+		Values:      importModeValues,
 		Description: "How a finished download reaches the library. auto hardlinks when source and destination share a filesystem and copies otherwise, so seeding survives.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingImportAudiobookMode, Type: SettingTypeEnum, Default: "",
+		Values:      importModeValues,
+		Description: "Import mode for audiobooks only. Empty uses import.mode for both formats; set it to send audiobooks somewhere else, such as copy into the Audiobookshelf library while ebooks go external to Calibre-Web-Automated.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingImportAudiobookDropFolder, Type: SettingTypeString, Default: "",
+		Description: "Drop folder for audiobooks when their import mode is external. Must exist inside the container. Empty uses import.drop_folder.",
 		State:       SettingStateActive,
 	},
 	{

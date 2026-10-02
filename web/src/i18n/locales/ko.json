@@ -571,7 +571,7 @@
       "apiKeys": "외부 API 키",
       "googleBooksKey": "Google Books API 키",
       "storage": "저장소",
-      "storageHint": "Bindery가 읽고 쓰는 경로입니다. 컨테이너 시작 전에 환경 변수(또는 설정 파일)로 지정하세요. 실행 중인 프로세스는 시작 시 이 값을 가져옵니다.",
+      "storageHint": "Bindery가 읽고 쓰는 경로입니다. 컨테이너 시작 전에 환경 변수로 지정하세요. 실행 중인 프로세스는 시작 시 이 값을 가져옵니다.",
       "downloadDir": "다운로드 디렉터리",
       "audiobookDownloadDir": "오디오북 다운로드 디렉터리",
       "audiobookDownloadDirFallback": "미설정 — 오디오북 다운로드는 기본 다운로드 디렉터리를 사용합니다.",

@@ -261,7 +261,7 @@ func filterRelevantDebug(results []newznab.SearchResult, title, author string, a
 	// Strip edition qualifiers ("(German Edition)" etc.) and normalize smart
 	// quotes before tokenizing — mirrors the first step of filterRelevant so
 	// both paths produce identical keyword sets.
-	title = newznab.NormalizeQueryTitle(title)
+	title = newznab.StripFormatQualifiers(newznab.NormalizeQueryTitle(title))
 	// Strip possessive author prefix before keyword extraction (mirrors filterRelevant).
 	title = stripPossessivePrefix(title, author)
 	fullKws := newznab.SigWords(title)
@@ -320,10 +320,14 @@ func filterRelevantDebug(results []newznab.SearchResult, title, author string, a
 			})
 			continue
 		}
-		fullOK := tryMatch(n, fullKws) || tryMatchElided(n, fullElided, fullKws)
+		// volumeNumberAgrees: the same cross spelling volume guard as
+		// filterRelevant, so "Vol 16" cannot newly pass for "Volume 17".
+		fullOK := (tryMatch(n, fullKws) || tryMatchElided(n, fullElided, fullKws)) &&
+			volumeNumberAgrees(n, title)
 		primaryOK := false
 		if !fullOK && len(primaryKws) > 0 && !sameKws(primaryKws, fullKws) {
-			primaryOK = tryMatch(n, primaryKws) || tryMatchElided(n, primaryElided, primaryKws)
+			primaryOK = (tryMatch(n, primaryKws) || tryMatchElided(n, primaryElided, primaryKws)) &&
+				volumeNumberAgrees(n, primaryTitle(title))
 		}
 		if fullOK || primaryOK {
 			filtered = append(filtered, r)

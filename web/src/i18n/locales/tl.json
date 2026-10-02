@@ -373,7 +373,7 @@
       "apiKeys": "Mga External API Key",
       "googleBooksKey": "Google Books API Key",
       "storage": "Imbakan",
-      "storageHint": "Mga path na binabasa at sinusulatan ng Bindery. I-configure sa pamamagitan ng environment variable (o iyong config file) bago simulan ang container; kinukuha ito ng tumatakbong proseso sa pagsisimula.",
+      "storageHint": "Mga path na binabasa at sinusulatan ng Bindery. I-configure sa pamamagitan ng environment variable bago simulan ang container; kinukuha ito ng tumatakbong proseso sa pagsisimula.",
       "downloadDir": "Download directory",
       "audiobookDownloadDir": "Audiobook download directory",
       "audiobookDownloadDirFallback": "Hindi nakatakda — gumagamit ang mga audiobook download ng pangunahing download directory.",

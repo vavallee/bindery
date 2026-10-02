@@ -368,11 +368,35 @@ set as one record), matching packs are allowed for it.
 the indexer, and why the category (default `books`) must already exist in the
 client. Bindery fetches the .torrent/NZB itself and hands it over.
 
+**Seeding limits.** A torrent indexer can carry its own seeding rules in
+Settings → Indexers, so a private tracker's minimum is met without changing the
+client's global rules for everything else. **Seed ratio** stops seeding at that
+upload ratio (or never, with *Unlimited*). **Seed time** stops seeding after
+that many minutes in total, and **Inactive seed time** after that many minutes
+without uploading. Leave a field blank to keep the client's own rule. They are
+applied to each torrent as it is grabbed, so changing them affects later grabs,
+not torrents already in the client. Indexers synced from Prowlarr pick up
+Prowlarr's per indexer seed ratio and seed time until you edit them yourself;
+Prowlarr has no inactive seed time. Not every client can hold every limit per
+torrent, and a limit the client cannot take is skipped (with a debug log line)
+rather than approximated:
+
+| Client | Seed ratio | Seed time | Inactive seed time |
+|---|---|---|---|
+| qBittorrent | yes | yes | yes, 4.6 or later |
+| Transmission | yes | no | yes |
+| Deluge | yes | no | no |
+| rTorrent | no | no | no |
+
+Usenet clients have no seeding, so the limits do nothing there.
+
 **Import.** When the client reports the job complete, Bindery matches it to
 the book, places the file per your import mode and naming template, and marks
 the book **In Library**. Ebooks land under the author's root folder (falling
 back to the default root folder, then `BINDERY_LIBRARY_DIR`); audiobooks have
-their own destination chain (`BINDERY_AUDIOBOOK_DIR`, per-author override).
+their own chain (the author's audiobook root folder, then the default audiobook
+root folder, then `BINDERY_AUDIOBOOK_DIR`). Both defaults are set under
+Settings > Root Folders, and the Add Author dialog preselects them.
 Every author added through the UI gets a root folder written on the author
 itself, seeded from the default you set in Settings, so changing that default
 later moves only authors you have not created yet. In 1.32.1 and earlier the
@@ -834,7 +858,10 @@ an absent row from that same provider may be actionable. A row from a different
 provider is kept as indeterminate when Bindery cannot correlate it to the
 current catalogue; changing providers alone is not evidence that a work is
 obsolete. A correlated work that the metadata profile explicitly rejects can
-still be removed for that rejection reason.
+still be removed for that rejection reason. The preview lists each
+indeterminate row separately with its provider and the incomplete-evidence
+reason so it can be reviewed manually; these informational rows have no
+selection control and cannot be sent for removal.
 
 **Duplicate titles.** The same book often reaches the catalogue twice under
 slightly different titles — "The Martian" and "Martian", "Dune" and "Dune

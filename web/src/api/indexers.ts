@@ -24,6 +24,15 @@ export interface Indexer {
   // seedCriteria.seedRatio (a later Prowlarr change may refresh it); 'user' = the
   // user set/cleared it (Prowlarr won't touch it); omitted/'' = unset.
   seedRatioSource?: string
+  // Per-indexer seed time overrides (#2206), in whole minutes. Omitted/null =
+  // no override. seedTimeMinutes is the total seeding time (qBittorrent only);
+  // inactiveSeedTimeMinutes stops after that long without upload (qBittorrent
+  // 4.6+ and Transmission). seedTimeSource has the same meaning as
+  // seedRatioSource, filled from Prowlarr's seedTime; Prowlarr has no
+  // inactive seed time, so that one has no source.
+  seedTimeMinutes?: number | null
+  seedTimeSource?: string
+  inactiveSeedTimeMinutes?: number | null
   // Only auto-grab freeleech releases from this indexer. Non-freeleech
   // releases are held in the Pending queue for manual approval instead of
   // being grabbed automatically. Interactive search is unaffected.

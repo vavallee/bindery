@@ -39,6 +39,28 @@ func LongStopWords() []string {
 	return out
 }
 
+// volumeMarkers are the spellings of a volume marker that release names and
+// metadata titles use interchangeably: "Volume 17", "Vol. 17", "Vols 1-3",
+// "Volumes 1-3". SigWords keeps all four as keywords, so without this a title
+// saying "Volume 17" demanded the literal word "volume" and dropped a release
+// saying "Vol 17".
+//
+// "book"/"bk" and "part"/"pt" are deliberately not here. "bk" and "pt" are
+// under three bytes, so SigWords never emits them, and "pt" is also the
+// Portuguese release language tag: treating it as "part" would let a title
+// saying "Part 2" match any Portuguese release.
+var volumeMarkers = map[string]bool{
+	"vol": true, "vols": true, "volume": true, "volumes": true,
+}
+
+// IsVolumeMarker reports whether w (already lowercased, as SigWords emits it)
+// is one of the interchangeable volume marker spellings. A keyword for which
+// this is true matches any of the spellings at match time, word bounded; see
+// indexer.keywordPattern.
+func IsVolumeMarker(w string) bool {
+	return volumeMarkers[w]
+}
+
 // SigWords returns the meaningful (non-stop, long enough) words from s.
 //
 // "Long enough" is three BYTES of UTF-8, not three characters, and that is

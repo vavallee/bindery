@@ -1,0 +1,2 @@
+### Fixed
+- **No more Content Security Policy error in the browser console on every page** (#2911): the small script that picks light or dark mode before the first paint sat inline in `index.html`, and Bindery's own `script-src 'self'` policy refused to run it. The UI still loaded, but the error was logged on every page and the dark theme could flash light for a frame. The script now loads as `theme-bootstrap.js` from Bindery itself, which the policy allows, including under `BINDERY_URL_BASE`. Thanks ractive1974 for the report.

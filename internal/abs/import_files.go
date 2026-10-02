@@ -287,17 +287,25 @@ func (i *Importer) allowedRootsForBook(ctx context.Context, author *models.Autho
 	return dedupeCleanPaths(roots)
 }
 
+// settingDefaultAudiobookRootID is the audiobook twin of settingDefaultRootID
+// (#2166), kept beside its only reader.
+const settingDefaultAudiobookRootID = "library.defaultAudiobookRootFolderId"
+
 // effectiveAudiobookDir returns the audiobook root for the given author:
-// the per-author AudiobookRootFolderID when set (#579), else the global
-// audiobookDir. It deliberately does not consult the ebook RootFolderID so an
-// ebook root folder never widens audiobook acceptance into the ebook tree
-// (#421). author may be nil (e.g. inspectFormatPath has no author context),
-// in which case only the global dir applies.
+// the per-author AudiobookRootFolderID when set (#579), else the
+// library.defaultAudiobookRootFolderId setting (#2166), else the global
+// audiobookDir. It deliberately does not consult the ebook RootFolderID or the
+// ebook default so an ebook root folder never widens audiobook acceptance into
+// the ebook tree (#421). author may be nil (e.g. inspectFormatPath has no
+// author context), in which case only the defaults apply.
 func (i *Importer) effectiveAudiobookDir(ctx context.Context, author *models.Author) string {
 	if author != nil && author.AudiobookRootFolderID != nil && i.rootFolders != nil {
 		if root, err := i.rootFolders.GetByID(ctx, *author.AudiobookRootFolderID); err == nil && root != nil {
 			return root.Path
 		}
+	}
+	if path := i.defaultRootFolderPath(ctx, settingDefaultAudiobookRootID); path != "" {
+		return path
 	}
 	return i.audiobookDir
 }
@@ -308,16 +316,31 @@ func (i *Importer) effectiveLibraryDir(ctx context.Context, author *models.Autho
 			return root.Path
 		}
 	}
-	if i.settings != nil && i.rootFolders != nil {
-		if setting, err := i.settings.Get(ctx, settingDefaultRootID); err == nil && setting != nil && strings.TrimSpace(setting.Value) != "" {
-			if id, err := strconv.ParseInt(strings.TrimSpace(setting.Value), 10, 64); err == nil && id > 0 {
-				if root, err := i.rootFolders.GetByID(ctx, id); err == nil && root != nil {
-					return root.Path
-				}
-			}
-		}
+	if path := i.defaultRootFolderPath(ctx, settingDefaultRootID); path != "" {
+		return path
 	}
 	return i.libraryDir
+}
+
+// defaultRootFolderPath resolves a default root folder setting to its path,
+// or "" when it is unset, malformed, or names a deleted root folder.
+func (i *Importer) defaultRootFolderPath(ctx context.Context, key string) string {
+	if i.settings == nil || i.rootFolders == nil {
+		return ""
+	}
+	setting, err := i.settings.Get(ctx, key)
+	if err != nil || setting == nil || strings.TrimSpace(setting.Value) == "" {
+		return ""
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(setting.Value), 10, 64)
+	if err != nil || id <= 0 {
+		return ""
+	}
+	root, err := i.rootFolders.GetByID(ctx, id)
+	if err != nil || root == nil {
+		return ""
+	}
+	return root.Path
 }
 
 func pathUnderDir(path, dir string) bool {

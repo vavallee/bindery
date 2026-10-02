@@ -183,6 +183,8 @@ Effective roots can come from:
 - `BINDERY_AUDIOBOOK_DIR`
 - the author's explicit root folder
 - `library.defaultRootFolderId`
+- the author's explicit audiobook root folder (audiobooks only)
+- `library.defaultAudiobookRootFolderId` (audiobooks only)
 
 When a path is visible and valid, Bindery records it through the normal book-file write path. When it is not, the item remains metadata-only and contributes to pending/manual follow-up rather than failing the whole run.
 

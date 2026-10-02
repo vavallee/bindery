@@ -1,0 +1,2 @@
+### Added
+- **Series page filters** (#2871): narrow the Series page to series with missing books, complete series, series not linked to Hardcover, or your shortlist. Missing and complete use the same count as each card's missing badge, combine with the title search, and stay in the page address so a reload or the back button keeps them. Filtering never marks, monitors, searches or fills anything. Thanks darkymehdi for the request.

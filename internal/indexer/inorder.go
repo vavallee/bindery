@@ -24,7 +24,8 @@ func containsInOrder(haystack string, seq []string) bool {
 func inOrderRegex(seq []string) *regexp.Regexp {
 	parts := make([]string, len(seq))
 	for i, w := range seq {
-		parts[i] = umlautFlexRegex(regexp.QuoteMeta(strings.ToLower(w)))
+		lw := strings.ToLower(w)
+		parts[i] = keywordPattern(lw, lw)
 	}
 	// wordSep rather than \b so non-ASCII words match (#1642). The gap between
 	// consecutive words is `SEP(?:.*SEP)?` rather than `.*` so that ADJACENT

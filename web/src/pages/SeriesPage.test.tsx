@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, useLocation } from 'react-router'
 import SeriesPage from './SeriesPage'
 import { api } from '../api/client'
-import type { Series, SeriesHardcoverLink, SeriesHardcoverSearchResult, SystemStatus } from '../api/client'
+import type { Book, Series, SeriesHardcoverLink, SeriesHardcoverSearchResult, SystemStatus } from '../api/client'
 import '../i18n'
 import { acceptConfirm } from '../test-utils'
 
@@ -144,10 +144,12 @@ describe('SeriesPage', () => {
     }])
 
     await screen.findByRole('heading', { name: 'Mistborn' })
-    expect(screen.getByText('Shortlisted')).toBeInTheDocument()
     expect(screen.queryByText('Monitored')).toBeNull()
     expect(screen.queryByRole('switch', { name: /monitor/i })).toBeNull()
     const toggle = screen.getByRole('switch', { name: /shortlist/i })
+    // Scoped to the switch: the Shortlisted filter button (#2871) carries the
+    // same word.
+    expect(within(toggle).getByText('Shortlisted')).toBeInTheDocument()
     expect(toggle).toHaveAttribute('title', expect.stringContaining('does not yet check'))
   })
 
@@ -1117,5 +1119,191 @@ describe('SeriesPage Hardcover links out (#1708)', () => {
 
     // The slug travels with the selection so the backend can store it.
     await waitFor(() => expect(api.linkSeriesHardcover).toHaveBeenCalledWith(52, candidate))
+  })
+})
+
+// Series page filters (#2871). Every one of them is computed from the series
+// list the page already loaded: no per series Hardcover diff, and nothing that
+// marks, monitors, searches or fills.
+describe('SeriesPage filters', () => {
+  const enhancedOff: SystemStatus = { version: 'dev', commit: 'unknown', buildDate: '', enhancedHardcoverApi: false, hardcoverTokenConfigured: false }
+  const enhancedOn: SystemStatus = { version: 'dev', commit: 'unknown', buildDate: '', enhancedHardcoverApi: true, hardcoverTokenConfigured: true }
+
+  function book(id: number, status: string, excluded = false): Book {
+    return {
+      id,
+      foreignBookId: `book-${id}`,
+      authorId: 1,
+      title: `Book ${id}`,
+      description: '',
+      imageUrl: '',
+      genres: [],
+      monitored: true,
+      status,
+      filePath: '',
+      mediaType: 'ebook',
+      ebookFilePath: '',
+      audiobookFilePath: '',
+      excluded,
+    } as Book
+  }
+
+  function series(id: number, title: string, books: Book[], extra: Partial<Series> = {}): Series {
+    return {
+      id,
+      foreignSeriesId: `series-${id}`,
+      title,
+      description: '',
+      monitored: false,
+      books: books.map((b, i) => ({ seriesId: id, bookId: b.id, positionInSeries: String(i + 1), book: b })),
+      ...extra,
+    }
+  }
+
+  function link(seriesId: number, hardcoverBookCount: number): SeriesHardcoverLink {
+    return {
+      id: seriesId,
+      seriesId,
+      hardcoverSeriesId: `hc-series:${seriesId}`,
+      hardcoverProviderId: String(seriesId),
+      hardcoverTitle: `HC ${seriesId}`,
+      hardcoverAuthorName: 'Someone',
+      hardcoverBookCount,
+      confidence: 1,
+      linkedBy: 'manual',
+      linkedAt: '2026-01-01T00:00:00Z',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    }
+  }
+
+  let currentSearch = ''
+  function LocationProbe() {
+    currentSearch = useLocation().search
+    return null
+  }
+
+  function renderAt(list: Series[], status: SystemStatus, entry = '/series') {
+    vi.mocked(api.listSeries).mockResolvedValue(list)
+    vi.mocked(api.status).mockResolvedValue(status)
+    return render(
+      <MemoryRouter initialEntries={[entry]}>
+        <SeriesPage />
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+  }
+
+  const library = [
+    series(1, 'Gappy', [book(11, 'imported'), book(12, 'wanted')], { monitored: true }),
+    series(2, 'Finished', [book(21, 'imported'), book(22, 'imported')]),
+    // Only outstanding book is excluded: not a gap (#2324), so complete.
+    series(3, 'Excluded Tail', [book(31, 'imported'), book(32, 'wanted', true)]),
+    // Nothing in it at all: neither missing nor complete.
+    series(4, 'Empty Shell', []),
+  ]
+
+  const headings = () => screen.queryAllByRole('heading', { level: 3 }).map(h => h.textContent)
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    currentSearch = ''
+  })
+
+  it('narrows to series with missing books and to complete series', async () => {
+    renderAt(library, enhancedOff)
+    expect(await screen.findByRole('heading', { name: 'Gappy' })).toBeInTheDocument()
+    const group = screen.getByRole('group', { name: 'Show series' })
+
+    fireEvent.click(within(group).getByRole('button', { name: 'Missing books' }))
+    expect(headings()).toEqual(['Gappy'])
+    expect(within(group).getByRole('button', { name: 'Missing books' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('1 of 4 series')).toBeInTheDocument()
+
+    fireEvent.click(within(group).getByRole('button', { name: 'Complete' }))
+    expect(headings()).toEqual(['Finished', 'Excluded Tail'])
+
+    fireEvent.click(within(group).getByRole('button', { name: 'All' }))
+    expect(headings()).toEqual(['Gappy', 'Finished', 'Excluded Tail', 'Empty Shell'])
+    expect(screen.getByText('4 series')).toBeInTheDocument()
+
+    // Filtering is read only.
+    expect(api.fillSeries).not.toHaveBeenCalled()
+    expect(api.fillSeriesAll).not.toHaveBeenCalled()
+    expect(api.monitorSeries).not.toHaveBeenCalled()
+    expect(api.getSeriesHardcoverDiff).not.toHaveBeenCalled()
+    expect(api.listSeries).toHaveBeenCalledTimes(1)
+  })
+
+  it('counts missing exactly as the card badge does when Hardcover linking is on', async () => {
+    renderAt([
+      // Every local book imported, but Hardcover lists five: the badge says
+      // "3 missing", so the filter must call it missing, not complete.
+      series(5, 'Hardcover Gap', [book(51, 'imported'), book(52, 'imported')], { hardcoverLink: link(5, 5) }),
+      series(6, 'Hardcover Done', [book(61, 'imported')], { hardcoverLink: link(6, 1) }),
+    ], enhancedOn)
+    expect(await screen.findByText('3 missing')).toBeInTheDocument()
+    const group = screen.getByRole('group', { name: 'Show series' })
+
+    fireEvent.click(within(group).getByRole('button', { name: 'Missing books' }))
+    expect(headings()).toEqual(['Hardcover Gap'])
+    fireEvent.click(within(group).getByRole('button', { name: 'Complete' }))
+    expect(headings()).toEqual(['Hardcover Done'])
+
+    // No per series diff fan out to decide either.
+    expect(api.getSeriesHardcoverDiff).not.toHaveBeenCalled()
+  })
+
+  it('shows unlinked series only when Hardcover linking is on', async () => {
+    renderAt([
+      series(7, 'Linked', [book(71, 'imported')], { hardcoverLink: link(7, 1) }),
+      series(8, 'Unlinked', [book(81, 'imported')]),
+    ], enhancedOn)
+    expect(await screen.findByRole('heading', { name: 'Linked' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Not linked to Hardcover' }))
+    expect(headings()).toEqual(['Unlinked'])
+  })
+
+  it('does not offer the unlinked filter without Hardcover linking, even from the URL', async () => {
+    renderAt(library, enhancedOff, '/series?filter=unlinked')
+    expect(await screen.findByRole('heading', { name: 'Gappy' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Not linked to Hardcover' })).not.toBeInTheDocument()
+    expect(headings()).toHaveLength(4)
+  })
+
+  it('narrows to shortlisted series', async () => {
+    renderAt(library, enhancedOff)
+    expect(await screen.findByRole('heading', { name: 'Gappy' })).toBeInTheDocument()
+    fireEvent.click(within(screen.getByRole('group', { name: 'Show series' })).getByRole('button', { name: 'Shortlisted' }))
+    expect(headings()).toEqual(['Gappy'])
+  })
+
+  it('reads the filter from the URL and writes it back', async () => {
+    renderAt(library, enhancedOff, '/series?filter=complete')
+    expect(await screen.findByRole('heading', { name: 'Finished' })).toBeInTheDocument()
+    expect(headings()).toEqual(['Finished', 'Excluded Tail'])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Missing books' }))
+    expect(currentSearch).toBe('?filter=missing')
+    fireEvent.click(screen.getByRole('button', { name: 'All' }))
+    expect(currentSearch).toBe('')
+  })
+
+  it('combines the filter with the title search', async () => {
+    renderAt(library, enhancedOff, '/series?filter=complete')
+    expect(await screen.findByRole('heading', { name: 'Finished' })).toBeInTheDocument()
+    const search = screen.getByRole('searchbox', { name: 'Search series...' })
+
+    fireEvent.change(search, { target: { value: 'excluded' } })
+    expect(headings()).toEqual(['Excluded Tail'])
+
+    fireEvent.change(search, { target: { value: 'gappy' } })
+    expect(headings()).toEqual([])
+    expect(screen.getByRole('status')).toHaveTextContent('No series match "gappy" with this filter')
+
+    fireEvent.change(search, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Shortlisted' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Missing books' }))
+    expect(headings()).toEqual(['Gappy'])
   })
 })

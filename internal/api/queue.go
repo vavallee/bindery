@@ -166,18 +166,19 @@ func (h *QueueHandler) WithIndexers(indexers *db.IndexerRepo) *QueueHandler {
 	return h
 }
 
-// resolveSeedRatio returns the seed-ratio override for the given indexer, or
-// nil when there is no indexer repo, no indexer id, the lookup fails, or the
-// indexer has no override. nil keeps the download client's global ratio rule.
-func (h *QueueHandler) resolveSeedRatio(ctx context.Context, indexerID *int64) *float64 {
+// resolveSeedLimits returns the seed ratio (#883) and seed time (#2206)
+// overrides for the given indexer. Each is nil when there is no indexer repo,
+// no indexer id, the lookup fails, or the indexer has no such override; nil
+// keeps the download client's own rule.
+func (h *QueueHandler) resolveSeedLimits(ctx context.Context, indexerID *int64) downloader.SeedLimits {
 	if h.indexers == nil || indexerID == nil || *indexerID == 0 {
-		return nil
+		return downloader.SeedLimits{}
 	}
 	idx, err := h.indexers.GetByID(ctx, *indexerID)
-	if err != nil || idx == nil {
-		return nil
+	if err != nil {
+		return downloader.SeedLimits{}
 	}
-	return idx.SeedRatio
+	return downloader.SeedLimitsFor(idx)
 }
 
 // signNZBURL restores the indexer apikey that the search and queue responses
@@ -1267,7 +1268,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	// The host-match fallback knows which indexer signed the URL, so record it.
 	// Without this the row keeps a nil (or dangling) IndexerID for precisely the
 	// API callers the fallback exists for, and both the queue's indexer
-	// attribution and resolveSeedRatio's per-indexer override are lost (#2053).
+	// attribution and resolveSeedLimits' per-indexer overrides are lost (#2053).
 	if hostMatched != nil {
 		indexerID = hostMatched
 	}
@@ -1303,8 +1304,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		MediaType:            req.MediaType,
 		DownloadDir:          h.downloadDir,
 		AudiobookDownloadDir: h.audiobookDownloadDir,
-		SeedRatio:            h.resolveSeedRatio(ctx, indexerID),
-	})
+	}.WithSeedLimits(h.resolveSeedLimits(ctx, indexerID)))
 	if err != nil {
 		slog.Error("failed to send download", "client_type", client.Type, "error", err, "title", req.Title)
 		if setErr := h.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {

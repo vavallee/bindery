@@ -162,6 +162,39 @@ func (ri remoteIndexer) seedRatio() *float64 {
 	return nil
 }
 
+// prowlarrSeedTimeField is the field name Prowlarr serialises for the
+// per-indexer seed time on a torrent indexer, the flattening of
+// IndexerTorrentBaseSettings.SeedTime. Prowlarr labels it in minutes. The
+// neighbouring packSeedTime is for season packs, which Bindery never grabs,
+// and Prowlarr has no inactive seed time setting at all.
+const prowlarrSeedTimeField = "torrentBaseSettings.seedTime"
+
+// seedTimeMinutes returns the per-indexer seed time Prowlarr has configured
+// for this indexer, in minutes, or nil when none is set (#2206). Prowlarr
+// models it as a nullable int and warns on anything <= 0, so as with the ratio
+// only a present, positive whole number counts; anything else, including a
+// fractional value that is not a valid int to Prowlarr either, is "no seed
+// time".
+func (ri remoteIndexer) seedTimeMinutes() *int {
+	for _, f := range ri.Fields {
+		if f.Name != prowlarrSeedTimeField {
+			continue
+		}
+		if len(f.Value) == 0 || string(f.Value) == "null" {
+			return nil
+		}
+		var v int
+		if err := json.Unmarshal(f.Value, &v); err != nil {
+			return nil
+		}
+		if v <= 0 {
+			return nil
+		}
+		return &v
+	}
+	return nil
+}
+
 type remoteCategory struct {
 	ID            int              `json:"id"`
 	Name          string           `json:"name"`
@@ -205,6 +238,10 @@ type IndexerInfo struct {
 	// when Prowlarr has none. Used to auto-populate Bindery's local seed-ratio
 	// override (#1065) for torrent indexers that lack an explicit override.
 	SeedRatio *float64
+	// SeedTimeMinutes is the per-indexer seed time Prowlarr has configured, or
+	// nil when it has none. Auto-populates Bindery's seed time override (#2206)
+	// under the same provenance rules as SeedRatio.
+	SeedTimeMinutes *int
 }
 
 // FetchIndexers returns all indexers configured in Prowlarr.
@@ -248,15 +285,16 @@ func (c *Client) FetchIndexers(ctx context.Context) ([]IndexerInfo, error) {
 		}
 
 		infos = append(infos, IndexerInfo{
-			ProwlarrID:     ri.ID,
-			Name:           ri.Name,
-			Enable:         ri.Enable,
-			Protocol:       ri.Protocol,
-			TorznabURL:     torznabURL,
-			APIKey:         c.apiKey,
-			SupportsSearch: ri.SupportsSearch,
-			Categories:     cats,
-			SeedRatio:      ri.seedRatio(),
+			ProwlarrID:      ri.ID,
+			Name:            ri.Name,
+			Enable:          ri.Enable,
+			Protocol:        ri.Protocol,
+			TorznabURL:      torznabURL,
+			APIKey:          c.apiKey,
+			SupportsSearch:  ri.SupportsSearch,
+			Categories:      cats,
+			SeedRatio:       ri.seedRatio(),
+			SeedTimeMinutes: ri.seedTimeMinutes(),
 		})
 	}
 	return infos, nil

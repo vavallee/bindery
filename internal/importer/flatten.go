@@ -168,7 +168,7 @@ func isMultiDiscAudiobook(srcRoot string) bool {
 // no separators), so book-derived strings cannot escape the library.
 func flattenAudiobookDir(ctx context.Context, mode, srcRoot, destDir string) error {
 	// Default "Part NNN.ext" naming: mirrors the historical multi-disc flatten.
-	return flattenAudiobookDirNamed(ctx, mode, srcRoot, destDir, func(index int, ext string) string {
+	return flattenAudiobookDirNamed(ctx, mode, srcRoot, destDir, func(index, _ int, ext string) string {
 		return fmt.Sprintf("Part %03d%s", index+1, ext)
 	})
 }
@@ -176,9 +176,11 @@ func flattenAudiobookDir(ctx context.Context, mode, srcRoot, destDir string) err
 // flattenAudiobookDirNamed is flattenAudiobookDir with a caller-supplied namer,
 // so both the built-in "Part NNN" multi-disc flatten and the opt-in per-file
 // audiobook naming template (#1126) share one deterministic placement path.
-// nameFor receives the 0-based playback index and the lowercased source
-// extension (with leading dot) and returns the destination basename.
-func flattenAudiobookDirNamed(ctx context.Context, mode, srcRoot, destDir string, nameFor func(index int, ext string) string) error {
+// nameFor receives the 0-based playback index, the number of tracks, and the
+// lowercased source extension (with leading dot) and returns the destination
+// basename. The count lets the template namer give a folder holding a single
+// track the same name as a lone audiobook file (#2900).
+func flattenAudiobookDirNamed(ctx context.Context, mode, srcRoot, destDir string, nameFor func(index, count int, ext string) string) error {
 	if mode != "copy" && mode != "hardlink" {
 		return fmt.Errorf("flatten supports copy/hardlink only, got %q", mode)
 	}
@@ -205,7 +207,7 @@ func flattenAudiobookDirNamed(ctx context.Context, mode, srcRoot, destDir string
 			return err
 		}
 		ext := strings.ToLower(filepath.Ext(tr.src))
-		name := filepath.Base(nameFor(i, ext))
+		name := filepath.Base(nameFor(i, len(tracks), ext))
 		if _, clash := reserved[name]; clash {
 			// A template that omits {Part} would collapse every track to one
 			// name and silently drop all but the last. Fail loudly instead.

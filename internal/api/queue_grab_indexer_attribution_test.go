@@ -11,7 +11,7 @@ import (
 // fallback exists for API clients that post {guid, nzbUrl} with no indexer id,
 // and it used to return only the signed URL. The grab then persisted a download
 // row with a nil IndexerID, so the queue could not say where the release came
-// from and resolveSeedRatio had no id to look an override up against.
+// from and resolveSeedLimits had no id to look an override up against.
 //
 // Asserting the id and the URL together matters: returning the URL was never
 // broken, so a test that only checked signing would have passed throughout.

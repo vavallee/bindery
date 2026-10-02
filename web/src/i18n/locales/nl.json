@@ -349,7 +349,7 @@
       "apiKeys": "Externe API-sleutels",
       "googleBooksKey": "Google Books API-sleutel",
       "storage": "Opslag",
-      "storageHint": "Paden die Bindery leest en waarnaar het schrijft. Configureer via omgevingsvariabelen (of je configuratiebestand); het draaiende proces leest ze bij het starten in.",
+      "storageHint": "Paden die Bindery leest en waarnaar het schrijft. Configureer via omgevingsvariabelen; het draaiende proces leest ze bij het starten in.",
       "downloadDir": "Downloadmap",
       "audiobookDownloadDir": "Downloadmap voor luisterboeken",
       "audiobookDownloadDirFallback": "Niet ingesteld — luisterboekdownloads gebruiken de algemene downloadmap.",

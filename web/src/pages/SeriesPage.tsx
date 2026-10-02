@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useLocation } from 'react-router'
+import { Link, useLocation, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, MediaType, Series, SeriesHardcoverDiff, SeriesHardcoverDiffBook, SeriesHardcoverLink, SeriesHardcoverSearchResult, SystemStatus } from '../api/client'
 import { hardcoverSeriesUrl } from '../util/metadataSource'
@@ -11,12 +11,41 @@ import { btn, btnSize } from '../components/buttons'
 import Switch from '../components/Switch'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 
+// Series page filters (#2871). Each is computed from the series list the page
+// already loaded; none of them marks, monitors, searches or fills anything.
+const SERIES_FILTERS = ['all', 'missing', 'complete', 'unlinked', 'shortlisted'] as const
+type SeriesFilter = typeof SERIES_FILTERS[number]
+
+function parseSeriesFilter(raw: string | null): SeriesFilter {
+  return SERIES_FILTERS.find(f => f === raw) ?? 'all'
+}
+
+// The counts behind a series card's "N missing" badge, and the only place they
+// are computed, so the Missing and Complete filters cannot disagree with the
+// badge the user is looking at. With enhanced Hardcover on, the badge can count
+// catalogue books that are not in the library: the exact figure from the diff
+// once the card has been opened, otherwise the estimate from the linked
+// series' book count. Both come from data already on the page; the filters
+// never fetch a diff per series to decide.
+function seriesMissingCounts(series: Series, enhancedHardcoverApi: boolean, diff?: SeriesHardcoverDiff) {
+  const books = series.books ?? []
+  // Excluded books are not a gap: counting them showed a "missing" pill
+  // that Fill could not act on (#2324).
+  const gapCount = books.filter(b => b.book && b.book.status !== 'imported' && !b.book.excluded).length
+  const hardcoverMissingEstimate = enhancedHardcoverApi ? Math.max(0, (series.hardcoverLink?.hardcoverBookCount ?? 0) - books.length) : 0
+  const hardcoverMissingCount = enhancedHardcoverApi ? (diff?.missingCount ?? hardcoverMissingEstimate) : 0
+  const displayMissingCount = Math.max(gapCount, hardcoverMissingCount)
+  return { gapCount, hardcoverMissingCount, displayMissingCount }
+}
+
 export default function SeriesPage() {
   const { t } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
   const location = useLocation()
   const [seriesList, setSeriesList] = useState<Series[]>([])
   const [search, setSearch] = useState('')
+  // The filter lives in the query string so reload and back keep it.
+  const [searchParams, setSearchParams] = useSearchParams()
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<number | null>(null)
   const [filling, setFilling] = useState<number | null>(null)
@@ -248,7 +277,42 @@ export default function SeriesPage() {
     }
   }
 
-  const filteredSeries = seriesList.filter(series => foldedIncludes(series.title, search))
+  // Unlinked only means something when Hardcover linking is on; otherwise
+  // the page shows no link controls, so a stale ?filter=unlinked shows all.
+  const requestedFilter = parseSeriesFilter(searchParams.get('filter'))
+  const filter: SeriesFilter = requestedFilter === 'unlinked' && !enhancedHardcoverApi ? 'all' : requestedFilter
+  const availableFilters = SERIES_FILTERS.filter(f => f !== 'unlinked' || enhancedHardcoverApi)
+
+  const selectFilter = (next: SeriesFilter) => {
+    const params = new URLSearchParams(searchParams)
+    if (next === 'all') params.delete('filter')
+    else params.set('filter', next)
+    setSearchParams(params, { replace: true })
+    // Opening a card can move it between Missing and Complete (its exact
+    // Hardcover diff replaces the estimate), so the open card stays listed
+    // until the user picks another filter; then the list starts clean.
+    setExpanded(null)
+  }
+
+  const matchesFilter = (series: Series) => {
+    switch (filter) {
+      case 'missing':
+        return seriesMissingCounts(series, enhancedHardcoverApi, diffs[series.id]).displayMissingCount > 0
+      case 'complete':
+        // A series with no books is not complete, it is empty.
+        return (series.books?.length ?? 0) > 0 &&
+          seriesMissingCounts(series, enhancedHardcoverApi, diffs[series.id]).displayMissingCount === 0
+      case 'unlinked':
+        return !series.hardcoverLink
+      case 'shortlisted':
+        return series.monitored
+      default:
+        return true
+    }
+  }
+
+  const filteredSeries = seriesList.filter(series =>
+    foldedIncludes(series.title, search) && (series.id === expanded || matchesFilter(series)))
 
   return (
     <div>
@@ -256,7 +320,9 @@ export default function SeriesPage() {
       <div className="flex items-center justify-between gap-3 flex-wrap mb-6">
         <h2 className="text-2xl font-bold">Series</h2>
         <div className="flex items-center gap-3">
-          <span className="text-sm text-slate-600 dark:text-zinc-500">{seriesList.length} series</span>
+          <span className="text-sm text-slate-600 dark:text-zinc-500">
+            {filter === 'all' ? `${seriesList.length} series` : t('series.countFiltered', { shown: filteredSeries.length, total: seriesList.length })}
+          </span>
           <button
             onClick={() => setShowAddSeries(true)}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-md text-sm font-medium transition-colors"
@@ -275,6 +341,20 @@ export default function SeriesPage() {
           placeholder={t('series.searchPlaceholder')}
           className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 placeholder-slate-400 dark:placeholder-zinc-600"
         />
+        <div role="group" aria-label={t('series.filterLabel')} className="flex gap-1 flex-wrap items-center">
+          {availableFilters.map(f => (
+            <button
+              key={f}
+              type="button"
+              aria-pressed={filter === f}
+              onClick={() => selectFilter(f)}
+              title={f === 'missing' && enhancedHardcoverApi ? t('series.filterMissingHint') : undefined}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filter === f ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`}
+            >
+              {t(`series.filter.${f}`)}
+            </button>
+          ))}
+        </div>
       </div>
 
       {loading ? (
@@ -286,7 +366,13 @@ export default function SeriesPage() {
         </div>
       ) : filteredSeries.length === 0 ? (
         <div className="text-center py-16 text-slate-600 dark:text-zinc-500" role="status">
-          <p>{t('series.noMatch', { query: search })}</p>
+          <p>
+            {filter === 'all'
+              ? t('series.noMatch', { query: search })
+              : search.trim()
+                ? t('series.noMatchFiltered', { query: search })
+                : t('series.noFilterMatch')}
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
@@ -296,13 +382,8 @@ export default function SeriesPage() {
           {filteredSeries.map(series => {
             const books = series.books ?? []
             const bookCount = books.length
-            // Excluded books are not a gap: counting them showed a "missing" pill
-            // that Fill could not act on (#2324).
-            const gapCount = books.filter(b => b.book && b.book.status !== 'imported' && !b.book.excluded).length
             const diff = diffs[series.id]
-            const hardcoverMissingEstimate = enhancedHardcoverApi ? Math.max(0, (series.hardcoverLink?.hardcoverBookCount ?? 0) - bookCount) : 0
-            const hardcoverMissingCount = enhancedHardcoverApi ? (diff?.missingCount ?? hardcoverMissingEstimate) : 0
-            const displayMissingCount = Math.max(gapCount, hardcoverMissingCount)
+            const { gapCount, hardcoverMissingCount, displayMissingCount } = seriesMissingCounts(series, enhancedHardcoverApi, diff)
             const fillNeeded = gapCount > 0 || hardcoverMissingCount > 0
             const isOpen = expanded === series.id
             const sortedBooks = [...books].sort((a, b) => {

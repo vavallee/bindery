@@ -37,6 +37,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
   const [dropErr, setDropErr] = useState<string | null>(null)
+  const [audiobookDropErr, setAudiobookDropErr] = useState<string | null>(null)
   const [langErr, setLangErr] = useState<string | null>(null)
   const [scanningLibrary, setScanningLibrary] = useState(false)
   const [showReorganize, setShowReorganize] = useState(false)
@@ -62,6 +63,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const [storage, setStorage] = useState<StorageHealth | null>(null)
   const [langSaveResult, langSave] = useSaveResult()
   const [dropSaveResult, dropSave] = useSaveResult()
+  const [audiobookDropSaveResult, audiobookDropSave] = useSaveResult()
   const [bookTemplateResult, bookTemplateSave] = useSaveResult()
   const [audiobookTemplateResult, audiobookTemplateSave] = useSaveResult()
   const [audiobookFileResult, audiobookFileSave] = useSaveResult()
@@ -113,6 +115,22 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Save failed'
       setDropErr(msg)
+      throw err
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  // saveAudiobookDropFolder is saveDropFolder for the audiobook drop folder
+  // (#1632): same server-side path check, error shown inline under its input.
+  const saveAudiobookDropFolder = async () => {
+    setSaving('import.audiobook.drop_folder')
+    setAudiobookDropErr(null)
+    try {
+      await api.setSetting('import.audiobook.drop_folder', settings['import.audiobook.drop_folder'] ?? '')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Save failed'
+      setAudiobookDropErr(msg)
       throw err
     } finally {
       setSaving(null)
@@ -186,6 +204,16 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const discoveryInterval = settings['authors.discovery.interval'] || 'off'
   const discoveryIntervalIsCustom = !DISCOVERY_INTERVAL_PRESETS.includes(discoveryInterval)
 
+  // Per format import routing (#1632). import.mode applies to both formats
+  // unless import.audiobook.mode overrides it for audiobooks; empty means
+  // "same as ebooks". The external section below shows whenever either
+  // format is external, with each format's drop folder shown only when that
+  // format actually drops.
+  const importMode = settings['import.mode'] ?? 'auto'
+  const audiobookModeSetting = settings['import.audiobook.mode'] ?? ''
+  const audiobookMode = audiobookModeSetting || importMode
+  const anyExternal = importMode === 'external' || audiobookMode === 'external'
+
   if (loading) return <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
 
   return (
@@ -242,7 +270,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                     await api.setSetting('import.mode', m).catch(console.error)
                   }}
                   className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
-                    (settings['import.mode'] ?? 'auto') === m
+                    importMode === m
                       ? 'bg-emerald-600 border-emerald-600 text-white'
                       : 'border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
@@ -256,7 +284,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 down in Storage, which is too far from the decision to be seen
                 — Docker volume mounts look like sibling paths (#1720). `auto`
                 handles the fallback correctly, so only this choice warns. */}
-            {(settings['import.mode'] ?? 'auto') === 'hardlink' && storage && !storage.hardlinkable && (
+            {importMode === 'hardlink' && storage && !storage.hardlinkable && (
               <p data-testid="import-mode-hardlink-warning" className="text-xs text-amber-600 dark:text-amber-400 mt-2">
                 {t('settings.general.importModeHardlinkWarning')}
                 {storage.hardlinkReason && (
@@ -265,7 +293,31 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               </p>
             )}
           </div>
-          {['copy', 'hardlink'].includes(settings['import.mode'] ?? 'auto') && (
+          <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
+            <label htmlFor="import-audiobook-mode" className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+              {t('settings.general.audiobookImportMode')}
+            </label>
+            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+              {t('settings.general.audiobookImportModeHint')}
+            </p>
+            <select
+              id="import-audiobook-mode"
+              data-testid="import-audiobook-mode"
+              value={audiobookModeSetting}
+              onChange={async e => {
+                const v = e.target.value
+                setSettings(s => ({ ...s, 'import.audiobook.mode': v }))
+                await api.setSetting('import.audiobook.mode', v).catch(console.error)
+              }}
+              className={inputCls}
+            >
+              <option value="">{t('settings.general.audiobookImportModeSame')}</option>
+              {(['auto', 'move', 'copy', 'hardlink', 'external'] as const).map(m => (
+                <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>
+              ))}
+            </select>
+          </div>
+          {['copy', 'hardlink'].includes(audiobookMode) && (
             <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
               <label className="flex items-start gap-2 cursor-pointer">
                 <input
@@ -289,8 +341,9 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               </label>
             </div>
           )}
-          {(settings['import.mode'] ?? 'auto') === 'external' && (
+          {anyExternal && (
             <div className="border-t border-slate-200 dark:border-zinc-800 pt-3 space-y-3">
+              {importMode === 'external' && (
               <div>
                 <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.dropFolder', 'Drop folder')}</label>
                 <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
@@ -311,6 +364,31 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 </div>
                 {dropErr && <p className="text-xs text-red-600 dark:text-red-400 mt-1">{dropErr}</p>}
               </div>
+              )}
+              {audiobookMode === 'external' && (
+              <div>
+                <label htmlFor="import-audiobook-drop-folder" className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.audiobookDropFolder')}</label>
+                <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+                  {t('settings.general.audiobookDropFolderHint')}
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    id="import-audiobook-drop-folder"
+                    data-testid="import-audiobook-drop-folder"
+                    value={settings['import.audiobook.drop_folder'] ?? ''}
+                    onChange={e => { setSettings(s => ({ ...s, 'import.audiobook.drop_folder': e.target.value })); setAudiobookDropErr(null) }}
+                    placeholder={importMode === 'external' ? (settings['import.drop_folder'] || '/audiobook-ingest') : '/audiobook-ingest'}
+                    className={inputCls + ' flex-1'}
+                  />
+                  <SaveButton
+                    result={audiobookDropSaveResult}
+                    saving={saving === 'import.audiobook.drop_folder'}
+                    onClick={() => audiobookDropSave(saveAudiobookDropFolder)}
+                  />
+                </div>
+                {audiobookDropErr && <p className="text-xs text-red-600 dark:text-red-400 mt-1">{audiobookDropErr}</p>}
+              </div>
+              )}
               <div className="flex gap-6 flex-wrap">
                 <div>
                   <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.dropLayout', 'Layout')}</label>
@@ -393,7 +471,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               {t('settings.general.audiobookFileTemplate', 'Audiobook file naming (per track)')}
             </label>
             <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
-              {t('settings.general.audiobookFileTemplateHint', 'Leave empty to keep the download’s original file layout. Set a template to rename every audiobook track in playback order — it must include {Part}.')}
+              {t('settings.general.audiobookFileTemplateHint', 'Leave empty to keep the download’s original file layout. Set a template to rename every audiobook track in playback order; it must include {Part}. A single-file audiobook is renamed too, as part 1, unless {Part} sits in a group with its own text, such as {Title}{ - Pt. Part:3}.{ext}, which is left out when there is only one file.')}
             </p>
             <div className="flex gap-2">
               <input

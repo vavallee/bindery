@@ -20,6 +20,7 @@ type DownloadClient struct {
 	PathRemap         string                `json:"pathRemap"`
 	Priority          int                   `json:"priority"`
 	Enabled           bool                  `json:"enabled"`
+	RemoveOnImport    bool                  `json:"removeOnImport"`
 	CreatedAt         time.Time             `json:"createdAt"`
 	UpdatedAt         time.Time             `json:"updatedAt"`
 	Health            *DownloadClientHealth `json:"health,omitempty"`

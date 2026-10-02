@@ -1,0 +1,2 @@
+### Added
+- **Remove a torrent from the download client after it imports** (#2046): a new per client toggle, Remove torrent after import, for qBittorrent and Transmission. It is off by default. When on, Bindery removes the finished torrent from the client once the book is imported and leaves the downloaded files on disk, so a hard linked or copied import is unaffected. Leave it off on private trackers where you need to keep seeding. Deluge and rTorrent do not offer it yet. Thanks ccarpinteri for building it.

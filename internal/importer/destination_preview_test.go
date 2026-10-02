@@ -80,9 +80,9 @@ func TestPreviewImportDestination_FormatHintWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreviewImportDestination: %v", err)
 	}
-	want := filepath.Join(audiobookDir, "Jane Doe", "Right Book (2020)")
+	want := filepath.Join(audiobookDir, "Jane Doe", "Right Book (2020)", "mislabelled.epub")
 	if got.Destination != want {
-		t.Errorf("destination = %q, want the audiobook root %q", got.Destination, want)
+		t.Errorf("destination = %q, want inside the audiobook root %q", got.Destination, want)
 	}
 }
 

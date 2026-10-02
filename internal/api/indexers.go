@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -196,6 +197,36 @@ func validateDailyQueryLimit(idx models.Indexer) error {
 	return nil
 }
 
+// maxSeedTimeMinutes bounds the per-indexer seed time limits (#2206) at ten
+// years. Nothing real needs more, and it keeps the value well inside the int32
+// that qBittorrent parses it into.
+const maxSeedTimeMinutes = 10 * 365 * 24 * 60
+
+// validateSeedTimeLimits rejects a seed time limit below one minute or above
+// maxSeedTimeMinutes. nil (the key omitted or sent as null) means "no
+// override" and is always fine. Zero is rejected rather than read as "unset":
+// qBittorrent would take it as "stop seeding the moment the download
+// finishes", which on a private tracker is a hit and run, and the form clears
+// the field by sending null.
+func validateSeedTimeLimits(idx models.Indexer) error {
+	check := func(name string, v *int) error {
+		if v == nil {
+			return nil
+		}
+		if *v < 1 {
+			return fmt.Errorf("%s must be at least 1 minute; leave it empty to use the download client's own rule", name)
+		}
+		if *v > maxSeedTimeMinutes {
+			return fmt.Errorf("%s must be at most %d minutes", name, maxSeedTimeMinutes)
+		}
+		return nil
+	}
+	if err := check("seedTimeMinutes", idx.SeedTimeMinutes); err != nil {
+		return err
+	}
+	return check("inactiveSeedTimeMinutes", idx.InactiveSeedTimeMinutes)
+}
+
 // indexerResponse strips the stored API key and reports whether one is set.
 // Indexer credentials are write-only over the API: the client needs to know
 // that a key exists so it can render "leave blank to keep the existing key",
@@ -278,6 +309,10 @@ func (h *IndexerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if err := validateSeedTimeLimits(idx); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if idx.Type == "" {
 		idx.Type = "newznab"
 	}
@@ -292,6 +327,13 @@ func (h *IndexerHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// touches them, but recording the provenance keeps the field consistent.
 	if idx.SeedRatio != nil {
 		idx.SeedRatioSource = models.SeedRatioSourceUser
+	}
+	// Same rule for the seed time (#2206). Anything a client sent in the
+	// source field itself is ignored: provenance is the server's to record.
+	if idx.SeedTimeMinutes != nil {
+		idx.SeedTimeSource = models.SeedRatioSourceUser
+	} else {
+		idx.SeedTimeSource = models.SeedRatioSourceUnset
 	}
 
 	// Check for duplicate URL
@@ -366,12 +408,19 @@ func (h *IndexerHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if err := validateSeedTimeLimits(idx); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	idx.ID = id
 	// A user editing the indexer takes ownership of the seed-ratio override, so
 	// the Prowlarr syncer (#1065) will not overwrite it on the next sync. This
 	// holds even when the user clears the value to null ("no override") or sets
 	// the -1 unlimited sentinel — the explicit choice sticks.
 	idx.SeedRatioSource = models.SeedRatioSourceUser
+	// The seed time (#2206) follows the same rule, so a value the user saw
+	// auto-filled from Prowlarr and saved, or cleared, stays as they left it.
+	idx.SeedTimeSource = models.SeedRatioSourceUser
 	if err := h.indexers.Update(r.Context(), &idx); err != nil {
 		writeServerError(w, r, err)
 		return
@@ -536,6 +585,10 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		// builds the QualityAllowed annotation below, so the book page's
 		// order and its approved flags come from one definition.
 		Profile: qualityProfile,
+		// The book's stored runtime lets the size term score an audio release
+		// by its density instead of its total size; zero keeps the flat bonus
+		// (#2740).
+		DurationSeconds: book.DurationSeconds,
 	}
 	if book.ReleaseDate != nil {
 		crit.Year = book.ReleaseDate.Year()
