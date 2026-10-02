@@ -822,7 +822,10 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		status := http.StatusBadGateway
-		if strings.Contains(err.Error(), "no enabled") && strings.Contains(err.Error(), "download client configured") {
+		// Both "no enabled ... download client configured" (noProtocolClientError)
+		// and "no enabled download client is eligible for ..." (noEligibleMediaTypeError)
+		// are configuration problems, not a downloader-side failure — 400, not 502.
+		if strings.Contains(err.Error(), "no enabled") {
 			status = http.StatusBadRequest
 		}
 		writeJSON(w, status, map[string]string{"error": err.Error()})
@@ -1124,15 +1127,19 @@ func (h *QueueHandler) BulkRetry(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, queueRetryResponse{Results: results})
 }
 
-// selectClient picks the best enabled client for the given protocol and media type.
-// It prefers a client whose category hints match the media type when multiple
-// clients of the same protocol type are configured.
+// selectClients returns every enabled client of the given protocol that is
+// eligible for the given media type, ranked best-first (priority, then
+// category hint) — see db.FilterEligibleForMediaType and db.RankClientsForMediaType.
+// grab() sends to the highest-ranked eligible client. A failed response can
+// be ambiguous about whether the client accepted the release, so it must not
+// be retried against another client automatically.
 //
 // When no client of the requested protocol is enabled, the returned error names
 // the protocol and — if the user has enabled clients of the *other* protocol —
 // spells out the mismatch so they don't re-check the client they already
-// verified. See noProtocolClientError.
-func (h *QueueHandler) selectClient(ctx context.Context, protocol, mediaType string) (*models.DownloadClient, error) {
+// verified. See noProtocolClientError. When clients of the right protocol exist
+// but none opted in to this media type, see noEligibleMediaTypeError.
+func (h *QueueHandler) selectClients(ctx context.Context, protocol, mediaType string) ([]models.DownloadClient, error) {
 	candidates, err := h.clients.GetEnabledByProtocol(ctx, protocol)
 	if err != nil {
 		return nil, err
@@ -1140,7 +1147,31 @@ func (h *QueueHandler) selectClient(ctx context.Context, protocol, mediaType str
 	if len(candidates) == 0 {
 		return nil, h.noProtocolClientError(ctx, protocol)
 	}
-	return db.PickClientForMediaType(candidates, mediaType), nil
+	eligible := db.FilterEligibleForMediaType(candidates, mediaType)
+	if len(eligible) == 0 {
+		otherProtocol := otherProtocol(protocol)
+		otherCandidates, otherErr := h.clients.GetEnabledByProtocol(ctx, otherProtocol)
+		if otherErr == nil && len(db.FilterEligibleForMediaType(otherCandidates, mediaType)) > 0 {
+			mediaLabel := "books"
+			if mediaType == models.MediaTypeAudiobook {
+				mediaLabel = "audiobooks"
+			}
+			return nil, fmt.Errorf("no enabled %s download client is eligible for %s; the eligible %s client cannot handle this release, so configure an eligible %s client", protocolLabel(protocol), mediaLabel, otherProtocol, protocolLabel(protocol))
+		}
+		return nil, noEligibleMediaTypeError(mediaType)
+	}
+	return db.RankClientsForMediaType(eligible, mediaType), nil
+}
+
+// noEligibleMediaTypeError builds the "no enabled download client is eligible"
+// error for when every enabled client of the right protocol has opted out of
+// this release's media type (EnabledForBooks / EnabledForAudiobooks).
+func noEligibleMediaTypeError(mediaType string) error {
+	label := "books"
+	if mediaType == models.MediaTypeAudiobook {
+		label = "audiobooks"
+	}
+	return fmt.Errorf("no enabled download client is eligible for %s — enable a download client for %s in Settings", label, label)
 }
 
 // noProtocolClientError builds an actionable "no enabled download client" error.
@@ -1207,18 +1238,15 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, alreadyGrabbedDetail(existing.Status))
 	}
 
-	client, err := h.selectClient(ctx, req.Protocol, req.MediaType)
+	candidates, err := h.selectClients(ctx, req.Protocol, req.MediaType)
 	if err != nil {
-		// selectClient already produced an actionable, protocol-aware message
-		// (see noProtocolClientError); propagate it rather than flattening it
-		// to the generic "no enabled download client configured".
+		// selectClients already produced an actionable, protocol- or
+		// media-type-aware message (see noProtocolClientError /
+		// noEligibleMediaTypeError); propagate it rather than flattening it.
 		return nil, err
 	}
-	if client == nil {
-		return nil, h.noProtocolClientError(ctx, req.Protocol)
-	}
 
-	protocol := downloader.ProtocolForClient(client.Type)
+	protocol := downloader.ProtocolForClient(candidates[0].Type)
 	// Coerce zero-valued BookID/IndexerID to nil. A caller that JSON-decodes
 	// into an older int64-typed grabRequest, or writes an explicit {"bookId":0},
 	// would otherwise insert 0 into the FK column and violate the constraint.
@@ -1271,12 +1299,16 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	if hostMatched != nil {
 		indexerID = hostMatched
 	}
+	// Tentative pick: the row exists before any network call is made (crash
+	// safety), attributed to the best-ranked candidate. If sending to it fails,
+	// the fallback loop below corrects DownloadClientID to whichever client
+	// actually accepted the release.
 	dl := &models.Download{
 		GUID:             req.GUID,
 		BookID:           bookID,
 		EditionID:        editionID,
 		IndexerID:        indexerID,
-		DownloadClientID: &client.ID,
+		DownloadClientID: &candidates[0].ID,
 		OwnerUserID:      grabOwner,
 		Title:            req.Title,
 		NZBURL:           nzbURL,
@@ -1299,6 +1331,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		return nil, err
 	}
 
+	client := &candidates[0]
 	sendRes, err := downloader.SendDownload(ctx, client, nzbURL, req.Title, downloader.SendOptions{
 		MediaType:            req.MediaType,
 		DownloadDir:          h.downloadDir,
@@ -1306,17 +1339,17 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		SeedRatio:            h.resolveSeedRatio(ctx, indexerID),
 	})
 	if err != nil {
-		slog.Error("failed to send download", "client_type", client.Type, "error", err, "title", req.Title)
-		if setErr := h.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {
+		slog.Error("failed to send download to eligible client", "client", client.Name, "error", err, "title", req.Title)
+		wrapped := fmt.Errorf("failed to send to eligible download client %s: %w", client.Name, err)
+		if setErr := h.downloads.SetError(ctx, dl.ID, wrapped.Error()); setErr != nil {
 			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
 		}
-		h.recordHistory(ctx, models.HistoryEventDownloadFailed, req.Title, bookID, map[string]any{"guid": req.GUID, "message": err.Error()})
+		h.recordHistory(ctx, models.HistoryEventDownloadFailed, req.Title, bookID, map[string]any{"guid": req.GUID, "message": wrapped.Error()})
 		if h.notif != nil {
-			h.notif.Send(ctx, notifier.EventDownloadFailed, map[string]any{"title": req.Title, "message": err.Error()})
+			h.notif.Send(ctx, notifier.EventDownloadFailed, map[string]any{"title": req.Title, "message": wrapped.Error()})
 		}
-		return nil, fmt.Errorf("failed to send to downloader: %w", err)
+		return nil, wrapped
 	}
-
 	if remoteID := sendRes.RemoteID; remoteID != "" {
 		if sendRes.UsesTorrentID {
 			normalised := strings.ToLower(remoteID)

@@ -267,16 +267,18 @@ func importReadarrDownloadClients(ctx context.Context, src *sql.DB, repo *db.Dow
 		}
 
 		c := &models.DownloadClient{
-			Name:     name,
-			Type:     t,
-			Host:     host,
-			Port:     s.Port,
-			APIKey:   s.APIKey,
-			Username: s.Username,
-			Password: s.Password,
-			Category: cat,
-			UseSSL:   s.UseSsl,
-			Enabled:  enable,
+			Name:                 name,
+			Type:                 t,
+			Host:                 host,
+			Port:                 s.Port,
+			APIKey:               s.APIKey,
+			Username:             s.Username,
+			Password:             s.Password,
+			Category:             cat,
+			UseSSL:               s.UseSsl,
+			Enabled:              enable,
+			EnabledForBooks:      true,
+			EnabledForAudiobooks: true,
 		}
 		// Same SSRF check the Add Download Client form runs (#2349). The RPC
 		// clients have no dial-time guard of their own, so an unvalidated host

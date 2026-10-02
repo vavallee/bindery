@@ -278,10 +278,10 @@ func TestImportReadarr_HappyPath(t *testing.T) {
 			qbt = &clients[i]
 		}
 	}
-	if sab == nil || sab.Type != "sabnzbd" || sab.Category != "ebooks" || sab.APIKey != "sabkey" {
+	if sab == nil || sab.Type != "sabnzbd" || sab.Category != "ebooks" || sab.APIKey != "sabkey" || !sab.EnabledForBooks || !sab.EnabledForAudiobooks {
 		t.Errorf("SAB unexpected: %+v", sab)
 	}
-	if qbt == nil || qbt.Type != "qbittorrent" || qbt.Username != "u" || qbt.Password != "p" {
+	if qbt == nil || qbt.Type != "qbittorrent" || qbt.Username != "u" || qbt.Password != "p" || !qbt.EnabledForBooks || !qbt.EnabledForAudiobooks {
 		t.Errorf("QBT unexpected: %+v", qbt)
 	}
 	// QBT has no tvCategory — should default to "books".

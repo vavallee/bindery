@@ -39,6 +39,7 @@ func TestQueueGrab_HistoryRecordsResolvedIndexerID(t *testing.T) {
 	host, port := testServerHostPort(t, sab.URL)
 	if err := clients.Create(ctx, &models.DownloadClient{
 		Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true,
+		EnabledForBooks: true, EnabledForAudiobooks: true,
 	}); err != nil {
 		t.Fatalf("create client: %v", err)
 	}

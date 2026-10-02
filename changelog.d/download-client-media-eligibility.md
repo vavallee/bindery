@@ -1,0 +1,2 @@
+### Added
+- **Download client media eligibility and priority** — download clients now feature independent "Eligible for books" and "Eligible for audiobooks" toggles (both on by default) and a configurable Priority. Priority is considered before category hints, so existing installs may select a different client. Grabs route to the highest-ranked eligible client; a failed send is reported rather than retried because the client may already have accepted it.

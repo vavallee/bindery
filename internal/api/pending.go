@@ -177,11 +177,14 @@ func (h *PendingHandler) Grab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up the book's media type.
-	mediaType := "ebook"
-	if h.books != nil {
-		if book, err := h.books.GetByID(r.Context(), pr.BookID); err == nil && book != nil {
-			mediaType = book.MediaType
+	// The release's type is authoritative, especially for dual-format books.
+	mediaType := pr.MediaType
+	if mediaType == "" {
+		mediaType = models.MediaTypeEbook
+		if h.books != nil {
+			if book, err := h.books.GetByID(r.Context(), pr.BookID); err == nil && book != nil {
+				mediaType = book.MediaType
+			}
 		}
 	}
 	stored.BookID = &pr.BookID

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,7 +18,8 @@ type DownloadClientRepo struct {
 
 const downloadClientSelectColumns = `
 	id, name, type, host, port, api_key, use_ssl, url_base, username, password,
-	category, category_audiobook, path_remap, priority, enabled, created_at, updated_at`
+	category, category_audiobook, path_remap, priority, enabled,
+	enabled_for_books, enabled_for_audiobooks, created_at, updated_at`
 
 // torrentClientTypes and usenetClientTypes are the download-client types each
 // protocol can be served by. They back the protocol-scoped queries below; a new
@@ -141,14 +143,16 @@ func (r *DownloadClientRepo) List(ctx context.Context) ([]models.DownloadClient,
 	var clients []models.DownloadClient
 	for rows.Next() {
 		var c models.DownloadClient
-		var enabled, useSSL int
+		var enabled, useSSL, enabledForBooks, enabledForAudiobooks int
 		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
 			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-			&enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&enabled, &enabledForBooks, &enabledForAudiobooks, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.Enabled = enabled == 1
 		c.UseSSL = useSSL == 1
+		c.EnabledForBooks = enabledForBooks == 1
+		c.EnabledForAudiobooks = enabledForAudiobooks == 1
 		hydrateClientCredentials(&c)
 		clients = append(clients, c)
 	}
@@ -157,13 +161,13 @@ func (r *DownloadClientRepo) List(ctx context.Context) ([]models.DownloadClient,
 
 func (r *DownloadClientRepo) GetByID(ctx context.Context, id int64) (*models.DownloadClient, error) {
 	var c models.DownloadClient
-	var enabled, useSSL int
+	var enabled, useSSL, enabledForBooks, enabledForAudiobooks int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT `+downloadClientSelectColumns+`
 		FROM download_clients WHERE id=?`, id).
 		Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
 			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-			&enabled, &c.CreatedAt, &c.UpdatedAt)
+			&enabled, &enabledForBooks, &enabledForAudiobooks, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -172,6 +176,8 @@ func (r *DownloadClientRepo) GetByID(ctx context.Context, id int64) (*models.Dow
 	}
 	c.Enabled = enabled == 1
 	c.UseSSL = useSSL == 1
+	c.EnabledForBooks = enabledForBooks == 1
+	c.EnabledForAudiobooks = enabledForAudiobooks == 1
 	hydrateClientCredentials(&c)
 	return &c, nil
 }
@@ -189,14 +195,16 @@ func (r *DownloadClientRepo) ListEnabled(ctx context.Context) ([]models.Download
 	var clients []models.DownloadClient
 	for rows.Next() {
 		var c models.DownloadClient
-		var enabled, useSSL int
+		var enabled, useSSL, enabledForBooks, enabledForAudiobooks int
 		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
 			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-			&enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&enabled, &enabledForBooks, &enabledForAudiobooks, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.Enabled = enabled == 1
 		c.UseSSL = useSSL == 1
+		c.EnabledForBooks = enabledForBooks == 1
+		c.EnabledForAudiobooks = enabledForAudiobooks == 1
 		hydrateClientCredentials(&c)
 		clients = append(clients, c)
 	}
@@ -205,13 +213,13 @@ func (r *DownloadClientRepo) ListEnabled(ctx context.Context) ([]models.Download
 
 func (r *DownloadClientRepo) GetFirstEnabled(ctx context.Context) (*models.DownloadClient, error) {
 	var c models.DownloadClient
-	var enabled, useSSL int
+	var enabled, useSSL, enabledForBooks, enabledForAudiobooks int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT `+downloadClientSelectColumns+`
 		FROM download_clients WHERE enabled=1 ORDER BY priority LIMIT 1`).
 		Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
 			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-			&enabled, &c.CreatedAt, &c.UpdatedAt)
+			&enabled, &enabledForBooks, &enabledForAudiobooks, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -220,6 +228,8 @@ func (r *DownloadClientRepo) GetFirstEnabled(ctx context.Context) (*models.Downl
 	}
 	c.Enabled = enabled == 1
 	c.UseSSL = useSSL == 1
+	c.EnabledForBooks = enabledForBooks == 1
+	c.EnabledForAudiobooks = enabledForAudiobooks == 1
 	hydrateClientCredentials(&c)
 	return &c, nil
 }
@@ -229,14 +239,14 @@ func (r *DownloadClientRepo) GetFirstEnabled(ctx context.Context) (*models.Downl
 // Returns (nil, nil) if no matching client is configured.
 func (r *DownloadClientRepo) GetFirstEnabledByProtocol(ctx context.Context, protocol string) (*models.DownloadClient, error) {
 	var c models.DownloadClient
-	var enabled, useSSL int
+	var enabled, useSSL, enabledForBooks, enabledForAudiobooks int
 	placeholders, args := clientTypesForProtocol(protocol)
 	err := r.db.QueryRowContext(ctx, `
 		SELECT `+downloadClientSelectColumns+`
 		FROM download_clients WHERE enabled=1 AND type IN (`+placeholders+`) ORDER BY priority LIMIT 1`, args...).
 		Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
 			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-			&enabled, &c.CreatedAt, &c.UpdatedAt)
+			&enabled, &enabledForBooks, &enabledForAudiobooks, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
@@ -245,6 +255,8 @@ func (r *DownloadClientRepo) GetFirstEnabledByProtocol(ctx context.Context, prot
 	}
 	c.Enabled = enabled == 1
 	c.UseSSL = useSSL == 1
+	c.EnabledForBooks = enabledForBooks == 1
+	c.EnabledForAudiobooks = enabledForAudiobooks == 1
 	hydrateClientCredentials(&c)
 	return &c, nil
 }
@@ -265,14 +277,16 @@ func (r *DownloadClientRepo) GetEnabledByProtocol(ctx context.Context, protocol 
 	var clients []models.DownloadClient
 	for rows.Next() {
 		var c models.DownloadClient
-		var enabled, useSSL int
+		var enabled, useSSL, enabledForBooks, enabledForAudiobooks int
 		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
 			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-			&enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&enabled, &enabledForBooks, &enabledForAudiobooks, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.Enabled = enabled == 1
 		c.UseSSL = useSSL == 1
+		c.EnabledForBooks = enabledForBooks == 1
+		c.EnabledForAudiobooks = enabledForAudiobooks == 1
 		hydrateClientCredentials(&c)
 		clients = append(clients, c)
 	}
@@ -283,9 +297,9 @@ func (r *DownloadClientRepo) Create(ctx context.Context, c *models.DownloadClien
 	normalizeClientCredentialStorage(c)
 	now := time.Now().UTC()
 	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO download_clients (name, type, host, port, api_key, use_ssl, url_base, username, password, category, category_audiobook, path_remap, priority, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.Name, c.Type, c.Host, c.Port, c.APIKey, c.UseSSL, c.URLBase, c.Username, c.Password, c.Category, c.CategoryAudiobook, c.PathRemap, c.Priority, c.Enabled, now, now)
+		INSERT INTO download_clients (name, type, host, port, api_key, use_ssl, url_base, username, password, category, category_audiobook, path_remap, priority, enabled, enabled_for_books, enabled_for_audiobooks, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.Name, c.Type, c.Host, c.Port, c.APIKey, c.UseSSL, c.URLBase, c.Username, c.Password, c.Category, c.CategoryAudiobook, c.PathRemap, c.Priority, c.Enabled, c.EnabledForBooks, c.EnabledForAudiobooks, now, now)
 	if err != nil {
 		return fmt.Errorf("create download client: %w", err)
 	}
@@ -304,9 +318,11 @@ func (r *DownloadClientRepo) Update(ctx context.Context, c *models.DownloadClien
 	now := time.Now().UTC()
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE download_clients SET name=?, type=?, host=?, port=?, api_key=?, use_ssl=?,
-		                            url_base=?, username=?, password=?, category=?, category_audiobook=?, path_remap=?, priority=?, enabled=?, updated_at=?
+		                            url_base=?, username=?, password=?, category=?, category_audiobook=?, path_remap=?, priority=?, enabled=?,
+		                            enabled_for_books=?, enabled_for_audiobooks=?, updated_at=?
 		WHERE id=?`,
-		c.Name, c.Type, c.Host, c.Port, c.APIKey, c.UseSSL, c.URLBase, c.Username, c.Password, c.Category, c.CategoryAudiobook, c.PathRemap, c.Priority, c.Enabled, now, c.ID)
+		c.Name, c.Type, c.Host, c.Port, c.APIKey, c.UseSSL, c.URLBase, c.Username, c.Password, c.Category, c.CategoryAudiobook, c.PathRemap, c.Priority, c.Enabled,
+		c.EnabledForBooks, c.EnabledForAudiobooks, now, c.ID)
 	return err
 }
 
@@ -323,27 +339,73 @@ func (r *DownloadClientRepo) Delete(ctx context.Context, id int64) error {
 // fuzzy "audio in category" heuristic so existing single-client setups keep
 // working.
 func PickClientForMediaType(clients []models.DownloadClient, mediaType string) *models.DownloadClient {
-	if len(clients) == 0 {
+	ranked := RankClientsForMediaType(clients, mediaType)
+	if len(ranked) == 0 {
 		return nil
 	}
-	if len(clients) == 1 {
-		return &clients[0]
+	return &ranked[0]
+}
+
+// RankClientsForMediaType orders clients by Priority first (lower is tried
+// first — the user-controlled ordering signal), and only falls back to the
+// category heuristic to break a tie between clients that share the same
+// Priority: an explicit CategoryAudiobook match, then the legacy "audio in
+// category" heuristic, then everything else. Unlike PickClientForMediaType it
+// returns every client, so a caller can retry the next-best one if sending to
+// the first choice fails.
+//
+// Priority must win outright over the category hint — #2412 was a client
+// with CategoryAudiobook set jumping ahead of a higher-priority (lower
+// Priority number) client that had no category hint at all, because the
+// category heuristic used to partition the whole list before priority was
+// ever consulted.
+func RankClientsForMediaType(clients []models.DownloadClient, mediaType string) []models.DownloadClient {
+	ranked := append([]models.DownloadClient(nil), clients...)
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].Priority != ranked[j].Priority {
+			return ranked[i].Priority < ranked[j].Priority
+		}
+		return categoryPreferenceScore(ranked[i], mediaType) < categoryPreferenceScore(ranked[j], mediaType)
+	})
+	return ranked
+}
+
+// categoryPreferenceScore ranks a client's category hint for the given media
+// type; lower is more preferred. Only used to break a Priority tie — see
+// RankClientsForMediaType.
+func categoryPreferenceScore(c models.DownloadClient, mediaType string) int {
+	if mediaType == models.MediaTypeAudiobook && strings.TrimSpace(c.CategoryAudiobook) != "" {
+		return 0
 	}
-	// First pass: prefer a client whose explicit fields match.
-	for i := range clients {
-		if mediaType == models.MediaTypeAudiobook && strings.TrimSpace(clients[i].CategoryAudiobook) != "" {
-			return &clients[i]
+	audioCategory := strings.Contains(strings.ToLower(c.Category), "audio")
+	if mediaType == models.MediaTypeAudiobook {
+		if audioCategory {
+			return 1
+		}
+		return 2
+	}
+	if !audioCategory {
+		return 1
+	}
+	return 2
+}
+
+// FilterEligibleForMediaType keeps only clients that opted in to handling the
+// given media type. Audiobooks require EnabledForAudiobooks; anything else
+// (mirroring the binary "audiobook vs everything else" treatment used
+// elsewhere in this file) requires EnabledForBooks.
+func FilterEligibleForMediaType(clients []models.DownloadClient, mediaType string) []models.DownloadClient {
+	eligible := make([]models.DownloadClient, 0, len(clients))
+	for _, c := range clients {
+		if mediaType == models.MediaTypeAudiobook {
+			if c.EnabledForAudiobooks {
+				eligible = append(eligible, c)
+			}
+			continue
+		}
+		if c.EnabledForBooks {
+			eligible = append(eligible, c)
 		}
 	}
-	// Second pass: legacy heuristic for clients without CategoryAudiobook set.
-	for i := range clients {
-		cat := strings.ToLower(clients[i].Category)
-		if mediaType == models.MediaTypeAudiobook && strings.Contains(cat, "audio") {
-			return &clients[i]
-		}
-		if mediaType != models.MediaTypeAudiobook && !strings.Contains(cat, "audio") {
-			return &clients[i]
-		}
-	}
-	return &clients[0]
+	return eligible
 }

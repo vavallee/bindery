@@ -430,6 +430,12 @@ func (r *DownloadRepo) SetNzoID(ctx context.Context, id int64, nzoID string) err
 	return err
 }
 
+// SetDownloadClientID records the download client selected for a download.
+func (r *DownloadRepo) SetDownloadClientID(ctx context.Context, id, clientID int64) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET download_client_id=? WHERE id=?", clientID, id)
+	return err
+}
+
 func (r *DownloadRepo) SetTorrentID(ctx context.Context, id int64, torrentID string) error {
 	torrentID = strings.ToLower(torrentID)
 	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET torrent_id=? WHERE id=?", torrentID, id)

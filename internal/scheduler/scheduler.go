@@ -1091,6 +1091,34 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		specs = append(specs, decision.FreeleechOnlySpec{IndexerIDs: freeleechOnly})
 	}
 	dm := decision.New(specs...)
+	eligibleProtocols := map[string]bool{"usenet": true, "torrent": true}
+	if s.clients != nil {
+		enabledClients, err := s.clients.ListEnabled(ctx)
+		if err != nil {
+			slog.Error("SearchAndGrabBook: failed to list download clients", "error", err)
+			outcome = "download client lookup failed"
+			return
+		}
+		eligibleProtocols = make(map[string]bool)
+		for _, client := range enabledClients {
+			if len(db.FilterEligibleForMediaType([]models.DownloadClient{client}, mediaType)) > 0 {
+				eligibleProtocols[downloader.ProtocolForClient(client.Type)] = true
+			}
+		}
+	}
+	resultCountBeforeClientFilter := len(results)
+	filteredResults := results[:0]
+	for _, result := range results {
+		if eligibleProtocols[result.Protocol] {
+			filteredResults = append(filteredResults, result)
+		}
+	}
+	results = filteredResults
+	if len(results) == 0 && resultCountBeforeClientFilter > 0 {
+		slog.Warn("SearchAndGrabBook: no enabled download client eligible for media type", "book", book.Title, "mediaType", mediaType)
+		outcome = "no eligible download client for media type"
+		return
+	}
 	releases := make([]decision.Release, len(results))
 	for i, res := range results {
 		releases[i] = decision.ReleaseFromSearchResult(res)
@@ -1146,15 +1174,16 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		outcome = "download client lookup failed"
 		return
 	}
-	client := db.PickClientForMediaType(candidates, mediaType)
 	// No cross-protocol fallback: a usenet release must not be pushed to a
 	// torrent client (qBittorrent would accept the .nzb URL, fail to parse it
 	// as a torrent, and report "hash could not be determined"), and vice versa.
-	if client == nil {
-		slog.Warn("SearchAndGrabBook: no enabled download client for protocol", "book", book.Title, "protocol", best.Protocol)
-		outcome = "no download client for protocol"
+	eligible := db.FilterEligibleForMediaType(candidates, mediaType)
+	if len(eligible) == 0 {
+		slog.Warn("SearchAndGrabBook: no enabled download client eligible for media type", "book", book.Title, "protocol", best.Protocol, "mediaType", mediaType)
+		outcome = "no eligible download client for media type"
 		return
 	}
+	ranked := db.RankClientsForMediaType(eligible, mediaType)
 
 	slog.Info("auto-grabbing book",
 		"book", book.Title,
@@ -1163,7 +1192,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		"result", best.Title,
 		"indexer", best.IndexerName,
 		"protocol", best.Protocol,
-		"client", client.Name,
+		"client", ranked[0].Name,
 		"size", best.Size,
 	)
 
@@ -1197,7 +1226,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		BookID:           &book.ID,
 		OwnerUserID:      book.OwnerUserID, // tenancy (#1457): background grab inherits the book's owner
 		IndexerID:        &best.IndexerID,
-		DownloadClientID: &client.ID,
+		DownloadClientID: &ranked[0].ID,
 		Title:            best.Title,
 		NZBURL:           best.NZBURL,
 		Size:             best.Size,
@@ -1232,6 +1261,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		return
 	}
 
+	client := &ranked[0]
 	sendRes, err := downloader.SendDownload(ctx, client, best.NZBURL, best.Title, downloader.SendOptions{
 		MediaType:            mediaType,
 		DownloadDir:          s.downloadDir,
@@ -1239,8 +1269,9 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		SeedRatio:            s.resolveSeedRatio(ctx, best.IndexerID),
 	})
 	if err != nil {
-		slog.Error("SearchAndGrabBook: failed to send to downloader", "client", client.Type, "title", best.Title, "error", err)
-		if setErr := s.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {
+		slog.Error("SearchAndGrabBook: failed to send to eligible client", "client", client.Name, "title", best.Title, "error", err)
+		wrapped := fmt.Errorf("failed to send to eligible download client %s: %w", client.Name, err)
+		if setErr := s.downloads.SetError(ctx, dl.ID, wrapped.Error()); setErr != nil {
 			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
 		}
 		outcome = "send to downloader failed"
