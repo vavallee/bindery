@@ -1,2 +1,2 @@
 ### Added
-- **Auditable catalogue reconciliation** (#2892) — list each row kept because provider or profile evidence is incomplete, with its provider and reason, while keeping it unavailable for automatic removal. Thanks @kevinatlee.
+- **Reconcile catalogue now lists the rows it kept for lack of evidence** (#2892): rows kept because provider or profile evidence was incomplete used to show up only as a count. Each one is now listed with its title, provider and the reason, such as language could not be confirmed, so you can review them yourself. They still can never be removed automatically. Thanks kevinatlee.
