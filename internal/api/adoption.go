@@ -58,6 +58,7 @@ type adoptionUnitStore interface {
 	IgnorePending(ctx context.Context, ids []int64, authorFolder string) (int64, error)
 	BookReferencedElsewhere(ctx context.Context, bookID, exceptID int64) (bool, error)
 	AuthorReferencedElsewhere(ctx context.Context, authorID, exceptID int64) (bool, error)
+	PriorBookStatusForBook(ctx context.Context, bookID, exceptID int64) (string, error)
 }
 
 // AdoptionHandler serves the adoption view on the Import page.
