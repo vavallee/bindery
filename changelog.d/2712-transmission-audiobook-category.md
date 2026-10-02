@@ -1,2 +1,0 @@
-### Fixed
-- **Transmission audiobook downloads are picked up again when the client has an audiobook category** (#2712): with an audiobook category set on a Transmission client, audiobook grabs were saved there but Bindery only checked the ebook category, so finished audiobooks stayed at downloading and never imported. Both categories are checked now, the same as the other clients. Thanks ccarpinteri.
