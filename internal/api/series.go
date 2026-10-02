@@ -753,14 +753,19 @@ type seriesHardcoverDiffBook struct {
 }
 
 type seriesHardcoverDiffResponse struct {
-	SeriesID     int64                       `json:"seriesId"`
-	Link         *models.SeriesHardcoverLink `json:"link"`
-	Present      []seriesHardcoverDiffBook   `json:"present"`
-	Missing      []seriesHardcoverDiffBook   `json:"missing"`
-	LocalOnly    []seriesHardcoverDiffBook   `json:"localOnly"`
-	Uncertain    []seriesHardcoverDiffBook   `json:"uncertain"`
-	PresentCount int                         `json:"presentCount"`
-	MissingCount int                         `json:"missingCount"`
+	SeriesID  int64                       `json:"seriesId"`
+	Link      *models.SeriesHardcoverLink `json:"link"`
+	Present   []seriesHardcoverDiffBook   `json:"present"`
+	Missing   []seriesHardcoverDiffBook   `json:"missing"`
+	LocalOnly []seriesHardcoverDiffBook   `json:"localOnly"`
+	Uncertain []seriesHardcoverDiffBook   `json:"uncertain"`
+	// Covered is a catalogue row that is not a missing volume but a split
+	// edition (#2524) of a book already present: the row's own LocalBookID/
+	// LocalTitle point at the whole work that covers it, not at a row of its
+	// own. Never counted in MissingCount, never offered to Fill.
+	Covered      []seriesHardcoverDiffBook `json:"covered"`
+	PresentCount int                       `json:"presentCount"`
+	MissingCount int                       `json:"missingCount"`
 }
 
 var (
@@ -1265,6 +1270,7 @@ func buildHardcoverDiff(ctx context.Context, books *db.BookRepo, userID int64, s
 		Missing:   []seriesHardcoverDiffBook{},
 		LocalOnly: []seriesHardcoverDiffBook{},
 		Uncertain: []seriesHardcoverDiffBook{},
+		Covered:   []seriesHardcoverDiffBook{},
 	}
 	// matchedCatalog doubles as the exclusion set for bestCatalogMatch: a
 	// catalog entry a previous local book already claimed is off the table for
@@ -1386,6 +1392,13 @@ func buildHardcoverDiff(ctx context.Context, books *db.BookRepo, userID int64, s
 		if title := firstNonEmpty(book.Book.Title, book.Title); metadata.IsUnambiguousBundleTitle(title) {
 			continue
 		}
+		if whole, ok := splitEditionWhole(book, diff.Present); ok {
+			item := catalogDiffBook(book, catalog.AuthorName)
+			item.LocalBookID = whole.LocalBookID
+			item.LocalTitle = whole.LocalTitle
+			diff.Covered = append(diff.Covered, item)
+			continue
+		}
 		item := catalogDiffBook(book, catalog.AuthorName)
 		enrichMissingDiffBook(ctx, books, userID, book, &item)
 		diff.Missing = append(diff.Missing, item)
@@ -1393,6 +1406,43 @@ func buildHardcoverDiff(ctx context.Context, books *db.BookRepo, userID int64, s
 	diff.PresentCount = len(diff.Present)
 	diff.MissingCount = len(diff.Missing)
 	return diff
+}
+
+// splitEditionWhole reports whether book is a split-edition part of some
+// already-present whole work, and if so returns that whole work's diff row.
+//
+// #2524: some Hardcover catalogues list a novel AND its split parts at
+// fractional positions under the novel's own position — Stormlight's "The
+// Way of Kings" at 1 alongside "…, Part 1" and "…, Part 2" at 1.1 and 1.2.
+// Owning the whole novel should not leave its own parts reading as missing
+// volumes, counting against the series, and sitting behind an Add button
+// that would create and queue a download for text already on the shelf.
+//
+// Position alone is not enough to call that: a novella can sit at a
+// fractional position too (Edgedancer at 2.5, beside Words of Radiance at
+// 2), and a novella is a real, separate book. So both signals are required:
+// book's position must be the fractional child of a Present row's integer
+// position (seriesmatch.IntegerFloorPosition), AND book's title must be that
+// Present row's title plus a "Part N" marker (seriesmatch.SplitPartOf). A
+// series represented ONLY by its split parts — Wheel of Time's "Two Volume
+// Edition", where there is no unsplit whole at the integer position — never
+// matches this, because there is no Present row to match against; its parts
+// are the real volumes and stay Missing.
+func splitEditionWhole(book metadata.SeriesCatalogBook, present []seriesHardcoverDiffBook) (seriesHardcoverDiffBook, bool) {
+	floor, ok := seriesmatch.IntegerFloorPosition(book.Position)
+	if !ok {
+		return seriesHardcoverDiffBook{}, false
+	}
+	partTitle := firstNonEmpty(book.Book.Title, book.Title)
+	for _, whole := range present {
+		if whole.Position == "" || !seriesmatch.SamePosition(whole.Position, floor) {
+			continue
+		}
+		if seriesmatch.SplitPartOf(partTitle, whole.Title) {
+			return whole, true
+		}
+	}
+	return seriesHardcoverDiffBook{}, false
 }
 
 // logDiffDecision records which catalogue entry a local series book bound

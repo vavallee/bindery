@@ -70,6 +70,11 @@ export interface SeriesHardcoverDiff {
   missing: SeriesHardcoverDiffBook[]
   localOnly: SeriesHardcoverDiffBook[]
   uncertain: SeriesHardcoverDiffBook[]
+  // covered is a split edition of a book already in Present (#2524) — e.g. a
+  // "Part 1"/"Part 2" catalogue row for a novel you already own whole. Its
+  // localBookId/localTitle point at that whole work, not at a row of its own.
+  // Never counted in missingCount, never offered an add button.
+  covered: SeriesHardcoverDiffBook[]
   presentCount: number
   missingCount: number
 }

@@ -13,7 +13,7 @@ When enhanced Hardcover series data is enabled, Bindery can:
 - search Hardcover for the matching catalog series
 - link or unlink a local series to a Hardcover series
 - compare the local series against the Hardcover catalog
-- show present, missing, local-only, and uncertain catalog entries
+- show present, missing, local-only, uncertain, and covered (split-edition) catalog entries
 - add one missing Hardcover book, or add all missing books for a linked series
 - create wanted and monitored book rows for missing catalog entries and queue searches for them
 
@@ -86,6 +86,8 @@ Every binding decision is logged at DEBUG as `series diff: local book bound to c
 Missing-book fill uses the linked Hardcover catalog as the source of truth for missing entries. Bindery skips catalog books that already exist locally as excluded titles, so excluded books are not silently re-added. That skip applies to the excluded title itself, not to other books whose titles it happens to contain, so an excluded box set does not stand in the way of the volume it is named after.
 
 Catalog entries whose titles name a box set rather than a book ("box set", "boxed set", "collection set", "3 Books Set") are never created by fill, the same way they are pruned from an author catalogue on ingestion. They are still listed in the diff, so clicking **add** on one does nothing and reports nothing queued.
+
+Some catalogs also list a novel's own split-into-parts editions beside the whole novel — Brandon Sanderson's The Way of Kings sits at position 1, with its "Part 1" and "Part 2" editions at 1.1 and 1.2. If the whole novel is already present, its parts are reported as **covered**, not missing: they are not counted, not offered an **add** button, and not created by fill, because the book is already on the shelf. They appear in their own collapsed section on the Series page ("N split editions of books you own"), each linking to the whole work that covers it. The rule needs both a fractional position under a present whole AND a title that is the whole's title plus a "Part N" marker, because a fractional position alone is not enough: a real novella, such as Edgedancer at position 2.5 beside Words of Radiance at 2, carries no "Part N" marker and is correctly left in Missing. A catalog that represents a work ONLY as its split parts, with no unsplit row at the integer position at all — Robert Jordan's Wheel of Time "Two Volume Edition" catalog is like this — never triggers the rule either, because there is nothing present to cover the parts; they are the real volumes there and stay in Missing.
 
 The fill action may create new authors and books from Hardcover metadata when the catalog entry is not already in Bindery. Those books are linked back to the series with the catalog position.
 

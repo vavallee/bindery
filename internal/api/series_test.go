@@ -1567,6 +1567,83 @@ func TestSeriesFillCreatesMissingHardcoverBook(t *testing.T) {
 	}
 }
 
+// TestSeriesFillSkipsOwnedSplitEditions is the write-path form of #2524:
+// both createMissingHardcoverBooks (bulk Fill) and createMissingHardcoverBook
+// (per-book Fill) iterate diff.Missing, so once buildHardcoverDiff moves a
+// split-edition row to Covered instead, Fill stops creating — and so stops
+// queuing a download for — a book already on the shelf. Every genuinely
+// missing book in the same series must still be created.
+func TestSeriesFillSkipsOwnedSplitEditions(t *testing.T) {
+	catalog := splitEditionCatalog()
+	searcher := newMockBookSearcher()
+	h, seriesRepo, authorRepo, bookRepo := seriesFixtureWithProvider(t, &stubSeriesProvider{
+		catalogs: map[string]*metadata.SeriesCatalog{catalog.ForeignID: catalog},
+	}, searcher)
+	ctx := context.Background()
+
+	author := &models.Author{ForeignID: "hc:brandon-sanderson", Name: "Brandon Sanderson", SortName: "Sanderson, Brandon"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	owned := &models.Book{
+		ForeignID: "hc:the-way-of-kings",
+		AuthorID:  author.ID,
+		Title:     "The Way of Kings",
+		SortTitle: "The Way of Kings",
+		Status:    models.BookStatusImported,
+		Genres:    []string{},
+	}
+	if err := bookRepo.Create(ctx, owned); err != nil {
+		t.Fatal(err)
+	}
+
+	series := &models.Series{ForeignID: "ol-series:stormlight", Title: "The Stormlight Archive"}
+	if err := seriesRepo.Create(ctx, series); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, series.ID, owned.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+	link := &models.SeriesHardcoverLink{
+		SeriesID:            series.ID,
+		HardcoverSeriesID:   catalog.ForeignID,
+		HardcoverProviderID: catalog.ProviderID,
+		HardcoverTitle:      catalog.Title,
+		HardcoverAuthorName: catalog.AuthorName,
+		HardcoverBookCount:  catalog.BookCount,
+		Confidence:          1,
+		LinkedBy:            "manual",
+	}
+	if err := seriesRepo.UpsertHardcoverLink(ctx, link); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Fill(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/series/1/fill", nil), "id", strconv.FormatInt(series.ID, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	for _, foreignID := range []string{"hc:the-way-of-kings-part-1", "hc:the-way-of-kings-part-2"} {
+		created, err := bookRepo.GetByForeignID(ctx, foreignID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if created != nil {
+			t.Fatalf("split-edition part %q must not be created when the whole work is owned", foreignID)
+		}
+	}
+	for _, foreignID := range []string{"hc:words-of-radiance", "hc:edgedancer"} {
+		created, err := bookRepo.GetByForeignID(ctx, foreignID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if created == nil {
+			t.Fatalf("genuinely missing book %q should still be created by Fill", foreignID)
+		}
+	}
+}
+
 // TestSeriesFillHonoursRequestedMediaType covers #1124: the per-book "add"
 // selector must create the missing Hardcover book with the chosen media type
 // rather than always defaulting to ebook.
@@ -2955,6 +3032,266 @@ func stormlightCatalog() *metadata.SeriesCatalog {
 			UsersCount: 123,
 			Book:       book,
 		}},
+	}
+}
+
+// splitEditionCatalog builds on stormlightCatalog with the real-data shape
+// from the #2524 report: "The Way of Kings" at position 1 is split into its
+// own "Part 1"/"Part 2" at 1.1/1.2, "Words of Radiance" sits at position 2,
+// and "Edgedancer" — a real novella, not a split edition of anything — sits
+// at the neighbouring fractional position 2.5.
+func splitEditionCatalog() *metadata.SeriesCatalog {
+	catalog := stormlightCatalog()
+	author := catalog.Books[0].Book.Author
+	catalog.Books = append(catalog.Books,
+		metadata.SeriesCatalogBook{
+			ForeignID:  "hc:the-way-of-kings-part-1",
+			ProviderID: "101-1",
+			Title:      "The Way of Kings, Part 1",
+			Position:   "1.1",
+			Book: models.Book{
+				ForeignID: "hc:the-way-of-kings-part-1",
+				Title:     "The Way of Kings, Part 1",
+				Author:    author,
+			},
+		},
+		metadata.SeriesCatalogBook{
+			ForeignID:  "hc:the-way-of-kings-part-2",
+			ProviderID: "101-2",
+			Title:      "The Way of Kings, Part 2",
+			Position:   "1.2",
+			Book: models.Book{
+				ForeignID: "hc:the-way-of-kings-part-2",
+				Title:     "The Way of Kings, Part 2",
+				Author:    author,
+			},
+		},
+		metadata.SeriesCatalogBook{
+			ForeignID:  "hc:words-of-radiance",
+			ProviderID: "102",
+			Title:      "Words of Radiance",
+			Position:   "2",
+			Book: models.Book{
+				ForeignID: "hc:words-of-radiance",
+				Title:     "Words of Radiance",
+				Author:    author,
+			},
+		},
+		metadata.SeriesCatalogBook{
+			ForeignID:  "hc:edgedancer",
+			ProviderID: "102-5",
+			Title:      "Edgedancer",
+			Position:   "2.5",
+			Book: models.Book{
+				ForeignID: "hc:edgedancer",
+				Title:     "Edgedancer",
+				Author:    author,
+			},
+		},
+	)
+	catalog.BookCount = len(catalog.Books)
+	return catalog
+}
+
+// TestSplitEditionWhole unit-tests the #2524 suppression rule directly
+// against crafted Present rows, independent of how a book came to be
+// Present. That sidesteps engineering a fuzzy title score into the 70-89
+// Uncertain band: a whole work that is Uncertain or Missing simply never
+// appears in the `present` slice this function is handed, which is exactly
+// the real-world shape (buildHardcoverDiff only passes diff.Present).
+func TestSplitEditionWhole(t *testing.T) {
+	wayOfKingsID := int64(1)
+	present := []seriesHardcoverDiffBook{{
+		ForeignBookID: "hc:the-way-of-kings",
+		Title:         "The Way of Kings",
+		Position:      "1",
+		LocalBookID:   &wayOfKingsID,
+		LocalTitle:    "The Way of Kings",
+	}}
+
+	cases := []struct {
+		name    string
+		book    metadata.SeriesCatalogBook
+		present []seriesHardcoverDiffBook
+		wantOK  bool
+	}{
+		{
+			name: "first part of an owned whole",
+			book: metadata.SeriesCatalogBook{
+				Position: "1.1",
+				Title:    "The Way of Kings, Part 1",
+				Book:     models.Book{Title: "The Way of Kings, Part 1"},
+			},
+			present: present,
+			wantOK:  true,
+		},
+		{
+			name: "second part of an owned whole",
+			book: metadata.SeriesCatalogBook{
+				Position: "1.2",
+				Title:    "The Way of Kings, Part 2",
+				Book:     models.Book{Title: "The Way of Kings, Part 2"},
+			},
+			present: present,
+			wantOK:  true,
+		},
+		{
+			name: "novella at a fractional position is not a split edition",
+			book: metadata.SeriesCatalogBook{
+				Position: "1.5",
+				Title:    "Dawnshard",
+				Book:     models.Book{Title: "Dawnshard"},
+			},
+			present: present,
+			wantOK:  false,
+		},
+		{
+			name: "whole number position never matches, even with a part title",
+			book: metadata.SeriesCatalogBook{
+				Position: "2",
+				Title:    "The Way of Kings, Part 1",
+				Book:     models.Book{Title: "The Way of Kings, Part 1"},
+			},
+			present: present,
+			wantOK:  false,
+		},
+		{
+			name: "fractional position but no Present row at the floor (Two Volume Edition shape)",
+			book: metadata.SeriesCatalogBook{
+				Position: "1.1",
+				Title:    "The Eye of the World, Part 1 of 2",
+				Book:     models.Book{Title: "The Eye of the World, Part 1 of 2"},
+			},
+			present: nil,
+			wantOK:  false,
+		},
+		{
+			name: "whole is bound only as Uncertain or Missing, not Present",
+			book: metadata.SeriesCatalogBook{
+				Position: "1.1",
+				Title:    "The Way of Kings, Part 1",
+				Book:     models.Book{Title: "The Way of Kings, Part 1"},
+			},
+			present: nil, // the whole never made it into the Present slice
+			wantOK:  false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := splitEditionWhole(tc.book, tc.present)
+			if ok != tc.wantOK {
+				t.Fatalf("splitEditionWhole() ok = %v, want %v (got %+v)", ok, tc.wantOK, got)
+			}
+			if ok && (got.LocalBookID == nil || *got.LocalBookID != wayOfKingsID) {
+				t.Fatalf("splitEditionWhole() local = %v, want %d", got.LocalBookID, wayOfKingsID)
+			}
+		})
+	}
+}
+
+// TestBuildHardcoverDiffCoversSplitEditionsOfOwnedWork is the #2524
+// acceptance case from the issue thread: Stormlight's "The Way of Kings" is
+// filed at position 1 alongside its own split parts at 1.1/1.2, and a real
+// novella sits at the neighbouring fractional position 2.5 under an unowned
+// "Words of Radiance". Owning the whole novel must not leave its own parts
+// reading as missing volumes; the novella, owning nothing to its name, must
+// not be swept up just because it shares the fractional-position shape.
+func TestBuildHardcoverDiffCoversSplitEditionsOfOwnedWork(t *testing.T) {
+	catalog := splitEditionCatalog()
+	series := &models.Series{
+		ID:    1,
+		Title: "The Stormlight Archive",
+		Books: []models.SeriesBook{
+			localSeriesBook(1, "The Way of Kings"),
+		},
+	}
+	link := &models.SeriesHardcoverLink{SeriesID: series.ID, HardcoverSeriesID: catalog.ForeignID}
+
+	diff := buildHardcoverDiff(context.Background(), nil, 0, series, link, catalog)
+
+	covered := map[string]seriesHardcoverDiffBook{}
+	for _, row := range diff.Covered {
+		covered[row.ForeignBookID] = row
+	}
+	if len(diff.Covered) != 2 {
+		t.Fatalf("Covered = %v, want exactly the two Way of Kings parts", diffForeignIDs(diff.Covered))
+	}
+	for _, id := range []string{"hc:the-way-of-kings-part-1", "hc:the-way-of-kings-part-2"} {
+		row, ok := covered[id]
+		if !ok {
+			t.Fatalf("expected %q in Covered, got %v", id, diffForeignIDs(diff.Covered))
+		}
+		if row.LocalBookID == nil || *row.LocalBookID != 1 {
+			t.Fatalf("%q LocalBookID = %v, want 1 (The Way of Kings)", id, row.LocalBookID)
+		}
+	}
+
+	missing := map[string]bool{}
+	for _, row := range diff.Missing {
+		missing[row.ForeignBookID] = true
+	}
+	for _, id := range []string{"hc:the-way-of-kings-part-1", "hc:the-way-of-kings-part-2"} {
+		if missing[id] {
+			t.Fatalf("%q was covered but still counted in Missing: %v", id, diffForeignIDs(diff.Missing))
+		}
+	}
+	if !missing["hc:words-of-radiance"] || !missing["hc:edgedancer"] {
+		t.Fatalf("Words of Radiance and the Edgedancer novella are genuinely missing, want both in Missing: %v", diffForeignIDs(diff.Missing))
+	}
+	if diff.MissingCount != len(diff.Missing) {
+		t.Fatalf("missingCount %d disagrees with list length %d", diff.MissingCount, len(diff.Missing))
+	}
+	if diff.MissingCount != 2 {
+		t.Fatalf("MissingCount = %d, want 2 (Words of Radiance, Edgedancer)", diff.MissingCount)
+	}
+}
+
+// TestBuildHardcoverDiffSplitEditionsNeedAnOwnedWhole is the Wheel of Time
+// "Two Volume Edition" trap from the #2524 thread: a catalogue can represent
+// a work ONLY as its split parts, with no unsplit row at the integer
+// position at all. There is nothing Present to cover the parts, so they
+// must stay Missing — they are the real volumes here, not duplicates of one.
+func TestBuildHardcoverDiffSplitEditionsNeedAnOwnedWhole(t *testing.T) {
+	author := &models.Author{ForeignID: "hc:robert-jordan", Name: "Robert Jordan"}
+	catalog := &metadata.SeriesCatalog{
+		ForeignID:  "hc-series:two-volume",
+		ProviderID: "7000",
+		Title:      "The Wheel of Time (Two Volume Edition)",
+		AuthorName: "Robert Jordan",
+		Books: []metadata.SeriesCatalogBook{
+			{
+				ForeignID: "hc:the-eye-of-the-world-part-1-of-2",
+				Title:     "The Eye of the World, Part 1 of 2",
+				Position:  "1.1",
+				Book: models.Book{
+					ForeignID: "hc:the-eye-of-the-world-part-1-of-2",
+					Title:     "The Eye of the World, Part 1 of 2",
+					Author:    author,
+				},
+			},
+			{
+				ForeignID: "hc:the-eye-of-the-world-part-2-of-2",
+				Title:     "The Eye of the World, Part 2 of 2",
+				Position:  "1.2",
+				Book: models.Book{
+					ForeignID: "hc:the-eye-of-the-world-part-2-of-2",
+					Title:     "The Eye of the World, Part 2 of 2",
+					Author:    author,
+				},
+			},
+		},
+	}
+	catalog.BookCount = len(catalog.Books)
+	series := &models.Series{ID: 2, Title: "The Wheel of Time (Two Volume Edition)"}
+	link := &models.SeriesHardcoverLink{SeriesID: series.ID, HardcoverSeriesID: catalog.ForeignID}
+
+	diff := buildHardcoverDiff(context.Background(), nil, 0, series, link, catalog)
+
+	if len(diff.Covered) != 0 {
+		t.Fatalf("Covered = %v, want empty: there is no unsplit whole for these parts to cover", diffForeignIDs(diff.Covered))
+	}
+	if len(diff.Missing) != 2 || diff.MissingCount != 2 {
+		t.Fatalf("Missing = %v (count %d), want both parts (they are the real volumes here)", diffForeignIDs(diff.Missing), diff.MissingCount)
 	}
 }
 

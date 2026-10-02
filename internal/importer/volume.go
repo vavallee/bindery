@@ -2,14 +2,9 @@ package importer
 
 import (
 	"regexp"
-	"strings"
 
 	"github.com/vavallee/bindery/internal/seriesmatch"
 )
-
-// partMarkerRe matches a "Part N" marker, with an optional "of M": "Part 1",
-// "Pt. 2", "Part 1 of 3".
-var partMarkerRe = regexp.MustCompile(`(?i)\b(?:part|pt)\.?\s*\d+(?:\.\d+)?(?:\s+of\s+\d+)?\b`)
 
 // volumeTitles returns a and b ready for a volume-number comparison.
 //
@@ -22,20 +17,19 @@ var partMarkerRe = regexp.MustCompile(`(?i)\b(?:part|pt)\.?\s*\d+(?:\.\d+)?(?:\s
 // (The Stormlight Archive, Book 4)", the "Part 1" read as volume 1 and vetoed
 // the book's own files (#2810 review). So a Part marker on one side only is
 // dropped before the comparison, and kept when both sides carry one.
+//
+// partMarkerRe/stripPartMarker moved to seriesmatch.HasPartMarker /
+// seriesmatch.StripPartMarker (#2524), which also needs them to recognize a
+// split-edition catalogue row — one regex, one package, instead of two.
 func volumeTitles(a, b string) (string, string) {
-	ap, bp := partMarkerRe.MatchString(a), partMarkerRe.MatchString(b)
+	ap, bp := seriesmatch.HasPartMarker(a), seriesmatch.HasPartMarker(b)
 	switch {
 	case ap && !bp:
-		a = stripPartMarker(a)
+		a = seriesmatch.StripPartMarker(a)
 	case bp && !ap:
-		b = stripPartMarker(b)
+		b = seriesmatch.StripPartMarker(b)
 	}
 	return a, b
-}
-
-func stripPartMarker(s string) string {
-	s = partMarkerRe.ReplaceAllString(s, " ")
-	return strings.TrimRight(strings.TrimSpace(s), " ,.:;-_")
 }
 
 // differentVolumes is seriesmatch.DifferentVolumes after volumeTitles: true

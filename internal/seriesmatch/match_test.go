@@ -285,3 +285,113 @@ func TestDifferentVolumesCatchesBareTrailingNumbers(t *testing.T) {
 		})
 	}
 }
+
+// TestHasPartMarker and TestStripPartMarker exercise the two helpers
+// directly: moving them here from internal/importer (#2524, so series.go
+// could use them too) left them reached only transitively through
+// internal/importer's own tests, which a per-package coverage profile does
+// not credit to this package.
+func TestHasPartMarker(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "part", in: "The Way of Kings, Part 1", want: true},
+		{name: "pt abbreviation", in: "The Way of Kings, Pt. 2", want: true},
+		{name: "part of", in: "The Great Hunt, Part 2 of 2", want: true},
+		{name: "no marker", in: "The Way of Kings", want: false},
+		{name: "blank", in: "", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HasPartMarker(tc.in); got != tc.want {
+				t.Fatalf("HasPartMarker(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStripPartMarker(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "trailing comma and marker", in: "The Way of Kings, Part 1", want: "The Way of Kings"},
+		{name: "part of", in: "The Great Hunt, Part 2 of 2", want: "The Great Hunt"},
+		{name: "no marker is unchanged", in: "The Way of Kings", want: "The Way of Kings"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := StripPartMarker(tc.in); got != tc.want {
+				t.Fatalf("StripPartMarker(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIntegerFloorPosition pins the #2524 fractional-position test: only a
+// genuinely fractional position reports a floor, and a whole number, blank,
+// or non-numeric position reports none.
+func TestIntegerFloorPosition(t *testing.T) {
+	cases := []struct {
+		name      string
+		pos       string
+		wantFloor string
+		wantOK    bool
+	}{
+		{name: "simple fraction", pos: "1.1", wantFloor: "1", wantOK: true},
+		{name: "second fraction", pos: "1.2", wantFloor: "1", wantOK: true},
+		{name: "novella position", pos: "2.5", wantFloor: "2", wantOK: true},
+		{name: "whole number", pos: "1", wantOK: false},
+		{name: "whole number written as float", pos: "1.0", wantOK: false},
+		{name: "blank", pos: "", wantOK: false},
+		{name: "non numeric", pos: "prelude", wantOK: false},
+		{name: "trims whitespace", pos: " 1.1 ", wantFloor: "1", wantOK: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			floor, ok := IntegerFloorPosition(tc.pos)
+			if ok != tc.wantOK {
+				t.Fatalf("IntegerFloorPosition(%q) ok = %v, want %v", tc.pos, ok, tc.wantOK)
+			}
+			if ok && floor != tc.wantFloor {
+				t.Fatalf("IntegerFloorPosition(%q) floor = %q, want %q", tc.pos, floor, tc.wantFloor)
+			}
+		})
+	}
+}
+
+// TestSplitPartOf pins the #2524 title half of the split-edition rule: the
+// text before a "Part N" marker, not the marker or anything after it, is
+// what must match the whole work's title.
+func TestSplitPartOf(t *testing.T) {
+	cases := []struct {
+		name  string
+		part  string
+		whole string
+		want  bool
+	}{
+		{name: "simple part", part: "The Way of Kings, Part 1", whole: "The Way of Kings", want: true},
+		{name: "second part", part: "The Way of Kings, Part 2", whole: "The Way of Kings", want: true},
+		{name: "pt spelling", part: "The Way of Kings, Pt. 2", whole: "The Way of Kings", want: true},
+		{
+			name:  "part carries its own subtitle",
+			part:  "The Great Hunt, Part 2 of 2: New Threads in the Pattern",
+			whole: "The Great Hunt",
+			want:  true,
+		},
+		{name: "wrong whole work", part: "Words of Radiance, Part 1", whole: "The Way of Kings", want: false},
+		{name: "novella has no marker at all", part: "Edgedancer", whole: "Words of Radiance", want: false},
+		{name: "bare marker, no prefix to compare", part: "Part 1", whole: "The Way of Kings", want: false},
+		{name: "case and punctuation folded", part: "the way of kings: part 1", whole: "The Way Of Kings", want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SplitPartOf(tc.part, tc.whole); got != tc.want {
+				t.Fatalf("SplitPartOf(%q, %q) = %v, want %v", tc.part, tc.whole, got, tc.want)
+			}
+		})
+	}
+}

@@ -27,6 +27,24 @@ func SamePosition(a, b string) bool {
 	return aerr == nil && berr == nil && math.Abs(af-bf) < 0.001
 }
 
+// IntegerFloorPosition reports the integer floor of a fractional series
+// position, and whether pos actually IS fractional. "1.1" -> ("1", true); a
+// whole number, "", or anything that does not parse as a number all report
+// (_, false) — this exists specifically to find the WHOLE work a split-part
+// position like 1.1 or 1.2 sits under (#2524), so a position that is already
+// whole has no "floor" worth reporting.
+func IntegerFloorPosition(pos string) (string, bool) {
+	f, err := strconv.ParseFloat(strings.TrimSpace(pos), 64)
+	if err != nil {
+		return "", false
+	}
+	floor := math.Floor(f)
+	if math.Abs(f-floor) < 1e-9 {
+		return "", false
+	}
+	return strconv.FormatFloat(floor, 'f', -1, 64), true
+}
+
 // NormalizeSeriesName reduces a series name for comparison: the canonical
 // dedup key, minus a redundant trailing collective noun ("… Series", "…
 // Trilogy").
@@ -273,6 +291,49 @@ func CleanTitle(title string) string {
 		out = append(out, word)
 	}
 	return strings.Join(out, " ")
+}
+
+// partMarkerRe matches a "Part N" marker, with an optional "of M": "Part 1",
+// "Pt. 2", "Part 1 of 3".
+var partMarkerRe = regexp.MustCompile(`(?i)\b(?:part|pt)\.?\s*\d+(?:\.\d+)?(?:\s+of\s+\d+)?\b`)
+
+// HasPartMarker reports whether s carries an explicit "Part N" / "Pt. N"
+// marker.
+func HasPartMarker(s string) bool {
+	return partMarkerRe.MatchString(s)
+}
+
+// StripPartMarker removes a "Part N" marker from s and cleans up the
+// whitespace and punctuation left behind: "The Way of Kings, Part 1" ->
+// "The Way of Kings".
+func StripPartMarker(s string) string {
+	s = partMarkerRe.ReplaceAllString(s, " ")
+	return strings.TrimRight(strings.TrimSpace(s), " ,.:;-_")
+}
+
+// SplitPartOf reports whether partTitle names one split-edition part of
+// wholeTitle: the text before a "Part N" marker, with trailing punctuation
+// trimmed, is wholeTitle under CleanTitle. Any subtitle AFTER the marker is
+// ignored, because a catalogue sometimes hangs one off the part itself —
+// "The Great Hunt, Part 2 of 2: New Threads in the Pattern" is still part 2
+// of "The Great Hunt".
+//
+// A bare marker with nothing before it ("Part 1" alone) never matches: an
+// empty prefix can only equal an equally blank wholeTitle. A title that
+// carries no marker at all — a novella like "Edgedancer" — is never a split
+// part of anything, however short its name or close its series position;
+// that is what keeps a fractional-position novella out of the #2524 rule
+// this exists for (see IntegerFloorPosition).
+func SplitPartOf(partTitle, wholeTitle string) bool {
+	loc := partMarkerRe.FindStringIndex(partTitle)
+	if loc == nil {
+		return false
+	}
+	prefix := strings.TrimRight(strings.TrimSpace(partTitle[:loc[0]]), " ,:;-")
+	if prefix == "" {
+		return false
+	}
+	return CleanTitle(prefix) == CleanTitle(wholeTitle)
 }
 
 // volumeNumberRe matches an EXPLICIT volume marker followed by a number:
