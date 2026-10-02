@@ -183,6 +183,8 @@ func (h *AdoptionHandler) adopt(ctx context.Context, id int64, token string, req
 	rec := db.AdoptionRecord{BookID: book.ID}
 	if created.BookCreated {
 		rec.CreatedBookID = book.ID
+	} else {
+		rec.PriorBookStatus = book.Status
 	}
 	if created.AuthorCreated && created.Author != nil {
 		rec.CreatedAuthorID = created.Author.ID

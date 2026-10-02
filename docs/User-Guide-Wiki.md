@@ -594,7 +594,9 @@ What adopting does to your library:
   adopted them. The author's other books are not added.
 - **Undo** removes exactly the file entries the adoption made, and only while
   each still belongs to the book it was adopted into; a file that has since
-  moved to another book stays with that book. A book or author the adoption
+  moved to another book stays with that book. If the files were adopted into a
+  book that was Skipped, undoing the adoption restores it as Skipped (and
+  unmonitored). A book or author the adoption
   created is removed too, unless something else now depends on it (another
   file, another book by that author, excluded or not, another adopted row),
   or the book has been used since: monitored, edited, linked to a series, or
