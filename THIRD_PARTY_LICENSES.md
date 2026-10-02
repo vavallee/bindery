@@ -86,7 +86,7 @@ does ship is the failure that matters.
 | i18next-browser-languagedetector | 8.2.1 | MIT |
 | react | 19.3.0 | MIT |
 | react-dom | 19.3.0 | MIT |
-| react-i18next | 17.0.14 | MIT |
+| react-i18next | 17.0.15 | MIT |
 | react-router | 8.4.0 | MIT |
 | scheduler | 0.28.0 | MIT |
 | typescript | 6.0.3 | Apache-2.0 |
@@ -1868,7 +1868,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 30. MIT — npm:react-i18next@17.0.14 (LICENSE)
+### 30. MIT — npm:react-i18next@17.0.15 (LICENSE)
 
 ```
 The MIT License (MIT)
