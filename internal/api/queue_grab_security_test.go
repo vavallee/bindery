@@ -64,15 +64,18 @@ type grabSecFixture struct {
 	// jackettQueries records the query string of every fetch of /dl/jackett,
 	// a Jackett style download link that carries its own credentials.
 	jackettQueries chan string
-	adds           *atomic.Int32
-	alice, bob     int64
+	// trackerPaths records the escaped path of every fetch under /tracker/,
+	// a private tracker style link that carries its passkey in the path.
+	trackerPaths chan string
+	adds         *atomic.Int32
+	alice, bob   int64
 }
 
 func newGrabSecFixture(t *testing.T) *grabSecFixture {
 	t.Helper()
 	t.Cleanup(httpsec.AllowLoopbackForTests())
 
-	f := &grabSecFixture{configHits: &atomic.Int32{}, downloadHits: &atomic.Int32{}, adds: &atomic.Int32{}, jackettQueries: make(chan string, 8)}
+	f := &grabSecFixture{configHits: &atomic.Int32{}, downloadHits: &atomic.Int32{}, adds: &atomic.Int32{}, jackettQueries: make(chan string, 8), trackerPaths: make(chan string, 8)}
 	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("apikey") != leakedAPIKey {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -90,6 +93,11 @@ func newGrabSecFixture(t *testing.T) *grabSecFixture {
 			f.jackettQueries <- r.URL.RawQuery
 			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><nzb></nzb>`))
 		default:
+			if strings.HasPrefix(r.URL.Path, "/tracker/") {
+				f.trackerPaths <- r.URL.EscapedPath()
+				_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><nzb></nzb>`))
+				return
+			}
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))

@@ -482,17 +482,24 @@ Search, queue, pending and grab responses strip every credential parameter
 from `nzbUrl`, `guid` and `infoUrl`: the indexer `apikey`, `jackett_apikey`,
 `passkey`, `torrent_pass`, `authkey`, `rsskey`, `token`, `signature` and the
 rest of the list in `internal/httpsec/redact.go`, plus `r` inside a newznab
-`getnzb` link. Magnets lose their `tr=` announce URLs. History event `data`
-gets the same treatment. A grab of a GUID a recent search returned uses the
+`getnzb` link. Magnets lose their `tr=` announce URLs. Path segments shaped
+like a private tracker passkey, RSS key or download token (hex of 16 or more
+characters, a letter and digit token of 20 or more characters, or the value of
+a `passkey=` style pair in the path) are replaced with `REDACTED-` and 12 hex
+characters. The suffix is a keyed hash that changes on every restart: it tells
+two releases apart without revealing the value. The segment after `/details/`
+or `/getnzb/` is a newznab release id and is kept. History event `data` and the
+log export get the same treatment. A grab of a GUID a recent search returned uses the
 server's own record of the raw URL, so post `guid` back exactly as the search
 returned it. The record lives in memory for 24 hours; after a restart or
 expiry a session grab answers `400` "this search result has expired, search
 again". An API key caller may instead post a GUID the server has not seen
 along with its own raw `nzbUrl`, which is grabbed as posted (with the indexer
-`apikey` added when the host matches a configured indexer).
-
-Known gap: a passkey embedded in a URL path rather than a parameter is not
-recognised and is shown as is.
+`apikey` added when the host matches a configured indexer). Only the indexer
+`apikey` is put back: a `jackett_apikey`, a passkey parameter or a passkey in
+the path that a response redacted cannot be recovered, so such a caller must
+post the raw URL it got from the indexer, not one copied from a Bindery
+response.
 
 #### Download client credentials are write-only
 

@@ -83,9 +83,11 @@ var secretPathPatterns = []*regexp.Regexp{
 }
 
 // RedactSecrets strips credentials from an arbitrary string: the value of any
-// secret query parameter (see secretParamNames) and the token in a known
+// secret query parameter (see secretParamNames), the token in a known
 // webhook or indexer URL shape (Discord, Telegram, Slack, Home Assistant,
-// Teams, Apprise, ntfy.sh, newznab getnzb links). It is meant for error strings and
+// Teams, Apprise, ntfy.sh, newznab getnzb links), and any URL path segment
+// shaped like a passkey or download token (see redactURLPath). It is meant
+// for error strings and
 // log lines that may embed an upstream request URL (e.g. a wrapped
 // *url.Error), so the secret is replaced with REDACTED before the error is
 // logged, stored on a download row, or surfaced to a client.
@@ -97,7 +99,7 @@ func RedactSecrets(s string) string {
 	for _, re := range secretPathPatterns {
 		s = re.ReplaceAllString(s, "${1}REDACTED")
 	}
-	return s
+	return redactURLPathsInText(s)
 }
 
 // RedactURLError scrubs credentials from the URL embedded in a *url.Error, in
@@ -152,6 +154,10 @@ func (e *redactedError) Timeout() bool {
 // as it was, in its original order, and a URL with nothing to remove is
 // returned unchanged, so stripping twice is the same as stripping once.
 //
+// A path segment shaped like a passkey, RSS key or download token is replaced
+// with a placeholder that differs per secret (see redactURLPath), so two
+// GUIDs that differ only there still differ once stripped.
+//
 // A magnet loses its tr= announce URLs, which carry private tracker passkeys.
 // Inside a newznab getnzb link "r" is the API key too, including the
 // getnzb/<guid>.nzb&i=<uid>&r=<apikey> shape where the parameters follow an &
@@ -192,6 +198,17 @@ func StripURLSecrets(raw string) string {
 	if kept := stripParams(u.RawQuery, isSecret); kept != u.RawQuery {
 		changed = true
 		u.RawQuery = kept
+	}
+	// A passkey or download token in the path (see redactURLPath). Only an
+	// absolute URL has a path to look at: a bare newznab GUID is hex too, and
+	// is an id, not a credential.
+	if u.Host != "" && u.Opaque == "" {
+		if p, ok := redactURLPath(u.EscapedPath()); ok {
+			if dec, err := url.PathUnescape(p); err == nil {
+				changed = true
+				u.Path, u.RawPath = dec, p
+			}
+		}
 	}
 	if !changed {
 		return raw
