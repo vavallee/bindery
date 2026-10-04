@@ -1,0 +1,2 @@
+### Security
+- **Bounded memory when reading MP3, M4B and DSF tags.** A large audiobook download whose tags claimed gigabytes of cover art or text could make every library scan hold that much in memory. Bindery now checks those sizes before reading the tags, as it already does for FLAC and Ogg, and falls back to the filename when they are out of bounds. Covers up to about 16 MiB still read in every format.
