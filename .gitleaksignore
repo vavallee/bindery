@@ -1,0 +1,23 @@
+# Individual gitleaks findings to ignore, one fingerprint per line
+# (commit:file:rule:line). Each entry silences exactly one finding in one
+# historical commit; nothing here changes the rules in .gitleaks.toml.
+#
+# PR #2987, commit 652cb981: fake tracker passkeys and RSS keys in the path
+# redaction test tables. They were never real credentials, and the next
+# commits build them at run time instead (internal/httpsec/fake_tokens_test.go),
+# so no literal remains in the tree. History cannot be rewritten without a
+# force push, so the commit that added them is listed here.
+652cb981998820347bcf2828753ac1619129efbf:internal/api/queue_grab_path_redact_test.go:generic-api-key:18
+652cb981998820347bcf2828753ac1619129efbf:internal/api/queue_grab_path_redact_test.go:generic-api-key:19
+652cb981998820347bcf2828753ac1619129efbf:internal/httpsec/redact_path_test.go:generic-api-key:19
+652cb981998820347bcf2828753ac1619129efbf:internal/httpsec/redact_path_test.go:generic-api-key:25
+652cb981998820347bcf2828753ac1619129efbf:internal/httpsec/redact_path_test.go:generic-api-key:31
+652cb981998820347bcf2828753ac1619129efbf:internal/httpsec/redact_path_test.go:generic-api-key:37
+652cb981998820347bcf2828753ac1619129efbf:internal/httpsec/redact_path_test.go:generic-api-key:43
+652cb981998820347bcf2828753ac1619129efbf:internal/httpsec/redact_path_test.go:generic-api-key:49
+652cb981998820347bcf2828753ac1619129efbf:internal/httpsec/redact_path_test.go:generic-api-key:55
+652cb981998820347bcf2828753ac1619129efbf:internal/httpsec/redact_path_test.go:generic-api-key:61
+652cb981998820347bcf2828753ac1619129efbf:internal/httpsec/redact_path_test.go:generic-api-key:67
+652cb981998820347bcf2828753ac1619129efbf:internal/httpsec/redact_path_test.go:generic-api-key:73
+652cb981998820347bcf2828753ac1619129efbf:internal/httpsec/redact_path_test.go:generic-api-key:91
+652cb981998820347bcf2828753ac1619129efbf:internal/httpsec/redact_path_test.go:generic-api-key:97
