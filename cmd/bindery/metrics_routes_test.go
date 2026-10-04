@@ -114,4 +114,27 @@ func TestRouteTemplate_NeverReturnsRawPath(t *testing.T) {
 			t.Errorf("%s %s: route=%q, want %q", tc.method, tc.path, got, tc.want)
 		}
 	}
+
+	// Under BINDERY_URL_BASE the inner router shares the outer router's
+	// route context, so a root level 405 reports the mount pattern rather
+	// than unmatched. Still a fixed value, never the raw path. An unknown
+	// method is rejected by the outer router before the inner middleware
+	// runs, so it records nothing at all (got stays empty).
+	prefixed := mountUnderURLBase(r, "/bindery")
+	prefixedCases := []struct {
+		method, path, want string
+	}{
+		{http.MethodGet, "/bindery/api/v1/book/42", "/bindery/api/v1/book/{id}"},
+		{http.MethodPost, "/bindery/some/spa/page", "/bindery/*"},
+		{"PROPFIND", "/bindery/secret-path-abc", ""},
+	}
+	for _, tc := range prefixedCases {
+		got = ""
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		req.Method = tc.method
+		prefixed.ServeHTTP(httptest.NewRecorder(), req)
+		if got != tc.want {
+			t.Errorf("url base %s %s: route=%q, want %q", tc.method, tc.path, got, tc.want)
+		}
+	}
 }

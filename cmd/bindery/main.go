@@ -1649,7 +1649,12 @@ func (p *dbUserProvisioner) ResolveOrProvisionUser(ctx context.Context, username
 // never the raw path. The metrics middleware runs before auth, so a raw path
 // label would let any anonymous client mint a permanent series per request.
 // Unknown GETs still report a template: "/*" for the SPA catch-all and
-// "/api/v1/*" for misses inside the API subrouter.
+// "/api/v1/*" for misses inside the API subrouter. With BINDERY_URL_BASE set,
+// the inner router shares the outer router's route context, so templates
+// carry the prefix and a root level 405 reports the mount pattern (e.g.
+// "/bindery/*") rather than unmatchedRoute; still one fixed value. Unknown
+// methods under a prefix are rejected by the outer router and never reach
+// the metrics middleware at all.
 func routeTemplate(r *http.Request) string {
 	if rc := chi.RouteContext(r.Context()); rc != nil {
 		if pat := rc.RoutePattern(); pat != "" {
