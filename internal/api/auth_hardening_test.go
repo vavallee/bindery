@@ -103,6 +103,12 @@ func TestOPDS_ConcurrentBasicBurstBoundedByLimit(t *testing.T) {
 // with an observable verifier and a 5 per window limiter.
 func opdsBasicHarness(t *testing.T) (http.Handler, *db.UserRepo, *opdsBasicVerifier) {
 	t.Helper()
+	return opdsBasicHarnessMode(t, auth.ModeEnabled)
+}
+
+// opdsBasicHarnessMode is opdsBasicHarness under the given auth mode.
+func opdsBasicHarnessMode(t *testing.T, mode auth.Mode) (http.Handler, *db.UserRepo, *opdsBasicVerifier) {
+	t.Helper()
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -110,6 +116,9 @@ func opdsBasicHarness(t *testing.T) (http.Handler, *db.UserRepo, *opdsBasicVerif
 	t.Cleanup(func() { _ = database.Close() })
 	settings := db.NewSettingsRepo(database)
 	if err := settings.Set(context.Background(), SettingAuthSessionSecret, "abcdefghijklmnopqrstuvwxyz012345"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.Set(context.Background(), SettingAuthMode, string(mode)); err != nil {
 		t.Fatal(err)
 	}
 	users := db.NewUserRepo(database)
@@ -150,6 +159,70 @@ func TestOPDS_ParallelCorrectBasicAllSucceed(t *testing.T) {
 	h.ServeHTTP(rec, basicReq("reader", "reader-password-1", "203.0.113.90"))
 	if rec.Code != http.StatusOK || v.kdfRuns.Load() != 1 {
 		t.Errorf("warm request: code %d, KDF runs %d; want 200 and still 1", rec.Code, v.kdfRuns.Load())
+	}
+}
+
+// TestOPDS_RefusedHostFallsThroughToBasicHardening combines the DNS rebinding
+// Host check (#2959) with the Basic hardening: in local-only and disabled
+// mode a refused Host name gets no mode grant, even from a LAN peer, and
+// falls through to Basic auth, which still bounds guessing with the limiter
+// and serves a parallel reader burst with one KDF run.
+func TestOPDS_RefusedHostFallsThroughToBasicHardening(t *testing.T) {
+	for _, mode := range []auth.Mode{auth.ModeLocalOnly, auth.ModeDisabled} {
+		t.Run(string(mode), func(t *testing.T) {
+			h, users, v := opdsBasicHarnessMode(t, mode)
+			hash, _ := auth.HashPassword("reader-password-1")
+			if _, err := users.Create(context.Background(), "reader", hash); err != nil {
+				t.Fatal(err)
+			}
+			const lanPeer = "192.168.1.50"
+			rebound := func(req *http.Request) *http.Request {
+				req.Host = "attacker.example.com" // a public name pointed at the LAN address
+				return req
+			}
+
+			// Accepted name, no credentials: the mode grant still applies.
+			ok := httptest.NewRequest(http.MethodGet, "/opds/", nil)
+			ok.RemoteAddr = lanPeer + ":5555"
+			ok.Host = "192.168.1.10:8787"
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, ok)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("accepted host, no credentials: %d; want 200 from the mode grant", rec.Code)
+			}
+
+			// Refused name, no credentials: no grant, Basic challenge.
+			bare := rebound(httptest.NewRequest(http.MethodGet, "/opds/", nil))
+			bare.RemoteAddr = lanPeer + ":5555"
+			rec = httptest.NewRecorder()
+			h.ServeHTTP(rec, bare)
+			if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") == "" {
+				t.Fatalf("refused host, no credentials: %d; want 401 with a Basic challenge", rec.Code)
+			}
+
+			// Refused name, distinct wrong passwords: the limiter bounds them.
+			codes := burstCodes(40, func(i int) *http.Request {
+				return rebound(basicReq("reader", "guess-"+strconv.Itoa(i), lanPeer))
+			}, h)
+			got := countCodes(codes)
+			if got[http.StatusOK] != 0 || got[http.StatusUnauthorized] > 5 ||
+				got[http.StatusUnauthorized]+got[http.StatusTooManyRequests] != 40 {
+				t.Fatalf("refused host, 40 wrong passwords: codes %v; want at most 5 x 401, the rest 429", got)
+			}
+
+			// Refused name, correct credentials from a fresh LAN peer: a
+			// parallel reader burst all succeeds on one KDF run.
+			before := v.kdfRuns.Load()
+			codes = burstCodes(12, func(int) *http.Request {
+				return rebound(basicReq("reader", "reader-password-1", "192.168.1.51"))
+			}, h)
+			if got := countCodes(codes); got[http.StatusOK] != 12 {
+				t.Fatalf("refused host, 12 correct: codes %v; want all 200", got)
+			}
+			if runs := v.kdfRuns.Load() - before; runs != 1 {
+				t.Errorf("refused host, 12 correct: %d KDF runs; want 1", runs)
+			}
+		})
 	}
 }
 
