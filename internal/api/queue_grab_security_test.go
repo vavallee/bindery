@@ -60,15 +60,19 @@ type grabSecFixture struct {
 	downloadURL  string // the download URL the search returns, unsigned
 	configHits   *atomic.Int32
 	downloadHits *atomic.Int32
-	adds         *atomic.Int32
-	alice, bob   int64
+	searcher     *fixedSearcher
+	// jackettQueries records the query string of every fetch of /dl/jackett,
+	// a Jackett style download link that carries its own credentials.
+	jackettQueries chan string
+	adds           *atomic.Int32
+	alice, bob     int64
 }
 
 func newGrabSecFixture(t *testing.T) *grabSecFixture {
 	t.Helper()
 	t.Cleanup(httpsec.AllowLoopbackForTests())
 
-	f := &grabSecFixture{configHits: &atomic.Int32{}, downloadHits: &atomic.Int32{}, adds: &atomic.Int32{}}
+	f := &grabSecFixture{configHits: &atomic.Int32{}, downloadHits: &atomic.Int32{}, adds: &atomic.Int32{}, jackettQueries: make(chan string, 8)}
 	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("apikey") != leakedAPIKey {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -81,6 +85,9 @@ func newGrabSecFixture(t *testing.T) *grabSecFixture {
 			_, _ = w.Write([]byte(`{"apiKey":"` + leakedAPIKey + `","password":"hunter2"}`))
 		case "/3/download":
 			f.downloadHits.Add(1)
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><nzb></nzb>`))
+		case "/dl/jackett":
+			f.jackettQueries <- r.URL.RawQuery
 			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><nzb></nzb>`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -113,7 +120,7 @@ func newGrabSecFixture(t *testing.T) *grabSecFixture {
 	// The searcher signs download URLs on the indexer's host, as the real
 	// search path does; the search handler strips the key before replying.
 	signed := newznab.SignDownloadURLFor(f.downloadURL, idx.URL, idx.APIKey)
-	searcher := fixedSearcher{results: []newznab.SearchResult{{
+	searcher := &fixedSearcher{results: []newznab.SearchResult{{
 		GUID: f.guid, IndexerID: idx.ID, IndexerName: idx.Name, Title: "Lee Child - One Shot (epub)",
 		Size: 1234, NZBURL: signed, Protocol: "usenet",
 	}}}
@@ -123,6 +130,7 @@ func newGrabSecFixture(t *testing.T) *grabSecFixture {
 	f.search = NewIndexerHandler(indexers, books, db.NewAuthorRepo(database), db.NewMetadataProfileRepo(database),
 		searcher, db.NewSettingsRepo(database), db.NewBlocklistRepo(database)).WithSearchResults(registry)
 	f.database, f.downloads, f.books, f.ctx = database, downloads, books, ctx
+	f.searcher = searcher
 	f.alice, f.bob = regrabUsers(t, database)
 	return f
 }
@@ -238,6 +246,14 @@ func TestQueueGrab_NonAdminGrabUsesTheSearchedURL(t *testing.T) {
 	if dl.OwnerUserID != f.bob {
 		t.Errorf("the download must belong to the grabber %d, got %d", f.bob, dl.OwnerUserID)
 	}
+	// The recorded URL already carries its key, so signNZBURL leaves it alone,
+	// and the indexer comes from the record rather than from a host match.
+	if dl.IndexerID == nil || *dl.IndexerID != f.indexerID {
+		t.Errorf("the download must be attributed to indexer %d, got %v", f.indexerID, dl.IndexerID)
+	}
+	if strings.Count(dl.NZBURL, "apikey=") != 1 {
+		t.Errorf("the stored URL must carry the key exactly once, got %q", newznab.RedactDownloadURL(dl.NZBURL))
+	}
 }
 
 // TestQueueGrab_AdminMayStillPostAURL: admins and API key callers (which carry
@@ -294,7 +310,8 @@ func TestQueueGrab_RefusesAnotherUsersBook(t *testing.T) {
 // stamped as its new owner, inheriting the row's book. With tenancy on, a dead
 // row that still means something to its owner (failed: Retry sends it again;
 // importBlocked: Retry import re-runs its files) is not someone else's to
-// claim. The caller's own rows keep #2289's reuse.
+// claim inside the scheduler's cooldown (TestQueueGrab_ClaimsAnotherUsersLongDeadRow
+// covers the row past it). The caller's own rows keep #2289's reuse.
 func TestQueueGrab_DoesNotTakeOverAnotherUsersRow(t *testing.T) {
 	for _, status := range []models.DownloadState{models.StateFailed, models.StateImportBlocked} {
 		t.Run(string(status), func(t *testing.T) {
@@ -394,5 +411,112 @@ func TestQueueRetry_NonAdminStillResendsOwnRow(t *testing.T) {
 	}
 	if n := f.downloadHits.Load(); n != 1 {
 		t.Errorf("expected the stored URL to be fetched once, got %d", n)
+	}
+}
+
+// TestQueueGrab_SendsTheRecordedCredentials: the registry holds the raw URL a
+// search produced, so a grab sends the real credentials even when the client
+// posts back a URL with them removed, as it will once search responses strip
+// every secret. That holds for admins as well as users, because a recorded
+// GUID is grabbed from the record whoever asks.
+func TestQueueGrab_SendsTheRecordedCredentials(t *testing.T) {
+	for _, role := range []string{auth.RoleUser, auth.RoleAdmin} {
+		t.Run(role, func(t *testing.T) {
+			f := newGrabSecFixture(t)
+			raw := f.indexerURL + "/dl/jackett?jackett_apikey=REAL&passkey=REAL&path=abc&file=One+Shot"
+			f.searcher.results = []newznab.SearchResult{{
+				GUID: "guid-jackett", IndexerID: f.indexerID, Title: "Lee Child - One Shot (epub)",
+				NZBURL: raw, Protocol: "usenet",
+			}}
+			f.searchAs(t, f.bob)
+
+			stripped := f.indexerURL + "/dl/jackett?jackett_apikey=REDACTED&path=abc&file=One+Shot"
+			rec := f.grabAs(f.bob, role, map[string]any{
+				"guid": "guid-jackett", "title": "Lee Child - One Shot (epub)", "nzbUrl": stripped, "indexerId": f.indexerID,
+			})
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("grab: got %d: %s", rec.Code, rec.Body.String())
+			}
+			select {
+			case q := <-f.jackettQueries:
+				if !strings.Contains(q, "jackett_apikey=REAL") || !strings.Contains(q, "passkey=REAL") {
+					t.Errorf("the download must be fetched with the real credentials, got query %q", q)
+				}
+			default:
+				t.Fatal("the recorded download URL was never fetched")
+			}
+			dl, err := f.downloads.GetByGUID(f.ctx, "guid-jackett")
+			if err != nil || dl == nil {
+				t.Fatalf("reload download: %v", err)
+			}
+			if !strings.Contains(dl.NZBURL, "passkey=REAL") || !strings.Contains(dl.NZBURL, "jackett_apikey=REAL") {
+				t.Errorf("the stored URL must be the recorded one, got %q", dl.NZBURL)
+			}
+			if dl.IndexerID == nil || *dl.IndexerID != f.indexerID {
+				t.Errorf("the download must be attributed to indexer %d, got %v", f.indexerID, dl.IndexerID)
+			}
+		})
+	}
+}
+
+// TestQueueGrab_ClaimsAnotherUsersLongDeadRow: a foreign row is claimed on the
+// scheduler's terms. A failed row dead for longer than the scheduler's
+// cooldown is claimed with a full reset, owner and book included; an
+// importBlocked row is not, whatever its age, since the scheduler never
+// claims one either.
+func TestQueueGrab_ClaimsAnotherUsersLongDeadRow(t *testing.T) {
+	for _, tc := range []struct {
+		status  models.DownloadState
+		claimed bool
+	}{
+		{models.StateFailed, true},
+		{models.StateImportBlocked, false},
+	} {
+		t.Run(string(tc.status), func(t *testing.T) {
+			auth.SetEnforceTenancyForTests(t, true)
+			f := newGrabSecFixture(t)
+			aliceBook := regrabOwnedBook(t, f.database, f.books, "alice-old", f.alice)
+			row := &models.Download{
+				GUID: f.guid, BookID: &aliceBook.ID, OwnerUserID: f.alice, Title: "Alice Release",
+				NZBURL: f.downloadURL, Status: tc.status, Protocol: "usenet", IndexerFlags: "freeleech",
+			}
+			if err := f.downloads.Create(f.ctx, row); err != nil {
+				t.Fatal(err)
+			}
+			longAgo := time.Now().UTC().Add(-models.DeadRegrabCooldown - time.Hour)
+			if _, err := f.database.Exec("UPDATE downloads SET dead_at=?, added_at=? WHERE id=?", longAgo, longAgo, row.ID); err != nil {
+				t.Fatal(err)
+			}
+			f.searchAs(t, f.bob)
+
+			rec := f.grabAs(f.bob, auth.RoleUser, map[string]any{
+				"guid": f.guid, "title": "Lee Child - One Shot (epub)", "nzbUrl": f.downloadURL, "indexerId": f.indexerID,
+			})
+			got, err := f.downloads.GetByID(f.ctx, row.ID)
+			if err != nil || got == nil {
+				t.Fatalf("reload row: %v", err)
+			}
+			if !tc.claimed {
+				if rec.Code != http.StatusConflict {
+					t.Fatalf("want 409, got %d: %s", rec.Code, rec.Body.String())
+				}
+				if got.OwnerUserID != f.alice || got.Status != tc.status {
+					t.Errorf("alice's row must be untouched; owner=%d status=%s", got.OwnerUserID, got.Status)
+				}
+				return
+			}
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("bob claiming alice's long dead row: got %d: %s", rec.Code, rec.Body.String())
+			}
+			if got.OwnerUserID != f.bob {
+				t.Errorf("the claimed row must belong to bob, owner is %d", got.OwnerUserID)
+			}
+			if got.BookID != nil {
+				t.Errorf("the claimed row must not keep alice's book, has %d", *got.BookID)
+			}
+			if got.IndexerFlags != "" || got.Title != "Lee Child - One Shot (epub)" || got.Status != models.StateDownloading {
+				t.Errorf("the claimed row must be fully reset: flags=%q title=%q status=%s", got.IndexerFlags, got.Title, got.Status)
+			}
+		})
 	}
 }

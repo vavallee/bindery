@@ -10,22 +10,10 @@ import (
 )
 
 // deadRegrabCooldown is how long a failed download row keeps blocking the
-// scheduler's automatic re-grab of the same release, measured from the moment
-// the row died (models.Download.DeadSince, dead_at).
-//
-// A finished attempt must not block a re-grab for good (#2710): the causes are
-// usually transient, and a release poisoned by one indexer 429 stayed
-// ungrabbable until the user deleted the queue row by hand. But it must not be
-// retried on every sweep either, because a release that fails at the download
-// client fails again the moment it is re-sent, and only the stall path
-// blocklists. Six hours sits between the two: shorter than the default twelve
-// hour search cadence, so the ordinary next sweep of that book retries the
-// release, and longer than the one hour minimum cadence, so the tightest
-// configured sweep still cannot hammer the client with it.
-//
-// A person clicking Grab is not bound by this. The manual path (api.grab) has
-// always retried a dead row immediately, and still does.
-const deadRegrabCooldown = 6 * time.Hour
+// scheduler's automatic re-grab of the same release. The value and its
+// reasoning live on models.DeadRegrabCooldown, which a manual grab of another
+// user's failed row is held to as well.
+const deadRegrabCooldown = models.DeadRegrabCooldown
 
 // regrabReasonImportBlocked and the other reasons below name a skip in the
 // search outcome and in the log line that accompanies it. They are short

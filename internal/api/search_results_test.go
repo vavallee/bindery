@@ -20,8 +20,8 @@ func TestSearchResultRegistry_RecordsWhatWasReturned(t *testing.T) {
 	if !ok {
 		t.Fatal("g1 should be recorded")
 	}
-	if e.NZBURL != "http://idx/dl?id=1" {
-		t.Errorf("the recorded URL must be the redacted one, got %q", e.NZBURL)
+	if e.NZBURL != "http://idx/dl?apikey=K&id=1" {
+		t.Errorf("the recorded URL must be the raw one, credentials included, got %q", e.NZBURL)
 	}
 	book := int64(5)
 	req := grabRequest{GUID: "g1", NZBURL: "http://elsewhere/", Title: "posted", BookID: &book, MediaType: "audiobook"}

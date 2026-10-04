@@ -727,7 +727,6 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		Rejection string `json:"rejection,omitempty"`
 	}
 	out := make([]searchDecision, len(decisions))
-	returned := make([]newznab.SearchResult, len(decisions))
 	for i, d := range decisions {
 		res := results[i]
 		// Strip the indexer apikey the search path signs into the download URL
@@ -735,7 +734,6 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		// non-admin users, so returning the signed URL leaks the shared indexer
 		// credential; the grab handler re-signs from the indexer id server-side.
 		res.NZBURL = newznab.RedactDownloadURL(res.NZBURL)
-		returned[i] = res
 		out[i] = searchDecision{
 			SearchResult: res,
 			Approved:     d.Approved,
@@ -752,7 +750,9 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Every result is grabbable, approved or not: a rejection only labels it.
-	h.searchResults.remember(returned)
+	// The registry keeps the raw URL, before the redaction above, so a grab
+	// never depends on the URL the client posts back.
+	h.searchResults.remember(results)
 
 	// Remember the most recent debug payload so the UI can re-fetch it
 	// (e.g. after a page reload) without having to re-run the search.
@@ -812,11 +812,12 @@ func (h *IndexerHandler) SearchQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := h.searcher.SearchQuery(r.Context(), idxs, query)
+	// Recorded raw, before the redaction below: see SearchBook.
+	h.searchResults.remember(results)
 	// Strip the indexer apikey from each download URL before returning to the
 	// client; the grab handler re-signs server-side (see SearchBook).
 	for i := range results {
 		results[i].NZBURL = newznab.RedactDownloadURL(results[i].NZBURL)
 	}
-	h.searchResults.remember(results)
 	writeJSON(w, http.StatusOK, results)
 }

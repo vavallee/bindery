@@ -63,9 +63,9 @@ Three roles exist: `admin`, `user` and `requester`.
 
 ### Grabbing as a user
 
-A `user` account grabs releases from the search results Bindery showed it. `POST /api/v1/queue/grab` looks the release up by its `guid` among recent search results and sends the download URL the server recorded for it, whatever `nzbUrl` the request carries. A release no recent search returned, or one whose results have aged out (24 hours, or a restart), is refused with a message to run the search again. Admins, API key requests and requests the auth mode admits as the admin can still post any download URL.
+A `user` account grabs releases from the search results Bindery showed it. `POST /api/v1/queue/grab` looks the release up by its `guid` among recent search results and sends the download URL the server recorded for it, credentials included, whatever `nzbUrl` the request carries. That applies to every caller: an admin grabbing a recent search result also gets the recorded URL. A release no recent search returned, or one whose results have aged out (24 hours, or a restart), is refused for a user account with a message to run the search again. Admins, API key requests and requests the auth mode admits as the admin fall back to the `nzbUrl` they posted.
 
-With `BINDERY_ENFORCE_TENANCY` on, a grab's `bookId` must be a book the caller owns (otherwise 404, as for any other book route), and a release whose queue row belongs to another user answers 409 without describing that row. The one exception is an imported row whose book was deleted, which any user may grab again.
+With `BINDERY_ENFORCE_TENANCY` on, a grab's `bookId` must be a book the caller owns (otherwise 404, as for any other book route), and a release whose queue row belongs to another user answers 409 without describing that row. A grab claims another user's row only on the terms the scheduler's automatic grab uses: a failed row once it has been dead for six hours, or an imported row whose book was deleted. A claimed row is reset completely, owner and book included. Rows in `importBlocked` and live rows are never claimed this way.
 
 ## Requester
 

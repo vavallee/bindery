@@ -44,6 +44,22 @@ var errAlreadyGrabbed = errors.New("already grabbed")
 // state, book and history are that user's.
 const foreignRowGrabbedDetail = "another user already has this release in their queue"
 
+// foreignRowClaimable reports whether a grab may claim d, a download row that
+// belongs to another user, at now. It is the scheduler's rule for its own
+// automatic re-grab (scheduler.blockingRegrabReason): an orphaned import
+// whatever its age, or a failed row that has been dead for at least
+// models.DeadRegrabCooldown. db.DownloadRepo.RetryDeadForAutoGrab claims
+// exactly these rows and re-checks the cooldown in SQL.
+func foreignRowClaimable(d *models.Download, now time.Time) bool {
+	if d.BlocksAutoRegrab() {
+		return false
+	}
+	if d.IsOrphanedImport() {
+		return true
+	}
+	return !d.DeadSince().After(now.Add(-models.DeadRegrabCooldown))
+}
+
 // errGrabBookNotFound is returned when the book a grab names does not exist or
 // belongs to another user. The handlers answer 404 for both, as the book
 // handlers do, so a caller cannot tell the two apart.
@@ -830,19 +846,20 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "guid and nzbUrl required"})
 		return
 	}
-	// A non-admin grabs what a search returned, never a URL of its own: the
-	// release is looked up by GUID and the server's record replaces the posted
-	// download URL, indexer, protocol, title and size. Bindery fetches the
-	// download URL itself and signs it with an indexer key when the host
-	// matches, so trusting the posted one let a user read an indexer's API, or
-	// any LAN service, through the grab. See SearchResultRegistry.
-	if !callerMayGrabAnyURL(r.Context()) {
-		rel, ok := h.searchResults.lookup(req.GUID)
-		if !ok {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": errReleaseNotSearched.Error()})
-			return
-		}
+	// A release a search returned is grabbed from the server's record, for
+	// every caller: the raw download URL, indexer, protocol, title and size
+	// replace the posted ones, so the grab never depends on what the client
+	// posts back (search responses redact the URL). A non-admin may grab
+	// nothing else. Bindery fetches the download URL itself and signs it with
+	// an indexer key when the host matches, so trusting a posted URL let a user
+	// read an indexer's API, or any LAN service, through the grab. Admins and
+	// API key callers fall back to the posted URL for a GUID the registry does
+	// not hold. See SearchResultRegistry.
+	if rel, ok := h.searchResults.lookup(req.GUID); ok {
 		rel.apply(&req)
+	} else if !callerMayGrabAnyURL(r.Context()) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errReleaseNotSearched.Error()})
+		return
 	}
 
 	dl, err := h.grab(r.Context(), req)
@@ -1260,15 +1277,17 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		return nil, err
 	}
 	// The GUID lookup is global because the column is UNIQUE, so under tenancy
-	// the row it finds may be another user's. Such a row is not this caller's
-	// to reuse: a failed one is still theirs to Retry and an importBlocked one
-	// theirs to Retry import, and reusing it handed the row to the caller with
-	// its book attached. The one exception is an orphaned import (#2289): its
-	// book is gone, nothing about it is actionable for its owner, and refusing
-	// would pin the release against every other user for good. The refusal
-	// does not describe the row, since it is not the caller's to see.
+	// the row it finds may be another user's. Such a row is claimed on the
+	// scheduler's terms and no others (foreignRowClaimable): a failed row once
+	// it has been dead for models.DeadRegrabCooldown, and an orphaned import
+	// (#2289). Inside the cooldown a failed row is still its owner's to Retry,
+	// an importBlocked row is its owner's to Retry import, and a live row is
+	// live work. The refusal does not describe the row, since it is not the
+	// caller's to see. A claimed foreign row is fully reset and lends the grab
+	// nothing (see below).
+	now := time.Now().UTC()
 	foreignRow := existing != nil && !auth.CheckOwnership(ctx, existing.OwnerUserID)
-	if foreignRow && !orphanedImport(existing) {
+	if foreignRow && !foreignRowClaimable(existing, now) {
 		return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, foreignRowGrabbedDetail)
 	}
 	if existing != nil && !regrabbable(existing) {
@@ -1378,11 +1397,22 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	}
 	if existing != nil {
 		dl.ID = existing.ID
-		ok, err := h.downloads.RetryFailed(ctx, dl)
+		var ok bool
+		if foreignRow {
+			// The scheduler's claim, with its cooldown re-checked in SQL, so a
+			// row that changed hands or died again since the read above is a
+			// refusal rather than a takeover.
+			ok, err = h.downloads.RetryDeadForAutoGrab(ctx, dl, now.Add(-models.DeadRegrabCooldown))
+		} else {
+			ok, err = h.downloads.RetryFailed(ctx, dl)
+		}
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
+			if foreignRow {
+				return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, foreignRowGrabbedDetail)
+			}
 			return nil, errAlreadyGrabbed
 		}
 	} else if err := h.downloads.Create(ctx, dl); err != nil {

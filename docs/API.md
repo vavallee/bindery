@@ -437,9 +437,9 @@ GET    /api/v1/queue                              active downloads with live dow
        -> {"items":[..],"partial":true,"staleClients":[{"clientId":1,"name":"qBit","message":".."}]}
                                                   partial means a download client did not answer in time, so items is short
 POST   /api/v1/queue/grab                         submit a search result to the download client
-                                                  admins and the API key may post any nzbUrl; a user account
-                                                  may only grab a guid its recent search returned, and the
-                                                  server's URL for it replaces the posted one
+                                                  a guid a recent search returned is grabbed from the server's
+                                                  record (raw URL) for every caller; otherwise admins and the
+                                                  API key use the posted nzbUrl and a user account is refused
 POST   /api/v1/queue/{id}/retry-import           retry an importFailed/importBlocked item without re-downloading
 POST   /api/v1/queue/{id}/retry                   re-send a failed item's release to the download client (no re-search)
 POST   /api/v1/queue/bulk-retry                   retry many; {"ids":[..]}; per id {"ok":true,"action":"import"|"resend"}

@@ -10,28 +10,35 @@ import (
 )
 
 // SearchResultRegistry remembers the releases the interactive search endpoints
-// returned, keyed by GUID, so that a grab from an account that is not an admin
-// can be held to a release Bindery itself found.
+// returned, keyed by GUID, with the download URL exactly as the indexer gave
+// it: before any redaction, credentials included.
 //
-// POST /queue/grab used to send whatever download URL the request carried.
-// Bindery fetches that URL itself for the usenet clients, signNZBURL attaches
-// the stored indexer key to any URL on a configured indexer's host, and the
-// first bytes of a body that is not an NZB come back in the error. Together
-// that let any user role account read an indexer's or Prowlarr's own API with
-// the admin's key, or read any HTTP service on the LAN. A user account grabs
-// from the search results the server handed it, so that is all it may grab:
-// the release is looked up here by GUID and the download URL, indexer,
-// protocol, title and size the server recorded replace whatever was posted.
+// It does two jobs. First, a grab from an account that is not an admin is held
+// to a release Bindery itself found. POST /queue/grab used to send whatever
+// download URL the request carried; Bindery fetches that URL itself for the
+// usenet clients, signNZBURL attaches the stored indexer key to any URL on a
+// configured indexer's host, and the first bytes of a body that is not an NZB
+// come back in the error. Together that let any user role account read an
+// indexer's or Prowlarr's own API with the admin's key, or read any HTTP
+// service on the LAN. A user account grabs from the search results the server
+// handed it, so that is all it may grab.
 //
-// Admins, and API key and trusted local requests (which carry the admin role),
-// keep posting their own URLs, as API clients that search elsewhere do. See
-// callerMayGrabAnyURL.
+// Second, a grab of a recorded release never depends on the URL the client
+// posts back, whoever the caller is. The recorded URL, indexer, protocol,
+// title and size replace the posted ones for admins and API key callers too,
+// so search responses can drop every secret from the URL (an indexer apikey, a
+// Jackett key, a tracker passkey) and the grab still sends the real values.
+// An admin or API key grab of a GUID the registry does not hold (a restart,
+// an eviction, a result older than the TTL, or a release found elsewhere)
+// falls back to the posted URL. See callerMayGrabAnyURL.
 //
 // Entries are keyed by GUID alone. The searcher already de-duplicates results
 // by GUID, and whichever search recorded an entry last, the URL in it is one an
 // indexer returned, which is the property that matters. The registry is in
-// memory: a restart empties it and a user re-runs the search, which is the
-// same thing they would do after the results page went stale.
+// memory and never leaves the process: lookup is only read by the grab
+// handler, and grab() redacts the record it returns. A restart empties it and
+// a user re-runs the search, which is the same thing they would do after the
+// results page went stale.
 type SearchResultRegistry struct {
 	mu      sync.Mutex
 	entries map[string]searchRelease
@@ -48,7 +55,7 @@ type SearchResultRegistry struct {
 // searchRelease is what a non-admin grab takes from the server rather than
 // from the request.
 type searchRelease struct {
-	NZBURL    string // as returned to the client: indexer key stripped
+	NZBURL    string // raw, as the indexer returned it: may carry credentials
 	Title     string
 	Size      int64
 	IndexerID int64
@@ -86,8 +93,9 @@ func NewSearchResultRegistry() *SearchResultRegistry {
 	}
 }
 
-// remember records results as returned to the client. Results with no GUID
-// are skipped: a grab needs one. A nil registry records nothing.
+// remember records results with their raw download URLs, so callers pass the
+// results before redacting them for the response. Results with no GUID are
+// skipped: a grab needs one. A nil registry records nothing.
 func (r *SearchResultRegistry) remember(results []newznab.SearchResult) {
 	if r == nil || len(results) == 0 {
 		return
@@ -101,7 +109,7 @@ func (r *SearchResultRegistry) remember(results []newznab.SearchResult) {
 		}
 		r.seq++
 		r.entries[res.GUID] = searchRelease{
-			NZBURL:    newznab.RedactDownloadURL(res.NZBURL),
+			NZBURL:    res.NZBURL,
 			Title:     res.Title,
 			Size:      res.Size,
 			IndexerID: res.IndexerID,
@@ -150,7 +158,8 @@ func (r *SearchResultRegistry) compactLocked() {
 
 // lookup returns the release recorded for guid, if one was recorded within the
 // TTL. A nil registry knows no releases, so a QueueHandler with none attached
-// refuses every non-admin grab rather than trusting the posted URL.
+// refuses every non-admin grab rather than trusting the posted URL, and admin
+// grabs use the posted URL as they always did.
 func (r *SearchResultRegistry) lookup(guid string) (searchRelease, bool) {
 	if r == nil || guid == "" {
 		return searchRelease{}, false
