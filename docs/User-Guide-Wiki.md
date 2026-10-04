@@ -563,6 +563,16 @@ How to work through the list:
   book that already has a file adds the new file alongside it (#2879).
   Suggestions are worked out by the scan, so a book added since the last scan
   appears after the next one; until then, search for it in the editor.
+- **Files that name another author than their folder** say so: the row reads,
+  for example, **Files say Katy Evans, folder says James Patterson**. The
+  author comes from the audio tags, or from track names that all read
+  `Author - Title 1`, `Author - Title 2` and so on. The row is named after the
+  book the files name (the album tag, or the title in those track names), and
+  suggestions come from the files' author first, scored on that title. Books
+  by the folder's author are still listed below them, marked **Folder author
+  only**, but they are never preselected and never a one click Confirm. When
+  the files' author is not in your library, the row offers **Add author** for
+  them, not for the folder's author (#2942).
 - **Choose book** opens the row in place: the suggestions with their scores,
   a search of your library (prefilled from the file), and a collapsed
   **Search metadata**. Metadata providers are only asked when you press Search

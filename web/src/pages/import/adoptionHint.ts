@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next'
 import type { AdoptionItem } from '../../api/client'
-import { matchStrength } from './adoptionMatch'
+import { matchStrength, preselectable } from './adoptionMatch'
 
 // The one sentence a row says about itself. It is written from facts the scan
 // recorded (the parsed author, the closest title) and ends in the thing to do
@@ -23,10 +23,12 @@ export function adoptionHint(item: AdoptionItem, t: TFunction): AdoptionHintText
     ? t('adoption.hint.reasonTooltip', { code: item.reason, defaultValue: 'Scan reason: {{code}}' })
     : ''
   const author = item.parsedAuthor
-  const top = item.candidates[0]
+  // A look alike by the folder's author is not what the row is about when the
+  // files name someone else (#2942); the hint speaks of the files' author.
+  const top = preselectable(item)
 
   if (top) {
-    const strong = matchStrength(item) === 'strong'
+    const strong = matchStrength(item, top) === 'strong'
     return {
       sentence: strong
         ? t('adoption.hint.strong', {

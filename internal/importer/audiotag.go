@@ -24,6 +24,10 @@ type AudioTags struct {
 	Title  string
 	Author string
 	ASIN   string
+	// Album is the album tag, which audiobook rips set to the book's title
+	// while the title tag names the track. Library adoption reads it as
+	// evidence of the book when the folder names someone else's (#2942).
+	Album string
 }
 
 // IsAudioTagFile reports whether path has an extension we attempt to read
@@ -56,6 +60,7 @@ func readAudioTagsFrom(r io.ReadSeeker) (AudioTags, error) {
 		Title:  strings.TrimSpace(m.Title()),
 		Author: pickAudioAuthor(m),
 		ASIN:   pickAudioASIN(m.Raw()),
+		Album:  strings.TrimSpace(m.Album()),
 	}, nil
 }
 
