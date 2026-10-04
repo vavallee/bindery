@@ -293,6 +293,35 @@ type Provider interface {
 	// cookie's epoch is a real mismatch (revoked cookie) and the user is logged
 	// out exactly as before.
 	UserSessionEpoch(ctx context.Context, userID int64) (int64, error)
+	// SessionRevoked reports whether the session token whose
+	// SessionTokenHash is tokenHash was signed out (POST /auth/logout).
+	// Logout revokes only the one token presented, so the user's sessions on
+	// other devices are untouched; the epoch is the tool for "everywhere".
+	// A non-nil error is handled like a failed epoch lookup: the request is
+	// failed with a 5xx rather than treated as authenticated or as a logout.
+	SessionRevoked(ctx context.Context, tokenHash string) (bool, error)
+}
+
+// SessionCookieUsable is the server side half of session validation that the
+// signature cannot answer: the cookie's epoch must equal the user's live
+// session epoch, and the token must not have been signed out. Callers verify
+// the signature and expiry first and pass the decoded uid and epoch. It
+// returns (true, nil) when the session may authenticate, (false, nil) for a
+// genuine rejection, and a non-nil error for a transient lookup failure that
+// must not be mistaken for either.
+func SessionCookieUsable(ctx context.Context, p Provider, cookie string, uid, epoch int64) (bool, error) {
+	curEpoch, err := p.UserSessionEpoch(ctx, uid)
+	if err != nil {
+		return false, err
+	}
+	if curEpoch != epoch {
+		return false, nil
+	}
+	revoked, err := p.SessionRevoked(ctx, SessionTokenHash(cookie))
+	if err != nil {
+		return false, err
+	}
+	return !revoked, nil
 }
 
 // AllowUnauthPath reports whether the given method+path combination must always
@@ -396,17 +425,18 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 					// (Wave 1 / Bundle C audit finding). Pre-047-migration
 					// cookies decode as epoch=0; the migration default of 1
 					// makes them all fail here on upgrade, which is the
-					// deliberate forced-logout-on-upgrade behaviour.
-					curEpoch, epochErr := p.UserSessionEpoch(ctx, uid)
+					// deliberate forced-logout-on-upgrade behaviour. A token
+					// that was signed out via /auth/logout is rejected here too.
+					usable, lookupErr := SessionCookieUsable(ctx, p, c.Value, uid, epoch)
 					switch {
-					case epochErr != nil:
+					case lookupErr != nil:
 						// Transient lookup failure — do not authenticate, but do
 						// not treat as a revoked cookie either. Flag it so an
 						// otherwise-unauthenticated request fails with 500 rather
 						// than silently logging the user out on a DB blip.
-						slog.Error("session epoch lookup failed", "user_id", uid, "error", epochErr)
+						slog.Error("session lookup failed", "user_id", uid, "error", lookupErr)
 						epochLookupFailed = true
-					case curEpoch == epoch:
+					case usable:
 						ctx = context.WithValue(ctx, userIDCtxKey, uid)
 						ctx = context.WithValue(ctx, userRoleCtxKey, p.UserRole(ctx, uid))
 						cookieValid = true

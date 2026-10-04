@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
@@ -56,6 +58,13 @@ type AuthHandler struct {
 	settings         *db.SettingsRepo
 	limiter          *auth.LoginLimiter
 	localAuthEnabled bool
+	// revocations is the logout denylist. Nil only in harnesses that do not
+	// exercise logout; production wires it via WithSessionRevocations.
+	revocations *db.SessionRevocations
+	// setupMu serialises first-run setup in this process so concurrent
+	// callers queue instead of each running the KDF. The one-admin guarantee
+	// itself is UserRepo.CreateFirstAdmin's single statement insert.
+	setupMu sync.Mutex
 }
 
 func NewAuthHandler(users *db.UserRepo, settings *db.SettingsRepo, limiter *auth.LoginLimiter) *AuthHandler {
@@ -67,6 +76,13 @@ func NewAuthHandler(users *db.UserRepo, settings *db.SettingsRepo, limiter *auth
 // admin user-create endpoint is also blocked.
 func (h *AuthHandler) WithLocalAuthEnabled(v bool) *AuthHandler {
 	h.localAuthEnabled = v
+	return h
+}
+
+// WithSessionRevocations wires the logout denylist. It must be the same
+// instance the auth middleware's Provider consults.
+func (h *AuthHandler) WithSessionRevocations(s *db.SessionRevocations) *AuthHandler {
+	h.revocations = s
 	return h
 }
 
@@ -143,8 +159,15 @@ func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 }
 
 // Setup creates the first admin user. Only allowed while no user exists.
+//
+// Concurrent calls create exactly one account: setupMu queues them in this
+// process, and CreateFirstAdmin only inserts into an empty users table, so
+// even a caller that got past the count check loses at the insert. Every
+// loser gets the same 409 a call after setup gets.
 func (h *AuthHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	h.setupMu.Lock()
+	defer h.setupMu.Unlock()
 	count, err := h.users.Count(ctx)
 	if err != nil {
 		writeServerError(w, r, err)
@@ -164,24 +187,23 @@ func (h *AuthHandler) Setup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "username required and password must be ≥ 8 chars")
 		return
 	}
-	hash, err := auth.HashPassword(req.Password)
+	hash, err := auth.HashPasswordContext(ctx, req.Password)
 	if err != nil {
 		writeServerError(w, r, err)
 		return
 	}
-	u, err := h.users.Create(ctx, req.Username, hash)
+	// The first user is the admin: CreateFirstAdmin writes the row with that
+	// role, so the freshly set up operator is never left on "user" and locked
+	// out of every admin gated page (Calibre plugin, user management, etc).
+	u, err := h.users.CreateFirstAdmin(ctx, req.Username, hash)
+	if errors.Is(err, db.ErrSetupComplete) {
+		writeErr(w, http.StatusConflict, "setup already complete")
+		return
+	}
 	if err != nil {
 		writeServerError(w, r, err)
 		return
 	}
-	// The first user is the admin. Create defaults role to "user"; without this
-	// promotion the freshly-set-up operator is locked out of every admin-gated
-	// page (Calibre plugin, user management, etc).
-	if err := h.users.PromoteFirstUser(ctx); err != nil {
-		writeServerError(w, r, err)
-		return
-	}
-	u.Role = "admin"
 	// Log the user in immediately.
 	if !h.issueSession(w, r, ctx, u.ID, true) {
 		return
@@ -221,8 +243,24 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if u != nil {
 		hash = u.PasswordHash
 	}
-	if ok := auth.VerifyPassword(req.Password, hash); u == nil || !ok {
-		h.limiter.Record(ip)
+	// Reserve the attempt before the KDF runs. Allow above is only a cheap
+	// early refusal: in a concurrent burst every request passes it before
+	// any failure is recorded, so it cannot bound how many verifications
+	// run. Acquire counts and checks in one step, and the reservation stands
+	// as a failure unless Reset clears it on success. It is taken before
+	// waiting for a KDF slot, so queued requests are already counted.
+	if !h.limiter.Acquire(ip) {
+		writeErr(w, http.StatusTooManyRequests, "too many attempts — try again later")
+		return
+	}
+	ok, err := auth.VerifyPasswordContext(ctx, req.Password, hash)
+	if err != nil {
+		// The client went away while waiting for a KDF slot. The attempt
+		// stays counted; nothing was verified.
+		writeErr(w, http.StatusServiceUnavailable, "server busy, try again")
+		return
+	}
+	if u == nil || !ok {
 		writeErr(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -233,8 +271,26 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, map[string]any{"ok": true, "username": u.Username})
 }
 
-// Logout clears the session cookie. Always succeeds.
-func (h *AuthHandler) Logout(w http.ResponseWriter, _ *http.Request) {
+// Logout signs out the presented session: it records the token on the
+// server side denylist, so a copy of the cookie stops working too, and clears
+// the browser's cookie. Only this one token is revoked; the user's sessions on
+// other devices are untouched (a password change is what ends all of them).
+//
+// The route is reachable unauthenticated, so the cookie's signature is
+// verified before anything is written: an unsigned or expired value is just
+// cleared, and the denylist only ever holds tokens this server issued.
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(auth.SessionCookieName); err == nil && c.Value != "" && h.revocations != nil {
+		ctx := r.Context()
+		if _, exp, err := auth.VerifySessionMultiWithExpiry(h.sessionSecrets(ctx), c.Value); err == nil {
+			if err := h.revocations.Revoke(ctx, auth.SessionTokenHash(c.Value), exp); err != nil {
+				// Do not report success for a logout that left the token
+				// valid; the client can retry.
+				writeServerError(w, r, err)
+				return
+			}
+		}
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.SessionCookieName,
 		Value:    "",

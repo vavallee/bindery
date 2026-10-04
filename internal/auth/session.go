@@ -14,9 +14,21 @@ import (
 
 // Session cookie format (all dot-separated).
 //
-// Current (v3), carries a per-user session epoch so a password change can
+// Current (v4), v3 plus a random per-session id:
+//
+//	v4.<key_id>.<user_id>.<session_epoch>.<expires_unix>.<session_id>.<hmac(secret, "v4.<key_id>.<user_id>.<session_epoch>.<expires_unix>.<session_id>")>
+//
+// <session_id> is 16 random bytes, unpadded base64url. It carries no meaning
+// of its own; it exists so every login mints a distinct token. Logout revokes
+// one token by recording a hash of the whole cookie value (SessionTokenHash)
+// in a small server side denylist, and without the id two logins by the same
+// user in the same second (two devices, a retry) produced byte-identical
+// cookies, so signing out of one would have signed out the other.
+//
+// Previous (v3), carries a per-user session epoch so a password change can
 // revoke every outstanding cookie for that user without rotating the
-// server-wide signing secret:
+// server-wide signing secret. Still ACCEPTED on verification, so upgrading
+// does not sign anyone out, and revocable by hash exactly like v4:
 //
 //	v3.<key_id>.<user_id>.<session_epoch>.<expires_unix>.<hmac(secret, "v3.<key_id>.<user_id>.<session_epoch>.<expires_unix>")>
 //
@@ -43,13 +55,17 @@ import (
 // verifier handed several candidate secrets can match the cookie's key-id to
 // pick the right one (or fall back to trying each).
 //
-// Self-contained: no server-side session table.
+// Self-contained: no server-side session table. The only server side state
+// is the logout denylist (db.SessionRevocations), which holds hashes of
+// tokens that were explicitly signed out and forgets each one once the token
+// would have expired anyway.
 const (
 	SessionCookieName    = "bindery_session"
 	SessionDuration      = 30 * 24 * time.Hour // when "remember me" is checked
 	SessionDurationShort = 12 * time.Hour      // browser-session equivalent when not
 
-	sessionCookieVersion       = "v3" // current format written by SignSessionWithEpoch
+	sessionCookieVersion       = "v4" // current format written by SignSessionWithEpoch
+	sessionCookieVersionV3     = "v3" // pre-session-id format, accepted on verify
 	sessionCookieVersionV2     = "v2" // pre-epoch format, accepted on verify
 	sessionCookieVersionLegacy = "v1" // oldest format, accepted on verify
 
@@ -61,6 +77,10 @@ const (
 	// minSecretLen is the minimum length (in bytes) required for a session
 	// signing secret. Shorter secrets are rejected fail-closed.
 	minSecretLen = 32
+
+	// sessionIDLen is the number of random bytes in a v4 session id: 128 bits,
+	// so two tokens never collide by chance.
+	sessionIDLen = 16
 )
 
 // Sentinel errors returned (wrapped) by VerifySession and SignSession.
@@ -85,7 +105,7 @@ func keyID(secret []byte) string {
 }
 
 // SignSession returns a signed cookie value for the given user that expires
-// at exp. It mints a v3 cookie with session_epoch=0 — provided as a
+// at exp. It mints a v4 cookie with session_epoch=0 — provided as a
 // convenience wrapper for tests and callers that do not yet plumb an epoch.
 // PRODUCTION callers MUST use SignSessionWithEpoch with the user's current
 // users.session_epoch value; otherwise the resulting cookie will fail the
@@ -96,7 +116,7 @@ func SignSession(secret []byte, userID int64, exp time.Time) (string, error) {
 	return SignSessionWithEpoch(secret, userID, 0, exp)
 }
 
-// SignSessionWithEpoch returns a signed v3 cookie carrying the user's
+// SignSessionWithEpoch returns a signed v4 cookie carrying the user's
 // session epoch. PRODUCTION callers must source epoch from
 // users.session_epoch so the middleware's per-request comparison succeeds.
 // Returns an error wrapping ErrSessionInvalid if secret is nil or shorter
@@ -105,7 +125,11 @@ func SignSessionWithEpoch(secret []byte, userID, epoch int64, exp time.Time) (st
 	if len(secret) < minSecretLen {
 		return "", fmt.Errorf("sign session: %w", ErrSessionInvalid)
 	}
-	payload := fmt.Sprintf("%s.%s.%d.%d.%d", sessionCookieVersion, keyID(secret), userID, epoch, exp.Unix())
+	sid, err := RandomBase64URL(sessionIDLen)
+	if err != nil {
+		return "", fmt.Errorf("sign session: %w", err)
+	}
+	payload := fmt.Sprintf("%s.%s.%d.%d.%d.%s", sessionCookieVersion, keyID(secret), userID, epoch, exp.Unix(), sid)
 	mac := hmacSum(secret, payload)
 	return payload + "." + base64.RawURLEncoding.EncodeToString(mac), nil
 }
@@ -153,6 +177,29 @@ func VerifySessionMulti(secrets [][]byte, cookie string) (int64, error) {
 // Verification is never weakened: a cookie is accepted only if some candidate
 // secret produces an HMAC equal (in constant time) to the cookie's signature.
 func VerifySessionMultiWithEpoch(secrets [][]byte, cookie string) (int64, int64, error) {
+	uid, epoch, _, err := verifySession(secrets, cookie)
+	return uid, epoch, err
+}
+
+// VerifySessionMultiWithExpiry verifies cookie exactly as
+// VerifySessionMultiWithEpoch does and returns the user id and the moment the
+// token expires. Logout uses the expiry to know how long a revoked token has
+// to stay on the denylist.
+func VerifySessionMultiWithExpiry(secrets [][]byte, cookie string) (int64, time.Time, error) {
+	uid, _, exp, err := verifySession(secrets, cookie)
+	return uid, exp, err
+}
+
+// SessionTokenHash is the key a session token is revoked under: the hex
+// SHA-256 of the whole cookie value. It works for every cookie version, and
+// storing a hash rather than the token keeps the denylist useless to anyone
+// who can read the database.
+func SessionTokenHash(cookie string) string {
+	sum := sha256.Sum256([]byte(cookie))
+	return hex.EncodeToString(sum[:])
+}
+
+func verifySession(secrets [][]byte, cookie string) (int64, int64, time.Time, error) {
 	// Keep only usable (long-enough) secrets. Fail closed if none remain.
 	var usable [][]byte
 	for _, s := range secrets {
@@ -161,7 +208,7 @@ func VerifySessionMultiWithEpoch(secrets [][]byte, cookie string) (int64, int64,
 		}
 	}
 	if len(usable) == 0 {
-		return 0, 0, fmt.Errorf("verify session: %w", ErrSessionInvalid)
+		return 0, 0, time.Time{}, fmt.Errorf("verify session: %w", ErrSessionInvalid)
 	}
 
 	parts := strings.Split(cookie, ".")
@@ -171,7 +218,12 @@ func VerifySessionMultiWithEpoch(secrets [][]byte, cookie string) (int64, int64,
 	epochIdx = -1
 
 	switch {
-	case len(parts) == 6 && parts[0] == sessionCookieVersion:
+	case len(parts) == 7 && parts[0] == sessionCookieVersion:
+		// v4.<key_id>.<user_id>.<session_epoch>.<expires>.<session_id>.<hmac>
+		cookieKeyID = parts[1]
+		idIdx, epochIdx, expIdx = 2, 3, 4
+		sig = parts[6]
+	case len(parts) == 6 && parts[0] == sessionCookieVersionV3:
 		// v3.<key_id>.<user_id>.<session_epoch>.<expires>.<hmac>
 		cookieKeyID = parts[1]
 		idIdx, epochIdx, expIdx = 2, 3, 4
@@ -186,28 +238,28 @@ func VerifySessionMultiWithEpoch(secrets [][]byte, cookie string) (int64, int64,
 		idIdx, expIdx = 1, 2
 		sig = parts[3]
 	default:
-		return 0, 0, fmt.Errorf("malformed session: %w", ErrSessionInvalid)
+		return 0, 0, time.Time{}, fmt.Errorf("malformed session: %w", ErrSessionInvalid)
 	}
 
 	userID, err := strconv.ParseInt(parts[idIdx], 10, 64)
 	if err != nil {
-		return 0, 0, fmt.Errorf("bad user id: %w", ErrSessionInvalid)
+		return 0, 0, time.Time{}, fmt.Errorf("bad user id: %w", ErrSessionInvalid)
 	}
 	var epoch int64
 	if epochIdx >= 0 {
 		epoch, err = strconv.ParseInt(parts[epochIdx], 10, 64)
 		if err != nil {
-			return 0, 0, fmt.Errorf("bad session epoch: %w", ErrSessionInvalid)
+			return 0, 0, time.Time{}, fmt.Errorf("bad session epoch: %w", ErrSessionInvalid)
 		}
 	}
 	expUnix, err := strconv.ParseInt(parts[expIdx], 10, 64)
 	if err != nil {
-		return 0, 0, fmt.Errorf("bad expiry: %w", ErrSessionInvalid)
+		return 0, 0, time.Time{}, fmt.Errorf("bad expiry: %w", ErrSessionInvalid)
 	}
 	payload := strings.Join(parts[:len(parts)-1], ".")
 	got, err := base64.RawURLEncoding.DecodeString(sig)
 	if err != nil {
-		return 0, 0, fmt.Errorf("bad signature encoding: %w", ErrSessionInvalid)
+		return 0, 0, time.Time{}, fmt.Errorf("bad signature encoding: %w", ErrSessionInvalid)
 	}
 
 	// Try the candidate whose key-id matches first (v3/v2 fast path), then
@@ -238,12 +290,12 @@ func VerifySessionMultiWithEpoch(secrets [][]byte, cookie string) (int64, int64,
 		}
 	}
 	if !matched {
-		return 0, 0, fmt.Errorf("bad signature: %w", ErrSessionInvalid)
+		return 0, 0, time.Time{}, fmt.Errorf("bad signature: %w", ErrSessionInvalid)
 	}
 	if time.Now().Unix() > expUnix {
-		return 0, 0, fmt.Errorf("cookie expired: %w", ErrSessionExpired)
+		return 0, 0, time.Time{}, fmt.Errorf("cookie expired: %w", ErrSessionExpired)
 	}
-	return userID, epoch, nil
+	return userID, epoch, time.Unix(expUnix, 0), nil
 }
 
 func hmacSum(secret []byte, payload string) []byte {

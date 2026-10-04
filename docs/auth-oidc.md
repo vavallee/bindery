@@ -421,7 +421,7 @@ Bindery issues its own HMAC-signed session cookie when OIDC login succeeds. That
 
 - **Force global logout.** Rotate the session secret in **Settings → General → Security → Rotate session secret**. One rotation keeps the previous secret valid for a rotation window, so nobody is dropped mid session; rotate a second time to stop every cookie signed under the original secret. Use for security incidents.
 - **Evict one user.** Reset that user's password with `PUT /api/v1/auth/users/{id}/reset-password`. It bumps their session epoch, which invalidates every cookie they hold without touching anyone else. A password change by the user themselves does the same thing.
-- **Revoke a single device** (not yet available). A `sessions` table with per-session revocation is planned for a future release.
+- **Sign out one device.** Logging out of Bindery on that device revokes its session on the server, so a copy of the cookie stops working too, while the user's other devices stay signed in. Revoking some other device remotely, from a list of sessions, is not built.
 - Session lifetime itself is fixed in the binary at 12 hours, or 30 days with "Remember me", and there is no setting for it.
 
 ## Client secret storage

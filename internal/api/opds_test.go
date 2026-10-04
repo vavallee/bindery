@@ -146,6 +146,9 @@ func (p *testProvider) OperatorUserID(context.Context) int64 { return 0 }
 // returning 0 keeps every existing cookie test passing. The dedicated
 // password-change/epoch-bump integration tests live elsewhere.
 func (p *testProvider) UserSessionEpoch(_ context.Context, _ int64) (int64, error) { return 0, nil }
+
+// SessionRevoked: no logout runs in these tests, so nothing is revoked.
+func (p *testProvider) SessionRevoked(_ context.Context, _ string) (bool, error) { return false, nil }
 func (p *testProvider) UserProvisioner() auth.UserProvisioner {
 	return nil // proxy auth not exercised in these tests
 }

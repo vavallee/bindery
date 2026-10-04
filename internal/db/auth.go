@@ -239,6 +239,38 @@ func (r *UserRepo) Create(ctx context.Context, username, passwordHash string) (*
 	return &User{ID: id, Username: username, PasswordHash: passwordHash, Role: "user", CreatedAt: now, UpdatedAt: now, SessionEpoch: 1}, nil
 }
 
+// ErrSetupComplete is returned by CreateFirstAdmin when a user already exists.
+var ErrSetupComplete = errors.New("setup already complete")
+
+// CreateFirstAdmin inserts the install's first account, as admin, only if the
+// users table is empty. The emptiness check and the insert are one statement,
+// so two concurrent first-run setups cannot both pass the check: SQLite runs
+// the statement under its write lock, and the loser sees the winner's row and
+// inserts nothing. Returns ErrSetupComplete when any user already exists.
+func (r *UserRepo) CreateFirstAdmin(ctx context.Context, username, passwordHash string) (*User, error) {
+	now := time.Now().UTC()
+	res, err := r.db.ExecContext(ctx,
+		`INSERT INTO users (username, password_hash, role, created_at, updated_at)
+		 SELECT ?, ?, 'admin', ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)`,
+		username, passwordHash, now, now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create first admin: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("create first admin: %w", err)
+	}
+	if n == 0 {
+		return nil, ErrSetupComplete
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("get user id: %w", err)
+	}
+	return &User{ID: id, Username: username, PasswordHash: passwordHash, Role: "admin", CreatedAt: now, UpdatedAt: now, SessionEpoch: 1}, nil
+}
+
 // List returns all users ordered by id.
 func (r *UserRepo) List(ctx context.Context) ([]User, error) {
 	rows, err := r.db.QueryContext(ctx, "SELECT "+userSelectCols+" FROM users ORDER BY id")

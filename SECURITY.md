@@ -70,7 +70,9 @@ CSP, cookie Secure auto-detect, container hardening, CI scans).
 ## Security controls currently in place
 
 - **Authentication**: API key + signed session cookie + argon2id passwords
-  (OWASP 2024 parameters) + per-IP login rate limit.
+  (OWASP 2024 parameters) + per-IP login rate limit. Logout revokes the
+  presented session server side, and at most four password hashes run at
+  once so a login flood queues rather than exhausting memory.
 - **SSRF**: outbound URLs for webhooks, indexers, and download clients pass
   through `internal/httpsec.ValidateOutboundURL` with policy-based blocking
   of loopback, link-local, cloud-metadata endpoints, and (for webhooks)

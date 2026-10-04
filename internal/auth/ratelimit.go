@@ -43,6 +43,30 @@ func (l *LoginLimiter) Allow(ip string) bool {
 	return len(l.events[ip]) < l.max
 }
 
+// Acquire reserves one attempt for ip and reports whether the caller may go on
+// to verify the credential. The check and the count happen under one lock, so
+// at most `max` attempts per window are ever let through for an address, no
+// matter how many arrive at once. The reservation stands as a failure unless
+// the caller clears it with Reset after a successful verification.
+//
+// Allow followed by Record cannot give that bound: every request in a
+// concurrent burst passes Allow before the first Record lands, so a burst ran
+// as many password verifications as it had requests. Credential checks that
+// run an expensive KDF must use Acquire; Allow stays useful as a cheap early
+// refusal before any work is done.
+func (l *LoginLimiter) Acquire(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	l.sweep(now)
+	l.gc(ip, now)
+	if len(l.events[ip]) >= l.max {
+		return false
+	}
+	l.events[ip] = append(l.events[ip], now)
+	return true
+}
+
 // Record increments the failure counter for ip.
 func (l *LoginLimiter) Record(ip string) {
 	l.mu.Lock()

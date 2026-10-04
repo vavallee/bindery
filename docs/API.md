@@ -965,7 +965,7 @@ tick, so `restartRequired` is `false`.
 GET    /api/v1/auth/status                        public — am I logged in?
 GET    /api/v1/auth/csrf                          fetch a CSRF token for browser flows
 POST   /api/v1/auth/login                         username + password
-POST   /api/v1/auth/logout
+POST   /api/v1/auth/logout                        revoke this session server side and clear the cookie
 POST   /api/v1/auth/setup                         first-run admin creation (one-shot)
 PUT    /api/v1/auth/mode                          switch enabled/local-only/disabled/proxy (admin)
 POST   /api/v1/auth/password                      change own password

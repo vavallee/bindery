@@ -40,7 +40,7 @@ func newAuthFixture(t *testing.T) (*AuthHandler, *db.UserRepo, *db.SettingsRepo,
 		t.Fatal(err)
 	}
 	lim := auth.NewLoginLimiter(5, 15*time.Minute)
-	return NewAuthHandler(users, settings, lim), users, settings, ctx
+	return NewAuthHandler(users, settings, lim).WithSessionRevocations(db.NewSessionRevocations(database)), users, settings, ctx
 }
 
 func jsonBody(t *testing.T, v any) *bytes.Buffer {
@@ -666,6 +666,8 @@ func TestStatus_LocalAuthEnabled_False(t *testing.T) {
 type epochProvider struct {
 	users  *db.UserRepo
 	secret []byte
+	// h, when set, supplies the logout denylist (SessionRevoked).
+	h *AuthHandler
 }
 
 func (p *epochProvider) Mode() auth.Mode                       { return auth.ModeEnabled }
@@ -694,6 +696,15 @@ func (p *epochProvider) UserRole(ctx context.Context, id int64) string {
 }
 func (p *epochProvider) UserSessionEpoch(ctx context.Context, id int64) (int64, error) {
 	return p.users.GetSessionEpoch(ctx, id)
+}
+
+// SessionRevoked consults the same denylist the fixture's AuthHandler writes
+// on logout, as main.go wires one instance into both.
+func (p *epochProvider) SessionRevoked(ctx context.Context, tokenHash string) (bool, error) {
+	if p.h == nil || p.h.revocations == nil {
+		return false, nil
+	}
+	return p.h.revocations.IsRevoked(ctx, tokenHash)
 }
 
 // extractSessionCookie returns the session cookie set on the response, or nil

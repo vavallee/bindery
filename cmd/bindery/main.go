@@ -189,6 +189,9 @@ func main() {
 	delayProfileRepo := db.NewDelayProfileRepo(database)
 	customFormatRepo := db.NewCustomFormatRepo(database)
 	userRepo := db.NewUserRepo(database)
+	// One denylist instance, shared by the logout handler and the auth
+	// middleware, so a logout is seen by the very next request.
+	sessionRevocations := db.NewSessionRevocations(database)
 
 	// Auth bootstrap: seed the API key and session secret on first boot if
 	// they're missing, so Bindery is never "open by default". If the user has
@@ -631,6 +634,7 @@ func main() {
 
 	// API handlers
 	authHandler := api.NewAuthHandler(userRepo, settingsRepo, loginLimiter).
+		WithSessionRevocations(sessionRevocations).
 		WithLocalAuthEnabled(cfg.LocalAuthEnabled)
 	oidcResolveBase := func(r *http.Request) string {
 		return api.ResolveOIDCRedirectBase(r, cfg.OIDCRedirectBaseURL, trustedCIDRs)
@@ -881,6 +885,7 @@ func main() {
 		proxyHeader:    cfg.ProxyAuthHeader,
 		proxyProvision: cfg.ProxyAutoProvision,
 		proxyCIDRs:     trustedCIDRs,
+		revocations:    sessionRevocations,
 	}
 
 	// Keep the nightly recommendation batch and manual refreshes on one
@@ -1530,6 +1535,8 @@ type dbAuthProvider struct {
 	proxyHeader    string
 	proxyProvision bool
 	proxyCIDRs     []*net.IPNet
+	// revocations is the logout denylist shared with the AuthHandler.
+	revocations *db.SessionRevocations
 }
 
 func (p *dbAuthProvider) Mode() auth.Mode {
@@ -1611,6 +1618,17 @@ func (p *dbAuthProvider) UserRole(ctx context.Context, userID int64) string {
 // as a server-side failure (5xx) instead of a forced logout.
 func (p *dbAuthProvider) UserSessionEpoch(ctx context.Context, userID int64) (int64, error) {
 	return p.users.GetSessionEpoch(ctx, userID)
+}
+
+// SessionRevoked reports whether the token was signed out via /auth/logout.
+// revocations is always set in production (main wires the same instance into
+// the AuthHandler); the nil branch serves route tests that build the provider
+// without a logout handler, where nothing can have been revoked.
+func (p *dbAuthProvider) SessionRevoked(ctx context.Context, tokenHash string) (bool, error) {
+	if p.revocations == nil {
+		return false, nil
+	}
+	return p.revocations.IsRevoked(ctx, tokenHash)
 }
 func (p *dbAuthProvider) UserProvisioner() auth.UserProvisioner {
 	return &dbUserProvisioner{users: p.users}

@@ -331,6 +331,10 @@ type fakeProvider struct {
 	// epoch lookup. UserSessionEpoch returns it so the middleware exercises the
 	// "surface server error instead of silent logout" path.
 	epochErr error
+	// revoked holds the SessionTokenHash of signed out tokens; revokedErr
+	// simulates a failed denylist lookup.
+	revoked    map[string]bool
+	revokedErr error
 }
 
 func (f *fakeProvider) Mode() Mode            { return f.mode }
@@ -359,6 +363,11 @@ func (f *fakeProvider) UserProvisioner() UserProvisioner     { return f.provisio
 // change epoch-bump path override this via the wantEpoch field below.
 func (f *fakeProvider) UserSessionEpoch(_ context.Context, _ int64) (int64, error) {
 	return f.wantEpoch, f.epochErr
+}
+
+// SessionRevoked reports a token as signed out when its hash is in revoked.
+func (f *fakeProvider) SessionRevoked(_ context.Context, tokenHash string) (bool, error) {
+	return f.revoked[tokenHash], f.revokedErr
 }
 
 // staticProvisioner always returns the same user ID for any username.
@@ -1629,18 +1638,22 @@ func TestIsLocalRequest_DirectLocalPeerNoXFF(t *testing.T) {
 
 // --- Finding 3: session key-id and rotation primitive ------------------------
 
-func TestSession_V3KeyIDRoundTrip(t *testing.T) {
-	// v3 is the current format (key-id + per-user session epoch). The wrapper
-	// SignSession mints epoch=0 by default, which is fine for this round-trip
-	// test — we are checking the framing, not the epoch-bump invariant.
+func TestSession_V4KeyIDRoundTrip(t *testing.T) {
+	// v4 is the current format (key-id + per-user session epoch + random
+	// session id). The wrapper SignSession mints epoch=0 by default, which is
+	// fine for this round-trip test — we are checking the framing, not the
+	// epoch-bump invariant.
 	secret := testSecret32
 	cookie, err := SignSession(secret, 99, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
 	parts := strings.Split(cookie, ".")
-	if len(parts) != 6 || parts[0] != "v3" {
-		t.Fatalf("cookie = %q; want 6-part v3 format", cookie)
+	if len(parts) != 7 || parts[0] != "v4" {
+		t.Fatalf("cookie = %q; want 7-part v4 format", cookie)
+	}
+	if parts[5] == "" {
+		t.Error("v4 cookie carries an empty session id")
 	}
 	if parts[1] != keyID(secret) {
 		t.Errorf("cookie key-id = %q; want %q", parts[1], keyID(secret))
@@ -1738,8 +1751,8 @@ func TestSession_LegacyV1StillVerifies(t *testing.T) {
 	}
 }
 
-func TestSession_V3WrongKeyIDStillVerifiesWithCorrectSecret(t *testing.T) {
-	// Decode-tolerant: a v3 cookie whose key-id field does not match (e.g.
+func TestSession_V4WrongKeyIDStillVerifiesWithCorrectSecret(t *testing.T) {
+	// Decode-tolerant: a v4 cookie whose key-id field does not match (e.g.
 	// truncated/garbled) must still verify if the signature is genuine — the
 	// HMAC is authoritative, the key-id is only a routing hint.
 	secret := testSecret32
@@ -1750,16 +1763,16 @@ func TestSession_V3WrongKeyIDStillVerifiesWithCorrectSecret(t *testing.T) {
 	parts := strings.Split(cookie, ".")
 	// Re-sign the payload but lie about the key-id field. The HMAC covers the
 	// key-id, so we must recompute it for the doctored payload to be valid.
-	// v3 payload = parts[0..4] (version, key_id, user_id, epoch, exp); the
-	// HMAC sits at parts[5].
+	// v4 payload = parts[0..5] (version, key_id, user_id, epoch, exp,
+	// session_id); the HMAC sits at parts[6].
 	parts[1] = "deadbeef"
-	doctoredPayload := strings.Join(parts[:5], ".")
-	parts[5] = base64.RawURLEncoding.EncodeToString(hmacSum(secret, doctoredPayload))
+	doctoredPayload := strings.Join(parts[:6], ".")
+	parts[6] = base64.RawURLEncoding.EncodeToString(hmacSum(secret, doctoredPayload))
 	doctored := strings.Join(parts, ".")
 
 	uid, err := VerifySession(secret, doctored)
 	if err != nil {
-		t.Fatalf("v3 with non-matching key-id but valid sig: %v", err)
+		t.Fatalf("v4 with non-matching key-id but valid sig: %v", err)
 	}
 	if uid != 12 {
 		t.Errorf("uid = %d; want 12", uid)

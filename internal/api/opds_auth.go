@@ -81,7 +81,7 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 						next.ServeHTTP(w, r)
 						return
 					}
-					if liveEpoch, err := users.GetSessionEpoch(r.Context(), uid); err == nil && liveEpoch == epoch {
+					if liveEpoch, err := users.GetSessionEpoch(r.Context(), uid); err == nil && liveEpoch == epoch && !opdsSessionRevoked(r, p, c.Value) {
 						if !opdsRoleAllowed(w, p.UserRole(r.Context(), uid)) {
 							return
 						}
@@ -93,9 +93,12 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 			}
 			if username, password, ok := r.BasicAuth(); ok && users != nil {
 				ip := opdsClientIP(r)
-				if limiter != nil && !limiter.Allow(ip) {
+				tooMany := func() {
 					w.Header().Set("WWW-Authenticate", `Basic realm="Bindery OPDS"`)
 					http.Error(w, "too many attempts", http.StatusTooManyRequests)
+				}
+				if limiter != nil && !limiter.Allow(ip) {
+					tooMany()
 					return
 				}
 				u, err := users.GetByUsername(r.Context(), strings.TrimSpace(username))
@@ -106,7 +109,21 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 				if err == nil && u != nil {
 					hash = u.PasswordHash
 				}
-				if ok := auth.VerifyPassword(password, hash); err == nil && u != nil && ok {
+				// Reserve the attempt before the KDF, as the login handler
+				// does: Allow alone let a concurrent burst run one
+				// verification per request. The reservation stands as the
+				// failure unless Reset clears it below.
+				if limiter != nil && !limiter.Acquire(ip) {
+					tooMany()
+					return
+				}
+				ok, verr := auth.VerifyPasswordContext(r.Context(), password, hash)
+				if verr != nil {
+					// Client went away while queued for a KDF slot.
+					http.Error(w, "server busy, try again", http.StatusServiceUnavailable)
+					return
+				}
+				if err == nil && u != nil && ok {
 					if limiter != nil {
 						limiter.Reset(ip)
 					}
@@ -125,9 +142,8 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 					next.ServeHTTP(w, r)
 					return
 				}
-				if limiter != nil {
-					limiter.Record(ip)
-				}
+				// A failed verification needs no Record here: the attempt
+				// was already counted by Acquire above.
 			}
 
 			// Challenge — OPDS clients retry with credentials on 401.
@@ -157,7 +173,24 @@ func opdsSessionIsRequester(r *http.Request, p auth.Provider, users *db.UserRepo
 			return false
 		}
 	}
+	// A signed out requester cookie no longer speaks for anyone, so it is
+	// treated like no cookie rather than refused as a requester.
+	if opdsSessionRevoked(r, p, c.Value) {
+		return false
+	}
 	return p.UserRole(r.Context(), uid) == auth.RoleRequester
+}
+
+// opdsSessionRevoked reports whether cookie was signed out via /auth/logout.
+// A failed lookup counts as revoked: the cookie then fails here and the
+// client falls through to Basic auth or the 401 challenge, never to access.
+func opdsSessionRevoked(r *http.Request, p auth.Provider, cookie string) bool {
+	revoked, err := p.SessionRevoked(r.Context(), auth.SessionTokenHash(cookie))
+	if err != nil {
+		slog.Warn("opds: session revocation lookup failed", "error", err)
+		return true
+	}
+	return revoked
 }
 
 // opdsRoleAllowed answers 403 and returns false when role may not read the
