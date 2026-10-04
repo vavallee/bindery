@@ -256,21 +256,10 @@ func TestQueueGrab_NonAdminGrabUsesTheSearchedURL(t *testing.T) {
 	}
 }
 
-// TestQueueGrab_AdminMayStillPostAURL: admins and API key callers (which carry
-// the admin role) keep posting their own download URLs, which is what API
-// clients that search elsewhere do.
-func TestQueueGrab_AdminMayStillPostAURL(t *testing.T) {
-	f := newGrabSecFixture(t)
-	rec := f.grabAs(f.alice, auth.RoleAdmin, map[string]any{
-		"guid": "guid-admin-unsearched", "title": "x", "nzbUrl": f.downloadURL,
-	})
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("admin grab of a posted URL: got %d: %s", rec.Code, rec.Body.String())
-	}
-	if n := f.downloadHits.Load(); n != 1 {
-		t.Errorf("expected the posted URL to be fetched once, got %d", n)
-	}
-}
+// API key callers keep posting their own download URLs, which is what API
+// clients that search elsewhere do; admin sessions no longer do. See
+// TestQueueGrab_APIKeyCallerMayPostAURL and
+// TestQueueGrab_RegistryMissIsExpiredForSessions.
 
 // TestQueueGrab_RefusesAnotherUsersBook is problem 2: with tenancy on, a user
 // must not grab into a book another user owns.

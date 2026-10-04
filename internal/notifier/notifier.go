@@ -332,7 +332,7 @@ func (n *Notifier) send(ctx context.Context, notif *models.Notification, payload
 	// the validator, and DNS can shift after a row was saved.
 	if n.validate != nil {
 		if err := n.validate(notif.URL); err != nil {
-			return fmt.Errorf("url not allowed: %w", redactWebhookError(err))
+			return fmt.Errorf("url not allowed: %w", redactWebhookValidation(err, notif.URL))
 		}
 	}
 

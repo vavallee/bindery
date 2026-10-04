@@ -60,3 +60,16 @@ func TestRedactDownloadURL_GetNZBRParam(t *testing.T) {
 		}
 	}
 }
+
+// A magnet's tr= announce URLs carry a private tracker's passkey, and torznab
+// feeds use the magnet as the download link and often the GUID.
+func TestRedactDownloadURL_MagnetTrackers(t *testing.T) {
+	in := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Dune&tr=https%3A%2F%2Ftracker.example%2Fannounce%3Fpasskey%3DREALSECRET&tr=udp%3A%2F%2Fopen.example%3A1337%2Fannounce%2FREALSECRET"
+	got := RedactDownloadURL(in)
+	if strings.Contains(got, "REALSECRET") {
+		t.Fatalf("magnet keeps a tracker credential: %q", got)
+	}
+	if !strings.Contains(got, "xt=urn:btih:0123456789abcdef0123456789abcdef01234567") || !strings.Contains(got, "dn=Dune") {
+		t.Fatalf("magnet lost its identity: %q", got)
+	}
+}

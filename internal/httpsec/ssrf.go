@@ -83,7 +83,9 @@ func ValidateOutboundURL(raw string, policy Policy) error {
 func validateWithResolver(raw string, policy Policy, r Resolver) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("url not allowed: invalid url: %w", err)
+		// Redact before wrapping: fmt.Errorf formats the message now, so a
+		// later RedactURLError on the result could not reach the URL inside.
+		return fmt.Errorf("url not allowed: invalid url: %w", RedactURLError(err))
 	}
 
 	scheme := strings.ToLower(u.Scheme)

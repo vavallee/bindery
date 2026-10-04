@@ -110,3 +110,42 @@ func TestRedactReleaseJSON_StripsEveryURLField(t *testing.T) {
 		t.Fatalf("other fields lost: %s", got)
 	}
 }
+
+// A browser admin's grab of a GUID the registry no longer holds (a restart, an
+// eviction) used to fall back to the posted URL, which search responses now
+// strip: the grab went out without its Jackett key or passkey and stored the
+// redacted GUID. Only an API key caller, which holds its own raw URL, may post
+// one.
+func TestQueueGrab_RegistryMissIsExpiredForSessions(t *testing.T) {
+	f := newGrabSecFixture(t)
+	stripped := f.indexerURL + "/dl/jackett?path=abc&file=One+Shot"
+	for _, role := range []string{auth.RoleAdmin, auth.RoleUser} {
+		rec := f.grabAs(f.alice, role, map[string]any{"guid": "guid-not-recorded", "title": "x", "nzbUrl": stripped})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s grab of an unrecorded GUID: got %d: %s", role, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "search again") {
+			t.Fatalf("%s: error should tell the user to search again: %s", role, rec.Body.String())
+		}
+	}
+	select {
+	case q := <-f.jackettQueries:
+		t.Fatalf("nothing should have been fetched, got %q", q)
+	default:
+	}
+}
+
+func TestQueueGrab_APIKeyCallerMayPostAURL(t *testing.T) {
+	f := newGrabSecFixture(t)
+	b, _ := json.Marshal(map[string]any{"guid": "guid-api-key", "title": "x", "nzbUrl": f.downloadURL})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/queue/grab", strings.NewReader(string(b)))
+	ctx := auth.WithAPIKeyAuth(auth.WithUserRole(auth.WithUserID(req.Context(), f.alice), auth.RoleAdmin))
+	rec := httptest.NewRecorder()
+	f.queue.Grab(rec, req.WithContext(ctx))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("API key grab of a posted URL: got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := f.downloadHits.Load(); n != 1 {
+		t.Errorf("expected the posted URL to be fetched once, got %d", n)
+	}
+}

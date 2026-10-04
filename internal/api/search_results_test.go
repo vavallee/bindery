@@ -84,21 +84,22 @@ func TestSearchResultRegistry_OrderStaysBounded(t *testing.T) {
 	}
 }
 
-func TestCallerMayGrabAnyURL(t *testing.T) {
+func TestCallerMayPostDownloadURL(t *testing.T) {
 	bg := context.Background()
 	for _, tc := range []struct {
 		name string
 		ctx  context.Context
 		want bool
 	}{
-		{"admin session", auth.WithUserRole(auth.WithUserID(bg, 1), auth.RoleAdmin), true},
-		{"api key or local admin, no user", auth.WithUserRole(bg, auth.RoleAdmin), true},
+		{"api key", auth.WithAPIKeyAuth(auth.WithUserRole(auth.WithUserID(bg, 1), auth.RoleAdmin)), true},
+		{"admin session", auth.WithUserRole(auth.WithUserID(bg, 1), auth.RoleAdmin), false},
+		{"local or disabled mode admin, no user", auth.WithUserRole(bg, auth.RoleAdmin), false},
 		{"no identity at all", bg, true},
 		{"user session", auth.WithUserRole(auth.WithUserID(bg, 2), auth.RoleUser), false},
 		{"session whose role could not be read", auth.WithUserID(bg, 2), false},
 		{"requester", auth.WithUserRole(auth.WithUserID(bg, 3), auth.RoleRequester), false},
 	} {
-		if got := callerMayGrabAnyURL(tc.ctx); got != tc.want {
+		if got := callerMayPostDownloadURL(tc.ctx); got != tc.want {
 			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
 	}

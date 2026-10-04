@@ -65,9 +65,9 @@ func foreignRowClaimable(d *models.Download, now time.Time) bool {
 // handlers do, so a caller cannot tell the two apart.
 var errGrabBookNotFound = errors.New("book not found")
 
-// errReleaseNotSearched refuses a non-admin grab of a release no recent search
-// returned. See SearchResultRegistry.
-var errReleaseNotSearched = errors.New("this release is not in your recent search results; run the search again and grab it from there")
+// errReleaseNotSearched refuses a grab of a release no recent search returned,
+// from any caller but an API key. See SearchResultRegistry.
+var errReleaseNotSearched = errors.New("this search result has expired, search again")
 
 // regrabbableState reports whether an existing download row for the same GUID
 // may be reused by a fresh grab of that release.
@@ -854,12 +854,15 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 	// posts back (search responses redact the URL). A non-admin may grab
 	// nothing else. Bindery fetches the download URL itself and signs it with
 	// an indexer key when the host matches, so trusting a posted URL let a user
-	// read an indexer's API, or any LAN service, through the grab. Admins and
-	// API key callers fall back to the posted URL for a GUID the registry does
-	// not hold. See SearchResultRegistry.
+	// read an indexer's API, or any LAN service, through the grab. Only API
+	// key callers fall back to the posted URL for a GUID the registry does not
+	// hold: a browser session posts back what a search response showed, which
+	// has its credentials stripped, so grabbing it would go out without its
+	// Jackett key or passkey and store a redacted GUID. See
+	// SearchResultRegistry.
 	if rel, ok := h.searchResults.lookup(req.GUID); ok {
 		rel.apply(&req)
-	} else if !callerMayGrabAnyURL(r.Context()) {
+	} else if !callerMayPostDownloadURL(r.Context()) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errReleaseNotSearched.Error()})
 		return
 	}

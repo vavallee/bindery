@@ -440,8 +440,9 @@ GET    /api/v1/queue                              active downloads with live dow
                                                   partial means a download client did not answer in time, so items is short
 POST   /api/v1/queue/grab                         submit a search result to the download client
                                                   a guid a recent search returned is grabbed from the server's
-                                                  record (raw URL) for every caller; otherwise admins and the
-                                                  API key use the posted nzbUrl and a user account is refused
+                                                  record (raw URL) for every caller; otherwise only the API key
+                                                  uses the posted nzbUrl, and everyone else gets 400 "this search
+                                                  result has expired, search again"
 POST   /api/v1/queue/{id}/retry-import           retry an importFailed/importBlocked item without re-downloading
 POST   /api/v1/queue/{id}/retry                   re-send a failed item's release to the download client (no re-search)
 POST   /api/v1/queue/bulk-retry                   retry many; {"ids":[..]}; per id {"ok":true,"action":"import"|"resend"}
@@ -481,8 +482,17 @@ Search, queue, pending and grab responses strip every credential parameter
 from `nzbUrl`, `guid` and `infoUrl`: the indexer `apikey`, `jackett_apikey`,
 `passkey`, `torrent_pass`, `authkey`, `rsskey`, `token`, `signature` and the
 rest of the list in `internal/httpsec/redact.go`, plus `r` inside a newznab
-`getnzb` link. A grab of a GUID a recent search returned uses the server's own
-record of the raw URL, so post `guid` back exactly as the search returned it.
+`getnzb` link. Magnets lose their `tr=` announce URLs. History event `data`
+gets the same treatment. A grab of a GUID a recent search returned uses the
+server's own record of the raw URL, so post `guid` back exactly as the search
+returned it. The record lives in memory for 24 hours; after a restart or
+expiry a session grab answers `400` "this search result has expired, search
+again". An API key caller may instead post a GUID the server has not seen
+along with its own raw `nzbUrl`, which is grabbed as posted (with the indexer
+`apikey` added when the host matches a configured indexer).
+
+Known gap: a passkey embedded in a URL path rather than a parameter is not
+recognised and is shown as is.
 
 #### Download client credentials are write-only
 

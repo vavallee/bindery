@@ -397,7 +397,7 @@ func (c *Client) hasTorrent(ctx context.Context, hash string) (bool, error) {
 func (c *Client) addTorrentFile(ctx context.Context, torrentURL string) (hash string, magnetURL string, err error) {
 	fetched, err := c.fetchTorrentContent(ctx, torrentURL)
 	if err != nil {
-		return "", "", fmt.Errorf("fetch torrent: %w", err)
+		return "", "", fmt.Errorf("fetch torrent: %w", httpsec.RedactURLError(err))
 	}
 	if fetched.magnetURL != "" {
 		return "", fetched.magnetURL, nil
@@ -451,11 +451,11 @@ func (c *Client) fetchTorrentContent(ctx context.Context, rawURL string) (*fetch
 
 	for redirects := 0; redirects <= 5; redirects++ {
 		if err := c.validateTorrentFetchURL(current); err != nil {
-			return nil, err
+			return nil, httpsec.RedactURLError(err)
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, current, nil)
 		if err != nil {
-			return nil, fmt.Errorf("build torrent fetch request: %w", err)
+			return nil, fmt.Errorf("build torrent fetch request: %w", httpsec.RedactURLError(err))
 		}
 		req.Header.Set("Accept", "application/x-bittorrent")
 		req.Header.Set("User-Agent", useragent.Get())
@@ -481,7 +481,7 @@ func (c *Client) fetchTorrentContent(ctx context.Context, rawURL string) (*fetch
 			}
 			next, err := req.URL.Parse(location)
 			if err != nil {
-				return nil, fmt.Errorf("invalid redirect location: %w", err)
+				return nil, fmt.Errorf("invalid redirect location: %w", httpsec.RedactURLError(err))
 			}
 			if next.Scheme != "http" && next.Scheme != "https" {
 				return nil, fmt.Errorf("unsupported redirect scheme %q", next.Scheme)

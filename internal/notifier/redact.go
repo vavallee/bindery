@@ -3,6 +3,9 @@ package notifier
 import (
 	"errors"
 	"net/url"
+	"strings"
+
+	"github.com/vavallee/bindery/internal/httpsec"
 )
 
 // redactWebhookError scrubs the webhook URL a *url.Error carries (a failed
@@ -19,6 +22,34 @@ func redactWebhookError(err error) error {
 	}
 	return err
 }
+
+// redactWebhookValidation scrubs a validator error for target. The validator
+// wraps the parse error with fmt.Errorf, which formats the message at once, so
+// rewriting the *url.Error afterwards would not reach the text. The message is
+// rebuilt with target replaced by its host only form; the chain is kept.
+func redactWebhookValidation(err error, target string) error {
+	msg := err.Error()
+	scrubbed := msg
+	if target != "" {
+		// The validator may already have run the URL through
+		// httpsec.RedactSecrets, which leaves path secrets in place.
+		for _, form := range []string{target, httpsec.RedactSecrets(target)} {
+			scrubbed = strings.ReplaceAll(scrubbed, form, webhookURLForLog(target))
+		}
+	}
+	if scrubbed == msg {
+		return redactWebhookError(err)
+	}
+	return &scrubbedError{msg: scrubbed, err: err}
+}
+
+type scrubbedError struct {
+	msg string
+	err error
+}
+
+func (e *scrubbedError) Error() string { return e.msg }
+func (e *scrubbedError) Unwrap() error { return e.err }
 
 // webhookURLForLog returns raw reduced to scheme://host, with "/REDACTED" in
 // place of any path, query or fragment.

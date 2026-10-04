@@ -525,11 +525,11 @@ func (c *Client) fetchTorrentContent(ctx context.Context, torrentURL string) (*f
 	current := torrentURL
 	for redirects := 0; redirects <= 5; redirects++ {
 		if err := c.validateTorrentFetchURL(current); err != nil {
-			return nil, fmt.Errorf("fetch torrent: %w", err)
+			return nil, fmt.Errorf("fetch torrent: %w", httpsec.RedactURLError(err))
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, current, nil)
 		if err != nil {
-			return nil, fmt.Errorf("fetch torrent: %w", err)
+			return nil, fmt.Errorf("fetch torrent: %w", httpsec.RedactURLError(err))
 		}
 		req.Header.Set("Accept", "application/x-bittorrent")
 		// Some indexers fingerprint the User-Agent and serve an anti-bot 403
@@ -555,7 +555,7 @@ func (c *Client) fetchTorrentContent(ctx context.Context, torrentURL string) (*f
 			}
 			next, err := req.URL.Parse(location)
 			if err != nil {
-				return nil, fmt.Errorf("fetch torrent: invalid redirect location: %w", err)
+				return nil, fmt.Errorf("fetch torrent: invalid redirect location: %w", httpsec.RedactURLError(err))
 			}
 			if next.Scheme != "http" && next.Scheme != "https" {
 				return nil, fmt.Errorf("fetch torrent: unsupported redirect scheme %q", next.Scheme)
@@ -571,7 +571,7 @@ func (c *Client) fetchTorrentContent(ctx context.Context, torrentURL string) (*f
 		}
 		data, err := io.ReadAll(io.LimitReader(resp.Body, 50<<20)) // 50 MB cap
 		if err != nil {
-			return nil, fmt.Errorf("fetch torrent: %w", err)
+			return nil, fmt.Errorf("fetch torrent: %w", httpsec.RedactURLError(err))
 		}
 		return &fetchedTorrent{data: data}, nil
 	}

@@ -36,3 +36,16 @@ func TestSend_FailureDoesNotLeakPathSecrets(t *testing.T) {
 		})
 	}
 }
+
+// The production validator parses the URL and wraps the parse error, which
+// quotes the URL, before send ever builds a request.
+func TestSend_ValidatorErrorDoesNotLeakWebhookSecret(t *testing.T) {
+	n := New(nil)
+	err := n.Test(context.Background(), &models.Notification{URL: "https://ntfy.example/S3CRETTOKEN%zz?auth=S3CRETAUTH"})
+	if err == nil {
+		t.Fatal("expected the validator to reject an unparseable URL")
+	}
+	if strings.Contains(err.Error(), "S3CRET") {
+		t.Fatalf("validator error leaks the webhook secret: %v", err)
+	}
+}

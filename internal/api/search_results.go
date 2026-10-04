@@ -28,9 +28,10 @@ import (
 // title and size replace the posted ones for admins and API key callers too,
 // so search responses can drop every secret from the URL (an indexer apikey, a
 // Jackett key, a tracker passkey) and the grab still sends the real values.
-// An admin or API key grab of a GUID the registry does not hold (a restart,
-// an eviction, a result older than the TTL, or a release found elsewhere)
-// falls back to the posted URL. See callerMayGrabAnyURL.
+// Only an API key grab of a GUID the registry does not hold (a restart, an
+// eviction, a result older than the TTL, or a release found elsewhere) falls
+// back to the posted URL; anyone else is told to search again. See
+// callerMayPostDownloadURL.
 //
 // Entries are keyed by the GUID as the search response shows it, which is the
 // raw GUID with every credential stripped (registryKey): a torznab GUID is
@@ -199,18 +200,22 @@ func (e searchRelease) apply(req *grabRequest) {
 	}
 }
 
-// callerMayGrabAnyURL reports whether a grab request may name its own download
-// URL. True for the admin role, which API key, disabled mode and trusted local
-// requests also carry, and for a context with no identity at all, which only
-// code outside the auth middleware builds (CheckOwnership treats that the same
-// way). Everyone else, including a signed in user whose role could not be
-// read, grabs only what a search returned.
-func callerMayGrabAnyURL(ctx context.Context) bool {
-	role := auth.UserRoleFromContext(ctx)
-	if role == auth.RoleAdmin {
+// callerMayPostDownloadURL reports whether a grab of a GUID the registry does
+// not hold may use the download URL the request carries. True only for a
+// verified API key, which external tools use with the raw URLs they hold, and
+// for a context with no identity at all, which only code outside the auth
+// middleware builds (CheckOwnership treats that the same way).
+//
+// Everyone else, admin sessions included, grabs only what a search returned.
+// A user account must not make Bindery fetch a URL of its choosing, and a
+// browser admin posts back what a search response showed: with its
+// credentials stripped, so the grab would go out without its Jackett key or
+// passkey and store a redacted GUID.
+func callerMayPostDownloadURL(ctx context.Context) bool {
+	if auth.AuthedViaAPIKey(ctx) {
 		return true
 	}
-	return role == "" && auth.UserIDFromContext(ctx) == 0
+	return auth.UserRoleFromContext(ctx) == "" && auth.UserIDFromContext(ctx) == 0
 }
 
 // WithSearchResults attaches the registry non-admin grabs are checked against.

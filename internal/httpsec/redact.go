@@ -110,12 +110,40 @@ func RedactSecrets(s string) string {
 // The error chain is left intact so errors.As/Is still reach the underlying net
 // error (nethint's timeout/DNS classification depends on it). Non-*url.Error
 // values pass through unchanged.
+//
+// The wrapped error's message is scrubbed too: net/http reports a Location
+// header it cannot parse as `failed to parse Location header "<url>"` inside
+// the *url.Error. That inner error is replaced only when its text actually
+// held a secret, by a wrapper that still unwraps to it.
 func RedactURLError(err error) error {
 	var ue *url.Error
 	if errors.As(err, &ue) {
 		ue.URL = RedactSecrets(ue.URL)
+		if ue.Err != nil {
+			msg := ue.Err.Error()
+			if redacted := RedactSecrets(msg); redacted != msg {
+				ue.Err = &redactedError{msg: redacted, err: ue.Err}
+			}
+		}
 	}
 	return err
+}
+
+// redactedError carries a scrubbed message for err while keeping err
+// reachable through errors.Is/As and its timeout classification.
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.err }
+
+// Timeout forwards to the wrapped error, since url.Error.Timeout type-asserts
+// its direct Err rather than unwrapping.
+func (e *redactedError) Timeout() bool {
+	var t interface{ Timeout() bool }
+	return errors.As(e.err, &t) && t.Timeout()
 }
 
 // StripURLSecrets removes every secret parameter, name and value, from a URL
@@ -124,6 +152,7 @@ func RedactURLError(err error) error {
 // as it was, in its original order, and a URL with nothing to remove is
 // returned unchanged, so stripping twice is the same as stripping once.
 //
+// A magnet loses its tr= announce URLs, which carry private tracker passkeys.
 // Inside a newznab getnzb link "r" is the API key too, including the
 // getnzb/<guid>.nzb&i=<uid>&r=<apikey> shape where the parameters follow an &
 // in the path. A string that does not parse as a URL is passed through
@@ -140,8 +169,13 @@ func StripURLSecrets(raw string) string {
 		return RedactSecrets(raw)
 	}
 	getnzb := strings.Contains(strings.ToLower(u.Path), "/getnzb")
+	magnet := strings.EqualFold(u.Scheme, "magnet")
 	isSecret := func(name string) bool {
-		return IsSecretParam(name) || (getnzb && strings.EqualFold(name, "r"))
+		return IsSecretParam(name) ||
+			(getnzb && strings.EqualFold(name, "r")) ||
+			// A magnet's announce URLs carry a private tracker's passkey, in
+			// the query or the path, so a displayed magnet drops them.
+			(magnet && strings.EqualFold(name, "tr"))
 	}
 	changed := false
 	if getnzb {

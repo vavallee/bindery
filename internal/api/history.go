@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -79,6 +80,7 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 	items := make([]historyItem, len(events))
 	bookIDs := make([]int64, 0, len(events))
 	for i, e := range events {
+		e.Data = redactEventData(e.Data)
 		items[i] = historyItem{HistoryEvent: e}
 		if e.BookID != nil {
 			bookIDs = append(bookIDs, *e.BookID)
@@ -206,5 +208,9 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, entry)
+	// The entry keeps the raw GUID, which search results are matched against;
+	// the caller, who may be any user, sees it without credentials.
+	shown := *entry
+	shown.GUID = newznab.RedactDownloadURL(shown.GUID)
+	writeJSON(w, http.StatusCreated, shown)
 }

@@ -595,11 +595,11 @@ func (c *Client) fetchTorrentContent(ctx context.Context, rawURL string) (*fetch
 
 	for redirects := 0; redirects <= 5; redirects++ {
 		if err := c.validateTorrentFetchURL(current); err != nil {
-			return nil, err
+			return nil, httpsec.RedactURLError(err)
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, current, nil)
 		if err != nil {
-			return nil, fmt.Errorf("build torrent fetch request: %w", err)
+			return nil, fmt.Errorf("build torrent fetch request: %w", httpsec.RedactURLError(err))
 		}
 		req.Header.Set("Accept", "application/x-bittorrent")
 		// Some indexers fingerprint the User-Agent and serve an anti-bot 403
@@ -627,7 +627,7 @@ func (c *Client) fetchTorrentContent(ctx context.Context, rawURL string) (*fetch
 			}
 			next, err := req.URL.Parse(location)
 			if err != nil {
-				return nil, fmt.Errorf("invalid redirect location: %w", err)
+				return nil, fmt.Errorf("invalid redirect location: %w", httpsec.RedactURLError(err))
 			}
 			if next.Scheme != "http" && next.Scheme != "https" {
 				return nil, fmt.Errorf("unsupported redirect scheme %q", next.Scheme)

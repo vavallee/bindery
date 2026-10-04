@@ -335,11 +335,11 @@ func (c *Client) validateNZBFetchURL(raw string) error {
 
 func (c *Client) fetchNZBContent(ctx context.Context, nzbURL string) ([]byte, error) {
 	if err := c.validateNZBFetchURL(nzbURL); err != nil {
-		return nil, fmt.Errorf("fetch nzb: %w", err)
+		return nil, fmt.Errorf("fetch nzb: %w", httpsec.RedactURLError(err))
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nzbURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("fetch nzb: %w", err)
+		return nil, fmt.Errorf("fetch nzb: %w", httpsec.RedactURLError(err))
 	}
 	// Some indexers (e.g. nzbfinder.ws, #1053) fingerprint the User-Agent and
 	// serve an anti-bot 403 to Go's default UA, so use the project UA the
