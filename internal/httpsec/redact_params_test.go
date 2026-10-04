@@ -14,7 +14,7 @@ import (
 var secretParamCases = []string{
 	"apikey", "api_key", "jackett_apikey", "key", "token", "access_token",
 	"auth", "authkey", "passkey", "torrent_pass", "rsskey", "pass",
-	"password", "secret", "sig", "signature",
+	"password", "secret", "sig", "signature", "tp",
 	// The name is matched case insensitively.
 	"PassKey", "JACKETT_APIKEY", "Torrent_Pass",
 }

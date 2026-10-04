@@ -480,27 +480,55 @@ DELETE /api/v1/blocklist/bulk                     bulk remove
 
 Search, queue, pending and grab responses strip every credential parameter
 from `nzbUrl`, `guid` and `infoUrl`: the indexer `apikey`, `jackett_apikey`,
-`passkey`, `torrent_pass`, `authkey`, `rsskey`, `token`, `signature` and the
-rest of the list in `internal/httpsec/redact.go`, plus `r` inside a newznab
-`getnzb` link. Magnets lose their `tr=` announce URLs. Path segments shaped
-like a private tracker passkey, RSS key or download token (hex of 16 or more
-characters, a letter and digit token of 20 or more characters, or the value of
-a `passkey=` style pair in the path) are replaced with `REDACTED-` and 12 hex
-characters. The suffix is a keyed hash that changes on every restart: it tells
-two releases apart without revealing the value. The segment after `/details/`
-or `/getnzb/` is a newznab release id and is kept. Credentials in the URL
-itself (`https://user:pass@host/...`) are replaced the same way, user name
-included. History event `data` and the log export get the same treatment.
+`passkey`, `torrent_pass`, `authkey`, `rsskey`, `tp`, `token`, `signature` and
+the rest of the list in `internal/httpsec/redact.go`, plus `r` inside a
+newznab `getnzb` link. Parameters separated by `;` count as well as `&`.
+Credentials in the URL itself (`https://user:pass@host/...`) are replaced,
+user name included. Magnets lose their `tr=` announce URLs and their `xs=` and
+`as=` source URLs.
+
+`nzbUrl` and `guid` also lose path segments shaped like a private tracker
+passkey, RSS key or download token. A path is cut into runs of `A-Z a-z 0-9 _ -`
+(compared after percent decoding), and a run is redacted when it is
+
+| Shape | Example |
+|-------|---------|
+| hex of 16 or more characters with a letter and a digit | `/download/123/0a1b2c3d4e5f60718293a4b5c6d7e8f9/x.torrent` |
+| 20 or more characters where one piece between `-` and `_` switches between letters and digits at least 4 times | `/torrent/download/12345.aB3dE5fG7hJ9kL2mN4pQ6rS8tU0vW1xY` |
+| the value of a `passkey=` style pair in the path | `/rss/passkey=hunter2/feed.xml` |
+
+Release names switch between letters and digits once or twice per piece
+(`Stormlight4`, `Retail2010`, `128kbps`), so they are kept, as are numeric
+ids, words, file names and non ASCII names. The segment after `/details/` or
+`/getnzb/` is a newznab release id and is kept. Info hashes and UUIDs in a
+download URL or GUID are redacted like any other token, which only costs
+readability: grabs take the real URL from the server's record. A redacted run
+becomes `REDACTED-` and 12 hex characters, a keyed hash that changes on every
+restart, so two releases stay apart without revealing the value. Not covered:
+keys shorter than these lengths, keys of only letters or only digits, a short
+token with few digits (a random 20 character base62 key reaches 4
+alternations about 77% of the time, a 32 character one about 96%), and URL
+fragments.
+
+`infoUrl` is a link people click, and detail pages are often addressed by a
+hex id (an MD5, an info hash), so it keeps its path and only loses credential
+parameters and `user:pass@`. When `infoUrl` is the download link itself (a
+torznab item with no enclosure) or equals the GUID, it is redacted like them.
+
+History event `data` and the log export get the same treatment as `nzbUrl`,
+and the log export also decodes the tracker URLs inside a magnet before
+redacting them.
+
 A grab of a GUID a recent search returned uses the server's own record of the
-raw URL, so post `guid` back exactly as the search returned it. The record lives in memory for 24 hours; after a restart or
-expiry a session grab answers `400` "this search result has expired, search
-again". An API key caller may instead post a GUID the server has not seen
-along with its own raw `nzbUrl`, which is grabbed as posted (with the indexer
-`apikey` added when the host matches a configured indexer). Only the indexer
-`apikey` is put back: a `jackett_apikey`, a passkey parameter, a passkey in
-the path or `user:pass@` credentials that a response redacted cannot be
-recovered, so such a caller must
-post the raw URL it got from the indexer, not one copied from a Bindery
+raw URL, so post `guid` back exactly as the search returned it. The record
+lives in memory for 24 hours; after a restart or expiry a session grab answers
+`400` "this search result has expired, search again". An API key caller may
+instead post a GUID the server has not seen along with its own raw `nzbUrl`,
+which is grabbed as posted (with the indexer `apikey` added when the host
+matches a configured indexer). Only the indexer `apikey` is put back: a
+`jackett_apikey`, a passkey parameter, a passkey in the path or `user:pass@`
+credentials that a response redacted cannot be recovered, so such a caller
+must post the raw URL it got from the indexer, not one copied from a Bindery
 response.
 
 #### Download client credentials are write-only

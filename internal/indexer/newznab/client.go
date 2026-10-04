@@ -258,10 +258,25 @@ func detailURL(item rssItem) string {
 		}
 		// With no enclosure, <link> is the download URL itself, and a torznab
 		// permalink is often a details page carrying the passkey. This is shown
-		// to every user, so it never carries a credential.
-		return RedactDownloadURL(raw)
+		// to every user, so it never carries a credential. A real detail page
+		// keeps its path, which people click and which is often a hex id; the
+		// download link, and a permalink that is also the GUID (shown redacted
+		// with the path rule), get the download URL treatment, path included.
+		if (download == "" && raw == strings.TrimSpace(item.Link)) || raw == strings.TrimSpace(item.GUID.Value) {
+			return RedactDownloadURL(raw)
+		}
+		return RedactInfoURL(raw)
 	}
 	return ""
+}
+
+// RedactInfoURL removes credentials from a detail page link before it is
+// shown: secret parameters and user:pass@ come off, the path stays, since it
+// is the indexer's id for the release and people click the link (see
+// httpsec.StripDetailURLSecrets). Use RedactDownloadURL for an info link that
+// is the download link itself.
+func RedactInfoURL(raw string) string {
+	return httpsec.StripDetailURLSecrets(raw)
 }
 
 // Caps fetches the indexer capabilities.

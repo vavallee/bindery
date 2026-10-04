@@ -25,19 +25,39 @@ import (
 //
 //   - hex of 16 or more characters with at least one digit and one letter (a
 //     passkey, RSS key or info hash), or
-//   - 20 or more characters with at least one digit and one letter, where some
-//     piece between '-' and '_' is longer than 6 characters and itself mixes
-//     letters and digits (a base62 or base64url token; a slug or release name
-//     such as the-name-of-the-wind-2007 or Some_Title_2020_EPUB_x264v2 is
-//     made of words, numbers and short tags and is left alone), or
+//   - 20 or more characters, where some piece between '-' and '_' switches
+//     between letters and digits at least minTokenAlternations (4) times (a
+//     base62 or base64url token), or
 //   - the value of a name=value pair whose name is on the secret parameter
 //     list (/rss/passkey=<value>/, ;torrent_pass=<value>), whatever its shape.
+//
+// The alternation count is what separates a random token from a release name.
+// Slugs switch once or twice per piece (Stormlight4, Retail2010, 128kbps,
+// HarryPotter1PhilosophersStone, wayofkings0000sand_x1y2 at most 3), while a
+// random base62 token switches about every third character. Measured on
+// random tokens, the share that reaches 4 alternations in one piece:
+//
+//	length            20     24     32
+//	base62           77%    87%    96%
+//	base64url        66%    75%    88%
+//	base36 (a-z0-9)  96%    99%   100%
+//
+// So a short token with few digits can slip through; most path passkeys are
+// hex, which the first rule catches whatever its digits. Episode style tags
+// (S01E02E03E04, Vol1Ch2Pt3Book4) do reach 4 and are redacted in a long run.
 //
 // The segment straight after /details/ or /getnzb/ is a newznab release GUID
 // (40 hex characters) that the indexer's detail page and NZB link need, so
 // only the name=value rule applies there. Numeric ids, words, slugs, release
-// and file names and percent encoded Unicode never match. A UUID does, like
-// any other random token.
+// and file names and percent encoded Unicode never match. A UUID usually
+// does, like any other random token, and so does an info hash: a download URL
+// or GUID built on one shows a placeholder, which costs readability only,
+// since grabs take the raw URL from the search result registry. Detail page
+// links are not run through this rule at all (see StripDetailURLSecrets),
+// because people click them and their ids are often hex.
+//
+// Not covered: keys shorter than these lengths, keys made only of letters or
+// only of digits, and anything in a URL fragment.
 //
 // A secret run is replaced by REDACTED-<12 hex characters>, a keyed hash of
 // the run. The hash key is random per process, so it reveals nothing about
@@ -154,11 +174,38 @@ func looksLikePathSecret(s string) bool {
 		return false
 	}
 	for _, piece := range strings.FieldsFunc(s, func(r rune) bool { return r == '-' || r == '_' }) {
-		if len(piece) > 6 && hasLetterAndDigit(piece) {
+		if letterDigitAlternations(piece) >= minTokenAlternations {
 			return true
 		}
 	}
 	return false
+}
+
+// minTokenAlternations is how many times one piece of a run must switch
+// between letters and digits to count as a random token; see redactURLPath.
+const minTokenAlternations = 4
+
+// letterDigitAlternations counts the switches between a letter and a digit
+// in s. Case changes and other characters do not count.
+func letterDigitAlternations(s string) int {
+	n := 0
+	var prev byte // 0 none yet, 'l' letter, 'd' digit
+	for i := 0; i < len(s); i++ {
+		var k byte
+		switch c := s[i]; {
+		case c >= '0' && c <= '9':
+			k = 'd'
+		case c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z':
+			k = 'l'
+		default:
+			continue
+		}
+		if prev != 0 && k != prev {
+			n++
+		}
+		prev = k
+	}
+	return n
 }
 
 // pathFingerprintKey keys the placeholder hash. It is random per process: the

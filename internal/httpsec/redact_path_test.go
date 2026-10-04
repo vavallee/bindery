@@ -124,6 +124,13 @@ var pathKeepCases = []string{
 	"http://jackett:9117/dl/mytracker/?path=Q2ZESjhQ&file=Dune",
 	"http://prowlarr:9696/3/download?file=Lee+Child&link=abc",
 	"https://tracker.example/details.php?id=4",
+	// Release name slugs on public trackers and archives: words, years and
+	// short tags, never four or more letter and digit alternations in a piece.
+	"https://1337x.to/torrent/12345/Brandon-Sanderson-Wind-and-Truth-Stormlight4-EPUB/",
+	"https://torrentgalaxy.to/torrent/12345/Dune-Messiah-1969-Audiobook-MP3-128kbps",
+	"https://tracker.example/torrent/12345/Stormlight_Archive_Book1_WayOfKings_Retail2010",
+	"https://tracker.example/torrent/12345/HarryPotter1PhilosophersStone",
+	"https://archive.org/download/wayofkings0000sand_x1y2/wayofkings0000sand_x1y2.pdf",
 	// The query is not the path: an unknown parameter keeps its value.
 	"https://tracker.example/browse?hash=0a1b2c3d4e5f60718293a4b5c6d7e8f9",
 }

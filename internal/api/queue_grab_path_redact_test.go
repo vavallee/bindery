@@ -239,3 +239,33 @@ func TestHistoryList_RedactsUserinfo(t *testing.T) {
 		t.Fatalf("log export carries a userinfo password: %s", got)
 	}
 }
+
+// An info link is shown as a clickable link, so its path survives unless the
+// info link is the download link itself.
+func TestRedactSearchResult_InfoURLKeepsDetailPath(t *testing.T) {
+	detail := "https://annas-archive.org/md5/" + pathPasskey
+	res := newznab.SearchResult{
+		GUID:    "https://tracker.example/torrent/download/1." + pathRSSKey,
+		NZBURL:  "https://tracker.example/download/1/" + pathPasskey + "/f.torrent",
+		InfoURL: detail + "?passkey=SECRETPK",
+	}
+	redactSearchResult(&res)
+	if res.InfoURL != detail {
+		t.Errorf("InfoURL = %q, want %q", res.InfoURL, detail)
+	}
+	assertNoPathSecret(t, "download URL and GUID", res.NZBURL+" "+res.GUID)
+
+	dl := "https://tracker.example/rss/download/1/" + pathPasskey + "/f.torrent"
+	res = newznab.SearchResult{GUID: "g", NZBURL: dl, InfoURL: dl}
+	redactSearchResult(&res)
+	assertNoPathSecret(t, "info link that is the download link", res.InfoURL)
+
+	blob := `{"guid":"g","nzbUrl":"` + dl + `","infoUrl":"` + detail + `"}`
+	got := redactReleaseJSON(blob)
+	if !strings.Contains(got, `"infoUrl":"`+detail+`"`) {
+		t.Errorf("pending blob info link changed: %s", got)
+	}
+	assertNoPathSecret(t, "pending download URL", strings.ReplaceAll(got, detail, ""))
+	blob = `{"guid":"g","nzbUrl":"` + dl + `","infoUrl":"` + dl + `"}`
+	assertNoPathSecret(t, "pending info link that is the download link", redactReleaseJSON(blob))
+}
