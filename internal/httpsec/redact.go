@@ -86,7 +86,8 @@ var secretPathPatterns = []*regexp.Regexp{
 // secret query parameter (see secretParamNames), the token in a known
 // webhook or indexer URL shape (Discord, Telegram, Slack, Home Assistant,
 // Teams, Apprise, ntfy.sh, newznab getnzb links), and any URL path segment
-// shaped like a passkey or download token (see redactURLPath). It is meant
+// shaped like a passkey or download token (see redactURLPath), and the
+// user:pass@ credentials in a URL's authority. It is meant
 // for error strings and
 // log lines that may embed an upstream request URL (e.g. a wrapped
 // *url.Error), so the secret is replaced with REDACTED before the error is
@@ -95,6 +96,7 @@ var secretPathPatterns = []*regexp.Regexp{
 // The output is for people to read, never to fetch: a redacted URL no longer
 // authenticates.
 func RedactSecrets(s string) string {
+	s = redactUserinfoInText(s)
 	s = secretQueryParamRE.ReplaceAllString(s, "${1}REDACTED")
 	for _, re := range secretPathPatterns {
 		s = re.ReplaceAllString(s, "${1}REDACTED")
@@ -156,7 +158,8 @@ func (e *redactedError) Timeout() bool {
 //
 // A path segment shaped like a passkey, RSS key or download token is replaced
 // with a placeholder that differs per secret (see redactURLPath), so two
-// GUIDs that differ only there still differ once stripped.
+// GUIDs that differ only there still differ once stripped. Credentials in
+// the authority (user:pass@host) are replaced the same way.
 //
 // A magnet loses its tr= announce URLs, which carry private tracker passkeys.
 // Inside a newznab getnzb link "r" is the API key too, including the
@@ -202,6 +205,10 @@ func StripURLSecrets(raw string) string {
 	// A passkey or download token in the path (see redactURLPath). Only an
 	// absolute URL has a path to look at: a bare newznab GUID is hex too, and
 	// is an id, not a credential.
+	// Basic credentials in the authority (user:pass@host).
+	if redactUserinfo(u) {
+		changed = true
+	}
 	if u.Host != "" && u.Opaque == "" {
 		if p, ok := redactURLPath(u.EscapedPath()); ok {
 			if dec, err := url.PathUnescape(p); err == nil {

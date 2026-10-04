@@ -162,3 +162,80 @@ func TestRedactReleaseJSON_PathPasskeys(t *testing.T) {
 func TestExportValue_PathPasskeys(t *testing.T) {
 	assertNoPathSecret(t, "log export", exportValue(`grab failed url=https://t.example/rss/download/1/`+pathPasskey+` err="EOF"`))
 }
+
+// A release URL with credentials in its userinfo (user:pass@host) is shown
+// without them, in search, grab, queue and history, and the grab still sends
+// them to the download URL from the server's record.
+func TestSearchAndGrab_UserinfoNeverLeavesTheServer(t *testing.T) {
+	for _, role := range []string{auth.RoleUser, auth.RoleAdmin} {
+		t.Run(role, func(t *testing.T) {
+			f := newGrabSecFixture(t)
+			withCreds := strings.Replace(f.indexerURL, "://", "://feeduser:TRACKERPW@", 1)
+			guid := withCreds + "/tracker/details/77"
+			f.searcher.results = []newznab.SearchResult{{
+				GUID: guid, InfoURL: guid, IndexerID: f.indexerID, Title: "Lee Child - One Shot (epub)",
+				NZBURL: withCreds + "/tracker/dl/77/One.Shot.torrent", Protocol: "usenet",
+			}}
+			assertNoCreds := func(what, body string) {
+				t.Helper()
+				if strings.Contains(body, "TRACKERPW") || strings.Contains(body, "feeduser") {
+					t.Fatalf("%s carries userinfo credentials: %s", what, body)
+				}
+			}
+
+			rec := httptest.NewRecorder()
+			f.search.SearchQuery(rec, asRole(httptest.NewRequest(http.MethodGet, "/api/v1/indexer/search?q=one+shot", nil), f.bob, role))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("search: got %d: %s", rec.Code, rec.Body.String())
+			}
+			assertNoCreds("search response", rec.Body.String())
+			var results []newznab.SearchResult
+			if err := json.Unmarshal(rec.Body.Bytes(), &results); err != nil || len(results) != 1 {
+				t.Fatalf("decode search response: %v (%s)", err, rec.Body.String())
+			}
+
+			grab := f.grabAs(f.bob, role, map[string]any{
+				"guid": results[0].GUID, "title": results[0].Title, "nzbUrl": results[0].NZBURL, "indexerId": f.indexerID,
+			})
+			if grab.Code != http.StatusAccepted {
+				t.Fatalf("grab: got %d: %s", grab.Code, grab.Body.String())
+			}
+			assertNoCreds("grab response", grab.Body.String())
+			select {
+			case p := <-f.trackerPaths:
+				if want := "/tracker/dl/77/One.Shot.torrent auth=feeduser:TRACKERPW"; p != want {
+					t.Errorf("the download must be fetched with the real credentials, got %q want %q", p, want)
+				}
+			default:
+				t.Fatal("the recorded download URL was never fetched")
+			}
+
+			list := httptest.NewRecorder()
+			f.queue.List(list, asRole(httptest.NewRequest(http.MethodGet, "/api/v1/queue", nil), f.bob, role))
+			if !strings.Contains(list.Body.String(), "/tracker/dl/77/") {
+				t.Fatalf("queue list does not show the grabbed release: %s", list.Body.String())
+			}
+			assertNoCreds("queue response", list.Body.String())
+		})
+	}
+}
+
+func TestHistoryList_RedactsUserinfo(t *testing.T) {
+	h, history, _, ctx := historyFixture(t)
+	raw := "https://feeduser:TRACKERPW@tracker.example/dl/77/One.Shot.torrent"
+	data, _ := json.Marshal(map[string]any{"guid": raw, "message": `fetch torrent: Get "` + raw + `": EOF`})
+	if err := history.Create(ctx, &models.HistoryEvent{EventType: models.HistoryEventGrabbed, SourceTitle: "x", Data: string(data)}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/history", nil))
+	if strings.Contains(rec.Body.String(), "TRACKERPW") {
+		t.Fatalf("history response carries a userinfo password: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "tracker.example/dl/77/One.Shot.torrent") {
+		t.Fatalf("redaction removed more than the credentials: %s", rec.Body.String())
+	}
+	if got := exportValue(`grab failed url=` + raw); strings.Contains(got, "TRACKERPW") {
+		t.Fatalf("log export carries a userinfo password: %s", got)
+	}
+}

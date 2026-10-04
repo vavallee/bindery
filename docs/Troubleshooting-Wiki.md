@@ -446,7 +446,7 @@ Filter down to the problem first — level, component, a search term, and a date
 Notes:
 
 - One entry per line, `timestamp LEVEL [component] message key=value`, so it stays greppable and pastes cleanly into an issue.
-- API keys, tracker passkeys, tokens and signatures that appear in logged URLs, and the token in a Discord, Slack, Telegram, Teams, Home Assistant, Apprise or ntfy.sh webhook URL, are replaced with `REDACTED` on the way out, as are passkeys and download tokens that private trackers put in the URL path. Still skim the file before posting, since paths and book titles are not redacted.
+- API keys, tracker passkeys, tokens and signatures that appear in logged URLs, and the token in a Discord, Slack, Telegram, Teams, Home Assistant, Apprise or ntfy.sh webhook URL, are replaced with `REDACTED` on the way out, as are passkeys and download tokens that private trackers put in the URL path and `user:pass@` credentials written into a URL. Still skim the file before posting, since paths and book titles are not redacted.
 - An export stops at 50,000 entries and says so in the last line of the file. If you hit that, narrow the level or the date range.
 - Admin-only, like the rest of the Logs tab.
 - Turn the **Runtime level** up to `DEBUG` before reproducing if the default output isn't enough; entries are persisted, so the download picks them up after the fact.

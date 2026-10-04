@@ -65,7 +65,8 @@ type grabSecFixture struct {
 	// a Jackett style download link that carries its own credentials.
 	jackettQueries chan string
 	// trackerPaths records the escaped path of every fetch under /tracker/,
-	// a private tracker style link that carries its passkey in the path.
+	// a private tracker style link that carries its passkey in the path, plus
+	// " auth=user:pass" when the fetch sent basic credentials.
 	trackerPaths chan string
 	adds         *atomic.Int32
 	alice, bob   int64
@@ -94,7 +95,11 @@ func newGrabSecFixture(t *testing.T) *grabSecFixture {
 			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><nzb></nzb>`))
 		default:
 			if strings.HasPrefix(r.URL.Path, "/tracker/") {
-				f.trackerPaths <- r.URL.EscapedPath()
+				got := r.URL.EscapedPath()
+				if user, pass, ok := r.BasicAuth(); ok {
+					got += " auth=" + user + ":" + pass
+				}
+				f.trackerPaths <- got
 				_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><nzb></nzb>`))
 				return
 			}
