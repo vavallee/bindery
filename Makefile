@@ -128,20 +128,24 @@ licenses-check: ## Fail if THIRD_PARTY_LICENSES.md is stale (the CI drift gate)
 go-version-check: ## Fail if a Dockerfile or workflow builds with a Go other than go.mod's toolchain
 	@want=$$(sed -n 's/^toolchain go//p' go.mod); \
 	if [ -z "$$want" ]; then echo "go.mod has no toolchain directive"; exit 1; fi; \
-	bad=0; \
-	for f in $$(git ls-files -- Dockerfile '*/Dockerfile'); do \
+	bad=0; nd=0; nw=0; \
+	dockerfiles=$$(find . \( -name node_modules -o -name vendor -o -name .git -o -path ./.claude \) -prune \
+		-o -type f \( -name 'Dockerfile*' -o -name '*.Dockerfile' \) -print); \
+	for f in $$dockerfiles; do \
+		nd=$$((nd + 1)); \
 		for tag in $$(grep -o 'golang:[^@ ]*' "$$f" | sed 's/^golang://'); do \
 			got=$${tag%%-*}; \
 			if [ "$$got" != "$$want" ]; then echo "$$f: golang:$$tag, go.mod toolchain is go$$want"; bad=1; fi; \
 		done; \
 	done; \
-	for f in .github/workflows/*.yml; do \
+	for f in .github/workflows/*.yml .github/workflows/*.yaml; do \
+		[ -f "$$f" ] || continue; nw=$$((nw + 1)); \
 		for got in $$(sed -n 's/^[[:space:]]*go-version:[[:space:]]*"\{0,1\}\([^"[:space:]]*\)"\{0,1\}.*/\1/p' "$$f"); do \
 			if [ "$$got" != "$$want" ]; then echo "$$f: go-version $$got, go.mod toolchain is go$$want"; bad=1; fi; \
 		done; \
 	done; \
 	if [ "$$bad" = 1 ]; then echo "Bump go.mod, every Dockerfile golang tag and every setup-go go-version together."; exit 1; fi; \
-	echo "Go $$want everywhere: go.mod, Dockerfiles, workflows"
+	echo "Go $$want everywhere: go.mod, $$nd Dockerfiles, $$nw workflows"
 
 sbom: build ## Generate an SPDX SBOM for the local binary
 	@command -v syft >/dev/null || (echo "syft not installed; see https://github.com/anchore/syft"; exit 1)

@@ -375,11 +375,14 @@ jobs:
           images: |
             ghcr.io/${{ github.repository }}
             vavallee/bindery
-          # `latest` moves only on a `v*` tag. It used to move on every push
-          # to main as well, so anyone running `:latest` (what the README and
-          # DEPLOYMENT.md tell people to run) got each merge before the
-          # release gates (pre-deploy smoke, goreleaser) ever saw it. Main
-          # HEAD gets its own moving tag, `edge`, for anyone who wants that.
+          # `latest` moves only when a `v*` tag is pushed. It used to move on
+          # every push to main as well, so anyone running `:latest` (what the
+          # README and DEPLOYMENT.md tell people to run) got each merge before
+          # it was released at all. Note this is not gated on the release
+          # jobs: on a tag, this job pushes `latest` before predeploy-smoke
+          # runs and alongside goreleaser, so a tag whose smoke or goreleaser
+          # fails has still moved `latest`. Main HEAD gets its own moving tag,
+          # `edge`, for anyone who wants that.
           tags: |
             type=sha,format=short
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}

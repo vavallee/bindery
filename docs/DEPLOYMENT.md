@@ -18,7 +18,7 @@ docker run -d \
 
 | Tag | Meaning |
 |-----|---------|
-| `:latest` | Most recent tagged release. Moves only when a `v*` release tag is built, never on a merge to `main` |
+| `:latest` | Most recent tagged release. Moves when a `v*` release tag is pushed and its image is built, never on a merge to `main`. It is pushed as soon as the tag's image builds, before the release smoke test and binary build finish, so pin `:X.Y.Z` if you want a release that has cleared every step |
 | `:X.Y.Z` / `:vX.Y.Z` | Specific release, both spellings are published. The Helm chart pins the un-prefixed form |
 | `:edge` | Head of `main`, rebuilt on every merge. Unreleased: it has passed CI but not the release gates |
 | `:development` | Bleeding edge from the `development` branch |
