@@ -478,7 +478,8 @@ func TestMigrate088_OverPopulatedDatabase(t *testing.T) {
 	}
 
 	v := migrationVersionForTest(t, "088_unmatched_units.sql")
-	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = ?`, v); err != nil {
+	v098 := migrationVersionForTest(t, "098_unmatched_units_prior_status.sql")
+	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version IN (?, ?)`, v, v098); err != nil {
 		t.Fatal(err)
 	}
 	if err := migrate(database); err != nil {

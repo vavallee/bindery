@@ -580,3 +580,102 @@ func TestAdopt_IntoAWantedBookSaysNothingExtra(t *testing.T) {
 		t.Fatalf("message = %q, want none", it.Message)
 	}
 }
+
+// TestAdopt_IntoASkippedBookRestoresSkippedOnUndo covers #2885:
+// undoing an adoption into a Skipped book restores its status as Skipped
+// and unmonitored rather than leaving it Wanted.
+func TestAdopt_IntoASkippedBookRestoresSkippedOnUndo(t *testing.T) {
+	f := newAdoptionFixture(t, &stubMetaProvider{name: "openlibrary"})
+	ctx := context.Background()
+	book := f.seedBook(t, "Skipped Book")
+	book.Status = models.BookStatusSkipped
+	book.Monitored = false
+	if err := f.books.Update(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	path := f.write(t, "Ann Leckie/Skipped Book.epub")
+	id := f.seedUnit(t, db.UnmatchedUnitScan{UnitPath: path, MemberPaths: []string{path}})
+
+	rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/adopt", id), map[string]any{"bookId": book.ID})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("adopt = %d %s", rec.Code, rec.Body.String())
+	}
+
+	// While adopted, the book is imported
+	afterAdopt, err := f.books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterAdopt.Status != models.BookStatusImported {
+		t.Fatalf("status after adopt = %s, want %s", afterAdopt.Status, models.BookStatusImported)
+	}
+
+	// Unit records PriorBookStatus
+	unit, err := f.units.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unit.PriorBookStatus != models.BookStatusSkipped {
+		t.Fatalf("unit prior_book_status = %q, want %q", unit.PriorBookStatus, models.BookStatusSkipped)
+	}
+
+	// Undo restores status as Skipped and Monitored as false
+	rec = f.post(t, fmt.Sprintf("/library/unmatched/%d/undo", id), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("undo = %d %s", rec.Code, rec.Body.String())
+	}
+
+	afterUndo, err := f.books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterUndo.Status != models.BookStatusSkipped || afterUndo.Monitored {
+		t.Fatalf("book after undo = status %s, monitored %v; want status %s and monitored false",
+			afterUndo.Status, afterUndo.Monitored, models.BookStatusSkipped)
+	}
+	if got := filePaths(t, f.books, book.ID); len(got) != 0 {
+		t.Fatalf("files after undo = %v, want empty", got)
+	}
+}
+
+// TestAdopt_IntoASkippedBookRestoresSkippedOnFailure covers #2885:
+// if adoption fails part way and rolls back, the skipped book's status is restored.
+func TestAdopt_IntoASkippedBookRestoresSkippedOnFailure(t *testing.T) {
+	f := newAdoptionFixture(t, &stubMetaProvider{name: "openlibrary"})
+	ctx := context.Background()
+	book := f.seedBook(t, "Skipped Book")
+	book.Status = models.BookStatusSkipped
+	book.Monitored = false
+	if err := f.books.Update(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	epub := f.write(t, "Ann Leckie/Skipped Book.epub")
+	mobi := f.write(t, "Ann Leckie/Skipped Book.mobi")
+	id := f.seedUnit(t, db.UnmatchedUnitScan{UnitPath: epub, MemberPaths: []string{epub, mobi}})
+
+	real := f.h.registerFile
+	calls := 0
+	f.h.registerFile = func(ctx context.Context, bookID int64, format, path string) (bool, error) {
+		calls++
+		if calls == 2 {
+			return false, errors.New("injected disk failure")
+		}
+		return real(ctx, bookID, format, path)
+	}
+
+	rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/adopt", id), map[string]any{"bookId": book.ID})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("adopt = %d %s, want 500", rec.Code, rec.Body.String())
+	}
+
+	afterFail, err := f.books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterFail.Status != models.BookStatusSkipped || afterFail.Monitored {
+		t.Fatalf("book after failed adopt = status %s, monitored %v; want status %s and monitored false",
+			afterFail.Status, afterFail.Monitored, models.BookStatusSkipped)
+	}
+}
