@@ -1,0 +1,2 @@
+### Security
+- **Bounded memory when reading book metadata.** A small malicious EPUB could make Bindery allocate gigabytes while reading its title during import, and a tiny FLAC, Ogg or Opus file could do the same through its embedded cover art during a library scan. Bindery now refuses metadata that is far larger than any real book carries and falls back to the filename, so a bad release can no longer run the container out of memory.

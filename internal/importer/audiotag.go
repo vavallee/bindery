@@ -45,6 +45,9 @@ func ReadAudioTags(path string) (AudioTags, error) {
 }
 
 func readAudioTagsFrom(r io.ReadSeeker) (AudioTags, error) {
+	if err := checkAudioPictureClaims(r); err != nil {
+		return AudioTags{}, err
+	}
 	m, err := tag.ReadFrom(r)
 	if err != nil {
 		return AudioTags{}, err

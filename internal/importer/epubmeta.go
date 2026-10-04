@@ -51,13 +51,78 @@ func ReadEpubMetadata(path string) (EpubMetadata, error) {
 	if opf == nil {
 		return EpubMetadata{}, fmt.Errorf("epub: opf %q not found in archive", opfPath)
 	}
-	rc, err := opf.Open()
+	rc, err := openCappedEntry(opf)
 	if err != nil {
 		return EpubMetadata{}, fmt.Errorf("epub: open opf: %w", err)
 	}
 	defer rc.Close()
 
 	return parseOPFMetadata(rc)
+}
+
+// maxEpubMetadataEntryBytes caps how much of a single zip entry the metadata
+// reader will inflate. The XML decoder buffers a whole text token before
+// returning it, so without a cap a tiny archive whose dc:title is one long run
+// of a repeated byte inflates to hundreds of megabytes per import, and the
+// downloaded file is untrusted.
+//
+// Real entries are nowhere near this. container.xml is a few hundred bytes. An
+// OPF is typically under 50 KiB, and the largest ones (omnibus editions with
+// thousands of manifest and spine items, or long embedded descriptions) stay
+// in the hundreds of KiB. 4 MiB leaves an order of magnitude of headroom over
+// those while bounding the worst case to a few times 4 MiB of allocation.
+const maxEpubMetadataEntryBytes = 4 << 20
+
+// errEpubEntryTooLarge reports a zip entry past maxEpubMetadataEntryBytes. The
+// metadata read fails with it, so the import carries on without embedded
+// metadata exactly as it does for any other unreadable OPF.
+var errEpubEntryTooLarge = fmt.Errorf("epub: entry exceeds %d bytes", maxEpubMetadataEntryBytes)
+
+// openCappedEntry opens f for a metadata read bounded by
+// maxEpubMetadataEntryBytes. The declared size in the zip header is checked
+// first as a cheap early reject, but it is attacker controlled, so the reader
+// itself also refuses to return more than the cap whatever the header claims.
+func openCappedEntry(f *zip.File) (io.ReadCloser, error) {
+	if f.UncompressedSize64 > maxEpubMetadataEntryBytes {
+		return nil, fmt.Errorf("%s: %w", f.Name, errEpubEntryTooLarge)
+	}
+	rc, err := f.Open()
+	if err != nil {
+		return nil, err
+	}
+	return struct {
+		io.Reader
+		io.Closer
+	}{newCappedReader(rc, maxEpubMetadataEntryBytes), rc}, nil
+}
+
+// cappedReader passes through at most limit bytes of r and fails with
+// errEpubEntryTooLarge if r has more. Unlike io.LimitReader it does not turn
+// an oversized entry into a clean, silently truncated EOF.
+type cappedReader struct {
+	r         io.Reader
+	remaining int64
+}
+
+func newCappedReader(r io.Reader, limit int64) io.Reader {
+	return &cappedReader{r: r, remaining: limit}
+}
+
+func (c *cappedReader) Read(p []byte) (int, error) {
+	if c.remaining < 0 {
+		return 0, errEpubEntryTooLarge
+	}
+	// Allow one byte past the limit so a stream that ends exactly at the cap
+	// is told apart from one that keeps going.
+	if int64(len(p)) > c.remaining+1 {
+		p = p[:c.remaining+1]
+	}
+	n, err := c.r.Read(p)
+	c.remaining -= int64(n)
+	if c.remaining < 0 {
+		return n + int(c.remaining), errEpubEntryTooLarge
+	}
+	return n, err
 }
 
 // epubOPFPath reads META-INF/container.xml and returns the full-path of the
@@ -67,7 +132,7 @@ func epubOPFPath(zr *zip.ReadCloser) (string, error) {
 	if f == nil {
 		return "", fmt.Errorf("epub: META-INF/container.xml missing")
 	}
-	rc, err := f.Open()
+	rc, err := openCappedEntry(f)
 	if err != nil {
 		return "", fmt.Errorf("epub: open container.xml: %w", err)
 	}
