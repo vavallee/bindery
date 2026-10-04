@@ -88,8 +88,13 @@ type Scanner struct {
 	// qualityProfiles and blocklist back the post-download format check
 	// (#1782). Both nil disables it entirely, which is what every caller that
 	// has not been wired up gets.
-	qualityProfiles      *db.QualityProfileRepo
-	blocklist            *db.BlocklistRepo
+	qualityProfiles *db.QualityProfileRepo
+	blocklist       *db.BlocklistRepo
+	// metadataProfiles backs the post-download language check (#2998): a
+	// downloaded EPUB declaring a language the author's metadata profile does
+	// not allow is rejected and blocklisted instead of relabelling the book.
+	// Nil disables the check, exactly as an unwired format check does.
+	metadataProfiles     *db.MetadataProfileRepo
 	libraryDir           string
 	audiobookDir         string
 	audiobookDownloadDir string
@@ -353,6 +358,15 @@ func (s *Scanner) WithFormatEnforcement(profiles *db.QualityProfileRepo, blockli
 	return s
 }
 
+// WithLanguageEnforcement wires the repos the post-download language check
+// needs (#2998). Without it the check does not run and every import behaves as
+// it did before: the file's declared language relabels the book (#1933).
+func (s *Scanner) WithLanguageEnforcement(profiles *db.MetadataProfileRepo, blocklist *db.BlocklistRepo) *Scanner {
+	s.metadataProfiles = profiles
+	s.blocklist = blocklist
+	return s
+}
+
 // allowedFormat reports whether a file of the given format may fill the given
 // slot, and the rejection reason when it may not. slotMediaType is the media
 // type the download is being imported as (detectDownloadFormat's answer, or an
@@ -393,14 +407,14 @@ func (s *Scanner) allowedFormat(ctx context.Context, author *models.Author, form
 		decision.Release{Format: format}, models.Book{})
 }
 
-// blocklistRejectedRelease records a format-rejected release so the next search
-// does not grab the same file again.
+// blocklistRejectedRelease records a release rejected for its format (#1782)
+// or its language (#2998) so the next search does not grab the same file again.
 //
 // Without this the rejection is a loop: the book stays wanted, the next scan
 // finds the same release, grabs it, downloads it, and rejects it again. The
 // blocklist is the only thing that makes a rejection stick, and it is also why
-// this must stay narrow: it fires on a format the user explicitly disallowed,
-// never on a transient import failure.
+// this must stay narrow: it fires on a format or language the user explicitly
+// disallowed, never on a transient import failure.
 func (s *Scanner) blocklistRejectedRelease(ctx context.Context, dl *models.Download, reason string) {
 	if s.blocklist == nil || dl == nil || strings.TrimSpace(dl.GUID) == "" {
 		return
@@ -413,7 +427,7 @@ func (s *Scanner) blocklistRejectedRelease(ctx context.Context, dl *models.Downl
 		Reason:    reason,
 	}
 	if err := s.blocklist.Create(ctx, entry); err != nil {
-		slog.Warn("could not blocklist a format-rejected release; it may be grabbed again",
+		slog.Warn("could not blocklist a rejected release; it may be grabbed again",
 			"guid", dl.GUID, "title", dl.Title, "error", err)
 	}
 }
@@ -1396,7 +1410,7 @@ func (s *Scanner) alreadyImportedPath(ctx context.Context, book *models.Book, de
 // based format detection when non-empty ("ebook" or "audiobook").
 func (s *Scanner) ImportFromPath(ctx context.Context, dl *models.Download, path, formatHint string) {
 	defer s.lockManualBook(dl)()
-	s.tryImportInternal(ctx, dl, path, "", "", formatHint, nil, nil)
+	s.tryImportInternal(withManualImport(ctx), dl, path, "", "", formatHint, nil, nil)
 }
 
 // ImportFilesFromPath imports several files already on disk as ONE unit: the
@@ -1408,7 +1422,7 @@ func (s *Scanner) ImportFromPath(ctx context.Context, dl *models.Download, path,
 // every file; files are absolute paths.
 func (s *Scanner) ImportFilesFromPath(ctx context.Context, dl *models.Download, dir string, files []string, formatHint string) {
 	defer s.lockManualBook(dl)()
-	s.tryImportInternal(ctx, dl, dir, "", "", formatHint, nil, files)
+	s.tryImportInternal(withManualImport(ctx), dl, dir, "", "", formatHint, nil, files)
 }
 
 // ManualDownloadGUIDPrefix starts the GUID of every synthetic download the
@@ -1680,6 +1694,42 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf(
 				"release is titled %q but is linked to the single book %q. Bindery cannot split a pack across book records, so nothing was imported. Use manual import to place each book's files",
 				marker, book.Title))
+			return
+		}
+	}
+
+	// Post-download language enforcement (#2998). The release name filter
+	// passes a name that does not say its language, so this is the first
+	// point where the language is actually known: the EPUB's dc:language.
+	// When it names a language the book's allowed languages exclude, the
+	// release is the wrong one, handled exactly like a disallowed format
+	// above: path recorded for Match to book, release blocklisted, download
+	// blocked, book left Wanted, nothing placed and nothing relabelled. See
+	// language_enforcement.go for what counts as allowed.
+	//
+	// A release that mixes allowed and disallowed EPUBs is not rejected: the
+	// ebook loop below skips the disallowed ones (langCheck.skip), as it skips
+	// a disallowed format.
+	//
+	// A manual import is never refused for its language: a person chose this
+	// file for this book, and the warning in the log is all it gets. The
+	// relabelling below then records the book's real language, as before.
+	var langCheck languageCheck
+	if detectedFormat != models.MediaTypeAudiobook && len(bookFiles) > 0 {
+		langCheck = s.checkDownloadLanguage(ctx, book, author, bookFiles, detectedFormat)
+		if isManualImport(ctx) {
+			if langCheck.reject {
+				slog.Warn("manual import of a file in a language the profile does not allow; importing it as asked",
+					"title", dl.Title, "bookID", book.ID, "languages", langCheck.declared)
+			}
+			// A person picked these files; place them all.
+			langCheck.skip = nil
+		} else if langCheck.reject {
+			slog.Warn("import blocked: file language is not allowed",
+				"title", dl.Title, "bookID", book.ID, "languages", langCheck.declared)
+			s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
+			s.blocklistRejectedRelease(ctx, dl, langCheck.reason)
+			s.failImport(ctx, dl, models.StateImportBlocked, langCheck.reason)
 			return
 		}
 	}
@@ -2208,12 +2258,23 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			}
 		}
 
+		// Skip an EPUB in a language the profile does not allow when the same
+		// download also carries one in an allowed language (#2998). A download
+		// where every EPUB is disallowed never reaches this loop: the language
+		// gate above blocks and blocklists it.
+		if langCheck.skip[srcFile] {
+			slog.Info("skipping a file in a language the profile does not allow",
+				"file", srcFile)
+			continue
+		}
+
 		// Read the embedded EPUB language while the source is still present
 		// (move mode deletes it on commit). Only when we actually intend to
-		// backfill, so we never open the zip needlessly.
+		// backfill, so we never open the zip needlessly. Under a restricted
+		// profile the first allowed declared language wins (relabelLanguage).
 		if readLanguage && detectedLang == "" && IsEpubFile(srcFile) {
 			if meta, err := ReadEpubMetadata(srcFile); err == nil && meta.Language != "" {
-				detectedLang = meta.Language
+				detectedLang = langCheck.relabelLanguage(meta)
 			}
 		}
 

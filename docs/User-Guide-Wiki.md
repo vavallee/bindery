@@ -408,6 +408,49 @@ a CWA ingest folder, Grimmory's BookDrop, an Audiobookshelf library scan,
 webhooks. The three ways of reaching Calibre or CWA are easy to mix up; the
 [Calibre integration guide](Calibre-Integration-Wiki.md) tells them apart.
 
+**The file's language is checked at import.** The language filter at grab
+time can only read the release name, so a release that does not say its
+language gets through it. When the download arrives, Bindery reads the
+language the EPUB declares (its `dc:language`) and compares it with the
+languages the book may be in: the allowed languages on the author's metadata
+profile, or, when that profile allows any language, the preferred search
+language if it is set to English. That is the same rule the release name was
+held to, so a file is never judged more strictly than its name would have
+been.
+
+- **The file is in an allowed language**, declares no language, or declares
+  one that is not a specific language (`und`, `mul`): it imports as normal.
+  Every language an EPUB declares counts, so a bilingual edition tagged
+  French and English is allowed under an English profile. Region tags are
+  ignored, so `en-US` and `en_GB` count as English, Bokmål and Nynorsk (`nb`,
+  `nob`, `nn`, `nno`) count as Norwegian, and `cmn` and `yue` count as
+  Chinese. Every two letter ISO 639-1 code is recognised.
+- **The release holds EPUBs in both allowed and disallowed languages**: the
+  allowed ones are imported and the others are left out, the same way a
+  disallowed format inside a release is left out.
+- **Every file is in a language the profile does not allow**: the release is
+  treated as the wrong release. Nothing is placed, the Queue row is blocked
+  with a message naming both languages ("file declares Swedish (swe), but the
+  metadata profile "Standard" allows only English (eng)"), the release is
+  added to the Blocklist so the next search picks a different one, and the
+  book stays Wanted. The failure is in History and is sent to your webhooks
+  like any other failed import.
+- **The profile allows any language** (and the preferred search language is
+  not English): nothing is rejected. When the file's language differs from
+  the book's, the book is relabelled to the file's language and History
+  records a "language corrected" row, because the file on disk is the edition
+  you actually have.
+
+To keep a rejected file anyway, use **Match to book** on the Queue row, or
+import it through **Import → From a folder**. A manual import is your own
+choice and is never refused for its language. If you locked a book's language
+by editing it, a file in that language is accepted for that book even when the
+profile does not allow it. Only downloads are checked: a library scan,
+adopting files already in your library, and books imported before this check
+existed are left alone. With the import mode set to **External**, Bindery
+hands the download to your other tool without opening its files, so nothing
+is checked there either. Audiobooks are not checked yet.
+
 If the library app downstream reads sidecar metadata, turn on **Write a
 metadata.opf sidecar** in Settings → General (off by default). Bindery then
 writes a Calibre style `metadata.opf` next to each imported ebook and

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/isbnutil"
@@ -92,6 +93,33 @@ func TestReadEpubMetadata_LanguageRegionSubtag(t *testing.T) {
 	}
 	if meta.Language != "ger" {
 		t.Errorf("Language = %q, want %q", meta.Language, "ger")
+	}
+}
+
+// TestReadEpubMetadata_AllLanguages: Language stays the first dc:language for
+// existing callers, and Languages carries every one, normalised and deduped,
+// for the import language check (#2998).
+func TestReadEpubMetadata_AllLanguages(t *testing.T) {
+	opf := `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Le Petit Prince</dc:title>
+    <dc:language> </dc:language>
+    <dc:language>fr</dc:language>
+    <dc:language>en-GB</dc:language>
+    <dc:language>fr-CA</dc:language>
+  </metadata>
+</package>`
+	p := writeTestEpub(t, "content.opf", opf)
+	meta, err := ReadEpubMetadata(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Language != "fre" {
+		t.Errorf("Language = %q, want %q (the first declared)", meta.Language, "fre")
+	}
+	if want := []string{"fre", "eng"}; !slices.Equal(meta.Languages, want) {
+		t.Errorf("Languages = %v, want %v", meta.Languages, want)
 	}
 }
 

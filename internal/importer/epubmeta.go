@@ -8,6 +8,7 @@ import (
 	"io"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/isbnutil"
@@ -24,6 +25,11 @@ type EpubMetadata struct {
 	Author   string
 	ISBN     string // normalised (digits only); ISBN-13 preferred over ISBN-10
 	Language string // ISO 639-2/B code from dc:language, normalised ("en" → "eng")
+	// Languages is every dc:language the OPF declares, normalised, in document
+	// order with duplicates dropped. Language is its first entry. A bilingual
+	// edition declares both, and the import language check (#2998) must see
+	// the second one too.
+	Languages []string
 }
 
 // IsEpubFile reports whether path is an EPUB we can read embedded metadata from.
@@ -206,8 +212,13 @@ func parseOPFMetadata(r io.Reader) (EpubMetadata, error) {
 				// First dc:language wins. Normalise to the ISO 639-2/B code the
 				// language filter and metadata profiles use so a value like "en"
 				// or "en-US" matches an "eng" profile (#1160).
-				if meta.Language == "" {
-					meta.Language = models.NormalizeLanguageCode(val)
+				if code := models.NormalizeLanguageCode(val); code != "" {
+					if meta.Language == "" {
+						meta.Language = code
+					}
+					if !slices.Contains(meta.Languages, code) {
+						meta.Languages = append(meta.Languages, code)
+					}
 				}
 			}
 		case xml.EndElement:

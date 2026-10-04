@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -63,6 +64,11 @@ func TestNormalizeLanguageCode(t *testing.T) {
 		{"ron", "rum"},
 		{"ell", "gre"},
 		{"deu-DE", "ger"},
+		// Bokmål and Nynorsk fold onto the "nor" a profile stores.
+		{"nob", "nor"},
+		{"nno", "nor"},
+		{"nb", "nor"},
+		{"nn-NO", "nor"},
 		// A language written out as a word, which is how Audible and Audnex
 		// report it and how release names carry it.
 		{"German", "ger"},
@@ -70,6 +76,19 @@ func TestNormalizeLanguageCode(t *testing.T) {
 		{"english", "eng"},
 		{"Português", "por"},
 		{"magyar", "hun"},
+		// #2998. The rest of ISO 639-1, which EPUBs use, and the Chinese
+		// individual languages.
+		{"uk", "ukr"},
+		{"he", "heb"},
+		{"sk", "slo"},
+		{"fa-IR", "per"},
+		{"cy", "wel"},
+		{"is", "ice"},
+		{"sr-Latn", "srp"},
+		{"cmn", "chi"},
+		{"yue-HK", "chi"},
+		{"NOB", "nor"},
+		{"nb-NO", "nor"},
 		// Still not a language, and still round-trips rather than vanishing.
 		{"zulu", "zulu"},
 		{"not a language", "not a language"},
@@ -196,10 +215,28 @@ func TestNormalizedLanguagesStayInTheEditorVocabulary(t *testing.T) {
 		// side is the standard's own spelling of the same language.
 		"alb", "arm", "baq", "bur", "geo", "ice", "mac", "mao", "may",
 		"per", "slo", "tib", "wel",
+		// The rest of ISO 639-1 (#2998). An EPUB tagged "uk" has to read as
+		// Ukrainian, not as no language, or the import language check lets
+		// it through an English only profile.
+		"aar", "abk", "afr", "aka", "amh", "arg", "asm", "ava", "ave", "aym",
+		"aze", "bak", "bam", "bel", "ben", "bis", "bos", "bre", "bul", "cha",
+		"che", "chu", "chv", "cor", "cos", "cre", "div", "dzo", "epo", "est",
+		"ewe", "fao", "fij", "fry", "ful", "gla", "gle", "glg", "glv", "grn",
+		"guj", "hat", "hau", "heb", "her", "hmo", "hrv", "ibo", "ido", "iii",
+		"iku", "ile", "ina", "ind", "ipk", "jav", "kal", "kan", "kas", "kau",
+		"kaz", "khm", "kik", "kin", "kir", "kom", "kon", "kua", "kur", "lao",
+		"lav", "lim", "lin", "lit", "ltz", "lub", "lug", "mah", "mal", "mar",
+		"mlg", "mlt", "mon", "nau", "nav", "nbl", "nde", "ndo", "nep", "nya",
+		"oci", "oji", "ori", "orm", "oss", "pan", "pli", "pus", "que", "roh",
+		"run", "sag", "san", "sin", "slv", "sme", "smo", "sna", "snd", "som",
+		"sot", "srd", "srp", "ssw", "sun", "swa", "tah", "tam", "tat", "tel",
+		"tgk", "tgl", "tha", "tir", "ton", "tsn", "tso", "tuk", "twi", "uig",
+		"ukr", "urd", "uzb", "ven", "vie", "vol", "wln", "wol", "xho", "yid",
+		"yor", "zha", "zul",
 	}
 
 	produced := map[string]bool{}
-	for _, table := range []map[string]string{iso639TwoLetterToB, iso639TermToB, iso639NameToB} {
+	for _, table := range languageAliasTables() {
 		for in, out := range table {
 			// Every table has to agree with the finished canonicaliser, or
 			// one of them is a second opinion again.
@@ -235,5 +272,79 @@ func TestNormalizedLanguagesStayInTheEditorVocabulary(t *testing.T) {
 		if got := NormalizeLanguageCode(code); got != code {
 			t.Errorf("KNOWN_LANGUAGES offers %q but NormalizeLanguageCode rewrites it to %q", code, got)
 		}
+	}
+}
+
+// TestLanguageName covers the names an import rejection uses (#2998): every
+// spelling of a code gives one English name, and a code with no name comes
+// back normalised rather than empty.
+func TestLanguageName(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"sv", "Swedish"},
+		{"swe", "Swedish"},
+		{"sv-SE", "Swedish"},
+		{"en_GB", "English"},
+		{"deu", "German"},
+		{"nob", "Norwegian"},
+		{"uk", "Ukrainian"},
+		{"cmn", "Chinese"},
+		{"zulu", "zulu"},
+		{"XX", "xx"},
+	}
+	for _, tc := range cases {
+		if got := LanguageName(tc.in); got != tc.want {
+			t.Errorf("LanguageName(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestLanguageNamesCoverEveryNormalisedCode keeps the display table in step
+// with the alias tables: a language Bindery can normalise onto must also have
+// a name, or a rejection message reads "file declares alb".
+func TestLanguageNamesCoverEveryNormalisedCode(t *testing.T) {
+	for _, table := range languageAliasTables() {
+		for _, code := range table {
+			if _, ok := languageNames[code]; !ok {
+				t.Errorf("no English name for %q", code)
+			}
+		}
+	}
+}
+
+// languageAliasTables is every table NormalizeLanguageCode reads.
+func languageAliasTables() []map[string]string {
+	return []map[string]string{iso639TwoLetterToB, iso639TermToB, iso639NameToB, iso639NorwegianToB, iso639ChineseToB}
+}
+
+// TestTwoLetterTableCoversISO6391 pins the two letter table to the whole of
+// ISO 639-1 (#2998). The table used to hold 25 codes, so an EPUB tagged "uk",
+// "he" or "sk" normalised to a code nothing recognised and was treated as
+// declaring no language at all.
+func TestTwoLetterTableCoversISO6391(t *testing.T) {
+	// The 183 current ISO 639-1 codes ("bh" was withdrawn in 2021).
+	iso6391 := strings.Fields(`
+		aa ab ae af ak am an ar as av ay az ba be bg bi bm bn bo br bs ca ce ch
+		co cr cs cu cv cy da de dv dz ee el en eo es et eu fa ff fi fj fo fr fy
+		ga gd gl gn gu gv ha he hi ho hr ht hu hy hz ia id ie ig ii ik io is it
+		iu ja jv ka kg ki kj kk kl km kn ko kr ks ku kv kw ky la lb lg li ln lo
+		lt lu lv mg mh mi mk ml mn mr ms mt my na nb nd ne ng nl nn no nr nv ny
+		oc oj om or os pa pi pl ps pt qu rm rn ro ru rw sa sc sd se sg si sk sl
+		sm sn so sq sr ss st su sv sw ta te tg th ti tk tl tn to tr ts tt tw ty
+		ug uk ur uz ve vi vo wa wo xh yi yo za zh zu`)
+	if len(iso6391) != 183 {
+		t.Fatalf("fixture lists %d codes, want 183", len(iso6391))
+	}
+	for _, code := range iso6391 {
+		b, ok := iso639TwoLetterToB[code]
+		if !ok {
+			t.Errorf("ISO 639-1 %q is missing from iso639TwoLetterToB", code)
+			continue
+		}
+		if len(b) != 3 {
+			t.Errorf("iso639TwoLetterToB[%q] = %q, want a three letter code", code, b)
+		}
+	}
+	if len(iso639TwoLetterToB) != len(iso6391) {
+		t.Errorf("iso639TwoLetterToB has %d entries, want %d", len(iso639TwoLetterToB), len(iso6391))
 	}
 }

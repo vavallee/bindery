@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -116,7 +117,7 @@ func FuzzReadEpubMetadata(f *testing.F) {
 		if err != nil {
 			// Error path is the fallback-to-filename-parsing contract: it must
 			// hand back a zero value, not partially-populated metadata.
-			if meta != (EpubMetadata{}) {
+			if !reflect.DeepEqual(meta, EpubMetadata{}) {
 				t.Fatalf("non-zero metadata %+v alongside error %v", meta, err)
 			}
 			return
