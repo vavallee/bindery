@@ -1707,21 +1707,30 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// blocked, book left Wanted, nothing placed and nothing relabelled. See
 	// language_enforcement.go for what counts as allowed.
 	//
+	// A release that mixes allowed and disallowed EPUBs is not rejected: the
+	// ebook loop below skips the disallowed ones (langCheck.skip), as it skips
+	// a disallowed format.
+	//
 	// A manual import is never refused for its language: a person chose this
 	// file for this book, and the warning in the log is all it gets. The
 	// relabelling below then records the book's real language, as before.
+	var langCheck languageCheck
 	if detectedFormat != models.MediaTypeAudiobook && len(bookFiles) > 0 {
-		if lc := s.checkDownloadLanguage(ctx, book, author, bookFiles, detectedFormat); lc.disallowed {
-			if !isManualImport(ctx) {
-				slog.Warn("import blocked: file language is not allowed",
-					"title", dl.Title, "bookID", book.ID, "language", lc.declared)
-				s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
-				s.blocklistRejectedRelease(ctx, dl, lc.reason)
-				s.failImport(ctx, dl, models.StateImportBlocked, lc.reason)
-				return
+		langCheck = s.checkDownloadLanguage(ctx, book, author, bookFiles, detectedFormat)
+		if isManualImport(ctx) {
+			if langCheck.reject {
+				slog.Warn("manual import of a file in a language the profile does not allow; importing it as asked",
+					"title", dl.Title, "bookID", book.ID, "languages", langCheck.declared)
 			}
-			slog.Warn("manual import of a file in a language the profile does not allow; importing it as asked",
-				"title", dl.Title, "bookID", book.ID, "language", lc.declared)
+			// A person picked these files; place them all.
+			langCheck.skip = nil
+		} else if langCheck.reject {
+			slog.Warn("import blocked: file language is not allowed",
+				"title", dl.Title, "bookID", book.ID, "languages", langCheck.declared)
+			s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
+			s.blocklistRejectedRelease(ctx, dl, langCheck.reason)
+			s.failImport(ctx, dl, models.StateImportBlocked, langCheck.reason)
+			return
 		}
 	}
 
@@ -2249,12 +2258,23 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			}
 		}
 
+		// Skip an EPUB in a language the profile does not allow when the same
+		// download also carries one in an allowed language (#2998). A download
+		// where every EPUB is disallowed never reaches this loop: the language
+		// gate above blocks and blocklists it.
+		if langCheck.skip[srcFile] {
+			slog.Info("skipping a file in a language the profile does not allow",
+				"file", srcFile)
+			continue
+		}
+
 		// Read the embedded EPUB language while the source is still present
 		// (move mode deletes it on commit). Only when we actually intend to
-		// backfill, so we never open the zip needlessly.
+		// backfill, so we never open the zip needlessly. Under a restricted
+		// profile the first allowed declared language wins (relabelLanguage).
 		if readLanguage && detectedLang == "" && IsEpubFile(srcFile) {
 			if meta, err := ReadEpubMetadata(srcFile); err == nil && meta.Language != "" {
-				detectedLang = meta.Language
+				detectedLang = langCheck.relabelLanguage(meta)
 			}
 		}
 

@@ -33,14 +33,14 @@ func ParseAllowedLanguages(csv string) []string {
 	return out
 }
 
-// The four tables below are the only ISO 639 tables in the codebase, and
-// NormalizeLanguageCode is the only thing that reads them. (languageNames,
-// further down, is a display table keyed by the codes they produce.) There
-// used to be four competing copies of these (here, in the indexer's release
-// filter, and twice over in the Audible ingestion paths) and they disagreed
-// with each other, so the same
-// language filtered differently depending on which code path happened to be
-// consulted. Add a language here and every caller learns it at once.
+// The alias tables below are the only ISO 639 tables in the codebase, and
+// NormalizeLanguageCode is the only thing that reads them (languageNames,
+// further down, is a display table keyed by the codes they produce). There
+// used to be four competing copies (here, in the indexer's release filter,
+// and twice over in the Audible ingestion paths) and they disagreed with each
+// other, so the same language filtered differently depending on which code
+// path happened to be consulted. Add a language here and every caller learns
+// it at once.
 
 // iso639TwoLetterToB maps ISO 639-1 two-letter codes to the ISO 639-2/B
 // three-letter vocabulary Bindery stores in Book.Language and metadata-profile
@@ -49,22 +49,43 @@ func ParseAllowedLanguages(csv string) []string {
 var iso639TwoLetterToB = map[string]string{
 	"en": "eng", "fr": "fre", "de": "ger", "nl": "dut", "es": "spa",
 	"it": "ita", "pt": "por", "ja": "jpn", "zh": "chi", "ru": "rus",
-	"sv": "swe", "no": "nor", "da": "dan", "pl": "pol", "cs": "cze",
+	"sv": "swe", "no": "nor", "nb": "nor", "nn": "nor", "da": "dan", "pl": "pol", "cs": "cze",
 	"tr": "tur", "hi": "hin", "ko": "kor", "ar": "ara", "fi": "fin",
 	"el": "gre", "hu": "hun", "ro": "rum", "ca": "cat", "la": "lat",
-	// Bokmål and Nynorsk are the two written forms of Norwegian. Folded onto
-	// the macrolanguage, see iso639IndividualToMacro.
-	"nb": "nor", "nn": "nor",
-}
-
-// iso639IndividualToMacro folds an ISO 639-3 individual language onto the ISO
-// 639-2 macrolanguage Bindery stores, where both are in real use for the same
-// books. A Norwegian EPUB or catalogue record is often tagged "nob" (Bokmål)
-// or "nno" (Nynorsk) rather than "nor", while the profile editor offers only
-// "nor", so without this a profile allowing Norwegian rejected Norwegian
-// books and files (#2998).
-var iso639IndividualToMacro = map[string]string{
-	"nob": "nor", "nno": "nor",
+	// The rest of ISO 639-1, so a file tagged "uk", "he" or "sk" is read as
+	// the language it names rather than as no language at all (#2998).
+	"aa": "aar", "ab": "abk", "ae": "ave", "af": "afr", "ak": "aka",
+	"am": "amh", "an": "arg", "as": "asm", "av": "ava", "ay": "aym",
+	"az": "aze", "ba": "bak", "be": "bel", "bg": "bul", "bi": "bis",
+	"bm": "bam", "bn": "ben", "bo": "tib", "br": "bre", "bs": "bos",
+	"ce": "che", "ch": "cha", "co": "cos", "cr": "cre", "cu": "chu",
+	"cv": "chv", "cy": "wel", "dv": "div", "dz": "dzo", "ee": "ewe",
+	"eo": "epo", "et": "est", "eu": "baq", "fa": "per", "ff": "ful",
+	"fj": "fij", "fo": "fao", "fy": "fry", "ga": "gle", "gd": "gla",
+	"gl": "glg", "gn": "grn", "gu": "guj", "gv": "glv", "ha": "hau",
+	"he": "heb", "ho": "hmo", "hr": "hrv", "ht": "hat", "hy": "arm",
+	"hz": "her", "ia": "ina", "id": "ind", "ie": "ile", "ig": "ibo",
+	"ii": "iii", "ik": "ipk", "io": "ido", "is": "ice", "iu": "iku",
+	"jv": "jav", "ka": "geo", "kg": "kon", "ki": "kik", "kj": "kua",
+	"kk": "kaz", "kl": "kal", "km": "khm", "kn": "kan", "kr": "kau",
+	"ks": "kas", "ku": "kur", "kv": "kom", "kw": "cor", "ky": "kir",
+	"lb": "ltz", "lg": "lug", "li": "lim", "ln": "lin", "lo": "lao",
+	"lt": "lit", "lu": "lub", "lv": "lav", "mg": "mlg", "mh": "mah",
+	"mi": "mao", "mk": "mac", "ml": "mal", "mn": "mon", "mr": "mar",
+	"ms": "may", "mt": "mlt", "my": "bur", "na": "nau", "nd": "nde",
+	"ne": "nep", "ng": "ndo", "nr": "nbl", "nv": "nav", "ny": "nya",
+	"oc": "oci", "oj": "oji", "om": "orm", "or": "ori", "os": "oss",
+	"pa": "pan", "pi": "pli", "ps": "pus", "qu": "que", "rm": "roh",
+	"rn": "run", "rw": "kin", "sa": "san", "sc": "srd", "sd": "snd",
+	"se": "sme", "sg": "sag", "si": "sin", "sk": "slo", "sl": "slv",
+	"sm": "smo", "sn": "sna", "so": "som", "sq": "alb", "sr": "srp",
+	"ss": "ssw", "st": "sot", "su": "sun", "sw": "swa", "ta": "tam",
+	"te": "tel", "tg": "tgk", "th": "tha", "ti": "tir", "tk": "tuk",
+	"tl": "tgl", "tn": "tsn", "to": "ton", "ts": "tso", "tt": "tat",
+	"tw": "twi", "ty": "tah", "ug": "uig", "uk": "ukr", "ur": "urd",
+	"uz": "uzb", "ve": "ven", "vi": "vie", "vo": "vol", "wa": "wln",
+	"wo": "wol", "xh": "xho", "yi": "yid", "yo": "yor", "za": "zha",
+	"zu": "zul",
 }
 
 // iso639TermToB maps the ISO 639-2/T (terminology) code onto the 639-2/B
@@ -79,6 +100,13 @@ var iso639TermToB = map[string]string{
 	"fra": "fre", "isl": "ice", "kat": "geo", "mkd": "mac", "mri": "mao",
 	"msa": "may", "nld": "dut", "ron": "rum", "slk": "slo", "zho": "chi",
 }
+
+// iso639NorwegianToB folds the two Norwegian written standards onto the
+// macrolanguage code. Bokmål and Nynorsk have their own ISO 639-2 codes, and
+// Norwegian catalogues (EPUB dc:language, the National Library) use them, but
+// a metadata profile offers only "Norwegian" and stores "nor". Without this a
+// profile allowing Norwegian rejected every book tagged "nob" or "nno".
+var iso639NorwegianToB = map[string]string{"nob": "nor", "nno": "nor"}
 
 // iso639NameToB maps a language written out as a word onto its 639-2/B code.
 // Audible reports languages this way ("english", "german"), and release names
@@ -117,6 +145,12 @@ var iso639NameToB = map[string]string{
 	"latin": "lat",
 }
 
+// iso639ChineseToB folds the ISO 639-3 codes for the two Chinese languages
+// books are written in onto the macrolanguage code a profile stores, the way
+// iso639NorwegianToB does for Norwegian. EPUBs tag themselves "cmn" or "yue"
+// as well as "zh".
+var iso639ChineseToB = map[string]string{"cmn": "chi", "yue": "chi"}
+
 // NormalizeLanguageCode canonicalizes a language code from any source (an
 // EPUB's dc:language, provider metadata, a hand-edited metadata profile) into
 // the lowercased ISO 639-2/B form the language filter compares against. It
@@ -139,6 +173,9 @@ func NormalizeLanguageCode(code string) string {
 	if i := strings.IndexAny(code, "-_"); i > 0 {
 		code = code[:i]
 	}
+	if b, ok := iso639ChineseToB[code]; ok {
+		return b
+	}
 	if len(code) == 2 {
 		if b, ok := iso639TwoLetterToB[code]; ok {
 			return b
@@ -148,8 +185,8 @@ func NormalizeLanguageCode(code string) string {
 	if b, ok := iso639TermToB[code]; ok {
 		return b
 	}
-	if m, ok := iso639IndividualToMacro[code]; ok {
-		return m
+	if b, ok := iso639NorwegianToB[code]; ok {
+		return b
 	}
 	return code
 }
@@ -158,16 +195,54 @@ func NormalizeLanguageCode(code string) string {
 // keyed by the ISO 639-2/B code NormalizeLanguageCode produces, so a message
 // can say "Swedish" rather than "swe".
 var languageNames = map[string]string{
-	"alb": "Albanian", "ara": "Arabic", "arm": "Armenian", "baq": "Basque",
-	"bur": "Burmese", "cat": "Catalan", "chi": "Chinese", "cze": "Czech",
-	"dan": "Danish", "dut": "Dutch", "eng": "English", "fin": "Finnish",
-	"fre": "French", "geo": "Georgian", "ger": "German", "gre": "Greek",
-	"hin": "Hindi", "hun": "Hungarian", "ice": "Icelandic", "ita": "Italian",
-	"jpn": "Japanese", "kor": "Korean", "lat": "Latin", "mac": "Macedonian",
-	"mao": "Maori", "may": "Malay", "nor": "Norwegian", "per": "Persian",
-	"pol": "Polish", "por": "Portuguese", "rum": "Romanian", "rus": "Russian",
-	"slo": "Slovak", "spa": "Spanish", "swe": "Swedish", "tib": "Tibetan",
-	"tur": "Turkish", "wel": "Welsh",
+	"aar": "Afar", "abk": "Abkhazian", "afr": "Afrikaans", "aka": "Akan",
+	"alb": "Albanian", "amh": "Amharic", "ara": "Arabic", "arg": "Aragonese",
+	"arm": "Armenian", "asm": "Assamese", "ava": "Avaric", "ave": "Avestan",
+	"aym": "Aymara", "aze": "Azerbaijani", "bak": "Bashkir", "bam": "Bambara",
+	"baq": "Basque", "bel": "Belarusian", "ben": "Bengali", "bis": "Bislama",
+	"bos": "Bosnian", "bre": "Breton", "bul": "Bulgarian", "bur": "Burmese",
+	"cat": "Catalan", "cha": "Chamorro", "che": "Chechen", "chi": "Chinese",
+	"chu": "Church Slavic", "chv": "Chuvash", "cor": "Cornish",
+	"cos": "Corsican", "cre": "Cree", "cze": "Czech", "dan": "Danish",
+	"div": "Divehi", "dut": "Dutch", "dzo": "Dzongkha", "eng": "English",
+	"epo": "Esperanto", "est": "Estonian", "ewe": "Ewe", "fao": "Faroese",
+	"fij": "Fijian", "fin": "Finnish", "fre": "French",
+	"fry": "Western Frisian", "ful": "Fulah", "geo": "Georgian",
+	"ger": "German", "gla": "Scottish Gaelic", "gle": "Irish",
+	"glg": "Galician", "glv": "Manx", "gre": "Greek", "grn": "Guarani",
+	"guj": "Gujarati", "hat": "Haitian Creole", "hau": "Hausa", "heb": "Hebrew",
+	"her": "Herero", "hin": "Hindi", "hmo": "Hiri Motu", "hrv": "Croatian",
+	"hun": "Hungarian", "ibo": "Igbo", "ice": "Icelandic", "ido": "Ido",
+	"iii": "Sichuan Yi", "iku": "Inuktitut", "ile": "Interlingue",
+	"ina": "Interlingua", "ind": "Indonesian", "ipk": "Inupiaq",
+	"ita": "Italian", "jav": "Javanese", "jpn": "Japanese",
+	"kal": "Kalaallisut", "kan": "Kannada", "kas": "Kashmiri", "kau": "Kanuri",
+	"kaz": "Kazakh", "khm": "Khmer", "kik": "Kikuyu", "kin": "Kinyarwanda",
+	"kir": "Kyrgyz", "kom": "Komi", "kon": "Kongo", "kor": "Korean",
+	"kua": "Kuanyama", "kur": "Kurdish", "lao": "Lao", "lat": "Latin",
+	"lav": "Latvian", "lim": "Limburgish", "lin": "Lingala",
+	"lit": "Lithuanian", "ltz": "Luxembourgish", "lub": "Luba-Katanga",
+	"lug": "Ganda", "mac": "Macedonian", "mah": "Marshallese",
+	"mal": "Malayalam", "mao": "Maori", "mar": "Marathi", "may": "Malay",
+	"mlg": "Malagasy", "mlt": "Maltese", "mon": "Mongolian", "nau": "Nauru",
+	"nav": "Navajo", "nbl": "South Ndebele", "nde": "North Ndebele",
+	"ndo": "Ndonga", "nep": "Nepali", "nor": "Norwegian", "nya": "Chichewa",
+	"oci": "Occitan", "oji": "Ojibwa", "ori": "Odia", "orm": "Oromo",
+	"oss": "Ossetian", "pan": "Punjabi", "per": "Persian", "pli": "Pali",
+	"pol": "Polish", "por": "Portuguese", "pus": "Pashto", "que": "Quechua",
+	"roh": "Romansh", "rum": "Romanian", "run": "Rundi", "rus": "Russian",
+	"sag": "Sango", "san": "Sanskrit", "sin": "Sinhala", "slo": "Slovak",
+	"slv": "Slovenian", "sme": "Northern Sami", "smo": "Samoan", "sna": "Shona",
+	"snd": "Sindhi", "som": "Somali", "sot": "Southern Sotho", "spa": "Spanish",
+	"srd": "Sardinian", "srp": "Serbian", "ssw": "Swati", "sun": "Sundanese",
+	"swa": "Swahili", "swe": "Swedish", "tah": "Tahitian", "tam": "Tamil",
+	"tat": "Tatar", "tel": "Telugu", "tgk": "Tajik", "tgl": "Tagalog",
+	"tha": "Thai", "tib": "Tibetan", "tir": "Tigrinya", "ton": "Tongan",
+	"tsn": "Tswana", "tso": "Tsonga", "tuk": "Turkmen", "tur": "Turkish",
+	"twi": "Twi", "uig": "Uyghur", "ukr": "Ukrainian", "urd": "Urdu",
+	"uzb": "Uzbek", "ven": "Venda", "vie": "Vietnamese", "vol": "Volapuk",
+	"wel": "Welsh", "wln": "Walloon", "wol": "Wolof", "xho": "Xhosa",
+	"yid": "Yiddish", "yor": "Yoruba", "zha": "Zhuang", "zul": "Zulu",
 }
 
 // LanguageName returns the English name of a language code in any spelling
@@ -209,9 +284,9 @@ func LanguageCodeVariants(codes []string) []string {
 				add(terminology)
 			}
 		}
-		for individual, macro := range iso639IndividualToMacro {
+		for standard, macro := range iso639NorwegianToB {
 			if macro == normalized {
-				add(individual)
+				add(standard)
 			}
 		}
 	}

@@ -420,9 +420,15 @@ been.
 
 - **The file is in an allowed language**, declares no language, or declares
   one that is not a specific language (`und`, `mul`): it imports as normal.
-  Region tags are ignored, so `en-US` and `en_GB` count as English, and
-  Bokmål and Nynorsk (`nb`, `nob`, `nn`, `nno`) count as Norwegian.
-- **The file is in a language the profile does not allow**: the release is
+  Every language an EPUB declares counts, so a bilingual edition tagged
+  French and English is allowed under an English profile. Region tags are
+  ignored, so `en-US` and `en_GB` count as English, Bokmål and Nynorsk (`nb`,
+  `nob`, `nn`, `nno`) count as Norwegian, and `cmn` and `yue` count as
+  Chinese. Every two letter ISO 639-1 code is recognised.
+- **The release holds EPUBs in both allowed and disallowed languages**: the
+  allowed ones are imported and the others are left out, the same way a
+  disallowed format inside a release is left out.
+- **Every file is in a language the profile does not allow**: the release is
   treated as the wrong release. Nothing is placed, the Queue row is blocked
   with a message naming both languages ("file declares Swedish (swe), but the
   metadata profile "Standard" allows only English (eng)"), the release is
@@ -441,7 +447,9 @@ choice and is never refused for its language. If you locked a book's language
 by editing it, a file in that language is accepted for that book even when the
 profile does not allow it. Only downloads are checked: a library scan,
 adopting files already in your library, and books imported before this check
-existed are left alone. Audiobooks are not checked yet.
+existed are left alone. With the import mode set to **External**, Bindery
+hands the download to your other tool without opening its files, so nothing
+is checked there either. Audiobooks are not checked yet.
 
 If the library app downstream reads sidecar metadata, turn on **Write a
 metadata.opf sidecar** in Settings → General (off by default). Bindery then

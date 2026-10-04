@@ -379,3 +379,148 @@ func TestLanguageEnforcement_UnwiredScannerKeepsRelabelling(t *testing.T) {
 		t.Errorf("book language = %q, want swe (relabelled, as before #2998)", book.Language)
 	}
 }
+
+// writeEpubDeclaring writes an EPUB named name into the download folder that
+// declares each of langs as its own dc:language, in order.
+func (f *langEnforceFixture) writeEpubDeclaring(t *testing.T, name string, langs ...string) string {
+	t.Helper()
+	var decl strings.Builder
+	for _, l := range langs {
+		decl.WriteString("    <dc:language>" + l + "</dc:language>\n")
+	}
+	opf := `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>The Racketeer</dc:title>
+    <dc:creator>John Grisham</dc:creator>
+` + decl.String() + `  </metadata>
+</package>`
+	src := writeTestEpub(t, "content.opf", opf)
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(f.dir, name)
+	if err := os.WriteFile(dst, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dst
+}
+
+// placedLanguages reads back the languages of every EPUB recorded on the book.
+func (f *langEnforceFixture) placedLanguages(t *testing.T) [][]string {
+	t.Helper()
+	var out [][]string
+	for _, bf := range f.bookFiles(t) {
+		meta, err := ReadEpubMetadata(bf.Path)
+		if err != nil {
+			t.Fatalf("read placed file %s: %v", bf.Path, err)
+		}
+		out = append(out, meta.Languages)
+	}
+	return out
+}
+
+// TestLanguageEnforcement_EveryDeclaredLanguageCounts: an EPUB may declare
+// several languages (a bilingual edition, or a stray tag ahead of the real
+// one). It is allowed when any of them is, whatever order they come in. Only
+// the first used to be read, so "fr, en" was blocked while "en, fr" imported.
+func TestLanguageEnforcement_EveryDeclaredLanguageCounts(t *testing.T) {
+	for _, order := range [][]string{{"fr", "en"}, {"en", "fr"}, {"und", "en-GB"}} {
+		t.Run(strings.Join(order, ","), func(t *testing.T) {
+			f := newLangEnforceFixture(t, langEnforceOpts{allowed: "eng", bookLang: "eng"})
+			f.writeEpubDeclaring(t, "The Racketeer.epub", order...)
+			f.importDownload(t)
+			book := f.assertImported(t)
+			// The relabelling must not pick the disallowed language either.
+			if book.Language != "eng" {
+				t.Errorf("book language = %q, want eng (the allowed declared language)", book.Language)
+			}
+		})
+	}
+}
+
+// TestLanguageEnforcement_MixedReleaseImportsAllowedFile: a release carrying a
+// Swedish EPUB and an English one is not the wrong release, it holds the right
+// file too. Only the first EPUB used to decide, so "A sv, B en" was rejected
+// while "A en, B sv" imported. Now the English file is imported and the
+// Swedish one skipped, in either order, the way the format check skips a
+// disallowed format inside a mixed release.
+func TestLanguageEnforcement_MixedReleaseImportsAllowedFile(t *testing.T) {
+	for _, swedishFirst := range []bool{true, false} {
+		name := "english-first"
+		if swedishFirst {
+			name = "swedish-first"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newLangEnforceFixture(t, langEnforceOpts{allowed: "eng", bookLang: "eng"})
+			sv, en := "A.epub", "B.epub"
+			if !swedishFirst {
+				sv, en = "B.epub", "A.epub"
+			}
+			f.writeEpubDeclaring(t, sv, "sv")
+			f.writeEpubDeclaring(t, en, "en")
+			f.importDownload(t)
+			book := f.assertImported(t)
+			placed := f.placedLanguages(t)
+			if len(placed) != 1 || len(placed[0]) != 1 || placed[0][0] != "eng" {
+				t.Errorf("placed files declare %v, want exactly one English file", placed)
+			}
+			if book.Language != "eng" {
+				t.Errorf("book language = %q, want eng", book.Language)
+			}
+		})
+	}
+}
+
+// TestLanguageEnforcement_AllFilesDisallowedRejects: several EPUBs, none in an
+// allowed language, is still the wrong release.
+func TestLanguageEnforcement_AllFilesDisallowedRejects(t *testing.T) {
+	f := newLangEnforceFixture(t, langEnforceOpts{allowed: "eng", bookLang: "eng"})
+	f.writeEpubDeclaring(t, "A.epub", "sv")
+	f.writeEpubDeclaring(t, "B.epub", "de", "und")
+	f.importDownload(t)
+
+	dl, book := f.reload(t)
+	if dl.Status != models.StateImportBlocked {
+		t.Fatalf("download status = %q, want %q", dl.Status, models.StateImportBlocked)
+	}
+	for _, want := range []string{"Swedish", "German", "English"} {
+		if !strings.Contains(dl.ErrorMessage, want) {
+			t.Errorf("rejection message %q does not name %s", dl.ErrorMessage, want)
+		}
+	}
+	if !f.blocked(t) {
+		t.Error("release was not blocklisted")
+	}
+	if book.Language != "eng" {
+		t.Errorf("book language = %q, want eng", book.Language)
+	}
+}
+
+// TestLanguageEnforcement_TwoLetterCodesOutsideTheOldTable: Ukrainian, Hebrew
+// and Slovak EPUBs tag themselves "uk", "he", "sk". Those codes were missing
+// from the two letter table, so they normalised to nothing Bindery knew,
+// counted as "no language declared", imported under an English only profile
+// and relabelled the book.
+func TestLanguageEnforcement_TwoLetterCodesOutsideTheOldTable(t *testing.T) {
+	for _, c := range []struct{ code, name string }{
+		{"uk", "Ukrainian"}, {"he", "Hebrew"}, {"sk", "Slovak"}, {"fa-IR", "Persian"}, {"is", "Icelandic"},
+	} {
+		t.Run(c.code, func(t *testing.T) {
+			f := newLangEnforceFixture(t, langEnforceOpts{allowed: "eng", bookLang: "eng"})
+			f.writeEpub(t, c.code)
+			f.importDownload(t)
+			dl, book := f.reload(t)
+			if dl.Status != models.StateImportBlocked {
+				t.Fatalf("download status = %q, want %q: a %s file imported against an English only profile", dl.Status, models.StateImportBlocked, c.name)
+			}
+			if !strings.Contains(dl.ErrorMessage, c.name) {
+				t.Errorf("rejection message %q does not name %s", dl.ErrorMessage, c.name)
+			}
+			if book.Language != "eng" {
+				t.Errorf("book language = %q, want eng (not relabelled)", book.Language)
+			}
+		})
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/importer/formatsniff"
@@ -82,34 +83,24 @@ func (s *Scanner) importAllowedLanguages(ctx context.Context, author *models.Aut
 	return []string{"eng"}, "the preferred search language"
 }
 
-// declaredDownloadLanguage returns the language the download's ebook declares:
-// the dc:language of the first EPUB that has one, normalised. It considers the
-// same files, in the same order, as the import loop's relabelling, so the
-// language checked here is the language the book would have been relabelled
-// to. Files the quality profile skips are skipped here too.
-func (s *Scanner) declaredDownloadLanguage(ctx context.Context, author *models.Author, files []string, slotMediaType string) string {
-	for _, f := range files {
-		if !IsEpubFile(f) {
-			continue
+// definiteLanguages returns the codes in langs (already normalised) that name
+// one specific language, in order.
+func definiteLanguages(langs []string) []string {
+	var out []string
+	for _, l := range langs {
+		if definiteLanguage(l) {
+			out = append(out, l)
 		}
-		if ok, _ := s.allowedFormat(ctx, author, formatsniff.Detect(f), slotMediaType); !ok {
-			continue
-		}
-		meta, err := ReadEpubMetadata(f)
-		if err != nil || meta.Language == "" {
-			continue
-		}
-		return meta.Language
 	}
-	return ""
+	return out
 }
 
 // definiteLanguage reports whether a normalised code names one specific
 // language. A file that says "und" (undetermined), "mul" (several), "zxx" (no
 // linguistic content), "mis" (uncoded), a private use code, or something that
-// is not an ISO 639-2 code at all ("unknown", an unmapped two letter code) has
-// not told us what it is in, and is passed for the same reason an untagged
-// release name is: rejecting on ignorance would block legitimate books.
+// is not an ISO 639-2 code at all ("unknown", "x-default") has not told us
+// what it is in, and is passed for the same reason an untagged release name
+// is: rejecting on ignorance would block legitimate books.
 func definiteLanguage(code string) bool {
 	if len(code) != 3 {
 		return false
@@ -127,17 +118,59 @@ func definiteLanguage(code string) bool {
 	return code < "qaa" || code > "qtz"
 }
 
-// languageCheck is the outcome of comparing a download's declared language
-// with the languages allowed for its book. A zero value means nothing to act
-// on.
+// languageCheck is the outcome of comparing the languages a download's EPUBs
+// declare with the languages allowed for its book. The zero value means
+// nothing is enforced.
 type languageCheck struct {
-	disallowed bool
-	declared   string
-	reason     string
+	// allowed is the effective allowed set (the profile's list plus a locked
+	// book language). Nil when any language is allowed.
+	allowed []string
+	// reject means no EPUB in the download is in an allowed language and at
+	// least one declares a language that is not: the wrong release.
+	reject bool
+	// declared lists the disallowed languages found, for the log.
+	declared []string
+	reason   string
+	// skip holds EPUBs in a disallowed language inside a release that also
+	// carries one in an allowed language. The import loop leaves them out and
+	// imports the rest, the way it leaves out a disallowed format.
+	skip map[string]bool
 }
 
-// checkDownloadLanguage compares the language the download's EPUB declares
-// with the languages its book may be in.
+// allows reports whether code is in the effective allowed set.
+func (lc languageCheck) allows(code string) bool {
+	return models.IsLanguageAllowed(code, lc.allowed, false)
+}
+
+// relabelLanguage picks the language to record for the book from an imported
+// EPUB's declared languages. With a restricted profile it is the first
+// declared language the profile allows, so a bilingual "fr, en" edition kept
+// under an English only profile does not relabel the book French. Otherwise,
+// or when none is allowed (a manual import), it is the first declared one, as
+// before #2998.
+func (lc languageCheck) relabelLanguage(meta EpubMetadata) string {
+	if len(lc.allowed) > 0 {
+		for _, l := range definiteLanguages(meta.Languages) {
+			if lc.allows(l) {
+				return l
+			}
+		}
+	}
+	return meta.Language
+}
+
+// checkDownloadLanguage compares every language every candidate EPUB in the
+// download declares with the languages its book may be in.
+//
+// The candidates are the EPUBs the import loop would place: files the quality
+// profile skips are skipped here too. An EPUB counts as allowed when ANY of its
+// declared languages is allowed (a bilingual edition, or a stray tag ahead of
+// the real one), as disallowed when it declares at least one specific language
+// and none is allowed, and as unknown when it declares no specific language.
+// The release is rejected only when some EPUB is disallowed and none is
+// allowed, the same shape as the format gate, which rejects only when every
+// file is disallowed. A release mixing allowed and disallowed EPUBs imports
+// the allowed ones and skips the rest.
 //
 // The allowed set is the profile's list (see importAllowedLanguages) plus,
 // when the user locked the book's language, that language. A lock is the user
@@ -150,32 +183,63 @@ func (s *Scanner) checkDownloadLanguage(ctx context.Context, book *models.Book, 
 	if s.metadataProfiles == nil || book == nil {
 		return languageCheck{}
 	}
-	allowed, source := s.importAllowedLanguages(ctx, author)
-	if len(allowed) == 0 {
+	profileAllowed, source := s.importAllowedLanguages(ctx, author)
+	if len(profileAllowed) == 0 {
 		return languageCheck{}
 	}
-	declared := s.declaredDownloadLanguage(ctx, author, files, slotMediaType)
-	if !definiteLanguage(declared) {
-		return languageCheck{}
+	lc := languageCheck{allowed: slices.Clone(profileAllowed)}
+	if book.IsFieldLocked(models.BookFieldLanguage) && book.Language != "" {
+		lc.allowed = append(lc.allowed, models.NormalizeLanguageCode(book.Language))
 	}
-	if models.IsLanguageAllowed(declared, allowed, false) {
-		return languageCheck{}
+
+	anyAllowed := false
+	for _, f := range files {
+		if !IsEpubFile(f) {
+			continue
+		}
+		if ok, _ := s.allowedFormat(ctx, author, formatsniff.Detect(f), slotMediaType); !ok {
+			continue
+		}
+		meta, err := ReadEpubMetadata(f)
+		if err != nil {
+			continue
+		}
+		langs := definiteLanguages(meta.Languages)
+		if len(langs) == 0 {
+			continue
+		}
+		if slices.ContainsFunc(langs, lc.allows) {
+			anyAllowed = true
+			continue
+		}
+		if lc.skip == nil {
+			lc.skip = make(map[string]bool)
+		}
+		lc.skip[f] = true
+		for _, l := range langs {
+			if !slices.Contains(lc.declared, l) {
+				lc.declared = append(lc.declared, l)
+			}
+		}
 	}
-	if book.IsFieldLocked(models.BookFieldLanguage) && book.Language != "" &&
-		models.NormalizeLanguageCode(book.Language) == declared {
-		return languageCheck{}
+	if len(lc.skip) == 0 || anyAllowed {
+		return lc
 	}
-	names := make([]string, 0, len(allowed))
-	for _, code := range allowed {
+
+	lc.reject = true
+	lc.reason = fmt.Sprintf("file declares %s, but %s allows only %s. "+
+		"Not imported, and the release was blocklisted so the next search picks another. "+
+		"To keep this file anyway, use Match to book in the Queue or manual import",
+		languageList(lc.declared), source, languageList(profileAllowed))
+	return lc
+}
+
+// languageList renders codes as "Swedish (swe), German (ger)".
+func languageList(codes []string) string {
+	names := make([]string, 0, len(codes))
+	for _, code := range codes {
 		n := models.NormalizeLanguageCode(code)
 		names = append(names, fmt.Sprintf("%s (%s)", models.LanguageName(n), n))
 	}
-	return languageCheck{
-		disallowed: true,
-		declared:   declared,
-		reason: fmt.Sprintf("file declares %s (%s), but %s allows only %s. "+
-			"Not imported, and the release was blocklisted so the next search picks another. "+
-			"To keep this file anyway, use Match to book in the Queue or manual import",
-			models.LanguageName(declared), declared, source, strings.Join(names, ", ")),
-	}
+	return strings.Join(names, ", ")
 }
