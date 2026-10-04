@@ -32,6 +32,13 @@ import (
 // The realm ("Bindery OPDS") is what shows in the client's credential
 // prompt; keep it descriptive so users know which server is asking.
 func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) func(http.Handler) http.Handler {
+	return opdsAuthWith(p, users, limiter, newOPDSBasicVerifier())
+}
+
+// opdsAuthWith is OPDSAuth with the Basic verifier supplied, so tests can
+// observe how many KDF runs a burst cost. One verifier serves every route the
+// middleware wraps, so the cache and single flight span the whole subtree.
+func opdsAuthWith(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter, basic *opdsBasicVerifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			mode := p.Mode()
@@ -93,43 +100,33 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 			}
 			if username, password, ok := r.BasicAuth(); ok && users != nil {
 				ip := opdsClientIP(r)
-				tooMany := func() {
-					w.Header().Set("WWW-Authenticate", `Basic realm="Bindery OPDS"`)
-					http.Error(w, "too many attempts", http.StatusTooManyRequests)
-				}
-				if limiter != nil && !limiter.Allow(ip) {
-					tooMany()
-					return
-				}
-				u, err := users.GetByUsername(r.Context(), strings.TrimSpace(username))
+				name := strings.TrimSpace(username)
+				u, err := users.GetByUsername(r.Context(), name)
 				// Verify against a dummy hash when the user is missing so the
 				// basic-auth response time does not reveal which usernames exist
 				// (mirrors the main login handler). See auth.DummyPasswordHash.
 				hash := auth.DummyPasswordHash()
-				if err == nil && u != nil {
+				known := err == nil && u != nil
+				if known {
 					hash = u.PasswordHash
 				}
-				// Reserve the attempt before the KDF, as the login handler
-				// does: Allow alone let a concurrent burst run one
-				// verification per request. The reservation stands as the
-				// failure unless Reset clears it below.
-				if limiter != nil && !limiter.Acquire(ip) {
-					tooMany()
+				// basic reserves the attempt before the KDF (Allow alone let a
+				// concurrent burst run one verification per request), refunds
+				// it when nothing was verified, serves recent successes from
+				// its cache and coalesces identical concurrent credentials.
+				switch basic.check(r.Context(), limiter, ip, name, password, hash, known) {
+				case opdsBasicLimited:
+					w.Header().Set("WWW-Authenticate", `Basic realm="Bindery OPDS"`)
+					http.Error(w, "too many attempts", http.StatusTooManyRequests)
 					return
-				}
-				ok, verr := auth.VerifyPasswordContext(r.Context(), password, hash)
-				if verr != nil {
+				case opdsBasicAbandoned:
 					// Client went away while queued for a KDF slot.
 					http.Error(w, "server busy, try again", http.StatusServiceUnavailable)
 					return
-				}
-				if err == nil && u != nil && ok {
-					if limiter != nil {
-						limiter.Reset(ip)
-					}
-					// The password is correct, so the limiter is reset, but a
-					// requester may not read the feed or download its files:
-					// they browse through /requests/library only.
+				case opdsBasicOK:
+					// The password is correct, but a requester may not read
+					// the feed or download its files: they browse through
+					// /requests/library only.
 					if !opdsRoleAllowed(w, u.Role) {
 						return
 					}
@@ -141,9 +138,10 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 					r = r.WithContext(auth.WithUserID(r.Context(), u.ID))
 					next.ServeHTTP(w, r)
 					return
+				case opdsBasicFail:
+					// Falls through to the challenge. No Record: the attempt
+					// was already counted when the verification reserved it.
 				}
-				// A failed verification needs no Record here: the attempt
-				// was already counted by Acquire above.
 			}
 
 			// Challenge — OPDS clients retry with credentials on 401.

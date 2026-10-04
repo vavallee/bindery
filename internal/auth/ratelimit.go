@@ -67,6 +67,25 @@ func (l *LoginLimiter) Acquire(ip string) bool {
 	return true
 }
 
+// Release refunds one Acquire reservation for ip. Call it only when no
+// verification ran after the Acquire, for example because the caller went
+// away while queued for a KDF slot: such a request learned nothing about the
+// credential, so it must not count toward locking the address out. A
+// reservation that was followed by a real check stays counted.
+func (l *LoginLimiter) Release(ip string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	events := l.events[ip]
+	if len(events) == 0 {
+		return
+	}
+	if len(events) == 1 {
+		delete(l.events, ip)
+		return
+	}
+	l.events[ip] = events[:len(events)-1]
+}
+
 // Record increments the failure counter for ip.
 func (l *LoginLimiter) Record(ip string) {
 	l.mu.Lock()

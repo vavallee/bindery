@@ -4,7 +4,7 @@
 -- and a copied cookie stayed valid until it expired, up to 30 days. Logout now
 -- records the token here and the auth middleware rejects it.
 --
--- token_hash is the hex SHA-256 of the whole cookie value
+-- token_hash is the hex SHA-256 of the cookie's signed payload
 -- (auth.SessionTokenHash), never the token itself, so reading this table does
 -- not hand out sessions. expires_at is the token's own expiry in unix
 -- seconds: after that the signature check rejects the cookie anyway, so the

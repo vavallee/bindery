@@ -65,10 +65,13 @@ type AuthHandler struct {
 	// callers queue instead of each running the KDF. The one-admin guarantee
 	// itself is UserRepo.CreateFirstAdmin's single statement insert.
 	setupMu sync.Mutex
+	// verifyPassword is auth.VerifyPasswordContext; tests swap it to drive
+	// the path where the caller gives up before a KDF slot frees.
+	verifyPassword func(ctx context.Context, password, phc string) (bool, error)
 }
 
 func NewAuthHandler(users *db.UserRepo, settings *db.SettingsRepo, limiter *auth.LoginLimiter) *AuthHandler {
-	return &AuthHandler{users: users, settings: settings, limiter: limiter, localAuthEnabled: true}
+	return &AuthHandler{users: users, settings: settings, limiter: limiter, localAuthEnabled: true, verifyPassword: auth.VerifyPasswordContext}
 }
 
 // WithLocalAuthEnabled controls whether local password login and local user
@@ -253,10 +256,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts — try again later")
 		return
 	}
-	ok, err := auth.VerifyPasswordContext(ctx, req.Password, hash)
+	ok, err := h.verifyPassword(ctx, req.Password, hash)
 	if err != nil {
-		// The client went away while waiting for a KDF slot. The attempt
-		// stays counted; nothing was verified.
+		// The client went away while waiting for a KDF slot. Nothing was
+		// verified, so refund the reservation: abandoned requests must not
+		// lock the address out.
+		h.limiter.Release(ip)
 		writeErr(w, http.StatusServiceUnavailable, "server busy, try again")
 		return
 	}

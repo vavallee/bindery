@@ -20,7 +20,7 @@ import (
 //
 // <session_id> is 16 random bytes, unpadded base64url. It carries no meaning
 // of its own; it exists so every login mints a distinct token. Logout revokes
-// one token by recording a hash of the whole cookie value (SessionTokenHash)
+// one token by recording a hash of its signed payload (SessionTokenHash)
 // in a small server side denylist, and without the id two logins by the same
 // user in the same second (two devices, a retry) produced byte-identical
 // cookies, so signing out of one would have signed out the other.
@@ -191,11 +191,24 @@ func VerifySessionMultiWithExpiry(secrets [][]byte, cookie string) (int64, time.
 }
 
 // SessionTokenHash is the key a session token is revoked under: the hex
-// SHA-256 of the whole cookie value. It works for every cookie version, and
-// storing a hash rather than the token keeps the denylist useless to anyone
-// who can read the database.
+// SHA-256 of the cookie's signed payload, everything before the final '.'
+// (for v4 that includes the session id). Keying on the payload rather than
+// the raw cookie string means no alternative spelling of the signature can
+// dodge a revocation: the payload is what the HMAC authenticates, so any
+// cookie that verifies for this session hashes to the same key. (verifySession
+// also decodes the signature strictly, which rejects the non-canonical
+// encodings that used to verify, but the key must not depend on that.) It
+// works for every cookie version, and storing a hash rather than the token
+// keeps the denylist useless to anyone who can read the database.
+//
+// Callers pass a cookie that has already verified; for anything else the
+// result is just a hash and means nothing.
 func SessionTokenHash(cookie string) string {
-	sum := sha256.Sum256([]byte(cookie))
+	payload := cookie
+	if i := strings.LastIndexByte(cookie, '.'); i >= 0 {
+		payload = cookie[:i]
+	}
+	sum := sha256.Sum256([]byte("bindery-session-revocation\x00" + payload))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -257,7 +270,7 @@ func verifySession(secrets [][]byte, cookie string) (int64, int64, time.Time, er
 		return 0, 0, time.Time{}, fmt.Errorf("bad expiry: %w", ErrSessionInvalid)
 	}
 	payload := strings.Join(parts[:len(parts)-1], ".")
-	got, err := base64.RawURLEncoding.DecodeString(sig)
+	got, err := base64.RawURLEncoding.Strict().DecodeString(sig)
 	if err != nil {
 		return 0, 0, time.Time{}, fmt.Errorf("bad signature encoding: %w", ErrSessionInvalid)
 	}

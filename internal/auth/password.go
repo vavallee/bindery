@@ -49,6 +49,12 @@ func kdfConcurrency() int {
 // acquireKDF waits for a KDF slot, giving up when ctx is done. The returned
 // release must be called exactly once.
 func acquireKDF(ctx context.Context) (release func(), err error) {
+	// A caller that is already gone gets no slot even when one is free:
+	// select picks at random between ready cases, and there is no point
+	// spending 64 MiB on an answer nobody will read.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	select {
 	case kdfSlots <- struct{}{}:
 		return func() { <-kdfSlots }, nil
