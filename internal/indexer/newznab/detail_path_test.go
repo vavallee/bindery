@@ -34,6 +34,22 @@ func TestDetailURL_KeepsIDsInDetailPaths(t *testing.T) {
 	}
 }
 
+// <link> is a download fallback in torznab feeds even when an enclosure is
+// present: a proxy enclosure can sit next to the tracker's direct passkey
+// link. With no comments link and no permalink GUID, detailURL falls back to
+// <link>, so that fallback always gets the full path rule.
+func TestDetailURL_LinkFallbackWithEnclosureRedactsPathSecret(t *testing.T) {
+	item := rssItem{
+		GUID:      rssGUID{IsPermaLink: "false", Value: "opaque"},
+		Link:      "https://tracker.example/rss/download/12345/0a1b2c3d4e5f60718293a4b5c6d7e8f9/Dune.torrent",
+		Enclosure: rssEnclosure{URL: "http://prowlarr:9696/3/download?apikey=K&link=abc"},
+	}
+	got := detailURL(item)
+	if strings.Contains(got, "0a1b2c3d4e5f60718293a4b5c6d7e8f9") || !strings.HasSuffix(got, "/Dune.torrent") {
+		t.Fatalf("detailURL = %q, want the path passkey redacted and the rest kept", got)
+	}
+}
+
 // With no enclosure the item's link is the download link itself, and the
 // detail URL falls back to it, so the path rule applies there.
 func TestDetailURL_RedactsPathSecretWhenItIsTheDownloadLink(t *testing.T) {

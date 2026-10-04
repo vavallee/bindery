@@ -512,8 +512,9 @@ fragments.
 
 `infoUrl` is a link people click, and detail pages are often addressed by a
 hex id (an MD5, an info hash), so it keeps its path and only loses credential
-parameters and `user:pass@`. When `infoUrl` is the download link itself (a
-torznab item with no enclosure) or equals the GUID, it is redacted like them.
+parameters and `user:pass@`. When `infoUrl` comes from the item's `<link>`
+(which torznab feeds also use as a download link, with or without an
+enclosure) or equals the download URL or the GUID, it is redacted like them.
 
 History event `data` and the log export get the same treatment as `nzbUrl`,
 and the log export also decodes the tracker URLs inside a magnet before
