@@ -209,24 +209,40 @@ func HasAPIKey(raw string) bool {
 	return u.Query().Get("apikey") != ""
 }
 
-// RedactDownloadURL removes the apikey query parameter from a download URL so it
-// can be returned to API clients without leaking the indexer credential. The
-// grab handler restores it server-side via SignDownloadURLFor before dialing the
-// indexer. A URL with no apikey is returned unchanged.
+// RedactDownloadURL removes every credential from a download URL so it can be
+// returned to API clients, which include non-admin users, without leaking it.
+//
+// The indexer's own "apikey" is dropped: the grab handler restores it
+// server-side via SignDownloadURLFor before dialing the indexer. Any other
+// secret parameter (httpsec.IsSecretParam: a Jackett key, a tracker passkey, a
+// signature) is not something Bindery can re-derive, so its value is sealed
+// instead (see sealParam) and UnsealDownloadURL puts it back when the URL comes
+// back on a grab. Every other parameter is left byte for byte as it was. A URL
+// with no credential is returned unchanged.
 func RedactDownloadURL(raw string) string {
 	if raw == "" {
 		return raw
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
+		// Not a URL anything could fetch, so nothing to preserve: scrub it as
+		// text rather than return it as is.
+		return httpsec.RedactSecrets(raw)
+	}
+	host := u.Host
+	rq := httpsec.MapSecretQueryParams(u.RawQuery, func(name, rawValue string) (string, bool) {
+		if name == "apikey" {
+			return "", false
+		}
+		if isSealed(rawValue) {
+			return rawValue, true
+		}
+		return sealParam(host, name, rawValue), true
+	})
+	if rq == u.RawQuery {
 		return raw
 	}
-	q := u.Query()
-	if q.Get("apikey") == "" {
-		return raw
-	}
-	q.Del("apikey")
-	u.RawQuery = q.Encode()
+	u.RawQuery = rq
 	return u.String()
 }
 
@@ -540,19 +556,11 @@ func (c *Client) bookSearchTiers(ctx context.Context, queryTitle, author string,
 	return results, nil
 }
 
-// redactAPIKey replaces the apikey query parameter value with *** so URLs
-// can be logged without leaking credentials.
+// redactAPIKey replaces the value of every secret query parameter (the apikey
+// and the rest of httpsec's list) with REDACTED so URLs can be logged, and used
+// as a query-cache key, without carrying credentials.
 func redactAPIKey(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return rawURL
-	}
-	q := u.Query()
-	if q.Get("apikey") != "" {
-		q.Set("apikey", "***")
-		u.RawQuery = q.Encode()
-	}
-	return u.String()
+	return httpsec.RedactSecrets(rawURL)
 }
 
 // primaryTitleForQuery returns the portion of a book title before a colon,

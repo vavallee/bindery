@@ -1137,7 +1137,7 @@ func TestRedactAPIKey(t *testing.T) {
 		{
 			name: "replaces apikey value",
 			in:   "https://indexer.local/api?t=book&apikey=supersecret&title=Dune",
-			want: "https://indexer.local/api?apikey=%2A%2A%2A&t=book&title=Dune",
+			want: "https://indexer.local/api?t=book&apikey=REDACTED&title=Dune",
 		},
 		{
 			name: "no apikey param left unchanged",

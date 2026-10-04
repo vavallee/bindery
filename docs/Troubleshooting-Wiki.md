@@ -446,7 +446,7 @@ Filter down to the problem first — level, component, a search term, and a date
 Notes:
 
 - One entry per line, `timestamp LEVEL [component] message key=value`, so it stays greppable and pastes cleanly into an issue.
-- API keys and tokens that appear in logged URLs are replaced with `REDACTED` on the way out. Still skim the file before posting — paths and book titles are not redacted.
+- API keys, tracker passkeys, tokens and signatures that appear in logged URLs, and the token in a Discord, Slack or Telegram webhook URL, are replaced with `REDACTED` on the way out. Still skim the file before posting, since paths and book titles are not redacted.
 - An export stops at 50,000 entries and says so in the last line of the file. If you hit that, narrow the level or the date range.
 - Admin-only, like the rest of the Logs tab.
 - Turn the **Runtime level** up to `DEBUG` before reproducing if the default output isn't enough; entries are persisted, so the download picks them up after the fact.

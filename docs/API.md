@@ -437,6 +437,7 @@ GET    /api/v1/queue                              active downloads with live dow
        -> {"items":[..],"partial":true,"staleClients":[{"clientId":1,"name":"qBit","message":".."}]}
                                                   partial means a download client did not answer in time, so items is short
 POST   /api/v1/queue/grab                         submit a search result to the download client
+                                                  post `nzbUrl` exactly as the search returned it; see below
 POST   /api/v1/queue/{id}/retry-import           retry an importFailed/importBlocked item without re-downloading
 POST   /api/v1/queue/{id}/retry                   re-send a failed item's release to the download client (no re-search)
 POST   /api/v1/queue/bulk-retry                   retry many; {"ids":[..]}; per id {"ok":true,"action":"import"|"resend"}
@@ -469,6 +470,18 @@ GET    /api/v1/blocklist                          list blocked releases
 DELETE /api/v1/blocklist/{id}                     remove an entry
 DELETE /api/v1/blocklist/bulk                     bulk remove
 ```
+
+#### Download URLs in responses carry no credentials
+
+Search, queue and pending responses never return a credential inside
+`nzbUrl`. The indexer `apikey` is removed and added back server side on grab.
+Any other credential parameter (a Jackett `jackett_apikey`, a tracker
+`passkey`, `torrent_pass`, `authkey` or `rsskey`, a `token` or `signature`) has
+its value replaced with an opaque `bindery-sealed.…` string that only this
+Bindery process can open, and only for the same host. Post the URL back to
+`/queue/grab` unchanged. Sealed values do not survive a restart: a grab of a
+result from before the restart answers `400` with "this search result has
+expired, search again".
 
 #### Download client credentials are write-only
 

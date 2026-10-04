@@ -813,6 +813,15 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "guid and nzbUrl required"})
 		return
 	}
+	// Search responses seal any credential other than the indexer apikey
+	// (a Jackett key, a tracker passkey) into the download URL rather than
+	// hand it to the client; put it back before the URL goes anywhere.
+	unsealed, err := newznab.UnsealDownloadURL(req.NZBURL)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	req.NZBURL = unsealed
 
 	dl, err := h.grab(r.Context(), req)
 	if errors.Is(err, errAlreadyGrabbed) {
