@@ -484,6 +484,29 @@ func TestMP4LibraryAtomsAreRead(t *testing.T) {
 	}
 }
 
+// TestReadAudioTags_LibraryPanicIsAnError covers files the library parses
+// but then panics on: it stores an MP4 atom by its data class, and its
+// accessors assert the type they expect, so a text atom typed as a number or
+// a picture makes Artist() or Title() panic. The read must fail like any other
+// unreadable file instead of killing the scan.
+func TestReadAudioTags_LibraryPanicIsAnError(t *testing.T) {
+	cases := []struct {
+		name string
+		file []byte
+	}{
+		{"artist typed as a number", mp4File(atom("\xa9nam", dataAtom(1, []byte("Guards! Guards!"))), atom("\xa9ART", dataAtom(21, []byte{7})))},
+		{"title typed as a picture", mp4File(atom("\xa9nam", dataAtom(13, []byte("not a jpeg"))))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := readAudioTagsFrom(bytes.NewReader(tc.file))
+			if !errors.Is(err, errAudioTagReaderPanicked) {
+				t.Errorf("expected errAudioTagReaderPanicked, got %v", err)
+			}
+		})
+	}
+}
+
 // --- Ogg covers are capped by decoded size --------------------------------------
 
 // oggPages splits packet across as many Ogg pages as it needs.

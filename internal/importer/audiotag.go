@@ -1,6 +1,8 @@
 package importer
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -44,7 +46,23 @@ func ReadAudioTags(path string) (AudioTags, error) {
 	return readAudioTagsFrom(f)
 }
 
-func readAudioTagsFrom(r io.ReadSeeker) (AudioTags, error) {
+// errAudioTagReaderPanicked reports a file the tag library panicked on.
+var errAudioTagReaderPanicked = errors.New("audio tags: tag reader failed on malformed data")
+
+func readAudioTagsFrom(r io.ReadSeeker) (tags AudioTags, err error) {
+	// github.com/dhowden/tag can panic on hostile data after parsing it: it
+	// stores an MP4 atom by the data class the file declares, and accessors
+	// such as Artist() and Title() then assert a string, so an artist atom
+	// typed as a number panics. Turn any panic in the read or the accessors
+	// into an ordinary error, so the caller logs the path and falls back to
+	// the filename instead of the panic ending the whole scan. The panic value
+	// is kept in the message; the stack is not, since a hostile file says
+	// nothing about Bindery's own code.
+	defer func() {
+		if rec := recover(); rec != nil {
+			tags, err = AudioTags{}, fmt.Errorf("%w: %v", errAudioTagReaderPanicked, rec)
+		}
+	}()
 	if err := checkAudioTagClaims(r); err != nil {
 		return AudioTags{}, err
 	}
