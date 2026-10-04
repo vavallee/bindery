@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -40,18 +39,20 @@ func New(host string, port int, apiKey, urlBase string, useSSL bool) *Client {
 	if useSSL {
 		scheme = "https"
 	}
-	return &Client{
+	c := &Client{
 		baseURL: fmt.Sprintf("%s://%s%s", scheme, clienthost.Authority(host, port), urlbase.Normalize(urlBase)),
 		apiKey:  apiKey,
 		http:    &http.Client{Timeout: 15 * time.Second},
-		// fetchHTTP pulls indexer-controlled NZB URLs, so guard the dial: it
-		// re-validates the resolved IP on every connect (DNS-rebind) and
-		// rejects a redirect to a forbidden host at dial time.
-		fetchHTTP: &http.Client{Timeout: 60 * time.Second, Transport: httpsec.GuardedTransport(httpsec.DownloadFetchPolicy())},
 		validateNZBURL: func(raw string) error {
 			return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 		},
 	}
+	// fetchHTTP pulls indexer-controlled NZB URLs: the dial is guarded (DNS
+	// rebind), every redirect hop is re-validated, and no hop carries a
+	// Referer or the original headers to another host. The method value reads
+	// c.validateNZBURL at call time, so a test override applies to hops too.
+	c.fetchHTTP = nzbfetch.NewHTTPClient(c.validateNZBFetchURL)
+	return c
 }
 
 // Test verifies connectivity and, when categories are supplied, that each
@@ -227,7 +228,7 @@ func (c *Client) fetchNZBContent(ctx context.Context, nzbURL string) ([]byte, er
 	if err != nil {
 		// Scrub the indexer apikey the *url.Error would otherwise leak into
 		// the download row / history / webhook payloads.
-		return nil, fmt.Errorf("fetch nzb from indexer: %w", redactURLError(err))
+		return nil, fmt.Errorf("fetch nzb from indexer: %w", httpsec.RedactURLError(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -375,34 +376,6 @@ func checkSimpleResponse(action string, resp SimpleResponse) error {
 	return fmt.Errorf("SABnzbd rejected %s (SABnzbd gave no reason)", action)
 }
 
-// redactURLError scrubs the apikey from a *url.Error's URL field in place, so
-// the error string no longer leaks the secret when it is %w-wrapped, while
-// leaving the wrapped error chain intact for type-based inspection (nethint's
-// DNS/timeout classification relies on errors.As reaching the underlying net
-// error). Non-url.Error values pass through unchanged.
-func redactURLError(err error) error {
-	var ue *url.Error
-	if errors.As(err, &ue) {
-		ue.URL = redactAPIURL(ue.URL)
-	}
-	return err
-}
-
-// redactAPIURL returns a copy of rawURL with the "apikey" query parameter
-// replaced by "REDACTED", safe for use in error messages and logs.
-func redactAPIURL(rawURL string) string {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return "[unparseable url]"
-	}
-	q := parsed.Query()
-	if q.Get("apikey") != "" {
-		q.Set("apikey", "REDACTED")
-		parsed.RawQuery = q.Encode()
-	}
-	return parsed.String()
-}
-
 func (c *Client) apiCall(ctx context.Context, params url.Values, target interface{}) error {
 	params.Set("apikey", c.apiKey)
 	params.Set("output", "json")
@@ -410,16 +383,16 @@ func (c *Client) apiCall(ctx context.Context, params url.Values, target interfac
 	u := fmt.Sprintf("%s/api?%s", c.baseURL, params.Encode())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return fmt.Errorf("build request for %s: %w", redactAPIURL(u), redactURLError(err))
+		return fmt.Errorf("build request for %s: %w", httpsec.RedactSecrets(u), httpsec.RedactURLError(err))
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		// redactURLError scrubs the apikey from the *url.Error's URL field
+		// httpsec.RedactURLError scrubs the apikey from the *url.Error's URL field
 		// (which %w would otherwise re-expose despite the redacted prefix)
 		// while keeping the wrapped chain intact so nethint can still classify
 		// the network failure.
-		return fmt.Errorf("request to %s: %w", redactAPIURL(u), redactURLError(err))
+		return fmt.Errorf("request to %s: %w", httpsec.RedactSecrets(u), httpsec.RedactURLError(err))
 	}
 	defer resp.Body.Close()
 
@@ -442,14 +415,14 @@ func (c *Client) apiUpload(ctx context.Context, params url.Values, body *bytes.B
 	u := fmt.Sprintf("%s/api?%s", c.baseURL, params.Encode())
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, body)
 	if err != nil {
-		return fmt.Errorf("build upload for %s: %w", redactAPIURL(u), redactURLError(err))
+		return fmt.Errorf("build upload for %s: %w", httpsec.RedactSecrets(u), httpsec.RedactURLError(err))
 	}
 	req.Header.Set("Content-Type", contentType)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// See apiCall: redact the url.Error's URL in place, keep the chain for nethint.
-		return fmt.Errorf("upload to %s: %w", redactAPIURL(u), redactURLError(err))
+		return fmt.Errorf("upload to %s: %w", httpsec.RedactSecrets(u), httpsec.RedactURLError(err))
 	}
 	defer resp.Body.Close()
 

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/pathmap"
 )
 
@@ -48,7 +49,7 @@ func (c *Client) CompleteDir(ctx context.Context, category string) (string, bool
 	var misc completeDirConfig
 	params := url.Values{"mode": {"get_config"}, "section": {"misc"}, "keyword": {"complete_dir"}}
 	if err := c.apiCall(ctx, params, &misc); err != nil {
-		return "", false, fmt.Errorf("read complete_dir: %w", redactURLError(err))
+		return "", false, fmt.Errorf("read complete_dir: %w", httpsec.RedactURLError(err))
 	}
 	if misc.Status != nil && !*misc.Status {
 		return "", false, fmt.Errorf("SABnzbd refused get_config: %s", strings.TrimSpace(misc.Error))
