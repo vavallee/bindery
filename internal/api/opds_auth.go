@@ -15,9 +15,10 @@ import (
 // mirrors the global auth middleware but adds HTTP Basic on top, because
 // that's what KOReader / Moon+ Reader / Aldiko all speak natively:
 //
-//  1. Mode == disabled                 — always allowed
+//  1. Mode == disabled                 — allowed under an accepted Host
 //  2. Valid X-Api-Key header or ?apikey= query — allowed
-//  3. Mode == local-only + RFC1918 IP  — always allowed
+//  3. Mode == local-only + RFC1918 IP  — allowed under an accepted Host
+//     (auth.HostAllowedForModeGrant; a refused Host falls through to 4-6)
 //  4. Valid signed session cookie      — allowed
 //  5. Valid Basic credentials          — allowed
 //  6. Otherwise                        — 401 with WWW-Authenticate: Basic
@@ -43,7 +44,15 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 				return
 			}
 
-			if mode == auth.ModeDisabled {
+			// The two mode grants below admit a caller with no credential,
+			// so they also need a Host name a public site cannot have, as in
+			// auth.Middleware (DNS rebinding). A refused name is not answered
+			// here: it falls through to the API key, session and Basic checks,
+			// so a reader with real credentials still gets in and one without
+			// gets the usual Basic challenge.
+			// Disabled mode admits every peer, so the proxy set is not needed
+			// (and not read: the #1894 tests pin the provider call order).
+			if mode == auth.ModeDisabled && auth.ModeGrantsAdmin(mode, r, nil) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -58,7 +67,7 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 				next.ServeHTTP(w, r)
 				return
 			}
-			if mode == auth.ModeLocalOnly && auth.IsLocalRequestTrusted(r, p.TrustedProxyCIDRs()) {
+			if mode == auth.ModeLocalOnly && auth.ModeGrantsAdmin(mode, r, p.TrustedProxyCIDRs()) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -131,10 +140,20 @@ func OPDSAuth(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimiter) f
 			}
 
 			// Challenge — OPDS clients retry with credentials on 401.
+			body := []byte(`{"error":"unauthorized"}`)
+			if host, refused := auth.RefusedModeGrantHost(mode, r, p.TrustedProxyCIDRs()); refused {
+				// Still a 401 with the Basic challenge, so readers can prompt
+				// for credentials, but say why the mode did not let it in.
+				// The name goes to the log only: reader apps rarely show
+				// the body, and a fixed body echoes nothing caller supplied.
+				auth.LogRefusedModeGrantHost(host)
+				body = []byte(`{"error":"this host name is not allowed to use this auth mode without a login; ` +
+					`sign in, or add it to ` + auth.AllowedHostsEnv + `"}`)
+			}
 			w.Header().Set("WWW-Authenticate", `Basic realm="Bindery OPDS"`)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			if _, err := w.Write([]byte(`{"error":"unauthorized"}`)); err != nil {
+			if _, err := w.Write(body); err != nil {
 				slog.Warn("failed to write OPDS unauthorized response", "error", err)
 			}
 		})

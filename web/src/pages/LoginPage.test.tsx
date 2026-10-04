@@ -30,6 +30,9 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) => {
       if (key === 'login.signInWith') return `Sign in with ${String(options?.name ?? '')}`
+      if (key === 'login.hostNotAllowed') {
+        return `Bindery is in ${String(options?.mode)} mode. ${String(options?.host)} is not local. Add ${String(options?.host)} to BINDERY_ALLOWED_HOSTS.`
+      }
       const strings: Record<string, string> = {
         'login.title': 'Sign in',
         'login.username': 'Username',
@@ -42,6 +45,8 @@ vi.mock('react-i18next', () => ({
         'login.proxyHint': 'Sign in via your SSO provider',
         'login.orLocal': 'or',
         'login.contactAdmin': 'Contact your administrator for access',
+        'login.hostNotAllowedTitle': 'Sign in is required at this address',
+        'login.hostNotAllowedDocs': 'How host names are checked',
       }
       return strings[key] ?? key
     },
@@ -185,5 +190,39 @@ describe('LoginPage', () => {
     expect(screen.queryByLabelText('Username')).not.toBeInTheDocument()
     // Contact admin message should appear
     expect(await screen.findByText('Contact your administrator for access')).toBeInTheDocument()
+  })
+
+  it('explains a refused host name and names BINDERY_ALLOWED_HOSTS', () => {
+    authState.status = makeAuthStatus({ mode: 'disabled', hostNotAllowed: true, refusedHost: 'books.example.com' })
+
+    renderLoginPage()
+
+    const notice = screen.getByRole('alert')
+    expect(notice).toHaveTextContent('Sign in is required at this address')
+    expect(notice).toHaveTextContent('books.example.com')
+    expect(notice).toHaveTextContent('BINDERY_ALLOWED_HOSTS')
+    expect(notice).toHaveTextContent('disabled mode')
+    expect(screen.getByRole('link', { name: 'How host names are checked' })).toHaveAttribute(
+      'href',
+      expect.stringContaining('DEPLOYMENT.md#host-names-in-local-only-and-disabled-mode'),
+    )
+    // The sign in form is still offered: a session works under any name.
+    expect(screen.getByLabelText('Username')).toBeInTheDocument()
+  })
+
+  it('falls back to the page host when the backend did not name one', () => {
+    authState.status = makeAuthStatus({ mode: 'local-only', hostNotAllowed: true })
+
+    renderLoginPage()
+
+    expect(screen.getByRole('alert')).toHaveTextContent(window.location.host)
+  })
+
+  it('shows no host notice when the flag is absent', () => {
+    authState.status = makeAuthStatus({ mode: 'local-only' })
+
+    renderLoginPage()
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

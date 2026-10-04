@@ -95,6 +95,10 @@ type statusResponse struct {
 	// accepts for that (see auth.HostAllowedForModeGrant). The caller is
 	// reported unauthenticated; the field says why.
 	HostNotAllowed bool `json:"hostNotAllowed,omitempty"`
+	// RefusedHost is the name that was refused, so the login page can tell
+	// the operator what to add to BINDERY_ALLOWED_HOSTS. It is the caller's
+	// own Host (or forwarded host), echoed back to the same caller.
+	RefusedHost string `json:"refusedHost,omitempty"`
 }
 
 type changePasswordRequest struct {
@@ -149,6 +153,7 @@ func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 		// would never reach the log.
 		auth.LogRefusedModeGrantHost(host)
 		resp.HostNotAllowed = true
+		resp.RefusedHost = host
 	}
 
 	writeOK(w, resp)

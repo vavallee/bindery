@@ -271,6 +271,12 @@ func main() {
 	// the TCP peer is then the proxy's own private address.
 	auth.WarnIfLocalOnlyWithoutTrustedProxy(bootAuthMode, trustedCIDRs)
 
+	// BINDERY_ALLOWED_HOSTS is read per request, so a bad entry would
+	// otherwise be ignored in silence, and a bare "*" (the Host check's
+	// opt out) deserves a line of its own whatever the boot mode: the mode
+	// can be switched to local-only or disabled at runtime.
+	auth.WarnAllowedHostsConfig()
+
 	// Same shape, different assumption: an operator who added a second account
 	// through Settings has no way to learn that the two accounts share one
 	// library until they look at it. A count read failure is not worth a line

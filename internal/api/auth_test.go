@@ -945,5 +945,8 @@ func TestStatus_HostNotAllowedInLoginFreeModes(t *testing.T) {
 		if resp.HostNotAllowed != c.wantRefused {
 			t.Errorf("%s: hostNotAllowed=%v, want %v", c.host, resp.HostNotAllowed, c.wantRefused)
 		}
+		if c.wantRefused && resp.RefusedHost != c.host {
+			t.Errorf("%s: refusedHost=%q", c.host, resp.RefusedHost)
+		}
 	}
 }

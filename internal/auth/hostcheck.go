@@ -45,7 +45,8 @@ var localHostSuffixes = []string{
 // the attacker's name. So the grant is only honoured for names an outside
 // site cannot have: IP literals, localhost, single label names, the local
 // only suffixes above, the host of BINDERY_OIDC_REDIRECT_BASE_URL, and the
-// operator's BINDERY_ALLOWED_HOSTS list.
+// operator's BINDERY_ALLOWED_HOSTS list (where a bare "*" switches the check
+// off; see parseAllowedHosts).
 //
 // When a trusted proxy forwards X-Forwarded-Host (it is stripped from every
 // other peer before this runs) each name in it must pass as well, since that
@@ -115,32 +116,118 @@ func hostAllowed(raw string) bool {
 	return matchAllowedHosts(h, os.Getenv(AllowedHostsEnv))
 }
 
-// matchAllowedHosts reports whether the normalised host h is in the comma
-// separated allowlist raw. An entry "*.example.com" matches any name under
-// example.com but not example.com itself. Entries may carry a port or be a
-// full URL; only the host is compared. Read on every call so the list is
-// whatever the environment says now, and so tests can vary it.
-func matchAllowedHosts(h, raw string) bool {
+// allowedHostList is BINDERY_ALLOWED_HOSTS parsed into what it permits.
+type allowedHostList struct {
+	any      bool     // a bare "*": the Host check is switched off
+	exact    []string // normalised names
+	suffixes []string // ".example.com" for an entry "*.example.com"
+	rejected []string // entries ignored as unsafe or malformed
+}
+
+// parseAllowedHosts parses the comma separated allowlist raw. An entry
+// "*.example.com" matches any name under example.com but not example.com
+// itself, and the part after "*." must have at least two labels: "*.com"
+// would admit every site under a TLD, which is the hole the check closes.
+// A bare "*" switches the check off. Entries may carry a port or be a full
+// URL; only the host is kept. Any other entry carrying a "*" is rejected.
+func parseAllowedHosts(raw string) allowedHostList {
+	var out allowedHostList
 	for _, e := range strings.Split(raw, ",") {
 		e = strings.TrimSpace(e)
 		if e == "" {
 			continue
 		}
-		if strings.Contains(e, "://") {
-			e = hostFromURL(e)
-		}
-		if strings.HasPrefix(e, "*.") {
-			suffix := "." + normalizeHost(e[2:])
-			if suffix != "." && strings.HasSuffix(h, suffix) {
-				return true
-			}
+		if e == "*" {
+			out.any = true
 			continue
 		}
-		if n := normalizeHost(e); n != "" && n == h {
+		if strings.HasPrefix(e, "*.") {
+			suffix := normalizeHost(e[2:])
+			if !wildcardSuffixOK(suffix) {
+				out.rejected = append(out.rejected, e)
+				continue
+			}
+			out.suffixes = append(out.suffixes, "."+suffix)
+			continue
+		}
+		if strings.Contains(e, "*") {
+			out.rejected = append(out.rejected, e)
+			continue
+		}
+		var n string
+		if strings.Contains(e, "://") {
+			n = hostFromURL(e)
+		} else {
+			n = normalizeHost(e)
+		}
+		if n == "" {
+			out.rejected = append(out.rejected, e)
+			continue
+		}
+		out.exact = append(out.exact, n)
+	}
+	return out
+}
+
+// wildcardSuffixOK requires at least two non empty labels and no further
+// wildcard. It cannot tell a shared domain such as duckdns.org from one the
+// operator owns (that needs the public suffix list, which Bindery does not
+// ship), so the docs say to list exact names under a shared domain instead.
+func wildcardSuffixOK(suffix string) bool {
+	if strings.Contains(suffix, "*") {
+		return false
+	}
+	labels := strings.Split(suffix, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, l := range labels {
+		if l == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func (a allowedHostList) allows(h string) bool {
+	if a.any {
+		return true
+	}
+	for _, n := range a.exact {
+		if n == h {
+			return true
+		}
+	}
+	for _, s := range a.suffixes {
+		if strings.HasSuffix(h, s) {
 			return true
 		}
 	}
 	return false
+}
+
+// matchAllowedHosts reports whether the normalised host h is permitted by
+// the allowlist raw. Read on every call so the list is whatever the
+// environment says now, and so tests can vary it.
+func matchAllowedHosts(h, raw string) bool {
+	return parseAllowedHosts(raw).allows(h)
+}
+
+// WarnAllowedHostsConfig logs, at startup, each BINDERY_ALLOWED_HOSTS entry
+// that is ignored, and a warning when a bare "*" switches the Host check off.
+// It reports whether the check is off.
+func WarnAllowedHostsConfig() bool {
+	a := parseAllowedHosts(os.Getenv(AllowedHostsEnv))
+	for _, e := range a.rejected {
+		slog.Warn("auth: ignoring "+AllowedHostsEnv+" entry; a wildcard needs at least two labels after *. (for example *.home.example.com)",
+			"entry", e, "env", AllowedHostsEnv)
+	}
+	if a.any {
+		slog.Warn("auth: "+AllowedHostsEnv+" contains *, so DNS rebinding protection is off; "+
+			"in local-only and disabled mode a web page opened by anyone on your network can act as the admin. "+
+			"List the host names you use instead", "env", AllowedHostsEnv)
+	}
+	return a.any
 }
 
 func hostFromURL(raw string) string {
@@ -164,13 +251,20 @@ func writeHostRejected(w http.ResponseWriter, host string) {
 	hostRejectLog.note(host)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
-	body, _ := json.Marshal(map[string]string{
-		"error": "host " + host + " is not allowed to use this auth mode without a login; " +
-			"sign in, or add the name to " + AllowedHostsEnv + " if this is how you reach Bindery",
-	})
-	if _, err := w.Write(body); err != nil {
+	if _, err := w.Write(hostRejectedBody(host)); err != nil {
 		slog.Warn("failed to write host rejected response", "error", err)
 	}
+}
+
+// hostRejectedBody is the JSON error body for a request refused the mode
+// grant because of its host name. It names BINDERY_ALLOWED_HOSTS so the
+// operator knows what to set. The host is JSON encoded and clipped.
+func hostRejectedBody(host string) []byte {
+	body, _ := json.Marshal(map[string]string{
+		"error": "host " + clipHost(host) + " is not allowed to use this auth mode without a login; " +
+			"sign in, or add the name to " + AllowedHostsEnv + " if this is how you reach Bindery",
+	})
+	return body
 }
 
 // clipHost bounds a caller supplied Host before it is echoed or logged.

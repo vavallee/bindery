@@ -473,6 +473,7 @@ func TestRequesterGuard_OPDSModeNeverElevatesARequester(t *testing.T) {
 		}{{f.cookie, http.StatusForbidden}, {f.userCookie, http.StatusOK}, {nil, http.StatusOK}} {
 			req := httptest.NewRequest(http.MethodGet, "/opds/", nil)
 			req.RemoteAddr = "127.0.0.1:5555"
+			req.Host = "localhost:8787" // not httptest's example.com, which the modes refuse
 			if c.cookie != nil {
 				req.AddCookie(c.cookie)
 			}

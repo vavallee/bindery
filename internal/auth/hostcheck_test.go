@@ -127,6 +127,70 @@ func TestRejectLoggerDeduplicatesAndCaps(t *testing.T) {
 	}
 }
 
+func TestParseAllowedHosts_WildcardNeedsTwoLabels(t *testing.T) {
+	a := parseAllowedHosts("*.com, *.duckdns.org, *., *, foo*.example.com, *.*.example.com, *.home.example.com, nas.example.com")
+	if !a.any {
+		t.Error("bare * should switch the check off")
+	}
+	wantRejected := []string{"*.com", "*.", "foo*.example.com", "*.*.example.com"}
+	if strings.Join(a.rejected, "|") != strings.Join(wantRejected, "|") {
+		t.Errorf("rejected = %q, want %q", a.rejected, wantRejected)
+	}
+	if strings.Join(a.suffixes, "|") != ".duckdns.org|.home.example.com" {
+		t.Errorf("suffixes = %q", a.suffixes)
+	}
+	if strings.Join(a.exact, "|") != "nas.example.com" {
+		t.Errorf("exact = %q", a.exact)
+	}
+}
+
+func TestAllowedHosts_SingleLabelWildcardIgnored(t *testing.T) {
+	t.Setenv(AllowedHostsEnv, "*.com,*.example")
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	for _, h := range []string{"attacker.com", "attacker.example"} {
+		r.Host = h
+		if HostAllowedForModeGrant(r) {
+			t.Errorf("%s: a one label wildcard must not admit anything", h)
+		}
+	}
+}
+
+func TestAllowedHosts_BareStarDisablesCheck(t *testing.T) {
+	t.Setenv(AllowedHostsEnv, "*")
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Host = "attacker.example"
+	if !HostAllowedForModeGrant(r) {
+		t.Fatal("a bare * is the explicit opt out")
+	}
+}
+
+func TestWarnAllowedHostsConfig(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	t.Setenv(AllowedHostsEnv, "nas.example.com,*.com")
+	if WarnAllowedHostsConfig() {
+		t.Error("check reported off without a bare *")
+	}
+	if !strings.Contains(buf.String(), "ignoring") || !strings.Contains(buf.String(), "entry=*.com") {
+		t.Errorf("expected the rejected entry logged: %s", buf.String())
+	}
+	if strings.Contains(buf.String(), "rebinding protection is off") {
+		t.Error("no opt out warning expected")
+	}
+
+	buf.Reset()
+	t.Setenv(AllowedHostsEnv, "*")
+	if !WarnAllowedHostsConfig() {
+		t.Error("bare * should report the check off")
+	}
+	if !strings.Contains(buf.String(), "DNS rebinding protection is off") || !strings.Contains(buf.String(), "level=WARN") {
+		t.Errorf("expected the opt out WARN: %s", buf.String())
+	}
+}
+
 func TestWriteHostRejectedNamesEnvVar(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeHostRejected(rec, `evil"<host>`)
