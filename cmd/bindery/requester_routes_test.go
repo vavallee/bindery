@@ -206,6 +206,9 @@ func (f *requesterFixture) do(method, target string, cookie *http.Cookie) *httpt
 func (f *requesterFixture) doFrom(method, target string, cookie *http.Cookie, remote string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, target, nil)
 	req.RemoteAddr = remote
+	// A LAN name, not httptest's example.com, which the login free modes
+	// refuse; the host check itself is covered in host_check_routes_test.go.
+	req.Host = "bindery:8787"
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}

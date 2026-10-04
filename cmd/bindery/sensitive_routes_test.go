@@ -468,6 +468,8 @@ func TestAdminRoutesAnswerInDisabledAuthMode(t *testing.T) {
 			}
 			seenID = 0
 			req := httptest.NewRequest(tc.method, tc.path, nil)
+			// Not httptest's example.com, which the login free modes refuse.
+			req.Host = "bindery:8787"
 			if tc.apiKey != "" {
 				req.Header.Set("X-Api-Key", tc.apiKey)
 			}

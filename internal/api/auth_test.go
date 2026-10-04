@@ -910,3 +910,40 @@ func withChiURLParam(r *http.Request, key, value string) *http.Request {
 	rctx.URLParams.Add(key, value)
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
+
+// TestStatus_HostNotAllowedInLoginFreeModes pins /auth/status to the same
+// Host rule the middleware applies: under a name a public site could have,
+// disabled mode does not report an admin, and says why.
+func TestStatus_HostNotAllowedInLoginFreeModes(t *testing.T) {
+	h, users, settings, ctx := newAuthFixture(t)
+	if _, err := users.Create(ctx, "admin", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.Set(ctx, SettingAuthMode, string(auth.ModeDisabled)); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		host        string
+		wantAdmin   bool
+		wantRefused bool
+	}{
+		{"attacker.example", false, true},
+		{"bindery:8787", true, false},
+		{"192.168.1.10:8787", true, false},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/auth/status", nil)
+		req.Host = c.host
+		rec := httptest.NewRecorder()
+		h.Status(rec, req)
+		var resp statusResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if got := resp.Authenticated && resp.Role == "admin"; got != c.wantAdmin {
+			t.Errorf("%s: admin=%v, want %v", c.host, got, c.wantAdmin)
+		}
+		if resp.HostNotAllowed != c.wantRefused {
+			t.Errorf("%s: hostNotAllowed=%v, want %v", c.host, resp.HostNotAllowed, c.wantRefused)
+		}
+	}
+}
