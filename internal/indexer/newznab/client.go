@@ -212,38 +212,15 @@ func HasAPIKey(raw string) bool {
 // RedactDownloadURL removes every credential from a download URL so it can be
 // returned to API clients, which include non-admin users, without leaking it.
 //
-// The indexer's own "apikey" is dropped: the grab handler restores it
-// server-side via SignDownloadURLFor before dialing the indexer. Any other
-// secret parameter (httpsec.IsSecretParam: a Jackett key, a tracker passkey, a
-// signature) is not something Bindery can re-derive, so its value is sealed
-// instead (see sealParam) and UnsealDownloadURL puts it back when the URL comes
-// back on a grab. Every other parameter is left byte for byte as it was. A URL
-// with no credential is returned unchanged.
+// Every parameter on httpsec's secret list is dropped (the indexer apikey, a
+// Jackett key, a tracker passkey, a getnzb link's r=), and everything else is
+// left byte for byte as it was. A grab of a search result takes the real URL
+// from the server's own record (api.SearchResultRegistry); an admin grab of an
+// unrecorded URL gets only the indexer apikey back, via SignDownloadURLFor. A
+// URL with no credential is returned unchanged. The same applies to a GUID or
+// detail link, which torznab feeds often build from the download URL.
 func RedactDownloadURL(raw string) string {
-	if raw == "" {
-		return raw
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		// Not a URL anything could fetch, so nothing to preserve: scrub it as
-		// text rather than return it as is.
-		return httpsec.RedactSecrets(raw)
-	}
-	host := u.Host
-	rq := httpsec.MapSecretQueryParams(u.RawQuery, func(name, rawValue string) (string, bool) {
-		if name == "apikey" {
-			return "", false
-		}
-		if isSealed(rawValue) {
-			return rawValue, true
-		}
-		return sealParam(host, name, rawValue), true
-	})
-	if rq == u.RawQuery {
-		return raw
-	}
-	u.RawQuery = rq
-	return u.String()
+	return httpsec.StripURLSecrets(raw)
 }
 
 // detailURL extracts the indexer's human-readable detail/release page URL for a
@@ -279,7 +256,10 @@ func detailURL(item rssItem) string {
 		if u.Host == "" {
 			continue
 		}
-		return raw
+		// With no enclosure, <link> is the download URL itself, and a torznab
+		// permalink is often a details page carrying the passkey. This is shown
+		// to every user, so it never carries a credential.
+		return RedactDownloadURL(raw)
 	}
 	return ""
 }

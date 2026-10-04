@@ -54,6 +54,7 @@ func (h *PendingHandler) List(w http.ResponseWriter, r *http.Request) {
 		// (it is an admin-only setting); this list has to do the same. The DB
 		// copy keeps the key so force-grab can still re-send the signed URL.
 		it.ReleaseJSON = redactReleaseJSON(it.ReleaseJSON)
+		it.GUID = newznab.RedactDownloadURL(it.GUID)
 		out[i] = pendingItem{PendingRelease: it}
 		if it.BookID != 0 {
 			bookIDs = append(bookIDs, it.BookID)
@@ -72,11 +73,12 @@ func (h *PendingHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// redactReleaseJSON removes the indexer apikey from the nzbUrl inside a stored
-// pending-release blob. The blob is decoded into a generic map rather than into
-// newznab.SearchResult so that a field the struct does not know about survives
-// the round-trip; anything that fails to decode is returned untouched, since a
-// blob we cannot parse is also one we cannot vouch for editing.
+// redactReleaseJSON strips every credential from the URL-shaped fields (nzbUrl,
+// guid, infoUrl) of a stored pending-release blob. The blob is decoded into a
+// generic map rather than into newznab.SearchResult so that a field the struct
+// does not know about survives the round-trip; anything that fails to decode
+// is returned untouched, since a blob we cannot parse is also one we cannot
+// vouch for editing.
 func redactReleaseJSON(raw string) string {
 	if raw == "" {
 		return raw
@@ -85,15 +87,20 @@ func redactReleaseJSON(raw string) string {
 	if err := json.Unmarshal([]byte(raw), &release); err != nil {
 		return raw
 	}
-	rawURL, ok := release["nzbUrl"].(string)
-	if !ok {
+	changed := false
+	for _, key := range []string{"nzbUrl", "guid", "infoUrl"} {
+		v, ok := release[key].(string)
+		if !ok {
+			continue
+		}
+		if redacted := newznab.RedactDownloadURL(v); redacted != v {
+			release[key] = redacted
+			changed = true
+		}
+	}
+	if !changed {
 		return raw
 	}
-	redacted := newznab.RedactDownloadURL(rawURL)
-	if redacted == rawURL {
-		return raw
-	}
-	release["nzbUrl"] = redacted
 	out, err := json.Marshal(release)
 	if err != nil {
 		return raw
@@ -198,6 +205,10 @@ func (h *PendingHandler) Grab(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, errAlreadyGrabbed) {
 			// err carries alreadyGrabbedDetail's explanation (#1955).
 			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, errGrabBookNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "pending release not found"})
 			return
 		}
 		writeServerError(w, r, err)

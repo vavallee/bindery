@@ -70,6 +70,7 @@ export default function LoginPage() {
 
   return (
     <CardShell title={t('login.title')} subtitle="">
+      {status?.hostNotAllowed && <HostNotAllowedNotice mode={status.mode} host={status.refusedHost || window.location.host} />}
       {oidcProviders.length > 0 && (
         <div className="space-y-2 mb-4">
           {oidcProviders.map(p => (
@@ -158,6 +159,27 @@ export function CardShell({ title, subtitle, children }: { title: string; subtit
           {children}
         </div>
       </div>
+    </div>
+  )
+}
+
+// Shown when local-only or disabled mode refused to skip sign in because of
+// the host name the browser used. Without it the operator just sees a login
+// page and no reason why the mode stopped applying.
+function HostNotAllowedNotice({ mode, host }: { mode: string; host: string }) {
+  const { t } = useTranslation()
+  return (
+    <div role="alert" className="mb-4 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+      <p className="font-medium">{t('login.hostNotAllowedTitle')}</p>
+      <p className="mt-1">{t('login.hostNotAllowed', { mode, host })}</p>
+      <a
+        href="https://github.com/vavallee/bindery/blob/main/docs/DEPLOYMENT.md#host-names-in-local-only-and-disabled-mode"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-1 inline-block underline"
+      >
+        {t('login.hostNotAllowedDocs')}
+      </a>
     </div>
   )
 }

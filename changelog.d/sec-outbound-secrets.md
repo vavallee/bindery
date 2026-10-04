@@ -1,4 +1,0 @@
-### Security
-- **NZB grabs through Prowlarr no longer hand its API key to the indexer.** SABnzbd and NZBGet fetches now drop the Referer header when following a download redirect, and every redirect is checked against the same address rules as the original link, including when an outbound proxy is set.
-- **More credentials are kept out of responses, logs and errors.** Jackett keys, tracker passkeys (`passkey`, `torrent_pass`, `authkey`, `rsskey`), tokens and signatures in download links are now hidden from search, queue and pending results and redacted from stored errors and the log export, the same way the indexer API key already was. Grabs from Jackett and private trackers keep working.
-- **Webhook tokens no longer show up in notifier errors.** A failed Discord, Slack or Telegram notification logs the URL with its token redacted.

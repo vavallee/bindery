@@ -50,6 +50,16 @@ updates:
     commit-message:
       prefix: "chore(docker)"
       include: scope
+    # The golang builder must match go.mod's toolchain and every setup-go in
+    # CI (`make go-version-check` enforces it). A minor or major Go move is a
+    # deliberate toolchain change made in go.mod first, never a Dockerfile
+    # bump on its own; digest refreshes and patch bumps still come through,
+    # and a patch bump stays red until go.mod and the workflows follow.
+    ignore:
+      - dependency-name: golang
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
 
   - package-ecosystem: github-actions
     directory: "/"
@@ -67,8 +77,18 @@ updates:
     directory: /cmd/discord-stats
     schedule:
       interval: daily
+    ignore:
+      - dependency-name: golang
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
 
   - package-ecosystem: docker
     directory: /cmd/telemetry-server
     schedule:
       interval: daily
+    ignore:
+      - dependency-name: golang
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor

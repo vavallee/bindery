@@ -45,14 +45,13 @@ func (h *QualityProfileHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
+	// No ownership check: quality profiles are instance wide configuration.
+	// Only admins can write them (RequireAdmin in cmd/bindery/main.go), they
+	// hold nothing sensitive, and migration 025 stamped every existing row
+	// with the first admin's id, so an owner filter here hid every profile
+	// from every non admin. Requesters never reach this route
+	// (auth.RequesterAllowList).
 	if p == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "quality profile not found"})
-		return
-	}
-	// Tier-1 cross-user IDOR guard (D1). The Put / Delete routes for this
-	// resource are already RequireAdmin (see cmd/bindery/main.go), so only
-	// the read path needs the per-user gate here.
-	if !auth.CheckOwnership(r.Context(), p.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "quality profile not found"})
 		return
 	}

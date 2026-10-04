@@ -90,6 +90,15 @@ type statusResponse struct {
 	Role             string `json:"role,omitempty"`
 	Mode             string `json:"mode"`
 	LocalAuthEnabled bool   `json:"localAuthEnabled"`
+	// HostNotAllowed is set when the auth mode would have admitted the
+	// caller without a login but the host name it used is not one Bindery
+	// accepts for that (see auth.HostAllowedForModeGrant). The caller is
+	// reported unauthenticated; the field says why.
+	HostNotAllowed bool `json:"hostNotAllowed,omitempty"`
+	// RefusedHost is the name that was refused, so the login page can tell
+	// the operator what to add to BINDERY_ALLOWED_HOSTS. It is the caller's
+	// own Host (or forwarded host), echoed back to the same caller.
+	RefusedHost string `json:"refusedHost,omitempty"`
 }
 
 type changePasswordRequest struct {
@@ -137,6 +146,14 @@ func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 		// Treat as admin so role-gated UI surfaces correctly.
 		resp.Authenticated = true
 		resp.Role = "admin"
+	} else if host, refused := auth.RefusedModeGrantHost(mode, r, auth.EnvTrustedProxyCIDRs()); refused {
+		// The UI reads this route first and goes to the login page on
+		// authenticated=false, so it may be the only request the operator's
+		// browser makes. Log the refusal here too, or the name to allow
+		// would never reach the log.
+		auth.LogRefusedModeGrantHost(host)
+		resp.HostNotAllowed = true
+		resp.RefusedHost = host
 	}
 
 	writeOK(w, resp)

@@ -72,6 +72,9 @@ type IndexerHandler struct {
 	// ISBN exact-match bonus in the ranker (#1724).
 	editions  *db.EditionRepo
 	lastDebug *lastDebugStore
+	// searchResults records what the search endpoints return, so a grab from
+	// a non-admin account can be held to it. See SearchResultRegistry.
+	searchResults *SearchResultRegistry
 }
 
 func NewIndexerHandler(indexers *db.IndexerRepo, books *db.BookRepo, authors *db.AuthorRepo, profiles *db.MetadataProfileRepo, searcher indexerSearcher, settings *db.SettingsRepo, blocklist *db.BlocklistRepo) *IndexerHandler {
@@ -726,11 +729,12 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	out := make([]searchDecision, len(decisions))
 	for i, d := range decisions {
 		res := results[i]
-		// Strip the indexer apikey the search path signs into the download URL
-		// before it reaches the client. Interactive search is available to
-		// non-admin users, so returning the signed URL leaks the shared indexer
-		// credential; the grab handler re-signs from the indexer id server-side.
-		res.NZBURL = newznab.RedactDownloadURL(res.NZBURL)
+		// Strip every credential (the indexer apikey the search path signs in,
+		// a Jackett key, a tracker passkey) from the download URL, GUID and
+		// detail link before they reach the client. Interactive search is
+		// available to non-admin users; the grab takes the real URL from the
+		// search result registry.
+		redactSearchResult(&res)
 		out[i] = searchDecision{
 			SearchResult: res,
 			Approved:     d.Approved,
@@ -745,6 +749,11 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+
+	// Every result is grabbable, approved or not: a rejection only labels it.
+	// The registry keeps the raw URL, before the redaction above, so a grab
+	// never depends on the URL the client posts back.
+	h.searchResults.remember(results)
 
 	// Remember the most recent debug payload so the UI can re-fetch it
 	// (e.g. after a page reload) without having to re-run the search.
@@ -804,10 +813,11 @@ func (h *IndexerHandler) SearchQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := h.searcher.SearchQuery(r.Context(), idxs, query)
-	// Strip the indexer apikey from each download URL before returning to the
-	// client; the grab handler re-signs server-side (see SearchBook).
+	// Recorded raw, before the redaction below: see SearchBook.
+	h.searchResults.remember(results)
+	// Strip every credential before returning to the client (see SearchBook).
 	for i := range results {
-		results[i].NZBURL = newznab.RedactDownloadURL(results[i].NZBURL)
+		redactSearchResult(&results[i])
 	}
 	writeJSON(w, http.StatusOK, results)
 }

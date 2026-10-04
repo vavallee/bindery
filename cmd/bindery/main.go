@@ -271,6 +271,12 @@ func main() {
 	// the TCP peer is then the proxy's own private address.
 	auth.WarnIfLocalOnlyWithoutTrustedProxy(bootAuthMode, trustedCIDRs)
 
+	// BINDERY_ALLOWED_HOSTS is read per request, so a bad entry would
+	// otherwise be ignored in silence, and a bare "*" (the Host check's
+	// opt out) deserves a line of its own whatever the boot mode: the mode
+	// can be switched to local-only or disabled at runtime.
+	auth.WarnAllowedHostsConfig()
+
 	// Same shape, different assumption: an operator who added a second account
 	// through Settings has no way to learn that the two accounts share one
 	// library until they look at it. A count read failure is not worth a line
@@ -671,10 +677,15 @@ func main() {
 		WithEditionHydration(editionRepo).
 		WithRoots(libraryRoots).
 		WithLifetimeCtx(appCtx)
+	// Interactive search records what it returns here, and a grab from a
+	// non-admin account is held to it: it can grab a search result, not make
+	// Bindery fetch a URL of its own choosing.
+	searchResults := api.NewSearchResultRegistry()
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, metadataProfileRepo, idxSearcher, settingsRepo, blocklistRepo).
 		WithAliases(authorAliasRepo).
 		WithQualityProfiles(qualityProfileRepo).
-		WithEditions(editionRepo)
+		WithEditions(editionRepo).
+		WithSearchResults(searchResults)
 	if clients, err := dlClientRepo.List(ctxBoot); err == nil {
 		downloader.RefreshDownloadClientHealthAsync(context.Background(), bgJobs, downloadHealth, clients, cfg.DownloadDir, cfg.AudiobookDownloadDir, cfg.DownloadPathRemap)
 	} else {
@@ -692,7 +703,8 @@ func main() {
 		WithNotifier(notif).
 		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir).
 		WithDownloadPathRemap(cfg.DownloadPathRemap).
-		WithIndexers(indexerRepo)
+		WithIndexers(indexerRepo).
+		WithSearchResults(searchResults)
 	// Manual/bulk import may read from the download dirs as well as the library
 	// roots — a Readarr/qBittorrent migrant's backlog sits in the download dir,
 	// not the library (#1373). These are trusted, configured source dirs the
@@ -1058,12 +1070,13 @@ func main() {
 		// History
 		r.Get("/history", historyHandler.List)
 		r.Delete("/history/{id}", historyHandler.Delete)
+		// Blocklisting a release from history stays open to every user: the
+		// handler 404s unless the caller owns the history event, so a user
+		// can only add entries for their own grabs.
 		r.Post("/history/{id}/blocklist", historyHandler.Blocklist)
 
-		// Blocklist
-		r.Get("/blocklist", blocklistHandler.List)
-		r.Delete("/blocklist/bulk", blocklistHandler.BulkDelete)
-		r.Delete("/blocklist/{id}", blocklistHandler.Delete)
+		// Blocklist, admin only (see registerBlocklistRoutes).
+		registerBlocklistRoutes(r, blocklistHandler)
 
 		// Notifications — Notification.Headers carries arbitrary HTTP
 		// headers (often auth tokens for ntfy / Gotify / webhook routing).
@@ -1079,15 +1092,9 @@ func main() {
 			r.Post("/notification/{id}/test", notificationHandler.Test)
 		})
 
-		// Quality Profiles — reads available to all; mutations admin-only.
-		r.Get("/qualityprofile", qualityProfileHandler.List)
-		r.Get("/qualityprofile/{id}", qualityProfileHandler.Get)
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireAdmin)
-			r.Post("/qualityprofile", qualityProfileHandler.Create)
-			r.Put("/qualityprofile/{id}", qualityProfileHandler.Update)
-			r.Delete("/qualityprofile/{id}", qualityProfileHandler.Delete)
-		})
+		// Quality profiles: reads open, writes admin only (see
+		// registerQualityProfileRoutes).
+		registerQualityProfileRoutes(r, qualityProfileHandler)
 
 		// Settings — reads available to all; mutations admin-only.
 		r.Get("/setting", settingsHandler.List)
@@ -1173,14 +1180,9 @@ func main() {
 			r.Delete("/customformat/{id}", customFormatHandler.Delete)
 		})
 
-		// Metadata profiles — per-user (owner_user_id from migration 025).
-		// Reads stay available to all authenticated users; the cross-user
-		// Get/Update/Delete IDOR is closed by D1's env-gated handler check.
-		r.Get("/metadataprofile", metadataProfileHandler.List)
-		r.Post("/metadataprofile", metadataProfileHandler.Create)
-		r.Get("/metadataprofile/{id}", metadataProfileHandler.Get)
-		r.Put("/metadataprofile/{id}", metadataProfileHandler.Update)
-		r.Delete("/metadataprofile/{id}", metadataProfileHandler.Delete)
+		// Metadata profiles: reads open, writes admin only (see
+		// registerMetadataProfileRoutes).
+		registerMetadataProfileRoutes(r, metadataProfileHandler)
 
 		// Backups — Restore replaces the live database (staged now, swapped
 		// in by db.ApplyPendingRestore at the next start), Delete removes
@@ -1644,17 +1646,28 @@ func (p *dbUserProvisioner) ResolveOrProvisionUser(ctx context.Context, username
 // metric labels — using the raw URL would create unbounded label cardinality
 // because every distinct id becomes a separate time series.
 //
-// Falls back to the URL path before any handler has matched the route, which
-// happens for 404s. Strip query strings — they're already excluded by URL.Path
-// but the comment is here for the reader.
+// When chi matched nothing (an unknown method, or a known method with no route
+// for the path, both answered 405 by chi) it returns the fixed unmatchedRoute,
+// never the raw path. The metrics middleware runs before auth, so a raw path
+// label would let any anonymous client mint a permanent series per request.
+// Unknown GETs still report a template: "/*" for the SPA catch-all and
+// "/api/v1/*" for misses inside the API subrouter. With BINDERY_URL_BASE set,
+// the inner router shares the outer router's route context, so templates
+// carry the prefix and a root level 405 reports the mount pattern (e.g.
+// "/bindery/*") rather than unmatchedRoute; still one fixed value. Unknown
+// methods under a prefix are rejected by the outer router and never reach
+// the metrics middleware at all.
 func routeTemplate(r *http.Request) string {
 	if rc := chi.RouteContext(r.Context()); rc != nil {
 		if pat := rc.RoutePattern(); pat != "" {
 			return pat
 		}
 	}
-	return r.URL.Path
+	return unmatchedRoute
 }
+
+// unmatchedRoute is the route label for requests no chi pattern matched.
+const unmatchedRoute = "unmatched"
 
 // buildTelemetryGatherer returns a telemetry.Gatherer closure that reads the
 // current per-subsystem configuration counts directly from SQLite. Every

@@ -332,7 +332,7 @@ func (n *Notifier) send(ctx context.Context, notif *models.Notification, payload
 	// the validator, and DNS can shift after a row was saved.
 	if n.validate != nil {
 		if err := n.validate(notif.URL); err != nil {
-			return fmt.Errorf("url not allowed: %w", httpsec.RedactURLError(err))
+			return fmt.Errorf("url not allowed: %w", redactWebhookError(err))
 		}
 	}
 
@@ -396,7 +396,7 @@ func (n *Notifier) send(ctx context.Context, notif *models.Notification, payload
 
 	req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("build request: %w", httpsec.RedactURLError(err))
+		return fmt.Errorf("build request: %w", redactWebhookError(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", useragent.Get())
@@ -416,7 +416,7 @@ func (n *Notifier) send(ctx context.Context, notif *models.Notification, payload
 		// The *url.Error prints the full target URL, and a Discord, Slack or
 		// Telegram webhook URL is itself the credential. Send logs this error
 		// and the test endpoint returns it, so scrub it here.
-		return fmt.Errorf("send webhook: %w", httpsec.RedactURLError(err))
+		return fmt.Errorf("send webhook: %w", redactWebhookError(err))
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)

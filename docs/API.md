@@ -23,6 +23,8 @@ A request is allowed if **any** of the following holds:
 4. The request carries a valid `bindery_session` cookie.
 5. Auth mode is **Proxy** and a trusted upstream forwards `X-Forwarded-User` matching a Bindery account (see [auth-proxy.md](auth-proxy.md)).
 
+Rules 1 and 2 also require the host name the request was sent to (the `Host` header, plus `X-Forwarded-Host` from a trusted proxy) to be one a site on the internet cannot have: an IP address, `localhost`, a single label name such as `bindery` or `nas`, a name under `.local`, `.lan`, `.home.arpa`, `.internal` or `.localdomain`, the host of `BINDERY_OIDC_REDIRECT_BASE_URL`, or a name listed in `BINDERY_ALLOWED_HOSTS`. Any other name gets `403` with an error naming that variable, and `GET /api/v1/auth/status` reports `authenticated: false` with `hostNotAllowed: true` and the name in `refusedHost`. The OPDS feed applies the same rule to its own mode grants and answers a refused name with its usual `401` Basic challenge. An API key or a session is accepted under any name. This stops a web page from reaching Bindery through the visitor's browser by pointing its own DNS name at Bindery's address (DNS rebinding). See [DEPLOYMENT.md](DEPLOYMENT.md#host-names-in-local-only-and-disabled-mode).
+
 Otherwise the server returns `401`. Browser sessions also need a CSRF double-submit token on mutating requests (anything other than `GET`, `HEAD` and `OPTIONS`); API-key clients are exempt from CSRF.
 
 Non-browser clients (curl, scripts, mobile apps) authenticating via API key do **not** need to send an `X-Requested-With: bindery-ui` header — that header is required only for browser sessions to satisfy the CSRF gate. The auth endpoints listed above (`/auth/login`, `/auth/logout`, `/auth/setup`, `/auth/status`, `/auth/csrf`) are exempt from the `X-Requested-With` check entirely, since there is no session to protect at that stage.
@@ -437,7 +439,9 @@ GET    /api/v1/queue                              active downloads with live dow
        -> {"items":[..],"partial":true,"staleClients":[{"clientId":1,"name":"qBit","message":".."}]}
                                                   partial means a download client did not answer in time, so items is short
 POST   /api/v1/queue/grab                         submit a search result to the download client
-                                                  post `nzbUrl` exactly as the search returned it; see below
+                                                  a guid a recent search returned is grabbed from the server's
+                                                  record (raw URL) for every caller; otherwise admins and the
+                                                  API key use the posted nzbUrl and a user account is refused
 POST   /api/v1/queue/{id}/retry-import           retry an importFailed/importBlocked item without re-downloading
 POST   /api/v1/queue/{id}/retry                   re-send a failed item's release to the download client (no re-search)
 POST   /api/v1/queue/bulk-retry                   retry many; {"ids":[..]}; per id {"ok":true,"action":"import"|"resend"}
@@ -471,17 +475,14 @@ DELETE /api/v1/blocklist/{id}                     remove an entry
 DELETE /api/v1/blocklist/bulk                     bulk remove
 ```
 
-#### Download URLs in responses carry no credentials
+#### Release URLs in responses carry no credentials
 
-Search, queue and pending responses never return a credential inside
-`nzbUrl`. The indexer `apikey` is removed and added back server side on grab.
-Any other credential parameter (a Jackett `jackett_apikey`, a tracker
-`passkey`, `torrent_pass`, `authkey` or `rsskey`, a `token` or `signature`) has
-its value replaced with an opaque `bindery-sealed.…` string that only this
-Bindery process can open, and only for the same host. Post the URL back to
-`/queue/grab` unchanged. Sealed values do not survive a restart: a grab of a
-result from before the restart answers `400` with "this search result has
-expired, search again".
+Search, queue, pending and grab responses strip every credential parameter
+from `nzbUrl`, `guid` and `infoUrl`: the indexer `apikey`, `jackett_apikey`,
+`passkey`, `torrent_pass`, `authkey`, `rsskey`, `token`, `signature` and the
+rest of the list in `internal/httpsec/redact.go`, plus `r` inside a newznab
+`getnzb` link. A grab of a GUID a recent search returned uses the server's own
+record of the raw URL, so post `guid` back exactly as the search returned it.
 
 #### Download client credentials are write-only
 

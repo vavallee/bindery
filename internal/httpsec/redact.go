@@ -67,11 +67,25 @@ var secretPathPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(/bot)\d+:[A-Za-z0-9_-]+`),
 	// Slack incoming webhooks and workflow triggers.
 	regexp.MustCompile(`(?i)(hooks\.slack\.com/(?:services|workflows|triggers)/)[^?#\s"'<>]+`),
+	// Home Assistant: /api/webhook/<webhook_id> (singular, unlike Discord).
+	regexp.MustCompile(`(?i)(/api/webhook/)[^/?#\s"'<>]+`),
+	// Microsoft Teams connectors: <tenant>.webhook.office.com/webhookb2/...
+	// and the older outlook.office.com/webhook/...; the whole path is the key.
+	regexp.MustCompile(`(?i)((?:webhook\.office\.com/webhookb2|outlook\.office\.com/webhook)/)[^?#\s"'<>]+`),
+	// Apprise API stateful notify: /notify/<config key>.
+	regexp.MustCompile(`(?i)(/notify/)[^/?#\s"'<>]+`),
+	// ntfy.sh: the topic name is the only thing guarding a public topic.
+	regexp.MustCompile(`(?i)(ntfy\.sh/)[^/?#\s"'<>]+`),
+	// newznab-tmux download links: getnzb/<guid>.nzb&i=<uid>&r=<apikey> or
+	// getnzb?id=<guid>&r=<apikey>. "r" is too short a name to treat as secret
+	// everywhere, so it is only redacted inside a getnzb link.
+	regexp.MustCompile(`(?i)(/getnzb[^#\s"'<>]*?[?&;]r=)[^&;#\s"'<>]+`),
 }
 
 // RedactSecrets strips credentials from an arbitrary string: the value of any
 // secret query parameter (see secretParamNames) and the token in a known
-// webhook path (Discord, Telegram, Slack). It is meant for error strings and
+// webhook or indexer URL shape (Discord, Telegram, Slack, Home Assistant,
+// Teams, Apprise, ntfy.sh, newznab getnzb links). It is meant for error strings and
 // log lines that may embed an upstream request URL (e.g. a wrapped
 // *url.Error), so the secret is replaced with REDACTED before the error is
 // logged, stored on a download row, or surfaced to a client.
@@ -104,37 +118,74 @@ func RedactURLError(err error) error {
 	return err
 }
 
-// MapSecretQueryParams rewrites the secret parameters of a raw (still escaped)
-// query string and leaves every other parameter byte for byte as it was, in
-// its original order. fn receives the parameter's name as written and its raw
-// value, and returns the raw value to put back, or keep=false to drop the
-// parameter. Parameters with an empty value are passed through untouched.
+// StripURLSecrets removes every secret parameter, name and value, from a URL
+// that is about to leave the server: a download link, GUID or detail link in a
+// search, queue or pending response. Every other parameter stays byte for byte
+// as it was, in its original order, and a URL with nothing to remove is
+// returned unchanged, so stripping twice is the same as stripping once.
 //
-// It exists for callers that must change a URL's credentials without
-// re-encoding the rest of it: url.Values.Encode sorts and re-escapes every
-// parameter, which is harmless for display but not for a URL that will be
-// fetched again.
-func MapSecretQueryParams(rawQuery string, fn func(name, rawValue string) (newRawValue string, keep bool)) string {
-	if rawQuery == "" {
-		return rawQuery
+// Inside a newznab getnzb link "r" is the API key too, including the
+// getnzb/<guid>.nzb&i=<uid>&r=<apikey> shape where the parameters follow an &
+// in the path. A string that does not parse as a URL is passed through
+// RedactSecrets instead.
+//
+// The result does not authenticate. The grab handler takes the real URL from
+// its own record of what the search returned; see api.SearchResultRegistry.
+func StripURLSecrets(raw string) string {
+	if raw == "" {
+		return raw
 	}
-	parts := strings.Split(rawQuery, "&")
-	out := parts[:0]
+	u, err := url.Parse(raw)
+	if err != nil {
+		return RedactSecrets(raw)
+	}
+	getnzb := strings.Contains(strings.ToLower(u.Path), "/getnzb")
+	isSecret := func(name string) bool {
+		return IsSecretParam(name) || (getnzb && strings.EqualFold(name, "r"))
+	}
+	changed := false
+	if getnzb {
+		if base, params, ok := strings.Cut(u.Path, "&"); ok {
+			if kept := stripParams(params, isSecret); kept != params {
+				changed = true
+				u.Path, u.RawPath = base, ""
+				if kept != "" {
+					u.Path += "&" + kept
+				}
+			}
+		}
+	}
+	if kept := stripParams(u.RawQuery, isSecret); kept != u.RawQuery {
+		changed = true
+		u.RawQuery = kept
+	}
+	if !changed {
+		return raw
+	}
+	return u.String()
+}
+
+// stripParams drops every &-separated name=value pair whose (unescaped) name
+// isSecret reports, leaving the rest exactly as written.
+func stripParams(params string, isSecret func(string) bool) string {
+	if params == "" {
+		return params
+	}
+	parts := strings.Split(params, "&")
+	kept := make([]string, 0, len(parts))
 	for _, part := range parts {
-		rawName, rawValue, hasValue := strings.Cut(part, "=")
+		rawName, _, _ := strings.Cut(part, "=")
 		name, err := url.QueryUnescape(rawName)
 		if err != nil {
 			name = rawName
 		}
-		if !hasValue || rawValue == "" || !IsSecretParam(name) {
-			out = append(out, part)
+		if isSecret(name) {
 			continue
 		}
-		v, keep := fn(name, rawValue)
-		if !keep {
-			continue
-		}
-		out = append(out, rawName+"="+v)
+		kept = append(kept, part)
 	}
-	return strings.Join(out, "&")
+	if len(kept) == len(parts) {
+		return params
+	}
+	return strings.Join(kept, "&")
 }

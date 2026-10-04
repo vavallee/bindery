@@ -96,3 +96,23 @@ func TestRedactSecrets_PathTokens(t *testing.T) {
 		})
 	}
 }
+
+// Shapes the log export sees outside the notifier's own error scrubbing.
+func TestRedactSecrets_MoreWebhookAndIndexerShapes(t *testing.T) {
+	for _, in := range []string{
+		`Post "https://ha.example/api/webhook/S3CRETVALUE": EOF`,
+		`https://contoso.webhook.office.com/webhookb2/1111-2222@3333-4444/IncomingWebhook/S3CRETVALUE/5555-6666`,
+		`https://outlook.office.com/webhook/1111@2222/IncomingWebhook/S3CRETVALUE/3333`,
+		`https://ntfy.sh/S3CRETVALUE`,
+		`http://apprise:8000/notify/S3CRETVALUE`,
+		`https://indexer.example/getnzb/abc.nzb&i=42&r=S3CRETVALUE`,
+		`https://indexer.example/getnzb?id=abc&r=S3CRETVALUE`,
+	} {
+		if got := RedactSecrets(in); strings.Contains(got, "S3CRETVALUE") {
+			t.Errorf("RedactSecrets(%q) = %q, secret survived", in, got)
+		}
+	}
+	if in := "https://tracker.example/browse?r=1&page=2"; RedactSecrets(in) != in {
+		t.Errorf("r= outside a getnzb link must be left alone: %q", RedactSecrets(in))
+	}
+}

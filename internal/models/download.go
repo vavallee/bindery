@@ -156,6 +156,28 @@ func (d *Download) BlocksAutoRegrab() bool {
 	return !d.Status.IsDeadForAutoRegrab() && !d.IsOrphanedImport()
 }
 
+// DeadRegrabCooldown is how long a failed download row keeps blocking the
+// scheduler's automatic re-grab of the same release, measured from the moment
+// the row died (models.Download.DeadSince, dead_at).
+//
+// A finished attempt must not block a re-grab for good (#2710): the causes are
+// usually transient, and a release poisoned by one indexer 429 stayed
+// ungrabbable until the user deleted the queue row by hand. But it must not be
+// retried on every sweep either, because a release that fails at the download
+// client fails again the moment it is re-sent, and only the stall path
+// blocklists. Six hours sits between the two: shorter than the default twelve
+// hour search cadence, so the ordinary next sweep of that book retries the
+// release, and longer than the one hour minimum cadence, so the tightest
+// configured sweep still cannot hammer the client with it.
+//
+// A person clicking Grab is not bound by this for their own rows: the manual
+// path (api.grab) retries a dead row of theirs immediately. Under tenancy it
+// is bound by it for another user's failed row, which it claims on exactly
+// the scheduler's terms (db.DownloadRepo.RetryDeadForAutoGrab), so a failed
+// row neither pins a release against other users for good nor can be taken
+// from its owner the moment it fails.
+const DeadRegrabCooldown = 6 * time.Hour
+
 // DeadSince is when this download's last attempt ended, for a row that is
 // dead. That is DeadAt, the stamp the repo writes at the moment of death
 // (#2710).
