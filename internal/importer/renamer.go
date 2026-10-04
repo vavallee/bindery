@@ -1604,6 +1604,19 @@ var ErrDownloadDirIsSymlink = errors.New("download folder is a symlink")
 // place, where a media server reading the library would follow it.
 var ErrLinkLeftInLibrary = errors.New("imported folder still holds a symlink or special file")
 
+// refuseSymlinkedDownloadDir returns ErrDownloadDirIsSymlink when src is
+// itself a symlink (Lstat). Every download placement mode calls it, not only
+// move: copying or hardlinking through the link would import whatever it
+// names. An Lstat error returns nil and is left to the caller's own stat,
+// which already reports a missing source. Library internal moves
+// (reorganize) never call it.
+func refuseSymlinkedDownloadDir(src string) error {
+	if li, err := os.Lstat(src); err == nil && li.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%w: %s", ErrDownloadDirIsSymlink, src)
+	}
+	return nil
+}
+
 // maxReportedEntries caps how many non-regular entries a log line names.
 const maxReportedEntries = 10
 

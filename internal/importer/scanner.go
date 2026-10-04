@@ -1780,6 +1780,20 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				audiobookSource = src
 			}
 		}
+		// A download folder that is itself a symlink is refused in every
+		// mode: moving it would place the link, and copying or hardlinking
+		// through it would import whatever it names. A torrent client's file
+		// list reaches through such a link even though a plain walk would
+		// not. Per-file placement is left alone: there audiobookSource is the
+		// client's shared save path, which an operator may well reach
+		// through a link of their own.
+		if !usePerFile {
+			if err := refuseSymlinkedDownloadDir(audiobookSource); err != nil {
+				slog.Error("refusing audiobook import from a symlinked download folder", "path", audiobookSource, "mode", mode)
+				s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf("audiobook %s refused: %v", mode, err))
+				return
+			}
+		}
 		slog.Info("importing audiobook folder", "src", audiobookSource, "dst", destDir, "mode", mode, "perFile", usePerFile)
 		// Single-file audiobook releases (e.g. a lone .m4b from a torrent) give
 		// us a file path rather than a folder. MoveDir/CopyDir/HardlinkDir all

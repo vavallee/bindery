@@ -303,3 +303,62 @@ func TestScanLibrary_SymlinkedFileIsNotReconciled(t *testing.T) {
 		t.Fatalf("book paths = %q / %q, want none", got.FilePath, got.EbookFilePath)
 	}
 }
+
+// TestImport_SymlinkedDownloadFolderRefusedInEveryMode: a job folder that is
+// itself a symlink is refused whatever the import mode, not only for move.
+// Copying or hardlinking through it would import whatever the link names.
+// A torrent client's file list is what reaches the folder (a plain walk would
+// not descend into the link), so this models one: a real save path holding a
+// content folder that is a link.
+func TestImport_SymlinkedDownloadFolderRefusedInEveryMode(t *testing.T) {
+	for _, mode := range []string{"move", "copy", "hardlink"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newRoutingFixture(t, models.MediaTypeAudiobook, map[string]string{
+				"import.mode": mode,
+			})
+			real := filepath.Join(t.TempDir(), "elsewhere")
+			mustWrite(t, filepath.Join(real, "part1.mp3"), "track one")
+			mustWrite(t, filepath.Join(real, "part2.mp3"), "track two")
+			savePath := t.TempDir()
+			job := filepath.Join(savePath, "Author A - Title T")
+			symlinkOrSkip(t, real, job)
+			dl := newPairDownload(t, f.downloads, f.book, models.MediaTypeAudiobook, f.ctx)
+
+			f.s.tryImportInternal(f.ctx, dl, savePath, "", "", "", nil,
+				[]string{filepath.Join(job, "part1.mp3"), filepath.Join(job, "part2.mp3")})
+
+			assertNoFiles(t, f.abDir, "audiobook library")
+			assertStatus(t, f.downloads, f.ctx, dl.GUID, models.StateImportBlocked)
+			if _, err := os.Stat(filepath.Join(real, "part1.mp3")); err != nil {
+				t.Fatalf("link target disturbed: %v", err)
+			}
+		})
+	}
+}
+
+// TestDrop_SymlinkedDownloadFolderRefused: the drop folder handoff copies or
+// hardlinks a download into a sibling tool's ingest folder and refuses a
+// symlinked download folder the same way.
+func TestDrop_SymlinkedDownloadFolderRefused(t *testing.T) {
+	for _, mode := range []string{"copy", "hardlink"} {
+		t.Run(mode, func(t *testing.T) {
+			s, settings, downloads, _, _, dropDir, book, ctx := dropFixture(t, models.MediaTypeAudiobook)
+			setDropSettings(t, settings, ctx, map[string]string{
+				"import.drop_folder":    dropDir,
+				"import.drop_link_mode": mode,
+			})
+			real := filepath.Join(t.TempDir(), "elsewhere")
+			mustWrite(t, filepath.Join(real, "part1.mp3"), "track one")
+			mustWrite(t, filepath.Join(real, "part2.mp3"), "track two")
+			savePath := t.TempDir()
+			job := filepath.Join(savePath, "Author A - Title T")
+			symlinkOrSkip(t, real, job)
+			dl := newDropDownload(t, downloads, book, ctx)
+
+			s.tryImportInternal(ctx, dl, savePath, "", "", "", nil,
+				[]string{filepath.Join(job, "part1.mp3"), filepath.Join(job, "part2.mp3")})
+
+			assertNoFiles(t, dropDir, "drop folder")
+		})
+	}
+}

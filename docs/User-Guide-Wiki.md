@@ -989,13 +989,19 @@ Knowing the edges saves time:
 - **Per-user root folders.** Multi-user tenancy scopes authors, books, and
   downloads per user; root folders stay a shared, admin-managed pool
   ([multi-user.md](multi-user.md)).
-- **Serve linked files.** Linked *folders* work: a library root reached
-  through a symlink or bind mount, or an author folder linked to another disk
-  (`/books/Author -> /mnt/disk2/Author`), is followed everywhere, including
-  when it points outside your library folders, because only you can create
-  one. A linked *file* is not a book file: imports place regular files only
-  (a symlink inside a download never lands in your library, and a download
-  folder that is itself a symlink is refused), Library Scan and the
+- **Serve linked files.** Linked *folders* work for imports and downloads: a
+  library root reached through a symlink or bind mount, or an author folder
+  linked to another disk (`/books/Author -> /mnt/disk2/Author`), is written
+  through on import and followed when serving a book, including when it
+  points outside your library folders, because only you can create one.
+  Library Scan is the exception: it does not descend into any linked folder,
+  including a library folder that is itself a symlink, so books under a linked
+  author folder (or a linked library root) are not found by a scan. A bind
+  mount is not a link and scans normally. A linked *file* is
+  not a book file: imports place regular files only (a symlink inside a
+  download never lands in your library, and a download folder that is itself
+  a symlink is refused in every import mode, including the drop folder
+  handoff), Library Scan and the
   Audiobookshelf import do not attach one to a book, and downloads (browser,
   OPDS, the Calibre bridge) refuse to serve one. An audiobook zip leaves out
   any link inside the book folder, file or folder. Replace a linked file with

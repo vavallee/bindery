@@ -606,6 +606,13 @@ func (s *Scanner) dropPlaceAudiobook(ctx context.Context, downloadPath string, b
 			source = src
 		}
 	}
+	// Same rule as the managed import: a download folder that is itself a
+	// symlink is never copied or hard linked through.
+	if !usePerFile {
+		if err := refuseSymlinkedDownloadDir(source); err != nil {
+			return err
+		}
+	}
 	if usePerFile {
 		// Same basename-collision preflight as the managed import path
 		// (#2275). It matters more here, not less: dropPlaceFile removes an
