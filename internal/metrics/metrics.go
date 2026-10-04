@@ -76,7 +76,12 @@ func Handler() http.Handler {
 // and bindery_http_request_duration_seconds for each request. Pass a routeFn
 // closure that returns the route template (e.g. "/api/v1/book/{id}") rather
 // than the raw URL path — high-cardinality URL parameters would otherwise
-// blow up the label space. routeFn is called AFTER the inner handler runs
+// blow up the label space. routeFn must return a value from a bounded set
+// (never r.URL.Path): this middleware runs before auth, so any label derived
+// from raw request data is a series an anonymous client can mint at will.
+// The method label is normalized the same way (see normalizeMethod); the
+// status label is bounded by net/http, which rejects codes outside 100..999.
+// routeFn is called AFTER the inner handler runs
 // because route templates (e.g. via chi.RouteContext) are only populated
 // once routing has matched a pattern.
 func HTTPMiddleware(routeFn func(*http.Request) string) func(http.Handler) http.Handler {
@@ -89,11 +94,30 @@ func HTTPMiddleware(routeFn func(*http.Request) string) func(http.Handler) http.
 			if route == "" {
 				route = "other"
 			}
+			method := normalizeMethod(r.Method)
 			dur := time.Since(start).Seconds()
-			httpRequestsTotal.WithLabelValues(r.Method, route, strconv.Itoa(rw.status)).Inc()
-			httpRequestDuration.WithLabelValues(r.Method, route).Observe(dur)
+			httpRequestsTotal.WithLabelValues(method, route, strconv.Itoa(rw.status)).Inc()
+			httpRequestDuration.WithLabelValues(method, route).Observe(dur)
 		})
 	}
+}
+
+// otherMethod is the method label for any request method outside the
+// standard set.
+const otherMethod = "OTHER"
+
+// normalizeMethod maps a request method onto a bounded label set. The
+// middleware runs before auth, and net/http accepts any token as a method,
+// so labelling by the raw value would let an unauthenticated client mint a
+// new permanent series per request. Methods are case sensitive, so "get" is
+// not GET and lands in OTHER.
+func normalizeMethod(m string) string {
+	switch m {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+		http.MethodDelete, http.MethodOptions, http.MethodConnect, http.MethodTrace:
+		return m
+	}
+	return otherMethod
 }
 
 // ObserveSchedulerRun records a background job run. result should be "ok" on

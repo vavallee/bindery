@@ -1644,17 +1644,23 @@ func (p *dbUserProvisioner) ResolveOrProvisionUser(ctx context.Context, username
 // metric labels — using the raw URL would create unbounded label cardinality
 // because every distinct id becomes a separate time series.
 //
-// Falls back to the URL path before any handler has matched the route, which
-// happens for 404s. Strip query strings — they're already excluded by URL.Path
-// but the comment is here for the reader.
+// When chi matched nothing (an unknown method, or a known method with no route
+// for the path, both answered 405 by chi) it returns the fixed unmatchedRoute,
+// never the raw path. The metrics middleware runs before auth, so a raw path
+// label would let any anonymous client mint a permanent series per request.
+// Unknown GETs still report a template: "/*" for the SPA catch-all and
+// "/api/v1/*" for misses inside the API subrouter.
 func routeTemplate(r *http.Request) string {
 	if rc := chi.RouteContext(r.Context()); rc != nil {
 		if pat := rc.RoutePattern(); pat != "" {
 			return pat
 		}
 	}
-	return r.URL.Path
+	return unmatchedRoute
 }
+
+// unmatchedRoute is the route label for requests no chi pattern matched.
+const unmatchedRoute = "unmatched"
 
 // buildTelemetryGatherer returns a telemetry.Gatherer closure that reads the
 // current per-subsystem configuration counts directly from SQLite. Every
