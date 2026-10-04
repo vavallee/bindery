@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -361,5 +363,111 @@ func TestFindExisting_SkipsTinyFile(t *testing.T) {
 	writeNovellaEpub(t, real)
 	if got := NewLibrarySnapshot(dir, dir).FindExisting(context.Background(), "Die 6. Geisel", "James Patterson", models.MediaTypeEbook); got != real {
 		t.Errorf("FindExisting = %q, want the real epub %q", got, real)
+	}
+}
+
+// TestScanLibrary_TinyFileTierGates covers the other two reconcile tiers:
+// a file under the floor is refused by the ASIN tier and the series position
+// tier exactly as by the title tier, and a book sized file with the same name
+// is still claimed by each, so the gate and not the fixture is what refuses.
+func TestScanLibrary_TinyFileTierGates(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// file is the name under the library root; seed links the book so
+		// only the tier under test can match it.
+		file string
+		seed func(t *testing.T, ctx context.Context, s *Scanner, database *sql.DB, book *models.Book)
+	}{
+		{
+			name: "asin",
+			file: "Unrelated Name [B0TINYASIN].txt",
+			seed: func(t *testing.T, ctx context.Context, _ *Scanner, database *sql.DB, book *models.Book) {
+				if _, err := database.ExecContext(ctx, `UPDATE books SET asin = ? WHERE id = ?`, "B0TINYASIN", book.ID); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "series position",
+			file: "[Stormlight Archive, Book 1] The Way of Kings - Brandon Sanderson.txt",
+			seed: func(t *testing.T, ctx context.Context, s *Scanner, database *sql.DB, book *models.Book) {
+				series := db.NewSeriesRepo(database)
+				s.WithSeriesRepo(series)
+				ser := &models.Series{ForeignID: "manual:stormlight", Title: "Stormlight Archive"}
+				if err := series.Create(ctx, ser); err != nil {
+					t.Fatal(err)
+				}
+				if err := series.LinkBook(ctx, ser.ID, book.ID, "1", true); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		for _, tiny := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s tiny=%v", tc.name, tiny), func(t *testing.T) {
+				database, err := db.OpenMemory()
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { database.Close() })
+				ctx := context.Background()
+				books := db.NewBookRepo(database)
+				authors := db.NewAuthorRepo(database)
+				libDir := t.TempDir()
+				s := NewScanner(db.NewDownloadRepo(database), db.NewDownloadClientRepo(database), books, authors,
+					db.NewHistoryRepo(database), libDir, "", "", "", "")
+				author := &models.Author{ForeignID: "ol:north", Name: "Ursula North", SortName: "North, Ursula"}
+				if err := authors.Create(ctx, author); err != nil {
+					t.Fatal(err)
+				}
+				book := &models.Book{ForeignID: "ol:qg", AuthorID: author.ID, Title: "Quantum Gardens",
+					Status: models.BookStatusWanted, Monitored: true, Genres: []string{}}
+				if err := books.Create(ctx, book); err != nil {
+					t.Fatal(err)
+				}
+				tc.seed(t, ctx, s, database, book)
+				p := filepath.Join(libDir, tc.file)
+				if tiny {
+					writeTinyTxt(t, p)
+				} else if err := os.WriteFile(p, bookSized("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+
+				s.ScanLibrary(ctx)
+
+				files, err := books.ListFiles(ctx, book.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tiny && len(files) != 0 {
+					t.Errorf("tier attached a 1008 byte file: %+v", files)
+				}
+				if !tiny && (len(files) != 1 || files[0].Path != p) {
+					t.Errorf("tier did not attach the book sized file: %+v", files)
+				}
+			})
+		}
+	}
+}
+
+// TestRootFormat names each scanned root's format only when the roots are
+// separate folders, and nothing for a combined or unknown root.
+func TestRootFormat(t *testing.T) {
+	separate := NewScanner(nil, nil, nil, nil, nil, "/data/books", "/data/audiobooks", "", "", "")
+	combined := NewScanner(nil, nil, nil, nil, nil, "/data/media", "", "", "", "")
+	for _, tc := range []struct {
+		s    *Scanner
+		root string
+		want string
+	}{
+		{separate, "/data/books", models.MediaTypeEbook},
+		{separate, "/data/audiobooks/", models.MediaTypeAudiobook},
+		{separate, "/data/elsewhere", ""},
+		{separate, "", ""},
+		{combined, "/data/media", ""},
+	} {
+		if got := tc.s.RootFormat(tc.root); got != tc.want {
+			t.Errorf("RootFormat(%q) = %q, want %q", tc.root, got, tc.want)
+		}
 	}
 }

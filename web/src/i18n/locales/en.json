@@ -233,7 +233,10 @@
       "inPlace": "Files stay where they are. Picking a book already in your library leaves its owner and monitoring as they are.",
       "adoptAs": "Adopt as {{title}}",
       "pickFirst": "Pick a book",
-      "alreadyImported": "This book already has its files. Adopting adds these alongside them, and nothing is replaced or deleted."
+      "alreadyImported": "This book already has its files. Adopting adds these alongside them, and nothing is replaced or deleted.",
+      "conflictLabel": "Author conflict",
+      "conflict": "The files say {{files}}, but the folder says {{folder}}. A book by {{folder}} is only a look alike, so none is chosen for you.",
+      "folderAuthorOnly": "Folder author only"
     },
     "col": {
       "book": "Book",
@@ -307,7 +310,8 @@
       "noTitle": "No title could be read",
       "noTitleMatch": "No close title by {{author}}",
       "noTitleMatchNoAuthor": "No close title in your library",
-      "tooSmall": "Too small to be a book"
+      "tooSmall": "Too small to be a book",
+      "authorConflict": "Files say {{files}}, folder says {{folder}}"
     },
     "group": {
       "label": "{{author}}, {{count}} books",

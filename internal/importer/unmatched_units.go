@@ -101,6 +101,9 @@ type unmatchedScanFile struct {
 	// layoutTitle is the cleaned book folder name, "" when the file has
 	// none. Candidate ranking reads the volume number from it (#2860).
 	layoutTitle string
+	// tags are the file's audio tags as read, zero for a file without them.
+	// Evidence for evidenceFor (#2942).
+	tags AudioTags
 }
 
 // unmatchedCollector gathers unmatched files up to maxUnmatchedFiles.
@@ -118,10 +121,12 @@ func (c *unmatchedCollector) add(f unmatchedScanFile) {
 }
 
 // unmatchedGroup is one unit before candidates are ranked: the stored shape
-// plus the member whose parse speaks for the unit.
+// plus the member whose parse speaks for the unit, and what its files say
+// against its author folder.
 type unmatchedGroup struct {
-	unit db.UnmatchedUnitScan
-	rep  unmatchedScanFile
+	unit     db.UnmatchedUnitScan
+	rep      unmatchedScanFile
+	evidence unitEvidence
 }
 
 // scanRootFor returns the longest root that contains path, or "".
@@ -290,7 +295,16 @@ func groupUnmatched(files []unmatchedScanFile, roots []string) (groups []unmatch
 			rep.layoutTitle = rep.title
 		}
 		u.ParsedTitle, u.ParsedAuthor, u.Reason = rep.title, rep.author, rep.reason
-		groups = append(groups, unmatchedGroup{unit: u, rep: rep})
+		// Files that name another author than their folder are recorded as
+		// what they name, and FilesAuthor tells the adoption page (#2942).
+		ev := evidenceFor(a.members, u.AuthorFolder, rep.layoutTitle)
+		if ev.conflict() {
+			u.ParsedAuthor, u.FilesAuthor = ev.author, ev.author
+			if ev.title != "" {
+				u.ParsedTitle = ev.title
+			}
+		}
+		groups = append(groups, unmatchedGroup{unit: u, rep: rep, evidence: ev})
 	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].unit.UnitPath < groups[j].unit.UnitPath })
 	if len(groups) > maxUnmatchedUnits {
@@ -475,9 +489,11 @@ type unitCounts struct {
 }
 
 // recordUnmatchedUnits groups a finished scan's unmatched files and stores
-// them. candidatesFor ranks suggestions for one unit's representative parse.
+// them. candidatesFor ranks suggestions for one unit's representative parse
+// and its files' evidence, and returns the unit's reason when the evidence
+// changes it ("" keeps the representative's).
 func (s *Scanner) recordUnmatchedUnits(ctx context.Context, c *unmatchedCollector, roots, rootsWithFiles []string, startedAt time.Time,
-	candidatesFor func(title, layoutTitle, author, layoutAuthor string) []db.UnmatchedCandidate) unitCounts {
+	candidatesFor func(rep unmatchedScanFile, ev unitEvidence) ([]db.UnmatchedCandidate, string)) unitCounts {
 	if s.unmatchedUnits == nil {
 		return unitCounts{}
 	}
@@ -486,9 +502,14 @@ func (s *Scanner) recordUnmatchedUnits(ctx context.Context, c *unmatchedCollecto
 	for i, g := range groups {
 		units[i] = g.unit
 		// Nothing is suggested for a file too small to be a book: a
-		// suggestion is an invitation to adopt it (#2944).
+		// suggestion is an invitation to adopt it, and its reason stays
+		// too_small whatever the evidence says (#2944).
 		if g.rep.reason != unmatchedReasonTooSmall {
-			units[i].Candidates = candidatesFor(g.rep.title, g.rep.layoutTitle, g.rep.author, g.rep.layoutAuthor)
+			var reason string
+			units[i].Candidates, reason = candidatesFor(g.rep, g.evidence)
+			if reason != "" {
+				units[i].Reason = reason
+			}
 		}
 	}
 	truncated := c.truncated || unitsTruncated

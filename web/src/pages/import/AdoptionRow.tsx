@@ -8,7 +8,7 @@ import MoreMenu, { type MoreMenuItem } from '../../components/MoreMenu'
 import { formatBytes } from '../../util/format'
 import { adoptionHint, unitDisplayName } from './adoptionHint'
 import { StatusPill } from './AdoptionEditor'
-import { alreadySettled, inOtherFormatRoot, matchStrength, shortHint } from './adoptionMatch'
+import { alreadySettled, inOtherFormatRoot, matchStrength, preselectable, shortHint } from './adoptionMatch'
 import type { Outcome } from './adoptionReducer'
 import { rowCls, cellCls, actionCellCls } from './adoptionStyles'
 
@@ -41,8 +41,10 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
 ) {
   const { t } = useTranslation()
   const name = unitDisplayName(item)
-  const top = item.candidates[0]
-  const strength = matchStrength(item)
+  // With an author conflict a folder author's look alike is not offered here;
+  // the row says which authors disagree instead (#2942).
+  const top = preselectable(item)
+  const strength = matchStrength(item, top)
   const full = adoptionHint(item, t)
   const tooltip = [full.sentence, full.tooltip].filter(Boolean).join('\n')
   const size = formatBytes(item.sizeBytes)
