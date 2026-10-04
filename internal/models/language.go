@@ -33,10 +33,12 @@ func ParseAllowedLanguages(csv string) []string {
 	return out
 }
 
-// The three tables below are the only ISO 639 tables in the codebase, and
-// NormalizeLanguageCode is the only thing that reads them. There used to be
-// four such tables (here, in the indexer's release filter, and twice over in
-// the Audible ingestion paths) and they disagreed with each other, so the same
+// The four tables below are the only ISO 639 tables in the codebase, and
+// NormalizeLanguageCode is the only thing that reads them. (languageNames,
+// further down, is a display table keyed by the codes they produce.) There
+// used to be four competing copies of these (here, in the indexer's release
+// filter, and twice over in the Audible ingestion paths) and they disagreed
+// with each other, so the same
 // language filtered differently depending on which code path happened to be
 // consulted. Add a language here and every caller learns it at once.
 
@@ -50,6 +52,19 @@ var iso639TwoLetterToB = map[string]string{
 	"sv": "swe", "no": "nor", "da": "dan", "pl": "pol", "cs": "cze",
 	"tr": "tur", "hi": "hin", "ko": "kor", "ar": "ara", "fi": "fin",
 	"el": "gre", "hu": "hun", "ro": "rum", "ca": "cat", "la": "lat",
+	// Bokmål and Nynorsk are the two written forms of Norwegian. Folded onto
+	// the macrolanguage, see iso639IndividualToMacro.
+	"nb": "nor", "nn": "nor",
+}
+
+// iso639IndividualToMacro folds an ISO 639-3 individual language onto the ISO
+// 639-2 macrolanguage Bindery stores, where both are in real use for the same
+// books. A Norwegian EPUB or catalogue record is often tagged "nob" (Bokmål)
+// or "nno" (Nynorsk) rather than "nor", while the profile editor offers only
+// "nor", so without this a profile allowing Norwegian rejected Norwegian
+// books and files (#2998).
+var iso639IndividualToMacro = map[string]string{
+	"nob": "nor", "nno": "nor",
 }
 
 // iso639TermToB maps the ISO 639-2/T (terminology) code onto the 639-2/B
@@ -133,7 +148,38 @@ func NormalizeLanguageCode(code string) string {
 	if b, ok := iso639TermToB[code]; ok {
 		return b
 	}
+	if m, ok := iso639IndividualToMacro[code]; ok {
+		return m
+	}
 	return code
+}
+
+// languageNames gives the English name of each language Bindery recognises,
+// keyed by the ISO 639-2/B code NormalizeLanguageCode produces, so a message
+// can say "Swedish" rather than "swe".
+var languageNames = map[string]string{
+	"alb": "Albanian", "ara": "Arabic", "arm": "Armenian", "baq": "Basque",
+	"bur": "Burmese", "cat": "Catalan", "chi": "Chinese", "cze": "Czech",
+	"dan": "Danish", "dut": "Dutch", "eng": "English", "fin": "Finnish",
+	"fre": "French", "geo": "Georgian", "ger": "German", "gre": "Greek",
+	"hin": "Hindi", "hun": "Hungarian", "ice": "Icelandic", "ita": "Italian",
+	"jpn": "Japanese", "kor": "Korean", "lat": "Latin", "mac": "Macedonian",
+	"mao": "Maori", "may": "Malay", "nor": "Norwegian", "per": "Persian",
+	"pol": "Polish", "por": "Portuguese", "rum": "Romanian", "rus": "Russian",
+	"slo": "Slovak", "spa": "Spanish", "swe": "Swedish", "tib": "Tibetan",
+	"tur": "Turkish", "wel": "Welsh",
+}
+
+// LanguageName returns the English name of a language code in any spelling
+// NormalizeLanguageCode accepts ("sv", "swe", "sv-SE" all give "Swedish"). A
+// code with no known name is returned normalised, so the result is never
+// empty for a non-empty input.
+func LanguageName(code string) string {
+	n := NormalizeLanguageCode(code)
+	if name, ok := languageNames[n]; ok {
+		return name
+	}
+	return n
 }
 
 // LanguageCodeVariants returns the provider-facing ISO spellings that are
@@ -161,6 +207,11 @@ func LanguageCodeVariants(codes []string) []string {
 		for terminology, bibliographic := range iso639TermToB {
 			if bibliographic == normalized {
 				add(terminology)
+			}
+		}
+		for individual, macro := range iso639IndividualToMacro {
+			if macro == normalized {
+				add(individual)
 			}
 		}
 	}

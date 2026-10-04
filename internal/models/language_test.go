@@ -70,6 +70,16 @@ func TestNormalizeLanguageCode(t *testing.T) {
 		{"english", "eng"},
 		{"Português", "por"},
 		{"magyar", "hun"},
+		// #2998. Bokmål and Nynorsk fold onto Norwegian, the code profiles
+		// and the editor use, in every spelling a dc:language carries.
+		{"nb", "nor"},
+		{"nb-NO", "nor"},
+		{"nob", "nor"},
+		{"NOB", "nor"},
+		{"nn", "nor"},
+		{"nno", "nor"},
+		{"no", "nor"},
+		{"nor", "nor"},
 		// Still not a language, and still round-trips rather than vanishing.
 		{"zulu", "zulu"},
 		{"not a language", "not a language"},
@@ -199,7 +209,7 @@ func TestNormalizedLanguagesStayInTheEditorVocabulary(t *testing.T) {
 	}
 
 	produced := map[string]bool{}
-	for _, table := range []map[string]string{iso639TwoLetterToB, iso639TermToB, iso639NameToB} {
+	for _, table := range []map[string]string{iso639TwoLetterToB, iso639TermToB, iso639NameToB, iso639IndividualToMacro} {
 		for in, out := range table {
 			// Every table has to agree with the finished canonicaliser, or
 			// one of them is a second opinion again.
@@ -234,6 +244,40 @@ func TestNormalizedLanguagesStayInTheEditorVocabulary(t *testing.T) {
 	for _, code := range offered {
 		if got := NormalizeLanguageCode(code); got != code {
 			t.Errorf("KNOWN_LANGUAGES offers %q but NormalizeLanguageCode rewrites it to %q", code, got)
+		}
+	}
+}
+
+// TestLanguageName covers the names an import rejection uses (#2998): every
+// spelling of a code gives one English name, and a code with no name comes
+// back normalised rather than empty.
+func TestLanguageName(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"sv", "Swedish"},
+		{"swe", "Swedish"},
+		{"sv-SE", "Swedish"},
+		{"en_GB", "English"},
+		{"deu", "German"},
+		{"nob", "Norwegian"},
+		{"zulu", "zulu"},
+		{"XX", "xx"},
+	}
+	for _, tc := range cases {
+		if got := LanguageName(tc.in); got != tc.want {
+			t.Errorf("LanguageName(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestLanguageNamesCoverEveryNormalisedCode keeps the display table in step
+// with the alias tables: a language Bindery can normalise onto must also have
+// a name, or a rejection message reads "file declares alb".
+func TestLanguageNamesCoverEveryNormalisedCode(t *testing.T) {
+	for _, table := range []map[string]string{iso639TwoLetterToB, iso639TermToB, iso639NameToB, iso639IndividualToMacro} {
+		for _, code := range table {
+			if _, ok := languageNames[code]; !ok {
+				t.Errorf("no English name for %q", code)
+			}
 		}
 	}
 }

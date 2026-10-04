@@ -54,7 +54,7 @@ If your platform can't run a different command, set `BINDERY_DB_FK_CHECK=report`
 
 ## A grabbed book never imports
 
-The book shows **grabbed** in History and reaches 100% in your download client, but Bindery never imports it. Usually one of two causes.
+The book shows **grabbed** in History and reaches 100% in your download client, but Bindery never imports it. Usually one of the causes below.
 
 ### qBittorrent 5.x with an old Bindery
 
@@ -63,6 +63,12 @@ qBittorrent 5.x changed the reply it sends when a torrent is added: 4.x answered
 You may see `add torrent failed: {"added_torrent_ids":...}` or `failed to send to downloader`. Because Bindery believes the hand-off failed, it never records the download, so it is never imported and no `importFailed` event appears.
 
 **Fix:** upgrade to Bindery **1.12.1 or later** (the current release is recommended). Bindery 1.11.0 and earlier cannot complete torrent grabs against qBittorrent 5.x at all — it is a hard incompatibility. After upgrading, re-grab anything that was stuck.
+
+### The file is in a language your profile does not allow
+
+The Queue row is **importBlocked** with a message like `file declares Swedish (swe), but the metadata profile "Standard" allows only English (eng)`. The release name did not say its language, so it passed the search filter, but the EPUB inside declares one the author's metadata profile does not allow. Bindery placed nothing, added the release to the Blocklist and left the book Wanted, so the next search picks a different release on its own. See [the file's language is checked at import](User-Guide-Wiki.md#from-wanted-to-your-library) for the full rule.
+
+If the file is what you want after all, press **Match to book** on the row and pick the book, or import it through **Import → From a folder**; a manual import is never refused for its language. To accept more languages for this author from now on, add them to the metadata profile, or set it to any language. Releases already blocklisted for this stay there until you remove them in **Settings → Blocklist**.
 
 ### Bindery cannot read the completed files
 
