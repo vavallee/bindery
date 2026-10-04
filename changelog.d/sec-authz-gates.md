@@ -1,4 +1,0 @@
-### Security
-- **Blocklist and profile changes are admin only**: a non admin account could list the whole blocklist and delete entries from it, letting releases an admin had blocked be grabbed again, and could create, edit or delete metadata profiles. Both now answer 403 to anyone but an admin, matching the Settings screens, which were already admin only. Blocklisting a release from your own History still works for every user.
-- **Quality and metadata profiles are now shared and managed by admins**: users can no longer create or edit profiles, and existing profiles, including any a user made before, are managed by admins. Every user still sees every profile when adding or editing an author, also with `BINDERY_ENFORCE_TENANCY` on.
-- **The Hardcover series comparison respects per user libraries**: with `BINDERY_ENFORCE_TENANCY` on, comparing a series with Hardcover listed other users' books from that series. It now shows only the books that user can open.

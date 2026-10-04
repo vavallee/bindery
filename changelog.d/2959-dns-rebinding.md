@@ -1,5 +1,0 @@
-### Security
-- **Login free modes now check the host name** (#2959). In `local-only` and `disabled` auth mode a web page could reach Bindery through your browser by pointing its own DNS name at Bindery's address, then act as the administrator. Those modes, and the OPDS feed in them, now skip the login only for IP addresses, `localhost`, single label names like `bindery`, and names under `.local`, `.lan`, `.home.arpa`, `.internal`, `.localdomain` or `.localhost`. Any other name gets the login page with a note explaining why. The default `enabled` mode, API keys and signed in sessions are not affected.
-
-### Upgrade notes
-- **Using local-only or disabled mode with a domain name? Set BINDERY_ALLOWED_HOSTS before you upgrade.** If you open Bindery by a name such as `books.example.com`, a Tailscale `ts.net` name, `nas.fritz.box` or a Kubernetes name like `bindery.media.svc`, add it to `BINDERY_ALLOWED_HOSTS` (comma separated, `*.example.com` covers a domain you own). Otherwise that name will ask you to sign in after the upgrade. Never wildcard a shared domain such as `duckdns.org`. Setting it to `*` turns the protection off and is not recommended.
