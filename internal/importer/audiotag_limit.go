@@ -11,27 +11,40 @@ import (
 	"strings"
 )
 
-// errAudioPictureTooLarge reports an embedded picture that declares more image
-// data than the file holds.
+// errAudioTagTooLarge reports embedded tag data that declares more bytes than
+// it can hold, or more than any real tag needs.
 //
 // github.com/dhowden/tag reads a FLAC picture block, and the
 // METADATA_BLOCK_PICTURE comment that FLAC, Ogg Vorbis and Opus files carry,
 // by allocating the declared data length up front. That length is a 32-bit
 // field the file controls, so a file of a few dozen bytes made every tag read
-// allocate up to 4 GiB (and panic outright on the 32-bit ARM builds). The
-// library has no option to skip pictures, which Bindery never uses, so
-// checkAudioPictureClaims walks the same structures first and refuses the
-// file when a declared length could not possibly be satisfied. The tag read
-// then fails like any other unreadable file and the scan falls back to the
-// filename.
-var errAudioPictureTooLarge = errors.New("audio tags: embedded picture declares more data than the file holds")
+// allocate up to 4 GiB, and on the 32-bit ARM builds a length of 2 GiB or more
+// went negative and panicked. The library has no option to skip pictures,
+// which Bindery never uses, so checkAudioTagClaims walks the same structures
+// first and refuses the file when a declared length overruns its container or
+// maxAudioTagStructureBytes. The tag read then fails like any other unreadable
+// file and the scan falls back to the filename.
+var errAudioTagTooLarge = errors.New("audio tags: embedded metadata declares more data than it holds")
 
-// checkAudioPictureClaims returns errAudioPictureTooLarge if r is a FLAC or
-// Ogg file whose embedded picture declares more data than is present. It
-// dispatches on the leading bytes exactly as tag.ReadFrom does and leaves r
-// positioned where it found it. Formats without this allocation (ID3, MP4) are
-// passed through untouched.
-func checkAudioPictureClaims(r io.ReadSeeker) error {
+// maxAudioTagStructureBytes bounds any single structure the check reads or
+// accepts: a comment, a picture, an Ogg packet. A FLAC metadata block length
+// is a 24-bit field, so no real FLAC block, and therefore no FLAC picture or
+// comment, can be larger. Ogg has no such field, and the same bound is used so
+// a picture is treated alike in either container.
+const maxAudioTagStructureBytes = 1<<24 - 1
+
+// checkAudioTagClaims returns an error if r is a FLAC or Ogg file whose
+// embedded tags declare lengths the library would allocate but the file
+// cannot back. It dispatches on the leading bytes exactly as tag.ReadFrom does
+// and leaves r positioned where it found it. Formats without this allocation
+// (ID3, MP4) pass through untouched.
+//
+// It fails closed: any fault in the walk is returned, so the library never
+// runs on a FLAC or Ogg file this check could not follow to its end. The walk
+// reads the same bytes in the same order as the library, so a file the
+// library can read is one this check can follow, apart from the extra limits
+// it applies on purpose.
+func checkAudioTagClaims(r io.ReadSeeker) error {
 	start, err := r.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err
@@ -53,17 +66,10 @@ func checkAudioPictureClaims(r io.ReadSeeker) error {
 	}
 	switch string(magic) {
 	case "fLaC":
-		err = checkFLACPictureClaims(cr)
+		return checkFLACClaims(cr)
 	case "OggS":
-		err = checkOggPictureClaims(cr)
-	default:
-		return nil
+		return checkOggClaims(cr)
 	}
-	if errors.Is(err, errAudioPictureTooLarge) {
-		return err
-	}
-	// Any other failure is a malformed file the tag reader rejects on its own
-	// before it reaches a picture, so it is not this check's to report.
 	return nil
 }
 
@@ -84,8 +90,12 @@ func (c *claimReader) peek(n int) ([]byte, error) {
 }
 
 // bytes returns the next n bytes. It refuses before allocating when n is more
-// than is left, so the check itself cannot be made to allocate.
+// than is left or more than maxAudioTagStructureBytes, so the check itself
+// cannot be made to allocate much.
 func (c *claimReader) bytes(n int64) ([]byte, error) {
+	if n > maxAudioTagStructureBytes {
+		return nil, fmt.Errorf("%w (%d bytes declared)", errAudioTagTooLarge, n)
+	}
 	if n < 0 || n > c.remaining {
 		return nil, errClaimTruncated
 	}
@@ -101,11 +111,28 @@ func (c *claimReader) skip(n int64) error {
 	if n < 0 || n > c.remaining {
 		return errClaimTruncated
 	}
-	if _, err := c.r.Discard(int(n)); err != nil {
+	// io.CopyN keeps the count in int64; bufio.Reader.Discard takes an int,
+	// which a 32-bit build would turn negative for lengths of 2 GiB and up.
+	if _, err := io.CopyN(io.Discard, c.r, n); err != nil {
 		return err
 	}
 	c.remaining -= n
 	return nil
+}
+
+// within runs fn with the reader limited to the next n bytes (or what is
+// left, if less), then restores the outer limit minus what fn consumed. The
+// position afterwards is wherever fn stopped, not n bytes on, because that is
+// where the library resumes.
+func (c *claimReader) within(n int64, fn func() error) error {
+	outer := c.remaining
+	if n < c.remaining {
+		c.remaining = n
+	}
+	inner := c.remaining
+	err := fn()
+	c.remaining = outer - (inner - c.remaining)
+	return err
 }
 
 func (c *claimReader) uint32BE() (int64, error) {
@@ -124,12 +151,14 @@ func (c *claimReader) uint32LE() (int64, error) {
 	return int64(binary.LittleEndian.Uint32(b)), nil
 }
 
-// checkFLACPictureClaims follows tag.ReadFLACTags: after "fLaC", metadata
-// blocks of a one-byte type (high bit marks the last) and a 24-bit length.
-// The library parses comment and picture blocks from the stream without
-// honouring that length and seeks over every other block by it, so this walk
-// does the same to stay aligned with what the library will read.
-func checkFLACPictureClaims(c *claimReader) error {
+// checkFLACClaims follows tag.ReadFLACTags: after "fLaC", metadata blocks of
+// a one-byte type (high bit marks the last) and a 24-bit length. The library
+// parses comment and picture blocks from the stream without honouring that
+// length and seeks over every other block by it. This walk holds each comment
+// and picture to its declared block length, which the library does not, but
+// resumes where the library will, after the last byte the block's contents
+// used, so the two never disagree about where the next block starts.
+func checkFLACClaims(c *claimReader) error {
 	if err := c.skip(4); err != nil {
 		return err
 	}
@@ -142,9 +171,9 @@ func checkFLACPictureClaims(c *claimReader) error {
 		blockLen := int64(hdr[1])<<16 | int64(hdr[2])<<8 | int64(hdr[3])
 		switch hdr[0] &^ 0x80 {
 		case 4: // VORBIS_COMMENT
-			err = checkVorbisCommentPictureClaims(c)
+			err = c.within(blockLen, func() error { return checkVorbisCommentClaims(c) })
 		case 6: // PICTURE
-			err = checkPictureClaim(c)
+			err = c.within(blockLen, func() error { return checkPictureClaim(c) })
 		default:
 			err = c.skip(blockLen)
 		}
@@ -177,18 +206,18 @@ func checkPictureClaim(c *claimReader) error {
 	if err != nil {
 		return err
 	}
-	if dataLen > c.remaining {
-		return fmt.Errorf("%w (%d bytes declared, %d available)", errAudioPictureTooLarge, dataLen, c.remaining)
+	if dataLen > c.remaining || dataLen > maxAudioTagStructureBytes {
+		return fmt.Errorf("%w (picture declares %d bytes, %d available)", errAudioTagTooLarge, dataLen, c.remaining)
 	}
 	return c.skip(dataLen)
 }
 
-// checkVorbisCommentPictureClaims follows the library's readVorbisComment:
+// checkVorbisCommentClaims follows the library's readVorbisComment:
 // vendor string, then a count of length-prefixed KEY=value comments. Every
 // METADATA_BLOCK_PICTURE value that decodes is checked against its own decoded
 // length, which is all the data that picture can hold. The library only ever
 // parses the last one, so checking all of them is stricter, never looser.
-func checkVorbisCommentPictureClaims(c *claimReader) error {
+func checkVorbisCommentClaims(c *claimReader) error {
 	vendorLen, err := c.uint32LE()
 	if err != nil {
 		return err
@@ -205,10 +234,11 @@ func checkVorbisCommentPictureClaims(c *claimReader) error {
 		if err != nil {
 			return err
 		}
-		// Read the whole comment (bounded by what is left, as the library's
-		// own read is) and match the key exactly as the library does. A byte
-		// prefix compare would miss keys that only lowercase to the picture
-		// key, such as one spelled with the Kelvin sign.
+		// Read the whole comment (bounded by what is left in the block and
+		// by maxAudioTagStructureBytes) and match the key exactly as the
+		// library does. A byte prefix compare would miss keys that only
+		// lowercase to the picture key, such as one spelled with the Kelvin
+		// sign.
 		comment, err := c.bytes(n)
 		if err != nil {
 			return err
@@ -223,22 +253,27 @@ func checkVorbisCommentPictureClaims(c *claimReader) error {
 			continue
 		}
 		pic := &claimReader{r: bufio.NewReader(bytes.NewReader(data)), remaining: int64(len(data))}
-		if err := checkPictureClaim(pic); errors.Is(err, errAudioPictureTooLarge) {
+		if err := checkPictureClaim(pic); errors.Is(err, errAudioTagTooLarge) {
 			return err
 		}
 		// Any other fault in an embedded picture is ignored by the library,
-		// which discards readPictureBlock's error for comment pictures.
+		// which discards readPictureBlock's error for comment pictures, and
+		// costs little: every other field it reads from the decoded bytes is
+		// bounded by them or by the library's own 10 MiB up front limit.
 	}
 	return nil
 }
 
-// checkOggPictureClaims follows tag.ReadOGGTags: it demultiplexes Ogg pages
-// into packets per stream serial and inspects the first Vorbis or Opus comment
+// checkOggClaims follows tag.ReadOGGTags: it demultiplexes Ogg pages into
+// packets per stream serial and inspects the first Vorbis or Opus comment
 // packet, which is the only one the library reads. Page checksums are not
 // verified; the library stops at a bad one, so skipping that check only means
-// this walk may look further than the library would.
-func checkOggPictureClaims(c *claimReader) error {
+// this walk may look further than the library would. Packet data held while
+// waiting for packets to complete is capped in total at
+// maxAudioTagStructureBytes, since the library holds the same data.
+func checkOggClaims(c *claimReader) error {
 	partial := map[uint32]*bytes.Buffer{}
+	var held int64 // bytes in partial
 	for {
 		hdr, err := c.bytes(27)
 		if err != nil {
@@ -262,16 +297,21 @@ func checkOggPictureClaims(c *claimReader) error {
 			return err
 		}
 
-		buf := &bytes.Buffer{}
-		if continued {
-			b, ok := partial[serial]
-			if !ok {
-				return errClaimTruncated
-			}
-			buf = b
+		buf := partial[serial]
+		delete(partial, serial)
+		if buf != nil {
+			held -= int64(buf.Len())
+		}
+		if !continued {
+			buf = &bytes.Buffer{}
+		} else if buf == nil {
+			return errClaimTruncated
 		}
 		var p int
 		for _, s := range lacing {
+			if held+int64(buf.Len())+int64(s) > maxAudioTagStructureBytes {
+				return fmt.Errorf("%w (ogg packets over %d bytes)", errAudioTagTooLarge, maxAudioTagStructureBytes)
+			}
 			buf.Write(data[p : p+int(s)])
 			p += int(s)
 			if s == 255 {
@@ -282,7 +322,7 @@ func checkOggPictureClaims(c *claimReader) error {
 			for _, prefix := range []string{"\x03vorbis", "OpusTags"} {
 				if bytes.HasPrefix(packet, []byte(prefix)) {
 					body := packet[len(prefix):]
-					return checkVorbisCommentPictureClaims(&claimReader{
+					return checkVorbisCommentClaims(&claimReader{
 						r:         bufio.NewReader(bytes.NewReader(body)),
 						remaining: int64(len(body)),
 					})
@@ -290,5 +330,6 @@ func checkOggPictureClaims(c *claimReader) error {
 			}
 		}
 		partial[serial] = buf
+		held += int64(buf.Len())
 	}
 }
