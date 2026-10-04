@@ -1,6 +1,6 @@
 # Multi-User
 
-Bindery v1.0 introduces per-user library scoping: authors, books, downloads, quality profiles, and metadata profiles can be owned by a specific user, and users log in with their own credentials.
+Bindery v1.0 introduces per-user library scoping: authors, books and downloads can be owned by a specific user, and users log in with their own credentials. Quality and metadata profiles are shared across the instance and managed by admins.
 
 > **Root folders are not per-user.** They are a single shared, admin-managed pool (Settings → Root Folders), and import destinations resolve per-author plus a global default — there is no per-user library directory today. Regular users don't get their own root folders. Per-user root folders are a tracked future enhancement, not current behaviour.
 
@@ -8,7 +8,7 @@ Bindery v1.0 introduces per-user library scoping: authors, books, downloads, qua
 >
 > When enforcement is on, Bindery scopes:
 > - **Tier-2 join-scoped resources** — download queue, history, pending grabs, and the OPDS catalogue — to the requesting user.
-> - **Per-user resources** — each user's own authors, books, quality and metadata profiles, and password. (Root folders are **not** per-user; see the note above. The API key and the notification webhooks are instance wide and admin only.)
+> - **Per-user resources** — each user's own authors, books, and password. (Root folders are **not** per-user; see the note above. Quality and metadata profiles are not per user either: every user and admin sees the same profiles, and only admins create, edit or delete them. The API key and the notification webhooks are instance wide and admin only.)
 > - **Background Hardcover list syncs** to the list's owner: a list decides whether to create a book by reading only the rows its owner can see, so one user's list never skips, widens or re-opens another user's book and never reuses another user's author. Rows with no owner stay shared and reusable by every list. Because a book's and an author's Hardcover id is unique across the whole instance, a work another user already holds cannot be created a second time; the sync leaves that row untouched, logs whose it is, and counts the book as skipped.
 >
 > **Admins see everything in list views.** With enforcement on, an `admin` is never filtered by ownership: the authors and books list endpoints (and the OPDS feed) return *all* users' libraries plus unowned/global rows, the same way an admin can already open any single item by ID. This is a **shared library across admins**, by design: it does not widen access, it makes lists consistent with per-item access. Non-admin (`user`) accounts stay isolated to their own rows plus unowned/global rows. Requests authenticated by API key, and requests the auth mode admits without a login (every request in `disabled` mode, local clients in `local-only` mode), act as the administrator: they carry the admin role and the first admin account's id, so they are likewise unscoped and anything they create is owned by that admin.
@@ -38,7 +38,7 @@ Three roles exist: `admin`, `user` and `requester`.
 | Action | `admin` | `user` | `requester` |
 |--------|:-------:|:------:|:-----------:|
 | View and manage own authors/books/downloads | Yes | Yes | No |
-| View quality/metadata profiles (with tenancy on, a user sees their own and unowned ones) | Yes | Yes | No |
+| View quality/metadata profiles (shared across the instance) | Yes | Yes | No |
 | Create, edit, delete quality/metadata profiles | Yes | No | No |
 | View or remove blocklist entries | Yes | No | No |
 | Blocklist a release from own history | Yes | Yes | No |

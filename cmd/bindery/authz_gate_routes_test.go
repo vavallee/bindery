@@ -91,6 +91,51 @@ func registerBlocklistStub(r chi.Router, h *stubAuthzGateHandler) { registerBloc
 func registerMetadataProfileStub(r chi.Router, h *stubAuthzGateHandler) {
 	registerMetadataProfileRoutes(r, h)
 }
+func registerQualityProfileStub(r chi.Router, h *stubAuthzGateHandler) {
+	registerQualityProfileRoutes(r, h)
+}
+
+var qualityProfileWriteRoutes = []authzGateRoute{
+	{name: "create quality profile", method: http.MethodPost, path: "/qualityprofile", called: "create"},
+	{name: "update quality profile", method: http.MethodPut, path: "/qualityprofile/3", called: "update"},
+	{name: "delete quality profile", method: http.MethodDelete, path: "/qualityprofile/3", called: "delete"},
+}
+
+var qualityProfileReadRoutes = []authzGateRoute{
+	{name: "list quality profiles", method: http.MethodGet, path: "/qualityprofile", called: "list"},
+	{name: "get quality profile", method: http.MethodGet, path: "/qualityprofile/3", called: "get"},
+}
+
+// TestQualityProfileRoutesReadsOpenWritesAdmin pins the quality profile split
+// that metadata profiles now share: role=user reads, gets 403 on every write,
+// and an admin reaches everything.
+func TestQualityProfileRoutesReadsOpenWritesAdmin(t *testing.T) {
+	for _, rt := range qualityProfileReadRoutes {
+		t.Run("user "+rt.name, func(t *testing.T) {
+			rec, h := serveAuthzGateRoute(t, registerQualityProfileStub, rt, "user")
+			if rec.Code != http.StatusNoContent || len(h.called) != 1 || h.called[0] != rt.called {
+				t.Fatalf("status = %d called = %v; want 204 [%s]", rec.Code, h.called, rt.called)
+			}
+		})
+	}
+	for _, rt := range qualityProfileWriteRoutes {
+		t.Run("user "+rt.name, func(t *testing.T) {
+			rec, h := serveAuthzGateRoute(t, registerQualityProfileStub, rt, "user")
+			if rec.Code != http.StatusForbidden || len(h.called) != 0 {
+				t.Fatalf("status = %d called = %v; want 403 and no handler call", rec.Code, h.called)
+			}
+		})
+	}
+	all := append(append([]authzGateRoute{}, qualityProfileReadRoutes...), qualityProfileWriteRoutes...)
+	for _, rt := range all {
+		t.Run("admin "+rt.name, func(t *testing.T) {
+			rec, h := serveAuthzGateRoute(t, registerQualityProfileStub, rt, "admin")
+			if rec.Code != http.StatusNoContent || len(h.called) != 1 || h.called[0] != rt.called {
+				t.Fatalf("status = %d called = %v; want 204 [%s]", rec.Code, h.called, rt.called)
+			}
+		})
+	}
+}
 
 // TestBlocklistRoutesRequireAdmin: docs/multi-user.md lists Blocklist under the
 // admin only System tab, but the routes sat outside any admin group.

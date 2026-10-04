@@ -14,114 +14,92 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// Profile List must hide what Get hides. Get 404s a profile owned by another
-// user under tenancy, but List used the unscoped repo call and returned it
-// anyway, so the IDOR guard on Get was decorative.
+// Quality and metadata profiles are instance wide configuration: only admins
+// write them, and migration 025 stamped every existing row (seeded defaults
+// included) with owner_user_id = 1. An owner filter on the reads therefore
+// hid every profile from every non admin under tenancy, which emptied the
+// profile pickers in the author forms. A user must see admin owned profiles.
 
-func listMetadataProfileIDs(t *testing.T, h *MetadataProfileHandler, ctx context.Context) map[int64]bool {
+// seedAdminOwnedProfiles builds the post migration 025 state: an admin (id 1)
+// and a user, with every quality and metadata profile owned by the admin.
+func seedAdminOwnedProfiles(t *testing.T) (*db.QualityProfileRepo, *db.MetadataProfileRepo, int64, int64) {
 	t.Helper()
-	rec := httptest.NewRecorder()
-	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/metadataprofile", nil).WithContext(ctx))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("list: got %d body=%s", rec.Code, rec.Body.String())
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("open db: %v", err)
 	}
-	var got []models.MetadataProfile
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode list: %v", err)
-	}
-	ids := make(map[int64]bool, len(got))
-	for _, p := range got {
-		ids[p.ID] = true
-	}
-	return ids
-}
-
-func TestMetadataProfile_List_ExcludesOtherUsersWhenGateOn(t *testing.T) {
-	auth.SetEnforceTenancyForTests(t, true)
-	f := seedTwoUserMetadataProfiles(t)
-	h := NewMetadataProfileHandler(f.repo)
-
-	ids := listMetadataProfileIDs(t, h, withAuthCtx(context.Background(), f.u2, "user"))
-	if ids[f.p1.ID] {
-		t.Fatalf("bob's list includes alice's profile %d; Get 404s it, so List must not return it", f.p1.ID)
-	}
-	if !ids[f.p2.ID] {
-		t.Fatalf("bob's list is missing his own profile %d", f.p2.ID)
-	}
-	// Unowned rows (the seeded defaults) stay visible, matching CheckOwnership.
-	all, err := f.repo.List(context.Background())
+	t.Cleanup(func() { _ = database.Close() })
+	ctx := context.Background()
+	users := db.NewUserRepo(database)
+	admin, err := users.Create(ctx, "admin", "h1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range all {
-		if p.OwnerUserID == 0 && !ids[p.ID] {
-			t.Fatalf("unowned profile %d (%s) must stay visible", p.ID, p.Name)
+	bob, err := users.Create(ctx, "bob", "h2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	qp := db.NewQualityProfileRepo(database)
+	mp := db.NewMetadataProfileRepo(database)
+	if err := qp.CreateForUser(ctx, &models.QualityProfile{
+		Name: "Admin Quality", Cutoff: "epub", UpgradeAllowed: true,
+		Items: []models.QualityItem{{Quality: "epub", Allowed: true}},
+	}, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := mp.CreateForUser(ctx, &models.MetadataProfile{Name: "Admin Metadata", AllowedLanguages: "eng"}, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"quality_profiles", "metadata_profiles"} {
+		if _, err := database.Exec("UPDATE "+table+" SET owner_user_id=?", admin.ID); err != nil {
+			t.Fatal(err)
 		}
 	}
+	return qp, mp, admin.ID, bob.ID
 }
 
-func TestMetadataProfile_List_AdminAndGateOffSeeAll(t *testing.T) {
-	cases := []struct {
-		name string
-		gate bool
-		role string
-	}{
-		{name: "admin with gate on", gate: true, role: "admin"},
-		{name: "user with gate off", gate: false, role: "user"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			auth.SetEnforceTenancyForTests(t, tc.gate)
-			f := seedTwoUserMetadataProfiles(t)
-			h := NewMetadataProfileHandler(f.repo)
-			ids := listMetadataProfileIDs(t, h, withAuthCtx(context.Background(), f.u2, tc.role))
-			if !ids[f.p1.ID] || !ids[f.p2.ID] {
-				t.Fatalf("list = %v; want both %d and %d", ids, f.p1.ID, f.p2.ID)
-			}
-		})
-	}
-}
-
-func listQualityProfileIDs(t *testing.T, h *QualityProfileHandler, ctx context.Context) map[int64]bool {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/qualityprofile", nil).WithContext(ctx))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("list: got %d body=%s", rec.Code, rec.Body.String())
-	}
-	var got []models.QualityProfile
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode list: %v", err)
-	}
-	ids := make(map[int64]bool, len(got))
-	for _, p := range got {
-		ids[p.ID] = true
-	}
-	return ids
-}
-
-func TestQualityProfile_List_ExcludesOtherUsersWhenGateOn(t *testing.T) {
+func TestProfiles_UserSeesAdminOwnedProfilesWhenGateOn(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
-	f := seedTwoUserQualityProfile(t)
-	h := NewQualityProfileHandler(f.repo)
+	qp, mp, _, bob := seedAdminOwnedProfiles(t)
+	ctx := withAuthCtx(context.Background(), bob, "user")
 
-	if ids := listQualityProfileIDs(t, h, withAuthCtx(context.Background(), f.u2, "user")); ids[f.p1.ID] {
-		t.Fatalf("bob's list includes alice's quality profile %d; Get 404s it, so List must not return it", f.p1.ID)
+	quality, err := qp.List(context.Background())
+	if err != nil || len(quality) == 0 {
+		t.Fatalf("seed quality profiles: %v (n=%d)", err, len(quality))
 	}
-	if ids := listQualityProfileIDs(t, h, withAuthCtx(context.Background(), f.u1, "user")); !ids[f.p1.ID] {
-		t.Fatalf("alice's list is missing her own quality profile %d", f.p1.ID)
+	meta, err := mp.List(context.Background())
+	if err != nil || len(meta) == 0 {
+		t.Fatalf("seed metadata profiles: %v (n=%d)", err, len(meta))
 	}
-	if ids := listQualityProfileIDs(t, h, withAuthCtx(context.Background(), 99, "admin")); !ids[f.p1.ID] {
-		t.Fatalf("admin list is missing alice's quality profile %d", f.p1.ID)
-	}
-}
 
-func TestQualityProfile_List_GateOffSeesAll(t *testing.T) {
-	auth.SetEnforceTenancyForTests(t, false)
-	f := seedTwoUserQualityProfile(t)
-	h := NewQualityProfileHandler(f.repo)
-	if ids := listQualityProfileIDs(t, h, withAuthCtx(context.Background(), f.u2, "user")); !ids[f.p1.ID] {
-		t.Fatalf("gate off must keep cross-user visibility; list = %v", ids)
+	qh := NewQualityProfileHandler(qp)
+	rec := httptest.NewRecorder()
+	qh.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/qualityprofile", nil).WithContext(ctx))
+	var gotQ []models.QualityProfile
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &gotQ) != nil || len(gotQ) != len(quality) {
+		t.Fatalf("quality List as user: status=%d got %d profiles, want %d; body=%s", rec.Code, len(gotQ), len(quality), rec.Body.String())
+	}
+	for _, p := range quality {
+		rec := httptest.NewRecorder()
+		qh.Get(rec, newRequestForID(http.MethodGet, "/api/v1/qualityprofile/"+strconv.FormatInt(p.ID, 10), p.ID, ctx))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("quality Get %d (%s) as user: got %d, want 200", p.ID, p.Name, rec.Code)
+		}
+	}
+
+	mh := NewMetadataProfileHandler(mp)
+	rec = httptest.NewRecorder()
+	mh.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/metadataprofile", nil).WithContext(ctx))
+	var gotM []models.MetadataProfile
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &gotM) != nil || len(gotM) != len(meta) {
+		t.Fatalf("metadata List as user: status=%d got %d profiles, want %d; body=%s", rec.Code, len(gotM), len(meta), rec.Body.String())
+	}
+	for _, p := range meta {
+		rec := httptest.NewRecorder()
+		mh.Get(rec, newRequestForID(http.MethodGet, "/api/v1/metadataprofile/"+strconv.FormatInt(p.ID, 10), p.ID, ctx))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("metadata Get %d (%s) as user: got %d, want 200", p.ID, p.Name, rec.Code)
+		}
 	}
 }
 

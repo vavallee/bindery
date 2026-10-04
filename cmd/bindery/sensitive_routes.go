@@ -284,9 +284,9 @@ func registerBlocklistRoutes(r chi.Router, h blocklistRouteHandler) {
 	})
 }
 
-// metadataProfileRouteHandler is the surface registerMetadataProfileRoutes
-// needs.
-type metadataProfileRouteHandler interface {
+// profileRouteHandler is the surface registerQualityProfileRoutes and
+// registerMetadataProfileRoutes need.
+type profileRouteHandler interface {
 	List(http.ResponseWriter, *http.Request)
 	Get(http.ResponseWriter, *http.Request)
 	Create(http.ResponseWriter, *http.Request)
@@ -294,12 +294,26 @@ type metadataProfileRouteHandler interface {
 	Delete(http.ResponseWriter, *http.Request)
 }
 
-// registerMetadataProfileRoutes mounts the /metadataprofile routes, matching
-// the quality profile routes: reads open to every authenticated user (the
-// author forms need the list for their picker, and the handlers scope it under
-// tenancy), mutations admin only. Profiles are settings that filter what every
-// author refresh adds, which the Settings UI already treats as admin only.
-func registerMetadataProfileRoutes(r chi.Router, h metadataProfileRouteHandler) {
+// registerQualityProfileRoutes mounts the /qualityprofile routes. Profiles are
+// instance wide configuration: reads open to every authenticated user (the
+// author forms fill their pickers from the list, and requesters are kept out by
+// auth.RequesterAllowList), mutations admin only.
+func registerQualityProfileRoutes(r chi.Router, h profileRouteHandler) {
+	r.Get("/qualityprofile", h.List)
+	r.Get("/qualityprofile/{id}", h.Get)
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
+		r.Post("/qualityprofile", h.Create)
+		r.Put("/qualityprofile/{id}", h.Update)
+		r.Delete("/qualityprofile/{id}", h.Delete)
+	})
+}
+
+// registerMetadataProfileRoutes mounts the /metadataprofile routes with the
+// same split as registerQualityProfileRoutes. Writes used to be open to every
+// user; a metadata profile filters what every author refresh adds, and the
+// Settings UI already showed the tab to admins only.
+func registerMetadataProfileRoutes(r chi.Router, h profileRouteHandler) {
 	r.Get("/metadataprofile", h.List)
 	r.Get("/metadataprofile/{id}", h.Get)
 	r.Group(func(r chi.Router) {
