@@ -363,7 +363,36 @@ func AllowUnauthPath(method, path string) bool {
 // mode branch runs. Two copies of it drifted once already: disabled mode was
 // reported as admin by the status route while the middleware stamped nothing,
 // so the UI rendered admin screens that every RequireAdmin route refused.
+//
+// The grant also requires the Host the browser used to pass
+// HostAllowedForModeGrant; see RefusedModeGrantHost for the case where the
+// peer qualifies but the name does not.
 func ModeGrantsAdmin(mode Mode, r *http.Request, trusted []*net.IPNet) bool {
+	return modeAdmitsPeer(mode, r, trusted) && HostAllowedForModeGrant(r)
+}
+
+// RefusedModeGrantHost reports whether the mode would have admitted r as the
+// admin from its network peer but the Host name cost it the grant, and returns
+// that name. Callers use it to tell the operator why, instead of answering as
+// if the request were simply unauthenticated.
+func RefusedModeGrantHost(mode Mode, r *http.Request, trusted []*net.IPNet) (string, bool) {
+	if !modeAdmitsPeer(mode, r, trusted) {
+		return "", false
+	}
+	host, ok := rejectedModeGrantHost(r)
+	if ok {
+		return "", false
+	}
+	return clipHost(host), true
+}
+
+// LogRefusedModeGrantHost records a refused host the way the middleware does:
+// once per host per hour, with a cap on distinct hosts.
+func LogRefusedModeGrantHost(host string) { hostRejectLog.note(clipHost(host)) }
+
+// modeAdmitsPeer is the network half of ModeGrantsAdmin: disabled admits
+// everyone, local-only a client on a private network.
+func modeAdmitsPeer(mode Mode, r *http.Request, trusted []*net.IPNet) bool {
 	switch mode {
 	case ModeDisabled:
 		return true
@@ -383,7 +412,9 @@ func ModeGrantsAdmin(mode Mode, r *http.Request, trusted []*net.IPNet) bool {
 //     proxy-authed user instead of always returning authenticated:false (#560).
 //  3. Health / auth endpoints: always allowed through
 //  4. Valid X-Api-Key header or ?apikey= query: admin, as the operator
-//  5. ModeGrantsAdmin (disabled, or local-only and local): admin, as the operator
+//  5. ModeGrantsAdmin (disabled, or local-only and local): admin, as the operator.
+//     Without a session, a Host that fails HostAllowedForModeGrant is refused
+//     with 403 here rather than falling through to 401.
 //  6. Valid signed session cookie: allowed
 //  7. Mode == proxy: trusted peer IP + identity header → resolve/provision user
 //  8. Otherwise: 401
@@ -500,7 +531,21 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if ModeGrantsAdmin(mode, r, p.TrustedProxyCIDRs()) {
+			if modeAdmitsPeer(mode, r, p.TrustedProxyCIDRs()) {
+				// The mode admits this peer, but with no session of its own
+				// the request is only served as the admin under a host name
+				// an outside site cannot have. Otherwise a page on another
+				// site, rebound to Bindery's address, would be served from
+				// the victim's own LAN address (DNS rebinding). A signed
+				// session (including one whose epoch lookup failed) and the
+				// API key are personal credentials such a page cannot obtain,
+				// so they are not checked.
+				if !cookieValid && !epochLookupFailed {
+					if host, ok := rejectedModeGrantHost(r); !ok {
+						writeHostRejected(w, host)
+						return
+					}
+				}
 				// A signed session whose epoch or role could not be read (a
 				// database error) might belong to a requester, so the mode
 				// grant is not applied to it. It goes through as that user

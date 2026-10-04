@@ -343,7 +343,10 @@
     "proxyHint": "Sign in via your SSO provider",
     "signInWith": "Sign in with {{name}}",
     "orLocal": "or",
-    "contactAdmin": "Contact your administrator for access"
+    "contactAdmin": "Contact your administrator for access",
+    "hostNotAllowedTitle": "Sign in is required at this address",
+    "hostNotAllowed": "Bindery is in {{mode}} mode, which skips sign in only for local addresses. {{host}} is not one of them, as a guard against DNS rebinding. Sign in below, or ask the operator to add {{host}} to BINDERY_ALLOWED_HOSTS and restart Bindery.",
+    "hostNotAllowedDocs": "How host names are checked"
   },
   "setup": {
     "title": "First-run setup",

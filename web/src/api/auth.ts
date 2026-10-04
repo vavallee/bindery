@@ -7,6 +7,11 @@ export interface AuthStatus {
   role?: string
   mode: 'enabled' | 'local-only' | 'disabled' | 'proxy'
   localAuthEnabled: boolean
+  // Set when local-only or disabled mode would have skipped sign in but the
+  // host name used to reach Bindery is not one it accepts for that
+  // (BINDERY_ALLOWED_HOSTS). refusedHost is that name.
+  hostNotAllowed?: boolean
+  refusedHost?: string
 }
 
 export interface ManagedUser {

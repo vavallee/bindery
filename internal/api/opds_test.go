@@ -315,9 +315,68 @@ func TestOPDS_LocalOnlyMode_BypassesAuth(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/opds/", nil)
 	req.RemoteAddr = "127.0.0.1:1234" // loopback — local bypass
+	req.Host = "localhost:8787"       // not httptest's example.com, which the mode refuses
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d under local-only; want 200", rec.Code)
+	}
+}
+
+// TestOPDS_HostCheckInLoginFreeModes: the OPDS mode grants (disabled, and
+// local-only for a LAN peer) admit a reader with no credential, so they get
+// the same Host check as the API. A refused name is a Basic challenge that
+// names BINDERY_ALLOWED_HOSTS, and a reader with real credentials (API key or
+// Basic) still gets in under that name.
+func TestOPDS_HostCheckInLoginFreeModes(t *testing.T) {
+	for _, mode := range []auth.Mode{auth.ModeLocalOnly, auth.ModeDisabled} {
+		t.Run(string(mode), func(t *testing.T) {
+			r, users, settings, key := opdsFixture(t)
+			ctx := context.Background()
+			if err := settings.Set(ctx, SettingAuthMode, string(mode)); err != nil {
+				t.Fatal(err)
+			}
+			hash, err := auth.HashPassword("reader-password")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := users.Create(ctx, "reader", hash); err != nil {
+				t.Fatal(err)
+			}
+			if err := users.PromoteFirstUser(ctx); err != nil {
+				t.Fatal(err)
+			}
+			do := func(host string, prep func(*http.Request)) *httptest.ResponseRecorder {
+				req := httptest.NewRequest(http.MethodGet, "/opds/book/1/file", nil)
+				req.RemoteAddr = "192.168.1.50:5000"
+				req.Host = host
+				if prep != nil {
+					prep(req)
+				}
+				rec := httptest.NewRecorder()
+				r.ServeHTTP(rec, req)
+				return rec
+			}
+
+			rec := do("attacker.example", nil)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("foreign Host, no credential: status %d, want 401 (body %s)", rec.Code, rec.Body.String())
+			}
+			if rec.Header().Get("WWW-Authenticate") == "" || !strings.Contains(rec.Body.String(), "BINDERY_ALLOWED_HOSTS") {
+				t.Errorf("want a Basic challenge naming BINDERY_ALLOWED_HOSTS, got %q %s", rec.Header().Get("WWW-Authenticate"), rec.Body.String())
+			}
+
+			for _, host := range []string{"192.168.1.10:8787", "nas.lan", "bindery"} {
+				if rec := do(host, nil); rec.Code != http.StatusOK {
+					t.Errorf("%s: status %d, want 200", host, rec.Code)
+				}
+			}
+			if rec := do("attacker.example", func(r *http.Request) { r.Header.Set("X-Api-Key", key) }); rec.Code != http.StatusOK {
+				t.Errorf("foreign Host with API key: status %d, want 200", rec.Code)
+			}
+			if rec := do("attacker.example", func(r *http.Request) { r.SetBasicAuth("reader", "reader-password") }); rec.Code != http.StatusOK {
+				t.Errorf("foreign Host with Basic auth: status %d, want 200", rec.Code)
+			}
+		})
 	}
 }
 
@@ -412,6 +471,7 @@ func TestOPDS_LocalOnly_BadKeyStillFallsThroughToBypass(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/opds/", nil)
 	req.Header.Set("X-Api-Key", "wrong-key")
 	req.RemoteAddr = "127.0.0.1:1234"
+	req.Host = "localhost:8787" // not httptest's example.com, which the mode refuses
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 

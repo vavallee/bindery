@@ -1836,7 +1836,11 @@ func TestInstallAuthenticatedRequestsCarryOperatorIdentity(t *testing.T) {
 				gotRole = UserRoleFromContext(r.Context())
 			}))
 			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, tc.request())
+			req := tc.request()
+			// httptest's default Host is example.com, which the login free
+			// modes refuse (HostAllowedForModeGrant); use a LAN name.
+			req.Host = "bindery:8787"
+			h.ServeHTTP(rec, req)
 
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200", rec.Code)

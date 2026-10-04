@@ -564,7 +564,10 @@ func TestHardcoverListsUsesSavedTokenInDisabledAuthMode(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	h.HardcoverLists(rec, httptest.NewRequest(http.MethodGet, "/api/v1/importlist/hardcover/lists", nil))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/importlist/hardcover/lists", nil)
+	// Not httptest's example.com, which the login free modes refuse.
+	req.Host = "bindery:8787"
+	h.HardcoverLists(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -590,6 +593,7 @@ func TestHardcoverListsUsesSavedTokenForLocalOnlyLocalRequests(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/importlist/hardcover/lists", nil)
 	req.RemoteAddr = "127.0.0.1:12345"
+	req.Host = "localhost:8787"
 	rec := httptest.NewRecorder()
 	h.HardcoverLists(rec, req)
 	if rec.Code != http.StatusOK {

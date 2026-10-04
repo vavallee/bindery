@@ -206,6 +206,9 @@ func (f *requesterFixture) do(method, target string, cookie *http.Cookie) *httpt
 func (f *requesterFixture) doFrom(method, target string, cookie *http.Cookie, remote string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, target, nil)
 	req.RemoteAddr = remote
+	// A LAN name, not httptest's example.com, which the login free modes
+	// refuse; the host check itself is covered in host_check_routes_test.go.
+	req.Host = "bindery:8787"
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}
@@ -470,6 +473,7 @@ func TestRequesterGuard_OPDSModeNeverElevatesARequester(t *testing.T) {
 		}{{f.cookie, http.StatusForbidden}, {f.userCookie, http.StatusOK}, {nil, http.StatusOK}} {
 			req := httptest.NewRequest(http.MethodGet, "/opds/", nil)
 			req.RemoteAddr = "127.0.0.1:5555"
+			req.Host = "localhost:8787" // not httptest's example.com, which the modes refuse
 			if c.cookie != nil {
 				req.AddCookie(c.cookie)
 			}
