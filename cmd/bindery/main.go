@@ -1063,12 +1063,13 @@ func main() {
 		// History
 		r.Get("/history", historyHandler.List)
 		r.Delete("/history/{id}", historyHandler.Delete)
+		// Blocklisting a release from history stays open to every user: the
+		// handler 404s unless the caller owns the history event, so a user
+		// can only add entries for their own grabs.
 		r.Post("/history/{id}/blocklist", historyHandler.Blocklist)
 
-		// Blocklist
-		r.Get("/blocklist", blocklistHandler.List)
-		r.Delete("/blocklist/bulk", blocklistHandler.BulkDelete)
-		r.Delete("/blocklist/{id}", blocklistHandler.Delete)
+		// Blocklist, admin only (see registerBlocklistRoutes).
+		registerBlocklistRoutes(r, blocklistHandler)
 
 		// Notifications — Notification.Headers carries arbitrary HTTP
 		// headers (often auth tokens for ntfy / Gotify / webhook routing).
@@ -1084,15 +1085,9 @@ func main() {
 			r.Post("/notification/{id}/test", notificationHandler.Test)
 		})
 
-		// Quality Profiles — reads available to all; mutations admin-only.
-		r.Get("/qualityprofile", qualityProfileHandler.List)
-		r.Get("/qualityprofile/{id}", qualityProfileHandler.Get)
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireAdmin)
-			r.Post("/qualityprofile", qualityProfileHandler.Create)
-			r.Put("/qualityprofile/{id}", qualityProfileHandler.Update)
-			r.Delete("/qualityprofile/{id}", qualityProfileHandler.Delete)
-		})
+		// Quality profiles: reads open, writes admin only (see
+		// registerQualityProfileRoutes).
+		registerQualityProfileRoutes(r, qualityProfileHandler)
 
 		// Settings — reads available to all; mutations admin-only.
 		r.Get("/setting", settingsHandler.List)
@@ -1178,14 +1173,9 @@ func main() {
 			r.Delete("/customformat/{id}", customFormatHandler.Delete)
 		})
 
-		// Metadata profiles — per-user (owner_user_id from migration 025).
-		// Reads stay available to all authenticated users; the cross-user
-		// Get/Update/Delete IDOR is closed by D1's env-gated handler check.
-		r.Get("/metadataprofile", metadataProfileHandler.List)
-		r.Post("/metadataprofile", metadataProfileHandler.Create)
-		r.Get("/metadataprofile/{id}", metadataProfileHandler.Get)
-		r.Put("/metadataprofile/{id}", metadataProfileHandler.Update)
-		r.Delete("/metadataprofile/{id}", metadataProfileHandler.Delete)
+		// Metadata profiles: reads open, writes admin only (see
+		// registerMetadataProfileRoutes).
+		registerMetadataProfileRoutes(r, metadataProfileHandler)
 
 		// Backups — Restore replaces the live database (staged now, swapped
 		// in by db.ApplyPendingRestore at the next start), Delete removes
@@ -1662,17 +1652,28 @@ func (p *dbUserProvisioner) ResolveOrProvisionUser(ctx context.Context, username
 // metric labels — using the raw URL would create unbounded label cardinality
 // because every distinct id becomes a separate time series.
 //
-// Falls back to the URL path before any handler has matched the route, which
-// happens for 404s. Strip query strings — they're already excluded by URL.Path
-// but the comment is here for the reader.
+// When chi matched nothing (an unknown method, or a known method with no route
+// for the path, both answered 405 by chi) it returns the fixed unmatchedRoute,
+// never the raw path. The metrics middleware runs before auth, so a raw path
+// label would let any anonymous client mint a permanent series per request.
+// Unknown GETs still report a template: "/*" for the SPA catch-all and
+// "/api/v1/*" for misses inside the API subrouter. With BINDERY_URL_BASE set,
+// the inner router shares the outer router's route context, so templates
+// carry the prefix and a root level 405 reports the mount pattern (e.g.
+// "/bindery/*") rather than unmatchedRoute; still one fixed value. Unknown
+// methods under a prefix are rejected by the outer router and never reach
+// the metrics middleware at all.
 func routeTemplate(r *http.Request) string {
 	if rc := chi.RouteContext(r.Context()); rc != nil {
 		if pat := rc.RoutePattern(); pat != "" {
 			return pat
 		}
 	}
-	return r.URL.Path
+	return unmatchedRoute
 }
+
+// unmatchedRoute is the route label for requests no chi pattern matched.
+const unmatchedRoute = "unmatched"
 
 // buildTelemetryGatherer returns a telemetry.Gatherer closure that reads the
 // current per-subsystem configuration counts directly from SQLite. Every

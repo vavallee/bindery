@@ -18,8 +18,9 @@ docker run -d \
 
 | Tag | Meaning |
 |-----|---------|
-| `:latest` | Most recent tagged release |
+| `:latest` | Most recent tagged release. Moves when a `v*` release tag is pushed and its image is built, never on a merge to `main`. It is pushed as soon as the tag's image builds, before the release smoke test and binary build finish, so pin `:X.Y.Z` if you want a release that has cleared every step |
 | `:X.Y.Z` / `:vX.Y.Z` | Specific release, both spellings are published. The Helm chart pins the un-prefixed form |
+| `:edge` | Head of `main`, rebuilt on every merge. Unreleased: it has passed CI but not the release gates |
 | `:development` | Bleeding edge from the `development` branch |
 | `:sha-<hash>` | Per-commit image, published for every branch and tag build. Pin for rollback |
 
@@ -108,6 +109,14 @@ Pre-built archives are attached to every [Release](https://github.com/vavallee/b
 | Windows | amd64, arm64 | x86_64 desktops, Windows on ARM |
 
 Pick the archive matching your platform, verify against `bindery_<version>_checksums.txt`, extract, and run.
+
+From the first release after v1.40.0, every archive and the checksums file also carry a signed [SLSA build provenance](https://slsa.dev/spec/v1.0/provenance) attestation, the same kind the container image has. A checksum only proves the file matches the list next to it; the attestation proves the file was built by this repository's release workflow from the tagged commit. With the GitHub CLI:
+
+```bash
+gh attestation verify bindery_<version>_linux_amd64.tar.gz --repo vavallee/bindery
+```
+
+Each archive also has an SPDX SBOM (`<archive>.sbom.spdx.json`) beside it on the release.
 
 Each archive also carries `LICENSE` and `THIRD_PARTY_LICENSES.md` — the licenses
 and NOTICE files of everything statically linked into the binary and embedded in
@@ -487,7 +496,7 @@ Several variables below have a database equivalent that overrides them once it i
 | `BINDERY_RATE_LIMIT_WINDOW_MINUTES` | `15` | Duration in minutes of the per-IP login rate-limit window. After the window expires the failure counter resets. |
 | `BINDERY_SHUTDOWN_GRACE` | `10s` | How long to drain in-flight HTTP requests after receiving SIGTERM or SIGINT before moving on to the background-job drain. Accepts a Go duration (e.g. `30s`, `2m`); a bare number is rejected and the default is kept. Increase if your load balancer / Kubernetes sends long-lived SSE or WebSocket connections. |
 | `BINDERY_JOBS_DRAIN_GRACE` | `15` | Seconds to drain detached background jobs (ABS import, Grimmory sync, manual library scan, startup syncs) after the HTTP server has stopped and before the database is closed. These jobs are cancelled at drain start and given this window to wind down cleanly; any still running when it expires are logged and the process proceeds to shut down. Accepts a Go duration (e.g. `45s`, `2m`). This grace runs **after** `BINDERY_SHUTDOWN_GRACE`, so the two sum to the total shutdown budget: the defaults total 25s, under Kubernetes' default 30s `terminationGracePeriodSeconds`. If you raise either, raise `terminationGracePeriodSeconds` to match so drains finish before SIGKILL. The bundled Helm chart sets `terminationGracePeriodSeconds: 30` in its Deployment template with no values key, so raising the graces past 25s in total means patching that template. |
-| `BINDERY_ENFORCE_TENANCY` | _(off)_ | Set to `true`/`1` to enforce per-user data isolation: each user sees only their own authors, books, profiles, and root folders, and the join-scoped queue / history / pending / OPDS feeds are scoped to the requesting user. **Defaults off**, in which case every authenticated user shares one library view (single-user behaviour). Admin-only configuration gating applies regardless of this flag. Accepted truthy values are `1`, `true`, `yes` and `on`. When more than one user account exists and the gate is off, Bindery logs one warning at startup naming the variable, because those accounts share a single library view. See [multi-user.md](multi-user.md). |
+| `BINDERY_ENFORCE_TENANCY` | _(off)_ | Set to `true`/`1` to enforce per-user data isolation: each user sees only their own authors and books (quality and metadata profiles and root folders stay shared and admin managed), and the join-scoped queue / history / pending / OPDS feeds are scoped to the requesting user. **Defaults off**, in which case every authenticated user shares one library view (single-user behaviour). Admin-only configuration gating applies regardless of this flag. Accepted truthy values are `1`, `true`, `yes` and `on`. When more than one user account exists and the gate is off, Bindery logs one warning at startup naming the variable, because those accounts share a single library view. See [multi-user.md](multi-user.md). |
 | `BINDERY_LOG_RETENTION_DAYS` | `14` | Days to retain persisted log entries in the SQLite log store before they are pruned. The same value is editable at **Settings → Logs → Log Retention**. |
 | `BINDERY_TRUSTED_PROXY` | _(empty)_ | Comma-separated IP/CIDR list of reverse proxies trusted to set `X-Forwarded-*`. Used for two things: (1) resolving the real client IP (for local-only auth and the per-IP login rate-limiter) by walking the `X-Forwarded-For` chain and only trusting hops in this list — never a client-supplied leftmost entry; and (2) honouring `X-Forwarded-Proto` / `X-Forwarded-Host` for the public scheme/host, which drives the fully-qualified OPDS feed link URLs, the `BINDERY_COOKIE_SECURE=auto` decision, and the OIDC `redirect_uri`. Requests from any peer **not** in this list have all `X-Forwarded-*` stripped, so behind a TLS-terminating proxy (Traefik / Caddy / nginx) those links fall back to `http://` until the proxy's IP/CIDR is listed here — **set it even if you are not using proxy auth.** An entry like `0.0.0.0/0` trusts every peer and effectively disables per-IP decisions. **Required** when proxy auth mode is active — Bindery refuses to start without it. **It also matters for `local-only` auth mode:** local-only serves any client whose resolved IP is private, and with this list empty that decision falls back to the TCP peer. Behind a reverse proxy the peer is the proxy's own private address, so every proxied request qualifies as local. Set it whenever Bindery is reached through a proxy, or use `enabled` mode instead; Bindery logs a warning at startup and on a mode change when it sees local-only with this unset. |
 | `BINDERY_TELEMETRY_DISABLED` | _(unset)_ | Set to `true` to opt out of the daily anonymous telemetry ping before any DB setting exists (e.g. on first boot). Equivalent to `telemetry.enabled: false` in **Settings → Logs**, but takes effect before the first ping fires. |

@@ -43,12 +43,13 @@ func (h *MetadataProfileHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
+	// No ownership check: metadata profiles are instance wide configuration.
+	// Only admins can write them (see registerMetadataProfileRoutes), they
+	// hold nothing sensitive, and migration 025 stamped every existing row
+	// with the first admin's id, so an owner filter here hid every profile
+	// from every non admin. Requesters never reach this route
+	// (auth.RequesterAllowList).
 	if p == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "metadata profile not found"})
-		return
-	}
-	// Tier-1 cross-user IDOR guard (D1).
-	if !auth.CheckOwnership(r.Context(), p.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "metadata profile not found"})
 		return
 	}

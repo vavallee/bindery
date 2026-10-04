@@ -946,7 +946,9 @@ func (h *SeriesHandler) HardcoverDiff(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	series, err := h.series.GetByID(r.Context(), id)
+	// Scoped like Get: the diff lists the series' local books (titles and ids
+	// in Present, LocalOnly and Uncertain), so it must only see the caller's.
+	series, err := h.series.GetByIDForUser(r.Context(), id, auth.ListScopeUserID(r.Context()))
 	if err != nil {
 		writeServerError(w, r, err)
 		return

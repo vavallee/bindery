@@ -260,3 +260,66 @@ func registerLibraryScanStatusRoute(r chi.Router, h libraryScanStatusRouteHandle
 		r.Get("/library/scan/status", h.ScanStatus)
 	})
 }
+
+// blocklistRouteHandler is the surface registerBlocklistRoutes needs.
+type blocklistRouteHandler interface {
+	List(http.ResponseWriter, *http.Request)
+	Delete(http.ResponseWriter, *http.Request)
+	BulkDelete(http.ResponseWriter, *http.Request)
+}
+
+// registerBlocklistRoutes mounts the /blocklist routes admin only. The
+// blocklist is app wide (no owner column) and every search consults it, so a
+// non-admin who could list it saw every release anyone had blocked, and one who
+// could delete from it re-enabled releases an admin had blocked for everybody.
+// docs/multi-user.md already placed Blocklist under the admin only System tab.
+// POST /history/{id}/blocklist stays open: it adds an entry only for a history
+// event the caller owns.
+func registerBlocklistRoutes(r chi.Router, h blocklistRouteHandler) {
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
+		r.Get("/blocklist", h.List)
+		r.Delete("/blocklist/bulk", h.BulkDelete)
+		r.Delete("/blocklist/{id}", h.Delete)
+	})
+}
+
+// profileRouteHandler is the surface registerQualityProfileRoutes and
+// registerMetadataProfileRoutes need.
+type profileRouteHandler interface {
+	List(http.ResponseWriter, *http.Request)
+	Get(http.ResponseWriter, *http.Request)
+	Create(http.ResponseWriter, *http.Request)
+	Update(http.ResponseWriter, *http.Request)
+	Delete(http.ResponseWriter, *http.Request)
+}
+
+// registerQualityProfileRoutes mounts the /qualityprofile routes. Profiles are
+// instance wide configuration: reads open to every authenticated user (the
+// author forms fill their pickers from the list, and requesters are kept out by
+// auth.RequesterAllowList), mutations admin only.
+func registerQualityProfileRoutes(r chi.Router, h profileRouteHandler) {
+	r.Get("/qualityprofile", h.List)
+	r.Get("/qualityprofile/{id}", h.Get)
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
+		r.Post("/qualityprofile", h.Create)
+		r.Put("/qualityprofile/{id}", h.Update)
+		r.Delete("/qualityprofile/{id}", h.Delete)
+	})
+}
+
+// registerMetadataProfileRoutes mounts the /metadataprofile routes with the
+// same split as registerQualityProfileRoutes. Writes used to be open to every
+// user; a metadata profile filters what every author refresh adds, and the
+// Settings UI already showed the tab to admins only.
+func registerMetadataProfileRoutes(r chi.Router, h profileRouteHandler) {
+	r.Get("/metadataprofile", h.List)
+	r.Get("/metadataprofile/{id}", h.Get)
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
+		r.Post("/metadataprofile", h.Create)
+		r.Put("/metadataprofile/{id}", h.Update)
+		r.Delete("/metadataprofile/{id}", h.Delete)
+	})
+}

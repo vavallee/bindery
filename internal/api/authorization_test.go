@@ -302,7 +302,10 @@ func seedTwoUserMetadataProfiles(t *testing.T) authzMetadataProfileFixture {
 	return authzMetadataProfileFixture{database: database, repo: repo, u1: u1.ID, u2: u2.ID, p1: p1, p2: p2}
 }
 
-func TestMetadataProfile_Get_CrossUserBlockedWhenGateOn(t *testing.T) {
+// Profiles are instance wide configuration that only admins write, so a
+// user's Get on another account's profile succeeds even with the gate on (see
+// authz_gates_test.go for the migration 025 case this protects).
+func TestMetadataProfile_Get_CrossUserReadableWhenGateOn(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	f := seedTwoUserMetadataProfiles(t)
 
@@ -311,8 +314,8 @@ func TestMetadataProfile_Get_CrossUserBlockedWhenGateOn(t *testing.T) {
 	req := newRequestForID(http.MethodGet, "/api/v1/metadataprofile/"+strconv.FormatInt(f.p1.ID, 10), f.p1.ID, ctx)
 	rec := httptest.NewRecorder()
 	h.Get(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("cross-user metadata profile Get must 404; got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cross-user metadata profile Get must succeed; got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -399,7 +402,7 @@ func seedTwoUserQualityProfile(t *testing.T) authzQualityProfileFixture {
 	return authzQualityProfileFixture{database: database, repo: repo, u1: u1.ID, u2: u2.ID, p1: p1}
 }
 
-func TestQualityProfile_Get_CrossUserBlockedWhenGateOn(t *testing.T) {
+func TestQualityProfile_Get_CrossUserReadableWhenGateOn(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	f := seedTwoUserQualityProfile(t)
 
@@ -408,8 +411,8 @@ func TestQualityProfile_Get_CrossUserBlockedWhenGateOn(t *testing.T) {
 	req := newRequestForID(http.MethodGet, "/api/v1/qualityprofile/"+strconv.FormatInt(f.p1.ID, 10), f.p1.ID, ctx)
 	rec := httptest.NewRecorder()
 	h.Get(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("cross-user quality profile Get must 404; got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cross-user quality profile Get must succeed; got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -427,12 +430,11 @@ func TestQualityProfile_Get_GateOffAllowsCrossUser(t *testing.T) {
 	}
 }
 
-// TestMetadataProfile_Create_StampsOwnerClosesIDOR drives the real Create
-// handler (not setOwner) to prove the owner-stamp fix: before it, Create never
-// wrote owner_user_id, so every API-created profile was owner-0 and
-// CheckOwnership let any authenticated user read/modify/delete it. After the
-// fix a second user's Get on the creator's profile is blocked.
-func TestMetadataProfile_Create_StampsOwnerClosesIDOR(t *testing.T) {
+// TestMetadataProfile_Create_StampsOwner drives the real Create handler (not
+// setOwner) to prove Create records owner_user_id. Profiles are instance wide
+// configuration (writes are admin only at the router), so the stamp is
+// bookkeeping and a second account can still read the profile.
+func TestMetadataProfile_Create_StampsOwner(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	database, err := db.OpenMemory()
 	if err != nil {
@@ -459,11 +461,14 @@ func TestMetadataProfile_Create_StampsOwnerClosesIDOR(t *testing.T) {
 	if err := json.Unmarshal(createRec.Body.Bytes(), &created); err != nil || created.ID == 0 {
 		t.Fatalf("decode created: err=%v id=%d", err, created.ID)
 	}
+	if stored, _ := repo.GetByID(ctx, created.ID); stored == nil || stored.OwnerUserID != alice.ID {
+		t.Fatalf("Create must stamp owner_user_id=%d; got %+v", alice.ID, stored)
+	}
 
 	bobRec := httptest.NewRecorder()
 	h.Get(bobRec, newRequestForID(http.MethodGet, "/x", created.ID, withAuthCtx(context.Background(), bob.ID, "user")))
-	if bobRec.Code != http.StatusNotFound {
-		t.Fatalf("cross-user Get must 404 after owner stamp; got %d", bobRec.Code)
+	if bobRec.Code != http.StatusOK {
+		t.Fatalf("profiles are instance wide, so another user's Get must 200; got %d", bobRec.Code)
 	}
 
 	aliceRec := httptest.NewRecorder()
@@ -473,9 +478,8 @@ func TestMetadataProfile_Create_StampsOwnerClosesIDOR(t *testing.T) {
 	}
 }
 
-// TestQualityProfile_Create_StampsOwnerClosesIDOR is the quality-profile
-// counterpart — same owner-stamp gap, same fix.
-func TestQualityProfile_Create_StampsOwnerClosesIDOR(t *testing.T) {
+// TestQualityProfile_Create_StampsOwner is the quality profile counterpart.
+func TestQualityProfile_Create_StampsOwner(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	database, err := db.OpenMemory()
 	if err != nil {
@@ -502,11 +506,14 @@ func TestQualityProfile_Create_StampsOwnerClosesIDOR(t *testing.T) {
 	if err := json.Unmarshal(createRec.Body.Bytes(), &created); err != nil || created.ID == 0 {
 		t.Fatalf("decode created: err=%v id=%d", err, created.ID)
 	}
+	if stored, _ := repo.GetByID(ctx, created.ID); stored == nil || stored.OwnerUserID != alice.ID {
+		t.Fatalf("Create must stamp owner_user_id=%d; got %+v", alice.ID, stored)
+	}
 
 	bobRec := httptest.NewRecorder()
 	h.Get(bobRec, newRequestForID(http.MethodGet, "/x", created.ID, withAuthCtx(context.Background(), bob.ID, "user")))
-	if bobRec.Code != http.StatusNotFound {
-		t.Fatalf("cross-user Get must 404 after owner stamp; got %d", bobRec.Code)
+	if bobRec.Code != http.StatusOK {
+		t.Fatalf("profiles are instance wide, so another user's Get must 200; got %d", bobRec.Code)
 	}
 
 	aliceRec := httptest.NewRecorder()
