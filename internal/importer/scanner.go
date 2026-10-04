@@ -2965,6 +2965,14 @@ type scanBook struct {
 	reconcilable bool
 }
 
+// titleReconcileHit is one wanted book that cleared every title-tier gate for
+// a single reading of a file. reconcileByTitle collects these and then
+// chooses; a gate failure is not a hit (#2941).
+type titleReconcileHit struct {
+	sb    *scanBook
+	score float64
+}
+
 func newScanBook(b *models.Book, reconcilable bool) scanBook {
 	sb := scanBook{book: b, normTitle: normalizeTitle(b.Title), reconcilable: reconcilable}
 	sb.normLen = len(sb.normTitle)
@@ -3479,11 +3487,20 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	var unmatchedFiles unmatchedCollector
 	var reconciled, unmatched, alreadyTracked, tagReadFailed int
 
-	// tryReconcileTitle attempts to reconcile path to the given wanted book via
-	// the fuzzy title tier, returning true once a book is claimed. The
-	// candidate's author is already known to satisfy authorMatch — see the
-	// title tier in the file loop below.
+	// titleReconcileMargin is how far the best hit must lead the runner-up
+	// before the scan claims the file (#2941). Five points on the 0-1
+	// Jaro-Winkler scale, the same width as canonicalDecisiveGap. It sits
+	// beside the 0.85 gate below: a score under that floor is never a hit,
+	// and two hits closer than this margin are left unmatched unless one of
+	// them is an exact normalised title.
+	const titleReconcileMargin = 0.05
+
+	// tryReconcileTitle reports whether one wanted book clears the fuzzy title
+	// tier for this reading of the file. It does not claim: reconcileByTitle
+	// scores every candidate, then picks. The candidate's author is already
+	// known to satisfy authorMatch — see the title tier in the file loop below.
 	var titleCand []int // reused candidate-index scratch
+	var titleHits []titleReconcileHit
 	// claimBlocked records that the file currently being processed matched a book
 	// whose slot for its format had already been claimed earlier in the pass. It
 	// is reset per file and read only in the unmatched branch, where it tells a
@@ -3499,7 +3516,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	// from it before the file's own title (see libraryVolumeConflict). Set per
 	// file in the loop below.
 	var fileLayoutTitle string
-	tryReconcileTitle := func(sb *scanBook, path, cleanPath, title, normParsed, detectedFmt string) bool {
+	tryReconcileTitle := func(sb *scanBook, path, title, normParsed, detectedFmt string) (titleReconcileHit, bool) {
 		b := sb.book
 		// Length gate: Jaro-Winkler is bounded above by 0.8 + 0.2·(minLen/
 		// maxLen), so a score >= 0.85 is impossible once the shorter normalised
@@ -3509,13 +3526,13 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			lo, hi = hi, lo
 		}
 		if lo == 0 || lo*4 < hi {
-			return false
+			return titleReconcileHit{}, false
 		}
 		// Require Jaro-Winkler >= 0.85 to prevent low-confidence matches from
 		// reconciling the wrong book after a delete+rescan (#343).
 		jwScore := textutil.JaroWinkler(sb.normTitle, normParsed)
 		if jwScore < 0.85 {
-			return false
+			return titleReconcileHit{}, false
 		}
 		// Two volumes of one series clear any similarity threshold:
 		// "Defiance of the Fall 17" against "Defiance of the Fall 01" scores
@@ -3528,7 +3545,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		if libraryVolumeConflict(title, fileLayoutTitle, b.Title) {
 			slog.Debug("library scan: title match rejected (different series volume)",
 				"title", b.Title, "path", path, "fileTitle", title, "folderTitle", fileLayoutTitle, "jw", jwScore)
-			return false
+			return titleReconcileHit{}, false
 		}
 		// This book already took a file of this format earlier in the pass. The
 		// claim check used to run before the title gate; it runs after it now so
@@ -3538,7 +3555,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// gets skipped.
 		if reconciledBooks[bookFormatClaim{b.ID, detectedFmt}] {
 			claimBlocked = true
-			return false
+			return titleReconcileHit{}, false
 		}
 		// File must live under the candidate book's effective library root to
 		// prevent cross-author mismapping after delete+rescan (#343).
@@ -3546,13 +3563,20 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		if !pathUnderDir(path, effDir) {
 			slog.Debug("library scan: title+author match rejected (outside library root)",
 				"title", b.Title, "path", path, "root", effDir)
-			return false
+			return titleReconcileHit{}, false
 		}
+		return titleReconcileHit{sb: sb, score: jwScore}, true
+	}
+
+	// claimTitleHit records the chosen hit. A write error is logged and
+	// reported so the caller can apply the same rule to the hits that remain.
+	claimTitleHit := func(hit titleReconcileHit, path, cleanPath, detectedFmt string) bool {
+		b := hit.sb.book
 		if err := s.books.AddBookFile(ctx, b.ID, detectedFmt, registeredPath); err != nil {
 			slog.Error("library scan: failed to update book", "id", b.ID, "error", err)
 			return false
 		}
-		slog.Info("library scan: reconciled book", "title", b.Title, "path", path, "jw", jwScore)
+		slog.Info("library scan: reconciled book", "title", b.Title, "path", path, "jw", hit.score)
 		trackedPaths[filepath.Clean(registeredPath)] = true
 		if detectedFmt == models.MediaTypeAudiobook {
 			// Sibling tracks of a just-reconciled audiobook folder belong to
@@ -3565,7 +3589,11 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	}
 
 	// reconcileByTitle runs the fuzzy title tier for one reading of a file,
-	// returning true once a book is claimed.
+	// returning true once a book is claimed. Every candidate is scored. The
+	// best hit is claimed when it is the only one, when its normalised title
+	// is identical to the file (score 1) and strictly ahead of the runner-up,
+	// or when it leads by titleReconcileMargin. A closer pair is left
+	// unmatched (#2941).
 	reconcileByTitle := func(path, cleanPath, detectedFmt, title, author, layoutAuthor string) bool {
 		// normalizeTitle strips leading articles and inverts comma-suffix
 		// sort form ("Title, A" → "title") so librarian-sorted folders
@@ -3577,23 +3605,57 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// means the parsed author is empty or initials only, so authorMatch
 		// accepts any author and every wanted book is a candidate.
 		authorSet, _ := resolveAuthors(author, layoutAuthor)
+		titleHits = titleHits[:0]
+		consider := func(sb *scanBook) {
+			if hit, ok := tryReconcileTitle(sb, path, title, normParsed, detectedFmt); ok {
+				titleHits = append(titleHits, hit)
+			}
+		}
 		if authorSet == nil {
 			for i := range wantedBooks {
-				if tryReconcileTitle(&wantedBooks[i], path, cleanPath, title, normParsed, detectedFmt) {
-					return true
+				consider(&wantedBooks[i])
+			}
+		} else {
+			titleCand = titleCand[:0]
+			for id := range authorSet {
+				titleCand = append(titleCand, booksByAuthor[id]...)
+			}
+			slices.Sort(titleCand) // restore library order across authors
+			for _, idx := range titleCand {
+				consider(&wantedBooks[idx])
+			}
+		}
+		hits := titleHits
+		if len(hits) > 1 {
+			slices.SortStableFunc(hits, func(a, b titleReconcileHit) int {
+				if a.score > b.score {
+					return -1
+				}
+				if a.score < b.score {
+					return 1
+				}
+				return 0
+			})
+		}
+		for len(hits) > 0 {
+			best := hits[0]
+			if len(hits) > 1 {
+				runner := hits[1]
+				// An exact normalised title still wins inside the margin.
+				// A tie at 1.0 is not strictly ahead, so it is left unmatched.
+				exact := best.score == 1 && best.score > runner.score
+				if !exact && best.score-runner.score < titleReconcileMargin {
+					slog.Debug("library scan: title match rejected (close title scores)",
+						"title", best.sb.book.Title, "jw", best.score,
+						"runnerUp", runner.sb.book.Title, "runnerUpJw", runner.score,
+						"path", path)
+					return false
 				}
 			}
-			return false
-		}
-		titleCand = titleCand[:0]
-		for id := range authorSet {
-			titleCand = append(titleCand, booksByAuthor[id]...)
-		}
-		slices.Sort(titleCand) // restore library order across authors
-		for _, idx := range titleCand {
-			if tryReconcileTitle(&wantedBooks[idx], path, cleanPath, title, normParsed, detectedFmt) {
+			if claimTitleHit(best, path, cleanPath, detectedFmt) {
 				return true
 			}
+			hits = hits[1:]
 		}
 		return false
 	}

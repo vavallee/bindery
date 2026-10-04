@@ -533,6 +533,8 @@ to the records. Things worth knowing before you judge the results:
   the titles look; it goes to volume 1 if that book is in your library, and
   otherwise waits on **Import → In your library**, where volume 17 is not
   offered as its suggestion either (#2860).
+- An exact title is attached in preference to a shorter partial one, and two
+  near-tied non-exact titles are left for you to choose (#2941).
 
 ## Adopting files already in your library
 
