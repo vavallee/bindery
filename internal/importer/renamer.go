@@ -56,6 +56,38 @@ func removeDownloadArtifacts(dir string) {
 	})
 }
 
+// removeNonRegularEntries deletes every entry under dir that is neither a
+// regular file nor a directory: symlinks, device nodes, fifos, sockets. A
+// download is untrusted input, and MoveDir's rename fast path moves it
+// wholesale, so a release carrying "cover.jpg -> /config/bindery.db" would
+// otherwise land that link in the library. The copy and hardlink paths
+// already skip these entries at placement time; this brings the rename path
+// to the same result.
+//
+// WalkDir reads entries without following links, so a link to a directory is
+// removed as a link and never descended into, and os.Remove on a link removes
+// the link, not its target. Best effort, like removeDownloadArtifacts: the
+// folder is already in place and the source is gone, so failing the import
+// here would not take the entry back out. The download and Calibre bridge
+// routes refuse to follow links and the library scan skips them, so an entry
+// that cannot be removed is still never served or tracked.
+func removeNonRegularEntries(dir string) {
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() || d.Type().IsRegular() {
+			return nil
+		}
+		if rmErr := os.Remove(path); rmErr != nil {
+			slog.Error("could not remove a non-regular entry from an imported folder", "path", path, "type", d.Type().String(), "error", rmErr)
+			return nil
+		}
+		slog.Warn("removed a non-regular entry (symlink, device or fifo) from an imported download", "path", path, "type", d.Type().String())
+		return nil
+	})
+}
+
 // templateGroupRe matches one "{...}" group. The content is parsed by
 // renderGroup: either the classic simple form — a bare "{Token}", optionally
 // with a default after a colon ("{Genre:Unsorted}") or a zero-pad width
@@ -727,12 +759,18 @@ func moveDirCtx(ctx context.Context, src, dst string) error {
 	}
 
 	// Fast path: same filesystem. Rename moves the folder wholesale, so any
-	// download artifacts (.nzb receipts, .par2 volumes) ride along — sweep
-	// them out of the destination afterwards to match the filtering the
-	// copy-based paths do at placement time.
-	if err := os.Rename(src, dst); err == nil {
-		removeDownloadArtifacts(dst)
-		return nil
+	// download artifacts (.nzb receipts, .par2 volumes) and any symlinks or
+	// other non-regular entries ride along. Sweep both out of the destination
+	// afterwards to match the filtering the copy-based paths do at placement
+	// time. A src that is itself a symlink skips the rename, which would put
+	// the link rather than a folder into the library; the copy below opens
+	// it as a directory and places only its regular files.
+	if li, lerr := os.Lstat(src); lerr == nil && li.IsDir() {
+		if err := os.Rename(src, dst); err == nil {
+			removeDownloadArtifacts(dst)
+			removeNonRegularEntries(dst)
+			return nil
+		}
 	}
 
 	// Slow path: recursive copy, then verify, then remove.

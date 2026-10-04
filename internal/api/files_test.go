@@ -34,7 +34,7 @@ func fileFixture(t *testing.T) (*FileHandler, *db.BookRepo, *models.Author, cont
 	if err := authors.Create(ctx, author); err != nil {
 		t.Fatal(err)
 	}
-	// isAllowedPath fails closed when no roots are configured (security
+	// openServable fails closed when no roots are configured (security
 	// hardening sweep); fixture returns its TempDir as the configured root
 	// and the test stores book file paths under it.
 	root := t.TempDir()
@@ -79,7 +79,7 @@ func TestFileDownload_FileMissingOnDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	// FilePath set to a path under the allowed root but the file doesn't
-	// exist — isAllowedPath passes, os.Stat fails → 404.
+	// exist — openServable passes the root check, Lstat fails → 404.
 	if err := books.SetFilePath(ctx, book.ID, filepath.Join(tmp, "missing.epub")); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestFileDownload_PathOutsideAllowedRoots(t *testing.T) {
 	if err := books.Create(ctx, book); err != nil {
 		t.Fatal(err)
 	}
-	// Path is outside the configured allowedRoots — isAllowedPath fails
+	// Path is outside the configured allowedRoots — openServable fails
 	// closed → 403, defending against tampered DB rows or importer bugs
 	// that point at /etc/passwd or anywhere else off the library tree.
 	if err := books.SetFilePath(ctx, book.ID, "/etc/passwd"); err != nil {
@@ -660,7 +660,7 @@ func TestFileDownload_PathParamUntrackedRefused(t *testing.T) {
 	}
 	// A real file, inside the allowed root, that this book simply does not own.
 	// Being under the root is the point: the refusal has to come from the
-	// book_files check, not from isAllowedPath.
+	// book_files check, not from openServable.
 	notMine := filepath.Join(tmp, "someone-elses.epub")
 	if err := os.WriteFile(notMine, []byte("not mine"), 0o644); err != nil {
 		t.Fatal(err)

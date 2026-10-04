@@ -3,10 +3,12 @@ package api
 import (
 	"archive/zip"
 	"context"
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -191,26 +193,128 @@ func (h *FileHandler) serveFile(w http.ResponseWriter, r *http.Request, filePath
 	// book_files rather than off the wire. A row written by an older importer
 	// bug is exactly the case the check exists for, and "it was in the
 	// database" is not the same as "it is inside the library".
-	if !h.isAllowedPath(r.Context(), filePath) {
+	//
+	// openServable also refuses a path that is a symlink, or that resolves
+	// outside every resolved root, and hands back a handle scoped to that
+	// root so nothing below can follow a link out of it.
+	sp, err := h.openServable(r.Context(), filePath)
+	switch {
+	case errors.Is(err, errServeNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "file not found on disk"})
+		return
+	case errors.Is(err, errServeOutside), errors.Is(err, errServeNotRegular):
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
+		return
+	case err != nil:
+		writeServerError(w, r, err)
+		return
+	}
+	defer sp.Close()
+
+	name := filepath.Base(filepath.Clean(filePath))
+	if sp.info.IsDir() {
+		streamZip(w, sp.root, sp.rel, name)
 		return
 	}
 
-	info, err := os.Stat(filePath)
+	f, err := sp.root.Open(sp.rel)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "file not found on disk"})
 		return
 	}
-
-	if info.IsDir() {
-		streamZip(w, filePath)
+	defer f.Close()
+	// Stat the handle that will be served, so what is checked is what is sent.
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
 		return
 	}
+	w.Header().Set("Content-Disposition", contentDisposition(name))
+	http.ServeContent(w, r, name, info.ModTime(), f)
+}
 
-	filename := filepath.Base(filePath)
-	w.Header().Set("Content-Disposition", contentDisposition(filename))
-	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
-	http.ServeFile(w, r, filePath)
+// Sentinels from openServable. errServeOutside and errServeNotRegular are both
+// a 403 to the caller; they are separate so the log says which rule fired.
+var (
+	errServeOutside    = errors.New("path is outside every library root")
+	errServeNotRegular = errors.New("path is not a regular file or directory")
+	errServeNotFound   = errors.New("file not found on disk")
+)
+
+// servedPath is a library path opened for serving. root is an os.Root on the
+// RESOLVED library root that contains the file, and rel is the file's path
+// under it, so every read goes through the root and the kernel refuses to
+// follow a link out of it even if the tree changes after the checks.
+type servedPath struct {
+	root *os.Root
+	rel  string
+	info fs.FileInfo // a regular file or a directory, never a link
+}
+
+func (s *servedPath) Close() { _ = s.root.Close() }
+
+// openServable is the gate every route that hands library bytes to a client
+// goes through (book download, the audiobook zip, OPDS, the Calibre bridge).
+// It refuses, in order:
+//
+//   - a path that is not lexically under a configured root (errServeOutside),
+//     the original allow-list check;
+//   - a path that is itself a symlink, or a device, fifo or socket
+//     (errServeNotRegular). Bindery never creates links in the library, and a
+//     link is how a download smuggles in "cover.jpg -> /config/bindery.db";
+//   - a path whose resolved location is outside every resolved root
+//     (errServeOutside), which catches a linked directory higher up.
+//
+// Roots are resolved too, so a library root that is itself reached through a
+// symlink (common with Docker bind mounts and NAS shares) keeps working: both
+// sides of the comparison are real paths.
+func (h *FileHandler) openServable(ctx context.Context, p string) (*servedPath, error) {
+	roots, ok := h.libraryRoots(ctx)
+	if !ok {
+		return nil, errServeOutside
+	}
+	clean := filepath.Clean(p)
+	if !containedUnder(clean, roots) {
+		return nil, errServeOutside
+	}
+	li, err := os.Lstat(clean)
+	if err != nil {
+		return nil, errServeNotFound
+	}
+	if !li.Mode().IsRegular() && !li.IsDir() {
+		slog.Warn("file download: refusing to serve a symlink or special file", "path", clean, "type", li.Mode().Type().String())
+		return nil, errServeNotRegular
+	}
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return nil, errServeNotFound
+	}
+	for _, root := range roots {
+		realRoot, err := filepath.EvalSymlinks(root)
+		if err != nil || !pathContains(realRoot, resolved) {
+			continue
+		}
+		rel, err := filepath.Rel(realRoot, resolved)
+		if err != nil {
+			continue
+		}
+		rt, err := os.OpenRoot(realRoot)
+		if err != nil {
+			return nil, fmt.Errorf("open library root: %w", err)
+		}
+		info, err := rt.Lstat(rel)
+		if err != nil {
+			_ = rt.Close()
+			return nil, errServeNotFound
+		}
+		if !info.Mode().IsRegular() && !info.IsDir() {
+			_ = rt.Close()
+			return nil, errServeNotRegular
+		}
+		return &servedPath{root: rt, rel: rel, info: info}, nil
+	}
+	slog.Warn("file download: refusing a path that resolves outside the library roots", "path", clean, "resolved", resolved)
+	return nil, errServeOutside
 }
 
 // legacyPathForFormat returns the legacy single FilePath when its on-disk
@@ -235,11 +339,50 @@ func legacyPathForFormat(p string, wantDir bool) string {
 // parameter carries an ASCII-only fallback for ancient clients; the
 // filename*= parameter carries the original UTF-8 percent-encoded for
 // anything modern (every browser since ~2010).
+//
+// The legacy value is an RFC 7230 quoted-string, so a backslash is escaped
+// before a quote: escaping only the quote let a name ending in a backslash, or
+// holding `\"`, close the string early and append parameters of its own.
 func contentDisposition(name string) string {
-	ascii := asciiFallback(name)
-	disp := `attachment; filename="` + strings.ReplaceAll(ascii, `"`, `\"`) + `"`
-	disp += `; filename*=UTF-8''` + url.PathEscape(name)
-	return disp
+	ascii := quotedStringEscaper.Replace(asciiFallback(name))
+	return `attachment; filename="` + ascii + `"; filename*=UTF-8''` + rfc5987Escape(name)
+}
+
+// quotedStringEscaper escapes the two characters a quoted-string reserves.
+// strings.Replacer works left to right over the input in one pass, so the
+// backslash a quote gains is never escaped a second time.
+var quotedStringEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+
+// rfc5987Escape percent-encodes every byte of s outside RFC 5987 attr-char.
+// url.PathEscape, used before, leaves characters such as "=", "(", ")", ","
+// and "'" unencoded, all of which a strict parser rejects inside an
+// ext-value, so a name like "Title (2020).epub" produced a header that
+// mime.ParseMediaType could not read.
+func rfc5987Escape(s string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if isRFC5987AttrChar(c) {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(hex[c>>4])
+		b.WriteByte(hex[c&0x0f])
+	}
+	return b.String()
+}
+
+// isRFC5987AttrChar: ALPHA / DIGIT / "!" / "#" / "$" / "&" / "+" / "-" / "." /
+// "^" / "_" / "`" / "|" / "~".
+func isRFC5987AttrChar(c byte) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		return true
+	}
+	return strings.IndexByte("!#$&+-.^_`|~", c) >= 0
 }
 
 // asciiFallback returns name with non-ASCII bytes replaced by '_' so it
@@ -258,12 +401,12 @@ func asciiFallback(name string) string {
 	return b.String()
 }
 
-// isAllowedPath reports whether p falls under one of the configured library
-// roots. Paths are compared after filepath.Clean so trailing slashes and
-// `..` traversal don't bypass the check. Fails CLOSED when no roots are
-// configured — a production install missing BINDERY_LIBRARY_DIR should not
-// silently degrade to "serve any path on disk". Tests that need an unscoped
-// handler must seed allowedRoots explicitly (e.g. t.TempDir()).
+// libraryRoots returns the roots a download may be served from, cleaned.
+// ok is false when the list could not be built, and callers deny. An empty
+// list (no roots configured at all) denies too: a production install missing
+// BINDERY_LIBRARY_DIR must not silently degrade to "serve any path on disk".
+// Tests that need an unscoped handler must seed allowedRoots explicitly (e.g.
+// t.TempDir()).
 //
 // Two sources of roots are consulted:
 //
@@ -274,32 +417,24 @@ func asciiFallback(name string) string {
 //     under these roots, so a book's file_path can legitimately live under any
 //     of them.
 //
-// FAIL CLOSED: if listing root folders errors, it is logged and treated as
-// "no additional roots" — a transient DB hiccup never widens the allow-list.
-func (h *FileHandler) isAllowedPath(ctx context.Context, p string) bool {
-	p = filepath.Clean(p)
-
-	// Static roots first — the common case and the only path that works
-	// without the repo wired.
-	if containedUnder(p, h.allowedRoots) {
-		return true
+// FAIL CLOSED: if listing root folders errors, it is logged and the request
+// is denied. A transient DB hiccup never widens the allow-list.
+func (h *FileHandler) libraryRoots(ctx context.Context) ([]string, bool) {
+	roots := make([]string, 0, len(h.allowedRoots)+2)
+	for _, r := range h.allowedRoots {
+		roots = append(roots, filepath.Clean(r))
 	}
-
-	// Dynamic root folders, resolved per request.
 	if h.rootFolders != nil {
 		folders, err := h.rootFolders.List(ctx)
 		if err != nil {
 			slog.Error("file download: failed to list root folders for allow-list, denying", "error", err)
-			return false
+			return nil, false
 		}
 		for _, f := range folders {
-			if pathContains(filepath.Clean(f.Path), p) {
-				return true
-			}
+			roots = append(roots, filepath.Clean(f.Path))
 		}
 	}
-
-	return false
+	return roots, len(roots) > 0
 }
 
 // containedUnder reports whether p (already cleaned) sits under any of roots.
@@ -322,36 +457,51 @@ func pathContains(root, p string) bool {
 	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
 }
 
-// streamZip writes a zip archive of every regular file under srcDir to the
-// ResponseWriter. Headers are set before the first byte is written.
-// Content-Length is unknown (streamed), so we use chunked transfer.
-func streamZip(w http.ResponseWriter, srcDir string) {
-	zipName := filepath.Base(srcDir) + ".zip"
+// streamZip writes a zip archive of every regular file under dir (a path
+// inside root) to the ResponseWriter, named name.zip. Headers are set before
+// the first byte is written. Content-Length is unknown (streamed), so we use
+// chunked transfer.
+//
+// The walk reads directory entries without following links, and anything
+// that is not a regular file (a symlink to a file or a directory, a device, a
+// fifo) is skipped rather than opened. Every open goes through root, so even a
+// file swapped for a link mid-walk cannot be read from outside the library.
+func streamZip(w http.ResponseWriter, root *os.Root, dir, name string) {
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+zipName+"\"")
+	w.Header().Set("Content-Disposition", contentDisposition(name+".zip"))
 
 	zw := zip.NewWriter(w)
 	defer func() { _ = zw.Close() }()
 
-	_ = filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	fsys := root.FS()
+	base := filepath.ToSlash(dir)
+	_ = fs.WalkDir(fsys, base, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
 			return nil
 		}
-		rel, rerr := filepath.Rel(srcDir, path)
-		if rerr != nil {
+		if !d.Type().IsRegular() {
+			slog.Warn("file download: skipping a symlink or special file in a zipped folder",
+				"root", root.Name(), "path", p, "type", d.Type().String())
 			return nil
 		}
-		// Use forward slashes in zip entries for cross-platform extraction.
-		rel = strings.ReplaceAll(rel, string(filepath.Separator), "/")
+		f, ferr := fsys.Open(p)
+		if ferr != nil {
+			return nil
+		}
+		defer func() { _ = f.Close() }()
+		if info, serr := f.Stat(); serr != nil || !info.Mode().IsRegular() {
+			return nil
+		}
+		// Entry names are relative to the zipped folder, with forward slashes
+		// (fs paths already are) for cross-platform extraction.
+		rel := p
+		if base != "." {
+			rel = strings.TrimPrefix(p, base+"/")
+		}
 		zf, zerr := zw.Create(rel)
 		if zerr != nil {
 			return zerr
 		}
-		f, ferr := os.Open(path)
-		if ferr != nil {
-			return nil
-		}
-		defer f.Close()
 		_, err = io.Copy(zf, f)
 		return err
 	})

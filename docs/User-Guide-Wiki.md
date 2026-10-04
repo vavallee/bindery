@@ -989,6 +989,12 @@ Knowing the edges saves time:
 - **Per-user root folders.** Multi-user tenancy scopes authors, books, and
   downloads per user; root folders stay a shared, admin-managed pool
   ([multi-user.md](multi-user.md)).
+- **Follow symlinks inside the library.** Imports place regular files only,
+  so a symlink in a download never lands in your library. Library Scan does
+  not attach a symlinked file to a book, and downloads (browser, OPDS, the
+  Calibre bridge) refuse to serve one or include one in an audiobook zip.
+  Replace the link with the file. A library folder that is itself reached
+  through a symlink or a bind mount works as normal.
 
 ## Quick answers
 

@@ -541,6 +541,46 @@ func TestBridgeFile(t *testing.T) {
 	}
 }
 
+// TestBridgeFile_SymlinkRefused: a delivery whose recorded path is a link
+// inside the library is refused, so the bridge never hands the plugin the
+// bytes of whatever the link names.
+func TestBridgeFile_SymlinkRefused(t *testing.T) {
+	f := newBridgeFixture(t)
+	secret := filepath.Join(f.outside, "bindery.db")
+	if err := os.WriteFile(secret, []byte(symlinkSecret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(f.root, "Jane Austen", "Persuasion.epub")
+	symlinkOrSkipAPI(t, secret, link)
+	_, ids := f.book("Persuasion", link)
+
+	rec := f.get("/bridge/v1/deliveries/"+strconv.FormatInt(ids[0], 10)+"/file", nil)
+	if rec.Code != http.StatusForbidden || bridgeCode(t, rec) != "path_forbidden" {
+		t.Fatalf("symlinked delivery: %d %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), symlinkSecret) {
+		t.Fatal("bridge served the symlink target")
+	}
+}
+
+// TestBridgeFile_SymlinkedLibraryRoot: a library root reached through a link
+// still delivers.
+func TestBridgeFile_SymlinkedLibraryRoot(t *testing.T) {
+	f := newBridgeFixture(t)
+	linked := filepath.Join(t.TempDir(), "books")
+	symlinkOrSkipAPI(t, f.root, linked)
+	f.h = NewCalibreBridgeHandler(f.d, NewFileHandler(f.books, linked), f.settings, f.limiter, 15*time.Minute, "v9.9.9")
+	f.router = chi.NewRouter()
+	mountBridge(f.router, f.h)
+
+	path := filepath.Join(linked, "Emma.epub")
+	_, ids := f.book("Emma", path)
+	rec := f.get("/bridge/v1/deliveries/"+strconv.FormatInt(ids[0], 10)+"/file", nil)
+	if rec.Code != http.StatusOK || rec.Body.String() != "Emma.epub" {
+		t.Fatalf("linked root delivery: %d %s", rec.Code, rec.Body)
+	}
+}
+
 // A png that the covers store holds, 1x1.
 var tinyPNG = []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82")
 

@@ -3174,6 +3174,15 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			if err != nil || info.IsDir() {
 				return nil
 			}
+			// filepath.Walk Lstats, so a symlink shows up here as itself.
+			// Only regular files are book files: a link (planted by a
+			// download, or pointing anywhere on the host) must never be
+			// reconciled onto a book and then served as that book's file.
+			// The Unmatched list already dropped links by mode
+			// (eligibleUnmatched); this keeps the reconcile pass in step.
+			if !info.Mode().IsRegular() {
+				return nil
+			}
 			if IsBookFile(path) {
 				files = append(files, path)
 				walked[path] = walkedFile{size: info.Size(), mode: info.Mode()}
