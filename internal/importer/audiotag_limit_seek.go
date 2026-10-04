@@ -16,22 +16,25 @@ import (
 // declares gigabytes costs as many bytes as the file really holds, every
 // scan. A multi-gigabyte audiobook download is a file that holds a lot. The
 // walks below follow the library's reads and refuse any single read over
-// maxAudioTagStructureBytes, and any file whose reads add up to more than
-// maxAudioTagTotalBytes, before the library runs. They seek where the library
+// maxAudioTagStructureBytes (one cover, one frame, one atom), and any file
+// whose reads add up to more than maxAudioTagTotalBytes, before the library
+// runs. They seek where the library
 // seeks (over mdat, for one), so they cost a few header reads, not a pass over
 // the audio.
 
 // maxAudioTagTotalBytes bounds the sum of every read the library will make
-// for one ID3v2 or MP4 tag. One cover at the per structure cap plus all the
-// text an audiobook carries fits with room to spare.
-const maxAudioTagTotalBytes = 32 << 20
+// for one ID3v2 or MP4 tag. A maximal cover plus several hundred chapters with
+// their own chapter art (300 chapters of 100 KB images is about 35 MiB) fits.
+const maxAudioTagTotalBytes = 64 << 20
 
-// maxID3v2Frames bounds the frames in one ID3v2 tag. The library stores each
-// frame in a map and names a repeat by probing NAME_0, NAME_1, ... from zero
-// every time, so n repeats of a frame cost n squared map lookups: about a
-// second of CPU at 4096 on a desktop, far more on a Raspberry Pi. Real tags,
-// chapter frames included, hold a few hundred at most.
-const maxID3v2Frames = 2048
+// maxID3v2Frames bounds the frames in one ID3v2 tag, padding not counted. The
+// library stores each frame in a map and names a repeat by probing NAME_0,
+// NAME_1, ... from zero every time, so n repeats of a frame cost n squared map
+// lookups. Measured on a Ryzen 7 5700X3D, 4096 repeated CHAP frames take the
+// library 0.7 s (0.85 s on a 386 build) and 8192 take 3 s, so this is the
+// largest power of two that keeps one hostile file near a second. It is still
+// twice the chapter count of the longest real audiobooks.
+const maxID3v2Frames = 4096
 
 // maxMP4ContainerDepth bounds how deep the MP4 walk goes. The library recurses
 // on every moov, udta, meta or ilst header and never unwinds before the end of
@@ -46,6 +49,65 @@ const maxMP4ContainerDepth = 32
 const maxMP4Atoms = 1 << 20
 
 var errClaimMalformed = errors.New("audio tags: malformed tag structure")
+
+// errAudioTagOverLimit reports a tag that may be honest but is bigger than
+// Bindery reads: too many frames, too many bytes in all, containers nested too
+// deep. It is kept apart from errAudioTagTooLarge so the scan's warning says
+// which it was.
+var errAudioTagOverLimit = errors.New("audio tags: embedded metadata is over Bindery's limits")
+
+// errClaimWraps marks a size the library would compute by subtracting past
+// zero. A 64-bit build then reads nothing; a 32-bit build reads about 4 GiB.
+var errClaimWraps = errors.New("size wraps below zero")
+
+// id3v2FrameIDs holds, per ID3v2 minor version, the frame IDs the library
+// treats as valid (id3v2frames.go: id3v22Frames, id3v23Frames, id3v24Frames,
+// at the pinned version; BSD licensed, see THIRD_PARTY_LICENSES.md). A frame
+// that runs past the end of the tag is still read when its ID is in these
+// tables and skipped, ending the tag, when it is not, so the walk needs the
+// same tables to stop where the library stops.
+var id3v2FrameIDs = map[byte]map[string]bool{
+	2: frameIDSet(
+		"BUF", "CNT", "COM", "CRA", "CRM", "ETC", "EQU", "GEO", "IPL", "LNK",
+		"MCI", "MLL", "PIC", "POP", "REV", "RVA", "SLT", "STC", "TAL", "TBP",
+		"TCM", "TCO", "TCR", "TDA", "TDY", "TEN", "TFT", "TIM", "TKE", "TLA",
+		"TLE", "TMT", "TOA", "TOF", "TOL", "TOR", "TOT", "TP1", "TP2", "TP3",
+		"TP4", "TPA", "TPB", "TRC", "TRD", "TRK", "TSI", "TSS", "TT1", "TT2",
+		"TT3", "TXT", "TXX", "TYE", "UFI", "ULT", "WAF", "WAR", "WAS", "WCM",
+		"WCP", "WPB", "WXX",
+	),
+	3: frameIDSet(
+		"AENC", "APIC", "COMM", "COMR", "ENCR", "EQUA", "ETCO", "GEOB", "GRID",
+		"IPLS", "LINK", "MCDI", "MLLT", "OWNE", "PRIV", "PCNT", "POPM", "POSS",
+		"RBUF", "RVAD", "RVRB", "SYLT", "SYTC", "TALB", "TBPM", "TCMP", "TCOM",
+		"TCON", "TCOP", "TDAT", "TDLY", "TENC", "TEXT", "TFLT", "TIME", "TIT1",
+		"TIT2", "TIT3", "TKEY", "TLAN", "TLEN", "TMED", "TOAL", "TOFN", "TOLY",
+		"TOPE", "TORY", "TOWN", "TPE1", "TPE2", "TPE3", "TPE4", "TPOS", "TPUB",
+		"TRCK", "TRDA", "TRSN", "TRSO", "TSIZ", "TSO2", "TSOC", "TSRC", "TSSE",
+		"TYER", "TXXX", "UFID", "USER", "USLT", "WCOM", "WCOP", "WOAF", "WOAR",
+		"WOAS", "WORS", "WPAY", "WPUB", "WXXX",
+	),
+	4: frameIDSet(
+		"AENC", "APIC", "ASPI", "COMM", "COMR", "ENCR", "EQU2", "ETCO", "GEOB",
+		"GRID", "LINK", "MCDI", "MLLT", "OWNE", "PRIV", "PCNT", "POPM", "POSS",
+		"RBUF", "RVA2", "RVRB", "SEEK", "SIGN", "SYLT", "SYTC", "TALB", "TBPM",
+		"TCMP", "TCOM", "TCON", "TCOP", "TDEN", "TDLY", "TDOR", "TDRC", "TDRL",
+		"TDTG", "TENC", "TEXT", "TFLT", "TIPL", "TIT1", "TIT2", "TIT3", "TKEY",
+		"TLAN", "TLEN", "TMCL", "TMED", "TMOO", "TOAL", "TOFN", "TOLY", "TOPE",
+		"TOWN", "TPE1", "TPE2", "TPE3", "TPE4", "TPOS", "TPRO", "TPUB", "TRCK",
+		"TRSN", "TRSO", "TSO2", "TSOA", "TSOC", "TSOP", "TSOT", "TSRC", "TSSE",
+		"TSST", "TXXX", "UFID", "USER", "USLT", "WCOM", "WCOP", "WOAF", "WOAR",
+		"WOAS", "WORS", "WPAY", "WPUB", "WXXX",
+	),
+}
+
+func frameIDSet(ids ...string) map[string]bool {
+	m := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	return m
+}
 
 // mp4LibraryAtoms is the library's own list (mp4.go, atoms) of atom names it
 // reads into memory wherever it meets them, at the pinned version. Every
@@ -81,7 +143,7 @@ func (b *tagBudget) take(n uint) (int64, error) {
 	k := int64(n)
 	b.total += k
 	if b.total > maxAudioTagTotalBytes {
-		return 0, fmt.Errorf("%w (tags over %d bytes)", errAudioTagTooLarge, maxAudioTagTotalBytes)
+		return 0, fmt.Errorf("%w (tags over %d bytes in all)", errAudioTagOverLimit, maxAudioTagTotalBytes)
 	}
 	return k, nil
 }
@@ -200,19 +262,6 @@ func id3SynchsafeUint(b []byte) uint {
 	return n
 }
 
-// id3FrameIDShape reports whether name could be in the library's tables of
-// valid frame IDs, which hold only upper case letters and digits. A name that
-// fails this is certainly not valid there; one that passes is treated as valid,
-// which can only make the walk stricter.
-func id3FrameIDShape(name string) bool {
-	for i := range len(name) {
-		if c := name[i]; (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
-			return false
-		}
-	}
-	return true
-}
-
 // checkID3v2Claims follows tag.ReadID3v2Tags: header, optional extended
 // header, then frames until the declared tag size is used up. Offsets are
 // kept in uint, as the library keeps them, so the walk wraps where the library
@@ -243,7 +292,7 @@ func checkID3v2Claims(w *seekWalker) error {
 		} else {
 			n := id3SynchsafeUint(b)
 			if n < 4 {
-				return fmt.Errorf("%w (ID3v2.4 extended header of %d bytes)", errAudioTagTooLarge, n)
+				return fmt.Errorf("%w (%w: ID3v2.4 extended header of %d bytes)", errAudioTagTooLarge, errClaimWraps, n)
 			}
 			ext = n - 4
 		}
@@ -261,10 +310,7 @@ func checkID3v2Claims(w *seekWalker) error {
 	if version == 2 {
 		hdrLen = 6
 	}
-	for frames := 0; offset < tagSize; frames++ {
-		if frames == maxID3v2Frames {
-			return fmt.Errorf("%w (more than %d ID3v2 frames)", errAudioTagTooLarge, maxID3v2Frames)
-		}
+	for frames := 0; offset < tagSize; {
 		h, err := s.read(int(hdrLen))
 		if err != nil {
 			return err
@@ -288,8 +334,11 @@ func checkID3v2Claims(w *seekWalker) error {
 		if size == 0 {
 			return nil // padding: the library stops here
 		}
+		if frames++; frames > maxID3v2Frames {
+			return fmt.Errorf("%w (more than %d ID3v2 frames)", errAudioTagOverLimit, maxID3v2Frames)
+		}
 		offset += hdrLen + size
-		if offset > tagSize && !id3FrameIDShape(name) {
+		if offset > tagSize && !id3v2FrameIDs[version][name] {
 			return nil // corrupt padding: the library stops here too
 		}
 		if compressed {
@@ -301,7 +350,7 @@ func checkID3v2Claims(w *seekWalker) error {
 					return err
 				}
 				if size < 4 {
-					return fmt.Errorf("%w (compressed ID3v2 frame of %d bytes)", errAudioTagTooLarge, size)
+					return fmt.Errorf("%w (%w: compressed ID3v2 frame of %d bytes)", errAudioTagTooLarge, errClaimWraps, size)
 				}
 				size -= 4
 			}
@@ -318,7 +367,7 @@ func checkID3v2Claims(w *seekWalker) error {
 				return err
 			}
 			if size == 0 {
-				return fmt.Errorf("%w (empty encrypted ID3v2 frame)", errAudioTagTooLarge)
+				return fmt.Errorf("%w (%w: empty encrypted ID3v2 frame)", errAudioTagTooLarge, errClaimWraps)
 			}
 			size--
 		}
@@ -363,7 +412,7 @@ func checkMP4Claims(w *seekWalker) error {
 	depth := 0
 	for atoms := 0; ; atoms++ {
 		if atoms == maxMP4Atoms {
-			return fmt.Errorf("%w (more than %d MP4 atoms)", errAudioTagTooLarge, maxMP4Atoms)
+			return fmt.Errorf("%w (more than %d MP4 atoms)", errAudioTagOverLimit, maxMP4Atoms)
 		}
 		size, name, err := mp4AtomHeader(w)
 		if errors.Is(err, io.EOF) {
@@ -381,7 +430,7 @@ func checkMP4Claims(w *seekWalker) error {
 		case "moov", "udta", "ilst":
 			depth++
 			if depth > maxMP4ContainerDepth {
-				return fmt.Errorf("%w (MP4 containers nested over %d deep)", errAudioTagTooLarge, maxMP4ContainerDepth)
+				return fmt.Errorf("%w (MP4 containers nested over %d deep)", errAudioTagOverLimit, maxMP4ContainerDepth)
 			}
 			continue
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"math/bits"
 	"reflect"
@@ -225,28 +226,110 @@ func TestReadAudioTags_ID3v2OffsetWrapsLikeTheLibrary(t *testing.T) {
 }
 
 // TestReadAudioTags_ID3v2TotalIsCapped pins that frames which each fit the
-// per frame cap cannot add up past maxAudioTagTotalBytes.
+// per frame cap cannot add up past maxAudioTagTotalBytes, and that a tag just
+// under it, such as an audiobook with a cover and chapter art, passes.
 func TestReadAudioTags_ID3v2TotalIsCapped(t *testing.T) {
 	const frame = 12 << 20
-	var frames [][]byte
-	for range 3 {
-		frames = append(frames, id3Frame23("PRIV", frame, [2]byte{}, make([]byte, frame)))
+	tagOf := func(n int) *patchedFile {
+		f := &patchedFile{size: 10 + int64(n)*(frame+10) + 64}
+		f.patches = append(f.patches, filePatch{0, id3Tag(3, 0, uint32(n*(frame+10)))})
+		for i := range n {
+			f.patches = append(f.patches, filePatch{10 + int64(i)*(frame+10), id3Frame23("PRIV", frame, [2]byte{}, nil)})
+		}
+		return f
 	}
-	file := id3Tag(3, 0, 3*(frame+10), frames...)
-	if _, err := readAudioTagsFrom(bytes.NewReader(file)); !errors.Is(err, errAudioTagTooLarge) {
-		t.Errorf("expected errAudioTagTooLarge, got %v", err)
+	if err := checkAudioTagClaims(tagOf(maxAudioTagTotalBytes / frame)); err != nil {
+		t.Errorf("%d frames of 12 MiB: %v", maxAudioTagTotalBytes/frame, err)
+	}
+	if err := checkAudioTagClaims(tagOf(maxAudioTagTotalBytes/frame + 1)); !errors.Is(err, errAudioTagOverLimit) {
+		t.Errorf("expected errAudioTagOverLimit, got %v", err)
 	}
 }
 
-// TestReadAudioTags_ID3v2FrameCountIsCapped pins the frame count bound. The
-// library stores every frame in a map and renames repeats by probing
-// NAME_0, NAME_1, ... from zero each time, so n repeats cost n squared work.
+// TestReadAudioTags_ID3v2FrameCountIsCapped pins the frame count bound, and
+// that padding after the last frame does not count as a frame. The library
+// stores every frame in a map and renames repeats by probing NAME_0, NAME_1,
+// ... from zero each time, so n repeats cost n squared work.
 func TestReadAudioTags_ID3v2FrameCountIsCapped(t *testing.T) {
 	one := id3Frame23("PRIV", 1, [2]byte{}, []byte{0})
-	frames := bytes.Repeat(one, maxID3v2Frames+1)
-	file := id3Tag(3, 0, uint32(len(frames)), frames)
-	if _, err := readAudioTagsFrom(bytes.NewReader(file)); !errors.Is(err, errAudioTagTooLarge) {
-		t.Errorf("expected errAudioTagTooLarge, got %v", err)
+	tagOf := func(n int) []byte {
+		frames := bytes.Repeat(one, n)
+		return id3Tag(3, 0, uint32(len(frames)+64), frames, make([]byte, 64))
+	}
+	if err := checkAudioTagClaims(bytes.NewReader(tagOf(maxID3v2Frames))); err != nil {
+		t.Errorf("exactly %d frames and padding: %v", maxID3v2Frames, err)
+	}
+	if _, err := readAudioTagsFrom(bytes.NewReader(tagOf(maxID3v2Frames + 1))); !errors.Is(err, errAudioTagOverLimit) {
+		t.Errorf("expected errAudioTagOverLimit, got %v", err)
+	}
+}
+
+// TestReadAudioTags_ID3v2StopsWhereLibraryStops covers frames that run past
+// the end of the tag. The library reads one whose ID is in its frame tables
+// and stops at one whose ID is not, so the walk must not refuse the second
+// kind whatever size it declares.
+func TestReadAudioTags_ID3v2StopsWhereLibraryStops(t *testing.T) {
+	title := id3Frame23("TIT2", uint32(len(id3Text("Guards! Guards!"))), [2]byte{}, id3Text("Guards! Guards!"))
+	cases := []struct {
+		name string
+		file []byte
+	}{
+		// The library starts its offset at 10 against a size that excludes
+		// the header, so the tag must declare 10 bytes beyond the title for
+		// the library to reach the ABCD frame at all.
+		{"unknown ID shaped like a frame", id3Tag(3, 0, uint32(len(title)+14), title, id3Frame23("ABCD", 0x01FFFFFF, [2]byte{}, make([]byte, 16)))},
+		{"digits as the ID (fuzzer case)", []byte("ID3\x04" + "0000000000000001")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, wantErr := tag.ReadFrom(bytes.NewReader(tc.file))
+			if wantErr != nil {
+				t.Fatalf("fixture: the library refuses it: %v", wantErr)
+			}
+			if err := checkAudioTagClaims(bytes.NewReader(tc.file)); err != nil {
+				t.Errorf("library reads it, check refuses it: %v", err)
+			}
+			got, err := readAudioTagsFrom(bytes.NewReader(tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := bareLibraryTags(t, bytes.NewReader(tc.file)); got != want {
+				t.Errorf("got %+v, bare library %+v", got, want)
+			}
+		})
+	}
+}
+
+// TestID3v2FrameIDsMatchLibrary pins id3v2FrameIDs against the library: a
+// frame that runs past the tag and past the data is read (and fails at the end
+// of the data) when its ID is in the library's table, and skipped when not.
+func TestID3v2FrameIDsMatchLibrary(t *testing.T) {
+	overrun := func(version byte, id string) []byte {
+		var frame []byte
+		switch version {
+		case 2:
+			frame = append([]byte(id), 0, 0x03, 0xE8)
+		case 3:
+			frame = id3Frame23(id, 1000, [2]byte{}, nil)
+		case 4:
+			frame = id3Frame24(id, 1000, [2]byte{}, nil)
+		}
+		return id3Tag(version, 0, 20, frame, make([]byte, 10))
+	}
+	for version, ids := range id3v2FrameIDs {
+		for id := range ids {
+			if _, err := tag.ReadFrom(bytes.NewReader(overrun(version, id))); err == nil {
+				t.Errorf("v2.%d %q: listed, but the library does not read it", version, id)
+			}
+		}
+		for _, id := range []string{"ABC", "CHAP", "CTOC", "ZZZZ", "0000"} {
+			if len(id) != map[byte]int{2: 3, 3: 4, 4: 4}[version] || ids[id] {
+				continue
+			}
+			if _, err := tag.ReadFrom(bytes.NewReader(overrun(version, id))); err != nil {
+				t.Errorf("v2.%d %q: not listed, but the library reads it: %v", version, id, err)
+			}
+		}
 	}
 }
 
@@ -290,19 +373,27 @@ func TestReadAudioTags_MP4HostileAtomClaims(t *testing.T) {
 // grows the stack by a frame every eight bytes.
 func TestReadAudioTags_MP4NestingIsCapped(t *testing.T) {
 	file := append(append([]byte{}, mp4Ftyp...), bytes.Repeat(atomHeader("moov", 8), maxMP4ContainerDepth+1)...)
-	if _, err := readAudioTagsFrom(bytes.NewReader(file)); !errors.Is(err, errAudioTagTooLarge) {
-		t.Errorf("expected errAudioTagTooLarge, got %v", err)
+	if _, err := readAudioTagsFrom(bytes.NewReader(file)); !errors.Is(err, errAudioTagOverLimit) {
+		t.Errorf("expected errAudioTagOverLimit, got %v", err)
 	}
 }
 
 func TestReadAudioTags_MP4TotalIsCapped(t *testing.T) {
 	const item = 12 << 20
-	var items [][]byte
-	for _, name := range []string{"\xa9cmt", "\xa9lyr", "keyw"} {
-		items = append(items, atom(name, dataAtom(1, make([]byte, item))))
+	tagOf := func(n int) *patchedFile {
+		head := mp4File()
+		f := &patchedFile{size: int64(len(head)) + int64(n)*(item+8) + 64}
+		f.patches = append(f.patches, filePatch{0, head})
+		for i := range n {
+			f.patches = append(f.patches, filePatch{int64(len(head)) + int64(i)*(item+8), atomHeader("\xa9cmt", item+8)})
+		}
+		return f
 	}
-	if _, err := readAudioTagsFrom(bytes.NewReader(mp4File(items...))); !errors.Is(err, errAudioTagTooLarge) {
-		t.Errorf("expected errAudioTagTooLarge, got %v", err)
+	if err := checkAudioTagClaims(tagOf(maxAudioTagTotalBytes / item)); err != nil {
+		t.Errorf("%d atoms of 12 MiB: %v", maxAudioTagTotalBytes/item, err)
+	}
+	if err := checkAudioTagClaims(tagOf(maxAudioTagTotalBytes/item + 1)); !errors.Is(err, errAudioTagOverLimit) {
+		t.Errorf("expected errAudioTagOverLimit, got %v", err)
 	}
 }
 
@@ -635,6 +726,83 @@ func FuzzCheckAudioTagClaims(f *testing.F) {
 		_ = checkAudioTagClaims(r)
 		if pos, _ := r.Seek(0, io.SeekCurrent); pos != 0 {
 			t.Fatalf("check left the reader at %d", pos)
+		}
+	})
+}
+
+// differentialPad is zero padding appended to every differential fuzz input,
+// so a claim over maxAudioTagStructureBytes finds the bytes to read and the
+// library's cost shows as bytes read instead of an early EOF.
+const differentialPad = maxAudioTagStructureBytes + 1<<20
+
+// FuzzAudioTagClaimsMatchLibrary runs the ID3v2, MP4 and DSF walks and the
+// bare library on the same input and checks they agree:
+//
+//   - the walk passes: the library reads no more than the input plus
+//     maxAudioTagTotalBytes;
+//   - the walk refuses a structure as too large: the library reads more than
+//     maxAudioTagStructureBytes, or fails on the file anyway;
+//   - the walk fails on the structure: the library fails too.
+//
+// Policy limits (errAudioTagOverLimit) and sizes that only wrap on 32-bit
+// builds (errClaimWraps) are refusals by design and are not compared.
+func FuzzAudioTagClaimsMatchLibrary(f *testing.F) {
+	title := id3Frame23("TIT2", uint32(len(id3Text("T"))), [2]byte{}, id3Text("T"))
+	dsf := append([]byte("DSD \x1c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"), binary.LittleEndian.AppendUint64(nil, 28)...)
+	for _, seed := range [][]byte{
+		id3Tag(3, 0, uint32(len(title)), title),
+		id3Tag(3, 0, uint32(len(title)+14), title, id3Frame23("ABCD", 0x01FFFFFF, [2]byte{}, nil)),
+		[]byte("ID3\x04" + "0000000000000001"),
+		id3Tag(3, 0, 4096, title, id3Frame23("APIC", 0xFFFFFFF0, [2]byte{}, id3APIC([]byte("tiny")))),
+		id3Tag(4, 0, 4096, id3Frame24("GEOB", 10, [2]byte{0, 0x01}, synchsafe(0x0FFFFFFF))),
+		id3Tag(4, 0x80, 4096, id3Frame24("APIC", 0x01FFFFFF, [2]byte{}, id3APIC([]byte{0xFF, 0, 1}))),
+		id3Tag(3, 0x40, 64, binary.BigEndian.AppendUint32(nil, 6), make([]byte, 6), title),
+		id3Tag(2, 0, 12, []byte("TT2\x00\x00\x02\x00T")),
+		append(dsf, id3Tag(3, 0, uint32(len(title)), title)...),
+		mp4File(atom("\xa9nam", dataAtom(1, []byte("T"))), mp4Freeform("com.apple.iTunes", "ASIN", "B003P2WO5E"), atom("covr", dataAtom(14, []byte("png")))),
+		append(append([]byte{}, mp4Ftyp...), atomHeader("covr", 0x01FFFFFF)...),
+		append(append([]byte{}, mp4Ftyp...), atom("----", atomHeader("data", 0))...),
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) < 11 || len(data) > 4096 {
+			return
+		}
+		if string(data[:4]) == "fLaC" || string(data[:4]) == "OggS" {
+			return // the FLAC and Ogg walks are stricter than the library on purpose
+		}
+		if string(data[4:8]) != "ftyp" && string(data[:3]) != "ID3" && string(data[:4]) != "DSD " {
+			return
+		}
+		open := func() *patchedFile {
+			return &patchedFile{size: int64(len(data)) + differentialPad, patches: []filePatch{{0, data}}}
+		}
+		walkErr := checkAudioTagClaims(open())
+		lib := open()
+		libErr := func() (err error) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					err = fmt.Errorf("panic: %v", rec)
+				}
+			}()
+			_, err = tag.ReadFrom(lib)
+			return err
+		}()
+		switch {
+		case walkErr == nil:
+			if lib.read > int64(len(data))+maxAudioTagTotalBytes {
+				t.Fatalf("walk passed, library read %d bytes", lib.read)
+			}
+		case errors.Is(walkErr, errAudioTagOverLimit), errors.Is(walkErr, errClaimWraps):
+		case errors.Is(walkErr, errAudioTagTooLarge):
+			if lib.read <= maxAudioTagStructureBytes && libErr == nil {
+				t.Fatalf("walk refused (%v), library read the file in %d bytes", walkErr, lib.read)
+			}
+		default:
+			if libErr == nil {
+				t.Fatalf("walk failed (%v), library read the file", walkErr)
+			}
 		}
 	})
 }
