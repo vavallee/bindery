@@ -13,7 +13,7 @@ func tracks(n int, name func(i int) string, tagAuthor, tagTitle, tagAlbum string
 	for i := range out {
 		out[i] = unmatchedScanFile{
 			path: "/audio/Folder Author/Book/" + name(i+1), format: models.MediaTypeAudiobook,
-			tagAuthor: tagAuthor, tagTitle: tagTitle, tagAlbum: tagAlbum,
+			tags: AudioTags{Artist: tagAuthor, Title: tagTitle, Album: tagAlbum},
 		}
 	}
 	return out
@@ -94,10 +94,52 @@ func TestAuthorEvidenceConflict(t *testing.T) {
 		{"J.R.R. Tolkien", "Tolkien", false},
 		{"Bill Clinton, James Patterson", "James Patterson", false},
 		{"Jane Doe", "Jane Smith", true},
+		{"Various Artists", "James Patterson", false},
+		{"[Unknown]", "James Patterson", false},
+		// Diacritics transliterated to ASCII are the same name to the
+		// author matcher.
+		{"Jo Nesbo", "Jo Nesbø", false},
+		{"Heinrich Boell", "Heinrich Böll", false},
 	}
 	for _, c := range cases {
-		if got := AuthorEvidenceConflict(c.files, c.folder); got != c.want {
-			t.Errorf("AuthorEvidenceConflict(%q, %q) = %v, want %v", c.files, c.folder, got, c.want)
+		if got := authorEvidenceConflict(c.files, c.folder); got != c.want {
+			t.Errorf("authorEvidenceConflict(%q, %q) = %v, want %v", c.files, c.folder, got, c.want)
 		}
+	}
+}
+
+// withTags gives every member the same author tags.
+func withTags(members []unmatchedScanFile, artist, albumArtist, composer, album string) []unmatchedScanFile {
+	for i := range members {
+		members[i].tags = AudioTags{Artist: artist, AlbumArtist: albumArtist, Composer: composer, Album: album}
+	}
+	return members
+}
+
+// TestEvidenceFor_AuthorTags: Artist, Album Artist and Composer are all
+// witnesses. One agreeing with the folder settles it; when none does, Album
+// Artist is the author named. Placeholders name nobody.
+func TestEvidenceFor_AuthorTags(t *testing.T) {
+	plain := func(i int) string { return fmt.Sprintf("%02d.mp3", i) }
+	cases := []struct {
+		name                             string
+		artist, albumArtist, composer    string
+		album, folder, layoutTitle, want string
+	}{
+		{"narrator in Artist, author in Album Artist", "Scott Brick", "James Patterson", "", "Kiss the Girls", "James Patterson", "Kiss the Girls", ""},
+		{"narrator in Artist, author in Composer", "Scott Brick", "", "James Patterson", "Tycoon", "James Patterson", "Something Else", ""},
+		{"narrator only, album naming the folder's book", "Ray Porter", "", "", "Project Hail Mary", "Andy Weir", "Project Hail Mary", ""},
+		{"Album Artist preferred when none agrees", "Sebastian York", "Katy Evans", "", "Tycoon", "James Patterson", "Something Else", "Katy Evans"},
+		{"placeholder Album Artist skipped", "Katy Evans", "Various Artists", "", "Tycoon", "James Patterson", "Something Else", "Katy Evans"},
+		{"only placeholders", "Unknown Artist", "Various Authors", "Full Cast", "Tycoon", "James Patterson", "Something Else", ""},
+		{"Audible Studios", "Audible Studios", "", "", "Tycoon", "James Patterson", "Something Else", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			members := withTags(tracks(3, plain, "", "", ""), c.artist, c.albumArtist, c.composer, c.album)
+			if got := evidenceFor(members, c.folder, c.layoutTitle).author; got != c.want {
+				t.Errorf("evidence author = %q, want %q", got, c.want)
+			}
+		})
 	}
 }

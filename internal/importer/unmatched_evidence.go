@@ -2,6 +2,7 @@ package importer
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -65,50 +66,119 @@ func AuthorNamesAgree(a, b string) bool {
 	return false
 }
 
-// AuthorEvidenceConflict reports whether the author a unit's files name is
-// someone other than its author folder. Both empty sides and agreeing names
-// are no conflict. The adoption API calls it on the stored parsed author and
-// author folder, the same two strings the scan decided on.
-func AuthorEvidenceConflict(filesAuthor, folderAuthor string) bool {
+// authorEvidenceConflict reports whether the author a unit's files name is
+// someone other than its author folder. Both empty sides, a placeholder credit
+// and agreeing names are no conflict.
+func authorEvidenceConflict(filesAuthor, folderAuthor string) bool {
 	filesAuthor, folderAuthor = strings.TrimSpace(filesAuthor), strings.TrimSpace(folderAuthor)
-	if filesAuthor == "" || folderAuthor == "" {
+	if filesAuthor == "" || folderAuthor == "" || isPlaceholderAuthor(filesAuthor) {
 		return false
 	}
 	return !AuthorNamesAgree(filesAuthor, folderAuthor)
 }
 
+// placeholderAuthorNames are credits that name nobody: compilations, unknowns,
+// productions and publishers that rips put in an author tag. Such a tag is no
+// evidence of an author, so it never raises a conflict or an Add author.
+// Compared after isPlaceholderAuthor folds case, brackets and spacing. The
+// codebase had no such list; "Unknown Author" is only ever written as a
+// default (renamer.go), never recognised.
+var placeholderAuthorNames = map[string]bool{
+	"various": true, "various authors": true, "various artists": true, "various narrators": true,
+	"va": true, "v.a.": true, "v/a": true,
+	"unknown": true, "unknown artist": true, "unknown author": true, "unknown authors": true,
+	"anonymous": true, "anon": true, "n/a": true, "none": true, "author": true, "artist": true,
+	"full cast": true, "a full cast": true, "full cast production": true, "full cast drama": true,
+	"audible studios": true, "audible": true, "audible originals": true, "audible original": true,
+	"librivox": true, "librivox volunteers": true, "audiobook": true, "audiobooks": true, "audio book": true,
+	"bbc radio": true, "bbc radio 4": true, "bbc audio": true,
+}
+
+// isPlaceholderAuthor reports whether an author tag names nobody in
+// particular ("Various Artists", "[Unknown]", "Full Cast").
+func isPlaceholderAuthor(s string) bool {
+	s = strings.ToLower(strings.Trim(strings.TrimSpace(s), "[]()<>{} "))
+	return placeholderAuthorNames[strings.Join(strings.Fields(s), " ")]
+}
+
+// tagAuthorNames returns a file's usable author tags, Album Artist first:
+// audiobook tooling puts the narrator in Artist often enough that Album
+// Artist is the better witness for the author. Empty values, narrator credits
+// and placeholders are left out, and a name repeated across tags appears once.
+func tagAuthorNames(t AudioTags) []string {
+	var out []string
+	for _, v := range []string{t.AlbumArtist, t.Artist, t.Composer} {
+		v = strings.TrimSpace(v)
+		if v == "" || isNarratorCredit(v) || isPlaceholderAuthor(v) {
+			continue
+		}
+		if !slices.ContainsFunc(out, func(o string) bool { return strings.EqualFold(o, v) }) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// tagsNameAnotherAuthor reports whether a file's author tags name someone and
+// none of them is the folder's author. Artist, Album Artist and Composer are
+// all checked, so a narrator in Artist beside the author in Album Artist is no
+// conflict. Tags whose album or title names the folder's own book agree with
+// the folder about the book, and the odd author tag is then more likely a
+// narrator than another author's book, so they do not count either.
+func tagsNameAnotherAuthor(t AudioTags, folder, layoutTitle string) bool {
+	folder = strings.TrimSpace(folder)
+	names := tagAuthorNames(t)
+	if folder == "" || len(names) == 0 {
+		return false
+	}
+	for _, n := range names {
+		if AuthorNamesAgree(n, folder) {
+			return false
+		}
+	}
+	return !sameBookTitle(t.Album, layoutTitle) && !sameBookTitle(t.Title, layoutTitle)
+}
+
 // evidenceFor reads what a unit's members say about their author and title,
-// against the unit's author folder. Tags lead: the author tag carried by most
-// members, else a filename pattern every member shares. A tag author that is
-// not the folder's is a conflict as it stands, and was already the unit's
-// parsed author. A filename author alone is weaker, since "<Series> - <Title>
-// 01.mp3" has the same shape, so it counts only when the title side also names
-// a different book than the folder does.
+// against the unit's author folder. Tags lead: the Artist, Album Artist and
+// Composer values most members carry, judged by tagsNameAnotherAuthor, with
+// Album Artist preferred as the author named. Without author tags, a filename
+// pattern every member shares; that is weaker, since "<Series> - <Title>
+// 01.mp3" has the same shape, so it counts only when the title side also
+// names a different book than the folder does.
 func evidenceFor(members []unmatchedScanFile, folder, layoutTitle string) unitEvidence {
 	folder = strings.TrimSpace(folder)
 	if folder == "" || len(members) == 0 {
 		return unitEvidence{}
 	}
+	tags := AudioTags{
+		Artist:      consensus(members, func(m unmatchedScanFile) string { return m.tags.Artist }),
+		AlbumArtist: consensus(members, func(m unmatchedScanFile) string { return m.tags.AlbumArtist }),
+		Composer:    consensus(members, func(m unmatchedScanFile) string { return m.tags.Composer }),
+		Album:       consensus(members, func(m unmatchedScanFile) string { return m.tags.Album }),
+		Title:       consensus(members, func(m unmatchedScanFile) string { return m.tags.Title }),
+	}
 	fnAuthor, fnTitle := filenameAuthorTitle(members, layoutTitle)
-	author := consensus(members, func(m unmatchedScanFile) string { return m.tagAuthor })
-	fromTags := author != ""
-	if !fromTags {
+	var author string
+	if names := tagAuthorNames(tags); len(names) > 0 {
+		if !tagsNameAnotherAuthor(tags, folder, layoutTitle) {
+			return unitEvidence{}
+		}
+		author = names[0]
+	} else {
+		if !authorEvidenceConflict(fnAuthor, folder) || sameBookTitle(fnTitle, layoutTitle) {
+			return unitEvidence{}
+		}
 		author = fnAuthor
-	}
-	if !AuthorEvidenceConflict(author, folder) {
-		return unitEvidence{}
-	}
-	if !fromTags && sameBookTitle(fnTitle, layoutTitle) {
-		return unitEvidence{}
 	}
 	ev := unitEvidence{author: author, folder: folder}
 	// The title the files name, best evidence first: the album tag, then a
 	// title tag that is "<author> - <title>", then the shared filename title
 	// when the file names credit the same author.
-	if album := consensus(members, func(m unmatchedScanFile) string { return m.tagAlbum }); album != "" && !AuthorNamesAgree(album, author) {
-		ev.title = album
-	} else if t := consensus(members, func(m unmatchedScanFile) string { return m.tagTitle }); t != "" {
-		if rest, ok := stripAuthorPrefix(t, author); ok {
+	if tags.Album != "" && !AuthorNamesAgree(tags.Album, author) {
+		ev.title = tags.Album
+	} else if tags.Title != "" {
+		if rest, ok := stripAuthorPrefix(tags.Title, author); ok {
 			ev.title = rest
 		}
 	}
@@ -276,7 +346,10 @@ func rankConflictCandidates(title string, catalogue []scanBook, catalogueByAutho
 		}
 	}
 	if len(rest) > 0 {
-		out = append(out, rankCandidates(title, "", nil, catalogue, catalogueByAuthor, rest)...)
+		for _, c := range rankCandidates(title, "", nil, catalogue, catalogueByAuthor, rest) {
+			c.FolderAuthorOnly = true
+			out = append(out, c)
+		}
 	}
 	if len(out) > maxCandidates {
 		out = out[:maxCandidates]

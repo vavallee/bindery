@@ -61,8 +61,8 @@ func TestAdoptionList_SurfacesAnAuthorConflict(t *testing.T) {
 	p := f.write(t, "James Patterson/$10,000,000 Marriage Proposition/Katy Evans - Tycoon 1-7.mp3")
 	f.seedUnit(t, db.UnmatchedUnitScan{
 		UnitPath: p, Format: models.MediaTypeAudiobook, AuthorFolder: "James Patterson",
-		ParsedTitle: "Tycoon", ParsedAuthor: "Katy Evans", Reason: "no_title_match", MemberPaths: []string{p},
-		Candidates: []db.UnmatchedCandidate{{BookID: evansBook.ID, Score: 1}, {BookID: folderBook.ID, Score: 0.61}},
+		ParsedTitle: "Tycoon", ParsedAuthor: "Katy Evans", FilesAuthor: "Katy Evans", Reason: "no_title_match", MemberPaths: []string{p},
+		Candidates: []db.UnmatchedCandidate{{BookID: evansBook.ID, Score: 1}, {BookID: folderBook.ID, Score: 0.61, FolderAuthorOnly: true}},
 	})
 
 	items := f.listItems(t)
@@ -88,7 +88,33 @@ func TestAdoptionList_SurfacesAnAuthorConflict(t *testing.T) {
 	}
 }
 
-// TestAdoptionList_NoConflictWhenTheAuthorsAgree: the same parsed and folder
+// TestAdoptionList_StoredNarratorRowIsNotAConflict: a row a scan stored before
+// conflicts were recorded, whose parsed author is the narrator from the Artist
+// tag (Scott Brick) under a James Patterson folder. Nothing says the files name
+// another author, so the page must not show a conflict or demote the 1.0
+// suggestion.
+func TestAdoptionList_StoredNarratorRowIsNotAConflict(t *testing.T) {
+	f := newAdoptionFixture(t, &countingProvider{})
+	b := f.seedAuthorBook(t, "James Patterson", "Kiss the Girls")
+	p := f.write(t, "James Patterson/Kiss the Girls/01.mp3")
+	f.seedUnit(t, db.UnmatchedUnitScan{
+		UnitPath: p, Format: models.MediaTypeAudiobook, AuthorFolder: "James Patterson",
+		ParsedTitle: "Kiss the Girls", ParsedAuthor: "Scott Brick", Reason: "no_title_match", MemberPaths: []string{p},
+		Candidates: []db.UnmatchedCandidate{{BookID: b.ID, Score: 1}},
+	})
+	items := f.listItems(t)
+	if len(items) != 1 {
+		t.Fatalf("items = %v", items)
+	}
+	if c, present := items[0]["authorConflict"]; present && c != nil {
+		t.Errorf("authorConflict = %v, want none", c)
+	}
+	if c := items[0]["candidates"].([]any)[0].(map[string]any); c["folderAuthorOnly"] == true {
+		t.Errorf("the folder author's exact title is flagged: %v", c)
+	}
+}
+
+// TestAdoptionList_NoConflictWhenTheAuthorsAgree:the same parsed and folder
 // author, a comma inverted spelling of it, or a contributor list naming it, is
 // not a conflict.
 func TestAdoptionList_NoConflictWhenTheAuthorsAgree(t *testing.T) {
@@ -113,5 +139,23 @@ func TestAdoptionList_NoConflictWhenTheAuthorsAgree(t *testing.T) {
 				t.Errorf("candidate flagged without a conflict: %v", c)
 			}
 		})
+	}
+}
+
+// TestAdoptionList_FolderOnlyLookAlikeDoesNotSetTheTopScore: the score a
+// conflicting row sorts by is its best suggestion by the files' author, not a
+// folder author's look alike (#2942).
+func TestAdoptionList_FolderOnlyLookAlikeDoesNotSetTheTopScore(t *testing.T) {
+	f := newAdoptionFixture(t, &countingProvider{})
+	folderBook := f.seedAuthorBook(t, "James Patterson", "Katt vs. Dogg")
+	p := f.write(t, "James Patterson/X/Katy Evans - Tycoon 1-7.mp3")
+	f.seedUnit(t, db.UnmatchedUnitScan{
+		UnitPath: p, Format: models.MediaTypeAudiobook, AuthorFolder: "James Patterson",
+		ParsedTitle: "Tycoon", ParsedAuthor: "Katy Evans", FilesAuthor: "Katy Evans", MemberPaths: []string{p},
+		Candidates: []db.UnmatchedCandidate{{BookID: folderBook.ID, Score: 0.8, FolderAuthorOnly: true}},
+	})
+	items := f.listItems(t)
+	if len(items) != 1 || items[0]["topScore"] != float64(0) {
+		t.Fatalf("topScore = %v, want 0", items[0]["topScore"])
 	}
 }

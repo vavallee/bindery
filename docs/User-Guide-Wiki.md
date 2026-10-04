@@ -566,7 +566,11 @@ How to work through the list:
 - **Files that name another author than their folder** say so: the row reads,
   for example, **Files say Katy Evans, folder says James Patterson**. The
   author comes from the audio tags, or from track names that all read
-  `Author - Title 1`, `Author - Title 2` and so on. The row is named after the
+  `Author - Title 1`, `Author - Title 2` and so on. Artist, Album Artist and
+  Composer are all checked, so a narrator in Artist beside the author in Album
+  Artist is not a conflict, and neither are credits such as Various Artists,
+  Unknown or Full Cast. Such files are also never attached by the scan to the
+  book their folder is named after. The row is named after the
   book the files name (the album tag, or the title in those track names), and
   suggestions come from the files' author first, scored on that title. Books
   by the folder's author are still listed below them, marked **Folder author

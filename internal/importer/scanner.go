@@ -3728,6 +3728,19 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				}
 			}
 		}
+		// fallbackAuthor is the author the title tiers fall back to when the
+		// parsed one matches nobody in the catalogue: the folder's. Not when
+		// every author tag (Artist, Album Artist, Composer) names someone else
+		// and the tags do not name the folder's book either: those are another
+		// author's files in the wrong folder, and falling back handed seven
+		// Katy Evans tracks to the Patterson book their folder was named after
+		// (#2942). The book folder title tier is skipped for the same reason.
+		// The unit then waits on Import with the conflict shown.
+		fallbackAuthor := layoutAuthor
+		tagsNameOther := tagsNameAnotherAuthor(fileTags, layoutAuthor, layoutTitle)
+		if tagsNameOther {
+			fallbackAuthor = ""
+		}
 
 		// Search existing books for a match: ASIN takes priority over fuzzy title+author.
 		matched := false
@@ -3774,7 +3787,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			}
 		}
 		if !matched && parsed.Title != "" {
-			matched = reconcileByTitle(path, cleanPath, detectedFmt, parsed.Title, parsed.Author, layoutAuthor)
+			matched = reconcileByTitle(path, cleanPath, detectedFmt, parsed.Title, parsed.Author, fallbackAuthor)
 		}
 		// The book folder's title, one tier down (#2171). The filename now
 		// leads, so this is what keeps everything the folder used to match
@@ -3783,7 +3796,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// chapter .pdf beside an epub is recognised as that epub's companion
 		// rather than an orphan — its own name says "notes", only the folder
 		// says which book it belongs to (#2188).
-		if !matched && layoutTitle != "" && layoutTitle != parsed.Title {
+		if !matched && !tagsNameOther && layoutTitle != "" && layoutTitle != parsed.Title {
 			if matched = reconcileByTitle(path, cleanPath, detectedFmt, layoutTitle, parsed.Author, layoutAuthor); matched {
 				// The log used to print only the winner, which is why the
 				// reported libraries looked healthy (#2171). Name both.
@@ -3846,7 +3859,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				// match that never happened.
 				reason = unmatchedReasonNoTitleParsed
 			}
-			authorSet, matchAuthor := resolveAuthors(parsed.Author, layoutAuthor)
+			authorSet, matchAuthor := resolveAuthors(parsed.Author, fallbackAuthor)
 			if authorSet != nil {
 				if len(authorSet) == 0 {
 					reason = unmatchedReasonAuthorNotInLibrary
@@ -3869,7 +3882,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			unmatchedFiles.add(unmatchedScanFile{
 				path: path, format: detectedFmt, size: walked[path].size, mode: walked[path].mode,
 				title: parsed.Title, layoutTitle: layoutTitle, author: parsed.Author, layoutAuthor: layoutAuthor, reason: reason,
-				tagAuthor: fileTags.Author, tagTitle: fileTags.Title, tagAlbum: fileTags.Album,
+				tags: fileTags,
 			})
 		}
 	}

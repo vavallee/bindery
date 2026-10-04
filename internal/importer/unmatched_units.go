@@ -79,11 +79,9 @@ type unmatchedScanFile struct {
 	// layoutTitle is the cleaned book folder name, "" when the file has
 	// none. Candidate ranking reads the volume number from it (#2860).
 	layoutTitle string
-	// tagAuthor, tagTitle and tagAlbum are the file's audio tags as read,
-	// "" for a file without them. Evidence for evidenceFor (#2942).
-	tagAuthor string
-	tagTitle  string
-	tagAlbum  string
+	// tags are the file's audio tags as read, zero for a file without them.
+	// Evidence for evidenceFor (#2942).
+	tags AudioTags
 }
 
 // unmatchedCollector gathers unmatched files up to maxUnmatchedFiles.
@@ -271,11 +269,10 @@ func groupUnmatched(files []unmatchedScanFile, roots []string) (groups []unmatch
 		}
 		u.ParsedTitle, u.ParsedAuthor, u.Reason = rep.title, rep.author, rep.reason
 		// Files that name another author than their folder are recorded as
-		// what they name (#2942); the adoption page reads the conflict from
-		// the parsed author against the author folder.
+		// what they name, and FilesAuthor tells the adoption page (#2942).
 		ev := evidenceFor(a.members, u.AuthorFolder, rep.layoutTitle)
 		if ev.conflict() {
-			u.ParsedAuthor = ev.author
+			u.ParsedAuthor, u.FilesAuthor = ev.author, ev.author
 			if ev.title != "" {
 				u.ParsedTitle = ev.title
 			}

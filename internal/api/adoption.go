@@ -265,17 +265,16 @@ func toAdoptionItem(u *db.UnmatchedUnit, refs map[int64]db.UnmatchedBookRef) ado
 		BookCreated: u.CreatedBookID > 0, AuthorCreated: u.CreatedAuthorID > 0,
 		Members: memberNames(u), FirstSeenAt: u.FirstSeenAt, ResolvedAt: u.ResolvedAt,
 	}
-	if importer.AuthorEvidenceConflict(u.ParsedAuthor, u.AuthorFolder) {
-		it.AuthorConflict = &adoptionAuthorConflict{Files: strings.TrimSpace(u.ParsedAuthor), Folder: strings.TrimSpace(u.AuthorFolder)}
+	// The scan decides a conflict with every author tag in hand and records
+	// it; deriving it here from the parsed author would flag a narrator in
+	// the Artist tag as another author (#2942).
+	if u.FilesAuthor != "" && u.AuthorFolder != "" {
+		it.AuthorConflict = &adoptionAuthorConflict{Files: u.FilesAuthor, Folder: u.AuthorFolder}
 	}
 	for _, c := range u.Candidates {
 		// A suggested book deleted since the scan simply drops out.
 		if ref, ok := refs[c.BookID]; ok {
-			cand := adoptionCandidate{Book: ref, Score: c.Score}
-			if it.AuthorConflict != nil {
-				cand.FolderAuthorOnly = !importer.AuthorNamesAgree(it.AuthorConflict.Files, ref.AuthorName)
-			}
-			it.Candidates = append(it.Candidates, cand)
+			it.Candidates = append(it.Candidates, adoptionCandidate{Book: ref, Score: c.Score, FolderAuthorOnly: c.FolderAuthorOnly && it.AuthorConflict != nil})
 		}
 	}
 	if ref, ok := refs[u.BookID]; ok && u.BookID > 0 {
