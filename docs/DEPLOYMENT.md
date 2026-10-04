@@ -110,6 +110,14 @@ Pre-built archives are attached to every [Release](https://github.com/vavallee/b
 
 Pick the archive matching your platform, verify against `bindery_<version>_checksums.txt`, extract, and run.
 
+From the first release after v1.40.0, every archive and the checksums file also carry a signed [SLSA build provenance](https://slsa.dev/spec/v1.0/provenance) attestation, the same kind the container image has. A checksum only proves the file matches the list next to it; the attestation proves the file was built by this repository's release workflow from the tagged commit. With the GitHub CLI:
+
+```bash
+gh attestation verify bindery_<version>_linux_amd64.tar.gz --repo vavallee/bindery
+```
+
+Each archive also has an SPDX SBOM (`<archive>.sbom.spdx.json`) beside it on the release.
+
 Each archive also carries `LICENSE` and `THIRD_PARTY_LICENSES.md` — the licenses
 and NOTICE files of everything statically linked into the binary and embedded in
 the web UI bundle. The container image has the same two files at `/LICENSE` and

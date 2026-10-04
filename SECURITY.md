@@ -92,8 +92,9 @@ CSP, cookie Secure auto-detect, container hardening, CI scans).
   Hadolint, Grype, Syft SBOM, ZAP baseline, OpenSSF Scorecard, Checkov,
   helm-unittest — SARIF uploaded to the Security tab; weekly rerun on a cron.
 - **Supply chain**: SLSA build provenance via
-  `actions/attest-build-provenance`, verifiable with
-  `gh attestation verify`.
+  `actions/attest-build-provenance` for both the container image and the
+  release archives (plus their checksums file), verifiable with
+  `gh attestation verify <file> --repo vavallee/bindery`.
 
 ## Secrets
 

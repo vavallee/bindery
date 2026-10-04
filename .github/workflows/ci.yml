@@ -507,6 +507,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Sigstore signing certificate (OIDC) and upload to the attestations API
+      # for the release-binary provenance step below.
+      id-token: write
+      attestations: write
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -564,6 +568,17 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # SLSA build provenance for the release binaries, matching what the
+      # image job already does for the container. Covers every archive and
+      # the checksums file; verify a download with
+      # `gh attestation verify <file> --repo vavallee/bindery`.
+      - name: Attest release binaries
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*_checksums.txt
 
   # NOTE: there is intentionally no "bump bindery-ping LATEST_VERSION" job here.
   # That job pushed the new version into the telemetry cluster via
