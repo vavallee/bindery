@@ -671,10 +671,15 @@ func main() {
 		WithEditionHydration(editionRepo).
 		WithRoots(libraryRoots).
 		WithLifetimeCtx(appCtx)
+	// Interactive search records what it returns here, and a grab from a
+	// non-admin account is held to it: it can grab a search result, not make
+	// Bindery fetch a URL of its own choosing.
+	searchResults := api.NewSearchResultRegistry()
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, metadataProfileRepo, idxSearcher, settingsRepo, blocklistRepo).
 		WithAliases(authorAliasRepo).
 		WithQualityProfiles(qualityProfileRepo).
-		WithEditions(editionRepo)
+		WithEditions(editionRepo).
+		WithSearchResults(searchResults)
 	if clients, err := dlClientRepo.List(ctxBoot); err == nil {
 		downloader.RefreshDownloadClientHealthAsync(context.Background(), bgJobs, downloadHealth, clients, cfg.DownloadDir, cfg.AudiobookDownloadDir, cfg.DownloadPathRemap)
 	} else {
@@ -692,7 +697,8 @@ func main() {
 		WithNotifier(notif).
 		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir).
 		WithDownloadPathRemap(cfg.DownloadPathRemap).
-		WithIndexers(indexerRepo)
+		WithIndexers(indexerRepo).
+		WithSearchResults(searchResults)
 	// Manual/bulk import may read from the download dirs as well as the library
 	// roots — a Readarr/qBittorrent migrant's backlog sits in the download dir,
 	// not the library (#1373). These are trusted, configured source dirs the

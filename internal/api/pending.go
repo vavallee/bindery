@@ -200,6 +200,10 @@ func (h *PendingHandler) Grab(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 			return
 		}
+		if errors.Is(err, errGrabBookNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "pending release not found"})
+			return
+		}
 		writeServerError(w, r, err)
 		return
 	}

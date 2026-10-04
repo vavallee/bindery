@@ -39,6 +39,20 @@ var queueClientPollTimeout = 1 * time.Second
 
 var errAlreadyGrabbed = errors.New("already grabbed")
 
+// foreignRowGrabbedDetail is the reason given when the release's download row
+// belongs to another user under tenancy. It says no more than that: the row's
+// state, book and history are that user's.
+const foreignRowGrabbedDetail = "another user already has this release in their queue"
+
+// errGrabBookNotFound is returned when the book a grab names does not exist or
+// belongs to another user. The handlers answer 404 for both, as the book
+// handlers do, so a caller cannot tell the two apart.
+var errGrabBookNotFound = errors.New("book not found")
+
+// errReleaseNotSearched refuses a non-admin grab of a release no recent search
+// returned. See SearchResultRegistry.
+var errReleaseNotSearched = errors.New("this release is not in your recent search results; run the search again and grab it from there")
+
 // regrabbableState reports whether an existing download row for the same GUID
 // may be reused by a fresh grab of that release.
 //
@@ -146,6 +160,9 @@ type QueueHandler struct {
 	downloadDir          string
 	audiobookDownloadDir string
 	downloadPathRemap    string
+	// searchResults is what a non-admin grab is held to (see
+	// SearchResultRegistry). Nil refuses every non-admin grab.
+	searchResults *SearchResultRegistry
 }
 
 func NewQueueHandler(downloads *db.DownloadRepo, clients *db.DownloadClientRepo, books *db.BookRepo, history *db.HistoryRepo) *QueueHandler {
@@ -813,12 +830,30 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "guid and nzbUrl required"})
 		return
 	}
+	// A non-admin grabs what a search returned, never a URL of its own: the
+	// release is looked up by GUID and the server's record replaces the posted
+	// download URL, indexer, protocol, title and size. Bindery fetches the
+	// download URL itself and signs it with an indexer key when the host
+	// matches, so trusting the posted one let a user read an indexer's API, or
+	// any LAN service, through the grab. See SearchResultRegistry.
+	if !callerMayGrabAnyURL(r.Context()) {
+		rel, ok := h.searchResults.lookup(req.GUID)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": errReleaseNotSearched.Error()})
+			return
+		}
+		rel.apply(&req)
+	}
 
 	dl, err := h.grab(r.Context(), req)
 	if errors.Is(err, errAlreadyGrabbed) {
 		// err carries alreadyGrabbedDetail's explanation; the search page shows
 		// this string verbatim, so send it rather than the bare sentinel (#1955).
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, errGrabBookNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
 	if err != nil {
@@ -1005,6 +1040,9 @@ func (h *QueueHandler) RetryDownload(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, errRetryNotResendable), errors.Is(err, errAlreadyGrabbed):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	case errors.Is(err, errGrabBookNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	case err != nil:
 		status := http.StatusBadGateway
@@ -1221,8 +1259,60 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	if err != nil {
 		return nil, err
 	}
+	// The GUID lookup is global because the column is UNIQUE, so under tenancy
+	// the row it finds may be another user's. Such a row is not this caller's
+	// to reuse: a failed one is still theirs to Retry and an importBlocked one
+	// theirs to Retry import, and reusing it handed the row to the caller with
+	// its book attached. The one exception is an orphaned import (#2289): its
+	// book is gone, nothing about it is actionable for its owner, and refusing
+	// would pin the release against every other user for good. The refusal
+	// does not describe the row, since it is not the caller's to see.
+	foreignRow := existing != nil && !auth.CheckOwnership(ctx, existing.OwnerUserID)
+	if foreignRow && !orphanedImport(existing) {
+		return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, foreignRowGrabbedDetail)
+	}
 	if existing != nil && !regrabbable(existing) {
 		return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, alreadyGrabbedDetail(existing.Status))
+	}
+
+	// Coerce zero-valued BookID/IndexerID to nil. A caller that JSON-decodes
+	// into an older int64-typed grabRequest, or writes an explicit {"bookId":0},
+	// would otherwise insert 0 into the FK column and violate the constraint.
+	bookID := req.BookID
+	if bookID != nil && *bookID == 0 {
+		bookID = nil
+	}
+	indexerID := req.IndexerID
+	if indexerID != nil && *indexerID == 0 {
+		indexerID = nil
+	}
+	editionID := (*int64)(nil)
+	indexerFlags := ""
+	// Only the caller's own row lends its book, indexer, edition and flags to
+	// the grab; a foreign orphaned import lends nothing.
+	if existing != nil && !foreignRow {
+		if bookID == nil {
+			bookID = existing.BookID
+		}
+		if indexerID == nil {
+			indexerID = existing.IndexerID
+		}
+		editionID = existing.EditionID
+		indexerFlags = existing.IndexerFlags
+	}
+	// The book the release is grabbed for must be one the caller may act on,
+	// the same check every book handler makes, and the same 404 for a book
+	// that is someone else's as for one that does not exist.
+	var bookOwner int64
+	if bookID != nil {
+		b, err := h.books.GetByID(ctx, *bookID)
+		if err != nil {
+			return nil, err
+		}
+		if b == nil || !auth.CheckOwnership(ctx, b.OwnerUserID) {
+			return nil, errGrabBookNotFound
+		}
+		bookOwner = b.OwnerUserID
 	}
 
 	// The media type picks the client, its category and the download
@@ -1244,29 +1334,6 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	}
 
 	protocol := downloader.ProtocolForClient(client.Type)
-	// Coerce zero-valued BookID/IndexerID to nil. A caller that JSON-decodes
-	// into an older int64-typed grabRequest, or writes an explicit {"bookId":0},
-	// would otherwise insert 0 into the FK column and violate the constraint.
-	bookID := req.BookID
-	if bookID != nil && *bookID == 0 {
-		bookID = nil
-	}
-	indexerID := req.IndexerID
-	if indexerID != nil && *indexerID == 0 {
-		indexerID = nil
-	}
-	editionID := (*int64)(nil)
-	indexerFlags := ""
-	if existing != nil {
-		if bookID == nil {
-			bookID = existing.BookID
-		}
-		if indexerID == nil {
-			indexerID = existing.IndexerID
-		}
-		editionID = existing.EditionID
-		indexerFlags = existing.IndexerFlags
-	}
 	// Tenancy (#1457): stamp from the request identity. API key and trusted
 	// local requests carry the first admin's id (auth.withOperatorUserID), so
 	// they own what they grab like any signed-in user. A request reaches here
@@ -1278,10 +1345,8 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	// it is now this grab's download. That includes unowned: the previous
 	// owner is never carried over.
 	grabOwner := auth.UserIDFromContext(ctx)
-	if grabOwner == 0 && bookID != nil {
-		if b, err := h.books.GetByID(ctx, *bookID); err == nil && b != nil {
-			grabOwner = b.OwnerUserID
-		}
+	if grabOwner == 0 {
+		grabOwner = bookOwner
 	}
 	// Re-attach the indexer apikey the search/queue responses strip out
 	// (SEC: the shared credential must not reach non-admin clients). The client

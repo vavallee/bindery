@@ -72,6 +72,9 @@ type IndexerHandler struct {
 	// ISBN exact-match bonus in the ranker (#1724).
 	editions  *db.EditionRepo
 	lastDebug *lastDebugStore
+	// searchResults records what the search endpoints return, so a grab from
+	// a non-admin account can be held to it. See SearchResultRegistry.
+	searchResults *SearchResultRegistry
 }
 
 func NewIndexerHandler(indexers *db.IndexerRepo, books *db.BookRepo, authors *db.AuthorRepo, profiles *db.MetadataProfileRepo, searcher indexerSearcher, settings *db.SettingsRepo, blocklist *db.BlocklistRepo) *IndexerHandler {
@@ -724,6 +727,7 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		Rejection string `json:"rejection,omitempty"`
 	}
 	out := make([]searchDecision, len(decisions))
+	returned := make([]newznab.SearchResult, len(decisions))
 	for i, d := range decisions {
 		res := results[i]
 		// Strip the indexer apikey the search path signs into the download URL
@@ -731,6 +735,7 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		// non-admin users, so returning the signed URL leaks the shared indexer
 		// credential; the grab handler re-signs from the indexer id server-side.
 		res.NZBURL = newznab.RedactDownloadURL(res.NZBURL)
+		returned[i] = res
 		out[i] = searchDecision{
 			SearchResult: res,
 			Approved:     d.Approved,
@@ -745,6 +750,9 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+
+	// Every result is grabbable, approved or not: a rejection only labels it.
+	h.searchResults.remember(returned)
 
 	// Remember the most recent debug payload so the UI can re-fetch it
 	// (e.g. after a page reload) without having to re-run the search.
@@ -809,5 +817,6 @@ func (h *IndexerHandler) SearchQuery(w http.ResponseWriter, r *http.Request) {
 	for i := range results {
 		results[i].NZBURL = newznab.RedactDownloadURL(results[i].NZBURL)
 	}
+	h.searchResults.remember(results)
 	writeJSON(w, http.StatusOK, results)
 }

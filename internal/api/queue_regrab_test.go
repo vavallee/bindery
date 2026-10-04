@@ -15,6 +15,7 @@ import (
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/httpsec"
+	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -432,6 +433,11 @@ func TestQueueGrab_ReusedRowBelongsToNewGrabber(t *testing.T) {
 	}
 
 	bobBook := regrabOwnedBook(t, database, books, "bob", bob)
+	// Bob is a user account, so his grab must name a release a search
+	// returned (SearchResultRegistry).
+	registry := NewSearchResultRegistry()
+	registry.remember([]newznab.SearchResult{{GUID: "guid-2289-owner", NZBURL: indexerURL + "/new.nzb", Title: "New Release"}})
+	h.WithSearchResults(registry)
 	body := `{"guid":"guid-2289-owner","nzbUrl":"` + indexerURL + `/new.nzb","title":"New Release","bookId":` +
 		strconv.FormatInt(bobBook.ID, 10) + `}`
 	rec := httptest.NewRecorder()
