@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -90,14 +91,18 @@ func TestImport_MoveModeAudiobookDropsSymlinks(t *testing.T) {
 	}
 }
 
-// TestMoveDir_FastPathDropsSymlinks is the same guarantee at the MoveDir
-// level, where the rename happens.
-func TestMoveDir_FastPathDropsSymlinks(t *testing.T) {
+// TestMoveDownloadDir_LinksNeverLand is the same guarantee at the entry point
+// the import uses. The source holds links, so the rename is skipped and only
+// regular files are copied.
+func TestMoveDownloadDir_LinksNeverLand(t *testing.T) {
 	job, secret := writeHostileAudiobookDownload(t)
 	dst := filepath.Join(t.TempDir(), "Author A", "Title T")
 
-	if err := MoveDir(job, dst); err != nil {
-		t.Fatalf("MoveDir: %v", err)
+	if err := MoveDownloadDirCtx(t.Context(), job, dst); err != nil {
+		t.Fatalf("MoveDownloadDirCtx: %v", err)
+	}
+	if _, err := os.Lstat(job); !os.IsNotExist(err) {
+		t.Errorf("source should be gone after a successful move, err = %v", err)
 	}
 	if got := nonRegularUnder(t, dst); len(got) != 0 {
 		t.Fatalf("destination holds non-regular entries: %v", got)
@@ -130,27 +135,132 @@ func TestCopyDirContext_SkipsSymlinks(t *testing.T) {
 	}
 }
 
-// TestMoveDir_SymlinkedSourceIsNotRenamedIn: when the job folder itself is a
-// link, renaming it would put the link, not a folder, into the library.
-func TestMoveDir_SymlinkedSourceIsNotRenamedIn(t *testing.T) {
+// TestMoveDownloadDir_RefusesSymlinkedSource: a job folder that is itself a
+// link is refused. Renaming it would put the link into the library, and
+// copying through it would import whatever it names.
+func TestMoveDownloadDir_RefusesSymlinkedSource(t *testing.T) {
 	real := filepath.Join(t.TempDir(), "real")
 	mustWrite(t, filepath.Join(real, "part1.mp3"), "track one")
 	link := filepath.Join(t.TempDir(), "job")
 	symlinkOrSkip(t, real, link)
 	dst := filepath.Join(t.TempDir(), "Author A", "Title T")
 
-	if err := MoveDir(link, dst); err != nil {
-		t.Fatalf("MoveDir: %v", err)
+	if err := MoveDownloadDirCtx(t.Context(), link, dst); !errors.Is(err, ErrDownloadDirIsSymlink) {
+		t.Fatalf("err = %v, want ErrDownloadDirIsSymlink", err)
 	}
-	info, err := os.Lstat(dst)
+	if _, err := os.Lstat(dst); !os.IsNotExist(err) {
+		t.Fatalf("destination created for a refused source: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(real, "part1.mp3")); err != nil {
+		t.Fatalf("link target disturbed: %v", err)
+	}
+}
+
+// TestMoveDownloadDir_LinkInReadOnlySubdirNeverLands: the download client's
+// UID often owns the folders, so Bindery cannot delete inside a read only
+// subfolder. A sweep after the rename would fail there and leave the link in
+// the library; checking before the rename means it never gets there.
+func TestMoveDownloadDir_LinkInReadOnlySubdirNeverLands(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "passwd")
+	mustWrite(t, secret, "SECRET")
+	job := filepath.Join(t.TempDir(), "job")
+	mustWrite(t, filepath.Join(job, "part1.mp3"), "track one")
+	sub := filepath.Join(job, "Disc 1")
+	mustWrite(t, filepath.Join(sub, "part2.mp3"), "track two")
+	symlinkOrSkip(t, secret, filepath.Join(sub, "cover.jpg"))
+	if err := os.Chmod(sub, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+	dst := filepath.Join(t.TempDir(), "Author A", "Title T")
+
+	// The source cleanup after the copy fails on the read only folder, as it
+	// always has for the copy path; what matters is what reached the library.
+	_ = MoveDownloadDirCtx(t.Context(), job, dst)
+
+	if got := nonRegularUnder(t, dst); len(got) != 0 {
+		t.Fatalf("library holds links from the download: %v", got)
+	}
+	if b, err := os.ReadFile(filepath.Join(dst, "Disc 1", "part2.mp3")); err != nil || string(b) != "track two" {
+		t.Fatalf("regular file in the read only folder not placed: %q, %v", b, err)
+	}
+}
+
+// TestMoveDownloadDir_CleanTreeStillRenames: a download with no links keeps
+// the cheap same filesystem rename (the inode is the same one).
+func TestMoveDownloadDir_CleanTreeStillRenames(t *testing.T) {
+	job := filepath.Join(t.TempDir(), "job")
+	mustWrite(t, filepath.Join(job, "part1.mp3"), "track one")
+	before, err := os.Stat(filepath.Join(job, "part1.mp3"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !info.IsDir() {
-		t.Fatalf("destination mode = %v, want a real directory", info.Mode())
+	dst := filepath.Join(t.TempDir(), "Author A", "Title T")
+	if err := MoveDownloadDirCtx(t.Context(), job, dst); err != nil {
+		t.Fatalf("MoveDownloadDirCtx: %v", err)
 	}
-	if b, err := os.ReadFile(filepath.Join(dst, "part1.mp3")); err != nil || string(b) != "track one" {
-		t.Fatalf("part1.mp3 = %q, %v", b, err)
+	after, err := os.Stat(filepath.Join(dst, "part1.mp3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("clean tree was copied, want the rename fast path")
+	}
+}
+
+// TestMoveDir_LibraryMoveKeepsUserLinks: MoveDir is also how reorganize moves
+// a folder already in the library. Links there are the operator's own and
+// must move with the folder unchanged.
+func TestMoveDir_LibraryMoveKeepsUserLinks(t *testing.T) {
+	lib := t.TempDir()
+	src := filepath.Join(lib, "unsorted", "My Book audio")
+	mustWrite(t, filepath.Join(src, "part1.mp3"), "track one")
+	art := filepath.Join(lib, "art", "cover.jpg")
+	mustWrite(t, art, "cover")
+	symlinkOrSkip(t, art, filepath.Join(src, "cover.jpg"))
+	dst := filepath.Join(lib, "Jane Doe", "My Book (2020)")
+
+	if err := MoveDirCtx(t.Context(), src, dst); err != nil {
+		t.Fatalf("MoveDirCtx: %v", err)
+	}
+	li, err := os.Lstat(filepath.Join(dst, "cover.jpg"))
+	if err != nil || li.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("user link not kept by a library move: %v, %v", li, err)
+	}
+}
+
+// TestReorganize_KeepsUserLink drives the same through ApplyReorganize.
+func TestReorganize_KeepsUserLink(t *testing.T) {
+	env, _, audiobookDir, ctx := reorgFixture(t)
+	book := env.seed(t, ctx, "Jane Doe", "My Book")
+	oldDir := filepath.Join(audiobookDir, "unsorted", "My Book audio")
+	writeFileAt(t, filepath.Join(oldDir, "part1.mp3"))
+	art := filepath.Join(audiobookDir, "art", "cover.jpg")
+	writeFileAt(t, art)
+	symlinkOrSkip(t, art, filepath.Join(oldDir, "cover.jpg"))
+	if err := env.books.AddBookFile(ctx, book.ID, models.MediaTypeAudiobook, oldDir); err != nil {
+		t.Fatal(err)
+	}
+
+	moves, err := env.s.PreviewReorganizeBook(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := env.s.ApplyReorganize(ctx, []int64{moves[0].FileID})
+	if results[0].Status != ReorgStatusMoved {
+		t.Fatalf("apply = %+v, want moved", results[0])
+	}
+	want := filepath.Join(audiobookDir, "Jane Doe", "My Book (2020)", "cover.jpg")
+	li, err := os.Lstat(want)
+	if err != nil || li.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("reorganize dropped the user link: %v, %v", li, err)
+	}
+	if target, _ := os.Readlink(want); target != art {
+		t.Fatalf("link target = %q, want %q", target, art)
 	}
 }
 

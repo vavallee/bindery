@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -281,6 +280,30 @@ func bridgeFileExt(format string) string {
 	return b.String()
 }
 
+// bridgeServeError answers a delivery whose file could not be opened and
+// reports whether it did. Only a file that does not exist marks the delivery
+// skipped (PullFileMissing is permanent); any other filesystem error, such as
+// permission denied or a stale NFS handle, is a 500 and the row stays pending
+// so the plugin retries it.
+func (h *CalibreBridgeHandler) bridgeServeError(w http.ResponseWriter, r *http.Request, row *models.CalibreDelivery, err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, errServeNotFound):
+		h.worker.PullFileMissing(r.Context(), row)
+		writeBridgeError(w, http.StatusNotFound, bridgeCodeNotFound, "file is gone")
+	case errors.Is(err, errServeOutside):
+		slog.Warn("calibre bridge: refused a delivery outside the library roots", "deliveryId", row.ID, "path", row.FilePath)
+		writeBridgeError(w, http.StatusForbidden, bridgeCodePathForbidden, "file is outside the library")
+	case errors.Is(err, errServeNotRegular):
+		slog.Warn("calibre bridge: refused a delivery that is not a regular file", "deliveryId", row.ID, "path", row.FilePath)
+		writeBridgeError(w, http.StatusForbidden, bridgeCodePathForbidden, "not a regular file")
+	default:
+		h.serverError(w, r, err)
+	}
+	return true
+}
+
 // File is GET /bridge/v1/deliveries/{id}/file. It serves only the path the
 // delivery row records, and only when that path is inside a library root
 // and is a regular file.
@@ -290,50 +313,18 @@ func (h *CalibreBridgeHandler) File(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sp, err := h.files.openServable(r.Context(), row.FilePath)
-	switch {
-	case errors.Is(err, errServeNotFound):
-		h.worker.PullFileMissing(r.Context(), row)
-		writeBridgeError(w, http.StatusNotFound, bridgeCodeNotFound, "file is gone")
-		return
-	case errors.Is(err, errServeOutside):
-		slog.Warn("calibre bridge: refused a delivery outside the library roots", "deliveryId", row.ID, "path", row.FilePath)
-		writeBridgeError(w, http.StatusForbidden, bridgeCodePathForbidden, "file is outside the library")
-		return
-	case errors.Is(err, errServeNotRegular):
-		slog.Warn("calibre bridge: refused a delivery that is not a regular file", "deliveryId", row.ID, "path", row.FilePath)
-		writeBridgeError(w, http.StatusForbidden, bridgeCodePathForbidden, "not a regular file")
-		return
-	case err != nil:
-		h.serverError(w, r, err)
+	if h.bridgeServeError(w, r, row, err) {
 		return
 	}
 	defer sp.Close()
-	// Opened through the library root, so a link swapped in after the checks
-	// above still cannot reach outside it. A directory fails the regular file
-	// check on the handle below.
-	f, err := sp.root.Open(sp.rel)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			h.worker.PullFileMissing(r.Context(), row)
-			writeBridgeError(w, http.StatusNotFound, bridgeCodeNotFound, "file is gone")
-			return
-		}
-		h.serverError(w, r, err)
+	// The same open the download route uses: a directory is refused, and the
+	// handle must be the file that was checked, so a link swapped in after the
+	// checks is refused too. Stat comes from the handle that will be served.
+	f, info, err := sp.openFile()
+	if h.bridgeServeError(w, r, row, err) {
 		return
 	}
-	defer f.Close()
-	// Stat the handle that will be served, not the path, so what is checked
-	// is what is sent.
-	info, err := f.Stat()
-	if err != nil {
-		h.serverError(w, r, err)
-		return
-	}
-	if !info.Mode().IsRegular() {
-		slog.Warn("calibre bridge: refused a delivery that is not a regular file", "deliveryId", row.ID, "path", row.FilePath)
-		writeBridgeError(w, http.StatusForbidden, bridgeCodePathForbidden, "not a regular file")
-		return
-	}
+	defer func() { _ = f.Close() }()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="book.`+bridgeFileExt(row.Format)+`"`)
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))

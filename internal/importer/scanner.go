@@ -1969,7 +1969,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					case "copy":
 						dirErr = CopyDirCtx(importCtx, audiobookSource, destDir)
 					default:
-						dirErr = MoveDirCtx(importCtx, audiobookSource, destDir)
+						dirErr = MoveDownloadDirCtx(importCtx, audiobookSource, destDir)
 					}
 				}
 			} else {

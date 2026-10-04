@@ -119,7 +119,14 @@ func (i *Importer) reconcileFormatPath(ctx context.Context, cfg ImportConfig, au
 		}
 		return false, false, fmt.Sprintf("%s path %q is outside Bindery storage%s; imported metadata only", format, cleanPath, unmappedPathHint(cfg)), false
 	}
-	info, err := os.Stat(cleanPath)
+	// Lstat, not Stat: a symlink is never registered as a book file, the same
+	// rule adoption and the library scan apply. A registered path is served
+	// by the download routes, and a link there could name any file on the
+	// host. Devices, fifos and sockets are refused for the same reason.
+	info, err := os.Lstat(cleanPath)
+	if err == nil && !info.Mode().IsRegular() && !info.IsDir() {
+		return false, false, fmt.Sprintf("%s path %q is a symlink or special file, not a regular file; imported metadata only", format, cleanPath), false
+	}
 	if err != nil {
 		if remappedPath != strings.TrimSpace(candidatePath) {
 			return false, false, fmt.Sprintf("%s path %q remapped to %q is not visible to Bindery; imported metadata only", format, strings.TrimSpace(candidatePath), cleanPath), true
@@ -216,7 +223,11 @@ func (i *Importer) inspectFormatPath(ctx context.Context, cfg ImportConfig, form
 		}
 		return false, fmt.Sprintf("%s path %q is outside Bindery storage%s", format, cleanPath, unmappedPathHint(cfg))
 	}
-	info, err := os.Stat(cleanPath)
+	// Lstat, matching reconcileFormatPath: a symlink is never a book file.
+	info, err := os.Lstat(cleanPath)
+	if err == nil && !info.Mode().IsRegular() && !info.IsDir() {
+		return false, fmt.Sprintf("%s path %q is a symlink or special file, not a regular file", format, cleanPath)
+	}
 	if err != nil {
 		if remappedPath != strings.TrimSpace(candidatePath) {
 			return false, fmt.Sprintf("%s path %q remapped to %q is not visible to Bindery", format, strings.TrimSpace(candidatePath), cleanPath)

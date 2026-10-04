@@ -194,19 +194,10 @@ func (h *FileHandler) serveFile(w http.ResponseWriter, r *http.Request, filePath
 	// bug is exactly the case the check exists for, and "it was in the
 	// database" is not the same as "it is inside the library".
 	//
-	// openServable also refuses a path that is a symlink, or that resolves
-	// outside every resolved root, and hands back a handle scoped to that
-	// root so nothing below can follow a link out of it.
+	// openServable also refuses a book file that is itself a symlink or a
+	// special file; see its doc for the full rule.
 	sp, err := h.openServable(r.Context(), filePath)
-	switch {
-	case errors.Is(err, errServeNotFound):
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "file not found on disk"})
-		return
-	case errors.Is(err, errServeOutside), errors.Is(err, errServeNotRegular):
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
-		return
-	case err != nil:
-		writeServerError(w, r, err)
+	if writeServeError(w, r, err) {
 		return
 	}
 	defer sp.Close()
@@ -217,34 +208,56 @@ func (h *FileHandler) serveFile(w http.ResponseWriter, r *http.Request, filePath
 		return
 	}
 
-	f, err := sp.root.Open(sp.rel)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "file not found on disk"})
+	f, info, err := sp.openFile()
+	if writeServeError(w, r, err) {
 		return
 	}
-	defer f.Close()
-	// Stat the handle that will be served, so what is checked is what is sent.
-	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
-		return
-	}
+	defer func() { _ = f.Close() }()
 	w.Header().Set("Content-Disposition", contentDisposition(name))
 	http.ServeContent(w, r, name, info.ModTime(), f)
 }
 
-// Sentinels from openServable. errServeOutside and errServeNotRegular are both
-// a 403 to the caller; they are separate so the log says which rule fired.
+// writeServeError answers a request whose openServable or openFile failed and
+// reports whether it did. Only a path that does not exist is a 404; any other
+// filesystem error (permission denied, EIO, a stale NFS handle) is a 500 so it
+// is not mistaken for a file that is gone.
+func writeServeError(w http.ResponseWriter, r *http.Request, err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, errServeNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "file not found on disk"})
+	case errors.Is(err, errServeOutside), errors.Is(err, errServeNotRegular):
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
+	default:
+		writeServerError(w, r, err)
+	}
+	return true
+}
+
+// Sentinels from openServable and servedPath.openFile. errServeOutside and
+// errServeNotRegular are both a 403 to the caller; they are separate so the
+// log says which rule fired. errServeNotFound is returned ONLY for
+// fs.ErrNotExist: the Calibre bridge reads it as "the file is gone" and
+// permanently skips the delivery, so a transient error must never map to it.
 var (
 	errServeOutside    = errors.New("path is outside every library root")
-	errServeNotRegular = errors.New("path is not a regular file or directory")
+	errServeNotRegular = errors.New("path is a symlink or not a regular file")
 	errServeNotFound   = errors.New("file not found on disk")
 )
 
-// servedPath is a library path opened for serving. root is an os.Root on the
-// RESOLVED library root that contains the file, and rel is the file's path
-// under it, so every read goes through the root and the kernel refuses to
-// follow a link out of it even if the tree changes after the checks.
+// serveStatErr maps a filesystem error to errServeNotFound when the path does
+// not exist, and wraps anything else so callers answer 500.
+func serveStatErr(err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		return errServeNotFound
+	}
+	return fmt.Errorf("stat library path: %w", err)
+}
+
+// servedPath is a library path opened for serving. For a file, root is an
+// os.Root on the file's parent folder and rel its name; for a folder, root is
+// on the folder itself and rel is ".". Every read goes through root.
 type servedPath struct {
 	root *os.Root
 	rel  string
@@ -253,21 +266,49 @@ type servedPath struct {
 
 func (s *servedPath) Close() { _ = s.root.Close() }
 
+// openFile opens the regular file s names and returns the handle and its
+// stat. The handle must be the same file openServable checked with Lstat: if
+// the name was swapped for a link (or anything else) in between, it is
+// refused rather than served.
+func (s *servedPath) openFile() (*os.File, fs.FileInfo, error) {
+	if !s.info.Mode().IsRegular() {
+		return nil, nil, errServeNotRegular
+	}
+	f, err := s.root.Open(s.rel)
+	if err != nil {
+		return nil, nil, serveStatErr(err)
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, fmt.Errorf("stat open library file: %w", err)
+	}
+	if !info.Mode().IsRegular() || !os.SameFile(info, s.info) {
+		_ = f.Close()
+		return nil, nil, errServeNotRegular
+	}
+	return f, info, nil
+}
+
 // openServable is the gate every route that hands library bytes to a client
 // goes through (book download, the audiobook zip, OPDS, the Calibre bridge).
-// It refuses, in order:
+// The rule:
 //
-//   - a path that is not lexically under a configured root (errServeOutside),
-//     the original allow-list check;
-//   - a path that is itself a symlink, or a device, fifo or socket
-//     (errServeNotRegular). Bindery never creates links in the library, and a
-//     link is how a download smuggles in "cover.jpg -> /config/bindery.db";
-//   - a path whose resolved location is outside every resolved root
-//     (errServeOutside), which catches a linked directory higher up.
+//   - the path as stored must be lexically under a configured root
+//     (errServeOutside);
+//   - a directory symlink anywhere in the path is followed. Links like
+//     /books/Author -> /mnt/disk2/Author are operator configuration, imports
+//     write through them, and downloads can no longer place links in the
+//     library (MoveDownloadDirCtx), so a directory link there is the
+//     operator's own. A linked library root works the same way;
+//   - the book file itself must be a regular file by Lstat: not a symlink,
+//     not a device, fifo or socket (errServeNotRegular). A file link is how a
+//     download would smuggle in "cover.jpg -> /config/bindery.db";
+//   - an audiobook folder is zipped with only its regular files; links inside
+//     it, to files or folders, are skipped (streamZip).
 //
-// Roots are resolved too, so a library root that is itself reached through a
-// symlink (common with Docker bind mounts and NAS shares) keeps working: both
-// sides of the comparison are real paths.
+// Only a path that does not exist is errServeNotFound; any other filesystem
+// error is wrapped so the caller answers 500.
 func (h *FileHandler) openServable(ctx context.Context, p string) (*servedPath, error) {
 	roots, ok := h.libraryRoots(ctx)
 	if !ok {
@@ -279,42 +320,52 @@ func (h *FileHandler) openServable(ctx context.Context, p string) (*servedPath, 
 	}
 	li, err := os.Lstat(clean)
 	if err != nil {
-		return nil, errServeNotFound
+		return nil, serveStatErr(err)
 	}
-	if !li.Mode().IsRegular() && !li.IsDir() {
-		slog.Warn("file download: refusing to serve a symlink or special file", "path", clean, "type", li.Mode().Type().String())
-		return nil, errServeNotRegular
-	}
-	resolved, err := filepath.EvalSymlinks(clean)
-	if err != nil {
-		return nil, errServeNotFound
-	}
-	for _, root := range roots {
-		realRoot, err := filepath.EvalSymlinks(root)
-		if err != nil || !pathContains(realRoot, resolved) {
-			continue
-		}
-		rel, err := filepath.Rel(realRoot, resolved)
+	switch {
+	case li.Mode().IsRegular():
+		parent, err := os.OpenRoot(filepath.Dir(clean))
 		if err != nil {
-			continue
+			return nil, serveStatErr(err)
 		}
-		rt, err := os.OpenRoot(realRoot)
+		name := filepath.Base(clean)
+		info, err := parent.Lstat(name)
 		if err != nil {
-			return nil, fmt.Errorf("open library root: %w", err)
+			_ = parent.Close()
+			return nil, serveStatErr(err)
 		}
-		info, err := rt.Lstat(rel)
-		if err != nil {
-			_ = rt.Close()
-			return nil, errServeNotFound
-		}
-		if !info.Mode().IsRegular() && !info.IsDir() {
-			_ = rt.Close()
+		if !info.Mode().IsRegular() {
+			_ = parent.Close()
 			return nil, errServeNotRegular
 		}
-		return &servedPath{root: rt, rel: rel, info: info}, nil
+		return &servedPath{root: parent, rel: name, info: info}, nil
+	case li.IsDir(), li.Mode()&fs.ModeSymlink != 0:
+		// A folder, possibly reached through an operator's folder link. A
+		// link to anything but a folder is a file link and is refused.
+		if li.Mode()&fs.ModeSymlink != 0 {
+			st, err := os.Stat(clean)
+			if err != nil {
+				return nil, serveStatErr(err)
+			}
+			if !st.IsDir() {
+				slog.Warn("file download: refusing to serve a symlinked file", "path", clean)
+				return nil, errServeNotRegular
+			}
+		}
+		dir, err := os.OpenRoot(clean)
+		if err != nil {
+			return nil, serveStatErr(err)
+		}
+		info, err := dir.Stat(".")
+		if err != nil {
+			_ = dir.Close()
+			return nil, serveStatErr(err)
+		}
+		return &servedPath{root: dir, rel: ".", info: info}, nil
+	default:
+		slog.Warn("file download: refusing to serve a special file", "path", clean, "type", li.Mode().Type().String())
+		return nil, errServeNotRegular
 	}
-	slog.Warn("file download: refusing a path that resolves outside the library roots", "path", clean, "resolved", resolved)
-	return nil, errServeOutside
 }
 
 // legacyPathForFormat returns the legacy single FilePath when its on-disk

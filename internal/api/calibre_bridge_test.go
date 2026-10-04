@@ -563,6 +563,34 @@ func TestBridgeFile_SymlinkRefused(t *testing.T) {
 	}
 }
 
+// TestBridgeFile_PermissionErrorKeepsDeliveryPending: only a file that does
+// not exist is "gone". A permission error (or EIO, or a stale NFS handle) is a
+// 500 and the delivery stays pending for the plugin to retry, rather than
+// being skipped for good.
+func TestBridgeFile_PermissionErrorKeepsDeliveryPending(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newBridgeFixture(t)
+	dir := filepath.Join(f.root, "Locked")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, ids := f.book("Locked", filepath.Join(dir, "Locked.epub"))
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	rec := f.get("/bridge/v1/deliveries/"+strconv.FormatInt(ids[0], 10)+"/file", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("unreadable parent: %d %s, want 500", rec.Code, rec.Body)
+	}
+	if got := f.row(ids[0]); got.State != models.CalibreDeliveryPending {
+		t.Fatalf("row state = %q, want pending", got.State)
+	}
+}
+
 // TestBridgeFile_SymlinkedLibraryRoot: a library root reached through a link
 // still delivers.
 func TestBridgeFile_SymlinkedLibraryRoot(t *testing.T) {

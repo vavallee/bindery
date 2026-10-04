@@ -178,6 +178,97 @@ func TestFileDownload_SymlinkedLibraryRootStillServes(t *testing.T) {
 	}
 }
 
+// TestFileDownload_LinkedAuthorFolderServes: /books/Author -> /mnt/disk2/Author
+// is an operator's way of spreading a library across disks, and imports write
+// through such links. A folder link anywhere in the path is followed, even
+// when it leads outside every configured root: downloads can no longer place
+// links in the library, so a folder link there is operator configuration.
+// The book file itself still has to be a regular file.
+func TestFileDownload_LinkedAuthorFolderServes(t *testing.T) {
+	h, books, author, ctx, tmp := fileFixture(t)
+	disk2 := t.TempDir() // outside every configured root
+	authorDir := filepath.Join(disk2, "Author")
+	if err := os.MkdirAll(filepath.Join(authorDir, "Audio (2020)"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(authorDir, "book.epub"), []byte("epub on disk2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(authorDir, "Audio (2020)", "part1.m4b"), []byte("audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkipAPI(t, filepath.Dir(outsideSecret(t)), filepath.Join(authorDir, "Audio (2020)", "extras"))
+	symlinkOrSkipAPI(t, authorDir, filepath.Join(tmp, "Author"))
+
+	ebook := &models.Book{ForeignID: "OL-LINKAUTH", AuthorID: author.ID, Title: "T"}
+	if err := books.Create(ctx, ebook); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFilePath(ctx, ebook.ID, filepath.Join(tmp, "Author", "book.epub")); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.Download(rec, downloadReq(ebook.ID))
+	if rec.Code != http.StatusOK || rec.Body.String() != "epub on disk2" {
+		t.Fatalf("ebook under a linked author folder: %d %q", rec.Code, rec.Body.String())
+	}
+
+	ab := &models.Book{ForeignID: "OL-LINKAUTH-AB", AuthorID: author.ID, Title: "Audio", MediaType: models.MediaTypeAudiobook}
+	if err := books.Create(ctx, ab); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFilePath(ctx, ab.ID, filepath.Join(tmp, "Author", "Audio (2020)")); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	h.Download(rec, downloadReq(ab.ID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("audiobook under a linked author folder: %d %s", rec.Code, rec.Body.String())
+	}
+	zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	if err != nil {
+		t.Fatalf("zip reader: %v", err)
+	}
+	// The folder link inside the book folder is skipped, not followed.
+	if len(zr.File) != 1 || zr.File[0].Name != "part1.m4b" {
+		t.Fatalf("zip entries: %d", len(zr.File))
+	}
+}
+
+// TestFileDownload_PermissionErrorIs500: only a missing file is a 404. An
+// unreadable parent folder is a server side problem and says so.
+func TestFileDownload_PermissionErrorIs500(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	h, books, author, ctx, tmp := fileFixture(t)
+	dir := filepath.Join(tmp, "Locked")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "book.epub")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{ForeignID: "OL-LOCKED", AuthorID: author.ID, Title: "T"}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.SetFilePath(ctx, book.ID, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	rec := httptest.NewRecorder()
+	h.Download(rec, downloadReq(book.ID))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("unreadable parent: %d, want 500", rec.Code)
+	}
+}
+
 // TestContentDisposition_BackslashQuoteRoundTrips: a backslash before a quote
 // must not let the name close the quoted filename= string early.
 func TestContentDisposition_BackslashQuoteRoundTrips(t *testing.T) {

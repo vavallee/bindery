@@ -989,12 +989,17 @@ Knowing the edges saves time:
 - **Per-user root folders.** Multi-user tenancy scopes authors, books, and
   downloads per user; root folders stay a shared, admin-managed pool
   ([multi-user.md](multi-user.md)).
-- **Follow symlinks inside the library.** Imports place regular files only,
-  so a symlink in a download never lands in your library. Library Scan does
-  not attach a symlinked file to a book, and downloads (browser, OPDS, the
-  Calibre bridge) refuse to serve one or include one in an audiobook zip.
-  Replace the link with the file. A library folder that is itself reached
-  through a symlink or a bind mount works as normal.
+- **Serve linked files.** Linked *folders* work: a library root reached
+  through a symlink or bind mount, or an author folder linked to another disk
+  (`/books/Author -> /mnt/disk2/Author`), is followed everywhere, including
+  when it points outside your library folders, because only you can create
+  one. A linked *file* is not a book file: imports place regular files only
+  (a symlink inside a download never lands in your library, and a download
+  folder that is itself a symlink is refused), Library Scan and the
+  Audiobookshelf import do not attach one to a book, and downloads (browser,
+  OPDS, the Calibre bridge) refuse to serve one. An audiobook zip leaves out
+  any link inside the book folder, file or folder. Replace a linked file with
+  the file itself. Reorganize moves your own links along unchanged.
 
 ## Quick answers
 

@@ -56,38 +56,6 @@ func removeDownloadArtifacts(dir string) {
 	})
 }
 
-// removeNonRegularEntries deletes every entry under dir that is neither a
-// regular file nor a directory: symlinks, device nodes, fifos, sockets. A
-// download is untrusted input, and MoveDir's rename fast path moves it
-// wholesale, so a release carrying "cover.jpg -> /config/bindery.db" would
-// otherwise land that link in the library. The copy and hardlink paths
-// already skip these entries at placement time; this brings the rename path
-// to the same result.
-//
-// WalkDir reads entries without following links, so a link to a directory is
-// removed as a link and never descended into, and os.Remove on a link removes
-// the link, not its target. Best effort, like removeDownloadArtifacts: the
-// folder is already in place and the source is gone, so failing the import
-// here would not take the entry back out. The download and Calibre bridge
-// routes refuse to follow links and the library scan skips them, so an entry
-// that cannot be removed is still never served or tracked.
-func removeNonRegularEntries(dir string) {
-	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() || d.Type().IsRegular() {
-			return nil
-		}
-		if rmErr := os.Remove(path); rmErr != nil {
-			slog.Error("could not remove a non-regular entry from an imported folder", "path", path, "type", d.Type().String(), "error", rmErr)
-			return nil
-		}
-		slog.Warn("removed a non-regular entry (symlink, device or fifo) from an imported download", "path", path, "type", d.Type().String())
-		return nil
-	})
-}
-
 // templateGroupRe matches one "{...}" group. The content is parsed by
 // renderGroup: either the classic simple form — a bare "{Token}", optionally
 // with a default after a colon ("{Genre:Unsorted}") or a zero-pad width
@@ -740,6 +708,12 @@ func MoveDir(src, dst string) error {
 // the partial destination is removed but the source is left intact — never
 // remove the still-seeding source after a cancelled or failed copy.
 func moveDirCtx(ctx context.Context, src, dst string) error {
+	return moveDir(ctx, src, dst, true)
+}
+
+// moveDir is moveDirCtx with the rename fast path optional. allowRename=false
+// always takes the copy-then-remove route, which places regular files only.
+func moveDir(ctx context.Context, src, dst string, allowRename bool) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		return fmt.Errorf("stat source dir: %w", err)
@@ -759,16 +733,12 @@ func moveDirCtx(ctx context.Context, src, dst string) error {
 	}
 
 	// Fast path: same filesystem. Rename moves the folder wholesale, so any
-	// download artifacts (.nzb receipts, .par2 volumes) and any symlinks or
-	// other non-regular entries ride along. Sweep both out of the destination
-	// afterwards to match the filtering the copy-based paths do at placement
-	// time. A src that is itself a symlink skips the rename, which would put
-	// the link rather than a folder into the library; the copy below opens
-	// it as a directory and places only its regular files.
-	if li, lerr := os.Lstat(src); lerr == nil && li.IsDir() {
+	// download artifacts (.nzb receipts, .par2 volumes) ride along — sweep
+	// them out of the destination afterwards to match the filtering the
+	// copy-based paths do at placement time.
+	if allowRename {
 		if err := os.Rename(src, dst); err == nil {
 			removeDownloadArtifacts(dst)
-			removeNonRegularEntries(dst)
 			return nil
 		}
 	}
@@ -1621,6 +1591,105 @@ func stageMove(ctx context.Context, src, staged string) (movedViaRename bool, er
 // import therefore can never delete the still-seeding source after the fact.
 func MoveDirCtx(ctx context.Context, src, dst string) error {
 	return moveDirCtx(ctx, src, dst)
+}
+
+// ErrDownloadDirIsSymlink is returned by MoveDownloadDirCtx when the download
+// folder itself is a symlink. Moving it would put the link, not a folder, into
+// the library, and copying through it would import whatever it points at.
+var ErrDownloadDirIsSymlink = errors.New("download folder is a symlink")
+
+// ErrLinkLeftInLibrary is returned by MoveDownloadDirCtx when, after a move,
+// the placed folder still holds a symlink or special file that could not be
+// removed. The import fails loudly rather than succeeding with the link in
+// place, where a media server reading the library would follow it.
+var ErrLinkLeftInLibrary = errors.New("imported folder still holds a symlink or special file")
+
+// maxReportedEntries caps how many non-regular entries a log line names.
+const maxReportedEntries = 10
+
+// MoveDownloadDirCtx is MoveDirCtx for a folder that came from a download
+// client. A download is untrusted input: whoever built the release decides
+// what is in it, symlinks included ("cover.jpg -> /config/bindery.db"). The
+// rename fast path moves a folder wholesale and cannot filter, so:
+//
+//   - a source that is itself a symlink is refused (ErrDownloadDirIsSymlink);
+//   - a source tree holding any symlink, device, fifo or socket skips the
+//     rename and takes the copy-then-remove path, which places regular files
+//     only, so the link never lands in the library at all;
+//   - a clean tree keeps the cheap rename, and the placed folder is checked
+//     again afterwards. Anything non-regular found then is removed, and if
+//     that fails the import fails with ErrLinkLeftInLibrary.
+//
+// Library-internal moves (reorganize) use MoveDirCtx, which keeps an
+// operator's own links exactly as they were.
+func MoveDownloadDirCtx(ctx context.Context, src, dst string) error {
+	li, err := os.Lstat(src)
+	if err != nil {
+		return fmt.Errorf("stat source dir: %w", err)
+	}
+	if li.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%w: %s", ErrDownloadDirIsSymlink, src)
+	}
+	found, scanErr := nonRegularEntries(src)
+	if scanErr != nil || len(found) > 0 {
+		// A tree that cannot be fully read cannot be shown clean, so it takes
+		// the filtering copy as well.
+		slog.Warn("download folder holds symlinks or special files, copying its regular files instead of moving the folder",
+			"src", src, "entries", capEntries(found), "count", len(found), "scanError", scanErr)
+		return moveDir(ctx, src, dst, false)
+	}
+	if err := moveDir(ctx, src, dst, true); err != nil {
+		return err
+	}
+	return ensureNoNonRegularEntries(dst)
+}
+
+// nonRegularEntries lists every entry under root that is neither a regular
+// file nor a directory. WalkDir reads entries without following links, so a
+// link to a directory is listed, not entered.
+func nonRegularEntries(root string) ([]string, error) {
+	var out []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && !d.Type().IsRegular() {
+			out = append(out, path)
+		}
+		return nil
+	})
+	return out, err
+}
+
+// ensureNoNonRegularEntries removes any non-regular entry under dir and
+// returns ErrLinkLeftInLibrary if one could not be removed or the tree could
+// not be checked. Only reached after a rename of a tree that was clean a
+// moment earlier, so finding anything here means it changed in between.
+func ensureNoNonRegularEntries(dir string) error {
+	found, err := nonRegularEntries(dir)
+	if err != nil {
+		return fmt.Errorf("%w: could not check %s: %w", ErrLinkLeftInLibrary, dir, err)
+	}
+	var left []string
+	for _, p := range found {
+		if rmErr := os.Remove(p); rmErr != nil {
+			slog.Error("could not remove a symlink or special file from an imported folder", "path", p, "error", rmErr)
+			left = append(left, p)
+			continue
+		}
+		slog.Warn("removed a symlink or special file from an imported folder", "path", p)
+	}
+	if len(left) > 0 {
+		return fmt.Errorf("%w: %v", ErrLinkLeftInLibrary, capEntries(left))
+	}
+	return nil
+}
+
+func capEntries(entries []string) []string {
+	if len(entries) > maxReportedEntries {
+		return entries[:maxReportedEntries]
+	}
+	return entries
 }
 
 // CopyDirCtx is like CopyDir but returns ctx.Err() if the context is
