@@ -1058,12 +1058,13 @@ func main() {
 		// History
 		r.Get("/history", historyHandler.List)
 		r.Delete("/history/{id}", historyHandler.Delete)
+		// Blocklisting a release from history stays open to every user: the
+		// handler 404s unless the caller owns the history event, so a user
+		// can only add entries for their own grabs.
 		r.Post("/history/{id}/blocklist", historyHandler.Blocklist)
 
-		// Blocklist
-		r.Get("/blocklist", blocklistHandler.List)
-		r.Delete("/blocklist/bulk", blocklistHandler.BulkDelete)
-		r.Delete("/blocklist/{id}", blocklistHandler.Delete)
+		// Blocklist, admin only (see registerBlocklistRoutes).
+		registerBlocklistRoutes(r, blocklistHandler)
 
 		// Notifications — Notification.Headers carries arbitrary HTTP
 		// headers (often auth tokens for ntfy / Gotify / webhook routing).
@@ -1173,14 +1174,9 @@ func main() {
 			r.Delete("/customformat/{id}", customFormatHandler.Delete)
 		})
 
-		// Metadata profiles — per-user (owner_user_id from migration 025).
-		// Reads stay available to all authenticated users; the cross-user
-		// Get/Update/Delete IDOR is closed by D1's env-gated handler check.
-		r.Get("/metadataprofile", metadataProfileHandler.List)
-		r.Post("/metadataprofile", metadataProfileHandler.Create)
-		r.Get("/metadataprofile/{id}", metadataProfileHandler.Get)
-		r.Put("/metadataprofile/{id}", metadataProfileHandler.Update)
-		r.Delete("/metadataprofile/{id}", metadataProfileHandler.Delete)
+		// Metadata profiles: reads open, writes admin only (see
+		// registerMetadataProfileRoutes).
+		registerMetadataProfileRoutes(r, metadataProfileHandler)
 
 		// Backups — Restore replaces the live database (staged now, swapped
 		// in by db.ApplyPendingRestore at the next start), Delete removes

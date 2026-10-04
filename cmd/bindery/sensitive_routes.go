@@ -260,3 +260,52 @@ func registerLibraryScanStatusRoute(r chi.Router, h libraryScanStatusRouteHandle
 		r.Get("/library/scan/status", h.ScanStatus)
 	})
 }
+
+// blocklistRouteHandler is the surface registerBlocklistRoutes needs.
+type blocklistRouteHandler interface {
+	List(http.ResponseWriter, *http.Request)
+	Delete(http.ResponseWriter, *http.Request)
+	BulkDelete(http.ResponseWriter, *http.Request)
+}
+
+// registerBlocklistRoutes mounts the /blocklist routes admin only. The
+// blocklist is app wide (no owner column) and every search consults it, so a
+// non-admin who could list it saw every release anyone had blocked, and one who
+// could delete from it re-enabled releases an admin had blocked for everybody.
+// docs/multi-user.md already placed Blocklist under the admin only System tab.
+// POST /history/{id}/blocklist stays open: it adds an entry only for a history
+// event the caller owns.
+func registerBlocklistRoutes(r chi.Router, h blocklistRouteHandler) {
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
+		r.Get("/blocklist", h.List)
+		r.Delete("/blocklist/bulk", h.BulkDelete)
+		r.Delete("/blocklist/{id}", h.Delete)
+	})
+}
+
+// metadataProfileRouteHandler is the surface registerMetadataProfileRoutes
+// needs.
+type metadataProfileRouteHandler interface {
+	List(http.ResponseWriter, *http.Request)
+	Get(http.ResponseWriter, *http.Request)
+	Create(http.ResponseWriter, *http.Request)
+	Update(http.ResponseWriter, *http.Request)
+	Delete(http.ResponseWriter, *http.Request)
+}
+
+// registerMetadataProfileRoutes mounts the /metadataprofile routes, matching
+// the quality profile routes: reads open to every authenticated user (the
+// author forms need the list for their picker, and the handlers scope it under
+// tenancy), mutations admin only. Profiles are settings that filter what every
+// author refresh adds, which the Settings UI already treats as admin only.
+func registerMetadataProfileRoutes(r chi.Router, h metadataProfileRouteHandler) {
+	r.Get("/metadataprofile", h.List)
+	r.Get("/metadataprofile/{id}", h.Get)
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
+		r.Post("/metadataprofile", h.Create)
+		r.Put("/metadataprofile/{id}", h.Update)
+		r.Delete("/metadataprofile/{id}", h.Delete)
+	})
+}

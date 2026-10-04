@@ -38,7 +38,10 @@ Three roles exist: `admin`, `user` and `requester`.
 | Action | `admin` | `user` | `requester` |
 |--------|:-------:|:------:|:-----------:|
 | View and manage own authors/books/downloads | Yes | Yes | No |
-| View and manage own quality/metadata profiles | Yes | Yes | No |
+| View quality/metadata profiles (with tenancy on, a user sees their own and unowned ones) | Yes | Yes | No |
+| Create, edit, delete quality/metadata profiles | Yes | No | No |
+| View or remove blocklist entries | Yes | No | No |
+| Blocklist a release from own history | Yes | Yes | No |
 | Manage root folders (single shared/global pool) | Yes | No | No |
 | Change own password | Yes | Yes | Yes |
 | Read or rotate the instance API key | Yes | No | No |

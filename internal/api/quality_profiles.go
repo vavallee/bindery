@@ -28,10 +28,15 @@ func (h *QualityProfileHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	if profiles == nil {
-		profiles = []models.QualityProfile{}
+	// Return exactly what Get would: a profile Get 404s for this caller must
+	// not appear here either.
+	visible := make([]models.QualityProfile, 0, len(profiles))
+	for _, p := range profiles {
+		if auth.CheckOwnership(r.Context(), p.OwnerUserID) {
+			visible = append(visible, p)
+		}
 	}
-	writeJSON(w, http.StatusOK, profiles)
+	writeJSON(w, http.StatusOK, visible)
 }
 
 func (h *QualityProfileHandler) Get(w http.ResponseWriter, r *http.Request) {
