@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -42,6 +43,16 @@ func writeEpubAt(t *testing.T, path, title, author, isbn string) {
     <dc:identifier>urn:isbn:`+isbn+`</dc:identifier>
   </metadata>
 </package>`)
+	// A chapter, stored rather than deflated, so the file is the size of a
+	// real (if very short) book: the library scan labels an ebook under
+	// MinPlausibleEbookBytes too small to be a book (#2944).
+	w, err := zw.CreateHeader(&zip.FileHeader{Name: "chapter1.xhtml", Method: zip.Store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("<html><body><p>" + strings.Repeat("A short chapter of a short book. ", 200) + "</p></body></html>")); err != nil {
+		t.Fatal(err)
+	}
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}

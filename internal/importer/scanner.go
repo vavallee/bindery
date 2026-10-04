@@ -3856,6 +3856,12 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 					}
 				}
 			}
+			// A file too small to be a book is labelled as such whatever else
+			// is true of it, so the list does not present it as a book that
+			// merely failed to match (#2944).
+			if TooSmallToBeABook(path, walked[path].size) {
+				reason = unmatchedReasonTooSmall
+			}
 			// matchAuthor is the author string the matcher actually used — it
 			// differs from parsedAuthor when a #1956 fallback fired, which is
 			// exactly what a support log needs to show.
@@ -4054,6 +4060,11 @@ const (
 	// book by that author matched this title" when there was no title to match
 	// — the file needs renaming, not a catalogue refresh.
 	unmatchedReasonNoTitleParsed = "no_title_parsed"
+	// unmatchedReasonTooSmall: an ebook format file under
+	// MinPlausibleEbookBytes, a notes or readme file rather than a book
+	// (#2944). It is listed so the user can see and ignore it, but it gets no
+	// suggestions, its own row, and adoption refuses it.
+	unmatchedReasonTooSmall = "too_small"
 )
 
 // writeScanError persists a failed-scan result so the UI reflects the failure

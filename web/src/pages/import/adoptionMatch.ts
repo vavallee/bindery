@@ -41,10 +41,20 @@ export function alreadySettled(status: string): boolean {
   return status === 'imported' || status === 'skipped'
 }
 
+// inOtherFormatRoot reports whether a row sits in the other format's library
+// folder, such as an ebook under a separate audiobooks root (#2944). With one
+// combined root the server sends no rootFormat and nothing is out of place.
+export function inOtherFormatRoot(item: AdoptionItem): boolean {
+  return item.rootFormat !== undefined && item.rootFormat !== item.format
+}
+
 export function matchStrength(item: AdoptionItem, candidate: AdoptionCandidate | undefined = item.candidates[0]): MatchStrength | null {
   if (!candidate) return null
   const author = item.parsedAuthor || item.authorFolder
-  return candidate.score >= STRONG_MATCH_SCORE && authorsMatch(author, candidate.book.authorName) && !alreadySettled(candidate.book.status)
+  // A file in the other format's folder is a look first decision, never a
+  // one click Confirm: the scan itself would not have claimed it there.
+  return candidate.score >= STRONG_MATCH_SCORE && authorsMatch(author, candidate.book.authorName) &&
+    !alreadySettled(candidate.book.status) && !inOtherFormatRoot(item)
     ? 'strong'
     : 'possible'
 }
@@ -62,6 +72,8 @@ export function shortHint(item: AdoptionItem, t: TFunction): string {
       return t('adoption.short.noCandidates', { author, defaultValue: 'No book by {{author}} is waiting for a file' })
     case 'no_title_parsed':
       return t('adoption.short.noTitle', 'No title could be read')
+    case 'too_small':
+      return t('adoption.short.tooSmall', 'Too small to be a book')
     default:
       return author
         ? t('adoption.short.noTitleMatch', { author, defaultValue: 'No close title by {{author}}' })

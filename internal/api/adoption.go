@@ -29,6 +29,7 @@ const maxAdoptionMembersShown = 20
 // adoptionScanner is the part of the scanner the adoption list reads.
 type adoptionScanner interface {
 	ScanRunning() bool
+	RootFormat(root string) string
 }
 
 // adoptionBookAdder is the add book core (see add_book_core.go).
@@ -116,6 +117,11 @@ type adoptionItem struct {
 	TopScore     float64              `json:"topScore"`
 	State        string               `json:"state"`
 	Book         *db.UnmatchedBookRef `json:"book,omitempty"`
+	// RootFormat is the format the row's library root holds, "ebook" or
+	// "audiobook", when the ebook and audiobook roots are separate folders,
+	// and "" with one combined root. The web labels a row whose own format
+	// differs, such as an ebook found under the audiobooks root (#2944).
+	RootFormat string `json:"rootFormat,omitempty"`
 	// BookCreated and AuthorCreated say whether the adoption added them, which
 	// is also what Undo would remove.
 	BookCreated   bool       `json:"bookCreated"`
@@ -238,6 +244,9 @@ func (h *AdoptionHandler) hydrate(ctx context.Context, units []db.UnmatchedUnit)
 	items := make([]adoptionItem, len(units))
 	for i := range units {
 		items[i] = toAdoptionItem(&units[i], refs)
+		if h.scanner != nil {
+			items[i].RootFormat = h.scanner.RootFormat(units[i].RootPath)
+		}
 	}
 	return items, nil
 }

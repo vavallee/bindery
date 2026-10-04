@@ -8,7 +8,7 @@ import MoreMenu, { type MoreMenuItem } from '../../components/MoreMenu'
 import { formatBytes } from '../../util/format'
 import { adoptionHint, unitDisplayName } from './adoptionHint'
 import { StatusPill } from './AdoptionEditor'
-import { alreadySettled, matchStrength, shortHint } from './adoptionMatch'
+import { alreadySettled, inOtherFormatRoot, matchStrength, shortHint } from './adoptionMatch'
 import type { Outcome } from './adoptionReducer'
 import { rowCls, cellCls, actionCellCls } from './adoptionStyles'
 
@@ -48,6 +48,16 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
   const size = formatBytes(item.sizeBytes)
   const pending = item.state === 'pending' && !outcome
   const authorFirst = pending && !inGroup && !top && item.reason === 'author_not_in_library' && item.parsedAuthor !== ''
+  // A file too small to be a book cannot be adopted (the server refuses it),
+  // so its one action is Ignore (#2944).
+  const tooSmall = pending && item.reason === 'too_small'
+  // Which folder a row sits in matters when it is the other format's: an
+  // ebook under the audiobooks root is not an ordinary ebook row (#2944).
+  const rootLabel = inOtherFormatRoot(item)
+    ? item.rootFormat === 'audiobook'
+      ? t('adoption.row.inAudiobookRoot', 'In your audiobooks folder')
+      : t('adoption.row.inEbookRoot', 'In your ebooks folder')
+    : ''
 
   const outcomeLine = (() => {
     switch (outcome?.kind) {
@@ -72,7 +82,7 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
   if (pending) {
     if (strength === 'strong' || authorFirst) menu.push({ label: t('adoption.choose', 'Choose book'), onSelect: () => onOpen(false) })
     if (item.fileCount > 1) menu.push({ label: t('adoption.showFiles', 'Show files'), onSelect: () => onOpen(true) })
-    menu.push({ label: t('adoption.ignore', 'Ignore'), onSelect: onIgnore })
+    if (!tooSmall) menu.push({ label: t('adoption.ignore', 'Ignore'), onSelect: onIgnore })
   }
 
   let primary: React.ReactNode
@@ -86,6 +96,8 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
         {item.state === 'ignored' ? t('adoption.unignore', 'Unignore') : t('adoption.undo', 'Undo')}
       </button>
     )
+  } else if (tooSmall) {
+    primary = <button type="button" onClick={onIgnore} aria-keyshortcuts="i" className={`${btn.secondary} ${btnSize.sm}`}>{t('adoption.ignore', 'Ignore')}</button>
   } else if (strength === 'strong') {
     primary = <button type="button" onClick={onConfirm} className={`${btn.primary} ${btnSize.sm}`}>{t('adoption.confirm', 'Confirm')}</button>
   } else if (authorFirst) {
@@ -107,6 +119,11 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate font-medium text-slate-800 dark:text-zinc-200">{name}</span>
           <MediaBadge type={item.format} />
+          {rootLabel && (
+            <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300" title={item.rootPath}>
+              {rootLabel}
+            </span>
+          )}
         </div>
         <p className="mt-0.5 truncate text-xs text-fg-muted" title={`${item.rootPath}/${item.relPath}`}>
           <span className="tabular-nums">

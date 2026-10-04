@@ -607,6 +607,16 @@ Things worth knowing:
 
 - Only regular files inside your library folders are listed. A symlink is not
   adopted, including one inside the library that points elsewhere.
+- **Too small to be a book**: an ebook format file under 4 KiB (a notes,
+  readme or link file, about two pages of plain text at most) is listed on a
+  row of its own with that label and no suggestion, and cannot be adopted.
+  Ignore it, or delete it from the folder. Audiobook tracks are not judged by
+  size. Files already tracked are not affected (#2944).
+- **In your audiobooks folder** / **In your ebooks folder**: when
+  `BINDERY_AUDIOBOOK_DIR` is its own folder, a row found in the other
+  format's folder (say an `.epub` under the audiobooks root) says so, and its
+  suggestion is never a one click Confirm. You can still adopt it after
+  checking. With one combined folder for both there is nothing to label.
 - A scan that finds no files at all (an unmounted volume, say) changes
   nothing on this list, so your ignores and adoptions survive it.
 - An adopted row stays, with Undo, for as long as its book exists. An ignored

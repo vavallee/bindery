@@ -25,6 +25,13 @@ export function adoptionHint(item: AdoptionItem, t: TFunction): AdoptionHintText
   const author = item.parsedAuthor
   const top = item.candidates[0]
 
+  if (item.reason === 'too_small') {
+    return {
+      sentence: t('adoption.hint.tooSmall', 'This file is too small to be a book, so it cannot be adopted. Ignore it, or delete it from the folder.'),
+      tooltip,
+    }
+  }
+
   if (top) {
     const strong = matchStrength(item) === 'strong'
     return {

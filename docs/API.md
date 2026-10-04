@@ -638,7 +638,7 @@ files are one row. Query parameters, all optional:
 | Parameter | Values |
 |---|---|
 | `state` | `pending` (default), `ignored`, `adopted` |
-| `reason` | `author_not_in_library`, `no_candidate_books`, `no_title_match`, `no_title_parsed` |
+| `reason` | `author_not_in_library`, `no_candidate_books`, `no_title_match`, `no_title_parsed`, `too_small` |
 | `authorFolder` | first folder under the library root |
 | `format` | `ebook`, `audiobook` |
 | `search` | words matched against title, author and path |
@@ -652,6 +652,14 @@ The response is `{items, total, facets?, summary, scan}`. Each item carries
 `candidates` (`{book, score}`, a title similarity from 0 to 1), `state`, the
 adopted `book` if any, `bookCreated`, `authorCreated` and the first 20
 `members` file names. No provider is called to build it.
+
+`rootFormat` is the format the row's library root holds, `ebook` or
+`audiobook`, and is present only when `BINDERY_AUDIOBOOK_DIR` is a separate
+folder from the library; with one combined root it is omitted. A row whose
+`format` differs from it, such as an ebook under the audiobooks root, is in
+the other format's folder (#2944). A `too_small` row is an ebook format file
+under 4 KiB, too small to be a book: it is its own row and carries no
+`candidates`.
 
 `POST /api/v1/library/unmatched/{id}/adopt` takes either `{"bookId": 12}` for
 a book already in the library or `{"foreignBookId": "...", "foreignAuthorId":
@@ -667,7 +675,7 @@ Answers:
 | Status | Meaning |
 |---|---|
 | `200` | the updated row |
-| `400` | neither or both of `bookId` and `foreignBookId`, or a format that is not the files' format |
+| `400` | neither or both of `bookId` and `foreignBookId`, a format that is not the files' format, or an ebook file under 4 KiB, too small to be a book |
 | `404` | no such row, or the book is gone |
 | `409` | the row is not pending (the body names its `state`), or a file already belongs to a book |
 | `422` | a file is gone, is not a regular file, or resolves outside the library folders |

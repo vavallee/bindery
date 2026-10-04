@@ -11,6 +11,9 @@ export type AdoptionReason =
   | 'no_candidate_books'
   | 'no_title_match'
   | 'no_title_parsed'
+  // An ebook format file under 4 KiB: a notes or readme file, not a book. It
+  // has no suggestions and the server refuses to adopt it (#2944).
+  | 'too_small'
 
 export interface AdoptionBookRef {
   id: number
@@ -40,6 +43,10 @@ export interface AdoptionItem {
   parsedTitle: string
   parsedAuthor: string
   reason: AdoptionReason | ''
+  // The format the row's library root holds, set only when the ebook and
+  // audiobook roots are separate folders. A row whose format differs sits in
+  // the other format's folder (#2944).
+  rootFormat?: 'ebook' | 'audiobook'
   candidates: AdoptionCandidate[]
   topScore: number
   state: AdoptionState | 'adopting' | 'undoing'
