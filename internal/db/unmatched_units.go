@@ -54,6 +54,10 @@ func unitTime(t time.Time) string { return t.UTC().Format(unitTimeLayout) }
 type UnmatchedCandidate struct {
 	BookID int64   `json:"bookId"`
 	Score  float64 `json:"score"`
+	// FolderAuthorOnly marks, on a unit whose files name another author than
+	// their folder, a book offered only because the folder's author wrote it
+	// (#2942). It never sets the unit's top score.
+	FolderAuthorOnly bool `json:"folderAuthorOnly,omitempty"`
 }
 
 // UnmatchedUnitScan is what a library scan reports for one unit.
@@ -68,9 +72,12 @@ type UnmatchedUnitScan struct {
 	AuthorFolder string
 	ParsedTitle  string
 	ParsedAuthor string
-	Reason       string
-	MemberPaths  []string
-	Candidates   []UnmatchedCandidate
+	// FilesAuthor is the author the unit's files name when that is not its
+	// author folder's (#2942); "" when they agree or say nothing.
+	FilesAuthor string
+	Reason      string
+	MemberPaths []string
+	Candidates  []UnmatchedCandidate
 }
 
 // RegisteredFile is one book_files row an adoption inserted: its path and the
@@ -94,6 +101,7 @@ type UnmatchedUnit struct {
 	AuthorFolder    string
 	ParsedTitle     string
 	ParsedAuthor    string
+	FilesAuthor     string
 	Reason          string
 	MemberPaths     []string
 	Candidates      []UnmatchedCandidate
@@ -165,10 +173,10 @@ func NewUnmatchedUnitRepo(database *sql.DB) *UnmatchedUnitRepo {
 const upsertUnmatchedUnitSQL = `
 INSERT INTO unmatched_units (
     unit_path, unit_kind, format, file_count, size_bytes, root_path, rel_path,
-    author_folder, parsed_title, parsed_author, reason, search_key,
+    author_folder, parsed_title, parsed_author, files_author, reason, search_key,
     member_paths_json, candidates_json, top_score, scan_generation,
     first_seen_at, last_seen_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(unit_path) DO UPDATE SET
     unit_kind = excluded.unit_kind,
     format = excluded.format,
@@ -179,6 +187,7 @@ ON CONFLICT(unit_path) DO UPDATE SET
     author_folder = excluded.author_folder,
     parsed_title = excluded.parsed_title,
     parsed_author = excluded.parsed_author,
+    files_author = excluded.files_author,
     reason = excluded.reason,
     search_key = excluded.search_key,
     member_paths_json = excluded.member_paths_json,
@@ -311,15 +320,19 @@ func (r *UnmatchedUnitRepo) upsertChunk(ctx context.Context, chunk []UnmatchedUn
 		if err != nil {
 			return fmt.Errorf("unmatched units: encode candidates: %w", err)
 		}
+		// A folder author's look alike on a conflicting unit does not rank
+		// the unit as a close match (#2942).
 		var top float64
 		for _, c := range cands {
-			top = max(top, c.Score)
+			if !c.FolderAuthorOnly {
+				top = max(top, c.Score)
+			}
 		}
 		fileCount := max(u.FileCount, 1)
 		searchKey := textutil.FoldForSearch(u.ParsedTitle + " " + u.ParsedAuthor + " " + u.RelPath)
 		if _, err := stmt.ExecContext(ctx,
 			u.UnitPath, u.UnitKind, u.Format, fileCount, u.SizeBytes, u.RootPath, u.RelPath,
-			u.AuthorFolder, u.ParsedTitle, u.ParsedAuthor, u.Reason, searchKey,
+			u.AuthorFolder, u.ParsedTitle, u.ParsedAuthor, u.FilesAuthor, u.Reason, searchKey,
 			string(members), string(candJSON), top, generation,
 			nowText, nowText, nowText,
 			startedText, startedText, startedText, startedText, startedText, startedText, startedText,
@@ -400,7 +413,7 @@ func (r *UnmatchedUnitRepo) Summary(ctx context.Context) (UnmatchedSummary, erro
 }
 
 const unmatchedUnitColumns = `id, unit_path, unit_kind, format, file_count, size_bytes, root_path, rel_path,
-    author_folder, parsed_title, parsed_author, reason, member_paths_json, candidates_json, top_score,
+    author_folder, parsed_title, parsed_author, files_author, reason, member_paths_json, candidates_json, top_score,
     state, book_id, created_book_id, created_author_id, registered_paths_json, created_book_fingerprint,
     scan_generation, first_seen_at, last_seen_at, resolved_at, claimed_at`
 
@@ -410,7 +423,7 @@ func scanUnmatchedUnit(scan func(...any) error) (*UnmatchedUnit, error) {
 	var bookID, createdBook, createdAuthor sql.NullInt64
 	var first, last, resolved, claimed sql.NullString
 	if err := scan(&u.ID, &u.UnitPath, &u.UnitKind, &u.Format, &u.FileCount, &u.SizeBytes, &u.RootPath, &u.RelPath,
-		&u.AuthorFolder, &u.ParsedTitle, &u.ParsedAuthor, &u.Reason, &members, &cands, &u.TopScore,
+		&u.AuthorFolder, &u.ParsedTitle, &u.ParsedAuthor, &u.FilesAuthor, &u.Reason, &members, &cands, &u.TopScore,
 		&u.State, &bookID, &createdBook, &createdAuthor, &registered, &u.CreatedBookFingerprint,
 		&u.ScanGeneration, &first, &last, &resolved, &claimed); err != nil {
 		return nil, err

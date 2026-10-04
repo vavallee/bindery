@@ -26,6 +26,17 @@ type AudioTags struct {
 	Title  string
 	Author string
 	ASIN   string
+	// Album is the album tag, which audiobook rips set to the book's title
+	// while the title tag names the track. Library adoption reads it as
+	// evidence of the book when the folder names someone else's (#2942).
+	Album string
+	// Artist, AlbumArtist and Composer are the three author tags as read,
+	// before pickAudioAuthor chooses one. A narrator often sits in Artist
+	// with the author in AlbumArtist, so whether the files name another
+	// author than their folder is decided on all three (#2942).
+	Artist      string
+	AlbumArtist string
+	Composer    string
 }
 
 // IsAudioTagFile reports whether path has an extension we attempt to read
@@ -61,14 +72,19 @@ func readAudioTagsFrom(r io.ReadSeeker) (AudioTags, error) {
 		Title:  strings.TrimSpace(m.title),
 		Author: pickAudioAuthor(m),
 		ASIN:   pickAudioASIN(m.raw),
+		Album:  strings.TrimSpace(m.album),
+
+		Artist:      strings.TrimSpace(m.artist),
+		AlbumArtist: strings.TrimSpace(m.albumArtist),
+		Composer:    strings.TrimSpace(m.composer),
 	}, nil
 }
 
 // libraryTags is what readAudioTagsFrom needs from the tag library, copied
 // out while the library's panics are contained.
 type libraryTags struct {
-	title, artist, albumArtist, composer string
-	raw                                  map[string]any
+	title, album, artist, albumArtist, composer string
+	raw                                         map[string]any
 }
 
 func (t libraryTags) Artist() string      { return t.artist }
@@ -96,6 +112,7 @@ func readLibraryTags(r io.ReadSeeker) (t libraryTags, err error) {
 	}
 	return libraryTags{
 		title:       m.Title(),
+		album:       m.Album(),
 		artist:      m.Artist(),
 		albumArtist: m.AlbumArtist(),
 		composer:    m.Composer(),

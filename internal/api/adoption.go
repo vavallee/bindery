@@ -97,25 +97,39 @@ func NewAdoptionHandler(units *db.UnmatchedUnitRepo, books *db.BookRepo, authors
 type adoptionCandidate struct {
 	Book  db.UnmatchedBookRef `json:"book"`
 	Score float64             `json:"score"`
+	// FolderAuthorOnly is set on a row with an author conflict for a book
+	// that is not by the author the files name: a look alike from the
+	// folder's author, which the page never preselects (#2942).
+	FolderAuthorOnly bool `json:"folderAuthorOnly,omitempty"`
+}
+
+// adoptionAuthorConflict says which authors disagree when a row's files name
+// someone other than its author folder (#2942).
+type adoptionAuthorConflict struct {
+	Files  string `json:"files"`
+	Folder string `json:"folder"`
 }
 
 // adoptionItem is one row as the web sees it.
 type adoptionItem struct {
-	ID           int64                `json:"id"`
-	Kind         string               `json:"kind"`
-	Format       string               `json:"format"`
-	FileCount    int                  `json:"fileCount"`
-	SizeBytes    int64                `json:"sizeBytes"`
-	RelPath      string               `json:"relPath"`
-	RootPath     string               `json:"rootPath"`
-	AuthorFolder string               `json:"authorFolder"`
-	ParsedTitle  string               `json:"parsedTitle"`
-	ParsedAuthor string               `json:"parsedAuthor"`
-	Reason       string               `json:"reason"`
-	Candidates   []adoptionCandidate  `json:"candidates"`
-	TopScore     float64              `json:"topScore"`
-	State        string               `json:"state"`
-	Book         *db.UnmatchedBookRef `json:"book,omitempty"`
+	ID           int64  `json:"id"`
+	Kind         string `json:"kind"`
+	Format       string `json:"format"`
+	FileCount    int    `json:"fileCount"`
+	SizeBytes    int64  `json:"sizeBytes"`
+	RelPath      string `json:"relPath"`
+	RootPath     string `json:"rootPath"`
+	AuthorFolder string `json:"authorFolder"`
+	ParsedTitle  string `json:"parsedTitle"`
+	ParsedAuthor string `json:"parsedAuthor"`
+	Reason       string `json:"reason"`
+	// AuthorConflict is set when the parsed author (what the files' tags or
+	// names say) is not the author folder's.
+	AuthorConflict *adoptionAuthorConflict `json:"authorConflict,omitempty"`
+	Candidates     []adoptionCandidate     `json:"candidates"`
+	TopScore       float64                 `json:"topScore"`
+	State          string                  `json:"state"`
+	Book           *db.UnmatchedBookRef    `json:"book,omitempty"`
 	// BookCreated and AuthorCreated say whether the adoption added them, which
 	// is also what Undo would remove.
 	BookCreated   bool       `json:"bookCreated"`
@@ -251,10 +265,16 @@ func toAdoptionItem(u *db.UnmatchedUnit, refs map[int64]db.UnmatchedBookRef) ado
 		BookCreated: u.CreatedBookID > 0, AuthorCreated: u.CreatedAuthorID > 0,
 		Members: memberNames(u), FirstSeenAt: u.FirstSeenAt, ResolvedAt: u.ResolvedAt,
 	}
+	// The scan decides a conflict with every author tag in hand and records
+	// it; deriving it here from the parsed author would flag a narrator in
+	// the Artist tag as another author (#2942).
+	if u.FilesAuthor != "" && u.AuthorFolder != "" {
+		it.AuthorConflict = &adoptionAuthorConflict{Files: u.FilesAuthor, Folder: u.AuthorFolder}
+	}
 	for _, c := range u.Candidates {
 		// A suggested book deleted since the scan simply drops out.
 		if ref, ok := refs[c.BookID]; ok {
-			it.Candidates = append(it.Candidates, adoptionCandidate{Book: ref, Score: c.Score})
+			it.Candidates = append(it.Candidates, adoptionCandidate{Book: ref, Score: c.Score, FolderAuthorOnly: c.FolderAuthorOnly && it.AuthorConflict != nil})
 		}
 	}
 	if ref, ok := refs[u.BookID]; ok && u.BookID > 0 {

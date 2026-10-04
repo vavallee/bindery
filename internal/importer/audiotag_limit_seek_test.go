@@ -406,7 +406,15 @@ func bareLibraryTags(t *testing.T, r io.ReadSeeker) AudioTags {
 	if err != nil {
 		t.Fatalf("bare library: %v", err)
 	}
-	return AudioTags{Title: strings.TrimSpace(m.Title()), Author: pickAudioAuthor(m), ASIN: pickAudioASIN(m.Raw())}
+	return AudioTags{
+		Title:       strings.TrimSpace(m.Title()),
+		Author:      pickAudioAuthor(m),
+		ASIN:        pickAudioASIN(m.Raw()),
+		Album:       strings.TrimSpace(m.Album()),
+		Artist:      strings.TrimSpace(m.Artist()),
+		AlbumArtist: strings.TrimSpace(m.AlbumArtist()),
+		Composer:    strings.TrimSpace(m.Composer()),
+	}
 }
 
 // unsync applies ID3v2 unsynchronisation: a zero after every 0xFF.
@@ -587,6 +595,8 @@ func TestReadAudioTags_LibraryPanicIsAnError(t *testing.T) {
 	}{
 		{"artist typed as a number", mp4File(atom("\xa9nam", dataAtom(1, []byte("Guards! Guards!"))), atom("\xa9ART", dataAtom(21, []byte{7})))},
 		{"title typed as a picture", mp4File(atom("\xa9nam", dataAtom(13, []byte("not a jpeg"))))},
+		{"album typed as a number", mp4File(atom("\xa9nam", dataAtom(1, []byte("Guards! Guards!"))), atom("\xa9alb", dataAtom(21, []byte{7})))},
+		{"composer typed as a number", mp4File(atom("\xa9nam", dataAtom(1, []byte("Guards! Guards!"))), atom("\xa9wrt", dataAtom(21, []byte{7})))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

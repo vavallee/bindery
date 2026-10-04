@@ -3687,12 +3687,16 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// audiobook files. Well-tagged M4B/MP3 releases carry the author,
 		// title and often an ASIN in their ID3/iTunes atoms; using them avoids
 		// the fuzzy-match noise seen on users' organised libraries (#303).
+		// fileTags keeps the tags as read, for library adoption's evidence of
+		// which author and book a unit's files name (#2942).
+		var fileTags AudioTags
 		if IsAudioTagFile(path) {
 			if tags, err := ReadAudioTags(path); err != nil {
 				slog.Warn("library scan: tag read failed, falling back to filename",
 					"path", path, "error", err)
 				tagReadFailed++
 			} else {
+				fileTags = tags
 				// Tags describe the file itself. A tag title leaves no
 				// filename reading to flip, and neither does a tag author that
 				// is not the folder's. A tag author that is the folder's (an
@@ -3723,6 +3727,19 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 					parsed.ASIN = tags.ASIN
 				}
 			}
+		}
+		// fallbackAuthor is the author the title tiers fall back to when the
+		// parsed one matches nobody in the catalogue: the folder's. Not when
+		// every author tag (Artist, Album Artist, Composer) names someone else
+		// and the tags do not name the folder's book either: those are another
+		// author's files in the wrong folder, and falling back handed seven
+		// Katy Evans tracks to the Patterson book their folder was named after
+		// (#2942). The book folder title tier is skipped for the same reason.
+		// The unit then waits on Import with the conflict shown.
+		fallbackAuthor := layoutAuthor
+		tagsNameOther := tagsNameAnotherAuthor(fileTags, layoutAuthor, layoutTitle)
+		if tagsNameOther {
+			fallbackAuthor = ""
 		}
 
 		// Search existing books for a match: ASIN takes priority over fuzzy title+author.
@@ -3770,7 +3787,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			}
 		}
 		if !matched && parsed.Title != "" {
-			matched = reconcileByTitle(path, cleanPath, detectedFmt, parsed.Title, parsed.Author, layoutAuthor)
+			matched = reconcileByTitle(path, cleanPath, detectedFmt, parsed.Title, parsed.Author, fallbackAuthor)
 		}
 		// The book folder's title, one tier down (#2171). The filename now
 		// leads, so this is what keeps everything the folder used to match
@@ -3779,7 +3796,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// chapter .pdf beside an epub is recognised as that epub's companion
 		// rather than an orphan — its own name says "notes", only the folder
 		// says which book it belongs to (#2188).
-		if !matched && layoutTitle != "" && layoutTitle != parsed.Title {
+		if !matched && !tagsNameOther && layoutTitle != "" && layoutTitle != parsed.Title {
 			if matched = reconcileByTitle(path, cleanPath, detectedFmt, layoutTitle, parsed.Author, layoutAuthor); matched {
 				// The log used to print only the winner, which is why the
 				// reported libraries looked healthy (#2171). Name both.
@@ -3842,7 +3859,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				// match that never happened.
 				reason = unmatchedReasonNoTitleParsed
 			}
-			authorSet, matchAuthor := resolveAuthors(parsed.Author, layoutAuthor)
+			authorSet, matchAuthor := resolveAuthors(parsed.Author, fallbackAuthor)
 			if authorSet != nil {
 				if len(authorSet) == 0 {
 					reason = unmatchedReasonAuthorNotInLibrary
@@ -3865,6 +3882,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			unmatchedFiles.add(unmatchedScanFile{
 				path: path, format: detectedFmt, size: walked[path].size, mode: walked[path].mode,
 				title: parsed.Title, layoutTitle: layoutTitle, author: parsed.Author, layoutAuthor: layoutAuthor, reason: reason,
+				tags: fileTags,
 			})
 		}
 	}
@@ -3896,12 +3914,23 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	var catalogue []scanBook
 	var catalogueByAuthor map[int64][]int
 	units := s.recordUnmatchedUnits(ctx, &unmatchedFiles, scanRoots, rootsWithFiles, scanStartedAt,
-		func(title, layoutTitle, author, layoutAuthor string) []db.UnmatchedCandidate {
+		func(rep unmatchedScanFile, ev unitEvidence) ([]db.UnmatchedCandidate, string) {
 			if catalogueByAuthor == nil {
 				catalogue, catalogueByAuthor = suggestionCatalogue(allBooks, wantedBooks)
 			}
-			authorSet, _ := resolveAuthors(author, layoutAuthor)
-			return rankCandidates(title, layoutTitle, wantedBooks, catalogue, catalogueByAuthor, authorSet)
+			if !ev.conflict() {
+				authorSet, _ := resolveAuthors(rep.author, rep.layoutAuthor)
+				return rankCandidates(rep.title, rep.layoutTitle, wantedBooks, catalogue, catalogueByAuthor, authorSet), ""
+			}
+			// The files name another author than their folder (#2942). Their
+			// author is searched without the folder fallback, since the folder
+			// is what is in doubt, and everything is scored on the title the
+			// files name.
+			title := firstNonEmpty(ev.title, rep.title)
+			filesSet, _ := resolveAuthors(ev.author, "")
+			folderSet := matchingAuthors(ev.folder)
+			reason := conflictReason(title, filesSet, func(id int64) int { return len(booksByAuthor[id]) })
+			return rankConflictCandidates(title, catalogue, catalogueByAuthor, filesSet, folderSet), reason
 		})
 
 	s.writeScanResult(ctx, len(foundFiles), reconciled, unmatched, alreadyTracked, tagReadFailed, units)

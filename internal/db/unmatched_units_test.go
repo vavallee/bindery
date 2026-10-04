@@ -477,12 +477,15 @@ func TestMigrate088_OverPopulatedDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v := migrationVersionForTest(t, "088_unmatched_units.sql")
-	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = ?`, v); err != nil {
-		t.Fatal(err)
+	// 100 adds a column to the table 088 creates, so it reruns with it.
+	for _, file := range []string{"088_unmatched_units.sql", "100_unmatched_units_files_author.sql"} {
+		v := migrationVersionForTest(t, file)
+		if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = ?`, v); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := migrate(database); err != nil {
-		t.Fatalf("rerun migration 088: %v", err)
+		t.Fatalf("rerun migrations 088 and 100: %v", err)
 	}
 
 	var n int
