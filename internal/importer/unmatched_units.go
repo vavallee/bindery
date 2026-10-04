@@ -59,8 +59,11 @@ func (s *Scanner) ScanRunning() bool {
 
 // RootFormat names the format the scanned root holds, so the adoption list
 // can say when a row sits in the other format's folder (#2944): an ebook
-// under the audiobooks root is not where Bindery keeps ebooks, and the scan's
-// own reconcile already refuses to claim it there. With one combined root
+// under the audiobooks root is not where Bindery keeps ebooks. It names the
+// root the row was recorded under (the longest scanned root containing it),
+// which is a label only; it makes no claim about what the reconcile would
+// accept, since an audiobook root nested inside the library is also under
+// the ebook root. With one combined root
 // (BINDERY_AUDIOBOOK_DIR unset, or the same folder as the library) either
 // format belongs anywhere and the answer is "". An unknown root is "" too.
 func (s *Scanner) RootFormat(root string) string {

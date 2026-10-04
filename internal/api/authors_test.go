@@ -7371,7 +7371,8 @@ func TestFetchAuthorBooks_UsesOneLibrarySnapshotForTheLoop(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(ownedPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(ownedPath, []byte("x"), 0o644); err != nil {
+	// Book sized: FindExisting skips a file too small to be a book (#2944).
+	if err := os.WriteFile(ownedPath, bytes.Repeat([]byte("x"), int(importer.MinPlausibleEbookBytes)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

@@ -84,7 +84,7 @@ func TestScanLibrary_ReconcilesMatchingBook(t *testing.T) {
 	// sides, so we name the file just "Dark Matter.epub" to keep the
 	// match unambiguous.
 	epub := filepath.Join(libDir, "Dark Matter.epub")
-	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(epub, bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -122,7 +122,7 @@ func TestScanLibrary_ReconcilesMatchingBook(t *testing.T) {
 func TestScanLibrary_ReconcilesImportedWithEmptyFilePath(t *testing.T) {
 	libDir := t.TempDir()
 	epub := filepath.Join(libDir, "Dark Matter.epub")
-	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(epub, bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -157,7 +157,7 @@ func TestScanLibrary_ReconcilesImportedWithEmptyFilePath(t *testing.T) {
 func TestScanLibrary_ReconcilesImportedWithMissingFile(t *testing.T) {
 	libDir := t.TempDir()
 	epub := filepath.Join(libDir, "Recursion.epub")
-	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(epub, bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -199,7 +199,7 @@ func TestScanLibrary_ReconcilesImportedWithMissingFile(t *testing.T) {
 func TestScanLibrary_LeavesImportedWithTrackedFile(t *testing.T) {
 	libDir := t.TempDir()
 	epubA := filepath.Join(libDir, "First.epub")
-	if err := os.WriteFile(epubA, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(epubA, bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -256,7 +256,7 @@ func TestIsReconcileCandidate(t *testing.T) {
 	t.Run("imported with existing path is not a candidate", func(t *testing.T) {
 		tmp := t.TempDir()
 		f := filepath.Join(tmp, "exists.epub")
-		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+		if err := os.WriteFile(f, bookSized("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		b := &models.Book{Status: models.BookStatusImported, FilePath: f}
@@ -270,7 +270,7 @@ func TestIsReconcileCandidate(t *testing.T) {
 		// though the audiobook path resolves.
 		tmp := t.TempDir()
 		audio := filepath.Join(tmp, "book.m4b")
-		if err := os.WriteFile(audio, []byte("x"), 0o644); err != nil {
+		if err := os.WriteFile(audio, bookSized("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		b := &models.Book{
@@ -284,7 +284,7 @@ func TestIsReconcileCandidate(t *testing.T) {
 		}
 		// Once both formats are present, it is no longer a candidate.
 		ebook := filepath.Join(tmp, "book.epub")
-		if err := os.WriteFile(ebook, []byte("x"), 0o644); err != nil {
+		if err := os.WriteFile(ebook, bookSized("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		b.EbookFilePath = ebook
@@ -310,10 +310,10 @@ func TestIsReconcileCandidate(t *testing.T) {
 // (jpg, nfo, etc.) should not appear in the walked list.
 func TestScanLibrary_NonBookFilesIgnored(t *testing.T) {
 	libDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(libDir, "cover.jpg"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(libDir, "cover.jpg"), bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(libDir, "info.nfo"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(libDir, "info.nfo"), bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	s, _, _, ctx := scannerFixture(t, libDir)
@@ -478,7 +478,7 @@ func TestScanLibrary_NoDuplicateBookAssignment(t *testing.T) {
 	file1 := filepath.Join(libDir, "Dune.epub")
 	file2 := filepath.Join(libDir, "Dune (Alt Edition).epub")
 	for _, f := range []string{file1, file2} {
-		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+		if err := os.WriteFile(f, bookSized("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -529,7 +529,7 @@ func TestScanLibrary_AudiobookDirectorySkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 	track := filepath.Join(abDir, "01 - Chapter One.mp3")
-	if err := os.WriteFile(track, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(track, bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -808,13 +808,13 @@ func TestScanLibrary_RejectsFileOutsideLibraryRoot(t *testing.T) {
 
 	// Put the orphan under otherDir, not under libDir.
 	epub := filepath.Join(otherDir, "Dune.epub")
-	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(epub, bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Also put a correctly-located file under libDir so the walk finds it.
 	localEpub := filepath.Join(libDir, "Dune-local.epub")
-	if err := os.WriteFile(localEpub, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(localEpub, bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -868,7 +868,7 @@ func TestScanLibrary_DirectoryAuthorInference(t *testing.T) {
 		t.Fatal(err)
 	}
 	epub := filepath.Join(bookDir, "foundation.epub")
-	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(epub, bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

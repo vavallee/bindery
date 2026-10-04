@@ -115,7 +115,7 @@ func TestScanLibrary_ReadarrFolderLayoutFixesSwappedFilename(t *testing.T) {
 	}
 	// Readarr's default "{Author Name} - {Book Title}" filename.
 	epub := filepath.Join(bookDir, "Cal Newport - Deep Work.epub")
-	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(epub, bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -167,7 +167,7 @@ func TestScanLibrary_ReadarrSeriesFolderReconcilesNonOpener(t *testing.T) {
 		}
 		// Readarr's default "{Author} - {Title}.{ext}" filename.
 		epub := filepath.Join(bookDir, "Terry Pratchett - "+b.title+".epub")
-		if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+		if err := os.WriteFile(epub, bookSized("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		paths[i] = epub
@@ -213,7 +213,7 @@ func TestScanLibrary_AuthorFolderFixesSwappedFilenameWithoutBookFolder(t *testin
 		t.Fatal(err)
 	}
 	epub := filepath.Join(authorDir, "Cal Newport - Deep Work.epub")
-	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(epub, bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

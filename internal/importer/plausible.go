@@ -25,6 +25,12 @@ const MinPlausibleEbookBytes int64 = 4 << 10
 // TooSmallToBeABook reports whether the file at path, of size bytes, is too
 // small to be a book. Only ebook formats are judged: an audiobook is a folder
 // of tracks and a single track can be small.
+//
+// It gates every path that decides on its own, or offers, that a file in the
+// library is a book: the library scan's reconcile tiers and its unmatched
+// list, FindExisting on the add author path, and adoption. Manual import is
+// deliberately not gated; it is the explicit override for a file that small
+// that really is the book.
 func TooSmallToBeABook(path string, size int64) bool {
 	return IsBookFile(path) &&
 		detectDownloadFormat([]string{path}) == models.MediaTypeEbook &&

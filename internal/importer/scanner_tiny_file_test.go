@@ -28,6 +28,18 @@ var tinyNotesText = func() []byte {
 	return append(b, bytes.Repeat([]byte("."), 1008-len(b))...)
 }()
 
+// bookSized is the shared fixture body for a file that stands in for a real
+// ebook: body padded with spaces to exactly MinPlausibleEbookBytes, the
+// smallest size the scan, FindExisting and adoption accept as a book
+// (#2944). Fixtures used to write one to 700 bytes, which is now a notes
+// file.
+func bookSized(body string) []byte {
+	if int64(len(body)) >= MinPlausibleEbookBytes {
+		return []byte(body)
+	}
+	return append([]byte(body), bytes.Repeat([]byte(" "), int(MinPlausibleEbookBytes)-len(body))...)
+}
+
 func writeTinyTxt(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -275,5 +287,79 @@ func TestTooSmallToBeABook(t *testing.T) {
 	}
 	if reasonTooSmall != unmatchedReasonTooSmall {
 		t.Errorf("test reason %q drifted from %q", reasonTooSmall, unmatchedReasonTooSmall)
+	}
+}
+
+// TestScanLibrary_TinyFileIsNeverReconciled is the worse form of #2944: the
+// scan's own reconcile, with nobody confirming anything, made a 1008 byte
+// "Die 6. Geisel.txt" under the ebook root the Wanted book's file, the book
+// went to Imported, and the real ebook was never searched for.
+func TestScanLibrary_TinyFileIsNeverReconciled(t *testing.T) {
+	for _, combined := range []bool{false, true} {
+		name := "separate roots"
+		if combined {
+			name = "combined root"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, books, libraryDir, _, book, ctx := tinyFileFixture(t, combined, models.BookStatusWanted)
+			tiny := filepath.Join(libraryDir, "James Patterson", "Die 6. Geisel", "Die 6. Geisel.txt")
+			writeTinyTxt(t, tiny)
+
+			s.ScanLibrary(ctx)
+
+			assertBookHasNoFiles(t, ctx, books, book.ID)
+			after, err := books.GetByID(ctx, book.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Status != models.BookStatusWanted {
+				t.Errorf("book status = %s, want wanted so the real ebook is still searched for", after.Status)
+			}
+			u := unitAt(readUnmatchedFiles(t, ctx, s), tiny)
+			if u == nil || u.Reason != reasonTooSmall || len(u.Candidates) != 0 {
+				t.Errorf("tiny file row = %+v, want listed as too small with no suggestion", u)
+			}
+		})
+	}
+}
+
+// TestScanLibrary_TinyNotesBesideItsEpubStaysASidecar: the reconcile gate
+// sits after the claim check, so a notes .txt beside the .epub that claimed
+// the book is still that epub's sidecar, counted and not listed (#2188),
+// rather than a too small row for the user to deal with.
+func TestScanLibrary_TinyNotesBesideItsEpubStaysASidecar(t *testing.T) {
+	s, books, libraryDir, _, book, ctx := tinyFileFixture(t, false, models.BookStatusWanted)
+	folder := filepath.Join(libraryDir, "James Patterson", "Die 6. Geisel")
+	epub := filepath.Join(folder, "Die 6. Geisel.epub")
+	writeNovellaEpub(t, epub)
+	writeTinyTxt(t, filepath.Join(folder, "Die 6. Geisel.txt"))
+
+	s.ScanLibrary(ctx)
+
+	files, err := books.ListFiles(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != epub {
+		t.Errorf("book files = %+v, want only the epub", files)
+	}
+	if units := readUnmatchedFiles(t, ctx, s); len(units) != 0 {
+		t.Errorf("units = %+v, want none: the notes file is the epub's sidecar", units)
+	}
+}
+
+// TestFindExisting_SkipsTinyFile: the add author path binds the first file
+// FindExisting returns with SetFilePath and skips the automatic search, so a
+// 1 KB notes file must never be the answer.
+func TestFindExisting_SkipsTinyFile(t *testing.T) {
+	dir := t.TempDir()
+	writeTinyTxt(t, filepath.Join(dir, "James Patterson", "Die 6. Geisel", "Die 6. Geisel.txt"))
+	if got := NewLibrarySnapshot(dir, dir).FindExisting(context.Background(), "Die 6. Geisel", "James Patterson", models.MediaTypeEbook); got != "" {
+		t.Errorf("FindExisting = %q, want no match for a 1008 byte file", got)
+	}
+	real := filepath.Join(dir, "James Patterson", "Die 6. Geisel", "Die 6. Geisel.epub")
+	writeNovellaEpub(t, real)
+	if got := NewLibrarySnapshot(dir, dir).FindExisting(context.Background(), "Die 6. Geisel", "James Patterson", models.MediaTypeEbook); got != real {
+		t.Errorf("FindExisting = %q, want the real epub %q", got, real)
 	}
 }

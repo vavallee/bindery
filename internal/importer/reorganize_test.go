@@ -73,7 +73,7 @@ func writeFileAt(t *testing.T, path string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("book bytes"), 0o600); err != nil {
+	if err := os.WriteFile(path, bookSized("book bytes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -219,7 +219,7 @@ func TestReorganize_Collision(t *testing.T) {
 	if results[0].Status != ReorgStatusCollision {
 		t.Errorf("apply status = %q, want collision (no overwrite)", results[0].Status)
 	}
-	if b, _ := os.ReadFile(oldPath); string(b) != "book bytes" {
+	if b, _ := os.ReadFile(oldPath); string(b) != string(bookSized("book bytes")) {
 		t.Errorf("source must remain untouched on collision")
 	}
 }

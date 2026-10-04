@@ -608,10 +608,16 @@ Things worth knowing:
 - Only regular files inside your library folders are listed. A symlink is not
   adopted, including one inside the library that points elsewhere.
 - **Too small to be a book**: an ebook format file under 4 KiB (a notes,
-  readme or link file, about two pages of plain text at most) is listed on a
-  row of its own with that label and no suggestion, and cannot be adopted.
-  Ignore it, or delete it from the folder. Audiobook tracks are not judged by
-  size. Files already tracked are not affected (#2944).
+  readme or link file, about two pages of plain text at most) is never
+  attached to a book automatically: the library scan does not match it to a
+  book, and adding an author does not treat it as a book you already own. It
+  is listed here on a row of its own with that label and no suggestion, and
+  cannot be adopted. Ignore it, or delete it from the folder. A notes file
+  beside the book file that matched is still counted quietly as that book's
+  companion and not listed. Audiobook tracks are not judged by size, and
+  files already tracked are not affected (#2944). If a file that small really
+  is the book, **Manual Import** is the override: it imports whatever file
+  you pick, whatever its size.
 - **In your audiobooks folder** / **In your ebooks folder**: when
   `BINDERY_AUDIOBOOK_DIR` is its own folder, a row found in the other
   format's folder (say an `.epub` under the audiobooks root) says so, and its

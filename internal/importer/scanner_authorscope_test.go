@@ -19,7 +19,7 @@ func TestScanLibrary_HyphenatedAuthorReconciles(t *testing.T) {
 		t.Fatal(err)
 	}
 	epub := filepath.Join(bookDir, "Influence.epub")
-	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(epub, bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -56,7 +56,7 @@ func TestScanLibrary_SharedFirstNameScopedToRightAuthor(t *testing.T) {
 		t.Fatal(err)
 	}
 	epub := filepath.Join(bookDir, "Quantum Gardens.epub")
-	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(epub, bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

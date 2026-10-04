@@ -675,7 +675,7 @@ Answers:
 | Status | Meaning |
 |---|---|
 | `200` | the updated row |
-| `400` | neither or both of `bookId` and `foreignBookId`, a format that is not the files' format, or an ebook file under 4 KiB, too small to be a book |
+| `400` | neither or both of `bookId` and `foreignBookId`, a format that is not the files' format, or an ebook file under 4 KiB, too small to be a book (Manual Import is the override for such a file) |
 | `404` | no such row, or the book is gone |
 | `409` | the row is not pending (the body names its `state`), or a file already belongs to a book |
 | `422` | a file is gone, is not a regular file, or resolves outside the library folders |

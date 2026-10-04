@@ -60,7 +60,7 @@ func TestScanLibrary_TrackedSiblingEbooksStillScanned(t *testing.T) {
 	}
 	write := func(name string) string {
 		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		if err := os.WriteFile(p, bookSized("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		return p
@@ -108,7 +108,7 @@ func TestScanLibrary_AudiobookFolderSiblingsCountAsTracked(t *testing.T) {
 	track1 := filepath.Join(dir, "01 - track.mp3")
 	track2 := filepath.Join(dir, "02 - track.mp3")
 	for _, p := range []string{track1, track2} {
-		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		if err := os.WriteFile(p, bookSized("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
