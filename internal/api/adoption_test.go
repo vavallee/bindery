@@ -73,7 +73,8 @@ func (f adoptionFixture) write(t *testing.T, rel string) string {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p, []byte("book"), 0o644); err != nil {
+	// Book sized: adoption refuses an ebook too small to be a book (#2944).
+	if err := os.WriteFile(p, bytes.Repeat([]byte("book "), 2<<10), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return p

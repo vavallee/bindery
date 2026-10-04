@@ -25,8 +25,11 @@ export type AdoptionListEntry = AdoptionGroup | AdoptionEntry
 
 const MIN_GROUP = 2
 
+// A row whose files name another author than its folder is not part of the
+// folder's decision: adding the folder's author would not match it (#2942).
 function groupable(item: AdoptionItem): boolean {
-  return item.state === 'pending' && item.reason === 'author_not_in_library' && item.authorFolder !== '' && item.candidates.length === 0
+  return item.state === 'pending' && item.reason === 'author_not_in_library' && item.authorFolder !== '' &&
+    item.candidates.length === 0 && !item.authorConflict
 }
 
 // groupEntries keeps the page order: a group takes the place of its first book.

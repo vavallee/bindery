@@ -245,5 +245,27 @@ func registryKey(guid string) string {
 func redactSearchResult(res *newznab.SearchResult) {
 	res.NZBURL = newznab.RedactDownloadURL(res.NZBURL)
 	res.GUID = newznab.RedactDownloadURL(res.GUID)
-	res.InfoURL = newznab.RedactDownloadURL(res.InfoURL)
+	res.InfoURL = redactInfoURL(res.InfoURL, res.NZBURL, res.GUID)
+}
+
+// redactInfoURL strips credentials from a detail link for a response. The
+// link is clicked, so its path is kept (newznab.RedactInfoURL), unless it is
+// the download link itself (a torznab item with no enclosure) or the GUID (a
+// permalink GUID, often the download link too). Those are shown redacted with
+// the path rule elsewhere in the same response, so the info link gets the
+// same treatment rather than showing what they hide. redacted holds the
+// download URL and GUID already run through newznab.RedactDownloadURL; the
+// comparison is on redacted forms, so a download URL the client signed with
+// an apikey still matches.
+func redactInfoURL(info string, redacted ...string) string {
+	if info == "" {
+		return info
+	}
+	full := newznab.RedactDownloadURL(info)
+	for _, r := range redacted {
+		if r != "" && full == r {
+			return full
+		}
+	}
+	return newznab.RedactInfoURL(info)
 }

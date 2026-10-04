@@ -21,6 +21,8 @@ var secretParamNames = []string{
 	"key", "token", "access_token", "auth",
 	// Private tracker credentials embedded in .torrent and RSS links.
 	"authkey", "passkey", "torrent_pass", "rsskey",
+	// IPTorrents download links: ?u=<uid>;tp=<passkey>.
+	"tp",
 	// Basic credentials some feeds and webhooks accept in the query.
 	"pass", "password", "secret",
 	// Signed download links (the signature is the credential until it expires).
@@ -83,9 +85,12 @@ var secretPathPatterns = []*regexp.Regexp{
 }
 
 // RedactSecrets strips credentials from an arbitrary string: the value of any
-// secret query parameter (see secretParamNames) and the token in a known
+// secret query parameter (see secretParamNames), the token in a known
 // webhook or indexer URL shape (Discord, Telegram, Slack, Home Assistant,
-// Teams, Apprise, ntfy.sh, newznab getnzb links). It is meant for error strings and
+// Teams, Apprise, ntfy.sh, newznab getnzb links), and any URL path segment
+// shaped like a passkey or download token (see redactURLPath), and the
+// user:pass@ credentials in a URL's authority. It is meant
+// for error strings and
 // log lines that may embed an upstream request URL (e.g. a wrapped
 // *url.Error), so the secret is replaced with REDACTED before the error is
 // logged, stored on a download row, or surfaced to a client.
@@ -93,11 +98,13 @@ var secretPathPatterns = []*regexp.Regexp{
 // The output is for people to read, never to fetch: a redacted URL no longer
 // authenticates.
 func RedactSecrets(s string) string {
+	s = redactMagnetURLsInText(s)
+	s = redactUserinfoInText(s)
 	s = secretQueryParamRE.ReplaceAllString(s, "${1}REDACTED")
 	for _, re := range secretPathPatterns {
 		s = re.ReplaceAllString(s, "${1}REDACTED")
 	}
-	return s
+	return redactURLPathsInText(s)
 }
 
 // RedactURLError scrubs credentials from the URL embedded in a *url.Error, in
@@ -147,20 +154,41 @@ func (e *redactedError) Timeout() bool {
 }
 
 // StripURLSecrets removes every secret parameter, name and value, from a URL
-// that is about to leave the server: a download link, GUID or detail link in a
-// search, queue or pending response. Every other parameter stays byte for byte
-// as it was, in its original order, and a URL with nothing to remove is
-// returned unchanged, so stripping twice is the same as stripping once.
+// that is about to leave the server: a download link or GUID in a search,
+// queue or pending response. Every other parameter stays byte for byte as it
+// was, in its original order, and a URL with nothing to remove is returned
+// unchanged, so stripping twice is the same as stripping once. Parameters are
+// split on ';' as well as '&' (IPTorrents writes ?u=1;tp=<passkey>).
 //
-// A magnet loses its tr= announce URLs, which carry private tracker passkeys.
-// Inside a newznab getnzb link "r" is the API key too, including the
-// getnzb/<guid>.nzb&i=<uid>&r=<apikey> shape where the parameters follow an &
-// in the path. A string that does not parse as a URL is passed through
-// RedactSecrets instead.
+// A path segment shaped like a passkey, RSS key or download token is replaced
+// with a placeholder that differs per secret (see redactURLPath), so two
+// GUIDs that differ only there still differ once stripped. Credentials in
+// the authority (user:pass@host) are replaced the same way.
+//
+// A magnet loses its tr= announce URLs and its xs= and as= source URLs, which
+// can carry private tracker passkeys. Inside a newznab getnzb link "r" is the
+// API key too, including the getnzb/<guid>.nzb&i=<uid>&r=<apikey> shape where
+// the parameters follow an & in the path. A string that does not parse as a
+// URL is passed through RedactSecrets instead.
 //
 // The result does not authenticate. The grab handler takes the real URL from
 // its own record of what the search returned; see api.SearchResultRegistry.
 func StripURLSecrets(raw string) string {
+	return stripURLSecrets(raw, true)
+}
+
+// StripDetailURLSecrets is StripURLSecrets for a detail page link, which
+// people click: secret parameters and user:pass@ credentials go, but the path
+// is kept as is. A detail page's path is the indexer's id for the release and
+// is often hex (an MD5 on Anna's Archive, an info hash on bt4g), which the
+// path rule would replace and so break the link. A detail link that is really
+// the download link (a torznab item with no enclosure) belongs to
+// StripURLSecrets instead.
+func StripDetailURLSecrets(raw string) string {
+	return stripURLSecrets(raw, false)
+}
+
+func stripURLSecrets(raw string, paths bool) string {
 	if raw == "" {
 		return raw
 	}
@@ -173,9 +201,10 @@ func StripURLSecrets(raw string) string {
 	isSecret := func(name string) bool {
 		return IsSecretParam(name) ||
 			(getnzb && strings.EqualFold(name, "r")) ||
-			// A magnet's announce URLs carry a private tracker's passkey, in
-			// the query or the path, so a displayed magnet drops them.
-			(magnet && strings.EqualFold(name, "tr"))
+			// A magnet's announce and source URLs carry a private tracker's
+			// passkey, in the query or the path, so a displayed magnet
+			// drops them.
+			(magnet && isMagnetURLParam(name))
 	}
 	changed := false
 	if getnzb {
@@ -193,33 +222,107 @@ func StripURLSecrets(raw string) string {
 		changed = true
 		u.RawQuery = kept
 	}
+	// Basic credentials in the authority (user:pass@host).
+	if redactUserinfo(u) {
+		changed = true
+	}
+	// A passkey or download token in the path (see redactURLPath). Only an
+	// absolute URL has a path to look at: a bare newznab GUID is hex too, and
+	// is an id, not a credential.
+	if paths && u.Host != "" && u.Opaque == "" {
+		if p, ok := redactURLPath(u.EscapedPath()); ok {
+			if dec, err := url.PathUnescape(p); err == nil {
+				changed = true
+				u.Path, u.RawPath = dec, p
+			}
+		}
+	}
 	if !changed {
 		return raw
 	}
 	return u.String()
 }
 
-// stripParams drops every &-separated name=value pair whose (unescaped) name
-// isSecret reports, leaving the rest exactly as written.
+// magnetInTextRE finds the query of each magnet link in free text.
+var magnetInTextRE = regexp.MustCompile(`(?i)(magnet:\?)([^\s"'<>]+)`)
+
+// redactMagnetURLsInText runs the tracker and source URLs inside each magnet
+// (tr=, xs=, as=) through RedactSecrets. They are percent encoded
+// (tr=https%3A%2F%2F...%3Fpasskey%3D...), so the patterns that find a secret
+// in a plain URL never see one; each value is decoded, redacted, and written
+// back encoded when it held a secret. Everything else is left as written.
+func redactMagnetURLsInText(s string) string {
+	if !strings.Contains(strings.ToLower(s), "magnet:?") {
+		return s
+	}
+	return magnetInTextRE.ReplaceAllStringFunc(s, func(m string) string {
+		sub := magnetInTextRE.FindStringSubmatch(m)
+		params := strings.Split(sub[2], "&")
+		changed := false
+		for i, p := range params {
+			name, value, ok := strings.Cut(p, "=")
+			if !ok || !isMagnetURLParam(name) {
+				continue
+			}
+			dec, err := url.QueryUnescape(value)
+			if err != nil || dec == value {
+				continue
+			}
+			if red := RedactSecrets(dec); red != dec {
+				params[i] = name + "=" + url.QueryEscape(red)
+				changed = true
+			}
+		}
+		if !changed {
+			return m
+		}
+		return sub[1] + strings.Join(params, "&")
+	})
+}
+
+// isMagnetURLParam reports whether a magnet parameter holds a URL that can
+// carry a tracker passkey: tr (announce), xs (exact source), as (acceptable
+// source).
+func isMagnetURLParam(name string) bool {
+	return strings.EqualFold(name, "tr") || strings.EqualFold(name, "xs") || strings.EqualFold(name, "as")
+}
+
+// stripParams drops every name=value pair, separated by '&' or ';', whose
+// (unescaped) name isSecret reports, leaving the rest and the separators
+// between them exactly as written.
 func stripParams(params string, isSecret func(string) bool) string {
 	if params == "" {
 		return params
 	}
-	parts := strings.Split(params, "&")
-	kept := make([]string, 0, len(parts))
-	for _, part := range parts {
+	var b strings.Builder
+	dropped := false
+	sep, rest := "", params
+	for {
+		part, next := rest, ""
+		i := strings.IndexAny(rest, "&;")
+		if i >= 0 {
+			part, next = rest[:i], rest[i:]
+		}
 		rawName, _, _ := strings.Cut(part, "=")
 		name, err := url.QueryUnescape(rawName)
 		if err != nil {
 			name = rawName
 		}
 		if isSecret(name) {
-			continue
+			dropped = true
+		} else {
+			if b.Len() > 0 {
+				b.WriteString(sep)
+			}
+			b.WriteString(part)
 		}
-		kept = append(kept, part)
+		if i < 0 {
+			break
+		}
+		sep, rest = next[:1], next[1:]
 	}
-	if len(kept) == len(parts) {
+	if !dropped {
 		return params
 	}
-	return strings.Join(kept, "&")
+	return b.String()
 }

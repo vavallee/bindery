@@ -113,7 +113,7 @@ func TestScanLibrary_EbookContainerOutranksTextSidecar(t *testing.T) {
 			epub := filepath.Join(dir, "Burning Chrome.epub")
 			writeEpubAt(t, epub, "Burning Chrome", "William Gibson", "9780060539825")
 			sidecar := filepath.Join(dir, tc.sidecarName)
-			if err := os.WriteFile(sidecar, []byte("scanned from the paperback, chapter notes\n"), 0o644); err != nil {
+			if err := os.WriteFile(sidecar, bookSized("scanned from the paperback, chapter notes\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 
@@ -161,7 +161,7 @@ func TestScanLibrary_TextOnlyFolderStillReconciles(t *testing.T) {
 	s, books, settings, dir, book, ctx := claimRankFixture(t)
 
 	txt := filepath.Join(dir, "Burning Chrome.txt")
-	if err := os.WriteFile(txt, []byte("BURNING CHROME\n\nIt was hot, the night...\n"), 0o644); err != nil {
+	if err := os.WriteFile(txt, bookSized("BURNING CHROME\n\nIt was hot, the night...\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -202,7 +202,7 @@ func TestScanLibrary_SidecarForADifferentBookStillReconciles(t *testing.T) {
 	epub := filepath.Join(authorDir, "Burning Chrome.epub")
 	writeEpubAt(t, epub, "Burning Chrome", "William Gibson", "9780060539825")
 	txt := filepath.Join(authorDir, "Neuromancer.txt")
-	if err := os.WriteFile(txt, []byte("The sky above the port...\n"), 0o644); err != nil {
+	if err := os.WriteFile(txt, bookSized("The sky above the port...\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

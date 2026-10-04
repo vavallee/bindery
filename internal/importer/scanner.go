@@ -3499,6 +3499,14 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	// from it before the file's own title (see libraryVolumeConflict). Set per
 	// file in the loop below.
 	var fileLayoutTitle string
+	// fileTooSmall is set per file when it is an ebook format file too small
+	// to be a book (#2944). Every tier still runs its claim check, so a
+	// notes .txt whose book a real container already claimed is recognised
+	// as that container's sidecar (#2188), but no tier attaches it: the gate
+	// sits after the claim check and before AddBookFile. A 1 KB notes file
+	// reconciled onto a Wanted book flipped it to Imported and the real
+	// ebook was never searched for.
+	var fileTooSmall bool
 	tryReconcileTitle := func(sb *scanBook, path, cleanPath, title, normParsed, detectedFmt string) bool {
 		b := sb.book
 		// Length gate: Jaro-Winkler is bounded above by 0.8 + 0.2·(minLen/
@@ -3546,6 +3554,11 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		if !pathUnderDir(path, effDir) {
 			slog.Debug("library scan: title+author match rejected (outside library root)",
 				"title", b.Title, "path", path, "root", effDir)
+			return false
+		}
+		if fileTooSmall {
+			slog.Debug("library scan: title+author match rejected (too small to be a book)",
+				"title", b.Title, "path", path)
 			return false
 		}
 		if err := s.books.AddBookFile(ctx, b.ID, detectedFmt, registeredPath); err != nil {
@@ -3606,6 +3619,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		cleanPath := filepath.Clean(path)
 		detectedFmt := detectDownloadFormat([]string{path})
 		claimBlocked = false
+		fileTooSmall = TooSmallToBeABook(path, walked[path].size)
 		// What the file is recorded as in book_files once it reconciles: an
 		// audiobook inside a book folder of its own is the folder, not the
 		// track that matched (see reconciledAudiobookPath). Decided before the
@@ -3687,12 +3701,16 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// audiobook files. Well-tagged M4B/MP3 releases carry the author,
 		// title and often an ASIN in their ID3/iTunes atoms; using them avoids
 		// the fuzzy-match noise seen on users' organised libraries (#303).
+		// fileTags keeps the tags as read, for library adoption's evidence of
+		// which author and book a unit's files name (#2942).
+		var fileTags AudioTags
 		if IsAudioTagFile(path) {
 			if tags, err := ReadAudioTags(path); err != nil {
 				slog.Warn("library scan: tag read failed, falling back to filename",
 					"path", path, "error", err)
 				tagReadFailed++
 			} else {
+				fileTags = tags
 				// Tags describe the file itself. A tag title leaves no
 				// filename reading to flip, and neither does a tag author that
 				// is not the folder's. A tag author that is the folder's (an
@@ -3724,6 +3742,19 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				}
 			}
 		}
+		// fallbackAuthor is the author the title tiers fall back to when the
+		// parsed one matches nobody in the catalogue: the folder's. Not when
+		// every author tag (Artist, Album Artist, Composer) names someone else
+		// and the tags do not name the folder's book either: those are another
+		// author's files in the wrong folder, and falling back handed seven
+		// Katy Evans tracks to the Patterson book their folder was named after
+		// (#2942). The book folder title tier is skipped for the same reason.
+		// The unit then waits on Import with the conflict shown.
+		fallbackAuthor := layoutAuthor
+		tagsNameOther := tagsNameAnotherAuthor(fileTags, layoutAuthor, layoutTitle)
+		if tagsNameOther {
+			fallbackAuthor = ""
+		}
 
 		// Search existing books for a match: ASIN takes priority over fuzzy title+author.
 		matched := false
@@ -3739,6 +3770,9 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				if !pathUnderDir(path, effDir) {
 					slog.Debug("library scan: ASIN match rejected (outside library root)",
 						"asin", parsed.ASIN, "path", path, "root", effDir)
+					continue
+				}
+				if fileTooSmall {
 					continue
 				}
 				if err := s.books.AddBookFile(ctx, b.ID, detectedFmt, registeredPath); err != nil {
@@ -3770,7 +3804,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			}
 		}
 		if !matched && parsed.Title != "" {
-			matched = reconcileByTitle(path, cleanPath, detectedFmt, parsed.Title, parsed.Author, layoutAuthor)
+			matched = reconcileByTitle(path, cleanPath, detectedFmt, parsed.Title, parsed.Author, fallbackAuthor)
 		}
 		// The book folder's title, one tier down (#2171). The filename now
 		// leads, so this is what keeps everything the folder used to match
@@ -3779,7 +3813,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// chapter .pdf beside an epub is recognised as that epub's companion
 		// rather than an orphan — its own name says "notes", only the folder
 		// says which book it belongs to (#2188).
-		if !matched && layoutTitle != "" && layoutTitle != parsed.Title {
+		if !matched && !tagsNameOther && layoutTitle != "" && layoutTitle != parsed.Title {
 			if matched = reconcileByTitle(path, cleanPath, detectedFmt, layoutTitle, parsed.Author, layoutAuthor); matched {
 				// The log used to print only the winner, which is why the
 				// reported libraries looked healthy (#2171). Name both.
@@ -3797,7 +3831,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				claimBlocked = true
 			} else if book != nil {
 				effDir := s.effectiveRootForFormat(ctx, authorMap[book.AuthorID], detectedFmt)
-				if pathUnderDir(path, effDir) {
+				if pathUnderDir(path, effDir) && !fileTooSmall {
 					if err := s.books.AddBookFile(ctx, book.ID, detectedFmt, registeredPath); err != nil {
 						slog.Error("library scan: failed to update book via series match", "id", book.ID, "error", err)
 					} else {
@@ -3842,7 +3876,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				// match that never happened.
 				reason = unmatchedReasonNoTitleParsed
 			}
-			authorSet, matchAuthor := resolveAuthors(parsed.Author, layoutAuthor)
+			authorSet, matchAuthor := resolveAuthors(parsed.Author, fallbackAuthor)
 			if authorSet != nil {
 				if len(authorSet) == 0 {
 					reason = unmatchedReasonAuthorNotInLibrary
@@ -3856,6 +3890,12 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 					}
 				}
 			}
+			// A file too small to be a book is labelled as such whatever else
+			// is true of it, so the list does not present it as a book that
+			// merely failed to match (#2944).
+			if fileTooSmall {
+				reason = unmatchedReasonTooSmall
+			}
 			// matchAuthor is the author string the matcher actually used — it
 			// differs from parsedAuthor when a #1956 fallback fired, which is
 			// exactly what a support log needs to show.
@@ -3865,6 +3905,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			unmatchedFiles.add(unmatchedScanFile{
 				path: path, format: detectedFmt, size: walked[path].size, mode: walked[path].mode,
 				title: parsed.Title, layoutTitle: layoutTitle, author: parsed.Author, layoutAuthor: layoutAuthor, reason: reason,
+				tags: fileTags,
 			})
 		}
 	}
@@ -3896,12 +3937,23 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	var catalogue []scanBook
 	var catalogueByAuthor map[int64][]int
 	units := s.recordUnmatchedUnits(ctx, &unmatchedFiles, scanRoots, rootsWithFiles, scanStartedAt,
-		func(title, layoutTitle, author, layoutAuthor string) []db.UnmatchedCandidate {
+		func(rep unmatchedScanFile, ev unitEvidence) ([]db.UnmatchedCandidate, string) {
 			if catalogueByAuthor == nil {
 				catalogue, catalogueByAuthor = suggestionCatalogue(allBooks, wantedBooks)
 			}
-			authorSet, _ := resolveAuthors(author, layoutAuthor)
-			return rankCandidates(title, layoutTitle, wantedBooks, catalogue, catalogueByAuthor, authorSet)
+			if !ev.conflict() {
+				authorSet, _ := resolveAuthors(rep.author, rep.layoutAuthor)
+				return rankCandidates(rep.title, rep.layoutTitle, wantedBooks, catalogue, catalogueByAuthor, authorSet), ""
+			}
+			// The files name another author than their folder (#2942). Their
+			// author is searched without the folder fallback, since the folder
+			// is what is in doubt, and everything is scored on the title the
+			// files name.
+			title := firstNonEmpty(ev.title, rep.title)
+			filesSet, _ := resolveAuthors(ev.author, "")
+			folderSet := matchingAuthors(ev.folder)
+			reason := conflictReason(title, filesSet, func(id int64) int { return len(booksByAuthor[id]) })
+			return rankConflictCandidates(title, catalogue, catalogueByAuthor, filesSet, folderSet), reason
 		})
 
 	s.writeScanResult(ctx, len(foundFiles), reconciled, unmatched, alreadyTracked, tagReadFailed, units)
@@ -4054,6 +4106,11 @@ const (
 	// book by that author matched this title" when there was no title to match
 	// — the file needs renaming, not a catalogue refresh.
 	unmatchedReasonNoTitleParsed = "no_title_parsed"
+	// unmatchedReasonTooSmall: an ebook format file under
+	// MinPlausibleEbookBytes, a notes or readme file rather than a book
+	// (#2944). It is listed so the user can see and ignore it, but it gets no
+	// suggestions, its own row, and adoption refuses it.
+	unmatchedReasonTooSmall = "too_small"
 )
 
 // writeScanError persists a failed-scan result so the UI reflects the failure

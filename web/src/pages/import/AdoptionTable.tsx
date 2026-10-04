@@ -6,7 +6,7 @@ import AdoptionEditor from './AdoptionEditor'
 import AdoptionGroupRow from './AdoptionGroupRow'
 import AdoptionRow from './AdoptionRow'
 import { groupEntries, visibleEntries, type AdoptionListEntry } from './adoptionGroups'
-import { matchStrength } from './adoptionMatch'
+import { matchStrength, preselectable } from './adoptionMatch'
 import type { AdoptionList } from './useAdoptionList'
 
 interface Props {
@@ -68,8 +68,8 @@ export default function AdoptionTable({ list, onSearchShortcut, onAddAuthor, onI
     list.collapse()
   }
   const confirm = (item: AdoptionItem) => {
-    const top = item.candidates[0]
-    if (top && matchStrength(item) === 'strong') void list.adopt(item, { bookId: top.book.id }, top.book)
+    const top = preselectable(item)
+    if (top && matchStrength(item, top) === 'strong') void list.adopt(item, { bookId: top.book.id }, top.book)
   }
 
   const onRowKey = (e: KeyboardEvent<HTMLTableRowElement>, index: number, entry: AdoptionListEntry) => {

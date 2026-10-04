@@ -303,13 +303,13 @@ func TestReadAudioTags_FLACBlockLengthIsEnforced(t *testing.T) {
 }
 
 // TestReadAudioTags_OggPacketIsCapped pins that the Ogg walk refuses a packet
-// continued across pages past maxAudioTagStructureBytes instead of buffering
+// continued across pages past maxOggPacketBytes instead of buffering
 // it, as the library would, for as long as the file goes on.
 func TestReadAudioTags_OggPacketIsCapped(t *testing.T) {
 	var b bytes.Buffer
 	lacing := bytes.Repeat([]byte{255}, 255)
 	body := make([]byte, 255*255)
-	for i := 0; int64(i*len(body)) <= maxAudioTagStructureBytes; i++ {
+	for i := 0; int64(i*len(body)) <= maxOggPacketBytes; i++ {
 		b.WriteString("OggS")
 		b.WriteByte(0)
 		flags := byte(0x01) // continued

@@ -40,7 +40,7 @@ func TestScanLibrary_SeriesPositionReconcileTier(t *testing.T) {
 	// Author="Brandon Sanderson" — none of which match the seeded book except
 	// the series position.
 	epub := filepath.Join(libDir, "[Stormlight Archive, Book 1] The Way of Kings - Brandon Sanderson.epub")
-	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(epub, bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

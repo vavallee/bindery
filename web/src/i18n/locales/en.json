@@ -181,7 +181,8 @@
       "author_not_in_library": "Author not in your library",
       "no_candidate_books": "No book waiting for a file",
       "no_title_match": "No close title",
-      "no_title_parsed": "No title read"
+      "no_title_parsed": "No title read",
+      "too_small": "Too small to be a book"
     },
     "confirm": "Confirm",
     "choose": "Choose book",
@@ -197,12 +198,15 @@
       "noTitleMatch": "No book by {{author}} has a title close to this one. Choose the book it is.",
       "noTitleMatchNoAuthor": "No book in your library has a title close to this one. Choose the book it is.",
       "strong": "Strong match: {{title}} by {{author}}. Confirm it or choose another book.",
-      "possible": "Possible match: {{title}} by {{author}}, {{percent}}% title similarity. Check it, then adopt it or choose another book."
+      "possible": "Possible match: {{title}} by {{author}}, {{percent}}% title similarity. Check it, then adopt it or choose another book.",
+      "tooSmall": "This file is too small to be a book, so it cannot be adopted. Ignore it, or delete it from the folder."
     },
     "row": {
       "files_one": "{{count}} file",
       "files_other": "{{count}} files",
-      "adoptedAs": "Adopted as"
+      "adoptedAs": "Adopted as",
+      "inAudiobookRoot": "In your audiobooks folder",
+      "inEbookRoot": "In your ebooks folder"
     },
     "outcome": {
       "adopting": "Adopting as {{title}}…",
@@ -229,7 +233,10 @@
       "inPlace": "Files stay where they are. Picking a book already in your library leaves its owner and monitoring as they are.",
       "adoptAs": "Adopt as {{title}}",
       "pickFirst": "Pick a book",
-      "alreadyImported": "This book already has its files. Adopting adds these alongside them, and nothing is replaced or deleted."
+      "alreadyImported": "This book already has its files. Adopting adds these alongside them, and nothing is replaced or deleted.",
+      "conflictLabel": "Author conflict",
+      "conflict": "The files say {{files}}, but the folder says {{folder}}. A book by {{folder}} is only a look alike, so none is chosen for you.",
+      "folderAuthorOnly": "Folder author only"
     },
     "col": {
       "book": "Book",
@@ -302,7 +309,9 @@
       "noCandidates": "No book by {{author}} is waiting for a file",
       "noTitle": "No title could be read",
       "noTitleMatch": "No close title by {{author}}",
-      "noTitleMatchNoAuthor": "No close title in your library"
+      "noTitleMatchNoAuthor": "No close title in your library",
+      "tooSmall": "Too small to be a book",
+      "authorConflict": "Files say {{files}}, folder says {{folder}}"
     },
     "group": {
       "label": "{{author}}, {{count}} books",

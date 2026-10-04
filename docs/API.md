@@ -480,19 +480,57 @@ DELETE /api/v1/blocklist/bulk                     bulk remove
 
 Search, queue, pending and grab responses strip every credential parameter
 from `nzbUrl`, `guid` and `infoUrl`: the indexer `apikey`, `jackett_apikey`,
-`passkey`, `torrent_pass`, `authkey`, `rsskey`, `token`, `signature` and the
-rest of the list in `internal/httpsec/redact.go`, plus `r` inside a newznab
-`getnzb` link. Magnets lose their `tr=` announce URLs. History event `data`
-gets the same treatment. A grab of a GUID a recent search returned uses the
-server's own record of the raw URL, so post `guid` back exactly as the search
-returned it. The record lives in memory for 24 hours; after a restart or
-expiry a session grab answers `400` "this search result has expired, search
-again". An API key caller may instead post a GUID the server has not seen
-along with its own raw `nzbUrl`, which is grabbed as posted (with the indexer
-`apikey` added when the host matches a configured indexer).
+`passkey`, `torrent_pass`, `authkey`, `rsskey`, `tp`, `token`, `signature` and
+the rest of the list in `internal/httpsec/redact.go`, plus `r` inside a
+newznab `getnzb` link. Parameters separated by `;` count as well as `&`.
+Credentials in the URL itself (`https://user:pass@host/...`) are replaced,
+user name included. Magnets lose their `tr=` announce URLs and their `xs=` and
+`as=` source URLs.
 
-Known gap: a passkey embedded in a URL path rather than a parameter is not
-recognised and is shown as is.
+`nzbUrl` and `guid` also lose path segments shaped like a private tracker
+passkey, RSS key or download token. A path is cut into runs of `A-Z a-z 0-9 _ -`
+(compared after percent decoding), and a run is redacted when it is
+
+| Shape | Example |
+|-------|---------|
+| hex of 16 or more characters with a letter and a digit | `/download/123/0a1b2c3d4e5f60718293a4b5c6d7e8f9/x.torrent` |
+| 20 or more characters where one piece between `-` and `_` switches between letters and digits at least 4 times | `/torrent/download/12345.aB3dE5fG7hJ9kL2mN4pQ6rS8tU0vW1xY` |
+| the value of a `passkey=` style pair in the path | `/rss/passkey=hunter2/feed.xml` |
+
+Release names switch between letters and digits once or twice per piece
+(`Stormlight4`, `Retail2010`, `128kbps`), so they are kept, as are numeric
+ids, words, file names and non ASCII names. The segment after `/details/` or
+`/getnzb/` is a newznab release id and is kept. Info hashes and UUIDs in a
+download URL or GUID are redacted like any other token, which only costs
+readability: grabs take the real URL from the server's record. A redacted run
+becomes `REDACTED-` and 12 hex characters, a keyed hash that changes on every
+restart, so two releases stay apart without revealing the value. Not covered:
+keys shorter than these lengths, keys of only letters or only digits, a short
+token with few digits (a random 20 character base62 key reaches 4
+alternations about 77% of the time, a 32 character one about 96%), and URL
+fragments.
+
+`infoUrl` is a link people click, and detail pages are often addressed by a
+hex id (an MD5, an info hash), so it keeps its path and only loses credential
+parameters and `user:pass@`. When `infoUrl` comes from the item's `<link>`
+(which torznab feeds also use as a download link, with or without an
+enclosure) or equals the download URL or the GUID, it is redacted like them.
+
+History event `data` and the log export get the same treatment as `nzbUrl`,
+and the log export also decodes the tracker URLs inside a magnet before
+redacting them.
+
+A grab of a GUID a recent search returned uses the server's own record of the
+raw URL, so post `guid` back exactly as the search returned it. The record
+lives in memory for 24 hours; after a restart or expiry a session grab answers
+`400` "this search result has expired, search again". An API key caller may
+instead post a GUID the server has not seen along with its own raw `nzbUrl`,
+which is grabbed as posted (with the indexer `apikey` added when the host
+matches a configured indexer). Only the indexer `apikey` is put back: a
+`jackett_apikey`, a passkey parameter, a passkey in the path or `user:pass@`
+credentials that a response redacted cannot be recovered, so such a caller
+must post the raw URL it got from the indexer, not one copied from a Bindery
+response.
 
 #### Download client credentials are write-only
 
@@ -638,7 +676,7 @@ files are one row. Query parameters, all optional:
 | Parameter | Values |
 |---|---|
 | `state` | `pending` (default), `ignored`, `adopted` |
-| `reason` | `author_not_in_library`, `no_candidate_books`, `no_title_match`, `no_title_parsed` |
+| `reason` | `author_not_in_library`, `no_candidate_books`, `no_title_match`, `no_title_parsed`, `too_small` |
 | `authorFolder` | first folder under the library root |
 | `format` | `ebook`, `audiobook` |
 | `search` | words matched against title, author and path |
@@ -652,6 +690,14 @@ The response is `{items, total, facets?, summary, scan}`. Each item carries
 `candidates` (`{book, score}`, a title similarity from 0 to 1), `state`, the
 adopted `book` if any, `bookCreated`, `authorCreated` and the first 20
 `members` file names. No provider is called to build it.
+
+`rootFormat` is the format the row's library root holds, `ebook` or
+`audiobook`, and is present only when `BINDERY_AUDIOBOOK_DIR` is a separate
+folder from the library; with one combined root it is omitted. A row whose
+`format` differs from it, such as an ebook under the audiobooks root, is in
+the other format's folder (#2944). A `too_small` row is an ebook format file
+under 4 KiB, too small to be a book: it is its own row and carries no
+`candidates`.
 
 `POST /api/v1/library/unmatched/{id}/adopt` takes either `{"bookId": 12}` for
 a book already in the library or `{"foreignBookId": "...", "foreignAuthorId":
@@ -667,7 +713,7 @@ Answers:
 | Status | Meaning |
 |---|---|
 | `200` | the updated row |
-| `400` | neither or both of `bookId` and `foreignBookId`, or a format that is not the files' format |
+| `400` | neither or both of `bookId` and `foreignBookId`, a format that is not the files' format, or an ebook file under 4 KiB, too small to be a book (Manual Import is the override for such a file) |
 | `404` | no such row, or the book is gone |
 | `409` | the row is not pending (the body names its `state`), or a file already belongs to a book |
 | `422` | a file is gone, is not a regular file, or resolves outside the library folders |

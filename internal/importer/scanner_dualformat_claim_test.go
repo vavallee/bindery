@@ -209,7 +209,7 @@ func TestScanLibrary_PDFWithoutAudioStillReconciles(t *testing.T) {
 	s, books, dir, book, ctx := dualFormatFixture(t)
 
 	pdf := filepath.Join(dir, "Project Hail Mary.pdf")
-	if err := os.WriteFile(pdf, []byte("%PDF-1.4 the book"), 0o644); err != nil {
+	if err := os.WriteFile(pdf, bookSized("%PDF-1.4 the book"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

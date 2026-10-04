@@ -84,6 +84,46 @@ afterEach(() => {
 })
 
 describe('AdoptionView', () => {
+  // #2944: two 1008 byte .txt files under the audiobooks root were listed as
+  // ordinary ebooks with a one click Confirm into the book their folder named.
+  it('labels a file too small to be a book and offers Ignore, not adoption', async () => {
+    const tiny = item({
+      id: 60, parsedTitle: 'Die 6. Geisel', parsedAuthor: 'James Patterson', authorFolder: 'James Patterson',
+      relPath: 'James Patterson/Die 6. Geisel ()/Die 6. Geisel.txt', rootPath: '/data/media/audiobooks',
+      rootFormat: 'audiobook', sizeBytes: 1008, reason: 'too_small',
+    })
+    serve(listResponse([tiny]))
+    let ignored = false
+    server.use(http.post(apiUrl('/library/unmatched/60/ignore'), () => {
+      ignored = true
+      return HttpResponse.json({ ...tiny, state: 'ignored' })
+    }))
+    const table = await renderView()
+
+    const row = within(table).getByRole('row', { name: 'Die 6. Geisel' })
+    expect(within(row).getByText('Too small to be a book')).toBeInTheDocument()
+    expect(within(row).getByText('In your audiobooks folder')).toBeInTheDocument()
+    expect(within(row).queryByRole('button', { name: 'Confirm' })).toBeNull()
+    expect(within(row).queryByRole('button', { name: 'Choose book' })).toBeNull()
+    fireEvent.click(within(row).getByRole('button', { name: 'Ignore' }))
+    await waitFor(() => expect(ignored).toBe(true))
+  })
+
+  it('labels an ebook under the audiobooks root and makes its match a possible one', async () => {
+    const misplaced = item({
+      id: 61, parsedTitle: 'The Martian', relPath: 'Andy Weir/The Martian/The Martian.epub',
+      rootPath: '/audiobooks', rootFormat: 'audiobook', sizeBytes: 300_000,
+      candidates: [{ book: martian, score: 1 }], topScore: 1,
+    })
+    serve(listResponse([misplaced]))
+    const table = await renderView()
+
+    const row = within(table).getByRole('row', { name: 'The Martian' })
+    expect(within(row).getByText('In your audiobooks folder')).toBeInTheDocument()
+    expect(within(row).getByText('Possible match')).toBeInTheDocument()
+    expect(within(row).queryByRole('button', { name: 'Confirm' })).toBeNull()
+  })
+
   it('confirms a strong suggestion in one click, then undoes it', async () => {
     serve(listResponse([suggested, unsuggested]))
     let adoptBody: unknown = null
@@ -195,6 +235,52 @@ describe('AdoptionView', () => {
 
     fireEvent.click(within(editor).getByRole('button', { name: 'Adopt as The Martian' }))
     expect(await within(table).findByText(/Added alongside the file it already had\./)).toBeInTheDocument()
+  })
+
+  // #2942: files naming Katy Evans in a James Patterson folder. A Patterson
+  // look alike is never the preselected one click adopt, and the row says
+  // which authors disagree.
+  it('shows an author conflict and does not preselect the folder author\'s book (#2942)', async () => {
+    const katt = { id: 51, title: 'Katt vs. Dogg', authorId: 9, authorName: 'James Patterson', status: 'wanted', mediaType: 'audiobook', monitored: true }
+    const misfiled = item({
+      id: 6, format: 'audiobook', fileCount: 7, parsedTitle: 'Tycoon', parsedAuthor: 'Katy Evans', authorFolder: 'James Patterson',
+      relPath: 'James Patterson/$10,000,000 Marriage Proposition',
+      authorConflict: { files: 'Katy Evans', folder: 'James Patterson' },
+      candidates: [{ book: katt, score: 0.8, folderAuthorOnly: true }], topScore: 0.8,
+    })
+    serve(listResponse([misfiled]))
+    server.use(http.get(apiUrl('/book'), () => HttpResponse.json({ items: [], total: 0 })))
+    const table = await renderView()
+    const row = within(table).getByRole('row', { name: 'Tycoon' })
+
+    expect(within(row).getByText('Files say Katy Evans, folder says James Patterson')).toBeInTheDocument()
+    expect(within(row).queryByText('Possible match')).toBeNull()
+    expect(within(row).queryByRole('button', { name: 'Confirm' })).toBeNull()
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Choose book' }))
+    const editor = await screen.findByRole('region', { name: 'Which book is Tycoon?' })
+    expect(within(editor).getByRole('note', { name: 'Author conflict' })).toHaveTextContent('The files say Katy Evans, but the folder says James Patterson.')
+    expect(within(editor).getByRole('radio', { name: /Katt vs\. Dogg/ })).not.toBeChecked()
+    expect(within(editor).getByText('Folder author only')).toBeInTheDocument()
+    expect(within(editor).queryByRole('button', { name: 'Adopt as Katt vs. Dogg' })).toBeNull()
+    expect(within(editor).getByRole('button', { name: 'Pick a book' })).toBeDisabled()
+  })
+
+  it('keeps a conflicting row out of its folder\'s Add author group (#2942)', async () => {
+    const jp = (id: number, title: string, extra: Partial<AdoptionItem> = {}) => item({
+      id, parsedTitle: title, parsedAuthor: 'James Patterson', authorFolder: 'James Patterson',
+      relPath: `James Patterson/${title}`, reason: 'author_not_in_library', ...extra,
+    })
+    serve(listResponse([
+      jp(21, 'Along Came a Spider'), jp(22, 'Kiss the Girls'),
+      jp(23, 'Tycoon', { parsedAuthor: 'Katy Evans', authorConflict: { files: 'Katy Evans', folder: 'James Patterson' } }),
+    ]))
+    const table = await renderView()
+
+    expect(within(table).getByRole('row', { name: 'James Patterson, 2 books' })).toBeInTheDocument()
+    const row = within(table).getByRole('row', { name: 'Tycoon' })
+    expect(within(row).getByText('Files say Katy Evans, folder says James Patterson')).toBeInTheDocument()
+    expect(within(row).getByRole('button', { name: 'Add author' })).toBeInTheDocument()
   })
 
   it('asks a metadata provider only when the search is submitted', async () => {

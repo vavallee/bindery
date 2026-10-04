@@ -57,6 +57,28 @@ func (s *Scanner) ScanRunning() bool {
 	return s.scanRunning.Load()
 }
 
+// RootFormat names the format the scanned root holds, so the adoption list
+// can say when a row sits in the other format's folder (#2944): an ebook
+// under the audiobooks root is not where Bindery keeps ebooks. It names the
+// root the row was recorded under (the longest scanned root containing it),
+// which is a label only; it makes no claim about what the reconcile would
+// accept, since an audiobook root nested inside the library is also under
+// the ebook root. With one combined root
+// (BINDERY_AUDIOBOOK_DIR unset, or the same folder as the library) either
+// format belongs anywhere and the answer is "". An unknown root is "" too.
+func (s *Scanner) RootFormat(root string) string {
+	if root == "" || s.audiobookDir == "" || filepath.Clean(s.audiobookDir) == filepath.Clean(s.libraryDir) {
+		return ""
+	}
+	switch filepath.Clean(root) {
+	case filepath.Clean(s.audiobookDir):
+		return models.MediaTypeAudiobook
+	case filepath.Clean(s.libraryDir):
+		return models.MediaTypeEbook
+	}
+	return ""
+}
+
 // walkedFile is what the library walk already knew about a file (P2): its
 // size and mode come from the os.FileInfo filepath.Walk hands over, so
 // grouping costs no extra stat.
@@ -79,6 +101,9 @@ type unmatchedScanFile struct {
 	// layoutTitle is the cleaned book folder name, "" when the file has
 	// none. Candidate ranking reads the volume number from it (#2860).
 	layoutTitle string
+	// tags are the file's audio tags as read, zero for a file without them.
+	// Evidence for evidenceFor (#2942).
+	tags AudioTags
 }
 
 // unmatchedCollector gathers unmatched files up to maxUnmatchedFiles.
@@ -96,10 +121,12 @@ func (c *unmatchedCollector) add(f unmatchedScanFile) {
 }
 
 // unmatchedGroup is one unit before candidates are ranked: the stored shape
-// plus the member whose parse speaks for the unit.
+// plus the member whose parse speaks for the unit, and what its files say
+// against its author folder.
 type unmatchedGroup struct {
-	unit db.UnmatchedUnitScan
-	rep  unmatchedScanFile
+	unit     db.UnmatchedUnitScan
+	rep      unmatchedScanFile
+	evidence unitEvidence
 }
 
 // scanRootFor returns the longest root that contains path, or "".
@@ -183,10 +210,15 @@ func discSetChecker(roots []string) func(folder string) bool {
 //   - loose audio directly in a library root has no book folder, so each file
 //     stands alone, as in the folder import scan;
 //   - ebooks group by folder and file stem, so Title.epub and Title.mobi are
-//     one book in two formats.
+//     one book in two formats;
+//   - a file too small to be a book stands alone, so a 1 KB Title.txt does
+//     not ride along in Title.epub's row and get adopted with it (#2944).
 //
 // It returns the grouping key, and for a folder unit the folder path.
 func unitKeyFor(f unmatchedScanFile, root string, isDiscSet func(string) bool) (key, folder string) {
+	if f.reason == unmatchedReasonTooSmall {
+		return "file\x00" + f.path, ""
+	}
 	parent := filepath.Dir(f.path)
 	if f.format == models.MediaTypeAudiobook {
 		if parent == root {
@@ -263,7 +295,16 @@ func groupUnmatched(files []unmatchedScanFile, roots []string) (groups []unmatch
 			rep.layoutTitle = rep.title
 		}
 		u.ParsedTitle, u.ParsedAuthor, u.Reason = rep.title, rep.author, rep.reason
-		groups = append(groups, unmatchedGroup{unit: u, rep: rep})
+		// Files that name another author than their folder are recorded as
+		// what they name, and FilesAuthor tells the adoption page (#2942).
+		ev := evidenceFor(a.members, u.AuthorFolder, rep.layoutTitle)
+		if ev.conflict() {
+			u.ParsedAuthor, u.FilesAuthor = ev.author, ev.author
+			if ev.title != "" {
+				u.ParsedTitle = ev.title
+			}
+		}
+		groups = append(groups, unmatchedGroup{unit: u, rep: rep, evidence: ev})
 	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].unit.UnitPath < groups[j].unit.UnitPath })
 	if len(groups) > maxUnmatchedUnits {
@@ -448,9 +489,11 @@ type unitCounts struct {
 }
 
 // recordUnmatchedUnits groups a finished scan's unmatched files and stores
-// them. candidatesFor ranks suggestions for one unit's representative parse.
+// them. candidatesFor ranks suggestions for one unit's representative parse
+// and its files' evidence, and returns the unit's reason when the evidence
+// changes it ("" keeps the representative's).
 func (s *Scanner) recordUnmatchedUnits(ctx context.Context, c *unmatchedCollector, roots, rootsWithFiles []string, startedAt time.Time,
-	candidatesFor func(title, layoutTitle, author, layoutAuthor string) []db.UnmatchedCandidate) unitCounts {
+	candidatesFor func(rep unmatchedScanFile, ev unitEvidence) ([]db.UnmatchedCandidate, string)) unitCounts {
 	if s.unmatchedUnits == nil {
 		return unitCounts{}
 	}
@@ -458,7 +501,16 @@ func (s *Scanner) recordUnmatchedUnits(ctx context.Context, c *unmatchedCollecto
 	units := make([]db.UnmatchedUnitScan, len(groups))
 	for i, g := range groups {
 		units[i] = g.unit
-		units[i].Candidates = candidatesFor(g.rep.title, g.rep.layoutTitle, g.rep.author, g.rep.layoutAuthor)
+		// Nothing is suggested for a file too small to be a book: a
+		// suggestion is an invitation to adopt it, and its reason stays
+		// too_small whatever the evidence says (#2944).
+		if g.rep.reason != unmatchedReasonTooSmall {
+			var reason string
+			units[i].Candidates, reason = candidatesFor(g.rep, g.evidence)
+			if reason != "" {
+				units[i].Reason = reason
+			}
+		}
 	}
 	truncated := c.truncated || unitsTruncated
 	// A truncated scan did not see every unit, so it removes and purges

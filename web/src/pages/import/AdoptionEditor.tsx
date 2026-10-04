@@ -6,6 +6,7 @@ import BookPicker from '../../components/import/BookPicker'
 import CatalogueAdder from '../../components/import/CatalogueAdder'
 import { bookStatusBadge } from '../../components/bookStatus'
 import { adoptionHint, scorePercent, unitDisplayName } from './adoptionHint'
+import { preselectable } from './adoptionMatch'
 
 interface Props {
   item: AdoptionItem
@@ -42,7 +43,9 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
   const { t } = useTranslation()
   const headingId = useId()
   const searchRef = useRef<HTMLInputElement>(null)
-  const [chosen, setChosen] = useState<AdoptionBookRef | null>(item.candidates[0]?.book ?? null)
+  // A folder author's look alike is listed but never chosen for the reader
+  // when the files name someone else (#2942).
+  const [chosen, setChosen] = useState<AdoptionBookRef | null>(preselectable(item)?.book ?? null)
   const [searched, setSearched] = useState<AdoptionBookRef | null>(null)
   const name = unitDisplayName(item)
 
@@ -59,7 +62,8 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
     setSearched(ref)
     setChosen(ref)
   }
-  const options: { book: AdoptionBookRef; score?: number }[] = [
+  const conflict = item.authorConflict
+  const options: { book: AdoptionBookRef; score?: number; folderAuthorOnly?: boolean }[] = [
     ...item.candidates,
     ...(searched && !item.candidates.some(c => c.book.id === searched.id) ? [{ book: searched }] : []),
   ]
@@ -70,6 +74,14 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
       <h4 id={headingId} className="text-sm font-semibold text-slate-800 dark:text-zinc-200">
         {t('adoption.editor.heading', { name, defaultValue: 'Which book is {{name}}?' })}
       </h4>
+      {conflict && (
+        <p role="note" aria-label={t('adoption.editor.conflictLabel', 'Author conflict')} className="-mt-2 text-xs text-amber-800 dark:text-amber-400">
+          {t('adoption.editor.conflict', {
+            files: conflict.files, folder: conflict.folder,
+            defaultValue: 'The files say {{files}}, but the folder says {{folder}}. A book by {{folder}} is only a look alike, so none is chosen for you.',
+          })}
+        </p>
+      )}
       <p className="-mt-2 text-xs text-fg-muted">{adoptionHint(item, t).sentence}</p>
 
       {options.length > 0 && (
@@ -93,11 +105,16 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
                     {o.book.title}
                     {o.book.authorName && <span className="text-xs text-fg-muted"> · {o.book.authorName}</span>}
                   </span>
+                  {o.folderAuthorOnly && (
+                    <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                      {t('adoption.editor.folderAuthorOnly', 'Folder author only')}
+                    </span>
+                  )}
                   <StatusPill status={o.book.status} monitored={o.book.monitored} />
                   {pct !== null ? (
                     <span className="flex items-center gap-2" aria-label={t('adoption.editor.score', { percent: pct, defaultValue: '{{percent}}% title match' })}>
                       <span aria-hidden="true" className="hidden sm:block h-1.5 w-24 overflow-hidden rounded-full bg-slate-200 dark:bg-zinc-800">
-                        <span className={`block h-full rounded-full ${pct >= 80 ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${pct}%` }} />
+                        <span className={`block h-full rounded-full ${pct >= 80 && !o.folderAuthorOnly ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${pct}%` }} />
                       </span>
                       <span className="w-9 text-right text-xs tabular-nums text-fg-muted">{pct}%</span>
                     </span>

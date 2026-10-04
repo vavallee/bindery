@@ -191,6 +191,12 @@ func walkLibraryEntries(ctx context.Context, root string) ([]libraryEntry, bool)
 		if !IsBookFile(path) {
 			return nil
 		}
+		// A notes file is never the book a new catalogue entry already owns:
+		// the add author path binds what this returns and skips the search
+		// (#2944).
+		if TooSmallToBeABook(path, info.Size()) {
+			return nil
+		}
 		firstDir := ""
 		if rel, relErr := filepath.Rel(root, path); relErr == nil {
 			if parts := strings.SplitN(rel, string(filepath.Separator), 2); len(parts) >= 2 {

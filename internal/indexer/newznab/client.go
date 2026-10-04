@@ -235,14 +235,21 @@ func RedactDownloadURL(raw string) string {
 func detailURL(item rssItem) string {
 	download := item.Enclosure.URL
 
-	candidates := []string{item.Comments}
-	if strings.EqualFold(strings.TrimSpace(item.GUID.IsPermaLink), "true") {
-		candidates = append(candidates, item.GUID.Value)
+	// link marks the <link> fallback, which torznab feeds also use as a
+	// download link: with no enclosure it is the download URL, and next to a
+	// proxy enclosure it can be the tracker's direct passkey link.
+	type candidate struct {
+		raw  string
+		link bool
 	}
-	candidates = append(candidates, item.Link)
+	candidates := []candidate{{raw: item.Comments}}
+	if strings.EqualFold(strings.TrimSpace(item.GUID.IsPermaLink), "true") {
+		candidates = append(candidates, candidate{raw: item.GUID.Value})
+	}
+	candidates = append(candidates, candidate{raw: item.Link, link: true})
 
-	for _, raw := range candidates {
-		raw = strings.TrimSpace(raw)
+	for _, c := range candidates {
+		raw := strings.TrimSpace(c.raw)
 		if raw == "" || raw == download {
 			continue
 		}
@@ -256,12 +263,28 @@ func detailURL(item rssItem) string {
 		if u.Host == "" {
 			continue
 		}
-		// With no enclosure, <link> is the download URL itself, and a torznab
+		// <link> may be a download link (see candidate), and a torznab
 		// permalink is often a details page carrying the passkey. This is shown
-		// to every user, so it never carries a credential.
-		return RedactDownloadURL(raw)
+		// to every user, so it never carries a credential. A real detail page
+		// (<comments>) keeps its path, which people click and which is often a
+		// hex id; the <link> fallback, and a permalink that is also the GUID
+		// (shown redacted with the path rule), get the download URL treatment,
+		// path included.
+		if c.link || raw == strings.TrimSpace(item.GUID.Value) {
+			return RedactDownloadURL(raw)
+		}
+		return RedactInfoURL(raw)
 	}
 	return ""
+}
+
+// RedactInfoURL removes credentials from a detail page link before it is
+// shown: secret parameters and user:pass@ come off, the path stays, since it
+// is the indexer's id for the release and people click the link (see
+// httpsec.StripDetailURLSecrets). Use RedactDownloadURL for an info link that
+// is the download link itself.
+func RedactInfoURL(raw string) string {
+	return httpsec.StripDetailURLSecrets(raw)
 }
 
 // Caps fetches the indexer capabilities.

@@ -563,6 +563,20 @@ How to work through the list:
   book that already has a file adds the new file alongside it (#2879).
   Suggestions are worked out by the scan, so a book added since the last scan
   appears after the next one; until then, search for it in the editor.
+- **Files that name another author than their folder** say so: the row reads,
+  for example, **Files say Katy Evans, folder says James Patterson**. The
+  author comes from the audio tags, or from track names that all read
+  `Author - Title 1`, `Author - Title 2` and so on. Artist, Album Artist and
+  Composer are all checked, so a narrator in Artist beside the author in Album
+  Artist is not a conflict, and neither are credits such as Various Artists,
+  Unknown or Full Cast. Such files are also never attached by the scan to the
+  book their folder is named after. The row is named after the
+  book the files name (the album tag, or the title in those track names), and
+  suggestions come from the files' author first, scored on that title. Books
+  by the folder's author are still listed below them, marked **Folder author
+  only**, but they are never preselected and never a one click Confirm. When
+  the files' author is not in your library, the row offers **Add author** for
+  them, not for the folder's author (#2942).
 - **Choose book** opens the row in place: the suggestions with their scores,
   a search of your library (prefilled from the file), and a collapsed
   **Search metadata**. Metadata providers are only asked when you press Search
@@ -607,6 +621,22 @@ Things worth knowing:
 
 - Only regular files inside your library folders are listed. A symlink is not
   adopted, including one inside the library that points elsewhere.
+- **Too small to be a book**: an ebook format file under 4 KiB (a notes,
+  readme or link file, about two pages of plain text at most) is never
+  attached to a book automatically: the library scan does not match it to a
+  book, and adding an author does not treat it as a book you already own. It
+  is listed here on a row of its own with that label and no suggestion, and
+  cannot be adopted. Ignore it, or delete it from the folder. A notes file
+  beside the book file that matched is still counted quietly as that book's
+  companion and not listed. Audiobook tracks are not judged by size, and
+  files already tracked are not affected (#2944). If a file that small really
+  is the book, **Manual Import** is the override: it imports whatever file
+  you pick, whatever its size.
+- **In your audiobooks folder** / **In your ebooks folder**: when
+  `BINDERY_AUDIOBOOK_DIR` is its own folder, a row found in the other
+  format's folder (say an `.epub` under the audiobooks root) says so, and its
+  suggestion is never a one click Confirm. You can still adopt it after
+  checking. With one combined folder for both there is nothing to label.
 - A scan that finds no files at all (an unmounted volume, say) changes
   nothing on this list, so your ignores and adoptions survive it.
 - An adopted row stays, with Undo, for as long as its book exists. An ignored

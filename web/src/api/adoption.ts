@@ -11,6 +11,9 @@ export type AdoptionReason =
   | 'no_candidate_books'
   | 'no_title_match'
   | 'no_title_parsed'
+  // An ebook format file under 4 KiB: a notes or readme file, not a book. It
+  // has no suggestions and the server refuses to adopt it (#2944).
+  | 'too_small'
 
 export interface AdoptionBookRef {
   id: number
@@ -26,6 +29,16 @@ export interface AdoptionBookRef {
 export interface AdoptionCandidate {
   book: AdoptionBookRef
   score: number
+  // Set on a row with an author conflict for a book that is not by the author
+  // the files name: a look alike from the folder's author (#2942).
+  folderAuthorOnly?: boolean
+}
+
+// The authors that disagree when a row's files (tags or names) name someone
+// other than the author folder they sit in (#2942).
+export interface AdoptionAuthorConflict {
+  files: string
+  folder: string
 }
 
 export interface AdoptionItem {
@@ -40,6 +53,11 @@ export interface AdoptionItem {
   parsedTitle: string
   parsedAuthor: string
   reason: AdoptionReason | ''
+  authorConflict?: AdoptionAuthorConflict
+  // The format the row's library root holds, set only when the ebook and
+  // audiobook roots are separate folders. A row whose format differs sits in
+  // the other format's folder (#2944).
+  rootFormat?: 'ebook' | 'audiobook'
   candidates: AdoptionCandidate[]
   topScore: number
   state: AdoptionState | 'adopting' | 'undoing'
