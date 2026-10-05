@@ -317,10 +317,13 @@ func (h *QueueHandler) WithStoragePaths(downloadDir, audiobookDownloadDir string
 
 // WithDownloadPathRemap attaches the global BINDERY_DOWNLOAD_PATH_REMAP.
 //
-// Only "remove with data" on an rTorrent client reads it — rTorrent has no
-// delete-with-data command, so Bindery deletes the payload itself and has to
-// translate rTorrent's path the same way the importer does. Leaving it unset
-// simply falls back to the client's own PathRemap.
+// Two things read it. A manual grab runs the save path it sends to
+// qBittorrent or rTorrent through it when the client's own PathRemap does not
+// cover the download folder (#2665). "Remove with data" on an rTorrent client
+// uses it too: rTorrent has no delete-with-data command, so Bindery deletes
+// the payload itself and has to translate rTorrent's path the same way the
+// importer does. Leaving it unset simply falls back to the client's own
+// PathRemap.
 func (h *QueueHandler) WithDownloadPathRemap(remap string) *QueueHandler {
 	h.downloadPathRemap = remap
 	return h
@@ -1428,6 +1431,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		MediaType:            req.MediaType,
 		DownloadDir:          h.downloadDir,
 		AudiobookDownloadDir: h.audiobookDownloadDir,
+		GlobalRemap:          h.downloadPathRemap,
 	}.WithSeedLimits(h.resolveSeedLimits(ctx, indexerID)))
 	if err != nil {
 		slog.Error("failed to send download", "client_type", client.Type, "error", err, "title", req.Title)

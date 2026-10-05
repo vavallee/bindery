@@ -181,6 +181,70 @@ func TestBookRepoUpdateHydratedMetadata(t *testing.T) {
 	}
 }
 
+// UpdateIfUnchanged is the whole-row sibling of UpdateHydratedMetadata for a
+// write that follows a provider call (#2926): it lands on an unchanged row,
+// including one whose updated_at is in a legacy shape, and loses to an edit.
+func TestBookRepoUpdateIfUnchanged(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	books := NewBookRepo(database)
+	author := mkAuthor(t, NewAuthorRepo(database), ctx, "OL-GUARDED-A")
+	book := mkBook(t, books, ctx, author.ID, "hc:guarded", "Original title", models.BookStatusWanted)
+
+	if _, err := database.ExecContext(ctx, "UPDATE books SET updated_at=? WHERE id=?", "2026-09-01 10:00:00", book.ID); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := books.GetByID(ctx, book.ID)
+	if err != nil || snapshot == nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	expected := snapshot.UpdatedAtRaw
+	snapshot.Title = "Mapped title"
+	updated, err := books.UpdateIfUnchanged(ctx, snapshot, expected)
+	if err != nil || !updated {
+		t.Fatalf("unchanged row: updated=%v err=%v", updated, err)
+	}
+	stored, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Title != "Mapped title" || stored.UpdatedAtRaw != snapshot.UpdatedAtRaw {
+		t.Fatalf("guarded write not persisted: title=%q raw=%q caller raw=%q", stored.Title, stored.UpdatedAtRaw, snapshot.UpdatedAtRaw)
+	}
+
+	// An edit after the snapshot wins; the stale write changes nothing.
+	stale := *stored
+	if err := books.SetImageURL(ctx, book.ID, "/covers/user.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	stale.Title = "Stale title"
+	updated, err = books.UpdateIfUnchanged(ctx, &stale, stored.UpdatedAtRaw)
+	if err != nil || updated {
+		t.Fatalf("stale write: updated=%v err=%v", updated, err)
+	}
+	if stale.UpdatedAtRaw != stored.UpdatedAtRaw {
+		t.Fatalf("a lost guard must not stamp the caller's row: raw=%q", stale.UpdatedAtRaw)
+	}
+	stored, err = books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Title != "Mapped title" || stored.ImageURL != "/covers/user.jpg" {
+		t.Fatalf("concurrent edit overwritten: title=%q image=%q", stored.Title, stored.ImageURL)
+	}
+
+	if _, err := books.UpdateIfUnchanged(ctx, nil, expected); err == nil {
+		t.Fatal("nil snapshot should be rejected")
+	}
+	if _, err := books.UpdateIfUnchanged(ctx, stored, ""); err == nil {
+		t.Fatal("snapshot without a stored updated_at should be rejected")
+	}
+}
+
 func TestBookRepoFillMissingAudiobookDurationRequiresMatchingIdentity(t *testing.T) {
 	for _, field := range []struct {
 		column, value string

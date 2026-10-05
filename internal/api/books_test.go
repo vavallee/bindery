@@ -18,6 +18,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/metadata"
+	"github.com/vavallee/bindery/internal/metadata/audnex"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -1171,6 +1173,215 @@ func TestEnrichAudiobook_RejectsMissingASIN(t *testing.T) {
 	h.EnrichAudiobook(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for missing ASIN, got %d", rec.Code)
+	}
+}
+
+// editingAudnexClient stands in for api.audnex.us. While it handles a request
+// it runs edit, which commits a user edit to the book row between the
+// handler's read and its write (#2926).
+type editingAudnexClient struct {
+	edit   func(call int)
+	calls  int
+	title  string
+	author string
+}
+
+func (c *editingAudnexClient) GetBook(_ context.Context, asin string) (*audnex.Book, error) {
+	c.calls++
+	if c.edit != nil {
+		c.edit(c.calls)
+	}
+	var authors []audnex.Person
+	if c.author != "" {
+		authors = []audnex.Person{{Name: c.author}}
+	}
+	return &audnex.Book{
+		ASIN:             asin,
+		Title:            c.title,
+		Authors:          authors,
+		Narrators:        []audnex.Person{{Name: "Audnex Narrator"}},
+		RuntimeLengthMin: 600,
+		Image:            "https://audnex.test/cover.jpg",
+		Summary:          "Audnex summary.",
+	}, nil
+}
+
+func enrichAudiobookFixture(t *testing.T, client *editingAudnexClient) (*BookHandler, *db.BookRepo, *models.Book, context.Context) {
+	t.Helper()
+	_, books, _, author, ctx := bookFixture(t)
+	h := NewBookHandler(books, metadata.NewAggregator(nil).WithAudnexClient(client), nil, nil)
+	book := &models.Book{
+		ForeignID: "B1", AuthorID: author.ID, Title: "T", SortTitle: "t",
+		Status: models.BookStatusWanted, MediaType: models.MediaTypeAudiobook, ASIN: "B000000001",
+		Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	return h, books, book, ctx
+}
+
+func postEnrichAudiobook(h *BookHandler, id int64) *httptest.ResponseRecorder {
+	idStr := strconv.FormatInt(id, 10)
+	req := withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/book/"+idStr+"/enrich-audiobook", nil), "id", idStr)
+	rec := httptest.NewRecorder()
+	h.EnrichAudiobook(rec, req)
+	return rec
+}
+
+// userEditBook applies an edit the way the book edit endpoint does: a fresh
+// read and a full row write, which bumps updated_at.
+func userEditBook(t *testing.T, ctx context.Context, books *db.BookRepo, id int64, mutate func(*models.Book)) {
+	t.Helper()
+	current, err := books.GetByID(ctx, id)
+	if err != nil || current == nil {
+		t.Errorf("load book for concurrent edit: %v", err)
+		return
+	}
+	mutate(current)
+	if err := books.Update(ctx, current); err != nil {
+		t.Errorf("concurrent edit: %v", err)
+	}
+}
+
+func TestEnrichAudiobook_PersistsAudnexFields(t *testing.T) {
+	client := &editingAudnexClient{}
+	h, books, book, ctx := enrichAudiobookFixture(t, client)
+
+	rec := postEnrichAudiobook(h, book.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	stored, err := books.GetByID(ctx, book.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if stored.Narrator != "Audnex Narrator" || stored.DurationSeconds != 36000 ||
+		stored.ImageURL != "https://audnex.test/cover.jpg" || stored.Description != "Audnex summary." {
+		t.Fatalf("audnex enrichment not persisted: %+v", stored)
+	}
+}
+
+// TestEnrichAudiobook_RetriesAfterConcurrentEdit covers #2926: an edit
+// committed during the Audnex call survives. The handler retries once from a
+// fresh read, so the enrichment still lands on top of the edit.
+func TestEnrichAudiobook_RetriesAfterConcurrentEdit(t *testing.T) {
+	client := &editingAudnexClient{}
+	h, books, book, ctx := enrichAudiobookFixture(t, client)
+	client.edit = func(call int) {
+		if call != 1 {
+			return
+		}
+		userEditBook(t, ctx, books, book.ID, func(b *models.Book) {
+			b.Monitored = false
+			b.ImageURL = "https://example.test/user-cover.jpg"
+		})
+	}
+
+	rec := postEnrichAudiobook(h, book.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 after one retry, got %d: %s", rec.Code, rec.Body.String())
+	}
+	stored, err := books.GetByID(ctx, book.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if stored.Monitored || stored.ImageURL != "https://example.test/user-cover.jpg" {
+		t.Fatalf("concurrent edit overwritten by enrichment: monitored=%v image=%q", stored.Monitored, stored.ImageURL)
+	}
+	if stored.Narrator != "Audnex Narrator" || stored.DurationSeconds != 36000 {
+		t.Fatalf("enrichment not applied on retry: narrator=%q duration=%d", stored.Narrator, stored.DurationSeconds)
+	}
+	var got models.Book
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Monitored || got.ImageURL != "https://example.test/user-cover.jpg" || got.Narrator != "Audnex Narrator" {
+		t.Fatalf("response does not match the stored row: %+v", got)
+	}
+}
+
+// TestEnrichAudiobook_MappedRetriesAfterConcurrentEdit covers the branch that
+// maps the book onto the canonical work for its ASIN. That write needs the
+// whole row, and it is guarded too (#2926).
+func TestEnrichAudiobook_MappedRetriesAfterConcurrentEdit(t *testing.T) {
+	client := &editingAudnexClient{title: "Iron Flame", author: "Rebecca Yarros"}
+	_, books, authors, _, ctx := bookFixture(t)
+	primary := &stubProvider{
+		books:  []models.Book{{ForeignID: "OL-IRON", Title: "Iron Flame", EditionCount: 42, Author: &models.Author{Name: "Rebecca Yarros"}}},
+		byISBN: &models.Book{ForeignID: "OL-IRON", Title: "Iron Flame", Description: "Canonical OpenLibrary description for Iron Flame.", Author: &models.Author{Name: "Rebecca Yarros"}},
+	}
+	h := NewBookHandler(books, metadata.NewAggregator(primary).WithAudnexClient(client), nil, nil).WithAuthors(authors)
+	author := &models.Author{ForeignID: "OL-RY", Name: "Rebecca Yarros", SortName: "Yarros, Rebecca", MetadataProvider: "openlibrary", Monitored: true}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "abs:book:lib:iron", AuthorID: author.ID, Title: "Iron Flame (Unabridged)", SortTitle: "Iron Flame (Unabridged)",
+		Status: models.BookStatusWanted, MediaType: models.MediaTypeAudiobook, ASIN: "B0DBJBFHGT",
+		Genres: []string{}, MetadataProvider: "audiobookshelf", Monitored: true,
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	client.edit = func(call int) {
+		if call != 1 {
+			return
+		}
+		userEditBook(t, ctx, books, book.ID, func(b *models.Book) { b.Monitored = false })
+	}
+
+	rec := postEnrichAudiobook(h, book.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 after one retry, got %d: %s", rec.Code, rec.Body.String())
+	}
+	stored, err := books.GetByID(ctx, book.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if stored.ForeignID != "OL-IRON" || stored.Title != "Iron Flame" {
+		t.Fatalf("ASIN metadata map not applied: foreignId=%q title=%q", stored.ForeignID, stored.Title)
+	}
+	if stored.Monitored {
+		t.Fatal("concurrent unmonitor overwritten by the mapped enrichment write")
+	}
+	if stored.Narrator != "Audnex Narrator" {
+		t.Fatalf("enrichment not applied: narrator=%q", stored.Narrator)
+	}
+}
+
+// TestEnrichAudiobook_ConflictWhenEditsKeepLanding: when the row changes
+// underneath both attempts the handler reports a conflict and writes nothing.
+// Each edit sets a new ASIN, so the retry misses the Audnex cache and the
+// fake server gets to edit again.
+func TestEnrichAudiobook_ConflictWhenEditsKeepLanding(t *testing.T) {
+	client := &editingAudnexClient{}
+	h, books, book, ctx := enrichAudiobookFixture(t, client)
+	client.edit = func(call int) {
+		userEditBook(t, ctx, books, book.ID, func(b *models.Book) {
+			b.Monitored = false
+			b.Narrator = "User Narrator"
+			b.ASIN = fmt.Sprintf("B00000000%d", call+1)
+		})
+	}
+
+	rec := postEnrichAudiobook(h, book.ID)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body["reason"] != "changed" {
+		t.Fatalf("409 body = %s, want reason \"changed\"", rec.Body.String())
+	}
+	if client.calls != 2 {
+		t.Fatalf("audnex calls = %d, want 2 (one retry)", client.calls)
+	}
+	stored, err := books.GetByID(ctx, book.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if stored.Monitored || stored.Narrator != "User Narrator" || stored.ASIN != "B000000003" || stored.DurationSeconds != 0 {
+		t.Fatalf("concurrent edit overwritten by enrichment: %+v", stored)
 	}
 }
 

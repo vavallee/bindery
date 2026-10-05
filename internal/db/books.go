@@ -720,10 +720,30 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 }
 
 func (r *BookRepo) Update(ctx context.Context, b *models.Book) error {
+	_, err := r.update(ctx, b, "")
+	return err
+}
+
+// UpdateIfUnchanged is Update guarded on the row not having changed since b
+// was read: expectedUpdatedAt is the snapshot's UpdatedAtRaw, compared as
+// stored text like UpdateHydratedMetadata. It reports false, without writing
+// or reloading b, when a concurrent write got there first. For callers that must
+// write the whole row after a provider call, such as an ASIN metadata map
+// that changes the book's identity (#2926).
+func (r *BookRepo) UpdateIfUnchanged(ctx context.Context, b *models.Book, expectedUpdatedAt string) (bool, error) {
+	if b == nil || b.ID == 0 || expectedUpdatedAt == "" {
+		return false, fmt.Errorf("update book: invalid book snapshot")
+	}
+	return r.update(ctx, b, expectedUpdatedAt)
+}
+
+// update writes every column of b. A non-empty expectedUpdatedAt adds the
+// stored-text updated_at precondition.
+func (r *BookRepo) update(ctx context.Context, b *models.Book, expectedUpdatedAt string) (bool, error) {
 	now := time.Now().UTC()
 	genresJSON, err := json.Marshal(b.Genres)
 	if err != nil {
-		return fmt.Errorf("marshal book genres: %w", err)
+		return false, fmt.Errorf("marshal book genres: %w", err)
 	}
 
 	mediaType := b.MediaType
@@ -738,10 +758,10 @@ func (r *BookRepo) Update(ctx context.Context, b *models.Book) error {
 
 	lockedJSON, err := json.Marshal(lockedOrEmpty(b.LockedFields))
 	if err != nil {
-		return fmt.Errorf("marshal book locked_fields: %w", err)
+		return false, fmt.Errorf("marshal book locked_fields: %w", err)
 	}
 
-	_, err = r.exec.ExecContext(ctx, `
+	query := `
 		UPDATE books SET foreign_id=?, author_id=?, title=?, sort_title=?, original_title=?, description=?, image_url=?,
 		                 release_date=?, genres=?, average_rating=?, ratings_count=?,
 		                 monitored=?, status=?, any_edition_ok=?, selected_edition_id=?,
@@ -749,20 +769,36 @@ func (r *BookRepo) Update(ctx context.Context, b *models.Book) error {
 		                 metadata_provider=?, dedup_key=?, sort_key=?, search_key=?,
 		                 locked_fields=?, last_metadata_refresh_at=?, updated_at=?,
 		                 ebook_file_path=?, audiobook_file_path=?
-		WHERE id=?`,
+		WHERE id=?`
+	args := []any{
 		b.ForeignID, b.AuthorID, b.Title, b.SortTitle, b.OriginalTitle, b.Description, b.ImageURL,
 		timeArg(b.ReleaseDate), string(genresJSON), b.AverageRating, b.RatingsCount,
 		b.Monitored, b.Status, b.AnyEditionOK, b.SelectedEditionID,
 		b.FilePath, b.Language, mediaType, b.Narrator, b.DurationSeconds, b.ASIN,
 		b.MetadataProvider, b.DedupKey, bookSortKey(b.SortTitle, b.Title), textutil.FoldForSearch(b.Title),
 		string(lockedJSON), timeArg(b.LastMetadataRefreshAt), timeValueArg(now),
-		b.EbookFilePath, b.AudiobookFilePath, b.ID)
+		b.EbookFilePath, b.AudiobookFilePath, b.ID,
+	}
+	if expectedUpdatedAt != "" {
+		query += ` AND CAST(updated_at AS TEXT)=?`
+		args = append(args, expectedUpdatedAt)
+	}
+	res, err := r.exec.ExecContext(ctx, query, args...)
 	if err != nil {
-		return fmt.Errorf("update book %d: %w", b.ID, err)
+		return false, fmt.Errorf("update book %d: %w", b.ID, err)
+	}
+	if expectedUpdatedAt != "" {
+		n, err := res.RowsAffected()
+		if err != nil {
+			return false, fmt.Errorf("check update for book %d: %w", b.ID, err)
+		}
+		if n == 0 {
+			return false, nil
+		}
 	}
 	b.UpdatedAt = now
 	b.UpdatedAtRaw = timeValueText(now)
-	return nil
+	return true, nil
 }
 
 // UpdateHydratedMetadata persists only the fields written by edition hydration
@@ -870,22 +906,56 @@ func (r *BookRepo) MarkWantedMonitored(ctx context.Context, id int64) error {
 // AddBookFile records a new on-disk file in book_files and refreshes the
 // book's aggregate status. Multiple files for the same format are all tracked
 // (e.g. epub + mobi + pdf from a multi-file download).
+//
+// Re-adding a path the book already tracks is a no-op success. A path another
+// existing book tracks returns *PathOwnedError (match it with errors.As) and
+// records nothing, so a caller can never report an import that tracked
+// nothing as a success (#2937). A row left by a deleted book is taken over.
 func (r *BookRepo) AddBookFile(ctx context.Context, bookID int64, format, path string) error {
-	if err := r.files.Add(ctx, bookID, format, path); err != nil {
+	if _, err := r.trackBookFile(ctx, bookID, format, path); err != nil {
 		return err
 	}
 	return r.refreshBookStatus(ctx, bookID)
 }
 
 // AddBookFileIfMissing records a new on-disk file and reports whether this call
-// inserted it, refreshing the book's aggregate status either way. See
-// BookFileRepo.AddIfMissing for why the caller needs to know (#1635).
+// made the row the book's, refreshing the book's aggregate status either way.
+// See BookFileRepo.AddIfMissing for why the caller needs to know (#1635). A
+// path another book owns returns *PathOwnedError, as AddBookFile does.
 func (r *BookRepo) AddBookFileIfMissing(ctx context.Context, bookID int64, format, path string) (bool, error) {
-	created, err := r.files.AddIfMissing(ctx, bookID, format, path)
+	res, err := r.trackBookFile(ctx, bookID, format, path)
 	if err != nil {
 		return false, err
 	}
-	return created, r.refreshBookStatus(ctx, bookID)
+	return res.Created(), r.refreshBookStatus(ctx, bookID)
+}
+
+// trackBookFile is BookFileRepo.Track with the orphan takeover logged, since
+// it changes a row the caller did not create.
+func (r *BookRepo) trackBookFile(ctx context.Context, bookID int64, format, path string) (TrackResult, error) {
+	res, err := r.files.Track(ctx, bookID, format, path)
+	if err == nil && res.Outcome == TrackReclaimedOrphan {
+		slog.Warn("book_files: took over a row left by a deleted book",
+			"path", path, "bookID", bookID, "deletedBookID", res.PreviousBookID)
+	}
+	return res, err
+}
+
+// MoveBookFile makes toBookID the owner of path and refreshes the status of
+// both books, returning the previous owner (0 when the path was untracked).
+// Only an explicit user action that says the file belongs to toBookID (Fix
+// match) may call this; an import must use AddBookFile, which refuses (#2937).
+func (r *BookRepo) MoveBookFile(ctx context.Context, path string, toBookID int64, format string) (int64, error) {
+	prev, err := r.files.MoveToBook(ctx, toBookID, format, path)
+	if err != nil {
+		return 0, err
+	}
+	if prev != 0 && prev != toBookID {
+		if err := r.refreshBookStatus(ctx, prev); err != nil {
+			return prev, err
+		}
+	}
+	return prev, r.refreshBookStatus(ctx, toBookID)
 }
 
 // ListFiles returns all book_files rows for the given book.

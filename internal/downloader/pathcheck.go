@@ -138,6 +138,27 @@ func RemapClientPath(client *models.DownloadClient, rawPath string, global *path
 	return rawPath, RemapRuleNone
 }
 
+// ClientSidePath is RemapClientPath run the other way: it renders a path on
+// Bindery's filesystem in the download client's own namespace, for a path
+// Bindery sends to the client. The precedence is the same, so whatever is
+// sent reads back to where it started: the client's own PathRemap first, and
+// only if none of its rules covers the path the global
+// BINDERY_DOWNLOAD_PATH_REMAP (#2665).
+//
+// "Covers" means a rule matched, not that the path changed. A client that
+// mounts Bindery's download folder at the same path, next to a global remap
+// written for other clients, opts out of the global remap with an identity
+// rule such as "/downloads:/downloads"; that rule matches and maps the folder
+// to itself, so the global remap is not consulted.
+func ClientSidePath(client *models.DownloadClient, localPath string, global *pathmap.Remapper) string {
+	if client != nil && strings.TrimSpace(client.PathRemap) != "" {
+		if clientPath, matched := pathmap.Parse(client.PathRemap).ApplyInverseMatched(localPath); matched {
+			return clientPath
+		}
+	}
+	return global.ApplyInverse(localPath)
+}
+
 // remapClientPath is RemapClientPath for callers holding the global remap as
 // its raw setting string and needing only the path.
 func remapClientPath(client *models.DownloadClient, rawPath, globalRemap string) string {

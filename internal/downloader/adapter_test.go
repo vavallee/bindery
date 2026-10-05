@@ -13,6 +13,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/pathmap"
 )
 
 func TestProtocolForClient(t *testing.T) {
@@ -1046,5 +1047,83 @@ func TestSendDownload_Transmission_PersistsInfoHash(t *testing.T) {
 				t.Fatalf("expected the lower-cased info hash as RemoteID, got %q", result.RemoteID)
 			}
 		})
+	}
+}
+
+// TestTorrentSavePath_RemapPrecedence: the save path sent to the client is
+// Bindery's download folder run back through the same precedence the importer
+// reads it with (RemapClientPath): the client's own PathRemap first, and
+// BINDERY_DOWNLOAD_PATH_REMAP when that leaves the folder unchanged (#2665).
+func TestTorrentSavePath_RemapPrecedence(t *testing.T) {
+	cases := []struct {
+		name        string
+		clientRemap string
+		globalRemap string
+		downloadDir string
+		want        string
+	}{
+		{name: "neither set sends Bindery's folder", downloadDir: "/downloads", want: "/downloads"},
+		{name: "client remap only", clientRemap: "/seedbox:/downloads", downloadDir: "/downloads/books", want: "/seedbox/books"},
+		{name: "global remap only", globalRemap: "/data:/downloads", downloadDir: "/downloads", want: "/data"},
+		{name: "global remap only, under the prefix", globalRemap: "/data:/downloads", downloadDir: "/downloads/books", want: "/data/books"},
+		{name: "both set, client remap wins", clientRemap: "/seedbox:/downloads", globalRemap: "/data:/downloads", downloadDir: "/downloads/books", want: "/seedbox/books"},
+		{name: "client remap misses, global applies", clientRemap: "/other:/elsewhere", globalRemap: "/data:/downloads", downloadDir: "/downloads/books", want: "/data/books"},
+		{name: "global remap to a Windows client", globalRemap: `D:\Torrents:/downloads`, downloadDir: "/downloads/books", want: `D:\Torrents\books`},
+		{name: "global remap to a network share", globalRemap: `\\nas\torrents:/downloads`, downloadDir: "/downloads/books", want: `\\nas\torrents\books`},
+		{name: "no download folder sends nothing", globalRemap: "/data:/downloads", want: ""},
+		// A client that mounts Bindery's folder at the same path opts out of
+		// a global remap written for other clients with an identity rule.
+		// The rule matches without changing the path, which must still stop
+		// the global fallback.
+		{name: "identity client remap opts out of the global remap", clientRemap: "/downloads:/downloads", globalRemap: "/data:/downloads", downloadDir: "/downloads/books", want: "/downloads/books"},
+		{name: "identity client remap on the folder itself", clientRemap: "/downloads:/downloads", globalRemap: "/data:/downloads", downloadDir: "/downloads", want: "/downloads"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &models.DownloadClient{Type: "rtorrent", PathRemap: tc.clientRemap}
+			got := torrentSavePath(client, SendOptions{DownloadDir: tc.downloadDir, GlobalRemap: tc.globalRemap})
+			if got != tc.want {
+				t.Errorf("torrentSavePath = %q, want %q", got, tc.want)
+			}
+			if got == "" {
+				return
+			}
+			// Whatever is sent must read back as Bindery's own folder, which
+			// is the point of sharing the importer's precedence.
+			if back, _ := RemapClientPath(client, got, pathmap.Parse(tc.globalRemap)); back != tc.downloadDir {
+				t.Errorf("RemapClientPath(%q) = %q, want the download folder %q back", got, back, tc.downloadDir)
+			}
+		})
+	}
+}
+
+// TestSendDownload_QbittorrentGlobalRemapOnly: with no category qBittorrent
+// takes the save path Bindery sends, and with only the global remap set that
+// path must be the client's own, not Bindery's container folder (#2665).
+func TestSendDownload_QbittorrentGlobalRemapOnly(t *testing.T) {
+	var gotSavePath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			_ = r.ParseForm()
+			gotSavePath = r.FormValue("savepath")
+			_, _ = w.Write([]byte("Ok."))
+		}
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p"}
+	_, err := SendDownload(context.Background(), client, "magnet:?xt=urn:btih:ABCDEF123&dn=Book", "", SendOptions{
+		MediaType:   models.MediaTypeEbook,
+		DownloadDir: "/downloads",
+		GlobalRemap: "/data:/downloads",
+	})
+	if err != nil {
+		t.Fatalf("SendDownload: %v", err)
+	}
+	if gotSavePath != "/data" {
+		t.Errorf("savepath = %q, want /data from the global remap", gotSavePath)
 	}
 }

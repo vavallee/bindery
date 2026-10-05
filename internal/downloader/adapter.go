@@ -63,6 +63,10 @@ type SendOptions struct {
 	// the full table. Usenet clients ignore them.
 	SeedTimeMinutes         *int
 	InactiveSeedTimeMinutes *int
+	// GlobalRemap is BINDERY_DOWNLOAD_PATH_REMAP. torrentSavePath falls back
+	// to it when the client's own PathRemap does not cover the download
+	// folder, the same precedence the importer reads paths back with (#2665).
+	GlobalRemap string
 }
 
 // SeedLimits is the set of per-indexer seeding overrides resolved for a grab.
@@ -286,7 +290,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		rt := RtorrentFor(client)
 		// Category is the ruTorrent label (d.custom1); the download directory
 		// comes from Bindery's configured download dir run back through the
-		// client's PathRemap, same as qBittorrent's savePath.
+		// path remaps, same as qBittorrent's savePath.
 		hash, err := rt.AddTorrent(ctx, sourceURL, ResolveCategory(client, opts.MediaType), torrentSavePath(client, opts), opts.SeedRatio)
 		if err != nil {
 			return nil, err
@@ -321,14 +325,16 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 }
 
 // torrentSavePath renders Bindery's target download directory in the download
-// client's own filesystem namespace by running it back through the client's
-// PathRemap. Shared by qBittorrent (savePath) and rTorrent (d.directory.set).
+// client's own filesystem namespace via ClientSidePath: the client's PathRemap
+// first, then the global remap in opts.GlobalRemap, the order the importer
+// reads the path back in. Shared by qBittorrent (savePath) and rTorrent
+// (d.directory.set).
 func torrentSavePath(client *models.DownloadClient, opts SendOptions) string {
 	localPath := TargetDownloadDir(opts.MediaType, opts.DownloadDir, opts.AudiobookDownloadDir)
 	if strings.TrimSpace(localPath) == "" {
 		return ""
 	}
-	return pathmap.Parse(client.PathRemap).ApplyInverse(localPath)
+	return ClientSidePath(client, localPath, pathmap.Parse(opts.GlobalRemap))
 }
 
 // errTransmissionSessionID is returned when a removal is asked to act on a

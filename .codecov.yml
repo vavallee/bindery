@@ -1,12 +1,11 @@
 coverage:
   status:
-    project:
-      default:
-        # Block when overall coverage drops more than 1% vs the base — catches
-        # silent erosion. (Was informational, so it never enforced anything.)
-        target: auto
-        threshold: 1%
-        informational: false
+    # Project status is per flag (see flag_management below), so a frontend
+    # upload can only move codecov/project/frontend and never fails the
+    # backend's comparison, and vice versa. No overall project status: the
+    # first uploads with both flags would compare a Go only base against a
+    # Go plus web head and report a change nobody made.
+    project: false
     patch:
       default:
         # New/changed lines must be >=70% covered. Patch only measures the diff,
@@ -14,14 +13,51 @@ coverage:
         target: 70%
         informational: false
 
+flag_management:
+  default_rules:
+    # A commit that only uploads one flag (a rerun, a skipped job) reuses the
+    # other flag's last report instead of reading as a coverage drop.
+    carryforward: true
+    statuses:
+      # Block when a flag's coverage drops more than 1% vs the base, which
+      # catches silent erosion. Same rule the single project status had.
+      - type: project
+        target: auto
+        threshold: 1%
+        informational: false
+  individual_flags:
+    # Go tests (validate-go on PRs, test on main), from coverage.out.
+    - name: backend
+      paths:
+        - internal/
+        - tools/
+    # Vitest with v8 coverage (validate-frontend on PRs, test on main), from
+    # web/coverage/lcov.info.
+    - name: frontend
+      paths:
+        - web/
+
 comment:
   layout: "reach, diff, flags, files"
   behavior: default
   require_changes: true
 
 ignore:
+  # Process wiring (cmd/bindery) and two separate services; mostly untested
+  # by design and not what the badge is meant to describe.
   - "cmd/**"
   - "internal/migrate/**"
-  - "web/**"
   - "**/*_mock.go"
   - "**/mock_*.go"
+  # Frontend: count application source only. web/vite.config.ts limits the
+  # lcov report the same way; this is the second fence.
+  - "web/**/*.test.ts"
+  - "web/**/*.test.tsx"
+  - "web/src/test/**"
+  - "web/src/test-*"
+  - "web/src/i18n/locales/**"
+  - "web/**/*.d.ts"
+  - "web/*.config.*"
+  - "web/eslint-rules/**"
+  - "web/dist/**"
+  - "web/coverage/**"

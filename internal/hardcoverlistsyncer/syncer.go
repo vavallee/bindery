@@ -718,15 +718,28 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 }
 
 // enrichAudiobook applies the best-effort Audnex enrichment for an ASIN that
-// arrived inline from a Hardcover list, then persists its mutations.
+// arrived inline from a Hardcover list, then persists its mutations. The write
+// is guarded on the row as it was before the Audnex call, so an edit made
+// during the call wins and the enrichment is dropped (#2926).
 func (s *ListSyncer) enrichAudiobook(ctx context.Context, book *models.Book) {
 	if s.enricher == nil || book.ASIN == "" {
 		return
 	}
+	expectedUpdatedAt := book.UpdatedAtRaw
 	if err := s.enricher.EnrichAudiobook(ctx, book); err != nil {
 		slog.Debug("audiobook enrichment skipped", "title", book.Title, "asin", book.ASIN, "error", err)
-	} else if err := s.books.Update(ctx, book); err != nil {
+		return
+	}
+	updated, err := s.books.UpdateHydratedMetadata(ctx, book, expectedUpdatedAt)
+	if err != nil {
 		slog.Warn("failed to persist enriched book", "title", book.Title, "error", err)
+	} else if !updated {
+		// book now holds the concurrent edit. On the create path that is the
+		// row the search queued after this sees; the widen path queued its
+		// copy before enriching. Logged at INFO because list sync does not
+		// retry this enrichment: a tracked book is skipped on later syncs.
+		// (ABS, by contrast, enriches again on its next import.)
+		slog.Info("audiobook enrichment discarded after concurrent book update", "title", book.Title, "book_id", book.ID)
 	}
 }
 

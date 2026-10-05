@@ -667,6 +667,7 @@
       "bookFileDeleted": "File Deleted",
       "bookRenamed": "File Renamed",
       "bookRebound": "Rebound",
+      "bookFileMoved": "File Moved",
       "bookLanguageCorrected": "Language Corrected"
     },
     "empty": "No history events found",
@@ -2005,6 +2006,7 @@
     "hardcoverHint": "Enter a Hardcover book slug or numeric ID prefixed with hc:.",
     "searchFailed": "Search failed. Try again or enter an exact ID.",
     "conflict": "This metadata record conflicts with an existing book.",
+    "changed": "This book changed while it was being rebound. Try again.",
     "failed": "Re-bind failed. Try again.",
     "authorMismatch": "Author mismatch",
     "authorMismatchHint": "This record belongs to {{upstream}}, but the book is attributed to {{current}}. Re-bind anyway, or go back and choose another record.",

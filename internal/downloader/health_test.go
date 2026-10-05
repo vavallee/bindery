@@ -400,3 +400,33 @@ func TestCheckDownloadClientHealth_MalformedHost(t *testing.T) {
 		})
 	}
 }
+
+// TestQbittorrentCategoryPath_GlobalRemapOnly: the category health check
+// resolves qBittorrent's save path with the importer's precedence, so a
+// client covered only by BINDERY_DOWNLOAD_PATH_REMAP is healthy, as its
+// imports are (#2665).
+func TestQbittorrentCategoryPath_GlobalRemapOnly(t *testing.T) {
+	tmp := t.TempDir()
+	local := filepath.Join(tmp, "books")
+	if err := os.MkdirAll(local, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/categories":
+			_, _ = w.Write([]byte(`{"books":{"name":"books","savePath":"/qbit/books"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p", Category: "books"}
+
+	got := CheckDownloadClientHealth(context.Background(), client, tmp, "", "/qbit:"+tmp)
+	if got.Status != HealthOK {
+		t.Fatalf("status = %q, want %q; message=%s", got.Status, HealthOK, got.Message)
+	}
+}

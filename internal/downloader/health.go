@@ -195,7 +195,7 @@ func CheckDownloadClientHealth(ctx context.Context, client *models.DownloadClien
 		return models.DownloadClientHealth{Status: HealthError, Message: err.Error()}
 	}
 	if client.Type == "qbittorrent" {
-		return checkQbittorrentCategoryPath(ctx, client, downloadDir, audiobookDownloadDir)
+		return checkQbittorrentCategoryPath(ctx, client, downloadDir, audiobookDownloadDir, globalRemap)
 	}
 
 	vis := CheckCompletedPathVisibility(ctx, client, downloadDir, audiobookDownloadDir, globalRemap)
@@ -242,7 +242,7 @@ func TargetDownloadDir(mediaType, downloadDir, audiobookDownloadDir string) stri
 	return strings.TrimSpace(downloadDir)
 }
 
-func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir string) models.DownloadClientHealth {
+func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) models.DownloadClientHealth {
 	category := strings.TrimSpace(client.Category)
 	if category == "" {
 		return healthError("qBittorrent category is empty; configure a category with a save path")
@@ -260,14 +260,14 @@ func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadCl
 	// Validate the ebook category first; if it fails, return immediately.
 	// When CategoryAudiobook is set, validate it against audiobookDownloadDir
 	// as well — both must be healthy for the client to be healthy (#700).
-	if h := validateQbittorrentCategorySavePath(ctx, qb, client, category, expected, categories); h.Status != HealthOK {
+	if h := validateQbittorrentCategorySavePath(ctx, qb, client, category, expected, globalRemap, categories); h.Status != HealthOK {
 		return h
 	}
 
 	audioCategory := strings.TrimSpace(client.CategoryAudiobook)
 	if audioCategory != "" && audioCategory != category {
 		expectedAudio := cleanConfiguredDir(ExpectedDownloadDirForClient(client, models.MediaTypeAudiobook, downloadDir, audiobookDownloadDir))
-		if h := validateQbittorrentCategorySavePath(ctx, qb, client, audioCategory, expectedAudio, categories); h.Status != HealthOK {
+		if h := validateQbittorrentCategorySavePath(ctx, qb, client, audioCategory, expectedAudio, globalRemap, categories); h.Status != HealthOK {
 			return h
 		}
 	}
@@ -302,7 +302,7 @@ func cleanConfiguredDir(dir string) string {
 
 // validateQbittorrentCategorySavePath checks that a single qBittorrent category
 // exists and that its (path-remapped) save path falls at or under expected.
-func validateQbittorrentCategorySavePath(ctx context.Context, qb *qbittorrent.Client, client *models.DownloadClient, category, expected string, categories map[string]qbittorrent.Category) models.DownloadClientHealth {
+func validateQbittorrentCategorySavePath(ctx context.Context, qb *qbittorrent.Client, client *models.DownloadClient, category, expected, globalRemap string, categories map[string]qbittorrent.Category) models.DownloadClientHealth {
 	qbCategory, ok := categories[category]
 	if !ok {
 		if expected == "" {
@@ -324,8 +324,9 @@ func validateQbittorrentCategorySavePath(ctx context.Context, qb *qbittorrent.Cl
 	}
 
 	// The remap runs on the save path exactly as qBittorrent reports it; only
-	// its result is a path on this host.
-	localPath := filepath.Clean(pathmap.Parse(client.PathRemap).Apply(savePath))
+	// its result is a path on this host. Same precedence as the importer:
+	// the client's remap, then the global one.
+	localPath := filepath.Clean(remapClientPath(client, savePath, globalRemap))
 	// With no download directory configured there is nothing to be under, and
 	// the stat below is the whole check (#2902).
 	if expected != "" && !pathIsAtOrUnder(localPath, expected) {

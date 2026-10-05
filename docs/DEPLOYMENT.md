@@ -116,6 +116,13 @@ From the first release after v1.40.0, every archive and the checksums file also 
 gh attestation verify bindery_<version>_linux_amd64.tar.gz --repo vavallee/bindery
 ```
 
+From v1.40.1 the same attestation is also attached to the release as `bindery_<version>.intoto.jsonl` (a Sigstore bundle covering every archive and the checksums file), so you can verify against that file instead of fetching the attestation from GitHub's API:
+
+```bash
+gh attestation verify bindery_<version>_linux_amd64.tar.gz --repo vavallee/bindery \
+  --bundle bindery_<version>.intoto.jsonl
+```
+
 Each archive also has an SPDX SBOM (`<archive>.sbom.spdx.json`) beside it on the release.
 
 Each archive also carries `LICENSE` and `THIRD_PARTY_LICENSES.md` — the licenses
@@ -369,6 +376,10 @@ reported paths drive the actual imports.
 When Bindery and your download client run in **separate containers**, they typically mount the same storage volume at different paths. Bindery needs to read the files the download client just completed, but the path the client reports (e.g. `/downloads/complete/My.Book`) doesn't exist inside Bindery's container.
 
 Set a download-client path remap in **Settings → Download clients** or set the global `BINDERY_DOWNLOAD_PATH_REMAP` fallback to a comma-separated list of `from:to` pairs. Bindery applies a longest-prefix match to every path the download client reports, replacing the matched prefix before it tries to access the file. A per-client remap takes precedence when it matches the reported path; the global env var still applies as a fallback.
+
+The same remaps also run in reverse, with the same precedence, when Bindery tells a client where to save a grab. rTorrent always gets a download directory, and qBittorrent gets a save path when the client has no category set. That directory is Bindery's download folder (`BINDERY_DOWNLOAD_DIR`, or `BINDERY_AUDIOBOOK_DOWNLOAD_DIR` for audiobooks) translated into the client's path: by the client's own remap when it covers that folder, otherwise by `BINDERY_DOWNLOAD_PATH_REMAP`. With `BINDERY_DOWNLOAD_PATH_REMAP=/data:/downloads` and no client remap, rTorrent is told to save into `/data`. Bindery 1.40.0 and earlier applied only the client's own remap here, so with just the global remap set the client was sent Bindery's `/downloads`.
+
+On the way out the global remap matches every client, because its right side is Bindery's own folder. If the global remap is written for one client (say SABnzbd sees Bindery's `/downloads` as `/data`) and an rTorrent or category-less qBittorrent mounts Bindery's folder at the same path, give that client an identity path remap, `/downloads:/downloads`. A client remap that covers the folder always wins, even when it maps it to itself, so that client keeps being sent `/downloads`. **Diagnose** on the client warns when the global remap produced the folder it sends while the client's own default save folder sits on Bindery's path, which is what that setup looks like. If the client really keeps that storage at the remapped path, ignore the warning.
 
 Per-client remaps are stored on each download client, so separate qBittorrent / SABnzbd / NZBGet instances can map different mount points. Existing download clients keep an empty remap after upgrade, which preserves the previous global-only behavior until you add a client-specific value.
 

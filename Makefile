@@ -10,6 +10,9 @@ GO_LICENSES_VERSION ?= v1.6.0
 # @latest would let a local run disagree with CI in either direction.
 GOVULNCHECK_VERSION ?= d1f380186385b4f64e00313f31743df8e4b89a77
 
+# Local `make security` only; CI runs gosec through golangci-lint.
+GOSEC_VERSION ?= v2.29.0
+
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DATE    ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -92,8 +95,8 @@ clean: ## Remove build artifacts
 	rm -rf web/dist web/node_modules
 
 security: ## Run local security scanners (gosec, govulncheck, gitleaks, npm audit)
-	@command -v gosec >/dev/null || go install github.com/securego/gosec/v2/cmd/gosec@latest
-	@command -v govulncheck >/dev/null || go install golang.org/x/vuln/cmd/govulncheck@latest
+	@command -v gosec >/dev/null || go install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION)
+	@command -v govulncheck >/dev/null || go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	gosec -quiet ./...
 	govulncheck ./...
 	@if command -v gitleaks >/dev/null; then gitleaks detect --no-banner --redact; \

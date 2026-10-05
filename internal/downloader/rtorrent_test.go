@@ -512,3 +512,58 @@ func TestRtorrentFor_IsCached(t *testing.T) {
 		t.Fatalf("constructor count after rotation: got %d, want 2", got)
 	}
 }
+
+// TestSendDownload_RtorrentGlobalRemapOnly: rTorrent always receives
+// d.directory.set, so with only BINDERY_DOWNLOAD_PATH_REMAP configured the
+// directory must still be in rTorrent's namespace (#2665).
+func TestSendDownload_RtorrentGlobalRemapOnly(t *testing.T) {
+	stub := newRtorrentStub(t, "0", "")
+	client := stub.client(t, 105)
+
+	magnet := "magnet:?xt=urn:btih:" + rtorrentTestHash
+	if _, err := SendDownload(context.Background(), client, magnet, "The Book", SendOptions{
+		DownloadDir: "/downloads",
+		GlobalRemap: "/data:/downloads",
+	}); err != nil {
+		t.Fatalf("SendDownload: %v", err)
+	}
+	body := stub.allBodies()
+	if !strings.Contains(body, "d.directory.set=&#34;/data&#34;") {
+		t.Errorf("download directory not run back through the global remap: %s", body)
+	}
+}
+
+// TestSendDownload_RtorrentMixedSetup is a global remap written for one client
+// (SABnzbd sees Bindery's /downloads as /data) next to an rTorrent that mounts
+// Bindery's /downloads directly. The global remap's Bindery side always
+// matches a sent folder, so without an opt out every client gets /data; an
+// identity remap on rTorrent keeps it on /downloads, while a second rTorrent
+// with no remap of its own still follows the global one (#2665).
+func TestSendDownload_RtorrentMixedSetup(t *testing.T) {
+	const global = "/data:/downloads"
+	cases := []struct {
+		name        string
+		clientRemap string
+		want        string
+	}{
+		{name: "identity remap keeps Bindery's folder", clientRemap: "/downloads:/downloads", want: "/downloads"},
+		{name: "no client remap follows the global one", want: "/data"},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := newRtorrentStub(t, "0", "")
+			client := stub.client(t, int64(106+i))
+			client.PathRemap = tc.clientRemap
+			magnet := "magnet:?xt=urn:btih:" + rtorrentTestHash
+			if _, err := SendDownload(context.Background(), client, magnet, "The Book", SendOptions{
+				DownloadDir: "/downloads",
+				GlobalRemap: global,
+			}); err != nil {
+				t.Fatalf("SendDownload: %v", err)
+			}
+			if body := stub.allBodies(); !strings.Contains(body, "d.directory.set=&#34;"+tc.want+"&#34;") {
+				t.Errorf("want d.directory.set=%q in: %s", tc.want, body)
+			}
+		})
+	}
+}

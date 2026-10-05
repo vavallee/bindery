@@ -3,6 +3,7 @@ package downloader
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/fsutil"
@@ -71,5 +72,62 @@ func TestFindCaseInsensitivePathUnder(t *testing.T) {
 	}
 	if r, _ := FindCaseInsensitivePathUnder(base, filepath.Join(base, "Link", "secret")); r != "" {
 		t.Errorf("followed an exact-named symlink out of base to %q", r)
+	}
+}
+
+func TestClientPathsOverlap(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{"/downloads", "/downloads", true},
+		{"/downloads/books", "/downloads", true},
+		{"/downloads", "/downloads/incomplete/", true},
+		{"/data", "/downloads", false},
+		{"/down", "/downloads", false},
+		{"/", "/downloads", true},
+		{`D:\Torrents\books`, `d:/torrents`, true},
+		{`\\nas\share\books`, `\\NAS\share`, true},
+		{`D:\Torrents`, `E:\Torrents`, false},
+	}
+	for _, tc := range tests {
+		if got := clientPathsOverlap(tc.a, tc.b); got != tc.want {
+			t.Errorf("clientPathsOverlap(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+}
+
+// TestNoteAgainstDefault: the warning fires only for the mixed setup, a
+// client whose default sits on Bindery's own folder while the global remap
+// sends it somewhere else, and stays quiet on correct setups (#2665).
+func TestNoteAgainstDefault(t *testing.T) {
+	tests := []struct {
+		name string
+		sent sentSavePath
+		def  string
+		warn bool
+	}{
+		{"mixed setup: default is Bindery's folder", sentSavePath{path: "/data", local: "/downloads", viaGlobal: true}, "/downloads", true},
+		{"mixed setup: default inside Bindery's folder", sentSavePath{path: "/data/books", local: "/downloads/books", viaGlobal: true}, "/downloads/books/complete", true},
+		{"mixed setup: default above Bindery's folder", sentSavePath{path: "/data/books", local: "/downloads/books", viaGlobal: true}, "/downloads", true},
+		{"default on the sent folder", sentSavePath{path: "/data/books", local: "/downloads/books", viaGlobal: true}, "/data", false},
+		{"dedicated folder next to the client default", sentSavePath{path: "/downloads/books", local: "/media/books", viaGlobal: true}, "/downloads/complete", false},
+		{"rTorrent split incomplete and complete", sentSavePath{path: "/seedbox/complete/books", local: "/media/books", viaGlobal: true}, "/seedbox/incomplete", false},
+		{"stock rTorrent relative default", sentSavePath{path: "/data", local: "/downloads", viaGlobal: true}, "./", false},
+		{"tilde default", sentSavePath{path: "/data", local: "/downloads", viaGlobal: true}, "~/download", false},
+		{"no default reported", sentSavePath{path: "/data", local: "/downloads", viaGlobal: true}, "", false},
+		{"folder from the client's own remap", sentSavePath{path: "/data", local: "/downloads", viaGlobal: false}, "/downloads", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var info ClientPathInfo
+			tc.sent.noteAgainstDefault(&info, "rTorrent", tc.def)
+			if got := info.Note != ""; got != tc.warn {
+				t.Fatalf("warned = %v, want %v (note %q)", got, tc.warn, info.Note)
+			}
+			if tc.warn && (!strings.Contains(info.NoteFix, tc.sent.local+":"+tc.sent.local) || !strings.Contains(info.Note, "ignore this")) {
+				t.Errorf("note = %q, fix = %q", info.Note, info.NoteFix)
+			}
+		})
 	}
 }

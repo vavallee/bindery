@@ -18,18 +18,37 @@ type Location struct {
 	NoteFix string
 }
 
+// LabelID is the form of a category Deluge's Label plugin knows it by. The
+// plugin lowercases a label when it is created but its set_torrent and
+// get_options take the id exactly as given, so a category typed as "Books"
+// only reaches the "books" label when Bindery lowercases it first (#2665).
+func LabelID(label string) string {
+	return strings.ToLower(label)
+}
+
+// Labels lists the labels Deluge's Label plugin holds, as label.get_labels
+// returns them (always lowercase). An error usually means the plugin is off,
+// in which case the method does not exist. The plugin answers a list, empty
+// or not, so a null answer is an error too rather than "no labels".
+func (c *Client) Labels(ctx context.Context) ([]string, error) {
+	var labels *[]string
+	if err := c.call(ctx, true, "label.get_labels", []any{}, &labels); err != nil {
+		return nil, fmt.Errorf("list deluge labels: %w", err)
+	}
+	if labels == nil {
+		return nil, fmt.Errorf("list deluge labels: no label list in the reply")
+	}
+	return *labels, nil
+}
+
 // DownloadLocation returns where deluged leaves a torrent that Bindery adds
-// with label, the label exactly as AddTorrent sends it to label.set_torrent.
+// with label, looked up as LabelID, the form AddTorrent sends to
+// label.set_torrent.
 //
 // Order of precedence matches Deluge: a label whose options apply a move
 // completed path wins, then the global move_completed_path when "move
 // completed" is on, then download_location. Only the needed keys are
 // requested.
-//
-// The Label plugin only knows lowercase labels and its set_torrent does not
-// lowercase what it is given, so a label with capitals is rejected. AddTorrent
-// ignores that error, which leaves the torrent unlabelled in the global
-// folder; this reports exactly that.
 func (c *Client) DownloadLocation(ctx context.Context, label string) (Location, error) {
 	var cfg struct {
 		DownloadLocation  string `json:"download_location"`
@@ -48,11 +67,7 @@ func (c *Client) DownloadLocation(ctx context.Context, label string) (Location, 
 	if label == "" {
 		return loc, nil
 	}
-	if label != strings.ToLower(label) {
-		loc.Note = fmt.Sprintf("Deluge only accepts lowercase labels, so grabs with the category %q are not labelled and land in the default folder.", label)
-		loc.NoteFix = "Use a lowercase category for this client in Bindery."
-		return loc, nil
-	}
+	label = LabelID(label)
 	var opts struct {
 		ApplyMoveCompleted bool   `json:"apply_move_completed"`
 		MoveCompleted      bool   `json:"move_completed"`

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import BookDetailPage, { SearchResultsSection } from './BookDetailPage'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import type { Author, Book, BookFile, Download, HistoryEvent, Indexer, SearchResult } from '../api/client'
 import en from '../i18n/locales/en.json'
 
@@ -1784,5 +1784,23 @@ describe('BookDetailPage automatic search (#2668)', () => {
     await screen.findByRole('heading', { name: 'The Final Empire' })
 
     expect(screen.getByRole('button', { name: new RegExp(autoLabel) })).toBeInTheDocument()
+  })
+})
+
+describe('BookDetailPage — audnex enrich', () => {
+  // A 409 from enrich means the book was edited during the Audnex lookup and
+  // kept changing on the server's one retry (#2926). The page shows the
+  // server's explanation rather than the generic failure text.
+  it('shows the server message when the book changed during enrichment', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ mediaType: 'audiobook', asin: 'B000000001' }))
+    vi.mocked(api.enrichAudiobook).mockRejectedValue(
+      new ApiError(409, { error: 'This book changed while it was being enriched. Try again.', reason: 'changed' }, 'Conflict'))
+
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    fireEvent.click(screen.getByRole('button', { name: 'Enrich from audnex' }))
+
+    expect(await screen.findByText('This book changed while it was being enriched. Try again.')).toBeInTheDocument()
+    expect(screen.queryByText('Enrich failed')).not.toBeInTheDocument()
   })
 })

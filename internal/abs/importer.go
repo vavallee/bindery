@@ -819,12 +819,21 @@ func (i *Importer) enrichAudiobookFromASIN(ctx context.Context, book *models.Boo
 	if book.MediaType != models.MediaTypeAudiobook && book.MediaType != models.MediaTypeBoth {
 		return
 	}
+	// Guard the write on the row as it was before the Audnex call, so an edit
+	// made during the call wins (#2926), as hydration does (#2758).
+	expectedUpdatedAt := book.UpdatedAtRaw
 	if err := i.meta.EnrichAudiobook(ctx, book); err != nil {
 		slog.Debug("abs import: audnex enrichment skipped", "bookID", book.ID, "asin", book.ASIN, "error", err)
 		return
 	}
-	if err := i.books.Update(ctx, book); err != nil {
+	updated, err := i.books.UpdateHydratedMetadata(ctx, book, expectedUpdatedAt)
+	if err != nil {
 		slog.Warn("abs import: persisting audnex enrichment failed", "bookID", book.ID, "asin", book.ASIN, "error", err)
+		return
+	}
+	if !updated {
+		// book now holds the concurrent edit; the rest of the import uses it.
+		slog.Debug("abs import: audnex enrichment discarded after concurrent book update", "bookID", book.ID, "asin", book.ASIN)
 	}
 }
 

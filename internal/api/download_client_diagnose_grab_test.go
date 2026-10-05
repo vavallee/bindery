@@ -286,10 +286,20 @@ func TestDiagnose_SlowFilesystemAnswersUnknown(t *testing.T) {
 
 func delugeLabelServer(t *testing.T, downloads string, labelOptions string) (string, int) {
 	t.Helper()
+	return delugeLabelServerWithLabels(t, downloads, labelOptions, "")
+}
+
+// delugeLabelServerWithLabels is delugeLabelServer whose label.get_labels
+// answers labels (a JSON list); "" leaves the method unanswered, as with the
+// plugin off. Like the real plugin, label.get_options knows labels only by
+// their lowercase id.
+func delugeLabelServerWithLabels(t *testing.T, _ string, labelOptions, labels string) (string, int) {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Method string `json:"method"`
-			ID     int64  `json:"id"`
+			Method string            `json:"method"`
+			Params []json.RawMessage `json:"params"`
+			ID     int64             `json:"id"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		switch req.Method {
@@ -297,9 +307,23 @@ func delugeLabelServer(t *testing.T, downloads string, labelOptions string) (str
 			fmt.Fprintf(w, `{"result":true,"error":null,"id":%d}`, req.ID)
 		case "core.get_config_values":
 			fmt.Fprintf(w, `{"result":{"download_location":"/incomplete","move_completed":false,"move_completed_path":""},"error":null,"id":%d}`, req.ID)
+		case "label.get_labels":
+			if labels == "" {
+				fmt.Fprintf(w, `{"result":null,"error":{"code":2,"message":"Unknown method"},"id":%d}`, req.ID)
+				return
+			}
+			fmt.Fprintf(w, `{"result":%s,"error":null,"id":%d}`, labels, req.ID)
 		case "label.get_options":
 			if labelOptions == "" {
 				fmt.Fprintf(w, `{"result":null,"error":{"code":2,"message":"Unknown method"},"id":%d}`, req.ID)
+				return
+			}
+			var label string
+			if len(req.Params) > 0 {
+				_ = json.Unmarshal(req.Params[0], &label)
+			}
+			if label != strings.ToLower(label) {
+				fmt.Fprintf(w, `{"result":null,"error":{"code":2,"message":"KeyError: '%s'"},"id":%d}`, label, req.ID)
 				return
 			}
 			fmt.Fprintf(w, `{"result":%s,"error":null,"id":%d}`, labelOptions, req.ID)
@@ -327,20 +351,16 @@ func TestDiagnose_DelugeLabelMovePath(t *testing.T) {
 		}
 	})
 
-	// The Label plugin rejects a label with capitals and the grab ignores
-	// that error, so the torrent lands in the global folder. The doctor must
-	// say so rather than report the lowercase label's folder.
-	t.Run("capital letters are not labelled", func(t *testing.T) {
+	// Grabs send a category with capitals as the lowercase label Deluge
+	// stores (#2665), so the label's move path applies to it as well.
+	t.Run("capital letters reach the lowercase label", func(t *testing.T) {
 		host, port := delugeLabelServer(t, downloads, string(applied))
 		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads}, &models.DownloadClient{
 			Name: "Deluge", Type: "deluge", Host: host, Port: port, Password: "deluge", Category: "Books", Enabled: true,
 		})
-		path := wantDiagStatus(t, resp, diagCodeClientPath, diagWarn)
-		if resp.Paths[0].ClientPath != "/incomplete" {
-			t.Errorf("clientPath = %q, want the global folder the unlabelled grab lands in", resp.Paths[0].ClientPath)
-		}
-		if !strings.Contains(path.Message, "only accepts lowercase labels") || path.Fix != "Use a lowercase category for this client in Bindery." {
-			t.Errorf("check = %+v", path)
+		path := wantDiagStatus(t, resp, diagCodeClientPath, diagPass)
+		if resp.Paths[0].ClientPath != downloads || !strings.Contains(path.Message, `label "books"`) {
+			t.Errorf("paths = %+v, message = %q", resp.Paths, path.Message)
 		}
 	})
 
@@ -368,35 +388,118 @@ func TestDiagnose_DelugeLabelMovePath(t *testing.T) {
 	})
 }
 
-// TestDiagnose_GlobalRemapOnlyWarnsForSentSavePath: torrentSavePath inverts
-// only the client's own remap, so with just BINDERY_DOWNLOAD_PATH_REMAP the
-// client is sent Bindery's own folder and the round trip back proves nothing.
-func TestDiagnose_GlobalRemapOnlyWarnsForSentSavePath(t *testing.T) {
+// TestDiagnose_DelugeLabelCategory: with the Label plugin on, the category
+// check compares the configured category with Deluge's labels the way grabs
+// send it, lowercased (#2665), and says when it lowercases.
+func TestDiagnose_DelugeLabelCategory(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	downloads := t.TempDir()
+	deluge := func(host string, port int, category string) *models.DownloadClient {
+		return &models.DownloadClient{Name: "Deluge", Type: "deluge", Host: host, Port: port, Password: "deluge", Category: category, Enabled: true}
+	}
+
+	t.Run("a capitalised category matches its lowercase label", func(t *testing.T) {
+		host, port := delugeLabelServerWithLabels(t, downloads, "", `["books","tv"]`)
+		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads}, deluge(host, port, "Books"))
+		cat := wantDiagStatus(t, resp, diagCodeCategory, diagPass)
+		if !strings.Contains(cat.Message, `has the category "books"`) || !strings.Contains(cat.Message, `sends the category "Books" as "books"`) {
+			t.Errorf("message = %q", cat.Message)
+		}
+	})
+
+	t.Run("a lowercase category says nothing about case", func(t *testing.T) {
+		host, port := delugeLabelServerWithLabels(t, downloads, "", `["books"]`)
+		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads}, deluge(host, port, "books"))
+		cat := wantDiagStatus(t, resp, diagCodeCategory, diagPass)
+		if strings.Contains(cat.Message, "lowercase") {
+			t.Errorf("message = %q", cat.Message)
+		}
+	})
+
+	t.Run("a missing label fails", func(t *testing.T) {
+		host, port := delugeLabelServerWithLabels(t, downloads, "", `["tv"]`)
+		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads}, deluge(host, port, "Books"))
+		cat := wantDiagStatus(t, resp, diagCodeCategory, diagFail)
+		if !strings.Contains(cat.Message, `no category "books"`) || !strings.Contains(cat.Message, `"tv"`) {
+			t.Errorf("message = %q", cat.Message)
+		}
+	})
+
+	t.Run("plugin off stays unknown", func(t *testing.T) {
+		host, port := delugeLabelServerWithLabels(t, downloads, "", "")
+		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads}, deluge(host, port, "Books"))
+		cat := wantDiagStatus(t, resp, diagCodeCategory, diagUnknown)
+		if !strings.Contains(cat.Message, "Label plugin") {
+			t.Errorf("message = %q", cat.Message)
+		}
+	})
+}
+
+// TestDiagnose_GlobalRemapAppliesToSentSavePath: the save path a grab sends
+// falls back to BINDERY_DOWNLOAD_PATH_REMAP when the client has no remap of
+// its own (#2665), so the doctor reports the client's folder and the global
+// remap reading it back, not Bindery's own folder.
+func TestDiagnose_GlobalRemapAppliesToSentSavePath(t *testing.T) {
 	defer httpsec.AllowLoopbackForTests()()
 	downloads := t.TempDir()
 
 	t.Run("qbittorrent without a category", func(t *testing.T) {
-		host, port := qbitGrabServer(t, map[string]string{}, "/default")
+		// qBittorrent's default sits above the folder it is sent, so the
+		// global remap is plausibly meant for it and nothing is flagged.
+		host, port := qbitGrabServer(t, map[string]string{}, "/qbit")
 		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads, remap: "/qbit/downloads:" + downloads}, qbitClient(host, port, "", ""))
-		remap := wantDiagStatus(t, resp, diagCodeRemap, diagWarn)
-		if !strings.Contains(remap.Message, "BINDERY_DOWNLOAD_PATH_REMAP is not applied") {
+		wantDiagStatus(t, resp, diagCodeClientPath, diagPass)
+		remap := wantDiagStatus(t, resp, diagCodeRemap, diagPass)
+		if !strings.Contains(remap.Message, "BINDERY_DOWNLOAD_PATH_REMAP") {
 			t.Errorf("message = %q", remap.Message)
 		}
-		if resp.Paths[0].ClientPath != downloads {
-			t.Errorf("clientPath = %q, want Bindery's own folder, as the grab sends it", resp.Paths[0].ClientPath)
+		if resp.Paths[0].ClientPath != "/qbit/downloads" {
+			t.Errorf("clientPath = %q, want the client's folder from the global remap, as the grab sends it", resp.Paths[0].ClientPath)
 		}
 	})
 
-	t.Run("a client remap removes the warning", func(t *testing.T) {
+	t.Run("a client remap wins over the global one", func(t *testing.T) {
 		host, port := qbitGrabServer(t, map[string]string{}, "/default")
-		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads, remap: "/qbit/downloads:" + downloads}, qbitClient(host, port, "", "/qbit/downloads:"+downloads))
-		wantDiagStatus(t, resp, diagCodeRemap, diagPass)
+		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads, remap: "/global/downloads:" + downloads}, qbitClient(host, port, "", "/qbit/downloads:"+downloads))
+		remap := wantDiagStatus(t, resp, diagCodeRemap, diagPass)
+		if !strings.Contains(remap.Message, "This client's path remap") {
+			t.Errorf("message = %q", remap.Message)
+		}
+		if resp.Paths[0].ClientPath != "/qbit/downloads" {
+			t.Errorf("clientPath = %q, want the client remap's folder", resp.Paths[0].ClientPath)
+		}
 	})
 
 	t.Run("a category save path is not sent by Bindery", func(t *testing.T) {
 		host, port := qbitGrabServer(t, map[string]string{"books": "/qbit/downloads"}, "/default")
 		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads, remap: "/qbit/downloads:" + downloads}, qbitClient(host, port, "books", ""))
 		wantDiagStatus(t, resp, diagCodeRemap, diagPass)
+	})
+
+	// The mixed setup: the global remap is written for another client (say
+	// SABnzbd sees Bindery's folder as /data), but this qBittorrent mounts
+	// Bindery's folder at the same path. The global remap still rewrites the
+	// folder it is sent, and the doctor says so and names the opt out.
+	t.Run("a global remap meant for another client is flagged", func(t *testing.T) {
+		host, port := qbitGrabServer(t, map[string]string{}, downloads)
+		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads, remap: "/data:" + downloads}, qbitClient(host, port, "", ""))
+		path := wantDiagStatus(t, resp, diagCodeClientPath, diagWarn)
+		if resp.Paths[0].ClientPath != "/data" {
+			t.Errorf("clientPath = %q, want /data, the folder the grab is sent", resp.Paths[0].ClientPath)
+		}
+		if !strings.Contains(path.Message, "BINDERY_DOWNLOAD_PATH_REMAP") || !strings.Contains(path.Fix, downloads+":"+downloads) {
+			t.Errorf("check = %+v", path)
+		}
+	})
+
+	t.Run("an identity client remap opts out of the global one", func(t *testing.T) {
+		host, port := qbitGrabServer(t, map[string]string{}, downloads)
+		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads, remap: "/data:" + downloads}, qbitClient(host, port, "", downloads+":"+downloads))
+		wantDiagStatus(t, resp, diagCodeClientPath, diagPass)
+		if resp.Paths[0].ClientPath != downloads {
+			t.Errorf("clientPath = %q, want Bindery's own folder %q", resp.Paths[0].ClientPath, downloads)
+		}
+		wantDiagStatus(t, resp, diagCodeLocalPath, diagPass)
 	})
 }
 

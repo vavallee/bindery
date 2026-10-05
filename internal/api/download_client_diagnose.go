@@ -10,12 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/config"
 	"github.com/vavallee/bindery/internal/downloader"
+	"github.com/vavallee/bindery/internal/downloader/deluge"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
@@ -104,10 +106,9 @@ type diagnoseResponse struct {
 // diagTarget is one folder grabs land in: ebook, audiobook, or both when
 // they resolve to the same client folder.
 type diagTarget struct {
-	row           diagPathRow
-	sentByBindery bool   // the client path is the save path Bindery sends
-	probePath     string // symlink-resolved local path, set once readable
-	stopped       bool   // an earlier per folder check had nothing to pass on
+	row       diagPathRow
+	probePath string // symlink-resolved local path, set once readable
+	stopped   bool   // an earlier per folder check had nothing to pass on
 }
 
 // diagState is what the checks share. Each check reads what earlier checks
@@ -429,7 +430,20 @@ func checkDiagCategory(ctx context.Context, st *diagState) []diagCheckResult {
 			Fix:     fmt.Sprintf("Create the category %s in %s, or change this client's category in Bindery to one that exists.", quoteJoin(report.Missing), st.clientName),
 		})
 	}
-	return one(diagCheckResult{Status: diagPass, Message: fmt.Sprintf("%s has the category %s.", st.clientName, quoteJoin(report.Wanted))})
+	res := diagCheckResult{Status: diagPass, Message: fmt.Sprintf("%s has the category %s.", st.clientName, quoteJoin(report.Wanted))}
+	if st.client.Type == "deluge" {
+		// Grabs lowercase the label (#2665), so a capital is not a problem,
+		// but say so, because the label in Deluge will not look like the
+		// category typed here.
+		var noted []string
+		for _, c := range []string{st.client.Category, st.client.CategoryAudiobook} {
+			if id := deluge.LabelID(c); id != c && !slices.Contains(noted, c) {
+				noted = append(noted, c)
+				res.Message += fmt.Sprintf(" Deluge keeps labels in lowercase, so Bindery sends the category %q as %q.", c, id)
+			}
+		}
+	}
+	return one(res)
 }
 
 // checkDiagClientPath works out where ebook and audiobook grabs land, using
@@ -440,7 +454,7 @@ func checkDiagClientPath(ctx context.Context, st *diagState) []diagCheckResult {
 		return downloader.ResolveCategory(st.client, mediaType) + "\x00" +
 			downloader.TargetDownloadDir(mediaType, st.downloadDir, st.audiobookDownloadDir)
 	}
-	ebook, ebookErr := downloader.GrabSavePath(ctx, st.client, models.MediaTypeEbook, st.downloadDir, st.audiobookDownloadDir)
+	ebook, ebookErr := downloader.GrabSavePath(ctx, st.client, models.MediaTypeEbook, st.downloadDir, st.audiobookDownloadDir, st.globalRemap)
 	type resolved struct {
 		mediaType string
 		info      downloader.ClientPathInfo
@@ -450,7 +464,7 @@ func checkDiagClientPath(ctx context.Context, st *diagState) []diagCheckResult {
 	if grabKey(models.MediaTypeEbook) == grabKey(models.MediaTypeAudiobook) {
 		found = []resolved{{"", ebook, ebookErr}}
 	} else {
-		audio, audioErr := downloader.GrabSavePath(ctx, st.client, models.MediaTypeAudiobook, st.downloadDir, st.audiobookDownloadDir)
+		audio, audioErr := downloader.GrabSavePath(ctx, st.client, models.MediaTypeAudiobook, st.downloadDir, st.audiobookDownloadDir, st.globalRemap)
 		if ebookErr == nil && audioErr == nil && ebook.Path == audio.Path && ebook.Source == audio.Source && ebook.Note == audio.Note {
 			found = []resolved{{"", ebook, nil}}
 		} else {
@@ -460,7 +474,7 @@ func checkDiagClientPath(ctx context.Context, st *diagState) []diagCheckResult {
 
 	out := make([]diagCheckResult, 0, len(found))
 	for _, f := range found {
-		t := &diagTarget{row: diagPathRow{MediaType: f.mediaType, ClientPath: f.info.Path, Source: f.info.Source}, sentByBindery: f.info.SentByBindery}
+		t := &diagTarget{row: diagPathRow{MediaType: f.mediaType, ClientPath: f.info.Path, Source: f.info.Source}}
 		st.targets = append(st.targets, t)
 		res := describeClientPath(st, f.mediaType, f.info, f.err)
 		res.MediaType = f.mediaType
@@ -568,16 +582,6 @@ func remapTarget(st *diagState, t *diagTarget, global *pathmap.Remapper) diagChe
 			Status:  diagFail,
 			Message: fmt.Sprintf("The folder resolves to %q, which is not an absolute path.", local),
 			Fix:     "Make both sides of the path remap absolute paths.",
-		}
-	}
-	// torrentSavePath inverts only the client's own remap when sending, so
-	// with only the global remap set the client is sent Bindery's own folder,
-	// and remapping it back proves nothing about the client's side.
-	if t.sentByBindery && strings.TrimSpace(st.client.PathRemap) == "" && !global.Empty() {
-		return diagCheckResult{
-			Status:  diagWarn,
-			Message: fmt.Sprintf("Bindery sends its own folder %q to %s, because BINDERY_DOWNLOAD_PATH_REMAP is not applied when sending. This check can only confirm Bindery reads its own folder, not that %s writes there.", raw, st.clientName, st.clientName),
-			Fix:     fmt.Sprintf("Set a path remap on this client, so the folder Bindery sends is translated into the path %s uses for the same storage.", st.clientName),
 		}
 	}
 	switch rule {

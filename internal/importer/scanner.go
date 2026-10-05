@@ -2124,12 +2124,15 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			// lock/busy errors and, on persistent failure, refuse to mark the
 			// import complete.
 			var setErr error
+			var owned *db.PathOwnedError
 			for attempt := 0; attempt < 3; attempt++ {
-				if setErr = s.books.SetFormatFilePath(ctx, book.ID, models.MediaTypeAudiobook, destDir); setErr == nil {
+				if setErr = s.recordImportedFile(ctx, book, models.MediaTypeAudiobook, destDir); setErr == nil {
 					break
 				}
-				if ctx.Err() != nil {
-					break // a cancelled context won't recover; stop retrying
+				if ctx.Err() != nil || errors.As(setErr, &owned) {
+					// A cancelled context won't recover, and neither will a
+					// path another book holds (#2937); stop retrying.
+					break
 				}
 				time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
 			}
@@ -2141,6 +2144,27 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				// move already consumed the source, so keep the placed folder
 				// and point the user at it rather than deleting their only copy.
 				switch {
+				case owned != nil && !mergedIntoExistingFolder && (mode == "copy" || mode == "hardlink"):
+					// Another book holds the folder's path (#2937). destDir
+					// came from UniqueDir, so this import created it and it
+					// holds only what was just placed: remove it, and name
+					// the owner, since retrying will not change the answer.
+					if rmErr := os.RemoveAll(destDir); rmErr != nil {
+						slog.Warn("failed to remove audiobook destination after a path conflict", "dst", destDir, "error", rmErr)
+					}
+					s.failImport(ctx, dl, models.StateImportBlocked,
+						fmt.Sprintf("audiobook not imported: %v", setErr))
+				case owned != nil && mergedIntoExistingFolder:
+					// Retrying cannot record a path another book holds, so
+					// point at that book (setErr names it and Fix match)
+					// rather than at a retry.
+					s.failImport(ctx, dl, models.StateImportBlocked,
+						fmt.Sprintf("audiobook merged into %s but not recorded: %v", destDir, setErr))
+				case owned != nil:
+					// Move mode: the source is gone, so a retry finds
+					// nothing at the download path. Same pointer as above.
+					s.failImport(ctx, dl, models.StateImportBlocked,
+						fmt.Sprintf("audiobook moved to %s but not recorded: %v", destDir, setErr))
 				case mergedIntoExistingFolder:
 					// destDir is the book's own folder, shared with the
 					// already-imported ebook, so the copy/hardlink rollback
@@ -2182,6 +2206,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			historyMeta["skippedFiles"] = strings.Join(mergeSkippedFiles, ", ")
 		}
 		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, historyMeta)
+		s.recordFixMatchMove(ctx, book, destDir)
 		s.notify(ctx, notifierEventBookImported, importedPayload(book, dl, models.MediaTypeAudiobook, destDir, mergeSkippedFiles))
 		if cleanupFunc != nil {
 			if err := cleanupFunc(); err != nil {
@@ -2192,6 +2217,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	}
 
 	var imported, failed int
+	// ownedFailed counts files refused because another book already tracks
+	// their destination (#2937). A retry cannot fix those, so a partial
+	// import whose only failures are these is blocked, not left retryable.
+	var ownedFailed int
 	var lastFileErr error
 	// importedSrcFiles records the source path of every file that landed in the
 	// library, so move-mode cleanup can delete exactly those files rather than
@@ -2326,11 +2355,19 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// The path is the final destPath, not the staging path — the row
 		// reflects where the file WILL live, and commit makes that true
 		// atomically immediately below.
-		if err := s.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, destPath); err != nil {
+		//
+		// A destPath another book already tracks fails here (#2937), before
+		// commit, so the staged file is discarded and the file that book
+		// tracks at destPath is never replaced.
+		if err := s.recordImportedFile(ctx, book, models.MediaTypeEbook, destPath); err != nil {
 			slog.Error("failed to record book file — rolling back staged file", "bookID", book.ID, "staged", stagedPath, "error", err)
 			rollback()
 			failed++
 			lastFileErr = fmt.Errorf("record book file: %w", err)
+			var owned *db.PathOwnedError
+			if errors.As(err, &owned) {
+				ownedFailed++
+			}
 			continue
 		}
 		if err := commit(); err != nil {
@@ -2431,7 +2468,15 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 		slog.Warn("partial import — skipping source cleanup to avoid data loss",
 			"title", dl.Title, "imported", imported, "failed", failed)
-		s.failImport(ctx, dl, models.StateImportFailed, reason)
+		status := models.StateImportFailed
+		if ownedFailed == failed {
+			// Every failure is a file another book holds (#2937), which a
+			// retry would only hit again: block it, as the single file case
+			// does, so it does not spend the retry budget. lastFileErr names
+			// the owner.
+			status = models.StateImportBlocked
+		}
+		s.failImport(ctx, dl, status, reason)
 		return
 	}
 
@@ -2450,8 +2495,9 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// counts the ones already placed through the idempotency guard, and
 		// lands here, so the download still ends up with exactly one
 		// bookImported row naming every format.
-		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID,
-			ebookImportHistoryData(importedDestPaths))
+		importData := ebookImportHistoryData(importedDestPaths)
+		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, importData)
+		s.recordFixMatchMove(ctx, book, importData["path"])
 		s.notify(ctx, notifierEventBookImported, importedPayload(book, dl, models.MediaTypeEbook, "", nil))
 
 		// For "move" mode bindery has no further use for the source files. The

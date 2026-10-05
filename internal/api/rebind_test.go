@@ -192,6 +192,63 @@ func TestRebind_KeepsAPinnedMediaType(t *testing.T) {
 	}
 }
 
+// editingLookup runs edit while the provider request is in flight, committing
+// a change to the book between Rebind's read and its write (#2926).
+type editingLookup struct {
+	book *models.Book
+	edit func()
+}
+
+func (s *editingLookup) GetBookFromProvider(_ context.Context, _, _ string) (*models.Book, error) {
+	s.edit()
+	return s.book, nil
+}
+
+// TestRebind_ConflictWhenBookChangesDuringFetch: the full row rebind write
+// must not overwrite a change made during the provider call. It reports a
+// conflict and leaves the row as the concurrent writer left it.
+func TestRebind_ConflictWhenBookChangesDuringFetch(t *testing.T) {
+	h, books, _, _, author, book, ctx := rebindFixture(t)
+	h.WithMetaLookup(&editingLookup{
+		book: &models.Book{
+			Title: "Correct Book", SortTitle: "Correct Book",
+			Author: &models.Author{ForeignID: author.ForeignID, Name: author.Name},
+		},
+		edit: func() {
+			current, err := books.GetByID(ctx, book.ID)
+			if err != nil || current == nil {
+				t.Errorf("load book for concurrent edit: %v", err)
+				return
+			}
+			current.Monitored = false
+			if err := books.Update(ctx, current); err != nil {
+				t.Errorf("concurrent edit: %v", err)
+			}
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	h.Rebind(rec, rebindRequest(book.ID, map[string]any{
+		"provider": "openlibrary", "foreign_id": "OL2W",
+	}))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// The UI tells this apart from the duplicate foreign ID 409 by reason.
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body["reason"] != "changed" {
+		t.Fatalf("409 body = %s, want reason \"changed\"", rec.Body.String())
+	}
+	stored, err := books.GetByID(ctx, book.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if stored.Monitored || stored.ForeignID != "OL1W" || stored.Title != "Wrong Book" {
+		t.Fatalf("concurrent edit overwritten: monitored=%v foreignId=%q title=%q", stored.Monitored, stored.ForeignID, stored.Title)
+	}
+}
+
 func TestRebind_BookNotFound(t *testing.T) {
 	h, _, _, _, _, _, _ := rebindFixture(t)
 	h.WithMetaLookup(&stubLookup{book: &models.Book{Title: "X"}})

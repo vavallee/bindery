@@ -155,67 +155,109 @@ func (h *BookHandler) hydrateHardcoverEditions(ctx context.Context, book *models
 	})
 }
 
+// conflictReasonChanged marks a 409 caused by a concurrent edit to the book
+// (#2926), so the UI can tell it apart from a duplicate foreign ID 409.
+const conflictReasonChanged = "changed"
+
 // EnrichAudiobook fetches audnex data for the book's ASIN and updates
 // narrator, duration, cover, and description on the record. Requires the
 // book to be media_type=audiobook with an ASIN already set.
+//
+// The write is guarded on the row as read before the Audnex call, so an edit
+// made during the call is not overwritten (#2926). On a lost guard the
+// handler retries once from a fresh read; Audnex answers are cached, so the
+// retry normally costs no second request. A second loss returns 409.
 func (h *BookHandler) EnrichAudiobook(w http.ResponseWriter, r *http.Request) {
 	book, ok := h.loadOwnedBook(w, r)
 	if !ok {
 		return
 	}
-	if book.MediaType != models.MediaTypeAudiobook && book.MediaType != models.MediaTypeBoth {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "book is not an audiobook"})
-		return
+	ctx := r.Context()
+	for attempt := 0; ; attempt++ {
+		if book.MediaType != models.MediaTypeAudiobook && book.MediaType != models.MediaTypeBoth {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "book is not an audiobook"})
+			return
+		}
+		if book.ASIN == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "set ASIN before enriching"})
+			return
+		}
+		if h.meta == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "metadata provider unavailable"})
+			return
+		}
+		expectedUpdatedAt := book.UpdatedAtRaw
+		if err := h.meta.EnrichAudiobook(ctx, book); err != nil {
+			slog.Warn("audnex enrich failed", "bookId", book.ID, "error", err)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		var updated bool
+		var err error
+		if h.tryMapAudiobookMetadataByASIN(ctx, book) {
+			// The map rewrites the book's identity, not just the enrichment
+			// columns, so it needs the whole row; still guarded.
+			updated, err = h.books.UpdateIfUnchanged(ctx, book, expectedUpdatedAt)
+		} else {
+			updated, err = h.books.UpdateHydratedMetadata(ctx, book, expectedUpdatedAt)
+		}
+		if err != nil {
+			writeServerError(w, r, err)
+			return
+		}
+		if updated {
+			cleanBookDescription(book)
+			writeJSON(w, http.StatusOK, book)
+			return
+		}
+		if attempt > 0 {
+			slog.Info("audnex enrich gave up after repeated concurrent book updates", "bookId", book.ID)
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "This book changed while it was being enriched. Try again.", "reason": conflictReasonChanged})
+			return
+		}
+		slog.Debug("audnex enrich retrying after concurrent book update", "bookId", book.ID)
+		fresh, err := h.books.GetByID(ctx, book.ID)
+		if err != nil {
+			writeServerError(w, r, err)
+			return
+		}
+		if fresh == nil || !auth.CheckOwnership(ctx, fresh.OwnerUserID) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
+			return
+		}
+		book = fresh
 	}
-	if book.ASIN == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "set ASIN before enriching"})
-		return
-	}
-	if h.meta == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "metadata provider unavailable"})
-		return
-	}
-	if err := h.meta.EnrichAudiobook(r.Context(), book); err != nil {
-		slog.Warn("audnex enrich failed", "bookId", book.ID, "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-		return
-	}
-	h.tryMapAudiobookMetadataByASIN(r.Context(), book)
-	if err := h.books.Update(r.Context(), book); err != nil {
-		writeServerError(w, r, err)
-		return
-	}
-	cleanBookDescription(book)
-	writeJSON(w, http.StatusOK, book)
 }
 
-func (h *BookHandler) tryMapAudiobookMetadataByASIN(ctx context.Context, book *models.Book) {
+// tryMapAudiobookMetadataByASIN maps the book onto the canonical work Audnex
+// names for its ASIN, and reports whether it changed the book.
+func (h *BookHandler) tryMapAudiobookMetadataByASIN(ctx context.Context, book *models.Book) bool {
 	if h == nil || h.meta == nil || h.authors == nil || book == nil || strings.TrimSpace(book.ASIN) == "" {
-		return
+		return false
 	}
 	target, err := h.meta.GetCanonicalBookByASIN(ctx, book.ASIN)
 	if err != nil {
 		slog.Debug("asin metadata map skipped", "bookId", book.ID, "asin", book.ASIN, "error", err)
-		return
+		return false
 	}
 	if target == nil || strings.TrimSpace(target.ForeignID) == "" {
-		return
+		return false
 	}
 	if existing, err := h.books.GetByForeignID(ctx, target.ForeignID); err != nil {
 		slog.Warn("asin metadata map conflict check failed", "bookId", book.ID, "foreignId", target.ForeignID, "error", err)
-		return
+		return false
 	} else if existing != nil && existing.ID != book.ID {
-		return
+		return false
 	}
 	currentAuthor, err := h.authors.GetByID(ctx, book.AuthorID)
 	if err != nil || currentAuthor == nil {
 		if err != nil {
 			slog.Warn("asin metadata map author lookup failed", "bookId", book.ID, "authorId", book.AuthorID, "error", err)
 		}
-		return
+		return false
 	}
 	if !bookMapAuthorMatches(currentAuthor, target.Author) {
-		return
+		return false
 	}
 	fallbackDescription := book.Description
 	fallbackImageURL := book.ImageURL
@@ -226,6 +268,7 @@ func (h *BookHandler) tryMapAudiobookMetadataByASIN(ctx context.Context, book *m
 	if book.ImageURL == "" {
 		book.ImageURL = fallbackImageURL
 	}
+	return true
 }
 
 // bookListResponse is the paginated wrapper returned by List. Replaces the
@@ -1143,6 +1186,7 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	expectedUpdatedAt := book.UpdatedAtRaw
 
 	var req struct {
 		Provider  string `json:"provider"`
@@ -1242,13 +1286,20 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	book.LastMetadataRefreshAt = &now
 
-	if err := h.books.Update(r.Context(), book); err != nil {
+	// Guarded on the row as loaded before the provider call: an edit or an
+	// import that landed meanwhile would otherwise be overwritten (#2926).
+	updated, err := h.books.UpdateIfUnchanged(r.Context(), book, expectedUpdatedAt)
+	if err != nil {
 		// A UNIQUE constraint means another book row already owns this foreign_id.
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "a different book already uses that foreign ID"})
 			return
 		}
 		writeServerError(w, r, err)
+		return
+	}
+	if !updated {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "This book changed while it was being rebound. Try again.", "reason": conflictReasonChanged})
 		return
 	}
 	// MediaType is in the preserved-fields list above because it belongs to the

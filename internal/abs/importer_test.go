@@ -14,6 +14,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
+	"github.com/vavallee/bindery/internal/metadata/audnex"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -4948,5 +4949,106 @@ func TestImporter_ItemWithoutFilesDoesNotWidenAnImportedBook(t *testing.T) {
 	}
 	if books[0].MediaType != models.MediaTypeEbook {
 		t.Errorf("after re-registering the ebook: mediaType = %q, want ebook", books[0].MediaType)
+	}
+}
+
+// editingAudnexClient stands in for api.audnex.us. While it handles the
+// request it runs edit, which commits a user edit to the book row: the window
+// between the importer's snapshot and its write (#2926).
+type editingAudnexClient struct {
+	book  *audnex.Book
+	edit  func()
+	calls int
+}
+
+func (c *editingAudnexClient) GetBook(_ context.Context, _ string) (*audnex.Book, error) {
+	c.calls++
+	if c.edit != nil {
+		c.edit()
+	}
+	return c.book, nil
+}
+
+func audnexEnrichmentFixture(t *testing.T) (*Importer, *db.BookRepo, *models.Book, *editingAudnexClient) {
+	t.Helper()
+	importer, authorRepo, bookRepo, _, _, _, _, _, _, _ := newABSImporterFixture(t)
+	ctx := context.Background()
+	author := &models.Author{ForeignID: "OL1A", Name: "Andy Weir", SortName: "Weir, Andy", MetadataProvider: "openlibrary", Monitored: true}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{
+		ForeignID: "abs:book:lib:1", AuthorID: author.ID, Title: "Project Hail Mary", SortTitle: "Project Hail Mary",
+		Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeAudiobook,
+		ASIN: "B08FHBV4ZX", Genres: []string{}, MetadataProvider: providerAudiobookshelf,
+	}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	client := &editingAudnexClient{book: &audnex.Book{
+		ASIN:             "B08FHBV4ZX",
+		Narrators:        []audnex.Person{{Name: "Audnex Narrator"}},
+		RuntimeLengthMin: 600,
+		Image:            "https://audnex.test/cover.jpg",
+		Summary:          "Audnex summary.",
+	}}
+	importer.WithMetadata(metadata.NewAggregator(nil).WithAudnexClient(client))
+	return importer, bookRepo, book, client
+}
+
+// TestEnrichAudiobookFromASINPersistsWithoutConcurrentEdit is the control for
+// the guarded write: with nothing racing it, the Audnex fields land.
+func TestEnrichAudiobookFromASINPersistsWithoutConcurrentEdit(t *testing.T) {
+	importer, bookRepo, book, client := audnexEnrichmentFixture(t)
+	ctx := context.Background()
+
+	importer.enrichAudiobookFromASIN(ctx, book)
+
+	if client.calls != 1 {
+		t.Fatalf("audnex calls = %d, want 1", client.calls)
+	}
+	stored, err := bookRepo.GetByID(ctx, book.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if stored.Narrator != "Audnex Narrator" || stored.DurationSeconds != 36000 ||
+		stored.ImageURL != "https://audnex.test/cover.jpg" || stored.Description != "Audnex summary." {
+		t.Fatalf("audnex enrichment not persisted: %+v", stored)
+	}
+}
+
+// TestEnrichAudiobookFromASINPreservesConcurrentEdit covers #2926: a user
+// edit committed while the Audnex request is in flight must survive the
+// enrichment write instead of being overwritten by the pre-call snapshot.
+func TestEnrichAudiobookFromASINPreservesConcurrentEdit(t *testing.T) {
+	importer, bookRepo, book, client := audnexEnrichmentFixture(t)
+	ctx := context.Background()
+	client.edit = func() {
+		current, err := bookRepo.GetByID(ctx, book.ID)
+		if err != nil || current == nil {
+			t.Errorf("load book for concurrent edit: %v", err)
+			return
+		}
+		current.Monitored = false
+		current.Narrator = "User Narrator"
+		current.ImageURL = "https://example.test/user-cover.jpg"
+		if err := bookRepo.Update(ctx, current); err != nil {
+			t.Errorf("concurrent edit: %v", err)
+		}
+	}
+
+	importer.enrichAudiobookFromASIN(ctx, book)
+
+	stored, err := bookRepo.GetByID(ctx, book.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if stored.Monitored || stored.Narrator != "User Narrator" || stored.ImageURL != "https://example.test/user-cover.jpg" {
+		t.Fatalf("concurrent edit overwritten by audnex enrichment: monitored=%v narrator=%q image=%q",
+			stored.Monitored, stored.Narrator, stored.ImageURL)
+	}
+	// The caller keeps importing with this row, so it must see the edit too.
+	if book.Monitored || book.Narrator != "User Narrator" {
+		t.Fatalf("caller row not refreshed after losing the guard: monitored=%v narrator=%q", book.Monitored, book.Narrator)
 	}
 }

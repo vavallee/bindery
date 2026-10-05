@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -82,6 +83,15 @@ type delugeServer struct {
 	// realFileHash makes core.add_torrent_file report the payload's real v1
 	// infohash instead of the fixed placeholder.
 	realFileHash bool
+
+	// labels, when non-nil, makes the stub behave like Deluge's Label plugin
+	// (deluge_label/core.py). The plugin's add() stores every label
+	// lowercased, so tests seed lowercase ids here; label.get_labels lists
+	// them, and label.set_torrent accepts only an id it holds exactly,
+	// answering "Unknown Label" otherwise. nil keeps the old accept-anything
+	// stub. torrentLabels records what was applied.
+	labels        map[string]bool
+	torrentLabels map[string]string
 }
 
 // duplicate answers an add of hash the way the configured Deluge does when
@@ -214,7 +224,39 @@ func (s *delugeServer) handler() http.HandlerFunc {
 			write(hash)
 
 		case "label.set_torrent":
+			if s.labels == nil {
+				write(nil)
+				return
+			}
+			var hash, label string
+			json.Unmarshal(req.Params[0], &hash)
+			json.Unmarshal(req.Params[1], &label)
+			// set_torrent does not lowercase: the id must match exactly.
+			if label != "" && !s.labels[label] {
+				writeErr("Unknown Label")
+				return
+			}
+			if _, ok := s.torrents[hash]; !ok {
+				writeErr("Unknown Torrent")
+				return
+			}
+			if s.torrentLabels == nil {
+				s.torrentLabels = make(map[string]string)
+			}
+			s.torrentLabels[hash] = label
 			write(nil)
+
+		case "label.get_labels":
+			if s.labels == nil {
+				writeErr("Unknown method")
+				return
+			}
+			out := make([]string, 0, len(s.labels))
+			for l := range s.labels {
+				out = append(out, l)
+			}
+			sort.Strings(out)
+			write(out)
 
 		case "core.set_torrent_stop_ratio":
 			if s.stopRatioErr {

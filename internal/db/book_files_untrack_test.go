@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -65,9 +66,12 @@ func TestAddBookFileIfMissing_DoesNotStealAnotherBooksPath(t *testing.T) {
 		t.Fatalf("seed AddBookFileIfMissing: %v", err)
 	}
 
+	// Since #2937 the refusal is an error naming the owner rather than a
+	// quiet created=false, so no caller can mistake it for "already mine".
 	created, err := repo.AddBookFileIfMissing(ctx, other.ID, models.MediaTypeEbook, "/lib/shared.epub")
-	if err != nil {
-		t.Fatalf("second book AddBookFileIfMissing: %v", err)
+	var owned *PathOwnedError
+	if !errors.As(err, &owned) || owned.OwnerBookID != book.ID {
+		t.Fatalf("second book AddBookFileIfMissing err = %v, want *PathOwnedError naming book %d", err, book.ID)
 	}
 	if created {
 		t.Error("claiming a path another book owns should report created=false")

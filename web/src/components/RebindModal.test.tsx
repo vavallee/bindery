@@ -305,6 +305,18 @@ describe('metadata search', () => {
     expect(rebindBook).toHaveBeenCalledWith(7, 'hardcover', 'hc:12345', false)
     expect(screen.queryByRole('button', { name: 'Re-bind anyway' })).not.toBeInTheDocument()
   })
+
+  it('reports a book edited during the rebind as changed, not as a duplicate', async () => {
+    rebindBook.mockRejectedValueOnce(new ApiError(409, { error: 'This book changed while it was being rebound. Try again.', reason: 'changed' }, 'Conflict'))
+    render(<RebindModal book={book()} onClose={() => {}} onSuccess={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Enter an ID' }))
+    fireEvent.change(screen.getByLabelText('Foreign ID'), { target: { value: 'OL999W' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Re-bind' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('This book changed while it was being rebound. Try again.')
+    expect(alert).not.toHaveTextContent('This metadata record conflicts with an existing book.')
+    expect(screen.queryByRole('button', { name: 'Re-bind anyway' })).not.toBeInTheDocument()
+  })
 })
 
 

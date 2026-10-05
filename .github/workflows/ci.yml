@@ -246,7 +246,15 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci --prefix web
       - run: npm run build --prefix web
-      - run: npm test --prefix web
+      # Same suite as `npm test`, plus v8 coverage written to web/coverage/.
+      - run: npm run test:coverage --prefix web
+      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          files: web/coverage/lcov.info
+          flags: frontend
+          disable_search: true
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   # ── Gate: fast tests that must pass before image + release ─────────────────
   test:
@@ -266,8 +274,18 @@ jobs:
         with:
           go-version: "1.26.8"
           cache: true
-      - run: go test -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/... ./tools/...
+      # Coverage runs on main and development only. On a v* tag this job gates
+      # the image and goreleaser, so it runs the same suites without coverage:
+      # instrumentation adds about a quarter to the runtime and the tag already
+      # has the coverage its commit got on main.
+      - name: Go tests with coverage
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: go test -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/... ./tools/...
+      - name: Go tests
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: go test ./cmd/... ./internal/... ./tools/...
       - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         with:
           files: coverage.out
           flags: backend
@@ -280,7 +298,21 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci --prefix web
       - run: npm run build --prefix web
-      - run: npm test --prefix web
+      # Same suite as `npm test`, plus v8 coverage written to web/coverage/.
+      - name: Frontend tests with coverage
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: npm run test:coverage --prefix web
+      - name: Frontend tests
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: npm test --prefix web
+      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        with:
+          files: web/coverage/lcov.info
+          flags: frontend
+          disable_search: true
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   # Race-detector run — the same six shards as PR validation, parallel with
   # image/goreleaser and not a deploy gate. Fix failures before the next release.
@@ -582,6 +614,45 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*_checksums.txt
+        id: attest
+      # The attestation above lives in GitHub's attestation store, which
+      # Scorecard's Signed-Releases check cannot see: it only looks at release
+      # assets, and only counts provenance for names ending in .intoto.jsonl
+      # (probes/releasesHaveProvenance). Attach the same Sigstore bundle (one
+      # JSON line covering every archive and the checksums file) so a download
+      # can also be verified against the file with
+      # `gh attestation verify <archive> --repo vavallee/bindery --bundle bindery_<version>.intoto.jsonl`.
+      #
+      # Ordering: the release is already public by now (created above, assets
+      # appended by goreleaser), so this only adds one more asset. --clobber
+      # makes a rerun idempotent. A failure here is reported loudly but does
+      # not fail the job: the binaries are published and attested, and failing
+      # goreleaser would skip deploy-prod and the Discord post for a release
+      # that is otherwise complete. Recover by downloading the bundle with
+      # `gh attestation download` and uploading it under the same name.
+      - name: Attach provenance to the release
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BUNDLE_PATH}" ] || [ ! -s "${BUNDLE_PATH}" ]; then
+            echo "::error::attest step produced no bundle at '${BUNDLE_PATH}'; release ${GITHUB_REF_NAME} has no provenance asset"
+            exit 1
+          fi
+          ASSET="${RUNNER_TEMP}/bindery_${GITHUB_REF_NAME#v}.intoto.jsonl"
+          cp "${BUNDLE_PATH}" "${ASSET}"
+          for attempt in 1 2 3; do
+            if gh release upload "${GITHUB_REF_NAME}" "${ASSET}" --clobber --repo "${GITHUB_REPOSITORY}"; then
+              echo "Attached $(basename "${ASSET}") to ${GITHUB_REF_NAME}"
+              exit 0
+            fi
+            echo "upload attempt ${attempt} failed; retrying"
+            sleep $((attempt * 10))
+          done
+          echo "::error::could not attach $(basename "${ASSET}") to release ${GITHUB_REF_NAME}; upload it by hand"
+          exit 1
 
   # NOTE: there is intentionally no "bump bindery-ping LATEST_VERSION" job here.
   # That job pushed the new version into the telemetry cluster via

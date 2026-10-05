@@ -319,3 +319,42 @@ func TestValidateShares(t *testing.T) {
 		t.Fatalf("Validate share with no destination = %v, want a share example", err)
 	}
 }
+
+// TestApplyMatchedReportsIdentityRules: an identity rule matches without
+// changing the path, which only the matched flag can show (#2665).
+func TestApplyMatchedReportsIdentityRules(t *testing.T) {
+	cases := []struct {
+		spec, path, wantFwd string
+		fwdMatched          bool
+		wantInv             string
+		invMatched          bool
+	}{
+		{"/downloads:/downloads", "/downloads/book", "/downloads/book", true, "/downloads/book", true},
+		{"/downloads:/downloads", "/other/book", "/other/book", false, "/other/book", false},
+		{"/data:/downloads", "/downloads/book", "/downloads/book", false, "/data/book", true},
+		{"/data:/downloads", "/data/book", "/downloads/book", true, "/data/book", false},
+		{`S:\Books:/books`, `s:/books/a`, "/books/a", true, `s:/books/a`, false},
+		{"", "/downloads/book", "/downloads/book", false, "/downloads/book", false},
+	}
+	for _, tc := range cases {
+		r := Parse(tc.spec)
+		got, ok := r.ApplyMatched(tc.path)
+		if got != tc.wantFwd || ok != tc.fwdMatched {
+			t.Errorf("Parse(%q).ApplyMatched(%q) = %q, %v; want %q, %v", tc.spec, tc.path, got, ok, tc.wantFwd, tc.fwdMatched)
+		}
+		if plain := r.Apply(tc.path); plain != got {
+			t.Errorf("Apply(%q) = %q, disagrees with ApplyMatched %q", tc.path, plain, got)
+		}
+		got, ok = r.ApplyInverseMatched(tc.path)
+		if got != tc.wantInv || ok != tc.invMatched {
+			t.Errorf("Parse(%q).ApplyInverseMatched(%q) = %q, %v; want %q, %v", tc.spec, tc.path, got, ok, tc.wantInv, tc.invMatched)
+		}
+		if plain := r.ApplyInverse(tc.path); plain != got {
+			t.Errorf("ApplyInverse(%q) = %q, disagrees with ApplyInverseMatched %q", tc.path, plain, got)
+		}
+	}
+	var nilRemapper *Remapper
+	if got, ok := nilRemapper.ApplyInverseMatched("/x"); got != "/x" || ok {
+		t.Errorf("nil remapper = %q, %v", got, ok)
+	}
+}
