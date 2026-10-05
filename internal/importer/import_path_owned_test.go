@@ -29,6 +29,7 @@ type pathOwnedFixture struct {
 	dl        *models.Download
 	dir       string
 	library   string
+	settings  *db.SettingsRepo
 }
 
 func newPathOwnedFixture(t *testing.T, mediaType string) *pathOwnedFixture {
@@ -89,7 +90,7 @@ func newPathOwnedFixture(t *testing.T, mediaType string) *pathOwnedFixture {
 	return &pathOwnedFixture{
 		database: database, scanner: s, books: books, downloads: downloads, history: history,
 		notif: notif, author: author, right: right, wrong: wrong, dl: dl,
-		dir: dir, library: library,
+		dir: dir, library: library, settings: settings,
 	}
 }
 
@@ -156,11 +157,7 @@ func (f *pathOwnedFixture) assertBlockedNamingOwner(t *testing.T) {
 		t.Fatalf("download status = %q (%s), want %q: the import recorded nothing yet reported success",
 			dl.Status, dl.ErrorMessage, models.StateImportBlocked)
 	}
-	for _, want := range []string{f.wrong.Title, fmt.Sprintf("%d", f.wrong.ID)} {
-		if !strings.Contains(dl.ErrorMessage, want) {
-			t.Errorf("failure message %q does not name the owning book (%s)", dl.ErrorMessage, want)
-		}
-	}
+	assertOwnerReason(t, dl.ErrorMessage, f.wrong)
 	if book.Status != models.BookStatusWanted {
 		t.Errorf("book status = %q, want %q", book.Status, models.BookStatusWanted)
 	}
@@ -243,6 +240,113 @@ func TestImport_AudiobookPathOwnedByOtherBook_FailsNamingOwner(t *testing.T) {
 	f.assertBlockedNamingOwner(t)
 	if _, err := os.Stat(dest); !os.IsNotExist(err) {
 		t.Errorf("copied audiobook folder left at %s after a blocked import (stat err %v)", dest, err)
+	}
+}
+
+// assertOwnerReason checks a failure reason names the owning book and points
+// at Fix match, never at a retry: a retry cannot record a path another book
+// holds, and in move mode it would find the download already gone.
+func assertOwnerReason(t *testing.T, reason string, owner *models.Book) {
+	t.Helper()
+	for _, want := range []string{owner.Title, fmt.Sprintf("id %d", owner.ID), "Fix match"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("failure message %q does not contain %q", reason, want)
+		}
+	}
+	if strings.Contains(strings.ToLower(reason), "retry") {
+		t.Errorf("failure message %q advises a retry that cannot succeed", reason)
+	}
+}
+
+// TestImport_AudiobookMoveModePathOwned_PointsAtOwner: in move mode the
+// folder is already placed and the source consumed, so the files stay where
+// they landed; the reason must still name the owner rather than suggest a
+// retry.
+func TestImport_AudiobookMoveModePathOwned_PointsAtOwner(t *testing.T) {
+	f := newPathOwnedFixture(t, models.MediaTypeAudiobook)
+	ctx := context.Background()
+	if err := f.settings.Set(ctx, "import.mode", "move"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.dir, "Defiance of the Fall 3.m4b"), make([]byte, 4096), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dest, err := f.scanner.destRenamer(ctx).AudiobookDestDir(f.scanner.effectiveAudiobookDir(ctx, f.author), f.author, f.right, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.books.SetFormatFilePath(ctx, f.wrong.ID, models.MediaTypeAudiobook, dest); err != nil {
+		t.Fatal(err)
+	}
+
+	f.importDownload(t)
+
+	f.assertBlockedNamingOwner(t)
+	dl, _ := f.reload(t)
+	if !strings.Contains(dl.ErrorMessage, dest) {
+		t.Errorf("failure message %q does not say where the moved files are (%s)", dl.ErrorMessage, dest)
+	}
+	if entries, err := os.ReadDir(dest); err != nil || len(entries) == 0 {
+		t.Errorf("moved audiobook not preserved at %s: %v entries, err %v", dest, len(entries), err)
+	}
+}
+
+// TestImport_MultiFileOneOwned_BlockedNotRetried: an epub and a mobi where
+// only the epub's destination is held by another book. The mobi imports; the
+// download is blocked naming the owner instead of ending importFailed, which
+// would spend the retry budget on a conflict a retry cannot clear.
+func TestImport_MultiFileOneOwned_BlockedNotRetried(t *testing.T) {
+	f := newPathOwnedFixture(t, models.MediaTypeEbook)
+	ctx := context.Background()
+	epubDest := f.ebookDest(t)
+	mobi := filepath.Join(f.dir, "Defiance of the Fall 3.mobi")
+	if err := os.WriteFile(mobi, []byte("volume three mobi"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mobiDest, err := f.scanner.destRenamer(ctx).DestPath(f.library, f.author, f.right, "", "", mobi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.books.AddBookFile(ctx, f.wrong.ID, models.MediaTypeEbook, epubDest); err != nil {
+		t.Fatal(err)
+	}
+
+	f.importDownload(t)
+
+	dl, _ := f.reload(t)
+	if dl.Status != models.StateImportBlocked {
+		t.Fatalf("download status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImportBlocked)
+	}
+	assertOwnerReason(t, dl.ErrorMessage, f.wrong)
+	files := f.files(t, f.right.ID)
+	if len(files) != 1 || files[0].Path != mobiDest {
+		t.Errorf("Vol 3 files = %+v, want only the mobi at %s", files, mobiDest)
+	}
+	if owner := f.files(t, f.wrong.ID); len(owner) != 1 || owner[0].Path != epubDest {
+		t.Errorf("Vol 17 files = %+v, want its epub row untouched", owner)
+	}
+}
+
+// TestImport_MultiFileOtherFailure_StaysRetryable: a partial import whose
+// failure is not an ownership conflict keeps the old retryable status.
+func TestImport_MultiFileOtherFailure_StaysRetryable(t *testing.T) {
+	f := newPathOwnedFixture(t, models.MediaTypeEbook)
+	epubDest := f.ebookDest(t)
+	mobi := filepath.Join(f.dir, "Defiance of the Fall 3.mobi")
+	if err := os.WriteFile(mobi, []byte("volume three mobi"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A directory where the epub must land makes its commit rename fail,
+	// a plain I/O failure rather than an ownership conflict.
+	if err := os.MkdirAll(filepath.Join(epubDest, "occupied"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	f.importDownload(t)
+
+	dl, _ := f.reload(t)
+	if dl.Status != models.StateImportFailed {
+		t.Fatalf("download status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImportFailed)
 	}
 }
 

@@ -2154,6 +2154,17 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					}
 					s.failImport(ctx, dl, models.StateImportBlocked,
 						fmt.Sprintf("audiobook not imported: %v", setErr))
+				case owned != nil && mergedIntoExistingFolder:
+					// Retrying cannot record a path another book holds, so
+					// point at that book (setErr names it and Fix match)
+					// rather than at a retry.
+					s.failImport(ctx, dl, models.StateImportBlocked,
+						fmt.Sprintf("audiobook merged into %s but not recorded: %v", destDir, setErr))
+				case owned != nil:
+					// Move mode: the source is gone, so a retry finds
+					// nothing at the download path. Same pointer as above.
+					s.failImport(ctx, dl, models.StateImportBlocked,
+						fmt.Sprintf("audiobook moved to %s but not recorded: %v", destDir, setErr))
 				case mergedIntoExistingFolder:
 					// destDir is the book's own folder, shared with the
 					// already-imported ebook, so the copy/hardlink rollback
@@ -2206,6 +2217,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	}
 
 	var imported, failed int
+	// ownedFailed counts files refused because another book already tracks
+	// their destination (#2937). A retry cannot fix those, so a partial
+	// import whose only failures are these is blocked, not left retryable.
+	var ownedFailed int
 	var lastFileErr error
 	// importedSrcFiles records the source path of every file that landed in the
 	// library, so move-mode cleanup can delete exactly those files rather than
@@ -2349,6 +2364,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			rollback()
 			failed++
 			lastFileErr = fmt.Errorf("record book file: %w", err)
+			var owned *db.PathOwnedError
+			if errors.As(err, &owned) {
+				ownedFailed++
+			}
 			continue
 		}
 		if err := commit(); err != nil {
@@ -2449,7 +2468,15 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 		slog.Warn("partial import — skipping source cleanup to avoid data loss",
 			"title", dl.Title, "imported", imported, "failed", failed)
-		s.failImport(ctx, dl, models.StateImportFailed, reason)
+		status := models.StateImportFailed
+		if ownedFailed == failed {
+			// Every failure is a file another book holds (#2937), which a
+			// retry would only hit again: block it, as the single file case
+			// does, so it does not spend the retry budget. lastFileErr names
+			// the owner.
+			status = models.StateImportBlocked
+		}
+		s.failImport(ctx, dl, status, reason)
 		return
 	}
 

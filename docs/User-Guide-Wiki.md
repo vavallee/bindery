@@ -555,7 +555,8 @@ to the records. Things worth knowing before you judge the results:
   its id. Nothing is recorded or overwritten, and the book you imported for
   stays Wanted. If the file really belongs to the book you imported it for,
   open the book it is attached to and use **Fix match** to move it (#2937).
-  A path left behind by a book that was deleted is taken over automatically.
+  When the book holding the path has since been deleted, a download or manual
+  import takes it over automatically; adoption still refuses it.
 - A folder holding both an ebook and an audiobook for the same book attaches
   both in a single scan — one file per format, so a second scan is not needed.
 - A PDF, TXT, RTF, CBZ or CBR sitting in a folder that also holds audio is treated as
