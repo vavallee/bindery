@@ -14,7 +14,8 @@
   <a href="https://codecov.io/gh/vavallee/bindery"><img src="https://img.shields.io/codecov/c/github/vavallee/bindery?logo=codecov&logoColor=white" alt="codecov" /></a>
   <a href="https://github.com/vavallee/bindery/releases"><img src="https://img.shields.io/github/v/release/vavallee/bindery" alt="Release" /></a>
   <a href="https://github.com/vavallee/bindery/releases"><img src="https://img.shields.io/github/downloads/vavallee/bindery/total" alt="Downloads" /></a>
-  <a href="https://hub.docker.com/r/vavallee/bindery"><img src="https://img.shields.io/docker/pulls/vavallee/bindery?logo=docker&logoColor=white" alt="Docker pulls" /></a>
+  <a href="https://github.com/vavallee/bindery/pkgs/container/bindery"><img src="https://img.shields.io/badge/ghcr.io-vavallee%2Fbindery-blue?logo=github" alt="GitHub Container Registry" /></a>
+  <a href="https://hub.docker.com/r/vavallee/bindery"><img src="https://img.shields.io/docker/pulls/vavallee/bindery?label=docker%20hub%20pulls&logo=docker&logoColor=white" alt="Docker Hub pulls" /></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/vavallee/bindery"><img src="https://img.shields.io/ossf-scorecard/github.com/vavallee/bindery?label=openssf%20scorecard" alt="OpenSSF Scorecard" /></a>
   <a href="https://github.com/vavallee/bindery/blob/main/LICENSE"><img src="https://img.shields.io/github/license/vavallee/bindery" alt="License" /></a>
   <a href="https://discord.gg/RpuYYRM9cZ"><img src="https://img.shields.io/badge/Discord-BINDERY-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
