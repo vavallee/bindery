@@ -444,8 +444,11 @@ func TestDiagnose_GlobalRemapAppliesToSentSavePath(t *testing.T) {
 	downloads := t.TempDir()
 
 	t.Run("qbittorrent without a category", func(t *testing.T) {
-		host, port := qbitGrabServer(t, map[string]string{}, "/default")
+		// qBittorrent's default sits above the folder it is sent, so the
+		// global remap is plausibly meant for it and nothing is flagged.
+		host, port := qbitGrabServer(t, map[string]string{}, "/qbit")
 		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads, remap: "/qbit/downloads:" + downloads}, qbitClient(host, port, "", ""))
+		wantDiagStatus(t, resp, diagCodeClientPath, diagPass)
 		remap := wantDiagStatus(t, resp, diagCodeRemap, diagPass)
 		if !strings.Contains(remap.Message, "BINDERY_DOWNLOAD_PATH_REMAP") {
 			t.Errorf("message = %q", remap.Message)
@@ -471,6 +474,32 @@ func TestDiagnose_GlobalRemapAppliesToSentSavePath(t *testing.T) {
 		host, port := qbitGrabServer(t, map[string]string{"books": "/qbit/downloads"}, "/default")
 		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads, remap: "/qbit/downloads:" + downloads}, qbitClient(host, port, "books", ""))
 		wantDiagStatus(t, resp, diagCodeRemap, diagPass)
+	})
+
+	// The mixed setup: the global remap is written for another client (say
+	// SABnzbd sees Bindery's folder as /data), but this qBittorrent mounts
+	// Bindery's folder at the same path. The global remap still rewrites the
+	// folder it is sent, and the doctor says so and names the opt out.
+	t.Run("a global remap meant for another client is flagged", func(t *testing.T) {
+		host, port := qbitGrabServer(t, map[string]string{}, downloads)
+		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads, remap: "/data:" + downloads}, qbitClient(host, port, "", ""))
+		path := wantDiagStatus(t, resp, diagCodeClientPath, diagWarn)
+		if resp.Paths[0].ClientPath != "/data" {
+			t.Errorf("clientPath = %q, want /data, the folder the grab is sent", resp.Paths[0].ClientPath)
+		}
+		if !strings.Contains(path.Message, "BINDERY_DOWNLOAD_PATH_REMAP") || !strings.Contains(path.Fix, downloads+":"+downloads) {
+			t.Errorf("check = %+v", path)
+		}
+	})
+
+	t.Run("an identity client remap opts out of the global one", func(t *testing.T) {
+		host, port := qbitGrabServer(t, map[string]string{}, downloads)
+		resp, _ := runDiagnose(t, diagnoseSetup{downloadDir: downloads, remap: "/data:" + downloads}, qbitClient(host, port, "", downloads+":"+downloads))
+		wantDiagStatus(t, resp, diagCodeClientPath, diagPass)
+		if resp.Paths[0].ClientPath != downloads {
+			t.Errorf("clientPath = %q, want Bindery's own folder %q", resp.Paths[0].ClientPath, downloads)
+		}
+		wantDiagStatus(t, resp, diagCodeLocalPath, diagPass)
 	})
 }
 

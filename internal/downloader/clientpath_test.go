@@ -73,3 +73,25 @@ func TestFindCaseInsensitivePathUnder(t *testing.T) {
 		t.Errorf("followed an exact-named symlink out of base to %q", r)
 	}
 }
+
+func TestClientPathsOverlap(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{"/downloads", "/downloads", true},
+		{"/downloads/books", "/downloads", true},
+		{"/downloads", "/downloads/incomplete/", true},
+		{"/data", "/downloads", false},
+		{"/down", "/downloads", false},
+		{"/", "/downloads", true},
+		{`D:\Torrents\books`, `d:/torrents`, true},
+		{`\\nas\share\books`, `\\NAS\share`, true},
+		{`D:\Torrents`, `E:\Torrents`, false},
+	}
+	for _, tc := range tests {
+		if got := clientPathsOverlap(tc.a, tc.b); got != tc.want {
+			t.Errorf("clientPathsOverlap(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+}

@@ -115,8 +115,17 @@ func Validate(spec string) error {
 // platform: a Windows source mapped to a POSIX destination yields forward
 // slashes. If no rule matches, p is returned unchanged.
 func (r *Remapper) Apply(p string) string {
+	out, _ := r.ApplyMatched(p)
+	return out
+}
+
+// ApplyMatched is Apply that also reports whether a rule matched. A rule that
+// maps a prefix onto itself (`/downloads:/downloads`) matches while leaving
+// the path unchanged, which comparing Apply's result with p cannot tell apart
+// from no rule matching at all.
+func (r *Remapper) ApplyMatched(p string) (string, bool) {
 	if r == nil || len(r.rules) == 0 || p == "" {
-		return p
+		return p, false
 	}
 	for _, rule := range r.rules {
 		rest, ok := matchPrefix(p, rule.fromKey, rule.fromWin)
@@ -124,19 +133,26 @@ func (r *Remapper) Apply(p string) string {
 			continue
 		}
 		if rest == "" {
-			return rule.to
+			return rule.to, true
 		}
-		return joinRemainder(rule.to, rule.toWin, rule.toSep, rest, rule.fromWin)
+		return joinRemainder(rule.to, rule.toWin, rule.toSep, rest, rule.fromWin), true
 	}
-	return p
+	return p, false
 }
 
 // ApplyInverse rewrites p in the opposite direction, from a Bindery-visible
 // path back to the external service mount point. It round-trips Apply,
 // including the separator style the Windows side was configured with.
 func (r *Remapper) ApplyInverse(p string) string {
+	out, _ := r.ApplyInverseMatched(p)
+	return out
+}
+
+// ApplyInverseMatched is ApplyInverse that also reports whether a rule
+// matched, for the same reason as ApplyMatched.
+func (r *Remapper) ApplyInverseMatched(p string) (string, bool) {
 	if r == nil || len(r.rules) == 0 || p == "" {
-		return p
+		return p, false
 	}
 	var best *remapRule
 	var bestRest string
@@ -151,12 +167,12 @@ func (r *Remapper) ApplyInverse(p string) string {
 		}
 	}
 	if best == nil {
-		return p
+		return p, false
 	}
 	if bestRest == "" {
-		return best.from
+		return best.from, true
 	}
-	return joinRemainder(best.from, best.fromWin, best.fromSep, bestRest, best.toWin)
+	return joinRemainder(best.from, best.fromWin, best.fromSep, bestRest, best.toWin), true
 }
 
 // Empty reports whether the remapper has no rules.

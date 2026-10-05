@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -118,7 +119,15 @@ func GrabSavePath(ctx context.Context, client *models.DownloadClient, mediaType,
 	// save path exactly as they are, so the doctor has to use them the same
 	// way to reach the same folder.
 	category := ResolveCategory(client, mediaType)
-	sent := torrentSavePath(client, SendOptions{MediaType: mediaType, DownloadDir: downloadDir, AudiobookDownloadDir: audiobookDownloadDir, GlobalRemap: globalRemap})
+	opts := SendOptions{MediaType: mediaType, DownloadDir: downloadDir, AudiobookDownloadDir: audiobookDownloadDir, GlobalRemap: globalRemap}
+	sent := sentSavePath{
+		path:  torrentSavePath(client, opts),
+		local: TargetDownloadDir(mediaType, downloadDir, audiobookDownloadDir),
+	}
+	if sent.path != "" {
+		opts.GlobalRemap = ""
+		sent.viaGlobal = sent.path != torrentSavePath(client, opts)
+	}
 	info := ClientPathInfo{Category: category}
 	switch client.Type {
 	case "qbittorrent":
@@ -126,11 +135,14 @@ func GrabSavePath(ctx context.Context, client *models.DownloadClient, mediaType,
 	case "rtorrent":
 		// rTorrent receives d.directory.set whenever Bindery has a download
 		// folder, so directory.default only matters without one.
-		if sent != "" {
-			info.Path, info.Source = sent, "the save path Bindery sends"
+		dir, err := RtorrentFor(client).DefaultDirectory(ctx)
+		if sent.path != "" {
+			info.Path, info.Source = sent.path, "the save path Bindery sends"
+			if err == nil {
+				sent.noteAgainstDefault(&info, "rTorrent", dir)
+			}
 			return info, nil
 		}
-		dir, err := RtorrentFor(client).DefaultDirectory(ctx)
 		if err != nil {
 			return info, err
 		}
@@ -177,17 +189,64 @@ func GrabSavePath(ctx context.Context, client *models.DownloadClient, mediaType,
 	}
 }
 
+// sentSavePath is the save path a grab sends (torrentSavePath), with what the
+// diagnose action needs to judge it.
+type sentSavePath struct {
+	path      string // as sent to the client; "" when Bindery sends none
+	local     string // Bindery's own folder it was made from
+	viaGlobal bool   // BINDERY_DOWNLOAD_PATH_REMAP produced it
+}
+
+// noteAgainstDefault sets a note on info when the global remap produced the
+// folder Bindery sends and that folder is unrelated to the client's own
+// default save folder: not that folder, not inside it and not above it. The
+// global remap always matches a sent folder, because its Bindery side is
+// Bindery's own folder, so a global remap written for one client also
+// rewrites what another client is sent. This is how that shows up when the
+// other client mounts Bindery's folder at the same path (#2665). A folder from
+// the client's own remap is the operator's explicit choice and is not second
+// guessed, and a default the client did not report is not checked.
+func (s sentSavePath) noteAgainstDefault(info *ClientPathInfo, clientName, def string) {
+	def = strings.TrimSpace(def)
+	if !s.viaGlobal || def == "" || clientPathsOverlap(s.path, def) {
+		return
+	}
+	info.Note = fmt.Sprintf("BINDERY_DOWNLOAD_PATH_REMAP turns Bindery's folder %q into %q for %s, but %s's own default save folder is %q, which is unrelated to it.", s.local, s.path, clientName, clientName, def)
+	info.NoteFix = fmt.Sprintf("If %s sees Bindery's download folder at the same path, set the path remap %q on this client, so it keeps that path instead of using the global remap. Otherwise check that %s can write to %q.", clientName, s.local+":"+s.local, clientName, s.path)
+}
+
+// clientPathsOverlap reports whether two paths in a download client's
+// namespace are the same folder or one lies inside the other. Windows paths
+// compare without regard to case or separator style.
+func clientPathsOverlap(a, b string) bool {
+	norm := func(p string) string {
+		c := pathmap.CleanClientPath(p)
+		if pathmap.IsWindowsPath(c) || pathmap.IsUNCPath(c) {
+			c = strings.ToLower(strings.ReplaceAll(c, `\`, "/"))
+		}
+		return strings.TrimRight(c, "/")
+	}
+	a, b = norm(a), norm(b)
+	under := func(child, parent string) bool {
+		return child == parent || strings.HasPrefix(child, parent+"/")
+	}
+	return under(a, b) || under(b, a)
+}
+
 // qbittorrentGrabPath follows addTorrentFields: with a category Bindery turns
 // on automatic torrent management and sends no save path, so the category
 // decides. Without one it sends the save path, or leaves the client default.
-func qbittorrentGrabPath(ctx context.Context, client *models.DownloadClient, info ClientPathInfo, sent string) (ClientPathInfo, error) {
+func qbittorrentGrabPath(ctx context.Context, client *models.DownloadClient, info ClientPathInfo, sent sentSavePath) (ClientPathInfo, error) {
 	qb := QbittorrentFor(client)
 	if info.Category == "" {
-		if sent != "" {
-			info.Path, info.Source = sent, "the save path Bindery sends"
+		def, err := qb.GetDefaultSavePath(ctx)
+		if sent.path != "" {
+			info.Path, info.Source = sent.path, "the save path Bindery sends"
+			if err == nil {
+				sent.noteAgainstDefault(&info, "qBittorrent", def)
+			}
 			return info, nil
 		}
-		def, err := qb.GetDefaultSavePath(ctx)
 		if err != nil {
 			return info, err
 		}

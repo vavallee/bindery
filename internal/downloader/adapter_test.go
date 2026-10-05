@@ -1071,6 +1071,12 @@ func TestTorrentSavePath_RemapPrecedence(t *testing.T) {
 		{name: "global remap to a Windows client", globalRemap: `D:\Torrents:/downloads`, downloadDir: "/downloads/books", want: `D:\Torrents\books`},
 		{name: "global remap to a network share", globalRemap: `\\nas\torrents:/downloads`, downloadDir: "/downloads/books", want: `\\nas\torrents\books`},
 		{name: "no download folder sends nothing", globalRemap: "/data:/downloads", want: ""},
+		// A client that mounts Bindery's folder at the same path opts out of
+		// a global remap written for other clients with an identity rule.
+		// The rule matches without changing the path, which must still stop
+		// the global fallback.
+		{name: "identity client remap opts out of the global remap", clientRemap: "/downloads:/downloads", globalRemap: "/data:/downloads", downloadDir: "/downloads/books", want: "/downloads/books"},
+		{name: "identity client remap on the folder itself", clientRemap: "/downloads:/downloads", globalRemap: "/data:/downloads", downloadDir: "/downloads", want: "/downloads"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
