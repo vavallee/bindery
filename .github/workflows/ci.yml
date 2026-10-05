@@ -576,12 +576,51 @@ jobs:
       # the checksums file; verify a download with
       # `gh attestation verify <file> --repo vavallee/bindery`.
       - name: Attest release binaries
+        id: attest
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
             dist/*_checksums.txt
+      # The attestation above lives in GitHub's attestation store, which
+      # Scorecard's Signed-Releases check cannot see: it only looks at release
+      # assets, and only counts provenance for names ending in .intoto.jsonl
+      # (probes/releasesHaveProvenance). Attach the same Sigstore bundle (one
+      # JSON line covering every archive and the checksums file) so a download
+      # can also be verified against the file with
+      # `gh attestation verify <archive> --repo vavallee/bindery --bundle bindery_<version>.intoto.jsonl`.
+      #
+      # Ordering: the release is already public by now (created above, assets
+      # appended by goreleaser), so this only adds one more asset. --clobber
+      # makes a rerun idempotent. A failure here is reported loudly but does
+      # not fail the job: the binaries are published and attested, and failing
+      # goreleaser would skip deploy-prod and the Discord post for a release
+      # that is otherwise complete. Recover by downloading the bundle with
+      # `gh attestation download` and uploading it under the same name.
+      - name: Attach provenance to the release
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BUNDLE_PATH}" ] || [ ! -s "${BUNDLE_PATH}" ]; then
+            echo "::error::attest step produced no bundle at '${BUNDLE_PATH}'; release ${GITHUB_REF_NAME} has no provenance asset"
+            exit 1
+          fi
+          ASSET="${RUNNER_TEMP}/bindery_${GITHUB_REF_NAME#v}.intoto.jsonl"
+          cp "${BUNDLE_PATH}" "${ASSET}"
+          for attempt in 1 2 3; do
+            if gh release upload "${GITHUB_REF_NAME}" "${ASSET}" --clobber --repo "${GITHUB_REPOSITORY}"; then
+              echo "Attached $(basename "${ASSET}") to ${GITHUB_REF_NAME}"
+              exit 0
+            fi
+            echo "upload attempt ${attempt} failed; retrying"
+            sleep $((attempt * 10))
+          done
+          echo "::error::could not attach $(basename "${ASSET}") to release ${GITHUB_REF_NAME}; upload it by hand"
+          exit 1
 
   # NOTE: there is intentionally no "bump bindery-ping LATEST_VERSION" job here.
   # That job pushed the new version into the telemetry cluster via
