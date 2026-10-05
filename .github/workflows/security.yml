@@ -112,9 +112,17 @@ jobs:
           sarif_file: web/eslint-security.sarif
           category: eslint-security
 
+      # Semgrep and every transitive dependency are pinned by hash in
+      # .github/requirements/semgrep.txt (compiled from semgrep.in with
+      # pip-compile --generate-hashes under Python 3.12, which is why the
+      # interpreter is pinned here too). Dependabot keeps the pair current.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
       - name: Semgrep
         run: |
-          python3 -m pip install --user semgrep
+          python -m pip install --require-hashes -r .github/requirements/semgrep.txt
           semgrep scan \
             --config p/react --config p/typescript --config p/xss \
             --sarif --output semgrep.sarif . || true
