@@ -734,9 +734,12 @@ func (s *ListSyncer) enrichAudiobook(ctx context.Context, book *models.Book) {
 	if err != nil {
 		slog.Warn("failed to persist enriched book", "title", book.Title, "error", err)
 	} else if !updated {
-		// book now holds the concurrent edit, so the search queued after
-		// this sees the user's monitoring choice rather than the snapshot.
-		slog.Debug("audiobook enrichment discarded after concurrent book update", "title", book.Title, "book_id", book.ID)
+		// book now holds the concurrent edit. On the create path that is the
+		// row the search queued after this sees; the widen path queued its
+		// copy before enriching. Logged at INFO because list sync does not
+		// retry this enrichment: a tracked book is skipped on later syncs.
+		// (ABS, by contrast, enriches again on its next import.)
+		slog.Info("audiobook enrichment discarded after concurrent book update", "title", book.Title, "book_id", book.ID)
 	}
 }
 

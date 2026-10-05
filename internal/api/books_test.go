@@ -1369,6 +1369,10 @@ func TestEnrichAudiobook_ConflictWhenEditsKeepLanding(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
 	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body["reason"] != "changed" {
+		t.Fatalf("409 body = %s, want reason \"changed\"", rec.Body.String())
+	}
 	if client.calls != 2 {
 		t.Fatalf("audnex calls = %d, want 2 (one retry)", client.calls)
 	}

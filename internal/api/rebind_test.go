@@ -235,6 +235,11 @@ func TestRebind_ConflictWhenBookChangesDuringFetch(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("want 409, got %d: %s", rec.Code, rec.Body.String())
 	}
+	// The UI tells this apart from the duplicate foreign ID 409 by reason.
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body["reason"] != "changed" {
+		t.Fatalf("409 body = %s, want reason \"changed\"", rec.Body.String())
+	}
 	stored, err := books.GetByID(ctx, book.ID)
 	if err != nil || stored == nil {
 		t.Fatalf("reload book: %v", err)

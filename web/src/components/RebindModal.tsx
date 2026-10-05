@@ -113,9 +113,12 @@ export default function RebindModal({ book, onClose, onSuccess }: Props) {
       onSuccess(updated)
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 409) {
-        const body = err.body as { force_required?: boolean; current_author?: string; upstream_author?: string; error?: string } | null
+        const body = err.body as { force_required?: boolean; reason?: string; current_author?: string; upstream_author?: string; error?: string } | null
         if (body?.force_required) {
           setMismatch({ currentAuthor: body.current_author ?? '', upstreamAuthor: body.upstream_author ?? '' })
+        } else if (body?.reason === 'changed') {
+          // The book was edited while the new record was fetched (#2926).
+          setError(t('bookRebind.changed'))
         } else {
           setError(t('bookRebind.conflict'))
         }

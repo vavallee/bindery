@@ -155,6 +155,10 @@ func (h *BookHandler) hydrateHardcoverEditions(ctx context.Context, book *models
 	})
 }
 
+// conflictReasonChanged marks a 409 caused by a concurrent edit to the book
+// (#2926), so the UI can tell it apart from a duplicate foreign ID 409.
+const conflictReasonChanged = "changed"
+
 // EnrichAudiobook fetches audnex data for the book's ASIN and updates
 // narrator, duration, cover, and description on the record. Requires the
 // book to be media_type=audiobook with an ASIN already set.
@@ -208,7 +212,7 @@ func (h *BookHandler) EnrichAudiobook(w http.ResponseWriter, r *http.Request) {
 		}
 		if attempt > 0 {
 			slog.Info("audnex enrich gave up after repeated concurrent book updates", "bookId", book.ID)
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "This book changed while it was being enriched. Try again."})
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "This book changed while it was being enriched. Try again.", "reason": conflictReasonChanged})
 			return
 		}
 		slog.Debug("audnex enrich retrying after concurrent book update", "bookId", book.ID)
@@ -1295,7 +1299,7 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !updated {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "This book changed while it was being rebound. Try again."})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "This book changed while it was being rebound. Try again.", "reason": conflictReasonChanged})
 		return
 	}
 	// MediaType is in the preserved-fields list above because it belongs to the
