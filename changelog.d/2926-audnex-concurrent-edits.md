@@ -1,2 +1,0 @@
-### Fixed
-- **Audnex enrichment no longer overwrites edits made while it runs** (#2926). Audiobookshelf imports, Hardcover list syncs and the Enrich button on the book page used to write back the whole book as it was before the Audnex lookup, so a change you saved during that lookup (unmonitoring the book, a new cover, a narrator fix) could be silently undone. Background enrichment now skips the book when it changed underneath, and the Enrich button retries once on top of your edit or asks you to try again. Rebind gets the same protection while it fetches the new record.
