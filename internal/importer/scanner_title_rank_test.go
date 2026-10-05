@@ -1,9 +1,11 @@
 package importer
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -116,5 +118,85 @@ func TestScanLibrary_IdenticalNormalisedTitlesStayUnmatched(t *testing.T) {
 	}
 	if units := readUnmatchedFiles(t, e.ctx, e.s); len(units) != 1 {
 		t.Fatalf("unmatched units = %d, want 1", len(units))
+	}
+}
+
+func TestScanLibrary_BlockedTitleStaysInRanking(t *testing.T) {
+	for _, scenario := range []string{"same scan", "previous scan", "script first", "near blocked", "dual format"} {
+		t.Run(scenario, func(t *testing.T) {
+			e := newVolumeScanEnv(t, "J. K. Rowling")
+			title := "Harry Potter en het vervloekte kind"
+			mediaType := models.MediaTypeEbook
+			if scenario == "dual format" {
+				mediaType = models.MediaTypeBoth
+			}
+			exact := e.wanted(t, title, mediaType)
+			shortTitle := "Harry Potter"
+			if scenario == "near blocked" {
+				shortTitle = title + " script"
+			}
+			short := e.wanted(t, shortTitle, models.MediaTypeEbook)
+			firstTitle := title
+			if scenario == "script first" {
+				firstTitle += " script"
+			}
+			first := filepath.Join(e.libDir, "J. K. Rowling", "a", firstTitle+" - J. K. Rowling.epub")
+			second := filepath.Join(e.libDir, "J. K. Rowling", "b", shortTitle+" - J. K. Rowling.epub")
+			if scenario != "near blocked" {
+				second = filepath.Join(e.libDir, "J. K. Rowling", "b", title+" - J. K. Rowling.epub")
+			}
+			writeFile(t, first)
+			if scenario == "previous scan" || scenario == "near blocked" || scenario == "dual format" {
+				if err := e.books.AddBookFile(e.ctx, exact.ID, models.MediaTypeEbook, first); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeFile(t, second)
+			e.s.ScanLibrary(e.ctx)
+			if got := e.get(t, exact.ID); got.EbookFilePath != first {
+				t.Errorf("exact book took %q, want %q", got.EbookFilePath, first)
+			}
+			if got := e.get(t, short.ID); got.EbookFilePath != "" {
+				t.Errorf("other book took %q", got.EbookFilePath)
+			}
+			if units := readUnmatchedFiles(t, e.ctx, e.s); len(units) != 1 {
+				t.Errorf("unmatched units = %+v, want one", units)
+			}
+		})
+	}
+}
+
+func TestScanLibrary_TitleWriteFailureDoesNotClaimRunnerUp(t *testing.T) {
+	e := newVolumeScanEnv(t, "J. K. Rowling")
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	e.books = db.NewBookRepo(database)
+	e.authors = db.NewAuthorRepo(database)
+	author := &models.Author{ForeignID: "hc:rowling", Name: "J. K. Rowling"}
+	if err := e.authors.Create(e.ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	e.authorID = author.ID
+	e.s = NewScanner(db.NewDownloadRepo(database), db.NewDownloadClientRepo(database), e.books, e.authors,
+		db.NewHistoryRepo(database), e.libDir, e.abDir, "", "", "")
+	e.s.WithUnmatchedUnits(db.NewUnmatchedUnitRepo(database))
+	exact := e.wanted(t, "Harry Potter en het vervloekte kind", models.MediaTypeEbook)
+	short := e.wanted(t, "Harry Potter", models.MediaTypeEbook)
+	writeFile(t, filepath.Join(e.libDir, "J. K. Rowling", exact.Title+" - J. K. Rowling.epub"))
+	if _, err := database.Exec(fmt.Sprintf(`CREATE TRIGGER f BEFORE INSERT ON book_files
+  WHEN NEW.book_id = %d BEGIN SELECT RAISE(ABORT,'boom'); END`, exact.ID)); err != nil {
+		t.Fatal(err)
+	}
+	e.s.ScanLibrary(e.ctx)
+	for _, id := range []int64{exact.ID, short.ID} {
+		if got := e.get(t, id); got.EbookFilePath != "" {
+			t.Errorf("book %d took %q", id, got.EbookFilePath)
+		}
+	}
+	if units := readUnmatchedFiles(t, e.ctx, e.s); len(units) != 1 {
+		t.Errorf("unmatched units = %+v, want one", units)
 	}
 }

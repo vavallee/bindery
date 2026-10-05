@@ -2960,17 +2960,18 @@ type scanBook struct {
 	normTitle string
 	normLen   int
 	// reconcilable is isReconcileCandidate for the book: the scan may claim
-	// a file for it on its own. Only the suggestion pool holds books without
-	// it (#2879).
+	// a file for it on its own. Books without it can block title claims
+	// and appear as suggestions (#2879).
 	reconcilable bool
 }
 
-// titleReconcileHit is one wanted book that cleared every title-tier gate for
+// titleReconcileHit is one catalogue book that cleared every title-tier gate for
 // a single reading of a file. reconcileByTitle collects these and then
 // chooses; a gate failure is not a hit (#2941).
 type titleReconcileHit struct {
-	sb    *scanBook
-	score float64
+	sb      *scanBook
+	score   float64
+	blocked bool
 }
 
 func newScanBook(b *models.Book, reconcilable bool) scanBook {
@@ -3495,15 +3496,15 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	// them is an exact normalised title.
 	const titleReconcileMargin = 0.05
 
-	// tryReconcileTitle reports whether one wanted book clears the fuzzy title
+	// tryReconcileTitle reports whether one catalogue book clears the fuzzy title
 	// tier for this reading of the file. It does not claim: reconcileByTitle
 	// scores every candidate, then picks. The candidate's author is already
 	// known to satisfy authorMatch — see the title tier in the file loop below.
 	var titleCand []int // reused candidate-index scratch
 	var titleHits []titleReconcileHit
 	// claimBlocked records that the file currently being processed matched a book
-	// whose slot for its format had already been claimed earlier in the pass. It
-	// is reset per file and read only in the unmatched branch, where it tells a
+	// that cannot accept another file of this format. It is reset per file
+	// and read only in the unmatched branch, where it tells a
 	// supplement-class sidecar apart from a genuine orphan (#2188).
 	var claimBlocked bool
 	// registeredPath is what the file currently being processed is recorded as
@@ -3547,16 +3548,6 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				"title", b.Title, "path", path, "fileTitle", title, "folderTitle", fileLayoutTitle, "jw", jwScore)
 			return titleReconcileHit{}, false
 		}
-		// This book already took a file of this format earlier in the pass. The
-		// claim check used to run before the title gate; it runs after it now so
-		// that claimBlocked means "a book this file actually matches is taken",
-		// not "some unrelated book is taken" (#2188). Jaro-Winkler on two short
-		// normalised titles is far cheaper than the root lookup below, which still
-		// gets skipped.
-		if reconciledBooks[bookFormatClaim{b.ID, detectedFmt}] {
-			claimBlocked = true
-			return titleReconcileHit{}, false
-		}
 		// File must live under the candidate book's effective library root to
 		// prevent cross-author mismapping after delete+rescan (#343).
 		effDir := s.effectiveRootForFormat(ctx, authorMap[b.AuthorID], detectedFmt)
@@ -3565,11 +3556,16 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				"title", b.Title, "path", path, "root", effDir)
 			return titleReconcileHit{}, false
 		}
-		return titleReconcileHit{sb: sb, score: jwScore}, true
+		existingPath := b.EbookFilePath
+		if detectedFmt == models.MediaTypeAudiobook {
+			existingPath = b.AudiobookFilePath
+		}
+		_, existingErr := os.Stat(existingPath)
+		blocked := !sb.reconcilable || existingErr == nil || reconciledBooks[bookFormatClaim{b.ID, detectedFmt}]
+		return titleReconcileHit{sb: sb, score: jwScore, blocked: blocked}, true
 	}
 
-	// claimTitleHit records the chosen hit. A write error is logged and
-	// reported so the caller can apply the same rule to the hits that remain.
+	// claimTitleHit records the chosen hit and reports a write error as unmatched.
 	claimTitleHit := func(hit titleReconcileHit, path, cleanPath, detectedFmt string) bool {
 		b := hit.sb.book
 		if err := s.books.AddBookFile(ctx, b.ID, detectedFmt, registeredPath); err != nil {
@@ -3594,6 +3590,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	// is identical to the file (score 1) and strictly ahead of the runner-up,
 	// or when it leads by titleReconcileMargin. A closer pair is left
 	// unmatched (#2941).
+	catalogue, catalogueByAuthor := suggestionCatalogue(allBooks, wantedBooks)
 	reconcileByTitle := func(path, cleanPath, detectedFmt, title, author, layoutAuthor string) bool {
 		// normalizeTitle strips leading articles and inverts comma-suffix
 		// sort form ("Title, A" → "title") so librarian-sorted folders
@@ -3601,9 +3598,9 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		normParsed := normalizeTitle(title)
 		// authorMatch is part of the title-tier predicate. Resolving the
 		// matching authors first lets the candidate list be built from just
-		// their books (booksByAuthor), iterated in library order. A nil set
+		// their books (catalogueByAuthor), iterated in library order. A nil set
 		// means the parsed author is empty or initials only, so authorMatch
-		// accepts any author and every wanted book is a candidate.
+		// accepts any author and every catalogue book is considered.
 		authorSet, _ := resolveAuthors(author, layoutAuthor)
 		titleHits = titleHits[:0]
 		consider := func(sb *scanBook) {
@@ -3612,17 +3609,17 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			}
 		}
 		if authorSet == nil {
-			for i := range wantedBooks {
-				consider(&wantedBooks[i])
+			for i := range catalogue {
+				consider(&catalogue[i])
 			}
 		} else {
 			titleCand = titleCand[:0]
 			for id := range authorSet {
-				titleCand = append(titleCand, booksByAuthor[id]...)
+				titleCand = append(titleCand, catalogueByAuthor[id]...)
 			}
 			slices.Sort(titleCand) // restore library order across authors
 			for _, idx := range titleCand {
-				consider(&wantedBooks[idx])
+				consider(&catalogue[idx])
 			}
 		}
 		hits := titleHits
@@ -3637,8 +3634,14 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				return 0
 			})
 		}
-		for len(hits) > 0 {
+		if len(hits) > 0 {
 			best := hits[0]
+			for _, hit := range hits {
+				if hit.blocked && best.score-hit.score < titleReconcileMargin {
+					claimBlocked = true
+					return false
+				}
+			}
 			if len(hits) > 1 {
 				runner := hits[1]
 				// An exact normalised title still wins inside the margin.
@@ -3652,10 +3655,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 					return false
 				}
 			}
-			if claimTitleHit(best, path, cleanPath, detectedFmt) {
-				return true
-			}
-			hits = hits[1:]
+			return claimTitleHit(best, path, cleanPath, detectedFmt)
 		}
 		return false
 	}
@@ -3952,16 +3952,9 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	// resolved author they are drawn from every book of that author, not only
 	// the ones the scan may claim by itself: a Skipped book, or one already
 	// Imported with a file elsewhere, is often exactly what an untracked copy
-	// is (#2879). Built on first use, so a scan with nothing unmatched pays
-	// nothing for it. Excluded books are not in allBooks and so are never
-	// offered.
-	var catalogue []scanBook
-	var catalogueByAuthor map[int64][]int
+	// is (#2879). Excluded books are not in allBooks and so are never offered.
 	units := s.recordUnmatchedUnits(ctx, &unmatchedFiles, scanRoots, rootsWithFiles, scanStartedAt,
 		func(title, layoutTitle, author, layoutAuthor string) []db.UnmatchedCandidate {
-			if catalogueByAuthor == nil {
-				catalogue, catalogueByAuthor = suggestionCatalogue(allBooks, wantedBooks)
-			}
 			authorSet, _ := resolveAuthors(author, layoutAuthor)
 			return rankCandidates(title, layoutTitle, wantedBooks, catalogue, catalogueByAuthor, authorSet)
 		})
