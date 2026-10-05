@@ -2052,3 +2052,70 @@ func TestSync_ScheduledRunSkippedDuringShutdown(t *testing.T) {
 	}
 	s.syncRunning.Store(false)
 }
+
+// editingEnricher mutates the book the way Audnex enrichment does, after
+// running edit, which commits a user edit to the row while the Audnex request
+// would be in flight (#2926).
+type editingEnricher struct {
+	edit func(book *models.Book)
+}
+
+func (e *editingEnricher) EnrichAudiobook(_ context.Context, book *models.Book) error {
+	if e.edit != nil {
+		e.edit(book)
+	}
+	book.Narrator = "Audnex Narrator"
+	book.DurationSeconds = 36000
+	book.ImageURL = "https://audnex.test/cover.jpg"
+	return nil
+}
+
+// TestSync_EnrichmentPreservesConcurrentBookEdit covers #2926: a user edit
+// committed while list sync waits on Audnex must survive the enrichment
+// write, rather than being overwritten by the row as it was before the call.
+func TestSync_EnrichmentPreservesConcurrentBookEdit(t *testing.T) {
+	syncer, books, _, ctx := newHydrationSyncer(t, models.MediaTypeAudiobook, models.MediaTypeBoth)
+	syncer.WithAudiobookEnricher(&editingEnricher{edit: func(book *models.Book) {
+		current, err := books.GetByID(ctx, book.ID)
+		if err != nil || current == nil {
+			t.Errorf("load book for concurrent edit: %v", err)
+			return
+		}
+		current.Monitored = false
+		current.Narrator = "User Narrator"
+		current.ImageURL = "https://example.test/user-cover.jpg"
+		if err := books.Update(ctx, current); err != nil {
+			t.Errorf("concurrent edit: %v", err)
+		}
+	}})
+
+	if err := syncer.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	book, err := books.GetByForeignID(ctx, "hc:pinned-book")
+	if err != nil || book == nil {
+		t.Fatalf("created book not found: %v", err)
+	}
+	if book.Monitored || book.Narrator != "User Narrator" || book.ImageURL != "https://example.test/user-cover.jpg" {
+		t.Fatalf("concurrent edit overwritten by audnex enrichment: monitored=%v narrator=%q image=%q",
+			book.Monitored, book.Narrator, book.ImageURL)
+	}
+}
+
+// TestSync_EnrichmentPersistsWithoutConcurrentEdit is the control: with
+// nothing racing the guarded write, every enriched field lands.
+func TestSync_EnrichmentPersistsWithoutConcurrentEdit(t *testing.T) {
+	syncer, books, _, ctx := newHydrationSyncer(t, models.MediaTypeAudiobook, models.MediaTypeBoth)
+	syncer.WithAudiobookEnricher(&editingEnricher{})
+
+	if err := syncer.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	book, err := books.GetByForeignID(ctx, "hc:pinned-book")
+	if err != nil || book == nil {
+		t.Fatalf("created book not found: %v", err)
+	}
+	if book.Narrator != "Audnex Narrator" || book.DurationSeconds != 36000 || book.ImageURL != "https://audnex.test/cover.jpg" {
+		t.Fatalf("audnex enrichment not persisted: %+v", book)
+	}
+}

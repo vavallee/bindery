@@ -802,6 +802,13 @@ This refresh also runs when the edition fetch is empty, unchanged, or fails.
 If a book is rebound while editions are being fetched, later edition writes for
 the old book identity are skipped.
 
+Audnex enrichment follows the same rule. When an Audiobookshelf import or a
+Hardcover list sync enriches a book you edited while the Audnex lookup was in
+flight, your edit is kept and that enrichment is skipped. The **Enrich** button
+on the book page retries once on top of your edit; if the book keeps changing
+it asks you to try again. **Rebind** does the same when the book changes while
+the new record is being fetched.
+
 Which of those a given book actually came from is on the book page, under
 **Metadata source**. It names the provider, shows the identifier the book is
 bound to with a copy button, and lists any other provider ids the same book is
