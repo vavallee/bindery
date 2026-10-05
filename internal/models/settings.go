@@ -106,6 +106,10 @@ const (
 	HistoryEventDownloadStalled      = "downloadStalled"
 	HistoryEventDownloadRequeued     = "downloadRequeued"
 	HistoryEventBookRebound          = "bookRebound"
+	// HistoryEventBookFileMoved records that Fix match moved a tracked file from
+	// one book to another (#2937). BookID is the book that now holds it; Data
+	// carries "path", "sourcePath", "fromBookId", "fromTitle" and "message".
+	HistoryEventBookFileMoved = "bookFileMoved"
 	// HistoryEventBookLanguageCorrected records that an imported EPUB's
 	// embedded dc:language disagreed with the language the metadata provider
 	// supplied, and the file's value was adopted (#1933). Data carries "from"

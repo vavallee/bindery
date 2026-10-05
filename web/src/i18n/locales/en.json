@@ -667,6 +667,7 @@
       "bookFileDeleted": "File Deleted",
       "bookRenamed": "File Renamed",
       "bookRebound": "Rebound",
+      "bookFileMoved": "File Moved",
       "bookLanguageCorrected": "Language Corrected"
     },
     "empty": "No history events found",

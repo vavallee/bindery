@@ -302,6 +302,39 @@ func TestAdopt_RefusesAFileAnotherBookOwns(t *testing.T) {
 	}
 }
 
+// TestAdopt_FileTakenAfterTheCheckIs409: another book takes the file between
+// the ownership check and the write (#2937). The write used to be an OR
+// IGNORE that reported "not inserted" and the adopt succeeded with nothing
+// registered; it is now the same 409 as the check, with nothing left behind.
+func TestAdopt_FileTakenAfterTheCheckIs409(t *testing.T) {
+	f := newAdoptionFixture(t, &stubMetaProvider{name: "openlibrary"})
+	thief := f.seedBook(t, "Provenance")
+	target := f.seedBook(t, "Translation State")
+	path := f.write(t, "Ann Leckie/Translation State.epub")
+	id := f.seedUnit(t, db.UnmatchedUnitScan{UnitPath: path, MemberPaths: []string{path}})
+
+	real := f.h.registerFile
+	f.h.registerFile = func(ctx context.Context, bookID int64, format, p string) (bool, error) {
+		if err := f.books.AddBookFile(ctx, thief.ID, format, p); err != nil {
+			t.Errorf("concurrent claim: %v", err)
+		}
+		return real(ctx, bookID, format, p)
+	}
+	rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/adopt", id), map[string]any{"bookId": target.ID})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("adopt = %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	if got := filePaths(t, f.books, target.ID); len(got) != 0 {
+		t.Fatalf("target gained %v", got)
+	}
+	if got := filePaths(t, f.books, thief.ID); len(got) != 1 {
+		t.Fatalf("concurrent owner's row = %v, want it kept", got)
+	}
+	if u, _ := f.units.Get(context.Background(), id); u.State != db.UnmatchedStatePending {
+		t.Fatalf("unit state = %s, want pending", u.State)
+	}
+}
+
 // TestAdopt_RejectsSymlinkEscape is S10 at adopt time: the row may be hours
 // old, so a member swapped for a symlink, or reached through a symlinked
 // folder that leaves the library, is refused and nothing is written.

@@ -870,22 +870,56 @@ func (r *BookRepo) MarkWantedMonitored(ctx context.Context, id int64) error {
 // AddBookFile records a new on-disk file in book_files and refreshes the
 // book's aggregate status. Multiple files for the same format are all tracked
 // (e.g. epub + mobi + pdf from a multi-file download).
+//
+// Re-adding a path the book already tracks is a no-op success. A path another
+// existing book tracks returns *PathOwnedError (match it with errors.As) and
+// records nothing, so a caller can never report an import that tracked
+// nothing as a success (#2937). A row left by a deleted book is taken over.
 func (r *BookRepo) AddBookFile(ctx context.Context, bookID int64, format, path string) error {
-	if err := r.files.Add(ctx, bookID, format, path); err != nil {
+	if _, err := r.trackBookFile(ctx, bookID, format, path); err != nil {
 		return err
 	}
 	return r.refreshBookStatus(ctx, bookID)
 }
 
 // AddBookFileIfMissing records a new on-disk file and reports whether this call
-// inserted it, refreshing the book's aggregate status either way. See
-// BookFileRepo.AddIfMissing for why the caller needs to know (#1635).
+// made the row the book's, refreshing the book's aggregate status either way.
+// See BookFileRepo.AddIfMissing for why the caller needs to know (#1635). A
+// path another book owns returns *PathOwnedError, as AddBookFile does.
 func (r *BookRepo) AddBookFileIfMissing(ctx context.Context, bookID int64, format, path string) (bool, error) {
-	created, err := r.files.AddIfMissing(ctx, bookID, format, path)
+	res, err := r.trackBookFile(ctx, bookID, format, path)
 	if err != nil {
 		return false, err
 	}
-	return created, r.refreshBookStatus(ctx, bookID)
+	return res.Created(), r.refreshBookStatus(ctx, bookID)
+}
+
+// trackBookFile is BookFileRepo.Track with the orphan takeover logged, since
+// it changes a row the caller did not create.
+func (r *BookRepo) trackBookFile(ctx context.Context, bookID int64, format, path string) (TrackResult, error) {
+	res, err := r.files.Track(ctx, bookID, format, path)
+	if err == nil && res.Outcome == TrackReclaimedOrphan {
+		slog.Warn("book_files: took over a row left by a deleted book",
+			"path", path, "bookID", bookID, "deletedBookID", res.PreviousBookID)
+	}
+	return res, err
+}
+
+// MoveBookFile makes toBookID the owner of path and refreshes the status of
+// both books, returning the previous owner (0 when the path was untracked).
+// Only an explicit user action that says the file belongs to toBookID (Fix
+// match) may call this; an import must use AddBookFile, which refuses (#2937).
+func (r *BookRepo) MoveBookFile(ctx context.Context, path string, toBookID int64, format string) (int64, error) {
+	prev, err := r.files.MoveToBook(ctx, toBookID, format, path)
+	if err != nil {
+		return 0, err
+	}
+	if prev != 0 && prev != toBookID {
+		if err := r.refreshBookStatus(ctx, prev); err != nil {
+			return prev, err
+		}
+	}
+	return prev, r.refreshBookStatus(ctx, toBookID)
 }
 
 // ListFiles returns all book_files rows for the given book.
