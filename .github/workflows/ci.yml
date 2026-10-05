@@ -592,13 +592,13 @@ jobs:
       # the checksums file; verify a download with
       # `gh attestation verify <file> --repo vavallee/bindery`.
       - name: Attest release binaries
-        id: attest
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
             dist/*_checksums.txt
+        id: attest
       # The attestation above lives in GitHub's attestation store, which
       # Scorecard's Signed-Releases check cannot see: it only looks at release
       # assets, and only counts provenance for names ending in .intoto.jsonl
