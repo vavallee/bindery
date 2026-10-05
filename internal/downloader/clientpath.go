@@ -197,22 +197,30 @@ type sentSavePath struct {
 	viaGlobal bool   // BINDERY_DOWNLOAD_PATH_REMAP produced it
 }
 
-// noteAgainstDefault sets a note on info when the global remap produced the
-// folder Bindery sends and that folder is unrelated to the client's own
-// default save folder: not that folder, not inside it and not above it. The
-// global remap always matches a sent folder, because its Bindery side is
-// Bindery's own folder, so a global remap written for one client also
-// rewrites what another client is sent. This is how that shows up when the
-// other client mounts Bindery's folder at the same path (#2665). A folder from
-// the client's own remap is the operator's explicit choice and is not second
-// guessed, and a default the client did not report is not checked.
+// noteAgainstDefault sets a note on info for the signature of a global remap
+// meant for a different client (#2665): the global remap produced the folder
+// Bindery sends, yet the client's own default save folder sits on Bindery's
+// own folder (that folder, inside it or above it) rather than on the folder
+// it is sent. The global remap always matches a sent folder, because its
+// Bindery side is Bindery's own folder, so a remap written for SABnzbd also
+// rewrites what an rTorrent mounting Bindery's path directly is sent.
+//
+// Anything else is left alone, because a default unrelated to both folders is
+// normal: a dedicated Bindery folder next to the client's default, or
+// separate incomplete and complete folders. A default that is not an
+// absolute path (rTorrent ships with "./", and "~/download" is common) says
+// nothing about mounts and is not checked, nor is a folder from the client's
+// own remap, which is the operator's explicit choice.
 func (s sentSavePath) noteAgainstDefault(info *ClientPathInfo, clientName, def string) {
 	def = strings.TrimSpace(def)
-	if !s.viaGlobal || def == "" || clientPathsOverlap(s.path, def) {
+	if !s.viaGlobal || !pathmap.IsAbsClientPath(def) || s.local == "" {
 		return
 	}
-	info.Note = fmt.Sprintf("BINDERY_DOWNLOAD_PATH_REMAP turns Bindery's folder %q into %q for %s, but %s's own default save folder is %q, which is unrelated to it.", s.local, s.path, clientName, clientName, def)
-	info.NoteFix = fmt.Sprintf("If %s sees Bindery's download folder at the same path, set the path remap %q on this client, so it keeps that path instead of using the global remap. Otherwise check that %s can write to %q.", clientName, s.local+":"+s.local, clientName, s.path)
+	if !clientPathsOverlap(def, s.local) || clientPathsOverlap(def, s.path) {
+		return
+	}
+	info.Note = fmt.Sprintf("BINDERY_DOWNLOAD_PATH_REMAP turns Bindery's folder %q into %q for %s, but %s's own default save folder %q is on Bindery's path, so the global remap may be meant for a different client. If %s really keeps this storage at %q, ignore this.", s.local, s.path, clientName, clientName, def, clientName, s.path)
+	info.NoteFix = fmt.Sprintf("If %s sees Bindery's download folder at the same path, set the path remap %q on this client, so it keeps that path instead of using the global remap.", clientName, s.local+":"+s.local)
 }
 
 // clientPathsOverlap reports whether two paths in a download client's
