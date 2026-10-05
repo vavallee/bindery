@@ -1,0 +1,16 @@
+# osv-scanner configuration. OpenSSF Scorecard's Vulnerabilities check runs
+# osv-scanner over the repository and loads this file from the directory that
+# holds go.mod, so an entry here also clears the Scorecard finding.
+#
+# Only ignore an advisory that cannot be fixed by an upgrade AND that
+# govulncheck confirms Bindery does not reach. Give every entry a reason and
+# drop it when it stops applying (osv-scanner warns about unused ignores).
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = """\
+golang.org/x/crypto/openpgp is deprecated and the advisory has no fixed \
+version, so it matches every x/crypto release. Bindery never imports any \
+openpgp package (go list -deps ./... shows none) and govulncheck reports \
+no call; the module is needed for other x/crypto packages.\
+"""

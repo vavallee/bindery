@@ -2903,6 +2903,12 @@ func handleNewWantedBook(ctx context.Context, books *db.BookRepo, series *db.Ser
 			slog.Info("library: found existing file, skipping auto-search", "title", book.Title, "path", existingPath)
 			if err := books.SetFilePath(ctx, book.ID, existingPath); err != nil {
 				slog.Warn("authors: record existing file path", "error", err, "book_id", book.ID)
+				// Another book took the file after the check above (#2937):
+				// nothing was bound, so let the auto-search run.
+				var owned *db.PathOwnedError
+				if errors.As(err, &owned) {
+					return false
+				}
 			}
 			return true
 		}

@@ -116,6 +116,13 @@ From the first release after v1.40.0, every archive and the checksums file also 
 gh attestation verify bindery_<version>_linux_amd64.tar.gz --repo vavallee/bindery
 ```
 
+From v1.40.1 the same attestation is also attached to the release as `bindery_<version>.intoto.jsonl` (a Sigstore bundle covering every archive and the checksums file), so you can verify against that file instead of fetching the attestation from GitHub's API:
+
+```bash
+gh attestation verify bindery_<version>_linux_amd64.tar.gz --repo vavallee/bindery \
+  --bundle bindery_<version>.intoto.jsonl
+```
+
 Each archive also has an SPDX SBOM (`<archive>.sbom.spdx.json`) beside it on the release.
 
 Each archive also carries `LICENSE` and `THIRD_PARTY_LICENSES.md` — the licenses

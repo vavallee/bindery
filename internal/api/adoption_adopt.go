@@ -347,6 +347,13 @@ func (h *AdoptionHandler) register(ctx context.Context, unitID int64, token stri
 	}
 	for _, p := range paths {
 		inserted, err := h.registerFile(ctx, bookID, format, p)
+		var owned *db.PathOwnedError
+		if errors.As(err, &owned) {
+			// Taken by another book between the check above and this write
+			// (#2937): the same refusal the check gives, and the caller
+			// reverses whatever this request already registered.
+			return refuse(http.StatusConflict, filepath.Base(p)+" already belongs to a book in your library.")
+		}
 		if err != nil {
 			return err
 		}

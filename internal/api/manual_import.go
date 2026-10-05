@@ -280,9 +280,17 @@ func (h *ManualImportHandler) Reassign(w http.ResponseWriter, r *http.Request) {
 	// away, so a later delete of the "empty-looking" source removes the target's
 	// file. Detach against the caller's raw path (what the frontend read from the
 	// DB) first, then fall back to the resolved form.
-	if !h.detachSourceFile(r.Context(), req.Path, path) {
+	source := h.detachSourceFile(r.Context(), req.Path, path)
+	if source == nil {
 		slog.Warn("reassign: source file not tracked under raw or resolved path; source book may retain a stale reference",
 			"rawPath", req.Path, "resolvedPath", path)
+	}
+	// Moving the file is what Fix match asks for, so tell the import: it
+	// records the move in history, and if the source path is somehow still
+	// held by another book it moves that row instead of refusing (#2937).
+	fm := importer.FixMatch{SourcePaths: []string{filepath.Clean(req.Path), path}}
+	if source != nil {
+		fm.FromBookID, fm.FromTitle = source.ID, source.Title
 	}
 	ctx := context.WithoutCancel(r.Context())
 	targetID := req.TargetBookID
@@ -291,7 +299,9 @@ func (h *ManualImportHandler) Reassign(w http.ResponseWriter, r *http.Request) {
 	// a pre-existing unrelated file as proof of a successful move (#1368).
 	preexisting := h.targetFilePaths(ctx, targetID)
 	if !h.goBackground("manual-import-reassign", ctx, func(ctx context.Context) {
-		h.scanner.ImportFromPath(ctx, dl, path, req.Format)
+		// Marked here rather than on the outer ctx: with a jobs group wired
+		// the job runs on the group's context, not the one passed above.
+		h.scanner.ImportFromPath(importer.WithFixMatch(ctx, fm), dl, path, req.Format)
 		h.removeStaleSource(ctx, path, targetID, preexisting)
 	}) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "server is shutting down"})
@@ -370,29 +380,30 @@ func (h *ManualImportHandler) ReassignPreview(w http.ResponseWriter, r *http.Req
 }
 
 // detachSourceFile removes the book_files association for the file being
-// reassigned and reports whether a row was actually removed. book_files stores
-// the path exactly as recorded at import time, which for a symlinked library
-// differs from the EvalSymlinks-resolved path prepareImport produces (#1368).
+// reassigned and returns the book it was removed from (nil when no row was
+// removed). book_files stores the path exactly as recorded at import time,
+// which for a symlinked library differs from the EvalSymlinks-resolved path
+// prepareImport produces (#1368).
 // Try the caller's raw (un-resolved) path — the string the frontend read back
 // from the DB — then the resolved path, so the source is reliably emptied
 // regardless of which form the row holds.
-func (h *ManualImportHandler) detachSourceFile(ctx context.Context, rawPath, resolvedPath string) bool {
+func (h *ManualImportHandler) detachSourceFile(ctx context.Context, rawPath, resolvedPath string) *models.Book {
 	raw := filepath.Clean(rawPath)
 	removed, err := h.books.RemoveBookFile(ctx, raw)
 	if err != nil {
 		slog.Warn("reassign: detach source book file", "path", raw, "error", err)
 	}
 	if removed != nil {
-		return true
+		return removed
 	}
 	if resolvedPath == raw {
-		return false
+		return nil
 	}
 	removed, err = h.books.RemoveBookFile(ctx, resolvedPath)
 	if err != nil {
 		slog.Warn("reassign: detach source book file", "path", resolvedPath, "error", err)
 	}
-	return removed != nil
+	return removed
 }
 
 // targetFilePaths returns the set of on-disk paths currently tracked for the

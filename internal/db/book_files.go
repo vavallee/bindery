@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -69,39 +70,170 @@ func (r *BookFileRepo) PathEpoch() uint64 {
 	return pathEpochFor(r.db).Load()
 }
 
-// Add inserts a book_files row. Duplicate paths are silently ignored (INSERT OR IGNORE).
-func (r *BookFileRepo) Add(ctx context.Context, bookID int64, format, path string) error {
-	_, err := r.db.ExecContext(ctx,
+// PathOwnedError reports that a path is already tracked in book_files by a
+// different, existing book. book_files.path is globally UNIQUE, so the row
+// cannot be recorded for a second book; before #2937 the insert was a silent
+// OR IGNORE that left the caller believing it had tracked the file. The owner
+// is named so the message tells the user where the file actually is.
+type PathOwnedError struct {
+	Path        string
+	OwnerBookID int64
+	OwnerTitle  string
+}
+
+func (e *PathOwnedError) Error() string {
+	return fmt.Sprintf("%s is already tracked on another book, %q (id %d)", e.Path, e.OwnerTitle, e.OwnerBookID)
+}
+
+// TrackOutcome says what Track did with a path.
+type TrackOutcome int
+
+const (
+	// TrackInserted means a new row was written for the book.
+	TrackInserted TrackOutcome = iota + 1
+	// TrackAlreadyTracked means the same book already held the path, so the
+	// call was an idempotent no-op (retries and rescans rely on this).
+	TrackAlreadyTracked
+	// TrackReclaimedOrphan means the path was held by a row whose book no
+	// longer exists (foreign_keys lost, #1727). That row is stale, so it was
+	// re-pointed at the book.
+	TrackReclaimedOrphan
+)
+
+// TrackResult is the outcome of Track. PreviousBookID is the dead book id an
+// orphaned row named before it was reclaimed.
+type TrackResult struct {
+	Outcome        TrackOutcome
+	PreviousBookID int64
+}
+
+// Created reports whether this call made the row the book's: a fresh insert
+// or a reclaimed orphan. A same-book no-op is not a creation.
+func (r TrackResult) Created() bool {
+	return r.Outcome == TrackInserted || r.Outcome == TrackReclaimedOrphan
+}
+
+// Track records path against bookID and reports what happened. A path the
+// same book already tracks is a no-op success, a row left behind by a deleted
+// book is taken over, and a path another existing book tracks fails with
+// *PathOwnedError and leaves that book's row alone (#2937).
+//
+// The insert and the ownership lookup run in one transaction so the answer
+// describes the row this call saw, not one a concurrent writer changed in
+// between. Nothing else happens inside it: no file I/O, no other query on
+// r.db (the pool has one connection).
+func (r *BookFileRepo) Track(ctx context.Context, bookID int64, format, path string) (TrackResult, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return TrackResult{}, fmt.Errorf("book_files track begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO book_files (book_id, format, path, size_bytes, created_at)
 		 VALUES (?, ?, ?, 0, ?)`,
 		bookID, format, path, time.Now().UTC())
 	if err != nil {
-		return fmt.Errorf("book_files add: %w", err)
+		return TrackResult{}, fmt.Errorf("book_files add: %w", err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return TrackResult{}, fmt.Errorf("book_files add rows: %w", err)
+	}
+	if n > 0 {
+		if err := tx.Commit(); err != nil {
+			return TrackResult{}, fmt.Errorf("book_files add commit: %w", err)
+		}
+		return TrackResult{Outcome: TrackInserted}, nil
+	}
+
+	var owner int64
+	var ownerTitle sql.NullString
+	err = tx.QueryRowContext(ctx,
+		`SELECT bf.book_id, b.title FROM book_files bf LEFT JOIN books b ON b.id = bf.book_id
+		 WHERE bf.path = ?`, path).Scan(&owner, &ownerTitle)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TrackResult{}, fmt.Errorf("book_files add: insert of %s was ignored but no row holds the path", path)
+	}
+	if err != nil {
+		return TrackResult{}, fmt.Errorf("book_files owner lookup: %w", err)
+	}
+	switch {
+	case owner == bookID:
+		return TrackResult{Outcome: TrackAlreadyTracked}, nil
+	case !ownerTitle.Valid:
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE book_files SET book_id = ?, format = ? WHERE path = ?`, bookID, format, path); err != nil {
+			return TrackResult{}, fmt.Errorf("book_files reclaim orphaned row: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return TrackResult{}, fmt.Errorf("book_files reclaim commit: %w", err)
+		}
+		return TrackResult{Outcome: TrackReclaimedOrphan, PreviousBookID: owner}, nil
+	default:
+		return TrackResult{}, &PathOwnedError{Path: path, OwnerBookID: owner, OwnerTitle: ownerTitle.String}
+	}
+}
+
+// Add records path against bookID. It is Track without the outcome: a
+// same-book re-add succeeds, and a path another book owns returns
+// *PathOwnedError instead of being silently ignored (#2937).
+func (r *BookFileRepo) Add(ctx context.Context, bookID int64, format, path string) error {
+	_, err := r.Track(ctx, bookID, format, path)
+	return err
 }
 
 // AddIfMissing records a new on-disk file and reports whether this call is the
-// one that inserted it. The path column is globally UNIQUE and the insert is
-// OR IGNORE, so a row another book (or an earlier run) already owns comes back
-// as false rather than being stolen or duplicated.
+// one that made the row the book's (see TrackResult.Created). A path the book
+// already tracks comes back false; a path another book owns comes back as
+// *PathOwnedError rather than being stolen or reported as handled.
 //
 // Callers that need to know what they own use this instead of Add: the Calibre
 // importer may only claim, and later roll back, a file row it actually created
 // (#1635), mirroring SeriesRepo.LinkBookIfMissing.
 func (r *BookFileRepo) AddIfMissing(ctx context.Context, bookID int64, format, path string) (bool, error) {
-	res, err := r.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO book_files (book_id, format, path, size_bytes, created_at)
-		 VALUES (?, ?, ?, 0, ?)`,
-		bookID, format, path, time.Now().UTC())
+	res, err := r.Track(ctx, bookID, format, path)
 	if err != nil {
-		return false, fmt.Errorf("book_files add if missing: %w", err)
+		return false, err
 	}
-	n, err := res.RowsAffected()
+	return res.Created(), nil
+}
+
+// MoveToBook makes bookID the owner of path, whoever held it before, and
+// returns the previous owner (0 when the path was untracked, bookID when it
+// was already the book's). It is for the explicit "this file belongs to that
+// book" action (Fix match, #1238), never for an ordinary import, which must
+// not take a file from another book (#2937). Runs in one transaction.
+func (r *BookFileRepo) MoveToBook(ctx context.Context, bookID int64, format, path string) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, fmt.Errorf("book_files add if missing rows: %w", err)
+		return 0, fmt.Errorf("book_files move begin: %w", err)
 	}
-	return n > 0, nil
+	defer func() { _ = tx.Rollback() }()
+
+	var prev int64
+	err = tx.QueryRowContext(ctx, `SELECT book_id FROM book_files WHERE path = ?`, path).Scan(&prev)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO book_files (book_id, format, path, size_bytes, created_at) VALUES (?, ?, ?, 0, ?)`,
+			bookID, format, path, time.Now().UTC()); err != nil {
+			return 0, fmt.Errorf("book_files move insert: %w", err)
+		}
+	case err != nil:
+		return 0, fmt.Errorf("book_files move lookup: %w", err)
+	case prev == bookID:
+		return prev, nil
+	default:
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE book_files SET book_id = ?, format = ? WHERE path = ?`, bookID, format, path); err != nil {
+			return 0, fmt.Errorf("book_files move update: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("book_files move commit: %w", err)
+	}
+	return prev, nil
 }
 
 // UpdatePath changes the on-disk path of the book_files row with the given id.

@@ -547,7 +547,16 @@ to the records. Things worth knowing before you judge the results:
   The modal warns you and shows the exact destination path before you confirm,
   and nothing happens until you do; the move itself then runs in the background
   and Bindery cannot undo it for you. Reassigning the metadata link *without*
-  relocating the file is not available yet (#2055).
+  relocating the file is not available yet (#2055). History records the move
+  as **File Moved**, naming the book the file came from.
+- **An import never takes a file another book already tracks.** If a download
+  or a manual import lands on a path that a different book already has, the
+  import stops with **Import Blocked** and the Queue row names that book and
+  its id. Nothing is recorded or overwritten, and the book you imported for
+  stays Wanted. If the file really belongs to the book you imported it for,
+  open the book it is attached to and use **Fix match** to move it (#2937).
+  When the book holding the path has since been deleted, a download or manual
+  import takes it over automatically; adoption still refuses it.
 - A folder holding both an ebook and an audiobook for the same book attaches
   both in a single scan — one file per format, so a second scan is not needed.
 - A PDF, TXT, RTF, CBZ or CBR sitting in a folder that also holds audio is treated as

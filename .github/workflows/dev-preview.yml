@@ -17,10 +17,11 @@ on:
   push:
     branches: [main]
 
+# Nothing at the top level: the write scopes live on the one job that needs
+# them, so a job added here later starts with a read-only token instead of
+# inheriting force-push and workflow-dispatch rights.
 permissions:
-  contents: write       # force-push the development branch
-  pull-requests: read   # list dev-preview PRs
-  actions: write        # dispatch ci.yml against development
+  contents: read
 
 # Debounce: during a back-to-back merge train only the latest assembly needs to
 # finish, so cancel superseded runs instead of assembling once per merge.
@@ -33,6 +34,10 @@ jobs:
     name: Assemble development = main + dev-preview PRs
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write       # force-push the development branch
+      pull-requests: read   # list dev-preview PRs
+      actions: write        # dispatch ci.yml against development
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

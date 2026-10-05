@@ -2,6 +2,7 @@ package abs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
 )
@@ -147,6 +149,12 @@ func (i *Importer) reconcileFormatPath(ctx context.Context, cfg ImportConfig, au
 	}
 	if err := i.books.SetFormatFilePath(ctx, book.ID, format, cleanPath); err != nil {
 		slog.Warn("abs import: file reconciliation failed", "bookID", book.ID, "format", format, "path", cleanPath, "error", err)
+		// Another book already tracks the file (#2937). This used to be
+		// reported as reconciled while recording nothing.
+		var owned *db.PathOwnedError
+		if errors.As(err, &owned) {
+			return false, false, fmt.Sprintf("%s path %q is already tracked on %q (book %d); imported metadata only", format, cleanPath, owned.OwnerTitle, owned.OwnerBookID), false
+		}
 		return false, false, fmt.Sprintf("%s path %q could not be registered in Bindery; imported metadata only", format, cleanPath), false
 	}
 	i.pruneVanishedFormatPaths(ctx, book.ID, format, cleanPath)

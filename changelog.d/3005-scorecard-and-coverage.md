@@ -1,0 +1,2 @@
+### Security
+- **Release downloads now include their build provenance as a file** (#3005). Each GitHub release carries `bindery_<version>.intoto.jsonl` next to the archives, the same signed attestation GitHub already stored for them. Check a download with `gh attestation verify <archive> --repo vavallee/bindery --bundle bindery_<version>.intoto.jsonl` and it reads the attestation from that file instead of asking GitHub for it.

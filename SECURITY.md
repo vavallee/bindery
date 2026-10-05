@@ -96,7 +96,9 @@ CSP, cookie Secure auto-detect, container hardening, CI scans).
 - **Supply chain**: SLSA build provenance via
   `actions/attest-build-provenance` for both the container image and the
   release archives (plus their checksums file), verifiable with
-  `gh attestation verify <file> --repo vavallee/bindery`.
+  `gh attestation verify <file> --repo vavallee/bindery`. From v1.40.1 the
+  archive attestation is also a release asset, `bindery_<version>.intoto.jsonl`,
+  usable with `--bundle` instead of the attestations API.
 
 ## Secrets
 

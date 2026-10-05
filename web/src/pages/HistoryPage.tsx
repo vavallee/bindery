@@ -89,6 +89,7 @@ const KNOWN_EVENT_TYPES = [
   'downloadStalled',
   'downloadRequeued',
   'bookRebound',
+  'bookFileMoved',
   'bookLanguageCorrected',
 ]
 

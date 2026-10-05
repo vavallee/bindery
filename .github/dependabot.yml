@@ -61,6 +61,21 @@ updates:
           - version-update:semver-major
           - version-update:semver-minor
 
+  # Semgrep for the frontend SAST job, installed with --require-hashes from a
+  # pip-compile lockfile so Scorecard's Pinned-Dependencies check passes.
+  # Dependabot recompiles semgrep.txt from semgrep.in, hashes included.
+  - package-ecosystem: pip
+    directory: "/.github/requirements"
+    schedule:
+      interval: monthly
+      time: "06:00"
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "chore(ci)"
+      include: scope
+
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
