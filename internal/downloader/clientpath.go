@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/downloader/deluge"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
 )
@@ -23,9 +24,6 @@ type ClientPathInfo struct {
 	// Category is the category or label the path was resolved for, exactly
 	// as the grab sends it.
 	Category string
-	// SentByBindery is true when Path is the save path Bindery itself sends
-	// with the grab (torrentSavePath), rather than a folder the client chose.
-	SentByBindery bool
 	// Note and NoteFix are set when a grab will not behave the way the
 	// configuration suggests, or when part of the answer could not be checked.
 	Note    string
@@ -106,12 +104,13 @@ func CompletedPath(ctx context.Context, client *models.DownloadClient) (ClientPa
 // actually finishes in, worked out from the same inputs SendDownload uses:
 // ResolveCategory for the category or label, and torrentSavePath for the save
 // path Bindery sends. downloadDir and audiobookDownloadDir are Bindery's own
-// BINDERY_DOWNLOAD_DIR and BINDERY_AUDIOBOOK_DOWNLOAD_DIR.
+// BINDERY_DOWNLOAD_DIR and BINDERY_AUDIOBOOK_DOWNLOAD_DIR, and globalRemap is
+// BINDERY_DOWNLOAD_PATH_REMAP, which the sent save path falls back to.
 //
 // An error means the client would not answer (for SABnzbd, typically an NZB
 // only API key). A zero Path with no error means the client answered but
 // exposes no usable folder, for example a category it does not have.
-func GrabSavePath(ctx context.Context, client *models.DownloadClient, mediaType, downloadDir, audiobookDownloadDir string) (ClientPathInfo, error) {
+func GrabSavePath(ctx context.Context, client *models.DownloadClient, mediaType, downloadDir, audiobookDownloadDir, globalRemap string) (ClientPathInfo, error) {
 	if client == nil {
 		return ClientPathInfo{}, nil
 	}
@@ -119,7 +118,7 @@ func GrabSavePath(ctx context.Context, client *models.DownloadClient, mediaType,
 	// save path exactly as they are, so the doctor has to use them the same
 	// way to reach the same folder.
 	category := ResolveCategory(client, mediaType)
-	sent := torrentSavePath(client, SendOptions{MediaType: mediaType, DownloadDir: downloadDir, AudiobookDownloadDir: audiobookDownloadDir})
+	sent := torrentSavePath(client, SendOptions{MediaType: mediaType, DownloadDir: downloadDir, AudiobookDownloadDir: audiobookDownloadDir, GlobalRemap: globalRemap})
 	info := ClientPathInfo{Category: category}
 	switch client.Type {
 	case "qbittorrent":
@@ -128,7 +127,7 @@ func GrabSavePath(ctx context.Context, client *models.DownloadClient, mediaType,
 		// rTorrent receives d.directory.set whenever Bindery has a download
 		// folder, so directory.default only matters without one.
 		if sent != "" {
-			info.Path, info.Source, info.SentByBindery = sent, "the save path Bindery sends", true
+			info.Path, info.Source = sent, "the save path Bindery sends"
 			return info, nil
 		}
 		dir, err := RtorrentFor(client).DefaultDirectory(ctx)
@@ -185,7 +184,7 @@ func qbittorrentGrabPath(ctx context.Context, client *models.DownloadClient, inf
 	qb := QbittorrentFor(client)
 	if info.Category == "" {
 		if sent != "" {
-			info.Path, info.Source, info.SentByBindery = sent, "the save path Bindery sends", true
+			info.Path, info.Source = sent, "the save path Bindery sends"
 			return info, nil
 		}
 		def, err := qb.GetDefaultSavePath(ctx)
@@ -243,7 +242,8 @@ func TestConnection(ctx context.Context, client *models.DownloadClient) error {
 // CategoryReport is the result of CheckCategories.
 type CategoryReport struct {
 	// Checked is false for client types without a category list Bindery can
-	// read (Transmission, Deluge, rTorrent).
+	// read (Transmission, rTorrent), and for Deluge when its Label plugin
+	// will not list labels.
 	Checked bool
 	// Wanted is the distinct non-empty categories configured in Bindery.
 	Wanted []string
@@ -256,9 +256,14 @@ type CategoryReport struct {
 // CheckCategories compares the categories configured in Bindery with the ones
 // the client defines. Matching is exact, as it is at grab time; a nested
 // qBittorrent category such as "books/ebooks" is its own key and matches.
+// Deluge labels are compared as deluge.LabelID, the lowercase form grabs send
+// them in, and Wanted holds that form.
 func CheckCategories(ctx context.Context, client *models.DownloadClient) (CategoryReport, error) {
 	report := CategoryReport{}
 	for _, c := range []string{client.Category, client.CategoryAudiobook} {
+		if client.Type == "deluge" {
+			c = deluge.LabelID(c)
+		}
 		// Compared exactly as grabs send it; a category with spaces around it
 		// does not match the client's, and the grab would not either.
 		if strings.TrimSpace(c) != "" && !slices.Contains(report.Wanted, c) {
@@ -281,7 +286,16 @@ func CheckCategories(ctx context.Context, client *models.DownloadClient) (Catego
 			return report, err
 		}
 		existing = cats
-	case "transmission", "deluge", "rtorrent":
+	case "deluge":
+		labels, err := DelugeFor(client).Labels(ctx)
+		if err != nil {
+			// Almost always the Label plugin being off. The report stays
+			// unchecked, and the diagnose action's advice for an unchecked
+			// Deluge list is to turn the plugin on.
+			return report, nil
+		}
+		existing = labels
+	case "transmission", "rtorrent":
 		return report, nil
 	default:
 		cats, err := SabnzbdFor(client).GetCategories(ctx)

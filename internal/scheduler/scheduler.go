@@ -217,6 +217,8 @@ type Scheduler struct {
 	audiobookDownloadDir string
 	// downloadHealth and downloadPathRemap back the periodic client-health
 	// probe (#2029). nil store means the job is not registered.
+	// downloadPathRemap is also the global remap automatic grabs send their
+	// save path through (#2665) and rTorrent removals resolve data with.
 	downloadHealth    *downloader.HealthStore
 	downloadPathRemap string
 }
@@ -319,7 +321,8 @@ func (s *Scheduler) WithEditions(editions *db.EditionRepo) {
 
 // WithDownloadClientHealth attaches the health store and the global path remap
 // so client health can be re-probed on a schedule (#2029). Without it the
-// periodic job is not registered and health stays what it was at boot.
+// periodic job is not registered and health stays what it was at boot. The
+// remap is also what automatic grabs and rTorrent removals fall back to.
 func (s *Scheduler) WithDownloadClientHealth(store *downloader.HealthStore, globalRemap string) {
 	s.downloadHealth = store
 	s.downloadPathRemap = globalRemap
@@ -1244,6 +1247,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		MediaType:            mediaType,
 		DownloadDir:          s.downloadDir,
 		AudiobookDownloadDir: s.audiobookDownloadDir,
+		GlobalRemap:          s.downloadPathRemap,
 	}.WithSeedLimits(s.resolveSeedLimits(ctx, best.IndexerID)))
 	if err != nil {
 		slog.Error("SearchAndGrabBook: failed to send to downloader", "client", client.Type, "title", best.Title, "error", err)

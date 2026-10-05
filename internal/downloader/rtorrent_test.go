@@ -512,3 +512,23 @@ func TestRtorrentFor_IsCached(t *testing.T) {
 		t.Fatalf("constructor count after rotation: got %d, want 2", got)
 	}
 }
+
+// TestSendDownload_RtorrentGlobalRemapOnly: rTorrent always receives
+// d.directory.set, so with only BINDERY_DOWNLOAD_PATH_REMAP configured the
+// directory must still be in rTorrent's namespace (#2665).
+func TestSendDownload_RtorrentGlobalRemapOnly(t *testing.T) {
+	stub := newRtorrentStub(t, "0", "")
+	client := stub.client(t, 105)
+
+	magnet := "magnet:?xt=urn:btih:" + rtorrentTestHash
+	if _, err := SendDownload(context.Background(), client, magnet, "The Book", SendOptions{
+		DownloadDir: "/downloads",
+		GlobalRemap: "/data:/downloads",
+	}); err != nil {
+		t.Fatalf("SendDownload: %v", err)
+	}
+	body := stub.allBodies()
+	if !strings.Contains(body, "d.directory.set=&#34;/data&#34;") {
+		t.Errorf("download directory not run back through the global remap: %s", body)
+	}
+}

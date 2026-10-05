@@ -276,8 +276,14 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, label string, seed
 	}
 
 	if label != "" {
-		// Label plugin is optional; ignore errors if it is not loaded.
-		_ = c.setLabel(ctx, hash, label)
+		// The torrent is already added, so a label that does not apply must
+		// not fail the grab, but it does change where a label move path puts
+		// the files, so it is logged rather than discarded (#2665). The usual
+		// causes are the Label plugin being off or the label not existing.
+		if err := c.setLabel(ctx, hash, label); err != nil {
+			slog.Warn("deluge: torrent added but its label was not applied; check the Label plugin is on and the label exists in Deluge",
+				"hash", hash, "label", LabelID(label), "error", err)
+		}
 	}
 
 	// Apply the per-indexer seed-ratio override. Skipped for nil (no override)
@@ -525,11 +531,11 @@ func readLimited(r io.Reader, maxBytes int64) ([]byte, error) {
 	return data, nil
 }
 
-// setLabel applies a label to a torrent via the Deluge label plugin.
-// Errors are intentionally swallowed by the caller — the plugin is optional.
+// setLabel applies a label to a torrent via the Deluge label plugin, sending
+// it as LabelID so a category typed with capitals still matches.
 func (c *Client) setLabel(ctx context.Context, hash, label string) error {
 	var result any
-	return c.call(ctx, true, "label.set_torrent", []any{hash, label}, &result)
+	return c.call(ctx, true, "label.set_torrent", []any{hash, LabelID(label)}, &result)
 }
 
 // GetTorrents returns status for all torrents, keyed by lower-cased hash.
