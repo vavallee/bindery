@@ -4,7 +4,7 @@ All notable changes to Bindery are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com) and versions follow
 [Semantic Versioning](https://semver.org).
 
-## [v1.40.1] - 2026-10-04
+## [v1.40.1] - 2026-10-05
 
 Security fixes from a full review of Bindery, import matching fixes, and one upgrade step for login free installs
 
