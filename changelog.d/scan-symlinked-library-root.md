@@ -1,0 +1,2 @@
+### Fixed
+- **Library Scan finds books in a library folder that is a symlink.** A library or audiobook folder configured as a link (say `/books` pointing at `/mnt/storage/books`, or a container volume path that is a link) was never entered, so a scan found nothing in it. The scan now follows the folder itself and records books under the path you configured. Adding an author now recognises the books you already own in such a folder too. Linked author folders inside the library are still not followed by a scan.

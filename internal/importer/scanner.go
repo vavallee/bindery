@@ -3267,6 +3267,32 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 	s.scanLibrary(ctx)
 }
 
+// walkRoot is filepath.Walk for a configured library or audiobook root that
+// may itself be a symlink (/books -> /mnt/storage/books, or a container
+// volume path that is a link). filepath.Walk Lstats its root, so a linked
+// root is reported once as a link and never entered, and a scan of it found
+// nothing. walkRoot resolves the root first and walks the target, then hands
+// fn every path rewritten under the configured root, so what a caller
+// reports, compares or stores is in the same form as the book_files rows
+// imports write and the root the serving containment checks resolve.
+//
+// Only the root is resolved. Entries inside it are still Lstat'ed and a
+// linked folder inside the library is reported, not entered, exactly as
+// filepath.Walk does. A root that cannot be resolved (missing, unreadable)
+// is walked as given, so fn sees the same error it always did.
+func walkRoot(root string, fn filepath.WalkFunc) error {
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil || resolved == filepath.Clean(root) {
+		return filepath.Walk(root, fn)
+	}
+	return filepath.Walk(resolved, func(path string, info os.FileInfo, err error) error {
+		if rel, relErr := filepath.Rel(resolved, path); relErr == nil {
+			path = filepath.Join(root, rel)
+		}
+		return fn(path, info, err)
+	})
+}
+
 // scanLibrary walks the library directory (and the separate audiobook directory
 // when configured) for book files not yet tracked in the database and reconciles
 // found files with existing "wanted" book records. Callers must hold the
@@ -3291,7 +3317,9 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	walked := make(map[string]walkedFile)
 	walkDir := func(root string) []string {
 		var files []string
-		if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		// walkRoot enters a root that is itself a symlink and reports paths
+		// under the configured root; links inside it are still not followed.
+		if err := walkRoot(root, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}

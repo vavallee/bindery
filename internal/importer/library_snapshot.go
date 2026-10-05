@@ -178,7 +178,9 @@ func (ls *LibrarySnapshot) entriesFor(ctx context.Context, root string) ([]libra
 func walkLibraryEntries(ctx context.Context, root string) ([]libraryEntry, bool) {
 	var entries []libraryEntry
 	audioDirs := make(map[string]bool)
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	// walkRoot enters a root that is itself a symlink, reporting paths under
+	// root as configured, so FindExisting's answer matches book_files rows.
+	_ = walkRoot(root, func(path string, info os.FileInfo, err error) error {
 		if ctx.Err() != nil {
 			return filepath.SkipAll
 		}

@@ -1083,10 +1083,11 @@ Knowing the edges saves time:
   linked to another disk (`/books/Author -> /mnt/disk2/Author`), is written
   through on import and followed when serving a book, including when it
   points outside your library folders, because only you can create one.
-  Library Scan is the exception: it does not descend into any linked folder,
-  including a library folder that is itself a symlink, so books under a linked
-  author folder (or a linked library root) are not found by a scan. A bind
-  mount is not a link and scans normally. A linked *file* is
+  Library Scan follows a library or audiobook folder that is itself a symlink
+  and records the books under the path you configured, but it does not
+  descend into a linked folder *inside* it, so books under a linked author
+  folder are not found by a scan. A bind mount is not a link and scans
+  normally. A linked *file* is
   not a book file: imports place regular files only (a symlink inside a
   download never lands in your library, and a download folder that is itself
   a symlink is refused in every import mode, including the drop folder
