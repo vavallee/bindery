@@ -565,16 +565,18 @@ func TestGetAuthorWorks_Empty(t *testing.T) {
 // num= lookup fails (network error), GetAuthorWorks falls back to using the
 // raw ID as the per= query term rather than returning an error.
 func TestGetAuthorWorks_ForeignID_NumLookupFails(t *testing.T) {
-	calls := 0
+	var numCalls, perCalls int
 	c := &Client{
 		http: &http.Client{
-			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-				calls++
-				if calls == 1 {
-					// Simulate a network error on the num= lookup.
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if strings.HasPrefix(r.URL.Query().Get("query"), "num=") {
+					// Simulate a network error on the num= lookup. The
+					// shared request loop retries it before giving up.
+					numCalls++
 					return nil, fmt.Errorf("connection refused")
 				}
-				// Second call (per= fallback) succeeds.
+				// The per= fallback succeeds.
+				perCalls++
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(sruXMLN("1", marcDuneGerman))),
@@ -587,8 +589,8 @@ func TestGetAuthorWorks_ForeignID_NumLookupFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected fallback to succeed, got error: %v", err)
 	}
-	if calls != 2 {
-		t.Errorf("expected 2 calls (num= fail + per= fallback), got %d", calls)
+	if numCalls == 0 || perCalls != 1 {
+		t.Errorf("num= calls = %d, per= calls = %d; want the num= lookup tried and one per= fallback", numCalls, perCalls)
 	}
 	if len(books) == 0 {
 		t.Errorf("expected at least 1 book from fallback, got 0")

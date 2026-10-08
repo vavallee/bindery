@@ -7,14 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,9 +21,9 @@ import (
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/metadata/providererr"
+	"github.com/vavallee/bindery/internal/metadata/providerhttp"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
-	"github.com/vavallee/bindery/internal/useragent"
 )
 
 // ErrNotFound signals a 404 from OpenLibrary. Callers use errors.Is to
@@ -36,28 +33,13 @@ var ErrNotFound = errors.New("not found")
 
 // ErrRateLimited is providererr.ErrRateLimited, re-exported so callers of this
 // package can name it here. getJSON marks an HTTP 429 that is still a 429
-// after its retries with it (#2236).
+// after its retries with it (#2236), and a request the client's refusal hold
+// would have kept past the caller's deadline.
 var ErrRateLimited = providererr.ErrRateLimited
-
-// rateLimitedError keeps the original status message while matching
-// ErrRateLimited through errors.Is.
-type rateLimitedError struct{ err error }
-
-func (e *rateLimitedError) Error() string        { return e.err.Error() }
-func (e *rateLimitedError) Unwrap() error        { return e.err }
-func (e *rateLimitedError) Is(target error) bool { return target == ErrRateLimited }
 
 // ErrUnavailable is providererr.ErrUnavailable: getJSON marks a server error
 // (HTTP 5xx) that is still one after its retries with it (#2236).
 var ErrUnavailable = providererr.ErrUnavailable
-
-// unavailableError keeps the original status message while matching
-// ErrUnavailable through errors.Is.
-type unavailableError struct{ err error }
-
-func (e *unavailableError) Error() string        { return e.err.Error() }
-func (e *unavailableError) Unwrap() error        { return e.err }
-func (e *unavailableError) Is(target error) bool { return target == ErrUnavailable }
 
 const (
 	baseURL  = "https://openlibrary.org"
@@ -127,6 +109,9 @@ type workEditionSample struct {
 // Client implements the metadata.Provider interface for OpenLibrary.
 type Client struct {
 	http *http.Client
+	// gate holds every request this client makes while OpenLibrary is
+	// refusing. Nil (a zero value Client in tests) holds each call on its own.
+	gate *providerhttp.Gate
 
 	// workSampleCache memoizes the edition-derived (language, cover) pair keyed
 	// on work ID so a later refresh pass — or the second derivation in the same
@@ -141,6 +126,7 @@ type Client struct {
 func New() *Client {
 	return &Client{
 		http:            &http.Client{Timeout: 15 * time.Second, Transport: httpsec.DefaultProxyTransport()},
+		gate:            providerhttp.NewGate(),
 		workSampleCache: map[string]workEditionSample{},
 	}
 }
@@ -1114,183 +1100,34 @@ func (c *Client) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, 
 	return b, nil
 }
 
-// getJSONMaxRetries bounds how many times a retryable failure (429, 502, 503,
-// 504, or a transport-level error) is retried before getJSON gives up.
-// OpenLibrary throttles per-UA (see editionSampleCap's comment) and a bulk
-// author import used to storm it with dozens of concurrent requests and no
-// backoff at all — #2075 reproduced 429s escalating into timeouts and
-// connection refusals with every request retried instantly forever.
-const getJSONMaxRetries = 3
-
-// getJSONBaseDelay and getJSONMaxDelay bound the exponential backoff applied
-// between retries when the response carries no Retry-After header.
-const (
-	getJSONBaseDelay = 500 * time.Millisecond
-	getJSONMaxDelay  = 8 * time.Second
-)
-
-// retryAfterCap bounds how long a single Retry-After value is honored for.
-// OpenLibrary is expected to send small values; capping defensively means a
-// malformed or unexpectedly large header can't stall a request indefinitely.
-const retryAfterCap = 30 * time.Second
-
-// maxDrainBytes bounds how much of a retryable error response's body gets
-// read (beyond the 512 bytes already sampled for the error message) purely
-// to let the connection be reused. OpenLibrary error bodies are small JSON
-// objects; this is generous headroom, not an expected size.
-const maxDrainBytes = 1 << 20 // 1 MiB
-
+// getJSON fetches rawURL and decodes it into target through the request loop
+// every HTTP metadata provider shares (package providerhttp): retries with
+// Retry-After and jittered backoff, a refusal that holds every request this
+// client makes rather than just the refused one, and the providererr marks on
+// what is left. OpenLibrary throttles per user agent, and a bulk author import
+// used to storm it until the 429s became timeouts and connection refusals
+// (#2075). A 404 is ErrNotFound.
+//
+// Transport errors keep their chain ("openlibrary request: %w"): callers and
+// tests rely on errors.Is(err, context.Canceled) and DeadlineExceeded to
+// classify them. OpenLibrary is keyless, so the URL a transport error embeds
+// carries no secret to redact (#1144 added redaction here, but it matched
+// nothing in OL URLs and only flattened the chain).
 func (c *Client) getJSON(ctx context.Context, rawURL string, target interface{}) error {
-	var lastErr error
-	var retryAfter time.Duration
-
-	for attempt := 0; attempt <= getJSONMaxRetries; attempt++ {
-		if attempt > 0 {
-			if err := sleepForRetry(ctx, backoffDelay(attempt, retryAfter)); err != nil {
-				return err
-			}
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-		if err != nil {
-			return err
-		}
-		req.Header.Set("User-Agent", useragent.Get())
-		req.Header.Set("Accept", "application/json")
-
-		resp, doErr := c.http.Do(req)
-		if doErr != nil {
-			// Wrap with %w so the error chain survives: callers (and tests) rely on
-			// errors.Is(err, context.Canceled)/context.DeadlineExceeded to classify
-			// cancellations and timeouts. OpenLibrary is a keyless API — every
-			// request URL is built from public path/query params (no key/token/auth),
-			// so the transport error's embedded URL carries no secret to redact.
-			// (#1144 added RedactSecrets here, but it matched nothing in OL URLs and
-			// only flattened the chain, breaking errors.Is classification.)
-			wrapped := fmt.Errorf("openlibrary request: %w", doErr)
-			// A canceled operation is never worth retrying, whatever canceled it.
-			// ctx.Err() != nil additionally means the CALLER's own deadline fired
-			// (as opposed to just this one request's timeout) — respect that
-			// budget too rather than retrying into a context that's already gone.
-			if errors.Is(doErr, context.Canceled) || ctx.Err() != nil || attempt == getJSONMaxRetries {
-				return wrapped
-			}
-			lastErr = wrapped
-			retryAfter = 0
-			continue
-		}
-
-		if resp.StatusCode == http.StatusNotFound {
-			_ = resp.Body.Close()
-			return ErrNotFound
-		}
-		if resp.StatusCode == http.StatusOK {
-			err := json.NewDecoder(resp.Body).Decode(target)
-			_ = resp.Body.Close()
-			return err
-		}
-
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		// Drain and discard whatever's left (bounded) before closing. Go's
-		// transport only returns a connection to its pool for reuse once the
-		// body has been read to EOF; closing after a partial read forces a
-		// fresh TCP connection on the very next retry — leaning into the
-		// exact "connection refused" symptom #2075 reported under a storm of
-		// retried requests.
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrainBytes))
-		_ = resp.Body.Close()
-		statusErr := fmt.Errorf("HTTP %d: %s", resp.StatusCode, httpsec.RedactSecrets(string(body)))
-
-		if !isRetryableStatus(resp.StatusCode) || attempt == getJSONMaxRetries {
-			if resp.StatusCode == http.StatusTooManyRequests {
-				return &rateLimitedError{err: statusErr}
-			}
-			if resp.StatusCode >= http.StatusInternalServerError {
-				return &unavailableError{err: statusErr}
-			}
-			return statusErr
-		}
-		lastErr = statusErr
-		retryAfter = parseRetryAfter(resp.Header.Get("Retry-After"))
+	resp, err := providerhttp.Do(ctx, c.http, c.gate, providerhttp.Request{
+		Provider: "openlibrary",
+		URL:      rawURL,
+		Header:   http.Header{"Accept": {"application/json"}},
+		Pass:     []int{http.StatusNotFound},
+	})
+	if err != nil {
+		return err
 	}
-	// Unreachable: every iteration above returns on its last attempt. Kept so
-	// the compiler doesn't need to prove that itself.
-	return lastErr
-}
-
-// isRetryableStatus reports whether status is a transient upstream failure
-// worth retrying rather than a real answer (a 4xx other than 429 means the
-// request itself is wrong, not that OpenLibrary is struggling).
-func isRetryableStatus(status int) bool {
-	switch status {
-	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		return true
-	default:
-		return false
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrNotFound
 	}
-}
-
-// parseRetryAfter reads an HTTP Retry-After header, accepting either a
-// delay-in-seconds or an HTTP-date, and returns 0 when absent or unparsable
-// (the caller falls back to computed backoff in that case).
-func parseRetryAfter(v string) time.Duration {
-	if v == "" {
-		return 0
-	}
-	if secs, err := strconv.Atoi(v); err == nil {
-		if secs <= 0 {
-			return 0
-		}
-		d := time.Duration(secs) * time.Second
-		if d > retryAfterCap {
-			return retryAfterCap
-		}
-		return d
-	}
-	if t, err := http.ParseTime(v); err == nil {
-		if d := time.Until(t); d > 0 {
-			if d > retryAfterCap {
-				return retryAfterCap
-			}
-			return d
-		}
-	}
-	return 0
-}
-
-// backoffDelay picks how long to wait before the given retry attempt
-// (1-indexed: the first retry is attempt 1). retryAfter, when positive, wins
-// outright — the server told us exactly how long to wait. Otherwise this
-// backs off exponentially from getJSONBaseDelay, capped at getJSONMaxDelay,
-// with equal jitter (half the computed delay, plus a random amount up to the
-// other half) so a burst of requests that all failed together don't all
-// retry in lockstep and produce a second burst.
-func backoffDelay(attempt int, retryAfter time.Duration) time.Duration {
-	if retryAfter > 0 {
-		return retryAfter
-	}
-	d := getJSONBaseDelay << uint(attempt-1) //nolint:gosec // attempt is bounded by getJSONMaxRetries, no overflow risk
-	if d <= 0 || d > getJSONMaxDelay {
-		d = getJSONMaxDelay
-	}
-	half := d / 2
-	return half + time.Duration(rand.Int63n(int64(half)+1)) //nolint:gosec // backoff jitter, not security-sensitive
-}
-
-// sleepForRetry waits for d, returning early with a wrapped ctx error if the
-// context is canceled or expires first.
-func sleepForRetry(ctx context.Context, d time.Duration) error {
-	if d <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("openlibrary request: %w", ctx.Err())
-	}
+	return json.NewDecoder(resp.Body).Decode(target)
 }
 
 // extractText handles OpenLibrary's description field which can be a string

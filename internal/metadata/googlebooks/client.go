@@ -5,18 +5,16 @@ package googlebooks
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/httpsec"
+	"github.com/vavallee/bindery/internal/metadata/providerhttp"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
-	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const baseURL = "https://www.googleapis.com/books/v1"
@@ -26,6 +24,9 @@ const baseURL = "https://www.googleapis.com/books/v1"
 type Client struct {
 	http   *http.Client
 	apiKey string // optional, increases quota from shared pool to 1000/day
+	// gate holds every request this client makes while Google Books is
+	// refusing. Nil (a zero value Client in tests) holds each call on its own.
+	gate *providerhttp.Gate
 }
 
 // New creates a Google Books client. apiKey can be empty for basic access.
@@ -33,6 +34,7 @@ func New(apiKey string) *Client {
 	return &Client{
 		http:   &http.Client{Timeout: 10 * time.Second, Transport: httpsec.DefaultProxyTransport()},
 		apiKey: apiKey,
+		gate:   providerhttp.NewGate(),
 	}
 }
 
@@ -151,27 +153,24 @@ func (c *Client) volumeToBook(item volumeItem) models.Book {
 	return b
 }
 
+// getJSON goes through the request loop every HTTP metadata provider shares
+// (package providerhttp), so a 429 is retried with Retry-After and backoff
+// instead of failing the lookup outright (#2369). Google Books answers 429
+// when the key's quota runs out, and a refusal holds every request this
+// client makes rather than letting the others keep spending it.
+//
+// Redact is set because the API key rides in the query string: a transport
+// error wraps a *url.Error whose message embeds the full URL, so it is
+// flattened to its redacted text before anything can log it (#1144).
 func (c *Client) getJSON(ctx context.Context, rawURL string, target interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	resp, err := providerhttp.Do(ctx, c.http, c.gate, providerhttp.Request{
+		URL:    rawURL,
+		Redact: true,
+	})
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", useragent.Get())
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		// A transport error wraps a *url.Error whose Error() embeds the full
-		// request URL, which carries the API key (?key=...). Redact it so the
-		// key cannot leak through any path that stringifies this error (#1144).
-		return errors.New(httpsec.RedactSecrets(err.Error()))
-	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, httpsec.RedactSecrets(string(body)))
-	}
-
 	return json.NewDecoder(resp.Body).Decode(target)
 }
 

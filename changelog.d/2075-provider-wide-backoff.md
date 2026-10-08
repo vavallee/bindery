@@ -1,0 +1,2 @@
+### Fixed
+- When a metadata provider asks Bindery to slow down during a bulk author import, every request to that provider now waits, not just the one that was refused (#2075). Each request used to back off on its own, so the other catalogue fetches and edition lookups in flight kept hitting OpenLibrary while it was throttling, and the 429s turned into timeouts and refused connections. A lookup whose wait would run past its own time limit now fails straight away as rate limited rather than sitting out the timeout. Thanks to TheOpsMgr for the report and the patient retesting.

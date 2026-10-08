@@ -945,9 +945,11 @@ and each new book is monitored or not according to the author's monitor mode.
 - **Opting an author out:** set their **Monitor new items** to *Don't add
   them*. Unmonitored authors and Calibre library authors are not checked
   either.
-- **When a provider struggles:** when OpenLibrary or Hardcover refuses with a
-  rate limit, the pass stops and the remaining authors wait for the next
-  hour. When three authors in a row fail because the provider is down (server
+- **When a provider struggles:** every metadata provider waits and retries
+  when it is told to slow down, honouring the provider's own `Retry-After`,
+  and holds its other requests for that long too. When a provider still
+  refuses with a rate limit after that, the pass stops and the remaining
+  authors wait for the next hour. When three authors in a row fail because the provider is down (server
   errors, network failures, timeouts), the pass stops too, and those three
   are tried again in about six hours rather than a week later. An error about
   one author, such as an author the provider no longer knows, counts that

@@ -38,9 +38,8 @@ import (
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/metadata"
-	"github.com/vavallee/bindery/internal/metadata/providererr"
+	"github.com/vavallee/bindery/internal/metadata/providerhttp"
 	"github.com/vavallee/bindery/internal/models"
-	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const (
@@ -73,12 +72,16 @@ var authorityIDRe = regexp.MustCompile(`^[0-9]+$`)
 // Client implements metadata.Provider for Nasjonalbiblioteket.
 type Client struct {
 	http *http.Client
+	// gate holds every request this client makes while NB is refusing. Nil
+	// (a zero value Client in tests) holds each call on its own.
+	gate *providerhttp.Gate
 }
 
 // New creates a new NB client.
 func New() *Client {
 	return &Client{
 		http: &http.Client{Timeout: 15 * time.Second, Transport: httpsec.DefaultProxyTransport()},
+		gate: providerhttp.NewGate(),
 	}
 }
 
@@ -489,14 +492,16 @@ func (c *Client) getXML(ctx context.Context, endpoint string, out any) (bool, er
 
 // get GETs endpoint and decodes the size-limited body. found is false on 404.
 func (c *Client) get(ctx context.Context, endpoint, accept string, decode func(io.Reader) error) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("User-Agent", useragent.Get())
-	req.Header.Set("Accept", accept)
-
-	resp, err := c.http.Do(req)
+	// The shared provider request loop retries a refusal or outage with
+	// Retry-After and backoff, holds every NB request while one is refused,
+	// and marks what outlives the retries with the shared provider errors so
+	// scheduled discovery backs off (#2369). NB publishes no rate limits, so
+	// its refusals are taken at their word.
+	resp, err := providerhttp.Do(ctx, c.http, c.gate, providerhttp.Request{
+		URL:    endpoint,
+		Header: http.Header{"Accept": {accept}},
+		Pass:   []int{http.StatusNotFound},
+	})
 	if err != nil {
 		return false, err
 	}
@@ -504,19 +509,6 @@ func (c *Client) get(ctx context.Context, endpoint, accept string, decode func(i
 
 	if resp.StatusCode == http.StatusNotFound {
 		return false, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		// A refusal or outage is the provider's state, not this request's:
-		// marked so scheduled discovery backs off. NB publishes no rate
-		// limits, so its refusals are taken at their word.
-		switch {
-		case resp.StatusCode == http.StatusTooManyRequests:
-			return false, fmt.Errorf("%w: HTTP %d: %s", providererr.ErrRateLimited, resp.StatusCode, string(body))
-		case resp.StatusCode >= 500:
-			return false, fmt.Errorf("%w: HTTP %d: %s", providererr.ErrUnavailable, resp.StatusCode, string(body))
-		}
-		return false, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	if err := decode(io.LimitReader(resp.Body, maxResponseBytes)); err != nil {
 		return false, fmt.Errorf("decode response: %w", err)
