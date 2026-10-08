@@ -130,3 +130,54 @@ func TestRefreshBookStatus_RederivesWhenInputsChange(t *testing.T) {
 		t.Errorf("ebook path = %q, want %q", got.EbookFilePath, path)
 	}
 }
+
+// TestRefreshBookStatus_KeepsConcurrentPathMove: a reorganize moves the
+// book's file while another refresh of the same book is between deriving its
+// paths and writing them. Status and media type do not change, so only the
+// stored path columns can tell the older refresh its derivation is stale;
+// without that it wrote the old path back over the new one.
+func TestRefreshBookStatus_KeepsConcurrentPathMove(t *testing.T) {
+	ctx, books, book, oldPath := refreshRaceFixture(t)
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, oldPath); err != nil {
+		t.Fatal(err)
+	}
+	files, err := books.ListBookFiles(ctx, book.ID)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("files = %v, %v", files, err)
+	}
+	newPath := filepath.Join(filepath.Dir(oldPath), "Moved", "Race Book.epub")
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	fired := false
+	refreshBookStatusDerived = func(int64) {
+		if fired {
+			return
+		}
+		fired = true
+		if err := os.Rename(oldPath, newPath); err != nil {
+			t.Fatalf("move file: %v", err)
+		}
+		if err := books.UpdateBookFilePath(ctx, files[0].ID, book.ID, newPath); err != nil {
+			t.Fatalf("concurrent move: %v", err)
+		}
+	}
+	t.Cleanup(func() { refreshBookStatusDerived = nil })
+
+	if err := books.RefreshBookStatus(ctx, book.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := books.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored string
+	if err := books.exec.QueryRowContext(ctx, `SELECT COALESCE(ebook_file_path,'') FROM books WHERE id=?`, book.ID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != newPath || got.FilePath != newPath {
+		t.Errorf("stored ebook_file_path=%q file_path=%q, want the moved path %q", stored, got.FilePath, newPath)
+	}
+}

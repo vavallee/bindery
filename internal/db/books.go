@@ -1134,6 +1134,10 @@ func (r *BookRepo) refreshBookStatus(ctx context.Context, bookID int64) error {
 // window a concurrent edit has to land in (#2375).
 var refreshBookStatusLoaded func(bookID int64)
 
+// refreshBookStatusDerived is the same kind of seam, run once the paths have
+// been derived from book_files and before the write.
+var refreshBookStatusDerived func(bookID int64)
+
 // refreshBookStatusOnce is one guarded attempt. It reports false, having
 // written nothing, when media_type or status changed since it read the book.
 // A book that no longer exists counts as written: there is nothing to refresh.
@@ -1146,6 +1150,20 @@ func (r *BookRepo) refreshBookStatusOnce(ctx context.Context, bookID int64) (boo
 		return true, nil
 	}
 	readMediaType, readStatus := b.MediaType, b.Status
+	// The stored path columns are guarded too, read raw: GetByID renders
+	// them through bookColumns' book_files view, which is not what the guard
+	// compares against. A concurrent refresh that moved a path (a reorganize
+	// running UpdateBookFilePath) changes only these, and writing back this
+	// attempt's older derivation would put the old path back.
+	var readEbookPath, readAudiobookPath sql.NullString
+	if err := r.exec.QueryRowContext(ctx,
+		`SELECT ebook_file_path, audiobook_file_path FROM books WHERE id=?`, bookID).
+		Scan(&readEbookPath, &readAudiobookPath); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return true, nil
+		}
+		return false, fmt.Errorf("refreshBookStatus: read stored paths: %w", err)
+	}
 	if refreshBookStatusLoaded != nil {
 		refreshBookStatusLoaded(bookID)
 	}
@@ -1165,6 +1183,9 @@ func (r *BookRepo) refreshBookStatusOnce(ctx context.Context, bookID int64) (boo
 
 	b.EbookFilePath = ebookPath
 	b.AudiobookFilePath = audiobookPath
+	if refreshBookStatusDerived != nil {
+		refreshBookStatusDerived(bookID)
+	}
 
 	// Inventory-driven widening: media_type records acquisition intent, but a
 	// file on disk makes that intent moot. Without this, a book carrying both
@@ -1198,14 +1219,16 @@ func (r *BookRepo) refreshBookStatusOnce(ctx context.Context, bookID int64) (boo
 	}
 	// The guard compares against what was read, so a NULL or empty column
 	// still matches: COALESCE on both sides keeps the comparison honest for
-	// legacy rows.
+	// legacy rows. The path columns compare with IS, which matches a NULL
+	// read as NULL.
 	res, err := r.exec.ExecContext(ctx, `
 		UPDATE books SET ebook_file_path=?, audiobook_file_path=?, media_type=?, status=?,
 		                 file_path=?, updated_at=?
-		WHERE id=? AND COALESCE(media_type,'')=? AND COALESCE(status,'')=?`,
+		WHERE id=? AND COALESCE(media_type,'')=? AND COALESCE(status,'')=?
+		  AND ebook_file_path IS ? AND audiobook_file_path IS ?`,
 		b.EbookFilePath, b.AudiobookFilePath, mediaType, b.Status,
 		b.FilePath, timeValueArg(time.Now().UTC()),
-		bookID, readMediaType, readStatus)
+		bookID, readMediaType, readStatus, readEbookPath, readAudiobookPath)
 	if err != nil {
 		return false, fmt.Errorf("update book %d: %w", bookID, err)
 	}
