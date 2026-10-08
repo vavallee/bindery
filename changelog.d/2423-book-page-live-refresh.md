@@ -1,0 +1,2 @@
+### Fixed
+- **The book page refreshes itself while its download is importing** (#2423). The page was meant to reload every few seconds while a book's file was on its way in, but it waited on a book status Bindery never sets, so it never did and you had to reload by hand. It now follows the book's own download: while one is grabbed, downloading or importing, the page reloads the book every 5 seconds, and stops once the file lands, refreshing the history with it.

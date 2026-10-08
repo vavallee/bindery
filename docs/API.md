@@ -285,7 +285,7 @@ fingerprint and the next request rescans.
 ```
 GET    /api/v1/book?status=wanted                 filter by status (wanted, imported, skipped)
 POST   /api/v1/book/bulk                          bulk monitor / status flip / exclude (`"expectNoFiles": true` skips books that have files)
-GET    /api/v1/book/{id}                          book detail (with editions, history, formats)
+GET    /api/v1/book/{id}                          book detail (with editions, history, formats; `importInFlight: true` while a download for it is still on its way into the library)
 PUT    /api/v1/book/{id}                          update monitor / status / metadata
 DELETE /api/v1/book/{id}                          remove from library
 DELETE /api/v1/book/{id}/file                     delete imported file(s) on disk (`?format=ebook|audiobook` scopes to one format; `?path=…` deregisters one tracked path WITHOUT deleting anything on disk)

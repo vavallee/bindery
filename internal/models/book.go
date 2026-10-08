@@ -102,6 +102,10 @@ type Book struct {
 	Author    *Author    `json:"author,omitempty"`
 	Editions  []Edition  `json:"editions,omitempty"`
 	BookFiles []BookFile `json:"bookFiles,omitempty"`
+	// ImportInFlight is set on single-book responses while a download for the
+	// book is still on its way into the library, so the book page knows to
+	// refresh itself until the file lands (#2423). Not a column.
+	ImportInFlight bool `json:"importInFlight,omitempty"`
 	// Identifiers is the provider identity map from migration 078 (#1705),
 	// populated on the single-book GET so the detail page can show which
 	// record it is looking at and every other id the same book is known by

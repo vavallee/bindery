@@ -24,6 +24,7 @@ import FixMatchModal from '../components/FixMatchModal'
 import EditBookModal from '../components/EditBookModal'
 import { formatBytes } from '../util/format'
 import MetadataLinksMenu from '../components/MetadataLinksMenu'
+import { usePolling } from '../components/usePolling'
 
 function formatDuration(seconds?: number): string {
   if (!seconds || seconds <= 0) return ''
@@ -351,6 +352,24 @@ function BookDetailPageInner() {
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [bookId, t])
+
+  // Live refresh while an import is in flight (#2423). It arms on the
+  // server's importInFlight flag: a download for this book that is still on
+  // its way into the library. The first version (#1161) armed on book statuses
+  // nothing ever wrote, so it never ran. Each tick reloads the book, and the
+  // reload that comes back with the flag cleared disarms the poll and pulls the
+  // history once more so the import shows up there too. The ASIN draft is left
+  // alone, since the user may be typing in it.
+  usePolling(() => {
+    api.getBook(bookId)
+      .then(b => {
+        setBook(b)
+        if (!b.importInFlight) {
+          api.listHistory({ bookId }).then(({ items }) => setEvents(items)).catch(() => {})
+        }
+      })
+      .catch(() => {})
+  }, 5000, Boolean(book?.importInFlight))
 
   // Series membership. There is no book→series endpoint, so this reuses the
   // author's series list and picks out this book's entries — deliberately not a

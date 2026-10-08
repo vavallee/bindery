@@ -45,6 +45,10 @@ export interface Book {
   audiobookFilePath: string
   // All on-disk files tracked in book_files (populated on single-book GET).
   bookFiles?: BookFile[]
+  // True on a single-book response while a download for the book is still on
+  // its way into the library. The book page refreshes itself while it is set
+  // (#2423).
+  importInFlight?: boolean
   excluded: boolean
   // Fields manually edited by the user and locked against metadata refresh
   // (#1237, #1446): title | description | genres | language | releaseDate.

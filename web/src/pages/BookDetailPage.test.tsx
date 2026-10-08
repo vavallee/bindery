@@ -975,13 +975,51 @@ describe('BookDetailPage — danger zone', () => {
   })
 })
 
-// The #1161 live import poll used to sit here: a 5s interval on the book
-// detail page, armed while book.status was 'downloading' or 'downloaded'.
-// Those statuses were removed in #2374 because nothing in Bindery ever wrote
-// them, which means the poll never armed on a real install and these tests
-// passed only on a mocked status the server could not produce. The effect and
-// its tests are gone; re-adding live refresh needs a signal that actually
-// exists, such as an open queue row for the book.
+// Live refresh while an import is in flight (#2423). The #1161 version armed
+// on book statuses nothing ever wrote, and its tests passed only on a mocked
+// status the server could not produce. This one arms on importInFlight, which
+// the server sets from the book's download rows (TestBookGet_ImportInFlight
+// pins that side).
+describe('BookDetailPage live refresh while an import is in flight (#2423)', () => {
+  it('reloads the book every 5s while importInFlight is set, and stops once the import lands', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(api.getBook)
+        .mockResolvedValueOnce(makeBook({ importInFlight: true }))
+        .mockResolvedValue(makeBook({ status: 'imported', filePath: '/library/book.epub' }))
+
+      renderBookDetailPage()
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(api.getBook).toHaveBeenCalledTimes(1)
+      const historyLoads = vi.mocked(api.listHistory).mock.calls.length
+
+      // One tick: the book is reloaded, comes back without the flag, and the
+      // history is pulled again so the import shows there too.
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+      expect(api.getBook).toHaveBeenCalledTimes(2)
+      expect(vi.mocked(api.listHistory).mock.calls.length).toBeGreaterThan(historyLoads)
+
+      // Disarmed: nothing more is fetched.
+      await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
+      expect(api.getBook).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not poll a book with no import in flight', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(api.getBook).mockResolvedValue(makeBook())
+      renderBookDetailPage()
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
+      expect(api.getBook).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
 
 // Regression guard for the File card's two-column grid.
 //

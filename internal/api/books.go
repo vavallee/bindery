@@ -410,7 +410,24 @@ func (h *BookHandler) Get(w http.ResponseWriter, r *http.Request) {
 	cleanBookDescription(book)
 	h.attachBookFiles(r.Context(), book)
 	h.attachBookIdentifiers(r.Context(), book)
+	h.attachImportInFlight(r.Context(), book)
 	writeJSON(w, http.StatusOK, book)
+}
+
+// attachImportInFlight marks a book whose download is still on its way into
+// the library, which is what the book page's live refresh arms on (#2423).
+// Best effort like the other attachments: a failed lookup only means the page
+// does not refresh itself.
+func (h *BookHandler) attachImportInFlight(ctx context.Context, book *models.Book) {
+	if h.downloads == nil {
+		return
+	}
+	inFlight, err := h.downloads.HasImportInFlight(ctx, book.ID)
+	if err != nil {
+		slog.Debug("book get: import in flight lookup failed", "book_id", book.ID, "error", err)
+		return
+	}
+	book.ImportInFlight = inFlight
 }
 
 func cleanBookDescription(book *models.Book) {
