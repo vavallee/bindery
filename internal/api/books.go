@@ -422,7 +422,7 @@ func (h *BookHandler) attachImportInFlight(ctx context.Context, book *models.Boo
 	if h.downloads == nil {
 		return
 	}
-	inFlight, err := h.downloads.HasImportInFlight(ctx, book.ID)
+	inFlight, err := h.downloads.HasImportInFlight(ctx, book.ID, auth.ListScopeUserID(ctx))
 	if err != nil {
 		slog.Debug("book get: import in flight lookup failed", "book_id", book.ID, "error", err)
 		return
