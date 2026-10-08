@@ -569,6 +569,14 @@ to the records. Things worth knowing before you judge the results:
   over automatically.
 - A folder holding both an ebook and an audiobook for the same book attaches
   both in a single scan — one file per format, so a second scan is not needed.
+- In a **flat** layout, where audiobooks sit straight in the author folder as
+  `Author/Title.mp3`, each file is matched on its own. A tracked audiobook only
+  claims the other files in that folder that are tracks of it (the same name
+  with a part, track or chapter number, or a bare number such as `02.mp3`), so
+  another audiobook by the same author beside it is attached to its own book
+  or listed as unmatched (#1985). Titles that differ only by a number, such as
+  `Saga 1.mp3` and `Saga 2.mp3`, still read as tracks of one audiobook; give
+  each book its own folder to keep them apart.
 - A PDF, TXT, RTF, CBZ or CBR sitting in a folder that also holds audio is treated as
   an **audiobook supplement** (the companion PDF Audible-style releases ship)
   and is not attached as the book's ebook. The same file in a folder with no

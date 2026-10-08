@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
@@ -3191,6 +3192,43 @@ func authorTitleFromLayout(path string, roots ...string) (author, title string, 
 	return author, cleanLayoutTitle(filepath.Base(folder)), true
 }
 
+// flatAudioDir reports whether the audio file at path has no book folder of
+// its own: it sits directly in a library root, or directly in an author folder
+// beneath one (the flat Author/Title.mp3 layout). Its parent then holds other
+// books as well, so it cannot stand for "this audiobook's tracks" (#1985).
+func flatAudioDir(path string, roots ...string) bool {
+	dir := filepath.Clean(filepath.Dir(path))
+	for _, root := range roots {
+		if root != "" && dir == filepath.Clean(root) {
+			return true
+		}
+	}
+	_, folder, ok := bookFolderFromLayout(path, roots...)
+	return ok && folder == ""
+}
+
+// trackNoiseRe matches what tells the tracks of one audiobook apart in a flat
+// folder: numbers and the words that label them.
+var trackNoiseRe = regexp.MustCompile(`(?i)\b(?:part|pt|track|trk|chapter|chap|ch|disc|disk|cd)\b|\d+`)
+
+// audioTrackStem is an audio file's name with its track numbering removed, so
+// "Alpha - Part 01.mp3", "Alpha 02.mp3" and "Alpha.mp3" share the stem "alpha"
+// while "Beta.mp3" does not. A name that is only a track number has the empty
+// stem. Titles that differ only by a number ("Saga 1", "Saga 2") share a stem
+// too; that keeps the pre-#1985 behaviour for them rather than splitting one
+// audiobook's tracks into separate books.
+func audioTrackStem(path string) string {
+	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	stem = trackNoiseRe.ReplaceAllString(stem, " ")
+	stem = strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) {
+			return unicode.ToLower(r)
+		}
+		return ' '
+	}, stem)
+	return strings.Join(strings.Fields(stem), " ")
+}
+
 // reconciledAudiobookPath returns what a reconciled audiobook file should be
 // recorded as in book_files. A track that sits in a book folder of its own is
 // recorded as that folder — the shape the importer writes for an audiobook
@@ -3480,12 +3518,45 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	// the author folder, and tracking it hid every untracked sibling ebook in
 	// that folder from the scan (#1436).
 	trackedPaths := make(map[string]bool)
+	// flatAudio is the parent marking for an audio file with no book folder
+	// of its own (#1985). In a flat Author/Title.mp3 layout the parent is the
+	// AUTHOR folder, and marking it absorbed every other audiobook by that
+	// author as already tracked, so a wanted one never reconciled and never
+	// reached Unmatched either. Such a folder instead remembers the track
+	// stems of its tracked files, and only a sibling that is another track of
+	// one of them (see audioTrackStem) is absorbed.
+	flatAudio := make(map[string]map[string]bool)
+	markAudioParent := func(cleanPath string) {
+		dir := filepath.Clean(filepath.Dir(cleanPath))
+		if !flatAudioDir(cleanPath, s.libraryDir, s.audiobookDir) {
+			trackedPaths[dir] = true
+			return
+		}
+		if flatAudio[dir] == nil {
+			flatAudio[dir] = make(map[string]bool)
+		}
+		flatAudio[dir][audioTrackStem(cleanPath)] = true
+	}
+	audioParentTracked := func(cleanPath string) bool {
+		dir := filepath.Clean(filepath.Dir(cleanPath))
+		if trackedPaths[dir] {
+			return true
+		}
+		stems := flatAudio[dir]
+		if stems == nil {
+			return false
+		}
+		stem := audioTrackStem(cleanPath)
+		// A bare track number names no book, so it stays with the tracked
+		// audiobook beside it, as it did before #1985.
+		return stem == "" || stems[stem]
+	}
 	if allPaths, err := s.books.ListAllBookFilePaths(ctx); err == nil {
 		for _, p := range allPaths {
 			cleanP := filepath.Clean(p)
 			trackedPaths[cleanP] = true
 			if detectDownloadFormat([]string{cleanP}) == models.MediaTypeAudiobook {
-				trackedPaths[filepath.Clean(filepath.Dir(cleanP))] = true
+				markAudioParent(cleanP)
 			}
 		}
 	}
@@ -3800,7 +3871,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		if detectedFmt == models.MediaTypeAudiobook {
 			// Sibling tracks of a just-reconciled audiobook folder belong to
 			// this book — count them as tracked, not unmatched.
-			trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] = true
+			markAudioParent(cleanPath)
 		}
 		reconciledBooks[bookFormatClaim{b.ID, detectedFmt}] = true
 		reconciled++
@@ -3871,7 +3942,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// (#2723).
 		if trackedPaths[cleanPath] ||
 			(detectedFmt == models.MediaTypeAudiobook &&
-				(trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] || trackedPaths[filepath.Clean(registeredPath)])) {
+				(audioParentTracked(cleanPath) || trackedPaths[filepath.Clean(registeredPath)])) {
 			alreadyTracked++
 			continue
 		}
@@ -4012,7 +4083,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				slog.Info("library scan: reconciled book via ASIN", "asin", parsed.ASIN, "title", b.Title, "path", path)
 				trackedPaths[filepath.Clean(registeredPath)] = true
 				if detectedFmt == models.MediaTypeAudiobook {
-					trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] = true
+					markAudioParent(cleanPath)
 				}
 				reconciledBooks[bookFormatClaim{b.ID, detectedFmt}] = true
 				reconciled++
@@ -4069,7 +4140,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 							"series", parsed.Series, "position", parsed.SeriesNumber, "title", book.Title, "path", path)
 						trackedPaths[filepath.Clean(registeredPath)] = true
 						if detectedFmt == models.MediaTypeAudiobook {
-							trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] = true
+							markAudioParent(cleanPath)
 						}
 						reconciledBooks[bookFormatClaim{book.ID, detectedFmt}] = true
 						reconciled++
