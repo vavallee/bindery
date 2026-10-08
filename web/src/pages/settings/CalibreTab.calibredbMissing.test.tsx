@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string, fallback?: unknown) => (typeof fallback === 'string' ? fallback : key) }),
@@ -88,5 +88,38 @@ describe('CalibreTab with no calibredb', () => {
 
     await waitFor(() => expect(mocked.testCalibre).toHaveBeenCalled())
     expect(screen.queryByText('settings.calibre.calibredbMissing.title')).not.toBeInTheDocument()
+  })
+
+  it('clears the warning when Test connection then reaches calibredb', async () => {
+    mocked.listSettings.mockResolvedValue([{ key: 'calibre.mode', value: 'calibredb' }])
+    mocked.testCalibre.mockRejectedValueOnce(missing())
+    render(<CalibreTab />)
+    expect(await screen.findByText('settings.calibre.calibredbMissing.title')).toBeInTheDocument()
+
+    mocked.testCalibre.mockResolvedValueOnce({ ok: 'true', version: 'calibredb (calibre 8.0)' })
+    fireEvent.click(screen.getByText('Test connection'))
+
+    await waitFor(() => expect(screen.queryByText('settings.calibre.calibredbMissing.title')).not.toBeInTheDocument())
+  })
+
+  it('sets and clears the warning from the binary path save', async () => {
+    mocked.listSettings.mockResolvedValue([{ key: 'calibre.mode', value: 'calibredb' }])
+    // The probe on open finds calibredb fine; only the saves speak here.
+    mocked.testCalibre.mockResolvedValue({ ok: 'true', version: 'calibredb (calibre 8.0)' })
+    render(<CalibreTab />)
+    const binary = await screen.findByPlaceholderText('/usr/bin/calibredb') as HTMLInputElement
+    await waitFor(() => expect(mocked.testCalibre).toHaveBeenCalled())
+    const save = within(binary.parentElement as HTMLElement).getByRole('button')
+
+    const cannotRun = 'calibredb exists but can\'t run in this image ("/opt/calibre/calibredb": no such file or directory).'
+    mocked.setSetting.mockResolvedValueOnce({ key: 'calibre.binary_path', value: '/opt/calibre/calibredb', warning: cannotRun, warningCode: 'calibredb_missing' })
+    fireEvent.change(binary, { target: { value: '/opt/calibre/calibredb' } })
+    fireEvent.click(save)
+    expect(await screen.findByText(cannotRun)).toBeInTheDocument()
+
+    mocked.setSetting.mockResolvedValueOnce({ key: 'calibre.binary_path', value: '/usr/bin/calibredb' })
+    fireEvent.change(binary, { target: { value: '/usr/bin/calibredb' } })
+    fireEvent.click(save)
+    await waitFor(() => expect(screen.queryByText('settings.calibre.calibredbMissing.title')).not.toBeInTheDocument())
   })
 })

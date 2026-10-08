@@ -7,6 +7,7 @@ import {
   CalibreImportRun,
   CalibreRollbackResult,
   CalibreSyncProgress,
+  type SettingSaveResult,
 } from '../../api/client'
 import Toggle from './Toggle'
 import SaveButton from './SaveButton'
@@ -45,10 +46,11 @@ export default function CalibreTab() {
       .finally(() => setLoading(false))
   }, [])
 
-  const saveSetting = async (key: string): Promise<string | null> => {
+  const saveSetting = async (key: string, onSaved?: (res: SettingSaveResult | undefined) => void): Promise<string | null> => {
     setSaving(key)
     try {
-      await api.setSetting(key, settings[key] ?? '')
+      const res = await api.setSetting(key, settings[key] ?? '')
+      onSaved?.(res)
       return null
     } catch (err) {
       return err instanceof Error ? err.message : 'Save failed'
@@ -76,7 +78,7 @@ function CalibreSection({
 }: {
   settings: Record<string, string>
   setSettings: (fn: (prev: Record<string, string>) => Record<string, string>) => void
-  saveSetting: (key: string) => Promise<string | null>
+  saveSetting: (key: string, onSaved?: (res: SettingSaveResult | undefined) => void) => Promise<string | null>
   saving: string | null
 }) {
   const { t } = useTranslation()
@@ -102,10 +104,10 @@ function CalibreSection({
   const [runs, setRuns] = useState<CalibreImportRun[]>([])
   const [rollbackRun, setRollbackRun] = useState<CalibreImportRun | null>(null)
 
-  const saveSettingWithErrorThrowing = async (key: string) => {
+  const saveSettingWithErrorThrowing = async (key: string, onSaved?: (res: SettingSaveResult | undefined) => void) => {
     setSaveError(null)
     setTestResult(null)
-    const err = await saveSetting(key)
+    const err = await saveSetting(key, onSaved)
     if (err) {
       setSaveError({ key, msg: err })
       throw new Error(err)
@@ -261,6 +263,12 @@ function CalibreSection({
     }
   }
 
+  // A calibredb mode or binary path save says whether calibredb can run
+  // (#1940): set the banner from its warning, or clear it when there is none.
+  const applyCalibredbWarning = (res: SettingSaveResult | undefined) => {
+    setCalibredbMissing(res?.warningCode === CALIBREDB_MISSING ? (res.warning ?? '') : null)
+  }
+
   const runTest = async () => {
     setTesting(true)
     setTestResult(null)
@@ -287,6 +295,8 @@ function CalibreSection({
       // on a successful manual test, without waiting for the silent probe
       // to re-fire (which only triggers on mode/url/key *changes*).
       if (isPlugin) setBridgeReachable(true)
+      // calibredb answered, so whatever the banner said no longer holds.
+      else setCalibredbMissing(null)
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'Test failed'
       const missing = calibredbMissingReason(err)
@@ -305,8 +315,7 @@ function CalibreSection({
     setSettings(s => ({ ...s, 'calibre.mode': next }))
     setCalibredbMissing(null)
     try {
-      const res = await api.setSetting('calibre.mode', next)
-      if (res?.warningCode === CALIBREDB_MISSING) setCalibredbMissing(res.warning ?? '')
+      applyCalibredbWarning(await api.setSetting('calibre.mode', next))
     } catch (err) {
       console.error(err)
     }
@@ -410,7 +419,7 @@ function CalibreSection({
               <SaveButton
                 result={binaryPathSaveResult}
                 saving={saving === 'calibre.binary_path'}
-                onClick={() => binaryPathSave(() => saveSettingWithErrorThrowing('calibre.binary_path'))}
+                onClick={() => binaryPathSave(() => saveSettingWithErrorThrowing('calibre.binary_path', applyCalibredbWarning))}
               />
             </div>
             {saveError?.key === 'calibre.binary_path' && (
