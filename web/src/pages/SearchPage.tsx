@@ -3,9 +3,12 @@ import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, isNoDownloadClientError, SearchResult } from '../api/client'
 import { formatBytes } from '../util/format'
+import { useConfirmDialog } from '../components/useConfirmDialog'
+import { grabWithForceConfirm } from '../util/forceGrab'
 
 export default function SearchPage() {
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[] | null>(null)
   const [searching, setSearching] = useState(false)
@@ -46,14 +49,15 @@ export default function SearchPage() {
     setError(null)
     setNeedsClient(false)
     try {
-      await api.grab({
+      const dl = await grabWithForceConfirm({
         guid: r.guid,
         title: r.title,
         nzbUrl: r.nzbUrl,
         size: r.size,
         indexerId: r.indexerId,
         protocol: r.protocol,
-      })
+      }, confirm, t)
+      if (!dl) return
       setGrabbed(prev => new Set(prev).add(r.guid))
     } catch (e) {
       if (isNoDownloadClientError(e)) {
@@ -68,6 +72,7 @@ export default function SearchPage() {
 
   return (
     <div className="max-w-4xl mx-auto sm:px-6 lg:px-8 py-8">
+      {confirmDialog}
       <h2 className="text-xl font-bold mb-6">{t('search.heading')}</h2>
 
       <form

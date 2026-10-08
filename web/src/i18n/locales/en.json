@@ -341,7 +341,10 @@
     "noClient": {
       "body": "Nothing was grabbed — no enabled download client can handle this release. Add or enable a download client to start downloads.",
       "action": "Set up Download Clients"
-    }
+    },
+    "forceTitle": "Grab this release again?",
+    "forceBody": "Bindery already imported this release once. Grab it anyway if that import has no usable files, or you want a fresh copy. Nothing is removed from your download client and the book's current files stay where they are.",
+    "forceConfirm": "Grab anyway"
   },
   "login": {
     "title": "Sign in",

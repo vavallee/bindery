@@ -93,6 +93,9 @@ export interface GrabRequest {
   indexerId?: number
   protocol?: string
   mediaType?: string
+  // force grabs a release Bindery already imported once, after the user
+  // confirmed it (#2289). See util/forceGrab.
+  force?: boolean
 }
 
 export interface PendingRelease {

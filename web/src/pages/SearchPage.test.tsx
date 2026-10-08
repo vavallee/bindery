@@ -139,3 +139,58 @@ describe('SearchPage no-download-client nudge', () => {
     expect(screen.queryByText(noClientBody)).not.toBeInTheDocument()
   })
 })
+
+// #2289: a release Bindery already imported is refused with forceAvailable,
+// and the page offers to grab it anyway instead of leaving the user stuck.
+describe('SearchPage forced re-grab (#2289)', () => {
+  const refusal = () => new ApiError(
+    409,
+    { error: 'already grabbed: this release has already been imported; grab it anyway to download it again', forceAvailable: true },
+    'Conflict',
+  )
+
+  it('asks, and grabs again with force when the user confirms', async () => {
+    const grabButton = await searchAndGetGrabButton()
+    vi.mocked(api.grab)
+      .mockRejectedValueOnce(refusal())
+      .mockResolvedValueOnce(makeDownload())
+
+    fireEvent.click(grabButton)
+
+    expect(await screen.findByText(en.search.forceTitle)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: en.search.forceConfirm }))
+
+    await waitFor(() => expect(api.grab).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(api.grab).mock.calls[0][0].force).toBeUndefined()
+    expect(vi.mocked(api.grab).mock.calls[1][0]).toMatchObject({ guid: 'g1', force: true })
+    expect(await screen.findByText(en.search.grabbed)).toBeInTheDocument()
+  })
+
+  it('does not grab again when the user cancels', async () => {
+    const grabButton = await searchAndGetGrabButton()
+    vi.mocked(api.grab).mockRejectedValueOnce(refusal())
+
+    fireEvent.click(grabButton)
+
+    expect(await screen.findByText(en.search.forceTitle)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: en.common.cancel }))
+
+    await waitFor(() => expect(screen.queryByText(en.search.forceTitle)).not.toBeInTheDocument())
+    expect(api.grab).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a refusal without forceAvailable as an error and offers nothing', async () => {
+    const grabButton = await searchAndGetGrabButton()
+    vi.mocked(api.grab).mockRejectedValueOnce(new ApiError(
+      409,
+      { error: 'already grabbed: it is already in the queue (downloading), see the Queue page', forceAvailable: false },
+      'Conflict',
+    ))
+
+    fireEvent.click(grabButton)
+
+    expect(await screen.findByText(/already in the queue/)).toBeInTheDocument()
+    expect(screen.queryByText(en.search.forceTitle)).not.toBeInTheDocument()
+    expect(api.grab).toHaveBeenCalledTimes(1)
+  })
+})

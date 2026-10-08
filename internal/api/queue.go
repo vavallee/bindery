@@ -39,6 +39,35 @@ var queueClientPollTimeout = 1 * time.Second
 
 var errAlreadyGrabbed = errors.New("already grabbed")
 
+// errRegrabForceable marks an "already grabbed" refusal the caller may
+// override by sending the grab again with force set (#2289). It is only ever
+// joined to errAlreadyGrabbed, never returned alone, and only for the caller's
+// own imported row: see forceRegrabbable.
+var errRegrabForceable = errors.New("grab it anyway to download it again")
+
+// forceRegrabbable reports whether a grab that sets force may reuse d even
+// though regrabbable refuses it (#2289).
+//
+// Only an imported row qualifies. Its download finished and its import ran,
+// so nothing is in flight that a re-grab could race or duplicate, and what
+// the refusal protects is the user fetching a book twice by accident. That is
+// the user's call to make, and before this the only ways to make it were to
+// delete the book or to delete the torrent in the download client, which on
+// a ratio tracked private tracker throws away the seeding history. The
+// reporter's release had been marked imported with no usable files, and
+// every Grab answered "already imported".
+//
+// Every other blocking state is live work (grabbed, downloading, completed,
+// importing) or work the scanner or an external tool still owns
+// (importFailed, importExternal, importHeld), and force does not open those.
+//
+// The row is reused in place, exactly as a dead row is. Nothing is removed
+// from the download client and no file is touched: the earlier import's
+// files stay with the book, and the history table keeps its record.
+func forceRegrabbable(d *models.Download) bool {
+	return d != nil && d.Status == models.StateImported
+}
+
 // foreignRowGrabbedDetail is the reason given when the release's download row
 // belongs to another user under tenancy. It says no more than that: the row's
 // state, book and history are that user's.
@@ -839,6 +868,9 @@ type grabRequest struct {
 	IndexerID *int64 `json:"indexerId"`
 	Protocol  string `json:"protocol"`
 	MediaType string `json:"mediaType"`
+	// Force re-grabs a release whose earlier download already imported,
+	// after the user confirmed it (#2289). See forceRegrabbable.
+	Force bool `json:"force"`
 }
 
 func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
@@ -874,7 +906,11 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, errAlreadyGrabbed) {
 		// err carries alreadyGrabbedDetail's explanation; the search page shows
 		// this string verbatim, so send it rather than the bare sentinel (#1955).
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		// forceAvailable tells the UI it may offer to grab anyway (#2289).
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":          err.Error(),
+			"forceAvailable": errors.Is(err, errRegrabForceable),
+		})
 		return
 	}
 	if errors.Is(err, errGrabBookNotFound) {
@@ -1298,8 +1334,19 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	if foreignRow && !foreignRowClaimable(existing, now) {
 		return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, foreignRowGrabbedDetail)
 	}
+	// forced is a grab the user confirmed over the "already imported"
+	// refusal (#2289). A foreign row is never forced: the check above already
+	// refuses every foreign imported row that still has its book, and force
+	// is for the caller's own rows whatever the order of these checks.
+	forced := false
 	if existing != nil && !regrabbable(existing) {
-		return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, alreadyGrabbedDetail(existing.Status))
+		if foreignRow || !forceRegrabbable(existing) {
+			return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, alreadyGrabbedDetail(existing.Status))
+		}
+		if !req.Force {
+			return nil, fmt.Errorf("%w: %s; %w", errAlreadyGrabbed, alreadyGrabbedDetail(existing.Status), errRegrabForceable)
+		}
+		forced = true
 	}
 
 	// Coerce zero-valued BookID/IndexerID to nil. A caller that JSON-decodes
@@ -1406,12 +1453,17 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	if existing != nil {
 		dl.ID = existing.ID
 		var ok bool
-		if foreignRow {
+		switch {
+		case foreignRow:
 			// The scheduler's claim, with its cooldown re-checked in SQL, so a
 			// row that changed hands or died again since the read above is a
 			// refusal rather than a takeover.
 			ok, err = h.downloads.RetryDeadForAutoGrab(ctx, dl, now.Add(-models.DeadRegrabCooldown))
-		} else {
+		case forced:
+			// Claims the row only while it is still imported, so a row that
+			// moved on since the read above is a refusal, not a takeover.
+			ok, err = h.downloads.RetryImported(ctx, dl)
+		default:
 			ok, err = h.downloads.RetryFailed(ctx, dl)
 		}
 		if err != nil {

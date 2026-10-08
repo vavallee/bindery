@@ -15,6 +15,8 @@ import { bookStatusBadge } from '../components/bookStatus'
 import RebindModal from '../components/RebindModal'
 import RenameFilesModal from '../components/RenameFilesModal'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { useConfirmDialog } from '../components/useConfirmDialog'
+import { grabWithForceConfirm } from '../util/forceGrab'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../components/useClipboardCopy'
 import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
@@ -279,6 +281,9 @@ export default function BookDetailPage() {
 
 function BookDetailPageInner() {
   const { t } = useTranslation()
+  // The page has its own ConfirmDialog states; this one only asks before a
+  // forced grab of a release Bindery already imported (#2289).
+  const { confirm: forceConfirm, confirmDialog: forceConfirmDialog } = useConfirmDialog()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
@@ -494,7 +499,7 @@ function BookDetailPageInner() {
     setGrabbing(r.guid)
     setError(null)
     try {
-      await api.grab({
+      const dl = await grabWithForceConfirm({
         guid: r.guid,
         title: r.title,
         nzbUrl: r.nzbUrl,
@@ -509,7 +514,8 @@ function BookDetailPageInner() {
         // this is the format the user picked; single-format searches leave it
         // unset and the book's own type is the answer.
         mediaType: r.mediaType || book.mediaType,
-      })
+      }, forceConfirm, t)
+      if (!dl) return
       // Refresh book + history
       const [b, h] = await Promise.all([
         api.getBook(book.id),
@@ -814,6 +820,7 @@ function BookDetailPageInner() {
     // (7xl vs 4xl), so author → book collapsed the content by 384px and
     // left-aligned it mid-navigation.
     <div className="max-w-7xl">
+      {forceConfirmDialog}
       {navRow}
 
       {/* ===== Header: cover + metadata ===== */}
