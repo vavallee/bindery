@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/go-chi/chi/v5"
 	"github.com/vavallee/bindery/internal/api"
 	"github.com/vavallee/bindery/internal/auth"
@@ -9,6 +10,7 @@ import (
 	"github.com/vavallee/bindery/internal/db"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -546,7 +548,8 @@ func TestLibraryScanStatusRouteRequiresAdmin(t *testing.T) {
 
 // TestLibraryScanStatusRouteAllowsAdmin is the symmetry case: the Settings
 // scan panel is admin UI and needs the whole blob, paths included, so an admin
-// must get it back byte for byte.
+// must get every stored field back unchanged. The only additions are the live
+// running and queued flags (#3014), which carry no paths.
 func TestLibraryScanStatusRouteAllowsAdmin(t *testing.T) {
 	router := newScanStatusRouter(t)
 
@@ -558,7 +561,28 @@ func TestLibraryScanStatusRouteAllowsAdmin(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; want %d", rec.Code, http.StatusOK)
 	}
-	if got := rec.Body.String(); got != pr2361ScanBlob {
-		t.Fatalf("admin body = %s; want the stored blob unchanged", got)
+	var stored, got map[string]any
+	if err := json.Unmarshal([]byte(pr2361ScanBlob), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("admin body is not JSON: %v: %s", err, rec.Body.String())
+	}
+	for k, v := range stored {
+		if !reflect.DeepEqual(got[k], v) {
+			t.Errorf("admin body %q = %v; want the stored %v", k, got[k], v)
+		}
+	}
+	for k, v := range got {
+		if _, ok := stored[k]; ok {
+			continue
+		}
+		if k != "running" && k != "queued" {
+			t.Errorf("admin body gained an unexpected field %q = %v", k, v)
+			continue
+		}
+		if _, isBool := v.(bool); !isBool {
+			t.Errorf("admin body %q = %v; want a bool", k, v)
+		}
 	}
 }
