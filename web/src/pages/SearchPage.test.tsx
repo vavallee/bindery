@@ -149,6 +149,11 @@ describe('SearchPage forced re-grab (#2289)', () => {
     'Conflict',
   )
 
+  // A queued once value a test did not consume must not leak into the next.
+  beforeEach(() => {
+    vi.mocked(api.grab).mockReset()
+  })
+
   it('asks, and grabs again with force when the user confirms', async () => {
     const grabButton = await searchAndGetGrabButton()
     vi.mocked(api.grab)
