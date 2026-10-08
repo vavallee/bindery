@@ -3207,19 +3207,41 @@ func flatAudioDir(path string, roots ...string) bool {
 	return ok && folder == ""
 }
 
-// trackNoiseRe matches what tells the tracks of one audiobook apart in a flat
-// folder: numbers and the words that label them.
-var trackNoiseRe = regexp.MustCompile(`(?i)\b(?:part|pt|track|trk|chapter|chap|ch|disc|disk|cd)\b|\d+`)
+// trackWordGlueRe splits a track label from a number glued onto it, so
+// "CD1" and "Part02" read as "cd 1" and "part 02".
+var trackWordGlueRe = regexp.MustCompile(`(?i)\b(part|pt|track|trk|chapter|chap|ch|disc|disk|cd)(\d)`)
 
-// audioTrackStem is an audio file's name with its track numbering removed, so
-// "Alpha - Part 01.mp3", "Alpha 02.mp3" and "Alpha.mp3" share the stem "alpha"
-// while "Beta.mp3" does not. A name that is only a track number has the empty
-// stem. Titles that differ only by a number ("Saga 1", "Saga 2") share a stem
-// too; that keeps the pre-#1985 behaviour for them rather than splitting one
-// audiobook's tracks into separate books.
+// trackNumberRe finds where a track's numbering starts: the first digit run,
+// or a spelled number after a track label ("Part One", "Chapter Twelve").
+var trackNumberRe = regexp.MustCompile(`(?i)\d|\b(?:part|pt|track|trk|chapter|chap|ch|disc|disk|cd)\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b`)
+
+// trackWordRe matches the track labels left in front of a number.
+var trackWordRe = regexp.MustCompile(`(?i)\b(?:part|pt|track|trk|chapter|chap|ch|disc|disk|cd)\b`)
+
+// audioTrackStem is the part of an audio file's name that names the book, for
+// telling another track of a tracked audiobook apart from a different book in
+// the same flat folder (#1985). Everything from the first track number on is
+// dropped, since what follows a number is usually a chapter title ("01 -
+// Chapter One", "Alpha - 02 - The Middle", "Alpha (2 of 12)"), and track labels
+// in front of it go too. So "Alpha - Part 01.mp3", "Alpha CD2.mp3", "Alpha Part
+// Two.mp3" and "Alpha.mp3" all share the stem "alpha" while "Beta.mp3" does
+// not. A name that starts with its number has the empty stem, which callers
+// treat as a bare track. Titles that differ only by a number ("Saga 1", "Saga
+// 2") share a stem too; that keeps the pre-#1985 behaviour for them rather
+// than splitting one audiobook's tracks into separate books.
 func audioTrackStem(path string) string {
 	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	stem = trackNoiseRe.ReplaceAllString(stem, " ")
+	stem = trackWordGlueRe.ReplaceAllString(stem, "$1 $2")
+	if loc := trackNumberRe.FindStringIndex(stem); loc != nil {
+		if stem[loc[0]] >= '0' && stem[loc[0]] <= '9' {
+			stem = stem[:loc[0]]
+		} else {
+			// A spelled number: keep the label, trackWordRe removes it below.
+			stem = stem[:loc[1]]
+			stem = stem[:strings.LastIndexAny(stem, " \t")]
+		}
+	}
+	stem = trackWordRe.ReplaceAllString(stem, " ")
 	stem = strings.Map(func(r rune) rune {
 		if unicode.IsLetter(r) {
 			return unicode.ToLower(r)

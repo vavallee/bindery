@@ -575,7 +575,9 @@ to the records. Things worth knowing before you judge the results:
 - In a **flat** layout, where audiobooks sit straight in the author folder as
   `Author/Title.mp3`, each file is matched on its own. A tracked audiobook only
   claims the other files in that folder that are tracks of it (the same name
-  with a part, track or chapter number, or a bare number such as `02.mp3`), so
+  up to a part, track, chapter or disc number, written as digits or as a word
+  like `Part Two`, or a name that starts with its number such as `02.mp3` or
+  `02 - Chapter Two.mp3`; a chapter title after the number is ignored), so
   another audiobook by the same author beside it is attached to its own book
   or listed as unmatched (#1985). Titles that differ only by a number, such as
   `Saga 1.mp3` and `Saga 2.mp3`, still read as tracks of one audiobook; give
