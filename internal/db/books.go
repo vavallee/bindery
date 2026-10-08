@@ -1104,13 +1104,43 @@ func legacyFilePathFor(mediaType, ebookPath, audiobookPath string) string {
 // current book_files rows and updates both the status and legacy columns.
 // It queries book_files directly so the result is always authoritative,
 // bypassing the legacy-column fallback in bookColumns.
+//
+// It writes only the five columns it derives, guarded on the two it derives
+// them from (#2375). It used to write the whole row back through Update from
+// the snapshot it read at the top, so a user edit that landed in between (an
+// unmonitor, a rename, a media type change) was silently reverted by an
+// import recording its file. When media_type or status changed under it, the
+// guard misses and the derivation runs again against the new values.
 func (r *BookRepo) refreshBookStatus(ctx context.Context, bookID int64) error {
+	const attempts = 5
+	for range attempts {
+		written, err := r.refreshBookStatusOnce(ctx, bookID)
+		if err != nil || written {
+			return err
+		}
+	}
+	return fmt.Errorf("refreshBookStatus: book %d kept changing under the status refresh", bookID)
+}
+
+// refreshBookStatusLoaded is a test seam: when set, it runs after
+// refreshBookStatus has read the book and before it writes, which is the
+// window a concurrent edit has to land in (#2375).
+var refreshBookStatusLoaded func(bookID int64)
+
+// refreshBookStatusOnce is one guarded attempt. It reports false, having
+// written nothing, when media_type or status changed since it read the book.
+// A book that no longer exists counts as written: there is nothing to refresh.
+func (r *BookRepo) refreshBookStatusOnce(ctx context.Context, bookID int64) (bool, error) {
 	b, err := r.GetByID(ctx, bookID)
 	if err != nil {
-		return fmt.Errorf("refreshBookStatus: load book: %w", err)
+		return false, fmt.Errorf("refreshBookStatus: load book: %w", err)
 	}
 	if b == nil {
-		return nil
+		return true, nil
+	}
+	readMediaType, readStatus := b.MediaType, b.Status
+	if refreshBookStatusLoaded != nil {
+		refreshBookStatusLoaded(bookID)
 	}
 
 	// Query book_files directly to get the path each format should render.
@@ -1119,11 +1149,11 @@ func (r *BookRepo) refreshBookStatus(ctx context.Context, bookID int64) error {
 	// the value bookColumns now reads back (see its comment).
 	ebookPath, err := r.derivedFormatPath(ctx, bookID, models.MediaTypeEbook)
 	if err != nil {
-		return fmt.Errorf("refreshBookStatus: read ebook path: %w", err)
+		return false, fmt.Errorf("refreshBookStatus: read ebook path: %w", err)
 	}
 	audiobookPath, err := r.derivedFormatPath(ctx, bookID, models.MediaTypeAudiobook)
 	if err != nil {
-		return fmt.Errorf("refreshBookStatus: read audiobook path: %w", err)
+		return false, fmt.Errorf("refreshBookStatus: read audiobook path: %w", err)
 	}
 
 	b.EbookFilePath = ebookPath
@@ -1139,12 +1169,9 @@ func (r *BookRepo) refreshBookStatus(ctx context.Context, bookID int64) error {
 	// Hardcover *hydration* (bookhydrate.Options.MediaTypePinned), which
 	// widened books from metadata alone — "this work has an audio edition
 	// somewhere". Here the audiobook is already imported.
+	widened := false
 	if ebookPath != "" && audiobookPath != "" && b.MediaType != models.MediaTypeBoth {
-		// Log it: this changes a user-visible field the user may have set
-		// themselves, and a silent flip has no answer to "why did my book
-		// become dual-format".
-		slog.Info("widened media_type from on-disk inventory",
-			"book_id", b.ID, "title", b.Title, "from", b.MediaType, "to", models.MediaTypeBoth)
+		widened = true
 		b.MediaType = models.MediaTypeBoth
 	}
 
@@ -1158,7 +1185,38 @@ func (r *BookRepo) refreshBookStatus(ctx context.Context, bookID int64) error {
 	// Keep legacy file_path column in sync.
 	b.FilePath = legacyFilePathFor(b.MediaType, ebookPath, audiobookPath)
 
-	return r.Update(ctx, b)
+	mediaType := b.MediaType
+	if mediaType == "" {
+		mediaType = models.MediaTypeEbook
+	}
+	// The guard compares against what was read, so a NULL or empty column
+	// still matches: COALESCE on both sides keeps the comparison honest for
+	// legacy rows.
+	res, err := r.exec.ExecContext(ctx, `
+		UPDATE books SET ebook_file_path=?, audiobook_file_path=?, media_type=?, status=?,
+		                 file_path=?, updated_at=?
+		WHERE id=? AND COALESCE(media_type,'')=? AND COALESCE(status,'')=?`,
+		b.EbookFilePath, b.AudiobookFilePath, mediaType, b.Status,
+		b.FilePath, timeValueArg(time.Now().UTC()),
+		bookID, readMediaType, readStatus)
+	if err != nil {
+		return false, fmt.Errorf("update book %d: %w", bookID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check status refresh for book %d: %w", bookID, err)
+	}
+	if n == 0 {
+		return false, nil
+	}
+	if widened {
+		// Log it: this changes a user-visible field the user may have set
+		// themselves, and a silent flip has no answer to "why did my book
+		// become dual-format".
+		slog.Info("widened media_type from on-disk inventory",
+			"book_id", b.ID, "title", b.Title, "from", readMediaType, "to", models.MediaTypeBoth)
+	}
+	return true, nil
 }
 
 // BookFilePathResolves reports whether a tracked book file path still points

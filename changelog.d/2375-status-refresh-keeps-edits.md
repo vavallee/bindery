@@ -1,0 +1,2 @@
+### Fixed
+- **Edits made during an import are no longer undone** (#2375). When a file was recorded against a book, Bindery rewrote the whole book from a copy it had read a moment earlier, so unmonitoring, renaming or changing the media type of a book while its import was running could quietly come back. Recording a file now only updates the book's status and file paths, and works them out again if you changed the media type at the same moment.
