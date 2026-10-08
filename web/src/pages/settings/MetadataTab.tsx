@@ -89,7 +89,7 @@ export default function MetadataTab() {
             {t('settings.general.metadataProviderLabel', 'Primary metadata provider')}
           </label>
           <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
-            {t('settings.general.metadataProviderHint', 'Selects the source used for author and book search, and decides what an author\'s catalogue looks like. DNB (Deutsche Nationalbibliothek) is recommended for German, Austrian, and Swiss catalogues — it covers German-language publications since 1913 where OpenLibrary coverage is thin. Hardcover is a curated catalogue: fewer translation editions, omnibus bundles, and non-book entries than OpenLibrary, at the cost of a thinner long tail. OpenLibrary remains the default. Whichever you pick, the other providers are still used as enrichers.')}
+            {t('settings.general.metadataProviderHint', 'Selects the source used for author and book search, and decides what an author\'s catalogue looks like. DNB (Deutsche Nationalbibliothek) is recommended for German, Austrian, and Swiss catalogues — it covers German-language publications since 1913 where OpenLibrary coverage is thin. Nasjonalbiblioteket (the National Library of Norway) is recommended for Norwegian catalogues — it holds every Norwegian publication by legal deposit, under its original Norwegian title where OpenLibrary often has only the English translation. Hardcover is a curated catalogue: fewer translation editions, omnibus bundles, and non-book entries than OpenLibrary, at the cost of a thinner long tail. OpenLibrary remains the default. Whichever you pick, the other providers are still used as enrichers, except Nasjonalbiblioteket, which is only queried when it is the primary.')}
           </p>
           <select
             value={settings['metadata.primary_provider'] ?? 'openlibrary'}
@@ -102,6 +102,7 @@ export default function MetadataTab() {
           >
             <option value="openlibrary">{t('settings.general.metadataProviderOpenlibrary', 'OpenLibrary (default)')}</option>
             <option value="dnb">{t('settings.general.metadataProviderDnb', 'DNB — Deutsche Nationalbibliothek (German/DACH)')}</option>
+            <option value="nb">{t('settings.general.metadataProviderNb', 'Nasjonalbiblioteket — National Library of Norway (Norwegian)')}</option>
             <option value="hardcover" disabled={!hardcoverTokenConfigured}>
               {hardcoverTokenConfigured
                 ? t('settings.general.metadataProviderHardcover', 'Hardcover (curated catalogue)')

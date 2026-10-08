@@ -1,0 +1,24 @@
+{
+  "_embedded": {
+    "items": [
+      {
+        "id": "a0000000000000000000000000000002",
+        "metadata": {
+          "title": "Fjellvinden : roman",
+          "titleInfos": [{"title": "Fjellvinden", "subTitle": "roman"}, {"title": "Fjellvinden", "type": "uniform"}],
+          "people": [
+            {"name": "Nordmann, Kari", "identifier": "bibsys.no:authority:10000001", "roles": [{"name": "aut"}], "usage": "primary"},
+            {"name": "Leser, Ola", "identifier": "bibsys.no:authority:30000001", "roles": [{"name": "nrt"}]}
+          ],
+          "identifiers": {"isbn13": ["9788200000028"], "sesamId": "a0000000000000000000000000000002"},
+          "languages": [{"code": "nob"}],
+          "mediaTypes": ["lydopptak"],
+          "originInfo": {"publisher": "Eksempelforlaget", "issued": "2020"},
+          "summary": "En oppdiktet roman brukt som testdata.",
+          "pageCount": 0
+        }
+      }
+    ]
+  },
+  "page": {"number": 0, "size": 100, "totalElements": 1, "totalPages": 1}
+}

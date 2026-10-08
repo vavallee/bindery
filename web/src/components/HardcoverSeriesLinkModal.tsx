@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, Series, SeriesHardcoverLink, SeriesHardcoverSearchResult } from '../api/client'
 import { hardcoverSeriesUrl } from '../util/metadataSource'
+import { useModal } from './useModal'
 
 interface HardcoverSeriesLinkModalProps {
   series: Series
@@ -117,11 +118,13 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
     }
   }
 
+  const { titleId, panelProps } = useModal({ onClose, canClose: !saving })
+
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+    <div className="modal-overlay fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={onClose}>
+      <div {...panelProps} className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-2xl shadow-2xl modal-max-h flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800 flex items-center justify-between gap-4">
-          <h3 className="text-lg font-semibold">Link to Hardcover Series</h3>
+          <h3 id={titleId} className="text-lg font-semibold">Link to Hardcover Series</h3>
           <button
             type="button"
             onClick={onClose}
@@ -169,6 +172,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
           )}
 
           <input
+            enterKeyHint="search"
             type="text"
             value={query}
             onChange={e => setQuery(e.target.value)}

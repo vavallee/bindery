@@ -5,6 +5,7 @@ import { api, ABSConfig, ABSImportProgress, ABSImportRun, ABSLibrary, ABSMetadat
 import ABSConflictPanel from '../../components/ABSAuthorConflictsPanel'
 import { inputCls } from './formStyles'
 import PathRemapField from './PathRemapField'
+import { secretInputAttrs, urlInputAttrs } from '../../util/inputAttrs'
 
 const absReviewResultLimit = 10
 
@@ -518,8 +519,10 @@ function AudiobookshelfSection() {
   }
   const rollbackActionDetail = (action: ABSRollbackAction) =>
     action.reason || `${action.entityType}${action.localId ? ` #${action.localId}` : ''}`
-  const rollbackPreviewChanges = rollbackResult?.actions.filter(action => action.action !== 'skip') ?? []
-  const rollbackPreviewRetained = rollbackResult?.actions.filter(action => action.action === 'skip') ?? []
+  // An older server sends actions: null for a run with nothing to undo.
+  const rollbackActions = rollbackResult?.actions ?? []
+  const rollbackPreviewChanges = rollbackActions.filter(action => action.action !== 'skip')
+  const rollbackPreviewRetained = rollbackActions.filter(action => action.action === 'skip')
 
   return (
     <section>
@@ -616,6 +619,7 @@ function AudiobookshelfSection() {
           <div>
             <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Base URL</label>
             <input
+              {...urlInputAttrs}
               value={draft.baseUrl}
               onChange={e => setDraft(prev => ({ ...prev, baseUrl: e.target.value }))}
               placeholder="http://audiobookshelf:13378"
@@ -627,6 +631,7 @@ function AudiobookshelfSection() {
         <div>
           <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">API key</label>
           <input
+            {...secretInputAttrs}
             value={draft.apiKey}
             onChange={e => setDraft(prev => ({ ...prev, apiKey: e.target.value }))}
             type="password"

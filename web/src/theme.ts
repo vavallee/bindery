@@ -18,9 +18,19 @@ function readInitial(): Theme {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
+// Browser chrome colours, matching the page background in each theme. These
+// agree with the two theme-color metas in index.html.
+export const THEME_COLORS: Record<Theme, string> = { light: '#f8fafc', dark: '#09090b' }
+
 function apply(theme: Theme) {
   if (typeof document === 'undefined') return
   document.documentElement.classList.toggle('dark', theme === 'dark')
+  // index.html ships one theme-color meta per OS colour scheme. The in-app
+  // toggle can override the OS, so point every one of them at the chosen
+  // theme; whichever media query matches then carries the right colour.
+  document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach(meta => {
+    meta.content = THEME_COLORS[theme]
+  })
 }
 
 /**

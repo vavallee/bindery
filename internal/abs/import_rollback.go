@@ -115,10 +115,13 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 		return nil, fmt.Errorf("abs import run %d not found", runID)
 	}
 	result := &RollbackResult{
-		RunID:    runID,
-		Preview:  preview,
-		DryRun:   run.DryRun,
-		Status:   run.Status,
+		RunID:   runID,
+		Preview: preview,
+		DryRun:  run.DryRun,
+		Status:  run.Status,
+		// Never nil: the UI reads actions.length, and a nil slice
+		// marshals as null for a run with nothing to undo.
+		Actions:  []RollbackAction{},
 		Finished: time.Now().UTC(),
 	}
 	if run.DryRun {

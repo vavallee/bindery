@@ -6,7 +6,7 @@ import { apiUrl, server } from '../test/msw'
 import { makeAuthStatus } from '../test-utils'
 
 function AuthProbe() {
-  const { status, loading, isAdmin, refresh, logout } = useAuth()
+  const { status, loading, isAdmin, statusError, refresh, logout } = useAuth()
 
   return (
     <div>
@@ -15,6 +15,7 @@ function AuthProbe() {
         {status ? `${status.authenticated ? 'authenticated' : 'anonymous'}:${status.mode}:${status.role ?? ''}` : 'none'}
       </div>
       <div data-testid="admin">{String(isAdmin)}</div>
+      <div data-testid="statusError">{String(statusError)}</div>
       <button type="button" onClick={() => { void refresh() }}>Refresh</button>
       <button type="button" onClick={() => { void logout() }}>Logout</button>
     </div>
@@ -98,6 +99,27 @@ describe('AuthProvider', () => {
 
     await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'))
     expect(screen.getByTestId('status')).toHaveTextContent('none')
+  })
+
+  it('keeps the signed in status when a later status check fails', async () => {
+    let statusHits = 0
+    server.use(
+      http.get(apiUrl('/auth/status'), () => {
+        statusHits += 1
+        return statusHits === 1
+          ? HttpResponse.json(makeAuthStatus({ authenticated: true, username: 'admin', role: 'admin' }))
+          : HttpResponse.json({ error: 'session check unavailable, try again' }, { status: 503 })
+      }),
+      http.get(apiUrl('/auth/csrf'), () => HttpResponse.json({ csrfToken: 'keep-token' })),
+    )
+
+    renderAuthProvider()
+
+    await screen.findByText('authenticated:enabled:admin')
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await waitFor(() => expect(statusHits).toBe(2))
+    await waitFor(() => expect(screen.getByTestId('statusError')).toHaveTextContent('true'))
+    expect(screen.getByTestId('status')).toHaveTextContent('authenticated:enabled:admin')
   })
 
   it('refreshes auth status when the document becomes visible', async () => {

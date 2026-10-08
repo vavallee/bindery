@@ -47,6 +47,7 @@ func TestAuthorProviderFromForeignID(t *testing.T) {
 		{id: "OL13200512A", want: "openlibrary"},
 		{id: "hc:emilia-jae", want: "hardcover"},
 		{id: "dnb:123456789", want: "dnb"},
+		{id: "nb:author:10000001", want: "nb"},
 		{id: "gb:volume", want: "googlebooks"},
 		{id: "calibre:author:1", want: "calibre"},
 		{id: "abs:author:lib:author", want: "audiobookshelf"},

@@ -201,6 +201,8 @@ describe('BooksPage', () => {
       await screen.findByRole('heading', { name: 'Dune' }),
     ).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Hyperion' })).toBeInTheDocument()
+    // The phone keyboard's return key reads Search on the search box.
+    expect(screen.getByPlaceholderText('Search by title or author...')).toHaveAttribute('enterkeyhint', 'search')
     // The empty state must not show when the library has books.
     expect(
       screen.queryByText('No books in your library yet'),

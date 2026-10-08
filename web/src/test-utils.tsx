@@ -54,3 +54,32 @@ export async function cancelConfirm(): Promise<void> {
   const buttons = within(dialog).getAllByRole('button')
   fireEvent.click(buttons[buttons.length - 2])
 }
+
+/**
+ * Install a window.matchMedia that answers `matches` for every query. jsdom
+ * ships without matchMedia, which components read as a wide screen, so a test
+ * of the phone layout installs this first. Returns a restore function.
+ */
+export function mockMatchMedia(matches: boolean | ((query: string) => boolean)): () => void {
+  const had = Object.prototype.hasOwnProperty.call(window, 'matchMedia')
+  const original = window.matchMedia
+  const answer = typeof matches === 'function' ? matches : () => matches
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: (query: string): MediaQueryList => ({
+      matches: answer(query),
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  })
+  return () => {
+    if (had) Object.defineProperty(window, 'matchMedia', { configurable: true, writable: true, value: original })
+    else delete (window as { matchMedia?: unknown }).matchMedia
+  }
+}

@@ -4,6 +4,7 @@ import { api, NotificationConfig } from '../../api/client'
 import { inputCls } from './formStyles'
 import Toggle from './Toggle'
 import { dangerLink } from '../../components/buttons'
+import { urlInputAttrs } from '../../util/inputAttrs'
 
 // The seven trigger chips, in the order both forms render them, paired with the
 // hint that says what actually sends the event. Wording checked against the
@@ -217,7 +218,7 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
           <option value="GET">GET</option>
         </select>
       </div>
-      <input value={url} onChange={e => setUrl(e.target.value)} placeholder="Webhook URL" className={inputCls} />
+      <input {...urlInputAttrs} value={url} onChange={e => setUrl(e.target.value)} placeholder="Webhook URL" className={inputCls} />
       <div>
         <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">ntfy topic (optional)</label>
         <input value={topic} onChange={e => setTopic(e.target.value)} placeholder="my-topic" className={inputCls} />
@@ -317,7 +318,7 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
           <option value="GET">GET</option>
         </select>
       </div>
-      <input value={url} onChange={e => setUrl(e.target.value)} placeholder="Webhook URL" className={inputCls} />
+      <input {...urlInputAttrs} value={url} onChange={e => setUrl(e.target.value)} placeholder="Webhook URL" className={inputCls} />
       <div>
         <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">ntfy topic (optional)</label>
         <input value={topic} onChange={e => setTopic(e.target.value)} placeholder="my-topic" className={inputCls} />

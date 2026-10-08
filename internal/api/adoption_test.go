@@ -335,6 +335,52 @@ func TestAdopt_FileTakenAfterTheCheckIs409(t *testing.T) {
 	}
 }
 
+// TestAdopt_FileLeftByADeletedBookIsAdopted: a book_files row whose book no
+// longer exists (foreign keys lost, #1727) belongs to nobody, and download and
+// manual import take such a row over since #2937. Adoption refused it with a
+// 409 that named no book, because its pre-check counted the dead row as an
+// owner. It now adopts and the row is the target's.
+func TestAdopt_FileLeftByADeletedBookIsAdopted(t *testing.T) {
+	f := newAdoptionFixture(t, &stubMetaProvider{name: "openlibrary"})
+	gone := f.seedBook(t, "Provenance (old)")
+	target := f.seedBook(t, "Provenance")
+	path := f.write(t, "Ann Leckie/Provenance.epub")
+	if err := f.books.AddBookFile(context.Background(), gone.ID, models.MediaTypeEbook, path); err != nil {
+		t.Fatal(err)
+	}
+	orphanBook(t, f.db, gone.ID)
+	id := f.seedUnit(t, db.UnmatchedUnitScan{UnitPath: path, MemberPaths: []string{path}})
+
+	rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/adopt", id), map[string]any{"bookId": target.ID})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("adopt = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if got := filePaths(t, f.books, target.ID); len(got) != 1 || got[0] != path {
+		t.Fatalf("target files = %v, want the dead book's row taken over", got)
+	}
+}
+
+// TestAdopt_FileOfALiveBookIsStill409 guards the other side: a row another
+// existing book holds is still refused.
+func TestAdopt_FileOfALiveBookIsStill409(t *testing.T) {
+	f := newAdoptionFixture(t, &stubMetaProvider{name: "openlibrary"})
+	owner := f.seedBook(t, "Provenance (other)")
+	target := f.seedBook(t, "Provenance")
+	path := f.write(t, "Ann Leckie/Provenance.epub")
+	if err := f.books.AddBookFile(context.Background(), owner.ID, models.MediaTypeEbook, path); err != nil {
+		t.Fatal(err)
+	}
+	id := f.seedUnit(t, db.UnmatchedUnitScan{UnitPath: path, MemberPaths: []string{path}})
+
+	rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/adopt", id), map[string]any{"bookId": target.ID})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("adopt = %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	if got := filePaths(t, f.books, owner.ID); len(got) != 1 {
+		t.Fatalf("owner's row = %v, want it kept", got)
+	}
+}
+
 // TestAdopt_RejectsSymlinkEscape is S10 at adopt time: the row may be hours
 // old, so a member swapped for a symlink, or reached through a symlinked
 // folder that leaves the library, is refused and nothing is written.

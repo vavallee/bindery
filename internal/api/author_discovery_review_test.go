@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -100,7 +102,11 @@ func TestDiscoverAuthorBooks_ConcurrentBulkRefreshCreatesOnceAnnouncesOnce(t *te
 			getAuthorGate:   gate,
 		}
 		rec := &eventRecorder{}
-		h := f.handler(stub, rec)
+		// Unshared, so the refresh reaches the provider itself instead of
+		// joining discovery's in flight author lookup, and the gate holds
+		// both syncs at the same point.
+		h := NewAuthorHandler(f.authors, nil, f.books, nil, metadata.NewAggregator(&unsharedMetaProvider{stubMetaProvider: stub}),
+			nil, f.profile, nil).WithNotifier(rec)
 
 		var wg sync.WaitGroup
 		wg.Add(2)
@@ -286,4 +292,17 @@ func TestDiscoverAuthorBooks_ProviderRateLimitStaysMarked(t *testing.T) {
 	if !errors.Is(err, metadata.ErrRateLimited) {
 		t.Fatalf("err = %v, want it to match metadata.ErrRateLimited", err)
 	}
+}
+
+// unsharedMetaProvider is stubMetaProvider with a fresh cache scope for every
+// request, so the aggregator neither caches its answers nor lets concurrent
+// callers share one fetch (#2594). A test that needs each sync to reach the
+// provider on its own uses it.
+type unsharedMetaProvider struct {
+	*stubMetaProvider
+	requests atomic.Int64
+}
+
+func (p *unsharedMetaProvider) ResolveCacheProvider(context.Context) (metadata.Provider, string) {
+	return p, strconv.FormatInt(p.requests.Add(1), 10)
 }

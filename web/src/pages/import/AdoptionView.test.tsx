@@ -189,7 +189,28 @@ describe('AdoptionView', () => {
     fireEvent.click(within(row).getByRole('button', { name: 'Confirm' }))
 
     expect(await within(row).findByRole('alert')).toHaveTextContent('already belongs to a book')
+    // The whole error wraps instead of truncating behind a hover tooltip.
+    expect(within(row).getByRole('alert')).not.toHaveClass('truncate')
     expect(within(row).getByRole('button', { name: 'Confirm' })).toBeInTheDocument()
+  })
+
+  // The full reason lived only in a title tooltip, which a touch screen never
+  // shows. Tapping the short hint reveals it inline.
+  it('reveals the full reason behind the short hint on tap', async () => {
+    serve(listResponse([unsuggested]))
+    const table = await renderView()
+    const row = within(table).getByRole('row', { name: 'Mystery Notes' })
+
+    const hint = within(row).getByRole('button', { name: 'No close title by Andy Weir' })
+    expect(hint).toHaveAttribute('aria-expanded', 'false')
+    const detail = document.getElementById(hint.getAttribute('aria-controls')!)!
+    expect(detail).not.toBeVisible()
+    expect(detail.textContent).toBe(hint.getAttribute('title'))
+    expect(detail.textContent!.length).toBeGreaterThan(hint.textContent!.length)
+
+    fireEvent.click(hint)
+    expect(hint).toHaveAttribute('aria-expanded', 'true')
+    expect(detail).toBeVisible()
   })
 
   it('offers a weak suggestion as a possible match that opens the editor preselected', async () => {

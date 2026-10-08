@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { createInstance } from 'i18next'
-import i18n from './index'
 import en from './locales/en.json'
 
-const locales = Object.entries(i18n.options.resources!)
+// Every locale file rather than i18n.options.resources, which holds only the
+// bundled English: the other locales load lazily.
+const files = import.meta.glob<Record<string, unknown>>('./locales/*.json', { import: 'default', eager: true })
+const locales = Object.entries(files).map(
+  ([path, translation]) => [path.replace(/^.*\/(\w+)\.json$/, '$1'), { translation }] as const,
+)
 const english = new Map<string, string>(Object.entries(en.bookRebind))
 const placeholders = (text: string) => [...text.matchAll(/{{\s*(\w+)\s*}}/g)].map(match => match[1]).sort()
 

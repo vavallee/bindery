@@ -56,3 +56,17 @@ describe('Google Books API key field', () => {
     )
   })
 })
+
+describe('API key fields on mobile', () => {
+  it('opt out of login autofill so the saved Bindery password is never filled in as a key', async () => {
+    render(<ApiKeysTab />)
+    await screen.findByTestId('save-googlebooks-key')
+    const input = screen.getByPlaceholderText(/Saved key is hidden/i)
+
+    expect(input).toHaveAttribute('type', 'password')
+    expect(input).toHaveAttribute('autocomplete', 'new-password')
+    expect(input).toHaveAttribute('autocapitalize', 'none')
+    expect(input).toHaveAttribute('autocorrect', 'off')
+    expect(input).toHaveAttribute('spellcheck', 'false')
+  })
+})

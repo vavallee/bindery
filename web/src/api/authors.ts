@@ -214,14 +214,57 @@ export type DuplicateRule =
   | 'edition-suffix'
   | 'substring'
 
+// Review evidence for one row (#2999), built from data Bindery already
+// stores. `format` is the file extension ('epub', 'm4b'); it is empty for an
+// audiobook kept as a folder. `isbns` is capped for display; `isbnCount` is
+// the full number the comparison used.
+export interface DuplicateEvidence {
+  files: { kind: 'ebook' | 'audiobook' | string; format: string }[]
+  isbns: string[]
+  isbnCount: number
+  asins: string[]
+  series: { seriesId: number; title: string; position: string }[]
+  year?: number
+}
+
+// Agreement and conflict markers between the rows of a group (#2999).
+export type DuplicateSignalKind =
+  | 'shared-isbn'
+  | 'shared-asin'
+  | 'same-series-position'
+  | 'series-position-conflict'
+  | 'year-conflict'
+  | 'language-conflict'
+
+export interface DuplicateSignal {
+  kind: DuplicateSignalKind
+  conflict: boolean
+  bookIds: number[]
+  values: string[]
+}
+
 export interface DuplicateCandidateMember extends Book {
   rules: DuplicateRule[]
+  // Optional so an older server's payload still renders.
+  evidence?: DuplicateEvidence
+  hasFiles?: boolean
 }
 
 export interface DuplicateCandidateGroup {
   key: string
   rules: DuplicateRule[]
   books: DuplicateCandidateMember[]
+  authorId?: number
+  authorName?: string
+  signals?: DuplicateSignal[]
+  conflict?: boolean
+  // The one non-excluded row with files; absent when none or several have files.
+  keeperId?: number
+  // The empty rows the server suggests excluding together. Non-empty only
+  // with a keeper and no conflict; never contains a row with files.
+  suggestedExcludeIds?: number[]
+  // Why there is no suggestion, when there is none.
+  suggestionWithheld?: 'no-files' | 'several-with-files' | 'conflict' | 'no-evidence'
 }
 
 export interface DuplicateCandidates {

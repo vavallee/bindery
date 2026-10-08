@@ -330,6 +330,28 @@ describe('Shell — mobile navigation', () => {
     // Closed again: back to hamburger
     expect(btn.innerHTML).toContain('M4 6h16M4 12h16M4 18h16')
   })
+
+  it('reports the menu state through aria-expanded', () => {
+    renderShell()
+    const btn = screen.getByRole('button', { name: /toggle menu/i })
+    expect(btn).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(btn)
+    expect(btn).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(btn)
+    expect(btn).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  // The admin menu runs to about 840px. Inside a sticky header it cannot
+  // scroll with the page, so the panel has to scroll on its own, capped at
+  // the viewport below the 4rem header row.
+  it('caps the open menu at the viewport and lets it scroll', () => {
+    renderShell()
+    fireEvent.click(screen.getByRole('button', { name: /toggle menu/i }))
+    const panel = document.querySelector('div.xl\\:hidden > nav')!.parentElement!
+    expect(panel.className).toContain('max-h-[calc(100dvh-4rem-1px-env(safe-area-inset-top))]')
+    expect(panel.className).toContain('overflow-y-auto')
+    expect(panel.className).toContain('overscroll-contain')
+  })
 })
 
 describe('Shell: Import nav badge', () => {

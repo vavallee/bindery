@@ -59,7 +59,9 @@ func trustedProxyMiddleware() func(http.Handler) http.Handler {
 			// RemoteAddr. The local-only trust decision needs the genuine peer
 			// to walk X-Forwarded-For right-to-left; without it, downstream
 			// code would have to reverse-engineer "was this rewritten?" from
-			// the post-rewrite value.
+			// the post-rewrite value. Every "is this sender a trusted proxy?"
+			// decision downstream (proxy auth identity header, OIDC redirect
+			// base) must read auth.RealPeerHost, not r.RemoteAddr (#3096).
 			r = r.WithContext(auth.WithRealPeer(r.Context(), r.RemoteAddr))
 
 			peerHost, _, _ := net.SplitHostPort(r.RemoteAddr)

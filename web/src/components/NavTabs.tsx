@@ -13,6 +13,10 @@ import { matchesPath, type NavEntry, type NavItem } from './navGroups'
 // sideways. It scrolls inside itself now, the same way the wide tables and the
 // adoption rail do, and the active tab is brought into view on mount so a deep
 // link to the rightmost page does not open on a strip that looks truncated.
+//
+// On a touch screen the tabs grow to 44px tall so they are easy to tap. That
+// is padding rather than the invisible touch-target overhang, which a strip
+// that scrolls would turn into a vertical scroll.
 export default function NavTabs({ group, renderLabel }: { group: NavEntry; renderLabel: (item: NavItem) => ReactNode }) {
   const { t } = useTranslation()
   const { pathname } = useLocation()
@@ -47,7 +51,7 @@ export default function NavTabs({ group, renderLabel }: { group: NavEntry; rende
             to={tab.to}
             ref={active ? activeRef : undefined}
             aria-current={active ? 'page' : undefined}
-            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 pointer-coarse:py-3 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
               active
                 ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow-sm'
                 : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'

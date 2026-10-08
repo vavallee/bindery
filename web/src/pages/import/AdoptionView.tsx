@@ -107,7 +107,7 @@ export default function AdoptionView() {
             <p role="alert" className="mb-3 text-sm text-red-600 dark:text-red-400">{state.loadError}</p>
           )}
           {!state.loaded ? (
-            <div className="py-10 text-center text-sm text-fg-muted">{t('common.loading', 'Loading...')}</div>
+            <div className="py-10 text-center text-sm text-fg-muted">{t('common.loading', 'Loading…')}</div>
           ) : empty ? (
             emptyState()
           ) : (

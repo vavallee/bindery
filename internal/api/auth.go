@@ -141,8 +141,20 @@ type modeRequest struct {
 // setup is required. Always public — this is what the frontend hits on load.
 func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	// A signed session cookie the middleware could not check is not a
+	// signed out caller. The UI reads authenticated=false from this route as
+	// a logout and goes to the login page, so answer with an error it can
+	// retry instead. A request the client abandoned gets no body at all.
+	if auth.SessionLookupFailed(ctx) {
+		writeSessionCheckUnavailable(w, r, nil)
+		return
+	}
 	count, err := h.users.Count(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			w.WriteHeader(auth.StatusClientClosedRequest)
+			return
+		}
 		writeServerError(w, r, err)
 		return
 	}
@@ -155,7 +167,13 @@ func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if uid := auth.UserIDFromContext(ctx); uid != 0 {
-		if u, _ := h.users.GetByID(ctx, uid); u != nil {
+		u, err := h.users.GetByID(ctx, uid)
+		if err != nil {
+			// Same reasoning: a failed read is not a deleted user.
+			writeSessionCheckUnavailable(w, r, err)
+			return
+		}
+		if u != nil {
 			resp.Authenticated = true
 			resp.Username = u.Username
 			resp.Role = u.Role
@@ -176,6 +194,21 @@ func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeOK(w, resp)
+}
+
+// writeSessionCheckUnavailable answers a status request whose session could
+// not be checked: 503 so the UI keeps its signed in state and retries, or
+// nothing useful when the client already abandoned the request.
+// err, when set, is logged; the middleware already logged its own failure.
+func writeSessionCheckUnavailable(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Context().Err() != nil {
+		w.WriteHeader(auth.StatusClientClosedRequest)
+		return
+	}
+	if err != nil {
+		slog.Error("session check failed", "path", r.URL.Path, "error", err)
+	}
+	writeErr(w, http.StatusServiceUnavailable, "session check unavailable, try again")
 }
 
 // Setup creates the first admin user. Only allowed while no user exists.

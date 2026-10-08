@@ -87,8 +87,16 @@ func (h *stubSeriesRouteHandler) DeleteHardcoverLink(w http.ResponseWriter, _ *h
 	h.record("delete-hardcover-link", w)
 }
 
+func (h *stubSeriesRouteHandler) Merge(w http.ResponseWriter, _ *http.Request) {
+	h.record("merge", w)
+}
+
 func (h *stubSeriesRouteHandler) HardcoverDiff(w http.ResponseWriter, _ *http.Request) {
 	h.record("hardcover-diff", w)
+}
+
+func (h *stubSeriesRouteHandler) UnmonitorSplitEditionParts(w http.ResponseWriter, _ *http.Request) {
+	h.record("unmonitor-split-edition-parts", w)
 }
 
 func TestSeriesMutationRoutesRequireAdmin(t *testing.T) {
@@ -101,10 +109,12 @@ func TestSeriesMutationRoutesRequireAdmin(t *testing.T) {
 		{name: "update series", method: http.MethodPut, path: "/series/1"},
 		{name: "monitor series", method: http.MethodPatch, path: "/series/1"},
 		{name: "delete series", method: http.MethodDelete, path: "/series/1"},
+		{name: "merge series", method: http.MethodPost, path: "/series/1/merge"},
 		{name: "add book", method: http.MethodPost, path: "/series/1/books"},
 		{name: "remove book", method: http.MethodDelete, path: "/series/1/books/2"},
 		{name: "set primary book", method: http.MethodPut, path: "/series/1/books/2/primary"},
 		{name: "fill series", method: http.MethodPost, path: "/series/1/fill"},
+		{name: "unmonitor split edition parts", method: http.MethodPost, path: "/series/1/split-parts/unmonitor"},
 		{name: "auto link hardcover", method: http.MethodPost, path: "/series/1/hardcover-link/auto"},
 		{name: "put hardcover link", method: http.MethodPut, path: "/series/1/hardcover-link"},
 		{name: "delete hardcover link", method: http.MethodDelete, path: "/series/1/hardcover-link"},
@@ -144,6 +154,7 @@ func TestSeriesMutationRoutesAllowAdmin(t *testing.T) {
 		{name: "update series", method: http.MethodPut, path: "/series/1", called: "update"},
 		{name: "monitor series", method: http.MethodPatch, path: "/series/1", called: "monitor"},
 		{name: "delete series", method: http.MethodDelete, path: "/series/1", called: "delete"},
+		{name: "merge series", method: http.MethodPost, path: "/series/1/merge", called: "merge"},
 		{name: "add book", method: http.MethodPost, path: "/series/1/books", called: "add-book"},
 		{name: "remove book", method: http.MethodDelete, path: "/series/1/books/2", called: "remove-book"},
 		{name: "set primary book", method: http.MethodPut, path: "/series/1/books/2/primary", called: "set-primary-book"},

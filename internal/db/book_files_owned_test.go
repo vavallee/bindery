@@ -191,3 +191,50 @@ func TestBookRepo_MoveBookFile(t *testing.T) {
 		t.Errorf("untracked move = %d, %v", prev, err)
 	}
 }
+
+// TestBookFileRepo_PathOwnedVariantsOnAnOrphanRow pins the split: a row left by
+// a deleted book still counts as owned for the delete guards (refusing to
+// unlink is the safe answer), and does not for the pre-checks of a write that
+// Track would let take the row over (adoption, the existing file bind).
+func TestBookFileRepo_PathOwnedVariantsOnAnOrphanRow(t *testing.T) {
+	database, author, gone := openTestDB(t)
+	ctx := context.Background()
+	files := NewBookFileRepo(database)
+	live := secondBook(t, database, author.ID, "Live")
+	other := secondBook(t, database, author.ID, "Other")
+	const orphanPath, livePath = "/lib/orphan.epub", "/lib/live.epub"
+
+	if err := files.Add(ctx, gone.ID, models.MediaTypeEbook, orphanPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := files.Add(ctx, other.ID, models.MediaTypeEbook, livePath); err != nil {
+		t.Fatal(err)
+	}
+	orphanBookRows(t, database, gone.ID)
+
+	for _, c := range []struct {
+		name            string
+		path            string
+		exclude         int64
+		wantAny, wantLv bool
+	}{
+		{"orphan row", orphanPath, live.ID, true, false},
+		{"orphan row, exclude none", orphanPath, 0, true, false},
+		{"live other owner", livePath, live.ID, true, true},
+		{"own row", livePath, other.ID, false, false},
+		{"untracked", "/lib/none.epub", live.ID, false, false},
+	} {
+		gotAny, err := files.PathOwnedByOtherBook(ctx, c.path, c.exclude)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotLv, err := files.PathOwnedByLiveOtherBook(ctx, c.path, c.exclude)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotAny != c.wantAny || gotLv != c.wantLv {
+			t.Errorf("%s: PathOwnedByOtherBook = %v, PathOwnedByLiveOtherBook = %v; want %v, %v",
+				c.name, gotAny, gotLv, c.wantAny, c.wantLv)
+		}
+	}
+}

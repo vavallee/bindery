@@ -379,6 +379,8 @@ Set a download-client path remap in **Settings → Download clients** or set the
 
 The same remaps also run in reverse, with the same precedence, when Bindery tells a client where to save a grab. rTorrent always gets a download directory, and qBittorrent gets a save path when the client has no category set. That directory is Bindery's download folder (`BINDERY_DOWNLOAD_DIR`, or `BINDERY_AUDIOBOOK_DOWNLOAD_DIR` for audiobooks) translated into the client's path: by the client's own remap when it covers that folder, otherwise by `BINDERY_DOWNLOAD_PATH_REMAP`. With `BINDERY_DOWNLOAD_PATH_REMAP=/data:/downloads` and no client remap, rTorrent is told to save into `/data`. Bindery 1.40.0 and earlier applied only the client's own remap here, so with just the global remap set the client was sent Bindery's `/downloads`.
 
+The download client **Test** button and the 15 minute health check look at the folder a grab actually lands in, the same one **Diagnose** reports: for rTorrent, and for a qBittorrent client with no category, the folder it is sent, and for qBittorrent with a category the folder that category saves to. A qBittorrent category with an empty save path saves to the default save path plus the category name, and a relative one under the default save path. qBittorrent creates that folder on its first download, so until then the check is satisfied by its parent. Earlier releases checked rTorrent's own default directory and qBittorrent's default save path instead, so a working setup whose default folder Bindery cannot see was reported as broken ([#2664](https://github.com/vavallee/bindery/issues/2664)). Because Bindery sends rTorrent its own download folder, the check now confirms Bindery can read that folder, not that rTorrent writes to the same storage; if grabs never import, run **Diagnose** on the client.
+
 On the way out the global remap matches every client, because its right side is Bindery's own folder. If the global remap is written for one client (say SABnzbd sees Bindery's `/downloads` as `/data`) and an rTorrent or category-less qBittorrent mounts Bindery's folder at the same path, give that client an identity path remap, `/downloads:/downloads`. A client remap that covers the folder always wins, even when it maps it to itself, so that client keeps being sent `/downloads`. **Diagnose** on the client warns when the global remap produced the folder it sends while the client's own default save folder sits on Bindery's path, which is what that setup looks like. If the client really keeps that storage at the remapped path, ignore the warning.
 
 Per-client remaps are stored on each download client, so separate qBittorrent / SABnzbd / NZBGet instances can map different mount points. Existing download clients keep an empty remap after upgrade, which preserves the previous global-only behavior until you add a client-specific value.
@@ -672,6 +674,51 @@ Versions before the #2564 fix stored each Calibre-imported book's cover as the l
 **Schema:** ABS import uses migrations `029` through `033`. They create five ABS tables: `abs_import_runs`, `abs_provenance`, `abs_metadata_conflicts`, `abs_import_run_entities`, and `abs_review_queue`. Migration `031` also adds `dry_run`, `source_config_json`, and `checkpoint_json` to `abs_import_runs`; migration `033` is currently a no-op compatibility migration. Take a normal SQLite backup before upgrading, then let Bindery apply the migrations on startup.
 
 **Outbound ABS requests:** ABS probes and imports send `User-Agent: bindery/<version>` to the configured ABS server. Development or unversioned builds use `bindery/dev`.
+
+### Metadata request caching
+
+Author and book searches through the metadata aggregator reuse successful
+provider responses for five minutes, including empty results. The search cache
+is limited to 1,000 entries per aggregator; expired entries and then the
+soonest-expiring entries are replaced as it fills. Search keys include the
+provider instance, operation, exact query (including search syntax/options),
+and any live credential scope. Ordinary searches, canonical matching, and
+cover enrichment share these provider responses without changing their ranking
+or matching rules.
+
+Concurrent identical search, author profile, book, or edition misses share one
+provider fetch. Hardcover throttling uses the remaining callers’ scheduling
+deadlines to avoid reserving slots none can use. Each caller can cancel
+independently; the upstream fetch is canceled when its last caller leaves. Failures are not cached as empty results, and returned values
+are copied so callers cannot modify another request's results. Book responses
+are cached before enrichment; enrichment snapshots also track live credential
+scopes and input metadata. After a search-provider failure a snapshot is kept
+for only five minutes, so the failing provider is retried once per window
+rather than on every lookup. Those short-lived snapshots share the 1,000-entry
+five-minute cache with search responses, so a large refresh during an enricher
+outage can evict recent searches early; they are refetched on next use.
+Cover-only providers retain their best-effort empty-result behavior. Raw and
+derived author catalogues also include provider scopes; a catalogue fetch uses
+one configuration snapshot across its primary, supplemental, and cover reads.
+
+Edition responses retain the existing 24-hour in-memory metadata cache and
+10,000-entry shared limit. After provider routing, `hc:dune` and an explicit
+Hardcover lookup of `dune` share an entry. Numeric-looking slugs, case-distinct
+slugs, and different providers remain distinct; Hardcover still tries the slug
+before its numeric-ID fallback. Live Hardcover token changes select a different
+cache namespace, and a fetch uses one token across all pages. Old namespaces
+expire under the same bounds. Direct provider calls remain uncached for callers
+that explicitly fetch fresh metadata, and a manual author **Refresh Metadata**
+still skips the cached author profile and catalogue (see
+`POST /api/v1/author/{id}/refresh` in [API.md](API.md)); its nested edition,
+cover and ISBN lookups keep using these caches.
+
+Caches are discarded on restart. Local edition rows can come from partial
+imports or embedded book metadata and have no complete-provider-snapshot
+freshness marker, so they are not used to satisfy these upstream lookups.
+Persistent edition caching would require tracking both completeness and
+provider/account freshness separately from local book refresh timestamps.
+These caches do not implement daily quota accounting or pause/resume.
 
 ### Enhanced Hardcover series data deployment note
 

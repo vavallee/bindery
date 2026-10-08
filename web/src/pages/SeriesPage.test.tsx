@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, useLocation } from 'react-router'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { ModalHistoryProvider } from '../components/useModal'
 import SeriesPage from './SeriesPage'
 import { api } from '../api/client'
 import type { Book, Series, SeriesHardcoverLink, SeriesHardcoverSearchResult, SystemStatus } from '../api/client'
-import '../i18n'
+import i18n from '../i18n'
 import { acceptConfirm } from '../test-utils'
 
 vi.mock('../api/client', async importOriginal => {
@@ -22,6 +23,7 @@ vi.mock('../api/client', async importOriginal => {
       createSeries: vi.fn(),
       updateSeries: vi.fn(),
       deleteSeries: vi.fn(),
+      mergeSeries: vi.fn(),
       deleteBook: vi.fn(),
       monitorSeries: vi.fn(),
       linkBookToSeries: vi.fn(),
@@ -35,6 +37,7 @@ vi.mock('../api/client', async importOriginal => {
       linkSeriesHardcover: vi.fn(),
       unlinkSeriesHardcover: vi.fn(),
       getSeriesHardcoverDiff: vi.fn(),
+      unmonitorSeriesSplitParts: vi.fn(),
     },
   }
 })
@@ -68,7 +71,7 @@ describe('SeriesPage', () => {
     ])
 
     expect(await screen.findByRole('heading', { name: 'The Stormlight Archive' })).toBeInTheDocument()
-    const search = screen.getByRole('searchbox', { name: 'Search series...' })
+    const search = screen.getByRole('searchbox', { name: 'Search series…' })
     fireEvent.change(search, { target: { value: '  CAFE  ' } })
     expect(screen.getByRole('heading', { name: 'Café Chronicles' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'The Stormlight Archive' })).not.toBeInTheDocument()
@@ -171,7 +174,7 @@ describe('SeriesPage', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Set genre' }))
 
       await waitFor(() => expect(api.applySeriesGenres).toHaveBeenCalledWith(12, ['Fantasy', 'Epic']))
-      expect(await screen.findByText('Genres set on 0 book(s)')).toBeInTheDocument()
+      expect(await screen.findByText('Genres set on 0 books')).toBeInTheDocument()
     } finally {
       promptSpy.mockRestore()
     }
@@ -316,6 +319,47 @@ describe('SeriesPage', () => {
     // The excluded book carries an "Excluded" marker, not shown as a plain wanted book.
     fireEvent.click(heading)
     expect(await screen.findByText('Excluded')).toBeInTheDocument()
+  })
+
+  it('marks split edition parts, leaves them out of the missing count and unmonitors them (#3048)', async () => {
+    const book = (id: number, title: string, status: Book['status'], monitored: boolean): Book => ({
+      id, foreignBookId: `book-${id}`, authorId: 5, title, description: '', imageUrl: '',
+      releaseDate: '2010-08-31', genres: [], monitored, status, filePath: '', mediaType: 'ebook',
+      ebookFilePath: '', audiobookFilePath: '', excluded: false,
+    })
+    const stormlight: Series = {
+      id: 40,
+      foreignSeriesId: 'series-40',
+      title: 'The Stormlight Archive',
+      description: '',
+      monitored: true,
+      splitEditionPartBookIds: [302, 303],
+      books: [
+        { seriesId: 40, bookId: 301, positionInSeries: '1', book: book(301, 'The Way of Kings', 'imported', true) },
+        { seriesId: 40, bookId: 302, positionInSeries: '1.1', book: book(302, 'The Way of Kings, Part 1', 'wanted', true) },
+        { seriesId: 40, bookId: 303, positionInSeries: '1.2', book: book(303, 'The Way of Kings, Part 2', 'wanted', true) },
+      ],
+    }
+    vi.mocked(api.unmonitorSeriesSplitParts).mockResolvedValue({ unmonitored: 2 })
+    renderSeriesPage([stormlight], { version: 'dev', commit: 'unknown', buildDate: '', enhancedHardcoverApi: false, hardcoverTokenConfigured: true })
+
+    const heading = await screen.findByRole('heading', { name: 'The Stormlight Archive' })
+    // The two parts are not gaps: the whole is imported.
+    expect(screen.queryByText('2 missing')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Fill gaps' })).not.toBeInTheDocument()
+
+    fireEvent.click(heading)
+    expect(await screen.findAllByText('Split part')).toHaveLength(2)
+
+    vi.mocked(api.listSeries).mockResolvedValue([{
+      ...stormlight,
+      books: stormlight.books!.map(b => b.bookId === 301 ? b : { ...b, book: { ...b.book!, monitored: false } }),
+    }])
+    fireEvent.click(screen.getByRole('button', { name: 'Unmonitor 2 split parts' }))
+    await acceptConfirm()
+    await waitFor(() => expect(api.unmonitorSeriesSplitParts).toHaveBeenCalledWith(40))
+    expect(await screen.findByText('2 split parts unmonitored')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Unmonitor 2 split parts' })).not.toBeInTheDocument()
   })
 
   it('opens the Hardcover series link modal from the Search control', async () => {
@@ -625,6 +669,28 @@ describe('SeriesPage', () => {
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'New Series' })).not.toBeInTheDocument())
   })
 
+  it('merges another series into one from its Merge dialog and reloads the list (#2554)', async () => {
+    const keep: Series = { id: 40, foreignSeriesId: 's:40', title: 'Fjellserien', description: '', monitored: false, books: [] }
+    const fold: Series = { id: 41, foreignSeriesId: 's:41', title: 'Serien om fjellet', description: '', monitored: false, books: [] }
+    vi.mocked(api.mergeSeries).mockResolvedValue({
+      targetId: 40, title: 'Fjellserien', aliases: ['s:41'], hardcoverLinkFrom: 0, genreOverrideFrom: 0, monitored: false,
+      sources: [{ id: 41, title: 'Serien om fjellet', foreignSeriesId: 's:41', moved: [], kept: [], conflicts: [] }],
+    })
+    renderSeriesPage([keep, fold])
+
+    expect(await screen.findByRole('heading', { name: 'Fjellserien' })).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Merge…' })[0])
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Serien om fjellet/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    await waitFor(() => expect(api.mergeSeries).toHaveBeenCalledWith(40, { sourceIds: [41], title: undefined, dryRun: true }))
+
+    vi.mocked(api.listSeries).mockResolvedValue([keep])
+    fireEvent.click(await screen.findByRole('button', { name: 'Merge' }))
+    await acceptConfirm()
+    await waitFor(() => expect(api.mergeSeries).toHaveBeenLastCalledWith(40, { sourceIds: [41], title: undefined, dryRun: false }))
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Serien om fjellet' })).not.toBeInTheDocument())
+  })
+
   it('links an existing library book to an expanded series', async () => {
     const series: Series = {
       id: 30,
@@ -698,7 +764,7 @@ describe('SeriesPage', () => {
 
     fireEvent.click(await screen.findByRole('heading', { name: 'Dune Chronicles' }))
     fireEvent.click(screen.getByRole('button', { name: 'Add Book' }))
-    const dialog = await screen.findByRole('dialog', { name: 'Add book to Dune Chronicles' })
+    const dialog = await screen.findByRole('dialog', { name: 'Add Book to Series Dune Chronicles' })
 
     expect(within(dialog).queryByText('Dune')).not.toBeInTheDocument()
     fireEvent.click(await within(dialog).findByLabelText(/Dune Messiah/))
@@ -1292,7 +1358,7 @@ describe('SeriesPage filters', () => {
   it('combines the filter with the title search', async () => {
     renderAt(library, enhancedOff, '/series?filter=complete')
     expect(await screen.findByRole('heading', { name: 'Finished' })).toBeInTheDocument()
-    const search = screen.getByRole('searchbox', { name: 'Search series...' })
+    const search = screen.getByRole('searchbox', { name: 'Search series…' })
 
     fireEvent.change(search, { target: { value: 'excluded' } })
     expect(headings()).toEqual(['Excluded Tail'])
@@ -1305,5 +1371,84 @@ describe('SeriesPage filters', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Shortlisted' }))
     fireEvent.click(screen.getByRole('button', { name: 'Missing books' }))
     expect(headings()).toEqual(['Gappy'])
+  })
+})
+
+// The heading, count, buttons and card labels were hardcoded English, so a
+// translated locale still showed them in English (found translating #2994).
+describe('SeriesPage translations', () => {
+  afterEach(async () => {
+    await act(async () => { await i18n.changeLanguage('en') })
+  })
+
+  it('renders its labels from the active locale', async () => {
+    i18n.addResourceBundle('de', 'translation', {
+      series: {
+        title: 'Serien',
+        count_one: '{{count}} Serie',
+        count_other: '{{count}} Serien',
+        addSeries: 'Serie hinzufügen',
+        rename: 'Umbenennen',
+        bookCount_one: '{{count}} Buch',
+        bookCount_other: '{{count}} Bücher',
+        shortlist: { off: 'Nicht vorgemerkt' },
+      },
+    }, true, true)
+    await act(async () => { await i18n.changeLanguage('de') })
+    renderSeriesPage([
+      { id: 1, foreignSeriesId: 'series-1', title: 'Dune', description: '', monitored: false, books: [] },
+      { id: 2, foreignSeriesId: 'series-2', title: 'Foundation', description: '', monitored: false, books: [] },
+    ], { version: 'dev', commit: 'unknown', buildDate: '', enhancedHardcoverApi: false, hardcoverTokenConfigured: false })
+
+    // The page heading renders before the list loads; wait for the cards.
+    expect(await screen.findByRole('heading', { name: 'Dune' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Serien' })).toBeInTheDocument()
+    expect(screen.getByText('2 Serien')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Serie hinzufügen' })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Umbenennen' })).toHaveLength(2)
+    expect(screen.getAllByText('0 Bücher')).toHaveLength(2)
+    expect(screen.getAllByText('Nicht vorgemerkt')).toHaveLength(2)
+    expect(document.title).toBe('Serien · Bindery')
+    expect(screen.queryByRole('heading', { level: 2, name: 'Series' })).not.toBeInTheDocument()
+  })
+})
+
+describe('SeriesPage with modal history', () => {
+  // #3052: opening a modal pushes a history entry with new state. The page
+  // used to refetch and re-expand the series it was opened on whenever the
+  // state object changed, so Add Book on series B collapsed B and expanded A.
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.listAllBooks).mockResolvedValue([])
+    vi.mocked(api.listAllAuthors).mockResolvedValue([])
+    vi.mocked(api.getSeriesHardcoverLink).mockRejectedValue(new Error('not linked'))
+  })
+
+  it('keeps the expanded series and does not refetch when a modal opens and closes', async () => {
+    const make = (id: number, title: string): Series => ({
+      id, foreignSeriesId: `manual:series:${id}`, title, description: '', monitored: false, books: [],
+    } as Series)
+    vi.mocked(api.listSeries).mockResolvedValue([make(30, 'Series A'), make(31, 'Series B')])
+    vi.mocked(api.status).mockResolvedValue({ version: 'dev', commit: 'unknown', buildDate: '', enhancedHardcoverApi: true, hardcoverTokenConfigured: true })
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/series', state: { seriesId: 30 } }]}>
+        <ModalHistoryProvider>
+          <Routes><Route path="/series" element={<SeriesPage />} /></Routes>
+        </ModalHistoryProvider>
+      </MemoryRouter>,
+    )
+    // Arrived with seriesId 30, so A is expanded.
+    expect(await screen.findByRole('button', { name: 'Add Book' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('heading', { name: 'Series B' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add Book' }))
+    expect(await screen.findByRole('dialog', { name: 'Add Book to Series Series B' })).toBeInTheDocument()
+    await act(async () => { await Promise.resolve() })
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await act(async () => { await Promise.resolve() })
+    // B is still the expanded one and the list was fetched once.
+    fireEvent.click(screen.getByRole('button', { name: 'Add Book' }))
+    expect(await screen.findByRole('dialog', { name: 'Add Book to Series Series B' })).toBeInTheDocument()
+    expect(api.listSeries).toHaveBeenCalledTimes(1)
   })
 })

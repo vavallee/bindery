@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, GrimmoryConfig, GrimmorySyncStatus, GrimmoryTestResult } from '../../api/client'
 import { inputCls } from './formStyles'
+import { literalInputAttrs, secretInputAttrs, urlInputAttrs } from '../../util/inputAttrs'
 
 export default function GrimmoryTab() {
   const [config, setConfig] = useState<GrimmoryConfig | null>(null)
@@ -131,6 +132,7 @@ export default function GrimmoryTab() {
         <div>
           <label className="block text-xs font-medium mb-1">Server URL</label>
           <input
+            {...urlInputAttrs}
             type="text"
             value={draft.baseUrl}
             onChange={e => setDraft(prev => ({ ...prev, baseUrl: e.target.value }))}
@@ -141,6 +143,7 @@ export default function GrimmoryTab() {
         <div>
           <label className="block text-xs font-medium mb-1">Username</label>
           <input
+            {...literalInputAttrs}
             type="text"
             value={draft.username}
             onChange={e => setDraft(prev => ({ ...prev, username: e.target.value }))}
@@ -156,6 +159,7 @@ export default function GrimmoryTab() {
             </span>
           </label>
           <input
+            {...secretInputAttrs}
             type="password"
             value={draft.password}
             onChange={e => setDraft(prev => ({ ...prev, password: e.target.value }))}
@@ -175,6 +179,7 @@ export default function GrimmoryTab() {
             </span>
           </label>
           <input
+            {...secretInputAttrs}
             type="password"
             value={draft.apiKey}
             onChange={e => setDraft(prev => ({ ...prev, apiKey: e.target.value }))}

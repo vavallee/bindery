@@ -304,3 +304,34 @@ describe('download client remove-on-import toggle', () => {
     expect(payload.removeOnImport).toBe(false)
   })
 })
+
+// Phones capitalised hosts and usernames, offered a QWERTY keyboard for the
+// port, and autofilled the saved Bindery login into the client credential.
+describe('download client form mobile keyboards', () => {
+  it('treats host and username as literal text, the port as digits and the credential as a key', () => {
+    renderTab([makeClient({ type: 'qbittorrent', apiKeyConfigured: false })])
+    openEditForm()
+
+    const host = screen.getByPlaceholderText('Host')
+    expect(host).toHaveAttribute('inputmode', 'url')
+    expect(host).toHaveAttribute('autocapitalize', 'none')
+    expect(host).toHaveAttribute('autocorrect', 'off')
+    expect(host).toHaveAttribute('spellcheck', 'false')
+    expect(host).not.toHaveAttribute('type', 'url')
+
+    const port = screen.getByPlaceholderText('Port')
+    expect(port).toHaveAttribute('inputmode', 'numeric')
+    expect(port).toHaveAttribute('pattern', '[0-9]*')
+
+    const username = screen.getByPlaceholderText('Username')
+    expect(username).toHaveAttribute('autocapitalize', 'none')
+    expect(username).toHaveAttribute('autocorrect', 'off')
+    expect(username).toHaveAttribute('spellcheck', 'false')
+
+    const credential = screen.getByPlaceholderText('Password')
+    expect(credential).toHaveAttribute('type', 'password')
+    expect(credential).toHaveAttribute('autocomplete', 'new-password')
+    expect(credential).toHaveAttribute('data-1p-ignore', 'true')
+    expect(credential).toHaveAttribute('data-lpignore', 'true')
+  })
+})

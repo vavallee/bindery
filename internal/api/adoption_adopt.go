@@ -323,10 +323,11 @@ func (h *AdoptionHandler) registrationPaths(ctx context.Context, unit *db.Unmatc
 }
 
 // checkOwnership refuses when any path already belongs to a book other than
-// bookID (0 means any book at all).
+// bookID (0 means any book at all). A row left by a deleted book is not an
+// owner: registering the file takes that row over, as an import does (#2937).
 func (h *AdoptionHandler) checkOwnership(ctx context.Context, paths []string, bookID int64) error {
 	for _, p := range paths {
-		owned, err := h.books.PathOwnedByOtherBook(ctx, p, bookID)
+		owned, err := h.books.PathOwnedByLiveOtherBook(ctx, p, bookID)
 		if err != nil {
 			return err
 		}

@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { CardShell } from './LoginPage'
+import { literalInputAttrs } from '../util/inputAttrs'
 
 export default function SetupPage() {
   const { t } = useTranslation()
@@ -55,6 +56,7 @@ export default function SetupPage() {
         <label className="block">
           <span className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">{t('setup.username')}</span>
           <input
+            {...literalInputAttrs}
             type="text"
             name="username"
             id="username"

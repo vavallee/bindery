@@ -28,3 +28,160 @@
   --color-fg-muted: var(--fg-muted);
   --color-accent-text: var(--accent-text);
 }
+
+/* Modal sizing on phones. `vh` is measured with the mobile browser toolbar
+   collapsed, so a panel capped at 90vh outgrows the visible area whenever the
+   toolbar is showing and its footer buttons end up at (or under) the screen
+   edge. `dvh` tracks the visible area. On narrow screens the cap also keeps a
+   3.5rem gap above and below the centred panel: iOS Safari treats a tap near
+   the bottom edge as "show the toolbar" instead of delivering it, so footer
+   buttons must not sit there. */
+@utility modal-max-h {
+  max-height: 90dvh;
+  @media (width < 40rem) {
+    max-height: calc(100dvh - 7rem);
+  }
+}
+
+@utility modal-overlay {
+  overscroll-behavior: contain;
+}
+
+/* On touch devices, stop the page behind an open modal from scrolling: the
+   scroll collapses and expands the browser toolbar, which resizes the modal
+   mid-interaction. Scoped to coarse pointers so desktop keeps its scrollbar
+   (hiding it there shifts the page sideways). */
+@media (pointer: coarse) {
+  html:has(.modal-overlay, dialog[open]) {
+    overflow: hidden;
+  }
+}
+
+/* A phone in landscape leaves well under 500px of height. A modal's header
+   and footer then take most of it, and its scrolling list shrank to a sliver
+   (27px in Reconcile catalogue; Edit author scrolled a 717px form through a
+   156px window). Below that height the whole panel scrolls as one area: its
+   sections keep their natural height and inner lists drop their caps.
+   Unlayered, so it wins over the max-h-* and flex-1 utilities. */
+@media (max-height: 500px) {
+  .modal-max-h {
+    overflow-y: auto;
+  }
+  .modal-max-h > * {
+    flex: none;
+  }
+  .modal-max-h [class*='max-h-'] {
+    max-height: none;
+  }
+}
+
+/* useModal focuses the panel itself when nothing inside asked for focus, so
+   a screen reader starts in the dialog and Tab continues from there. The
+   panel is not a control, so it gets no focus ring. */
+[data-modal-panel]:focus {
+  outline: none;
+}
+
+/* iOS Safari zooms the page in when a form control with a font size under
+   16px takes focus, and leaves it zoomed. Unlayered so it beats the text-sm
+   utilities on individual controls. */
+@media (hover: none) and (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  /* At 16px the select text outgrows the room the px-* utilities leave for
+     the arrow the forms plugin draws (1.5em wide, 0.5rem from the edge), so
+     the value ran under it. Reserve the arrow's width here; desktop keeps
+     the compact padding. */
+  select:not([multiple]):not([size]) {
+    padding-right: 2.5rem;
+  }
+}
+
+/* A select is as wide as its longest option, and on touch screens that
+   option is set at 16px with 2.5rem kept for the arrow, so a long one ran
+   past a 320px screen (Default monitor mode in Settings, Metadata, made the
+   page 349px wide). Capping it at its container lets the value truncate
+   instead. In the base layer so a max-w-* utility still wins, and it changes
+   nothing for a select that already fits. */
+@layer base {
+  select {
+    max-width: 100%;
+  }
+}
+
+/* Native controls (select popups, date pickers, scrollbars) follow
+   color-scheme, not the page colours, so the dark theme still opened white
+   pickers. Tracks the .dark class rather than the OS setting because the
+   theme can be overridden in the app. */
+@layer base {
+  html:not(.dark) { color-scheme: light; }
+  html.dark { color-scheme: dark; }
+}
+
+/* A 44px hit area for small controls on touch screens without changing how
+   they look: the invisible ::before is centred on the control, and a tap on
+   it lands on the control. In the components layer so a positioning utility
+   such as `absolute` on the same element wins over the relative here. Not for
+   controls inside a scroll container, which would scroll to the overhang;
+   those get pointer-coarse padding instead. */
+@layer components {
+  @media (pointer: coarse) {
+    .touch-target {
+      position: relative;
+    }
+    .touch-target::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+      transform: translate(-50%, -50%);
+    }
+  }
+}
+
+/* Safe area insets. index.html sets viewport-fit=cover (paired with these,
+   never without them) so an installed, standalone Bindery can paint edge to
+   edge; these keep content clear of the notch, the status bar and the home
+   indicator. Where a device has no insets each utility reduces to its plain
+   spacing value, so pb-safe-3 is pb-3. Insets are not only a standalone
+   matter: in landscape on a notched iPhone, Safari reports non-zero side and
+   bottom insets in an ordinary tab too. With viewport-fit=cover Safari stops
+   insetting the page itself, so the body side padding below reproduces the
+   inset it used to apply, and the bottom bars clear the home indicator. */
+@layer base {
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
+
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+
+@utility pb-safe-* {
+  padding-bottom: calc(--spacing(--value(number)) + env(safe-area-inset-bottom));
+}
+
+@utility px-safe-* {
+  padding-left: calc(--spacing(--value(number)) + env(safe-area-inset-left));
+  padding-right: calc(--spacing(--value(number)) + env(safe-area-inset-right));
+}
+
+@utility bottom-safe-* {
+  bottom: calc(--spacing(--value(number)) + env(safe-area-inset-bottom));
+}
+
+@utility right-safe-* {
+  right: calc(--spacing(--value(number)) + env(safe-area-inset-right));
+}
+
+@utility left-safe-* {
+  left: calc(--spacing(--value(number)) + env(safe-area-inset-left));
+}

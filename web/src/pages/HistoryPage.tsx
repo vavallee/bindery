@@ -8,15 +8,15 @@ import { dangerLink } from '../components/buttons'
 import { formatBytes } from '../util/format'
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
-  grabbed: 'bg-blue-500/20 text-blue-400',
-  bookImported: 'bg-emerald-500/20 text-emerald-400',
-  imported: 'bg-emerald-500/20 text-emerald-400',
-  downloadFailed: 'bg-red-500/20 text-red-400',
-  importFailed: 'bg-red-500/20 text-red-400',
-  deleted: 'bg-red-500/20 text-red-400',
-  renamed: 'bg-purple-500/20 text-purple-400',
+  grabbed: 'bg-blue-500/20 text-blue-700 dark:text-blue-400',
+  bookImported: 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400',
+  imported: 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400',
+  downloadFailed: 'bg-red-500/20 text-red-700 dark:text-red-400',
+  importFailed: 'bg-red-500/20 text-red-700 dark:text-red-400',
+  deleted: 'bg-red-500/20 text-red-700 dark:text-red-400',
+  renamed: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
   ignored: 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400',
-  bookFileRenamed: 'bg-purple-500/20 text-purple-400',
+  bookFileRenamed: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
   // Amber rather than green: the import worked, but the file turned out not to
   // be the edition the catalogue described, which is worth a second look.
   bookLanguageCorrected: 'bg-amber-500/20 text-amber-600 dark:text-amber-400',
@@ -212,7 +212,7 @@ export default function HistoryPage() {
                           </div>
                           <BookAuthorLink book={event.book} />
                           {detail && (
-                            <div className={`mt-1 text-xs break-words ${isError ? 'text-red-400' : 'text-slate-600 dark:text-zinc-500'}`}>
+                            <div className={`mt-1 text-xs break-words ${isError ? 'text-red-600 dark:text-red-400' : 'text-slate-600 dark:text-zinc-500'}`}>
                               {detail}
                             </div>
                           )}
@@ -284,12 +284,12 @@ export default function HistoryPage() {
                     </div>
                     <span className="text-[10px] text-slate-600 dark:text-zinc-500">{formatDate(event.createdAt)}</span>
                   </div>
-                  <p className="text-sm text-slate-800 dark:text-zinc-200 break-words mb-1">
+                  <p className="text-sm text-slate-800 dark:text-zinc-200 [overflow-wrap:anywhere] mb-1">
                     {event.sourceTitle || <span className="text-slate-500 dark:text-zinc-600">—</span>}
                   </p>
                   <BookAuthorLink book={event.book} />
                   {detail && (
-                    <p className={`text-xs break-words mb-2 ${isError ? 'text-red-400' : 'text-slate-600 dark:text-zinc-500'}`}>
+                    <p className={`text-xs break-words mb-2 ${isError ? 'text-red-600 dark:text-red-400' : 'text-slate-600 dark:text-zinc-500'}`}>
                       {detail}
                     </p>
                   )}
@@ -297,14 +297,14 @@ export default function HistoryPage() {
                     {BLOCKLISTABLE.has(event.eventType) && (
                       <button
                         onClick={() => handleBlocklist(event.id)}
-                        className="text-xs text-amber-400 hover:text-amber-300 transition-colors py-1"
+                        className="touch-target text-xs text-amber-400 hover:text-amber-300 transition-colors py-1"
                       >
                         {t('history.blocklist')}
                       </button>
                     )}
                     <button
                       onClick={() => handleDelete(event.id)}
-                      className={`text-xs py-1 ${dangerLink}`}
+                      className={`touch-target text-xs py-1 ${dangerLink}`}
                     >
                       {t('history.delete')}
                     </button>

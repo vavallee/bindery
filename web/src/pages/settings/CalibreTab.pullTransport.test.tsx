@@ -80,7 +80,7 @@ describe('CalibreTab transport', () => {
     // Nothing probes a plugin URL in pull.
     expect(mocked.testCalibre).not.toHaveBeenCalled()
     // Push all works without a plugin URL.
-    expect(screen.getByRole('button', { name: 'Push all to Calibre' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'settings.calibre.pushAll.label' })).toBeEnabled()
     // The queue panel shows the check in rather than reachability.
     expect(await screen.findByTestId('calibre-delivery-reachability')).toHaveTextContent('settings.calibre.deliveries.lastCheckIn')
   })

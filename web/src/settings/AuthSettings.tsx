@@ -5,6 +5,7 @@ import Alert from '../components/Alert'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../components/useClipboardCopy'
 import { useConfirmDialog } from '../components/useConfirmDialog'
+import { secretInputAttrs, urlInputAttrs } from '../util/inputAttrs'
 
 const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
 
@@ -259,7 +260,7 @@ function AddProviderForm({
         </div>
         <div>
           <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.oidc.fieldClientSecret')}</label>
-          <input value={clientSecret} onChange={e => setClientSecret(e.target.value)} required type="password" className={inputCls} />
+          <input {...secretInputAttrs} value={clientSecret} onChange={e => setClientSecret(e.target.value)} required type="password" className={inputCls} />
         </div>
       </div>
       <div>
@@ -333,6 +334,7 @@ function IssuerField({ value, onChange }: { value: string; onChange: (v: string)
       </label>
       <div className="flex gap-2">
         <input
+          {...urlInputAttrs}
           value={value}
           onChange={e => handleChange(e.target.value)}
           required

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -231,5 +233,144 @@ func TestRecommendationAddWidensUnpinnedMediaType(t *testing.T) {
 	}
 	if len(editions) != 1 || editions[0].ForeignID != "hc:rec-ebook-audio" {
 		t.Fatalf("expected hydrated edition, got %+v", editions)
+	}
+}
+
+// recommendationAuthorFixture seeds an author owned by alice (or by nobody
+// when shared is set) and one recommendation for bob that names that author,
+// by id when byID is set and by name otherwise, and returns the handler plus
+// the ids a test needs.
+func recommendationAuthorFixture(t *testing.T, tenancy, byID, shared bool) (h *RecommendationHandler, books *db.BookRepo, recID, aliceAuthorID, alice, bob int64) {
+	t.Helper()
+	auth.SetEnforceTenancyForTests(t, tenancy)
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	ctx := context.Background()
+	users := db.NewUserRepo(database)
+	a, err := users.Create(ctx, "alice", "h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := users.Create(ctx, "bob", "h2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recRepo := db.NewRecommendationRepo(database)
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+
+	author := &models.Author{
+		ForeignID: "hc:alice-author", Name: "Alice Writer", SortName: "Writer, Alice",
+		MetadataProvider: "hardcover", Monitored: true,
+	}
+	owner := a.ID
+	if shared {
+		owner = 0
+	}
+	if err := authorRepo.CreateForUser(ctx, author, owner); err != nil {
+		t.Fatal(err)
+	}
+	cand := models.RecommendationCandidate{
+		ForeignID: "hc:rec-cross", RecType: models.RecTypeListCross, Title: "Cross Book",
+		AuthorName: author.Name, MediaType: models.MediaTypeEbook, Genres: []string{}, Score: 1,
+	}
+	if byID {
+		cand.AuthorID = &author.ID
+	}
+	if err := recRepo.ReplaceBatch(ctx, b.ID, []models.RecommendationCandidate{cand}); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := recRepo.List(ctx, b.ID, "", 10, 0)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("bob's recommendations = %+v err=%v", recs, err)
+	}
+	h = NewRecommendationHandler(recRepo, fakeRecommendationEngine{}, authorRepo, bookRepo, nil).WithAppContext(ctx)
+	return h, bookRepo, recs[0].ID, author.ID, a.ID, b.ID
+}
+
+func addRecommendationAs(h *RecommendationHandler, ctx context.Context, recID int64) *httptest.ResponseRecorder {
+	id := strconv.FormatInt(recID, 10)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/recommendations/"+id+"/add", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	h.Add(rec, withURLParam(req, "id", id))
+	return rec
+}
+
+// With tenancy on, adding a recommendation must not file the new book under
+// another user's author. Before the fix the author was resolved from every
+// user's authors, so bob's add created a wanted, monitored book inside
+// alice's author, and the search it queued downloaded into her library.
+func TestRecommendationAdd_TenancyDoesNotUseAnotherUsersAuthor(t *testing.T) {
+	for _, byID := range []bool{false, true} {
+		t.Run(map[bool]string{false: "by name", true: "by id"}[byID], func(t *testing.T) {
+			h, books, recID, aliceAuthorID, _, bob := recommendationAuthorFixture(t, true, byID, false)
+			rec := addRecommendationAs(h, auth.WithUserID(context.Background(), bob), recID)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("want 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "Alice") {
+				t.Fatalf("response names alice's author: %s", rec.Body.String())
+			}
+			under, err := books.ListByAuthor(context.Background(), aliceAuthorID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(under) != 0 {
+				t.Fatalf("bob's add filed %d book(s) under alice's author: %+v", len(under), under)
+			}
+		})
+	}
+}
+
+// The admin manages every library, and tenancy off is one shared library, so
+// both still resolve the author and create the book exactly as before, with
+// no owner stamped on it.
+func TestRecommendationAdd_AdminAndTenancyOffStillResolveAuthor(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		tenancy bool
+	}{
+		{"admin under tenancy", true},
+		{"tenancy off", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, books, recID, aliceAuthorID, _, bob := recommendationAuthorFixture(t, tc.tenancy, false, false)
+			ctx := auth.WithUserID(context.Background(), bob)
+			if tc.tenancy {
+				ctx = auth.WithUserRole(ctx, "admin")
+			}
+			rec := addRecommendationAs(h, ctx, recID)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("want 201, got %d: %s", rec.Code, rec.Body.String())
+			}
+			book, err := books.GetByForeignID(context.Background(), "hc:rec-cross")
+			if err != nil || book == nil {
+				t.Fatalf("book = %+v err=%v", book, err)
+			}
+			if book.AuthorID != aliceAuthorID || book.OwnerUserID != 0 {
+				t.Fatalf("book author=%d owner=%d, want author %d and no owner", book.AuthorID, book.OwnerUserID, aliceAuthorID)
+			}
+		})
+	}
+}
+
+// Under tenancy, a recommendation filed under a shared (unowned) author is
+// still the caller's book. With no owner it would appear in every user's
+// library, alice's included, as a wanted book she never asked for.
+func TestRecommendationAdd_TenancySharedAuthorBookIsCallers(t *testing.T) {
+	h, books, recID, sharedAuthorID, _, bob := recommendationAuthorFixture(t, true, false, true)
+	rec := addRecommendationAs(h, auth.WithUserID(context.Background(), bob), recID)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("want 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	book, err := books.GetByForeignID(context.Background(), "hc:rec-cross")
+	if err != nil || book == nil {
+		t.Fatalf("book = %+v err=%v", book, err)
+	}
+	if book.AuthorID != sharedAuthorID || book.OwnerUserID != bob {
+		t.Fatalf("book author=%d owner=%d, want author %d owner bob (%d)", book.AuthorID, book.OwnerUserID, sharedAuthorID, bob)
 	}
 }

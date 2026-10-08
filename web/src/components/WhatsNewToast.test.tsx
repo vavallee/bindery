@@ -66,4 +66,18 @@ describe('WhatsNewToast', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
+
+  // Anchored only on the right, a max-w-sm toast ran off the left edge of a
+  // 320px screen. Pinning both sides below sm keeps it inside the gutter, and
+  // ml-auto keeps it on the right once the screen is wider than max-w-sm.
+  it('pins both edges below sm and only the right edge from sm', () => {
+    localStorage.setItem(KEY, '1.29.1')
+    render(<WhatsNewToast version="1.30.0" />)
+    const cls = screen.getByRole('status').className
+    expect(cls).toContain('left-safe-4')
+    expect(cls).toContain('sm:left-auto')
+    expect(cls).toContain('right-safe-4')
+    expect(cls).toContain('bottom-safe-4')
+    expect(cls).toContain('ml-auto')
+  })
 })

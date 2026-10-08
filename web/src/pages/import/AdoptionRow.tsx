@@ -1,4 +1,4 @@
-import { forwardRef, type KeyboardEvent } from 'react'
+import { forwardRef, useId, useState, type KeyboardEvent } from 'react'
 import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import type { AdoptionItem } from '../../api/client'
@@ -47,6 +47,11 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
   const strength = matchStrength(item, top)
   const full = adoptionHint(item, t)
   const tooltip = [full.sentence, full.tooltip].filter(Boolean).join('\n')
+  // The hint line is one short phrase; the full explanation used to live only
+  // in a hover tooltip, which touch screens never show. Tapping the phrase
+  // reveals it inline.
+  const [hintOpen, setHintOpen] = useState(false)
+  const hintId = useId()
   const size = formatBytes(item.sizeBytes)
   const pending = item.state === 'pending' && !outcome
   const authorFirst = pending && !inGroup && !top && item.reason === 'author_not_in_library' && item.parsedAuthor !== ''
@@ -127,7 +132,7 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
             </span>
           )}
         </div>
-        <p className="mt-0.5 truncate text-xs text-fg-muted" title={`${item.rootPath}/${item.relPath}`}>
+        <p className="mt-0.5 break-all text-xs text-fg-muted md:truncate" title={`${item.rootPath}/${item.relPath}`}>
           <span className="tabular-nums">
             {t('adoption.row.files', { count: item.fileCount, defaultValue: '{{count}} files' })}{size ? ` · ${size}` : ''}
           </span>
@@ -160,14 +165,26 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
           // The group row above already says why; repeating it per book is noise.
           <span className="sr-only">{shortHint(item, t)}</span>
         ) : (
-          <p className="truncate text-xs text-fg-muted" title={tooltip}>{shortHint(item, t)}</p>
+          <div className="text-xs text-fg-muted">
+            <button
+              type="button"
+              onClick={() => setHintOpen(v => !v)}
+              aria-expanded={hintOpen}
+              aria-controls={hintId}
+              title={tooltip}
+              className="max-w-full truncate text-left underline decoration-dotted underline-offset-2 hover:text-slate-700 dark:hover:text-zinc-300"
+            >
+              {shortHint(item, t)}
+            </button>
+            <p id={hintId} hidden={!hintOpen} className="mt-0.5 whitespace-pre-line break-words">{tooltip}</p>
+          </div>
         )}
         {note === 'keptBook' && (
           <p role="status" className="mt-0.5 truncate text-xs text-fg-muted" title={t('adoption.outcome.keptBook', 'Files removed. The book stayed because it is now in use.')}>
             {t('adoption.outcome.keptBook', 'Files removed. The book stayed because it is now in use.')}
           </p>
         )}
-        {error && <p role="alert" className="mt-0.5 truncate text-xs text-red-600 dark:text-red-400" title={error}>{error}</p>}
+        {error && <p role="alert" className="mt-0.5 break-words text-xs text-red-600 dark:text-red-400">{error}</p>}
       </td>
       <td className={actionCellCls}>
         <div className="flex items-center gap-1.5 md:justify-end">

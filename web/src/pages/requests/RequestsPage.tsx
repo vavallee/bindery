@@ -103,7 +103,7 @@ export default function RequestsPage() {
             <li key={r.id} className="p-4">
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div className="min-w-0">
-                  <div className="font-medium break-words">{r.title}</div>
+                  <div className="font-medium [overflow-wrap:anywhere]">{r.title}</div>
                   <div className="text-xs text-fg-muted mt-0.5">
                     {r.kind === 'author' ? t('requests.kindAuthor') : r.authorName || t('requests.kindBook')}
                     {' · '}

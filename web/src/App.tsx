@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useParams } from 'react-router'
-import { Fragment, lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
+import { Fragment, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from './api/client'
 import { AuthProvider, useAuth } from './auth/AuthContext'
@@ -10,6 +10,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import LibrarySearch from './components/LibrarySearch'
 import Logo from './components/Logo'
 import NavTabs from './components/NavTabs'
+import { ModalHistoryProvider } from './components/useModal'
 import { activeGroup, isEntryActive, matchesPath, navGroupsFor, type NavItem } from './components/navGroups'
 import SetupBanner from './components/SetupBanner'
 import VersionBadge from './components/VersionBadge'
@@ -17,6 +18,8 @@ import WhatsNewToast from './components/WhatsNewToast'
 import { useUnmatchedCount } from './components/useUnmatchedCount'
 import { REQUESTS_CHANGED_EVENT } from './pages/requests/requestLabels'
 import { useTheme } from './theme'
+import ScrollRestoration from './components/ScrollRestoration'
+import { lazyWithReload } from './util/lazyWithReload'
 
 // Route-scoped error boundary: a render crash in one page shows an inline error
 // inside the content area (the nav/header stay usable) instead of bubbling to
@@ -31,26 +34,27 @@ function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   )
 }
 
-const LoginPage = lazy(() => import('./pages/LoginPage'))
-const SetupPage = lazy(() => import('./pages/SetupPage'))
-const AuthorsPage = lazy(() => import('./pages/AuthorsPage'))
-const AuthorDetailPage = lazy(() => import('./pages/AuthorDetailPage'))
-const BooksPage = lazy(() => import('./pages/BooksPage'))
-const BookDetailPage = lazy(() => import('./pages/BookDetailPage'))
-const WantedPage = lazy(() => import('./pages/WantedPage'))
-const QueuePage = lazy(() => import('./pages/QueuePage'))
-const ImportPage = lazy(() => import('./pages/import/ImportPage'))
-const SettingsPage = lazy(() => import('./pages/SettingsPage'))
-const UsersPage = lazy(() => import('./pages/UsersPage'))
-const HistoryPage = lazy(() => import('./pages/HistoryPage'))
-const SeriesPage = lazy(() => import('./pages/SeriesPage'))
-const CalendarPage = lazy(() => import('./pages/CalendarPage'))
-const DiscoverPage = lazy(() => import('./pages/DiscoverPage'))
-const SearchPage = lazy(() => import('./pages/SearchPage'))
-const RequesterLibraryPage = lazy(() => import('./pages/requests/RequesterLibraryPage'))
-const RequestSearchPage = lazy(() => import('./pages/requests/RequestSearchPage'))
-const MyRequestsPage = lazy(() => import('./pages/requests/MyRequestsPage'))
-const RequestsPage = lazy(() => import('./pages/requests/RequestsPage'))
+const LoginPage = lazyWithReload(() => import('./pages/LoginPage'), './pages/LoginPage')
+const SetupPage = lazyWithReload(() => import('./pages/SetupPage'), './pages/SetupPage')
+const AuthorsPage = lazyWithReload(() => import('./pages/AuthorsPage'), './pages/AuthorsPage')
+const AuthorDetailPage = lazyWithReload(() => import('./pages/AuthorDetailPage'), './pages/AuthorDetailPage')
+const BooksPage = lazyWithReload(() => import('./pages/BooksPage'), './pages/BooksPage')
+const BookDetailPage = lazyWithReload(() => import('./pages/BookDetailPage'), './pages/BookDetailPage')
+const DuplicatesPage = lazyWithReload(() => import('./pages/DuplicatesPage'), './pages/DuplicatesPage')
+const WantedPage = lazyWithReload(() => import('./pages/WantedPage'), './pages/WantedPage')
+const QueuePage = lazyWithReload(() => import('./pages/QueuePage'), './pages/QueuePage')
+const ImportPage = lazyWithReload(() => import('./pages/import/ImportPage'), './pages/import/ImportPage')
+const SettingsPage = lazyWithReload(() => import('./pages/SettingsPage'), './pages/SettingsPage')
+const UsersPage = lazyWithReload(() => import('./pages/UsersPage'), './pages/UsersPage')
+const HistoryPage = lazyWithReload(() => import('./pages/HistoryPage'), './pages/HistoryPage')
+const SeriesPage = lazyWithReload(() => import('./pages/SeriesPage'), './pages/SeriesPage')
+const CalendarPage = lazyWithReload(() => import('./pages/CalendarPage'), './pages/CalendarPage')
+const DiscoverPage = lazyWithReload(() => import('./pages/DiscoverPage'), './pages/DiscoverPage')
+const SearchPage = lazyWithReload(() => import('./pages/SearchPage'), './pages/SearchPage')
+const RequesterLibraryPage = lazyWithReload(() => import('./pages/requests/RequesterLibraryPage'), './pages/requests/RequesterLibraryPage')
+const RequestSearchPage = lazyWithReload(() => import('./pages/requests/RequestSearchPage'), './pages/requests/RequestSearchPage')
+const MyRequestsPage = lazyWithReload(() => import('./pages/requests/MyRequestsPage'), './pages/requests/MyRequestsPage')
+const RequestsPage = lazyWithReload(() => import('./pages/requests/RequestsPage'), './pages/requests/RequestsPage')
 
 // The admin nav badge: pending requests, read once on load and again after
 // each approve or decline. No polling.
@@ -179,7 +183,7 @@ function Shell() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-zinc-950 text-slate-900 dark:text-zinc-100">
-      <header className="border-b border-slate-200 dark:border-zinc-800 sticky top-0 z-40 bg-slate-50 dark:bg-zinc-950">
+      <header className="border-b border-slate-200 dark:border-zinc-800 sticky top-0 z-40 pt-safe bg-slate-50 dark:bg-zinc-950">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between gap-4 h-16">
             <Link to="/" className="flex items-center gap-2 flex-shrink-0 group" onClick={() => setMenuOpen(false)}>
@@ -255,7 +259,9 @@ function Shell() {
               <button
                 onClick={() => setMenuOpen(open => !open)}
                 className="xl:hidden p-2 rounded-md text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-zinc-800 transition-colors"
-                aria-label="Toggle menu"
+                aria-label={t('nav.toggleMenu', 'Toggle menu')}
+                aria-expanded={menuOpen}
+                aria-controls={menuOpen ? 'mobile-menu' : undefined}
               >
                 {menuOpen ? (
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -272,7 +278,15 @@ function Shell() {
         </div>
 
         {menuOpen && (
-          <div className="xl:hidden border-t border-slate-200 dark:border-zinc-800">
+          // The header is sticky, so a menu taller than the screen (the admin
+          // one runs to about 840px) could never scroll into view with the
+          // page. Cap it at the viewport below the 4rem header row, its 1px
+          // border and the header's top safe area inset, and scroll it on its
+          // own.
+          <div
+            id="mobile-menu"
+            className="xl:hidden border-t border-slate-200 dark:border-zinc-800 max-h-[calc(100dvh-4rem-1px-env(safe-area-inset-top))] overflow-y-auto overscroll-contain"
+          >
             {/* From lg up the search, the icons and the account menu stay in
                 the header row, so the menu only carries the nav links. */}
             {!isRequester && <div className="lg:hidden px-4 py-3 border-b border-slate-200/50 dark:border-zinc-800/50">
@@ -336,7 +350,7 @@ function Shell() {
               {signedIn && (
                 <button
                   onClick={logout}
-                  className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white transition-colors"
+                  className="touch-target text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white transition-colors"
                 >
                   {t('login.signOut')}
                 </button>
@@ -373,6 +387,7 @@ function Shell() {
             <Route path="/authors" element={<Navigate to="/" replace />} />
             <Route path="/author/:id" element={<AuthorDetailPage />} />
             <Route path="/books" element={<BooksPage />} />
+            <Route path="/books/duplicates" element={<DuplicatesPage />} />
             <Route path="/book/:id" element={<BookDetailPage />} />
             <Route path="/wanted" element={<WantedPage />} />
             <Route path="/queue" element={<QueuePage />} />
@@ -423,36 +438,40 @@ const binderyBase: string =
 function App() {
   return (
     <BrowserRouter basename={binderyBase}>
-      <AuthProvider>
-        <Suspense fallback={<PageLoadingFallback />}>
-          <Routes>
-            <Route
-              path="/login"
-              element={
-                <PublicOnlyRoute mode="login">
-                  <LoginPage />
-                </PublicOnlyRoute>
-              }
-            />
-            <Route
-              path="/setup"
-              element={
-                <PublicOnlyRoute mode="setup">
-                  <SetupPage />
-                </PublicOnlyRoute>
-              }
-            />
-            <Route
-              path="/*"
-              element={
-                <AuthGuard>
-                  <Shell />
-                </AuthGuard>
-              }
-            />
-          </Routes>
-        </Suspense>
-      </AuthProvider>
+      <ScrollRestoration />
+      {/* Modals get their back button behaviour from this (#3052). */}
+      <ModalHistoryProvider>
+        <AuthProvider>
+          <Suspense fallback={<PageLoadingFallback />}>
+            <Routes>
+              <Route
+                path="/login"
+                element={
+                  <PublicOnlyRoute mode="login">
+                    <LoginPage />
+                  </PublicOnlyRoute>
+                }
+              />
+              <Route
+                path="/setup"
+                element={
+                  <PublicOnlyRoute mode="setup">
+                    <SetupPage />
+                  </PublicOnlyRoute>
+                }
+              />
+              <Route
+                path="/*"
+                element={
+                  <AuthGuard>
+                    <Shell />
+                  </AuthGuard>
+                }
+              />
+            </Routes>
+          </Suspense>
+        </AuthProvider>
+      </ModalHistoryProvider>
     </BrowserRouter>
   )
 }

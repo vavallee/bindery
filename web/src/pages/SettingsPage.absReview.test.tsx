@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router'
 import SettingsPage from './SettingsPage'
 import { api } from '../api/client'
 import type { ABSReviewItem, Author, Book } from '../api/client'
@@ -186,7 +187,7 @@ describe('SettingsPage ABS review search', () => {
       offset: 0,
     })
 
-    render(<SettingsPage />)
+    render(<MemoryRouter initialEntries={['/settings']}><SettingsPage /></MemoryRouter>)
 
     fireEvent.click(await screen.findByRole('button', { name: 'settings.tabs.abs' }))
     await screen.findByText('No-match books')

@@ -105,3 +105,95 @@ func (s *Scanner) recordFixMatchMove(ctx context.Context, book *models.Book, des
 		"message":    fmt.Sprintf("Fix match moved this file from %q (id %d)", fm.FromTitle, fm.FromBookID),
 	})
 }
+
+// RelinkResult describes what RelinkFile did.
+type RelinkResult struct {
+	// Path is the book_files path that now belongs to the target book. The
+	// file itself is wherever it was.
+	Path   string
+	Format string
+	// FromBookID is the book the row was taken from, 0 when the path was not
+	// tracked before.
+	FromBookID int64
+	// Unchanged is true when the path already belonged to the target book.
+	Unchanged bool
+}
+
+// RelinkFile is Fix match's "correct the match only" mode (#2055): it makes
+// bookID the owner of the tracked file without touching the file on disk. No
+// import runs, so nothing is moved, renamed or deleted, which is what the *arr
+// apps' fix match does and what a library imported in place expects.
+//
+// paths are the spellings of the file the user picked (the path the client
+// sent and its symlink-resolved form, #1368); the first one book_files tracks
+// is the row relinked, keeping the stored spelling. An untracked file is
+// recorded under the first spelling. formatHint wins over the stored format,
+// which wins over detection from the path.
+func (s *Scanner) RelinkFile(ctx context.Context, bookID int64, paths []string, formatHint string) (RelinkResult, error) {
+	if len(paths) == 0 {
+		return RelinkResult{}, fmt.Errorf("relink: no path")
+	}
+	book, err := s.books.GetByID(ctx, bookID)
+	if err != nil {
+		return RelinkResult{}, fmt.Errorf("relink: load book %d: %w", bookID, err)
+	}
+	if book == nil {
+		return RelinkResult{}, fmt.Errorf("relink: book %d not found", bookID)
+	}
+	var stored *models.BookFile
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		f, err := s.books.FileByPath(ctx, filepath.Clean(p))
+		if err != nil {
+			return RelinkResult{}, fmt.Errorf("relink: %w", err)
+		}
+		if f != nil {
+			stored = f
+			break
+		}
+	}
+	res := RelinkResult{Path: filepath.Clean(paths[0]), Format: formatHint}
+	if stored != nil {
+		res.Path = stored.Path
+		if res.Format == "" {
+			res.Format = stored.Format
+		}
+	}
+	if res.Format == "" {
+		res.Format = lookupDetectFormat(filepath.Clean(paths[len(paths)-1]))
+	}
+	if stored != nil && stored.BookID == bookID {
+		res.Unchanged = true
+		return res, nil
+	}
+	prev, err := s.books.MoveBookFile(ctx, res.Path, bookID, res.Format)
+	if err != nil {
+		return RelinkResult{}, fmt.Errorf("relink: move book file: %w", err)
+	}
+	res.FromBookID = prev
+	slog.Info("fix match: linked a file to the chosen book without moving it",
+		"path", res.Path, "fromBookID", prev, "toBookID", bookID)
+	if prev == bookID {
+		return res, nil
+	}
+	data := map[string]string{
+		"path":       res.Path,
+		"sourcePath": res.Path,
+		"message":    "Fix match linked this file, which no book tracked, and left it where it was",
+	}
+	if prev != 0 {
+		fromTitle := ""
+		if from, err := s.books.GetByID(ctx, prev); err == nil && from != nil {
+			fromTitle = from.Title
+		}
+		data["fromBookId"] = strconv.FormatInt(prev, 10)
+		data["fromTitle"] = fromTitle
+		data["message"] = fmt.Sprintf("Fix match linked this file from %q (id %d) and left it where it was", fromTitle, prev)
+	}
+	// Written for an untracked file too, so the link never appears on a
+	// book's History without a trace of where it came from.
+	s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, data)
+	return res, nil
+}

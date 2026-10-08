@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?><mods xmlns="http://www.loc.gov/mods/v3" xmlns:xlink="http://www.w3.org/1999/xlink" version="3.8">
+   <titleInfo>
+      <title>Havets stemme</title>
+   </titleInfo>
+   <relatedItem xmlns:xlink="http://www.w3.org/1999/xlink" type="series" xlink:href="(NO-TrBIB)10000001">
+      <titleInfo>
+         <title>Serien om fjellet</title>
+         <partNumber>3</partNumber>
+      </titleInfo>
+   </relatedItem>
+   <relatedItem xmlns:xlink="http://www.w3.org/1999/xlink" type="series" xlink:href="(NO-TrBIB)10000001">
+      <titleInfo>
+         <title>Fjellserien</title>
+         <partNumber>3</partNumber>
+      </titleInfo>
+   </relatedItem>
+   <relatedItem type="series">
+      <titleInfo>
+         <title>Eksempelkrim</title>
+         <partNumber>3</partNumber>
+      </titleInfo>
+   </relatedItem>
+   <identifier type="isbn">9788200000035</identifier>
+</mods>

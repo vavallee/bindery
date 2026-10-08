@@ -73,6 +73,7 @@ func TestIntegrationRoutesRequireAdmin(t *testing.T) {
 	}{
 		{"create root folder", http.MethodPost, "/rootfolder"},
 		{"delete root folder", http.MethodDelete, "/rootfolder/1"},
+		{"get grimmory config", http.MethodGet, "/grimmory/config"},
 		{"set grimmory config", http.MethodPut, "/grimmory/config"},
 		{"test grimmory", http.MethodPost, "/grimmory/test"},
 		{"test calibre", http.MethodPost, "/calibre/test"},
@@ -115,6 +116,7 @@ func TestIntegrationRoutesAllowAdmin(t *testing.T) {
 	}{
 		{http.MethodPost, "/rootfolder", "create"},
 		{http.MethodDelete, "/rootfolder/1", "delete"},
+		{http.MethodGet, "/grimmory/config", "get-config"},
 		{http.MethodPut, "/grimmory/config", "set-config"},
 		{http.MethodPost, "/grimmory/test", "test"},
 		{http.MethodPost, "/calibre/test", "test"},
@@ -148,15 +150,17 @@ func TestIntegrationRoutesAllowAdmin(t *testing.T) {
 }
 
 // TestIntegrationOpenReadsAllowNonAdmin guards the reads we deliberately kept
-// open: GET /rootfolder and GET /grimmory/config (which redacts its key). If a
-// refactor drops them inside the admin group, non-admin UI loses them.
+// open: GET /rootfolder, which the add author dialog reads to offer a root
+// folder. If a refactor drops it inside the admin group, non-admin UI loses it.
+// GET /grimmory/config used to be here too; it moved behind the admin gate in
+// #2361 because it hands back the Grimmory URL and username and only the
+// admin Grimmory tab reads it.
 func TestIntegrationOpenReadsAllowNonAdmin(t *testing.T) {
 	tests := []struct {
 		path   string
 		called string
 	}{
 		{"/rootfolder", "list"},
-		{"/grimmory/config", "get-config"},
 		// The handler itself checks ownership and strips the detail.
 		{"/book/1/calibre", "book-state"},
 	}

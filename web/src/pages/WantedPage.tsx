@@ -2,10 +2,13 @@ import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, Book, SearchResult } from '../api/client'
+import { useConfirmDialog } from '../components/useConfirmDialog'
+import { grabWithForceConfirm } from '../util/forceGrab'
 import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
 import { usePagination } from '../components/usePagination'
+import { useListParams, useUrlSearchInput } from '../components/useListParams'
 import { foldedIncludes } from '../util/foldForSearch'
 import { usePolling } from '../components/usePolling'
 import { safeHref } from '../util/safeHref'
@@ -14,23 +17,44 @@ import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
 
 // Shared grid template so the header row and every list row line up exactly.
 // columns: checkbox · cover · title+author · format · actions
-const ROW_GRID = 'grid grid-cols-[1.5rem_2rem_1fr_6rem_8.5rem] items-center gap-3'
+// Below sm the fixed format and action columns left the title about 13px at
+// 375px, so a phone gets three columns and the format and actions move to a
+// second line under the title (see ROW_CONTROLS). On a touch screen from sm
+// up the format column is wider: form controls render at 16px there (see
+// index.css), and "Audiobook" at 16px does not fit in 6rem.
+const ROW_GRID = 'grid grid-cols-[1.5rem_2rem_minmax(0,1fr)] sm:grid-cols-[1.5rem_2rem_1fr_6rem_8.5rem] sm:pointer-coarse:grid-cols-[1.5rem_2rem_1fr_8.5rem_8.5rem] items-center gap-x-3 gap-y-1.5 sm:gap-3'
+// Holds the format select and the actions. A flex line spanning the cover and
+// title columns on a phone; display: contents from sm, so its two children
+// drop back into their own grid columns.
+const ROW_CONTROLS = 'col-start-2 col-span-2 flex flex-wrap items-center gap-2 sm:contents'
+
+// Query-string keys and their defaults; defaults stay out of the URL.
+const LIST_DEFAULTS = { q: '', excluded: '' }
 
 export default function WantedPage() {
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
 
   const [books, setBooks] = useState<Book[]>([])
   const [loading, setLoading] = useState(true)
   const [searchingId, setSearchingId] = useState<number | null>(null)
   const [results, setResults] = useState<SearchResult[]>([])
   const [showResults, setShowResults] = useState<number | null>(null)
-  const [search, setSearch] = useState('')
+  // Page, search and the excluded toggle live in the URL so going back from a
+  // book lands on the same page of the same list (#3052).
+  const list = useListParams(LIST_DEFAULTS)
+  const updateList = list.update
+  // The list filters on every keystroke; the URL catches up once typing
+  // pauses, replacing the entry rather than pushing one per keystroke.
+  const commitSearch = useCallback((q: string) => updateList({ q, page: null }, { replace: true }), [updateList])
+  const [search, setSearch] = useUrlSearchInput(list.values.q, commitSearch)
   const [grabbingGuid, setGrabbingGuid] = useState<string | null>(null)
   const [grabbedGuid, setGrabbedGuid] = useState<string | null>(null)
   const [unmonitoringId, setUnmonitoringId] = useState<number | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
-  const [showExcluded, setShowExcluded] = useState(false)
+  const showExcluded = list.values.excluded === '1'
+  const setShowExcluded = (next: boolean) => updateList({ excluded: next ? '1' : null })
   const [toast, setToast] = useState<string | null>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
 
@@ -130,7 +154,7 @@ export default function WantedPage() {
   const grab = async (result: SearchResult, book: Book) => {
     setGrabbingGuid(result.guid)
     try {
-      await api.grab({
+      const dl = await grabWithForceConfirm({
         guid: result.guid,
         title: result.title,
         nzbUrl: result.nzbUrl,
@@ -140,7 +164,8 @@ export default function WantedPage() {
         protocol: result.protocol,
         // The result's own media type wins over the book's 'both' (#2933).
         mediaType: result.mediaType || book.mediaType,
-      })
+      }, confirm, t)
+      if (!dl) return
       setGrabbedGuid(result.guid)
       setTimeout(() => {
         setShowResults(null)
@@ -154,7 +179,7 @@ export default function WantedPage() {
     }
   }
 
-  const { pageItems, paginationProps, reset } = usePagination(filtered, 50, 'wanted')
+  const { pageItems, paginationProps } = usePagination(filtered, 50, 'wanted', { page: list.page, setPage: list.setPage })
 
   // This page's loaded ids, in order — handed to BookDetailPage as router
   // state (#2548) for Previous/Next; see BookNavState there. Scoped to
@@ -163,7 +188,8 @@ export default function WantedPage() {
   // rule used by BooksPage/AuthorDetailPage.
   const pageItemIds = pageItems.map(b => b.id)
 
-  useEffect(() => { reset() }, [search, reset])
+  // A selection only means something on the page it was made on.
+  useEffect(() => { setSelectedIds(new Set()) }, [list.page, list.values.q, showExcluded])
 
   // Keep the select-all checkbox indeterminate state in sync.
   const allPageSelected = pageItems.length > 0 && pageItems.every(b => selectedIds.has(b.id))
@@ -214,8 +240,9 @@ export default function WantedPage() {
 
   return (
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
+      {confirmDialog}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-50 px-4 py-2.5 bg-red-600 text-white rounded-lg shadow-lg text-sm font-medium animate-fade-in">
+        <div className="fixed bottom-safe-6 right-safe-6 z-50 px-4 py-2.5 bg-red-600 text-white rounded-lg shadow-lg text-sm font-medium animate-fade-in">
           {toast}
         </div>
       )}
@@ -238,6 +265,7 @@ export default function WantedPage() {
       </div>
 
       <input
+        enterKeyHint="search"
         type="search"
         value={search}
         onChange={e => setSearch(e.target.value)}
@@ -271,8 +299,8 @@ export default function WantedPage() {
             />
             <span aria-hidden />
             <span>{t('wanted.colTitleAuthor')}</span>
-            <span>{t('wanted.colFormat')}</span>
-            <span className="text-right">{t('wanted.colActions')}</span>
+            <span className="hidden sm:block">{t('wanted.colFormat')}</span>
+            <span className="hidden sm:block text-right">{t('wanted.colActions')}</span>
           </div>
 
           {pageItems.map((book, i) => {
@@ -298,7 +326,7 @@ export default function WantedPage() {
 
                   {/* uniform cover slot */}
                   {book.imageUrl ? (
-                    <img
+                    <img loading="lazy" decoding="async"
                       src={book.imageUrl}
                       alt=""
                       className="w-8 h-11 object-cover rounded bg-slate-200 dark:bg-zinc-800"
@@ -319,7 +347,7 @@ export default function WantedPage() {
                       // hopDepth: 1 — first hop into a book detail page from
                       // this list, not a further Previous/Next chain hop.
                       state={{ ids: pageItemIds, index: i, hopDepth: 1 }}
-                      className="block truncate text-sm font-medium text-slate-800 dark:text-zinc-200 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+                      className="block [overflow-wrap:anywhere] sm:truncate text-sm font-medium text-slate-800 dark:text-zinc-200 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
                     >
                       {book.title}
                     </Link>
@@ -343,52 +371,54 @@ export default function WantedPage() {
                     )}
                   </div>
 
-                  {/* format control — compact select, still changes the value */}
-                  <div className="min-w-0">
-                    <select
-                      value={book.mediaType || 'ebook'}
-                      onChange={e => changeMediaType(book, e.target.value as 'ebook' | 'audiobook' | 'both')}
-                      className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded text-[11px] px-1.5 py-0.5 focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
-                      aria-label={t('wanted.changeFormat', { title: book.title })}
-                      title={t('wanted.changeFormat', { title: book.title })}
-                    >
-                      <option value="ebook">{t('books.mediaEbook')}</option>
-                      <option value="audiobook">{t('books.mediaAudiobook')}</option>
-                      <option value="both">{t('books.mediaBoth')}</option>
-                    </select>
-                    {book.mediaType === 'both' && (
-                      <div className="mt-0.5 text-[10px] text-slate-500 dark:text-zinc-500 truncate">
-                        {book.ebookFilePath ? t('wanted.ebookDone') : t('wanted.ebookNeeded')}
-                        {' · '}
-                        {book.audiobookFilePath ? t('wanted.audiobookDone') : t('wanted.audiobookNeeded')}
-                      </div>
-                    )}
-                  </div>
+                  <div className={ROW_CONTROLS} data-testid="wanted-row-controls">
+                    {/* format control: compact select, still changes the value */}
+                    <div className="min-w-28 flex-1 sm:min-w-0 sm:flex-none">
+                      <select
+                        value={book.mediaType || 'ebook'}
+                        onChange={e => changeMediaType(book, e.target.value as 'ebook' | 'audiobook' | 'both')}
+                        className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded text-[11px] px-1.5 py-0.5 focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+                        aria-label={t('wanted.changeFormat', { title: book.title })}
+                        title={t('wanted.changeFormat', { title: book.title })}
+                      >
+                        <option value="ebook">{t('books.mediaEbook')}</option>
+                        <option value="audiobook">{t('books.mediaAudiobook')}</option>
+                        <option value="both">{t('books.mediaBoth')}</option>
+                      </select>
+                      {book.mediaType === 'both' && (
+                        <div className="mt-0.5 text-[10px] text-slate-500 dark:text-zinc-500 truncate">
+                          {book.ebookFilePath ? t('wanted.ebookDone') : t('wanted.ebookNeeded')}
+                          {' · '}
+                          {book.audiobookFilePath ? t('wanted.audiobookDone') : t('wanted.audiobookNeeded')}
+                        </div>
+                      )}
+                    </div>
 
-                  {/* actions */}
-                  <div className="flex items-center justify-end gap-1.5">
-                    {book.excluded && (
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
-                        {t('wanted.excluded')}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => unmonitor(book)}
-                      disabled={unmonitoringId === book.id}
-                      className="px-2 py-1 rounded text-xs font-medium bg-slate-200 dark:bg-zinc-800 hover:bg-amber-100 dark:hover:bg-amber-900/30 hover:text-amber-700 dark:hover:text-amber-400 text-slate-700 dark:text-zinc-300 disabled:opacity-50 transition-colors"
-                      title={t('wanted.unmonitorHint')}
-                    >
-                      {unmonitoringId === book.id ? '…' : t('common.unmonitor')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => searchBook(book)}
-                      disabled={searchingId === book.id}
-                      className="px-2 py-1 rounded text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 transition-colors"
-                    >
-                      {searchingId === book.id ? t('wanted.searching') : t('common.search')}
-                    </button>
+                    {/* actions */}
+                    <div className="flex items-center justify-end gap-1.5">
+                      {book.excluded && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                          {t('wanted.excluded')}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => unmonitor(book)}
+                        disabled={unmonitoringId === book.id}
+                        className="px-2 py-1 rounded text-xs font-medium bg-slate-200 dark:bg-zinc-800 hover:bg-amber-100 dark:hover:bg-amber-900/30 hover:text-amber-700 dark:hover:text-amber-400 text-slate-700 dark:text-zinc-300 disabled:opacity-50 transition-colors"
+                        title={t('wanted.unmonitorHint')}
+                      >
+                        {unmonitoringId === book.id ? '…' : t('common.unmonitor')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => searchBook(book)}
+                        disabled={searchingId === book.id}
+                        className="px-2 py-1 rounded text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 transition-colors"
+                      >
+                        {searchingId === book.id ? t('wanted.searching') : t('common.search')}
+                      </button>
+                    </div>
                   </div>
                 </div>
 

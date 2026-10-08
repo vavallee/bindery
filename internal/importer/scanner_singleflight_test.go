@@ -33,8 +33,8 @@ func singleFlightFixture(t *testing.T) (*Scanner, *db.SettingsRepo, context.Cont
 }
 
 // TestScanLibrary_SingleFlight is the regression test for #1460: a scan
-// request while another scan is in flight must be rejected (StartScan) or
-// skipped (ScanLibrary, the cron path), never run concurrently.
+// request while another scan is in flight must be queued behind it (StartScan,
+// #3014) or skipped (ScanLibrary, the cron path), never run concurrently.
 func TestScanLibrary_SingleFlight(t *testing.T) {
 	s, settings, ctx := singleFlightFixture(t)
 
@@ -43,9 +43,9 @@ func TestScanLibrary_SingleFlight(t *testing.T) {
 		t.Fatal("fresh scanner unexpectedly has scanRunning set")
 	}
 
-	// Manual path: a second StartScan must be rejected with the sentinel.
-	if err := s.StartScan(ctx); !errors.Is(err, ErrScanAlreadyRunning) {
-		t.Fatalf("StartScan during in-flight scan: got %v, want ErrScanAlreadyRunning", err)
+	// Manual path: a second StartScan must be queued, not started beside it.
+	if err := s.StartScan(ctx); !errors.Is(err, ErrScanQueued) {
+		t.Fatalf("StartScan during in-flight scan: got %v, want ErrScanQueued", err)
 	}
 
 	// Cron path: ScanLibrary must skip — it returns without scanning, so no
@@ -63,7 +63,7 @@ func TestScanLibrary_SingleFlight(t *testing.T) {
 
 	// Release the simulated scan; the guard must now admit a scan again and
 	// release itself on completion.
-	s.scanRunning.Store(false)
+	s.releaseScan()
 	if err := s.StartScan(ctx); err != nil {
 		t.Fatalf("StartScan after release: %v", err)
 	}

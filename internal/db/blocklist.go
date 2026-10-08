@@ -73,6 +73,20 @@ func (r *BlocklistRepo) IsBlocked(ctx context.Context, guid string) (bool, error
 	return count > 0, nil
 }
 
+// IsBlockedForBook reports whether a row for this GUID already exists under
+// this book (a nil bookID matches a row with no book). Writers use it to avoid
+// stacking duplicates; it is deliberately narrower than IsBlocked, because a
+// row filed under another book disappears with that book (DeleteByBookID) and
+// must not stand in for this one's.
+func (r *BlocklistRepo) IsBlockedForBook(ctx context.Context, guid string, bookID *int64) (bool, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM blocklist WHERE guid=? AND book_id IS ?", guid, bookID).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("check blocklist: %w", err)
+	}
+	return count > 0, nil
+}
+
 func (r *BlocklistRepo) DeleteByID(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx, "DELETE FROM blocklist WHERE id=?", id)
 	return err

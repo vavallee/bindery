@@ -74,6 +74,8 @@ vi.mock('react-i18next', () => ({
         'common.refresh': 'Refresh',
         'common.cancel': 'Cancel',
         'common.apply': 'Apply',
+        'series.addSeries': 'Add Series',
+        'series.nameModal.name': 'Name',
         'authors.bulkApplyMonitoringToExisting': 'Also apply to their existing books',
         'authors.bulkApplyMonitoringToExistingHint': 'Rewrites every book of the selected authors to match. Leave it off to change the authors only.',
         'bulkActionBar.clear': 'Clear',

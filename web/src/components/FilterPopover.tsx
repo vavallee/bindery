@@ -123,7 +123,7 @@ export default function FilterPopover({
         aria-controls={open ? panelId : undefined}
         aria-label={ariaLabel}
         onClick={() => setOpen(o => !o)}
-        className={`${btn.secondary} ${btnSize.sm}`}
+        className={`touch-target ${btn.secondary} ${btnSize.sm}`}
       >
         {label}
         {activeCount > 0 && (
@@ -137,7 +137,7 @@ export default function FilterPopover({
       {open && (
         <div
           id={panelId}
-          className="absolute left-0 top-full mt-1 z-20 min-w-[13rem] max-h-[70vh] overflow-y-auto rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-lg divide-y divide-slate-200 dark:divide-zinc-700"
+          className="absolute left-0 top-full mt-1 z-20 min-w-[13rem] max-h-[70dvh] overflow-y-auto rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-lg divide-y divide-slate-200 dark:divide-zinc-700"
         >
           {children}
         </div>

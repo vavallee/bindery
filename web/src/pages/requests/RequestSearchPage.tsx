@@ -8,6 +8,7 @@ export default function RequestSearchPage() {
   const navigate = useNavigate()
   return (
     <AddToLibraryModal
+      standalone
       onClose={() => navigate('/my-requests')}
       onAdded={() => navigate('/my-requests')}
       onRequested={() => navigate('/my-requests')}

@@ -1,0 +1,59 @@
+{
+  "authorityType": "PERSON",
+  "deleted": false,
+  "systemControlNumber": "10000001",
+  "marcdata": [
+    {
+      "tag": "040",
+      "ind1": " ",
+      "ind2": " ",
+      "subfields": [
+        {
+          "subcode": "a",
+          "value": "NO-TrBIB"
+        }
+      ]
+    },
+    {
+      "tag": "100",
+      "ind1": "1",
+      "ind2": " ",
+      "subfields": [
+        {
+          "subcode": "a",
+          "value": "Nordmann, Kari"
+        },
+        {
+          "subcode": "d",
+          "value": "1970-"
+        }
+      ]
+    },
+    {
+      "tag": "400",
+      "ind1": "1",
+      "ind2": " ",
+      "subfields": [
+        {
+          "subcode": "a",
+          "value": "Nordman, Kari"
+        }
+      ]
+    },
+    {
+      "tag": "400",
+      "ind1": "1",
+      "ind2": " ",
+      "subfields": [
+        {
+          "subcode": "a",
+          "value": "Нордманн, Кари"
+        },
+        {
+          "subcode": "d",
+          "value": "1970-"
+        }
+      ]
+    }
+  ]
+}

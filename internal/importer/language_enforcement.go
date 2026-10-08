@@ -126,7 +126,8 @@ type languageCheck struct {
 	// book language). Nil when any language is allowed.
 	allowed []string
 	// reject means no EPUB in the download is in an allowed language and at
-	// least one declares a language that is not: the wrong release.
+	// least one declares a language that is not: the wrong release. An
+	// undeclared EPUB beside it does not change that.
 	reject bool
 	// declared lists the disallowed languages found, for the log.
 	declared []string
@@ -166,11 +167,14 @@ func (lc languageCheck) relabelLanguage(meta EpubMetadata) string {
 // profile skips are skipped here too. An EPUB counts as allowed when ANY of its
 // declared languages is allowed (a bilingual edition, or a stray tag ahead of
 // the real one), as disallowed when it declares at least one specific language
-// and none is allowed, and as unknown when it declares no specific language.
-// The release is rejected only when some EPUB is disallowed and none is
-// allowed, the same shape as the format gate, which rejects only when every
-// file is disallowed. A release mixing allowed and disallowed EPUBs imports
-// the allowed ones and skips the rest.
+// and none is allowed, and as unknown when it declares no specific language
+// (none, "und", "mul"). The release is rejected only when some EPUB is
+// disallowed and none is allowed, the same shape as the format gate, which
+// rejects only when every file is disallowed. An unknown EPUB imports on its
+// own and beside an allowed one, but does not rescue a release that holds a
+// disallowed EPUB and no allowed one: it is most likely the same edition with
+// its metadata stripped. A release mixing allowed and disallowed EPUBs imports
+// the allowed and unknown ones and skips the rest.
 //
 // The allowed set is the profile's list (see importAllowedLanguages) plus,
 // when the user locked the book's language, that language. A lock is the user
@@ -206,6 +210,11 @@ func (s *Scanner) checkDownloadLanguage(ctx context.Context, book *models.Book, 
 		}
 		langs := definiteLanguages(meta.Languages)
 		if len(langs) == 0 {
+			// Undeclared or "und": imported when nothing in the release
+			// declares a disallowed language, or when something declares
+			// an allowed one. It does not on its own make a release with a
+			// disallowed file acceptable: beside a Swedish EPUB it is most
+			// likely the same edition with its metadata stripped.
 			continue
 		}
 		if slices.ContainsFunc(langs, lc.allows) {

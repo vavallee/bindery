@@ -141,7 +141,8 @@ export interface CalibreRollbackResult {
   dryRun: boolean
   status: string
   stats: CalibreRollbackStats
-  actions: CalibreRollbackAction[]
+  // null from servers before the empty slice fix, for a run with nothing to undo.
+  actions: CalibreRollbackAction[] | null
   filesOnDiskWarning?: string
   finishedAt: string
 }

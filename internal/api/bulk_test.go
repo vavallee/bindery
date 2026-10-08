@@ -1682,3 +1682,61 @@ func TestBulk_MixedOwnership_PartialEnforcement(t *testing.T) {
 		t.Error("Bob's author must be untouched (durable invariant)")
 	}
 }
+
+// TestBooksBulk_ExcludeExpectNoFiles is the stale page race from the #3004
+// review: the duplicate review loaded while both rows were empty, then one of
+// them was imported before the person clicked "exclude the empty rows". With
+// expectNoFiles the imported row is skipped and reported, never excluded;
+// without it the action keeps its old unconditional behaviour.
+func TestBooksBulk_ExcludeExpectNoFiles(t *testing.T) {
+	h, _, books, author, ctx := bulkFixture(t)
+	mk := func(fid, title string) *models.Book {
+		return mustCreateBook(t, books, ctx, &models.Book{
+			ForeignID: fid, AuthorID: author.ID, Title: title, SortTitle: title,
+			Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+		})
+	}
+	stillEmpty := mk("B_EMPTY", "Nightingale")
+	importedSince := mk("B_LATE", "Nightingale")
+	// The import lands after the page was rendered.
+	if err := books.AddBookFile(ctx, importedSince.ID, "ebook", "/library/Nightingale.epub"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postBulk(t, h.BooksBulk, fmt.Sprintf(`{"ids":[%d,%d],"action":"exclude","expectNoFiles":true}`, stillEmpty.ID, importedSince.ID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp bulkResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if r := resp.Results[fmt.Sprintf("%d", stillEmpty.ID)]; !r.OK {
+		t.Errorf("empty row: %+v, want ok", r)
+	}
+	if r := resp.Results[fmt.Sprintf("%d", importedSince.ID)]; r.OK || r.Code != bookHasFilesCode {
+		t.Errorf("imported row: %+v, want skipped with code %q", r, bookHasFilesCode)
+	}
+	excluded := func(id int64) bool {
+		b, err := books.GetByID(ctx, id)
+		if err != nil || b == nil {
+			t.Fatalf("get %d: %v", id, err)
+		}
+		return b.Excluded
+	}
+	if !excluded(stillEmpty.ID) {
+		t.Error("empty row was not excluded")
+	}
+	if excluded(importedSince.ID) {
+		t.Error("a row that has files was excluded on a stale page")
+	}
+
+	// Without the flag the action is unconditional, as before.
+	rec = postBulk(t, h.BooksBulk, fmt.Sprintf(`{"ids":[%d],"action":"exclude"}`, importedSince.ID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if !excluded(importedSince.ID) {
+		t.Error("plain bulk exclude no longer excludes")
+	}
+}

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useModal } from './useModal'
 
 interface Props {
   title: string
@@ -45,21 +46,21 @@ export default function ConfirmDialog({
   const [acknowledged, setAcknowledged] = useState(false)
   const needsAcknowledgement = acknowledgeLabel !== undefined
 
+  const { titleId, panelProps } = useModal({ onClose, canClose: !confirming })
+
   return (
     <div
-      className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"
+      className="modal-overlay fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"
       onClick={onClose}
     >
       <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirm-dialog-title"
+        {...panelProps}
         data-testid="confirm-dialog"
-        className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-md shadow-2xl max-h-[90vh] flex flex-col"
+        className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-md shadow-2xl modal-max-h flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
-          <h3 id="confirm-dialog-title" className="text-lg font-semibold text-slate-800 dark:text-zinc-200">{title}</h3>
+          <h3 id={titleId} className="text-lg font-semibold text-slate-800 dark:text-zinc-200">{title}</h3>
         </div>
         <div className="p-4 flex-1 overflow-y-auto space-y-4">
           <div className="text-sm text-slate-600 dark:text-zinc-400 leading-relaxed">{body}</div>

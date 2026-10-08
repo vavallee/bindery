@@ -140,7 +140,7 @@ export default function BlocklistTab() {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-400">
+                        <span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-700 dark:text-red-400">
                           {entry.reason || 'Unknown'}
                         </span>
                       </td>
@@ -186,12 +186,12 @@ export default function BlocklistTab() {
                     className="accent-emerald-500 mt-0.5 flex-shrink-0"
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm text-slate-800 dark:text-zinc-200 break-words">{entry.title}</p>
+                    <p className="text-sm text-slate-800 dark:text-zinc-200 [overflow-wrap:anywhere]">{entry.title}</p>
                     {entry.guid && (
                       <p className="text-[10px] text-slate-500 dark:text-zinc-600 mt-0.5 font-mono truncate">{entry.guid}</p>
                     )}
                     <div className="flex flex-wrap items-center gap-2 mt-2">
-                      <span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-400">
+                      <span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-700 dark:text-red-400">
                         {entry.reason || 'Unknown'}
                       </span>
                       <span className="text-[10px] text-slate-600 dark:text-zinc-500">{formatBlocklistDate(entry.createdAt)}</span>

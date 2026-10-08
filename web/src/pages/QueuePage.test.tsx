@@ -841,3 +841,59 @@ describe('MatchBookControl', () => {
     expect(screen.queryByLabelText('queue.matchBookSearch')).not.toBeInTheDocument()
   })
 })
+
+// Phone layout. jsdom does no layout, so these check the classes that decide
+// it: below sm the actions take a full line under the content instead of a
+// column beside it, and the open picker is as wide as that line.
+describe('QueuePage on a phone', () => {
+  const failed = () => makeQueueItem({
+    id: 21,
+    title: 'A.Very.Long.Release.Name.With.No.Spaces.2026.EPUB',
+    status: 'importFailed',
+    errorMessage: 'could not match any book to this download',
+    addedAt: '2026-05-01T12:00:00Z',
+  })
+
+  it('puts the row actions on their own full width line below sm', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [failed()] })
+    renderQueuePage()
+    await screen.findByText('A.Very.Long.Release.Name.With.No.Spaces.2026.EPUB')
+    const actions = screen.getByTestId('queue-row-actions')
+    expect(actions).toHaveClass('basis-full', 'flex-wrap', 'sm:basis-auto', 'sm:flex-shrink-0')
+    expect(actions).not.toHaveClass('flex-shrink-0')
+    expect(actions.parentElement).toHaveClass('flex-wrap', 'sm:flex-nowrap')
+  })
+
+  it('opens the match picker at the full width of the row below sm', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [failed()] })
+    renderQueuePage()
+    await screen.findByText('A.Very.Long.Release.Name.With.No.Spaces.2026.EPUB')
+    fireEvent.click(screen.getByText('queue.matchBook'))
+    const input = screen.getByLabelText('queue.matchBookSearch')
+    expect(input).toHaveClass('min-w-0')
+    expect(input.parentElement?.parentElement).toHaveClass('w-full', 'sm:w-64')
+  })
+
+  it('wraps the full release name below sm instead of cutting it off', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [failed()] })
+    renderQueuePage()
+    const title = await screen.findByText('A.Very.Long.Release.Name.With.No.Spaces.2026.EPUB')
+    expect(title).toHaveClass('[overflow-wrap:anywhere]', 'sm:truncate')
+    expect(title).not.toHaveClass('truncate')
+  })
+
+  it('shows the exact time when the relative time is tapped', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [failed()] })
+    renderQueuePage()
+    await screen.findByText('A.Very.Long.Release.Name.With.No.Spaces.2026.EPUB')
+    const exact = new Date('2026-05-01T12:00:00Z').toUTCString()
+    const time = screen.getByRole('button', { name: /ago$/ })
+    expect(time).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText(`(${exact})`)).not.toBeInTheDocument()
+    fireEvent.click(time)
+    expect(time).toHaveAttribute('aria-expanded', 'true')
+    expect(time).toHaveTextContent(exact)
+    fireEvent.click(time)
+    expect(time).not.toHaveTextContent(exact)
+  })
+})

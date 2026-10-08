@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { act, render, screen } from '@testing-library/react'
 import { CalibreSyncModal } from './CalibreTab'
 import type { CalibreSyncProgress } from '../../api/client'
+import i18n from '../../i18n'
 
 function progress(over: Partial<CalibreSyncProgress> = {}): CalibreSyncProgress {
   return {
@@ -61,5 +62,31 @@ describe('CalibreSyncModal', () => {
     render(<CalibreSyncModal progress={progress()} error={null} onClose={vi.fn()} />)
     expect(screen.getByTestId('calibre-sync-skipped')).toHaveTextContent('0')
     expect(screen.queryByTestId('calibre-sync-skip-table')).toBeNull()
+  })
+})
+
+// "Push all to Calibre" and the modal's labels were hardcoded English.
+describe('CalibreSyncModal translations', () => {
+  afterEach(async () => {
+    await act(async () => { await i18n.changeLanguage('en') })
+  })
+
+  it('renders the English strings from en.json', () => {
+    render(<CalibreSyncModal progress={progress({ stats: { total: 4, processed: 4, pushed: 1, alreadyInCalibre: 2, failed: 0, skipped: 1 } })} error={null} onClose={vi.fn()} />)
+    expect(screen.getByRole('heading', { name: 'Push all to Calibre' })).toBeInTheDocument()
+    expect(screen.getByText('Done. Pushed 1, already in Calibre 2, failed 0, skipped 1.')).toBeInTheDocument()
+    // The header X and the footer button both read Close once it is done.
+    expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(2)
+  })
+
+  it('follows the active locale', async () => {
+    i18n.addResourceBundle('fr', 'translation', {
+      settings: { calibre: { pushAll: { label: 'Tout envoyer vers Calibre', pushed: 'Envoyés', close: 'Fermer' } } },
+    }, true, true)
+    await act(async () => { await i18n.changeLanguage('fr') })
+    render(<CalibreSyncModal progress={progress()} error={null} onClose={vi.fn()} />)
+    expect(screen.getByRole('heading', { name: 'Tout envoyer vers Calibre' })).toBeInTheDocument()
+    expect(screen.getByText('Envoyés')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Fermer' })).toHaveLength(2)
   })
 })

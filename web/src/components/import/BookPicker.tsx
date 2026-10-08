@@ -48,6 +48,7 @@ const BookPicker = forwardRef<HTMLInputElement, Props>(function BookPicker({ onP
     <div className="rounded border border-slate-200 dark:border-zinc-800 p-2">
       <div className="flex gap-2">
         <input
+          enterKeyHint="search"
           ref={ref}
           type="text"
           value={term}
@@ -67,7 +68,7 @@ const BookPicker = forwardRef<HTMLInputElement, Props>(function BookPicker({ onP
         )}
       </div>
       <div className="mt-2 max-h-48 overflow-y-auto divide-y divide-slate-100 dark:divide-zinc-800">
-        {loading && <p className="py-2 text-xs text-slate-500 dark:text-zinc-500">{t('common.loading', 'Loading...')}</p>}
+        {loading && <p className="py-2 text-xs text-slate-500 dark:text-zinc-500">{t('common.loading', 'Loading…')}</p>}
         {!loading && term.trim().length >= 2 && results.length === 0 && (
           <p className="py-2 text-xs text-slate-500 dark:text-zinc-500">
             {t('manualImport.noResults', 'No matching books in your library.')}

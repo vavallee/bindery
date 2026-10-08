@@ -14,6 +14,10 @@ interface AuthContextValue {
   // A requester browses a read only library and asks for books; every other
   // screen is closed to them server side, so the UI does not offer it.
   isRequester: boolean
+  // statusError is true when the last status check failed (a server error
+  // or no answer). The previous status is kept: a failed check is not a
+  // logout, and only an answer of authenticated=false (or a 401) signs out.
+  statusError: boolean
   refresh: () => Promise<void>
   logout: () => Promise<void>
 }
@@ -27,11 +31,13 @@ function parseRole(role: string | undefined): UserRole | null {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus | null>(null)
   const [loading, setLoading] = useState(true)
+  const [statusError, setStatusError] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
       const s = await api.authStatus()
       setStatus(s)
+      setStatusError(false)
       // Re-hydrate CSRF token after page reload: authLogin() calls initCSRF,
       // but a subsequent reload keeps the session cookie without the token
       // in JS memory, so mutating requests would 403 until the next login.
@@ -39,7 +45,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await initCSRF()
       }
     } catch {
-      setStatus(null)
+      // Keep whatever status we had. Clearing it here sent a signed in user
+      // to the login page whenever one status check failed: a server error,
+      // a dropped connection, or a request the browser aborted. A real
+      // logout arrives as authenticated=false or a 401, which request()
+      // already turns into a redirect.
+      setStatusError(true)
     } finally {
       setLoading(false)
     }
@@ -64,7 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isRequester = role === 'requester'
 
   return (
-    <AuthContext.Provider value={{ status, loading, isAdmin, role, isRequester, refresh, logout }}>
+    <AuthContext.Provider value={{ status, loading, isAdmin, role, isRequester, statusError, refresh, logout }}>
       {children}
     </AuthContext.Provider>
   )

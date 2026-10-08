@@ -5,12 +5,14 @@ import { api, Book, PendingRelease, QueueItem } from '../api/client'
 import BookAuthorLink from '../components/BookAuthorLink'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
+import TapToReveal from '../components/TapToReveal'
 import { usePagination } from '../components/usePagination'
 import { usePolling } from '../components/usePolling'
 import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
 import { btn, btnSize } from '../components/buttons'
 import { formatBytes } from '../util/format'
 import { downloadStatusBadge, isFailed, isMatchable, isResendable, isRetryable } from '../components/downloadStatus'
+import { ModalPanel } from '../components/useModal'
 
 export default function QueuePage() {
   const { t } = useTranslation()
@@ -408,7 +410,7 @@ export default function QueuePage() {
                       <button
                         onClick={retryAllFailed}
                         disabled={bulkBusy}
-                        className="px-2.5 py-1 text-xs rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-medium"
+                        className="touch-target px-2.5 py-1 text-xs rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-medium"
                       >
                         {t('queue.retryAllFailed', 'Retry all failed')}
                       </button>
@@ -416,7 +418,7 @@ export default function QueuePage() {
                     <button
                       onClick={clearAllFailed}
                       disabled={bulkBusy}
-                      className="px-2.5 py-1 text-xs rounded border border-red-300 dark:border-red-900 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50 font-medium"
+                      className="touch-target px-2.5 py-1 text-xs rounded border border-red-300 dark:border-red-900 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50 font-medium"
                     >
                       {t('queue.clearAllFailed', 'Clear all failed')}
                     </button>
@@ -491,7 +493,7 @@ export default function QueuePage() {
                 </div>
               )}
               {queuePage.map(item => (
-                <div key={item.id} className={`flex items-center justify-between p-3 border rounded-lg bg-slate-100 dark:bg-zinc-900 ${selectedIds.has(item.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800'}`}>
+                <div key={item.id} className={`flex flex-wrap sm:flex-nowrap items-center justify-between p-3 border rounded-lg bg-slate-100 dark:bg-zinc-900 ${selectedIds.has(item.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800'}`}>
                   <input
                     type="checkbox"
                     checked={selectedIds.has(item.id)}
@@ -500,9 +502,12 @@ export default function QueuePage() {
                     className="mr-3 shrink-0 rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
                   />
                   <div className="min-w-0 flex-1">
-                    <h3 className="font-medium text-sm truncate">{item.title}</h3>
+                    <h3 className="font-medium text-sm [overflow-wrap:anywhere] sm:truncate">{item.title}</h3>
                     <BookAuthorLink book={item.book} />
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
+                    {/* The time toggle in this row is 16px tall with a 44px
+                        hit area on touch. The margin keeps that hit area off
+                        the author link above and the hints below. */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs pointer-coarse:my-3.5 pointer-coarse:gap-y-5">
                       <DownloadStatusChip status={item.status} />
                       <span className="text-slate-600 dark:text-zinc-500">{formatBytes(item.size)}</span>
                       {item.percentage && (
@@ -517,9 +522,11 @@ export default function QueuePage() {
                       {(() => {
                         const ts = getContextualTimestamp(item)
                         return ts ? (
-                          <span className="text-slate-500 dark:text-zinc-600" title={ts.absolute}>
-                            {ts.label}
-                          </span>
+                          <TapToReveal
+                            label={ts.label}
+                            detail={ts.absolute}
+                            className="touch-target text-slate-500 dark:text-zinc-600"
+                          />
                         ) : null
                       })()}
                     </div>
@@ -591,7 +598,14 @@ export default function QueuePage() {
                       </div>
                     )}
                   </div>
-                  <div className="ml-4 flex flex-col sm:flex-row items-end sm:items-center gap-2 flex-shrink-0">
+                  {/* Below sm the actions take a full line under the content:
+                      beside it the open Match picker squeezed the error text
+                      to one character per line on a 320px phone and pushed
+                      Search off screen. min-w-0 here and on the picker: as
+                      flex items both took the search input's intrinsic width
+                      (418px at the 16px touch font) as their minimum, which
+                      made a 320px page 526px wide. */}
+                  <div data-testid="queue-row-actions" className="basis-full min-w-0 mt-2 flex flex-wrap justify-end items-center gap-2 sm:basis-auto sm:mt-0 sm:ml-4 sm:flex-nowrap sm:flex-shrink-0">
                     {isMatchable(item.status) && (
                       <MatchBookControl
                         disabled={retryingImportIds.has(item.id)}
@@ -645,7 +659,7 @@ export default function QueuePage() {
                 {pending.map(item => (
                   <div key={item.id} className="flex items-center justify-between p-4 border border-amber-200 dark:border-amber-900/40 rounded-lg bg-amber-50 dark:bg-amber-950/20">
                     <div className="min-w-0 flex-1">
-                      <h3 className="font-medium text-sm truncate">{item.title}</h3>
+                      <h3 className="font-medium text-sm [overflow-wrap:anywhere] sm:truncate">{item.title}</h3>
                       <BookAuthorLink book={item.book} />
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
                         <span className="text-amber-600 dark:text-amber-400">{item.reason}</span>
@@ -683,14 +697,17 @@ export default function QueuePage() {
 
       {deleteTarget && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          className="modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           onClick={closeDeleteDialog}
         >
-          <div
-            className="w-full max-w-md rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 shadow-xl"
+          <ModalPanel
+            onClose={closeDeleteDialog}
+            canClose={!deleting}
+            labelledBy="queue-remove-title"
+            className="w-full max-w-md rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 shadow-xl modal-max-h overflow-y-auto"
             onClick={e => e.stopPropagation()}
           >
-            <h3 className="text-lg font-semibold mb-2">{t('queue.removeTitle')}</h3>
+            <h3 id="queue-remove-title" className="text-lg font-semibold mb-2">{t('queue.removeTitle')}</h3>
             <p className="text-sm text-slate-600 dark:text-zinc-400 break-words">
               {t('queue.removeBody', { title: deleteTarget.title })}
             </p>
@@ -724,7 +741,7 @@ export default function QueuePage() {
                 {t('queue.removeConfirm')}
               </button>
             </div>
-          </div>
+          </ModalPanel>
         </div>
       )}
     </div>
@@ -801,11 +818,12 @@ export function MatchBookControl({ disabled, onMatch, alreadyMatched = false }: 
   }
 
   return (
-    <div className="w-64 p-2 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded space-y-1">
+    <div className="w-full min-w-0 sm:w-64 p-2 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded space-y-1">
       <div className="flex gap-1">
         <input
+          enterKeyHint="search"
           autoFocus
-          className="flex-1 px-2 py-1 text-xs rounded border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-900"
+          className="flex-1 min-w-0 px-2 py-1 text-xs rounded border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-900"
           placeholder={t('queue.matchBookPlaceholder', 'Search your library')}
           value={query}
           onChange={e => setQuery(e.target.value)}

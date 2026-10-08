@@ -91,6 +91,16 @@ describe('LoginPage', () => {
     expect(loginHit).toBe(false)
   })
 
+  it('keeps the phone keyboard from capitalising or correcting the username', () => {
+    renderLoginPage()
+
+    const username = document.getElementById('username')
+    expect(username).toHaveAttribute('autocomplete', 'username')
+    expect(username).toHaveAttribute('autocapitalize', 'none')
+    expect(username).toHaveAttribute('autocorrect', 'off')
+    expect(username).toHaveAttribute('spellcheck', 'false')
+  })
+
   it('does not render the login form for an authenticated session', () => {
     authState.status = makeAuthStatus({ authenticated: true, username: 'alice', role: 'admin' })
 

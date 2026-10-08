@@ -69,6 +69,13 @@ func TestNormalizeLanguageCode(t *testing.T) {
 		{"nno", "nor"},
 		{"nb", "nor"},
 		{"nn-NO", "nor"},
+		// Withdrawn ISO 639-1 codes older EPUB tools still write, folded
+		// onto the current ones rather than passed through raw.
+		{"iw", "heb"},
+		{"iw-IL", "heb"},
+		{"in", "ind"},
+		{"IN_id", "ind"},
+		{"ji", "yid"},
 		// A language written out as a word, which is how Audible and Audnex
 		// report it and how release names carry it.
 		{"German", "ger"},

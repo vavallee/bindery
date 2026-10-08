@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -38,11 +41,12 @@ type dupCandResponse struct {
 }
 
 type dupCandFixture struct {
-	ctx     context.Context
-	authors *db.AuthorRepo
-	books   *db.BookRepo
-	series  *db.SeriesRepo
-	handler *AuthorHandler
+	ctx      context.Context
+	database *sql.DB
+	authors  *db.AuthorRepo
+	books    *db.BookRepo
+	series   *db.SeriesRepo
+	handler  *AuthorHandler
 }
 
 func newDupCandFixture(t *testing.T) (*dupCandFixture, *models.Author) {
@@ -58,11 +62,12 @@ func newDupCandFixture(t *testing.T) (*dupCandFixture, *models.Author) {
 	books := db.NewBookRepo(database)
 	series := db.NewSeriesRepo(database)
 	f := &dupCandFixture{
-		ctx:     ctx,
-		authors: authors,
-		books:   books,
-		series:  series,
-		handler: NewAuthorHandler(authors, nil, books, series, nil, nil, nil, nil),
+		ctx:      ctx,
+		database: database,
+		authors:  authors,
+		books:    books,
+		series:   series,
+		handler:  NewAuthorHandler(authors, nil, books, series, nil, nil, nil, nil),
 	}
 	author := &models.Author{Name: "Andy Weir", SortName: "Weir, Andy", Monitored: true}
 	if err := authors.Create(ctx, author); err != nil {
@@ -442,4 +447,136 @@ func rulesByID(books []dupCandBook, id int64) []string {
 		}
 	}
 	return nil
+}
+
+// dupEvidenceGroup decodes the #2999 review annotations.
+type dupEvidenceGroup struct {
+	Key                 string  `json:"key"`
+	AuthorID            int64   `json:"authorId"`
+	AuthorName          string  `json:"authorName"`
+	Conflict            bool    `json:"conflict"`
+	KeeperID            int64   `json:"keeperId"`
+	SuggestedExcludeIDs []int64 `json:"suggestedExcludeIds"`
+	Signals             []struct {
+		Kind     string   `json:"kind"`
+		Conflict bool     `json:"conflict"`
+		BookIDs  []int64  `json:"bookIds"`
+		Values   []string `json:"values"`
+	} `json:"signals"`
+	Books []struct {
+		ID          int64  `json:"id"`
+		Status      string `json:"status"`
+		Excluded    bool   `json:"excluded"`
+		Description string `json:"description"`
+		HasFiles    bool   `json:"hasFiles"`
+		Evidence    struct {
+			Files []struct {
+				Kind   string `json:"kind"`
+				Format string `json:"format"`
+			} `json:"files"`
+			ISBNs  []string `json:"isbns"`
+			ASINs  []string `json:"asins"`
+			Series []struct {
+				Title    string `json:"title"`
+				Position string `json:"position"`
+			} `json:"series"`
+			Year int `json:"year"`
+		} `json:"evidence"`
+	} `json:"books"`
+}
+
+// addFile records a real on-disk file for the book, the way an import does.
+func (f *dupCandFixture) addFile(t *testing.T, bookID int64, format, name string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.books.AddBookFile(f.ctx, bookID, format, path); err != nil {
+		t.Fatalf("add file: %v", err)
+	}
+}
+
+// addEdition stores an edition carrying an ISBN for the book.
+func (f *dupCandFixture) addEdition(t *testing.T, bookID int64, foreignID, isbn13, isbn10 string) {
+	t.Helper()
+	e := &models.Edition{ForeignID: foreignID, BookID: bookID, Title: "edition", Monitored: true}
+	if isbn13 != "" {
+		e.ISBN13 = &isbn13
+	}
+	if isbn10 != "" {
+		e.ISBN10 = &isbn10
+	}
+	if err := db.NewEditionRepo(f.database).Upsert(f.ctx, e); err != nil {
+		t.Fatalf("add edition: %v", err)
+	}
+}
+
+// TestDuplicateCandidates_Evidence is the per-author half of #2999: each row
+// says which one has files and what identifies it, and the group says whether
+// the rows agree, with the row that has files as the keeper.
+func TestDuplicateCandidates_Evidence(t *testing.T) {
+	f, author := newDupCandFixture(t)
+	empty := f.addBook(t, author.ID, "Nightingale", "OL7001W", false)
+	owned := f.addBook(t, author.ID, "The Nightingale", "OL7002W", false)
+	f.addFile(t, owned.ID, "ebook", "The Nightingale.epub")
+	f.addEdition(t, owned.ID, "OL7002M", "9780553418026", "")
+	f.addEdition(t, empty.ID, "OL7001M", "", "0553418025")
+	f.linkSeries(t, "OLS7S", "Standalones", owned.ID, "1")
+	f.linkSeries(t, "OLS7S", "Standalones", empty.ID, "1")
+
+	rec := f.get(t, author.ID, 0)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Groups []dupEvidenceGroup `json:"groups"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Groups) != 1 {
+		t.Fatalf("groups = %d, want 1", len(resp.Groups))
+	}
+	g := resp.Groups[0]
+	if g.AuthorID != author.ID || g.AuthorName != "Andy Weir" {
+		t.Errorf("group author = %d %q", g.AuthorID, g.AuthorName)
+	}
+	if g.KeeperID != owned.ID {
+		t.Errorf("keeperId = %d, want %d (the row with the file)", g.KeeperID, owned.ID)
+	}
+	if !slices.Equal(g.SuggestedExcludeIDs, []int64{empty.ID}) {
+		t.Errorf("suggestedExcludeIds = %v, want [%d]", g.SuggestedExcludeIDs, empty.ID)
+	}
+	if g.Conflict {
+		t.Error("conflict = true for agreeing rows")
+	}
+	kinds := map[string]bool{}
+	for _, s := range g.Signals {
+		kinds[s.Kind] = true
+	}
+	if !kinds["shared-isbn"] || !kinds["same-series-position"] {
+		t.Errorf("signals = %+v, want shared-isbn (ISBN-10 vs ISBN-13 of one edition) and same-series-position", g.Signals)
+	}
+	for _, b := range g.Books {
+		switch b.ID {
+		case owned.ID:
+			if !b.HasFiles || len(b.Evidence.Files) != 1 || b.Evidence.Files[0].Format != "epub" {
+				t.Errorf("owned row evidence = %+v", b.Evidence)
+			}
+			if b.Status != models.BookStatusImported {
+				t.Errorf("owned row status = %q, want imported", b.Status)
+			}
+		case empty.ID:
+			if b.HasFiles || len(b.Evidence.Files) != 0 {
+				t.Errorf("empty row reports files: %+v", b.Evidence)
+			}
+			if !slices.Equal(b.Evidence.ISBNs, []string{"9780553418026"}) {
+				t.Errorf("empty row isbns = %v, want the ISBN-10 as ISBN-13", b.Evidence.ISBNs)
+			}
+			if len(b.Evidence.Series) != 1 || b.Evidence.Series[0].Position != "1" {
+				t.Errorf("empty row series = %+v", b.Evidence.Series)
+			}
+		}
+	}
 }

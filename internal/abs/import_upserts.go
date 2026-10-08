@@ -2,6 +2,7 @@ package abs
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -319,7 +320,7 @@ func (i *Importer) resolveManualAuthor(ctx context.Context, cfg ImportConfig, ru
 		Monitored: true,
 		// Import-created authors start with a partial catalogue (#1348).
 		MonitorNewItems:  models.AuthorMonitorNewItemsNone,
-		MetadataProvider: "openlibrary",
+		MetadataProvider: models.AuthorProviderFromForeignID(foreignID),
 	}
 	if i.meta != nil && !cfg.DryRun {
 		if full, err := i.meta.GetAuthor(ctx, foreignID); err == nil && full != nil {
@@ -336,7 +337,7 @@ func (i *Importer) resolveManualAuthor(ctx context.Context, cfg ImportConfig, ru
 			// import-created policy (#1348).
 			author.MonitorNewItems = models.AuthorMonitorNewItemsNone
 			if author.MetadataProvider == "" {
-				author.MetadataProvider = "openlibrary"
+				author.MetadataProvider = models.AuthorProviderFromForeignID(foreignID)
 			}
 		} else if err != nil {
 			slog.Warn("abs import: manual author metadata fetch failed", "foreignID", foreignID, "error", err)
@@ -399,41 +400,104 @@ func (i *Importer) enrichAuthor(ctx context.Context, cfg ImportConfig, item Norm
 	if full == nil {
 		return metadataMergeResult{}, nil
 	}
+	return i.mergeUpstreamAuthor(ctx, cfg, item, author, full, matcher)
+}
+
+// mergeUpstreamAuthor merges an upstream author record onto author and writes
+// it, under the same rules as mergeUpstreamBook (#2926): the write is guarded
+// on author's updated_at, a lost guard merges the record already in hand once
+// more onto a fresh read, and a second loss drops the merge for this import.
+// The variant alias, the identifier and the conflict rows are recorded only
+// for a merge that was written, or that needed no write.
+func (i *Importer) mergeUpstreamAuthor(ctx context.Context, cfg ImportConfig, item NormalizedLibraryItem, author *models.Author, full *models.Author, matcher *authorMatcher) (metadataMergeResult, error) {
+	if author.UpdatedAtRaw == "" {
+		if err := i.reloadAuthor(ctx, author); err != nil {
+			return mergeReloadFailed(entityTypeAuthor, author.ID, err)
+		}
+	}
+	for attempt := 1; ; attempt++ {
+		merged := *author
+		plan, err := i.planUpstreamAuthorMerge(ctx, cfg, item, &merged, full, matcher)
+		if err != nil {
+			return metadataMergeResult{}, err
+		}
+		if plan.write {
+			now := time.Now().UTC()
+			merged.LastMetadataRefreshAt = &now
+			written, err := i.authors.UpdateIfUnchanged(ctx, &merged, author.UpdatedAtRaw)
+			if err != nil {
+				return metadataMergeResult{}, err
+			}
+			if !written {
+				if err := i.reloadAuthor(ctx, author); err != nil {
+					return mergeReloadFailed(entityTypeAuthor, author.ID, err)
+				}
+				if attempt < 2 {
+					continue
+				}
+				slog.Info("abs import: upstream author merge skipped, the author kept changing during the import; the next import retries it",
+					"authorId", author.ID, "author", author.Name, "upstreamForeignId", full.ForeignID)
+				return metadataMergeResult{Messages: []string{
+					"author metadata merge skipped: the author changed while this import was running, the next import retries it",
+				}}, nil
+			}
+			*author = merged
+		}
+		if err := i.recordAuthorMergeBookkeeping(ctx, cfg, author.ID, plan, matcher); err != nil {
+			return metadataMergeResult{}, err
+		}
+		if plan.write {
+			matcher.addAuthor(author)
+		}
+		return plan.result, nil
+	}
+}
+
+// authorMergePlan is one attempt of mergeUpstreamAuthor.
+type authorMergePlan struct {
+	result metadataMergeResult
+	write  bool
+	// aliasName is the local name a rename replaces, kept as a variant alias.
+	aliasName string
+	// identifier is an upstream id to attach without relinking, for an
+	// author whose identity is not replaceable.
+	identifier string
+	conflicts  []*models.ABSMetadataConflict
+}
+
+// planUpstreamAuthorMerge applies full onto author in memory. It reads the
+// database but writes nothing.
+func (i *Importer) planUpstreamAuthorMerge(ctx context.Context, cfg ImportConfig, item NormalizedLibraryItem, author *models.Author, full *models.Author, matcher *authorMatcher) (authorMergePlan, error) {
+	// Checked on every attempt: an edit that renamed the author may mean the
+	// ABS name no longer belongs to it.
 	matches, err := matcher.authorMatchesABSName(ctx, author, item.Authors[0].Name)
 	if err != nil {
-		return metadataMergeResult{}, err
+		return authorMergePlan{}, err
 	}
 	if !matches {
-		return metadataMergeResult{Messages: []string{"author relink skipped: ABS author no longer matches local author"}}, nil
+		return authorMergePlan{result: metadataMergeResult{Messages: []string{"author relink skipped: ABS author no longer matches local author"}}}, nil
 	}
 
-	result := metadataMergeResult{Matched: 1}
+	plan := authorMergePlan{result: metadataMergeResult{Matched: 1}}
 	changed := false
 	if name := strings.TrimSpace(full.Name); name != "" && strings.TrimSpace(author.Name) != name {
-		oldName := author.Name
+		plan.aliasName = author.Name
 		author.Name = name
 		if full.SortName != "" {
 			author.SortName = full.SortName
-		}
-		if !cfg.DryRun {
-			i.recordAuthorVariantAlias(ctx, author.ID, oldName, matcher)
 		}
 		changed = true
 	}
 	if full.ForeignID != "" && author.ForeignID != full.ForeignID {
 		existing, err := i.authors.GetByAnyForeignID(ctx, full.ForeignID)
 		if err != nil {
-			return metadataMergeResult{}, err
+			return authorMergePlan{}, err
 		}
 		if existing != nil && existing.ID != author.ID {
-			result.Messages = append(result.Messages, "author relink skipped: upstream author already exists locally")
+			plan.result.Messages = append(plan.result.Messages, "author relink skipped: upstream author already exists locally")
 		} else if !models.CanReplaceAuthorIdentity(author) {
-			if !cfg.DryRun {
-				if err := i.authors.UpsertAuthorIdentifier(ctx, author.ID, full.ForeignID); err != nil {
-					return metadataMergeResult{}, err
-				}
-			}
-			result.Messages = append(result.Messages, "author relink skipped: existing metadata identity is not replaceable")
+			plan.identifier = full.ForeignID
+			plan.result.Messages = append(plan.result.Messages, "author relink skipped: existing metadata identity is not replaceable")
 		} else {
 			author.ForeignID = full.ForeignID
 			if full.MetadataProvider != "" {
@@ -441,37 +505,85 @@ func (i *Importer) enrichAuthor(ctx context.Context, cfg ImportConfig, item Norm
 			} else {
 				author.MetadataProvider = models.AuthorProviderFromForeignID(full.ForeignID)
 			}
-			result.Relinked++
+			plan.result.Relinked++
 			changed = true
 		}
 	}
 	for _, field := range authorConflictFields {
-		fieldResult, fieldChanged, err := i.applyConflictField(ctx, cfg, item, entityTypeAuthor, author.ID, field,
+		fieldResult, fieldChanged, conflict, err := i.planConflictField(ctx, cfg, item, entityTypeAuthor, author.ID, field,
 			SerializeAuthorConflictValue(author, field),
 			SerializeAuthorConflictValue(full, field),
 			func(value string) error { return ApplyAuthorConflictValue(author, field, value) },
 			func() string { return SerializeAuthorConflictValue(author, field) },
 		)
 		if err != nil {
-			return metadataMergeResult{}, err
+			return authorMergePlan{}, err
 		}
-		result.Matched += fieldResult.Matched
-		result.Relinked += fieldResult.Relinked
-		result.Conflicts += fieldResult.Conflicts
-		result.AutoResolved += fieldResult.AutoResolved
-		result.Messages = append(result.Messages, fieldResult.Messages...)
+		plan.result.Matched += fieldResult.Matched
+		plan.result.Relinked += fieldResult.Relinked
+		plan.result.Conflicts += fieldResult.Conflicts
+		plan.result.AutoResolved += fieldResult.AutoResolved
+		plan.result.Messages = append(plan.result.Messages, fieldResult.Messages...)
+		if conflict != nil {
+			plan.conflicts = append(plan.conflicts, conflict)
+		}
 		changed = changed || fieldChanged
 	}
-	if !changed && result.Conflicts == 0 && result.AutoResolved == 0 && result.Relinked == 0 {
-		return result, nil
+	r := plan.result
+	plan.write = changed || r.Conflicts != 0 || r.AutoResolved != 0 || r.Relinked != 0
+	return plan, nil
+}
+
+// recordAuthorMergeBookkeeping writes what an author merge records beside the
+// author row, once that row is written. Failures are handled as before the
+// split: a failed alias is logged, a failed identifier or conflict write
+// fails the merge.
+func (i *Importer) recordAuthorMergeBookkeeping(ctx context.Context, cfg ImportConfig, authorID int64, plan authorMergePlan, matcher *authorMatcher) error {
+	if plan.aliasName != "" && !cfg.DryRun {
+		i.recordAuthorVariantAlias(ctx, authorID, plan.aliasName, matcher)
 	}
-	now := time.Now().UTC()
-	author.LastMetadataRefreshAt = &now
-	if err := i.authors.Update(ctx, author); err != nil {
+	if plan.identifier != "" && !cfg.DryRun {
+		if err := i.authors.UpsertAuthorIdentifier(ctx, authorID, plan.identifier); err != nil {
+			return err
+		}
+	}
+	for _, conflict := range plan.conflicts {
+		if err := i.conflicts.Upsert(ctx, conflict); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mergeReloadFailed handles a failed re-read during a guarded merge. A row
+// deleted while the upstream lookup ran is not an import failure: the merge
+// has nothing left to apply to, so it is skipped. Anything else is an error.
+func mergeReloadFailed(entityType string, id int64, err error) (metadataMergeResult, error) {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return metadataMergeResult{}, err
 	}
-	matcher.addAuthor(author)
-	return result, nil
+	slog.Info("abs import: upstream metadata merge skipped, the row was deleted during the import",
+		"entity", entityType, "id", id)
+	return metadataMergeResult{Messages: []string{
+		entityType + " metadata merge skipped: it was deleted while this import was running",
+	}}, nil
+}
+
+// reloadAuthor replaces author with the stored row, keeping the transport
+// only provider identifiers while the identity is unchanged.
+func (i *Importer) reloadAuthor(ctx context.Context, author *models.Author) error {
+	current, err := i.authors.GetByID(ctx, author.ID)
+	if err != nil {
+		return fmt.Errorf("reload author %d: %w", author.ID, err)
+	}
+	if current == nil {
+		return fmt.Errorf("reload author %d: %w", author.ID, sql.ErrNoRows)
+	}
+	if current.ForeignID == author.ForeignID {
+		current.ProviderIdentifiers = author.ProviderIdentifiers
+	}
+	*author = *current
+	return nil
 }
 
 func (i *Importer) enrichBook(ctx context.Context, cfg ImportConfig, item NormalizedLibraryItem, author *models.Author, book *models.Book) (metadataMergeResult, error) {
@@ -506,74 +618,157 @@ func (i *Importer) enrichBook(ctx context.Context, cfg ImportConfig, item Normal
 	return i.mergeUpstreamBook(ctx, cfg, item, book, full, matchedBy)
 }
 
+// mergeUpstreamBook merges an upstream record onto book and writes it.
+//
+// full was fetched after book was read, so the write is guarded on book's
+// updated_at: an edit saved during the lookup must not be undone by writing
+// back the older row (#2926). On a lost guard the same upstream record is
+// merged once more onto a fresh read, since it is already in hand. If that
+// loses too the merge is dropped for this import and the next one retries it.
+// The conflict rows are recorded only for a merge that was written, so they
+// always describe the stored row; the ABS id a relink replaces is kept first.
+// Either way book ends up holding the stored row, which the rest of the
+// import works from.
 func (i *Importer) mergeUpstreamBook(ctx context.Context, cfg ImportConfig, item NormalizedLibraryItem, book *models.Book, full *models.Book, matchedBy string) (metadataMergeResult, error) {
 	if book == nil || full == nil {
 		return metadataMergeResult{}, nil
 	}
-	result := metadataMergeResult{Matched: 1}
+	if book.UpdatedAtRaw == "" {
+		if err := i.books.ReloadHydratedBook(ctx, book); err != nil {
+			return mergeReloadFailed(entityTypeBook, book.ID, err)
+		}
+	}
+	for attempt := 1; ; attempt++ {
+		merged := *book
+		plan, err := i.planUpstreamBookMerge(ctx, cfg, item, &merged, full, matchedBy)
+		if err != nil {
+			return metadataMergeResult{}, err
+		}
+		if plan.write {
+			// The ABS id goes into the identity table before the relink
+			// overwrites foreign_id, not after: a crash between the two must
+			// not leave a row that no lookup can find by its ABS key (#1691).
+			// If the write then loses, the identifier still names this row's
+			// current id, so it is harmless.
+			i.preserveRelinkedBookIdentifier(ctx, book.ID, plan.previousForeignID)
+			now := time.Now().UTC()
+			merged.LastMetadataRefreshAt = &now
+			written, err := i.books.UpdateIfUnchanged(ctx, &merged, book.UpdatedAtRaw)
+			if err != nil {
+				return metadataMergeResult{}, err
+			}
+			if !written {
+				if err := i.books.ReloadHydratedBook(ctx, book); err != nil {
+					return mergeReloadFailed(entityTypeBook, book.ID, err)
+				}
+				if attempt < 2 {
+					continue
+				}
+				slog.Info("abs import: upstream metadata merge skipped, the book kept changing during the import; the next import retries it",
+					"bookId", book.ID, "title", item.Title, "upstreamForeignId", full.ForeignID)
+				return metadataMergeResult{Messages: []string{
+					"book metadata merge skipped: the book changed while this import was running, the next import retries it",
+				}}, nil
+			}
+			*book = merged
+		}
+		if err := i.recordBookMergeBookkeeping(ctx, plan); err != nil {
+			return metadataMergeResult{}, err
+		}
+		return plan.result, nil
+	}
+}
+
+// bookMergePlan is one attempt of mergeUpstreamBook: what the merge did to
+// its copy of the row, and what to record once that copy is written.
+type bookMergePlan struct {
+	result metadataMergeResult
+	// write is false when the merge changed nothing worth a write.
+	write bool
+	// previousForeignID is the id a relink replaces, kept as an identifier.
+	previousForeignID string
+	conflicts         []*models.ABSMetadataConflict
+}
+
+// planUpstreamBookMerge applies full onto book in memory. It reads the
+// database but writes nothing, so a merge whose write loses the guard leaves
+// no trace.
+func (i *Importer) planUpstreamBookMerge(ctx context.Context, cfg ImportConfig, item NormalizedLibraryItem, book *models.Book, full *models.Book, matchedBy string) (bookMergePlan, error) {
+	plan := bookMergePlan{result: metadataMergeResult{Matched: 1}}
 	changed := false
 	if full.ForeignID != "" && book.ForeignID != full.ForeignID {
 		existing, err := i.books.GetByForeignID(ctx, full.ForeignID)
 		if err != nil {
-			return metadataMergeResult{}, err
+			return bookMergePlan{}, err
 		}
 		if existing != nil && existing.ID != book.ID {
-			result.Messages = append(result.Messages, "book relink skipped: upstream book already exists locally")
-			full = nil
-		} else {
-			// Keep the ABS id this row was created with before overwriting it
-			// (#1691, on top of #1705's identity table). Once ForeignID becomes
-			// the upstream id, the abs: key that step 2 of the match ladder
-			// looks for is gone, so a provenance miss drops straight to the
-			// title path, and a title path that has just been invalidated by a
-			// rename in ABS mints a duplicate. Recording the old id keeps that
-			// second lookup able to find the row.
-			if previous := strings.TrimSpace(book.ForeignID); previous != "" {
-				if ierr := i.books.UpsertBookIdentifier(ctx, book.ID, previous); ierr != nil {
-					slog.Warn("could not preserve the ABS book identifier across a relink",
-						"bookId", book.ID, "foreignId", previous, "error", ierr)
-				}
-			}
-			book.ForeignID = full.ForeignID
-			if full.MetadataProvider != "" {
-				book.MetadataProvider = full.MetadataProvider
-			}
-			result.Relinked++
-			changed = true
+			plan.result.Messages = append(plan.result.Messages, "book relink skipped: upstream book already exists locally")
+			return plan, nil
 		}
-	}
-	if full == nil {
-		return result, nil
+		// Keep the ABS id this row was created with before overwriting it
+		// (#1691, on top of #1705's identity table). Once ForeignID becomes
+		// the upstream id, the abs: key that step 2 of the match ladder looks
+		// for is gone, so a provenance miss drops straight to the title path,
+		// and a title path that has just been invalidated by a rename in ABS
+		// mints a duplicate. Recording the old id keeps that second lookup
+		// able to find the row.
+		plan.previousForeignID = strings.TrimSpace(book.ForeignID)
+		book.ForeignID = full.ForeignID
+		if full.MetadataProvider != "" {
+			book.MetadataProvider = full.MetadataProvider
+		}
+		plan.result.Relinked++
+		changed = true
 	}
 	for _, field := range bookConflictFields {
-		fieldResult, fieldChanged, err := i.applyConflictField(ctx, cfg, item, entityTypeBook, book.ID, field,
+		fieldResult, fieldChanged, conflict, err := i.planConflictField(ctx, cfg, item, entityTypeBook, book.ID, field,
 			bookABSCandidateValue(book, item, field),
 			SerializeBookConflictValue(full, field),
 			func(value string) error { return ApplyBookConflictValue(book, field, value) },
 			func() string { return SerializeBookConflictValue(book, field) },
 		)
 		if err != nil {
-			return metadataMergeResult{}, err
+			return bookMergePlan{}, err
 		}
-		result.Matched += fieldResult.Matched
-		result.Relinked += fieldResult.Relinked
-		result.Conflicts += fieldResult.Conflicts
-		result.AutoResolved += fieldResult.AutoResolved
-		result.Messages = append(result.Messages, fieldResult.Messages...)
+		plan.result.Matched += fieldResult.Matched
+		plan.result.Relinked += fieldResult.Relinked
+		plan.result.Conflicts += fieldResult.Conflicts
+		plan.result.AutoResolved += fieldResult.AutoResolved
+		plan.result.Messages = append(plan.result.Messages, fieldResult.Messages...)
+		if conflict != nil {
+			plan.conflicts = append(plan.conflicts, conflict)
+		}
 		changed = changed || fieldChanged
 	}
-	if matchedBy != "" && result.Relinked > 0 {
-		result.Messages = append(result.Messages, fmt.Sprintf("book relinked by %s metadata match", matchedBy))
+	if matchedBy != "" && plan.result.Relinked > 0 {
+		plan.result.Messages = append(plan.result.Messages, fmt.Sprintf("book relinked by %s metadata match", matchedBy))
 	}
-	if !changed && result.Conflicts == 0 && result.AutoResolved == 0 && result.Relinked == 0 {
-		return result, nil
+	r := plan.result
+	plan.write = changed || r.Conflicts != 0 || r.AutoResolved != 0 || r.Relinked != 0
+	return plan, nil
+}
+
+// preserveRelinkedBookIdentifier keeps the id a relink is about to replace in
+// the identity table. A failure is only logged, as it always was.
+func (i *Importer) preserveRelinkedBookIdentifier(ctx context.Context, bookID int64, previousForeignID string) {
+	if previousForeignID == "" {
+		return
 	}
-	now := time.Now().UTC()
-	book.LastMetadataRefreshAt = &now
-	if err := i.books.Update(ctx, book); err != nil {
-		return metadataMergeResult{}, err
+	if err := i.books.UpsertBookIdentifier(ctx, bookID, previousForeignID); err != nil {
+		slog.Warn("could not preserve the ABS book identifier across a relink",
+			"bookId", bookID, "foreignId", previousForeignID, "error", err)
 	}
-	return result, nil
+}
+
+// recordBookMergeBookkeeping records a merge's conflict rows once the book
+// row is written. A failed conflict write fails the merge, as it always did.
+func (i *Importer) recordBookMergeBookkeeping(ctx context.Context, plan bookMergePlan) error {
+	for _, conflict := range plan.conflicts {
+		if err := i.conflicts.Upsert(ctx, conflict); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (i *Importer) lookupUpstreamBook(ctx context.Context, author *models.Author, item NormalizedLibraryItem) (*models.Book, string, bool, error) {
@@ -673,10 +868,12 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 	if strings.TrimSpace(item.ResolvedBookForeignID) != "" || strings.TrimSpace(item.ResolvedBookTitle) != "" {
 		return i.upsertManualBook(ctx, cfg, runID, author, item)
 	}
+	var bookLink *models.ABSProvenance
 	if i.provenance != nil {
 		if link, err := i.provenance.GetByExternal(ctx, cfg.SourceID, item.LibraryID, entityTypeBook, externalID); err != nil {
 			return nil, false, false, metadataMergeResult{}, err
 		} else if link != nil {
+			bookLink = link
 			existing, err := i.books.GetByID(ctx, link.LocalID)
 			if err != nil {
 				return nil, false, false, metadataMergeResult{}, err
@@ -686,7 +883,7 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 					if err := i.recordBookBeforeSnapshot(ctx, runID, cfg, item, externalID, existing, itemOutcomeUpdated, nil); err != nil {
 						return nil, false, false, metadataMergeResult{}, err
 					}
-					if err := i.applyBookFields(ctx, existing, author.ID, item); err != nil {
+					if err := i.applyLinkedBookFields(ctx, existing, author.ID, item, link); err != nil {
 						return nil, false, false, metadataMergeResult{}, err
 					}
 					if err := i.upsertBookProvenance(ctx, cfg, runID, existing.ID, item); err != nil {
@@ -716,7 +913,7 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 			if err := i.recordBookBeforeSnapshot(ctx, runID, cfg, item, externalID, existing, itemOutcomeUpdated, nil); err != nil {
 				return nil, false, false, metadataMergeResult{}, err
 			}
-			if err := i.applyBookFields(ctx, existing, author.ID, item); err != nil {
+			if err := i.applyLinkedBookFields(ctx, existing, author.ID, item, bookLink); err != nil {
 				return nil, false, false, metadataMergeResult{}, err
 			}
 			if err := i.upsertBookProvenance(ctx, cfg, runID, existing.ID, item); err != nil {
@@ -729,6 +926,40 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 		}
 		metaResult, err := i.enrichBook(ctx, cfg, item, author, existing)
 		return &bookUpsertResult{row: existing, matchedBy: "foreign_id"}, false, false, metaResult, err
+	}
+
+	// The item's files, before its title (#1691). Neither key above finds a
+	// book Bindery had before this ABS item was ever imported, such as one it
+	// downloaded itself, or one whose ABS item was re-created. If such a book
+	// already tracks the very file this item points at, it is this item's
+	// book, whatever either side calls it now. Matching only on the title
+	// here used to create a second, wanted row beside the owned one whenever
+	// the titles disagreed ("Chapterhouse: Dune" against "Chapter House
+	// Dune"), and that row could never take the file, so it stayed wanted.
+	//
+	// The book keeps its own author and title. It was not made from this item,
+	// so the item's spelling of either is not a correction, and the rung only
+	// fires when the two authors are the same person (see findBookByItemFiles).
+	if existing, bookAuthor, err := i.findBookByItemFiles(ctx, cfg, author, item); err != nil {
+		return nil, false, false, metadataMergeResult{}, err
+	} else if existing != nil {
+		if !cfg.DryRun {
+			if err := i.recordBookBeforeSnapshot(ctx, runID, cfg, item, externalID, existing, itemOutcomeLinked, nil); err != nil {
+				return nil, false, false, metadataMergeResult{}, err
+			}
+			if err := i.applyBookFieldsKeepingIdentity(ctx, existing, item); err != nil {
+				return nil, false, false, metadataMergeResult{}, err
+			}
+			if err := i.upsertBookProvenanceKeeping(ctx, cfg, runID, existing.ID, item, true); err != nil {
+				return nil, false, false, metadataMergeResult{}, err
+			}
+		}
+		_ = i.recordRunEntity(ctx, runID, cfg, item.LibraryID, item.ItemID, entityTypeBook, externalID, existing.ID, itemOutcomeLinked, map[string]string{"matchedBy": "file_path"})
+		if cfg.DryRun {
+			return &bookUpsertResult{row: existing, matchedBy: "file_path"}, false, true, metadataMergeResult{}, nil
+		}
+		metaResult, err := i.enrichBook(ctx, cfg, item, bookAuthor, existing)
+		return &bookUpsertResult{row: existing, matchedBy: "file_path"}, false, true, metaResult, err
 	}
 
 	match, ambiguous, err := i.findBookByNormalizedTitle(ctx, author.ID, item.Title, item.Series)
@@ -921,16 +1152,34 @@ func (i *Importer) applyABSFormatFields(book *models.Book, item NormalizedLibrar
 }
 
 func (i *Importer) upsertBookProvenance(ctx context.Context, cfg ImportConfig, runID, bookID int64, item NormalizedLibraryItem) error {
+	return i.upsertBookProvenanceKeeping(ctx, cfg, runID, bookID, item, false)
+}
+
+// upsertBookProvenanceKeeping records the item's link to bookID. keepIdentity
+// marks a link made through a file the book already tracked (#1691); the flag
+// then survives later imports through the same link.
+func (i *Importer) upsertBookProvenanceKeeping(ctx context.Context, cfg ImportConfig, runID, bookID int64, item NormalizedLibraryItem, keepIdentity bool) error {
 	return i.upsertProvenance(ctx, &models.ABSProvenance{
-		SourceID:    cfg.SourceID,
-		LibraryID:   item.LibraryID,
-		EntityType:  entityTypeBook,
-		ExternalID:  item.ItemID,
-		LocalID:     bookID,
-		ItemID:      item.ItemID,
-		FileIDs:     itemFileIDs(item),
-		ImportRunID: ptrInt64(runID),
+		SourceID:     cfg.SourceID,
+		LibraryID:    item.LibraryID,
+		EntityType:   entityTypeBook,
+		ExternalID:   item.ItemID,
+		LocalID:      bookID,
+		ItemID:       item.ItemID,
+		FileIDs:      itemFileIDs(item),
+		ImportRunID:  ptrInt64(runID),
+		KeepIdentity: keepIdentity,
 	})
+}
+
+// applyLinkedBookFields applies the item to a book it is already linked to.
+// A link made by a file match keeps the book's own author and title (#1691);
+// any other link applies the item as it always did.
+func (i *Importer) applyLinkedBookFields(ctx context.Context, book *models.Book, authorID int64, item NormalizedLibraryItem, link *models.ABSProvenance) error {
+	if link != nil && link.KeepIdentity && link.LocalID == book.ID {
+		return i.applyBookFieldsKeepingIdentity(ctx, book, item)
+	}
+	return i.applyBookFields(ctx, book, authorID, item)
 }
 
 // findBookByNormalizedTitle binds an incoming ABS item to an existing local
@@ -1028,9 +1277,20 @@ func sequencesEqual(a, b string) bool {
 }
 
 func (i *Importer) applyBookFields(ctx context.Context, book *models.Book, authorID int64, item NormalizedLibraryItem) error {
+	return i.applyBookFieldsTo(ctx, book, authorID, item, false)
+}
+
+// applyBookFieldsKeepingIdentity is applyBookFields for a book matched by its
+// files rather than by this item (#1691): the author and title stay as they
+// are, and everything else follows the same rules.
+func (i *Importer) applyBookFieldsKeepingIdentity(ctx context.Context, book *models.Book, item NormalizedLibraryItem) error {
+	return i.applyBookFieldsTo(ctx, book, book.AuthorID, item, true)
+}
+
+func (i *Importer) applyBookFieldsTo(ctx context.Context, book *models.Book, authorID int64, item NormalizedLibraryItem, keepTitle bool) error {
 	book.AuthorID = authorID
 	// Locked fields (#1237): a manual edit survives ABS re-imports.
-	if !book.IsFieldLocked(models.BookFieldTitle) {
+	if !keepTitle && !book.IsFieldLocked(models.BookFieldTitle) {
 		book.Title = strings.TrimSpace(item.Title)
 		book.SortTitle = book.Title
 	}

@@ -61,6 +61,12 @@ type HistoryItem struct {
 	FileSizeMB float64 `json:"FileSizeMB"`
 	DestDir    string  `json:"DestDir"`
 	URL        string  `json:"URL"`
+	// ParStatus and UnpackStatus are the per stage results NZBGet keeps next
+	// to the summary Status ("NONE", "FAILURE", "SUCCESS", "SKIPPED" and a
+	// few more). Status alone cannot say whether a successful job actually
+	// ran the unpacker; UnpackStatus can (#3024).
+	ParStatus    string `json:"ParStatus"`
+	UnpackStatus string `json:"UnpackStatus"`
 }
 
 // historyResponse is the result of calling "history".

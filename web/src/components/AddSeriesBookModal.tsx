@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { api, Author, Book, Series } from '../api/client'
 import { foldedIncludes } from '../util/foldForSearch'
+import { useModal } from './useModal'
 
 interface Props {
   series: Series
@@ -88,23 +89,26 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
     }
   }
 
+  // Named by the heading and the series title under it.
+  const titleId = 'add-series-book-title'
+  const { panelProps } = useModal({ onClose, canClose: !saving, labelledBy: `${titleId} ${titleId}-series` })
+
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={onClose}>
+    <div className="modal-overlay fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={onClose}>
       <form
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Add book to ${series.title}`}
+        {...panelProps}
         onSubmit={submit}
-        className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col"
+        className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl modal-max-h flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
-          <h3 className="text-lg font-semibold">Add Book to Series</h3>
-          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5 truncate">{series.title}</p>
+          <h3 id={titleId} className="text-lg font-semibold">Add Book to Series</h3>
+          <p id={`${titleId}-series`} className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5 truncate">{series.title}</p>
         </div>
 
         <div className="p-4 flex-1 overflow-y-auto space-y-4">
           <input
+            enterKeyHint="search"
             type="search"
             value={query}
             onChange={e => setQuery(e.target.value)}
@@ -140,7 +144,7 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
                       className="text-emerald-500 focus:ring-emerald-500"
                     />
                     {book.imageUrl ? (
-                      <img src={book.imageUrl} alt="" className="w-8 h-10 object-cover rounded flex-shrink-0" />
+                      <img loading="lazy" decoding="async" src={book.imageUrl} alt="" className="w-8 h-10 object-cover rounded flex-shrink-0" />
                     ) : (
                       <div className="w-8 h-10 bg-slate-300 dark:bg-zinc-700 rounded flex-shrink-0" />
                     )}

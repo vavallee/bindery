@@ -8,7 +8,34 @@ import (
 	"net"
 	"strconv"
 	"strings"
+
+	"github.com/vavallee/bindery/internal/downloader/urlbase"
 )
+
+// TargetKey identifies the daemon a download client entry talks to, so two
+// entries configured against one daemon (separate ebook and audiobook entries
+// on the same qBittorrent, say) compare equal. It folds what the stored
+// fields allow to differ for one daemon: host case, IPv6 brackets, a leading
+// http:// or https:// and trailing slash on a host saved before Normalize
+// existed, and the spelling of the URL base. It does not resolve names, so
+// "localhost" and "127.0.0.1" stay distinct.
+//
+// The scheme comes from ssl, as it does when the client builds its URL. The
+// client type is part of the key, since entries of different types never
+// share a torrent or job set.
+func TargetKey(clientType, host string, port int, ssl bool, urlBase string) string {
+	h := strings.ToLower(strings.TrimSpace(host))
+	for _, prefix := range []string{"http://", "https://"} {
+		h = strings.TrimPrefix(h, prefix)
+	}
+	h = Unbracket(strings.TrimRight(h, "/"))
+	scheme := "http"
+	if ssl {
+		scheme = "https"
+	}
+	return strings.ToLower(strings.TrimSpace(clientType)) + "|" + scheme + "://" +
+		net.JoinHostPort(h, strconv.Itoa(port)) + urlbase.Normalize(urlBase)
+}
 
 // ErrEmpty reports a Host field that is blank once trimmed.
 var ErrEmpty = errors.New("host is required")

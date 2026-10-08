@@ -228,3 +228,42 @@ func TestMiddleware_RejectsRevokedSession(t *testing.T) {
 		t.Fatalf("lookup failure: code=%d reached=%v; want 500 and not reached", code, reached)
 	}
 }
+
+// TestMiddleware_CancelledSessionLookup: a request the client abandons mid
+// lookup fails with context.Canceled. It must not be answered as signed out
+// (401) or touch the cookie, and status handlers must be able to tell it
+// apart from an anonymous caller.
+func TestMiddleware_CancelledSessionLookup(t *testing.T) {
+	cookie, err := SignSession(testSecret32, 5, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &fakeProvider{mode: ModeEnabled, secret: testSecret32, epochErr: context.Canceled}
+	var reached, flagged bool
+	h := Middleware(p)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		flagged = SessionLookupFailed(r.Context())
+	}))
+	for _, path := range []string{"/api/v1/author", "/api/v1/auth/status"} {
+		reached, flagged = false, false
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		req := httptest.NewRequest(http.MethodGet, path, nil).WithContext(ctx)
+		req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: cookie})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code == http.StatusUnauthorized {
+			t.Errorf("%s: cancelled lookup answered 401", path)
+		}
+		if len(rec.Result().Cookies()) != 0 {
+			t.Errorf("%s: cancelled lookup set a cookie", path)
+		}
+		if path == "/api/v1/author" {
+			if reached || rec.Code != StatusClientClosedRequest {
+				t.Errorf("%s: code=%d reached=%v; want %d and not reached", path, rec.Code, reached, StatusClientClosedRequest)
+			}
+		} else if !reached || !flagged {
+			t.Errorf("%s: reached=%v flagged=%v; want the handler to see SessionLookupFailed", path, reached, flagged)
+		}
+	}
+}

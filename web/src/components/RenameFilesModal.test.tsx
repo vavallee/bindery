@@ -43,6 +43,19 @@ describe('RenameFilesModal', () => {
     expect(screen.getByRole('button', { name: /Rename 1 file/ })).toBeInTheDocument()
   })
 
+  // The new filename is the point of the modal; a hover tooltip was the only
+  // way to read a long one, and touch screens have no hover.
+  it('shows the whole proposed path rather than truncating it', async () => {
+    previewMock.mockResolvedValue({
+      moves: sampleMoves,
+      summary: { total: 2, toMove: 1, noop: 1, collision: 0, missing: 0, errored: 0, moved: 0, failed: 0 },
+    })
+    render(<RenameFilesModal scope="book" id={1} label="My Book" onClose={() => {}} />)
+
+    const proposed = await screen.findByText('/lib/Jane Doe/My Book (2020)/My Book - Jane Doe.epub')
+    expect(proposed.closest('.truncate')).toBeNull()
+  })
+
   it('applies only movable files and reports the result', async () => {
     previewMock.mockResolvedValue({
       moves: sampleMoves,

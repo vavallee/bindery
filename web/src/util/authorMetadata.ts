@@ -23,6 +23,7 @@ export function authorProviderKey(author?: Pick<Author, 'foreignAuthorId' | 'met
   if (id.startsWith('gb:')) return 'googlebooks'
   if (id.startsWith('hc:')) return 'hardcover'
   if (id.startsWith('dnb:')) return 'dnb'
+  if (id.startsWith('nb:')) return 'nb'
   if (id.startsWith('calibre:')) return 'calibre'
   if (id.startsWith('abs:')) return 'audiobookshelf'
   if (id !== '') return 'openlibrary'

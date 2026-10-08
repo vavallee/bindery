@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?><mods xmlns="http://www.loc.gov/mods/v3" xmlns:xlink="http://www.w3.org/1999/xlink" version="3.8">
+   <titleInfo>
+      <title>Fjellvinden</title>
+      <subTitle>roman</subTitle>
+   </titleInfo>
+   <relatedItem xmlns:xlink="http://www.w3.org/1999/xlink" type="series" xlink:href="(NO-TrBIB)10000001">
+      <titleInfo>
+         <title>Fjellserien Norsk</title>
+         <partNumber>2</partNumber>
+      </titleInfo>
+      <name type="personal">
+         <namePart>Nordmann, Kari</namePart>
+         <namePart type="date">1970-</namePart>
+      </name>
+   </relatedItem>
+   <relatedItem type="series">
+      <titleInfo>
+         <title>Eksempelkrim</title>
+         <partNumber>41</partNumber>
+      </titleInfo>
+   </relatedItem>
+   <relatedItem>
+      <location>
+         <url displayLabel="Forlagets beskrivelse (lang)">https://example.invalid/content</url>
+      </location>
+   </relatedItem>
+   <identifier type="isbn">9788200000011</identifier>
+</mods>

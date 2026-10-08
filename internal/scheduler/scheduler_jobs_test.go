@@ -776,6 +776,111 @@ func TestRefreshMetadata_SparseRefresh_DoesNotClobber(t *testing.T) {
 	}
 }
 
+// editingAuthorMetaProvider answers GetAuthor from a per foreign id map and,
+// while it handles the request, runs the matching edit: a user change
+// committed between refreshMetadata's read of the author and its write
+// (#2926).
+type editingAuthorMetaProvider struct {
+	mockMetaProvider
+	authors map[string]*models.Author
+	edits   map[string]func()
+}
+
+func (p *editingAuthorMetaProvider) GetAuthor(_ context.Context, foreignID string) (*models.Author, error) {
+	if edit := p.edits[foreignID]; edit != nil {
+		edit()
+	}
+	return p.authors[foreignID], nil
+}
+
+// TestRefreshMetadata_PreservesEditDuringProviderCall covers #2926 on the
+// authors table: an edit saved while the provider lookup for that author is
+// in flight survives, and the refresh for that author is skipped until the
+// next run. An edit saved earlier in the loop, before that author's own
+// lookup, does not cost it the refresh.
+func TestRefreshMetadata_PreservesEditDuringProviderCall(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("OpenMemory: %v", err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authRepo := db.NewAuthorRepo(database)
+	// List orders by sort name, so "A" is refreshed before "B".
+	first := &models.Author{ForeignID: "OL_RACE_A", Name: "Alpha Author", SortName: "A, Alpha",
+		Description: "Old biography.", MetadataProvider: "openlibrary", Monitored: true}
+	second := &models.Author{ForeignID: "OL_RACE_B", Name: "Beta Author", SortName: "B, Beta",
+		Description: "Old biography.", MetadataProvider: "openlibrary", Monitored: true}
+	for _, a := range []*models.Author{first, second} {
+		if err := authRepo.Create(ctx, a); err != nil {
+			t.Fatalf("create author: %v", err)
+		}
+	}
+
+	userEdit := func(id int64) func() {
+		return func() {
+			current, err := authRepo.GetByID(ctx, id)
+			if err != nil || current == nil {
+				t.Errorf("load author for concurrent edit: %v", err)
+				return
+			}
+			current.Monitored = false
+			current.ImageURL = "https://example.test/user-portrait.jpg"
+			if err := authRepo.Update(ctx, current); err != nil {
+				t.Errorf("concurrent edit: %v", err)
+			}
+		}
+	}
+	provider := &editingAuthorMetaProvider{
+		authors: map[string]*models.Author{
+			"OL_RACE_A": {ForeignID: "OL_RACE_A", Name: "Alpha Author", Description: "Upstream biography A.",
+				ImageURL: "https://upstream.test/a.jpg", AverageRating: 4.1, RatingsCount: 10},
+			"OL_RACE_B": {ForeignID: "OL_RACE_B", Name: "Beta Author", Description: "Upstream biography B.",
+				AverageRating: 3.9, RatingsCount: 20},
+		},
+	}
+	// The lookup for A edits A itself (the race) and also B (an edit that
+	// lands before B's own lookup starts).
+	editA, editB := userEdit(first.ID), func() {
+		current, err := authRepo.GetByID(ctx, second.ID)
+		if err != nil || current == nil {
+			t.Errorf("load second author for edit: %v", err)
+			return
+		}
+		current.ImageURL = "https://example.test/user-portrait-b.jpg"
+		if err := authRepo.Update(ctx, current); err != nil {
+			t.Errorf("edit second author: %v", err)
+		}
+	}
+	provider.edits = map[string]func(){"OL_RACE_A": func() { editA(); editB() }}
+
+	s := &Scheduler{authors: authRepo, meta: metadata.NewAggregator(provider)}
+	s.refreshMetadata()
+
+	gotA, err := authRepo.GetByID(ctx, first.ID)
+	if err != nil || gotA == nil {
+		t.Fatalf("reload first author: %v", err)
+	}
+	if gotA.Monitored || gotA.ImageURL != "https://example.test/user-portrait.jpg" {
+		t.Fatalf("edit made during the provider call was overwritten: monitored=%v image=%q", gotA.Monitored, gotA.ImageURL)
+	}
+	if gotA.Description != "Old biography." {
+		t.Errorf("refresh should be skipped after losing to an edit, description=%q", gotA.Description)
+	}
+
+	gotB, err := authRepo.GetByID(ctx, second.ID)
+	if err != nil || gotB == nil {
+		t.Fatalf("reload second author: %v", err)
+	}
+	if gotB.ImageURL != "https://example.test/user-portrait-b.jpg" {
+		t.Errorf("edit made earlier in the loop was overwritten: image=%q", gotB.ImageURL)
+	}
+	if gotB.Description != "Upstream biography B." || gotB.RatingsCount != 20 {
+		t.Errorf("author edited before its own lookup should still refresh: description=%q ratings=%d", gotB.Description, gotB.RatingsCount)
+	}
+}
+
 // bypassRecordingMetaProvider counts GetAuthor calls and how many carried the
 // metadata cache bypass.
 type bypassRecordingMetaProvider struct {

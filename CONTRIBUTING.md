@@ -204,11 +204,22 @@ rather than declared up front. Implement only what your source supports:
 |-----------|-----------|
 | `metadata.SeriesCatalogProvider` | Series search and ordered series catalogues |
 | `metadata.CoverProvider` | Cover art lookup |
+| `metadata.CacheScopedProvider` | Bind live credentials/options to a provider cache request |
 
 Register the provider in `cmd/bindery/main.go`, at the
 `metadata.NewAggregator(primaryProvider, enrichers...)` call. A source is either
 the *primary* (the one that defines canonical identity) or an *enricher* (one
 that fills gaps). Most new sources are enrichers.
+
+Search and edition cache identity includes the provider instance. Providers with
+live credentials or context-dependent query options must implement
+`CacheScopedProvider`: return a provider bound to the resolved configuration and
+an opaque scope that changes with that configuration. Keep credentials out of
+scope strings. The bound provider must use the same snapshot for all pages and
+retries and retain optional capabilities such as author catalogues and cover
+lookup. Immutable providers need no extra implementation. See
+[metadata request caching](docs/DEPLOYMENT.md#metadata-request-caching) for TTLs,
+bounds, and cancellation behavior.
 
 Return `metadata.ErrProviderNotConfigured` when credentials are missing, rather
 than an error. The aggregator treats it as "skip me" instead of a failure, which

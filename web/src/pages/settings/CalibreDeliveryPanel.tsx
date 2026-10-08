@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { CalibreDeliveryList, CalibreDeliverySummary } from '../../api/client'
+import { ModalPanel } from '../../components/useModal'
 
 // How often the panel refreshes while books are waiting, so the counts move
 // as the worker delivers them.
@@ -229,13 +230,13 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
       )}
 
       {confirmReset && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="calibre-reset-title"
-        >
-          <div className="w-full max-w-md rounded-lg bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 shadow-xl">
+        <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <ModalPanel
+            onClose={() => setConfirmReset(false)}
+            canClose={busy !== 'reset'}
+            labelledBy="calibre-reset-title"
+            className="w-full max-w-md rounded-lg bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 shadow-xl modal-max-h overflow-y-auto"
+          >
             <div className="px-4 py-3 border-b border-slate-200 dark:border-zinc-800">
               <h3 id="calibre-reset-title" className="text-base font-semibold text-slate-800 dark:text-zinc-100">
                 {t('settings.calibre.deliveries.resetTitle')}
@@ -258,7 +259,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
                 {busy === 'reset' ? t('settings.calibre.deliveries.resetting') : t('settings.calibre.deliveries.resetConfirm')}
               </button>
             </div>
-          </div>
+          </ModalPanel>
         </div>
       )}
     </div>

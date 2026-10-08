@@ -16,5 +16,11 @@ try {
   try { saved = localStorage.getItem('bindery.theme') } catch (e) { /* storage blocked */ }
   var dark = saved === 'dark' || (saved !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
   document.documentElement.classList.toggle('dark', dark)
+  // Point both theme-color metas (one per OS scheme, above this script in
+  // index.html) at the chosen theme, so the browser bar already matches a
+  // stored choice that overrides the OS. The colours mirror THEME_COLORS in
+  // src/theme.ts, whose apply() does the same once the app is running.
+  var metas = document.querySelectorAll('meta[name="theme-color"]')
+  for (var i = 0; i < metas.length; i++) metas[i].setAttribute('content', dark ? '#09090b' : '#f8fafc')
 } catch (e) { /* leave the light default in place */ }
 /* theme-bootstrap:end */

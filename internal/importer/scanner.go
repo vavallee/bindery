@@ -19,10 +19,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/decision"
+	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/importer/formatsniff"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/jobs"
@@ -116,6 +118,24 @@ type Scanner struct {
 	// constraint equivalent to book_files.path) and clobber library.lastScan,
 	// so only one scan — manual or scheduled — runs at a time.
 	scanRunning atomic.Bool
+	// scanMu orders the claim and release of scanRunning against
+	// scanPending, so a request that arrives as a scan finishes is either
+	// run by that scan's follow-up or starts a scan of its own, never lost.
+	scanMu sync.Mutex
+	// scanPending records that a scan was requested while one was running
+	// (#3014). The running scan runs one follow-up when it finishes, however
+	// many requests arrived.
+	scanPending bool
+	// scanSeq counts the scans this process has started; scanID is the id of
+	// the one running or last run. Both under scanMu. The id lets a client
+	// that asked for a scan recognise that scan's result (#3014).
+	scanSeq int64
+	scanID  string
+
+	// testScanHook, when non-nil, runs at the start of every library scan
+	// walk. A test seam: it lets a test hold a scan in flight while it makes
+	// a second request (#3014).
+	testScanHook func()
 
 	// testImportHook, when non-nil, intercepts tryImportInternal before any
 	// state transition or file operation and replaces the import entirely.
@@ -141,6 +161,12 @@ type Scanner struct {
 	// either created its folder, and split one audiobook's tracks across
 	// "Title" and "Title (2)".
 	manualBookLocks sync.Map
+
+	// contentBreaker stops blocklisting on a download client's content
+	// verdict when the client itself looks broken (#3024), and clientHealth,
+	// when set, is where that is reported. Nil clientHealth reports nothing.
+	contentBreaker contentFailureBreaker
+	clientHealth   *downloader.HealthStore
 }
 
 // NewScanner creates an import scanner. downloadPathRemap is an optional
@@ -408,15 +434,25 @@ func (s *Scanner) allowedFormat(ctx context.Context, author *models.Author, form
 }
 
 // blocklistRejectedRelease records a release rejected for its format (#1782)
-// or its language (#2998) so the next search does not grab the same file again.
+// or its language (#2998), or one the download client reported as broken
+// (#3024), so the next search does not grab the same file again.
 //
 // Without this the rejection is a loop: the book stays wanted, the next scan
 // finds the same release, grabs it, downloads it, and rejects it again. The
 // blocklist is the only thing that makes a rejection stick, and it is also why
 // this must stay narrow: it fires on a format or language the user explicitly
-// disallowed, never on a transient import failure.
+// disallowed, or on a client status that is about the release's content, never
+// on a transient import or transport failure.
+//
+// A release already on the blocklist for the same book is not added twice: a
+// manual grab can send a blocklisted release again, and its second failure
+// says nothing new. A row under another book does not count, because deleting
+// that book deletes its rows.
 func (s *Scanner) blocklistRejectedRelease(ctx context.Context, dl *models.Download, reason string) {
 	if s.blocklist == nil || dl == nil || strings.TrimSpace(dl.GUID) == "" {
+		return
+	}
+	if blocked, err := s.blocklist.IsBlockedForBook(ctx, dl.GUID, dl.BookID); err == nil && blocked {
 		return
 	}
 	entry := &models.BlocklistEntry{
@@ -2764,7 +2800,8 @@ func largestFileIsVideo(downloadPath string, explicitFiles []string) bool {
 // walked: MediaTypeEbook restricts to libraryDir, MediaTypeAudiobook restricts
 // to audiobookDir (falling back to libraryDir when audiobookDir is unset), and
 // MediaTypeBoth or an empty/unknown value walks both with libraryDir first.
-// Returns the first matching file path, or "" if none is found. Intended to be
+// Returns the best matching file path, or "" when none matches or two files
+// of different titles are too close to call (#2941). Intended to be
 // called before auto-searching so books the user already owns are not
 // re-downloaded.
 func (s *Scanner) FindExisting(ctx context.Context, title, authorName, mediaType string) string {
@@ -3160,6 +3197,65 @@ func authorTitleFromLayout(path string, roots ...string) (author, title string, 
 	return author, cleanLayoutTitle(filepath.Base(folder)), true
 }
 
+// flatAudioDir reports whether the audio file at path has no book folder of
+// its own: it sits directly in a library root, or directly in an author folder
+// beneath one (the flat Author/Title.mp3 layout). Its parent then holds other
+// books as well, so it cannot stand for "this audiobook's tracks" (#1985).
+func flatAudioDir(path string, roots ...string) bool {
+	dir := filepath.Clean(filepath.Dir(path))
+	for _, root := range roots {
+		if root != "" && dir == filepath.Clean(root) {
+			return true
+		}
+	}
+	_, folder, ok := bookFolderFromLayout(path, roots...)
+	return ok && folder == ""
+}
+
+// trackWordGlueRe splits a track label from a number glued onto it, so
+// "CD1" and "Part02" read as "cd 1" and "part 02".
+var trackWordGlueRe = regexp.MustCompile(`(?i)\b(part|pt|track|trk|chapter|chap|ch|disc|disk|cd)(\d)`)
+
+// trackNumberRe finds where a track's numbering starts: the first digit run,
+// or a spelled number after a track label ("Part One", "Chapter Twelve").
+var trackNumberRe = regexp.MustCompile(`(?i)\d|\b(?:part|pt|track|trk|chapter|chap|ch|disc|disk|cd)\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b`)
+
+// trackWordRe matches the track labels left in front of a number.
+var trackWordRe = regexp.MustCompile(`(?i)\b(?:part|pt|track|trk|chapter|chap|ch|disc|disk|cd)\b`)
+
+// audioTrackStem is the part of an audio file's name that names the book, for
+// telling another track of a tracked audiobook apart from a different book in
+// the same flat folder (#1985). Everything from the first track number on is
+// dropped, since what follows a number is usually a chapter title ("01 -
+// Chapter One", "Alpha - 02 - The Middle", "Alpha (2 of 12)"), and track labels
+// in front of it go too. So "Alpha - Part 01.mp3", "Alpha CD2.mp3", "Alpha Part
+// Two.mp3" and "Alpha.mp3" all share the stem "alpha" while "Beta.mp3" does
+// not. A name that starts with its number has the empty stem, which callers
+// treat as a bare track. Titles that differ only by a number ("Saga 1", "Saga
+// 2") share a stem too; that keeps the pre-#1985 behaviour for them rather
+// than splitting one audiobook's tracks into separate books.
+func audioTrackStem(path string) string {
+	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	stem = trackWordGlueRe.ReplaceAllString(stem, "$1 $2")
+	if loc := trackNumberRe.FindStringIndex(stem); loc != nil {
+		if stem[loc[0]] >= '0' && stem[loc[0]] <= '9' {
+			stem = stem[:loc[0]]
+		} else {
+			// A spelled number: keep the label, trackWordRe removes it below.
+			stem = stem[:loc[1]]
+			stem = stem[:strings.LastIndexAny(stem, " \t")]
+		}
+	}
+	stem = trackWordRe.ReplaceAllString(stem, " ")
+	stem = strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) {
+			return unicode.ToLower(r)
+		}
+		return ' '
+	}, stem)
+	return strings.Join(strings.Fields(stem), " ")
+}
+
 // reconciledAudiobookPath returns what a reconciled audiobook file should be
 // recorded as in book_files. A track that sits in a book folder of its own is
 // recorded as that folder — the shape the importer writes for an audiobook
@@ -3206,10 +3302,17 @@ func flipByLayout(parsed ParsedFile, layoutAuthor string) (ParsedFile, bool) {
 	return parsed, true
 }
 
-// ErrScanAlreadyRunning is returned by StartScan when a library scan (manual
-// or scheduled) is already in flight. Matches the ABS importer's
-// ErrAlreadyRunning / Grimmory syncer's ErrSyncAlreadyRunning pattern.
+// ErrScanAlreadyRunning was StartScan's answer to a request made while a
+// library scan was in flight (#1460). Since #3014 such a request is queued and
+// StartScan returns ErrScanQueued; this stays for callers that still match it.
 var ErrScanAlreadyRunning = errors.New("library scan already running")
+
+// ErrScanQueued is returned by StartScan when a scan is already in flight. The
+// request is not dropped: the running scan runs one more scan as soon as it
+// finishes, so a file placed in a folder the walk had already passed is still
+// picked up (#3014). Any number of requests made during one scan coalesce into
+// that single follow-up.
+var ErrScanQueued = errors.New("library scan queued behind the running scan")
 
 // ErrShuttingDown is returned by StartScan when the scan could not be launched
 // because the process is already draining its background jobs. The single-flight
@@ -3217,15 +3320,129 @@ var ErrScanAlreadyRunning = errors.New("library scan already running")
 // Matches hardcoverlistsyncer.ErrShuttingDown.
 var ErrShuttingDown = errors.New("server is shutting down")
 
+// claimScan takes the single-flight gate. When a scan already holds it,
+// claimScan reports false and, if queue is set, records that one more scan is
+// wanted once the running one finishes.
+func (s *Scanner) claimScan(queue bool) bool {
+	ok, _ := s.claimScanID(queue)
+	return ok
+}
+
+// scanBootID makes scan ids unique across restarts, since the stored result
+// outlives the process and the sequence restarts at 1.
+var scanBootID = strconv.FormatInt(time.Now().UnixNano(), 36)
+
+func scanIDFor(seq int64) string {
+	return scanBootID + "-" + strconv.FormatInt(seq, 10)
+}
+
+// claimScanID is claimScan that also names the scan whose result will answer
+// this request: the next one to start, whether that is the scan this call
+// starts or the follow-up it queues behind the running one.
+func (s *Scanner) claimScanID(queue bool) (bool, string) {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	next := scanIDFor(s.scanSeq + 1)
+	if s.scanRunning.CompareAndSwap(false, true) {
+		return true, next
+	}
+	if queue {
+		s.scanPending = true
+	}
+	return false, next
+}
+
+// beginScan numbers the scan about to walk, under the gate.
+func (s *Scanner) beginScan() {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	s.scanSeq++
+	s.scanID = scanIDFor(s.scanSeq)
+}
+
+// currentScanID is the id of the scan running or last run, "" before any.
+func (s *Scanner) currentScanID() string {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	return s.scanID
+}
+
+// ScanState reports whether a library scan is walking and whether another is
+// queued behind it, for the scan status endpoint (#3014).
+func (s *Scanner) ScanState() (running, queued bool) {
+	if s == nil {
+		return false, false
+	}
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	return s.scanRunning.Load(), s.scanPending
+}
+
+// finishScan is called by the scan holding the gate when its walk is done. It
+// keeps the gate and reports true when a scan was queued meanwhile, so the
+// caller runs the follow-up; otherwise it releases the gate. A cancelled
+// context drops the queued request, since the process is shutting down.
+func (s *Scanner) finishScan(ctx context.Context) bool {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	if s.scanPending && ctx.Err() == nil {
+		s.scanPending = false
+		return true
+	}
+	s.scanPending = false
+	s.scanRunning.Store(false)
+	return false
+}
+
+// releaseScan drops the gate and any queued request without running anything.
+func (s *Scanner) releaseScan() {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	s.scanPending = false
+	s.scanRunning.Store(false)
+}
+
+// runScans runs a scan, then the one follow-up a request made during it asked
+// for, and releases the gate. The caller must hold the gate. The deferred
+// release covers a scan that panics, which used to be covered by a deferred
+// Store(false).
+func (s *Scanner) runScans(ctx context.Context) {
+	released := false
+	defer func() {
+		if !released {
+			s.releaseScan()
+		}
+	}()
+	for {
+		s.beginScan()
+		s.scanLibrary(ctx)
+		if !s.finishScan(ctx) {
+			released = true
+			return
+		}
+		slog.Info("library scan: running the scan requested while the last one was in flight")
+	}
+}
+
 // StartScan launches a library scan in the background and returns
-// immediately. If a scan is already in flight it returns
-// ErrScanAlreadyRunning so callers (the manual-scan endpoint) can surface a
-// 409 instead of piling up concurrent full walks (#1460). Callers pass
-// context.WithoutCancel(r.Context()) so the HTTP response-send doesn't cancel
-// the scan.
+// immediately. If a scan is already in flight it does not start a second walk
+// beside it (#1460): it queues one follow-up scan and returns ErrScanQueued,
+// so callers (the manual-scan endpoint) can say the request was accepted
+// (#3014). Callers pass context.WithoutCancel(r.Context()) so the HTTP
+// response-send doesn't cancel the scan.
 func (s *Scanner) StartScan(ctx context.Context) error {
-	if !s.scanRunning.CompareAndSwap(false, true) {
-		return ErrScanAlreadyRunning
+	_, err := s.StartScanTracked(ctx)
+	return err
+}
+
+// StartScanTracked is StartScan that also returns the id the requested scan's
+// result will carry as scan_id in library.lastScan, so a caller can tell its
+// own scan's result from an earlier one without comparing clocks (#3014).
+// The id is returned with ErrScanQueued too, naming the follow-up scan.
+func (s *Scanner) StartScanTracked(ctx context.Context) (string, error) {
+	claimed, id := s.claimScanID(true)
+	if !claimed {
+		return id, ErrScanQueued
 	}
 	// When a jobs group is wired, the scan runs on the shutdown-scoped context
 	// so SIGTERM cancels and drains it before the DB closes, instead of the
@@ -3237,34 +3454,54 @@ func (s *Scanner) StartScan(ctx context.Context) error {
 		// left scanRunning true for the rest of the process's life and answered
 		// the manual-scan endpoint with success for a scan that never ran
 		// (#2372).
-		if !s.jobs.Go("library-scan", func(ctx context.Context) {
-			defer s.scanRunning.Store(false)
-			s.scanLibrary(ctx)
-		}) {
-			s.scanRunning.Store(false)
-			return ErrShuttingDown
+		if !s.jobs.Go("library-scan", s.runScans) {
+			s.releaseScan()
+			return "", ErrShuttingDown
 		}
 	} else {
-		go func() {
-			defer s.scanRunning.Store(false)
-			s.scanLibrary(ctx)
-		}()
+		go s.runScans(ctx)
 	}
-	return nil
+	return id, nil
 }
 
 // ScanLibrary runs a library scan synchronously, sharing the single-flight
 // guard with StartScan: if a scan is already in flight (e.g. a manual scan
 // racing the 6-hourly cron job) the call is skipped with a log line. The
 // cron scheduler's SkipIfStillRunning only guards cron-vs-cron, so this is
-// what prevents cron-vs-manual overlap (#1460).
+// what prevents cron-vs-manual overlap (#1460). A manual request made while
+// this scan runs is queued, and runs here once the walk finishes (#3014).
 func (s *Scanner) ScanLibrary(ctx context.Context) {
-	if !s.scanRunning.CompareAndSwap(false, true) {
+	if !s.claimScan(false) {
 		slog.Info("library scan already running; skipping")
 		return
 	}
-	defer s.scanRunning.Store(false)
-	s.scanLibrary(ctx)
+	s.runScans(ctx)
+}
+
+// walkRoot is filepath.Walk for a configured library or audiobook root that
+// may itself be a symlink (/books -> /mnt/storage/books, or a container
+// volume path that is a link). filepath.Walk Lstats its root, so a linked
+// root is reported once as a link and never entered, and a scan of it found
+// nothing. walkRoot resolves the root first and walks the target, then hands
+// fn every path rewritten under the configured root, so what a caller
+// reports, compares or stores is in the same form as the book_files rows
+// imports write and the root the serving containment checks resolve.
+//
+// Only the root is resolved. Entries inside it are still Lstat'ed and a
+// linked folder inside the library is reported, not entered, exactly as
+// filepath.Walk does. A root that cannot be resolved (missing, unreadable)
+// is walked as given, so fn sees the same error it always did.
+func walkRoot(root string, fn filepath.WalkFunc) error {
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil || resolved == filepath.Clean(root) {
+		return filepath.Walk(root, fn)
+	}
+	return filepath.Walk(resolved, func(path string, info os.FileInfo, err error) error {
+		if rel, relErr := filepath.Rel(resolved, path); relErr == nil {
+			path = filepath.Join(root, rel)
+		}
+		return fn(path, info, err)
+	})
 }
 
 // scanLibrary walks the library directory (and the separate audiobook directory
@@ -3272,6 +3509,9 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 // found files with existing "wanted" book records. Callers must hold the
 // scanRunning single-flight flag (via StartScan or ScanLibrary).
 func (s *Scanner) scanLibrary(ctx context.Context) {
+	if s.testScanHook != nil {
+		s.testScanHook()
+	}
 	if s.libraryDir == "" {
 		// #965: previously this returned without writing any result, so the UI
 		// kept showing a stale prior scan and the #962 "no files found" warning
@@ -3291,7 +3531,9 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	walked := make(map[string]walkedFile)
 	walkDir := func(root string) []string {
 		var files []string
-		if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		// walkRoot enters a root that is itself a symlink and reports paths
+		// under the configured root; links inside it are still not followed.
+		if err := walkRoot(root, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}
@@ -3357,12 +3599,45 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	// the author folder, and tracking it hid every untracked sibling ebook in
 	// that folder from the scan (#1436).
 	trackedPaths := make(map[string]bool)
+	// flatAudio is the parent marking for an audio file with no book folder
+	// of its own (#1985). In a flat Author/Title.mp3 layout the parent is the
+	// AUTHOR folder, and marking it absorbed every other audiobook by that
+	// author as already tracked, so a wanted one never reconciled and never
+	// reached Unmatched either. Such a folder instead remembers the track
+	// stems of its tracked files, and only a sibling that is another track of
+	// one of them (see audioTrackStem) is absorbed.
+	flatAudio := make(map[string]map[string]bool)
+	markAudioParent := func(cleanPath string) {
+		dir := filepath.Clean(filepath.Dir(cleanPath))
+		if !flatAudioDir(cleanPath, s.libraryDir, s.audiobookDir) {
+			trackedPaths[dir] = true
+			return
+		}
+		if flatAudio[dir] == nil {
+			flatAudio[dir] = make(map[string]bool)
+		}
+		flatAudio[dir][audioTrackStem(cleanPath)] = true
+	}
+	audioParentTracked := func(cleanPath string) bool {
+		dir := filepath.Clean(filepath.Dir(cleanPath))
+		if trackedPaths[dir] {
+			return true
+		}
+		stems := flatAudio[dir]
+		if stems == nil {
+			return false
+		}
+		stem := audioTrackStem(cleanPath)
+		// A bare track number names no book, so it stays with the tracked
+		// audiobook beside it, as it did before #1985.
+		return stem == "" || stems[stem]
+	}
 	if allPaths, err := s.books.ListAllBookFilePaths(ctx); err == nil {
 		for _, p := range allPaths {
 			cleanP := filepath.Clean(p)
 			trackedPaths[cleanP] = true
 			if detectDownloadFormat([]string{cleanP}) == models.MediaTypeAudiobook {
-				trackedPaths[filepath.Clean(filepath.Dir(cleanP))] = true
+				markAudioParent(cleanP)
 			}
 		}
 	}
@@ -3677,7 +3952,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		if detectedFmt == models.MediaTypeAudiobook {
 			// Sibling tracks of a just-reconciled audiobook folder belong to
 			// this book — count them as tracked, not unmatched.
-			trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] = true
+			markAudioParent(cleanPath)
 		}
 		reconciledBooks[bookFormatClaim{b.ID, detectedFmt}] = true
 		reconciled++
@@ -3748,7 +4023,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// (#2723).
 		if trackedPaths[cleanPath] ||
 			(detectedFmt == models.MediaTypeAudiobook &&
-				(trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] || trackedPaths[filepath.Clean(registeredPath)])) {
+				(audioParentTracked(cleanPath) || trackedPaths[filepath.Clean(registeredPath)])) {
 			alreadyTracked++
 			continue
 		}
@@ -3889,7 +4164,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				slog.Info("library scan: reconciled book via ASIN", "asin", parsed.ASIN, "title", b.Title, "path", path)
 				trackedPaths[filepath.Clean(registeredPath)] = true
 				if detectedFmt == models.MediaTypeAudiobook {
-					trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] = true
+					markAudioParent(cleanPath)
 				}
 				reconciledBooks[bookFormatClaim{b.ID, detectedFmt}] = true
 				reconciled++
@@ -3946,7 +4221,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 							"series", parsed.Series, "position", parsed.SeriesNumber, "title", book.Title, "path", path)
 						trackedPaths[filepath.Clean(registeredPath)] = true
 						if detectedFmt == models.MediaTypeAudiobook {
-							trackedPaths[filepath.Clean(filepath.Dir(cleanPath))] = true
+							markAudioParent(cleanPath)
 						}
 						reconciledBooks[bookFormatClaim{book.ID, detectedFmt}] = true
 						reconciled++
@@ -4280,8 +4555,8 @@ func (s *Scanner) writeScanResultWithError(ctx context.Context, filesFound, reco
 	// list so a web bundle cached from before library adoption still parses
 	// the result. Added 2026-09 for v1.37; remove it in the release after.
 	payload := fmt.Sprintf(
-		`{"ran_at":%q,"files_found":%d,"reconciled":%d,"unmatched":%d,"already_tracked":%d,"tag_read_failed":%d,"unmatched_files":[],"unmatched_units":%d,"ignored_units":%d,"units_truncated":%t,"library_dir":%q,"audiobook_dir":%q,"scanned_paths":%s,"no_files_found":%t,"scan_error":%s}`,
-		time.Now().UTC().Format(time.RFC3339),
+		`{"ran_at":%q,"scan_id":%q,"files_found":%d,"reconciled":%d,"unmatched":%d,"already_tracked":%d,"tag_read_failed":%d,"unmatched_files":[],"unmatched_units":%d,"ignored_units":%d,"units_truncated":%t,"library_dir":%q,"audiobook_dir":%q,"scanned_paths":%s,"no_files_found":%t,"scan_error":%s}`,
+		time.Now().UTC().Format(time.RFC3339), s.currentScanID(),
 		filesFound, reconciled, unmatched, alreadyTracked, tagReadFailed,
 		units.pending, units.ignored, units.truncated,
 		s.libraryDir, s.audiobookDir, pathsJSON, noFilesFound, scanErrorJSON,

@@ -77,6 +77,9 @@ type DownloadClientHandler struct {
 	// goos and fsTimeout override runtime.GOOS and diagnoseFSTimeout in tests.
 	goos      string
 	fsTimeout time.Duration
+	// resetContentBreaker forgets the importer's paused blocklisting for a
+	// client (#3024). Nil (tests, unwired callers) does nothing.
+	resetContentBreaker func(clientID int64)
 }
 
 func NewDownloadClientHandler(clients *db.DownloadClientRepo) *DownloadClientHandler {
@@ -110,6 +113,35 @@ func (h *DownloadClientHandler) bgCtx() context.Context {
 func (h *DownloadClientHandler) WithHealth(store *downloader.HealthStore) *DownloadClientHandler {
 	h.health = store
 	return h
+}
+
+// WithContentBreakerReset wires the importer's breaker reset, called when a
+// client is edited, disabled or deleted: whatever paused automatic
+// blocklisting for it was presumably what the user just changed (#3024).
+func (h *DownloadClientHandler) WithContentBreakerReset(reset func(clientID int64)) *DownloadClientHandler {
+	h.resetContentBreaker = reset
+	return h
+}
+
+// forgetPausedBlocklisting resets the importer's breaker for a client and
+// clears the advisory it published.
+func (h *DownloadClientHandler) forgetPausedBlocklisting(clientID int64) {
+	if h.resetContentBreaker != nil {
+		h.resetContentBreaker(clientID)
+	}
+	if h.health != nil {
+		h.health.ClearAdvisory(clientID, downloader.AdvisoryBlocklist)
+	}
+}
+
+// forgetClient drops everything kept about a client that was disabled or
+// deleted: the importer's breaker, every advisory and the cached NZBGet
+// unpacker check.
+func (h *DownloadClientHandler) forgetClient(clientID int64) {
+	h.forgetPausedBlocklisting(clientID)
+	if h.health != nil {
+		h.health.ForgetClient(clientID)
+	}
 }
 
 func (h *DownloadClientHandler) WithStoragePaths(downloadDir, audiobookDownloadDir string) *DownloadClientHandler {
@@ -249,6 +281,7 @@ func (h *DownloadClientHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// the remote service rejected a request, at which point the per-client
 	// re-Login path would burn an extra round-trip. (Wave 3 finding 10.)
 	downloader.Evict(id)
+	h.forgetPausedBlocklisting(id)
 	h.refreshClientHealthAsync(c)
 	h.attachClientHealth(&c)
 	writeJSON(w, http.StatusOK, downloadClientResponse(c))
@@ -369,6 +402,7 @@ func (h *DownloadClientHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if h.health != nil {
 		h.health.Delete(id)
 	}
+	h.forgetClient(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -513,6 +547,7 @@ func (h *DownloadClientHandler) refreshClientHealthAsync(client models.DownloadC
 	}
 	if !client.Enabled {
 		h.health.Delete(client.ID)
+		h.forgetClient(client.ID)
 		return
 	}
 	h.health.Set(client.ID, downloader.CheckingHealth())
@@ -523,6 +558,9 @@ func (h *DownloadClientHandler) refreshClientHealthAsync(client models.DownloadC
 		ctx, cancel := context.WithTimeout(h.bgCtx(), 15*time.Second)
 		defer cancel()
 		h.health.Set(client.ID, downloader.CheckDownloadClientHealth(ctx, &client, h.downloadDir, h.audiobookDownloadDir, h.downloadPathRemap))
+		// Create and edit are when an NZBGet's unpackers are worth asking
+		// about; the periodic probe never does (see NZBGetUnpackers).
+		h.health.NZBGetUnpackers(ctx, &client, true)
 	}()
 }
 
@@ -532,9 +570,13 @@ func (h *DownloadClientHandler) refreshClientHealth(ctx context.Context, client 
 	}
 	if !client.Enabled {
 		h.health.Delete(client.ID)
+		h.forgetClient(client.ID)
 		return nil
 	}
-	health := downloader.CheckDownloadClientHealth(ctx, client, h.downloadDir, h.audiobookDownloadDir, h.downloadPathRemap)
-	h.health.Set(client.ID, health)
-	return &health
+	h.health.Set(client.ID, downloader.CheckDownloadClientHealth(ctx, client, h.downloadDir, h.audiobookDownloadDir, h.downloadPathRemap))
+	h.health.NZBGetUnpackers(ctx, client, true)
+	// Return what the store now shows, not the raw probe: the store also
+	// carries the importer's paused blocklisting advisory (#3024), and the
+	// UI replaces the client's health with this answer.
+	return h.health.Get(client.ID)
 }

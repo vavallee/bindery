@@ -59,7 +59,7 @@ describe('CalibreTab Push all on the queue', () => {
   it('keeps Push all available while books wait for an unreachable Calibre', async () => {
     mocked.calibreSyncStatus.mockResolvedValue(waiting)
     render(<CalibreTab />)
-    const button = await screen.findByRole('button', { name: 'Push all to Calibre' })
+    const button = await screen.findByRole('button', { name: 'settings.calibre.pushAll.label' })
     await waitFor(() => expect(mocked.calibreSyncStatus).toHaveBeenCalled())
     await waitFor(() => expect(mocked.testCalibre).toHaveBeenCalled())
     expect(button).toBeEnabled()
@@ -71,6 +71,6 @@ describe('CalibreTab Push all on the queue', () => {
     mocked.calibreSyncStatus.mockResolvedValue({ ...waiting, queueing: true, message: 'queueing books for Calibre…' })
     render(<CalibreTab />)
     expect(await screen.findByRole('dialog')).toHaveTextContent('queueing books for Calibre')
-    expect(screen.getByRole('button', { name: 'Queueing…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'settings.calibre.pushAll.queueing' })).toBeDisabled()
   })
 })

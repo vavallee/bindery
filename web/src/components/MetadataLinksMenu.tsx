@@ -37,8 +37,11 @@ export default function MetadataLinksMenu({ links }: { links: MetadataSourceLink
     <div
       ref={rootRef}
       className="relative inline-flex"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      // Hover only means something for a mouse. A tap fires pointerenter and
+      // an emulated mouseenter but never a matching leave, so tracking it would
+      // pin the menu open and leave the trigger unable to close it.
+      onPointerEnter={event => { if (event.pointerType === 'mouse') setHovered(true) }}
+      onPointerLeave={event => { if (event.pointerType === 'mouse') setHovered(false) }}
       onBlur={event => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setExpanded(false)
       }}

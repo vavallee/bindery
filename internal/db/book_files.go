@@ -274,6 +274,22 @@ func (r *BookFileRepo) BookIDForFile(ctx context.Context, fileID int64) (int64, 
 	return bookID, nil
 }
 
+// GetByPath returns the book_files row recorded at path, or nil when no row
+// has that exact path.
+func (r *BookFileRepo) GetByPath(ctx context.Context, path string) (*models.BookFile, error) {
+	var f models.BookFile
+	err := r.db.QueryRowContext(ctx,
+		`SELECT id, book_id, format, path, size_bytes, created_at FROM book_files WHERE path = ?`, path).
+		Scan(&f.ID, &f.BookID, &f.Format, &f.Path, &f.SizeBytes, &f.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("book_files get by path: %w", err)
+	}
+	return &f, nil
+}
+
 // ListByBook returns all book_files rows for the given book, ordered by id.
 func (r *BookFileRepo) ListByBook(ctx context.Context, bookID int64) ([]models.BookFile, error) {
 	rows, err := r.db.QueryContext(ctx,
@@ -362,7 +378,9 @@ func (r *BookFileRepo) DeleteByPath(ctx context.Context, path string) (int64, er
 // UNIQUE, so there is at most one owner. Pass excludeBookID=0 to treat ANY
 // registered owner as "another book" (e.g. when the current book's rows have
 // already been cascade-deleted). The delete and reassign-cleanup paths use this
-// to avoid os.Remove-ing a file another book still owns (#1368).
+// to avoid os.Remove-ing a file another book still owns (#1368). A row left by
+// a deleted book counts as owned here on purpose; PathOwnedByLiveOtherBook is
+// the variant that does not.
 func (r *BookFileRepo) PathOwnedByOtherBook(ctx context.Context, path string, excludeBookID int64) (bool, error) {
 	var owner int64
 	err := r.db.QueryRowContext(ctx, `SELECT book_id FROM book_files WHERE path = ? LIMIT 1`, path).Scan(&owner)
@@ -373,6 +391,45 @@ func (r *BookFileRepo) PathOwnedByOtherBook(ctx context.Context, path string, ex
 		return false, fmt.Errorf("book_files owner lookup: %w", err)
 	}
 	return owner != excludeBookID, nil
+}
+
+// PathOwnedByLiveOtherBook is PathOwnedByOtherBook counting only an owner that
+// still exists. A row left by a deleted book (foreign keys lost, #1727) is
+// owned by nobody here, because Track takes such a row over (#2937).
+//
+// Only a check that guards a write through Track may use this: adoption's
+// ownership check and the existing file bind when an author is added. A
+// delete must keep using PathOwnedByOtherBook, where an orphan row counts as
+// owned: refusing to unlink is the safe answer when ownership is unclear.
+func (r *BookFileRepo) PathOwnedByLiveOtherBook(ctx context.Context, path string, excludeBookID int64) (bool, error) {
+	var owner int64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT bf.book_id FROM book_files bf JOIN books b ON b.id = bf.book_id
+		 WHERE bf.path = ? LIMIT 1`, path).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("book_files live owner lookup: %w", err)
+	}
+	return owner != excludeBookID, nil
+}
+
+// LiveOwnerOfPath returns the id of the existing book that tracks path, or 0
+// when no live book does. A row left by a deleted book does not count, for the
+// reason PathOwnedByLiveOtherBook gives.
+func (r *BookFileRepo) LiveOwnerOfPath(ctx context.Context, path string) (int64, error) {
+	var owner int64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT bf.book_id FROM book_files bf JOIN books b ON b.id = bf.book_id
+		 WHERE bf.path = ? LIMIT 1`, path).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("book_files live owner lookup: %w", err)
+	}
+	return owner, nil
 }
 
 // ListAllPaths returns every path currently registered in book_files.

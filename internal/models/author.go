@@ -51,6 +51,10 @@ type Author struct {
 	ProviderIdentifiers map[string]string `json:"-"`
 	CreatedAt           time.Time         `json:"createdAt"`
 	UpdatedAt           time.Time         `json:"updatedAt"`
+	// UpdatedAtRaw is authors.updated_at exactly as stored, for guarded
+	// writes (AuthorRepo.UpdateIfUnchanged). Like Book.UpdatedAtRaw it is
+	// compared as text, because legacy rows hold other timestamp shapes.
+	UpdatedAtRaw string `json:"-"`
 
 	// OwnerUserID is the per-user ownership column added in migration 025.
 	// Zero means "no recorded owner" (legacy pre-backfill rows or rows
@@ -287,6 +291,8 @@ func AuthorProviderFromForeignID(foreignID string) string {
 		return "hardcover"
 	case strings.HasPrefix(foreignID, "dnb:"):
 		return "dnb"
+	case strings.HasPrefix(foreignID, "nb:"):
+		return "nb"
 	case strings.HasPrefix(foreignID, "calibre:"):
 		return "calibre"
 	case strings.HasPrefix(foreignID, "abs:"):

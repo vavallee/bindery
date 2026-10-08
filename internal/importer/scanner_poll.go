@@ -78,6 +78,11 @@ func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.Down
 				slog.Warn("download failed", "title", dl.Title, "message", slot.FailMessage)
 				s.setDownloadError(ctx, dl.ID, slot.FailMessage)
 				s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, map[string]string{"guid": dl.GUID, "message": slot.FailMessage})
+				// A content failure fails again on every re-send, so the
+				// #2710 cooldown alone would re-grab it each sweep (#3024).
+				if sabnzbd.IsContentFailure(slot.FailMessage) {
+					s.blocklistRejectedRelease(ctx, dl, "downloadFailed: "+slot.FailMessage)
+				}
 				s.notify(ctx, notifierEventDownloadFailed, map[string]interface{}{
 					"title":   dl.Title,
 					"message": slot.FailMessage,
@@ -127,6 +132,7 @@ func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.Downl
 					slog.Debug("remapped download path", "nzbget", item.DestDir, "local", localPath)
 				}
 				slog.Info("download completed", "title", dl.Title, "path", localPath)
+				s.noteNZBGetCompletion(client, item)
 				s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
 				s.tryImportNZBGet(ctx, ng, dl, item.NZBID, localPath)
 			} else if dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit {
@@ -149,6 +155,11 @@ func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.Downl
 				slog.Warn("download failed", "title", dl.Title, "status", item.Status)
 				s.setDownloadError(ctx, dl.ID, msg)
 				s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, map[string]string{"guid": dl.GUID, "message": msg})
+				// See the SABnzbd branch. For the statuses NZBGet also uses for
+				// its own faults, the job log is read first (#3024).
+				if nzbget.IsContentFailure(item.Status) {
+					s.handleNZBGetContentFailure(ctx, client, ng, dl, item)
+				}
 				s.notify(ctx, notifierEventDownloadFailed, map[string]interface{}{
 					"title":   dl.Title,
 					"message": msg,
@@ -623,7 +634,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 					}
 					s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
 					s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
-					if cleanup := qbittorrentRemoveOnImportCleanup(ctx, qb, client, &dl); cleanup != nil {
+					if cleanup := s.qbittorrentRemoveOnImportCleanup(ctx, qb, client, &dl); cleanup != nil {
 						if err := cleanup(); err != nil {
 							slog.Warn("cleanup failed", cleanupWarnAttrs("qbittorrent", safeRemoteID(dl.TorrentID), err)...)
 						}
@@ -681,7 +692,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 					s.updateDownloadStatus(ctx, dl.ID, models.StateImportPending)
 					s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
 					s.updateDownloadStatus(ctx, dl.ID, models.StateImported)
-					if cleanup := qbittorrentRemoveOnImportCleanup(ctx, qb, client, &dl); cleanup != nil {
+					if cleanup := s.qbittorrentRemoveOnImportCleanup(ctx, qb, client, &dl); cleanup != nil {
 						if err := cleanup(); err != nil {
 							slog.Warn("cleanup failed", cleanupWarnAttrs("qbittorrent", safeRemoteID(dl.TorrentID), err)...)
 						}
@@ -1021,6 +1032,11 @@ func (s *Scanner) tryImportTransmission(ctx context.Context, trans *transmission
 	if client.RemoveOnImport && dl.TorrentID != nil && strings.TrimSpace(*dl.TorrentID) != "" {
 		ref := strings.TrimSpace(*dl.TorrentID)
 		cleanup = func() error {
+			// Another download row may still use the torrent the client
+			// adopted for both grabs; it stays until the last one is done.
+			if downloader.ClientJobShared(ctx, s.downloads, client, dl, "remove on import") {
+				return nil
+			}
 			slog.Info("removing torrent from Transmission after import", "torrent", ref, "title", dl.Title)
 			// deleteFiles=false: the payload has been imported (hard linked or
 			// copied) but the torrent may still be seeding from those files.
@@ -1228,7 +1244,7 @@ func normaliseReleaseName(s string) string {
 // tryImportQbittorrent attempts to import a completed qBittorrent download. See
 // tryImportTransmission for the semantics of explicitFiles.
 func (s *Scanner) tryImportQbittorrent(ctx context.Context, qb *qbittorrent.Client, client *models.DownloadClient, dl *models.Download, downloadPath string, explicitFiles []string) {
-	cleanup := qbittorrentRemoveOnImportCleanup(ctx, qb, client, dl)
+	cleanup := s.qbittorrentRemoveOnImportCleanup(ctx, qb, client, dl)
 	s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", safeRemoteID(dl.TorrentID), "", cleanup, explicitFiles)
 }
 
@@ -1237,12 +1253,19 @@ func (s *Scanner) tryImportQbittorrent(ctx context.Context, qb *qbittorrent.Clie
 // in checkQbittorrentDownloads (issue #2046) — those shortcuts close out a
 // download without ever calling tryImportInternal, so they need the same
 // cleanup construction rather than only the normal import path getting it.
-func qbittorrentRemoveOnImportCleanup(ctx context.Context, qb *qbittorrent.Client, client *models.DownloadClient, dl *models.Download) func() error {
+//
+// The torrent stays while another download row still uses it
+// (downloader.ClientJobShared): two grabs of one release share the torrent the
+// client adopted, and the other row may not have imported yet.
+func (s *Scanner) qbittorrentRemoveOnImportCleanup(ctx context.Context, qb *qbittorrent.Client, client *models.DownloadClient, dl *models.Download) func() error {
 	if !client.RemoveOnImport || dl.TorrentID == nil {
 		return nil
 	}
 	hash := *dl.TorrentID
 	return func() error {
+		if downloader.ClientJobShared(ctx, s.downloads, client, dl, "remove on import") {
+			return nil
+		}
 		slog.Info("removing torrent from qBittorrent after import", "hash", hash, "title", dl.Title)
 		if err := qb.DeleteTorrent(ctx, hash, false); err != nil {
 			return fmt.Errorf("remove torrent %s: %w", hash, err)

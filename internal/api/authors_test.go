@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1242,6 +1243,70 @@ func TestHandleNewWantedBook_DoesNotBindAnotherBooksFile(t *testing.T) {
 		if bound := len(files) > 0; bound != tc.wantBound {
 			t.Errorf("%s: book_files rows = %v, want bound=%v", tc.name, files, tc.wantBound)
 		}
+	}
+}
+
+// TestHandleNewWantedBook_BindsAFileLeftByADeletedBook is the other half: a
+// book_files row whose book no longer exists (foreign keys lost, #1727) does
+// not belong to anyone. The write takes such a row over since #2937, so the
+// pre-check must not decline the bind on its account and send the book off to
+// search for a file it already has.
+func TestHandleNewWantedBook_BindsAFileLeftByADeletedBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{ForeignID: "hc:leckie", Name: "Ann Leckie", SortName: "Leckie, Ann"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	gone := &models.Book{ForeignID: "hc:gone", AuthorID: author.ID, Title: "Gone",
+		Status: models.BookStatusImported, MediaType: models.MediaTypeEbook, Genres: []string{}}
+	if err := bookRepo.Create(ctx, gone); err != nil {
+		t.Fatal(err)
+	}
+	const path = "/books/Ann Leckie/Provenance/Provenance.epub"
+	if err := bookRepo.AddBookFile(ctx, gone.ID, models.MediaTypeEbook, path); err != nil {
+		t.Fatal(err)
+	}
+	orphanBook(t, database, gone.ID)
+
+	book := &models.Book{ForeignID: "hc:provenance", AuthorID: author.ID, Title: "Provenance",
+		Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook, Genres: []string{}}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	finder := &stubLibraryFinder{ownedTitle: book.Title, ownedPath: path}
+	if !handleNewWantedBook(ctx, bookRepo, nil, finder, *book, author.Name) {
+		t.Fatal("handleNewWantedBook declined a file only a deleted book's row held")
+	}
+	files, err := bookRepo.ListFiles(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != path {
+		t.Fatalf("book_files = %+v, want the row taken over", files)
+	}
+}
+
+// orphanBook deletes a book row with foreign keys off, leaving its book_files
+// rows pointing at a book that no longer exists (#1727).
+func orphanBook(t *testing.T, database *sql.DB, bookID int64) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := database.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "DELETE FROM books WHERE id = ?", bookID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "PRAGMA foreign_keys=ON"); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -4784,6 +4849,47 @@ func TestAddBook_DNBDirectInsertSucceeds(t *testing.T) {
 	if err != nil || auth == nil {
 		t.Fatalf("author not persisted: err=%v auth=%v", err, auth)
 	}
+	// DNB has no author lookup by id, so the author is built from the
+	// request. Its provider label must still be DNB's: it used to be stamped
+	// openlibrary on a dnb: id, the mismatch behind #2117.
+	if auth.MetadataProvider != "dnb" {
+		t.Errorf("author metadata_provider = %q for %s, want dnb", auth.MetadataProvider, auth.ForeignID)
+	}
+}
+
+// TestFetchAuthorForCreate_LabelsProviderFromForeignID: when the provider
+// lookup fails or is not configured, the author is built from the request and
+// labelled with the provider its foreign id belongs to (#2117). DNB has no
+// author lookup by id at all, so every DNB author added from a search result
+// took this path and was labelled openlibrary.
+func TestFetchAuthorForCreate_LabelsProviderFromForeignID(t *testing.T) {
+	cases := []struct{ id, want string }{
+		{"dnb:gnd:118540238", "dnb"},
+		{"hc:andy-weir", "hardcover"},
+		{"OL7234434A", "openlibrary"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.id, func(t *testing.T) {
+			// No metadata configured.
+			h := &AuthorHandler{}
+			got, err := h.fetchAuthorForCreate(context.Background(), tc.id, "Some Author")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.MetadataProvider != tc.want {
+				t.Errorf("without metadata: metadata_provider = %q, want %q", got.MetadataProvider, tc.want)
+			}
+			// Metadata configured, but nothing answers for the id.
+			h = &AuthorHandler{meta: metadata.NewAggregator(&stubMetaProvider{})}
+			got, err = h.fetchAuthorForCreate(context.Background(), tc.id, "Some Author")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.MetadataProvider != tc.want {
+				t.Errorf("lookup missed: metadata_provider = %q, want %q", got.MetadataProvider, tc.want)
+			}
+		})
+	}
 }
 
 // TestAddBook_NameOnlyResolvesToExistingLibraryAuthor covers the Google-Books
@@ -5486,7 +5592,7 @@ func TestApplyAuthorMajorityLanguageFallback(t *testing.T) {
 			{ForeignID: "5", Language: ""}, // unresolved: should be backfilled
 			{ForeignID: "6", Language: ""}, // unresolved: should be backfilled
 		}
-		applyAuthorMajorityLanguageFallback(books)
+		applyAuthorMajorityLanguageFallback(books, nil)
 		for _, b := range books {
 			if b.Language != "eng" {
 				t.Errorf("book %s: Language = %q, want eng", b.ForeignID, b.Language)
@@ -5502,7 +5608,7 @@ func TestApplyAuthorMajorityLanguageFallback(t *testing.T) {
 			{ForeignID: "4", Language: "ger"},
 			{ForeignID: "5", Language: ""},
 		}
-		applyAuthorMajorityLanguageFallback(books)
+		applyAuthorMajorityLanguageFallback(books, nil)
 		if books[4].Language != "" {
 			t.Errorf("Language = %q, want unchanged (empty) — no language clears the dominance threshold", books[4].Language)
 		}
@@ -5514,7 +5620,7 @@ func TestApplyAuthorMajorityLanguageFallback(t *testing.T) {
 			{ForeignID: "2", Language: "eng"},
 			{ForeignID: "3", Language: ""},
 		}
-		applyAuthorMajorityLanguageFallback(books)
+		applyAuthorMajorityLanguageFallback(books, nil)
 		if books[2].Language != "" {
 			t.Errorf("Language = %q, want unchanged (empty) — only 2 resolved works is below the minimum sample", books[2].Language)
 		}
@@ -5525,7 +5631,7 @@ func TestApplyAuthorMajorityLanguageFallback(t *testing.T) {
 			{ForeignID: "1", Language: ""},
 			{ForeignID: "2", Language: ""},
 		}
-		applyAuthorMajorityLanguageFallback(books)
+		applyAuthorMajorityLanguageFallback(books, nil)
 		for _, b := range books {
 			if b.Language != "" {
 				t.Errorf("book %s: Language = %q, want unchanged (empty)", b.ForeignID, b.Language)
@@ -6228,6 +6334,102 @@ func TestFetchAuthorBooks_KeepsBookWithUnknownAuthorship(t *testing.T) {
 	synced, got := reparentFixture(t, "OL777A", nil)
 	if got.AuthorID == synced.ID {
 		t.Error("book with unknown authorship must not be moved")
+	}
+}
+
+// With tenancy on, a catalogue sync must not re-link a book into a different
+// owner's library. books.foreign_id is unique across users, so bob's sync of
+// an author whose catalogue lists a work alice holds finds alice's row, and
+// before the fix moved it under bob's author. No owner counts as an owner of
+// its own here: a shared author's sync must not take alice's book out from
+// under her author, and a shared book must not move under bob's private
+// author. Only a shared book under a shared author still moves, and tenancy
+// off keeps the re-link everywhere.
+func TestFetchAuthorBooks_TenancyKeepsAnotherUsersBook(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		tenancy      bool
+		syncedShared bool
+		bookShared   bool
+		wantMoved    bool
+	}{
+		{"tenancy on", true, false, false, false},
+		{"tenancy off", false, false, false, true},
+		{"tenancy on, shared author syncs alice's book", true, true, false, false},
+		{"tenancy on, bob's author syncs a shared book", true, false, true, false},
+		{"tenancy on, shared author syncs a shared book", true, true, true, true},
+		{"tenancy off, shared author syncs alice's book", false, true, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			auth.SetEnforceTenancyForTests(t, tc.tenancy)
+			database, err := db.OpenMemory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { database.Close() })
+			ctx := context.Background()
+			users := db.NewUserRepo(database)
+			alice, err := users.Create(ctx, "alice", "h1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			bob, err := users.Create(ctx, "bob", "h2")
+			if err != nil {
+				t.Fatal(err)
+			}
+			authorRepo := db.NewAuthorRepo(database)
+			bookRepo := db.NewBookRepo(database)
+
+			synced := &models.Author{
+				ForeignID: "OL500A", Name: "Real Author", SortName: "Author, Real",
+				MetadataProvider: "openlibrary", Monitored: true,
+			}
+			syncedOwner, bookOwner := bob.ID, alice.ID
+			if tc.syncedShared {
+				syncedOwner = 0
+			}
+			if tc.bookShared {
+				bookOwner = 0
+			}
+			if err := authorRepo.CreateForUser(ctx, synced, syncedOwner); err != nil {
+				t.Fatal(err)
+			}
+			aliceAuthor := &models.Author{
+				ForeignID: "OL777A", Name: "Other Author", SortName: "Author, Other",
+				MetadataProvider: "openlibrary",
+			}
+			if err := authorRepo.CreateForUser(ctx, aliceAuthor, bookOwner); err != nil {
+				t.Fatal(err)
+			}
+			book := &models.Book{
+				ForeignID: "OL501W", AuthorID: aliceAuthor.ID, Title: "Elantris", SortTitle: "elantris",
+				Language: "eng", Status: models.BookStatusWanted, Monitored: true,
+				Genres: []string{}, MetadataProvider: "openlibrary", OwnerUserID: bookOwner,
+			}
+			if err := bookRepo.Create(ctx, book); err != nil {
+				t.Fatal(err)
+			}
+			stub := &stubMetaProvider{works: []models.Book{{
+				ForeignID: "OL501W", Title: "Elantris", SortTitle: "elantris",
+				Language: "eng", Status: models.BookStatusWanted, Genres: []string{},
+				MetadataProvider: "openlibrary", CreditedAuthorForeignIDs: []string{"OL500A"},
+			}}}
+			h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(stub), nil,
+				db.NewMetadataProfileRepo(database), &searcherSpy{})
+			h.FetchAuthorBooks(synced, false, "")
+
+			got, err := bookRepo.GetByID(ctx, book.ID)
+			if err != nil || got == nil {
+				t.Fatalf("re-read alice's book: %+v err=%v", got, err)
+			}
+			if moved := got.AuthorID == synced.ID; moved != tc.wantMoved {
+				t.Fatalf("alice's book author = %d (bob's synced author %d, alice's %d), want moved=%v",
+					got.AuthorID, synced.ID, aliceAuthor.ID, tc.wantMoved)
+			}
+			if got.OwnerUserID != bookOwner {
+				t.Fatalf("book owner = %d, want %d", got.OwnerUserID, bookOwner)
+			}
+		})
 	}
 }
 
@@ -7419,6 +7621,177 @@ func TestFetchAuthorBooks_UsesOneLibrarySnapshotForTheLoop(t *testing.T) {
 	}
 	if missing.FilePath != "" {
 		t.Errorf("missing book unexpectedly got a file path %q", missing.FilePath)
+	}
+}
+
+// TestFetchAuthorBooks_FileGoesToExactTitleNotShorterBook is #2941 on the add
+// author path. The library holds one untracked epub titled exactly as one of
+// the author's books; a second book, "Harry Potter", is created first and its
+// title also clears FindExisting's word match. It used to take the file, skip
+// its search, and leave the exact book unbound because the file was by then
+// owned. The file must go to the exact title and the shorter book stay
+// without one.
+func TestFetchAuthorBooks_FileGoesToExactTitleNotShorterBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	libDir := t.TempDir()
+	dutchPath := filepath.Join(libDir, "J. K. Rowling", "Harry Potter en het vervloekte kind (2016)", "Harry Potter en het vervloekte kind - J. K. Rowling.epub")
+	if err := os.MkdirAll(filepath.Dir(dutchPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dutchPath, bytes.Repeat([]byte("x"), int(importer.MinPlausibleEbookBytes)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+
+	ctx := context.Background()
+	author := &models.Author{
+		ForeignID: "OL910A", Name: "J. K. Rowling", SortName: "Rowling, J. K.",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := &stubMetaProvider{
+		works: []models.Book{
+			{ForeignID: "OL911W", Title: "Harry Potter", SortTitle: "harry potter", Language: "eng", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary", MediaType: models.MediaTypeBoth},
+			{ForeignID: "OL912W", Title: "Harry Potter en het vervloekte kind", SortTitle: "harry potter en het vervloekte kind", Language: "eng", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary", MediaType: models.MediaTypeBoth},
+		},
+	}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(stub), nil, profileRepo, nil).
+		WithFinder(importer.NewLibrarySnapshot(libDir, ""))
+
+	h.FetchAuthorBooks(author, false, "")
+
+	short, err := bookRepo.GetByForeignID(ctx, "OL911W")
+	if err != nil || short == nil {
+		t.Fatalf("Harry Potter not created: err=%v", err)
+	}
+	exact, err := bookRepo.GetByForeignID(ctx, "OL912W")
+	if err != nil || exact == nil {
+		t.Fatalf("Harry Potter en het vervloekte kind not created: err=%v", err)
+	}
+	if short.FilePath != "" {
+		t.Errorf("%q took %q, which is titled exactly as another book of the author", short.Title, short.FilePath)
+	}
+	if exact.FilePath != dutchPath {
+		t.Errorf("%q file path = %q, want %q", exact.Title, exact.FilePath, dutchPath)
+	}
+}
+
+// TestHandleNewWantedBook_ExcludedRowDoesNotBlockBind: a row the user
+// excluded is out of the catalogue, so its title must not withdraw a file
+// from the book they kept. An excluded "Project Hail Mary" duplicate would
+// otherwise keep "Project Hail Mary.epub" from "Project Hail Mary: A Novel"
+// forever, and the owned book would be downloaded again (#2941 review).
+func TestHandleNewWantedBook_ExcludedRowDoesNotBlockBind(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	ctx := context.Background()
+
+	libDir := t.TempDir()
+	path := filepath.Join(libDir, "Andy Weir", "Project Hail Mary.epub")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), int(importer.MinPlausibleEbookBytes)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{ForeignID: "OL920A", Name: "Andy Weir", SortName: "Weir, Andy"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	dup := &models.Book{ForeignID: "OL921W", AuthorID: author.ID, Title: "Project Hail Mary",
+		Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook, Genres: []string{}}
+	if err := bookRepo.Create(ctx, dup); err != nil {
+		t.Fatal(err)
+	}
+	if err := bookRepo.SetExcluded(ctx, dup.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{ForeignID: "OL922W", AuthorID: author.ID, Title: "Project Hail Mary: A Novel",
+		Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook, Genres: []string{}}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	if !handleNewWantedBook(ctx, bookRepo, nil, importer.NewLibrarySnapshot(libDir, ""), *book, author.Name) {
+		t.Fatalf("%q was not bound to %q: the excluded %q row withdrew it", book.Title, path, dup.Title)
+	}
+	got, err := bookRepo.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FilePath != path {
+		t.Errorf("file path = %q, want %q", got.FilePath, path)
+	}
+}
+
+// TestHandleNewWantedBook_RivalFileStepsAside is the add path half of the
+// rival drop: "The Way of Kings Prime.epub" belongs to the catalogue book of
+// that title, so "The Way of Kings" must still find its own file beside it
+// rather than nothing.
+func TestHandleNewWantedBook_RivalFileStepsAside(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	ctx := context.Background()
+
+	libDir := t.TempDir()
+	dir := filepath.Join(libDir, "Brandon Sanderson")
+	own := filepath.Join(dir, "Stormlight Archive The Way of Kings - Brandon Sanderson.epub")
+	for _, p := range []string{own, filepath.Join(dir, "The Way of Kings Prime - Brandon Sanderson.epub")} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, bytes.Repeat([]byte("x"), int(importer.MinPlausibleEbookBytes)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	author := &models.Author{ForeignID: "OL930A", Name: "Brandon Sanderson", SortName: "Sanderson, Brandon"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	prime := &models.Book{ForeignID: "OL931W", AuthorID: author.ID, Title: "The Way of Kings Prime",
+		Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook, Genres: []string{}}
+	if err := bookRepo.Create(ctx, prime); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{ForeignID: "OL932W", AuthorID: author.ID, Title: "The Way of Kings",
+		Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook, Genres: []string{}}
+	if err := bookRepo.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	if !handleNewWantedBook(ctx, bookRepo, nil, importer.NewLibrarySnapshot(libDir, ""), *book, author.Name) {
+		t.Fatalf("%q was not bound to its own file %q", book.Title, own)
+	}
+	got, err := bookRepo.GetByID(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FilePath != own {
+		t.Errorf("file path = %q, want %q", got.FilePath, own)
 	}
 }
 
@@ -9314,5 +9687,190 @@ func TestAuthorRefresh_RefusesSecondRefreshWhileSyncRuns(t *testing.T) {
 			t.Fatal("the third sync never finished")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// editingEditionsMetaProvider runs edit once, while it handles the first
+// edition lookup for editForeignID: a user change committed after the
+// catalogue sync read the author's books and before it writes one (#2926).
+type editingEditionsMetaProvider struct {
+	stubMetaProvider
+	editForeignID string
+	once          sync.Once
+	edit          func()
+}
+
+func (p *editingEditionsMetaProvider) GetEditions(ctx context.Context, fid string) ([]models.Edition, error) {
+	if fid == p.editForeignID && p.edit != nil {
+		p.once.Do(p.edit)
+	}
+	return p.stubMetaProvider.GetEditions(ctx, fid)
+}
+
+// TestRefreshAuthorBooks_TitleMatchKeepsEditMadeDuringSync covers #2926 for
+// the catalogue sync's title match branch. The rows it updates are read when
+// the sync starts, and provider calls (here the MinPages edition prefetch)
+// run before the write, so writing that snapshot back undid an edit saved in
+// between. The calibre stub upgrade must land on top of the edit instead.
+func TestRefreshAuthorBooks_TitleMatchKeepsEditMadeDuringSync(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("GetByID(default profile) failed: %v", err)
+	}
+	profile.MinPages = 50
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	author := &models.Author{
+		ForeignID: "OL-RACE-AUTHOR", Name: "Race Author", SortName: "Author, Race",
+		MetadataProvider: "openlibrary", Monitored: true,
+		MonitorMode: models.AuthorMonitorModeAll, MonitorNewItems: models.AuthorMonitorNewItemsAll,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	stub := &models.Book{
+		ForeignID: "calibre:book:41", AuthorID: author.ID, Title: "Race Title",
+		SortTitle: "race title", Status: models.BookStatusWanted, Monitored: true,
+		Genres: []string{}, MetadataProvider: "calibre",
+	}
+	if err := bookRepo.Create(ctx, stub); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &editingEditionsMetaProvider{
+		stubMetaProvider: stubMetaProvider{name: "openlibrary", works: []models.Book{{
+			ForeignID: "OL-RACE-W", Title: "Race Title", SortTitle: "race title", Language: "eng",
+			RatingsCount: 50, AverageRating: 4.2, Status: models.BookStatusWanted,
+			Genres: []string{}, MetadataProvider: "openlibrary",
+		}}},
+		editForeignID: "OL-RACE-W",
+	}
+	provider.edit = func() {
+		current, err := bookRepo.GetByID(ctx, stub.ID)
+		if err != nil || current == nil {
+			t.Errorf("load book for concurrent edit: %v", err)
+			return
+		}
+		current.Monitored = false
+		current.ImageURL = "/covers/user-choice.jpg"
+		if err := bookRepo.Update(ctx, current); err != nil {
+			t.Errorf("concurrent edit: %v", err)
+		}
+	}
+
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
+		metadata.NewAggregator(provider), nil, profileRepo, &searcherSpy{})
+	h.RefreshAuthorBooks(author, false, "")
+
+	provider.editionCallsMu.Lock()
+	calls := len(provider.editionCalls)
+	provider.editionCallsMu.Unlock()
+	if calls == 0 {
+		t.Fatal("the edition prefetch never ran, so nothing raced the write")
+	}
+	stored, err := bookRepo.GetByID(ctx, stub.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if stored.Monitored || stored.ImageURL != "/covers/user-choice.jpg" {
+		t.Fatalf("edit made during the sync was overwritten: monitored=%v image=%q", stored.Monitored, stored.ImageURL)
+	}
+	if stored.ForeignID != "OL-RACE-W" || stored.RatingsCount != 50 || stored.Language != "eng" {
+		t.Fatalf("calibre stub upgrade not applied on top of the edit: foreignID=%q ratings=%d language=%q",
+			stored.ForeignID, stored.RatingsCount, stored.Language)
+	}
+}
+
+// TestRefreshAuthorBooks_LostTitleMatchIsRetriedNextSync: when the guarded
+// write of a calibre stub upgrade loses, the sync must not record the work's
+// ids against the stub. Recorded ids would send the next sync down the id
+// branch, which never relinks a stub, so the upgrade would never happen. A
+// trigger that silently ignores the relink stands in for an edit landing
+// between the re-read and the write.
+func TestRefreshAuthorBooks_LostTitleMatchIsRetriedNextSync(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{
+		ForeignID: "OL-RETRY-AUTHOR", Name: "Retry Author", SortName: "Author, Retry",
+		MetadataProvider: "openlibrary", Monitored: true,
+		MonitorMode: models.AuthorMonitorModeAll, MonitorNewItems: models.AuthorMonitorNewItemsAll,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	stub := &models.Book{
+		ForeignID: "calibre:book:77", AuthorID: author.ID, Title: "Retry Title",
+		SortTitle: "retry title", Status: models.BookStatusWanted, Monitored: true,
+		Genres: []string{}, MetadataProvider: "calibre",
+	}
+	if err := bookRepo.Create(ctx, stub); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		CREATE TRIGGER test_ignore_stub_upgrade BEFORE UPDATE OF foreign_id ON books
+		WHEN NEW.foreign_id = 'OL-RETRY-W'
+		BEGIN SELECT RAISE(IGNORE); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	works := []models.Book{{
+		ForeignID: "OL-RETRY-W", Title: "Retry Title", SortTitle: "retry title", Language: "eng",
+		Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary",
+	}}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
+		metadata.NewAggregator(&stubMetaProvider{name: "openlibrary", works: works}), nil, profileRepo, &searcherSpy{})
+	h.RefreshAuthorBooks(author, false, "")
+
+	stored, err := bookRepo.GetByID(ctx, stub.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if stored.ForeignID != "calibre:book:77" {
+		t.Fatalf("the trigger should have made the first upgrade lose, foreignID=%q", stored.ForeignID)
+	}
+	if ident, err := bookRepo.GetBookIdentifier(ctx, "OL-RETRY-W"); err != nil || ident != nil {
+		t.Errorf("work ids recorded against a stub whose upgrade did not land: %+v err=%v", ident, err)
+	}
+
+	if _, err := database.ExecContext(ctx, `DROP TRIGGER test_ignore_stub_upgrade`); err != nil {
+		t.Fatal(err)
+	}
+	h.RefreshAuthorBooks(author, false, "")
+
+	stored, err = bookRepo.GetByID(ctx, stub.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if stored.ForeignID != "OL-RETRY-W" {
+		t.Fatalf("second sync did not perform the upgrade: foreignID=%q", stored.ForeignID)
+	}
+	books, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("want the one upgraded row, got %d: %v", len(books), bookTitles(books))
 	}
 }

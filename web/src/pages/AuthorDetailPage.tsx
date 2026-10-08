@@ -676,13 +676,17 @@ export default function AuthorDetailPage() {
         }}
       >
         <td className="px-3 py-2 w-10 align-middle" onClick={e => e.stopPropagation()}>
-          <input
-            type="checkbox"
-            checked={selected.has(book.id)}
-            onChange={() => toggleSelect(book.id)}
-            className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
-            aria-label={`Select ${book.title}`}
-          />
+          {/* The label fills the cell, so the whole cell toggles the box: the
+              16px box alone is hard to tap. */}
+          <label className="flex items-center -mx-3 -my-2 px-3 py-2 cursor-pointer pointer-coarse:min-h-11">
+            <input
+              type="checkbox"
+              checked={selected.has(book.id)}
+              onChange={() => toggleSelect(book.id)}
+              className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+              aria-label={`Select ${book.title}`}
+            />
+          </label>
         </td>
         <td className="px-3 py-2 align-middle">
           <Link
@@ -695,7 +699,7 @@ export default function AuthorDetailPage() {
             }}
           >
             {book.imageUrl ? (
-              <img src={book.imageUrl} alt="" className="w-6 h-9 object-cover rounded flex-shrink-0" />
+              <img loading="lazy" decoding="async" src={book.imageUrl} alt="" className="w-6 h-9 object-cover rounded flex-shrink-0" />
             ) : (
               <CoverPlaceholder
                 id={book.id}
@@ -798,14 +802,20 @@ export default function AuthorDetailPage() {
           key={book.id}
           className={`relative border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden group transition-colors ${selected.has(book.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800 hover:border-emerald-500'}`}
         >
-          <input
-            type="checkbox"
-            checked={selected.has(book.id)}
-            onChange={() => toggleSelect(book.id)}
+          {/* The label is the tap area: 32px round the box, 44px on a touch
+              screen, where the box sits further in to make room. */}
+          <label
+            className="absolute top-0 left-0 z-10 flex p-2 pointer-coarse:p-3.5 cursor-pointer"
             onClick={e => e.stopPropagation()}
-            className={`absolute top-2 left-2 z-10 rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 ${selected.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
-            aria-label={`Select ${book.title}`}
-          />
+          >
+            <input
+              type="checkbox"
+              checked={selected.has(book.id)}
+              onChange={() => toggleSelect(book.id)}
+              className={`rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 ${selected.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
+              aria-label={`Select ${book.title}`}
+            />
+          </label>
           <Link
             to={`/book/${book.id}`}
             state={bookNavState(book)}
@@ -814,7 +824,7 @@ export default function AuthorDetailPage() {
           >
             <div className="aspect-[2/3] bg-slate-200 dark:bg-zinc-800 relative">
               {book.imageUrl ? (
-                <img src={book.imageUrl} alt={book.title} className="w-full h-full object-cover" />
+                <img loading="lazy" decoding="async" src={book.imageUrl} alt={book.title} className="w-full h-full object-cover" />
               ) : (
                 <CoverPlaceholder id={book.id} title={book.title} size="sm" className="w-full h-full" />
               )}
@@ -908,7 +918,7 @@ export default function AuthorDetailPage() {
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-2xl font-bold mb-1">{author.authorName}</h2>
+          <h2 className="text-2xl font-bold mb-1 [overflow-wrap:anywhere]">{author.authorName}</h2>
           {author.disambiguation && (
             <p className="text-xs text-slate-600 dark:text-zinc-500">{author.disambiguation}</p>
           )}

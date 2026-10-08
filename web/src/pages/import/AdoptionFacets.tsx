@@ -27,13 +27,14 @@ const AdoptionFacets = forwardRef<HTMLInputElement, Props>(function AdoptionFace
   const reasonLabel = (code: string) => t(`adoption.reason.${code}`, code)
   const formatLabel = (f: string) => (f === 'audiobook' ? t('common.audiobook', 'Audiobook') : t('common.ebook', 'Ebook'))
   const pill = (active: boolean) =>
-    `px-3 py-1 rounded-md text-xs font-medium transition-colors ${active ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`
+    `touch-target px-3 py-1 rounded-md text-xs font-medium transition-colors ${active ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`
   const chip = 'inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-200 dark:bg-zinc-800 text-xs text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700'
 
   return (
     <div className="mb-3 space-y-2">
       <div className="flex flex-col sm:flex-row gap-3">
         <input
+          enterKeyHint="search"
           ref={searchRef}
           type="search"
           value={filters.search}
@@ -43,7 +44,7 @@ const AdoptionFacets = forwardRef<HTMLInputElement, Props>(function AdoptionFace
           aria-keyshortcuts="/"
           className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 placeholder-slate-400 dark:placeholder-zinc-600"
         />
-        <div role="radiogroup" aria-label={t('adoption.stateLabel', 'Show')} className="flex gap-1 flex-wrap items-center">
+        <div role="radiogroup" aria-label={t('adoption.stateLabel', 'Show')} className="flex gap-1 pointer-coarse:gap-y-5 flex-wrap items-center">
           {STATES.map(s => (
             <button
               key={s}

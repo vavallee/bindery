@@ -80,25 +80,51 @@ func authorEvidenceConflict(filesAuthor, folderAuthor string) bool {
 // placeholderAuthorNames are credits that name nobody: compilations, unknowns,
 // productions and publishers that rips put in an author tag. Such a tag is no
 // evidence of an author, so it never raises a conflict or an Add author.
-// Compared after isPlaceholderAuthor folds case, brackets and spacing. The
-// codebase had no such list; "Unknown Author" is only ever written as a
-// default (renamer.go), never recognised.
+// Keys are in the form placeholderKey produces, so "V.A.", "V/A" and "VA" are
+// all "va", "Unknown Author(s)" is "unknown authors" and "Full-Cast" is "full
+// cast". The codebase had no such list; "Unknown Author" is only ever written
+// as a default (renamer.go), never recognised.
 var placeholderAuthorNames = map[string]bool{
+	// Compilations and unknowns.
 	"various": true, "various authors": true, "various artists": true, "various narrators": true,
-	"va": true, "v.a.": true, "v/a": true,
-	"unknown": true, "unknown artist": true, "unknown author": true, "unknown authors": true,
-	"anonymous": true, "anon": true, "n/a": true, "none": true, "author": true, "artist": true,
+	"va": true, "na": true, "none": true, "author": true, "artist": true,
+	"unknown": true, "unknown artist": true, "unknown artists": true,
+	"unknown author": true, "unknown authors": true, "author unknown": true, "artist unknown": true,
+	"anonymous": true, "anon": true,
+	// Productions.
 	"full cast": true, "a full cast": true, "full cast production": true, "full cast drama": true,
-	"audible studios": true, "audible": true, "audible originals": true, "audible original": true,
 	"librivox": true, "librivox volunteers": true, "audiobook": true, "audiobooks": true, "audio book": true,
 	"bbc radio": true, "bbc radio 4": true, "bbc audio": true,
+	// Audiobook publishers and imprints.
+	"audible studios": true, "audible": true, "audible originals": true, "audible original": true,
+	"brilliance audio": true, "brilliance publishing": true, "recorded books": true,
+	"tantor audio": true, "tantor media": true, "macmillan audio": true,
+	"blackstone audio": true, "blackstone publishing": true, "random house audio": true,
+	"penguin audio": true, "penguin random house audio": true,
+	"harperaudio": true, "harper audio": true, "podium audio": true, "podium publishing": true,
+}
+
+// placeholderKey folds an author tag for comparison with
+// placeholderAuthorNames: lower case, brackets, dots, slashes and apostrophes
+// dropped, any other punctuation read as a space, spacing collapsed.
+func placeholderKey(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+		case strings.ContainsRune("()[]{}<>./'’", r):
+		default:
+			b.WriteByte(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 // isPlaceholderAuthor reports whether an author tag names nobody in
-// particular ("Various Artists", "[Unknown]", "Full Cast").
+// particular ("Various Artists.", "[Unknown]", "Full-Cast", "Brilliance Audio").
 func isPlaceholderAuthor(s string) bool {
-	s = strings.ToLower(strings.Trim(strings.TrimSpace(s), "[]()<>{} "))
-	return placeholderAuthorNames[strings.Join(strings.Fields(s), " ")]
+	return placeholderAuthorNames[placeholderKey(s)]
 }
 
 // tagAuthorNames returns a file's usable author tags, Album Artist first:

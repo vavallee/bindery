@@ -88,6 +88,12 @@ var iso639TwoLetterToB = map[string]string{
 	"zu": "zul",
 }
 
+// iso639LegacyTwoLetter maps the ISO 639-1 codes withdrawn in 1989 onto the
+// codes that replaced them. Older EPUB tools and Java locales still write
+// them, and passed through raw they read as no language at all and relabelled
+// a book to "iw".
+var iso639LegacyTwoLetter = map[string]string{"iw": "he", "in": "id", "ji": "yi"}
+
 // iso639TermToB maps the ISO 639-2/T (terminology) code onto the 639-2/B
 // (bibliographic) code for the twenty languages where the two standards
 // disagree. Both spellings are legal ISO 639-2 and providers emit either, but
@@ -177,6 +183,9 @@ func NormalizeLanguageCode(code string) string {
 		return b
 	}
 	if len(code) == 2 {
+		if current, ok := iso639LegacyTwoLetter[code]; ok {
+			code = current
+		}
 		if b, ok := iso639TwoLetterToB[code]; ok {
 			return b
 		}

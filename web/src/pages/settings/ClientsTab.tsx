@@ -7,6 +7,7 @@ import PathRemapField from './PathRemapField'
 import { downloadClientPathRemapHelp, rtorrentScgiIgnoredFields } from './helpers'
 import { dangerLink } from '../../components/buttons'
 import ClientDiagnosePanel from './ClientDiagnosePanel'
+import { literalInputAttrs, portInputAttrs, secretInputAttrs, urlInputAttrs } from '../../util/inputAttrs'
 
 // clients is owned by SettingsPage so it can be fetched eagerly on page mount
 // (matching the pre-refactor monolith), not on tab open.
@@ -325,8 +326,8 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
       <div>
         <label className={labelCls}>Connection</label>
         <div className="flex gap-2">
-          <input value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
-          <input value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+          <input {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+          <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
         </div>
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
       </div>
@@ -355,7 +356,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
       {hasUsername(type) && (
         <div>
           <label className={labelCls}>Username</label>
-          <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className={inputCls} />
+          <input {...literalInputAttrs} value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className={inputCls} />
         </div>
       )}
       <div>
@@ -363,6 +364,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
           ? t('settings.clients.passwordEditLabel')
           : t('settings.clients.apiKeyEditLabel')}</label>
         <input
+          {...secretInputAttrs}
           id={`edit-credential-${client.id}`}
           value={credential}
           onChange={e => setCredential(e.target.value)}
@@ -567,8 +569,8 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
       <div>
         <label className={labelCls}>Connection</label>
         <div className="flex gap-2">
-          <input value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
-          <input value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+          <input {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+          <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
         </div>
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
       </div>
@@ -597,12 +599,12 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
       {hasUsername(type) && (
         <div>
           <label className={labelCls}>Username</label>
-          <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className={inputCls} />
+          <input {...literalInputAttrs} value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className={inputCls} />
         </div>
       )}
       <div>
         <label className={labelCls}>{isPasswordClient(type) ? 'Password' : 'API Key'}</label>
-        <input value={credential} onChange={e => setCredential(e.target.value)} placeholder={isPasswordClient(type) ? 'Password' : 'API Key'} type="password" className={inputCls} />
+        <input {...secretInputAttrs} value={credential} onChange={e => setCredential(e.target.value)} placeholder={isPasswordClient(type) ? 'Password' : 'API Key'} type="password" className={inputCls} />
       </div>
       <div>
         <label className={labelCls}>{type === 'transmission' ? 'Download Directory' : 'Category / Label'}</label>

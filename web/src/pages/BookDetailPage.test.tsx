@@ -639,6 +639,123 @@ describe('BookDetailPage — search', () => {
     expect(api.listIndexers).toHaveBeenCalled()
   })
 
+  // #1636: a sweep can take 10 to 18 seconds and the results render far
+  // below the fold, so on a long book page nothing visibly happened. The
+  // button now spins while the search runs and the results are scrolled into
+  // view when they land, unless they are already on screen or the reader
+  // scrolled away on their own while waiting.
+  function mockScrolling(regionTop: number) {
+    const scrollIntoView = vi.fn()
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollIntoView
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(
+      { top: regionTop, bottom: regionTop + 200, left: 0, right: 800, width: 800, height: 200, x: 0, y: regionTop, toJSON: () => ({}) } as DOMRect,
+    )
+    return {
+      scrollIntoView,
+      restore: () => {
+        Element.prototype.scrollIntoView = original
+        rect.mockRestore()
+      },
+    }
+  }
+
+  it('shows a spinner while searching and brings the results into view when they land', async () => {
+    const { scrollIntoView, restore } = mockScrolling(2000)
+    try {
+      let resolveSearch: (v: { results: SearchResult[]; debug: null }) => void = () => {}
+      vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
+      vi.mocked(api.searchBook).mockImplementation(() => new Promise(resolve => { resolveSearch = resolve }))
+
+      renderBookDetailPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+
+      const busy = await screen.findByRole('button', { name: /Searching all indexers/ })
+      expect(busy).toBeDisabled()
+      expect(busy).toHaveAttribute('aria-busy', 'true')
+      expect(within(busy).getByTestId('search-spinner')).toBeInTheDocument()
+      expect(scrollIntoView).not.toHaveBeenCalled()
+
+      await act(async () => {
+        resolveSearch({ results: [makeResult({ guid: 'r1', title: 'A Result' })], debug: null })
+      })
+
+      expect(await screen.findByText('A Result')).toBeInTheDocument()
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+      const target = scrollIntoView.mock.instances[0] as unknown as HTMLElement
+      expect(target).toHaveAttribute('data-testid', 'search-results-region')
+      expect(within(target).getByText('A Result')).toBeInTheDocument()
+      expect(screen.queryByTestId('search-spinner')).not.toBeInTheDocument()
+    } finally {
+      restore()
+    }
+  })
+
+  it('brings an empty result into view too, since that is the answer the user waited for', async () => {
+    const { scrollIntoView, restore } = mockScrolling(2000)
+    try {
+      vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
+      vi.mocked(api.searchBook).mockResolvedValue({ results: [], debug: null })
+
+      renderBookDetailPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+
+      expect(await screen.findByText(/No results on any indexer/)).toBeInTheDocument()
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    } finally {
+      restore()
+    }
+  })
+
+  it('does not scroll when the results are already on screen', async () => {
+    const { scrollIntoView, restore } = mockScrolling(300)
+    try {
+      vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
+      vi.mocked(api.searchBook).mockResolvedValue({ results: [makeResult({ guid: 'r1', title: 'A Result' })], debug: null })
+
+      renderBookDetailPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+
+      expect(await screen.findByText('A Result')).toBeInTheDocument()
+      await new Promise(r => setTimeout(r, 20))
+      expect(scrollIntoView).not.toHaveBeenCalled()
+    } finally {
+      restore()
+    }
+  })
+
+  it.each([
+    ['the wheel', () => fireEvent.wheel(window)],
+    ['a touch drag', () => fireEvent.touchMove(window)],
+    ['Page Down', () => fireEvent.keyDown(window, { key: 'PageDown' })],
+  ])('does not pull back a reader who scrolled with %s while waiting', async (_how, scroll) => {
+    const { scrollIntoView, restore } = mockScrolling(2000)
+    try {
+      let resolveSearch: (v: { results: SearchResult[]; debug: null }) => void = () => {}
+      vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
+      vi.mocked(api.searchBook).mockImplementation(() => new Promise(resolve => { resolveSearch = resolve }))
+
+      renderBookDetailPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+      await screen.findByRole('button', { name: /Searching all indexers/ })
+      scroll()
+
+      await act(async () => {
+        resolveSearch({ results: [makeResult({ guid: 'r1', title: 'A Result' })], debug: null })
+      })
+
+      expect(await screen.findByText('A Result')).toBeInTheDocument()
+      await new Promise(r => setTimeout(r, 20))
+      expect(scrollIntoView).not.toHaveBeenCalled()
+    } finally {
+      restore()
+    }
+  })
+
   it('shows an empty search state when no indexers are configured', async () => {
     vi.mocked(api.listIndexers).mockResolvedValue([])
     vi.mocked(api.searchBook).mockResolvedValue({ results: [], debug: null })
@@ -975,13 +1092,51 @@ describe('BookDetailPage — danger zone', () => {
   })
 })
 
-// The #1161 live import poll used to sit here: a 5s interval on the book
-// detail page, armed while book.status was 'downloading' or 'downloaded'.
-// Those statuses were removed in #2374 because nothing in Bindery ever wrote
-// them, which means the poll never armed on a real install and these tests
-// passed only on a mocked status the server could not produce. The effect and
-// its tests are gone; re-adding live refresh needs a signal that actually
-// exists, such as an open queue row for the book.
+// Live refresh while an import is in flight (#2423). The #1161 version armed
+// on book statuses nothing ever wrote, and its tests passed only on a mocked
+// status the server could not produce. This one arms on importInFlight, which
+// the server sets from the book's download rows (TestBookGet_ImportInFlight
+// pins that side).
+describe('BookDetailPage live refresh while an import is in flight (#2423)', () => {
+  it('reloads the book every 5s while importInFlight is set, and stops once the import lands', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(api.getBook)
+        .mockResolvedValueOnce(makeBook({ importInFlight: true }))
+        .mockResolvedValue(makeBook({ status: 'imported', filePath: '/library/book.epub' }))
+
+      renderBookDetailPage()
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(api.getBook).toHaveBeenCalledTimes(1)
+      const historyLoads = vi.mocked(api.listHistory).mock.calls.length
+
+      // One tick: the book is reloaded, comes back without the flag, and the
+      // history is pulled again so the import shows there too.
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+      expect(api.getBook).toHaveBeenCalledTimes(2)
+      expect(vi.mocked(api.listHistory).mock.calls.length).toBeGreaterThan(historyLoads)
+
+      // Disarmed: nothing more is fetched.
+      await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
+      expect(api.getBook).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not poll a book with no import in flight', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(api.getBook).mockResolvedValue(makeBook())
+      renderBookDetailPage()
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
+      expect(api.getBook).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
 
 // Regression guard for the File card's two-column grid.
 //
@@ -1354,19 +1509,19 @@ describe('BookDetailPage metadata source (#1707)', () => {
     expect(trigger).not.toHaveAttribute('aria-haspopup')
     expect(trigger).toHaveAttribute('aria-controls')
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
-    fireEvent.mouseEnter(trigger.parentElement!)
+    fireEvent.pointerEnter(trigger.parentElement!, { pointerType: 'mouse' })
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     fireEvent.pointerDown(document.body)
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
-    fireEvent.mouseEnter(trigger.parentElement!)
+    fireEvent.pointerEnter(trigger.parentElement!, { pointerType: 'mouse' })
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     fireEvent.click(trigger)
-    fireEvent.mouseLeave(trigger.parentElement!)
+    fireEvent.pointerLeave(trigger.parentElement!, { pointerType: 'mouse' })
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    fireEvent.mouseEnter(trigger.parentElement!)
+    fireEvent.pointerEnter(trigger.parentElement!, { pointerType: 'mouse' })
     fireEvent.click(trigger)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    fireEvent.mouseLeave(trigger.parentElement!)
+    fireEvent.pointerLeave(trigger.parentElement!, { pointerType: 'mouse' })
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(trigger)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
@@ -1612,6 +1767,10 @@ describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () =>
     await screen.findByRole('heading', { name: 'The Final Empire' })
 
     const asinInput = screen.getByLabelText('ASIN (Audible identifier)') as HTMLInputElement
+    // An ASIN is an uppercase code, not a word to correct.
+    expect(asinInput).toHaveAttribute('autocapitalize', 'characters')
+    expect(asinInput).toHaveAttribute('autocorrect', 'off')
+    expect(asinInput).toHaveAttribute('spellcheck', 'false')
     fireEvent.change(asinInput, { target: { value: 'B0DRAFTVALUE' } })
     expect(asinInput).toHaveValue('B0DRAFTVALUE')
 
@@ -1674,7 +1833,7 @@ describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () =>
 
     fireEvent.click(screen.getByLabelText('Next book'))
 
-    expect(await screen.findByText('Loading...')).toBeInTheDocument()
+    expect(await screen.findByText('Loading…')).toBeInTheDocument()
     expect(screen.getByText('← Books')).toBeInTheDocument()
     expect(screen.getByLabelText('Previous book')).toBeInTheDocument()
     expect(screen.getByLabelText('Next book')).toBeInTheDocument()

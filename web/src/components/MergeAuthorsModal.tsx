@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from './useConfirmDialog'
 import { api, Author } from '../api/client'
+import { useModal } from './useModal'
 
 interface Props {
   authors: Author[]
@@ -73,15 +74,18 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
     }
   }
 
+  const { titleId, panelProps } = useModal({ onClose, canClose: !busy })
+
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={onClose}>
+    <div className="modal-overlay fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={onClose}>
       {confirmDialog}
       <div
-        className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl"
+        {...panelProps}
+        className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl modal-max-h overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
-          <h3 className="text-lg font-semibold">{t('mergeAuthorsModal.title')}</h3>
+          <h3 id={titleId} className="text-lg font-semibold">{t('mergeAuthorsModal.title')}</h3>
           <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1">
             {t('mergeAuthorsModal.description')}
           </p>

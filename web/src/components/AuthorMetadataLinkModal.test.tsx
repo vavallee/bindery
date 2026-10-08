@@ -7,11 +7,11 @@ import type { Author } from '../api/client'
 const tMock = vi.hoisted(() => (key: string, options?: string | Record<string, unknown>) => {
   const strings: Record<string, string> = {
     'authorMetadataLink.title': 'Link metadata',
-    'authorMetadataLink.searchPlaceholder': 'Search by author name...',
+    'authorMetadataLink.searchPlaceholder': 'Search by author name…',
     'authorMetadataLink.search': 'Search',
-    'authorMetadataLink.searching': 'Searching...',
+    'authorMetadataLink.searching': 'Searching…',
     'authorMetadataLink.link': 'Link',
-    'authorMetadataLink.linking': 'Linking...',
+    'authorMetadataLink.linking': 'Linking…',
     'authorMetadataLink.noResults': 'No alternate metadata candidates found',
     'authorMetadataLink.previouslyLinked': 'previously linked',
     'common.cancel': 'Cancel',
@@ -96,7 +96,7 @@ describe('AuthorMetadataLinkModal', () => {
 
     await waitFor(() => expect(api.searchAuthorLinkCandidates).toHaveBeenCalledWith(42, 'Emilia Jae'))
 
-    const input = screen.getByPlaceholderText('Search by author name...')
+    const input = screen.getByPlaceholderText('Search by author name…')
     fireEvent.change(input, { target: { value: 'Manual Query' } })
     const form = input.closest('form')
     if (!form) throw new Error('search form not found')

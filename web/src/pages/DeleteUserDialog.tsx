@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ManagedUser, UserOwnedRows, UserDeletePlan } from '../api/client'
+import { useModal } from '../components/useModal'
 
 const btnCls = 'px-3 py-1.5 rounded text-sm font-medium transition-colors'
 const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
@@ -53,10 +54,12 @@ export default function DeleteUserDialog({ user, counts, users, busy, onCancel, 
     })
   }
 
+  const { titleId, panelProps } = useModal({ onClose: onCancel, canClose: !busy })
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
-      <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg p-5 w-full max-w-md space-y-4">
-        <h2 className="text-base font-semibold">{t('users.deleteTitle', { username: user.username })}</h2>
+    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div {...panelProps} className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg p-5 w-full max-w-md space-y-4 modal-max-h overflow-y-auto">
+        <h2 id={titleId} className="text-base font-semibold">{t('users.deleteTitle', { username: user.username })}</h2>
 
         <div className="text-sm text-slate-600 dark:text-zinc-400 space-y-2">
           <p>{t('users.deleteOwns')}</p>

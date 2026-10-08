@@ -16,6 +16,7 @@ type seriesRouteHandler interface {
 	Update(http.ResponseWriter, *http.Request)
 	Monitor(http.ResponseWriter, *http.Request)
 	Delete(http.ResponseWriter, *http.Request)
+	Merge(http.ResponseWriter, *http.Request)
 	AddBook(http.ResponseWriter, *http.Request)
 	RemoveBook(http.ResponseWriter, *http.Request)
 	SetPrimaryBook(http.ResponseWriter, *http.Request)
@@ -27,6 +28,7 @@ type seriesRouteHandler interface {
 	PutHardcoverLink(http.ResponseWriter, *http.Request)
 	DeleteHardcoverLink(http.ResponseWriter, *http.Request)
 	HardcoverDiff(http.ResponseWriter, *http.Request)
+	UnmonitorSplitEditionParts(http.ResponseWriter, *http.Request)
 }
 
 func registerSeriesRoutes(r chi.Router, seriesHandler seriesRouteHandler) {
@@ -42,10 +44,12 @@ func registerSeriesRoutes(r chi.Router, seriesHandler seriesRouteHandler) {
 		r.Put("/series/{id}", seriesHandler.Update)
 		r.Patch("/series/{id}", seriesHandler.Monitor)
 		r.Delete("/series/{id}", seriesHandler.Delete)
+		r.Post("/series/{id}/merge", seriesHandler.Merge)
 		r.Post("/series/{id}/books", seriesHandler.AddBook)
 		r.Delete("/series/{id}/books/{bookId}", seriesHandler.RemoveBook)
 		r.Put("/series/{id}/books/{bookId}/primary", seriesHandler.SetPrimaryBook)
 		r.Post("/series/{id}/fill", seriesHandler.Fill)
+		r.Post("/series/{id}/split-parts/unmonitor", seriesHandler.UnmonitorSplitEditionParts)
 		r.Put("/series/{id}/genres", seriesHandler.ApplyGenres)
 		r.Delete("/series/{id}/genres", seriesHandler.ClearGenres)
 		r.Post("/series/{id}/hardcover-link/auto", seriesHandler.AutoLinkHardcover)

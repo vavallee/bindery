@@ -11,6 +11,7 @@ import { AuthorAddDefaults, loadAuthorAddDefaults } from './authorAddDefaults'
 import AddBookConfirm from './AddBookConfirm'
 import { authorProviderKey } from '../util/authorMetadata'
 import { providerDisplayName } from '../util/metadataSource'
+import { useModal } from './useModal'
 
 // What the modal reports back once something is in the library. Callers that
 // only refresh a list ignore the payload; the header search navigates to it.
@@ -32,6 +33,9 @@ interface Props {
   // For a requester, called once a request is sent (the confirm steps send a
   // request instead of adding).
   onRequested?: (request: LibraryRequest) => void
+  // The dialog is the whole page (the requester's search route) rather than
+  // a layer over one, so it adds no history entry of its own.
+  standalone?: boolean
 }
 
 type Selected =
@@ -51,7 +55,7 @@ function isIdentifierQuery(q: string): boolean {
   return isbnFromQuery(q) !== null || ASIN_RE.test(q)
 }
 
-export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode, onRequested }: Props) {
+export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode, onRequested, standalone = false }: Props) {
   const { t } = useTranslation()
   // A requester cannot read profiles, root folders or settings, and never
   // needs them: the admin picks those at approval.
@@ -74,7 +78,6 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
   // every row selection. Null until it arrives; the step disables Add
   // meanwhile.
   const [authorDefaults, setAuthorDefaults] = useState<AuthorAddDefaults | null>(null)
-  const dialogRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (isRequester) return
@@ -90,7 +93,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
         const value = (s.value || '').trim().toLowerCase()
         // Mirror MetadataPrimaryProviders on the backend; anything else means
         // no explicit choice, so no notice.
-        if (value === 'openlibrary' || value === 'dnb' || value === 'hardcover') setPrimaryProvider(value)
+        if (value === 'openlibrary' || value === 'dnb' || value === 'nb' || value === 'hardcover') setPrimaryProvider(value)
       })
       .catch(() => { /* unset; no provider notice needed */ })
   }, [isRequester])
@@ -164,56 +167,10 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
     return provider
   }
 
-  const handleDialogKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      onClose()
-      return
-    }
-    if (event.key !== 'Tab') return
-
-    const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    )
-    if (!focusable?.length) return
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    const activeElement = document.activeElement as HTMLElement | null
-    const activeIsFocusable = activeElement ? Array.from(focusable).includes(activeElement) : false
-    if (event.shiftKey && (activeElement === first || !activeIsFocusable)) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && (activeElement === last || !activeIsFocusable)) {
-      event.preventDefault()
-      first.focus()
-    }
-  }
-
-  // Focus leaves the dialog after an overlay click or when a row that had
-  // focus is replaced, and from the body the dialog's own handler never sees
-  // the key. Escape must still close and Tab must still land inside, so a
-  // document listener covers keys whose target is outside the dialog; keys
-  // inside it stay with handleDialogKeyDown so inner menus can stop them.
-  useEffect(() => {
-    const onDocumentKeyDown = (event: KeyboardEvent) => {
-      const dialog = dialogRef.current
-      if (!dialog || (event.target instanceof Node && dialog.contains(event.target))) return
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-        return
-      }
-      if (event.key !== 'Tab') return
-      const focusable = dialog.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      )
-      if (!focusable.length) return
-      event.preventDefault()
-      ;(event.shiftKey ? focusable[focusable.length - 1] : focusable[0]).focus()
-    }
-    document.addEventListener('keydown', onDocumentKeyDown)
-    return () => document.removeEventListener('keydown', onDocumentKeyDown)
-  }, [onClose])
+  // Escape, the focus trap and the back button come from useModal (#3052).
+  // As a page of its own (the requester's search) back already leaves the
+  // page, which is what the user wants there.
+  const { panelProps } = useModal({ onClose, labelledBy: 'add-to-library-title', history: !standalone })
 
   const placeholder = mode === 'author'
     ? t('addToLibrary.searchPlaceholderAuthor')
@@ -325,8 +282,8 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={onClose}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="add-to-library-title" className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()} onKeyDown={handleDialogKeyDown}>
+    <div className="modal-overlay fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={onClose}>
+      <div {...panelProps} className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl modal-max-h flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
           <h3 id="add-to-library-title" className="text-lg font-semibold">{t('addToLibrary.title')}</h3>
           <p className="text-xs text-fg-muted mt-0.5">{t('addToLibrary.description')}</p>
@@ -355,6 +312,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
           <div className="p-4 flex-1 overflow-y-auto">
             <div className="flex gap-2">
               <input
+                enterKeyHint="search"
                 type="text"
                 value={query}
                 onChange={e => setQuery(e.target.value)}
@@ -373,7 +331,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
               </button>
             </div>
 
-            <div className="mt-4 space-y-2 max-h-[50vh] overflow-y-auto">
+            <div className="mt-4 space-y-2 max-h-[50dvh] overflow-y-auto">
               {rows.map((row, i) => {
                 if (row.kind === 'author') return renderAuthorRow(row.author, i)
                 if (row.kind === 'book') return renderBookRow(row.book, i)

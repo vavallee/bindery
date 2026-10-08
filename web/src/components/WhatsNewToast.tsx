@@ -36,7 +36,7 @@ export default function WhatsNewToast({ version }: { version: string }) {
   return (
     <div
       role="status"
-      className="fixed bottom-4 right-4 z-50 max-w-sm flex items-start gap-3 px-4 py-3 rounded-lg shadow-lg border border-emerald-300 dark:border-emerald-700/60 bg-emerald-50 dark:bg-emerald-950/70 text-sm text-emerald-900 dark:text-emerald-200"
+      className="fixed bottom-safe-4 right-safe-4 left-safe-4 sm:left-auto ml-auto z-50 max-w-sm flex items-start gap-3 px-4 py-3 rounded-lg shadow-lg border border-emerald-300 dark:border-emerald-700/60 bg-emerald-50 dark:bg-emerald-950/70 text-sm text-emerald-900 dark:text-emerald-200"
     >
       <span className="flex-1">
         {t('whatsNew.updated', 'Updated to v{{version}}.', { version })}{' '}

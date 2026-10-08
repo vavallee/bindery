@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Author, AuthorMonitorMode, MetadataProfile, MonitorNewItems, QualityProfile, RootFolder, Series, UpdateAuthorRequest } from '../api/client'
+import { useModal } from './useModal'
 
 interface Props {
   author: Author
@@ -161,17 +162,19 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
     }
   }
 
+  const { titleId, panelProps } = useModal({ onClose, canClose: !saving })
+
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={onClose}>
-      <div className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+    <div className="modal-overlay fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50" onClick={onClose}>
+      <div {...panelProps} className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl modal-max-h flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
-          <h3 className="text-lg font-semibold">{t('editAuthorModal.title', 'Edit Author')}</h3>
+          <h3 id={titleId} className="text-lg font-semibold">{t('editAuthorModal.title', 'Edit Author')}</h3>
           <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1">{author.authorName}</p>
         </div>
 
         <div className="p-4 flex-1 overflow-y-auto">
           {loading ? (
-            <p className="text-sm text-slate-600 dark:text-zinc-500">{t('common.loading', 'Loading...')}</p>
+            <p className="text-sm text-slate-600 dark:text-zinc-500">{t('common.loading', 'Loading…')}</p>
           ) : (
             <>
               {qualityProfiles.length > 0 && (
@@ -262,7 +265,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                 <div className="mb-3">
                   <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.monitoredSeries', 'Monitored series')}</label>
                   {!seriesLoaded ? (
-                    <p className="text-xs text-slate-500 dark:text-zinc-500">{t('common.loading', 'Loading...')}</p>
+                    <p className="text-xs text-slate-500 dark:text-zinc-500">{t('common.loading', 'Loading…')}</p>
                   ) : authorSeries.length === 0 ? (
                     <p className="text-xs text-slate-500 dark:text-zinc-500">
                       {t('editAuthorModal.monitoredSeriesEmpty', 'No series found for this author yet. Refresh the author to pull series data first.')}
@@ -376,7 +379,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
             disabled={loading || saving}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-md text-sm font-medium text-white"
           >
-            {saving ? t('common.saving', 'Saving...') : t('common.save', 'Save')}
+            {saving ? t('common.saving', 'Saving…') : t('common.save', 'Save')}
           </button>
         </div>
       </div>

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -629,6 +630,13 @@ type catalogueSyncOptions struct {
 	// whole library.
 	refreshFromProvider bool
 
+	// ownerForUnownedAuthor owns the books this run creates when the author
+	// has no owner. Add Book's single work fallback sets it to the caller
+	// under tenancy, so a book picked under a shared author belongs to the
+	// user who picked it, as the direct insert's does. Zero keeps the
+	// author's owner, which for a shared author is none.
+	ownerForUnownedAuthor int64
+
 	// syncClaimed marks a run its caller already counted in runningSyncs.
 	// The manual Refresh claims the author before it answers, so a second
 	// click sees the first; fetchAuthorBooks counts every other run itself.
@@ -675,7 +683,7 @@ func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fal
 			ForeignID:        foreignID,
 			Name:             fallbackName,
 			SortName:         sortName(fallbackName),
-			MetadataProvider: "openlibrary",
+			MetadataProvider: models.AuthorProviderFromForeignID(foreignID),
 		}, nil
 	}
 	author, err := h.meta.GetAuthor(ctx, foreignID)
@@ -685,7 +693,7 @@ func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fal
 			ForeignID:        foreignID,
 			Name:             fallbackName,
 			SortName:         sortName(fallbackName),
-			MetadataProvider: "openlibrary",
+			MetadataProvider: models.AuthorProviderFromForeignID(foreignID),
 		}, nil
 	}
 	if author == nil {
@@ -693,7 +701,7 @@ func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fal
 			ForeignID:        foreignID,
 			Name:             fallbackName,
 			SortName:         sortName(fallbackName),
-			MetadataProvider: "openlibrary",
+			MetadataProvider: models.AuthorProviderFromForeignID(foreignID),
 		}, nil
 	}
 	if strings.TrimSpace(author.Name) == "" {
@@ -797,7 +805,7 @@ func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, auth
 	if provider := strings.TrimSpace(upstream.MetadataProvider); provider != "" {
 		author.MetadataProvider = provider
 	} else {
-		author.MetadataProvider = "openlibrary"
+		author.MetadataProvider = models.AuthorProviderFromForeignID(author.ForeignID)
 	}
 	applyAuthorCreateOptions(author, monitored, monitorMode, monitorLatestCount, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID)
 	author.MonitorNewItems = monitorNewItems
@@ -906,7 +914,11 @@ func (h *AuthorHandler) findAuthorByNameOrAliasExcluding(ctx context.Context, ex
 		if err != nil {
 			return nil, false, err
 		}
-		if author != nil && author.ID != excludeID {
+		// The alias table is not owner scoped, but an alias belongs to its
+		// author, and so to that author's owner. Under tenancy another user's
+		// author must not match: the caller would get that row back in a
+		// conflict, or relink it in place.
+		if author != nil && author.ID != excludeID && auth.CheckOwnership(ctx, author.OwnerUserID) {
 			exact[author.ID] = author
 		}
 	}
@@ -942,7 +954,7 @@ func (h *AuthorHandler) findAuthorByNameOrAliasExcluding(ctx context.Context, ex
 		if err != nil {
 			return nil, false, err
 		}
-		if author != nil && author.ID != excludeID {
+		if author != nil && author.ID != excludeID && auth.CheckOwnership(ctx, author.OwnerUserID) {
 			normalized[author.ID] = author
 		}
 	}
@@ -1751,6 +1763,37 @@ func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Aut
 	_, _ = h.runCatalogueSync(ctx, author, opts)
 }
 
+// refreshTitleMatch re-reads a row the catalogue sync matched by title. The
+// title index holds rows as the sync first read them, and the cover, edition
+// and hydration calls since then are long enough for a user to save an edit
+// that writing the old copy back would undo (#2926). It reports false, and
+// the sync leaves the row alone, when the row is gone or now excluded.
+func (h *AuthorHandler) refreshTitleMatch(ctx context.Context, existing *models.Book) bool {
+	if err := h.books.ReloadHydratedBook(ctx, existing); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("catalogue sync: could not re-read a matched book", "book_id", existing.ID, "error", err)
+		}
+		return false
+	}
+	return !existing.Excluded
+}
+
+// writeTitleMatch writes a row refreshTitleMatch re-read, guarded on that
+// read. On a lost guard nothing is written and existing is reloaded so the
+// steps after it see the edit; the next sync makes the change again.
+func (h *AuthorHandler) writeTitleMatch(ctx context.Context, existing *models.Book, expectedUpdatedAt string) (bool, error) {
+	written, err := h.books.UpdateIfUnchanged(ctx, existing, expectedUpdatedAt)
+	if err != nil || written {
+		return written, err
+	}
+	slog.Info("catalogue sync: book changed while it was being updated, leaving it for the next sync",
+		"title", existing.Title, "book_id", existing.ID)
+	if err := h.books.ReloadHydratedBook(ctx, existing); err != nil {
+		slog.Warn("catalogue sync: could not re-read a book after a concurrent edit", "book_id", existing.ID, "error", err)
+	}
+	return false, nil
+}
+
 // runCatalogueSync is the catalogue sync behind fetchAuthorBooks. It returns
 // how many books the run created and, when the provider could not list the
 // author's works, that error, so scheduled discovery can tell a rate limit
@@ -1934,7 +1977,7 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	// OpenLibrary metadata gap it has no way to tell apart from an actual
 	// foreign-language book.
 	if len(allowedLangs) > 0 {
-		applyAuthorMajorityLanguageFallback(books)
+		applyAuthorMajorityLanguageFallback(books, languageEvidence)
 	}
 
 	// Everything above can take minutes for a prolific author (works fetch,
@@ -2083,10 +2126,24 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 				for _, id := range pinIDs {
 					pinSet[id] = struct{}{}
 				}
+				var pinned []int64
 				for _, s := range ownSeries {
-					if _, ok := pinSet[s.ID]; ok && s.ForeignID != "" {
-						monitoredSeriesForeignIDs[s.ForeignID] = struct{}{}
+					if _, ok := pinSet[s.ID]; ok {
+						pinned = append(pinned, s.ID)
+						if s.ForeignID != "" {
+							monitoredSeriesForeignIDs[s.ForeignID] = struct{}{}
+						}
 					}
+				}
+				// A provider can still report a pinned series under an id
+				// merged into it (#2554); that book belongs to the pinned
+				// series too, so it is monitored at creation as well.
+				aliases, err := h.series.AliasForeignIDs(ctx, pinned)
+				if err != nil {
+					slog.Warn("failed to load merged series ids for series-mode fetch", "author", author.Name, "error", err)
+				}
+				for _, id := range aliases {
+					monitoredSeriesForeignIDs[id] = struct{}{}
 				}
 			}
 		}
@@ -2514,7 +2571,17 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		//   • A duplicate that carries the same media_type as the existing row is
 		//     truly redundant and is silently skipped (no format gain).
 		if existing, seen := seenTitles.Lookup(b.Title); seen && existing != nil {
+			// existing is the row as this sync first saw it, and the
+			// provider calls since then leave plenty of time for an edit.
+			// Work from a fresh read and guard each write on it (#2926).
+			if !h.refreshTitleMatch(ctx, existing) {
+				continue
+			}
+			expectedUpdatedAt := existing.UpdatedAtRaw
 			hydrateExistingFromMatchedHardcover := false
+			// lostGuard: an edit landed between the re-read and the write,
+			// so this work's change was not made.
+			lostGuard := false
 			switch {
 			case strings.HasPrefix(existing.ForeignID, "calibre:"):
 				// Upgrade calibre stub to real OL foreign_id.
@@ -2526,8 +2593,10 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 					existing.RatingsCount = b.RatingsCount
 					existing.AverageRating = b.AverageRating
 				}
-				if err := h.books.Update(ctx, existing); err != nil {
+				if written, err := h.writeTitleMatch(ctx, existing, expectedUpdatedAt); err != nil {
 					slog.Warn("authors: update during dedup", "error", err, "book_id", existing.ID)
+				} else if !written {
+					lostGuard = true
 				} else if existing.WantsAudiobook() {
 					hydrateExistingFromMatchedHardcover = true
 				}
@@ -2554,8 +2623,10 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 					existing.RatingsCount = b.RatingsCount
 					existing.AverageRating = b.AverageRating
 				}
-				if err := h.books.Update(ctx, existing); err != nil {
+				if written, err := h.writeTitleMatch(ctx, existing, expectedUpdatedAt); err != nil {
 					slog.Warn("failed to upgrade book to dual-format", "title", existing.Title, "error", err)
+				} else if !written {
+					lostGuard = true
 				} else {
 					slog.Debug("upgraded book to dual-format", "title", existing.Title, "foreignId", b.ForeignID)
 					hydrateExistingFromMatchedHardcover = true
@@ -2565,11 +2636,21 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 				if b.RatingsCount > 0 && (existing.RatingsCount == 0 || b.RatingsCount > existing.RatingsCount) {
 					existing.RatingsCount = b.RatingsCount
 					existing.AverageRating = b.AverageRating
-					if err := h.books.Update(ctx, existing); err != nil {
+					if written, err := h.writeTitleMatch(ctx, existing, expectedUpdatedAt); err != nil {
 						slog.Warn("authors: update during dedup", "error", err, "book_id", existing.ID)
+					} else if !written {
+						lostGuard = true
 					}
 				}
 				hydrateExistingFromMatchedHardcover = existing.WantsAudiobook()
+			}
+			if lostGuard {
+				// Leave the work unrecorded too. Its ids would make the next
+				// sync resolve it through the id branch above, which never
+				// relinks a calibre stub or widens the format, so the change
+				// would be lost for good instead of retried by title.
+				matched++
+				continue
 			}
 			// A title match is a guess that just paid off. Recording the
 			// incoming ids turns it into an exact match next time, which
@@ -2624,8 +2705,12 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		seenTitles.Add(b.Title, &b)
 
 		// Tenancy (#1457): a new book inherits its author's owner so per-user
-		// scoping sees the sync's output. NULL-owned authors stay NULL-owned.
+		// scoping sees the sync's output. NULL-owned authors stay NULL-owned,
+		// except for Add Book's fallback (see ownerForUnownedAuthor).
 		b.OwnerUserID = author.OwnerUserID
+		if b.OwnerUserID == 0 {
+			b.OwnerUserID = opts.ownerForUnownedAuthor
+		}
 		if err := h.books.Create(ctx, &b); err != nil {
 			// A UNIQUE constraint on foreign_id means the book was already
 			// created by a concurrent or earlier sync — treat as a benign
@@ -2698,6 +2783,11 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	}
 	editionCache := h.prefetchHardcoverEditions(ctx, createdTargets, seededEditions)
 
+	// The author's catalogue as this sync leaves it, for the rival title
+	// check (#2941): read once here instead of once per bound book.
+	authorCatalogue := make([]models.Book, 0, len(allBooks)+len(createdBooks))
+	authorCatalogue = append(authorCatalogue, allBooks...)
+	authorCatalogue = append(authorCatalogue, createdBooks...)
 	for i := range createdBooks {
 		b := createdBooks[i]
 		// Order within a book is unchanged: hydration can widen MediaType and
@@ -2707,7 +2797,7 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		// widening stays available (#2768).
 		h.hydrateHardcoverEditions(ctx, &b, editionCache, false)
 
-		if fileFound := handleNewWantedBook(ctx, h.books, h.series, finder, b, author.Name); fileFound {
+		if fileFound := handleNewWantedBookAmong(ctx, h.books, h.series, finder, b, author.Name, authorCatalogue); fileFound {
 			continue // don't auto-search for a book we already have
 		}
 
@@ -2832,6 +2922,15 @@ func (h *AuthorHandler) reparentMisattachedBook(ctx context.Context, existing *m
 	if existing.AuthorID == author.ID {
 		return false
 	}
+	// The row was found by a foreign id lookup that spans every user, so under
+	// tenancy it can be another user's book. Moving it would take it out of
+	// their author and into a different library. No owner counts as an owner
+	// of its own: a shared author's sync must not take a user's book out from
+	// under that user's author, and a shared book must not move under one
+	// user's private author. Only a move within one owner goes ahead.
+	if auth.EnforceTenancy() && existing.OwnerUserID != author.OwnerUserID {
+		return false
+	}
 	owner, err := h.authors.GetByID(ctx, existing.AuthorID)
 	if err != nil {
 		// Can't verify ownership — leave the row alone rather than moving it
@@ -2867,6 +2966,14 @@ func (h *AuthorHandler) reparentMisattachedBook(ctx context.Context, existing *m
 // Returns true when an existing file was found (caller must NOT auto-search),
 // false otherwise.
 func handleNewWantedBook(ctx context.Context, books *db.BookRepo, series *db.SeriesRepo, finder LibraryFinder, book models.Book, authorName string) (fileFound bool) {
+	return handleNewWantedBookAmong(ctx, books, series, finder, book, authorName, nil)
+}
+
+// handleNewWantedBookAmong is handleNewWantedBook for a caller that already
+// holds the author's catalogue, passed as siblings so the rival title check
+// (#2941) does not list the author again for every book. nil siblings reads
+// them from books.
+func handleNewWantedBookAmong(ctx context.Context, books *db.BookRepo, series *db.SeriesRepo, finder LibraryFinder, book models.Book, authorName string, siblings []models.Book) (fileFound bool) {
 	// Populate series membership for this book.
 	if series != nil {
 		for _, ref := range book.SeriesRefs {
@@ -2894,7 +3001,7 @@ func handleNewWantedBook(ctx context.Context, books *db.BookRepo, series *db.Ser
 
 	// Check if the user already owns this book before queuing a download.
 	if finder != nil {
-		if existingPath := finder.FindExisting(ctx, book.Title, authorName, book.MediaType); existingPath != "" {
+		if existingPath := findExistingForNewBook(ctx, books, finder, book, authorName, siblings); existingPath != "" {
 			if existingFileOwnedByOtherBook(ctx, books, existingPath, book.ID) {
 				slog.Info("library: matching file already belongs to another book, not binding it",
 					"title", book.Title, "path", existingPath)
@@ -2916,6 +3023,61 @@ func handleNewWantedBook(ctx context.Context, books *db.BookRepo, series *db.Ser
 	return false
 }
 
+// rivalAwareFinder is the optional capability of a LibraryFinder that can
+// weigh a library file against the author's other catalogue titles before
+// offering it for a new book. Implemented by *importer.LibrarySnapshot.
+type rivalAwareFinder interface {
+	FindExistingAmong(ctx context.Context, title, authorName, mediaType string, rivals []string) string
+}
+
+// findExistingForNewBook asks finder for a file the user already has for
+// book, with the author's other books as rival titles when the finder can use
+// them (#2941). FindExisting alone matches on the wanted title, so the
+// shorter "Harry Potter" took an untracked "Harry Potter en het vervloekte
+// kind.epub", skipped its search, and left the exact book unbound once the
+// file was owned.
+//
+// siblings is the author's catalogue when the caller already holds it, which
+// the author sync does: reading it again per new book costs a full author
+// listing each time. nil means read it here; every caller runs after its book
+// rows are written, so the listing holds the new book's siblings.
+//
+// Excluded books are not rivals: a row the user removed from the catalogue
+// must not keep a file from the book they kept. Another user's book is left
+// out too, so one user's catalogue never steers another's binds. A listing
+// error falls back to the plain lookup, which is the old behaviour.
+func findExistingForNewBook(ctx context.Context, books *db.BookRepo, finder LibraryFinder, book models.Book, authorName string, siblings []models.Book) string {
+	// A Scanner hands out a snapshot; a fresh one costs the same single walk
+	// its own FindExisting makes.
+	finder = snapshotFinder(finder)
+	ra, ok := finder.(rivalAwareFinder)
+	if !ok || book.AuthorID == 0 || (siblings == nil && books == nil) {
+		return finder.FindExisting(ctx, book.Title, authorName, book.MediaType)
+	}
+	// Rivals drop files before ranking, so they can turn a near tie into a
+	// clear answer as well as remove one: the lookup always needs them.
+	if siblings == nil {
+		var err error
+		siblings, err = books.ListByAuthor(ctx, book.AuthorID)
+		if err != nil {
+			slog.Warn("library: list author books for rival titles", "error", err, "book_id", book.ID)
+			return finder.FindExisting(ctx, book.Title, authorName, book.MediaType)
+		}
+	}
+	rivals := make([]string, 0, len(siblings))
+	for i := range siblings {
+		s := &siblings[i]
+		if s.ID == book.ID || s.Excluded || s.AuthorID != book.AuthorID {
+			continue
+		}
+		if book.OwnerUserID != 0 && s.OwnerUserID != 0 && s.OwnerUserID != book.OwnerUserID {
+			continue
+		}
+		rivals = append(rivals, s.Title)
+	}
+	return ra.FindExistingAmong(ctx, book.Title, authorName, book.MediaType, rivals)
+}
+
 // existingFileOwnedByOtherBook reports whether a file FindExisting offered
 // for bookID is already in book_files under another book: the file itself,
 // or for an audio track the folder holding it, which is how an imported or
@@ -2928,7 +3090,8 @@ func handleNewWantedBook(ctx context.Context, books *db.BookRepo, series *db.Ser
 // and file carry no number at all, which Libation's default naming produces.
 // Declining the bind leaves the book wanted and lets auto-search run, which
 // is the right outcome for a different book and a visible one for a
-// duplicate row. A lookup error keeps the old behaviour and binds.
+// duplicate row. A lookup error keeps the old behaviour and binds. A row left
+// by a deleted book does not count: SetFilePath takes it over (#2937).
 func existingFileOwnedByOtherBook(ctx context.Context, books *db.BookRepo, path string, bookID int64) bool {
 	if books == nil {
 		return false
@@ -2938,7 +3101,7 @@ func existingFileOwnedByOtherBook(ctx context.Context, books *db.BookRepo, path 
 		candidates = append(candidates, filepath.Dir(path))
 	}
 	for _, p := range candidates {
-		owned, err := books.PathOwnedByOtherBook(ctx, p, bookID)
+		owned, err := books.PathOwnedByLiveOtherBook(ctx, p, bookID)
 		if err != nil {
 			slog.Warn("library: book_files owner lookup failed", "path", p, "error", err)
 			continue
@@ -3535,7 +3698,17 @@ const authorMajorityLanguageThreshold = 0.9
 // least authorMajorityLanguageMinSample resolved works. Mutates books in
 // place. A no-op when too few works have a resolved language yet, or when
 // no single language dominates strongly enough to trust.
-func applyAuthorMajorityLanguageFallback(books []models.Book) {
+//
+// A blank work whose title is written in a different script from the
+// majority's titles is left blank (#3091): "Рожби на съзнанието" in an English
+// author's catalogue is a translation, and stamping "eng" on it let it past
+// even unknown_language_behavior = fail. It keeps an unknown language, so the
+// profile's unknown-language rule decides it. So is a work its provider has
+// already proved is in a language the profile does not allow: the filter
+// rejects it on that evidence anyway, and the skipped sample should not show
+// it as English. Indeterminate evidence still gets the fallback, as it did
+// before: it means the provider found no edition in any language (#2754).
+func applyAuthorMajorityLanguageFallback(books []models.Book, evidence map[string]metadata.AuthorWorkLanguageEvidence) {
 	counts := make(map[string]int, 4)
 	resolved := 0
 	for _, b := range books {
@@ -3558,10 +3731,18 @@ func applyAuthorMajorityLanguageFallback(books []models.Book) {
 	if float64(majorityCount)/float64(resolved) < authorMajorityLanguageThreshold {
 		return
 	}
+	majorityScript := majorityTitleScript(books, majorityLang)
 	for i := range books {
-		if books[i].Language == "" {
-			books[i].Language = majorityLang
+		if books[i].Language != "" {
+			continue
 		}
+		if found, ok := evidence[strings.TrimSpace(books[i].ForeignID)]; ok && found.State == metadata.AuthorWorkLanguageNotAllowed {
+			continue
+		}
+		if script := titleScript(books[i].Title); script != "" && majorityScript != "" && script != majorityScript {
+			continue
+		}
+		books[i].Language = majorityLang
 	}
 }
 

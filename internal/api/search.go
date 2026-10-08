@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
@@ -224,8 +225,18 @@ func (h *SearchHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// interactiveLookupTimeout bounds a whole ISBN or ASIN lookup from the Add
+// Book dialog. The lookup walks the providers one after another, and each now
+// retries a refusal or an outage, so two dead providers used to run past the
+// server's 120s write timeout and the dialog got a dropped connection instead
+// of an error. The provider clients fail fast once a retry or hold would
+// outlast this deadline. A var so tests can shorten it.
+var interactiveLookupTimeout = 20 * time.Second
+
 func (h *SearchHandler) lookupByISBN(w http.ResponseWriter, r *http.Request, isbn string) {
-	book, outcome, err := h.meta.GetBookByISBNWithOutcome(r.Context(), isbn)
+	ctx, cancel := context.WithTimeout(r.Context(), interactiveLookupTimeout)
+	defer cancel()
+	book, outcome, err := h.meta.GetBookByISBNWithOutcome(ctx, isbn)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
@@ -250,7 +261,9 @@ func (h *SearchHandler) lookupByISBN(w http.ResponseWriter, r *http.Request, isb
 }
 
 func (h *SearchHandler) lookupByASIN(w http.ResponseWriter, r *http.Request, asin string) {
-	book, err := h.meta.GetCanonicalBookByASIN(r.Context(), asin)
+	ctx, cancel := context.WithTimeout(r.Context(), interactiveLookupTimeout)
+	defer cancel()
+	book, err := h.meta.GetCanonicalBookByASIN(ctx, asin)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return

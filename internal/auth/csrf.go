@@ -104,15 +104,14 @@ func RequireCSRFToken(secrets func() [][]byte) func(http.Handler) http.Handler {
 // not accept". The path is r.URL.Path and never RequestURI, because the query
 // string can carry ?apikey= (#708 finding 4a).
 func logCSRFRejection(guard string, r *http.Request, reason string, extra ...any) {
-	peer := ""
-	if ip := requestPeerIP(r); ip != nil {
-		peer = ip.String()
-	}
 	attrs := []any{
 		"guard", guard,
 		"method", r.Method,
 		"path", r.URL.Path,
-		"peer", peer,
+		// peer is the TCP peer (the proxy, behind one); client is the
+		// address X-Forwarded-For resolved to. Same value without a proxy.
+		"peer", RealPeerHost(r),
+		"client", ipString(requestPeerIP(r)),
 		"reason", reason,
 		"api_key_header", r.Header.Get("X-Api-Key") != "",
 		// A key in ?apikey= is ignored on mutating methods (#708 finding 4a),

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { BrowserRouter } from 'react-router'
 import SettingsPage from './SettingsPage'
 import { acceptConfirm } from '../test-utils'
 import { api, type ABSImportRun, type DownloadClient, type HardcoverList, type ImportList, type ImportListSyncProgress, type Indexer, type OidcProvider, type ProwlarrInstance, type RootFolder, type SystemStatus } from '../api/client'
@@ -346,7 +347,9 @@ function seedSettingsMocks(options: {
 
 function renderSettings(options?: Parameters<typeof seedSettingsMocks>[0]) {
   if (options) seedSettingsMocks(options)
-  return render(<SettingsPage />)
+  // BrowserRouter reads window.location, so tests set the starting URL with
+  // history.replaceState and read ?tab= back from window.location.
+  return render(<BrowserRouter><SettingsPage /></BrowserRouter>)
 }
 
 async function openIndexersTab() {
@@ -400,7 +403,7 @@ function sectionForHeading(name: string) {
 describe('SettingsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    // SettingsPage syncs the active tab into ?tab= via replaceState; reset it
+    // SettingsPage keeps the active tab in ?tab=; reset it
     // between tests so a tab selected in one test doesn't leak into the next
     // test's initial tab (jsdom shares one location across the file).
     window.history.replaceState(null, '', '/settings')

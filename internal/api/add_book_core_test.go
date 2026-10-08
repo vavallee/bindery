@@ -281,6 +281,12 @@ func TestCreateAuthorCore_DefaultParamsMatchHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("core: %v", err)
 	}
+	// drain cancels the job context before waiting, and the aggregator's
+	// shared requests honour that cancellation before calling the provider,
+	// so wait for the sync to reach the works lookup first.
+	for deadline := time.Now().Add(5 * time.Second); provider.worksCalls.Load() == 0 && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
 	viaCore.drain(t)
 	got := res.Author
 	if !res.Created || got == nil {

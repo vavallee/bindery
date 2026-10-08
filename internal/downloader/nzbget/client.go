@@ -464,6 +464,77 @@ func IsFailure(status string) bool {
 		(len(status) >= 6 && status[:6] == "SCRIPT")
 }
 
+// IsContentFailure reports whether a NZBGet history status usually means the
+// release itself is broken, so sending the same NZB again would fail the same
+// way (#3024). The strings are the ones NzbInfo::MakeTextStatus produces.
+//
+//   - FAILURE/PAR: the par set could not repair the download.
+//   - FAILURE/UNPACK: the archive would not extract (corrupt, missing volumes).
+//   - FAILURE/HEALTH: the health check found too many missing articles, either
+//     at the end or when HealthCheck=Delete aborted it early. Current NZBGet
+//     reports a health check delete this way; it has no DELETED/HEALTH.
+//   - FAILURE/SCAN: NZBGet could not parse the NZB. Bindery only ever uploads
+//     a body that nzbfetch.ValidateNZB accepted as an NZB, so an indexer error
+//     page never reaches NZBGet and this is normally the file itself.
+//   - FAILURE/BAD: someone marked the job bad, the user through "Mark as bad"
+//     or a queue or post processing script such as a fake detector. Either is
+//     an explicit verdict on this release, and mark as bad exists precisely
+//     to tell an automation to move on to another one.
+//
+// "Usually" is load bearing. NZBGet folds some faults of its own host into
+// the same statuses: an unrar or 7z that is missing, misconfigured, out of
+// memory or denied permission, a full disk while extracting, and a failed
+// move out of the _unpack folder all report FAILURE/UNPACK; a par2 file or
+// memory error during repair reports FAILURE/PAR; and a failed rename of the
+// NZB in NzbDir (permissions) reports FAILURE/SCAN. Those fail every job, not
+// one release, so for these three NeedsLogEvidence is true: a caller must read
+// the job's log first (ClassifyFailureLog) and, when it says nothing, hold
+// back once many different releases fail the same way (the importer's
+// contentFailureBreaker). FAILURE/HEALTH and FAILURE/BAD have no such host
+// cause: missing articles say nothing about NZBGet's own machine, and a mark is a
+// deliberate verdict, so they always count.
+//
+// Everything else is left to the #2710 cooldown: FAILURE/MOVE is the disk or
+// permissions on the client, FAILURE/FETCH a URL fetch, DELETED/MANUAL a
+// person deleting the job for reasons NZBGet does not know, DELETED/DUPE
+// NZBGet's own duplicate handling, and FAILURE/INTERNAL_ERROR says nothing
+// about the release.
+func IsContentFailure(status string) bool {
+	switch status {
+	case "FAILURE/PAR", "FAILURE/UNPACK", "FAILURE/HEALTH", "FAILURE/SCAN", "FAILURE/BAD":
+		return true
+	}
+	return false
+}
+
+// NeedsLogEvidence reports whether a content status is one NZBGet also uses
+// for faults of its own machine, so it must not blocklist on the status
+// alone (see IsContentFailure).
+func NeedsLogEvidence(status string) bool {
+	switch status {
+	case "FAILURE/PAR", "FAILURE/UNPACK", "FAILURE/SCAN":
+		return true
+	}
+	return false
+}
+
+// StageSucceeded reports whether a history item shows the stage behind a
+// NeedsLogEvidence status completing: UnpackStatus SUCCESS for FAILURE/UNPACK,
+// ParStatus SUCCESS for FAILURE/PAR, and for FAILURE/SCAN any job that got
+// past scanning to a SUCCESS status. A plain epub that never touched the
+// unpacker reports UnpackStatus NONE and proves nothing about unrar.
+func StageSucceeded(status string, item HistoryItem) bool {
+	switch status {
+	case "FAILURE/UNPACK":
+		return item.UnpackStatus == "SUCCESS"
+	case "FAILURE/PAR":
+		return item.ParStatus == "SUCCESS"
+	case "FAILURE/SCAN":
+		return IsSuccess(item.Status)
+	}
+	return false
+}
+
 func (c *Client) call(ctx context.Context, method string, params []any, target any) error {
 	if params == nil {
 		params = []any{}

@@ -160,3 +160,24 @@ describe('Pagination', () => {
     expect(wrapper.className).toContain('sm:flex-row')
   })
 })
+
+// The page buttons were 24px tall and about 28px wide on a phone, set 4px
+// apart. On touch each is at least 44px wide with a 44px hit area, and
+// wrapped rows sit far enough apart that the hit areas do not overlap.
+describe('Pagination on touch screens', () => {
+  it('gives every page control a 44px target', () => {
+    render(<Pagination {...defaults} page={6} totalPages={12} totalItems={300} />)
+    const controls = [
+      ...screen.getAllByRole('button'),
+      ...screen.getAllByRole('combobox', { name: 'Jump to page' }),
+    ]
+    expect(controls.length).toBeGreaterThan(6)
+    for (const el of controls) {
+      expect(el.className.split(/\s+/)).toEqual(expect.arrayContaining(['touch-target', 'pointer-coarse:min-w-11']))
+    }
+    for (const el of screen.getAllByRole('combobox')) {
+      expect(el.className.split(/\s+/)).toContain('pointer-coarse:min-h-11')
+    }
+    expect(screen.getByRole('button', { name: '1' }).parentElement?.className).toContain('pointer-coarse:gap-y-5')
+  })
+})

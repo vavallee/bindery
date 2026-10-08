@@ -2,6 +2,9 @@ package metadata
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -55,9 +58,13 @@ func (a *Aggregator) GetCanonicalBookByASIN(ctx context.Context, asin string) (*
 	if a == nil || a.primary == nil || asin == "" {
 		return nil, nil
 	}
-	key := "asin-canonical:" + asin
-	if cached, ok := a.cache.get(key); ok {
-		return cached.(*models.Book), nil
+	// Scoped and copied like the ISBN lookup (#2869): an answer built under one
+	// provider configuration is not served after it changes, and a caller that
+	// edits the book it gets cannot rewrite the cached entry.
+	ctx, scope := a.bindCacheProviders(ctx)
+	key := "asin-canonical:" + scope + ":" + asin
+	if cached, ok := a.cachedBook(key); ok {
+		return cached, nil
 	}
 
 	b, err := a.getAudnexBookByASIN(ctx, asin)
@@ -81,10 +88,11 @@ func (a *Aggregator) GetCanonicalBookByASIN(ctx context.Context, asin string) (*
 		a.cache.set(key, noBook)
 		return nil, nil
 	}
+	complete := true
 	if len(canonical.Description) < 50 || canonical.ImageURL == "" {
-		a.enrichBook(ctx, canonical)
+		complete = a.enrichBook(ctx, canonical)
 	}
-	a.cache.set(key, canonical)
+	a.storeBook(ctx, key, canonical, complete)
 	return canonical, nil
 }
 
@@ -278,19 +286,67 @@ func enrichBookCacheKey(book *models.Book) string {
 	return "enrich-title:" + title + "|" + author
 }
 
-func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
+// A snapshot contains post-enrichment values, so it is reusable only for the
+// same input. Raw metadata may expire or change accounts before this entry.
+// Include matching and cover-lookup inputs as well as every retained field.
+func enrichmentInputKey(book *models.Book) string {
+	author := ""
+	if book.Author != nil {
+		author = book.Author.Name
+	}
+	var isbns []string
+	for _, edition := range book.Editions {
+		isbn := ""
+		if edition.ISBN13 != nil && *edition.ISBN13 != "" {
+			isbn = *edition.ISBN13
+		} else if edition.ISBN10 != nil {
+			isbn = *edition.ISBN10
+		}
+		isbns = append(isbns, isbn)
+	}
+	input := fmt.Sprintf("%q|%q|%q|%q|%g|%d|%q|%q", book.Title, author,
+		book.Description, book.ImageURL, book.AverageRating, book.RatingsCount, book.Genres, isbns)
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(input)))
+}
+
+// enrichBook reports whether the enrichment is complete: false when an
+// enricher failed, or when the result came from a snapshot built during such a
+// failure. A caller caching the enriched book uses it to keep an incomplete
+// result in the five minute cache rather than the 24 hour one (#2869).
+func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) bool {
+	ctx, scope := a.bindCacheProviders(ctx)
 	cacheKey := enrichBookCacheKey(book)
 	if cacheKey != "" {
+		cacheKey += ":" + scope + ":" + enrichmentInputKey(book)
+	}
+	// Bind live configuration once for both the snapshot key and its fetches.
+	enrichers := make([]Provider, len(a.enrichers))
+	scopes := make([]string, len(a.enrichers))
+	for i, p := range a.enrichers {
+		enrichers[i], scopes[i] = resolveCacheProvider(ctx, p)
+
+	}
+	if cacheKey != "" {
 		if cached, ok := a.cache.get(cacheKey); ok {
-			snap := cached.(enrichmentSnapshot)
-			applyEnrichmentSnapshot(book, snap)
-			return
+			applyEnrichmentSnapshot(book, cached.(enrichmentSnapshot))
+			return true
+		}
+		if cached, ok := a.requests.shortCache().get(cacheKey); ok {
+			applyEnrichmentSnapshot(book, cached.(enrichmentSnapshot))
+			return false
 		}
 	}
 
-	for _, enricher := range a.enrichers {
-		enriched, err := enricher.SearchBooks(ctx, book.Title)
+	cacheable := true
+	for i, enricher := range enrichers {
+		enriched, err := a.searchBoundProviderBooks(ctx, enricher, scopes[i], book.Title)
 		if err != nil {
+			// An enricher with no credentials (Hardcover without a token is
+			// registered on every install) never answers, so it must not keep
+			// the snapshot out of the cache the way a real failure does.
+			if !errors.Is(err, ErrProviderNotConfigured) {
+				cacheable = false
+			}
 			slog.Debug("enrichment failed", "provider", enricher.Name(), "error", err)
 			continue
 		}
@@ -356,15 +412,26 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 	// book rather than hand one user's hand written text to another's library
 	// (#2767). A locked book is rare, so this costs one extra enricher round
 	// trip in a case that barely happens; every unlocked book caches as before.
-	if cacheKey != "" && book.CanWrite(models.BookFieldDescription) && book.CanWrite(models.BookFieldGenres) {
-		a.cache.set(cacheKey, enrichmentSnapshot{
+	if cacheKey != "" && ctx.Err() == nil &&
+		book.CanWrite(models.BookFieldDescription) && book.CanWrite(models.BookFieldGenres) {
+		snap := enrichmentSnapshot{
 			description:   book.Description,
 			imageURL:      book.ImageURL,
 			averageRating: book.AverageRating,
 			ratingsCount:  book.RatingsCount,
 			genres:        slices.Clone(book.Genres),
-		})
+		}
+		if cacheable {
+			a.cache.set(cacheKey, snap)
+		} else {
+			// An enricher failed, so this snapshot is incomplete and must stay
+			// retryable, but not on every cache hit: GetBook enriches each
+			// hit, and a failing or rate limited enricher would otherwise be
+			// asked once per call. The five minute cache bounds that.
+			a.requests.shortCache().set(cacheKey, snap)
+		}
 	}
+	return cacheable
 }
 
 // applyEnrichmentSnapshot mirrors the per-field merge rules used by
@@ -494,9 +561,10 @@ func pickEnrichmentMatch(candidates []models.Book, target *models.Book) *models.
 		// "J.R.R. Tolkien" vs "J. R. R. Tolkien", "Tolkien, J.R.R." vs the
 		// same, NFC vs NFD — all Exact under textutil, none a substring of the
 		// other. FuzzyAuto is included because enrichment fails closed and both
-		// names are already corroborated by a title match.
-		switch textutil.MatchAuthorName(target.Author.Name, c.Author.Name).Kind {
-		case textutil.AuthorMatchExact, textutil.AuthorMatchFuzzyAuto:
+		// names are already corroborated by a title match. For the same
+		// reason a pairing that only drops initials ("J. Rowling" against
+		// "J.K. Rowling") counts too (#2881).
+		if textutil.MatchAuthorName(target.Author.Name, c.Author.Name).ConfirmedByTitle() {
 			return c
 		}
 	}
@@ -509,6 +577,7 @@ func pickEnrichmentMatch(candidates []models.Book, target *models.Book) *models.
 // provider (e.g. DNB) returns no cover URL in its bibliographic data.
 func (a *Aggregator) fillCoverFromCoverProviders(ctx context.Context, book *models.Book) {
 	for _, p := range a.providers() {
+		p, _ = resolveCacheProvider(ctx, p)
 		cp, ok := p.(CoverProvider)
 		if !ok {
 			continue

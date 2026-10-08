@@ -1287,3 +1287,78 @@ func TestMigration075_BackfillsAuthorsThatHaveBooks(t *testing.T) {
 		t.Errorf("author with no books must stay unmarked: got=%v err=%v", got, err)
 	}
 }
+
+// UpdateIfUnchanged guards an author write that follows a provider call
+// (#2926): it lands on an unchanged row, including one whose updated_at is in
+// a legacy shape, and loses to an edit without touching the identifier table.
+func TestAuthorRepoUpdateIfUnchanged(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	authors := NewAuthorRepo(database)
+	author := mkAuthor(t, authors, ctx, "OL-GUARDED-AUTHOR")
+	if author.UpdatedAtRaw == "" {
+		t.Fatal("Create must record the stored updated_at text")
+	}
+
+	if _, err := database.ExecContext(ctx, "UPDATE authors SET updated_at=? WHERE id=?", "2026-09-01 10:00:00", author.ID); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := authors.GetByID(ctx, author.ID)
+	if err != nil || snapshot == nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	if snapshot.UpdatedAtRaw != "2026-09-01 10:00:00" {
+		t.Fatalf("UpdatedAtRaw = %q, want the stored text", snapshot.UpdatedAtRaw)
+	}
+	snapshot.Description = "Provider biography."
+	updated, err := authors.UpdateIfUnchanged(ctx, snapshot, snapshot.UpdatedAtRaw)
+	if err != nil || !updated {
+		t.Fatalf("unchanged row: updated=%v err=%v", updated, err)
+	}
+	stored, err := authors.GetByID(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Description != "Provider biography." || stored.UpdatedAtRaw != snapshot.UpdatedAtRaw {
+		t.Fatalf("guarded write not persisted: description=%q raw=%q caller raw=%q", stored.Description, stored.UpdatedAtRaw, snapshot.UpdatedAtRaw)
+	}
+
+	// A user edit after the snapshot wins; the stale write changes nothing,
+	// including the identifier row a relink would have added.
+	stale := *stored
+	edit := *stored
+	edit.Monitored = false
+	if err := authors.Update(ctx, &edit); err != nil {
+		t.Fatal(err)
+	}
+	stale.Description = "Stale biography."
+	stale.ForeignID = "OL-STALE-RELINK"
+	updated, err = authors.UpdateIfUnchanged(ctx, &stale, stored.UpdatedAtRaw)
+	if err != nil || updated {
+		t.Fatalf("stale write: updated=%v err=%v", updated, err)
+	}
+	if stale.UpdatedAtRaw != stored.UpdatedAtRaw {
+		t.Fatalf("a lost guard must not stamp the caller's row: raw=%q", stale.UpdatedAtRaw)
+	}
+	stored, err = authors.GetByID(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Monitored || stored.Description != "Provider biography." || stored.ForeignID != "OL-GUARDED-AUTHOR" {
+		t.Fatalf("concurrent edit overwritten: monitored=%v description=%q foreignID=%q", stored.Monitored, stored.Description, stored.ForeignID)
+	}
+	if owner, err := authors.GetAuthorIdentifier(ctx, "OL-STALE-RELINK"); err != nil || owner != nil {
+		t.Fatalf("a lost guard must not record the identifier: owner=%+v err=%v", owner, err)
+	}
+
+	if _, err := authors.UpdateIfUnchanged(ctx, nil, "x"); err == nil {
+		t.Fatal("nil snapshot should be rejected")
+	}
+	if _, err := authors.UpdateIfUnchanged(ctx, stored, ""); err == nil {
+		t.Fatal("snapshot without a stored updated_at should be rejected")
+	}
+}

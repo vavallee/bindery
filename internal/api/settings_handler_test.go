@@ -55,8 +55,10 @@ func TestSettings_ListFiltersSecrets(t *testing.T) {
 		}
 	}
 
+	// As an admin: secrets are hidden from admins too, and only an admin gets
+	// the non secret keys below since #2361 inverted the non admin default.
 	rec := httptest.NewRecorder()
-	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/settings", nil))
+	h.List(rec, adminReq(httptest.NewRequest(http.MethodGet, "/api/v1/settings", nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
@@ -273,8 +275,10 @@ func TestSettings_SecretLeakRegression(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// As an admin, for the same reason as TestSettings_ListFiltersSecrets: the
+	// secrets must be gone even for the most privileged reader.
 	rec := httptest.NewRecorder()
-	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/setting", nil))
+	h.List(rec, adminReq(httptest.NewRequest(http.MethodGet, "/api/v1/setting", nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("List status = %d", rec.Code)
 	}
@@ -291,9 +295,9 @@ func TestSettings_SecretLeakRegression(t *testing.T) {
 		t.Errorf("non-secret grimmory.enabled missing from List output: %s", body)
 	}
 
-	// Direct GET on each leaky key must 404.
+	// Direct GET on each leaky key must 404, for an admin too.
 	for k := range leaky {
-		req := withKey(httptest.NewRequest(http.MethodGet, "/api/v1/setting/"+k, nil), k)
+		req := adminReq(withKey(httptest.NewRequest(http.MethodGet, "/api/v1/setting/"+k, nil), k))
 		rec := httptest.NewRecorder()
 		h.Get(rec, req)
 		if rec.Code != http.StatusNotFound {
@@ -963,10 +967,9 @@ func adminOnlyPathFixture(t *testing.T, repo *db.SettingsRepo, ctx context.Conte
 func TestSettings_AdminOnlyPathsHiddenFromNonAdmin(t *testing.T) {
 	h, repo, ctx := settingsFixture(t)
 	paths := adminOnlyPathFixture(t, repo, ctx)
-	// A neighbouring non-path key on the same screens must stay readable, or
-	// the fix has quietly closed the whole Calibre tab to non-admins for no
-	// security gain.
-	if err := repo.Set(ctx, SettingCalibreEnabled, "true"); err != nil {
+	// A key a non admin screen does read must stay readable, or the fix has
+	// quietly broken the add author dialog for no security gain.
+	if err := repo.Set(ctx, SettingDefaultMediaType, "both"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -984,8 +987,8 @@ func TestSettings_AdminOnlyPathsHiddenFromNonAdmin(t *testing.T) {
 			t.Errorf("List leaked admin-only key %q to a non-admin", key)
 		}
 	}
-	if !strings.Contains(body, SettingCalibreEnabled) {
-		t.Errorf("non-admin lost the non-path key %q: %s", SettingCalibreEnabled, body)
+	if !strings.Contains(body, SettingDefaultMediaType) {
+		t.Errorf("non-admin lost the allowlisted key %q: %s", SettingDefaultMediaType, body)
 	}
 
 	for key := range paths {
@@ -1132,19 +1135,208 @@ func TestIsAdminOnlySetting_AgreesWithIsSecretSetting(t *testing.T) {
 		}
 	}
 
-	// Ordinary settings stay readable by everyone. calibre.enabled and
-	// import.mode sit next to the path keys on the same screens and are the
-	// ones a too-broad classifier would take out with them.
+	// Since the allowlist inversion only the keys a non admin screen reads
+	// stay readable by everyone. Everything else is admin only, including
+	// keys nobody has registered yet, which is the fail closed half of #2361.
+	for key := range nonAdminReadableSettings {
+		if isAdminOnlySetting(key) {
+			t.Errorf("isAdminOnlySetting(%q) = true; it is on the non admin allowlist", key)
+		}
+	}
 	for _, key := range []string{
 		SettingCalibreEnabled,
 		SettingImportMode,
-		SettingImportAudiobookMode,
-		SettingImportDropLayout,
-		SettingMetadataPrimaryProvider,
-		"ui.theme",
+		SettingABSBaseURL,
+		SettingGrimmoryBaseURL,
+		SettingGrimmoryUsername,
+		SettingCalibrePluginURL,
+		"telemetry.install_id",
+		"some.key_added_next_release",
 	} {
-		if isAdminOnlySetting(key) {
-			t.Errorf("isAdminOnlySetting(%q) = true; want false", key)
+		if !isAdminOnlySetting(key) {
+			t.Errorf("isAdminOnlySetting(%q) = false; want true (not on the allowlist)", key)
 		}
+	}
+}
+
+// TestNonAdminReadableSettings_AreKnownAndNotSecret keeps the allowlist
+// honest: a typo in it would silently hide a key the UI needs, and a secret on
+// it would be a leak if isAdminOnlySetting ever lost its delegation.
+func TestNonAdminReadableSettings_AreKnownAndNotSecret(t *testing.T) {
+	known := make(map[string]bool)
+	for _, d := range SettingDescriptors() {
+		known[d.Key] = true
+	}
+	for key := range nonAdminReadableSettings {
+		if !known[key] {
+			t.Errorf("allowlisted key %q has no descriptor; typo?", key)
+		}
+		if isSecretSetting(key) {
+			t.Errorf("allowlisted key %q is a secret", key)
+		}
+	}
+	// The allowlist is the contract the non admin tests pin; keep them equal
+	// so neither can grow without the other.
+	if len(nonAdminReadableSettings) != len(nonAdminUIKeys) {
+		t.Errorf("allowlist has %d keys, the non admin UI contract has %d", len(nonAdminReadableSettings), len(nonAdminUIKeys))
+	}
+	for key := range nonAdminUIKeys {
+		if !nonAdminReadableSettings[key] {
+			t.Errorf("%q is in the UI contract but not on the allowlist", key)
+		}
+	}
+}
+
+// nonAdminUIKeys is the set of settings a non admin screen in web/src reads,
+// with the value each test stores. It is written out here rather than read
+// from the handler's allowlist so the test states the contract on its own: if
+// somebody widens the allowlist, the exact-set check below fails and makes
+// them say why.
+//
+//   - recommendations.enabled: DiscoverPage
+//   - metadata.primary_provider: AddToLibraryModal
+//   - the two default root folder ids, default.media_type and the two author
+//     monitor defaults: authorAddDefaults, used by AddToLibraryModal
+var nonAdminUIKeys = map[string]string{
+	"recommendations.enabled":              "true",
+	SettingMetadataPrimaryProvider:         "dnb",
+	SettingDefaultLibraryRootFolderID:      "3",
+	SettingDefaultAudiobookRootFolderID:    "4",
+	SettingDefaultMediaType:                "both",
+	SettingAuthorDefaultMonitorMode:        "latest",
+	SettingAuthorDefaultMonitorLatestCount: "2",
+}
+
+// operatorDetailKeys are settings no non admin screen reads. The first five
+// are what the v1.40.0 scan flagged as readable by any account: integration
+// URLs, an integration username and the telemetry install id. The rest are
+// ordinary operator knobs that sit next to them, plus one path key so the
+// earlier #2361 fix stays covered by the inverted default.
+var operatorDetailKeys = map[string]string{
+	SettingABSBaseURL:         "http://hidden-abs.internal:13378",
+	SettingGrimmoryBaseURL:    "http://hidden-grimmory.internal:6060",
+	SettingGrimmoryUsername:   "hidden-grimmory-user",
+	SettingCalibrePluginURL:   "http://hidden-calibre-plugin.internal:8099",
+	"telemetry.install_id":    "hidden-install-id-0f3c",
+	SettingCalibreEnabled:     "hidden-true",
+	SettingSearchInterval:     "hidden-12h",
+	SettingImportMode:         "hidden-copy",
+	SettingCalibreLibraryPath: "/srv/hidden-calibre-library",
+}
+
+func seedAllowlistFixture(t *testing.T, repo *db.SettingsRepo, ctx context.Context) {
+	t.Helper()
+	for _, m := range []map[string]string{nonAdminUIKeys, operatorDetailKeys} {
+		for k, v := range m {
+			if err := repo.Set(ctx, k, v); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func listAs(t *testing.T, h *SettingsHandler, role string) map[string]string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/setting", nil)
+	req = req.WithContext(auth.WithUserRole(req.Context(), role))
+	rec := httptest.NewRecorder()
+	h.List(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("List as %q = %d", role, rec.Code)
+	}
+	var listed []models.Setting
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	out := make(map[string]string, len(listed))
+	for _, s := range listed {
+		out[s.Key] = s.Value
+	}
+	return out
+}
+
+func getAs(h *SettingsHandler, role, key string) *httptest.ResponseRecorder {
+	req := withKey(httptest.NewRequest(http.MethodGet, "/api/v1/setting/"+key, nil), key)
+	req = req.WithContext(auth.WithUserRole(req.Context(), role))
+	rec := httptest.NewRecorder()
+	h.Get(rec, req)
+	return rec
+}
+
+// TestSettings_NonAdminReadsOnlyTheAllowlist pins the allowlist inversion of
+// #2361. Before it, a non admin got every stored setting that was not a secret
+// or a known path, which included integration base URLs, the Grimmory
+// username and the telemetry install id. Now a non admin gets exactly the keys
+// a non admin screen reads and nothing else, whichever role it holds. The
+// empty role is the fail closed case: a request whose role was never stamped
+// is treated as a non admin, not as an admin.
+func TestSettings_NonAdminReadsOnlyTheAllowlist(t *testing.T) {
+	for _, role := range []string{auth.RoleUser, auth.RoleRequester, ""} {
+		t.Run("role="+role, func(t *testing.T) {
+			h, repo, ctx := settingsFixture(t)
+			seedAllowlistFixture(t, repo, ctx)
+
+			got := listAs(t, h, role)
+			for k, v := range got {
+				if strings.Contains(v, "hidden") {
+					t.Errorf("List leaked operator detail %q = %q", k, v)
+				}
+				if _, ok := nonAdminUIKeys[k]; !ok {
+					t.Errorf("List returned %q, which no non admin screen reads", k)
+				}
+			}
+			for k, want := range nonAdminUIKeys {
+				if got[k] != want {
+					t.Errorf("List %q = %q, want %q (a non admin screen reads it)", k, got[k], want)
+				}
+			}
+
+			for k := range operatorDetailKeys {
+				if rec := getAs(h, role, k); rec.Code != http.StatusNotFound {
+					t.Errorf("Get %q = %d, want 404; body=%s", k, rec.Code, rec.Body.String())
+				}
+			}
+			for k, want := range nonAdminUIKeys {
+				rec := getAs(h, role, k)
+				if rec.Code != http.StatusOK {
+					t.Errorf("Get %q = %d, want 200", k, rec.Code)
+					continue
+				}
+				var s models.Setting
+				if err := json.Unmarshal(rec.Body.Bytes(), &s); err != nil {
+					t.Fatal(err)
+				}
+				if s.Value != want {
+					t.Errorf("Get %q = %q, want %q", k, s.Value, want)
+				}
+			}
+		})
+	}
+}
+
+// TestSettings_AdminReadsEverythingAsBefore is the other half of the
+// inversion: the admin Settings screens render every stored non secret value,
+// so an admin must still get all of them back from List and Get.
+func TestSettings_AdminReadsEverythingAsBefore(t *testing.T) {
+	h, repo, ctx := settingsFixture(t)
+	seedAllowlistFixture(t, repo, ctx)
+	if err := repo.Set(ctx, SettingGrimmoryAPIKey, "grimmory-secret-value"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := listAs(t, h, auth.RoleAdmin)
+	for _, m := range []map[string]string{nonAdminUIKeys, operatorDetailKeys} {
+		for k, want := range m {
+			if got[k] != want {
+				t.Errorf("admin List %q = %q, want %q", k, got[k], want)
+			}
+			rec := getAs(h, auth.RoleAdmin, k)
+			if rec.Code != http.StatusOK {
+				t.Errorf("admin Get %q = %d, want 200", k, rec.Code)
+			}
+		}
+	}
+	if _, ok := got[SettingGrimmoryAPIKey]; ok {
+		t.Errorf("admin List returned a secret")
 	}
 }

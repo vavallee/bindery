@@ -108,6 +108,40 @@ func TestAuthorEvidenceConflict(t *testing.T) {
 	}
 }
 
+// TestIsPlaceholderAuthor: the credits rips put in an author tag that name
+// nobody, in the spellings they actually arrive in. Trailing punctuation,
+// "(s)", a hyphenated "Full-Cast" and a run together "HarperAudio" used to
+// slip past the list and read as an author, raising a conflict with the
+// folder and an Add author for "Brilliance Audio" (#2942).
+func TestIsPlaceholderAuthor(t *testing.T) {
+	for _, s := range []string{
+		"Various Artists", "Various Artists.", "Various Authors;", "  various   authors  ",
+		"[Unknown]", "Unknown Author", "Unknown Author(s)", "Unknown Authors", "Author Unknown",
+		"Full Cast", "Full-Cast", "full cast.", "A Full Cast", "Anon.", "Anon", "Anonymous",
+		"V.A.", "V/A", "VA", "N/A",
+		"Brilliance Audio", "Recorded Books", "Audible Studios", "Tantor Audio",
+		"Blackstone Audio", "Penguin Audio", "HarperAudio", "Harper Audio",
+		"Macmillan Audio", "Random House Audio", "Podium Audio",
+	} {
+		if !isPlaceholderAuthor(s) {
+			t.Errorf("isPlaceholderAuthor(%q) = false, want true", s)
+		}
+	}
+	// Real names, including ones built from initials, stay authors.
+	for _, s := range []string{
+		"Katy Evans", "James Patterson", "V. E. Schwab", "N.K. Jemisin", "Anne Rice",
+		"Cast", "Unknown Soldier", "Penguin", "Harper Lee",
+	} {
+		if isPlaceholderAuthor(s) {
+			t.Errorf("isPlaceholderAuthor(%q) = true, want false", s)
+		}
+	}
+	// End to end: a placeholder tag beside the folder author is no conflict.
+	if authorEvidenceConflict("Brilliance Audio", "James Patterson") {
+		t.Error(`"Brilliance Audio" raised an author conflict with the folder`)
+	}
+}
+
 // withTags gives every member the same author tags.
 func withTags(members []unmatchedScanFile, artist, albumArtist, composer, album string) []unmatchedScanFile {
 	for i := range members {

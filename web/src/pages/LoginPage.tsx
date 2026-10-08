@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { api, BINDERY_BASE, OidcProvider } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import Logo from '../components/Logo'
+import { literalInputAttrs } from '../util/inputAttrs'
 
 export default function LoginPage() {
   const { t } = useTranslation()
@@ -95,6 +96,7 @@ export default function LoginPage() {
       <form onSubmit={submit} method="post" className="space-y-4">
         <Field label={t('login.username')}>
           <input
+            {...literalInputAttrs}
             type="text"
             name="username"
             id="username"

@@ -57,11 +57,11 @@ func (e *AuthorIdentifierConflictError) Unwrap() error {
 const authorSelectCols = `id, foreign_id, name, sort_name, description, image_url, disambiguation,
 	       ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
 	       audiobook_root_folder_id, monitor_mode, monitor_latest_count, monitor_new_items, metadata_provider, last_metadata_refresh_at,
-	       created_at, updated_at, COALESCE(owner_user_id, 0)`
+	       created_at, updated_at, COALESCE(owner_user_id, 0), CAST(updated_at AS TEXT)`
 const authorSelectColsA = `a.id, a.foreign_id, a.name, a.sort_name, a.description, a.image_url, a.disambiguation,
 		       a.ratings_count, a.average_rating, a.monitored, a.quality_profile_id, a.metadata_profile_id, a.root_folder_id,
 		       a.audiobook_root_folder_id, a.monitor_mode, a.monitor_latest_count, a.monitor_new_items, a.metadata_provider, a.last_metadata_refresh_at,
-		       a.created_at, a.updated_at, COALESCE(a.owner_user_id, 0)`
+		       a.created_at, a.updated_at, COALESCE(a.owner_user_id, 0), CAST(a.updated_at AS TEXT)`
 
 func (r *AuthorRepo) List(ctx context.Context) ([]models.Author, error) {
 	return r.ListByUser(ctx, 0)
@@ -557,6 +557,7 @@ func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerU
 	a.ID = id
 	a.CreatedAt = now
 	a.UpdatedAt = now
+	a.UpdatedAtRaw = timeValueText(now)
 	// Reflect the persisted owner back onto the struct, exactly as
 	// QualityProfileRepo.CreateForUser and MetadataProfileRepo.CreateForUser
 	// already do. Without this the caller holds an author it believes is
@@ -791,51 +792,93 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 }
 
 func (r *AuthorRepo) Update(ctx context.Context, a *models.Author) error {
+	_, err := r.updateAuthor(ctx, a, "")
+	return err
+}
+
+// UpdateIfUnchanged is Update guarded on the row not having changed since a
+// was read: expectedUpdatedAt is the snapshot's UpdatedAtRaw, compared as
+// stored text like BookRepo.UpdateIfUnchanged. It reports false, without
+// writing anything (the author_identifiers row included) or reloading a,
+// when a concurrent write got there first. For callers that write an author
+// after a provider call, so an edit saved during the call is not undone
+// (#2926).
+func (r *AuthorRepo) UpdateIfUnchanged(ctx context.Context, a *models.Author, expectedUpdatedAt string) (bool, error) {
+	if a == nil || a.ID == 0 || expectedUpdatedAt == "" {
+		return false, fmt.Errorf("update author: invalid author snapshot")
+	}
+	return r.updateAuthor(ctx, a, expectedUpdatedAt)
+}
+
+// updateAuthor writes every column of a in one transaction with its
+// identifier row. A non-empty expectedUpdatedAt adds the stored-text
+// updated_at precondition.
+func (r *AuthorRepo) updateAuthor(ctx context.Context, a *models.Author, expectedUpdatedAt string) (bool, error) {
 	now := time.Now().UTC()
 	normalizeAuthorMonitorDefaults(a)
 
 	if _, ok := r.exec.(*sql.Tx); ok {
-		if err := r.update(ctx, r.exec, a, now); err != nil {
-			return err
+		updated, err := r.update(ctx, r.exec, a, now, expectedUpdatedAt)
+		if err != nil || !updated {
+			return false, err
 		}
 		a.UpdatedAt = now
-		return nil
+		a.UpdatedAtRaw = timeValueText(now)
+		return true, nil
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin update author %d: %w", a.ID, err)
+		return false, fmt.Errorf("begin update author %d: %w", a.ID, err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := r.update(ctx, tx, a, now); err != nil {
-		return err
+	updated, err := r.update(ctx, tx, a, now, expectedUpdatedAt)
+	if err != nil || !updated {
+		return false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit update author %d: %w", a.ID, err)
+		return false, fmt.Errorf("commit update author %d: %w", a.ID, err)
 	}
 	a.UpdatedAt = now
-	return nil
+	a.UpdatedAtRaw = timeValueText(now)
+	return true, nil
 }
 
-func (r *AuthorRepo) update(ctx context.Context, exec dbExecutor, a *models.Author, now time.Time) error {
-	_, err := exec.ExecContext(ctx, `
+func (r *AuthorRepo) update(ctx context.Context, exec dbExecutor, a *models.Author, now time.Time, expectedUpdatedAt string) (bool, error) {
+	query := `
 		UPDATE authors SET foreign_id=?, name=?, sort_name=?, sort_key=?, name_sort_key=?, search_key=?, description=?, image_url=?, disambiguation=?,
 		                   ratings_count=?, average_rating=?, monitored=?, quality_profile_id=?,
 		                   metadata_profile_id=?, root_folder_id=?, audiobook_root_folder_id=?, monitor_mode=?,
 		                   monitor_latest_count=?, monitor_new_items=?, metadata_provider=?, last_metadata_refresh_at=?, updated_at=?
-		WHERE id=?`,
+		WHERE id=?`
+	args := []any{
 		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), authorSortKey(a.Name), textutil.FoldForSearch(a.Name), a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID,
 		a.MetadataProfileID, a.RootFolderID, a.AudiobookRootFolderID, a.MonitorMode,
-		a.MonitorLatestCount, a.MonitorNewItems, a.MetadataProvider, timeArg(a.LastMetadataRefreshAt), timeValueArg(now), a.ID)
+		a.MonitorLatestCount, a.MonitorNewItems, a.MetadataProvider, timeArg(a.LastMetadataRefreshAt), timeValueArg(now), a.ID,
+	}
+	if expectedUpdatedAt != "" {
+		query += ` AND CAST(updated_at AS TEXT)=?`
+		args = append(args, expectedUpdatedAt)
+	}
+	res, err := exec.ExecContext(ctx, query, args...)
 	if err != nil {
-		return fmt.Errorf("update author %d: %w", a.ID, err)
+		return false, fmt.Errorf("update author %d: %w", a.ID, err)
+	}
+	if expectedUpdatedAt != "" {
+		n, err := res.RowsAffected()
+		if err != nil {
+			return false, fmt.Errorf("check update for author %d: %w", a.ID, err)
+		}
+		if n == 0 {
+			return false, nil
+		}
 	}
 	if err := r.upsertIdentifierTx(ctx, exec, a.ID, a.ForeignID, now); err != nil {
-		return err
+		return false, err
 	}
-	return nil
+	return true, nil
 }
 
 // Delete removes the author and its author_identifiers rows.
@@ -1006,7 +1049,7 @@ func scanAuthorRow(row *sql.Row) (models.Author, error) {
 }
 
 // trailingScanner lets a query select the standard author columns plus extra
-// derived ones without duplicating scanAuthorFrom's 22-destination list, which
+// derived ones without duplicating scanAuthorFrom's 23-destination list, which
 // would then be free to drift from authorSelectCols on the next column added.
 type trailingScanner struct {
 	s     rowScanner
@@ -1022,12 +1065,15 @@ func scanAuthorFrom(s rowScanner) (models.Author, error) {
 	var monitored int
 	// Time columns scanned as strings + parseFlexibleTime so legacy rows
 	// written by Go's default time.String() shape (#914) still load.
-	var lastMetadataRefreshAtStr, createdAtStr, updatedAtStr sql.NullString
+	// updatedAtRaw is CAST(updated_at AS TEXT): the driver reformats a
+	// DATETIME column it can parse, so only the cast keeps the stored text a
+	// guarded write compares against (UpdateIfUnchanged).
+	var lastMetadataRefreshAtStr, createdAtStr, updatedAtStr, updatedAtRaw sql.NullString
 	err := s.Scan(&a.ID, &a.ForeignID, &a.Name, &a.SortName, &a.Description, &a.ImageURL,
 		&a.Disambiguation, &a.RatingsCount, &a.AverageRating, &monitored,
 		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.AudiobookRootFolderID,
 		&a.MonitorMode, &a.MonitorLatestCount, &a.MonitorNewItems, &a.MetadataProvider,
-		&lastMetadataRefreshAtStr, &createdAtStr, &updatedAtStr, &a.OwnerUserID)
+		&lastMetadataRefreshAtStr, &createdAtStr, &updatedAtStr, &a.OwnerUserID, &updatedAtRaw)
 	if err != nil {
 		return a, err
 	}
@@ -1038,6 +1084,7 @@ func scanAuthorFrom(s rowScanner) (models.Author, error) {
 	}
 	a.CreatedAt = parseFlexibleTimeValue(createdAtStr, "authors.created_at")
 	a.UpdatedAt = parseFlexibleTimeValue(updatedAtStr, "authors.updated_at")
+	a.UpdatedAtRaw = updatedAtRaw.String
 	a.Monitored = monitored == 1
 	normalizeAuthorMonitorDefaults(&a)
 	return a, nil

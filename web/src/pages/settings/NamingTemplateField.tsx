@@ -6,7 +6,7 @@
 // which mirrors the Go renamer (internal/importer/renamer.go) so the preview
 // matches what the importer actually writes.
 
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { inputCls, labelCls } from './formStyles'
 import SaveButton from './SaveButton'
@@ -44,6 +44,18 @@ export default function NamingTemplateField({
 }: NamingTemplateFieldProps) {
   const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
+  // The token last tapped, so its meaning can be shown inline: the title
+  // tooltip that carries it needs a hover, which a touch screen never sends.
+  const [tappedToken, setTappedToken] = useState<string | null>(null)
+
+  const tokenMeaning = (token: string, descKey: string, greyed: boolean) =>
+    greyed
+      ? t('settings.general.naming.tokenIgnoredAudiobook', { token })
+      : t(`settings.general.naming.${descKey}`)
+  const tapped = NAMING_TOKENS.find(tok => tok.token === tappedToken)
+  const tappedTokenMeaning = tapped
+    ? tokenMeaning(tapped.token, tapped.descKey, !!tapped.ebookOnly && kind === 'audiobook')
+    : null
 
   const validation = validateTemplate(value)
   const preview = renderTemplate(value, kind)
@@ -83,13 +95,14 @@ export default function NamingTemplateField({
             <button
               key={tok.token}
               type="button"
-              onClick={() => !greyed && insertToken(tok.token)}
-              disabled={greyed}
-              title={
-                greyed
-                  ? t('settings.general.naming.tokenIgnoredAudiobook', { token: tok.token })
-                  : t(`settings.general.naming.${tok.descKey}`)
-              }
+              onClick={() => {
+                setTappedToken(tok.token)
+                if (!greyed) insertToken(tok.token)
+              }}
+              // aria-disabled rather than disabled so a tap still reaches the
+              // button and shows why the token does nothing here.
+              aria-disabled={greyed || undefined}
+              title={tokenMeaning(tok.token, tok.descKey, !!greyed)}
               className={
                 greyed
                   ? 'px-2 py-0.5 rounded text-[11px] font-mono border border-slate-200 dark:border-zinc-800 text-slate-400 dark:text-zinc-600 cursor-not-allowed line-through'
@@ -101,15 +114,21 @@ export default function NamingTemplateField({
           )
         })}
       </div>
+      {tappedTokenMeaning && (
+        // Touch screens only: on a desktop the tooltip already says this.
+        <p data-testid={`naming-token-meaning-${kind}`} aria-live="polite" className="hidden pointer-coarse:block text-xs text-slate-600 dark:text-zinc-400 -mt-1 mb-2">
+          {tappedTokenMeaning}
+        </p>
+      )}
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <input
           ref={inputRef}
           value={value}
           onChange={e => onChange(e.target.value)}
           placeholder={placeholder}
           aria-invalid={hasErrors}
-          className={inputCls + ' flex-1 font-mono'}
+          className={inputCls + ' grow basis-48 min-w-0 font-mono'}
         />
         <SaveButton
           result={saveResult}

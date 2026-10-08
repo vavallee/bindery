@@ -335,9 +335,13 @@ func (r *SeriesRepo) SetGenreOverride(ctx context.Context, id int64, genres []st
 	return nil
 }
 
+// manualSeriesPrefix starts the synthetic foreign id of a hand-made series.
+// No provider ever sends one back, so a merge does not keep it as an alias.
+const manualSeriesPrefix = "manual:series:"
+
 func (r *SeriesRepo) CreateManual(ctx context.Context, title string) (*models.Series, error) {
 	s := &models.Series{
-		ForeignID:   fmt.Sprintf("manual:series:%d", time.Now().UTC().UnixNano()),
+		ForeignID:   fmt.Sprintf(manualSeriesPrefix+"%d", time.Now().UTC().UnixNano()),
 		Title:       strings.TrimSpace(title),
 		Description: "",
 	}
@@ -645,9 +649,12 @@ func (r *SeriesRepo) DeleteHardcoverLink(ctx context.Context, seriesID int64) er
 	return nil
 }
 
+// GetByForeignID returns the series a provider foreign id names: the series
+// with that id, or the series it was merged into (#2554). It resolves through
+// seriesByForeignIDSQL, the one place a provider id is looked up.
 func (r *SeriesRepo) GetByForeignID(ctx context.Context, foreignID string) (*models.Series, error) {
-	row := r.db.QueryRowContext(ctx,
-		"SELECT id, foreign_id, title, description, monitored, created_at FROM series WHERE foreign_id=?", foreignID)
+	row := r.exec.QueryRowContext(ctx,
+		"SELECT id, foreign_id, title, description, monitored, created_at FROM series WHERE id = ("+seriesByForeignIDSQL+")", foreignID, foreignID)
 	var s models.Series
 	var monitored int
 	err := row.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &s.CreatedAt)
@@ -665,6 +672,9 @@ func (r *SeriesRepo) UpdateForeignID(ctx context.Context, id int64, foreignID st
 	if id == 0 {
 		return nil
 	}
+	if err := r.refuseAlias(ctx, foreignID); err != nil {
+		return err
+	}
 	_, err := r.db.ExecContext(ctx, "UPDATE series SET foreign_id=? WHERE id=?", foreignID, id)
 	if err != nil {
 		return fmt.Errorf("update series %d foreign_id: %w", id, err)
@@ -673,6 +683,9 @@ func (r *SeriesRepo) UpdateForeignID(ctx context.Context, id int64, foreignID st
 }
 
 func (r *SeriesRepo) Create(ctx context.Context, s *models.Series) error {
+	if err := r.refuseAlias(ctx, s.ForeignID); err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	result, err := r.db.ExecContext(ctx,
 		"INSERT INTO series (foreign_id, title, description, created_at) VALUES (?, ?, ?, ?)",
@@ -698,9 +711,14 @@ func (r *SeriesRepo) CreateOrGet(ctx context.Context, s *models.Series) error {
 		return fmt.Errorf("upsert series %q: refusing to create a series with an empty foreign_id", s.Title)
 	}
 	now := time.Now().UTC()
+	// The alias check is part of the INSERT, not a lookup before it: SQLite
+	// runs one statement atomically under its single writer, so a refresh
+	// racing a merge (#2554) cannot recreate the row the merge just removed.
 	result, err := r.db.ExecContext(ctx,
-		"INSERT OR IGNORE INTO series (foreign_id, title, description, created_at) VALUES (?, ?, ?, ?)",
-		s.ForeignID, s.Title, s.Description, now)
+		`INSERT OR IGNORE INTO series (foreign_id, title, description, created_at)
+		 SELECT ?, ?, ?, ?
+		 WHERE NOT EXISTS (SELECT 1 FROM series_aliases WHERE foreign_id = ?)`,
+		s.ForeignID, s.Title, s.Description, now, s.ForeignID)
 	if err != nil {
 		return fmt.Errorf("upsert series: %w", err)
 	}
@@ -710,13 +728,69 @@ func (r *SeriesRepo) CreateOrGet(ctx context.Context, s *models.Series) error {
 		s.CreatedAt = now
 		return nil
 	}
-	// Row already existed — fetch its ID.
-	row := r.db.QueryRowContext(ctx, "SELECT id FROM series WHERE foreign_id = ?", s.ForeignID)
+	// The series exists, under this id or as the series it was merged into.
+	row := r.db.QueryRowContext(ctx, seriesByForeignIDSQL, s.ForeignID, s.ForeignID)
 	if err := row.Scan(&s.ID); err != nil {
 		return fmt.Errorf("get existing series id: %w", err)
 	}
 	return nil
 }
+
+// seriesByForeignIDSQL selects the id of the series a provider foreign id
+// names: the series with that id, else the series an alias of it was merged
+// into (#2554). Takes the foreign id twice. It is the only lookup of a series
+// by provider id (TestSeriesForeignIDLookupsGoThroughResolver), which is what
+// keeps a merge from being undone by a refresh that still reports a merged-
+// away id.
+const seriesByForeignIDSQL = `SELECT id FROM series WHERE foreign_id = ?
+	UNION ALL
+	SELECT series_id FROM series_aliases WHERE foreign_id = ?
+	LIMIT 1`
+
+// refuseAlias keeps an alias id from also becoming a live series foreign id:
+// the two would then name different series.
+func (r *SeriesRepo) refuseAlias(ctx context.Context, foreignID string) error {
+	var n int
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM series_aliases WHERE foreign_id = ?", foreignID).Scan(&n); err != nil {
+		return fmt.Errorf("check series alias %q: %w", foreignID, err)
+	}
+	if n > 0 {
+		return fmt.Errorf("series foreign id %q belongs to a merged series: %w", foreignID, ErrSeriesAlias)
+	}
+	return nil
+}
+
+// AliasForeignIDs returns the provider ids merged into any of seriesIDs
+// (#2554), for a caller that matches provider refs against a set of series by
+// foreign id and must treat a merged-away id as the series it now names.
+func (r *SeriesRepo) AliasForeignIDs(ctx context.Context, seriesIDs []int64) ([]string, error) {
+	if len(seriesIDs) == 0 {
+		return nil, nil
+	}
+	args := make([]any, len(seriesIDs))
+	for i, id := range seriesIDs {
+		args[i] = id
+	}
+	rows, err := r.exec.QueryContext(ctx,
+		`SELECT foreign_id FROM series_aliases WHERE series_id IN (?`+strings.Repeat(",?", len(seriesIDs)-1)+`) ORDER BY foreign_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list series aliases: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// ErrSeriesAlias reports a foreign id that names a series through a merge
+// alias and so cannot be given to another series.
+var ErrSeriesAlias = errors.New("series foreign id is an alias")
 
 // LinkBook inserts a series_books row joining seriesID → bookID.
 // INSERT OR IGNORE makes the call idempotent: a second call with the same
@@ -979,8 +1053,8 @@ func (r *SeriesRepo) ListBookSeriesMembershipsForBook(ctx context.Context, bookI
 	return out[bookID], nil
 }
 
-func (r *SeriesRepo) scanBookSeriesMemberships(ctx context.Context, query string, arg int64) (map[int64][]BookSeriesMembership, error) {
-	rows, err := r.db.QueryContext(ctx, query, arg)
+func (r *SeriesRepo) scanBookSeriesMemberships(ctx context.Context, query string, args ...any) (map[int64][]BookSeriesMembership, error) {
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

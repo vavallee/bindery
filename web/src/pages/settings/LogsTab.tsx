@@ -7,6 +7,7 @@ import SaveButton from './SaveButton'
 import Toggle from './Toggle'
 import { useSaveResult } from './useSaveResult'
 import { usePolling } from '../../components/usePolling'
+import { BELOW_SM, useMediaQuery } from '../../components/useMediaQuery'
 
 // <input type="datetime-local"> produces "2026-08-12T14:03" — no zone, which
 // the API's RFC3339 parse rejects, so the range was silently ignored. The
@@ -33,6 +34,7 @@ function formatRelativeTime(iso: string): string {
 
 export default function LogsTab() {
   const { t, i18n } = useTranslation()
+  const narrow = useMediaQuery(BELOW_SM)
   const { confirm, confirmDialog } = useConfirmDialog()
   const [logEntries, setLogEntries] = useState<LogEntry[]>([])
   const [logLevel, setLogLevel] = useState<string>('info')
@@ -151,8 +153,9 @@ export default function LogsTab() {
       <div className="flex flex-wrap items-center gap-3 mb-3">
         <h3 className="text-lg font-semibold mr-auto">{t('settings.logs.heading')}</h3>
 
-        {/* Level filter pills */}
-        <div className="flex items-center gap-1.5 text-xs">
+        {/* Level filter pills. They wrap: five pills and the label in one
+            unbreakable row pushed a phone page out to about 406px. */}
+        <div className="flex flex-wrap items-center gap-1.5 text-xs" data-testid="log-level-filter">
           <span className="text-[10px] font-medium uppercase text-slate-400 dark:text-zinc-600 mr-1">View</span>
           {(['all', 'debug', 'info', 'warn', 'error'] as const).map(f => (
             <button
@@ -209,26 +212,28 @@ export default function LogsTab() {
         </button>
       </div>
 
-      {/* Toolbar row 2: date range + component + search */}
+      {/* Toolbar row 2: date range + component + search. Below sm each date
+          field takes a full row and may shrink: a datetime input's intrinsic
+          width at the 16px touch font ran past a 320px screen. */}
       <div className="flex flex-wrap items-center gap-2 mb-3 text-xs">
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 w-full sm:w-auto min-w-0">
           <span className="text-slate-500 dark:text-zinc-500">{t('settings.logs.from')}</span>
           <input
             type="datetime-local"
             aria-label={t('settings.logs.from')}
             value={logFrom}
             onChange={e => setLogFrom(e.target.value)}
-            className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-xs"
+            className="min-w-0 flex-1 sm:flex-none bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-xs"
           />
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 w-full sm:w-auto min-w-0">
           <span className="text-slate-500 dark:text-zinc-500">{t('settings.logs.to')}</span>
           <input
             type="datetime-local"
             aria-label={t('settings.logs.to')}
             value={logTo}
             onChange={e => setLogTo(e.target.value)}
-            className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-xs"
+            className="min-w-0 flex-1 sm:flex-none bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-xs"
           />
         </div>
         <input
@@ -275,7 +280,7 @@ export default function LogsTab() {
       </div>
 
       {/* Log output */}
-      <div className="font-mono text-xs bg-slate-50 dark:bg-black rounded-lg border border-slate-200 dark:border-zinc-900 overflow-auto max-h-[60vh]">
+      <div className="font-mono text-xs bg-slate-50 dark:bg-black rounded-lg border border-slate-200 dark:border-zinc-900 overflow-auto max-h-[60dvh]">
         {(() => {
           const formatAttr = (k: string, v: unknown) => {
             const s = String(v)
@@ -283,6 +288,45 @@ export default function LogsTab() {
           }
           if (logEntries.length === 0) {
             return <p className="text-slate-500 dark:text-zinc-600 p-4 text-center">{t('settings.logs.noEntries')}</p>
+          }
+          const rows = logEntries.map((e, i) => {
+            const levelCls =
+              e.level === 'ERROR' ? 'text-red-500 dark:text-red-400' :
+              e.level === 'WARN'  ? 'text-amber-600 dark:text-amber-400' :
+              e.level === 'DEBUG' ? 'text-slate-400 dark:text-zinc-500' :
+              'text-emerald-600 dark:text-emerald-400'
+            // Support both ring buffer (time/msg/attrs) and DB (ts/message/fields) shapes.
+            const rawTs = e.ts ?? e.time ?? ''
+            const d = new Date(rawTs)
+            const ts = rawTs ? d.toLocaleString(i18n.resolvedLanguage, {
+              day: '2-digit', month: '2-digit',
+              hour: '2-digit', minute: '2-digit', second: '2-digit',
+              hour12: false,
+            }) : ''
+            const msgText = e.message ?? e.msg ?? ''
+            const attrsObj = e.fields ?? e.attrs ?? {}
+            const attrStr = Object.entries(attrsObj).map(([k, v]) => formatAttr(k, v)).join(' ')
+            return { key: e.id ?? i, level: e.level, levelCls, iso: d.toISOString(), ts, component: e.component ?? '', msgText, attrStr }
+          })
+          // On a phone the fixed table left the message column next to
+          // nothing once time, level, component and attrs took their share,
+          // so each entry stacks: a header line, then the message, then attrs.
+          if (narrow) {
+            return (
+              <ul>
+                {rows.map(r => (
+                  <li key={r.key} data-testid="log-entry" className="px-3 py-1.5 border-b border-slate-200 dark:border-zinc-900">
+                    <div className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="text-slate-500 dark:text-zinc-600 whitespace-nowrap" title={r.iso}>{r.ts}</span>
+                      <span className={`font-semibold ${r.levelCls}`}>{r.level}</span>
+                      {r.component && <span className="text-slate-500 dark:text-zinc-500">{r.component}</span>}
+                    </div>
+                    <div className="text-slate-800 dark:text-zinc-200 break-words whitespace-pre-wrap">{r.msgText}</div>
+                    {r.attrStr && <div className="text-slate-500 dark:text-zinc-500 break-words whitespace-pre-wrap">{r.attrStr}</div>}
+                  </li>
+                ))}
+              </ul>
+            )
           }
           return (
             <table className="w-full border-collapse table-fixed">
@@ -294,33 +338,15 @@ export default function LogsTab() {
                 <col className="w-2/5" />
               </colgroup>
               <tbody>
-                {logEntries.map((e, i) => {
-                  const levelCls =
-                    e.level === 'ERROR' ? 'text-red-500 dark:text-red-400' :
-                    e.level === 'WARN'  ? 'text-amber-600 dark:text-amber-400' :
-                    e.level === 'DEBUG' ? 'text-slate-400 dark:text-zinc-500' :
-                    'text-emerald-600 dark:text-emerald-400'
-                  // Support both ring buffer (time/msg/attrs) and DB (ts/message/fields) shapes.
-                  const rawTs = e.ts ?? e.time ?? ''
-                  const d = new Date(rawTs)
-                  const ts = rawTs ? d.toLocaleString(i18n.resolvedLanguage, {
-                    day: '2-digit', month: '2-digit',
-                    hour: '2-digit', minute: '2-digit', second: '2-digit',
-                    hour12: false,
-                  }) : ''
-                  const msgText = e.message ?? e.msg ?? ''
-                  const attrsObj = e.fields ?? e.attrs ?? {}
-                  const attrStr = Object.entries(attrsObj).map(([k, v]) => formatAttr(k, v)).join(' ')
-                  return (
-                    <tr key={e.id ?? i} className="border-b border-slate-200 dark:border-zinc-900 hover:bg-slate-100 dark:hover:bg-zinc-900/50">
-                      <td className="pl-3 pr-2 py-0.5 text-slate-500 dark:text-zinc-600 whitespace-nowrap align-top" title={d.toISOString()}>{ts}</td>
-                      <td className={`pr-2 py-0.5 whitespace-nowrap font-semibold align-top ${levelCls}`}>{e.level}</td>
-                      <td className="pr-2 py-0.5 text-slate-500 dark:text-zinc-500 whitespace-nowrap align-top">{e.component ?? ''}</td>
-                      <td className="pr-2 py-0.5 text-slate-800 dark:text-zinc-200 break-words whitespace-pre-wrap align-top">{msgText}</td>
-                      <td className="pr-3 py-0.5 text-slate-500 dark:text-zinc-500 break-words whitespace-pre-wrap align-top">{attrStr}</td>
-                    </tr>
-                  )
-                })}
+                {rows.map(r => (
+                  <tr key={r.key} className="border-b border-slate-200 dark:border-zinc-900 hover:bg-slate-100 dark:hover:bg-zinc-900/50">
+                    <td className="pl-3 pr-2 py-0.5 text-slate-500 dark:text-zinc-600 whitespace-nowrap align-top" title={r.iso}>{r.ts}</td>
+                    <td className={`pr-2 py-0.5 whitespace-nowrap font-semibold align-top ${r.levelCls}`}>{r.level}</td>
+                    <td className="pr-2 py-0.5 text-slate-500 dark:text-zinc-500 whitespace-nowrap align-top">{r.component}</td>
+                    <td className="pr-2 py-0.5 text-slate-800 dark:text-zinc-200 break-words whitespace-pre-wrap align-top">{r.msgText}</td>
+                    <td className="pr-3 py-0.5 text-slate-500 dark:text-zinc-500 break-words whitespace-pre-wrap align-top">{r.attrStr}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           )
@@ -386,12 +412,14 @@ export default function LogsTab() {
       <section className="mt-8">
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.backup')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
+          {/* Stacks below sm like the retention row above: the label input
+              and button cannot shrink, so side by side they widened the page. */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-0" data-testid="backup-create-row">
+            <div className="min-w-0">
               <p className="text-sm text-slate-700 dark:text-zinc-300">{t('settings.general.backupCreate')}</p>
               <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.backupHint')}</p>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex flex-wrap items-center gap-2 sm:flex-shrink-0">
               <input
                 type="text"
                 value={backupLabel}

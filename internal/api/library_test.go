@@ -14,17 +14,21 @@ import (
 // fakeScanner records the context it received so the test can inspect it,
 // and can simulate an in-flight scan via err.
 type fakeScanner struct {
-	called chan context.Context
-	err    error
+	called  chan context.Context
+	err     error
+	running bool
+	queued  bool
 }
 
-func (f *fakeScanner) StartScan(ctx context.Context) error {
+func (f *fakeScanner) StartScanTracked(ctx context.Context) (string, error) {
 	if f.err != nil {
-		return f.err
+		return "boot-2", f.err
 	}
 	f.called <- ctx
-	return nil
+	return "boot-1", nil
 }
+
+func (f *fakeScanner) ScanState() (bool, bool) { return f.running, f.queued }
 
 func newLibraryHandler(t *testing.T) *LibraryHandler {
 	t.Helper()
@@ -93,6 +97,34 @@ func TestLibraryScan_AlreadyRunningReturns409(t *testing.T) {
 	}
 }
 
+// TestLibraryScan_QueuedReturns202 pins #3014: a scan requested while one is
+// running is queued behind it, and the caller is told so with 202 and
+// queued=true rather than a 409 it cannot tell apart from a refusal.
+func TestLibraryScan_QueuedReturns202(t *testing.T) {
+	fake := &fakeScanner{err: importer.ErrScanQueued}
+	h := &LibraryHandler{scanner: fake}
+
+	rec := httptest.NewRecorder()
+	h.Scan(rec, httptest.NewRequest(http.MethodPost, "/library/scan", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for a queued scan, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Message string `json:"message"`
+		Queued  bool   `json:"queued"`
+		ScanID  string `json:"scanId"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if body.ScanID != "boot-2" {
+		t.Errorf("scanId = %q, want the follow-up scan's id", body.ScanID)
+	}
+	if !body.Queued || body.Message == "" {
+		t.Errorf("body = %+v, want queued=true and a message", body)
+	}
+}
+
 // TestLibraryScan_ShuttingDownReturns503 pins the answer for a scan the jobs
 // group refused because the process is draining (#2372). 202 there would tell
 // the user a scan started when nothing did.
@@ -127,5 +159,31 @@ func TestLibraryScan_Returns202(t *testing.T) {
 	}
 	if body["message"] == "" {
 		t.Error("expected non-empty message in response body")
+	}
+}
+
+// TestLibraryScanStatus_ReportsRunningAndQueued: the status carries the live
+// scan state next to the stored result, so the Settings page keeps waiting
+// while a scan it asked for is still walking or queued (#3014).
+func TestLibraryScanStatus_ReportsRunningAndQueued(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	settings := db.NewSettingsRepo(database)
+	if err := settings.Set(t.Context(), "library.lastScan", `{"ran_at":"2026-10-01T00:00:00Z","scan_id":"boot-1"}`); err != nil {
+		t.Fatal(err)
+	}
+	h := &LibraryHandler{scanner: &fakeScanner{running: true, queued: true}, settings: settings}
+
+	rec := httptest.NewRecorder()
+	h.ScanStatus(rec, httptest.NewRequest(http.MethodGet, "/api/v1/library/scan/status", nil))
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["running"] != true || body["queued"] != true || body["scan_id"] != "boot-1" {
+		t.Errorf("status = %v, want running and queued true with the stored scan_id kept", body)
 	}
 }

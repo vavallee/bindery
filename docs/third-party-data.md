@@ -77,6 +77,39 @@ Public domain catalogue data (CC0). Cover images come from
 `covers.openlibrary.org` and are subject to their rate limits; Bindery serves
 them through the same `/api/v1/images` cache.
 
+## Nasjonalbiblioteket
+
+Sources: <https://api.nb.no/catalog/v1/items/api-docs> (the catalogue search
+API) and <https://authority.bibsys.no> (the Norwegian authority file). Reviewed
+2026-10-04. Only contacted when Nasjonalbiblioteket is the primary provider.
+
+- **The delivered records are CC0; the search API states no licence.** The
+  National Library publishes its catalogue records under CC0 through its
+  metadata delivery over OAI-PMH and SRU
+  (<https://doc.aja.bs.no/hente/bibliografiske-data/mlnb.html>). Bindery does
+  not use that delivery: it reads the catalogue search API, which publishes no
+  licence, terms or rate limits of its own. What Bindery stores from it is the
+  same bibliographic data (titles, authors, ISBNs, years, languages, series,
+  genres, audiobook narrators and running times). Bindery keeps NB opt in so
+  installs that do not choose it send no traffic.
+- **Summaries are publisher copy.** A record's summary is usually the
+  publisher's own description of the book, not the library's cataloguing, so
+  CC0 does not reach it. Bindery stores it as the book description, the way it
+  stores descriptions from the other providers.
+- **Covers are excluded.** NB's image service refuses in-copyright books, and
+  the cover images some records link to are licensed to library catalogues
+  only. Bindery fetches no cover from NB or from those links.
+- **The authority file is Sikt's, under NLOD 2.0.** Bindery reads an author's
+  name heading from it to look up their catalogue, and the name's other forms,
+  which may become aliases. NLOD asks for attribution when the data is
+  redistributed, for example published as a dataset:
+
+  > Contains data under the Norwegian licence for Open Government data (NLOD)
+  > distributed by Sikt.
+
+  A self-hosted install that shows the names to its own users does not
+  redistribute them.
+
 ## Audible
 
 `internal/metadata/audible` calls an unpublished Amazon endpoint, and Amazon's

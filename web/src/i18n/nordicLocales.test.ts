@@ -111,9 +111,13 @@ describe('language detection', () => {
     return loaded()
   }
 
+  // The i18next instance is a singleton that outlives resetModules, so
+  // isInitialized is already true from the previous run. Wait on this run's
+  // init instead: the locale bundles load asynchronously through the lazy
+  // backend, so resolvedLanguage is only settled once it resolves.
   async function loaded() {
-    const { default: instance } = await import('./index')
-    if (!instance.isInitialized) await new Promise(resolve => instance.on('initialized', resolve))
+    const { default: instance, i18nReady } = await import('./index')
+    await i18nReady
     return instance
   }
 

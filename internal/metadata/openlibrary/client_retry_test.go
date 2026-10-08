@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/vavallee/bindery/internal/metadata/providerhttp"
 )
 
 // scriptedRoundTripper replays one response per call from responses, in
@@ -63,7 +65,7 @@ func TestGetJSON_RetriesOn429ThenSucceeds(t *testing.T) {
 	if got := rt.calls.Load(); got != 2 {
 		t.Fatalf("calls = %d, want 2 (one 429, one success)", got)
 	}
-	if elapsed := time.Since(start); elapsed < getJSONBaseDelay/2 {
+	if elapsed := time.Since(start); elapsed < providerhttp.BaseDelay/2 {
 		t.Fatalf("elapsed = %v, expected a backoff wait before the retry", elapsed)
 	}
 }
@@ -102,9 +104,9 @@ func TestGetJSON_ExhaustsRetriesAndReturnsLastError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error once retries are exhausted")
 	}
-	// getJSONMaxRetries retries plus the initial attempt.
-	if got, want := rt.calls.Load(), int32(getJSONMaxRetries+1); got != want {
-		t.Fatalf("calls = %d, want %d (initial attempt + %d retries)", got, want, getJSONMaxRetries)
+	// providerhttp.MaxRetries retries plus the initial attempt.
+	if got, want := rt.calls.Load(), int32(providerhttp.MaxRetries+1); got != want {
+		t.Fatalf("calls = %d, want %d (initial attempt + %d retries)", got, want, providerhttp.MaxRetries)
 	}
 	if !strings.Contains(err.Error(), "503") {
 		t.Fatalf("err = %v, want it to mention the final HTTP 503", err)
@@ -152,46 +154,6 @@ func TestGetJSON_DoesNotRetryPastCallerDeadline(t *testing.T) {
 	}
 }
 
-func TestParseRetryAfter(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want time.Duration
-	}{
-		{"empty", "", 0},
-		{"seconds", "5", 5 * time.Second},
-		{"zero seconds", "0", 0},
-		{"negative seconds", "-1", 0},
-		{"garbage", "not-a-number-or-date", 0},
-		{"capped", "3600", retryAfterCap},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := parseRetryAfter(tc.in); got != tc.want {
-				t.Fatalf("parseRetryAfter(%q) = %v, want %v", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestBackoffDelay_RetryAfterWins(t *testing.T) {
-	if got, want := backoffDelay(1, 2*time.Second), 2*time.Second; got != want {
-		t.Fatalf("backoffDelay with retryAfter set = %v, want %v", got, want)
-	}
-}
-
-func TestBackoffDelay_ComputedIsBoundedAndPositive(t *testing.T) {
-	for attempt := 1; attempt <= getJSONMaxRetries+2; attempt++ {
-		d := backoffDelay(attempt, 0)
-		if d <= 0 {
-			t.Fatalf("backoffDelay(%d, 0) = %v, want > 0", attempt, d)
-		}
-		if d > getJSONMaxDelay {
-			t.Fatalf("backoffDelay(%d, 0) = %v, want <= %v", attempt, d, getJSONMaxDelay)
-		}
-	}
-}
-
 // drainTrackingBody wraps a Reader and records whether it was ever read all
 // the way to EOF before Close, so a test can prove the caller drained a
 // response body rather than just reading a prefix and closing.
@@ -236,7 +198,7 @@ func TestGetJSON_DrainsRetryableResponseBodyBeforeClosing(t *testing.T) {
 	rt := &oneShotRoundTripper{status: http.StatusServiceUnavailable, body: body}
 	c := &Client{http: &http.Client{Transport: rt}}
 
-	// getJSON retries a 503 up to getJSONMaxRetries times; every retry after
+	// getJSON retries a 503 up to providerhttp.MaxRetries times; every retry after
 	// the first re-reads the same already-drained body (RoundTrip returns the
 	// same *http.Response each call here), which just yields EOF immediately.
 	// That only affects timing, not what this test checks: whether the FIRST

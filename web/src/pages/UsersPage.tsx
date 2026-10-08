@@ -6,6 +6,8 @@ import { ApiError } from '../api/core'
 import DeleteUserDialog from './DeleteUserDialog'
 import { useAuth } from '../auth/AuthContext'
 import type { UserRole } from '../auth/AuthContext'
+import { literalInputAttrs } from '../util/inputAttrs'
+import { BELOW_SM, useMediaQuery } from '../components/useMediaQuery'
 
 const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
 const btnCls = 'px-3 py-1.5 rounded text-sm font-medium transition-colors'
@@ -14,6 +16,7 @@ export default function UsersPage() {
   const { t } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
   const { isAdmin, status } = useAuth()
+  const narrow = useMediaQuery(BELOW_SM)
   const [users, setUsers] = useState<ManagedUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -127,6 +130,58 @@ export default function UsersPage() {
     }
   }
 
+  // Shared by the table and the phone cards, so the two cannot drift apart.
+  // Three roles, so a select rather than a promote/demote toggle. The server
+  // refuses to demote the last admin.
+  const roleSelect = (u: ManagedUser) => (
+    <select
+      value={u.role}
+      onChange={e => void handleRoleChange(u, e.target.value as UserRole)}
+      aria-label={t('users.roleFor', { username: u.username })}
+      className={`px-2 py-0.5 rounded text-xs font-medium border border-slate-300 dark:border-zinc-700 ${
+        u.role === 'admin'
+          ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400'
+          : 'bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400'
+      }`}
+    >
+      <option value="admin">{t('users.roleAdmin')}</option>
+      <option value="user">{t('users.roleUser')}</option>
+      <option value="requester">{t('users.roleRequester')}</option>
+    </select>
+  )
+
+  // Only a requester queues requests, so the toggle is shown for that role.
+  // The value stays on the account if the role changes and comes back with it.
+  const autoApproveToggle = (u: ManagedUser) => u.role === 'requester' && (
+    <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-zinc-400">
+      <input
+        type="checkbox"
+        checked={u.autoApproveRequests}
+        onChange={e => void handleAutoApproveChange(u, e.target.checked)}
+        aria-label={t('users.autoApproveFor', { username: u.username })}
+        className="accent-emerald-500"
+      />
+      {t('users.autoApprove')}
+    </label>
+  )
+
+  const actionButtons = (u: ManagedUser) => (
+    <>
+      <button
+        onClick={() => handleReset(u.id)}
+        className={`${btnCls} text-xs bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300 pointer-coarse:py-2.5`}
+      >
+        {t('users.resetPassword')}
+      </button>
+      <button
+        onClick={() => handleDelete(u)}
+        className={`${btnCls} text-xs bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 pointer-coarse:py-2.5`}
+      >
+        {t('common.delete')}
+      </button>
+    </>
+  )
+
   if (!isAdmin) {
     return (
       <div className="text-center py-20 text-slate-500 dark:text-zinc-500">
@@ -155,8 +210,38 @@ export default function UsersPage() {
       {error && <p className="text-sm text-red-500">{error}</p>}
       {!loading && <p className="text-xs text-slate-500 dark:text-zinc-500">{t('users.autoApproveHint')}</p>}
 
-      {!loading && (
-        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg overflow-hidden">
+      {!loading && narrow && (
+        // Below sm each user is a card, as on History. The five column table
+        // scrolled sideways there with nothing to say so, which left Reset
+        // password and Delete out of sight past the right edge.
+        <ul className="space-y-2" data-testid="users-cards">
+          {users.map(u => (
+            <li key={u.id} className="p-3 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg space-y-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="font-medium min-w-0 [overflow-wrap:anywhere]">
+                  {u.username}
+                  {u.username === status?.username && (
+                    <span className="ml-2 text-xs text-slate-500 dark:text-zinc-500">({t('users.you')})</span>
+                  )}
+                </span>
+                <span className="shrink-0 text-xs text-slate-500 dark:text-zinc-500">
+                  {new Date(u.createdAt).toLocaleDateString()}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                {roleSelect(u)}
+                {autoApproveToggle(u)}
+              </div>
+              <div className="flex flex-wrap gap-2 justify-end">
+                {actionButtons(u)}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!loading && !narrow && (
+        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950">
@@ -177,56 +262,18 @@ export default function UsersPage() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {/* Three roles, so a select rather than a promote/demote
-                        toggle. The server refuses to demote the last admin. */}
-                    <select
-                      value={u.role}
-                      onChange={e => void handleRoleChange(u, e.target.value as UserRole)}
-                      aria-label={t('users.roleFor', { username: u.username })}
-                      className={`px-2 py-0.5 rounded text-xs font-medium border border-slate-300 dark:border-zinc-700 ${
-                        u.role === 'admin'
-                          ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400'
-                          : 'bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400'
-                      }`}
-                    >
-                      <option value="admin">{t('users.roleAdmin')}</option>
-                      <option value="user">{t('users.roleUser')}</option>
-                      <option value="requester">{t('users.roleRequester')}</option>
-                    </select>
+                    {roleSelect(u)}
                   </td>
                   <td className="px-4 py-3">
-                    {/* Only a requester queues requests, so the toggle is
-                        shown for that role. The value stays on the account if
-                        the role changes and comes back with it. */}
-                    {u.role === 'requester' && (
-                      <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-zinc-400">
-                        <input
-                          type="checkbox"
-                          checked={u.autoApproveRequests}
-                          onChange={e => void handleAutoApproveChange(u, e.target.checked)}
-                          aria-label={t('users.autoApproveFor', { username: u.username })}
-                          className="accent-emerald-500"
-                        />
-                        {t('users.autoApprove')}
-                      </label>
-                    )}
+                    {autoApproveToggle(u)}
                   </td>
                   <td className="px-4 py-3 text-slate-500 dark:text-zinc-500">
                     {new Date(u.createdAt).toLocaleDateString()}
                   </td>
-                  <td className="px-4 py-3 flex gap-2 justify-end">
-                    <button
-                      onClick={() => handleReset(u.id)}
-                      className={`${btnCls} text-xs bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300`}
-                    >
-                      {t('users.resetPassword')}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(u)}
-                      className={`${btnCls} text-xs bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400`}
-                    >
-                      {t('common.delete')}
-                    </button>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-2 justify-end whitespace-nowrap">
+                      {actionButtons(u)}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -242,6 +289,7 @@ export default function UsersPage() {
             <div>
               <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">{t('users.fieldUsername')}</label>
               <input
+                {...literalInputAttrs}
                 className={inputCls}
                 value={newUsername}
                 onChange={e => setNewUsername(e.target.value)}

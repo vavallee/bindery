@@ -68,6 +68,13 @@ async function pickCandidate() {
   fireEvent.click(candidate)
 }
 
+// chooseMove picks a candidate and opts into moving the file, the mode that
+// runs the full import.
+async function chooseMove() {
+  await pickCandidate()
+  fireEvent.click(await screen.findByRole('radio', { name: /Also move and rename the file/ }))
+}
+
 describe('FixMatchModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -86,14 +93,36 @@ describe('FixMatchModal', () => {
     await pickCandidate()
 
     // The confirmation step is up...
-    await screen.findByText(/This moves and renames the file on disk/)
+    await screen.findByRole('radio', { name: /Correct the match only/ })
     // ...and nothing has been committed.
     expect(api.reassignFile).not.toHaveBeenCalled()
   })
 
+  // #2055: the button is called Fix match, and a fix match in the *arr apps
+  // corrects the link without touching the file. That is the default here.
+  it('corrects the match only by default, leaving the file where it is', async () => {
+    const onReassigned = renderModal()
+    await pickCandidate()
+
+    expect(await screen.findByRole('radio', { name: /Correct the match only/ })).toBeChecked()
+    expect(screen.getByText(SRC, { selector: 'dd' })).toBeInTheDocument()
+    expect(screen.queryByText(/This moves and renames the file on disk/)).not.toBeInTheDocument()
+    // Nothing will move, so there is no destination to work out.
+    expect(api.reassignFilePreview).not.toHaveBeenCalled()
+
+    const confirm = screen.getByRole('button', { name: 'Reassign' })
+    expect(confirm).not.toBeDisabled()
+    fireEvent.click(confirm)
+
+    await waitFor(() =>
+      expect(api.reassignFile).toHaveBeenCalledWith({ path: SRC, targetBookId: 7, format: 'ebook', relocate: false }),
+    )
+    await waitFor(() => expect(onReassigned).toHaveBeenCalledWith(7))
+  })
+
   it('shows the destination path the file will be moved to', async () => {
     renderModal()
-    await pickCandidate()
+    await chooseMove()
 
     await waitFor(() =>
       expect(api.reassignFilePreview).toHaveBeenCalledWith({
@@ -109,7 +138,7 @@ describe('FixMatchModal', () => {
 
   it('warns that the move is not undoable from the UI', async () => {
     renderModal()
-    await pickCandidate()
+    await chooseMove()
 
     expect(
       await screen.findByText(/cannot undo it for you/),
@@ -118,14 +147,14 @@ describe('FixMatchModal', () => {
 
   it('only reassigns once the confirm button is clicked', async () => {
     const onReassigned = renderModal()
-    await pickCandidate()
+    await chooseMove()
 
     const confirm = await screen.findByRole('button', { name: 'Move and reassign' })
     await waitFor(() => expect(confirm).not.toBeDisabled())
     fireEvent.click(confirm)
 
     await waitFor(() =>
-      expect(api.reassignFile).toHaveBeenCalledWith({ path: SRC, targetBookId: 7, format: 'ebook' }),
+      expect(api.reassignFile).toHaveBeenCalledWith({ path: SRC, targetBookId: 7, format: 'ebook', relocate: true }),
     )
     await waitFor(() => expect(onReassigned).toHaveBeenCalledWith(7))
   })
@@ -149,7 +178,7 @@ describe('FixMatchModal', () => {
       status: 'noop',
     })
     renderModal()
-    await pickCandidate()
+    await chooseMove()
 
     expect(await screen.findByText(/only the metadata link changes/)).toBeInTheDocument()
     expect(screen.queryByText(/This moves and renames the file on disk/)).not.toBeInTheDocument()
@@ -158,10 +187,26 @@ describe('FixMatchModal', () => {
   it('still warns about the move when the destination cannot be computed', async () => {
     vi.mocked(api.reassignFilePreview).mockRejectedValue(new Error('book not found'))
     renderModal()
-    await pickCandidate()
+    await chooseMove()
 
     expect(await screen.findByText(/could not work out the destination/i)).toBeInTheDocument()
     expect(screen.getByText(/This moves and renames the file on disk/)).toBeInTheDocument()
     expect(api.reassignFile).not.toHaveBeenCalled()
+  })
+
+  // A fixed 5rem top offset plus an uncapped panel pushed the footer under
+  // the browser toolbar on a phone. From sm the panel is centred: a 5rem
+  // offset plus a 90dvh panel ran off any viewport under about 800px.
+  it('caps the panel on a phone and scrolls its body', () => {
+    renderModal()
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.className).toContain('modal-max-h')
+    expect(dialog.className).toContain('flex flex-col')
+    const overlay = dialog.parentElement!
+    expect(overlay.className).toContain('sm:items-center')
+    expect(overlay.className).not.toContain('pt-20')
+    const body = dialog.children[1] as HTMLElement
+    expect(body.className).toContain('overflow-y-auto')
+    expect(body.className).toContain('min-h-0')
   })
 })

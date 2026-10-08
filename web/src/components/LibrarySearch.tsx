@@ -234,7 +234,7 @@ export default function LibrarySearch({ className = '', onNavigate, autoFocus }:
         >
           {row.kind !== 'series' && (
             row.imageUrl
-              ? <img src={row.imageUrl} alt="" className={`flex-shrink-0 object-cover rounded ${row.kind === 'author' ? 'w-7 h-7 rounded-full' : 'w-7 h-10'}`} />
+              ? <img loading="lazy" decoding="async" src={row.imageUrl} alt="" className={`flex-shrink-0 object-cover rounded ${row.kind === 'author' ? 'w-7 h-7 rounded-full' : 'w-7 h-10'}`} />
               : <span aria-hidden="true" className={`flex-shrink-0 bg-slate-300 dark:bg-zinc-700 ${row.kind === 'author' ? 'w-7 h-7 rounded-full' : 'w-7 h-10 rounded'}`} />
           )}
           <span className="min-w-0">
@@ -255,6 +255,7 @@ export default function LibrarySearch({ className = '', onNavigate, autoFocus }:
           <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
         </svg>
         <input
+          enterKeyHint="search"
           ref={inputRef}
           id={`${listId}-input`}
           type="text"
@@ -285,7 +286,7 @@ export default function LibrarySearch({ className = '', onNavigate, autoFocus }:
         role="listbox"
         aria-label={t('librarySearch.label')}
         hidden={!open || rows.length === 0}
-        className="absolute left-0 right-0 sm:right-auto sm:min-w-[20rem] mt-1 max-h-[70vh] overflow-y-auto py-1 rounded-md border border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-900 shadow-lg z-50"
+        className="absolute left-0 right-0 sm:right-auto sm:min-w-[20rem] mt-1 max-h-[70dvh] overflow-y-auto py-1 rounded-md border border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-900 shadow-lg z-50"
       >
         {open && loading && !results && (
           <li role="presentation" className="px-3 py-2 text-sm text-fg-muted">{t('librarySearch.searching')}</li>

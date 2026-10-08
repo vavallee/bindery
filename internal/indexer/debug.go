@@ -21,6 +21,24 @@ type SearchDebug struct {
 	Filters    []FilterDebug    `json:"filters"`
 	StartedAt  time.Time        `json:"startedAt"`
 	DurationMs int64            `json:"durationMs"`
+
+	// The fields below say WHICH search this is, for GET /search/last-debug,
+	// which more than one path now writes to (#2154). The searcher leaves them
+	// empty; whoever records the trail fills them in.
+
+	// Origin is DebugOriginInteractive for the book page's Search button, or
+	// the SearchOrigin of an automatic search ("scheduled", "bulk", ...).
+	Origin string `json:"origin,omitempty"`
+	// BookID is the book searched for.
+	BookID int64 `json:"bookId,omitempty"`
+	// UserID is the signed in user who ran an interactive search. Zero for
+	// an automatic search and for a caller with no user identity.
+	UserID int64 `json:"userId,omitempty"`
+	// Outcome is what an automatic search did with what it found, using the
+	// same words as the "book search finished" log line ("grabbed",
+	// "no results", "nothing approved", ...). Empty for an interactive
+	// search, which only lists releases.
+	Outcome string `json:"outcome,omitempty"`
 }
 
 // SearchQueryDebug is the effective criteria sent into the searcher.

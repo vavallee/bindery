@@ -158,7 +158,8 @@ export interface ABSRollbackResult {
     skipped: number
     failed: number
   }
-  actions: ABSRollbackAction[]
+  // null from servers before the empty slice fix, for a run with nothing to undo.
+  actions: ABSRollbackAction[] | null
   finishedAt: string
 }
 

@@ -40,13 +40,16 @@ type grimmoryRouteHandler interface {
 	Test(http.ResponseWriter, *http.Request)
 }
 
-// registerGrimmoryRoutes mounts /grimmory/*. GetConfig redacts the API key so
-// it stays open; SetConfig writes the integration URL + credential and Test
-// probes it, so those are admin-only (matching the abs/* config pattern).
+// registerGrimmoryRoutes mounts /grimmory/*, all admin only, matching the
+// abs/* config routes. SetConfig writes the integration URL and credential and
+// Test probes it. GetConfig redacts the API key and password but still returns
+// the Grimmory base URL and username, the same values GET /setting withholds
+// from non admins since #2361, and the only screen that reads it is the admin
+// Grimmory tab, so it sits behind the gate too.
 func registerGrimmoryRoutes(r chi.Router, h grimmoryRouteHandler) {
-	r.Get("/grimmory/config", h.GetConfig)
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAdmin)
+		r.Get("/grimmory/config", h.GetConfig)
 		r.Put("/grimmory/config", h.SetConfig)
 		r.Post("/grimmory/test", h.Test)
 	})

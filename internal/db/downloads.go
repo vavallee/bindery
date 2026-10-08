@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vavallee/bindery/internal/downloader/clienthost"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -116,6 +117,84 @@ func (r *DownloadRepo) GetByTorrentID(ctx context.Context, torrentID string) (*m
 	return &dl[0], nil
 }
 
+// ListByClientTorrentID returns every download whose torrent_id is torrentID
+// on client or on any other client entry that talks to the same daemon,
+// across all owners. A torrent client adopts a torrent it already holds when a
+// grab sends the same info hash again, so several rows can name one torrent,
+// and two entries configured against one daemon (separate ebook and audiobook
+// entries, say) adopt across each other. Callers use this to find out whether
+// anything else still depends on a torrent before removing it from the client.
+//
+// torrent_id is written lower case (SetTorrentID), but the comparison folds
+// case anyway so a row written by an older path still matches. An empty or
+// whitespace only id never matches anything, and neither does a NULL one.
+func (r *DownloadRepo) ListByClientTorrentID(ctx context.Context, client *models.DownloadClient, torrentID string) ([]models.Download, error) {
+	torrentID = strings.ToLower(strings.TrimSpace(torrentID))
+	if torrentID == "" || client == nil {
+		return nil, nil
+	}
+	return r.listOnSameDaemon(ctx, client, "LOWER(TRIM(torrent_id))=?", torrentID)
+}
+
+// ListByClientNzoID is ListByClientTorrentID for the usenet clients, keyed on
+// sabnzbd_nzo_id (SABnzbd's nzo id, or NZBGet's numeric NZBID as text).
+func (r *DownloadRepo) ListByClientNzoID(ctx context.Context, client *models.DownloadClient, nzoID string) ([]models.Download, error) {
+	nzoID = strings.TrimSpace(nzoID)
+	if nzoID == "" || client == nil {
+		return nil, nil
+	}
+	return r.listOnSameDaemon(ctx, client, "TRIM(sabnzbd_nzo_id)=?", nzoID)
+}
+
+// listOnSameDaemon runs cond against the downloads of client and of every
+// other client entry of the same type whose connection target
+// (clienthost.TargetKey) matches client's.
+func (r *DownloadRepo) listOnSameDaemon(ctx context.Context, client *models.DownloadClient, cond string, arg any) ([]models.Download, error) {
+	ids, err := r.sameDaemonClientIDs(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+	args := make([]any, 0, len(ids)+1)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	args = append(args, arg)
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	return r.query(ctx,
+		"SELECT "+downloadSelectColumns+" FROM downloads WHERE download_client_id IN ("+placeholders+") AND "+cond,
+		args...)
+}
+
+// sameDaemonClientIDs returns client.ID plus the ids of every other client
+// entry of the same type configured against the same daemon.
+func (r *DownloadRepo) sameDaemonClientIDs(ctx context.Context, client *models.DownloadClient) ([]int64, error) {
+	ids := []int64{client.ID}
+	want := clienthost.TargetKey(client.Type, client.Host, client.Port, client.UseSSL, client.URLBase)
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT id, host, port, use_ssl, url_base FROM download_clients WHERE LOWER(type)=LOWER(?) AND id<>?",
+		client.Type, client.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list download clients on the same daemon: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			id      int64
+			host    string
+			port    int
+			ssl     bool
+			urlBase sql.NullString
+		)
+		if err := rows.Scan(&id, &host, &port, &ssl, &urlBase); err != nil {
+			return nil, fmt.Errorf("scan download client: %w", err)
+		}
+		if clienthost.TargetKey(client.Type, host, port, ssl, urlBase.String) == want {
+			ids = append(ids, id)
+		}
+	}
+	return ids, rows.Err()
+}
+
 // downloadOwnerArg maps 0 to NULL so unowned downloads keep the legacy
 // NULL-owner representation (matching CreateForUser's ownerArg idiom).
 func downloadOwnerArg(ownerUserID int64) any {
@@ -178,6 +257,15 @@ func (r *DownloadRepo) RetryFailed(ctx context.Context, d *models.Download) (boo
 	return r.claimForRegrab(ctx, d,
 		regrabClaimSQL+`(status IN (?, ?) OR (status=? AND book_id IS NULL))`,
 		models.StateFailed, models.StateImportBlocked, models.StateImported)
+}
+
+// RetryImported is RetryFailed for a grab the user forced over an earlier
+// import of the same release (#2289): the same reset, claimed only while the
+// row is still imported, book or no book. A row that moved to any other state
+// since the caller read it is refused, so a force can never take over live
+// work. The caller (api.forceRegrabbable) decides who may force.
+func (r *DownloadRepo) RetryImported(ctx context.Context, d *models.Download) (bool, error) {
+	return r.claimForRegrab(ctx, d, regrabClaimSQL+`status=?`, models.StateImported)
 }
 
 // RetryDeadForAutoGrab is RetryFailed for the scheduler's auto grab: the same
@@ -715,6 +803,27 @@ func (r *DownloadRepo) GetOwnerByID(ctx context.Context, id int64) (int64, bool,
 		return 0, false, fmt.Errorf("get download owner: %w", err)
 	}
 	return owner.Int64, true, nil
+}
+
+// HasImportInFlight reports whether a download for the book is still on its
+// way into the library: grabbed, downloading, or completed and not yet through
+// the import. The book page polls while this is true (#2423). The parked
+// hand-off states (importExternal, importHeld) are left out on purpose: they
+// can wait hours on another tool, and a page should not poll for that long.
+//
+// userID scopes it the way the queue is scoped (QueryScope, strict owner
+// equality; 0 is unscoped), so a user looking at a book nobody owns cannot
+// learn from it that another user has a grab in flight.
+func (r *DownloadRepo) HasImportInFlight(ctx context.Context, bookID, userID int64) (bool, error) {
+	where, args := QueryScope("WHERE book_id = ? AND status IN (?, ?, ?, ?, ?)", userID,
+		bookID, models.StateGrabbed, models.StateDownloading, models.StateCompleted,
+		models.StateImportPending, models.StateImporting)
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM downloads `+where, args...).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("import in flight for book %d: %w", bookID, err)
+	}
+	return n > 0, nil
 }
 
 func (r *DownloadRepo) DeleteByBook(ctx context.Context, bookID int64) error {

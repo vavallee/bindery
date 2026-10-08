@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { api, BINDERY_BASE, Book, HardcoverList, ImportList, ImportListSyncProgress, ManagedUser, ManualImportLookup } from '../../api/client'
 import { inputCls } from './formStyles'
 import GoodreadsImportSection from './GoodreadsImportSection'
+import { secretInputAttrs } from '../../util/inputAttrs'
 
 interface MigrateResult {
   requested?: number
@@ -569,6 +570,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
 
       <div className="mb-3 flex flex-col sm:flex-row gap-2">
         <input
+          {...secretInputAttrs}
           className={inputCls}
           type="password"
           placeholder={t('settings.import.hardcoverTokenPlaceholder')}
@@ -708,6 +710,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
               {il && overrideOpen[il.id] && (
                 <div className="mt-3 flex flex-col sm:flex-row gap-2">
                   <input
+                    {...secretInputAttrs}
                     className={inputCls}
                     type="password"
                     placeholder={il.apiKeyConfigured ? t('settings.import.hardcoverTokenOverridePlaceholderConfigured', 'Override token is hidden. Enter a new token to replace it.') : t('settings.import.hardcoverTokenOverridePlaceholder', 'Paste a per-list token override')}

@@ -637,6 +637,43 @@ func TestIsFailure(t *testing.T) {
 	}
 }
 
+// TestIsContentFailure pins the #3024 classifier. The statuses are the full set
+// NzbInfo::MakeTextStatus and the dupe history can produce, plus the strings
+// the issue named that NZBGet does not actually emit.
+func TestIsContentFailure(t *testing.T) {
+	cases := []struct {
+		status string
+		want   bool
+	}{
+		{"FAILURE/PAR", true},
+		{"FAILURE/UNPACK", true},
+		{"FAILURE/HEALTH", true},
+		{"FAILURE/SCAN", true},
+		{"FAILURE/BAD", true},
+
+		{"FAILURE/MOVE", false},
+		{"FAILURE/FETCH", false},
+		{"FAILURE/INTERNAL_ERROR", false},
+		{"FAILURE/HIDDEN", false},
+		{"DELETED/MANUAL", false},
+		{"DELETED/DUPE", false},
+		{"DELETED/GOOD", false},
+		{"DELETED/COPY", false},
+		{"DELETED/HEALTH", false}, // not emitted by NZBGet 13 or later
+		{"DELETED", false},
+		{"WARNING/DAMAGED", false},
+		{"WARNING/SCRIPT", false},
+		{"SUCCESS/ALL", false},
+		{"failure/par", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := IsContentFailure(tc.status); got != tc.want {
+			t.Errorf("IsContentFailure(%q) = %v, want %v", tc.status, got, tc.want)
+		}
+	}
+}
+
 // TestBasicAuth verifies that the client sends HTTP Basic auth credentials.
 func TestBasicAuth(t *testing.T) {
 	var gotUser, gotPass string

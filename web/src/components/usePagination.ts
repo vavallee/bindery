@@ -49,25 +49,53 @@ function persistPageSize(storageKey: string | undefined, size: number) {
  * filters) change — typically by listing them in a fetch effect's deps. Page
  * size is persisted under the same localStorage keys as usePagination, so the
  * user's preference carries across both kinds of list.
+ *
+ * Pass `options.page` and `options.setPage` to keep the page somewhere else,
+ * such as the URL (useListParams), so it survives going back (#3052).
  */
-export function useServerPagination(total: number, defaultPageSize = 50, storageKey?: string) {
-  const [page, setPage] = useState(1)
+export interface ControlledPage {
+  /** The current page, e.g. read from the URL. */
+  page: number
+  /** Called for every page change; `replace` marks a correction, not a step. */
+  setPage: (page: number, opts?: { replace?: boolean }) => void
+}
+
+export interface ServerPaginationOptions extends Partial<ControlledPage> {
+  /**
+   * False while `total` is not yet known (the first fetch is in flight). The
+   * snap back to the last page waits for it, so a page taken from the URL is
+   * not thrown away because the empty initial total says there is one page.
+   */
+  ready?: boolean
+}
+
+export function useServerPagination(total: number, defaultPageSize = 50, storageKey?: string, options: ServerPaginationOptions = {}) {
+  const [ownPage, setOwnPage] = useState(1)
   const [pageSize, setPageSizeState] = useState(() => readStoredPageSize(storageKey) ?? defaultPageSize)
+  const controlled = options.page !== undefined && options.setPage !== undefined
+  const page = controlled ? options.page! : ownPage
+  const controlledSetPage = options.setPage
+  const setPage = useCallback((p: number, opts?: { replace?: boolean }) => {
+    if (controlled && controlledSetPage) controlledSetPage(p, opts)
+    else setOwnPage(p)
+  }, [controlled, controlledSetPage])
+  const ready = options.ready ?? true
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   // If the result set shrank (e.g. a filter was applied) below the current
   // page, snap back so the user is not stranded on an empty page.
   useEffect(() => {
-    if (page > totalPages) setPage(totalPages)
-  }, [page, totalPages])
+    if (ready && page > totalPages) setPage(totalPages, { replace: true })
+  }, [ready, page, totalPages, setPage])
 
   const setPageSize = useCallback((size: number) => {
     setPageSizeState(size)
     setPage(1)
     persistPageSize(storageKey, size)
-  }, [storageKey])
+  }, [storageKey, setPage])
 
-  const reset = useCallback(() => setPage(1), [])
+  const reset = useCallback(() => setPage(1), [setPage])
+  const onPageChange = useCallback((p: number) => setPage(p), [setPage])
 
   return {
     page,
@@ -79,7 +107,7 @@ export function useServerPagination(total: number, defaultPageSize = 50, storage
       totalPages,
       pageSize,
       totalItems: total,
-      onPageChange: setPage,
+      onPageChange,
       onPageSizeChange: setPageSize,
     },
   }
@@ -93,9 +121,17 @@ export function useServerPagination(total: number, defaultPageSize = 50, storage
  * key so the user's preference survives navigation and page reloads. A shared
  * key is also written so that when the user first visits a new tab, they see
  * the page size they last picked elsewhere.
+ *
+ * controlledPage: keep the page outside the hook (e.g. in the URL).
  */
-export function usePagination<T>(items: T[], defaultPageSize = 50, storageKey?: string) {
-  const [page, setPage] = useState(1)
+export function usePagination<T>(items: T[], defaultPageSize = 50, storageKey?: string, controlledPage?: ControlledPage) {
+  const [ownPage, setOwnPage] = useState(1)
+  const page = controlledPage ? controlledPage.page : ownPage
+  const controlledSetPage = controlledPage?.setPage
+  const setPage = useCallback((p: number) => {
+    if (controlledSetPage) controlledSetPage(p)
+    else setOwnPage(p)
+  }, [controlledSetPage])
   const [pageSize, setPageSize] = useState(() => {
     return readStoredPageSize(storageKey) ?? defaultPageSize
   })
@@ -104,7 +140,7 @@ export function usePagination<T>(items: T[], defaultPageSize = 50, storageKey?: 
   const safePage = Math.min(page, totalPages)
   const paged = useMemo(() => items.slice((safePage - 1) * pageSize, safePage * pageSize), [items, safePage, pageSize])
 
-  const reset = useCallback(() => setPage(1), [])
+  const reset = useCallback(() => setPage(1), [setPage])
 
   const handlePageSizeChange = (size: number) => {
     setPageSize(size)

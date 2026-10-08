@@ -1,8 +1,11 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import { Suspense, useCallback, useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router'
+import { lazyWithReload } from '../util/lazyWithReload'
 import { useTranslation } from 'react-i18next'
 import { api, DownloadClient, Indexer, ProwlarrInstance } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import ProtocolMismatchWarning from '../components/ProtocolMismatchWarning'
+import { BELOW_MD, useMediaQuery } from '../components/useMediaQuery'
 
 // Decomposed from the former ~5100-line SettingsPage monolith (#547): each tab
 // now lives in its own file under ./settings/. Tabs are React.lazy code-split
@@ -18,23 +21,24 @@ import ProtocolMismatchWarning from '../components/ProtocolMismatchWarning'
 // Indexers and Clients tabs. Everything else is genuinely tab-local and lives
 // inside its own tab component.
 
-// Each tab is a default export, so lazy(() => import(...)) resolves directly.
-const GeneralTab = lazy(() => import('./settings/GeneralTab'))
-const IndexersTab = lazy(() => import('./settings/IndexersTab'))
-const ClientsTab = lazy(() => import('./settings/ClientsTab'))
-const NotificationsTab = lazy(() => import('./settings/NotificationsTab'))
-const QualityTab = lazy(() => import('./settings/QualityTab'))
-const MetadataTab = lazy(() => import('./settings/MetadataTab'))
-const RootFoldersTab = lazy(() => import('./settings/RootFoldersTab'))
-const CalibreTab = lazy(() => import('./settings/CalibreTab'))
-const ABSTab = lazy(() => import('./settings/ABSTab'))
-const GrimmoryTab = lazy(() => import('./settings/GrimmoryTab'))
-const ApiKeysTab = lazy(() => import('./settings/ApiKeysTab'))
-const ImportTab = lazy(() => import('./settings/ImportTab'))
-const BlocklistTab = lazy(() => import('./settings/BlocklistTab'))
-const LogsTab = lazy(() => import('./settings/LogsTab'))
-const AdvancedTab = lazy(() => import('./settings/AdvancedTab'))
-const AboutTab = lazy(() => import('./settings/AboutTab'))
+// Each tab is a default export, so the import resolves directly. lazyWithReload
+// reloads once if a tab chunk is gone after an upgrade, keyed by its path.
+const GeneralTab = lazyWithReload(() => import('./settings/GeneralTab'), './settings/GeneralTab')
+const IndexersTab = lazyWithReload(() => import('./settings/IndexersTab'), './settings/IndexersTab')
+const ClientsTab = lazyWithReload(() => import('./settings/ClientsTab'), './settings/ClientsTab')
+const NotificationsTab = lazyWithReload(() => import('./settings/NotificationsTab'), './settings/NotificationsTab')
+const QualityTab = lazyWithReload(() => import('./settings/QualityTab'), './settings/QualityTab')
+const MetadataTab = lazyWithReload(() => import('./settings/MetadataTab'), './settings/MetadataTab')
+const RootFoldersTab = lazyWithReload(() => import('./settings/RootFoldersTab'), './settings/RootFoldersTab')
+const CalibreTab = lazyWithReload(() => import('./settings/CalibreTab'), './settings/CalibreTab')
+const ABSTab = lazyWithReload(() => import('./settings/ABSTab'), './settings/ABSTab')
+const GrimmoryTab = lazyWithReload(() => import('./settings/GrimmoryTab'), './settings/GrimmoryTab')
+const ApiKeysTab = lazyWithReload(() => import('./settings/ApiKeysTab'), './settings/ApiKeysTab')
+const ImportTab = lazyWithReload(() => import('./settings/ImportTab'), './settings/ImportTab')
+const BlocklistTab = lazyWithReload(() => import('./settings/BlocklistTab'), './settings/BlocklistTab')
+const LogsTab = lazyWithReload(() => import('./settings/LogsTab'), './settings/LogsTab')
+const AdvancedTab = lazyWithReload(() => import('./settings/AdvancedTab'), './settings/AdvancedTab')
+const AboutTab = lazyWithReload(() => import('./settings/AboutTab'), './settings/AboutTab')
 
 type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'grimmory' | 'api-keys' | 'advanced' | 'about'
 
@@ -46,28 +50,50 @@ const ADMIN_TABS: Tab[] = ['indexers', 'clients', 'notifications', 'quality', 'm
 const ALL_TABS: Tab[] = ['general', 'about', ...ADMIN_TABS]
 
 // Allow deep-linking to a specific tab via ?tab=indexers (used by first-run
-// onboarding guidance on the Authors/Books empty states). Read from the URL
-// directly rather than via a router hook so SettingsPage stays renderable
-// without a Router context (its tests render it bare).
-function initialTabFromUrl(): Tab {
-  try {
-    const param = new URLSearchParams(window.location.search).get('tab')
-    if (param && (ALL_TABS as string[]).includes(param)) return param as Tab
-  } catch { /* ignore — fall back to general */ }
-  return 'general'
+// onboarding guidance on the Authors/Books empty states). Anything missing or
+// unknown is General.
+function tabFromParam(param: string | null): Tab {
+  return param && (ALL_TABS as string[]).includes(param) ? param as Tab : 'general'
 }
 
-function SettingsNavLink({ tab, active, onSelect, label }: { tab: Tab; active: Tab; onSelect: (t: Tab) => void; label: string }) {
+// The admin tabs in their sidebar groups. The sidebar and the phone select
+// both read this, so the two cannot drift apart.
+type TabGroup = { key: 'sources' | 'library' | 'integrations' | 'system'; tabs: Tab[] }
+const ADMIN_GROUPS: TabGroup[] = [
+  { key: 'sources', tabs: ['indexers', 'clients'] },
+  { key: 'library', tabs: ['quality', 'metadata', 'rootfolders'] },
+  // Notifications used to sit under Sources next to Indexers and Download
+  // Clients, which it is not: nothing comes in from it. A webhook, Discord or
+  // Apprise target is an outbound connection to another service, so it
+  // belongs here.
+  { key: 'integrations', tabs: ['notifications', 'calibre', 'abs', 'grimmory', 'api-keys'] },
+  // Advanced is last on purpose: it is the escape hatch for the rare keys,
+  // not a place to start (#2311).
+  { key: 'system', tabs: ['import', 'blocklist', 'logs', 'advanced'] },
+]
+
+// Tabs still marked as a preview carry a chip in the sidebar and a suffix in
+// the phone select.
+const PREVIEW_TABS: Tab[] = ['grimmory']
+
+function SettingsNavLink({ tab, active, onSelect, label, badge }: { tab: Tab; active: Tab; onSelect: (t: Tab) => void; label: string; badge?: string }) {
   return (
     <button
       onClick={() => onSelect(tab)}
-      className={`w-full text-left px-3 py-1.5 rounded-md text-sm transition-colors ${
+      className={`w-full text-left px-3 py-1.5 rounded-md text-sm transition-colors ${badge ? 'flex items-center gap-2 ' : ''}${
         active === tab
           ? 'bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white font-medium'
           : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-zinc-800/50'
       }`}
     >
-      {label}
+      {badge ? (
+        <>
+          <span>{label}</span>
+          <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 font-medium leading-none">
+            {badge}
+          </span>
+        </>
+      ) : label}
     </button>
   )
 }
@@ -90,21 +116,26 @@ function TabFallback({ label }: { label: string }) {
 export default function SettingsPage() {
   const { t } = useTranslation()
   const { isAdmin } = useAuth()
-  const [tab, setTabState] = useState<Tab>(initialTabFromUrl)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tab = tabFromParam(searchParams.get('tab'))
+  const narrow = useMediaQuery(BELOW_MD)
 
-  // Keep the active tab in the URL (?tab=…) so every Settings sub-tab is
-  // deep-linkable and survives a refresh/back. replaceState (not a router
-  // navigate) avoids piling a history entry per tab click while still letting
-  // initialTabFromUrl pick the tab on a fresh load (e.g. /blocklist redirects
-  // to /settings?tab=blocklist).
-  const setTab = useCallback((next: Tab) => {
-    setTabState(next)
-    try {
-      const url = new URL(window.location.href)
-      url.searchParams.set('tab', next)
-      window.history.replaceState(window.history.state, '', url)
-    } catch { /* ignore — tab state still updates */ }
-  }, [])
+  // The active tab lives in the URL (?tab=…), so every Settings sub-tab is
+  // deep-linkable and survives a refresh (e.g. /blocklist redirects to
+  // /settings?tab=blocklist). Each change is a router navigation that pushes
+  // a history entry: with a replace, Android back left Settings entirely
+  // instead of returning to the previous tab. Going through the router (not
+  // history.pushState) gives every tab its own location key, so scroll
+  // restoration keeps tabs apart. Picking the tab already showing, and
+  // corrections the user did not ask for, replace instead: neither should
+  // be a back step.
+  const setTab = useCallback((next: Tab, { replace = false }: { replace?: boolean } = {}) => {
+    setSearchParams(prev => {
+      const params = new URLSearchParams(prev)
+      params.set('tab', next)
+      return params
+    }, { replace: replace || next === tab })
+  }, [setSearchParams, tab])
 
   // Soft cross-tab navigation passed to tabs (e.g. General's "Manage in Root
   // Folders →", Import's "Configure … in General settings →") so those links
@@ -114,6 +145,16 @@ export default function SettingsPage() {
   const navigateToTab = useCallback((next: string) => {
     if ((ALL_TABS as string[]).includes(next)) setTab(next as Tab)
   }, [setTab])
+
+  // Labels for the grouped admin tabs. API Keys and Advanced use keys that do
+  // not match their tab id.
+  const tabLabel = (id: Tab): string => {
+    switch (id) {
+      case 'api-keys': return t('settings.tabs.apiKeys')
+      case 'advanced': return t('settings.tabs.advanced', 'Advanced')
+      default: return t(`settings.tabs.${id}`)
+    }
+  }
 
   // Eagerly fetched on page mount (cross-tab — see file header note).
   const [indexers, setIndexers] = useState<Indexer[]>([])
@@ -166,7 +207,7 @@ export default function SettingsPage() {
   // admin-only tab (e.g. via direct link or stale state).
   useEffect(() => {
     if (!isAdmin && ADMIN_TABS.includes(tab)) {
-      setTab('general')
+      setTab('general', { replace: true })
     }
   }, [isAdmin, tab, setTab])
 
@@ -175,64 +216,52 @@ export default function SettingsPage() {
       <h2 className="text-2xl font-bold mb-6">{t('settings.title')}</h2>
 
       <div className="flex flex-col md:flex-row gap-4 md:gap-8 items-stretch md:items-start">
-        {/* Sidebar navigation — stacks above content on mobile so the tab
-            content gets the full viewport width instead of ~180px. */}
-        <nav className="w-full md:w-44 flex-shrink-0 space-y-0.5">
-          <SettingsNavLink tab="general" active={tab} onSelect={setTab} label={t('settings.tabs.general')} />
-          <SettingsNavLink tab="about" active={tab} onSelect={setTab} label={t('settings.tabs.about', 'About')} />
+        {narrow ? (
+          // Below md the sidebar stacked above the content, so tapping a tab
+          // changed something a screen further down and the tap looked like
+          // it did nothing. A select keeps the choice to one line.
+          <select
+            value={tab}
+            onChange={e => setTab(e.target.value as Tab)}
+            aria-label={t('settings.sectionLabel')}
+            className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+          >
+            <option value="general">{t('settings.tabs.general')}</option>
+            <option value="about">{t('settings.tabs.about', 'About')}</option>
+            {isAdmin && ADMIN_GROUPS.map(group => (
+              <optgroup key={group.key} label={t(`settings.groups.${group.key}`)}>
+                {group.tabs.map(id => (
+                  <option key={id} value={id}>
+                    {PREVIEW_TABS.includes(id)
+                      ? t('settings.tabWithPreview', { tab: tabLabel(id) })
+                      : tabLabel(id)}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        ) : (
+          <nav className="w-full md:w-44 flex-shrink-0 space-y-0.5">
+            <SettingsNavLink tab="general" active={tab} onSelect={setTab} label={t('settings.tabs.general')} />
+            <SettingsNavLink tab="about" active={tab} onSelect={setTab} label={t('settings.tabs.about', 'About')} />
 
-          {isAdmin && (
-            <>
-              <div className="pt-4 pb-0.5">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-zinc-600 px-3 mb-1">Sources</p>
-                <SettingsNavLink tab="indexers" active={tab} onSelect={setTab} label={t('settings.tabs.indexers')} />
-                <SettingsNavLink tab="clients" active={tab} onSelect={setTab} label={t('settings.tabs.clients')} />
+            {isAdmin && ADMIN_GROUPS.map((group, i) => (
+              <div key={group.key} className={`${i === 0 ? 'pt-4' : 'pt-3'} pb-0.5`}>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-zinc-600 px-3 mb-1">{t(`settings.groups.${group.key}`)}</p>
+                {group.tabs.map(id => (
+                  <SettingsNavLink
+                    key={id}
+                    tab={id}
+                    active={tab}
+                    onSelect={setTab}
+                    label={tabLabel(id)}
+                    badge={PREVIEW_TABS.includes(id) ? t('settings.previewBadge') : undefined}
+                  />
+                ))}
               </div>
-
-              <div className="pt-3 pb-0.5">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-zinc-600 px-3 mb-1">Library</p>
-                <SettingsNavLink tab="quality" active={tab} onSelect={setTab} label={t('settings.tabs.quality')} />
-                <SettingsNavLink tab="metadata" active={tab} onSelect={setTab} label={t('settings.tabs.metadata')} />
-                <SettingsNavLink tab="rootfolders" active={tab} onSelect={setTab} label={t('settings.tabs.rootfolders')} />
-              </div>
-
-              <div className="pt-3 pb-0.5">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-zinc-600 px-3 mb-1">Integrations</p>
-                {/* Notifications used to sit under Sources next to Indexers and
-                    Download Clients, which it is not: nothing comes in from it.
-                    A webhook, Discord or Apprise target is an outbound
-                    connection to another service, so it belongs here. */}
-                <SettingsNavLink tab="notifications" active={tab} onSelect={setTab} label={t('settings.tabs.notifications')} />
-                <SettingsNavLink tab="calibre" active={tab} onSelect={setTab} label={t('settings.tabs.calibre')} />
-                <SettingsNavLink tab="abs" active={tab} onSelect={setTab} label={t('settings.tabs.abs')} />
-                <button
-                  onClick={() => setTab('grimmory')}
-                  className={`w-full text-left px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-2 ${
-                    tab === 'grimmory'
-                      ? 'bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white font-medium'
-                      : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-zinc-800/50'
-                  }`}
-                >
-                  <span>{t('settings.tabs.grimmory')}</span>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 font-medium leading-none">
-                    Preview
-                  </span>
-                </button>
-                <SettingsNavLink tab="api-keys" active={tab} onSelect={setTab} label={t('settings.tabs.apiKeys')} />
-              </div>
-
-              <div className="pt-3 pb-0.5">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-zinc-600 px-3 mb-1">System</p>
-                <SettingsNavLink tab="import" active={tab} onSelect={setTab} label={t('settings.tabs.import')} />
-                <SettingsNavLink tab="blocklist" active={tab} onSelect={setTab} label={t('settings.tabs.blocklist')} />
-                <SettingsNavLink tab="logs" active={tab} onSelect={setTab} label={t('settings.tabs.logs')} />
-                {/* Advanced is last on purpose: it is the escape hatch for the
-                    rare keys, not a place to start (#2311). */}
-                <SettingsNavLink tab="advanced" active={tab} onSelect={setTab} label={t('settings.tabs.advanced', 'Advanced')} />
-              </div>
-            </>
-          )}
-        </nav>
+            ))}
+          </nav>
+        )}
 
         {/* Tab content */}
         <div className="flex-1 min-w-0">

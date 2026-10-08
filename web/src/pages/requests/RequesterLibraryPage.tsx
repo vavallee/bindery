@@ -50,6 +50,7 @@ export default function RequesterLibraryPage() {
         className="flex gap-2 max-w-md"
       >
         <input
+          enterKeyHint="search"
           type="search"
           value={query}
           onChange={e => setQuery(e.target.value)}
@@ -69,14 +70,14 @@ export default function RequesterLibraryPage() {
         {items.map(b => (
           <li key={b.id} className="min-w-0">
             {b.coverUrl ? (
-              <img src={b.coverUrl} alt="" loading="lazy" className="w-full aspect-[2/3] object-cover rounded-md bg-slate-200 dark:bg-zinc-800" />
+              <img src={b.coverUrl} alt="" loading="lazy" decoding="async" className="w-full aspect-[2/3] object-cover rounded-md bg-slate-200 dark:bg-zinc-800" />
             ) : (
               <div aria-hidden="true" className="w-full aspect-[2/3] rounded-md bg-slate-200 dark:bg-zinc-800" />
             )}
-            <div className="mt-2 text-sm font-medium leading-snug break-words">{b.title}</div>
-            <div className="text-xs text-fg-muted">{b.authorName}</div>
+            <div className="mt-2 text-sm font-medium leading-snug [overflow-wrap:anywhere]">{b.title}</div>
+            <div className="text-xs text-fg-muted [overflow-wrap:anywhere]">{b.authorName}</div>
             {b.series && (
-              <div className="text-xs text-fg-muted">
+              <div className="text-xs text-fg-muted [overflow-wrap:anywhere]">
                 {b.seriesPosition ? t('requests.library.seriesWithPosition', { series: b.series, position: b.seriesPosition }) : b.series}
               </div>
             )}

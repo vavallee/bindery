@@ -29,6 +29,12 @@ type ClientPathInfo struct {
 	// configuration suggests, or when part of the answer could not be checked.
 	Note    string
 	NoteFix string
+	// CreatedOnGrab is set when Path is a folder the client makes inside
+	// another one the first time it saves there: qBittorrent's default save
+	// path plus the category, for a category whose own save path is empty
+	// or relative. Until the first grab it can be missing on a setup that
+	// works, so a check that stats it accepts its parent instead (#2664).
+	CreatedOnGrab bool
 }
 
 // ClientTypeName is the display name for a download client type.
@@ -49,12 +55,12 @@ func ClientTypeName(clientType string) string {
 	}
 }
 
-// CompletedPath is the client default completed folder the Test button and
-// the health job check: the qBittorrent category save path (or the default
-// save path when the category sets none), NZBGet's DestDir for the category,
-// and rTorrent's directory.default. Other types answer with no path. Its
-// behaviour is unchanged from before the diagnose action; GrabSavePath is the
-// folder a grab actually lands in.
+// CompletedPath is the client's own completed folder: the qBittorrent
+// category save path (or the default save path when the category sets none),
+// NZBGet's DestDir for the category, and rTorrent's directory.default. Other
+// types answer with no path. GrabSavePath is the folder a grab actually lands
+// in, and since #2664 the Test button and the health job check that one for
+// qBittorrent and rTorrent; NZBGet still goes through this.
 //
 // An error means the client would not answer. A zero Path with no error means
 // the client answered but has no usable folder.
@@ -281,14 +287,20 @@ func qbittorrentGrabPath(ctx context.Context, client *models.DownloadClient, inf
 	if def = strings.TrimSpace(def); def == "" {
 		return info, nil
 	}
-	// qBittorrent resolves a relative category save path under its default
-	// save path, and an empty one as the category name under it.
-	if savePath != "" {
-		info.Path, info.Source = pathmap.JoinClientPath(def, savePath), "the category save path, under the client default save path"
-		return info, nil
-	}
-	info.Path, info.Source = pathmap.JoinClientPath(def, info.Category), "the client default save path plus the category name"
+	info.Path, info.Source = qbittorrentCategoryFolder(def, savePath, info.Category)
+	info.CreatedOnGrab = true
 	return info, nil
+}
+
+// qbittorrentCategoryFolder is where qBittorrent saves a category whose own
+// save path is not absolute: a relative save path resolves under the default
+// save path def, and an empty one is the category name under it. It returns
+// the folder and a phrase naming where it came from.
+func qbittorrentCategoryFolder(def, savePath, category string) (string, string) {
+	if savePath = strings.TrimSpace(savePath); savePath != "" {
+		return pathmap.JoinClientPath(def, savePath), "the category save path, under the client default save path"
+	}
+	return pathmap.JoinClientPath(def, category), "the client default save path plus the category name"
 }
 
 // TestConnection checks the client answers with the stored credentials and

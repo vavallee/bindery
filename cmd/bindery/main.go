@@ -24,6 +24,7 @@ import (
 	"github.com/vavallee/bindery/internal/api"
 	"github.com/vavallee/bindery/internal/auth"
 	oidcauth "github.com/vavallee/bindery/internal/auth/oidc"
+	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/config"
 	"github.com/vavallee/bindery/internal/covers"
@@ -40,6 +41,7 @@ import (
 	"github.com/vavallee/bindery/internal/metadata/dnb"
 	"github.com/vavallee/bindery/internal/metadata/googlebooks"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
+	"github.com/vavallee/bindery/internal/metadata/nb"
 	"github.com/vavallee/bindery/internal/metadata/openlibrary"
 	"github.com/vavallee/bindery/internal/metrics"
 	"github.com/vavallee/bindery/internal/models"
@@ -306,6 +308,8 @@ func main() {
 	//
 	// - "dnb" is the recommended choice for German/Austrian/Swiss catalogues,
 	//   where OpenLibrary coverage is too thin for German-language books.
+	// - "nb" is the same for Norwegian ones: original titles where
+	//   OpenLibrary has the English translation.
 	// - "hardcover" trades breadth for a cleaner, editorially curated
 	//   catalogue: no translation editions masquerading as separate works, no
 	//   omnibus bundles, no non-book merchandise rows (#2040).
@@ -318,6 +322,11 @@ func main() {
 	switch primaryName {
 	case "dnb":
 		primaryProvider = dnbClient
+	case "nb":
+		// Opt-in only: unlike the others, NB is never added as an enricher,
+		// so an install that did not choose it sends NB no traffic. NB
+		// publishes no rate limits for a fleet of independent installs.
+		primaryProvider = nb.New()
 	case "hardcover":
 		primaryProvider = hcClient
 	default:
@@ -410,6 +419,7 @@ func main() {
 	// profile: a downloaded EPUB in a language the profile does not allow is
 	// rejected and blocklisted instead of relabelling the book (#2998).
 	importScanner.WithLanguageEnforcement(metadataProfileRepo, blocklistRepo)
+	importScanner.WithClientHealth(downloadHealth)
 	importScanner.WithJobs(bgJobs) // drain manual scans on shutdown (#1458)
 
 	// Grimmory push pipeline (#826). Config is loaded live per push, so the
@@ -490,6 +500,11 @@ func main() {
 	calibreDeliverer := calibre.NewDeliverer(calibreDeliveryRepo, bookRepo,
 		modeResolver, calibreLoadConfig, calibreAdders.For).
 		WithMetadata(authorRepo, editionRepo, seriesRepo).
+		// A book with no editions on record, as every list synced book is,
+		// gets its Hardcover editions fetched when it reaches Calibre (#1853).
+		WithEditionHydrator(bookhydrate.EditionsOnly(editionRepo, func(ctx context.Context, foreignID string) ([]models.Edition, error) {
+			return metaAgg.GetEditionsFromProvider(ctx, "hardcover", foreignID)
+		}), func(b *models.Book) bool { return bookhydrate.IsHardcoverBook(b, "") }).
 		WithCovers(calibreCovers).
 		WithJobs(bgJobs).
 		// In pull (#2833) the plugin fetches from /bridge/v1 and the
@@ -580,6 +595,10 @@ func main() {
 	sched.WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir)
 	sched.WithDownloadClientHealth(downloadHealth, cfg.DownloadPathRemap)
 	sched.WithNotifier(notif)
+	// One log behind GET /search/last-debug, written by both the interactive
+	// search handler and the scheduler's automatic searches (#2154).
+	searchDebugLog := indexer.NewDebugLog()
+	sched.WithSearchDebugLog(searchDebugLog)
 	// Register the Calibre importer as the 24-hour sync job. The scheduler
 	// only fires the job when the syncer is non-nil, so no guard needed here.
 	sched.WithCalibreSyncer(calibreImporter)
@@ -662,6 +681,7 @@ func main() {
 		WithLocalAuthEnabled(cfg.LocalAuthEnabled)
 	searchHandler := api.NewSearchHandler(metaAgg, bookRepo, authorRepo)
 	librarySearchHandler := api.NewLibrarySearchHandler(authorRepo, bookRepo, seriesRepo)
+	duplicateReviewHandler := api.NewDuplicateReviewHandler(bookRepo, seriesRepo)
 	// Library-root containment checker (Wave 1 / Bundle B): used by the book
 	// and author delete handlers to refuse on-disk removal of any path that
 	// isn't inside a configured root. Defaults to the legacy single-root env
@@ -693,7 +713,8 @@ func main() {
 		WithAliases(authorAliasRepo).
 		WithQualityProfiles(qualityProfileRepo).
 		WithEditions(editionRepo).
-		WithSearchResults(searchResults)
+		WithSearchResults(searchResults).
+		WithSearchDebugLog(searchDebugLog)
 	if clients, err := dlClientRepo.List(ctxBoot); err == nil {
 		downloader.RefreshDownloadClientHealthAsync(context.Background(), bgJobs, downloadHealth, clients, cfg.DownloadDir, cfg.AudiobookDownloadDir, cfg.DownloadPathRemap)
 	} else {
@@ -702,6 +723,7 @@ func main() {
 	setupStateHandler := api.NewSetupStateHandler(indexerRepo, dlClientRepo, authorRepo, settingsRepo)
 	dlClientHandler := api.NewDownloadClientHandler(dlClientRepo).
 		WithHealth(downloadHealth).
+		WithContentBreakerReset(importScanner.ResetContentBreaker).
 		WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir).
 		WithDownloadPathRemap(cfg.DownloadPathRemap).
 		WithRoots(libraryRoots).
@@ -777,6 +799,7 @@ func main() {
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
 		WithFinder(importScanner).
 		WithEditionHydration(editionRepo).
+		WithMetadataProfiles(metadataProfileRepo).
 		WithLifetimeCtx(appCtx)
 	importListHandler := api.NewImportListHandler(importListRepo, settingsRepo, hcSyncer, userRepo)
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
@@ -1007,6 +1030,10 @@ func main() {
 		r.Get("/author/{id}/relink-upstream/candidates", authorHandler.RelinkCandidates)
 		r.Post("/author/{id}/relink-upstream", authorHandler.RelinkUpstream)
 		r.Get("/author/{id}/duplicate-candidates", authorHandler.DuplicateCandidates)
+		// Library-wide duplicate review (#2999): the same detection as the
+		// per-author window, across every author the caller may see. Not admin
+		// only, matching the per-author route; owner scoped inside the handler.
+		r.Get("/library/duplicate-candidates", duplicateReviewHandler.List)
 		r.Get("/author/{id}/series", authorHandler.ListSeries)
 		r.Get("/author/{id}/aliases", authorAliasHandler.List)
 		r.Delete("/author/{id}/aliases/{aliasID}", authorAliasHandler.Delete)
@@ -1105,7 +1132,9 @@ func main() {
 		// registerQualityProfileRoutes).
 		registerQualityProfileRoutes(r, qualityProfileHandler)
 
-		// Settings — reads available to all; mutations admin-only.
+		// Settings: reads open to every role, but a non admin only gets the
+		// keys on the handler's allowlist (isAdminOnlySetting, #2361);
+		// mutations admin only.
 		r.Get("/setting", settingsHandler.List)
 		r.Get("/setting/{key}", settingsHandler.Get)
 		r.Group(func(r chi.Router) {
@@ -1328,24 +1357,7 @@ func main() {
 		_, _ = w.Write(baseScript)
 	})
 
-	fileServer := http.FileServer(http.FS(distFS))
-	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path[1:]
-		if path == "" || path == "index.html" {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-			_, _ = w.Write(indexHTML)
-			return
-		}
-		if _, err := fs.Stat(distFS, path); err == nil {
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-		// SPA fallback — unknown paths render the app shell.
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-		_, _ = w.Write(indexHTML)
-	})
+	r.Get("/*", spaHandler(distFS, indexHTML))
 
 	// If BINDERY_URL_BASE is set, mount the entire router under that prefix.
 	// chi.Mount strips the prefix before dispatching so all inner routes and

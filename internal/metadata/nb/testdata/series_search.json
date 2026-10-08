@@ -1,0 +1,153 @@
+{
+  "_embedded": {
+    "items": [
+      {
+        "id": "a0000000000000000000000000000001",
+        "metadata": {
+          "title": "Fjellvinden : roman",
+          "titleInfos": [
+            {
+              "title": "Fjellvinden",
+              "subTitle": "roman"
+            },
+            {
+              "title": "Fjellvinden Norsk",
+              "type": "uniform"
+            }
+          ],
+          "people": [
+            {
+              "name": "Nordmann, Kari",
+              "identifier": "bibsys.no:authority:10000001",
+              "roles": [
+                {
+                  "name": "aut",
+                  "description": "Forfatter"
+                }
+              ],
+              "usage": "primary"
+            }
+          ],
+          "identifiers": {
+            "isbn13": [
+              "9788200000011"
+            ],
+            "sesamId": "a0000000000000000000000000000001"
+          },
+          "languages": [
+            {
+              "code": "nob"
+            }
+          ],
+          "mediaTypes": [
+            "bøker"
+          ],
+          "originInfo": {
+            "publisher": "Eksempelforlaget",
+            "issued": "2019"
+          },
+          "summary": "En oppdiktet roman brukt som testdata.",
+          "pageCount": 312,
+          "series": [
+            "Fjellserien"
+          ]
+        }
+      },
+      {
+        "id": "a0000000000000000000000000000009",
+        "metadata": {
+          "title": "Tåkeheim : roman",
+          "titleInfos": [
+            {
+              "title": "Tåkeheim",
+              "subTitle": "roman"
+            }
+          ],
+          "people": [
+            {
+              "name": "Nordmann, Kari",
+              "identifier": "bibsys.no:authority:10000001",
+              "roles": [
+                {
+                  "name": "aut"
+                }
+              ],
+              "usage": "primary"
+            }
+          ],
+          "identifiers": {
+            "isbn13": [
+              "9788200000073"
+            ],
+            "sesamId": "a0000000000000000000000000000009"
+          },
+          "languages": [
+            {
+              "code": "nob"
+            }
+          ],
+          "mediaTypes": [
+            "bøker"
+          ],
+          "originInfo": {
+            "publisher": "Eksempelforlaget",
+            "issued": "2017"
+          },
+          "series": [
+            "Fjellserien"
+          ]
+        }
+      },
+      {
+        "id": "a0000000000000000000000000000010",
+        "metadata": {
+          "title": "Fjellserien",
+          "titleInfos": [
+            {
+              "title": "Fjellserien"
+            }
+          ],
+          "people": [
+            {
+              "name": "Annen, Per",
+              "identifier": "bibsys.no:authority:40000002",
+              "roles": [
+                {
+                  "name": "aut"
+                }
+              ],
+              "usage": "primary"
+            }
+          ],
+          "identifiers": {
+            "isbn13": [
+              "9788200000080"
+            ],
+            "sesamId": "a0000000000000000000000000000010"
+          },
+          "languages": [
+            {
+              "code": "nob"
+            }
+          ],
+          "mediaTypes": [
+            "bøker"
+          ],
+          "originInfo": {
+            "publisher": "Eksempelforlaget",
+            "issued": "2001"
+          },
+          "series": [
+            "Fjellserien"
+          ]
+        }
+      }
+    ]
+  },
+  "page": {
+    "number": 0,
+    "size": 100,
+    "totalElements": 3,
+    "totalPages": 1
+  }
+}

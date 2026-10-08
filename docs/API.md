@@ -228,12 +228,64 @@ Each `books` entry is the full book object plus a per-book `rules` list; the
 group's `rules` is the union across its members. Groups whose members are all
 excluded are omitted, and `count` is the number of groups returned.
 
+Each group also carries review evidence (#2999), built only from data Bindery
+already stores; no provider is called:
+
+| Field | Where | Meaning |
+|-------|-------|---------|
+| `authorId`, `authorName` | group | the author the group belongs to |
+| `hasFiles` | book | the row has at least one file in the library |
+| `evidence.files` | book | `{kind, format}` per file: `kind` is `ebook` or `audiobook`, `format` the extension (`epub`, `m4b`), empty for an audiobook folder |
+| `evidence.isbns`, `evidence.isbnCount` | book | edition ISBNs as ISBN-13 where the check digit allows, at most five shown; `isbnCount` is the full number compared |
+| `evidence.asins` | book | the book's ASIN plus its editions' ASINs |
+| `evidence.series` | book | `{seriesId, title, position}` per series membership |
+| `evidence.year` | book | release year, omitted when unknown |
+| `signals` | group | agreements and conflicts between the non-excluded rows: `{kind, conflict, bookIds, values}` |
+| `conflict` | group | true when any signal is a conflict |
+| `keeperId` | group | the one non-excluded row with files; omitted when no row or several rows have files |
+| `suggestedExcludeIds` | group | the non-excluded rows without files, offered as one confirmed exclusion; empty unless there is a `keeperId`, no conflict, and positive evidence tying every empty row to the keeper (a shared ISBN or ASIN, the same series position, or titles that match by a rule stronger than `substring`); never contains a row with files |
+| `suggestionWithheld` | group | why there is no suggestion: `no-files`, `several-with-files`, `conflict` or `no-evidence`; omitted when there is one |
+
+Signal kinds are `shared-isbn`, `shared-asin` and `same-series-position`
+(agreements: evidence the rows are one book) and `series-position-conflict`,
+`year-conflict` (release years more than one year apart) and
+`language-conflict` (languages that differ after normalising codes, so `en`,
+`eng` and `English` agree; `und`, `mul`, `mis` and `zxx` count as unknown).
+Series positions compare numerically, so `1` and `1.0` are one position.
+Nothing is acted on automatically: the review UI excludes rows only through
+`PUT /book/{id}/exclude` or `POST /book/bulk` with `"action": "exclude"`, after
+a person confirms. For the empty rows it sends `"expectNoFiles": true`, which
+makes the bulk exclude skip any book that has a file by the time the request
+runs, reporting it with `"code": "has_files"` instead of excluding it.
+
+`GET /api/v1/library/duplicate-candidates?limit=25&offset=0` returns the same
+groups for every author in one paginated list (#2999), ordered by author name
+then group key:
+
+```json
+{ "groups": [ ... ], "total": 124, "count": 25, "limit": 25, "offset": 0 }
+```
+
+Detection is the per-author scan run once per author, so a title is only ever
+compared with titles by the same author, and the groups match what each
+author's own window reports. `total` counts groups across all pages; `limit`
+defaults to 25 and is capped at 100. The page's books are full book objects
+with `description` left empty. It is not admin only, matching the per-author
+route; with `BINDERY_ENFORCE_TENANCY` on, a non-admin sees groups for the
+authors they own and unowned authors only, the same authors the per-author
+route would open for them. The scan reads one thin row per book and loads full
+rows and evidence only for the page it returns, in batched queries. The sorted
+group list is cached per owner scope under a fingerprint of the books, series
+links and authors tables, for at most two minutes, so turning pages does not
+rescan; any exclusion, import, new book or series change produces a new
+fingerprint and the next request rescans.
+
 ### Books
 
 ```
 GET    /api/v1/book?status=wanted                 filter by status (wanted, imported, skipped)
-POST   /api/v1/book/bulk                          bulk monitor / status flip
-GET    /api/v1/book/{id}                          book detail (with editions, history, formats)
+POST   /api/v1/book/bulk                          bulk monitor / status flip / exclude (`"expectNoFiles": true` skips books that have files)
+GET    /api/v1/book/{id}                          book detail (with editions, history, formats; `importInFlight: true` while a download for it is still on its way into the library)
 PUT    /api/v1/book/{id}                          update monitor / status / metadata
 DELETE /api/v1/book/{id}                          remove from library
 DELETE /api/v1/book/{id}/file                     delete imported file(s) on disk (`?format=ebook|audiobook` scopes to one format; `?path=…` deregisters one tracked path WITHOUT deleting anything on disk)
@@ -250,8 +302,10 @@ GET    /api/v1/book/{id}/calibre                  where the book stands in the C
 ```
 GET    /api/v1/series                             list series with their linked books
 GET    /api/v1/series/{id}                        one series
-POST   /api/v1/series/{id}/fill                   add the series' missing books as wanted (admin)
+POST   /api/v1/series/{id}/fill                   add the series' missing books as wanted (admin); answers {queued, skippedByProfile, skippedSplitParts}
+POST   /api/v1/series/{id}/split-parts/unmonitor  unmonitor the split edition parts of books already in the series, listed as splitEditionPartBookIds on the series (admin); answers {unmonitored}
 PATCH  /api/v1/series/{id}                        monitor / unmonitor (admin)
+POST   /api/v1/series/{id}/merge                  merge other series into this one: {"sourceIds":[..],"title":"optional rename","dryRun":true} previews (admin)
 ```
 
 `GET /series` returns the bare array it always has. Pagination is opt-in
@@ -269,6 +323,35 @@ GET    /api/v1/book/lookup?isbn=… | ?asin=…       single-book lookup by iden
 GET    /api/v1/wanted/missing                     list wanted-but-missing books
 POST   /api/v1/wanted/bulk                        bulk operations on wanted
 ```
+
+Some bulk actions start an automatic search (search and grab) for the books
+they touch, and the response is written before any indexer is asked: the
+searches run on a background pool afterwards, so `"ok": true` means the action
+was accepted, not that a search finished (#2154). These are the actions that
+can search, and when:
+
+* `POST /book/bulk` with `"action": "search"`: each book.
+* `POST /book/bulk` with `"action": "monitor"`: a book that was wanted and
+  becomes monitored, the same immediate search a single book monitor fires.
+* `POST /wanted/bulk` with `"action": "search"`: each book.
+* `POST /author/bulk` with `"action": "search"`: every monitored wanted book of
+  the author.
+
+For those actions an `ok` entry carries one of two extra fields:
+
+* `"queued": true`: at least one search for this id is on its way. It is set
+  only when that search will actually run: a searcher is configured,
+  automatic grabbing is on, and the book still needs a format.
+* `"searchSkipped": "<reason>"`: the action succeeded but no search was
+  queued. The reasons are `no_format_needed` (every format the book wants is
+  already on disk), `nothing_wanted` (an author with no monitored wanted book
+  still needing a format), `auto_grab_disabled` (a monitor while automatic
+  grabbing is off) and `no_searcher`.
+
+A `"action": "search"` while automatic grabbing is off is refused instead,
+with `"ok": false` and `"code": "auto_grab_disabled"` (#2669). Each search
+that runs leaves a `book search finished` line in the log with its outcome,
+and shows in `GET /search/last-debug`.
 
 Metadata results say when they are already in the caller's library (#1227).
 Each `/search/book` and `/book/lookup` result carries `libraryBookId` when its
@@ -298,7 +381,7 @@ DELETE /api/v1/indexer/{id}                       remove (admin)
 POST   /api/v1/indexer/{id}/test                  probe a saved indexer (admin)
 POST   /api/v1/indexer/test                       probe an unsaved config posted in the body (admin)
 GET    /api/v1/indexer/search?q=…                 multi-indexer ad-hoc query
-GET    /api/v1/search/last-debug                  last query plan & raw responses (debugging)
+GET    /api/v1/search/last-debug                  newest search audit trail you can see (debugging; see below)
 
 GET    /api/v1/prowlarr                           list registered Prowlarr servers (admin)
 GET    /api/v1/prowlarr/{id}                      fetch one (admin)
@@ -312,6 +395,28 @@ GET    /api/v1/rootfolder                         list library roots
 POST   /api/v1/rootfolder                         add a new root (admin)
 DELETE /api/v1/rootfolder/{id}                    remove (admin)
 ```
+
+`GET /search/last-debug` returns the newest search audit trail the caller may
+see: their own latest search from a book page's Search button, or the latest
+automatic search (scheduled sweep, bulk search, series fill and so on) of a
+book they can see, whichever ran last. A request made with the API key sees
+every user's interactive searches too, so a script can read the search a user
+just ran in the browser. A signed in user never sees another user's
+interactive search. The payload says which search it is (#2154):
+
+* `origin`: `interactive` for the Search button, otherwise what started the
+  automatic search: `scheduled`, `bulk`, `series-fill`, `author`, `book`,
+  `add`, `recommendation`, `list-sync`, `requeue` or `unknown`.
+* `bookId`: the book searched for.
+* `userId`: the signed in user who ran an interactive search; absent for an
+  automatic one.
+* `outcome`: an automatic search's result, in the same words as the
+  `book search finished` log line (`grabbed`, `no results`,
+  `nothing approved` and so on).
+
+Check `bookId` and `startedAt` before reading the rest: an automatic search
+that ran after yours will replace it as the newest. 404 means nothing has run
+since startup.
 
 #### Quality profiles
 
@@ -443,11 +548,16 @@ POST   /api/v1/queue/grab                         submit a search result to the 
                                                   record (raw URL) for every caller; otherwise only the API key
                                                   uses the posted nzbUrl, and everyone else gets 400 "this search
                                                   result has expired, search again"
+                                                  409 "already grabbed" when a row holds the guid; the body's
+                                                  "forceAvailable":true means it is your own imported row and
+                                                  the same grab with "force":true re-grabs it (reuses the row,
+                                                  removes nothing from the client)
 POST   /api/v1/queue/{id}/retry-import           retry an importFailed/importBlocked item without re-downloading
 POST   /api/v1/queue/{id}/retry                   re-send a failed item's release to the download client (no re-search)
 POST   /api/v1/queue/bulk-retry                   retry many; {"ids":[..]}; per id {"ok":true,"action":"import"|"resend"}
-DELETE /api/v1/queue/{id}                         remove (also from the download client)
-       ?deleteFiles=true                          have the client destroy the data too
+DELETE /api/v1/queue/{id}                         remove (also from the download client, unless another queue item
+                                                  still uses the same torrent/NZB: then only this row goes)
+       ?deleteFiles=true                          have the client destroy the data too (same exception)
        ?removeFromClient=false                    forget Bindery's row only, leave the torrent/NZB in the client
 POST   /api/v1/queue/bulk-delete                  remove many; {"ids":[..],"deleteFiles":false,"unmonitorBooks":false,"removeFromClient":true}
 
@@ -460,6 +570,9 @@ POST   /api/v1/queue/manual-import                import one path against a book
 POST   /api/v1/queue/manual-import/batch          import selected {path, bookId} pairs (admin); audio files for
                                                     the same book import as one audiobook under one download id
 POST   /api/v1/queue/manual-import/reassign       move a mis-matched file to another book (admin)
+                                                    {"path","targetBookId","format"?,"relocate"?}: relocate false links the
+                                                    file to the book and leaves it on disk as it is (200, done); true or
+                                                    absent re-imports it, moving and renaming it (202, background) (#2055)
 GET    /api/v1/queue/manual-import/reassign/preview  where that reassign would move and rename it (admin)
                                                     ?path=…&targetBookId=N[&format=ebook|audiobook]
 POST   /api/v1/queue/manual-import/match          attach an importFailed download to a book and import its files (admin)
@@ -643,7 +756,8 @@ GET    /api/v1/backup                             list stored backups (admin)
 DELETE /api/v1/backup/{filename}                  delete one backup (admin)
 POST   /api/v1/backup/{filename}/restore          stage a backup for the next restart (admin, X-Confirm-Restore: true)
 GET    /api/v1/system/status                      version, commit, build date, newest published release, image cache size, Hardcover feature state
-POST   /api/v1/library/scan                       start a library scan in the background (202)
+POST   /api/v1/library/scan                       start a library scan in the background (202; {"queued": true} when one is already running)
+GET    /api/v1/library/duplicate-candidates      read-only duplicate title groups across every author, paginated (#2999)
 GET    /api/v1/library/scan/status                summary of the last library scan, paths included (admin)
 GET    /api/v1/library/unmatched                  books the scan could not match, one row per book (admin)
 GET    /api/v1/library/unmatched/summary          pending, ignored and adopted counts plus scan status (admin)
@@ -658,6 +772,17 @@ GET    /api/v1/system/loglevel                    current log level (admin)
 PUT    /api/v1/system/loglevel                    runtime log-level switch, debug/info/warn/error (admin)
 GET    /api/v1/images?url=<encoded>               proxied + cached cover image (30-day TTL)
 ```
+
+`POST /api/v1/library/scan` answers `202` with `{"message": "library scan
+started"}` when it starts a scan. While a scan is already running it no longer
+answers `409`: the request is queued and the answer is `202` with
+`{"message": "library scan queued", "queued": true}`. When the running scan
+finishes, one more scan runs, however many requests arrived meanwhile, so a
+file placed in a folder the walk had already passed is still picked up (#3014).
+Both answers carry `scanId`, the `scan_id` the requested scan's result will
+have in `GET /api/v1/library/scan/status`, so a client can recognise its own
+scan's result. The status also carries `running` and `queued`, the live state
+next to the stored result of the last finished scan.
 
 `GET /api/v1/library/scan/status` returns the stored summary of the most recent
 scan: the counts, the library roots it walked and the path of every unmatched
@@ -995,8 +1120,28 @@ GET    /api/v1/settings/descriptors               describe every key Bindery kno
 ```
 
 Secrets (`*.api_key`, `*.api_token`, `auth.*`, and the rest of
-`isSecretSetting`) never appear in a list or a read, and settings whose value is
-a server filesystem path are returned to admins only.
+`isSecretSetting`) never appear in a list or a read, not even for an admin.
+
+Every other key is returned to admins only, with a short allowlist of keys a
+non admin screen reads (#2361). A non admin caller gets exactly these, and any
+other key is left out of the list and answers `404` from a read, the same as an
+unset key:
+
+| Key | Read by |
+|-----|---------|
+| `recommendations.enabled` | Discover page |
+| `metadata.primary_provider` | add to library dialog |
+| `library.defaultRootFolderId` | add author dialog |
+| `library.defaultAudiobookRootFolderId` | add author dialog |
+| `default.media_type` | add author dialog |
+| `author.default_monitor_mode` | add author dialog |
+| `author.default_monitor_latest_count` | add author dialog |
+
+Requests authenticated with the API key are treated as admin, so a script or a
+third party client using the key still reads every non secret setting. A client
+signed in as a `user` account that read other keys should switch to the API
+key. `adminOnly` in the descriptors below says which side of the line a key is
+on.
 
 **`PUT` refuses a key Bindery does not know**, with `400` and the key named.
 Before this, an unrecognised key was stored and then read by nothing, so a typo

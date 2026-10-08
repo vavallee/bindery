@@ -7,16 +7,17 @@ import "testing"
 // OpenLibrary, matching the long-standing books.foreign_id convention.
 func TestBookProviderFromForeignID(t *testing.T) {
 	cases := map[string]string{
-		"hc:volume-1":      "hardcover",
-		"HC:VOLUME-1":      "hardcover",
-		"OL1W":             "openlibrary",
-		"calibre:12":       "calibre",
-		"abs:lib:item":     "audiobookshelf",
-		"gb:xyz":           "googlebooks",
-		"dnb:123":          "dnb",
-		"":                 "openlibrary",
-		"  hc:spaced  ":    "hardcover",
-		"something-random": "openlibrary",
+		"hc:volume-1":                         "hardcover",
+		"HC:VOLUME-1":                         "hardcover",
+		"OL1W":                                "openlibrary",
+		"calibre:12":                          "calibre",
+		"abs:lib:item":                        "audiobookshelf",
+		"gb:xyz":                              "googlebooks",
+		"dnb:123":                             "dnb",
+		"nb:a0000000000000000000000000000001": "nb",
+		"":                                    "openlibrary",
+		"  hc:spaced  ":                       "hardcover",
+		"something-random":                    "openlibrary",
 	}
 	for id, want := range cases {
 		if got := BookProviderFromForeignID(id); got != want {
