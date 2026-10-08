@@ -835,7 +835,7 @@ func TestPullList_EditionFetchesAreCapped(t *testing.T) {
 func TestDeliverer_OnlyAnAnswerIsRemembered(t *testing.T) {
 	f := newWorkerFixture(t, ModeCalibredb, &metaCapture{})
 	calls := 0
-	var answer error = context.DeadlineExceeded
+	answer := context.DeadlineExceeded
 	f.d.WithEditionHydrator(func(context.Context, *models.Book) error {
 		calls++
 		return answer

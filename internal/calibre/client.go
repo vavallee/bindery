@@ -66,7 +66,7 @@ func isExecNotFound(err error) bool {
 // otherwise it is missing (ErrCalibredbMissing).
 func startFailure(binary string, cause error) error {
 	if path, err := lookPath(binary); err == nil {
-		return fmt.Errorf("%w (%q: %v). %s", ErrCalibredbCannotRun, path, cause, CalibredbCannotRunAdvice)
+		return fmt.Errorf("%w (%q: %w). %s", ErrCalibredbCannotRun, path, cause, CalibredbCannotRunAdvice)
 	}
 	return calibredbMissing(binary)
 }
