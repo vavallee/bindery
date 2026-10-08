@@ -69,22 +69,66 @@ func TestMatchAuthorNameMiddleInitials(t *testing.T) {
 	}
 }
 
-// TestMatchAuthorNameShortWordIsNotInitials is the related risk #2881 noted:
-// any short forename was split into letters, so "Ann" was the same name as
-// "A. N. N." and "Amy Tan" as "A. M. Y. Tan", exactly enough to bind an alias.
-// When the name is written in mixed case, only a word written in capitals is
-// read as initials.
-func TestMatchAuthorNameShortWordIsNotInitials(t *testing.T) {
+// TestMatchAuthorNameTitleCaseInitialsStayExact: initials run together and
+// written in title case ("Jrr", "Ra", "Tj") are common in folder names and
+// loose metadata. They must stay Exact against the dotted form, because alias
+// binding, the bulk import skip, the Calibre alias rule and the sort name
+// dedupe all accept Exact only.
+func TestMatchAuthorNameTitleCaseInitialsStayExact(t *testing.T) {
 	for _, tc := range [][2]string{
-		{"Ann Leckie", "A. N. N. Leckie"},
-		{"Amy Tan", "A. M. Y. Tan"},
-		{"Ed McBain", "E. D. McBain"},
+		{"Jrr Tolkien", "J.R.R. Tolkien"},
+		{"Tolkien, Jrr", "J. R. R. Tolkien"},
+		{"Ra Salvatore", "R.A. Salvatore"},
+		{"Tj Klune", "T. J. Klune"},
+		{"Rr Haywood", "R.R. Haywood"},
 	} {
-		if got := MatchAuthorName(tc[0], tc[1]); got.Kind == AuthorMatchExact {
-			t.Errorf("MatchAuthorName(%q, %q) = Exact, a forename is not a run of initials", tc[0], tc[1])
+		for _, pair := range [][2]string{tc, {tc[1], tc[0]}} {
+			if got := MatchAuthorName(pair[0], pair[1]); got.Kind != AuthorMatchExact {
+				t.Errorf("MatchAuthorName(%q, %q) = %s, want Exact", pair[0], pair[1], kindNames[got.Kind])
+			}
 		}
-		if LatinAliasBinds(tc[0], tc[1]) {
-			t.Errorf("LatinAliasBinds(%q, %q) = true, want false", tc[0], tc[1])
+	}
+	// Spelled out, the vowelless run still reads as initials.
+	if got := MatchAuthorName("Jrr Tolkien", "John Ronald Reuel Tolkien"); got.Kind != AuthorMatchFuzzyAuto {
+		t.Errorf("MatchAuthorName(Jrr Tolkien, spelled out) = %s, want FuzzyAuto", kindNames[got.Kind])
+	}
+	// And it still cannot stand in for a conflicting middle initial.
+	if got := MatchAuthorName("Tj Klune", "T. K. Klune"); got.Kind == AuthorMatchExact || got.Kind == AuthorMatchFuzzyAuto {
+		t.Errorf("MatchAuthorName(Tj Klune, T. K. Klune) = %s, want no auto match", kindNames[got.Kind])
+	}
+}
+
+// TestMatchAuthorNameDroppedInitialConfirmedByTitle: #2881 asked that a
+// dropped initial stay acceptable when a title backs it. Callers that have
+// matched the title use ConfirmedByTitle, which accepts the ambiguous band
+// only when the difference is initials left out, never initials that disagree.
+func TestMatchAuthorNameDroppedInitialConfirmedByTitle(t *testing.T) {
+	for _, tc := range [][2]string{
+		{"J. Rowling", "J.K. Rowling"},
+		{"A. Smith", "A. B. Smith"},
+		{"George Martin", "George R. R. Martin"},
+		{"Iain Banks", "Iain M. Banks"},
+	} {
+		for _, pair := range [][2]string{tc, {tc[1], tc[0]}} {
+			got := MatchAuthorName(pair[0], pair[1])
+			if got.Kind != AuthorMatchFuzzyAmbiguous || !got.DroppedInitial || !got.ConfirmedByTitle() {
+				t.Errorf("MatchAuthorName(%q, %q) = %s dropped=%v, want ambiguous and confirmed by a title",
+					pair[0], pair[1], kindNames[got.Kind], got.DroppedInitial)
+			}
+		}
+	}
+	for _, tc := range [][2]string{
+		{"J. R. Smith", "J. T. Smith"},
+		{"Philip K. Dick", "Philip J. Dick"},
+		{"Alice Jones", "Alice James"},
+		{"Tolkien", "J.R.R. Tolkien"},
+		{"Stanley Paul", "Paul Stanley"},
+	} {
+		for _, pair := range [][2]string{tc, {tc[1], tc[0]}} {
+			if got := MatchAuthorName(pair[0], pair[1]); got.ConfirmedByTitle() {
+				t.Errorf("MatchAuthorName(%q, %q) = %s dropped=%v, a title must not confirm it",
+					pair[0], pair[1], kindNames[got.Kind], got.DroppedInitial)
+			}
 		}
 	}
 }

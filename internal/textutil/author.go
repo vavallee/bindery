@@ -272,87 +272,54 @@ func authorNameFormSets(name string) (ordered, all []string) {
 	return ordered, all
 }
 
-// authorMatchForms is the form set MatchAuthorName compares with. It differs
-// from authorNameFormSets in one respect: it decides which words are initials
-// from the name as written, before lowercasing throws that away (#2881).
+// authorScoringForms are the forms MatchAuthorName weighs field by field
+// once no exact pairing exists. They differ from authorNameFormSets' ordered
+// forms in two ways (#2881).
 //
-// authorNameFormSets cannot tell "JRR" (three initials run together) from
-// "Ann" (a forename), so it splits every short word into letters and glues
-// every run of letters back into a word. That made "Ann Smith" and
-// "A. N. N. Smith" the same name, and it let the glued run "jr" stand in for a
-// spelled out forename beginning with J, which is how "J. R. Smith" against
-// "J. T. Smith" scored as a confident match. The public variant list keeps that
-// behaviour byte for byte, because other callers index into it; only matching
-// changes.
+// No glued run of initials appears here. authorNameFormSets compacts "j r"
+// into "jr" so that "J. R. Smith" and "JR Smith" compare equal, which is right
+// for the exact tier and wrong for scoring: there "jr" read as a spelled out
+// forename beginning with J, which is how "J. R. Smith" against "J. T. Smith"
+// scored as a confident match.
 //
-// When the name carries case information (it has both capitals and small
-// letters), a short word counts as initials only when it was written in
-// capitals: "JRR", "KL", "AJ". A dotted group needs no rule, normalisation
-// already splits "J.R.R." into letters. When the name is written in a single
-// case, the case says nothing, so every short non final word may be initials,
-// as before.
-type authorMatchFormSet struct {
-	// ordered holds the forms that keep the written order (or the order a
-	// comma declares). Equality here is an exact match.
-	ordered []string
-	// reordered adds the last first readings of the same forms.
-	reordered []string
-	// scoring holds the forms the per field evidence is weighed on. No glued
-	// run of initials appears here, so a cluster is never mistaken for a word.
-	scoring []string
-}
-
-func authorMatchForms(name string) authorMatchFormSet {
-	var set authorMatchFormSet
+// And a short word is split into letters only when it reads as initials. When
+// the name carries case information (both capitals and small letters), that is
+// a word written in capitals ("JRR", "KL", "AJ") or one with no vowel at all
+// ("Jrr", "Tj"), which no forename is. "Ann", "Amy" and "Ed" stay whole, so
+// they are not taken for a run of initials that conflicts with a middle
+// initial on the other side. A dotted group needs no rule, normalisation
+// already splits "J.R.R." into letters. A name written in a single case says
+// nothing either way, so every short non final word may be initials, as
+// before, and both readings are scored.
+func authorScoringForms(name string) []string {
 	if NormalizeAuthorName(name) == "" {
-		return set
+		return nil
 	}
 	informative, initials := authorInitialWords(name)
-
-	seen := map[*[]string]map[string]struct{}{}
-	add := func(dst *[]string, toks []string) {
+	var out []string
+	seen := map[string]struct{}{}
+	add := func(toks []string) {
 		if len(toks) == 0 {
 			return
 		}
-		m := seen[dst]
-		if m == nil {
-			m = map[string]struct{}{}
-			seen[dst] = m
-		}
 		v := strings.Join(toks, " ")
-		if _, ok := m[v]; ok {
+		if _, ok := seen[v]; ok {
 			return
 		}
-		m[v] = struct{}{}
-		*dst = append(*dst, v)
-	}
-	addOrdered := func(toks []string) {
-		add(&set.ordered, toks)
-		add(&set.reordered, toks)
+		seen[v] = struct{}{}
+		out = append(out, v)
 	}
 	addForm := func(raw string) {
 		tokens := stripAuthorSuffixes(strings.Fields(NormalizeAuthorName(raw)))
 		if len(tokens) == 0 {
 			return
 		}
-		swapped := lastFirstSwap(tokens)
 		if !informative {
-			addOrdered(tokens)
-			addOrdered(compactInitials(tokens))
-			addOrdered(expandInitials(tokens))
-			add(&set.reordered, swapped)
-			add(&set.reordered, compactInitials(swapped))
-			add(&set.reordered, expandInitials(swapped))
-			add(&set.scoring, tokens)
-			add(&set.scoring, expandInitials(tokens))
+			add(tokens)
+			add(expandInitials(tokens))
 			return
 		}
-		expanded := expandInitialWords(tokens, initials)
-		addOrdered(tokens)
-		addOrdered(expanded)
-		add(&set.reordered, swapped)
-		add(&set.reordered, lastFirstSwap(expanded))
-		add(&set.scoring, expanded)
+		add(expandInitialWords(tokens, initials))
 	}
 	addName := func(raw string) {
 		addForm(raw)
@@ -364,13 +331,14 @@ func authorMatchForms(name string) authorMatchFormSet {
 	if before, after, ok := strings.Cut(name, ","); ok {
 		addName(strings.TrimSpace(after) + " " + strings.TrimSpace(before))
 	}
-	return set
+	return out
 }
 
 // authorInitialWords reports whether the raw name carries case information and,
-// if it does, which normalized words were written as a run of capital initials
-// ("JRR", "KL"). The transliterated spelling of each such word is included, so
-// the ASCII chain sees the same set.
+// if it does, which normalized words read as a run of initials: two or three
+// letters written in capitals ("JRR", "KL"), or two or three Latin letters with
+// no vowel ("Jrr", "Tj"). The transliterated spelling of each such word is
+// included, so the ASCII chain sees the same set.
 func authorInitialWords(name string) (bool, map[string]struct{}) {
 	hasUpper, hasLower := false, false
 	for _, r := range name {
@@ -399,16 +367,37 @@ func authorInitialWords(name string) (bool, map[string]struct{}) {
 				upper = false
 			}
 		}
-		if !upper || letters < 2 || letters > 3 {
+		if letters < 2 || letters > 3 {
 			continue
 		}
 		key := NormalizeAuthorName(w)
+		if !upper && !vowelless(key) {
+			continue
+		}
 		initials[key] = struct{}{}
 		if ascii := asciiTransliterate(w); ascii != "" {
 			initials[NormalizeAuthorName(ascii)] = struct{}{}
 		}
 	}
 	return true, initials
+}
+
+// vowelless reports whether s is plain a to z with no vowel (y counts as one),
+// the shape of initials run together and never of a forename.
+func vowelless(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+		switch r {
+		case 'a', 'e', 'i', 'o', 'u', 'y':
+			return false
+		}
+	}
+	return true
 }
 
 // expandInitialWords splits the non final words that authorInitialWords marked
@@ -553,6 +542,25 @@ type AuthorMatchResult struct {
 	Score float64
 	// Weight is the additive per-field evidence total that decided Kind.
 	Weight float64
+	// DroppedInitial marks an ambiguous pairing whose only difference is that
+	// one side leaves out initials the other carries, with an equal surname and
+	// nothing that disagrees: "J. Rowling" against "J.K. Rowling", "George
+	// Martin" against "George R. R. Martin". It is not enough on its own, but a
+	// matching title backs it up (#2881). See ConfirmedByTitle.
+	DroppedInitial bool
+}
+
+// ConfirmedByTitle reports whether the pairing is good enough for a caller
+// that has already matched the title: an auto match, or an ambiguous one that
+// only drops initials. A caller deciding on the name alone gates on Kind.
+func (r AuthorMatchResult) ConfirmedByTitle() bool {
+	switch r.Kind {
+	case AuthorMatchExact, AuthorMatchFuzzyAuto:
+		return true
+	case AuthorMatchFuzzyAmbiguous:
+		return r.DroppedInitial
+	}
+	return false
 }
 
 // MatchAuthorName compares two raw author names (no prior normalization
@@ -575,18 +583,15 @@ func MatchAuthorName(a, b string) AuthorMatchResult {
 	// differently. This is the tier alias binding and every dedupe path rests
 	// on, and it is unchanged. It is also the common case on a rescan, so it is
 	// settled before any scoring happens.
-	am, bm := authorMatchForms(a), authorMatchForms(b)
-	if len(am.ordered) == 0 || len(bm.ordered) == 0 {
+	ao, av := authorNameFormSets(a)
+	bo, bv := authorNameFormSets(b)
+	if len(ao) == 0 || len(bo) == 0 {
 		return AuthorMatchResult{Kind: AuthorMatchNone}
 	}
-	if formsIntersect(am.ordered, bm.ordered) {
+	if formsIntersect(ao, bo) {
 		return AuthorMatchResult{Kind: AuthorMatchExact, Score: 1, Weight: authorExactWeight}
 	}
 
-	// Score is still taken over the public variant list, so a ranking built
-	// on it does not move.
-	_, av := authorNameFormSets(a)
-	_, bv := authorNameFormSets(b)
 	best := 0.0
 	for _, x := range av {
 		for _, y := range bv {
@@ -602,15 +607,74 @@ func MatchAuthorName(a, b string) AuthorMatchResult {
 	// names agree on which token is the surname and the pairing is exact.
 	// Otherwise "Stanley Paul" and "Paul Stanley" are indistinguishable from
 	// two different people who happen to share both words, so cap at ambiguous.
-	if formsIntersect(am.reordered, bm.reordered) {
+	if formsIntersect(av, bv) {
 		if authorOrderIsSignposted(a, b) {
 			return AuthorMatchResult{Kind: AuthorMatchExact, Score: 1, Weight: authorExactWeight}
 		}
 		return AuthorMatchResult{Kind: AuthorMatchFuzzyAmbiguous, Score: best, Weight: authorSwapWeight}
 	}
 
-	weight := scoreAuthorFields(am.scoring, bm.scoring)
-	return AuthorMatchResult{Kind: authorWeightKind(weight), Score: best, Weight: weight}
+	as, bs := authorScoringForms(a), authorScoringForms(b)
+	weight := scoreAuthorFields(as, bs)
+	res := AuthorMatchResult{Kind: authorWeightKind(weight), Score: best, Weight: weight}
+	if res.Kind == AuthorMatchFuzzyAmbiguous {
+		res.DroppedInitial = authorOnlyDropsInitials(as, bs)
+	}
+	return res
+}
+
+// authorOnlyDropsInitials reports whether some pairing of the two sides'
+// scoring forms has an equal surname and given names that agree position by
+// position, the longer one only adding single letter initials, and no pairing
+// with an equal surname has initials that disagree.
+func authorOnlyDropsInitials(aForms, bForms []string) bool {
+	found := false
+	for _, ap := range splitAuthorForms(aForms) {
+		for _, bp := range splitAuthorForms(bForms) {
+			if ap.surname == "" || ap.surname != bp.surname {
+				continue
+			}
+			switch authorInitialsCompare(ap.given, bp.given) {
+			case initialsFirstConflict, initialsMiddleConflict:
+				return false
+			}
+			if givenOnlyDropsInitials(ap.given, bp.given) {
+				found = true
+			}
+		}
+	}
+	return found
+}
+
+// givenOnlyDropsInitials: both given names present, every aligned position
+// agrees (equal, or an initial against a word with that first letter), and the
+// longer list's extra tokens are all single letters.
+func givenOnlyDropsInitials(a, b string) bool {
+	at, bt := strings.Fields(a), strings.Fields(b)
+	if len(at) == 0 || len(bt) == 0 || len(at) == len(bt) {
+		return false
+	}
+	if len(at) > len(bt) {
+		at, bt = bt, at
+	}
+	for i := range at {
+		x, y := []rune(at[i]), []rune(bt[i])
+		if len(x) == 1 || len(y) == 1 {
+			if x[0] != y[0] {
+				return false
+			}
+			continue
+		}
+		if at[i] != bt[i] {
+			return false
+		}
+	}
+	for _, extra := range bt[len(at):] {
+		if len([]rune(extra)) != 1 {
+			return false
+		}
+	}
+	return true
 }
 
 // authorWeightKind bands an evidence total.

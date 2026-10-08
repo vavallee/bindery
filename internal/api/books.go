@@ -1454,8 +1454,9 @@ func bookMapAuthorMatches(current, target *models.Author) bool {
 }
 
 func authorNameAutoMatches(a, b string) bool {
-	match := textutil.MatchAuthorName(a, b)
-	return match.Kind == textutil.AuthorMatchExact || match.Kind == textutil.AuthorMatchFuzzyAuto
+	// The record was found by the book's own ASIN, so the work is settled and
+	// a pairing that only drops initials is enough (#2881).
+	return textutil.MatchAuthorName(a, b).ConfirmedByTitle()
 }
 
 // metadataProviderFromForeignID names the provider a book's foreign ID belongs
