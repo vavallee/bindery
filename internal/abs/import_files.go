@@ -248,6 +248,42 @@ func (i *Importer) inspectFormatPath(ctx context.Context, cfg ImportConfig, form
 	return true, ""
 }
 
+// findBookByItemFiles returns the existing book that already tracks one of the
+// item's files, or nil. The paths are the ones reconcileFormatPath would
+// record for the item: the ebook file and the audiobook folder, after the
+// path remap. A book owned by another user is not offered, so an import can
+// never reach across tenants through a shared file (#1457).
+func (i *Importer) findBookByItemFiles(ctx context.Context, cfg ImportConfig, author *models.Author, item NormalizedLibraryItem) (*models.Book, error) {
+	if i.books == nil {
+		return nil, nil
+	}
+	candidates := []string{item.EbookPath}
+	if len(item.AudioFiles) > 0 {
+		candidates = append(candidates, item.Path)
+	}
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate) == "" {
+			continue
+		}
+		cleanPath := filepath.Clean(i.remapABSPath(cfg, candidate))
+		if cleanPath == "." || cleanPath == "" {
+			continue
+		}
+		book, err := i.books.GetByTrackedPath(ctx, cleanPath)
+		if err != nil {
+			return nil, err
+		}
+		if book == nil {
+			continue
+		}
+		if author != nil && author.OwnerUserID != 0 && book.OwnerUserID != 0 && author.OwnerUserID != book.OwnerUserID {
+			continue
+		}
+		return book, nil
+	}
+	return nil, nil
+}
+
 func (i *Importer) remapABSPath(cfg ImportConfig, candidatePath string) string {
 	candidatePath = strings.TrimSpace(candidatePath)
 	if candidatePath == "" || strings.TrimSpace(cfg.PathRemap) == "" {

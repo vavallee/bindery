@@ -120,9 +120,12 @@ Secondary ABS authors are recorded as aliases where possible.
 Resolution order:
 
 1. `abs_provenance` lookup for the ABS item id
-2. fallback `books.foreign_id = abs:book:<library_id>:<item_id>`
-3. existing book under the resolved author with the same normalized title
-4. create a new shared book
+2. fallback `books.foreign_id = abs:book:<library_id>:<item_id>`, also found as a recorded book identifier after the book was relinked to an upstream id
+3. existing book that already tracks one of the item's files in `book_files` (the ebook file or the audiobook folder, after `abs.path_remap`), whatever its title. A book owned by another user is not matched
+4. existing book under the resolved author with the same normalized title
+5. create a new shared book
+
+Retitling an item in Audiobookshelf and importing again updates the same book through step 1 or 2. Step 3 covers a book Bindery had before the item was ever imported, such as one it downloaded itself under the provider's spelling of the title: the item is matched to it instead of becoming a second, wanted row beside the owned one.
 
 Important applied fields:
 

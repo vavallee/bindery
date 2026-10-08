@@ -926,6 +926,36 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 		return &bookUpsertResult{row: existing, matchedBy: "foreign_id"}, false, false, metaResult, err
 	}
 
+	// The item's files, before its title (#1691). Neither key above finds a
+	// book Bindery had before this ABS item was ever imported, such as one it
+	// downloaded itself, or one whose ABS item was re-created. If such a book
+	// already tracks the very file this item points at, it is this item's
+	// book, whatever either side calls it now. Matching only on the title
+	// here used to create a second, wanted row beside the owned one whenever
+	// the titles disagreed ("Chapterhouse: Dune" against "Chapter House
+	// Dune"), and that row could never take the file, so it stayed wanted.
+	if existing, err := i.findBookByItemFiles(ctx, cfg, author, item); err != nil {
+		return nil, false, false, metadataMergeResult{}, err
+	} else if existing != nil {
+		if !cfg.DryRun {
+			if err := i.recordBookBeforeSnapshot(ctx, runID, cfg, item, externalID, existing, itemOutcomeLinked, nil); err != nil {
+				return nil, false, false, metadataMergeResult{}, err
+			}
+			if err := i.applyBookFields(ctx, existing, author.ID, item); err != nil {
+				return nil, false, false, metadataMergeResult{}, err
+			}
+			if err := i.upsertBookProvenance(ctx, cfg, runID, existing.ID, item); err != nil {
+				return nil, false, false, metadataMergeResult{}, err
+			}
+		}
+		_ = i.recordRunEntity(ctx, runID, cfg, item.LibraryID, item.ItemID, entityTypeBook, externalID, existing.ID, itemOutcomeLinked, map[string]string{"matchedBy": "file_path"})
+		if cfg.DryRun {
+			return &bookUpsertResult{row: existing, matchedBy: "file_path"}, false, true, metadataMergeResult{}, nil
+		}
+		metaResult, err := i.enrichBook(ctx, cfg, item, author, existing)
+		return &bookUpsertResult{row: existing, matchedBy: "file_path"}, false, true, metaResult, err
+	}
+
 	match, ambiguous, err := i.findBookByNormalizedTitle(ctx, author.ID, item.Title, item.Series)
 	if err != nil {
 		return nil, false, false, metadataMergeResult{}, err

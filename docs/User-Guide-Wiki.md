@@ -1006,7 +1006,8 @@ selection control and cannot be sent for removal.
 slightly different titles — "The Martian" and "Martian", "Dune" and "Dune
 (Unabridged)". Open the author and choose **More → Review duplicates…** to see
 groups of titles that look like the same book. Each group shows which rule
-matched (identical after normalisation, a leading article dropped, an edition
+matched (identical after normalisation, a leading article dropped or filed behind
+a comma as in "Trace of Death, A", an edition
 marker dropped, or one title being the main title or subtitle of the other),
 and each row shows the rules that pulled it in. A main title or subtitle match
 only counts at a colon, bracket or spaced dash, so Asimov's "Foundation" is not
