@@ -697,7 +697,7 @@ GET    /api/v1/backup                             list stored backups (admin)
 DELETE /api/v1/backup/{filename}                  delete one backup (admin)
 POST   /api/v1/backup/{filename}/restore          stage a backup for the next restart (admin, X-Confirm-Restore: true)
 GET    /api/v1/system/status                      version, commit, build date, newest published release, image cache size, Hardcover feature state
-POST   /api/v1/library/scan                       start a library scan in the background (202)
+POST   /api/v1/library/scan                       start a library scan in the background (202; {"queued": true} when one is already running)
 GET    /api/v1/library/duplicate-candidates      read-only duplicate title groups across every author, paginated (#2999)
 GET    /api/v1/library/scan/status                summary of the last library scan, paths included (admin)
 GET    /api/v1/library/unmatched                  books the scan could not match, one row per book (admin)
@@ -713,6 +713,13 @@ GET    /api/v1/system/loglevel                    current log level (admin)
 PUT    /api/v1/system/loglevel                    runtime log-level switch, debug/info/warn/error (admin)
 GET    /api/v1/images?url=<encoded>               proxied + cached cover image (30-day TTL)
 ```
+
+`POST /api/v1/library/scan` answers `202` with `{"message": "library scan
+started"}` when it starts a scan. While a scan is already running it no longer
+answers `409`: the request is queued and the answer is `202` with
+`{"message": "library scan queued", "queued": true}`. When the running scan
+finishes, one more scan runs, however many requests arrived meanwhile, so a
+file placed in a folder the walk had already passed is still picked up (#3014).
 
 `GET /api/v1/library/scan/status` returns the stored summary of the most recent
 scan: the counts, the library roots it walked and the path of every unmatched

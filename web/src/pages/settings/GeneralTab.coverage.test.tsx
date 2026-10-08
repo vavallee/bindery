@@ -169,6 +169,13 @@ describe('GeneralTab library scan', () => {
     expect(screen.getByText('settings.general.scanLibraryButton')).not.toBeDisabled()
   })
 
+  it('says a scan requested during a running one is queued (#3014)', async () => {
+    m.triggerLibraryScan.mockResolvedValue({ message: 'library scan queued', queued: true })
+    render(<GeneralTab />)
+    fireEvent.click(await screen.findByText('settings.general.scanLibraryButton'))
+    expect(await screen.findByText('settings.general.scanQueued')).toBeInTheDocument()
+  })
+
   it('shows the stored scan error, scanned paths and the unmatched books link', async () => {
     m.libraryScanStatus.mockResolvedValue({
       ran_at: '2026-10-01T00:00:00Z',

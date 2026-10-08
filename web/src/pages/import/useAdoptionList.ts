@@ -142,7 +142,8 @@ export function useAdoptionList() {
     try {
       await api.triggerLibraryScan()
     } catch {
-      // 409: a scan is already running, which is what we wanted anyway.
+      // A failed trigger leaves the summary as it was. A scan already running
+      // is not a failure: the request is queued behind it (#3014).
     }
     await refreshSummary()
   }, [refreshSummary])

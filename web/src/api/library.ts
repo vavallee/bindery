@@ -48,7 +48,9 @@ export const libraryApi = {
     return request<LibrarySearchResponse>(`/search/library?${params.toString()}`)
   },
   // Library
-  triggerLibraryScan: () => request<{ message: string }>('/library/scan', { method: 'POST' }),
+  // queued is true when a scan was already running: the request is not
+  // dropped, one more scan runs as soon as that one finishes (#3014).
+  triggerLibraryScan: () => request<{ message: string; queued?: boolean }>('/library/scan', { method: 'POST' }),
   libraryScanStatus: () => request<{
     ran_at: string
     files_found: number

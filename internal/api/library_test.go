@@ -93,6 +93,30 @@ func TestLibraryScan_AlreadyRunningReturns409(t *testing.T) {
 	}
 }
 
+// TestLibraryScan_QueuedReturns202 pins #3014: a scan requested while one is
+// running is queued behind it, and the caller is told so with 202 and
+// queued=true rather than a 409 it cannot tell apart from a refusal.
+func TestLibraryScan_QueuedReturns202(t *testing.T) {
+	fake := &fakeScanner{err: importer.ErrScanQueued}
+	h := &LibraryHandler{scanner: fake}
+
+	rec := httptest.NewRecorder()
+	h.Scan(rec, httptest.NewRequest(http.MethodPost, "/library/scan", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for a queued scan, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Message string `json:"message"`
+		Queued  bool   `json:"queued"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if !body.Queued || body.Message == "" {
+		t.Errorf("body = %+v, want queued=true and a message", body)
+	}
+}
+
 // TestLibraryScan_ShuttingDownReturns503 pins the answer for a scan the jobs
 // group refused because the process is draining (#2372). 202 there would tell
 // the user a scan started when nothing did.

@@ -47,6 +47,10 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const [showReorganize, setShowReorganize] = useState(false)
   const [scanMessage, setScanMessage] = useState<string | null>(null)
   const scanStartedAt = useRef<number>(0)
+  // Set when the scan request was queued behind one already running (#3014).
+  // The first result to land is then that running scan's, not ours, so the
+  // poll shows it and keeps waiting for the next one.
+  const skipScanResult = useRef<string | null>(null)
   const [lastScan, setLastScan] = useState<{
     ran_at: string
     files_found: number
@@ -190,6 +194,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       try {
         const status = await api.libraryScanStatus()
         if (new Date(status.ran_at).getTime() >= scanStartedAt.current) {
+          if (skipScanResult.current === '') {
+            skipScanResult.current = status.ran_at
+            setLastScan(status)
+            return
+          }
+          if (skipScanResult.current !== null && skipScanResult.current === status.ran_at) return
+          skipScanResult.current = null
           setLastScan(status)
           setScanMessage(null)
           setScanningLibrary(false)
@@ -214,8 +225,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
     setScanningLibrary(true)
     setScanMessage('Scanning…')
     setLastScan(null)
+    skipScanResult.current = null
     try {
-      await api.triggerLibraryScan()
+      const res = await api.triggerLibraryScan()
+      if (res?.queued) {
+        skipScanResult.current = ''
+        setScanMessage(t('settings.general.scanQueued'))
+      }
     } catch (err) {
       setScanMessage('Scan failed: ' + (err instanceof Error ? err.message : 'Unknown error'))
       setScanningLibrary(false)

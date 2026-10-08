@@ -40,6 +40,13 @@ func (h *LibraryHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	// context.WithoutCancel so the scan goroutine isn't killed when the HTTP
 	// response is sent and the request context is cancelled.
 	err := h.scanner.StartScan(context.WithoutCancel(r.Context()))
+	if errors.Is(err, importer.ErrScanQueued) {
+		// A scan is already walking. The request is not dropped: one more scan
+		// runs as soon as it finishes, so a file placed behind the walk is
+		// still picked up (#3014). 202, because the request will be honoured.
+		writeJSON(w, http.StatusAccepted, map[string]any{"message": "library scan queued", "queued": true})
+		return
+	}
 	if errors.Is(err, importer.ErrScanAlreadyRunning) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return

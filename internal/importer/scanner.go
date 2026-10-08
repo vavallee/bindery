@@ -117,6 +117,19 @@ type Scanner struct {
 	// constraint equivalent to book_files.path) and clobber library.lastScan,
 	// so only one scan — manual or scheduled — runs at a time.
 	scanRunning atomic.Bool
+	// scanMu orders the claim and release of scanRunning against
+	// scanPending, so a request that arrives as a scan finishes is either
+	// run by that scan's follow-up or starts a scan of its own, never lost.
+	scanMu sync.Mutex
+	// scanPending records that a scan was requested while one was running
+	// (#3014). The running scan runs one follow-up when it finishes, however
+	// many requests arrived.
+	scanPending bool
+
+	// testScanHook, when non-nil, runs at the start of every library scan
+	// walk. A test seam: it lets a test hold a scan in flight while it makes
+	// a second request (#3014).
+	testScanHook func()
 
 	// testImportHook, when non-nil, intercepts tryImportInternal before any
 	// state transition or file operation and replaces the import entirely.
@@ -3224,10 +3237,17 @@ func flipByLayout(parsed ParsedFile, layoutAuthor string) (ParsedFile, bool) {
 	return parsed, true
 }
 
-// ErrScanAlreadyRunning is returned by StartScan when a library scan (manual
-// or scheduled) is already in flight. Matches the ABS importer's
-// ErrAlreadyRunning / Grimmory syncer's ErrSyncAlreadyRunning pattern.
+// ErrScanAlreadyRunning was StartScan's answer to a request made while a
+// library scan was in flight (#1460). Since #3014 such a request is queued and
+// StartScan returns ErrScanQueued; this stays for callers that still match it.
 var ErrScanAlreadyRunning = errors.New("library scan already running")
+
+// ErrScanQueued is returned by StartScan when a scan is already in flight. The
+// request is not dropped: the running scan runs one more scan as soon as it
+// finishes, so a file placed in a folder the walk had already passed is still
+// picked up (#3014). Any number of requests made during one scan coalesce into
+// that single follow-up.
+var ErrScanQueued = errors.New("library scan queued behind the running scan")
 
 // ErrShuttingDown is returned by StartScan when the scan could not be launched
 // because the process is already draining its background jobs. The single-flight
@@ -3235,15 +3255,75 @@ var ErrScanAlreadyRunning = errors.New("library scan already running")
 // Matches hardcoverlistsyncer.ErrShuttingDown.
 var ErrShuttingDown = errors.New("server is shutting down")
 
+// claimScan takes the single-flight gate. When a scan already holds it,
+// claimScan reports false and, if queue is set, records that one more scan is
+// wanted once the running one finishes.
+func (s *Scanner) claimScan(queue bool) bool {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	if s.scanRunning.CompareAndSwap(false, true) {
+		return true
+	}
+	if queue {
+		s.scanPending = true
+	}
+	return false
+}
+
+// finishScan is called by the scan holding the gate when its walk is done. It
+// keeps the gate and reports true when a scan was queued meanwhile, so the
+// caller runs the follow-up; otherwise it releases the gate. A cancelled
+// context drops the queued request, since the process is shutting down.
+func (s *Scanner) finishScan(ctx context.Context) bool {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	if s.scanPending && ctx.Err() == nil {
+		s.scanPending = false
+		return true
+	}
+	s.scanPending = false
+	s.scanRunning.Store(false)
+	return false
+}
+
+// releaseScan drops the gate and any queued request without running anything.
+func (s *Scanner) releaseScan() {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	s.scanPending = false
+	s.scanRunning.Store(false)
+}
+
+// runScans runs a scan, then the one follow-up a request made during it asked
+// for, and releases the gate. The caller must hold the gate. The deferred
+// release covers a scan that panics, which used to be covered by a deferred
+// Store(false).
+func (s *Scanner) runScans(ctx context.Context) {
+	released := false
+	defer func() {
+		if !released {
+			s.releaseScan()
+		}
+	}()
+	for {
+		s.scanLibrary(ctx)
+		if !s.finishScan(ctx) {
+			released = true
+			return
+		}
+		slog.Info("library scan: running the scan requested while the last one was in flight")
+	}
+}
+
 // StartScan launches a library scan in the background and returns
-// immediately. If a scan is already in flight it returns
-// ErrScanAlreadyRunning so callers (the manual-scan endpoint) can surface a
-// 409 instead of piling up concurrent full walks (#1460). Callers pass
-// context.WithoutCancel(r.Context()) so the HTTP response-send doesn't cancel
-// the scan.
+// immediately. If a scan is already in flight it does not start a second walk
+// beside it (#1460): it queues one follow-up scan and returns ErrScanQueued,
+// so callers (the manual-scan endpoint) can say the request was accepted
+// (#3014). Callers pass context.WithoutCancel(r.Context()) so the HTTP
+// response-send doesn't cancel the scan.
 func (s *Scanner) StartScan(ctx context.Context) error {
-	if !s.scanRunning.CompareAndSwap(false, true) {
-		return ErrScanAlreadyRunning
+	if !s.claimScan(true) {
+		return ErrScanQueued
 	}
 	// When a jobs group is wired, the scan runs on the shutdown-scoped context
 	// so SIGTERM cancels and drains it before the DB closes, instead of the
@@ -3255,18 +3335,12 @@ func (s *Scanner) StartScan(ctx context.Context) error {
 		// left scanRunning true for the rest of the process's life and answered
 		// the manual-scan endpoint with success for a scan that never ran
 		// (#2372).
-		if !s.jobs.Go("library-scan", func(ctx context.Context) {
-			defer s.scanRunning.Store(false)
-			s.scanLibrary(ctx)
-		}) {
-			s.scanRunning.Store(false)
+		if !s.jobs.Go("library-scan", s.runScans) {
+			s.releaseScan()
 			return ErrShuttingDown
 		}
 	} else {
-		go func() {
-			defer s.scanRunning.Store(false)
-			s.scanLibrary(ctx)
-		}()
+		go s.runScans(ctx)
 	}
 	return nil
 }
@@ -3275,14 +3349,14 @@ func (s *Scanner) StartScan(ctx context.Context) error {
 // guard with StartScan: if a scan is already in flight (e.g. a manual scan
 // racing the 6-hourly cron job) the call is skipped with a log line. The
 // cron scheduler's SkipIfStillRunning only guards cron-vs-cron, so this is
-// what prevents cron-vs-manual overlap (#1460).
+// what prevents cron-vs-manual overlap (#1460). A manual request made while
+// this scan runs is queued, and runs here once the walk finishes (#3014).
 func (s *Scanner) ScanLibrary(ctx context.Context) {
-	if !s.scanRunning.CompareAndSwap(false, true) {
+	if !s.claimScan(false) {
 		slog.Info("library scan already running; skipping")
 		return
 	}
-	defer s.scanRunning.Store(false)
-	s.scanLibrary(ctx)
+	s.runScans(ctx)
 }
 
 // walkRoot is filepath.Walk for a configured library or audiobook root that
@@ -3316,6 +3390,9 @@ func walkRoot(root string, fn filepath.WalkFunc) error {
 // found files with existing "wanted" book records. Callers must hold the
 // scanRunning single-flight flag (via StartScan or ScanLibrary).
 func (s *Scanner) scanLibrary(ctx context.Context) {
+	if s.testScanHook != nil {
+		s.testScanHook()
+	}
 	if s.libraryDir == "" {
 		// #965: previously this returned without writing any result, so the UI
 		// kept showing a stale prior scan and the #962 "no files found" warning
