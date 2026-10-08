@@ -399,6 +399,23 @@ func (r *BookFileRepo) PathOwnedByLiveOtherBook(ctx context.Context, path string
 	return owner != excludeBookID, nil
 }
 
+// LiveOwnerOfPath returns the id of the existing book that tracks path, or 0
+// when no live book does. A row left by a deleted book does not count, for the
+// reason PathOwnedByLiveOtherBook gives.
+func (r *BookFileRepo) LiveOwnerOfPath(ctx context.Context, path string) (int64, error) {
+	var owner int64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT bf.book_id FROM book_files bf JOIN books b ON b.id = bf.book_id
+		 WHERE bf.path = ? LIMIT 1`, path).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("book_files live owner lookup: %w", err)
+	}
+	return owner, nil
+}
+
 // ListAllPaths returns every path currently registered in book_files.
 // Used by ScanLibrary to build the set of already-tracked files.
 func (r *BookFileRepo) ListAllPaths(ctx context.Context) ([]string, error) {

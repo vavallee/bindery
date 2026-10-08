@@ -320,7 +320,7 @@ func (i *Importer) resolveManualAuthor(ctx context.Context, cfg ImportConfig, ru
 		Monitored: true,
 		// Import-created authors start with a partial catalogue (#1348).
 		MonitorNewItems:  models.AuthorMonitorNewItemsNone,
-		MetadataProvider: "openlibrary",
+		MetadataProvider: models.AuthorProviderFromForeignID(foreignID),
 	}
 	if i.meta != nil && !cfg.DryRun {
 		if full, err := i.meta.GetAuthor(ctx, foreignID); err == nil && full != nil {
@@ -337,7 +337,7 @@ func (i *Importer) resolveManualAuthor(ctx context.Context, cfg ImportConfig, ru
 			// import-created policy (#1348).
 			author.MonitorNewItems = models.AuthorMonitorNewItemsNone
 			if author.MetadataProvider == "" {
-				author.MetadataProvider = "openlibrary"
+				author.MetadataProvider = models.AuthorProviderFromForeignID(foreignID)
 			}
 		} else if err != nil {
 			slog.Warn("abs import: manual author metadata fetch failed", "foreignID", foreignID, "error", err)
@@ -868,10 +868,12 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 	if strings.TrimSpace(item.ResolvedBookForeignID) != "" || strings.TrimSpace(item.ResolvedBookTitle) != "" {
 		return i.upsertManualBook(ctx, cfg, runID, author, item)
 	}
+	var bookLink *models.ABSProvenance
 	if i.provenance != nil {
 		if link, err := i.provenance.GetByExternal(ctx, cfg.SourceID, item.LibraryID, entityTypeBook, externalID); err != nil {
 			return nil, false, false, metadataMergeResult{}, err
 		} else if link != nil {
+			bookLink = link
 			existing, err := i.books.GetByID(ctx, link.LocalID)
 			if err != nil {
 				return nil, false, false, metadataMergeResult{}, err
@@ -881,7 +883,7 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 					if err := i.recordBookBeforeSnapshot(ctx, runID, cfg, item, externalID, existing, itemOutcomeUpdated, nil); err != nil {
 						return nil, false, false, metadataMergeResult{}, err
 					}
-					if err := i.applyBookFields(ctx, existing, author.ID, item); err != nil {
+					if err := i.applyLinkedBookFields(ctx, existing, author.ID, item, link); err != nil {
 						return nil, false, false, metadataMergeResult{}, err
 					}
 					if err := i.upsertBookProvenance(ctx, cfg, runID, existing.ID, item); err != nil {
@@ -911,7 +913,7 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 			if err := i.recordBookBeforeSnapshot(ctx, runID, cfg, item, externalID, existing, itemOutcomeUpdated, nil); err != nil {
 				return nil, false, false, metadataMergeResult{}, err
 			}
-			if err := i.applyBookFields(ctx, existing, author.ID, item); err != nil {
+			if err := i.applyLinkedBookFields(ctx, existing, author.ID, item, bookLink); err != nil {
 				return nil, false, false, metadataMergeResult{}, err
 			}
 			if err := i.upsertBookProvenance(ctx, cfg, runID, existing.ID, item); err != nil {
@@ -924,6 +926,40 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 		}
 		metaResult, err := i.enrichBook(ctx, cfg, item, author, existing)
 		return &bookUpsertResult{row: existing, matchedBy: "foreign_id"}, false, false, metaResult, err
+	}
+
+	// The item's files, before its title (#1691). Neither key above finds a
+	// book Bindery had before this ABS item was ever imported, such as one it
+	// downloaded itself, or one whose ABS item was re-created. If such a book
+	// already tracks the very file this item points at, it is this item's
+	// book, whatever either side calls it now. Matching only on the title
+	// here used to create a second, wanted row beside the owned one whenever
+	// the titles disagreed ("Chapterhouse: Dune" against "Chapter House
+	// Dune"), and that row could never take the file, so it stayed wanted.
+	//
+	// The book keeps its own author and title. It was not made from this item,
+	// so the item's spelling of either is not a correction, and the rung only
+	// fires when the two authors are the same person (see findBookByItemFiles).
+	if existing, bookAuthor, err := i.findBookByItemFiles(ctx, cfg, author, item); err != nil {
+		return nil, false, false, metadataMergeResult{}, err
+	} else if existing != nil {
+		if !cfg.DryRun {
+			if err := i.recordBookBeforeSnapshot(ctx, runID, cfg, item, externalID, existing, itemOutcomeLinked, nil); err != nil {
+				return nil, false, false, metadataMergeResult{}, err
+			}
+			if err := i.applyBookFieldsKeepingIdentity(ctx, existing, item); err != nil {
+				return nil, false, false, metadataMergeResult{}, err
+			}
+			if err := i.upsertBookProvenanceKeeping(ctx, cfg, runID, existing.ID, item, true); err != nil {
+				return nil, false, false, metadataMergeResult{}, err
+			}
+		}
+		_ = i.recordRunEntity(ctx, runID, cfg, item.LibraryID, item.ItemID, entityTypeBook, externalID, existing.ID, itemOutcomeLinked, map[string]string{"matchedBy": "file_path"})
+		if cfg.DryRun {
+			return &bookUpsertResult{row: existing, matchedBy: "file_path"}, false, true, metadataMergeResult{}, nil
+		}
+		metaResult, err := i.enrichBook(ctx, cfg, item, bookAuthor, existing)
+		return &bookUpsertResult{row: existing, matchedBy: "file_path"}, false, true, metaResult, err
 	}
 
 	match, ambiguous, err := i.findBookByNormalizedTitle(ctx, author.ID, item.Title, item.Series)
@@ -1116,16 +1152,34 @@ func (i *Importer) applyABSFormatFields(book *models.Book, item NormalizedLibrar
 }
 
 func (i *Importer) upsertBookProvenance(ctx context.Context, cfg ImportConfig, runID, bookID int64, item NormalizedLibraryItem) error {
+	return i.upsertBookProvenanceKeeping(ctx, cfg, runID, bookID, item, false)
+}
+
+// upsertBookProvenanceKeeping records the item's link to bookID. keepIdentity
+// marks a link made through a file the book already tracked (#1691); the flag
+// then survives later imports through the same link.
+func (i *Importer) upsertBookProvenanceKeeping(ctx context.Context, cfg ImportConfig, runID, bookID int64, item NormalizedLibraryItem, keepIdentity bool) error {
 	return i.upsertProvenance(ctx, &models.ABSProvenance{
-		SourceID:    cfg.SourceID,
-		LibraryID:   item.LibraryID,
-		EntityType:  entityTypeBook,
-		ExternalID:  item.ItemID,
-		LocalID:     bookID,
-		ItemID:      item.ItemID,
-		FileIDs:     itemFileIDs(item),
-		ImportRunID: ptrInt64(runID),
+		SourceID:     cfg.SourceID,
+		LibraryID:    item.LibraryID,
+		EntityType:   entityTypeBook,
+		ExternalID:   item.ItemID,
+		LocalID:      bookID,
+		ItemID:       item.ItemID,
+		FileIDs:      itemFileIDs(item),
+		ImportRunID:  ptrInt64(runID),
+		KeepIdentity: keepIdentity,
 	})
+}
+
+// applyLinkedBookFields applies the item to a book it is already linked to.
+// A link made by a file match keeps the book's own author and title (#1691);
+// any other link applies the item as it always did.
+func (i *Importer) applyLinkedBookFields(ctx context.Context, book *models.Book, authorID int64, item NormalizedLibraryItem, link *models.ABSProvenance) error {
+	if link != nil && link.KeepIdentity && link.LocalID == book.ID {
+		return i.applyBookFieldsKeepingIdentity(ctx, book, item)
+	}
+	return i.applyBookFields(ctx, book, authorID, item)
 }
 
 // findBookByNormalizedTitle binds an incoming ABS item to an existing local
@@ -1223,9 +1277,20 @@ func sequencesEqual(a, b string) bool {
 }
 
 func (i *Importer) applyBookFields(ctx context.Context, book *models.Book, authorID int64, item NormalizedLibraryItem) error {
+	return i.applyBookFieldsTo(ctx, book, authorID, item, false)
+}
+
+// applyBookFieldsKeepingIdentity is applyBookFields for a book matched by its
+// files rather than by this item (#1691): the author and title stay as they
+// are, and everything else follows the same rules.
+func (i *Importer) applyBookFieldsKeepingIdentity(ctx context.Context, book *models.Book, item NormalizedLibraryItem) error {
+	return i.applyBookFieldsTo(ctx, book, book.AuthorID, item, true)
+}
+
+func (i *Importer) applyBookFieldsTo(ctx context.Context, book *models.Book, authorID int64, item NormalizedLibraryItem, keepTitle bool) error {
 	book.AuthorID = authorID
 	// Locked fields (#1237): a manual edit survives ABS re-imports.
-	if !book.IsFieldLocked(models.BookFieldTitle) {
+	if !keepTitle && !book.IsFieldLocked(models.BookFieldTitle) {
 		book.Title = strings.TrimSpace(item.Title)
 		book.SortTitle = book.Title
 	}

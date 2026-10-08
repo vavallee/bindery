@@ -644,12 +644,12 @@ func (debugSearcher) SearchQuery(_ context.Context, _ []models.Indexer, _ string
 // TestLastSearchDebug_IsScopedToCaller verifies one authenticated user cannot
 // read another user's search audit trail (#1859).
 func TestLastSearchDebug_IsScopedToCaller(t *testing.T) {
-	h := &IndexerHandler{lastDebug: &lastDebugStore{}}
+	h := &IndexerHandler{lastDebug: indexer.NewDebugLog()}
 	const (
 		aliceID int64 = 101
 		bobID   int64 = 202
 	)
-	h.lastDebug.set(aliceID, &indexer.SearchDebug{Query: indexer.SearchQueryDebug{Title: "Alice's private search"}})
+	h.lastDebug.RecordInteractive(aliceID, &indexer.SearchDebug{Query: indexer.SearchQueryDebug{Title: "Alice's private search"}})
 
 	aliceRec := httptest.NewRecorder()
 	aliceReq := httptest.NewRequest(http.MethodGet, "/search/last-debug", nil).

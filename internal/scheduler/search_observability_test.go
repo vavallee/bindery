@@ -215,3 +215,51 @@ func TestEverySearchCallSiteTagsItsOrigin(t *testing.T) {
 			strings.Join(untagged, "\n  "))
 	}
 }
+
+// #2154 point 3: GET /search/last-debug was written only by the interactive
+// search handler, so a scheduled or bulk search never showed up there and the
+// endpoint kept answering with an older interactive search. The scheduler now
+// records each automatic search, tagged with its origin, book and outcome,
+// under the book's owner.
+func TestSearchAndGrabBook_RecordsTheSearchForLastDebug(t *testing.T) {
+	s := newEmptyScheduler(t)
+	log := indexer.NewDebugLog()
+	s.WithSearchDebugLog(log)
+	_ = captureLogs(t)
+
+	ctx := indexer.WithSearchOrigin(context.Background(), indexer.OriginBulk)
+	s.SearchAndGrabBook(ctx, models.Book{
+		ID: 42, Title: "Dune", MediaType: models.MediaTypeEbook, OwnerUserID: 9,
+	})
+
+	var askedFor []int64
+	got := log.Latest(0, false, func(owner int64) bool {
+		askedFor = append(askedFor, owner)
+		return true
+	})
+	if got == nil {
+		t.Fatal("the automatic search left nothing in the debug log")
+	}
+	if got.Origin != "bulk" || got.BookID != 42 || got.Outcome != "no results" || got.Query.Title != "Dune" || got.Query.MediaType != models.MediaTypeEbook {
+		t.Fatalf("recorded %+v, want origin=bulk bookId=42 outcome=\"no results\" for Dune (ebook)", got)
+	}
+	if len(askedFor) != 1 || askedFor[0] != 9 {
+		t.Fatalf("visibility was checked against owners %v, want the book's owner 9", askedFor)
+	}
+}
+
+// A "both" book is two searches, so the log ends on the second format.
+func TestSearchAndGrabBook_RecordsEachFormat(t *testing.T) {
+	s := newEmptyScheduler(t)
+	log := indexer.NewDebugLog()
+	s.WithSearchDebugLog(log)
+	_ = captureLogs(t)
+
+	s.SearchAndGrabBook(indexer.WithSearchOrigin(context.Background(), indexer.OriginScheduled),
+		models.Book{ID: 7, Title: "Dune", MediaType: models.MediaTypeBoth})
+
+	got := log.Latest(0, false, func(int64) bool { return true })
+	if got == nil || got.Origin != "scheduled" || got.Query.MediaType != models.MediaTypeAudiobook {
+		t.Fatalf("latest = %+v, want the scheduled audiobook leg", got)
+	}
+}

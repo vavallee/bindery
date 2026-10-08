@@ -1055,6 +1055,17 @@ func (r *BookRepo) ListFilesForBooks(ctx context.Context, bookIDs []int64) (map[
 	return r.files.ListByBooks(ctx, bookIDs)
 }
 
+// GetByTrackedPath returns the existing book whose book_files hold path, or
+// nil when no live book tracks it. The path is compared exactly; callers pass
+// it cleaned, the way it was recorded.
+func (r *BookRepo) GetByTrackedPath(ctx context.Context, path string) (*models.Book, error) {
+	id, err := r.files.LiveOwnerOfPath(ctx, path)
+	if err != nil || id == 0 {
+		return nil, err
+	}
+	return r.GetByID(ctx, id)
+}
+
 // ListBookFiles returns the book_files rows for a single book.
 func (r *BookRepo) ListBookFiles(ctx context.Context, bookID int64) ([]models.BookFile, error) {
 	return r.files.ListByBook(ctx, bookID)

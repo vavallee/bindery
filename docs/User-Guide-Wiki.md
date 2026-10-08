@@ -791,15 +791,26 @@ like everything else on that tab that names server paths.
   selector stays disabled until you save one.
 
   When a metadata profile restricts languages, Bindery checks Hardcover's
-  editions for each author work in one batched request. A translated default
-  edition is not treated as the language of the whole work: any edition in an
-  allowed language keeps the work, while a work is rejected as non-allowed
-  only when the lookup completes and finds no allowed edition. This filtering
-  evidence does not rewrite the displayed language, which remains the
+  editions for each author work in one batched request. This happens whether
+  Hardcover is the primary provider or supplements OpenLibrary, so the
+  Hardcover works merged into an OpenLibrary author are checked too. A
+  translated default edition is not treated as the language of the whole work:
+  any edition in an allowed language keeps the work, while a work is rejected
+  as non-allowed only when the lookup completes and finds no allowed edition
+  and some edition, default or not, records another language. A work with no
+  language on any edition stays unknown. This filtering evidence does not
+  rewrite the displayed language, which remains the
   provider's preferred/default language or the user's locked value. If the
   evidence is indeterminate or its lookup fails, normal refreshes fall through
   to the existing edition-sampled, author-majority, and scalar language before
-  applying **When book language is unknown**. **Reconcile catalogue** treats a
+  applying **When book language is unknown**. The author-majority fallback is
+  not applied to a work whose title is written in a different script from the
+  author's other titles (a Cyrillic title in an English author's catalogue, for
+  example), so such a work stays unknown. OpenLibrary edition sampling only
+  runs for OpenLibrary works, and takes the language and a missing cover from
+  the edition OpenLibrary features on the work's own page first, falling back
+  to a small sample of its editions (and a cover in the sampled language) only
+  for what that edition lacks. **Reconcile catalogue** treats a
   failed lookup as indeterminate rather than offering the row for removal.
 - **Google Books** (free API key) and **Audnexus/Audible** (audiobook
   narrator, duration, by ASIN) enrich further.
@@ -858,10 +869,12 @@ When metadata is wrong, you have three levels of fix:
 2. **Re-bind** the book, or **relink** the author ("Find better match"), to a
    different provider record when the match itself is wrong.
 3. A **metadata profile** (languages, minimum page count, minimum edition
-   count, skip part books) filters what a catalogue sync lets in. Filling a
-   series skips every metadata profile filter today, the edition count included
-   ([#2208](https://github.com/vavallee/bindery/issues/2208)), so a filled
-   series can still bring in thin works.
+   count, skip part books) filters what a catalogue sync lets in, and what
+   **Fill gaps** or **add all** on a series creates
+   ([#2208](https://github.com/vavallee/bindery/issues/2208)). Adding a single
+   row from a series is an explicit pick and is not filtered. Filters screen
+   books as they arrive; **Reconcile catalogue** on an author applies them to
+   books already stored.
 
 Box sets need no setting. A work whose title plainly names a bundle ("... Box
 Set", "3 Books Set", "Carton of 10 Signed Copies") is dropped from every
@@ -945,9 +958,11 @@ and each new book is monitored or not according to the author's monitor mode.
 - **Opting an author out:** set their **Monitor new items** to *Don't add
   them*. Unmonitored authors and Calibre library authors are not checked
   either.
-- **When a provider struggles:** when OpenLibrary or Hardcover refuses with a
-  rate limit, the pass stops and the remaining authors wait for the next
-  hour. When three authors in a row fail because the provider is down (server
+- **When a provider struggles:** every metadata provider waits and retries
+  when it is told to slow down, honouring the provider's own `Retry-After`,
+  and holds its other requests for that long too. When a provider still
+  refuses with a rate limit after that, the pass stops and the remaining
+  authors wait for the next hour. When three authors in a row fail because the provider is down (server
   errors, network failures, timeouts), the pass stops too, and those three
   are tried again in about six hours rather than a week later. An error about
   one author, such as an author the provider no longer knows, counts that
@@ -1006,7 +1021,8 @@ selection control and cannot be sent for removal.
 slightly different titles — "The Martian" and "Martian", "Dune" and "Dune
 (Unabridged)". Open the author and choose **More → Review duplicates…** to see
 groups of titles that look like the same book. Each group shows which rule
-matched (identical after normalisation, a leading article dropped, an edition
+matched (identical after normalisation, a leading article dropped or filed behind
+a comma as in "Trace of Death, A", an edition
 marker dropped, or one title being the main title or subtitle of the other),
 and each row shows the rules that pulled it in. A main title or subtitle match
 only counts at a colon, bracket or spaced dash, so Asimov's "Foundation" is not

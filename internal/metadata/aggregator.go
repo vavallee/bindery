@@ -856,12 +856,17 @@ func (a *Aggregator) GetBookByISBN(ctx context.Context, isbn string) (*models.Bo
 // Such a record is also not cached, so the next lookup asks the primary again
 // instead of serving the fallback's answer for the life of the cache entry. A
 // cache hit therefore never carries a primary failure.
+//
+// The cache key carries the bound provider scope, so an answer built under one
+// configuration (a Hardcover token, a primary switch) is not served after it
+// changes, and every caller gets its own copy of the cached book (#2869).
 func (a *Aggregator) GetBookByISBNWithOutcome(ctx context.Context, isbn string) (*models.Book, SearchOutcome, error) {
 	isbn = isbnutil.Normalize(isbn)
-	key := "isbn:" + isbn
+	ctx, scope := a.bindCacheProviders(ctx)
+	key := "isbn:" + scope + ":" + isbn
 	primaryName := a.PrimaryProviderName()
-	if cached, ok := a.cache.get(key); ok {
-		return cached.(*models.Book), SearchOutcome{Primary: primaryName}, nil
+	if cached, ok := a.cachedBook(key); ok {
+		return cached, SearchOutcome{Primary: primaryName}, nil
 	}
 
 	var (
@@ -889,7 +894,8 @@ func (a *Aggregator) GetBookByISBNWithOutcome(ctx context.Context, isbn string) 
 		if provider == nil {
 			continue
 		}
-		book, err := provider.GetBookByISBN(ctx, isbn)
+		bound, _ := resolveCacheProvider(ctx, provider)
+		book, err := bound.GetBookByISBN(ctx, isbn)
 		if err != nil {
 			if errors.Is(err, ErrProviderNotConfigured) {
 				skippedUnconfigured = true
@@ -945,16 +951,24 @@ func (a *Aggregator) GetBookByISBNWithOutcome(ctx context.Context, isbn string) 
 	return nil, outcome, nil
 }
 
-// cacheISBNBook fills in a thin ISBN record and, when store is true, caches it
-// under key.
+// cacheISBNBook fills in a thin ISBN record and, when store is true, caches a
+// copy of it under key. A record filled in while a provider or enricher was
+// failing is incomplete, so it goes in the five minute cache rather than the
+// 24 hour one and the failing lookup is retried once per window (#2869).
 func (a *Aggregator) cacheISBNBook(ctx context.Context, key string, book *models.Book, store bool) *models.Book {
+	complete := true
 	if book != nil && len(book.Description) < 50 {
 		// Try fetching the full record from the provider before falling back to
 		// enrichers. ISBN search results are often lightweight (title + ForeignID
 		// only); GetBook returns the canonical description, cover, etc.
 		if book.ForeignID != "" {
 			if provider := a.providerForForeignID(book.ForeignID); provider != nil {
-				if full, err := provider.GetBook(ctx, book.ForeignID); err == nil && full != nil {
+				provider, _ = resolveCacheProvider(ctx, provider)
+				full, err := provider.GetBook(ctx, book.ForeignID)
+				if err != nil && !errors.Is(err, ErrProviderNotConfigured) {
+					complete = false
+				}
+				if err == nil && full != nil {
 					if len(full.Description) > len(book.Description) {
 						book.Description = full.Description
 					}
@@ -974,14 +988,41 @@ func (a *Aggregator) cacheISBNBook(ctx context.Context, key string, book *models
 				}
 			}
 		}
-		if len(book.Description) < 50 {
-			a.enrichBook(ctx, book)
+		if len(book.Description) < 50 && !a.enrichBook(ctx, book) {
+			complete = false
 		}
 	}
 	if store {
-		a.cache.set(key, book)
+		a.storeBook(ctx, key, book, complete)
 	}
 	return book
+}
+
+// cachedBook returns a copy of the book cached under key, from the 24 hour
+// cache or the five minute one. A cached nil (a lookup that found nothing) is
+// a hit too.
+func (a *Aggregator) cachedBook(key string) (*models.Book, bool) {
+	if cached, ok := a.cache.get(key); ok {
+		return cloneBook(cached.(*models.Book)), true
+	}
+	if cached, ok := a.requests.shortCache().get(key); ok {
+		return cloneBook(cached.(*models.Book)), true
+	}
+	return nil, false
+}
+
+// storeBook caches a copy of book under key, so the caller keeps sole use of
+// the pointer it returns. An incomplete book is kept for five minutes only. A
+// cancelled request stores nothing, since what it built may be partial.
+func (a *Aggregator) storeBook(ctx context.Context, key string, book *models.Book, complete bool) {
+	if ctx.Err() != nil {
+		return
+	}
+	if complete {
+		a.cache.set(key, cloneBook(book))
+		return
+	}
+	a.requests.shortCache().set(key, cloneBook(book))
 }
 
 // GetBookFromProvider fetches a single book by foreign ID from the named

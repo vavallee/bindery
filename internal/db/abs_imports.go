@@ -203,7 +203,7 @@ func NewABSProvenanceRepo(db *sql.DB) *ABSProvenanceRepo {
 
 func (r *ABSProvenanceRepo) GetByExternal(ctx context.Context, sourceID, libraryID, entityType, externalID string) (*models.ABSProvenance, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, source_id, library_id, entity_type, external_id, local_id, item_id, format, file_ids_json, import_run_id, created_at, updated_at
+		SELECT id, source_id, library_id, entity_type, external_id, local_id, item_id, format, file_ids_json, import_run_id, keep_identity, created_at, updated_at
 		FROM abs_provenance
 		WHERE source_id = ? AND library_id = ? AND entity_type = ? AND external_id = ?`,
 		sourceID, libraryID, entityType, externalID)
@@ -212,7 +212,7 @@ func (r *ABSProvenanceRepo) GetByExternal(ctx context.Context, sourceID, library
 
 func (r *ABSProvenanceRepo) ListByLocal(ctx context.Context, entityType string, localID int64) ([]models.ABSProvenance, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, source_id, library_id, entity_type, external_id, local_id, item_id, format, file_ids_json, import_run_id, created_at, updated_at
+		SELECT id, source_id, library_id, entity_type, external_id, local_id, item_id, format, file_ids_json, import_run_id, keep_identity, created_at, updated_at
 		FROM abs_provenance
 		WHERE entity_type = ? AND local_id = ?
 		ORDER BY id`, entityType, localID)
@@ -241,17 +241,23 @@ func (r *ABSProvenanceRepo) Upsert(ctx context.Context, p *models.ABSProvenance)
 	if err != nil {
 		return fmt.Errorf("encode abs provenance file ids: %w", err)
 	}
+	// keep_identity sticks while the link names the same book: an import that
+	// follows the link writes false and must not undo how the link was made
+	// (#1691). A link re-pointed at another book takes the new value.
 	_, err = r.db.ExecContext(ctx, `
-		INSERT INTO abs_provenance (source_id, library_id, entity_type, external_id, local_id, item_id, format, file_ids_json, import_run_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO abs_provenance (source_id, library_id, entity_type, external_id, local_id, item_id, format, file_ids_json, import_run_id, keep_identity, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_id, library_id, entity_type, external_id) DO UPDATE SET
+			keep_identity = CASE WHEN abs_provenance.local_id = excluded.local_id
+				THEN MAX(abs_provenance.keep_identity, excluded.keep_identity)
+				ELSE excluded.keep_identity END,
 			local_id      = excluded.local_id,
 			item_id       = excluded.item_id,
 			format        = excluded.format,
 			file_ids_json = excluded.file_ids_json,
 			import_run_id = excluded.import_run_id,
 			updated_at    = excluded.updated_at`,
-		p.SourceID, p.LibraryID, p.EntityType, p.ExternalID, p.LocalID, p.ItemID, p.Format, string(fileIDsJSON), p.ImportRunID, now, now)
+		p.SourceID, p.LibraryID, p.EntityType, p.ExternalID, p.LocalID, p.ItemID, p.Format, string(fileIDsJSON), p.ImportRunID, p.KeepIdentity, now, now)
 	if err != nil {
 		return fmt.Errorf("upsert abs provenance %s/%s/%s: %w", p.EntityType, p.LibraryID, p.ExternalID, err)
 	}
@@ -805,7 +811,7 @@ func scanABSProvenance(scanner absProvenanceScanner, context string) (*models.AB
 		item        models.ABSProvenance
 		fileIDsJSON string
 	)
-	if err := scanner.Scan(&item.ID, &item.SourceID, &item.LibraryID, &item.EntityType, &item.ExternalID, &item.LocalID, &item.ItemID, &item.Format, &fileIDsJSON, &item.ImportRunID, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	if err := scanner.Scan(&item.ID, &item.SourceID, &item.LibraryID, &item.EntityType, &item.ExternalID, &item.LocalID, &item.ItemID, &item.Format, &fileIDsJSON, &item.ImportRunID, &item.KeepIdentity, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}

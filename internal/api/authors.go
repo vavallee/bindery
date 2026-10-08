@@ -683,7 +683,7 @@ func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fal
 			ForeignID:        foreignID,
 			Name:             fallbackName,
 			SortName:         sortName(fallbackName),
-			MetadataProvider: "openlibrary",
+			MetadataProvider: models.AuthorProviderFromForeignID(foreignID),
 		}, nil
 	}
 	author, err := h.meta.GetAuthor(ctx, foreignID)
@@ -693,7 +693,7 @@ func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fal
 			ForeignID:        foreignID,
 			Name:             fallbackName,
 			SortName:         sortName(fallbackName),
-			MetadataProvider: "openlibrary",
+			MetadataProvider: models.AuthorProviderFromForeignID(foreignID),
 		}, nil
 	}
 	if author == nil {
@@ -701,7 +701,7 @@ func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fal
 			ForeignID:        foreignID,
 			Name:             fallbackName,
 			SortName:         sortName(fallbackName),
-			MetadataProvider: "openlibrary",
+			MetadataProvider: models.AuthorProviderFromForeignID(foreignID),
 		}, nil
 	}
 	if strings.TrimSpace(author.Name) == "" {
@@ -805,7 +805,7 @@ func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, auth
 	if provider := strings.TrimSpace(upstream.MetadataProvider); provider != "" {
 		author.MetadataProvider = provider
 	} else {
-		author.MetadataProvider = "openlibrary"
+		author.MetadataProvider = models.AuthorProviderFromForeignID(author.ForeignID)
 	}
 	applyAuthorCreateOptions(author, monitored, monitorMode, monitorLatestCount, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID)
 	author.MonitorNewItems = monitorNewItems
@@ -1977,7 +1977,7 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	// OpenLibrary metadata gap it has no way to tell apart from an actual
 	// foreign-language book.
 	if len(allowedLangs) > 0 {
-		applyAuthorMajorityLanguageFallback(books)
+		applyAuthorMajorityLanguageFallback(books, languageEvidence)
 	}
 
 	// Everything above can take minutes for a prolific author (works fetch,
@@ -3698,7 +3698,17 @@ const authorMajorityLanguageThreshold = 0.9
 // least authorMajorityLanguageMinSample resolved works. Mutates books in
 // place. A no-op when too few works have a resolved language yet, or when
 // no single language dominates strongly enough to trust.
-func applyAuthorMajorityLanguageFallback(books []models.Book) {
+//
+// A blank work whose title is written in a different script from the
+// majority's titles is left blank (#3091): "Рожби на съзнанието" in an English
+// author's catalogue is a translation, and stamping "eng" on it let it past
+// even unknown_language_behavior = fail. It keeps an unknown language, so the
+// profile's unknown-language rule decides it. So is a work its provider has
+// already proved is in a language the profile does not allow: the filter
+// rejects it on that evidence anyway, and the skipped sample should not show
+// it as English. Indeterminate evidence still gets the fallback, as it did
+// before: it means the provider found no edition in any language (#2754).
+func applyAuthorMajorityLanguageFallback(books []models.Book, evidence map[string]metadata.AuthorWorkLanguageEvidence) {
 	counts := make(map[string]int, 4)
 	resolved := 0
 	for _, b := range books {
@@ -3721,10 +3731,18 @@ func applyAuthorMajorityLanguageFallback(books []models.Book) {
 	if float64(majorityCount)/float64(resolved) < authorMajorityLanguageThreshold {
 		return
 	}
+	majorityScript := majorityTitleScript(books, majorityLang)
 	for i := range books {
-		if books[i].Language == "" {
-			books[i].Language = majorityLang
+		if books[i].Language != "" {
+			continue
 		}
+		if found, ok := evidence[strings.TrimSpace(books[i].ForeignID)]; ok && found.State == metadata.AuthorWorkLanguageNotAllowed {
+			continue
+		}
+		if script := titleScript(books[i].Title); script != "" && majorityScript != "" && script != majorityScript {
+			continue
+		}
+		books[i].Language = majorityLang
 	}
 }
 

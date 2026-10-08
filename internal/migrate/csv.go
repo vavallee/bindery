@@ -143,6 +143,7 @@ func ImportCSVAuthors(
 
 	var newlyAdded []*models.Author
 	outage := &primaryOutage{}
+	known := newLibraryAuthors(authors)
 
 	for _, row := range rows {
 		name := row.name
@@ -150,7 +151,7 @@ func ImportCSVAuthors(
 			continue
 		}
 
-		full := resolveAndCreateAuthor(ctx, "csv", name, row.monitored, authors, settings, agg, outage, res)
+		full := resolveAndCreateAuthor(ctx, "csv", name, row.monitored, authors, settings, agg, outage, known, res)
 		if full == nil {
 			continue
 		}

@@ -302,7 +302,8 @@ GET    /api/v1/book/{id}/calibre                  where the book stands in the C
 ```
 GET    /api/v1/series                             list series with their linked books
 GET    /api/v1/series/{id}                        one series
-POST   /api/v1/series/{id}/fill                   add the series' missing books as wanted (admin)
+POST   /api/v1/series/{id}/fill                   add the series' missing books as wanted (admin); answers {queued, skippedByProfile, skippedSplitParts}
+POST   /api/v1/series/{id}/split-parts/unmonitor  unmonitor the split edition parts of books already in the series, listed as splitEditionPartBookIds on the series (admin); answers {unmonitored}
 PATCH  /api/v1/series/{id}                        monitor / unmonitor (admin)
 POST   /api/v1/series/{id}/merge                  merge other series into this one: {"sourceIds":[..],"title":"optional rename","dryRun":true} previews (admin)
 ```
@@ -322,6 +323,35 @@ GET    /api/v1/book/lookup?isbn=… | ?asin=…       single-book lookup by iden
 GET    /api/v1/wanted/missing                     list wanted-but-missing books
 POST   /api/v1/wanted/bulk                        bulk operations on wanted
 ```
+
+Some bulk actions start an automatic search (search and grab) for the books
+they touch, and the response is written before any indexer is asked: the
+searches run on a background pool afterwards, so `"ok": true` means the action
+was accepted, not that a search finished (#2154). These are the actions that
+can search, and when:
+
+* `POST /book/bulk` with `"action": "search"`: each book.
+* `POST /book/bulk` with `"action": "monitor"`: a book that was wanted and
+  becomes monitored, the same immediate search a single book monitor fires.
+* `POST /wanted/bulk` with `"action": "search"`: each book.
+* `POST /author/bulk` with `"action": "search"`: every monitored wanted book of
+  the author.
+
+For those actions an `ok` entry carries one of two extra fields:
+
+* `"queued": true`: at least one search for this id is on its way. It is set
+  only when that search will actually run: a searcher is configured,
+  automatic grabbing is on, and the book still needs a format.
+* `"searchSkipped": "<reason>"`: the action succeeded but no search was
+  queued. The reasons are `no_format_needed` (every format the book wants is
+  already on disk), `nothing_wanted` (an author with no monitored wanted book
+  still needing a format), `auto_grab_disabled` (a monitor while automatic
+  grabbing is off) and `no_searcher`.
+
+A `"action": "search"` while automatic grabbing is off is refused instead,
+with `"ok": false` and `"code": "auto_grab_disabled"` (#2669). Each search
+that runs leaves a `book search finished` line in the log with its outcome,
+and shows in `GET /search/last-debug`.
 
 Metadata results say when they are already in the caller's library (#1227).
 Each `/search/book` and `/book/lookup` result carries `libraryBookId` when its
@@ -351,7 +381,7 @@ DELETE /api/v1/indexer/{id}                       remove (admin)
 POST   /api/v1/indexer/{id}/test                  probe a saved indexer (admin)
 POST   /api/v1/indexer/test                       probe an unsaved config posted in the body (admin)
 GET    /api/v1/indexer/search?q=…                 multi-indexer ad-hoc query
-GET    /api/v1/search/last-debug                  last query plan & raw responses (debugging)
+GET    /api/v1/search/last-debug                  newest search audit trail you can see (debugging; see below)
 
 GET    /api/v1/prowlarr                           list registered Prowlarr servers (admin)
 GET    /api/v1/prowlarr/{id}                      fetch one (admin)
@@ -365,6 +395,28 @@ GET    /api/v1/rootfolder                         list library roots
 POST   /api/v1/rootfolder                         add a new root (admin)
 DELETE /api/v1/rootfolder/{id}                    remove (admin)
 ```
+
+`GET /search/last-debug` returns the newest search audit trail the caller may
+see: their own latest search from a book page's Search button, or the latest
+automatic search (scheduled sweep, bulk search, series fill and so on) of a
+book they can see, whichever ran last. A request made with the API key sees
+every user's interactive searches too, so a script can read the search a user
+just ran in the browser. A signed in user never sees another user's
+interactive search. The payload says which search it is (#2154):
+
+* `origin`: `interactive` for the Search button, otherwise what started the
+  automatic search: `scheduled`, `bulk`, `series-fill`, `author`, `book`,
+  `add`, `recommendation`, `list-sync`, `requeue` or `unknown`.
+* `bookId`: the book searched for.
+* `userId`: the signed in user who ran an interactive search; absent for an
+  automatic one.
+* `outcome`: an automatic search's result, in the same words as the
+  `book search finished` log line (`grabbed`, `no results`,
+  `nothing approved` and so on).
+
+Check `bookId` and `startedAt` before reading the rest: an automatic search
+that ran after yours will replace it as the newest. 404 means nothing has run
+since startup.
 
 #### Quality profiles
 

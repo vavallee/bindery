@@ -7,16 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/httpsec"
+	"github.com/vavallee/bindery/internal/metadata/providererr"
+	"github.com/vavallee/bindery/internal/metadata/providerhttp"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
-	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const baseURL = "https://www.googleapis.com/books/v1"
@@ -26,6 +27,9 @@ const baseURL = "https://www.googleapis.com/books/v1"
 type Client struct {
 	http   *http.Client
 	apiKey string // optional, increases quota from shared pool to 1000/day
+	// gate holds every request this client makes while Google Books is
+	// refusing. Nil (a zero value Client in tests) holds each call on its own.
+	gate *providerhttp.Gate
 }
 
 // New creates a Google Books client. apiKey can be empty for basic access.
@@ -33,6 +37,7 @@ func New(apiKey string) *Client {
 	return &Client{
 		http:   &http.Client{Timeout: 10 * time.Second, Transport: httpsec.DefaultProxyTransport()},
 		apiKey: apiKey,
+		gate:   providerhttp.NewGate(),
 	}
 }
 
@@ -151,29 +156,58 @@ func (c *Client) volumeToBook(item volumeItem) models.Book {
 	return b
 }
 
+// getJSON goes through the request loop every HTTP metadata provider shares
+// (package providerhttp), so a 429 is retried with Retry-After and backoff
+// instead of failing the lookup outright (#2369), and a refusal holds every
+// request this client makes rather than letting the others keep spending it.
+//
+// A quota that has run out for the day is the exception. Google Books reports
+// it as a 403 or 429 whose reason is dailyLimitExceeded or quotaExceeded, and
+// retrying it only spends more requests on an answer that will not change
+// until tomorrow, so it comes back at once, marked as a rate limit.
+//
+// Redact is set because the API key rides in the query string: a transport
+// error wraps a *url.Error whose message embeds the full URL, so it is
+// flattened to its redacted text before anything can log it (#1144).
 func (c *Client) getJSON(ctx context.Context, rawURL string, target interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	resp, err := providerhttp.Do(ctx, c.http, c.gate, providerhttp.Request{
+		URL:    rawURL,
+		Redact: true,
+		Final:  isQuotaExhausted,
+	})
 	if err != nil {
+		var status *providerhttp.StatusError
+		if errors.As(err, &status) && status.Final {
+			return &quotaExhaustedError{err: status}
+		}
 		return err
 	}
-	req.Header.Set("User-Agent", useragent.Get())
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		// A transport error wraps a *url.Error whose Error() embeds the full
-		// request URL, which carries the API key (?key=...). Redact it so the
-		// key cannot leak through any path that stringifies this error (#1144).
-		return errors.New(httpsec.RedactSecrets(err.Error()))
-	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, httpsec.RedactSecrets(string(body)))
-	}
-
 	return json.NewDecoder(resp.Body).Decode(target)
 }
+
+// quotaReasonRe matches the reason Google's API error envelope gives for a
+// quota that has run out for the day, as opposed to a per minute throttle
+// ("rateLimitExceeded", "userRateLimitExceeded"), which is worth retrying.
+var quotaReasonRe = regexp.MustCompile(`"reason"\s*:\s*"(dailyLimitExceeded|quotaExceeded)"`)
+
+// isQuotaExhausted reports whether a 403 or 429 is the daily quota refusal.
+func isQuotaExhausted(code int, body []byte) bool {
+	if code != http.StatusForbidden && code != http.StatusTooManyRequests {
+		return false
+	}
+	return quotaReasonRe.Match(body)
+}
+
+// quotaExhaustedError marks a daily quota refusal as a rate limit whatever
+// its status, so scheduled work stops asking instead of walking its queue.
+type quotaExhaustedError struct{ err error }
+
+func (e *quotaExhaustedError) Error() string {
+	return "google books daily quota exhausted: " + e.err.Error()
+}
+func (e *quotaExhaustedError) Unwrap() error        { return e.err }
+func (e *quotaExhaustedError) Is(target error) bool { return target == providererr.ErrRateLimited }
 
 // sortName delegates to textutil.SortName, the same way the openlibrary and
 // hardcover clients do, so all three providers stamp the same sort form on an

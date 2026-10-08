@@ -6,15 +6,15 @@ package audnex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/httpsec"
-	"github.com/vavallee/bindery/internal/useragent"
+	"github.com/vavallee/bindery/internal/metadata/providerhttp"
 )
 
 const defaultBaseURL = "https://api.audnex.us"
@@ -25,6 +25,8 @@ type Client struct {
 	baseURL string
 	http    *http.Client
 	region  string
+	// gate holds every request this client makes while audnex is refusing.
+	gate *providerhttp.Gate
 }
 
 // New returns an audnex client. Region defaults to "us" — other supported
@@ -37,6 +39,7 @@ func New(region string) *Client {
 		baseURL: defaultBaseURL,
 		http:    &http.Client{Timeout: 15 * time.Second, Transport: httpsec.DefaultProxyTransport()},
 		region:  region,
+		gate:    providerhttp.NewGate(),
 	}
 }
 
@@ -68,22 +71,23 @@ func (c *Client) GetBook(ctx context.Context, asin string) (*Book, error) {
 		return nil, fmt.Errorf("asin required")
 	}
 	u := fmt.Sprintf("%s/books/%s?region=%s", c.baseURL, url.PathEscape(asin), url.QueryEscape(c.region))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	// The shared provider request loop retries a 429 or 5xx with Retry-After
+	// and backoff, and holds every audnex request while one is refused
+	// (#2369).
+	resp, err := providerhttp.Do(ctx, c.http, c.gate, providerhttp.Request{
+		URL:  u,
+		Pass: []int{http.StatusNotFound},
+	})
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", useragent.Get())
-	resp, err := c.http.Do(req)
-	if err != nil {
+		var status *providerhttp.StatusError
+		if errors.As(err, &status) {
+			return nil, fmt.Errorf("audnex GET %s: %w", u, err)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("audnex GET %s: HTTP %d: %s", u, resp.StatusCode, string(body))
 	}
 	var b Book
 	if err := json.NewDecoder(resp.Body).Decode(&b); err != nil {
