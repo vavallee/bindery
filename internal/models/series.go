@@ -20,6 +20,10 @@ type Series struct {
 	// Joined data
 	Books         []SeriesBook         `json:"books,omitempty"`
 	HardcoverLink *SeriesHardcoverLink `json:"hardcoverLink,omitempty"`
+	// SplitEditionPartBookIDs lists the books in this series that are split
+	// edition parts of a whole the library already has (#3048), filled by the
+	// series API only. Fill and the wanted sweep skip them.
+	SplitEditionPartBookIDs []int64 `json:"splitEditionPartBookIds,omitempty"`
 }
 
 type SeriesHardcoverLink struct {

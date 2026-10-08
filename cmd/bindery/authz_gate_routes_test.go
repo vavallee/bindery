@@ -37,6 +37,38 @@ func (h *stubAuthzGateHandler) Delete(w http.ResponseWriter, _ *http.Request) {
 func (h *stubAuthzGateHandler) BulkDelete(w http.ResponseWriter, _ *http.Request) {
 	h.record("bulk-delete", w)
 }
+func (h *stubAuthzGateHandler) FilteredBooks(w http.ResponseWriter, _ *http.Request) {
+	h.record("filtered-books", w)
+}
+func (h *stubAuthzGateHandler) UnmonitorFilteredBooks(w http.ResponseWriter, _ *http.Request) {
+	h.record("unmonitor-filtered-books", w)
+}
+
+// metadataProfileLibraryRoutes apply a profile to books already stored
+// (#2208). The preview lists wanted books across every library and the
+// action changes them, so both are admin only.
+var metadataProfileLibraryRoutes = []authzGateRoute{
+	{name: "preview filtered books", method: http.MethodGet, path: "/metadataprofile/3/filtered-books", called: "filtered-books"},
+	{name: "unmonitor filtered books", method: http.MethodPost, path: "/metadataprofile/3/filtered-books/unmonitor", called: "unmonitor-filtered-books"},
+}
+
+func TestMetadataProfileLibraryRoutesRequireAdmin(t *testing.T) {
+	register := func(r chi.Router, h *stubAuthzGateHandler) { registerMetadataProfileLibraryRoutes(r, h) }
+	for _, rt := range metadataProfileLibraryRoutes {
+		t.Run("user "+rt.name, func(t *testing.T) {
+			rec, h := serveAuthzGateRoute(t, register, rt, "user")
+			if rec.Code != http.StatusForbidden || len(h.called) != 0 {
+				t.Fatalf("status = %d called = %v; want 403 and no handler call", rec.Code, h.called)
+			}
+		})
+		t.Run("admin "+rt.name, func(t *testing.T) {
+			rec, h := serveAuthzGateRoute(t, register, rt, "admin")
+			if rec.Code != http.StatusNoContent || len(h.called) != 1 || h.called[0] != rt.called {
+				t.Fatalf("status = %d called = %v; want 204 [%s]", rec.Code, h.called, rt.called)
+			}
+		})
+	}
+}
 
 type authzGateRoute struct {
 	name   string

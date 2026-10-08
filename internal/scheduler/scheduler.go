@@ -1470,10 +1470,20 @@ func (s *Scheduler) wantedSearchQueue(ctx context.Context) []wantedSearch {
 	}
 
 	inFlight := s.inFlightFormatsByBook(ctx)
+	splitParts := s.coveredSplitEditionParts(ctx)
 
 	searchQueue := make([]wantedSearch, 0, len(wanted))
 	for _, book := range wanted {
 		if book.Excluded {
+			continue
+		}
+		// A split edition part of a book the library already has or is
+		// already looking for is not a missing volume (#3048). Searching it
+		// downloads text that is already on the shelf. The row stays as it
+		// is; the series page offers to unmonitor it.
+		if whole, ok := splitParts[book.ID]; ok {
+			slog.Debug("skipping wanted search: the book is a split edition part of a book already in the library",
+				"book", book.Title, "bookID", book.ID, "wholeBookID", whole)
 			continue
 		}
 		held := inFlight[book.ID]
@@ -1513,6 +1523,22 @@ func (s *Scheduler) wantedSearchQueue(ctx context.Context) []wantedSearch {
 		searchQueue = append(searchQueue, wantedSearch{book: book, formats: formats})
 	}
 	return searchQueue
+}
+
+// coveredSplitEditionParts maps the id of every book that is a split edition
+// part of a whole already in the library to that whole's id (#3048). A lookup
+// failure skips nothing, so a broken query can never stop the sweep.
+func (s *Scheduler) coveredSplitEditionParts(ctx context.Context) map[int64]int64 {
+	parts, err := s.books.ListCoveredSplitEditionParts(ctx, 0)
+	if err != nil {
+		slog.Warn("failed to list split edition parts; searching every wanted book", "error", err)
+		return nil
+	}
+	covered := make(map[int64]int64, len(parts))
+	for _, p := range parts {
+		covered[p.BookID] = p.WholeBookID
+	}
+	return covered
 }
 
 // inFlightFormatsByBook maps a book id to the set of media types that already

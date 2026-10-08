@@ -13,7 +13,8 @@ import (
 )
 
 type MetadataProfileHandler struct {
-	repo *db.MetadataProfileRepo
+	repo  *db.MetadataProfileRepo
+	books *db.BookRepo
 }
 
 func NewMetadataProfileHandler(repo *db.MetadataProfileRepo) *MetadataProfileHandler {

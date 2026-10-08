@@ -95,6 +95,10 @@ func (h *stubSeriesRouteHandler) HardcoverDiff(w http.ResponseWriter, _ *http.Re
 	h.record("hardcover-diff", w)
 }
 
+func (h *stubSeriesRouteHandler) UnmonitorSplitEditionParts(w http.ResponseWriter, _ *http.Request) {
+	h.record("unmonitor-split-edition-parts", w)
+}
+
 func TestSeriesMutationRoutesRequireAdmin(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -110,6 +114,7 @@ func TestSeriesMutationRoutesRequireAdmin(t *testing.T) {
 		{name: "remove book", method: http.MethodDelete, path: "/series/1/books/2"},
 		{name: "set primary book", method: http.MethodPut, path: "/series/1/books/2/primary"},
 		{name: "fill series", method: http.MethodPost, path: "/series/1/fill"},
+		{name: "unmonitor split edition parts", method: http.MethodPost, path: "/series/1/split-parts/unmonitor"},
 		{name: "auto link hardcover", method: http.MethodPost, path: "/series/1/hardcover-link/auto"},
 		{name: "put hardcover link", method: http.MethodPut, path: "/series/1/hardcover-link"},
 		{name: "delete hardcover link", method: http.MethodDelete, path: "/series/1/hardcover-link"},
