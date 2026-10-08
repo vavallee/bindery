@@ -868,10 +868,12 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 	if strings.TrimSpace(item.ResolvedBookForeignID) != "" || strings.TrimSpace(item.ResolvedBookTitle) != "" {
 		return i.upsertManualBook(ctx, cfg, runID, author, item)
 	}
+	var bookLink *models.ABSProvenance
 	if i.provenance != nil {
 		if link, err := i.provenance.GetByExternal(ctx, cfg.SourceID, item.LibraryID, entityTypeBook, externalID); err != nil {
 			return nil, false, false, metadataMergeResult{}, err
 		} else if link != nil {
+			bookLink = link
 			existing, err := i.books.GetByID(ctx, link.LocalID)
 			if err != nil {
 				return nil, false, false, metadataMergeResult{}, err
@@ -881,7 +883,7 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 					if err := i.recordBookBeforeSnapshot(ctx, runID, cfg, item, externalID, existing, itemOutcomeUpdated, nil); err != nil {
 						return nil, false, false, metadataMergeResult{}, err
 					}
-					if err := i.applyBookFields(ctx, existing, author.ID, item); err != nil {
+					if err := i.applyLinkedBookFields(ctx, existing, author.ID, item, link); err != nil {
 						return nil, false, false, metadataMergeResult{}, err
 					}
 					if err := i.upsertBookProvenance(ctx, cfg, runID, existing.ID, item); err != nil {
@@ -911,7 +913,7 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 			if err := i.recordBookBeforeSnapshot(ctx, runID, cfg, item, externalID, existing, itemOutcomeUpdated, nil); err != nil {
 				return nil, false, false, metadataMergeResult{}, err
 			}
-			if err := i.applyBookFields(ctx, existing, author.ID, item); err != nil {
+			if err := i.applyLinkedBookFields(ctx, existing, author.ID, item, bookLink); err != nil {
 				return nil, false, false, metadataMergeResult{}, err
 			}
 			if err := i.upsertBookProvenance(ctx, cfg, runID, existing.ID, item); err != nil {
@@ -948,7 +950,7 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 			if err := i.applyBookFieldsKeepingIdentity(ctx, existing, item); err != nil {
 				return nil, false, false, metadataMergeResult{}, err
 			}
-			if err := i.upsertBookProvenance(ctx, cfg, runID, existing.ID, item); err != nil {
+			if err := i.upsertBookProvenanceKeeping(ctx, cfg, runID, existing.ID, item, true); err != nil {
 				return nil, false, false, metadataMergeResult{}, err
 			}
 		}
@@ -1150,16 +1152,34 @@ func (i *Importer) applyABSFormatFields(book *models.Book, item NormalizedLibrar
 }
 
 func (i *Importer) upsertBookProvenance(ctx context.Context, cfg ImportConfig, runID, bookID int64, item NormalizedLibraryItem) error {
+	return i.upsertBookProvenanceKeeping(ctx, cfg, runID, bookID, item, false)
+}
+
+// upsertBookProvenanceKeeping records the item's link to bookID. keepIdentity
+// marks a link made through a file the book already tracked (#1691); the flag
+// then survives later imports through the same link.
+func (i *Importer) upsertBookProvenanceKeeping(ctx context.Context, cfg ImportConfig, runID, bookID int64, item NormalizedLibraryItem, keepIdentity bool) error {
 	return i.upsertProvenance(ctx, &models.ABSProvenance{
-		SourceID:    cfg.SourceID,
-		LibraryID:   item.LibraryID,
-		EntityType:  entityTypeBook,
-		ExternalID:  item.ItemID,
-		LocalID:     bookID,
-		ItemID:      item.ItemID,
-		FileIDs:     itemFileIDs(item),
-		ImportRunID: ptrInt64(runID),
+		SourceID:     cfg.SourceID,
+		LibraryID:    item.LibraryID,
+		EntityType:   entityTypeBook,
+		ExternalID:   item.ItemID,
+		LocalID:      bookID,
+		ItemID:       item.ItemID,
+		FileIDs:      itemFileIDs(item),
+		ImportRunID:  ptrInt64(runID),
+		KeepIdentity: keepIdentity,
 	})
+}
+
+// applyLinkedBookFields applies the item to a book it is already linked to.
+// A link made by a file match keeps the book's own author and title (#1691);
+// any other link applies the item as it always did.
+func (i *Importer) applyLinkedBookFields(ctx context.Context, book *models.Book, authorID int64, item NormalizedLibraryItem, link *models.ABSProvenance) error {
+	if link != nil && link.KeepIdentity && link.LocalID == book.ID {
+		return i.applyBookFieldsKeepingIdentity(ctx, book, item)
+	}
+	return i.applyBookFields(ctx, book, authorID, item)
 }
 
 // findBookByNormalizedTitle binds an incoming ABS item to an existing local

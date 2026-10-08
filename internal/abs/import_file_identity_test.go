@@ -133,6 +133,38 @@ func TestImporter_MatchesExistingBookByTrackedFile(t *testing.T) {
 	}
 }
 
+// TestImporter_FileMatchKeepsIdentityOnLaterImports: the first import links
+// the item through the file and records the link; every later import finds
+// the book through that link instead. Those imports must keep the book's own
+// author and title too, not only the first one.
+func TestImporter_FileMatchKeepsIdentityOnLaterImports(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFileIdentityFixture(t, models.MediaTypeEbook, "Frank Herbert", "Frank Herbert", noOwner, noOwner)
+
+	for run := 1; run <= 3; run++ {
+		runSingleABSImport(t, f.env.importer, f.item)
+		books, err := f.env.books.ListIncludingExcluded(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(books) != 1 {
+			t.Fatalf("run %d: books = %d, want 1", run, len(books))
+		}
+		if got := books[0]; got.ID != f.owned.ID || got.Title != "Chapterhouse: Dune" || got.AuthorID != f.authorID {
+			t.Fatalf("run %d: book = id %d %q author %d, want id %d %q author %d",
+				run, got.ID, got.Title, got.AuthorID, f.owned.ID, "Chapterhouse: Dune", f.authorID)
+		}
+		links, err := f.env.provenance.ListByLocal(ctx, entityTypeBook, f.owned.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(links) != 1 || !links[0].KeepIdentity {
+			t.Fatalf("run %d: provenance = %+v, want one link marked as a file match", run, links)
+		}
+	}
+}
+
 // TestImporter_FileMatchRequiresTheSameAuthor: a shared file does not let an
 // item credited to Frank Herbert claim a book by Brian Herbert. The book must
 // keep its author, title and provenance.
