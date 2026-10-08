@@ -93,6 +93,36 @@ func TestGetAuthorWorkLanguageEvidence_BlankLanguageResolvedFromKnownEditions(t 
 	}
 }
 
+// The allowed-language query matches on code2 and code3 only, so an edition
+// whose language Hardcover records by name ("English", no codes) is missed by
+// it. The follow up normalises the name and must not then reject the work for
+// being in the very language the profile allows.
+func TestGetAuthorWorkLanguageEvidence_KnownLanguageThatIsAllowedIsNotRejected(t *testing.T) {
+	var knownRequests []map[string]interface{}
+	c := knownLanguageEvidenceClient(t,
+		nil,
+		[]map[string]interface{}{
+			evidenceEdition(1, "named-english", "", "", "English"),
+			evidenceEdition(2, "o-ponto-azul-claro", "pt", "por", "Portuguese"),
+		},
+		http.StatusOK, &knownRequests)
+
+	got, err := c.GetAuthorWorkLanguageEvidence(context.Background(), []models.Book{
+		{ForeignID: "hc:named-english"},
+		{ForeignID: "hc:o-ponto-azul-claro"},
+	}, []string{"eng"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]metadata.AuthorWorkLanguageEvidence{
+		"hc:named-english":      {State: metadata.AuthorWorkLanguageAllowed, Language: "eng"},
+		"hc:o-ponto-azul-claro": {State: metadata.AuthorWorkLanguageNotAllowed, Language: "por"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("evidence = %#v, want %#v", got, want)
+	}
+}
+
 // The follow up is best effort: if it fails, the works it would have resolved
 // stay indeterminate and the allowed-language evidence still stands.
 func TestGetAuthorWorkLanguageEvidence_KnownLanguageLookupFailureKeepsEvidence(t *testing.T) {

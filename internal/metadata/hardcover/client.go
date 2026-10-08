@@ -457,7 +457,7 @@ func (c *Client) GetAuthorWorkLanguageEvidence(ctx context.Context, books []mode
 		}
 		evidence[key] = metadata.AuthorWorkLanguageEvidence{State: metadata.AuthorWorkLanguageAllowed, Language: language}
 	}
-	c.resolveBlankWorkLanguages(ctx, books, evidence)
+	c.resolveBlankWorkLanguages(ctx, books, allowed, evidence)
 	return evidence, nil
 }
 
@@ -466,15 +466,16 @@ func (c *Client) GetAuthorWorkLanguageEvidence(ctx context.Context, books []mode
 // sets a work's language from its default ebook or audio edition, which is
 // usually blank, so a translation such as "O Ponto Azul-Claro" arrived with no
 // language, stayed indeterminate, and the unknown-language default let it in
-// (#3091). The query above has already proved none of its editions is in an
-// allowed language; if any edition records a language at all, that language is
-// a non-allowed one, and the work is rejected on it. A work with no language
-// recorded on any edition stays indeterminate.
+// (#3091). The query above found none of its editions by an allowed language
+// code, so an edition that records a language here is checked against the
+// profile: a non-allowed language rejects the work, and an allowed one (a
+// language Hardcover records by name only, which the code match misses) keeps
+// it. A work with no language recorded on any edition stays indeterminate.
 //
 // One bounded distinct_on query, like the one above. It is best effort: a
 // failure leaves the works indeterminate, which is what they were before it
 // ran, rather than discarding the evidence already established.
-func (c *Client) resolveBlankWorkLanguages(ctx context.Context, books []models.Book, evidence map[string]metadata.AuthorWorkLanguageEvidence) {
+func (c *Client) resolveBlankWorkLanguages(ctx context.Context, books []models.Book, allowed []string, evidence map[string]metadata.AuthorWorkLanguageEvidence) {
 	var slugs []string
 	bookIDs := make([]int, 0)
 	asked := make(map[string]bool)
@@ -537,7 +538,14 @@ func (c *Client) resolveBlankWorkLanguages(ctx context.Context, books []models.B
 		if language == "" {
 			continue
 		}
-		evidence[key] = metadata.AuthorWorkLanguageEvidence{State: metadata.AuthorWorkLanguageNotAllowed, Language: language}
+		state := metadata.AuthorWorkLanguageNotAllowed
+		if models.IsLanguageAllowed(language, allowed, true) {
+			// The allowed query matches code2 and code3 only, while this
+			// normalises the language name too, so an edition recorded as
+			// "English" with no codes lands here. It is an allowed edition.
+			state = metadata.AuthorWorkLanguageAllowed
+		}
+		evidence[key] = metadata.AuthorWorkLanguageEvidence{State: state, Language: language}
 	}
 }
 
