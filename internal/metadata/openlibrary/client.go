@@ -275,6 +275,18 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 
 	if len(resp.Covers) > 0 && resp.Covers[0] > 0 {
 		b.ImageURL = fmt.Sprintf("%s/b/id/%d-L.jpg", coverURL, resp.Covers[0])
+	} else if resp.CoverEdition != nil {
+		// A work record often has no cover of its own while the edition its
+		// page features does (#1779). One request, only in that case, and
+		// best effort: a failure leaves the cover to the enrichers as before.
+		if key := strings.TrimPrefix(strings.TrimSpace(resp.CoverEdition.Key), "/books/"); key != "" {
+			var featured editionEntry
+			if err := c.getJSON(ctx, fmt.Sprintf("%s/books/%s.json", baseURL, key), &featured); err != nil {
+				slog.Debug("openlibrary: cover edition fetch failed", "work", foreignID, "edition", key, "error", err)
+			} else {
+				b.ImageURL = firstEditionCover([]editionEntry{featured})
+			}
+		}
 	}
 
 	// Parse series membership.
@@ -917,9 +929,16 @@ func ownsWork(book models.Book) bool {
 // one. A work-level cover, which the work record carries for free, is
 // preferred to a sampled one.
 //
-// So a work with a featured edition that carries both costs two requests
-// instead of the one editions sample it used to, and every other work costs
-// the work record on top of that sample.
+// Cost, against the single editions sample this used to make: up to two
+// extra requests per sampled work.
+//   - featured edition with both a language and a cover: work record and
+//     featured edition, two requests (the sample is skipped).
+//   - featured edition missing either one: work record, featured edition and
+//     the sample, three requests.
+//   - no featured edition, or the work record fails: work record and the
+//     sample, two requests.
+//
+// Each is made once per work per run and shared by both derivations.
 func (c *Client) sampleWorkEditions(ctx context.Context, workID string) workEditionSample {
 	if sample, ok := c.cachedWorkSample(workID); ok {
 		return sample
