@@ -65,6 +65,9 @@ func profileSeriesFixture(t *testing.T, catalog *metadata.SeriesCatalog, searche
 	}
 	p.SkipPartBooks = true
 	p.SkipMissingDate = true
+	// Hardcover series entries carry no language. Under "unknown fails" a
+	// fill must still create them; the language is resolved later.
+	p.UnknownLanguageBehavior = models.UnknownLanguageFail
 	if err := profiles.Update(ctx, p); err != nil {
 		t.Fatal(err)
 	}
@@ -105,6 +108,20 @@ func TestSeriesFillAppliesMetadataProfileFilters(t *testing.T) {
 	if err := seriesRepo.LinkBook(ctx, series.ID, boxSet.ID, "4.5", true); err != nil {
 		t.Fatal(err)
 	}
+	// An undated novella the user added and monitored by hand. It is already
+	// being sought, so fill queues it as before and does not report it as
+	// skipped on every run.
+	handPicked := &models.Book{
+		ForeignID: "hc:the-churn", AuthorID: author.ID, Title: "The Churn", SortTitle: "The Churn",
+		Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeEbook,
+		Genres: []string{}, MetadataProvider: "hardcover",
+	}
+	if err := bookRepo.Create(ctx, handPicked); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, series.ID, handPicked.ID, "3.5", true); err != nil {
+		t.Fatal(err)
+	}
 
 	rec := httptest.NewRecorder()
 	h.Fill(rec, withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/series/1/fill", nil), "id", strconv.FormatInt(series.ID, 10)))
@@ -141,8 +158,8 @@ func TestSeriesFillAppliesMetadataProfileFilters(t *testing.T) {
 	if stored.Monitored {
 		t.Error("fill re-monitored a stored box set the metadata profile filters out")
 	}
-	if body["queued"] != 2 || body["skippedByProfile"] != 3 {
-		t.Errorf("response = %+v, want queued 2 and skippedByProfile 3", body)
+	if body["queued"] != 3 || body["skippedByProfile"] != 3 {
+		t.Errorf("response = %+v, want queued 3 (two created, the hand picked novella) and skippedByProfile 3", body)
 	}
 
 	// The per row add names one book on purpose and is not screened.

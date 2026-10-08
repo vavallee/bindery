@@ -743,12 +743,20 @@ func (h *SeriesHandler) Fill(w http.ResponseWriter, r *http.Request) {
 			// The same filters an author sync applies, judged from the
 			// stored row (#2208). Without this, a fill put the very box
 			// sets the profile screens out back on Wanted and monitored,
-			// including ones the user had unmonitored by hand.
-			if reason := storedBookProfileFilter(h.profileForAuthor(r.Context(), profiles, b.AuthorID), &b); reason != "" {
-				skippedByProfile++
-				slog.Debug("series fill: not queueing a book the metadata profile filters out",
-					"seriesID", id, "bookID", b.ID, "title", b.Title, "filter", reason)
-				continue
+			// including ones the user had unmonitored by hand. Only an
+			// unmonitored row is screened: a monitored one is already
+			// being sought, very possibly because the user added or
+			// monitored it on purpose, and there is no stored signal that
+			// tells the two apart. Leaving it queued changes nothing the
+			// wanted sweep would not do anyway, and it is not reported as
+			// skipped on every fill.
+			if !b.Monitored {
+				if reason := storedBookProfileFilter(h.profileForAuthor(r.Context(), profiles, b.AuthorID), &b); reason != "" {
+					skippedByProfile++
+					slog.Debug("series fill: not queueing a book the metadata profile filters out",
+						"seriesID", id, "bookID", b.ID, "title", b.Title, "filter", reason)
+					continue
+				}
 			}
 		}
 		didQueue, queuedBook, err := h.queueSeriesBook(r.Context(), b)

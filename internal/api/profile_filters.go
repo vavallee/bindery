@@ -79,6 +79,7 @@ func storedBookProfileFilter(p *models.MetadataProfile, b *models.Book) string {
 //     list rejects is checked once more against the provider's edition
 //     evidence, which the author sync also consults, so a work whose display
 //     language is foreign but which has an allowed language edition is kept.
+//     A blank language, or an evidence lookup that fails, passes.
 //   - MinPages and SkipMissingISBN from an edition lookup, made only when the
 //     profile turns either on. A failed lookup enforces neither.
 func catalogBookProfileFilter(ctx context.Context, meta *metadata.Aggregator, p *models.MetadataProfile, b *models.Book) string {
@@ -91,10 +92,22 @@ func catalogBookProfileFilter(ctx context.Context, meta *metadata.Aggregator, p 
 	if p.MinEditionCount > 0 && b.EditionCount > 0 && b.EditionCount < p.MinEditionCount {
 		return profileFilterMinEditionCount
 	}
-	if allowed := models.ParseAllowedLanguages(p.AllowedLanguages); len(allowed) > 0 {
-		unknownFail := p.UnknownLanguageBehavior == models.UnknownLanguageFail
-		if !models.IsLanguageAllowed(b.Language, allowed, unknownFail) && !languageEvidenceAllows(ctx, meta, b, allowed) {
-			return profileFilterLanguage
+	// A blank language is unknown and passes here whatever the profile's
+	// unknown language behaviour says. Hardcover series catalogue entries
+	// carry no language at all, so honouring "fail" would reject every book
+	// of every series fill; the language is resolved later, on hydration or
+	// import. Same unknown passes rule as MinPages and SkipMissingISBN.
+	if allowed := models.ParseAllowedLanguages(p.AllowedLanguages); len(allowed) > 0 && strings.TrimSpace(b.Language) != "" {
+		if !models.IsLanguageAllowed(b.Language, allowed, false) {
+			ok, err := languageEvidenceAllows(ctx, meta, b, allowed)
+			if err != nil {
+				// No answer is not a "no": a lookup that failed (or was
+				// held back) does not reject the book.
+				slog.Debug("language evidence lookup failed; not enforcing the language filter for this book",
+					"title", b.Title, "foreignId", b.ForeignID, "error", err)
+			} else if !ok {
+				return profileFilterLanguage
+			}
 		}
 	}
 	if (p.MinPages > 0 || p.SkipMissingISBN) && meta != nil && b.ForeignID != "" {
@@ -115,17 +128,18 @@ func catalogBookProfileFilter(ctx context.Context, meta *metadata.Aggregator, p 
 }
 
 // languageEvidenceAllows asks the provider whether any edition of b is in an
-// allowed language. Only a definitive "allowed" answer counts; an error or an
-// indeterminate answer leaves the scalar language's verdict standing.
-func languageEvidenceAllows(ctx context.Context, meta *metadata.Aggregator, b *models.Book, allowed []string) bool {
+// allowed language. Only a definitive "allowed" answer counts as true; an
+// indeterminate answer, or a primary provider with no evidence to offer,
+// leaves the book's own language verdict standing. A failed lookup is
+// returned as an error so the caller can treat it as unknown.
+func languageEvidenceAllows(ctx context.Context, meta *metadata.Aggregator, b *models.Book, allowed []string) (bool, error) {
 	if meta == nil || b.ForeignID == "" {
-		return false
+		return false, nil
 	}
 	evidence, err := meta.GetAuthorWorkLanguageEvidence(ctx, []models.Book{*b}, allowed)
 	if err != nil {
-		slog.Debug("language evidence lookup failed; using the book's own language", "title", b.Title, "error", err)
-		return false
+		return false, err
 	}
 	resolved, found := evidence[strings.TrimSpace(b.ForeignID)]
-	return found && resolved.State == metadata.AuthorWorkLanguageAllowed
+	return found && resolved.State == metadata.AuthorWorkLanguageAllowed, nil
 }
