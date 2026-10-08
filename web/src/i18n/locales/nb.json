@@ -748,7 +748,32 @@
       "unlinked": "Ikke koblet til Hardcover",
       "shortlisted": "På kortlisten"
     },
-    "filterMissingHint": "Serier som viser merket for manglende bøker. Med Hardcover-kobling slått på teller dette bøker i katalogen som du ikke har ennå, akkurat som merket gjør."
+    "filterMissingHint": "Serier som viser merket for manglende bøker. Med Hardcover-kobling slått på teller dette bøker i katalogen som du ikke har ennå, akkurat som merket gjør.",
+    "merge": {
+      "button": "Slå sammen…",
+      "buttonHint": "Slå andre serier sammen med denne",
+      "title": "Slå sammen med «{{title}}»",
+      "description": "Seriene du velger, slås inn i denne og slettes. Bøkene deres beholder nummereringen i denne serien og fyller hullene i den, og ID-ene deres hos leverandøren beholdes som alias, så en oppdatering ikke oppretter dem på nytt.",
+      "filterPlaceholder": "Finn en serie…",
+      "sourcesLabel": "Serier som skal slås inn",
+      "bookCount_one": "{{count}} bok",
+      "bookCount_other": "{{count}} bøker",
+      "noCandidates": "Ingen andre serier passer",
+      "renameLabel": "Nytt navn (valgfritt)",
+      "preview": "Forhåndsvis",
+      "apply": "Slå sammen",
+      "sourceSummary": "{{title}}: {{moved}} flyttes inn, {{kept}} er her fra før",
+      "conflict": "{{book}} beholder #{{kept}} (den sammenslåtte serien hadde #{{dropped}})",
+      "renamed": "Får nytt navn: «{{title}}»",
+      "takesHardcoverLink": "Overtar Hardcover-koblingen fra «{{title}}»",
+      "takesGenres": "Overtar sjangeroverstyringen fra «{{title}}»",
+      "becomesMonitored": "Blir overvåket, fordi en av de sammenslåtte seriene var det",
+      "aliases_one": "{{count}} gammel leverandør-ID vil peke hit",
+      "aliases_other": "{{count}} gamle leverandør-ID-er vil peke hit",
+      "confirmBody_one": "Slå {{count}} serie sammen med «{{title}}»? Den sammenslåtte serien slettes, og dette kan ikke angres.",
+      "confirmBody_other": "Slå {{count}} serier sammen med «{{title}}»? De sammenslåtte seriene slettes, og dette kan ikke angres.",
+      "failed": "Sammenslåingen mislyktes"
+    }
   },
   "importHints": {
     "heading": "Har du allerede filer på disken?",

@@ -748,7 +748,32 @@
       "unlinked": "Inte länkade till Hardcover",
       "shortlisted": "På kortlistan"
     },
-    "filterMissingHint": "Serier som visar märket för saknade böcker. Med Hardcover-länkning påslagen räknas böcker i katalogen som du inte har ännu, precis som märket gör."
+    "filterMissingHint": "Serier som visar märket för saknade böcker. Med Hardcover-länkning påslagen räknas böcker i katalogen som du inte har ännu, precis som märket gör.",
+    "merge": {
+      "button": "Slå ihop…",
+      "buttonHint": "Slå ihop andra serier med den här",
+      "title": "Slå ihop med ”{{title}}”",
+      "description": "Serierna du väljer slås in i den här och tas bort. Deras böcker behåller numreringen i den här serien och fyller dess luckor, och deras ID:n hos leverantören behålls som alias så att en uppdatering inte skapar dem igen.",
+      "filterPlaceholder": "Hitta en serie…",
+      "sourcesLabel": "Serier att slå in",
+      "bookCount_one": "{{count}} bok",
+      "bookCount_other": "{{count}} böcker",
+      "noCandidates": "Inga andra serier matchar",
+      "renameLabel": "Nytt namn (valfritt)",
+      "preview": "Förhandsgranska",
+      "apply": "Slå ihop",
+      "sourceSummary": "{{title}}: {{moved}} flyttas in, {{kept}} finns redan här",
+      "conflict": "{{book}} behåller #{{kept}} (den ihopslagna serien hade #{{dropped}})",
+      "renamed": "Byter namn till ”{{title}}”",
+      "takesHardcoverLink": "Tar över Hardcover-länken från ”{{title}}”",
+      "takesGenres": "Tar över genreåsidosättningen från ”{{title}}”",
+      "becomesMonitored": "Blir bevakad, eftersom en av de ihopslagna serierna var det",
+      "aliases_one": "{{count}} gammalt leverantörs-ID kommer att peka hit",
+      "aliases_other": "{{count}} gamla leverantörs-ID:n kommer att peka hit",
+      "confirmBody_one": "Slå ihop {{count}} serie med ”{{title}}”? Den ihopslagna serien tas bort, och det går inte att ångra.",
+      "confirmBody_other": "Slå ihop {{count}} serier med ”{{title}}”? De ihopslagna serierna tas bort, och det går inte att ångra.",
+      "failed": "Sammanslagningen misslyckades"
+    }
   },
   "importHints": {
     "heading": "Har du redan filer på disken?",
