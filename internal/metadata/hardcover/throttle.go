@@ -231,6 +231,26 @@ func parseRetryHint(msg string) (time.Duration, bool) {
 	return d, true
 }
 
+// graphQLRateLimitRe matches the wording of a rate limit or quota refusal in a
+// GraphQL error's message or extensions code. Hardcover is a Hasura endpoint,
+// and Hasura reports some throttling as an HTTP 200 carrying an errors array
+// rather than as a 429 (#2791).
+var graphQLRateLimitRe = regexp.MustCompile(`(?i)rate[ _-]?limit|throttl|too[ _-]many[ _-]requests|quota`)
+
+// isRateLimitGraphQL reports whether any error in a 200's errors array is a
+// rate limit or quota refusal rather than a problem with the query.
+func isRateLimitGraphQL(errs []gqlError) bool {
+	for _, e := range errs {
+		if graphQLRateLimitRe.MatchString(e.Message) {
+			return true
+		}
+		if code, ok := e.Extensions["code"].(string); ok && graphQLRateLimitRe.MatchString(code) {
+			return true
+		}
+	}
+	return false
+}
+
 // parseRetryAfterHeader reads a standard Retry-After header, accepting a
 // delay-in-seconds or an HTTP-date, clamped like parseRetryHint. Hardcover is
 // not known to send one, so this is belt and braces: if it starts to, the
