@@ -668,9 +668,10 @@ func (d *Deliverer) deliver(ctx context.Context, row *models.CalibreDelivery, ta
 		slog.Warn("calibre delivery: the adder reports the integration disabled while the configured mode is on; this is a wiring bug, please report it",
 			"mode", target.mode, "bookId", book.ID)
 		return deliveryStop
-	case errors.Is(addErr, ErrCalibredbMissing):
-		// calibredb went away between the pass's check and this add. Same
-		// as the check: not the book's fault, not an attempt.
+	case IsCalibredbUnusable(addErr):
+		// calibredb is there but cannot start (the pass's Locate only sees
+		// that the file exists), or it went away since. Same as the check:
+		// not the book's fault, not an attempt.
 		d.noteReachable(false, addErr.Error())
 		return deliveryStop
 	case isDeliveryUnreachable(ctx, addErr):

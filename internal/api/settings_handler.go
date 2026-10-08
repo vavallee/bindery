@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -585,15 +584,30 @@ func (h *SettingsHandler) settingSaveWarning(ctx context.Context, key string) (s
 	if LoadCalibreMode(ctx, h.settings) != calibre.ModeCalibredb {
 		return "", ""
 	}
-	if _, err := calibre.New(LoadCalibreConfig(ctx, h.settings)).Locate(); err != nil {
+	cfg := LoadCalibreConfig(ctx, h.settings)
+	cfg.Enabled = true
+	client := calibre.New(cfg)
+	if _, err := client.Locate(); err != nil {
 		code := ""
-		if errors.Is(err, calibre.ErrCalibredbMissing) {
+		if calibre.IsCalibredbUnusable(err) {
 			code = warningCalibredbMissing
 		}
 		return err.Error(), code
 	}
+	// The file is there; whether it starts is another matter on the official
+	// image, where a mounted Calibre install has no libraries to load. Ask it
+	// for its version, briefly, and warn only when it cannot run at all. Any
+	// other trouble, such as the library path, is Test connection's to report.
+	tctx, cancel := context.WithTimeout(ctx, calibredbSaveProbeTimeout)
+	defer cancel()
+	if _, err := client.Test(tctx); calibre.IsCalibredbUnusable(err) {
+		return err.Error(), warningCalibredbMissing
+	}
 	return "", ""
 }
+
+// calibredbSaveProbeTimeout bounds the version check a calibredb save runs.
+const calibredbSaveProbeTimeout = 10 * time.Second
 
 // validateSettingDependencies rejects values that are well-formed on their own
 // but invalid given the rest of the stored configuration. validateSettingValue

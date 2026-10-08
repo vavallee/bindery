@@ -39,10 +39,36 @@ func calibredbMissing(binary string) error {
 	return fmt.Errorf("%w (looked for %q). %s", ErrCalibredbMissing, binary, CalibredbMissingAdvice)
 }
 
-// isExecNotFound reports whether err is a failure to start a program that
-// does not exist, as opposed to one that ran and failed.
+// ErrCalibredbCannotRun means a calibredb file is there but the system
+// cannot start it. On the official image that is a Calibre install copied or
+// mounted in: the file exists, but its interpreter or shared libraries do
+// not, and the kernel reports that as "no such file" for the binary itself.
+var ErrCalibredbCannotRun = errors.New("calibredb exists but can't run in this image")
+
+// CalibredbCannotRunAdvice is the fix that goes with ErrCalibredbCannotRun.
+const CalibredbCannotRunAdvice = "The official Bindery image is distroless and has none of the libraries Calibre needs, so a Calibre install mounted into it cannot start. Switch the write integration to the Calibre Bridge plugin, or run Bindery where Calibre is installed."
+
+// IsCalibredbUnusable reports whether err says calibredb cannot be used at
+// all where Bindery runs: missing, or present and unable to start. Nothing a
+// retry does changes either.
+func IsCalibredbUnusable(err error) bool {
+	return errors.Is(err, ErrCalibredbMissing) || errors.Is(err, ErrCalibredbCannotRun)
+}
+
+// isExecNotFound reports whether err is a failure to start a program, as
+// opposed to one that ran and failed.
 func isExecNotFound(err error) bool {
 	return errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist)
+}
+
+// startFailure explains why the binary would not start. When lookPath finds
+// the file, it is there and the start failed anyway (ErrCalibredbCannotRun);
+// otherwise it is missing (ErrCalibredbMissing).
+func startFailure(binary string, cause error) error {
+	if path, err := lookPath(binary); err == nil {
+		return fmt.Errorf("%w (%q: %v). %s", ErrCalibredbCannotRun, path, cause, CalibredbCannotRunAdvice)
+	}
+	return calibredbMissing(binary)
 }
 
 // Config is a snapshot of the user-facing Calibre settings. It is built
@@ -118,7 +144,7 @@ func (c *Client) Add(ctx context.Context, filePath string, meta Metadata) (int64
 	out, err := c.run(ctx, c.binary(), args...)
 	if err != nil {
 		if isExecNotFound(err) {
-			return 0, calibredbMissing(c.binary())
+			return 0, startFailure(c.binary(), err)
 		}
 		return 0, fmt.Errorf("calibredb add: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -166,7 +192,7 @@ func (c *Client) Test(ctx context.Context) (string, error) {
 	out, err := c.run(ctx, c.binary(), "--version")
 	if err != nil {
 		if isExecNotFound(err) {
-			return "", calibredbMissing(c.binary())
+			return "", startFailure(c.binary(), err)
 		}
 		return "", fmt.Errorf("calibredb --version: %w: %s", err, strings.TrimSpace(string(out)))
 	}

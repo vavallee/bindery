@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -90,5 +93,41 @@ func TestSettings_SetCalibredbModeWarnsWhenMissing(t *testing.T) {
 
 	if body := set(SettingCalibreMode, "plugin"); body["warning"] != nil || body["warningCode"] != nil {
 		t.Errorf("plugin mode does not need calibredb and must not warn, got %v", body)
+	}
+}
+
+// TestSettings_SetCalibredbBinaryThatCannotRun: a calibredb that is there
+// but cannot start, as a Calibre install mounted into the distroless image
+// is, must be named as such on save rather than called missing.
+func TestSettings_SetCalibredbBinaryThatCannotRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a script whose interpreter is missing")
+	}
+	h, repo, ctx := settingsFixture(t)
+	if err := repo.Set(ctx, SettingCalibreLibraryPath, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Set(ctx, SettingCalibreMode, "calibredb"); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "calibredb")
+	if err := os.WriteFile(binary, []byte("#!/no/such/interpreter\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.Set(rec, withKey(httptest.NewRequest(http.MethodPut, "/api/v1/setting/"+SettingCalibreBinaryPath,
+		bytes.NewBufferString(`{"value":"`+binary+`"}`)), SettingCalibreBinaryPath))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["warningCode"] != "calibredb_missing" {
+		t.Errorf("a calibredb that cannot start must warn, got %v", body)
+	}
+	if w, _ := body["warning"].(string); !strings.Contains(w, "can't run in this image") {
+		t.Errorf("the warning must say calibredb cannot run here, got %q", w)
 	}
 }
