@@ -300,10 +300,11 @@ func TestCheckCompletedPathVisibility_Rtorrent(t *testing.T) {
 	})
 
 	t.Run("not visible", func(t *testing.T) {
-		// The classic seedbox setup with no remap configured: connection fine,
-		// nothing will ever import (#1182).
+		// Grabs are sent to Bindery's download folder (#2664), so that is
+		// the folder judged: one Bindery cannot read is a warning naming the
+		// fix, whatever rTorrent's own default directory is (#1182).
 		client := &models.DownloadClient{ID: 111, Type: "rtorrent", Host: host, Port: port}
-		got := CheckCompletedPathVisibility(context.Background(), client, root, "", "")
+		got := CheckCompletedPathVisibility(context.Background(), client, filepath.Join(root, "missing"), "", "")
 		if got.Status != PathNotVisible {
 			t.Fatalf("got %+v", got)
 		}
@@ -311,6 +312,40 @@ func TestCheckCompletedPathVisibility_Rtorrent(t *testing.T) {
 			t.Errorf("warning should name the fix, got %q", got.Message)
 		}
 	})
+}
+
+// TestCheckCompletedPathVisibility_RtorrentChecksTheSentFolder replays #2664.
+// A seedbox rTorrent keeps its own default directory, which Bindery cannot
+// see, while every grab is sent d.directory.set with Bindery's download
+// folder through the client remap /data:<root>, and imports work. The Test
+// button and the health job judged the default directory and warned on a
+// working setup; they must judge the folder grabs are sent to.
+func TestCheckCompletedPathVisibility_RtorrentChecksTheSentFolder(t *testing.T) {
+	root := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/xml")
+		if strings.Contains(string(body), "directory.default") {
+			_, _ = io.WriteString(w, `<?xml version="1.0"?><methodResponse><params><param><value><string>/home/seedbox/rtorrent/download</string></value></param></params></methodResponse>`)
+			return
+		}
+		_, _ = io.WriteString(w, `<?xml version="1.0"?><methodResponse><params><param><value><i8>0</i8></value></param></params></methodResponse>`)
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{ID: 112, Type: "rtorrent", Host: host, Port: port, PathRemap: "/data:" + root}
+
+	got := CheckCompletedPathVisibility(context.Background(), client, root, "", "")
+	if got.Status != PathVisible {
+		t.Fatalf("#2664: the folder grabs are sent to is readable, so Test must pass; got %+v", got)
+	}
+	if got.Path != root {
+		t.Errorf("expected the sent folder %q to be the one checked, got %q", root, got.Path)
+	}
+	health := CheckDownloadClientHealth(context.Background(), client, root, "", "")
+	if health.Status != HealthOK {
+		t.Errorf("#2664: the health job must agree with Test; got %+v", health)
+	}
 }
 
 func TestRtorrentStatus(t *testing.T) {

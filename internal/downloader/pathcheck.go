@@ -25,8 +25,8 @@ const (
 	PathNotVisible = "warning"
 	// PathUnknown means the client type does not expose a completed-downloads
 	// path Bindery can introspect (SABnzbd, Transmission, Deluge), so the Test
-	// stays connection-only with no regression. rTorrent does expose one
-	// (directory.default) and is checked.
+	// stays connection-only with no regression. rTorrent is checked at the
+	// folder Bindery sends it (#2664).
 	PathUnknown = "unknown"
 )
 
@@ -81,11 +81,82 @@ func CheckCompletedPathVisibility(ctx context.Context, client *models.DownloadCl
 // client serves audiobooks separately, rather than pointing only at the ebook
 // one (#1984, the half left over from #1993).
 func completedPathVisibility(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) PathVisibility {
+	if client.Type == "qbittorrent" || client.Type == "rtorrent" {
+		return grabPathVisibility(ctx, client, downloadDir, audiobookDownloadDir, globalRemap)
+	}
 	info, err := CompletedPath(ctx, client)
 	if err != nil || strings.TrimSpace(info.Path) == "" {
 		return PathVisibility{Status: PathUnknown}
 	}
 	return statRemappedPath(client, info.Path, clientExpectedHint(client, downloadDir, audiobookDownloadDir), globalRemap)
+}
+
+// grabPathVisibility checks the folder a grab actually lands in, resolved by
+// GrabSavePath exactly as the diagnose action resolves it, rather than the
+// client's default folder (#2664).
+//
+// The default was the wrong folder for two setups. rTorrent is sent
+// d.directory.set on every grab, built from BINDERY_DOWNLOAD_DIR, so its
+// directory.default says nothing about where Bindery's downloads go: a
+// seedbox keeping ~/rtorrent/download as its default, with grabs sent to a
+// remapped /data that imports fine, was told its completed folder was not
+// visible. And qBittorrent saves a category with an empty save path to the
+// default save path plus the category name, not to the default itself.
+//
+// Each media type whose grab folder differs is checked, ebook first, and the
+// first folder Bindery cannot read is the answer. A media type the client
+// cannot answer for is skipped; none answering is PathUnknown, as before.
+func grabPathVisibility(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) PathVisibility {
+	// GrabSavePath answers rTorrent from the folder Bindery sends without
+	// needing the client, so ask the client first: one that does not answer
+	// is PathUnknown, as it always was, rather than judged on Bindery's own
+	// folder alone.
+	if _, err := CompletedPath(ctx, client); err != nil {
+		return PathVisibility{Status: PathUnknown}
+	}
+	hint := clientExpectedHint(client, downloadDir, audiobookDownloadDir)
+	result := PathVisibility{Status: PathUnknown}
+	seen := map[string]bool{}
+	for _, mediaType := range []string{models.MediaTypeEbook, models.MediaTypeAudiobook} {
+		info, err := GrabSavePath(ctx, client, mediaType, downloadDir, audiobookDownloadDir, globalRemap)
+		if err != nil || strings.TrimSpace(info.Path) == "" || seen[info.Path] {
+			continue
+		}
+		seen[info.Path] = true
+		vis := statRemappedPath(client, info.Path, hint, globalRemap)
+		if vis.Status == PathNotVisible && info.CreatedOnGrab {
+			vis = createdOnGrabVisibility(vis)
+		}
+		if vis.Status == PathNotVisible {
+			return vis
+		}
+		if result.Status == PathUnknown {
+			result = vis
+		}
+	}
+	return result
+}
+
+// createdOnGrabVisibility judges a folder the client makes on the first grab
+// (ClientPathInfo.CreatedOnGrab) that does not exist yet. Its parent being
+// readable is as good as it gets before that first grab, so that is reported
+// as visible, naming the folder the client will create. A missing parent
+// keeps the original warning.
+func createdOnGrabVisibility(missing PathVisibility) PathVisibility {
+	localPath := missing.Path
+	if localPath == "" {
+		return missing
+	}
+	parent := filepath.Dir(localPath)
+	info, err := os.Stat(parent)
+	if err != nil || !info.IsDir() {
+		return missing
+	}
+	return PathVisibility{
+		Status:  PathVisible,
+		Path:    localPath,
+		Message: fmt.Sprintf("Bindery can read %q, where the client creates the folder %q on its first download.", parent, localPath),
+	}
 }
 
 // clientExpectedHint describes the local directories Bindery is configured to

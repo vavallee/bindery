@@ -415,15 +415,28 @@ func validateQbittorrentCategorySavePath(ctx context.Context, qb *qbittorrent.Cl
 	}
 
 	savePath := strings.TrimSpace(qbCategory.SavePath)
-	if savePath == "" {
-		message := fmt.Sprintf("qBittorrent category %q has no save path", category)
-		if expected != "" {
-			message += fmt.Sprintf("; expected %q", expected)
+	// A category whose save path is empty or relative saves under
+	// qBittorrent's default save path (#2664): the category name, or the
+	// relative path, inside it. That is the folder grabs land in, so it is
+	// the folder to check, not a reason to fail. qBittorrent creates it on
+	// the first download, so until then its parent standing in for it is
+	// enough (createdOnGrab).
+	createdOnGrab := false
+	if !pathmap.IsAbsClientPath(savePath) {
+		defaultPath, err := qb.GetDefaultSavePath(ctx)
+		defaultPath = strings.TrimSpace(defaultPath)
+		if err != nil || defaultPath == "" {
+			message := fmt.Sprintf("qBittorrent category %q has no save path", category)
+			if savePath != "" {
+				message = fmt.Sprintf("qBittorrent category %q has the relative save path %q and qBittorrent did not report its default save path", category, savePath)
+			}
+			if expected != "" {
+				message += fmt.Sprintf("; expected %q", expected)
+			}
+			return healthError(message)
 		}
-		if defaultPath, err := qb.GetDefaultSavePath(ctx); err == nil && strings.TrimSpace(defaultPath) != "" {
-			message += fmt.Sprintf(" and qBittorrent default is %q", strings.TrimSpace(defaultPath))
-		}
-		return healthError(message)
+		savePath, _ = qbittorrentCategoryFolder(defaultPath, savePath, category)
+		createdOnGrab = true
 	}
 
 	// The remap runs on the save path exactly as qBittorrent reports it; only
@@ -454,6 +467,14 @@ func validateQbittorrentCategorySavePath(ctx context.Context, qb *qbittorrent.Cl
 	if _, err := os.Stat(localPath); os.IsNotExist(err) {
 		if resolved, divergedAt := findCaseInsensitivePath(localPath); resolved != "" {
 			return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q inside Bindery — that exact path does not exist, but %q does. Linux is case-sensitive; update the path remap so it produces %q (the segment %q must match the on-disk case).", category, savePath, localPath, resolved, resolved, filepath.Base(divergedAt)))
+		}
+		if createdOnGrab {
+			if info, err := os.Stat(filepath.Dir(localPath)); err == nil && info.IsDir() {
+				return models.DownloadClientHealth{
+					Status:  HealthOK,
+					Message: fmt.Sprintf("qBittorrent category %q saves to %q, which qBittorrent creates inside %q on its first download", category, localPath, filepath.Dir(localPath)),
+				}
+			}
 		}
 		return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q inside Bindery — but that path does not exist. Check the path remap and the directory Bindery is mounting.", category, savePath, localPath))
 	}

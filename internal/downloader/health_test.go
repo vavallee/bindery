@@ -51,10 +51,35 @@ func TestCheckDownloadClientHealth_QBittorrentCategoryPath(t *testing.T) {
 			wantText:   "was not found",
 		},
 		{
-			name:       "empty category path reports default",
+			// qBittorrent saves an empty category save path to its default
+			// save path plus the category name, so that folder is judged
+			// (#2664), and here it is outside the download directory.
+			name:       "empty category path is judged under the default",
 			categories: `{"books":{"name":"books","savePath":""}}`,
 			wantStatus: HealthError,
-			wantText:   "qBittorrent default is",
+			wantText:   `saves to "/media/default/books"`,
+		},
+		{
+			// #2664: before, an empty save path was an error by itself, on a
+			// setup whose grabs land in a folder Bindery reads.
+			name:       "empty category path under the default is accepted",
+			categories: `{"books":{"name":"books","savePath":""}}`,
+			pathRemap:  "/media/default:" + expected,
+			wantStatus: HealthOK,
+		},
+		{
+			name:       "relative category path resolves under the default",
+			categories: `{"books":{"name":"books","savePath":"Torrents/books"}}`,
+			pathRemap:  "/media/default:" + expected,
+			wantStatus: HealthOK,
+		},
+		{
+			// The category folder does not exist until qBittorrent's first
+			// download into it; its parent being readable is enough.
+			name:       "category folder not created yet",
+			categories: `{"books":{"name":"books","savePath":""}}`,
+			pathRemap:  "/media/default:" + filepath.Join(expected, "Torrents", "books"),
+			wantStatus: HealthOK,
 		},
 		{
 			name:       "mismatched category path",
