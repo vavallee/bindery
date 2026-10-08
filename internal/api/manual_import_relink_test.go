@@ -74,3 +74,29 @@ func TestFixMatch_CorrectMatchOnlyLeavesFileInPlace(t *testing.T) {
 		t.Fatalf("bookFileMoved history = %+v, want one row naming %q", moved, f.wrong.Title)
 	}
 }
+
+// TestFixMatch_CorrectMatchOnlyUntrackedFileIsRecorded: relinking a file no
+// book tracked still attaches it, and still leaves a history row, so the
+// change is not invisible on the book's History.
+func TestFixMatch_CorrectMatchOnlyUntrackedFileIsRecorded(t *testing.T) {
+	f := newOwnedFixture(t)
+	ctx := context.Background()
+	src := f.writeFile(t, "Loose/vol3.epub", "volume three")
+
+	raw, _ := json.Marshal(map[string]any{"path": src, "targetBookId": f.right.ID, "relocate": false})
+	rec := httptest.NewRecorder()
+	f.h.Reassign(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/reassign", bytes.NewReader(raw)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body = %s", rec.Code, rec.Body.String())
+	}
+	if files := f.files(t, f.right.ID); len(files) != 1 || files[0].Path != src {
+		t.Fatalf("Vol 3 files = %+v, want the one row at %s", files, src)
+	}
+	moved, err := f.history.ListByType(ctx, "bookFileMoved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(moved) != 1 || moved[0].BookID == nil || *moved[0].BookID != f.right.ID || !strings.Contains(moved[0].Data, src) {
+		t.Fatalf("bookFileMoved history = %+v, want one row on Vol 3 naming %s", moved, src)
+	}
+}

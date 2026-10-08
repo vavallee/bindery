@@ -175,18 +175,25 @@ func (s *Scanner) RelinkFile(ctx context.Context, bookID int64, paths []string, 
 	res.FromBookID = prev
 	slog.Info("fix match: linked a file to the chosen book without moving it",
 		"path", res.Path, "fromBookID", prev, "toBookID", bookID)
-	if prev != 0 && prev != bookID {
+	if prev == bookID {
+		return res, nil
+	}
+	data := map[string]string{
+		"path":       res.Path,
+		"sourcePath": res.Path,
+		"message":    "Fix match linked this file, which no book tracked, and left it where it was",
+	}
+	if prev != 0 {
 		fromTitle := ""
 		if from, err := s.books.GetByID(ctx, prev); err == nil && from != nil {
 			fromTitle = from.Title
 		}
-		s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, map[string]string{
-			"path":       res.Path,
-			"sourcePath": res.Path,
-			"fromBookId": strconv.FormatInt(prev, 10),
-			"fromTitle":  fromTitle,
-			"message":    fmt.Sprintf("Fix match linked this file from %q (id %d) and left it where it was", fromTitle, prev),
-		})
+		data["fromBookId"] = strconv.FormatInt(prev, 10)
+		data["fromTitle"] = fromTitle
+		data["message"] = fmt.Sprintf("Fix match linked this file from %q (id %d) and left it where it was", fromTitle, prev)
 	}
+	// Written for an untracked file too, so the link never appears on a
+	// book's History without a trace of where it came from.
+	s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, data)
 	return res, nil
 }
