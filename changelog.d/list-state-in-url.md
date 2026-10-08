@@ -1,2 +1,0 @@
-### Fixed
-- **Going back to a list keeps your place** (#3052). Opening a book from page 3 of Books and going back, whether with the browser button, the Android back gesture or a swipe on iPhone, used to land on page 1 with the search cleared. Books, Authors and Wanted now keep the page, the search, the filters and the sort order in the address bar, so back returns to the same list scrolled to where you left it, and a copied link opens the same view. Opening a book or author now always starts at the top of its page instead of at the list's old scroll position.

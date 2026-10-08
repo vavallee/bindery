@@ -1,2 +1,0 @@
-### Fixed
-- **Audiobooks side by side in an author folder are each matched** (#1985). In a flat `Author/Title.mp3` layout, one tracked audiobook made the library scan count every other audiobook in that author folder as already tracked, so a wanted one was never attached and never listed as unmatched either. The scan now only treats files that are tracks of the tracked audiobook (the same name with a part or track number, or a bare number) as belonging to it.

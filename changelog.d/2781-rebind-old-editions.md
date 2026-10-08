@@ -1,2 +1,0 @@
-### Fixed
-- **Re-binding a book drops the old record's editions** (#2781). A book re-bound from the wrong metadata record kept that record's provider editions, so searches could keep using the wrong work's ISBN. A re-bind to a different record now removes them. Editions imported from Calibre or Audiobookshelf, the edition you selected, and editions a download or Calibre delivery points at are kept. Thanks to magrhino for the report.

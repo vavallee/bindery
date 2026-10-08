@@ -1,2 +1,0 @@
-### Fixed
-- A signed in user is no longer sent to the login page when one session check fails. A database hiccup or an abandoned request used to make the status check report you as signed out, and the web app took any failed status check as a logout. The server now answers those with a retryable error, the web app keeps your session, and if nothing has loaded yet it offers a Retry button instead of the login page (#3068).

@@ -1,2 +1,0 @@
-### Fixed
-- **Removing a queue item no longer removes a download another queue item still uses.** When two grabs of the same release end up sharing one torrent in the download client (from two indexers, or by two users), removing one of them, asking for its files to be deleted, a stalled download being cleared, or remove on import now leaves the torrent and its data in place while the other queue item still needs it. The last one to go removes it as before.

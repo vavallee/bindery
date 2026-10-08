@@ -1,2 +1,0 @@
-### Fixed
-- **Modals on phones** (#3052). On an iPhone the buttons at the bottom of a dialog could end up at the very edge of the screen or under the browser toolbar once the dialog filled with search results, where a tap shows the toolbar instead of pressing the button. Dialogs now size themselves to the visible part of the screen and keep a gap below their buttons, and the page behind an open dialog no longer scrolls on touch devices. Tapping into a text field no longer zooms the page in, and the book details in Add to library stay inside their card on narrow screens.

@@ -1,2 +1,0 @@
-### Fixed
-- **A library scan requested while one is running is queued instead of refused** (#3014, thanks foobarbigtime). Asking for a scan during a scan used to answer 409 and drop the request, so a file copied into a folder the scan had already walked past was missed until the next scheduled scan. The request is now accepted with `{"queued": true}`, and one more scan runs as soon as the current one finishes, however many requests came in meanwhile. The Settings page says so instead of reporting a failure.

@@ -1,2 +1,0 @@
-### Fixed
-- Split edition parts of a book you already have, like "The Way of Kings, Part 1" and "Part 2" next to The Way of Kings itself, are no longer put back on Wanted by Fill gaps or searched by the scheduled wanted search, so Bindery stops downloading parts of a book on your shelf (#3048). The series card marks them as split parts, leaves them out of the missing count, and offers to unmonitor any a fill from an older version left monitored. Nothing is deleted.

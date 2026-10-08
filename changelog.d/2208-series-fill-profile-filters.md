@@ -1,2 +1,0 @@
-### Fixed
-- Fill gaps and add all on a series now respect the author's metadata profile, so box sets, undated works and anything else the profile filters out are no longer created by a series fill, and a fill no longer puts stored books the profile rejects back on Wanted (#2208). The result line says how many the profile skipped. Adding a single book from a series row still works for anything you pick by hand. Thanks to ianepreston for the report.
