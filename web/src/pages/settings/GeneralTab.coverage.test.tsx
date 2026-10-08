@@ -195,7 +195,7 @@ describe('GeneralTab library scan', () => {
       // Past two minutes, still waiting while the server says a scan is going.
       await act(async () => { await vi.advanceTimersByTimeAsync(180_000) })
       expect(screen.getByText('settings.general.scanning')).toBeInTheDocument()
-      expect(screen.queryByText(/check back shortly/)).not.toBeInTheDocument()
+      expect(screen.queryByText('settings.general.scanCheckBack')).not.toBeInTheDocument()
 
       // Our scan's result lands.
       m.libraryScanStatus.mockResolvedValue({

@@ -1436,6 +1436,7 @@
       "scanLibrary": "Scan library",
       "scanLibraryHint": "Walks your library folders and attaches the files it finds to books already in your catalogue. It never creates a book: a file with no matching book is listed under Import, In your library, where you decide what it is. Downloads Bindery grabbed itself are imported on their own and do not need a scan.",
       "scanning": "Scanning…",
+      "scanCheckBack": "Scan started. Check back shortly for results.",
       "scanQueued": "A scan is already running. Another one starts as soon as it finishes, so files added since it began are picked up too.",
       "scanLibraryButton": "Scan Library",
       "reorganizeLibrary": "Reorganize library",

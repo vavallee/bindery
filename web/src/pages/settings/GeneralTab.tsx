@@ -56,6 +56,10 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   // Whether the last status said a scan was walking or queued. The poll only
   // gives up after two minutes when the server says nothing is happening.
   const scanActive = useRef(false)
+  // The give up message, kept in a ref so the poll effect does not restart
+  // whenever the translation function changes identity.
+  const checkBackMessage = useRef('')
+  useEffect(() => { checkBackMessage.current = t('settings.general.scanCheckBack') })
   const [lastScan, setLastScan] = useState<{
     ran_at: string
     files_found: number
@@ -196,7 +200,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   useEffect(() => {
     if (!scanningLibrary) return
     const giveUp = () => {
-      setScanMessage('Scan started — check back shortly for results.')
+      setScanMessage(checkBackMessage.current)
       setScanningLibrary(false)
     }
     const id = setInterval(async () => {
