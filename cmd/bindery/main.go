@@ -504,7 +504,7 @@ func main() {
 		// gets its Hardcover editions fetched when it reaches Calibre (#1853).
 		WithEditionHydrator(bookhydrate.EditionsOnly(editionRepo, func(ctx context.Context, foreignID string) ([]models.Edition, error) {
 			return metaAgg.GetEditionsFromProvider(ctx, "hardcover", foreignID)
-		})).
+		}), func(b *models.Book) bool { return bookhydrate.IsHardcoverBook(b, "") }).
 		WithCovers(calibreCovers).
 		WithJobs(bgJobs).
 		// In pull (#2833) the plugin fetches from /bridge/v1 and the
