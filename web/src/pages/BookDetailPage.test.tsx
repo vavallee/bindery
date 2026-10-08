@@ -639,6 +639,63 @@ describe('BookDetailPage — search', () => {
     expect(api.listIndexers).toHaveBeenCalled()
   })
 
+  // #1636: a sweep can take 10 to 18 seconds and the results render far
+  // below the fold, so on a long book page nothing visibly happened. The
+  // button now spins while the search runs and the results are scrolled into
+  // view when they land.
+  it('shows a spinner while searching and brings the results into view when they land', async () => {
+    const scrollIntoView = vi.fn()
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollIntoView
+    try {
+      let resolveSearch: (v: { results: SearchResult[]; debug: null }) => void = () => {}
+      vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
+      vi.mocked(api.searchBook).mockImplementation(() => new Promise(resolve => { resolveSearch = resolve }))
+
+      renderBookDetailPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+
+      const busy = await screen.findByRole('button', { name: /Searching all indexers/ })
+      expect(busy).toBeDisabled()
+      expect(busy).toHaveAttribute('aria-busy', 'true')
+      expect(within(busy).getByTestId('search-spinner')).toBeInTheDocument()
+      expect(scrollIntoView).not.toHaveBeenCalled()
+
+      await act(async () => {
+        resolveSearch({ results: [makeResult({ guid: 'r1', title: 'A Result' })], debug: null })
+      })
+
+      expect(await screen.findByText('A Result')).toBeInTheDocument()
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+      const target = scrollIntoView.mock.instances[0] as unknown as HTMLElement
+      expect(target).toHaveAttribute('data-testid', 'search-results-region')
+      expect(within(target).getByText('A Result')).toBeInTheDocument()
+      expect(screen.queryByTestId('search-spinner')).not.toBeInTheDocument()
+    } finally {
+      Element.prototype.scrollIntoView = original
+    }
+  })
+
+  it('brings an empty result into view too, since that is the answer the user waited for', async () => {
+    const scrollIntoView = vi.fn()
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollIntoView
+    try {
+      vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
+      vi.mocked(api.searchBook).mockResolvedValue({ results: [], debug: null })
+
+      renderBookDetailPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+
+      expect(await screen.findByText(/No results on any indexer/)).toBeInTheDocument()
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    } finally {
+      Element.prototype.scrollIntoView = original
+    }
+  })
+
   it('shows an empty search state when no indexers are configured', async () => {
     vi.mocked(api.listIndexers).mockResolvedValue([])
     vi.mocked(api.searchBook).mockResolvedValue({ results: [], debug: null })
