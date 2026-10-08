@@ -35,3 +35,13 @@ The ArgoCD "prod" app is the maintainer's own instance, not a customer fleet —
 ## Deployment notes
 
 - `BINDERY_PUID/PGID` are sanity checks only (distroless image, no runtime user switching) — operators must also set `user: "UID:GID"` in Compose.
+
+## Local resource limits (agents on DARKWAVE2)
+
+The dev host is a WSL2 VM capped at 12 GB RAM + 8 GB swap, shared with other sessions. On 2026-10-08 two concurrent `golangci-lint` runs from parallel subagent worktrees (5.5 GB + 3.8 GB) filled swap to 7.6 of 8 GB. When several agents or worktrees are active:
+
+- Run heavy jobs one at a time through one shared lock: `flock /tmp/bindery-heavy.lock <cmd>`. Heavy means `golangci-lint`, `go test ./internal/api/...` (or `make test`), `npm ci`, `tsc`, `make build` and web builds.
+- Set `GOMEMLIMIT=3GiB` for Go tools.
+- Lint with `golangci-lint run --concurrency 2 ./...`. Never pass `--allow-parallel-runners`; its own lock is what keeps two runs from overlapping.
+- Run Go tests with `-p 2`.
+- Remove finished worktrees (`git worktree remove <path>`) when their PR lands.
