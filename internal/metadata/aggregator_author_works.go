@@ -114,18 +114,56 @@ type authorWorkLanguageEvidenceProvider interface {
 	GetAuthorWorkLanguageEvidence(ctx context.Context, books []models.Book, allowed []string) (map[string]AuthorWorkLanguageEvidence, error)
 }
 
-// GetAuthorWorkLanguageEvidence asks the primary provider for bounded,
-// profile-specific edition evidence. Unsupported providers return nil. Failed
-// lookups never return evidence: a secondary lookup error must leave the
-// existing scalar, edition-sampled, and majority-language pipeline unchanged.
+// GetAuthorWorkLanguageEvidence asks every provider that can supply it for
+// bounded, profile-specific edition evidence: the primary, and any enricher
+// whose works were merged into the catalogue. With OpenLibrary primary and
+// Hardcover supplementing, the hc: works come from Hardcover and only
+// Hardcover can say what language their editions are in, so asking the
+// primary alone left every translation it supplied unresolved (#3091). Each
+// provider answers only for its own works, so the maps do not overlap; on a
+// clash the primary's answer is kept.
+//
+// Unsupported providers contribute nothing, and nil is returned when none
+// supports it. A failed primary lookup returns its error and no evidence, as
+// before. A failed or unconfigured enricher costs only that enricher's
+// evidence: its works fall back to the scalar, edition-sampled and
+// majority-language pipeline unchanged.
 func (a *Aggregator) GetAuthorWorkLanguageEvidence(ctx context.Context, books []models.Book, allowed []string) (map[string]AuthorWorkLanguageEvidence, error) {
-	resolver, ok := a.primary.(authorWorkLanguageEvidenceProvider)
-	if !ok || len(allowed) == 0 {
+	if len(allowed) == 0 {
 		return nil, nil
 	}
-	evidence, err := resolver.GetAuthorWorkLanguageEvidence(ctx, books, allowed)
-	if err != nil {
-		return nil, err
+	var evidence map[string]AuthorWorkLanguageEvidence
+	merge := func(found map[string]AuthorWorkLanguageEvidence) {
+		if evidence == nil && found != nil {
+			evidence = make(map[string]AuthorWorkLanguageEvidence, len(found))
+		}
+		for key, value := range found {
+			if _, exists := evidence[key]; !exists {
+				evidence[key] = value
+			}
+		}
+	}
+	if resolver, ok := a.primary.(authorWorkLanguageEvidenceProvider); ok {
+		found, err := resolver.GetAuthorWorkLanguageEvidence(ctx, books, allowed)
+		if err != nil {
+			return nil, err
+		}
+		merge(found)
+	}
+	for _, enricher := range a.enrichers {
+		resolver, ok := enricher.(authorWorkLanguageEvidenceProvider)
+		if !ok {
+			continue
+		}
+		found, err := resolver.GetAuthorWorkLanguageEvidence(ctx, books, allowed)
+		if err != nil {
+			if !errors.Is(err, ErrProviderNotConfigured) {
+				slog.Warn("supplementing provider language evidence lookup failed; its works use the existing language fallbacks",
+					"provider", enricher.Name(), "error", err)
+			}
+			continue
+		}
+		merge(found)
 	}
 	return evidence, nil
 }

@@ -868,7 +868,7 @@ func editionFromEntry(e editionEntry) models.Edition {
 func (c *Client) FillMissingWorkLanguages(ctx context.Context, books []models.Book) int {
 	targets := make([]int, 0, len(books))
 	for i := range books {
-		if books[i].Language != "" || books[i].ForeignID == "" {
+		if books[i].Language != "" || !ownsWork(books[i]) {
 			continue
 		}
 		targets = append(targets, i)
@@ -882,6 +882,21 @@ func (c *Client) FillMissingWorkLanguages(ctx context.Context, books []models.Bo
 		}
 	})
 	return int(filled.Load())
+}
+
+// ownsWork reports whether book is an OpenLibrary work, the only kind with a
+// /works/{id}/editions.json to sample. A work merged in from another provider
+// (Hardcover "hc:", Audible "audible:", DNB "dnb:") is skipped: asking
+// OpenLibrary for it is a guaranteed "not found", one wasted request per work
+// on every pass (#3091). The provider prefix is the test, with the book's
+// MetadataProvider as a second one for a supplement that left the prefix off.
+func ownsWork(book models.Book) bool {
+	id := strings.TrimSpace(book.ForeignID)
+	if id == "" || strings.Contains(id, ":") {
+		return false
+	}
+	p := strings.TrimSpace(book.MetadataProvider)
+	return p == "" || strings.EqualFold(p, "openlibrary")
 }
 
 // sampleWorkEditions returns the language and cover derived from a work's first
@@ -974,10 +989,7 @@ func (c *Client) setCachedWorkSample(workID string, sample workEditionSample) {
 func (c *Client) FillMissingWorkCovers(ctx context.Context, books []models.Book) int {
 	targets := make([]int, 0, len(books))
 	for i := range books {
-		if books[i].ImageURL != "" || books[i].ForeignID == "" {
-			continue
-		}
-		if p := books[i].MetadataProvider; p != "" && p != "openlibrary" {
+		if books[i].ImageURL != "" || !ownsWork(books[i]) {
 			continue
 		}
 		targets = append(targets, i)

@@ -457,7 +457,88 @@ func (c *Client) GetAuthorWorkLanguageEvidence(ctx context.Context, books []mode
 		}
 		evidence[key] = metadata.AuthorWorkLanguageEvidence{State: metadata.AuthorWorkLanguageAllowed, Language: language}
 	}
+	c.resolveBlankWorkLanguages(ctx, books, evidence)
 	return evidence, nil
+}
+
+// resolveBlankWorkLanguages settles the works the allowed-language query left
+// indeterminate only because they carry no language of their own. Hardcover
+// sets a work's language from its default ebook or audio edition, which is
+// usually blank, so a translation such as "O Ponto Azul-Claro" arrived with no
+// language, stayed indeterminate, and the unknown-language default let it in
+// (#3091). The query above has already proved none of its editions is in an
+// allowed language; if any edition records a language at all, that language is
+// a non-allowed one, and the work is rejected on it. A work with no language
+// recorded on any edition stays indeterminate.
+//
+// One bounded distinct_on query, like the one above. It is best effort: a
+// failure leaves the works indeterminate, which is what they were before it
+// ran, rather than discarding the evidence already established.
+func (c *Client) resolveBlankWorkLanguages(ctx context.Context, books []models.Book, evidence map[string]metadata.AuthorWorkLanguageEvidence) {
+	var slugs []string
+	bookIDs := make([]int, 0)
+	asked := make(map[string]bool)
+	for _, book := range books {
+		key := strings.TrimSpace(book.ForeignID)
+		current, ok := evidence[key]
+		if !ok || asked[key] || current.State != metadata.AuthorWorkLanguageIndeterminate ||
+			models.NormalizeLanguageCode(book.Language) != "" {
+			continue
+		}
+		asked[key] = true
+		id := strings.TrimSpace(strings.TrimPrefix(key, idPrefix))
+		slugs = append(slugs, id)
+		if numericID, ok := hardcoverNumericID(id); ok {
+			bookIDs = append(bookIDs, numericID)
+		}
+	}
+	if len(slugs) == 0 {
+		return
+	}
+
+	const gql = `query GetAuthorWorkKnownLanguages($slugs: [String!]!, $bookIds: [Int!]!, $limit: Int!) {
+		editions(
+			where: {
+				_and: [
+					{_or: [{book: {slug: {_in: $slugs}}}, {book_id: {_in: $bookIds}}]},
+					{language: {id: {_is_null: false}}}
+				]
+			},
+			distinct_on: [book_id],
+			order_by: [{book_id: asc}, {id: asc}],
+			limit: $limit
+		) {
+			book { id slug }
+			language { code2 code3 language }
+		}
+	}`
+	var resp struct {
+		Data struct {
+			Editions []struct {
+				Book     hcBookRef   `json:"book"`
+				Language *hcLanguage `json:"language"`
+			} `json:"editions"`
+		} `json:"data"`
+	}
+	if err := c.query(ctx, gql, map[string]any{
+		"slugs":   slugs,
+		"bookIds": bookIDs,
+		"limit":   len(slugs),
+	}, &resp); err != nil {
+		slog.Debug("hardcover: known edition language lookup failed; blank-language works stay indeterminate", "works", len(slugs), "error", err)
+		return
+	}
+	for _, edition := range resp.Data.Editions {
+		key := edition.Book.foreignID()
+		if !asked[key] {
+			continue
+		}
+		language := hardcoverLanguageName(edition.Language)
+		if language == "" {
+			continue
+		}
+		evidence[key] = metadata.AuthorWorkLanguageEvidence{State: metadata.AuthorWorkLanguageNotAllowed, Language: language}
+	}
 }
 
 func (c *Client) GetAuthor(ctx context.Context, foreignID string) (*models.Author, error) {
