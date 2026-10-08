@@ -121,7 +121,7 @@ Resolution order:
 
 1. `abs_provenance` lookup for the ABS item id
 2. fallback `books.foreign_id = abs:book:<library_id>:<item_id>`, also found as a recorded book identifier after the book was relinked to an upstream id
-3. existing book that already tracks one of the item's files in `book_files` (the ebook file or the audiobook folder, after `abs.path_remap`), whatever its title. A book owned by another user is not matched
+3. existing book that already tracks one of the item's files in `book_files` (the ebook file or the audiobook folder, after `abs.path_remap`), whatever its title, when its author is the item's author (the same row, or a name that matches automatically) and it belongs to the same owner or to nobody. The book keeps its own author and title; the other fields are applied as for any match
 4. existing book under the resolved author with the same normalized title
 5. create a new shared book
 

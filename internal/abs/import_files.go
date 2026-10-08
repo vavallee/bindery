@@ -13,6 +13,7 @@ import (
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 type ownershipReconcileResult struct {
@@ -249,13 +250,23 @@ func (i *Importer) inspectFormatPath(ctx context.Context, cfg ImportConfig, form
 }
 
 // findBookByItemFiles returns the existing book that already tracks one of the
-// item's files, or nil. The paths are the ones reconcileFormatPath would
-// record for the item: the ebook file and the audiobook folder, after the
-// path remap. A book owned by another user is not offered, so an import can
-// never reach across tenants through a shared file (#1457).
-func (i *Importer) findBookByItemFiles(ctx context.Context, cfg ImportConfig, author *models.Author, item NormalizedLibraryItem) (*models.Book, error) {
-	if i.books == nil {
-		return nil, nil
+// item's files, with that book's author, or nil. The paths are the ones
+// reconcileFormatPath would record for the item: the ebook file and the
+// audiobook folder, after the path remap.
+//
+// A shared file is not proof on its own, so two guards apply.
+//
+//   - Owner. A book is offered only when it belongs to the importing owner, or
+//     to nobody. An import with no owner (the usual case: ABS authors are
+//     created without one) therefore only reaches books with no owner, and an
+//     import can never reach across tenants through a file (#1457).
+//   - Author. The book's author must be the item's author: the same row, or a
+//     name that MatchAuthorName auto matches. "Chapterhouse: Dune" by Brian
+//     Herbert is not claimed by an item that credits Frank Herbert, whatever
+//     file both point at. The caller keeps the book's own author and title.
+func (i *Importer) findBookByItemFiles(ctx context.Context, cfg ImportConfig, author *models.Author, item NormalizedLibraryItem) (*models.Book, *models.Author, error) {
+	if i.books == nil || i.authors == nil || author == nil {
+		return nil, nil, nil
 	}
 	candidates := []string{item.EbookPath}
 	if len(item.AudioFiles) > 0 {
@@ -271,17 +282,30 @@ func (i *Importer) findBookByItemFiles(ctx context.Context, cfg ImportConfig, au
 		}
 		book, err := i.books.GetByTrackedPath(ctx, cleanPath)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if book == nil {
 			continue
 		}
-		if author != nil && author.OwnerUserID != 0 && book.OwnerUserID != 0 && author.OwnerUserID != book.OwnerUserID {
+		if book.OwnerUserID != 0 && book.OwnerUserID != author.OwnerUserID {
 			continue
 		}
-		return book, nil
+		if book.AuthorID == author.ID {
+			return book, author, nil
+		}
+		bookAuthor, err := i.authors.GetByID(ctx, book.AuthorID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if bookAuthor == nil {
+			continue
+		}
+		switch textutil.MatchAuthorName(author.Name, bookAuthor.Name).Kind {
+		case textutil.AuthorMatchExact, textutil.AuthorMatchFuzzyAuto:
+			return book, bookAuthor, nil
+		}
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 func (i *Importer) remapABSPath(cfg ImportConfig, candidatePath string) string {

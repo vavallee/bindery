@@ -934,14 +934,18 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 	// here used to create a second, wanted row beside the owned one whenever
 	// the titles disagreed ("Chapterhouse: Dune" against "Chapter House
 	// Dune"), and that row could never take the file, so it stayed wanted.
-	if existing, err := i.findBookByItemFiles(ctx, cfg, author, item); err != nil {
+	//
+	// The book keeps its own author and title. It was not made from this item,
+	// so the item's spelling of either is not a correction, and the rung only
+	// fires when the two authors are the same person (see findBookByItemFiles).
+	if existing, bookAuthor, err := i.findBookByItemFiles(ctx, cfg, author, item); err != nil {
 		return nil, false, false, metadataMergeResult{}, err
 	} else if existing != nil {
 		if !cfg.DryRun {
 			if err := i.recordBookBeforeSnapshot(ctx, runID, cfg, item, externalID, existing, itemOutcomeLinked, nil); err != nil {
 				return nil, false, false, metadataMergeResult{}, err
 			}
-			if err := i.applyBookFields(ctx, existing, author.ID, item); err != nil {
+			if err := i.applyBookFieldsKeepingIdentity(ctx, existing, item); err != nil {
 				return nil, false, false, metadataMergeResult{}, err
 			}
 			if err := i.upsertBookProvenance(ctx, cfg, runID, existing.ID, item); err != nil {
@@ -952,7 +956,7 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 		if cfg.DryRun {
 			return &bookUpsertResult{row: existing, matchedBy: "file_path"}, false, true, metadataMergeResult{}, nil
 		}
-		metaResult, err := i.enrichBook(ctx, cfg, item, author, existing)
+		metaResult, err := i.enrichBook(ctx, cfg, item, bookAuthor, existing)
 		return &bookUpsertResult{row: existing, matchedBy: "file_path"}, false, true, metaResult, err
 	}
 
@@ -1253,9 +1257,20 @@ func sequencesEqual(a, b string) bool {
 }
 
 func (i *Importer) applyBookFields(ctx context.Context, book *models.Book, authorID int64, item NormalizedLibraryItem) error {
+	return i.applyBookFieldsTo(ctx, book, authorID, item, false)
+}
+
+// applyBookFieldsKeepingIdentity is applyBookFields for a book matched by its
+// files rather than by this item (#1691): the author and title stay as they
+// are, and everything else follows the same rules.
+func (i *Importer) applyBookFieldsKeepingIdentity(ctx context.Context, book *models.Book, item NormalizedLibraryItem) error {
+	return i.applyBookFieldsTo(ctx, book, book.AuthorID, item, true)
+}
+
+func (i *Importer) applyBookFieldsTo(ctx context.Context, book *models.Book, authorID int64, item NormalizedLibraryItem, keepTitle bool) error {
 	book.AuthorID = authorID
 	// Locked fields (#1237): a manual edit survives ABS re-imports.
-	if !book.IsFieldLocked(models.BookFieldTitle) {
+	if !keepTitle && !book.IsFieldLocked(models.BookFieldTitle) {
 		book.Title = strings.TrimSpace(item.Title)
 		book.SortTitle = book.Title
 	}
