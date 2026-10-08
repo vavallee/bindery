@@ -7,6 +7,7 @@ import {
   CalibreImportRun,
   CalibreRollbackResult,
   CalibreSyncProgress,
+  type SettingSaveResult,
 } from '../../api/client'
 import Toggle from './Toggle'
 import SaveButton from './SaveButton'
@@ -14,6 +15,20 @@ import CalibreDeliveryPanel from './CalibreDeliveryPanel'
 import { useSaveResult } from './useSaveResult'
 import { secretInputAttrs, urlInputAttrs } from '../../util/inputAttrs'
 import { useModal } from '../../components/useModal'
+
+// The code the server puts on a calibredb mode it cannot run because there is
+// no calibredb where Bindery runs (#1940), on a Test failure and on a save.
+const CALIBREDB_MISSING = 'calibredb_missing'
+
+// calibredbMissingReason returns the server's reason when err is a Test
+// failure for a missing calibredb, and null for any other failure.
+function calibredbMissingReason(err: unknown): string | null {
+  // Read off the body the way the warning below is, rather than by class, so
+  // an error from any request helper shape is understood.
+  const body = (err as { body?: { code?: unknown } } | null)?.body
+  if (body?.code !== CALIBREDB_MISSING) return null
+  return err instanceof Error ? err.message : ''
+}
 
 export default function CalibreTab() {
   const [settings, setSettings] = useState<Record<string, string>>({})
@@ -31,10 +46,11 @@ export default function CalibreTab() {
       .finally(() => setLoading(false))
   }, [])
 
-  const saveSetting = async (key: string): Promise<string | null> => {
+  const saveSetting = async (key: string, onSaved?: (res: SettingSaveResult | undefined) => void): Promise<string | null> => {
     setSaving(key)
     try {
-      await api.setSetting(key, settings[key] ?? '')
+      const res = await api.setSetting(key, settings[key] ?? '')
+      onSaved?.(res)
       return null
     } catch (err) {
       return err instanceof Error ? err.message : 'Save failed'
@@ -62,7 +78,7 @@ function CalibreSection({
 }: {
   settings: Record<string, string>
   setSettings: (fn: (prev: Record<string, string>) => Record<string, string>) => void
-  saveSetting: (key: string) => Promise<string | null>
+  saveSetting: (key: string, onSaved?: (res: SettingSaveResult | undefined) => void) => Promise<string | null>
   saving: string | null
 }) {
   const { t } = useTranslation()
@@ -81,14 +97,17 @@ function CalibreSection({
   const [syncError, setSyncError] = useState<string | null>(null)
   const [syncModalOpen, setSyncModalOpen] = useState(false)
   const [bridgeReachable, setBridgeReachable] = useState<boolean | null>(null)
+  // Set when calibredb mode is on and there is no calibredb where Bindery
+  // runs, as on the official image (#1940). Holds the server's reason.
+  const [calibredbMissing, setCalibredbMissing] = useState<string | null>(null)
   // Recent imports + rollback (issue #643).
   const [runs, setRuns] = useState<CalibreImportRun[]>([])
   const [rollbackRun, setRollbackRun] = useState<CalibreImportRun | null>(null)
 
-  const saveSettingWithErrorThrowing = async (key: string) => {
+  const saveSettingWithErrorThrowing = async (key: string, onSaved?: (res: SettingSaveResult | undefined) => void) => {
     setSaveError(null)
     setTestResult(null)
-    const err = await saveSetting(key)
+    const err = await saveSetting(key, onSaved)
     if (err) {
       setSaveError({ key, msg: err })
       throw new Error(err)
@@ -158,6 +177,25 @@ function CalibreSection({
     return () => { cancelled = true }
   }, [mode, pulling, pluginURL, pluginKey])
 
+  // calibredb mode on a Bindery with no calibredb saves and then drops every
+  // import without a word (#1940), so check whenever the tab shows that mode,
+  // not only when the user thinks to press Test.
+  useEffect(() => {
+    if (mode !== 'calibredb') {
+      setCalibredbMissing(null)
+      return
+    }
+    let cancelled = false
+    api.testCalibre()
+      .then(() => { if (!cancelled) setCalibredbMissing(null) })
+      .catch(err => {
+        if (cancelled) return
+        const missing = calibredbMissingReason(err)
+        if (missing) setCalibredbMissing(missing)
+      })
+    return () => { cancelled = true }
+  }, [mode])
+
   // Poll while an import is running.
   useEffect(() => {
     if (!importProgress?.running) return
@@ -225,6 +263,12 @@ function CalibreSection({
     }
   }
 
+  // A calibredb mode or binary path save says whether calibredb can run
+  // (#1940): set the banner from its warning, or clear it when there is none.
+  const applyCalibredbWarning = (res: SettingSaveResult | undefined) => {
+    setCalibredbMissing(res?.warningCode === CALIBREDB_MISSING ? (res.warning ?? '') : null)
+  }
+
   const runTest = async () => {
     setTesting(true)
     setTestResult(null)
@@ -251,8 +295,12 @@ function CalibreSection({
       // on a successful manual test, without waiting for the silent probe
       // to re-fire (which only triggers on mode/url/key *changes*).
       if (isPlugin) setBridgeReachable(true)
+      // calibredb answered, so whatever the banner said no longer holds.
+      else setCalibredbMissing(null)
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'Test failed'
+      const missing = calibredbMissingReason(err)
+      if (missing) setCalibredbMissing(missing)
       const prefix = isPlugin ? '✗ Could not reach plugin' : '✗ calibredb unreachable'
       const body = (err as { body?: { warning?: unknown } } | null)?.body
       const warning = typeof body?.warning === 'string' && body.warning ? body.warning : undefined
@@ -265,7 +313,12 @@ function CalibreSection({
 
   const setMode = async (next: 'off' | 'calibredb' | 'plugin') => {
     setSettings(s => ({ ...s, 'calibre.mode': next }))
-    await api.setSetting('calibre.mode', next).catch(console.error)
+    setCalibredbMissing(null)
+    try {
+      applyCalibredbWarning(await api.setSetting('calibre.mode', next))
+    } catch (err) {
+      console.error(err)
+    }
   }
 
   const setTransport = async (next: 'push' | 'pull') => {
@@ -338,6 +391,20 @@ function CalibreSection({
           </div>
         </div>
 
+        {mode === 'calibredb' && calibredbMissing !== null && (
+          <Alert tier="error" className="text-xs" title={t('settings.calibre.calibredbMissing.title')}>
+            <p>{t('settings.calibre.calibredbMissing.body')}</p>
+            {calibredbMissing && <p className="mt-1 font-mono break-words">{calibredbMissing}</p>}
+            <button
+              type="button"
+              onClick={() => setMode('plugin')}
+              className="mt-2 text-emerald-700 dark:text-emerald-400 underline"
+            >
+              {t('settings.calibre.calibredbMissing.switchToBridge')}
+            </button>
+          </Alert>
+        )}
+
         {mode === 'calibredb' && (
           <div>
             <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Binary path (optional)</label>
@@ -352,7 +419,7 @@ function CalibreSection({
               <SaveButton
                 result={binaryPathSaveResult}
                 saving={saving === 'calibre.binary_path'}
-                onClick={() => binaryPathSave(() => saveSettingWithErrorThrowing('calibre.binary_path'))}
+                onClick={() => binaryPathSave(() => saveSettingWithErrorThrowing('calibre.binary_path', applyCalibredbWarning))}
               />
             </div>
             {saveError?.key === 'calibre.binary_path' && (

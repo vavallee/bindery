@@ -25,9 +25,9 @@ import (
 
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/isbnutil"
+	"github.com/vavallee/bindery/internal/metadata/providerhttp"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
-	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const (
@@ -46,12 +46,16 @@ const (
 // Client implements metadata.Provider for DNB via the public SRU endpoint.
 type Client struct {
 	http *http.Client
+	// gate holds every SRU request this client makes while DNB is refusing.
+	// Nil (a zero value Client in tests) holds each call on its own.
+	gate *providerhttp.Gate
 }
 
 // New creates a new DNB client.
 func New() *Client {
 	return &Client{
 		http: &http.Client{Timeout: 15 * time.Second, Transport: httpsec.DefaultProxyTransport()},
+		gate: providerhttp.NewGate(),
 	}
 }
 
@@ -236,23 +240,16 @@ func (c *Client) sruQuery(ctx context.Context, cql string, maxRecords int) ([]ma
 	}
 	endpoint := sruBase + "?" + params.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", useragent.Get())
-	req.Header.Set("Accept", "application/xml")
-
-	resp, err := c.http.Do(req)
+	// The shared provider request loop retries a 429 or 5xx with Retry-After
+	// and backoff, and holds every DNB request while one is refused (#2369).
+	resp, err := providerhttp.Do(ctx, c.http, c.gate, providerhttp.Request{
+		URL:    endpoint,
+		Header: http.Header{"Accept": {"application/xml"}},
+	})
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
-	}
 
 	var result sruResponse
 	if err := xml.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&result); err != nil {

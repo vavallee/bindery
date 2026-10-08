@@ -549,13 +549,65 @@ func (h *SettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"key": key, "value": ""})
 		return
 	}
-	s, err := h.settings.Get(r.Context(), key)
-	if err != nil || s == nil {
-		writeJSON(w, http.StatusOK, map[string]string{"key": key, "value": value})
-		return
+	resp := settingSetResponse{Setting: &models.Setting{Key: key, Value: value}}
+	if s, err := h.settings.Get(r.Context(), key); err == nil && s != nil {
+		resp.Setting = s
 	}
-	writeJSON(w, http.StatusOK, s)
+	resp.Warning, resp.WarningCode = h.settingSaveWarning(r.Context(), key)
+	writeJSON(w, http.StatusOK, resp)
 }
+
+// settingSetResponse is what a setting write answers: the stored setting,
+// and a warning when the value saved but cannot work as configured.
+type settingSetResponse struct {
+	*models.Setting
+	Warning     string `json:"warning,omitempty"`
+	WarningCode string `json:"warningCode,omitempty"`
+}
+
+// warningCalibredbMissing is the warning code for a calibredb write mode
+// with no calibredb where Bindery runs (#1940).
+const warningCalibredbMissing = "calibredb_missing"
+
+// settingSaveWarning checks a just saved setting against the environment.
+//
+// A calibredb write mode is saved even when there is no calibredb to run
+// (#1940), because refusing would leave the user unable to save the mode
+// they will make work by installing Calibre, but saying nothing is how the
+// official image, which has no Calibre at all, came to drop every import on
+// the floor with a successful looking import and a single WARN line. So the
+// save answers with the reason, and the Calibre settings tab shows it.
+func (h *SettingsHandler) settingSaveWarning(ctx context.Context, key string) (string, string) {
+	if key != SettingCalibreMode && key != SettingCalibreBinaryPath {
+		return "", ""
+	}
+	if LoadCalibreMode(ctx, h.settings) != calibre.ModeCalibredb {
+		return "", ""
+	}
+	cfg := LoadCalibreConfig(ctx, h.settings)
+	cfg.Enabled = true
+	client := calibre.New(cfg)
+	if _, err := client.Locate(); err != nil {
+		code := ""
+		if calibre.IsCalibredbUnusable(err) {
+			code = warningCalibredbMissing
+		}
+		return err.Error(), code
+	}
+	// The file is there; whether it starts is another matter on the official
+	// image, where a mounted Calibre install has no libraries to load. Ask it
+	// for its version, briefly, and warn only when it cannot run at all. Any
+	// other trouble, such as the library path, is Test connection's to report.
+	tctx, cancel := context.WithTimeout(ctx, calibredbSaveProbeTimeout)
+	defer cancel()
+	if _, err := client.Test(tctx); calibre.IsCalibredbUnusable(err) {
+		return err.Error(), warningCalibredbMissing
+	}
+	return "", ""
+}
+
+// calibredbSaveProbeTimeout bounds the version check a calibredb save runs.
+const calibredbSaveProbeTimeout = 10 * time.Second
 
 // validateSettingDependencies rejects values that are well-formed on their own
 // but invalid given the rest of the stored configuration. validateSettingValue

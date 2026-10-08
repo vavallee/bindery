@@ -204,15 +204,17 @@ func TestQueueGrab_LiveDownloadStillBlocksRegrabWithReason(t *testing.T) {
 			if rec.Code != http.StatusConflict {
 				t.Fatalf("expected 409 for a %s download, got %d: %s", tc.name, rec.Code, rec.Body.String())
 			}
-			var payload map[string]string
+			var payload struct {
+				Error string `json:"error"`
+			}
 			if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(payload["error"], "already grabbed") {
-				t.Errorf("expected the sentinel preserved for clients matching on it, got %q", payload["error"])
+			if !strings.Contains(payload.Error, "already grabbed") {
+				t.Errorf("expected the sentinel preserved for clients matching on it, got %q", payload.Error)
 			}
-			if !strings.Contains(payload["error"], tc.want) {
-				t.Errorf("expected the 409 body to explain why (%q), got %q", tc.want, payload["error"])
+			if !strings.Contains(payload.Error, tc.want) {
+				t.Errorf("expected the 409 body to explain why (%q), got %q", tc.want, payload.Error)
 			}
 		})
 	}

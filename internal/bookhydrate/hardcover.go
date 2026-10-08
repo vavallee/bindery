@@ -219,6 +219,30 @@ func HydrateHardcoverEditions(ctx context.Context, opts Options) Result {
 	return result
 }
 
+// EditionsOnly returns a hydrator that fetches and stores the Hardcover
+// editions of a book and changes nothing else (#1853). The Calibre handoff
+// uses it for a book that reaches Calibre with no editions on record, which
+// is every book a Hardcover list sync added since #1784 stopped fetching
+// editions there. The book is copied before hydration, so the ASIN
+// promotion and audiobook derivation HydrateHardcoverEditions does for a new
+// book never touch the caller's book or the books table: a delivery is no
+// place to rewrite a book's metadata. A book with no Hardcover identity is
+// left alone.
+func EditionsOnly(editions EditionUpserter, fetch EditionFetcher) func(context.Context, *models.Book) error {
+	return func(ctx context.Context, book *models.Book) error {
+		if book == nil || !IsHardcoverBook(book, "") {
+			return nil
+		}
+		copied := *book
+		return HydrateHardcoverEditions(ctx, Options{
+			Book:          &copied,
+			Provider:      "hardcover",
+			Editions:      editions,
+			FetchEditions: fetch,
+		}).Err
+	}
+}
+
 // preferredAudioEdition returns the audio-looking edition whose ASIN matches
 // the book, or the edition maybePromoteASIN will use when the book has no ASIN.
 // Among matching ASINs, prefer the highest audioEditionScore, then an edition

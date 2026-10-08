@@ -41,11 +41,21 @@ export interface SettingDescriptor {
   writable: boolean
 }
 
+// SettingSaveResult is what a setting write answers.
+export interface SettingSaveResult {
+  key: string
+  value: string
+  warning?: string
+  warningCode?: string
+}
+
 export const settingsApi = {
   // Settings
   listSettings: () => request<Array<{ key: string; value: string }>>('/setting'),
   getSetting: (key: string) => request<{ key: string; value: string }>(`/setting/${key}`),
-  setSetting: (key: string, value: string) => request<void>(`/setting/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
+  // A save can succeed and still warn that the value cannot work where Bindery
+  // runs, such as calibredb mode with no calibredb (#1940).
+  setSetting: (key: string, value: string) => request<SettingSaveResult | undefined>(`/setting/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
   // Deleting a row restores the key's default, which is why the Advanced tab
   // calls this "Reset" rather than "Delete". Admin only server side, and
   // refused for secrets.

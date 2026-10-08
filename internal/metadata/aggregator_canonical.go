@@ -694,7 +694,7 @@ func (a *Aggregator) canonicalPrimaryBookFromResults(query primaryBookCanonicalQ
 		authorMatchedAlias := false
 		if !assumeAuthorMatch || bookAuthorName(result) != "" {
 			author, authorMatchedAlias = bookAuthorMatch(sourceAuthor, result)
-			if author.Kind != textutil.AuthorMatchExact && author.Kind != textutil.AuthorMatchFuzzyAuto {
+			if !author.ConfirmedByTitle() {
 				continue
 			}
 		}

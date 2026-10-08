@@ -51,10 +51,35 @@ func TestCheckDownloadClientHealth_QBittorrentCategoryPath(t *testing.T) {
 			wantText:   "was not found",
 		},
 		{
-			name:       "empty category path reports default",
+			// qBittorrent saves an empty category save path to its default
+			// save path plus the category name, so that folder is judged
+			// (#2664), and here it is outside the download directory.
+			name:       "empty category path is judged under the default",
 			categories: `{"books":{"name":"books","savePath":""}}`,
 			wantStatus: HealthError,
-			wantText:   "qBittorrent default is",
+			wantText:   `saves to "/media/default/books"`,
+		},
+		{
+			// #2664: before, an empty save path was an error by itself, on a
+			// setup whose grabs land in a folder Bindery reads.
+			name:       "empty category path under the default is accepted",
+			categories: `{"books":{"name":"books","savePath":""}}`,
+			pathRemap:  "/media/default:" + expected,
+			wantStatus: HealthOK,
+		},
+		{
+			name:       "relative category path resolves under the default",
+			categories: `{"books":{"name":"books","savePath":"Torrents/books"}}`,
+			pathRemap:  "/media/default:" + expected,
+			wantStatus: HealthOK,
+		},
+		{
+			// The category folder does not exist until qBittorrent's first
+			// download into it; its parent being readable is enough.
+			name:       "category folder not created yet",
+			categories: `{"books":{"name":"books","savePath":""}}`,
+			pathRemap:  "/media/default:" + filepath.Join(expected, "Torrents", "books"),
+			wantStatus: HealthOK,
 		},
 		{
 			name:       "mismatched category path",
@@ -428,5 +453,41 @@ func TestQbittorrentCategoryPath_GlobalRemapOnly(t *testing.T) {
 	got := CheckDownloadClientHealth(context.Background(), client, tmp, "", "/qbit:"+tmp)
 	if got.Status != HealthOK {
 		t.Fatalf("status = %q, want %q; message=%s", got.Status, HealthOK, got.Message)
+	}
+}
+
+// TestCheckDownloadClientHealth_QBittorrentWithoutCategory: a qBittorrent
+// client with no category is valid, since grabs are then sent Bindery's
+// download folder as the save path. The health job failed it with "category
+// is empty" while Test passed it (#2664); both now check that folder.
+func TestCheckDownloadClientHealth_QBittorrentWithoutCategory(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/categories":
+			_, _ = w.Write([]byte(`{}`))
+		case "/api/v2/app/defaultSavePath":
+			_, _ = w.Write([]byte("/media/default"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p"}
+
+	readable := t.TempDir()
+	got := CheckDownloadClientHealth(context.Background(), client, readable, "", "")
+	if got.Status != HealthOK {
+		t.Fatalf("#2664: grabs land in a folder Bindery reads, so the health job must pass; got %+v", got)
+	}
+	if vis := CheckCompletedPathVisibility(context.Background(), client, readable, "", ""); vis.Status != PathVisible {
+		t.Fatalf("Test must agree with the health job, got %+v", vis)
+	}
+
+	got = CheckDownloadClientHealth(context.Background(), client, filepath.Join(readable, "missing"), "", "")
+	if got.Status != HealthError {
+		t.Fatalf("a download folder Bindery cannot read must still fail, got %+v", got)
 	}
 }

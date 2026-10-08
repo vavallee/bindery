@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, Book, SearchResult } from '../api/client'
+import { useConfirmDialog } from '../components/useConfirmDialog'
+import { grabWithForceConfirm } from '../util/forceGrab'
 import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
@@ -31,6 +33,7 @@ const LIST_DEFAULTS = { q: '', excluded: '' }
 
 export default function WantedPage() {
   const { t } = useTranslation()
+  const { confirm, confirmDialog } = useConfirmDialog()
 
   const [books, setBooks] = useState<Book[]>([])
   const [loading, setLoading] = useState(true)
@@ -151,7 +154,7 @@ export default function WantedPage() {
   const grab = async (result: SearchResult, book: Book) => {
     setGrabbingGuid(result.guid)
     try {
-      await api.grab({
+      const dl = await grabWithForceConfirm({
         guid: result.guid,
         title: result.title,
         nzbUrl: result.nzbUrl,
@@ -161,7 +164,8 @@ export default function WantedPage() {
         protocol: result.protocol,
         // The result's own media type wins over the book's 'both' (#2933).
         mediaType: result.mediaType || book.mediaType,
-      })
+      }, confirm, t)
+      if (!dl) return
       setGrabbedGuid(result.guid)
       setTimeout(() => {
         setShowResults(null)
@@ -236,6 +240,7 @@ export default function WantedPage() {
 
   return (
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
+      {confirmDialog}
       {toast && (
         <div className="fixed bottom-safe-6 right-safe-6 z-50 px-4 py-2.5 bg-red-600 text-white rounded-lg shadow-lg text-sm font-medium animate-fade-in">
           {toast}

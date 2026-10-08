@@ -17,8 +17,8 @@ package audible
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/httpsec"
+	"github.com/vavallee/bindery/internal/metadata/providerhttp"
 	"github.com/vavallee/bindery/internal/models"
-	"github.com/vavallee/bindery/internal/useragent"
 )
 
 const (
@@ -51,6 +51,8 @@ const (
 type Client struct {
 	baseURL string
 	http    *http.Client
+	// gate holds every request this client makes while Audible is refusing.
+	gate *providerhttp.Gate
 }
 
 // New returns an Audible catalogue client pointed at api.audible.com (US).
@@ -64,6 +66,7 @@ func New() *Client {
 	return &Client{
 		baseURL: defaultBaseURL,
 		http:    &http.Client{Timeout: 15 * time.Second, Transport: httpsec.DefaultProxyTransport()},
+		gate:    providerhttp.NewGate(),
 	}
 }
 
@@ -176,23 +179,22 @@ func (c *Client) fetchCataloguePage(ctx context.Context, author string, page int
 	}
 	endpoint := c.baseURL + "/1.0/catalog/products?" + params.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	// The shared provider request loop retries a 429 or 5xx with Retry-After
+	// and backoff, and holds every Audible request while one is refused. The
+	// ABS import walks many authors here, and a 429 used to drop the author's
+	// audiobook catalogue outright (#2369).
+	resp, err := providerhttp.Do(ctx, c.http, c.gate, providerhttp.Request{
+		URL:    endpoint,
+		Header: http.Header{"Accept": {"application/json"}},
+	})
 	if err != nil {
-		return catalogueResponse{}, err
-	}
-	req.Header.Set("User-Agent", useragent.Get())
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
+		var status *providerhttp.StatusError
+		if errors.As(err, &status) {
+			return catalogueResponse{}, fmt.Errorf("audible %w", err)
+		}
 		return catalogueResponse{}, fmt.Errorf("audible search by author %q page %d: %w", author, page, err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return catalogueResponse{}, fmt.Errorf("audible HTTP %d: %s", resp.StatusCode, string(body))
-	}
 
 	var parsed catalogueResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {

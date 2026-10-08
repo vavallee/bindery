@@ -151,6 +151,41 @@ func TestCheckCompletedPathVisibility_GlobalRemapFallback(t *testing.T) {
 	}
 }
 
+// TestCheckCompletedPathVisibility_QbittorrentEmptyCategoryPath is the
+// qBittorrent half of #2664. A category with an empty save path saves to the
+// default save path plus the category name. Here only that category folder
+// is mounted in Bindery, which is enough for imports, but Test judged the
+// default save path itself and warned.
+func TestCheckCompletedPathVisibility_QbittorrentEmptyCategoryPath(t *testing.T) {
+	mounted := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/categories":
+			_, _ = w.Write([]byte(`{"books":{"name":"books","savePath":""}}`))
+		case "/api/v2/app/defaultSavePath":
+			_, _ = w.Write([]byte("/remote/downloads"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{
+		Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p",
+		Category:  "books",
+		PathRemap: "/remote/downloads/books:" + mounted,
+	}
+	got := CheckCompletedPathVisibility(context.Background(), client, mounted, "", "")
+	if got.Status != PathVisible {
+		t.Fatalf("#2664: the category folder grabs land in is readable, so Test must pass; got %+v", got)
+	}
+	if got.Path != mounted {
+		t.Errorf("expected the category folder %q to be checked, got %q", mounted, got.Path)
+	}
+}
+
 // TestCheckCompletedPathVisibility_Nzbget verifies the probe resolves NZBGet's
 // completed directory from its config RPC (expanding ${MainDir}) and stats it.
 func TestCheckCompletedPathVisibility_Nzbget(t *testing.T) {

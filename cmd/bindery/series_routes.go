@@ -28,6 +28,7 @@ type seriesRouteHandler interface {
 	PutHardcoverLink(http.ResponseWriter, *http.Request)
 	DeleteHardcoverLink(http.ResponseWriter, *http.Request)
 	HardcoverDiff(http.ResponseWriter, *http.Request)
+	UnmonitorSplitEditionParts(http.ResponseWriter, *http.Request)
 }
 
 func registerSeriesRoutes(r chi.Router, seriesHandler seriesRouteHandler) {
@@ -48,6 +49,7 @@ func registerSeriesRoutes(r chi.Router, seriesHandler seriesRouteHandler) {
 		r.Delete("/series/{id}/books/{bookId}", seriesHandler.RemoveBook)
 		r.Put("/series/{id}/books/{bookId}/primary", seriesHandler.SetPrimaryBook)
 		r.Post("/series/{id}/fill", seriesHandler.Fill)
+		r.Post("/series/{id}/split-parts/unmonitor", seriesHandler.UnmonitorSplitEditionParts)
 		r.Put("/series/{id}/genres", seriesHandler.ApplyGenres)
 		r.Delete("/series/{id}/genres", seriesHandler.ClearGenres)
 		r.Post("/series/{id}/hardcover-link/auto", seriesHandler.AutoLinkHardcover)

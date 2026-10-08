@@ -3,11 +3,13 @@ package calibre
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -626,6 +628,253 @@ func TestDeliverer_CalibredbMode(t *testing.T) {
 	}
 	if id := f.calibreID(t); id == nil || *id != 1234 {
 		t.Errorf("books.calibre_id = %v, want 1234", id)
+	}
+}
+
+// TestDeliverer_CalibredbMissingWaitsAndSaysWhy replays #1940. On the
+// official distroless image there is no calibredb, so calibredb mode can
+// never deliver. Every import still looked successful and the only trace
+// was a WARN line. A pass must leave the rows waiting without spending their
+// attempts, and the settings queue view must say calibredb is missing and
+// point at the Bridge plugin.
+func TestDeliverer_CalibredbMissingWaitsAndSaysWhy(t *testing.T) {
+	cfg := Config{Enabled: true, LibraryPath: t.TempDir(), BinaryPath: filepath.Join(t.TempDir(), "calibredb")}
+	f := newWorkerFixture(t, ModeCalibredb, New(cfg))
+	f.cfg = cfg
+	row := f.addFile(t, "a.epub")
+
+	f.d.RunDeliveries(f.ctx)
+
+	got := f.row(t, row.ID)
+	if got.State != models.CalibreDeliveryPending || got.Attempts != 0 {
+		t.Fatalf("#1940: a missing calibredb is not the book's fault; row = %+v, want pending with no attempt spent", got)
+	}
+	h := f.d.Health()
+	if h.Reachable == nil || *h.Reachable {
+		t.Fatalf("#1940: the queue view must report calibredb unusable, got reachable=%v", h.Reachable)
+	}
+	for _, want := range []string{"calibredb is not installed", "Calibre Bridge plugin"} {
+		if !strings.Contains(h.LastError, want) {
+			t.Errorf("#1940: the reason shown must mention %q, got %q", want, h.LastError)
+		}
+	}
+}
+
+// metaCapture is a calibredb shaped adder that keeps the metadata it was
+// handed.
+type metaCapture struct {
+	metas []Metadata
+}
+
+func (m *metaCapture) Add(_ context.Context, _ string, meta Metadata) (int64, error) {
+	m.metas = append(m.metas, meta)
+	return int64(len(m.metas)), nil
+}
+
+// TestDeliverer_FetchesEditionsForABookWithNone replays #1853. A Hardcover
+// list sync stopped storing editions in #1784, so a list synced book reached
+// Calibre with no ISBN, publisher or edition language: the handoff reads
+// them from the editions table, and there were none. The delivery must fetch
+// the book's editions when it has none on record, once, and use them.
+func TestDeliverer_FetchesEditionsForABookWithNone(t *testing.T) {
+	cli := &metaCapture{}
+	f := newWorkerFixture(t, ModeCalibredb, cli)
+	f.cfg.LibraryPath = "/lib"
+	isbn := "9780441172719"
+	calls := 0
+	f.d.WithEditionHydrator(func(ctx context.Context, book *models.Book) error {
+		calls++
+		return f.editions.Upsert(ctx, &models.Edition{
+			ForeignID: "hc-ed:1", BookID: book.ID, Title: book.Title,
+			ISBN13: &isbn, Publisher: "Ace", Format: "EPUB", Language: "eng", IsEbook: true,
+		})
+	}, nil)
+	f.addFile(t, "a.epub")
+
+	f.d.RunDeliveries(f.ctx)
+
+	if calls != 1 {
+		t.Fatalf("expected one edition fetch for a book with none, got %d", calls)
+	}
+	if len(cli.metas) != 1 {
+		t.Fatalf("expected one add, got %d", len(cli.metas))
+	}
+	meta := cli.metas[0]
+	if meta.Identifiers["isbn"] != isbn {
+		t.Errorf("#1853: the handoff must carry the fetched edition's ISBN, got identifiers %v", meta.Identifiers)
+	}
+	if meta.Publisher != "Ace" {
+		t.Errorf("#1853: the handoff must carry the fetched edition's publisher, got %q", meta.Publisher)
+	}
+
+	// A book that now has editions on record is not fetched again.
+	f.d.prepareEditions(withHydrateBudget(f.ctx), f.book)
+	if calls != 1 {
+		t.Errorf("editions on record must not be fetched again, got %d fetches", calls)
+	}
+}
+
+// TestDeliverer_EditionFetchFailureStillDelivers: the fetch is best effort.
+// A provider that fails leaves the handoff as it was, and the book still
+// reaches Calibre.
+func TestDeliverer_EditionFetchFailureStillDelivers(t *testing.T) {
+	cli := &metaCapture{}
+	f := newWorkerFixture(t, ModeCalibredb, cli)
+	f.cfg.LibraryPath = "/lib"
+	f.d.WithEditionHydrator(func(context.Context, *models.Book) error { return errors.New("hardcover down") }, nil)
+	row := f.addFile(t, "a.epub")
+
+	f.d.RunDeliveries(f.ctx)
+
+	if got := f.row(t, row.ID); got.State != models.CalibreDeliveryDelivered {
+		t.Fatalf("a failed edition fetch must not hold the delivery back, row = %+v", got)
+	}
+	if _, ok := cli.metas[0].Identifiers["isbn"]; ok {
+		t.Errorf("no edition, no ISBN; got %v", cli.metas[0].Identifiers)
+	}
+}
+
+// storingHydrator stores one edition per book it is asked about and counts
+// the asks.
+func storingHydrator(f *workerFixture, calls *int) EditionHydrator {
+	return func(ctx context.Context, book *models.Book) error {
+		*calls++
+		isbn := fmt.Sprintf("97800000%05d", book.ID)
+		return f.editions.Upsert(ctx, &models.Edition{
+			ForeignID: fmt.Sprintf("hc-ed:%d", book.ID), BookID: book.ID, Title: book.Title,
+			ISBN13: &isbn, Format: "EPUB", IsEbook: true,
+		})
+	}
+}
+
+// TestDeliverer_EditionFetchesAreCappedPerPass: a pass fetches editions for
+// at most editionHydratePerRun books. The rest wait, untouched, for the next
+// pass rather than going to Calibre without them.
+func TestDeliverer_EditionFetchesAreCappedPerPass(t *testing.T) {
+	cli := &metaCapture{}
+	f := newWorkerFixture(t, ModeCalibredb, cli)
+	f.cfg.LibraryPath = "/lib"
+	calls := 0
+	f.d.WithEditionHydrator(storingHydrator(f, &calls), nil)
+	total := editionHydratePerRun + 2
+	var rows []models.CalibreDelivery
+	for i := 0; i < total; i++ {
+		_, r := f.addBook(t, fmt.Sprintf("Capped%d", i), "a.epub")
+		rows = append(rows, r...)
+	}
+
+	f.d.RunDeliveries(f.ctx)
+	if calls != editionHydratePerRun || len(cli.metas) != editionHydratePerRun {
+		t.Fatalf("first pass: %d fetches and %d adds, want %d of each", calls, len(cli.metas), editionHydratePerRun)
+	}
+	waiting := 0
+	for _, r := range rows {
+		got := f.row(t, r.ID)
+		if got.State == models.CalibreDeliveryPending {
+			waiting++
+			if got.Attempts != 0 {
+				t.Errorf("a row deferred for the cap must not spend an attempt, got %+v", got)
+			}
+		}
+	}
+	if waiting != total-editionHydratePerRun {
+		t.Fatalf("%d rows waiting, want %d", waiting, total-editionHydratePerRun)
+	}
+
+	f.d.RunDeliveries(f.ctx)
+	if calls != total || len(cli.metas) != total {
+		t.Fatalf("second pass: %d fetches and %d adds, want %d of each", calls, len(cli.metas), total)
+	}
+	for _, m := range cli.metas {
+		if m.Identifiers["isbn"] == "" {
+			t.Errorf("every delivered book must carry its fetched ISBN, got %v", m.Identifiers)
+		}
+	}
+}
+
+// TestPullList_EditionFetchesAreCapped: a pull listing runs inside the
+// plugin's request, so it fetches for at most editionHydratePerRun books and
+// leaves the rest to a later listing.
+func TestPullList_EditionFetchesAreCapped(t *testing.T) {
+	f, _ := newPullFixture(t)
+	calls := 0
+	f.d.WithEditionHydrator(storingHydrator(f, &calls), nil)
+	total := editionHydratePerRun + 3
+	for i := 0; i < total; i++ {
+		f.addBook(t, fmt.Sprintf("Pulled%d", i), "a.epub")
+	}
+
+	page, err := f.d.PullList(f.ctx, PullCaps{}, "", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != editionHydratePerRun {
+		t.Fatalf("one listing made %d edition fetches, want at most %d", calls, editionHydratePerRun)
+	}
+	if len(page.Deliveries) != editionHydratePerRun {
+		t.Fatalf("listed %d books, want the %d whose editions were fetched", len(page.Deliveries), editionHydratePerRun)
+	}
+	for _, it := range page.Deliveries {
+		if it.Metadata.Identifiers["isbn"] == "" {
+			t.Errorf("a listed book must carry its fetched ISBN, got %v", it.Metadata.Identifiers)
+		}
+	}
+
+	page, err = f.d.PullList(f.ctx, PullCaps{}, "", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != total || len(page.Deliveries) != total {
+		t.Fatalf("second listing: %d fetches, %d listed; want %d of each", calls, len(page.Deliveries), total)
+	}
+}
+
+// TestDeliverer_OnlyAnAnswerIsRemembered: a fetch that fails or is cut off
+// does not hold the book back from being asked again, while one Hardcover
+// answered, even with no editions, is not repeated within the retry window.
+func TestDeliverer_OnlyAnAnswerIsRemembered(t *testing.T) {
+	f := newWorkerFixture(t, ModeCalibredb, &metaCapture{})
+	calls := 0
+	answer := context.DeadlineExceeded
+	f.d.WithEditionHydrator(func(context.Context, *models.Book) error {
+		calls++
+		return answer
+	}, nil)
+
+	f.d.prepareEditions(withHydrateBudget(f.ctx), f.book)
+	f.d.prepareEditions(withHydrateBudget(f.ctx), f.book)
+	if calls != 2 {
+		t.Fatalf("a cut off fetch must not block the next ask, got %d fetches", calls)
+	}
+
+	answer = nil // Hardcover answered, with nothing to store
+	f.d.prepareEditions(withHydrateBudget(f.ctx), f.book)
+	f.d.prepareEditions(withHydrateBudget(f.ctx), f.book)
+	if calls != 3 {
+		t.Fatalf("an answered book must not be asked again within the window, got %d fetches", calls)
+	}
+	f.offset = editionHydrateRetry + time.Minute
+	f.d.prepareEditions(withHydrateBudget(f.ctx), f.book)
+	if calls != 4 {
+		t.Fatalf("after the window the book is asked again, got %d fetches", calls)
+	}
+}
+
+// TestDeliverer_HydratorScopeSpendsNoBudget: a book the hydrator does not
+// apply to is not fetched and leaves the allowance to books it does.
+func TestDeliverer_HydratorScopeSpendsNoBudget(t *testing.T) {
+	f := newWorkerFixture(t, ModeCalibredb, &metaCapture{})
+	calls := 0
+	f.d.WithEditionHydrator(func(context.Context, *models.Book) error { calls++; return nil },
+		func(b *models.Book) bool { return b.MetadataProvider == "hardcover" })
+	ctx := withHydrateBudget(f.ctx)
+	for i := 0; i < editionHydratePerRun+1; i++ {
+		if f.d.prepareEditions(ctx, f.book) {
+			t.Fatal("a book the hydrator does not apply to must never be deferred")
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("got %d fetches for a book out of scope", calls)
 	}
 }
 

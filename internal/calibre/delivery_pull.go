@@ -270,6 +270,9 @@ func (d *Deliverer) PullList(ctx context.Context, caps PullCaps, cursor string, 
 		return page, err
 	}
 	target := d.pullTarget(caps, d.pullLibrary())
+	// The listing runs inside the plugin's request, so its edition fetches
+	// are capped; a book over the cap is listed on a later check in (#1853).
+	ctx = withHydrateBudget(ctx)
 
 	books := groupByBook(rows)
 	lastIncluded := int64(0)

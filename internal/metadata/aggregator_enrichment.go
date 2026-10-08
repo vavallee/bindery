@@ -561,9 +561,10 @@ func pickEnrichmentMatch(candidates []models.Book, target *models.Book) *models.
 		// "J.R.R. Tolkien" vs "J. R. R. Tolkien", "Tolkien, J.R.R." vs the
 		// same, NFC vs NFD — all Exact under textutil, none a substring of the
 		// other. FuzzyAuto is included because enrichment fails closed and both
-		// names are already corroborated by a title match.
-		switch textutil.MatchAuthorName(target.Author.Name, c.Author.Name).Kind {
-		case textutil.AuthorMatchExact, textutil.AuthorMatchFuzzyAuto:
+		// names are already corroborated by a title match. For the same
+		// reason a pairing that only drops initials ("J. Rowling" against
+		// "J.K. Rowling") counts too (#2881).
+		if textutil.MatchAuthorName(target.Author.Name, c.Author.Name).ConfirmedByTitle() {
 			return c
 		}
 	}

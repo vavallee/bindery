@@ -683,7 +683,7 @@ func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fal
 			ForeignID:        foreignID,
 			Name:             fallbackName,
 			SortName:         sortName(fallbackName),
-			MetadataProvider: "openlibrary",
+			MetadataProvider: models.AuthorProviderFromForeignID(foreignID),
 		}, nil
 	}
 	author, err := h.meta.GetAuthor(ctx, foreignID)
@@ -693,7 +693,7 @@ func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fal
 			ForeignID:        foreignID,
 			Name:             fallbackName,
 			SortName:         sortName(fallbackName),
-			MetadataProvider: "openlibrary",
+			MetadataProvider: models.AuthorProviderFromForeignID(foreignID),
 		}, nil
 	}
 	if author == nil {
@@ -701,7 +701,7 @@ func (h *AuthorHandler) fetchAuthorForCreate(ctx context.Context, foreignID, fal
 			ForeignID:        foreignID,
 			Name:             fallbackName,
 			SortName:         sortName(fallbackName),
-			MetadataProvider: "openlibrary",
+			MetadataProvider: models.AuthorProviderFromForeignID(foreignID),
 		}, nil
 	}
 	if strings.TrimSpace(author.Name) == "" {
@@ -805,7 +805,7 @@ func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, auth
 	if provider := strings.TrimSpace(upstream.MetadataProvider); provider != "" {
 		author.MetadataProvider = provider
 	} else {
-		author.MetadataProvider = "openlibrary"
+		author.MetadataProvider = models.AuthorProviderFromForeignID(author.ForeignID)
 	}
 	applyAuthorCreateOptions(author, monitored, monitorMode, monitorLatestCount, qualityProfileID, metadataProfileID, rootFolderID, audiobookRootFolderID)
 	author.MonitorNewItems = monitorNewItems

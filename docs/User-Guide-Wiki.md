@@ -882,10 +882,12 @@ When metadata is wrong, you have three levels of fix:
 2. **Re-bind** the book, or **relink** the author ("Find better match"), to a
    different provider record when the match itself is wrong.
 3. A **metadata profile** (languages, minimum page count, minimum edition
-   count, skip part books) filters what a catalogue sync lets in. Filling a
-   series skips every metadata profile filter today, the edition count included
-   ([#2208](https://github.com/vavallee/bindery/issues/2208)), so a filled
-   series can still bring in thin works.
+   count, skip part books) filters what a catalogue sync lets in, and what
+   **Fill gaps** or **add all** on a series creates
+   ([#2208](https://github.com/vavallee/bindery/issues/2208)). Adding a single
+   row from a series is an explicit pick and is not filtered. Filters screen
+   books as they arrive; **Reconcile catalogue** on an author applies them to
+   books already stored.
 
 Box sets need no setting. A work whose title plainly names a bundle ("... Box
 Set", "3 Books Set", "Carton of 10 Signed Copies") is dropped from every
@@ -969,9 +971,11 @@ and each new book is monitored or not according to the author's monitor mode.
 - **Opting an author out:** set their **Monitor new items** to *Don't add
   them*. Unmonitored authors and Calibre library authors are not checked
   either.
-- **When a provider struggles:** when OpenLibrary or Hardcover refuses with a
-  rate limit, the pass stops and the remaining authors wait for the next
-  hour. When three authors in a row fail because the provider is down (server
+- **When a provider struggles:** every metadata provider waits and retries
+  when it is told to slow down, honouring the provider's own `Retry-After`,
+  and holds its other requests for that long too. When a provider still
+  refuses with a rate limit after that, the pass stops and the remaining
+  authors wait for the next hour. When three authors in a row fail because the provider is down (server
   errors, network failures, timeouts), the pass stops too, and those three
   are tried again in about six hours rather than a week later. An error about
   one author, such as an author the provider no longer knows, counts that
@@ -1030,7 +1034,8 @@ selection control and cannot be sent for removal.
 slightly different titles — "The Martian" and "Martian", "Dune" and "Dune
 (Unabridged)". Open the author and choose **More → Review duplicates…** to see
 groups of titles that look like the same book. Each group shows which rule
-matched (identical after normalisation, a leading article dropped, an edition
+matched (identical after normalisation, a leading article dropped or filed behind
+a comma as in "Trace of Death, A", an edition
 marker dropped, or one title being the main title or subtitle of the other),
 and each row shows the rules that pulled it in. A main title or subtitle match
 only counts at a colon, bracket or spaced dash, so Asimov's "Foundation" is not

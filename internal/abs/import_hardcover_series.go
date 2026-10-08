@@ -603,6 +603,17 @@ func hardcoverAuthorScore(absAuthor, hcAuthor string) int {
 		return 30
 	case textutil.AuthorMatchFuzzyAuto:
 		return 20
+	case textutil.AuthorMatchFuzzyAmbiguous:
+		// Only initials left out, and the score is added to a title score,
+		// so the title backs it up (#2881).
+		if match.DroppedInitial {
+			return 20
+		}
+		score := shelfarrTitleScore(absAuthor, hcAuthor)
+		if score >= 90 {
+			return 15
+		}
+		return 0
 	default:
 		score := shelfarrTitleScore(absAuthor, hcAuthor)
 		if score >= 90 {

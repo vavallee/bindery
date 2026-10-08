@@ -259,6 +259,15 @@ func (r *DownloadRepo) RetryFailed(ctx context.Context, d *models.Download) (boo
 		models.StateFailed, models.StateImportBlocked, models.StateImported)
 }
 
+// RetryImported is RetryFailed for a grab the user forced over an earlier
+// import of the same release (#2289): the same reset, claimed only while the
+// row is still imported, book or no book. A row that moved to any other state
+// since the caller read it is refused, so a force can never take over live
+// work. The caller (api.forceRegrabbable) decides who may force.
+func (r *DownloadRepo) RetryImported(ctx context.Context, d *models.Download) (bool, error) {
+	return r.claimForRegrab(ctx, d, regrabClaimSQL+`status=?`, models.StateImported)
+}
+
 // RetryDeadForAutoGrab is RetryFailed for the scheduler's auto grab: the same
 // reset, over a narrower set of rows, with one extra condition of its own.
 //

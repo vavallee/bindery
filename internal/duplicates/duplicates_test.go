@@ -102,6 +102,13 @@ func TestArticleKey(t *testing.T) {
 		{"single-article-survives", "A", "a"},
 		{"single-article-die", "Die", "die"},
 		{"internal-untouched", "The Eye of the World", "eyeoftheworld"},
+		// The library filing form puts the article after a comma (#1691).
+		{"filing-form-a", "Trace of Death, A", "traceofdeath"},
+		{"filing-form-the", "Martian, The", "martian"},
+		{"filing-form-german", "Name des Windes, Der", "namedeswindes"},
+		{"comma-not-article", "Love, Actually", "loveactually"},
+		{"comma-phrase-kept", "Me, Myself and I", "memyselfandi"},
+		{"comma-only-article-survives", ", A", "a"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -294,6 +301,25 @@ func TestScanGrouping(t *testing.T) {
 	}
 	if !rulesContain(dune.Rules, RuleAlnumEqual) {
 		t.Errorf("dune group rules = %v, want alnum-equal", dune.Rules)
+	}
+}
+
+// TestScanGroupsFilingFormTitles is #1691's comma inverted pair: one source
+// files the title as "Trace of Death, A", another writes "A Trace of Death",
+// and the duplicate review must offer them as one group.
+func TestScanGroupsFilingFormTitles(t *testing.T) {
+	books := []models.Book{book("A Trace of Death"), book("Trace of Death, A"), book("The Martian"), book("Martian, The")}
+	for i := range books {
+		books[i].ID = int64(i + 1)
+	}
+	groups := Scan(books, nil)
+	if len(groups) != 2 {
+		t.Fatalf("Scan = %d groups, want 2 (each title with its filing form)", len(groups))
+	}
+	for _, g := range groups {
+		if len(g.Members) != 2 || !rulesContain(g.Rules, RuleArticleStrip) {
+			t.Errorf("group %q = %d members, rules %v; want a pair on the article rule", g.Key, len(g.Members), g.Rules)
+		}
 	}
 }
 

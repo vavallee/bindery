@@ -179,9 +179,27 @@ func dropLeadingArticle(words []string) []string {
 	return words
 }
 
-// ArticleKey is the aggressive key with any leading article dropped.
+// dropArticle is dropLeadingArticle that also understands the library
+// filing form, where the article is moved behind a comma: "Trace of Death, A"
+// is "A Trace of Death" (#1691). The comma has to be read from the raw title,
+// because folding turns it into a space. Only a lone article after the last
+// comma counts, so "Love, Actually" and "Me, Myself and I" are left alone.
+func dropArticle(title string, words []string) []string {
+	if idx := strings.LastIndex(title, ","); idx >= 0 && len(words) > 1 {
+		tail := foldWords(title[idx+1:])
+		if len(tail) == 1 && words[len(words)-1] == tail[0] {
+			if _, ok := leadingArticles[tail[0]]; ok {
+				return words[:len(words)-1]
+			}
+		}
+	}
+	return dropLeadingArticle(words)
+}
+
+// ArticleKey is the aggressive key with any leading article dropped, or a
+// trailing one in the "Title, The" filing form.
 func ArticleKey(title string) string {
-	return strings.Join(dropLeadingArticle(foldWords(title)), "")
+	return strings.Join(dropArticle(title, foldWords(title)), "")
 }
 
 // editionMarkers are the trailing qualifier sequences the edition-suffix rule
@@ -401,9 +419,9 @@ func bookKeyFor(title string) bookKeys {
 	words := foldWords(title)
 	return bookKeys{
 		alnum:    strings.Join(words, ""),
-		article:  strings.Join(dropLeadingArticle(words), ""),
+		article:  strings.Join(dropArticle(title, words), ""),
 		edition:  strings.Join(dropTrailingEditionMarkers(words), ""),
-		combined: strings.Join(dropTrailingEditionMarkers(dropLeadingArticle(words)), ""),
+		combined: strings.Join(dropTrailingEditionMarkers(dropArticle(title, words)), ""),
 		segments: titleSegments(title),
 	}
 }

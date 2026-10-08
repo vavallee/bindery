@@ -277,8 +277,9 @@ func RefreshDownloadClientHealthAsync(parent context.Context, g *jobs.Group, sto
 // common support shape, where the connection tests fine, the client accepts
 // grabs, and nothing ever imports.
 //
-// qBittorrent keeps its own richer check because it validates both the ebook
-// and audiobook categories rather than a single path. Everything else goes
+// qBittorrent with a category keeps its own richer check because it validates
+// both the ebook and audiobook categories rather than a single path; without
+// one it gets the shared check, the same as Test (#2664). Everything else goes
 // through the shared visibility check, and a type that genuinely cannot be
 // introspected now answers HealthUnknown rather than a fabricated OK.
 func CheckDownloadClientHealth(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) models.DownloadClientHealth {
@@ -292,7 +293,11 @@ func CheckDownloadClientHealth(ctx context.Context, client *models.DownloadClien
 	if _, err := clienthost.Normalize(client.Host); err != nil {
 		return models.DownloadClientHealth{Status: HealthError, Message: err.Error()}
 	}
-	if client.Type == "qbittorrent" {
+	// A qBittorrent client with no category is valid: grabs are then sent
+	// Bindery's download folder as the save path. It used to fail here while
+	// Test passed it; it now gets the same check as Test, on the folder
+	// grabs land in (#2664).
+	if client.Type == "qbittorrent" && strings.TrimSpace(client.Category) != "" {
 		return checkQbittorrentCategoryPath(ctx, client, downloadDir, audiobookDownloadDir, globalRemap)
 	}
 	return checkCompletedPath(ctx, client, downloadDir, audiobookDownloadDir, globalRemap)
@@ -347,9 +352,6 @@ func TargetDownloadDir(mediaType, downloadDir, audiobookDownloadDir string) stri
 
 func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) models.DownloadClientHealth {
 	category := strings.TrimSpace(client.Category)
-	if category == "" {
-		return healthError("qBittorrent category is empty; configure a category with a save path")
-	}
 	// An unset download directory is not an error: the Windows binary has no
 	// built in default (#2902). The save path then only has to exist here.
 	expected := cleanConfiguredDir(ExpectedDownloadDirForClient(client, models.MediaTypeEbook, downloadDir, audiobookDownloadDir))
@@ -415,15 +417,28 @@ func validateQbittorrentCategorySavePath(ctx context.Context, qb *qbittorrent.Cl
 	}
 
 	savePath := strings.TrimSpace(qbCategory.SavePath)
-	if savePath == "" {
-		message := fmt.Sprintf("qBittorrent category %q has no save path", category)
-		if expected != "" {
-			message += fmt.Sprintf("; expected %q", expected)
+	// A category whose save path is empty or relative saves under
+	// qBittorrent's default save path (#2664): the category name, or the
+	// relative path, inside it. That is the folder grabs land in, so it is
+	// the folder to check, not a reason to fail. qBittorrent creates it on
+	// the first download, so until then its parent standing in for it is
+	// enough (createdOnGrab).
+	createdOnGrab := false
+	if !pathmap.IsAbsClientPath(savePath) {
+		defaultPath, err := qb.GetDefaultSavePath(ctx)
+		defaultPath = strings.TrimSpace(defaultPath)
+		if err != nil || defaultPath == "" {
+			message := fmt.Sprintf("qBittorrent category %q has no save path", category)
+			if savePath != "" {
+				message = fmt.Sprintf("qBittorrent category %q has the relative save path %q and qBittorrent did not report its default save path", category, savePath)
+			}
+			if expected != "" {
+				message += fmt.Sprintf("; expected %q", expected)
+			}
+			return healthError(message)
 		}
-		if defaultPath, err := qb.GetDefaultSavePath(ctx); err == nil && strings.TrimSpace(defaultPath) != "" {
-			message += fmt.Sprintf(" and qBittorrent default is %q", strings.TrimSpace(defaultPath))
-		}
-		return healthError(message)
+		savePath, _ = qbittorrentCategoryFolder(defaultPath, savePath, category)
+		createdOnGrab = true
 	}
 
 	// The remap runs on the save path exactly as qBittorrent reports it; only
@@ -454,6 +469,14 @@ func validateQbittorrentCategorySavePath(ctx context.Context, qb *qbittorrent.Cl
 	if _, err := os.Stat(localPath); os.IsNotExist(err) {
 		if resolved, divergedAt := findCaseInsensitivePath(localPath); resolved != "" {
 			return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q inside Bindery — that exact path does not exist, but %q does. Linux is case-sensitive; update the path remap so it produces %q (the segment %q must match the on-disk case).", category, savePath, localPath, resolved, resolved, filepath.Base(divergedAt)))
+		}
+		if createdOnGrab {
+			if info, err := os.Stat(filepath.Dir(localPath)); err == nil && info.IsDir() {
+				return models.DownloadClientHealth{
+					Status:  HealthOK,
+					Message: fmt.Sprintf("qBittorrent category %q saves to %q, which qBittorrent creates inside %q on its first download", category, localPath, filepath.Dir(localPath)),
+				}
+			}
 		}
 		return healthError(fmt.Sprintf("qBittorrent category %q saves to %q, which maps to %q inside Bindery — but that path does not exist. Check the path remap and the directory Bindery is mounting.", category, savePath, localPath))
 	}

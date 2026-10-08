@@ -911,13 +911,34 @@ func (c *Client) query(ctx context.Context, q string, vars map[string]any, out i
 			continue
 		}
 
-		c.pacer().succeed()
+		// Classify the envelope before telling the pacer anything. GraphQL
+		// reports application failures as a 200 with an errors array, and
+		// succeed is the input to the rate control loop, not a transport
+		// counter: feeding it a refusal decays pacing that earlier refusals
+		// set up (#2791).
 		var envelope struct {
 			Errors []gqlError `json:"errors"`
 		}
 		if err := json.Unmarshal(raw, &envelope); err == nil && len(envelope.Errors) > 0 {
-			return fmt.Errorf("GraphQL: %s", httpsec.RedactSecrets(formatGraphQLErrors(envelope.Errors)))
+			gqlErr := fmt.Errorf("GraphQL: %s", httpsec.RedactSecrets(formatGraphQLErrors(envelope.Errors)))
+			if !isRateLimitGraphQL(envelope.Errors) {
+				// Answered, but not healthy: neither a success nor a refusal.
+				return gqlErr
+			}
+			// A refusal delivered as a 200 is still a refusal: penalise and
+			// retry it exactly as a 429.
+			hint, _ := parseRetryHint(gqlErr.Error())
+			c.pacer().penalize(hint)
+			gqlErr = rateLimited(gqlErr)
+			if attempt == hardcoverMaxRetries {
+				return gqlErr
+			}
+			slog.Debug("hardcover rate limited, retrying",
+				"status", status, "attempt", attempt+1, "hint", hint, "error", gqlErr)
+			lastErr = gqlErr
+			continue
 		}
+		c.pacer().succeed()
 		return json.Unmarshal(raw, out)
 	}
 	// Unreachable: the final iteration always returns. Kept so the compiler

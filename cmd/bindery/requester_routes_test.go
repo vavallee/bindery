@@ -486,3 +486,8 @@ func TestRequesterGuard_OPDSModeNeverElevatesARequester(t *testing.T) {
 		}
 	}
 }
+
+// UnmonitorSplitEditionParts completes the series route surface (#3048).
+func (s universalStub) UnmonitorSplitEditionParts(w http.ResponseWriter, _ *http.Request) {
+	s.h(w)
+}
