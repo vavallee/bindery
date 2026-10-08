@@ -175,8 +175,11 @@ export const booksApi = {
   // This MOVES AND RENAMES the file on disk and returns 202 before the move
   // runs, so there is nothing to undo against. Call reassignFilePreview first
   // and let the user confirm (#2055).
-  reassignFile: (data: { path: string; targetBookId: number; format?: string }) =>
-    request<{ id: number }>('/queue/manual-import/reassign', { method: 'POST', body: JSON.stringify(data) }),
+  // relocate false corrects the match only: the file stays where it is and the
+  // answer is 200 once the link has moved. relocate true (or absent) runs the
+  // full import and answers 202 with the import record (#2055).
+  reassignFile: (data: { path: string; targetBookId: number; format?: string; relocate?: boolean }) =>
+    request<{ id?: number; relocated?: boolean; targetBookId?: number }>('/queue/manual-import/reassign', { method: 'POST', body: JSON.stringify(data) }),
 
   // Read-only: where reassignFile would put this file. Computed server-side by
   // the same renamer the import uses, so the path shown is the path written.

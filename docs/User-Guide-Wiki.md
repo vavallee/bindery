@@ -549,15 +549,18 @@ to the records. Things worth knowing before you judge the results:
   per book with a sentence saying why and what to do: add the author, confirm
   a suggested book, or choose one. See [Adopting files already in your
   library](#adopting-files-already-in-your-library).
-- **Fix match moves and renames the file.** When a book page shows the wrong
-  file, the **Fix match** button reassigns it to the book you pick. That runs
-  the full import, so the file is moved into the target book's folder and
+- **Fix match corrects the link and leaves the file alone by default.** When a
+  book page shows the wrong file, the **Fix match** button reassigns it to the
+  book you pick. After you pick the book, the modal asks what should happen to
+  the file. **Correct the match only**, the default, keeps the file where it
+  is under its current name and only changes which book it belongs to, the way
+  Readarr's fix match does (#2055). **Also move and rename the file** runs the
+  full import instead, so the file is moved into the target book's folder and
   renamed from your naming template, replacing your own layout for that file.
-  The modal warns you and shows the exact destination path before you confirm,
-  and nothing happens until you do; the move itself then runs in the background
-  and Bindery cannot undo it for you. Reassigning the metadata link *without*
-  relocating the file is not available yet (#2055). History records the move
-  as **File Moved**, naming the book the file came from.
+  Choosing it shows the exact destination path before you confirm; the move
+  then runs in the background and Bindery cannot undo it for you. Nothing
+  happens until you confirm either way. History records the change as **File
+  Moved**, naming the book the file came from.
 - **An import never takes a file another book already tracks.** If a download
   or a manual import lands on a path that a different book already has, the
   import stops with **Import Blocked** and the Queue row names that book and

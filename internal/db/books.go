@@ -1055,6 +1055,13 @@ func (r *BookRepo) ListFilesForBooks(ctx context.Context, bookIDs []int64) (map[
 	return r.files.ListByBooks(ctx, bookIDs)
 }
 
+// FileByPath returns the book_files row recorded at path, or nil when the path
+// is not tracked. Used by Fix match's correct-match-only mode (#2055) to find
+// the row it relinks and the format it was recorded as.
+func (r *BookRepo) FileByPath(ctx context.Context, path string) (*models.BookFile, error) {
+	return r.files.GetByPath(ctx, path)
+}
+
 // ListBookFiles returns the book_files rows for a single book.
 func (r *BookRepo) ListBookFiles(ctx context.Context, bookID int64) ([]models.BookFile, error) {
 	return r.files.ListByBook(ctx, bookID)

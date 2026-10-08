@@ -1177,7 +1177,7 @@ function BookDetailPageInner() {
                               items={[
                                 {
                                   label: t('bookDetail.fixMatch.button', 'Fix match'),
-                                  title: t('bookDetail.fixMatch.hint', 'Move this file to a different book'),
+                                  title: t('bookDetail.fixMatch.hint', 'Say which book this file really belongs to'),
                                   disabled: deletingFile || deregistering || deletingBook,
                                   onSelect: () => setFixMatchRow(row),
                                 },
@@ -1235,7 +1235,7 @@ function BookDetailPageInner() {
                 onClick={() => setFixMatchRow(rows[0])}
                 disabled={deletingFile || deregistering || deletingBook}
                 className={actionBtnCls}
-                title={t('bookDetail.fixMatch.hint', 'Move this file to a different book')}
+                title={t('bookDetail.fixMatch.hint', 'Say which book this file really belongs to')}
               >
                 {t('bookDetail.fixMatch.button', 'Fix match')}
               </button>

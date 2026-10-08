@@ -274,6 +274,22 @@ func (r *BookFileRepo) BookIDForFile(ctx context.Context, fileID int64) (int64, 
 	return bookID, nil
 }
 
+// GetByPath returns the book_files row recorded at path, or nil when no row
+// has that exact path.
+func (r *BookFileRepo) GetByPath(ctx context.Context, path string) (*models.BookFile, error) {
+	var f models.BookFile
+	err := r.db.QueryRowContext(ctx,
+		`SELECT id, book_id, format, path, size_bytes, created_at FROM book_files WHERE path = ?`, path).
+		Scan(&f.ID, &f.BookID, &f.Format, &f.Path, &f.SizeBytes, &f.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("book_files get by path: %w", err)
+	}
+	return &f, nil
+}
+
 // ListByBook returns all book_files rows for the given book, ordered by id.
 func (r *BookFileRepo) ListByBook(ctx context.Context, bookID int64) ([]models.BookFile, error) {
 	rows, err := r.db.QueryContext(ctx,

@@ -514,6 +514,9 @@ POST   /api/v1/queue/manual-import                import one path against a book
 POST   /api/v1/queue/manual-import/batch          import selected {path, bookId} pairs (admin); audio files for
                                                     the same book import as one audiobook under one download id
 POST   /api/v1/queue/manual-import/reassign       move a mis-matched file to another book (admin)
+                                                    {"path","targetBookId","format"?,"relocate"?}: relocate false links the
+                                                    file to the book and leaves it on disk as it is (200, done); true or
+                                                    absent re-imports it, moving and renaming it (202, background) (#2055)
 GET    /api/v1/queue/manual-import/reassign/preview  where that reassign would move and rename it (admin)
                                                     ?path=…&targetBookId=N[&format=ebook|audiobook]
 POST   /api/v1/queue/manual-import/match          attach an importFailed download to a book and import its files (admin)

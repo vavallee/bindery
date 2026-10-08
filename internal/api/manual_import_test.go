@@ -100,6 +100,12 @@ func (s *stubManualImportScanner) PreviewImportDestination(_ context.Context, bo
 	return s.preview, s.previewErr
 }
 
+// RelinkFile records nothing: the correct-match-only path is exercised against
+// the real importer in manual_import_owned_test.go.
+func (s *stubManualImportScanner) RelinkFile(_ context.Context, _ int64, paths []string, formatHint string) (importer.RelinkResult, error) {
+	return importer.RelinkResult{Path: paths[0], Format: formatHint}, nil
+}
+
 // manualImportFixture spins up an in-memory DB and wires a ManualImportHandler.
 func manualImportFixture(t *testing.T) (*ManualImportHandler, *stubManualImportScanner, *db.DownloadRepo, *db.BookRepo, context.Context) {
 	t.Helper()
