@@ -277,8 +277,9 @@ func RefreshDownloadClientHealthAsync(parent context.Context, g *jobs.Group, sto
 // common support shape, where the connection tests fine, the client accepts
 // grabs, and nothing ever imports.
 //
-// qBittorrent keeps its own richer check because it validates both the ebook
-// and audiobook categories rather than a single path. Everything else goes
+// qBittorrent with a category keeps its own richer check because it validates
+// both the ebook and audiobook categories rather than a single path; without
+// one it gets the shared check, the same as Test (#2664). Everything else goes
 // through the shared visibility check, and a type that genuinely cannot be
 // introspected now answers HealthUnknown rather than a fabricated OK.
 func CheckDownloadClientHealth(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) models.DownloadClientHealth {
@@ -292,7 +293,11 @@ func CheckDownloadClientHealth(ctx context.Context, client *models.DownloadClien
 	if _, err := clienthost.Normalize(client.Host); err != nil {
 		return models.DownloadClientHealth{Status: HealthError, Message: err.Error()}
 	}
-	if client.Type == "qbittorrent" {
+	// A qBittorrent client with no category is valid: grabs are then sent
+	// Bindery's download folder as the save path. It used to fail here while
+	// Test passed it; it now gets the same check as Test, on the folder
+	// grabs land in (#2664).
+	if client.Type == "qbittorrent" && strings.TrimSpace(client.Category) != "" {
 		return checkQbittorrentCategoryPath(ctx, client, downloadDir, audiobookDownloadDir, globalRemap)
 	}
 	return checkCompletedPath(ctx, client, downloadDir, audiobookDownloadDir, globalRemap)
@@ -347,9 +352,6 @@ func TargetDownloadDir(mediaType, downloadDir, audiobookDownloadDir string) stri
 
 func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadClient, downloadDir, audiobookDownloadDir, globalRemap string) models.DownloadClientHealth {
 	category := strings.TrimSpace(client.Category)
-	if category == "" {
-		return healthError("qBittorrent category is empty; configure a category with a save path")
-	}
 	// An unset download directory is not an error: the Windows binary has no
 	// built in default (#2902). The save path then only has to exist here.
 	expected := cleanConfiguredDir(ExpectedDownloadDirForClient(client, models.MediaTypeEbook, downloadDir, audiobookDownloadDir))
