@@ -274,8 +274,13 @@ func resolveGoodreadsRow(ctx context.Context, row GoodreadsRow, resolver goodrea
 		outcome.Answered = answered
 		outage.observe("goodreads", o)
 	}
+	byISBN := func(isbn string) (*models.Book, metadata.SearchOutcome, error) {
+		return lookupWaitingOutHolds(ctx, "goodreads", func() (*models.Book, metadata.SearchOutcome, error) {
+			return resolver.ResolveBookByISBNWithOutcome(ctx, isbn)
+		})
+	}
 	if isbn := strings.TrimSpace(row.ISBN13); isbn != "" {
-		book, o, err := resolver.ResolveBookByISBNWithOutcome(ctx, isbn)
+		book, o, err := byISBN(isbn)
 		note(o)
 		if err != nil {
 			slog.Debug("goodreads import: isbn13 lookup failed", "isbn", isbn, "error", err)
@@ -284,7 +289,7 @@ func resolveGoodreadsRow(ctx context.Context, row GoodreadsRow, resolver goodrea
 		}
 	}
 	if isbn := strings.TrimSpace(row.ISBN); isbn != "" && !outage.down() {
-		book, o, err := resolver.ResolveBookByISBNWithOutcome(ctx, isbn)
+		book, o, err := byISBN(isbn)
 		note(o)
 		if err != nil {
 			slog.Debug("goodreads import: isbn10 lookup failed", "isbn", isbn, "error", err)
@@ -317,7 +322,9 @@ func resolveGoodreadsByTitleAuthor(ctx context.Context, row GoodreadsRow, resolv
 	if author := strings.TrimSpace(row.Author); author != "" {
 		query = title + " " + author
 	}
-	results, outcome, err := resolver.SearchBooksWithOutcome(ctx, query)
+	results, outcome, err := lookupWaitingOutHolds(ctx, "goodreads", func() ([]models.Book, metadata.SearchOutcome, error) {
+		return resolver.SearchBooksWithOutcome(ctx, query)
+	})
 	if err != nil {
 		slog.Debug("goodreads import: title+author search failed", "query", query, "error", err)
 		return nil, outcome

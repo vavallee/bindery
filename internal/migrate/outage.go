@@ -1,12 +1,10 @@
 package migrate
 
 import (
-	"errors"
 	"log/slog"
 	"slices"
 
 	"github.com/vavallee/bindery/internal/metadata"
-	"github.com/vavallee/bindery/internal/metadata/hardcover"
 )
 
 // primaryOutageThreshold is how many metadata lookups in a row may go
@@ -46,17 +44,18 @@ type primaryOutage struct {
 // observe records one lookup's outcome.
 //
 // A primary that failed because it is rate limiting us is not down, and is
-// left out of the streak. Hardcover's own pacer fails a lookup fast once its
-// backoff would outlast the fan out's deadline, so a free account on a large
-// import could put three throttled lookups in a row and fail every remaining
-// row, where waiting lets the throttle relax. The fan out records failures in
+// left out of the streak, whichever provider it is. Hardcover's pacer and the
+// shared provider request loop both fail a lookup fast once a hold would
+// outlast the fan out's deadline, so a single 429 could otherwise put three
+// refused lookups in a row within a millisecond and fail every remaining
+// row, where waiting lets the hold pass (#2075). The fan out records failures in
 // provider order with the primary first, so FirstErr is the primary's error
 // whenever PrimaryFailed is set.
 func (p *primaryOutage) observe(source string, o metadata.SearchOutcome) {
 	switch {
 	case o.Primary != "" && slices.Contains(o.Answered, o.Primary):
 		p.streak = 0
-	case o.PrimaryFailed && errors.Is(o.FirstErr, hardcover.ErrRateLimited):
+	case o.PrimaryFailed && isRateLimited(o.FirstErr):
 		// Throttled, not down: neither extend nor reset the streak.
 	case o.PrimaryFailed:
 		p.streak++

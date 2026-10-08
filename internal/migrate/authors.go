@@ -120,7 +120,9 @@ func resolveAndCreateAuthor(
 
 	// Search every provider. The first match that carries a foreign id wins,
 	// subject to the guard below.
-	matches, outcome, err := agg.SearchAuthorsWithOutcome(ctx, name)
+	matches, outcome, err := lookupWaitingOutHolds(ctx, source, func() ([]models.Author, metadata.SearchOutcome, error) {
+		return agg.SearchAuthorsWithOutcome(ctx, name)
+	})
 	outage.observe(source, outcome)
 	if err != nil {
 		slog.Warn(source+" import: search failed", "name", name, "error", err)
