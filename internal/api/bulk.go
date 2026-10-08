@@ -180,6 +180,14 @@ type bulkItemResult struct {
 	// setting to change. Omitted for ordinary per-ID failures, whose text is
 	// already the whole story.
 	Code string `json:"code,omitempty"`
+	// Queued is true when this ID handed at least one book to the search
+	// pool. The pool runs after the response is written, so ok:true on a
+	// search only ever meant "accepted"; queued says so explicitly, and its
+	// absence on an ok entry means nothing needed searching (an author with no
+	// wanted books, say). The outcome of each search is in the
+	// "book search finished" log line, in History when something was
+	// grabbed, and in GET /search/last-debug (#2154).
+	Queued bool `json:"queued,omitempty"`
 }
 
 // bulkResponse is the envelope returned by all three bulk endpoints.
@@ -308,6 +316,7 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 
 	for _, id := range req.IDs {
 		key := fmt.Sprintf("%d", id)
+		queued := false
 		switch req.Action {
 		case "monitor":
 			if err := h.setAuthorMonitored(r.Context(), id, true, req.ApplyMonitorModeToExisting); err != nil {
@@ -365,6 +374,7 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 				for _, b := range books {
 					if b.Status == models.BookStatusWanted && b.Monitored {
 						searchTargets = append(searchTargets, b)
+						queued = true
 					}
 				}
 			}
@@ -392,7 +402,7 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		resp.Results[key] = bulkItemResult{OK: true}
+		resp.Results[key] = bulkItemResult{OK: true, Queued: queued}
 	}
 
 	if len(searchTargets) > 0 && h.searcher != nil {
@@ -512,6 +522,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 
 	for _, id := range req.IDs {
 		key := fmt.Sprintf("%d", id)
+		queued := false
 		var opErr error
 		switch req.Action {
 		case "monitor":
@@ -523,6 +534,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 			book, becameSearchable, opErr = h.setBookMonitored(r.Context(), id, true)
 			if opErr == nil && becameSearchable && book != nil {
 				searchTargets = append(searchTargets, *book)
+				queued = true
 			}
 		case "unmonitor":
 			_, _, opErr = h.setBookMonitored(r.Context(), id, false)
@@ -541,6 +553,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 			}
 			if h.searcher != nil {
 				searchTargets = append(searchTargets, *book)
+				queued = true
 			}
 		case "set_media_type":
 			opErr = h.setBookMediaType(r.Context(), id, req.MediaType)
@@ -559,7 +572,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 			resp.Results[key] = bulkItemResult{Error: opErr.Error()}
 			continue
 		}
-		resp.Results[key] = bulkItemResult{OK: true}
+		resp.Results[key] = bulkItemResult{OK: true, Queued: queued}
 	}
 
 	if len(searchTargets) > 0 && h.searcher != nil {
@@ -617,6 +630,7 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 
 	for _, id := range req.IDs {
 		key := fmt.Sprintf("%d", id)
+		queued := false
 		var opErr error
 		switch req.Action {
 		case "search":
@@ -632,6 +646,7 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 			}
 			if h.searcher != nil {
 				searchTargets = append(searchTargets, *book)
+				queued = true
 			}
 		case "unmonitor":
 			_, _, opErr = h.setBookMonitored(r.Context(), id, false)
@@ -642,7 +657,7 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 			resp.Results[key] = bulkItemResult{Error: opErr.Error()}
 			continue
 		}
-		resp.Results[key] = bulkItemResult{OK: true}
+		resp.Results[key] = bulkItemResult{OK: true, Queued: queued}
 	}
 
 	if len(searchTargets) > 0 && h.searcher != nil {

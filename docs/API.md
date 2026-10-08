@@ -323,6 +323,14 @@ GET    /api/v1/wanted/missing                     list wanted-but-missing books
 POST   /api/v1/wanted/bulk                        bulk operations on wanted
 ```
 
+A bulk `"action": "search"` (on `/book/bulk`, `/wanted/bulk` or
+`/author/bulk`) answers before any indexer is asked: the searches run on a
+background pool afterwards. Each id that handed at least one book to the pool
+gets `{"ok":true,"queued":true}`; `ok` without `queued` means there was nothing
+to search, such as an author with no monitored wanted books. Each search then
+leaves a `book search finished` line in the log with its outcome, and shows in
+`GET /search/last-debug` (#2154).
+
 Metadata results say when they are already in the caller's library (#1227).
 Each `/search/book` and `/book/lookup` result carries `libraryBookId` when its
 `foreignBookId` matches a book the requesting user owns, and each
@@ -351,7 +359,7 @@ DELETE /api/v1/indexer/{id}                       remove (admin)
 POST   /api/v1/indexer/{id}/test                  probe a saved indexer (admin)
 POST   /api/v1/indexer/test                       probe an unsaved config posted in the body (admin)
 GET    /api/v1/indexer/search?q=…                 multi-indexer ad-hoc query
-GET    /api/v1/search/last-debug                  last query plan & raw responses (debugging)
+GET    /api/v1/search/last-debug                  newest search audit trail you can see (debugging; see below)
 
 GET    /api/v1/prowlarr                           list registered Prowlarr servers (admin)
 GET    /api/v1/prowlarr/{id}                      fetch one (admin)
@@ -365,6 +373,28 @@ GET    /api/v1/rootfolder                         list library roots
 POST   /api/v1/rootfolder                         add a new root (admin)
 DELETE /api/v1/rootfolder/{id}                    remove (admin)
 ```
+
+`GET /search/last-debug` returns the newest search audit trail the caller may
+see: their own latest search from a book page's Search button, or the latest
+automatic search (scheduled sweep, bulk search, series fill and so on) of a
+book they can see, whichever ran last. A request made with the API key sees
+every user's interactive searches too, so a script can read the search a user
+just ran in the browser. A signed in user never sees another user's
+interactive search. The payload says which search it is (#2154):
+
+* `origin`: `interactive` for the Search button, otherwise what started the
+  automatic search: `scheduled`, `bulk`, `series-fill`, `author`, `book`,
+  `add`, `recommendation`, `list-sync`, `requeue` or `unknown`.
+* `bookId`: the book searched for.
+* `userId`: the signed in user who ran an interactive search; absent for an
+  automatic one.
+* `outcome`: an automatic search's result, in the same words as the
+  `book search finished` log line (`grabbed`, `no results`,
+  `nothing approved` and so on).
+
+Check `bookId` and `startedAt` before reading the rest: an automatic search
+that ran after yours will replace it as the newest. 404 means nothing has run
+since startup.
 
 #### Quality profiles
 

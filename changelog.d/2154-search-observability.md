@@ -1,0 +1,2 @@
+### Fixed
+- Automatic searches are easier to follow from scripts (#2154). A bulk search through the API now marks each book it hands to the background search with `"queued": true`, because `"ok": true` only ever meant the request was accepted, not that the search had finished. `GET /api/v1/search/last-debug` now also shows scheduled, bulk and other automatic searches, says which kind of search it is, which book it was for and what came of it, and a request made with the API key sees the search a user just ran in the browser. Thanks to SturmB for the report.

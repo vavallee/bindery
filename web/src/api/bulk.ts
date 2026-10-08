@@ -11,7 +11,9 @@ export interface BulkResult {
   // `code` is a stable machine readable reason for a failed entry, present
   // only where the client should react to the specific cause. Today the one
   // value is 'auto_grab_disabled' (#2669); see util/autoGrabRefusal.
-  results: Record<string, { ok: boolean; error?: string; code?: string }>
+  // queued: a search action handed this id to the background search pool.
+  // ok on a search means accepted, not finished (#2154).
+  results: Record<string, { ok: boolean; error?: string; code?: string; queued?: boolean }>
 }
 
 export interface BulkSetAuthorMonitorModeOptions {
