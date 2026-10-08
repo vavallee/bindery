@@ -10,6 +10,7 @@ import (
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 func isAuthorCreateConflict(err error) bool {
@@ -111,8 +112,18 @@ func resolveAndCreateAuthor(
 	settings *db.SettingsRepo,
 	agg *metadata.Aggregator,
 	outage *primaryOutage,
+	known *libraryAuthors,
 	res *Result,
 ) *models.Author {
+	// Already in the library by name, under whatever provider id it was
+	// bound to. Checked before any provider is asked, so it holds whether or
+	// not the providers would hand back the same id today (#2117).
+	if existing := known.find(ctx, name); existing != nil {
+		slog.Info(source+" import: author already in the library, skipped",
+			"name", name, "existing", existing.Name, "foreignId", existing.ForeignID)
+		res.Skipped++
+		return nil
+	}
 	if outage.down() {
 		res.fail(name, outage.reason())
 		return nil
@@ -186,5 +197,82 @@ func resolveAndCreateAuthor(
 	}
 	res.Added++
 	res.AddedNames = append(res.AddedNames, full.Name)
+	known.add(full)
 	return full
+}
+
+// libraryAuthors answers "does the library already have an author with this
+// name" for one bulk import run.
+//
+// The importers used to decide that by foreign id alone. An author's id
+// depends on which provider answered when the author was added, so the same
+// person can be in the library under a dnb: id (bound while OpenLibrary was
+// timing out, before #2332 closed that) or an hc: id (added on a Hardcover
+// primary). A later import that resolves the name to an OpenLibrary id missed
+// that row and created a second author for the same person (#2117). Running
+// the same author list again after an outage was enough.
+//
+// A name is "already there" only on an exact MatchAuthorName pairing, the
+// tier alias binding uses: the same name spelled or punctuated differently.
+// A fuzzy pairing is not enough to skip a row on. Nothing is merged or
+// relinked; the row is counted as skipped, as a foreign id hit always was.
+//
+// The library is read once, on the first lookup, and authors the run creates
+// are added as it goes. If the read fails the run carries on with the foreign
+// id check only, which is how it behaved before.
+type libraryAuthors struct {
+	repo   *db.AuthorRepo
+	loaded bool
+	byKey  map[string][]*models.Author
+}
+
+func newLibraryAuthors(repo *db.AuthorRepo) *libraryAuthors {
+	return &libraryAuthors{repo: repo}
+}
+
+func (l *libraryAuthors) load(ctx context.Context) {
+	if l.loaded {
+		return
+	}
+	l.loaded = true
+	l.byKey = map[string][]*models.Author{}
+	all, err := l.repo.List(ctx)
+	if err != nil {
+		slog.Warn("bulk import: could not read the library's authors, duplicates are checked by provider id only", "error", err)
+		return
+	}
+	for idx := range all {
+		l.index(&all[idx])
+	}
+}
+
+func (l *libraryAuthors) index(a *models.Author) {
+	for _, key := range textutil.NormalizeAuthorNameWithVariants(a.Name) {
+		l.byKey[key] = append(l.byKey[key], a)
+	}
+}
+
+func (l *libraryAuthors) add(a *models.Author) {
+	if l == nil || !l.loaded || a == nil {
+		return
+	}
+	cp := *a
+	l.index(&cp)
+}
+
+// find returns an author already in the library whose name is an exact match
+// for name, or nil.
+func (l *libraryAuthors) find(ctx context.Context, name string) *models.Author {
+	if l == nil || l.repo == nil {
+		return nil
+	}
+	l.load(ctx)
+	for _, key := range textutil.NormalizeAuthorNameWithVariants(name) {
+		for _, cand := range l.byKey[key] {
+			if textutil.MatchAuthorName(name, cand.Name).Kind == textutil.AuthorMatchExact {
+				return cand
+			}
+		}
+	}
+	return nil
 }

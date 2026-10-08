@@ -320,7 +320,7 @@ func (i *Importer) resolveManualAuthor(ctx context.Context, cfg ImportConfig, ru
 		Monitored: true,
 		// Import-created authors start with a partial catalogue (#1348).
 		MonitorNewItems:  models.AuthorMonitorNewItemsNone,
-		MetadataProvider: "openlibrary",
+		MetadataProvider: models.AuthorProviderFromForeignID(foreignID),
 	}
 	if i.meta != nil && !cfg.DryRun {
 		if full, err := i.meta.GetAuthor(ctx, foreignID); err == nil && full != nil {
@@ -337,7 +337,7 @@ func (i *Importer) resolveManualAuthor(ctx context.Context, cfg ImportConfig, ru
 			// import-created policy (#1348).
 			author.MonitorNewItems = models.AuthorMonitorNewItemsNone
 			if author.MetadataProvider == "" {
-				author.MetadataProvider = "openlibrary"
+				author.MetadataProvider = models.AuthorProviderFromForeignID(foreignID)
 			}
 		} else if err != nil {
 			slog.Warn("abs import: manual author metadata fetch failed", "foreignID", foreignID, "error", err)

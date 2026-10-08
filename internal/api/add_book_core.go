@@ -303,7 +303,7 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 				ForeignID:        req.ForeignAuthorID,
 				Name:             name,
 				SortName:         sortName(name),
-				MetadataProvider: "openlibrary",
+				MetadataProvider: models.AuthorProviderFromForeignID(req.ForeignAuthorID),
 			}
 		}
 		fetched.Monitored = false

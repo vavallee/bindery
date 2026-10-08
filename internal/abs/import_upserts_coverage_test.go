@@ -166,6 +166,22 @@ func TestCovImpResolveManualAuthor(t *testing.T) {
 		}
 	})
 
+	// A manual mapping to a non OpenLibrary id with no metadata to fetch it
+	// from must be labelled with the provider the id belongs to, not
+	// openlibrary (#2117).
+	t.Run("creates without metadata labels the id's provider", func(t *testing.T) {
+		t.Parallel()
+		env := covImpNewEnv(t)
+		got, created, _, _, err := env.importer.resolveManualAuthor(ctx, cfg, 0, covImpManualItem("dnb:gnd:118540238", "Brand New"), nil)
+		if err != nil || !created {
+			t.Fatalf("create = %+v %v %v", got, created, err)
+		}
+		saved, _ := env.authors.GetByID(ctx, got.ID)
+		if saved.MetadataProvider != "dnb" {
+			t.Fatalf("metadata_provider = %q for %s, want dnb", saved.MetadataProvider, saved.ForeignID)
+		}
+	})
+
 	t.Run("create failures", func(t *testing.T) {
 		t.Parallel()
 		for _, table := range []string{"authors", "abs_provenance"} {

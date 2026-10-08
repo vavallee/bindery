@@ -4849,6 +4849,47 @@ func TestAddBook_DNBDirectInsertSucceeds(t *testing.T) {
 	if err != nil || auth == nil {
 		t.Fatalf("author not persisted: err=%v auth=%v", err, auth)
 	}
+	// DNB has no author lookup by id, so the author is built from the
+	// request. Its provider label must still be DNB's: it used to be stamped
+	// openlibrary on a dnb: id, the mismatch behind #2117.
+	if auth.MetadataProvider != "dnb" {
+		t.Errorf("author metadata_provider = %q for %s, want dnb", auth.MetadataProvider, auth.ForeignID)
+	}
+}
+
+// TestFetchAuthorForCreate_LabelsProviderFromForeignID: when the provider
+// lookup fails or is not configured, the author is built from the request and
+// labelled with the provider its foreign id belongs to (#2117). DNB has no
+// author lookup by id at all, so every DNB author added from a search result
+// took this path and was labelled openlibrary.
+func TestFetchAuthorForCreate_LabelsProviderFromForeignID(t *testing.T) {
+	cases := []struct{ id, want string }{
+		{"dnb:gnd:118540238", "dnb"},
+		{"hc:andy-weir", "hardcover"},
+		{"OL7234434A", "openlibrary"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.id, func(t *testing.T) {
+			// No metadata configured.
+			h := &AuthorHandler{}
+			got, err := h.fetchAuthorForCreate(context.Background(), tc.id, "Some Author")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.MetadataProvider != tc.want {
+				t.Errorf("without metadata: metadata_provider = %q, want %q", got.MetadataProvider, tc.want)
+			}
+			// Metadata configured, but nothing answers for the id.
+			h = &AuthorHandler{meta: metadata.NewAggregator(&stubMetaProvider{})}
+			got, err = h.fetchAuthorForCreate(context.Background(), tc.id, "Some Author")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.MetadataProvider != tc.want {
+				t.Errorf("lookup missed: metadata_provider = %q, want %q", got.MetadataProvider, tc.want)
+			}
+		})
+	}
 }
 
 // TestAddBook_NameOnlyResolvesToExistingLibraryAuthor covers the Google-Books
