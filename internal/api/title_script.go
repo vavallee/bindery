@@ -10,6 +10,13 @@ import (
 // it answers is only whether a title is plainly not in the script the
 // author's majority-language titles are in (#3091), so a coarse set is
 // enough.
+//
+// Han, Hiragana and Katakana are one bucket, "CJK": a Japanese title mixes all
+// three ("ノルウェイの森" is mostly katakana, "騎士団長殺し" all kanji), so
+// telling them apart would judge an author's own titles foreign to each other.
+// Hangul stays separate. Korean titles are written in it almost entirely, so a
+// Japanese or Chinese translation in a Korean catalogue is plainly foreign,
+// and a Korean translation in a Japanese one likewise.
 var titleScripts = []struct {
 	name  string
 	table *unicode.RangeTable
@@ -19,9 +26,9 @@ var titleScripts = []struct {
 	{"Greek", unicode.Greek},
 	{"Arabic", unicode.Arabic},
 	{"Hebrew", unicode.Hebrew},
-	{"Han", unicode.Han},
-	{"Hiragana", unicode.Hiragana},
-	{"Katakana", unicode.Katakana},
+	{"CJK", unicode.Han},
+	{"CJK", unicode.Hiragana},
+	{"CJK", unicode.Katakana},
 	{"Hangul", unicode.Hangul},
 	{"Thai", unicode.Thai},
 	{"Devanagari", unicode.Devanagari},
