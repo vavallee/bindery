@@ -830,7 +830,11 @@
       "nothing": "Nothing to fill",
       "queued_one": "{{count}} book queued",
       "queued_other": "{{count}} books queued",
-      "failed": "Failed"
+      "failed": "Failed",
+      "skippedByProfile_one": "{{count}} skipped by the metadata profile",
+      "skippedByProfile_other": "{{count}} skipped by the metadata profile",
+      "skippedSplitParts_one": "{{count}} split edition part skipped",
+      "skippedSplitParts_other": "{{count}} split edition parts skipped"
     },
     "hardcover": {
       "searching": "Searching…",
@@ -883,6 +887,17 @@
       "confirmBody_one": "Merge {{count}} series into \"{{title}}\"? The merged series are deleted; this cannot be undone.",
       "confirmBody_other": "Merge {{count}} series into \"{{title}}\"? The merged series are deleted; this cannot be undone.",
       "failed": "Merge failed"
+    },
+    "splitParts": {
+      "badge": "Split part",
+      "badgeHint": "One part of a split edition of a book already in this series. Fill and the wanted search skip it.",
+      "unmonitor_one": "Unmonitor {{count}} split part",
+      "unmonitor_other": "Unmonitor {{count}} split parts",
+      "unmonitorHint": "Stop searching for the split edition parts of books you already have. Nothing is deleted.",
+      "confirm": "Unmonitor the split edition parts of books already in this series? They stay in the library and leave Wanted, and you can monitor any of them again from its book page.",
+      "done_one": "{{count}} split part unmonitored",
+      "done_other": "{{count}} split parts unmonitored",
+      "failed": "Could not unmonitor the split parts"
     }
   },
   "importHints": {

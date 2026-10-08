@@ -289,13 +289,14 @@ func (h *SeriesHandler) annotateSplitEditionParts(ctx context.Context, seriesID 
 		bySeries[p.SeriesID][p.BookID] = struct{}{}
 	}
 	for i := range series {
-		covered := bySeries[series[i].ID]
+		s := &series[i]
+		covered := bySeries[s.ID]
 		if len(covered) == 0 {
 			continue
 		}
-		for _, member := range series[i].Books {
+		for _, member := range s.Books {
 			if _, ok := covered[member.BookID]; ok {
-				series[i].SplitEditionPartBookIDs = append(series[i].SplitEditionPartBookIDs, member.BookID)
+				s.SplitEditionPartBookIDs = append(s.SplitEditionPartBookIDs, member.BookID)
 			}
 		}
 	}
@@ -740,9 +741,9 @@ func (h *SeriesHandler) Fill(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			// The same filters an author sync applies, judged from the
-			// stored row (#2208). Without this, a fill re-monitored the
-			// very box sets the profile screens out, including ones the
-			// user had just unmonitored from the profile settings.
+			// stored row (#2208). Without this, a fill put the very box
+			// sets the profile screens out back on Wanted and monitored,
+			// including ones the user had unmonitored by hand.
 			if reason := storedBookProfileFilter(h.profileForAuthor(r.Context(), profiles, b.AuthorID), &b); reason != "" {
 				skippedByProfile++
 				slog.Debug("series fill: not queueing a book the metadata profile filters out",

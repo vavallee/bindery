@@ -791,7 +791,7 @@ func main() {
 		WithMetadataProfiles(metadataProfileRepo).
 		WithLifetimeCtx(appCtx)
 	importListHandler := api.NewImportListHandler(importListRepo, settingsRepo, hcSyncer, userRepo)
-	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo).WithLibrary(bookRepo)
+	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
 	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)
 	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched).
@@ -1210,7 +1210,6 @@ func main() {
 		// Metadata profiles: reads open, writes admin only (see
 		// registerMetadataProfileRoutes).
 		registerMetadataProfileRoutes(r, metadataProfileHandler)
-		registerMetadataProfileLibraryRoutes(r, metadataProfileHandler)
 
 		// Backups — Restore replaces the live database (staged now, swapped
 		// in by db.ApplyPendingRestore at the next start), Delete removes

@@ -302,7 +302,8 @@ GET    /api/v1/book/{id}/calibre                  where the book stands in the C
 ```
 GET    /api/v1/series                             list series with their linked books
 GET    /api/v1/series/{id}                        one series
-POST   /api/v1/series/{id}/fill                   add the series' missing books as wanted (admin)
+POST   /api/v1/series/{id}/fill                   add the series' missing books as wanted (admin); answers {queued, skippedByProfile, skippedSplitParts}
+POST   /api/v1/series/{id}/split-parts/unmonitor  unmonitor the split edition parts of books already in the series, listed as splitEditionPartBookIds on the series (admin); answers {unmonitored}
 PATCH  /api/v1/series/{id}                        monitor / unmonitor (admin)
 POST   /api/v1/series/{id}/merge                  merge other series into this one: {"sourceIds":[..],"title":"optional rename","dryRun":true} previews (admin)
 ```

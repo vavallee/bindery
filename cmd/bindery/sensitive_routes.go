@@ -323,22 +323,3 @@ func registerMetadataProfileRoutes(r chi.Router, h profileRouteHandler) {
 		r.Delete("/metadataprofile/{id}", h.Delete)
 	})
 }
-
-// metadataProfileLibraryRouteHandler is the surface
-// registerMetadataProfileLibraryRoutes needs.
-type metadataProfileLibraryRouteHandler interface {
-	FilteredBooks(http.ResponseWriter, *http.Request)
-	UnmonitorFilteredBooks(http.ResponseWriter, *http.Request)
-}
-
-// registerMetadataProfileLibraryRoutes mounts the routes that apply a metadata
-// profile's filters to books already in the library (#2208). Both are admin
-// only: the preview lists wanted books across every user's library, and the
-// action changes them.
-func registerMetadataProfileLibraryRoutes(r chi.Router, h metadataProfileLibraryRouteHandler) {
-	r.Group(func(r chi.Router) {
-		r.Use(auth.RequireAdmin)
-		r.Get("/metadataprofile/{id}/filtered-books", h.FilteredBooks)
-		r.Post("/metadataprofile/{id}/filtered-books/unmonitor", h.UnmonitorFilteredBooks)
-	})
-}

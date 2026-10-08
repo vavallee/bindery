@@ -21,6 +21,13 @@ function parseSeriesFilter(raw: string | null): SeriesFilter {
   return SERIES_FILTERS.find(f => f === raw) ?? 'all'
 }
 
+// How many of a series' split edition parts (#3048) are still monitored, which
+// is what the unmonitor action would change.
+function monitoredSplitParts(series: Series): number {
+  const parts = new Set(series.splitEditionPartBookIds ?? [])
+  return (series.books ?? []).filter(b => parts.has(b.bookId) && b.book?.monitored).length
+}
+
 // The counts behind a series card's "N missing" badge, and the only place they
 // are computed, so the Missing and Complete filters cannot disagree with the
 // badge the user is looking at. With enhanced Hardcover on, the badge can count
@@ -31,8 +38,10 @@ function parseSeriesFilter(raw: string | null): SeriesFilter {
 function seriesMissingCounts(series: Series, enhancedHardcoverApi: boolean, diff?: SeriesHardcoverDiff) {
   const books = series.books ?? []
   // Excluded books are not a gap: counting them showed a "missing" pill
-  // that Fill could not act on (#2324).
-  const gapCount = books.filter(b => b.book && b.book.status !== 'imported' && !b.book.excluded).length
+  // that Fill could not act on (#2324). Nor is a split edition part of a book
+  // already in the series, which Fill skips (#3048).
+  const splitParts = new Set(series.splitEditionPartBookIds ?? [])
+  const gapCount = books.filter(b => b.book && b.book.status !== 'imported' && !b.book.excluded && !splitParts.has(b.bookId)).length
   const hardcoverMissingEstimate = enhancedHardcoverApi ? Math.max(0, (series.hardcoverLink?.hardcoverBookCount ?? 0) - books.length) : 0
   const hardcoverMissingCount = enhancedHardcoverApi ? (diff?.missingCount ?? hardcoverMissingEstimate) : 0
   const displayMissingCount = Math.max(gapCount, hardcoverMissingCount)
@@ -219,7 +228,12 @@ export default function SeriesPage() {
             ...(mediaType ? { mediaType } : {}),
           })
         : await api.fillSeriesAll(series.id, mediaType)
-      setFillResult(prev => ({ ...prev, [series.id]: r.queued === 0 ? t('series.fill.nothing') : t('series.fill.queued', { count: r.queued }) }))
+      // Say what the fill left out and why, or a profile that filtered every
+      // missing book reads as a fill that did nothing (#2208, #3048).
+      const parts = [r.queued === 0 ? t('series.fill.nothing') : t('series.fill.queued', { count: r.queued })]
+      if (r.skippedByProfile) parts.push(t('series.fill.skippedByProfile', { count: r.skippedByProfile }))
+      if (r.skippedSplitParts) parts.push(t('series.fill.skippedSplitParts', { count: r.skippedSplitParts }))
+      setFillResult(prev => ({ ...prev, [series.id]: parts.join(', ') }))
       const list = await refreshSeriesList()
       const updated = list.find(s => s.id === series.id)
       if (enhancedHardcoverApi && updated?.hardcoverLink) {
@@ -227,6 +241,26 @@ export default function SeriesPage() {
       }
     } catch {
       setFillResult(prev => ({ ...prev, [series.id]: t('series.fill.failed') }))
+    } finally {
+      setFilling(null)
+    }
+  }
+
+  // One click cleanup for the split edition parts a fill created before the
+  // series diff learned to recognise them (#3048). Unmonitors, never deletes.
+  const unmonitorSplitParts = async (series: Series) => {
+    if (!await confirm({
+      title: t('common.confirmTitle'),
+      body: t('series.splitParts.confirm'),
+      confirmLabel: t('series.splitParts.unmonitor', { count: monitoredSplitParts(series) }),
+    })) return
+    setFilling(series.id)
+    try {
+      const r = await api.unmonitorSeriesSplitParts(series.id)
+      setFillResult(prev => ({ ...prev, [series.id]: t('series.splitParts.done', { count: r.unmonitored }) }))
+      await refreshSeriesList()
+    } catch {
+      setFillResult(prev => ({ ...prev, [series.id]: t('series.splitParts.failed') }))
     } finally {
       setFilling(null)
     }
@@ -391,6 +425,8 @@ export default function SeriesPage() {
             const diff = diffs[series.id]
             const { gapCount, hardcoverMissingCount, displayMissingCount } = seriesMissingCounts(series, enhancedHardcoverApi, diff)
             const fillNeeded = gapCount > 0 || hardcoverMissingCount > 0
+            const splitPartIds = new Set(series.splitEditionPartBookIds ?? [])
+            const splitPartsToUnmonitor = monitoredSplitParts(series)
             const isOpen = expanded === series.id
             const sortedBooks = [...books].sort((a, b) => {
               const posA = parseFloat(a.positionInSeries) || 0
@@ -515,6 +551,16 @@ export default function SeriesPage() {
                       {filling === series.id ? t('series.fill.queuing') : t('series.fill.button')}
                     </button>
                   )}
+                  {splitPartsToUnmonitor > 0 && (
+                    <button
+                      onClick={() => unmonitorSplitParts(series)}
+                      disabled={filling === series.id}
+                      className="touch-target text-xs px-2.5 py-1 rounded font-medium bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50"
+                      title={t('series.splitParts.unmonitorHint')}
+                    >
+                      {t('series.splitParts.unmonitor', { count: splitPartsToUnmonitor })}
+                    </button>
+                  )}
                   {fillResult[series.id] && (
                     <span className="ml-auto text-xs text-emerald-600 dark:text-emerald-400">{fillResult[series.id]}</span>
                   )}
@@ -568,6 +614,14 @@ export default function SeriesPage() {
                           {entry.book?.excluded && (
                             <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400">
                               {t('series.excluded')}
+                            </span>
+                          )}
+                          {splitPartIds.has(entry.bookId) && (
+                            <span
+                              className="text-xs px-2 py-0.5 rounded bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400"
+                              title={t('series.splitParts.badgeHint')}
+                            >
+                              {t('series.splitParts.badge')}
                             </span>
                           )}
                         </span>

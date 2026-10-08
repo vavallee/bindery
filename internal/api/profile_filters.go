@@ -44,14 +44,16 @@ func effectiveMetadataProfile(ctx context.Context, profiles *db.MetadataProfileR
 
 // storedBookProfileFilter reports which metadata profile filter rejects b,
 // judged only from what a stored book row already carries: its title and its
-// release date. "" means it passes.
+// release date. "" means it passes. Series fill uses it so a fill does not put
+// a stored row the profile rejects back on Wanted (#2208).
 //
 // These are the two filters the author sync applies without a provider round
-// trip (#2208). The others need data a stored row does not hold reliably:
-// language is decided at sync time from provider edition evidence that is not
-// stored, and MinPages, SkipMissingISBN and MinEditionCount need a fresh
-// edition lookup. Judging those from the row would flag books the sync
-// correctly kept.
+// trip. The others need data a stored row does not hold reliably: language is
+// decided from provider edition evidence that is not stored, and MinPages,
+// SkipMissingISBN and MinEditionCount need a fresh edition lookup. Judging
+// those from the row would skip books the sync correctly kept. Reconcile
+// catalogue (catalogue_reconciliation.go) is the place that applies every
+// filter to stored rows, with the provider lookups that needs.
 func storedBookProfileFilter(p *models.MetadataProfile, b *models.Book) string {
 	if p == nil || b == nil {
 		return ""
