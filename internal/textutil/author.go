@@ -272,6 +272,164 @@ func authorNameFormSets(name string) (ordered, all []string) {
 	return ordered, all
 }
 
+// authorMatchForms is the form set MatchAuthorName compares with. It differs
+// from authorNameFormSets in one respect: it decides which words are initials
+// from the name as written, before lowercasing throws that away (#2881).
+//
+// authorNameFormSets cannot tell "JRR" (three initials run together) from
+// "Ann" (a forename), so it splits every short word into letters and glues
+// every run of letters back into a word. That made "Ann Smith" and
+// "A. N. N. Smith" the same name, and it let the glued run "jr" stand in for a
+// spelled out forename beginning with J, which is how "J. R. Smith" against
+// "J. T. Smith" scored as a confident match. The public variant list keeps that
+// behaviour byte for byte, because other callers index into it; only matching
+// changes.
+//
+// When the name carries case information (it has both capitals and small
+// letters), a short word counts as initials only when it was written in
+// capitals: "JRR", "KL", "AJ". A dotted group needs no rule, normalisation
+// already splits "J.R.R." into letters. When the name is written in a single
+// case, the case says nothing, so every short non final word may be initials,
+// as before.
+type authorMatchFormSet struct {
+	// ordered holds the forms that keep the written order (or the order a
+	// comma declares). Equality here is an exact match.
+	ordered []string
+	// reordered adds the last first readings of the same forms.
+	reordered []string
+	// scoring holds the forms the per field evidence is weighed on. No glued
+	// run of initials appears here, so a cluster is never mistaken for a word.
+	scoring []string
+}
+
+func authorMatchForms(name string) authorMatchFormSet {
+	var set authorMatchFormSet
+	if NormalizeAuthorName(name) == "" {
+		return set
+	}
+	informative, initials := authorInitialWords(name)
+
+	seen := map[*[]string]map[string]struct{}{}
+	add := func(dst *[]string, toks []string) {
+		if len(toks) == 0 {
+			return
+		}
+		m := seen[dst]
+		if m == nil {
+			m = map[string]struct{}{}
+			seen[dst] = m
+		}
+		v := strings.Join(toks, " ")
+		if _, ok := m[v]; ok {
+			return
+		}
+		m[v] = struct{}{}
+		*dst = append(*dst, v)
+	}
+	addOrdered := func(toks []string) {
+		add(&set.ordered, toks)
+		add(&set.reordered, toks)
+	}
+	addForm := func(raw string) {
+		tokens := stripAuthorSuffixes(strings.Fields(NormalizeAuthorName(raw)))
+		if len(tokens) == 0 {
+			return
+		}
+		swapped := lastFirstSwap(tokens)
+		if !informative {
+			addOrdered(tokens)
+			addOrdered(compactInitials(tokens))
+			addOrdered(expandInitials(tokens))
+			add(&set.reordered, swapped)
+			add(&set.reordered, compactInitials(swapped))
+			add(&set.reordered, expandInitials(swapped))
+			add(&set.scoring, tokens)
+			add(&set.scoring, expandInitials(tokens))
+			return
+		}
+		expanded := expandInitialWords(tokens, initials)
+		addOrdered(tokens)
+		addOrdered(expanded)
+		add(&set.reordered, swapped)
+		add(&set.reordered, lastFirstSwap(expanded))
+		add(&set.scoring, expanded)
+	}
+	addName := func(raw string) {
+		addForm(raw)
+		if ascii := asciiTransliterate(raw); ascii != "" {
+			addForm(ascii)
+		}
+	}
+	addName(name)
+	if before, after, ok := strings.Cut(name, ","); ok {
+		addName(strings.TrimSpace(after) + " " + strings.TrimSpace(before))
+	}
+	return set
+}
+
+// authorInitialWords reports whether the raw name carries case information and,
+// if it does, which normalized words were written as a run of capital initials
+// ("JRR", "KL"). The transliterated spelling of each such word is included, so
+// the ASCII chain sees the same set.
+func authorInitialWords(name string) (bool, map[string]struct{}) {
+	hasUpper, hasLower := false, false
+	for _, r := range name {
+		if unicode.IsUpper(r) {
+			hasUpper = true
+		} else if unicode.IsLower(r) {
+			hasLower = true
+		}
+	}
+	if !hasUpper || !hasLower {
+		return false, nil
+	}
+	initials := map[string]struct{}{}
+	words := strings.FieldsFunc(name, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.Is(unicode.Mn, r)
+	})
+	for _, w := range words {
+		letters := 0
+		upper := true
+		for _, r := range w {
+			if unicode.Is(unicode.Mn, r) {
+				continue
+			}
+			letters++
+			if !unicode.IsUpper(r) {
+				upper = false
+			}
+		}
+		if !upper || letters < 2 || letters > 3 {
+			continue
+		}
+		key := NormalizeAuthorName(w)
+		initials[key] = struct{}{}
+		if ascii := asciiTransliterate(w); ascii != "" {
+			initials[NormalizeAuthorName(ascii)] = struct{}{}
+		}
+	}
+	return true, initials
+}
+
+// expandInitialWords splits the non final words that authorInitialWords marked
+// as initials into one token per letter, and leaves every other word whole.
+func expandInitialWords(tokens []string, initials map[string]struct{}) []string {
+	if len(tokens) < 2 || len(initials) == 0 {
+		return tokens
+	}
+	out := make([]string, 0, len(tokens)+2)
+	for idx, tok := range tokens {
+		if _, ok := initials[tok]; ok && idx < len(tokens)-1 {
+			for _, r := range tok {
+				out = append(out, string(r))
+			}
+			continue
+		}
+		out = append(out, tok)
+	}
+	return out
+}
+
 // asciiTransliterate returns the lowercased name with German umlauts expanded
 // (ö→oe) and the non-decomposable Latin letters folded (ø→o, ł→l), or "" when
 // neither step changed anything. See NormalizeAuthorNameWithVariants for why
@@ -417,15 +575,18 @@ func MatchAuthorName(a, b string) AuthorMatchResult {
 	// differently. This is the tier alias binding and every dedupe path rests
 	// on, and it is unchanged. It is also the common case on a rescan, so it is
 	// settled before any scoring happens.
-	ao, av := authorNameFormSets(a)
-	bo, bv := authorNameFormSets(b)
-	if len(ao) == 0 || len(bo) == 0 {
+	am, bm := authorMatchForms(a), authorMatchForms(b)
+	if len(am.ordered) == 0 || len(bm.ordered) == 0 {
 		return AuthorMatchResult{Kind: AuthorMatchNone}
 	}
-	if formsIntersect(ao, bo) {
+	if formsIntersect(am.ordered, bm.ordered) {
 		return AuthorMatchResult{Kind: AuthorMatchExact, Score: 1, Weight: authorExactWeight}
 	}
 
+	// Score is still taken over the public variant list, so a ranking built
+	// on it does not move.
+	_, av := authorNameFormSets(a)
+	_, bv := authorNameFormSets(b)
 	best := 0.0
 	for _, x := range av {
 		for _, y := range bv {
@@ -441,14 +602,14 @@ func MatchAuthorName(a, b string) AuthorMatchResult {
 	// names agree on which token is the surname and the pairing is exact.
 	// Otherwise "Stanley Paul" and "Paul Stanley" are indistinguishable from
 	// two different people who happen to share both words, so cap at ambiguous.
-	if formsIntersect(av, bv) {
+	if formsIntersect(am.reordered, bm.reordered) {
 		if authorOrderIsSignposted(a, b) {
 			return AuthorMatchResult{Kind: AuthorMatchExact, Score: 1, Weight: authorExactWeight}
 		}
 		return AuthorMatchResult{Kind: AuthorMatchFuzzyAmbiguous, Score: best, Weight: authorSwapWeight}
 	}
 
-	weight := scoreAuthorFields(ao, bo)
+	weight := scoreAuthorFields(am.scoring, bm.scoring)
 	return AuthorMatchResult{Kind: authorWeightKind(weight), Score: best, Weight: weight}
 }
 
@@ -642,8 +803,21 @@ func scoreAuthorGiven(a, b string) float64 {
 	if a == b {
 		return authorGivenExactWeight
 	}
-	if authorInitialsCompatible(a, b) {
+	switch authorInitialsCompare(a, b) {
+	case initialsCompatible:
 		return authorGivenInitialWeight
+	case initialsFirstConflict:
+		return authorGivenConflictWeight
+	case initialsMiddleConflict, initialsOnlyMissing:
+		// "A. B. Smith" against "A. C. Smith", or "A. Smith" against
+		// "A. B. Smith" (#2881). Name authority practice reads the first as
+		// two people and the second as too little to go on. Neither is
+		// evidence for the pairing, but neither rules it out: with an equal
+		// surname the pair lands in the ambiguous band, where a person can
+		// confirm it and nothing claims it automatically. This return also
+		// keeps the whole string Jaro-Winkler below from reading
+		// "kelly l" and "kelly m" as a typo.
+		return 0
 	}
 	if !authorFormHasLatin(a) || !authorFormHasLatin(b) {
 		return 0
@@ -660,33 +834,85 @@ func scoreAuthorGiven(a, b string) float64 {
 	}
 }
 
-// authorInitialsCompatible reports whether one given-name form abbreviates the
-// other: "j r r" against "john ronald reuel", or "j" against "jane". Tokens are
-// aligned left to right and compared over the shorter list, because dropped
-// middle names are routine in catalogue data; every aligned pair must agree,
-// and at least one pair must actually be an abbreviation, so two different
-// spelled-out names never land here.
-func authorInitialsCompatible(a, b string) bool {
+// initialsOutcome is what lining two given names up initial by initial says.
+type initialsOutcome int
+
+const (
+	// initialsUndecided: the comparison is not about initials (two different
+	// spelled out names, or the same forename with more words on one side).
+	// The caller falls back to its string similarity.
+	initialsUndecided initialsOutcome = iota
+	// initialsCompatible: one side abbreviates the other and every aligned
+	// position agrees ("j r r" against "john ronald reuel").
+	initialsCompatible
+	// initialsFirstConflict: the first given name disagrees and at least one
+	// side of it is an initial ("j" against "k", "j" against "kevin").
+	initialsFirstConflict
+	// initialsMiddleConflict: the first given name agrees but a later position
+	// pairs an initial with a different letter ("a b" against "a c",
+	// "kelly l" against "kelly m").
+	initialsMiddleConflict
+	// initialsOnlyMissing: every aligned position agrees, but all of that
+	// agreement is initial against initial and one side has more given names
+	// ("a" against "a b"). A matching initial is weak evidence; a missing one
+	// is weaker still.
+	initialsOnlyMissing
+)
+
+// authorInitialsCompare lines two given-name forms up left to right and
+// classifies the result. Positions are compared over the shorter list, because
+// dropped middle names are routine in catalogue data.
+//
+// An initial disagreeing with the letter at the same position is a conflict,
+// whatever the rest of the string looks like (#2881). Only when no position
+// conflicts does an abbreviation count as compatible, and then only if one was
+// actually seen, so two different spelled out names never land here.
+func authorInitialsCompare(a, b string) initialsOutcome {
 	at, bt := strings.Fields(a), strings.Fields(b)
 	if len(at) == 0 || len(bt) == 0 {
-		return false
+		return initialsUndecided
 	}
 	n := min(len(at), len(bt))
-	sawInitial := false
+	sawInitial, sawWord, wordMismatch := false, false, false
 	for i := range n {
 		x, y := []rune(at[i]), []rune(bt[i])
 		if len(x) == 1 || len(y) == 1 {
 			if x[0] != y[0] {
-				return false
+				switch {
+				case i == 0:
+					return initialsFirstConflict
+				case len(x) != len(y):
+					// An initial against a different whole word further in
+					// is more often a dropped middle name or a particle
+					// shifting the positions ("ursula k le" against
+					// "ursula le") than a disagreement, so it is left to the
+					// string comparison, as it always was.
+					return initialsUndecided
+				case wordMismatch || sawInitial:
+					// Two initials disagree after a forename that only
+					// abbreviates, or already differs: one more strike
+					// against, not a near miss.
+					return initialsFirstConflict
+				}
+				return initialsMiddleConflict
 			}
 			if len(x) != len(y) {
 				sawInitial = true
 			}
 			continue
 		}
+		sawWord = true
 		if at[i] != bt[i] {
-			return false
+			wordMismatch = true
 		}
 	}
-	return sawInitial
+	switch {
+	case wordMismatch:
+		return initialsUndecided
+	case sawInitial:
+		return initialsCompatible
+	case !sawWord && len(at) != len(bt):
+		return initialsOnlyMissing
+	}
+	return initialsUndecided
 }
