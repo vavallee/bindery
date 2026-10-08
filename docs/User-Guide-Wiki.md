@@ -807,7 +807,10 @@ like everything else on that tab that names server paths.
   not applied to a work whose title is written in a different script from the
   author's other titles (a Cyrillic title in an English author's catalogue, for
   example), so such a work stays unknown. OpenLibrary edition sampling only
-  runs for OpenLibrary works. **Reconcile catalogue** treats a
+  runs for OpenLibrary works, and takes the language and a missing cover from
+  the edition OpenLibrary features on the work's own page first, falling back
+  to a small sample of its editions (and a cover in the sampled language) only
+  for what that edition lacks. **Reconcile catalogue** treats a
   failed lookup as indeterminate rather than offering the row for removal.
 - **Google Books** (free API key) and **Audnexus/Audible** (audiobook
   narrator, duration, by ASIN) enrich further.
