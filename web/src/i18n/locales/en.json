@@ -343,7 +343,7 @@
       "action": "Set up Download Clients"
     },
     "forceTitle": "Grab this release again?",
-    "forceBody": "Bindery already imported this release once. Grab it anyway if that import has no usable files, or you want a fresh copy. Nothing is removed from your download client and the book's current files stay where they are.",
+    "forceBody": "Bindery already imported this release once. Grab it anyway only if the files from that import are missing: while they are still there, the new download is skipped as a duplicate. Nothing is removed from your download client and the book's current files stay where they are.",
     "forceConfirm": "Grab anyway"
   },
   "login": {
