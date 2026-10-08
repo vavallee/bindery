@@ -1,16 +1,27 @@
 package indexer
 
-import "sync"
+import (
+	"strconv"
+	"sync"
+)
 
 // DebugOriginInteractive is the SearchDebug.Origin of a search run from the
 // book page's Search button (POST /book/{id}/search). The automatic paths
 // report their SearchOrigin instead ("scheduled", "bulk" and so on).
 const DebugOriginInteractive = "interactive"
 
-// debugLogBackgroundCap bounds how many automatic search trails are kept. A
-// wanted sweep over a large library records one per book and format, and only
-// the newest few are ever read, so the oldest are dropped.
-const debugLogBackgroundCap = 64
+// debugLogBackgroundPerOwner bounds how many automatic search trails are kept
+// for each book owner. A wanted sweep over a large library records one per
+// book and format and only the newest is ever read, so the oldest are
+// dropped. The cap is per owner so one user's sweep cannot evict another
+// user's entries.
+const debugLogBackgroundPerOwner = 8
+
+// debugLogMaxFilters bounds the per candidate rejections kept in one stored
+// trail. A broad search can reject thousands of releases, and the log holds
+// several trails per user for the life of the process. The live response of
+// an interactive search is not affected; only the stored copy is trimmed.
+const debugLogMaxFilters = 200
 
 // DebugLog holds the most recent search audit trails behind
 // GET /api/v1/search/last-debug.
@@ -36,7 +47,8 @@ type DebugLog struct {
 	mu          sync.Mutex
 	seq         uint64
 	interactive map[int64]debugEntry
-	background  []debugEntry
+	// background is keyed by book owner, oldest first within each owner.
+	background map[int64][]debugEntry
 }
 
 type debugEntry struct {
@@ -47,7 +59,24 @@ type debugEntry struct {
 
 // NewDebugLog returns an empty log.
 func NewDebugLog() *DebugLog {
-	return &DebugLog{interactive: make(map[int64]debugEntry)}
+	return &DebugLog{interactive: make(map[int64]debugEntry), background: make(map[int64][]debugEntry)}
+}
+
+// storedCopy returns what the log keeps for d: a shallow copy whose Filters
+// are capped at debugLogMaxFilters, with one closing entry saying how many
+// were left out. Copying keeps the caller's own value, which an interactive
+// search is about to send back in full, untouched.
+func storedCopy(d *SearchDebug) *SearchDebug {
+	c := *d
+	if over := len(c.Filters) - debugLogMaxFilters; over > 0 {
+		kept := make([]FilterDebug, debugLogMaxFilters, debugLogMaxFilters+1)
+		copy(kept, c.Filters)
+		c.Filters = append(kept, FilterDebug{
+			Stage:  "truncated",
+			Reason: strconv.Itoa(over) + " more rejected release(s) not kept in the stored copy",
+		})
+	}
+	return &c
 }
 
 // RecordInteractive stores d as userID's latest interactive search. The
@@ -62,7 +91,7 @@ func (l *DebugLog) RecordInteractive(userID int64, d *SearchDebug) {
 		l.interactive = make(map[int64]debugEntry)
 	}
 	l.seq++
-	l.interactive[userID] = debugEntry{seq: l.seq, dbg: d}
+	l.interactive[userID] = debugEntry{seq: l.seq, dbg: storedCopy(d)}
 }
 
 // RecordBackground stores d as an automatic search for a book owned by
@@ -74,11 +103,15 @@ func (l *DebugLog) RecordBackground(ownerUserID int64, d *SearchDebug) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.seq++
-	l.background = append(l.background, debugEntry{seq: l.seq, dbg: d, ownerUserID: ownerUserID})
-	if over := len(l.background) - debugLogBackgroundCap; over > 0 {
-		l.background = append(l.background[:0:0], l.background[over:]...)
+	if l.background == nil {
+		l.background = make(map[int64][]debugEntry)
 	}
+	l.seq++
+	entries := append(l.background[ownerUserID], debugEntry{seq: l.seq, dbg: storedCopy(d), ownerUserID: ownerUserID})
+	if over := len(entries) - debugLogBackgroundPerOwner; over > 0 {
+		entries = append(entries[:0:0], entries[over:]...)
+	}
+	l.background[ownerUserID] = entries
 }
 
 // Latest returns the newest search readerID may see, or nil.
@@ -108,14 +141,15 @@ func (l *DebugLog) Latest(readerID int64, seeAllInteractive bool, canSeeBook fun
 		best = e
 	}
 	if canSeeBook != nil {
-		for i := len(l.background) - 1; i >= 0; i-- {
-			e := l.background[i]
-			if e.seq <= best.seq {
-				break
+		for owner, entries := range l.background {
+			if len(entries) == 0 {
+				continue
 			}
-			if canSeeBook(e.ownerUserID) {
-				best = e
-				break
+			// Each owner's newest entry is the only candidate from that
+			// owner, and visibility is decided per owner.
+			newest := entries[len(entries)-1]
+			if newest.seq > best.seq && canSeeBook(owner) {
+				best = newest
 			}
 		}
 	}

@@ -642,11 +642,26 @@ describe('BookDetailPage — search', () => {
   // #1636: a sweep can take 10 to 18 seconds and the results render far
   // below the fold, so on a long book page nothing visibly happened. The
   // button now spins while the search runs and the results are scrolled into
-  // view when they land.
-  it('shows a spinner while searching and brings the results into view when they land', async () => {
+  // view when they land, unless they are already on screen or the reader
+  // scrolled away on their own while waiting.
+  function mockScrolling(regionTop: number) {
     const scrollIntoView = vi.fn()
     const original = Element.prototype.scrollIntoView
     Element.prototype.scrollIntoView = scrollIntoView
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(
+      { top: regionTop, bottom: regionTop + 200, left: 0, right: 800, width: 800, height: 200, x: 0, y: regionTop, toJSON: () => ({}) } as DOMRect,
+    )
+    return {
+      scrollIntoView,
+      restore: () => {
+        Element.prototype.scrollIntoView = original
+        rect.mockRestore()
+      },
+    }
+  }
+
+  it('shows a spinner while searching and brings the results into view when they land', async () => {
+    const { scrollIntoView, restore } = mockScrolling(2000)
     try {
       let resolveSearch: (v: { results: SearchResult[]; debug: null }) => void = () => {}
       vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
@@ -673,14 +688,12 @@ describe('BookDetailPage — search', () => {
       expect(within(target).getByText('A Result')).toBeInTheDocument()
       expect(screen.queryByTestId('search-spinner')).not.toBeInTheDocument()
     } finally {
-      Element.prototype.scrollIntoView = original
+      restore()
     }
   })
 
   it('brings an empty result into view too, since that is the answer the user waited for', async () => {
-    const scrollIntoView = vi.fn()
-    const original = Element.prototype.scrollIntoView
-    Element.prototype.scrollIntoView = scrollIntoView
+    const { scrollIntoView, restore } = mockScrolling(2000)
     try {
       vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
       vi.mocked(api.searchBook).mockResolvedValue({ results: [], debug: null })
@@ -692,7 +705,54 @@ describe('BookDetailPage — search', () => {
       expect(await screen.findByText(/No results on any indexer/)).toBeInTheDocument()
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
     } finally {
-      Element.prototype.scrollIntoView = original
+      restore()
+    }
+  })
+
+  it('does not scroll when the results are already on screen', async () => {
+    const { scrollIntoView, restore } = mockScrolling(300)
+    try {
+      vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
+      vi.mocked(api.searchBook).mockResolvedValue({ results: [makeResult({ guid: 'r1', title: 'A Result' })], debug: null })
+
+      renderBookDetailPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+
+      expect(await screen.findByText('A Result')).toBeInTheDocument()
+      await new Promise(r => setTimeout(r, 20))
+      expect(scrollIntoView).not.toHaveBeenCalled()
+    } finally {
+      restore()
+    }
+  })
+
+  it.each([
+    ['the wheel', () => fireEvent.wheel(window)],
+    ['a touch drag', () => fireEvent.touchMove(window)],
+    ['Page Down', () => fireEvent.keyDown(window, { key: 'PageDown' })],
+  ])('does not pull back a reader who scrolled with %s while waiting', async (_how, scroll) => {
+    const { scrollIntoView, restore } = mockScrolling(2000)
+    try {
+      let resolveSearch: (v: { results: SearchResult[]; debug: null }) => void = () => {}
+      vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
+      vi.mocked(api.searchBook).mockImplementation(() => new Promise(resolve => { resolveSearch = resolve }))
+
+      renderBookDetailPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+      await screen.findByRole('button', { name: /Searching all indexers/ })
+      scroll()
+
+      await act(async () => {
+        resolveSearch({ results: [makeResult({ guid: 'r1', title: 'A Result' })], debug: null })
+      })
+
+      expect(await screen.findByText('A Result')).toBeInTheDocument()
+      await new Promise(r => setTimeout(r, 20))
+      expect(scrollIntoView).not.toHaveBeenCalled()
+    } finally {
+      restore()
     }
   })
 

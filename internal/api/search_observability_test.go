@@ -76,8 +76,8 @@ func TestBulkSearch_SaysQueuedNotFinished(t *testing.T) {
 	}
 }
 
-// An author with nothing wanted queues nothing, and says so by leaving queued
-// off rather than claiming a search that never runs.
+// An author with nothing wanted queues nothing, and says so rather than
+// claiming a search that never runs.
 func TestBulkSearch_AuthorWithNothingWantedIsNotQueued(t *testing.T) {
 	searcher := newMockBookSearcher()
 	h, _, books, author, ctx := bulkFixtureWithSearcher(t, searcher)
@@ -88,10 +88,91 @@ func TestBulkSearch_AuthorWithNothingWantedIsNotQueued(t *testing.T) {
 	})
 	rec := postBulk(t, h.AuthorsBulk, fmt.Sprintf(`{"ids":[%d],"action":"search"}`, author.ID))
 	item := bulkResultFields(t, rec)[strconv.FormatInt(author.ID, 10)]
-	if item["ok"] != true || item["queued"] != nil {
-		t.Fatalf("result = %v, want ok:true without queued", item)
+	if item["ok"] != true || item["queued"] != nil || item["searchSkipped"] != searchSkipNothingWanted {
+		t.Fatalf("result = %v, want ok:true, no queued, searchSkipped %q", item, searchSkipNothingWanted)
 	}
 	searcher.assertNoCall(t, 50*time.Millisecond)
+}
+
+// A search the scheduler would drop before asking any indexer must not be
+// reported as queued. SearchAndGrabBook returns at once for a book with no
+// format left to find, so the bulk handler now says so instead (#2154 review).
+func TestBulkSearch_BookWithNothingNeededIsNotQueued(t *testing.T) {
+	cases := []struct {
+		name   string
+		action func(h *BulkHandler) http.HandlerFunc
+	}{
+		{"book bulk", func(h *BulkHandler) http.HandlerFunc { return h.BooksBulk }},
+		{"wanted bulk", func(h *BulkHandler) http.HandlerFunc { return h.WantedBulk }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			searcher := newMockBookSearcher()
+			h, _, books, author, ctx := bulkFixtureWithSearcher(t, searcher)
+			book := mustCreateBook(t, books, ctx, &models.Book{
+				ForeignID: "Q_OWNED", AuthorID: author.ID, Title: "Owned",
+				SortTitle: "owned", Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook,
+				Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+			})
+			if err := books.SetFormatFilePath(ctx, book.ID, models.MediaTypeEbook, "/library/owned.epub"); err != nil {
+				t.Fatal(err)
+			}
+			rec := postBulk(t, tc.action(h), fmt.Sprintf(`{"ids":[%d],"action":"search"}`, book.ID))
+			item := bulkResultFields(t, rec)[strconv.FormatInt(book.ID, 10)]
+			if item["ok"] != true || item["queued"] != nil || item["searchSkipped"] != searchSkipNoFormatNeeded {
+				t.Fatalf("result = %v, want ok:true, no queued, searchSkipped %q", item, searchSkipNoFormatNeeded)
+			}
+			searcher.assertNoCall(t, 50*time.Millisecond)
+		})
+	}
+}
+
+// A bulk monitor that makes a wanted book searchable earns an immediate
+// search (#2722), but only when automatic grabbing is on. With the switch off
+// the monitor still succeeds; the entry says the search was skipped and why.
+func TestBulkMonitor_QueuesOnlyWhenAutoGrabIsOn(t *testing.T) {
+	for _, tc := range []struct {
+		autoGrab    string
+		wantQueued  any
+		wantSkipped any
+	}{
+		{"true", true, nil},
+		{"false", nil, searchSkipAutoGrabDisabled},
+	} {
+		t.Run("autoGrab="+tc.autoGrab, func(t *testing.T) {
+			f := newRefusalFixture(t, tc.autoGrab)
+			book := f.books[0]
+			book.Monitored = false
+			if err := f.handler.books.Update(f.ctx, book); err != nil {
+				t.Fatal(err)
+			}
+			rec := postBulk(t, f.handler.BooksBulk, fmt.Sprintf(`{"ids":[%d],"action":"monitor"}`, book.ID))
+			item := bulkResultFields(t, rec)[strconv.FormatInt(book.ID, 10)]
+			if item["ok"] != true || item["queued"] != tc.wantQueued || item["searchSkipped"] != tc.wantSkipped {
+				t.Fatalf("result = %v, want ok:true queued=%v searchSkipped=%v", item, tc.wantQueued, tc.wantSkipped)
+			}
+			if tc.wantQueued == true {
+				f.searcher.waitForCall(t, time.Second)
+			} else {
+				f.searcher.assertNoCall(t, 50*time.Millisecond)
+			}
+		})
+	}
+}
+
+// Without a searcher nothing can search, so nothing is queued.
+func TestBulkSearch_NoSearcherIsNotQueued(t *testing.T) {
+	h, _, books, author, ctx := bulkFixture(t)
+	book := mustCreateBook(t, books, ctx, &models.Book{
+		ForeignID: "Q_NOS", AuthorID: author.ID, Title: "No Searcher",
+		SortTitle: "no searcher", Status: models.BookStatusWanted,
+		Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	})
+	rec := postBulk(t, h.BooksBulk, fmt.Sprintf(`{"ids":[%d],"action":"search"}`, book.ID))
+	item := bulkResultFields(t, rec)[strconv.FormatInt(book.ID, 10)]
+	if item["ok"] != true || item["queued"] != nil || item["searchSkipped"] != searchSkipNoSearcher {
+		t.Fatalf("result = %v, want ok:true, no queued, searchSkipped %q", item, searchSkipNoSearcher)
+	}
 }
 
 // #2154 point 3: GET /search/last-debug was partitioned by user id, so a

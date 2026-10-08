@@ -299,6 +299,12 @@ function BookDetailPageInner() {
   // can scroll the results region into view once React has rendered it.
   const searchResultsRef = useRef<HTMLDivElement>(null)
   const [revealResults, setRevealResults] = useState(false)
+  // Set when the reader scrolls on their own while the search runs. They
+  // went somewhere on purpose, so the finished search must not pull them
+  // back. Input events rather than 'scroll', because clearing the previous
+  // results shortens the page and the browser's own scroll clamp fires
+  // 'scroll' with no reader involved.
+  const userScrolledDuringSearch = useRef(false)
   const [hasIndexers, setHasIndexers] = useState<boolean | null>(null)
   const [grabbing, setGrabbing] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -463,11 +469,31 @@ function BookDetailPageInner() {
   }
 
   useEffect(() => {
+    if (!searching) return
+    userScrolledDuringSearch.current = false
+    const scrollKeys = new Set(['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '])
+    const onScrollIntent = () => { userScrolledDuringSearch.current = true }
+    const onKey = (e: KeyboardEvent) => { if (scrollKeys.has(e.key)) onScrollIntent() }
+    window.addEventListener('wheel', onScrollIntent, { passive: true })
+    window.addEventListener('touchmove', onScrollIntent, { passive: true })
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('wheel', onScrollIntent)
+      window.removeEventListener('touchmove', onScrollIntent)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [searching])
+
+  useEffect(() => {
     if (!revealResults) return
     setRevealResults(false)
+    if (userScrolledDuringSearch.current) return
     const el = searchResultsRef.current
     // jsdom and some older engines have no scrollIntoView.
     if (!el || typeof el.scrollIntoView !== 'function') return
+    // Already on screen: scrolling would only move the page for nothing.
+    const top = el.getBoundingClientRect().top
+    if (top >= 0 && top < window.innerHeight) return
     const reduceMotion = typeof window.matchMedia === 'function'
       && window.matchMedia('(prefers-reduced-motion: reduce)').matches
     el.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' })

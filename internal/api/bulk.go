@@ -181,13 +181,54 @@ type bulkItemResult struct {
 	// already the whole story.
 	Code string `json:"code,omitempty"`
 	// Queued is true when this ID handed at least one book to the search
-	// pool. The pool runs after the response is written, so ok:true on a
-	// search only ever meant "accepted"; queued says so explicitly, and its
-	// absence on an ok entry means nothing needed searching (an author with no
-	// wanted books, say). The outcome of each search is in the
-	// "book search finished" log line, in History when something was
-	// grabbed, and in GET /search/last-debug (#2154).
+	// pool AND that search will run: a searcher is wired, automatic grabbing
+	// is on, and the book still needs a format. The pool runs after the
+	// response is written, so ok:true on a search only ever meant
+	// "accepted"; queued says a search is on its way. The outcome of each
+	// search is in the "book search finished" log line, in History when
+	// something was grabbed, and in GET /search/last-debug (#2154).
+	//
+	// The scheduler's other skip, an unmonitored author (#2742), applies only
+	// to automatic origins, and the bulk fan out is tagged OriginBulk, which
+	// is not one, so it cannot suppress a search queued here.
 	Queued bool `json:"queued,omitempty"`
+	// SearchSkipped is set on an ok entry whose action would have searched
+	// but will not, naming why: one of the searchSkip* constants. Absent when
+	// the action never searches (unmonitor, delete and so on).
+	SearchSkipped string `json:"searchSkipped,omitempty"`
+}
+
+// Reasons a bulk action that searches did not queue a search for an ID
+// (bulkItemResult.SearchSkipped).
+const (
+	// searchSkipNoFormatNeeded: every format the book wants is on disk, so
+	// SearchAndGrabBook would return before asking any indexer.
+	searchSkipNoFormatNeeded = "no_format_needed"
+	// searchSkipNothingWanted: an author search found no monitored wanted
+	// book that still needs a format.
+	searchSkipNothingWanted = "nothing_wanted"
+	// searchSkipAutoGrabDisabled: a monitor that made a book searchable while
+	// automatic grabbing is off. The monitor itself succeeded, so this is a
+	// skip on an ok entry, not the refusal a "search" action gets (#2669).
+	searchSkipAutoGrabDisabled = "auto_grab_disabled"
+	// searchSkipNoSearcher: no searcher is wired, so nothing can search.
+	searchSkipNoSearcher = "no_searcher"
+)
+
+// bookSearchSkip reports why a search of book would not run, or "" when it
+// will. It mirrors what scheduler.SearchAndGrabBook checks before asking an
+// indexer: a needed format (neededFormats) and the auto grab switch.
+// autoGrabOn is passed in because it is read once per request.
+func (h *BulkHandler) bookSearchSkip(book *models.Book, autoGrabOn bool) string {
+	switch {
+	case h.searcher == nil:
+		return searchSkipNoSearcher
+	case !autoGrabOn:
+		return searchSkipAutoGrabDisabled
+	case !book.NeedsEbook() && !book.NeedsAudiobook():
+		return searchSkipNoFormatNeeded
+	}
+	return ""
 }
 
 // bulkResponse is the envelope returned by all three bulk endpoints.
@@ -317,6 +358,7 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 	for _, id := range req.IDs {
 		key := fmt.Sprintf("%d", id)
 		queued := false
+		skipped := ""
 		switch req.Action {
 		case "monitor":
 			if err := h.setAuthorMonitored(r.Context(), id, true, req.ApplyMonitorModeToExisting); err != nil {
@@ -370,12 +412,18 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 				resp.Results[key] = bulkItemResult{Error: err.Error()}
 				continue
 			}
-			if h.searcher != nil {
-				for _, b := range books {
-					if b.Status == models.BookStatusWanted && b.Monitored {
-						searchTargets = append(searchTargets, b)
-						queued = true
-					}
+			// searchRefused already returned above, so the switch is on.
+			for i := range books {
+				b := books[i]
+				if b.Status == models.BookStatusWanted && b.Monitored && h.bookSearchSkip(&b, true) == "" {
+					searchTargets = append(searchTargets, b)
+					queued = true
+				}
+			}
+			if !queued {
+				skipped = searchSkipNothingWanted
+				if h.searcher == nil {
+					skipped = searchSkipNoSearcher
 				}
 			}
 		case "refresh":
@@ -402,7 +450,7 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		resp.Results[key] = bulkItemResult{OK: true, Queued: queued}
+		resp.Results[key] = bulkItemResult{OK: true, Queued: queued, SearchSkipped: skipped}
 	}
 
 	if len(searchTargets) > 0 && h.searcher != nil {
@@ -523,6 +571,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 	for _, id := range req.IDs {
 		key := fmt.Sprintf("%d", id)
 		queued := false
+		skipped := ""
 		var opErr error
 		switch req.Action {
 		case "monitor":
@@ -533,8 +582,10 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 			var becameSearchable bool
 			book, becameSearchable, opErr = h.setBookMonitored(r.Context(), id, true)
 			if opErr == nil && becameSearchable && book != nil {
-				searchTargets = append(searchTargets, *book)
-				queued = true
+				if skipped = h.bookSearchSkip(book, autoGrabEnabled(r.Context(), h.settings)); skipped == "" {
+					searchTargets = append(searchTargets, *book)
+					queued = true
+				}
 			}
 		case "unmonitor":
 			_, _, opErr = h.setBookMonitored(r.Context(), id, false)
@@ -551,7 +602,8 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 				searchesRefused++
 				continue
 			}
-			if h.searcher != nil {
+			// searchRefused already returned above, so the switch is on.
+			if skipped = h.bookSearchSkip(book, true); skipped == "" {
 				searchTargets = append(searchTargets, *book)
 				queued = true
 			}
@@ -572,7 +624,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 			resp.Results[key] = bulkItemResult{Error: opErr.Error()}
 			continue
 		}
-		resp.Results[key] = bulkItemResult{OK: true, Queued: queued}
+		resp.Results[key] = bulkItemResult{OK: true, Queued: queued, SearchSkipped: skipped}
 	}
 
 	if len(searchTargets) > 0 && h.searcher != nil {
@@ -631,6 +683,7 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 	for _, id := range req.IDs {
 		key := fmt.Sprintf("%d", id)
 		queued := false
+		skipped := ""
 		var opErr error
 		switch req.Action {
 		case "search":
@@ -644,7 +697,8 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 				searchesRefused++
 				continue
 			}
-			if h.searcher != nil {
+			// searchRefused already returned above, so the switch is on.
+			if skipped = h.bookSearchSkip(book, true); skipped == "" {
 				searchTargets = append(searchTargets, *book)
 				queued = true
 			}
@@ -657,7 +711,7 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 			resp.Results[key] = bulkItemResult{Error: opErr.Error()}
 			continue
 		}
-		resp.Results[key] = bulkItemResult{OK: true, Queued: queued}
+		resp.Results[key] = bulkItemResult{OK: true, Queued: queued, SearchSkipped: skipped}
 	}
 
 	if len(searchTargets) > 0 && h.searcher != nil {

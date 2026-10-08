@@ -323,13 +323,34 @@ GET    /api/v1/wanted/missing                     list wanted-but-missing books
 POST   /api/v1/wanted/bulk                        bulk operations on wanted
 ```
 
-A bulk `"action": "search"` (on `/book/bulk`, `/wanted/bulk` or
-`/author/bulk`) answers before any indexer is asked: the searches run on a
-background pool afterwards. Each id that handed at least one book to the pool
-gets `{"ok":true,"queued":true}`; `ok` without `queued` means there was nothing
-to search, such as an author with no monitored wanted books. Each search then
-leaves a `book search finished` line in the log with its outcome, and shows in
-`GET /search/last-debug` (#2154).
+Some bulk actions start an automatic search (search and grab) for the books
+they touch, and the response is written before any indexer is asked: the
+searches run on a background pool afterwards, so `"ok": true` means the action
+was accepted, not that a search finished (#2154). These are the actions that
+can search, and when:
+
+* `POST /book/bulk` with `"action": "search"`: each book.
+* `POST /book/bulk` with `"action": "monitor"`: a book that was wanted and
+  becomes monitored, the same immediate search a single book monitor fires.
+* `POST /wanted/bulk` with `"action": "search"`: each book.
+* `POST /author/bulk` with `"action": "search"`: every monitored wanted book of
+  the author.
+
+For those actions an `ok` entry carries one of two extra fields:
+
+* `"queued": true`: at least one search for this id is on its way. It is set
+  only when that search will actually run: a searcher is configured,
+  automatic grabbing is on, and the book still needs a format.
+* `"searchSkipped": "<reason>"`: the action succeeded but no search was
+  queued. The reasons are `no_format_needed` (every format the book wants is
+  already on disk), `nothing_wanted` (an author with no monitored wanted book
+  still needing a format), `auto_grab_disabled` (a monitor while automatic
+  grabbing is off) and `no_searcher`.
+
+A `"action": "search"` while automatic grabbing is off is refused instead,
+with `"ok": false` and `"code": "auto_grab_disabled"` (#2669). Each search
+that runs leaves a `book search finished` line in the log with its outcome,
+and shows in `GET /search/last-debug`.
 
 Metadata results say when they are already in the caller's library (#1227).
 Each `/search/book` and `/book/lookup` result carries `libraryBookId` when its

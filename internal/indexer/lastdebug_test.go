@@ -42,17 +42,47 @@ func TestDebugLog_NewestVisibleWins(t *testing.T) {
 	}
 }
 
-// A sweep over a large library must not grow the log without bound.
-func TestDebugLog_BackgroundIsBounded(t *testing.T) {
+// A sweep over a large library must not grow the log without bound, and one
+// owner's sweep must not evict another owner's entries.
+func TestDebugLog_BackgroundIsBoundedPerOwner(t *testing.T) {
 	l := NewDebugLog()
-	for i := 0; i < debugLogBackgroundCap*3; i++ {
-		l.RecordBackground(0, &SearchDebug{BookID: int64(i)})
+	l.RecordBackground(2, &SearchDebug{BookID: 999})
+	for i := 0; i < debugLogBackgroundPerOwner*50; i++ {
+		l.RecordBackground(1, &SearchDebug{BookID: int64(i)})
 	}
-	if n := len(l.background); n != debugLogBackgroundCap {
-		t.Fatalf("kept %d entries, want %d", n, debugLogBackgroundCap)
+	if n := len(l.background[1]); n != debugLogBackgroundPerOwner {
+		t.Fatalf("kept %d entries for owner 1, want %d", n, debugLogBackgroundPerOwner)
 	}
-	if got := l.Latest(0, false, allow); got.BookID != int64(debugLogBackgroundCap*3-1) {
+	if got := l.Latest(0, false, allow); got.BookID != int64(debugLogBackgroundPerOwner*50-1) {
 		t.Fatalf("latest book %d, want the last recorded", got.BookID)
+	}
+	onlyOwner2 := func(owner int64) bool { return owner == 2 }
+	if got := l.Latest(0, false, onlyOwner2); got == nil || got.BookID != 999 {
+		t.Fatalf("owner 2 read %+v, want its entry to survive owner 1's sweep", got)
+	}
+}
+
+// A search that rejected thousands of releases is stored with its rejection
+// list capped, and the caller's own value (which an interactive search sends
+// back in full) is left alone.
+func TestDebugLog_CapsStoredFilters(t *testing.T) {
+	d := &SearchDebug{BookID: 1}
+	for i := 0; i < debugLogMaxFilters+50; i++ {
+		d.Filters = append(d.Filters, FilterDebug{Stage: "relevance"})
+	}
+	l := NewDebugLog()
+	l.RecordInteractive(1, d)
+	l.RecordBackground(1, d)
+	if len(d.Filters) != debugLogMaxFilters+50 {
+		t.Fatalf("caller's filters changed to %d", len(d.Filters))
+	}
+	for _, got := range []*SearchDebug{l.interactive[1].dbg, l.background[1][0].dbg} {
+		if len(got.Filters) != debugLogMaxFilters+1 {
+			t.Fatalf("stored %d filters, want %d plus one summary", len(got.Filters), debugLogMaxFilters)
+		}
+		if last := got.Filters[debugLogMaxFilters]; last.Stage != "truncated" || last.Reason != "50 more rejected release(s) not kept in the stored copy" {
+			t.Fatalf("summary entry = %+v", last)
+		}
 	}
 }
 
