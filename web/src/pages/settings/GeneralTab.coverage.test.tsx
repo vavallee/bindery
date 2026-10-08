@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
+import { act, render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { acceptConfirm, cancelConfirm } from '../../test-utils'
 
 // Covers the GeneralTab paths the topic-specific suites leave alone: the
@@ -174,6 +174,39 @@ describe('GeneralTab library scan', () => {
     render(<GeneralTab />)
     fireEvent.click(await screen.findByText('settings.general.scanLibraryButton'))
     expect(await screen.findByText('settings.general.scanQueued')).toBeInTheDocument()
+  })
+
+  it('waits for the result carrying its own scan id, not the running scan it queued behind (#3014)', async () => {
+    vi.useFakeTimers()
+    try {
+      m.triggerLibraryScan.mockResolvedValue({ message: 'library scan queued', queued: true, scanId: 'b-2' })
+      // The scan already running finishes first, with a fresh ran_at.
+      m.libraryScanStatus.mockResolvedValue({
+        ran_at: new Date(Date.now() + 60_000).toISOString(),
+        scan_id: 'b-1', running: true, queued: true,
+        files_found: 1, reconciled: 0, unmatched: 0,
+      })
+      render(<GeneralTab />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      fireEvent.click(screen.getByText('settings.general.scanLibraryButton'))
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+      expect(screen.getByText('settings.general.scanning')).toBeInTheDocument()
+
+      // Past two minutes, still waiting while the server says a scan is going.
+      await act(async () => { await vi.advanceTimersByTimeAsync(180_000) })
+      expect(screen.getByText('settings.general.scanning')).toBeInTheDocument()
+      expect(screen.queryByText(/check back shortly/)).not.toBeInTheDocument()
+
+      // Our scan's result lands.
+      m.libraryScanStatus.mockResolvedValue({
+        ran_at: new Date().toISOString(), scan_id: 'b-2', running: false, queued: false,
+        files_found: 7, reconciled: 1, unmatched: 0,
+      })
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(screen.getByText('settings.general.scanLibraryButton')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('shows the stored scan error, scanned paths and the unmatched books link', async () => {

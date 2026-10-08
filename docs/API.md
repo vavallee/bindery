@@ -723,6 +723,10 @@ answers `409`: the request is queued and the answer is `202` with
 `{"message": "library scan queued", "queued": true}`. When the running scan
 finishes, one more scan runs, however many requests arrived meanwhile, so a
 file placed in a folder the walk had already passed is still picked up (#3014).
+Both answers carry `scanId`, the `scan_id` the requested scan's result will
+have in `GET /api/v1/library/scan/status`, so a client can recognise its own
+scan's result. The status also carries `running` and `queued`, the live state
+next to the stored result of the last finished scan.
 
 `GET /api/v1/library/scan/status` returns the stored summary of the most recent
 scan: the counts, the library roots it walked and the path of every unmatched

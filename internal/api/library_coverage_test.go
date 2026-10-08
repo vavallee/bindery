@@ -37,7 +37,10 @@ func TestLibraryScanStatusCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := get(h)
-	if rec.Code != http.StatusOK || rec.Body.String() != stored || rec.Header().Get("Content-Type") != "application/json" {
+	// The stored result comes back with the live running and queued state
+	// added (#3014).
+	const want = `{"filesFound":3,"matched":2,"queued":false,"running":false}`
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
 		t.Fatalf("after scan: %d %q %q", rec.Code, rec.Body.String(), rec.Header().Get("Content-Type"))
 	}
 

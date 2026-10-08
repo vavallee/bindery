@@ -126,6 +126,11 @@ type Scanner struct {
 	// (#3014). The running scan runs one follow-up when it finishes, however
 	// many requests arrived.
 	scanPending bool
+	// scanSeq counts the scans this process has started; scanID is the id of
+	// the one running or last run. Both under scanMu. The id lets a client
+	// that asked for a scan recognise that scan's result (#3014).
+	scanSeq int64
+	scanID  string
 
 	// testScanHook, when non-nil, runs at the start of every library scan
 	// walk. A test seam: it lets a test hold a scan in flight while it makes
@@ -3319,15 +3324,58 @@ var ErrShuttingDown = errors.New("server is shutting down")
 // claimScan reports false and, if queue is set, records that one more scan is
 // wanted once the running one finishes.
 func (s *Scanner) claimScan(queue bool) bool {
+	ok, _ := s.claimScanID(queue)
+	return ok
+}
+
+// scanBootID makes scan ids unique across restarts, since the stored result
+// outlives the process and the sequence restarts at 1.
+var scanBootID = strconv.FormatInt(time.Now().UnixNano(), 36)
+
+func scanIDFor(seq int64) string {
+	return scanBootID + "-" + strconv.FormatInt(seq, 10)
+}
+
+// claimScanID is claimScan that also names the scan whose result will answer
+// this request: the next one to start, whether that is the scan this call
+// starts or the follow-up it queues behind the running one.
+func (s *Scanner) claimScanID(queue bool) (bool, string) {
 	s.scanMu.Lock()
 	defer s.scanMu.Unlock()
+	next := scanIDFor(s.scanSeq + 1)
 	if s.scanRunning.CompareAndSwap(false, true) {
-		return true
+		return true, next
 	}
 	if queue {
 		s.scanPending = true
 	}
-	return false
+	return false, next
+}
+
+// beginScan numbers the scan about to walk, under the gate.
+func (s *Scanner) beginScan() {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	s.scanSeq++
+	s.scanID = scanIDFor(s.scanSeq)
+}
+
+// currentScanID is the id of the scan running or last run, "" before any.
+func (s *Scanner) currentScanID() string {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	return s.scanID
+}
+
+// ScanState reports whether a library scan is walking and whether another is
+// queued behind it, for the scan status endpoint (#3014).
+func (s *Scanner) ScanState() (running, queued bool) {
+	if s == nil {
+		return false, false
+	}
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	return s.scanRunning.Load(), s.scanPending
 }
 
 // finishScan is called by the scan holding the gate when its walk is done. It
@@ -3366,6 +3414,7 @@ func (s *Scanner) runScans(ctx context.Context) {
 		}
 	}()
 	for {
+		s.beginScan()
 		s.scanLibrary(ctx)
 		if !s.finishScan(ctx) {
 			released = true
@@ -3382,8 +3431,18 @@ func (s *Scanner) runScans(ctx context.Context) {
 // (#3014). Callers pass context.WithoutCancel(r.Context()) so the HTTP
 // response-send doesn't cancel the scan.
 func (s *Scanner) StartScan(ctx context.Context) error {
-	if !s.claimScan(true) {
-		return ErrScanQueued
+	_, err := s.StartScanTracked(ctx)
+	return err
+}
+
+// StartScanTracked is StartScan that also returns the id the requested scan's
+// result will carry as scan_id in library.lastScan, so a caller can tell its
+// own scan's result from an earlier one without comparing clocks (#3014).
+// The id is returned with ErrScanQueued too, naming the follow-up scan.
+func (s *Scanner) StartScanTracked(ctx context.Context) (string, error) {
+	claimed, id := s.claimScanID(true)
+	if !claimed {
+		return id, ErrScanQueued
 	}
 	// When a jobs group is wired, the scan runs on the shutdown-scoped context
 	// so SIGTERM cancels and drains it before the DB closes, instead of the
@@ -3397,12 +3456,12 @@ func (s *Scanner) StartScan(ctx context.Context) error {
 		// (#2372).
 		if !s.jobs.Go("library-scan", s.runScans) {
 			s.releaseScan()
-			return ErrShuttingDown
+			return "", ErrShuttingDown
 		}
 	} else {
 		go s.runScans(ctx)
 	}
-	return nil
+	return id, nil
 }
 
 // ScanLibrary runs a library scan synchronously, sharing the single-flight
@@ -4496,8 +4555,8 @@ func (s *Scanner) writeScanResultWithError(ctx context.Context, filesFound, reco
 	// list so a web bundle cached from before library adoption still parses
 	// the result. Added 2026-09 for v1.37; remove it in the release after.
 	payload := fmt.Sprintf(
-		`{"ran_at":%q,"files_found":%d,"reconciled":%d,"unmatched":%d,"already_tracked":%d,"tag_read_failed":%d,"unmatched_files":[],"unmatched_units":%d,"ignored_units":%d,"units_truncated":%t,"library_dir":%q,"audiobook_dir":%q,"scanned_paths":%s,"no_files_found":%t,"scan_error":%s}`,
-		time.Now().UTC().Format(time.RFC3339),
+		`{"ran_at":%q,"scan_id":%q,"files_found":%d,"reconciled":%d,"unmatched":%d,"already_tracked":%d,"tag_read_failed":%d,"unmatched_files":[],"unmatched_units":%d,"ignored_units":%d,"units_truncated":%t,"library_dir":%q,"audiobook_dir":%q,"scanned_paths":%s,"no_files_found":%t,"scan_error":%s}`,
+		time.Now().UTC().Format(time.RFC3339), s.currentScanID(),
 		filesFound, reconciled, unmatched, alreadyTracked, tagReadFailed,
 		units.pending, units.ignored, units.truncated,
 		s.libraryDir, s.audiobookDir, pathsJSON, noFilesFound, scanErrorJSON,

@@ -47,10 +47,15 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const [showReorganize, setShowReorganize] = useState(false)
   const [scanMessage, setScanMessage] = useState<string | null>(null)
   const scanStartedAt = useRef<number>(0)
-  // Set when the scan request was queued behind one already running (#3014).
-  // The first result to land is then that running scan's, not ours, so the
-  // poll shows it and keeps waiting for the next one.
-  const skipScanResult = useRef<string | null>(null)
+  // The scan_id the result of the scan we asked for will carry, from the
+  // server's 202 (#3014). undefined until the trigger has answered; '' when
+  // the server sent none, which falls back to comparing ran_at with the
+  // browser clock. Matching on the id is what tells our scan from the one
+  // that was already running when the request was queued.
+  const awaitedScanId = useRef<string | undefined>(undefined)
+  // Whether the last status said a scan was walking or queued. The poll only
+  // gives up after two minutes when the server says nothing is happening.
+  const scanActive = useRef(false)
   const [lastScan, setLastScan] = useState<{
     ran_at: string
     files_found: number
@@ -190,33 +195,34 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
 
   useEffect(() => {
     if (!scanningLibrary) return
+    const giveUp = () => {
+      setScanMessage('Scan started — check back shortly for results.')
+      setScanningLibrary(false)
+    }
     const id = setInterval(async () => {
       try {
         const status = await api.libraryScanStatus()
-        if (new Date(status.ran_at).getTime() >= scanStartedAt.current) {
-          if (skipScanResult.current === '') {
-            skipScanResult.current = status.ran_at
-            setLastScan(status)
-            return
-          }
-          if (skipScanResult.current !== null && skipScanResult.current === status.ran_at) return
-          skipScanResult.current = null
+        scanActive.current = Boolean(status.running || status.queued)
+        const target = awaitedScanId.current
+        if (target === undefined) return // the trigger has not answered yet
+        const ours = target
+          ? status.scan_id === target
+          : !scanActive.current && new Date(status.ran_at).getTime() >= scanStartedAt.current
+        if (ours) {
           setLastScan(status)
           setScanMessage(null)
           setScanningLibrary(false)
+          return
         }
       } catch {
-        // result not written yet — keep polling
+        // result not written yet, keep polling
       }
+      // Give up after two minutes only while the server reports no scan
+      // walking or queued: a big library can take longer than that.
+      if (Date.now() - scanStartedAt.current > 120_000 && !scanActive.current) giveUp()
     }, 2000)
-    // Stop after 2 minutes regardless; the scan surely finished or something went wrong.
-    const ceiling = setTimeout(() => {
-      setScanMessage('Scan started — check back shortly for results.')
-      setScanningLibrary(false)
-    }, 120_000)
     return () => {
       clearInterval(id)
-      clearTimeout(ceiling)
     }
   }, [scanningLibrary])
 
@@ -225,11 +231,12 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
     setScanningLibrary(true)
     setScanMessage('Scanning…')
     setLastScan(null)
-    skipScanResult.current = null
+    awaitedScanId.current = undefined
+    scanActive.current = false
     try {
       const res = await api.triggerLibraryScan()
+      awaitedScanId.current = res?.scanId ?? ''
       if (res?.queued) {
-        skipScanResult.current = ''
         setScanMessage(t('settings.general.scanQueued'))
       }
     } catch (err) {
