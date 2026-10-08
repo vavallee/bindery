@@ -58,13 +58,31 @@ type outcomeSearcher interface {
 	SearchBookWithOutcomes(ctx context.Context, indexers []models.Indexer, c indexer.MatchCriteria) ([]newznab.SearchResult, []indexer.IndexerDebug)
 }
 
+// debugSearcher is the optional capability of returning the whole audit
+// trail the interactive search panel shows. The scheduler asks for it only
+// when it has a DebugLog to record into, so GET /search/last-debug can show
+// an automatic search too (#2154). SearchBookWithOutcomes is a projection of
+// the same call, so asking for the trail costs nothing extra.
+type debugSearcher interface {
+	SearchBookWithDebug(ctx context.Context, indexers []models.Indexer, c indexer.MatchCriteria) ([]newznab.SearchResult, *indexer.SearchDebug)
+}
+
 // searchBookWithOutcomes runs the search, reporting per-indexer outcomes when
-// the searcher can supply them.
-func (s *Scheduler) searchBookWithOutcomes(ctx context.Context, idxs []models.Indexer, crit indexer.MatchCriteria) ([]newznab.SearchResult, []indexer.IndexerDebug) {
-	if os, ok := s.searcher.(outcomeSearcher); ok {
-		return os.SearchBookWithOutcomes(ctx, idxs, crit)
+// the searcher can supply them, and the full audit trail when there is a
+// debug log to record it in.
+func (s *Scheduler) searchBookWithOutcomes(ctx context.Context, idxs []models.Indexer, crit indexer.MatchCriteria) ([]newznab.SearchResult, []indexer.IndexerDebug, *indexer.SearchDebug) {
+	if ds, ok := s.searcher.(debugSearcher); ok && s.debugLog != nil {
+		results, dbg := ds.SearchBookWithDebug(ctx, idxs, crit)
+		if dbg == nil {
+			return results, nil, nil
+		}
+		return results, dbg.Indexers, dbg
 	}
-	return s.searcher.SearchBook(ctx, idxs, crit), nil
+	if os, ok := s.searcher.(outcomeSearcher); ok {
+		results, outcomes := os.SearchBookWithOutcomes(ctx, idxs, crit)
+		return results, outcomes, nil
+	}
+	return s.searcher.SearchBook(ctx, idxs, crit), nil, nil
 }
 
 // RecommendationEngine is the narrow interface the scheduler calls to
@@ -187,6 +205,9 @@ type Scheduler struct {
 	cron     *cron.Cron
 	scanner  *importer.Scanner
 	searcher bookSearcher
+	// debugLog receives the audit trail of every automatic search, for
+	// GET /search/last-debug (#2154). Optional; nil records nothing.
+	debugLog *indexer.DebugLog
 	meta     *metadata.Aggregator
 
 	authors         *db.AuthorRepo
@@ -379,6 +400,13 @@ func (s *Scheduler) WithCalibreDeliverer(d CalibreDeliverer) {
 // Must be called before Start.
 func (s *Scheduler) WithRecommender(engine RecommendationEngine) {
 	s.recommender = engine
+}
+
+// WithSearchDebugLog shares the log behind GET /search/last-debug, so the
+// automatic searches the scheduler runs (scheduled, bulk, series fill and the
+// rest) are recorded there next to the interactive ones (#2154).
+func (s *Scheduler) WithSearchDebugLog(l *indexer.DebugLog) {
+	s.debugLog = l
 }
 
 // WithOperatorUserID supplies the identity the recommendation job attributes
@@ -960,7 +988,17 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	started := time.Now()
 	outcome := "aborted"
 	var indexerCount, rawResults, afterFilters, approved int
+	// dbg is the search's audit trail, set only when there is a debug log to
+	// record it in. It is recorded on the way out, with the outcome, so
+	// GET /search/last-debug shows automatic searches too (#2154).
+	var dbg *indexer.SearchDebug
 	defer func() {
+		if dbg != nil {
+			dbg.Origin = string(indexer.SearchOriginFrom(ctx))
+			dbg.BookID = book.ID
+			dbg.Outcome = outcome
+			s.debugLog.RecordBackground(book.OwnerUserID, dbg)
+		}
 		slog.Info("book search finished",
 			"origin", string(indexer.SearchOriginFrom(ctx)),
 			"book", book.Title,
@@ -1031,7 +1069,8 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		}
 	}
 
-	results, outcomes := s.searchBookWithOutcomes(ctx, idxs, crit)
+	results, outcomes, searchDbg := s.searchBookWithOutcomes(ctx, idxs, crit)
+	dbg = searchDbg
 	rawResults = len(results)
 	// An indexer that failed contributed zero results and is otherwise
 	// indistinguishable from one that answered with nothing, so a grab decided
@@ -1057,6 +1096,13 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		results = indexer.FilterByAllowedLanguages(results, allowedLangs)
 	} else {
 		results = indexer.FilterByLanguage(results, lang)
+	}
+	if dbg != nil && len(results) < rawResults {
+		dbg.Filters = append(dbg.Filters, indexer.FilterDebug{
+			Stage:  "language",
+			Reason: "release name tagged with a language outside the profile",
+			Title:  "(" + strconv.Itoa(rawResults-len(results)) + " result(s) dropped)",
+		})
 	}
 	afterFilters = len(results)
 
@@ -1112,6 +1158,14 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		if d.Approved {
 			best = &results[i]
 			break
+		}
+		if dbg != nil {
+			dbg.Filters = append(dbg.Filters, indexer.FilterDebug{
+				Title:       results[i].Title,
+				IndexerName: results[i].IndexerName,
+				Stage:       "decision",
+				Reason:      d.Rejection,
+			})
 		}
 		// Store delay-rejected releases so they can be re-evaluated next sweep.
 		// The sentinel "delay not met" matches both "usenet delay not met" and

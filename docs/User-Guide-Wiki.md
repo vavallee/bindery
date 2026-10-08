@@ -791,15 +791,26 @@ like everything else on that tab that names server paths.
   selector stays disabled until you save one.
 
   When a metadata profile restricts languages, Bindery checks Hardcover's
-  editions for each author work in one batched request. A translated default
-  edition is not treated as the language of the whole work: any edition in an
-  allowed language keeps the work, while a work is rejected as non-allowed
-  only when the lookup completes and finds no allowed edition. This filtering
-  evidence does not rewrite the displayed language, which remains the
+  editions for each author work in one batched request. This happens whether
+  Hardcover is the primary provider or supplements OpenLibrary, so the
+  Hardcover works merged into an OpenLibrary author are checked too. A
+  translated default edition is not treated as the language of the whole work:
+  any edition in an allowed language keeps the work, while a work is rejected
+  as non-allowed only when the lookup completes and finds no allowed edition
+  and some edition, default or not, records another language. A work with no
+  language on any edition stays unknown. This filtering evidence does not
+  rewrite the displayed language, which remains the
   provider's preferred/default language or the user's locked value. If the
   evidence is indeterminate or its lookup fails, normal refreshes fall through
   to the existing edition-sampled, author-majority, and scalar language before
-  applying **When book language is unknown**. **Reconcile catalogue** treats a
+  applying **When book language is unknown**. The author-majority fallback is
+  not applied to a work whose title is written in a different script from the
+  author's other titles (a Cyrillic title in an English author's catalogue, for
+  example), so such a work stays unknown. OpenLibrary edition sampling only
+  runs for OpenLibrary works, and takes the language and a missing cover from
+  the edition OpenLibrary features on the work's own page first, falling back
+  to a small sample of its editions (and a cover in the sampled language) only
+  for what that edition lacks. **Reconcile catalogue** treats a
   failed lookup as indeterminate rather than offering the row for removal.
 - **Google Books** (free API key) and **Audnexus/Audible** (audiobook
   narrator, duration, by ASIN) enrich further.

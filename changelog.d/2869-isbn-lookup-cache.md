@@ -1,0 +1,2 @@
+### Fixed
+- **ISBN and Audible ASIN lookups no longer hand out a stale or shared record** (#2869). An ISBN or ASIN answer was cached for a day under a key that ignored the metadata provider settings, so changing the primary provider or the Hardcover token kept serving the old answer, and every caller was handed the same cached book. Each lookup now gets its own copy, a settings change fetches a fresh answer, and a record built while an enrichment provider was failing is kept for five minutes instead of a day so it is retried. Thanks to magrhino for the report.

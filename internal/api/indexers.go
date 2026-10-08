@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
@@ -22,29 +21,6 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/telemetry"
 )
-
-// lastDebugStore holds each caller's most recent SearchBook audit trail. The
-// debug panel surfaces "what happened on my last search", not a history.
-// Handler calls come from different goroutines, so access is mutex-guarded.
-type lastDebugStore struct {
-	mu     sync.RWMutex
-	byUser map[int64]*indexer.SearchDebug
-}
-
-func (s *lastDebugStore) set(userID int64, d *indexer.SearchDebug) {
-	s.mu.Lock()
-	if s.byUser == nil {
-		s.byUser = make(map[int64]*indexer.SearchDebug)
-	}
-	s.byUser[userID] = d
-	s.mu.Unlock()
-}
-
-func (s *lastDebugStore) get(userID int64) *indexer.SearchDebug {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.byUser[userID]
-}
 
 // indexerSearcher is the subset of indexer.Searcher used by IndexerHandler.
 // It is an interface so tests can inject a mock.
@@ -70,8 +46,11 @@ type IndexerHandler struct {
 	qualityProfiles *db.QualityProfileRepo
 	// editions is optional; when set, the book's edition ISBNs feed the
 	// ISBN exact-match bonus in the ranker (#1724).
-	editions  *db.EditionRepo
-	lastDebug *lastDebugStore
+	editions *db.EditionRepo
+	// lastDebug is the log behind GET /search/last-debug. The scheduler
+	// writes its automatic searches to the same log (#2154); see
+	// WithSearchDebugLog.
+	lastDebug *indexer.DebugLog
 	// searchResults records what the search endpoints return, so a grab from
 	// a non-admin account can be held to it. See SearchResultRegistry.
 	searchResults *SearchResultRegistry
@@ -81,8 +60,18 @@ func NewIndexerHandler(indexers *db.IndexerRepo, books *db.BookRepo, authors *db
 	return &IndexerHandler{
 		indexers: indexers, books: books, authors: authors, profiles: profiles,
 		searcher: searcher, settings: settings, blocklist: blocklist,
-		lastDebug: &lastDebugStore{},
+		lastDebug: indexer.NewDebugLog(),
 	}
+}
+
+// WithSearchDebugLog replaces the handler's private debug log with one shared
+// with the scheduler, so GET /search/last-debug also answers for scheduled,
+// bulk and other automatic searches (#2154).
+func (h *IndexerHandler) WithSearchDebugLog(l *indexer.DebugLog) *IndexerHandler {
+	if l != nil {
+		h.lastDebug = l
+	}
+	return h
 }
 
 // WithAliases attaches the author alias repo used to populate AuthorAliases in MatchCriteria.
@@ -758,7 +747,11 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	// Remember the most recent debug payload so the UI can re-fetch it
 	// (e.g. after a page reload) without having to re-run the search.
 	if dbg != nil {
-		h.lastDebug.set(auth.UserIDFromContext(r.Context()), dbg)
+		uid := auth.UserIDFromContext(r.Context())
+		dbg.Origin = indexer.DebugOriginInteractive
+		dbg.BookID = book.ID
+		dbg.UserID = uid
+		h.lastDebug.RecordInteractive(uid, dbg)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -767,11 +760,27 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// LastSearchDebug returns the caller's most recent SearchBook audit trail, or
-// 404 if that caller has not run a search yet. User ID 0 retains the shared
-// behavior for API-key, disabled-auth, and local-only requests.
+// LastSearchDebug returns the newest search audit trail the caller may see,
+// or 404 when there is none.
+//
+// That is the caller's own latest interactive search or the latest automatic
+// search (scheduled, bulk, series fill and so on) of a book the caller may
+// see, whichever ran last (#2154). A caller holding the install's API key, or
+// one with no user identity at all, also sees every user's interactive
+// search: the key is admin equivalent, and a script reading this endpoint
+// after a user searched in the browser would otherwise get an older search
+// from a different bucket. A signed in user never sees another user's
+// interactive search (#1859).
+//
+// The payload's origin, bookId and outcome fields say which search it is, so
+// an older or unrelated search cannot pass for the one just started.
 func (h *IndexerHandler) LastSearchDebug(w http.ResponseWriter, r *http.Request) {
-	dbg := h.lastDebug.get(auth.UserIDFromContext(r.Context()))
+	ctx := r.Context()
+	uid := auth.UserIDFromContext(ctx)
+	seeAll := uid == 0 || auth.AuthedViaAPIKey(ctx)
+	dbg := h.lastDebug.Latest(uid, seeAll, func(ownerUserID int64) bool {
+		return auth.CheckOwnership(ctx, ownerUserID)
+	})
 	if dbg == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no search has run yet"})
 		return

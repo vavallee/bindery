@@ -790,7 +790,6 @@ func TestGetAuthorWorksByName_NoTokenSkipsRequest(t *testing.T) {
 func TestGetAuthorWorkLanguageEvidence_BatchesAllowedEditionLookup(t *testing.T) {
 	requests := 0
 	c := newMockClient(func(r *http.Request) (*http.Response, error) {
-		requests++
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatal(err)
@@ -799,6 +798,12 @@ func TestGetAuthorWorkLanguageEvidence_BatchesAllowedEditionLookup(t *testing.T)
 		if err := json.Unmarshal(body, &req); err != nil {
 			t.Fatal(err)
 		}
+		if strings.Contains(req.Query, "GetAuthorWorkKnownLanguages") {
+			// The follow up for blank-language works (#3091), covered by
+			// its own tests. Finding nothing leaves hc:unknown as it was.
+			return gqlResponse(t, http.StatusOK, map[string]interface{}{"editions": []interface{}{}}), nil
+		}
+		requests++
 		for _, fragment := range []string{
 			"distinct_on: [book_id]",
 			"order_by: [{book_id: asc}, {id: asc}]",

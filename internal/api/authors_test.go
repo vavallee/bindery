@@ -5551,7 +5551,7 @@ func TestApplyAuthorMajorityLanguageFallback(t *testing.T) {
 			{ForeignID: "5", Language: ""}, // unresolved: should be backfilled
 			{ForeignID: "6", Language: ""}, // unresolved: should be backfilled
 		}
-		applyAuthorMajorityLanguageFallback(books)
+		applyAuthorMajorityLanguageFallback(books, nil)
 		for _, b := range books {
 			if b.Language != "eng" {
 				t.Errorf("book %s: Language = %q, want eng", b.ForeignID, b.Language)
@@ -5567,7 +5567,7 @@ func TestApplyAuthorMajorityLanguageFallback(t *testing.T) {
 			{ForeignID: "4", Language: "ger"},
 			{ForeignID: "5", Language: ""},
 		}
-		applyAuthorMajorityLanguageFallback(books)
+		applyAuthorMajorityLanguageFallback(books, nil)
 		if books[4].Language != "" {
 			t.Errorf("Language = %q, want unchanged (empty) — no language clears the dominance threshold", books[4].Language)
 		}
@@ -5579,7 +5579,7 @@ func TestApplyAuthorMajorityLanguageFallback(t *testing.T) {
 			{ForeignID: "2", Language: "eng"},
 			{ForeignID: "3", Language: ""},
 		}
-		applyAuthorMajorityLanguageFallback(books)
+		applyAuthorMajorityLanguageFallback(books, nil)
 		if books[2].Language != "" {
 			t.Errorf("Language = %q, want unchanged (empty) — only 2 resolved works is below the minimum sample", books[2].Language)
 		}
@@ -5590,7 +5590,7 @@ func TestApplyAuthorMajorityLanguageFallback(t *testing.T) {
 			{ForeignID: "1", Language: ""},
 			{ForeignID: "2", Language: ""},
 		}
-		applyAuthorMajorityLanguageFallback(books)
+		applyAuthorMajorityLanguageFallback(books, nil)
 		for _, b := range books {
 			if b.Language != "" {
 				t.Errorf("book %s: Language = %q, want unchanged (empty)", b.ForeignID, b.Language)

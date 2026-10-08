@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, BINDERY_BASE, Book, HistoryEvent, MediaType, SearchResult, SearchDebug, Series } from '../api/client'
@@ -293,6 +293,18 @@ function BookDetailPageInner() {
   const [autoSearchNotice, setAutoSearchNotice] = useState<string | null>(null)
   const [results, setResults] = useState<SearchResult[] | null>(null)
   const [searchDebug, setSearchDebug] = useState<SearchDebug | null>(null)
+  // #1636: the results of an interactive search render below the metadata
+  // sections, often well below the fold, and a sweep can take 10 to 18
+  // seconds. revealResults is set when a search finishes so the effect below
+  // can scroll the results region into view once React has rendered it.
+  const searchResultsRef = useRef<HTMLDivElement>(null)
+  const [revealResults, setRevealResults] = useState(false)
+  // Set when the reader scrolls on their own while the search runs. They
+  // went somewhere on purpose, so the finished search must not pull them
+  // back. Input events rather than 'scroll', because clearing the previous
+  // results shortens the page and the browser's own scroll clamp fires
+  // 'scroll' with no reader involved.
+  const userScrolledDuringSearch = useRef(false)
   const [hasIndexers, setHasIndexers] = useState<boolean | null>(null)
   const [grabbing, setGrabbing] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -448,12 +460,44 @@ function BookDetailPageInner() {
       setHasIndexers(indexers.length > 0)
       setResults(r.results)
       setSearchDebug(r.debug ?? null)
+      setRevealResults(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : t('bookDetail.searchFailed'))
     } finally {
       setSearching(false)
     }
   }
+
+  useEffect(() => {
+    if (!searching) return
+    userScrolledDuringSearch.current = false
+    const scrollKeys = new Set(['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '])
+    const onScrollIntent = () => { userScrolledDuringSearch.current = true }
+    const onKey = (e: KeyboardEvent) => { if (scrollKeys.has(e.key)) onScrollIntent() }
+    window.addEventListener('wheel', onScrollIntent, { passive: true })
+    window.addEventListener('touchmove', onScrollIntent, { passive: true })
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('wheel', onScrollIntent)
+      window.removeEventListener('touchmove', onScrollIntent)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [searching])
+
+  useEffect(() => {
+    if (!revealResults) return
+    setRevealResults(false)
+    if (userScrolledDuringSearch.current) return
+    const el = searchResultsRef.current
+    // jsdom and some older engines have no scrollIntoView.
+    if (!el || typeof el.scrollIntoView !== 'function') return
+    // Already on screen: scrolling would only move the page for nothing.
+    const top = el.getBoundingClientRect().top
+    if (top >= 0 && top < window.innerHeight) return
+    const reduceMotion = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    el.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' })
+  }, [revealResults])
 
   // #2668 (ThatDeltaGuy): the automatic counterpart of runSearch above. That
   // one is POST /book/{id}/search, which returns releases and grabs nothing,
@@ -965,9 +1009,19 @@ function BookDetailPageInner() {
             <button
               onClick={runSearch}
               disabled={searching}
+              aria-busy={searching}
               className={`${btn.primary} ${btnSize.md}`}
             >
-              <span aria-hidden>🔍</span> {searchLabel}
+              {searching ? (
+                <span
+                  data-testid="search-spinner"
+                  aria-hidden
+                  className="inline-block h-3.5 w-3.5 align-[-2px] animate-spin rounded-full border-2 border-current border-t-transparent"
+                />
+              ) : (
+                <span aria-hidden>🔍</span>
+              )}{' '}
+              {searchLabel}
             </button>
             {canAutoSearch && (
               <button
@@ -1392,40 +1446,44 @@ function BookDetailPageInner() {
         </Section>
       )}
 
-      {/* ===== Search results ===== */}
-      {results !== null && results.length === 0 && (
-        <div className="mt-6 text-center py-6 text-sm text-slate-600 dark:text-zinc-500 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          {hasIndexers === false ? (
-            <>
-              {t('bookDetail.noIndexers')}{' '}
-              <Link to="/settings" className="underline">{t('nav.settings')}</Link>.
-            </>
-          ) : (
-            t('bookDetail.noResults')
-          )}
-        </div>
-      )}
+      {/* ===== Search results =====
+          One region so a finished search can scroll it into view (#1636).
+          scroll-mt clears the sticky header. */}
+      <div ref={searchResultsRef} data-testid="search-results-region" className="scroll-mt-20">
+        {results !== null && results.length === 0 && (
+          <div className="mt-6 text-center py-6 text-sm text-slate-600 dark:text-zinc-500 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+            {hasIndexers === false ? (
+              <>
+                {t('bookDetail.noIndexers')}{' '}
+                <Link to="/settings" className="underline">{t('nav.settings')}</Link>.
+              </>
+            ) : (
+              t('bookDetail.noResults')
+            )}
+          </div>
+        )}
 
-      {searchDebug && (
-        <div className="mt-6">
-          <SearchDebugPanel
-            debug={searchDebug}
-            resultCount={results?.length ?? 0}
-            defaultOpen={results !== null && results.length === 0}
-          />
-        </div>
-      )}
+        {searchDebug && (
+          <div className="mt-6">
+            <SearchDebugPanel
+              debug={searchDebug}
+              resultCount={results?.length ?? 0}
+              defaultOpen={results !== null && results.length === 0}
+            />
+          </div>
+        )}
 
-      {results !== null && results.length > 0 && (
-        <div className="mt-6">
-          <SearchResultsSection
-            results={results}
-            bookMediaType={book.mediaType}
-            grabbing={grabbing}
-            onGrab={grab}
-          />
-        </div>
-      )}
+        {results !== null && results.length > 0 && (
+          <div className="mt-6">
+            <SearchResultsSection
+              results={results}
+              bookMediaType={book.mediaType}
+              grabbing={grabbing}
+              onGrab={grab}
+            />
+          </div>
+        )}
+      </div>
 
       {/* ===== History section ===== */}
       {events.length > 0 && (

@@ -58,9 +58,13 @@ func (a *Aggregator) GetCanonicalBookByASIN(ctx context.Context, asin string) (*
 	if a == nil || a.primary == nil || asin == "" {
 		return nil, nil
 	}
-	key := "asin-canonical:" + asin
-	if cached, ok := a.cache.get(key); ok {
-		return cached.(*models.Book), nil
+	// Scoped and copied like the ISBN lookup (#2869): an answer built under one
+	// provider configuration is not served after it changes, and a caller that
+	// edits the book it gets cannot rewrite the cached entry.
+	ctx, scope := a.bindCacheProviders(ctx)
+	key := "asin-canonical:" + scope + ":" + asin
+	if cached, ok := a.cachedBook(key); ok {
+		return cached, nil
 	}
 
 	b, err := a.getAudnexBookByASIN(ctx, asin)
@@ -84,10 +88,11 @@ func (a *Aggregator) GetCanonicalBookByASIN(ctx context.Context, asin string) (*
 		a.cache.set(key, noBook)
 		return nil, nil
 	}
+	complete := true
 	if len(canonical.Description) < 50 || canonical.ImageURL == "" {
-		a.enrichBook(ctx, canonical)
+		complete = a.enrichBook(ctx, canonical)
 	}
-	a.cache.set(key, canonical)
+	a.storeBook(ctx, key, canonical, complete)
 	return canonical, nil
 }
 
@@ -304,7 +309,11 @@ func enrichmentInputKey(book *models.Book) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(input)))
 }
 
-func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
+// enrichBook reports whether the enrichment is complete: false when an
+// enricher failed, or when the result came from a snapshot built during such a
+// failure. A caller caching the enriched book uses it to keep an incomplete
+// result in the five minute cache rather than the 24 hour one (#2869).
+func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) bool {
 	ctx, scope := a.bindCacheProviders(ctx)
 	cacheKey := enrichBookCacheKey(book)
 	if cacheKey != "" {
@@ -320,11 +329,11 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 	if cacheKey != "" {
 		if cached, ok := a.cache.get(cacheKey); ok {
 			applyEnrichmentSnapshot(book, cached.(enrichmentSnapshot))
-			return
+			return true
 		}
 		if cached, ok := a.requests.shortCache().get(cacheKey); ok {
 			applyEnrichmentSnapshot(book, cached.(enrichmentSnapshot))
-			return
+			return false
 		}
 	}
 
@@ -422,6 +431,7 @@ func (a *Aggregator) enrichBook(ctx context.Context, book *models.Book) {
 			a.requests.shortCache().set(cacheKey, snap)
 		}
 	}
+	return cacheable
 }
 
 // applyEnrichmentSnapshot mirrors the per-field merge rules used by

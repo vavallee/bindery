@@ -135,6 +135,13 @@ export interface SearchDebug {
   filters: FilterDebug[]
   startedAt: string
   durationMs: number
+  // Which search this is (#2154): 'interactive' or an automatic origin such
+  // as 'scheduled' or 'bulk', the book, and for an automatic search what it
+  // did ('grabbed', 'no results', ...).
+  origin?: string
+  bookId?: number
+  userId?: number
+  outcome?: string
 }
 
 export interface SearchBookResponse {

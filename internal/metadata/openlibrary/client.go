@@ -76,7 +76,9 @@ const (
 // The cost of that is accuracy. OpenLibrary returns editions in no meaningful
 // order, so a handful of them is a sample rather than the leading editions, and
 // a work whose first few happen to be translations can be read as
-// foreign-language or pick up a foreign cover (#1779, still open on that half).
+// foreign-language or pick up a foreign cover. That is why the sample is now
+// the fallback: sampleWorkEditions asks the work's featured cover_edition
+// first and only samples for what it does not supply (#1779).
 //
 // The two derivations used to be separate samplers with separate caches, which
 // meant a work missing both language and cover cost TWO round trips to the
@@ -273,6 +275,18 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 
 	if len(resp.Covers) > 0 && resp.Covers[0] > 0 {
 		b.ImageURL = fmt.Sprintf("%s/b/id/%d-L.jpg", coverURL, resp.Covers[0])
+	} else if resp.CoverEdition != nil {
+		// A work record often has no cover of its own while the edition its
+		// page features does (#1779). One request, only in that case, and
+		// best effort: a failure leaves the cover to the enrichers as before.
+		if key := strings.TrimPrefix(strings.TrimSpace(resp.CoverEdition.Key), "/books/"); key != "" {
+			var featured editionEntry
+			if err := c.getJSON(ctx, fmt.Sprintf("%s/books/%s.json", baseURL, key), &featured); err != nil {
+				slog.Debug("openlibrary: cover edition fetch failed", "work", foreignID, "edition", key, "error", err)
+			} else {
+				b.ImageURL = firstEditionCover([]editionEntry{featured})
+			}
+		}
 	}
 
 	// Parse series membership.
@@ -868,7 +882,7 @@ func editionFromEntry(e editionEntry) models.Edition {
 func (c *Client) FillMissingWorkLanguages(ctx context.Context, books []models.Book) int {
 	targets := make([]int, 0, len(books))
 	for i := range books {
-		if books[i].Language != "" || books[i].ForeignID == "" {
+		if books[i].Language != "" || !ownsWork(books[i]) {
 			continue
 		}
 		targets = append(targets, i)
@@ -884,12 +898,74 @@ func (c *Client) FillMissingWorkLanguages(ctx context.Context, books []models.Bo
 	return int(filled.Load())
 }
 
-// sampleWorkEditions returns the language and cover derived from a work's first
-// editionSampleCap editions. Results (including the all-empty result) are cached
-// per work ID, so the language and cover derivations cost ONE round trip between
-// them rather than one each (#1888).
+// ownsWork reports whether book is an OpenLibrary work, the only kind with a
+// /works/{id}/editions.json to sample. A work merged in from another provider
+// (Hardcover "hc:", Audible "audible:", DNB "dnb:") is skipped: asking
+// OpenLibrary for it is a guaranteed "not found", one wasted request per work
+// on every pass (#3091). The provider prefix is the test, with the book's
+// MetadataProvider as a second one for a supplement that left the prefix off.
+func ownsWork(book models.Book) bool {
+	id := strings.TrimSpace(book.ForeignID)
+	if id == "" || strings.Contains(id, ":") {
+		return false
+	}
+	p := strings.TrimSpace(book.MetadataProvider)
+	return p == "" || strings.EqualFold(p, "openlibrary")
+}
+
+// sampleWorkEditions returns the language and cover derived for a work.
+// Results (including the all-empty result) are cached per work ID, so the
+// language and cover derivations share one derivation between them rather
+// than paying for one each (#1888).
+//
+// The work's cover_edition comes first (#1779). It is the edition
+// OpenLibrary's own work page features, so it is what a user comparing
+// Bindery with openlibrary.org expects, and unlike the editions endpoint,
+// whose order means nothing, it does not change with how many translations
+// a work has. The work record and that one edition are both plain document
+// fetches. Only what the cover edition does not supply is then taken from an
+// editionSampleCap sample of the editions list, as before: the majority
+// language, and a cover from an edition in that language where the sample has
+// one. A work-level cover, which the work record carries for free, is
+// preferred to a sampled one.
+//
+// Cost, against the single editions sample this used to make: up to two
+// extra requests per sampled work.
+//   - featured edition with both a language and a cover: work record and
+//     featured edition, two requests (the sample is skipped).
+//   - featured edition missing either one: work record, featured edition and
+//     the sample, three requests.
+//   - no featured edition, or the work record fails: work record and the
+//     sample, two requests.
+//
+// Each is made once per work per run and shared by both derivations.
 func (c *Client) sampleWorkEditions(ctx context.Context, workID string) workEditionSample {
 	if sample, ok := c.cachedWorkSample(workID); ok {
+		return sample
+	}
+
+	var sample workEditionSample
+	var work workResponse
+	if err := c.getJSON(ctx, fmt.Sprintf("%s/works/%s.json", baseURL, workID), &work); err != nil {
+		slog.Debug("openlibrary: work record fetch for edition sampling failed", "work", workID, "error", err)
+	} else {
+		if work.CoverEdition != nil {
+			if key := strings.TrimPrefix(strings.TrimSpace(work.CoverEdition.Key), "/books/"); key != "" {
+				var featured editionEntry
+				if err := c.getJSON(ctx, fmt.Sprintf("%s/books/%s.json", baseURL, key), &featured); err != nil {
+					slog.Debug("openlibrary: cover edition fetch failed", "work", workID, "edition", key, "error", err)
+				} else {
+					sample.language = majorityEditionLanguage([]editionEntry{featured})
+					sample.cover = firstEditionCover([]editionEntry{featured})
+				}
+			}
+		}
+		if sample.cover == "" && len(work.Covers) > 0 && work.Covers[0] > 0 {
+			sample.cover = fmt.Sprintf("%s/b/id/%d-L.jpg", coverURL, work.Covers[0])
+		}
+	}
+	if sample.language != "" && sample.cover != "" {
+		c.setCachedWorkSample(workID, sample)
 		return sample
 	}
 
@@ -897,17 +973,58 @@ func (c *Client) sampleWorkEditions(ctx context.Context, workID string) workEdit
 	var resp editionsResponse
 	if err := c.getJSON(ctx, u, &resp); err != nil {
 		slog.Debug("openlibrary: edition sampling failed", "work", workID, "error", err)
-		// Cache the miss so we don't retry a flaky/expensive call this run.
-		c.setCachedWorkSample(workID, workEditionSample{})
-		return workEditionSample{}
+		// Cache what we have, a miss included, so a flaky or expensive call
+		// is not retried this run.
+		c.setCachedWorkSample(workID, sample)
+		return sample
 	}
 
-	sample := workEditionSample{
-		language: majorityEditionLanguage(resp.Entries),
-		cover:    firstEditionCover(resp.Entries),
+	if sample.language == "" {
+		sample.language = majorityEditionLanguage(resp.Entries)
+	}
+	if sample.cover == "" {
+		sample.cover = editionCoverInLanguage(resp.Entries, sample.language)
 	}
 	c.setCachedWorkSample(workID, sample)
 	return sample
+}
+
+// editionCoverInLanguage returns the cover of the first sampled edition in
+// language that has one, so a work read as English does not take the cover
+// of a translation that happened to come first (#1779). Failing that it takes
+// the first cover of an edition with no language recorded, and only then any
+// cover at all, as firstEditionCover always did.
+func editionCoverInLanguage(entries []editionEntry, language string) string {
+	if language != "" {
+		var inLanguage, unknown []editionEntry
+		for _, e := range entries {
+			switch langs := entryLanguages(e); {
+			case len(langs) == 0:
+				unknown = append(unknown, e)
+			case slices.Contains(langs, language):
+				inLanguage = append(inLanguage, e)
+			}
+		}
+		if cover := firstEditionCover(inLanguage); cover != "" {
+			return cover
+		}
+		if cover := firstEditionCover(unknown); cover != "" {
+			return cover
+		}
+	}
+	return firstEditionCover(entries)
+}
+
+// entryLanguages returns an edition's language codes ("eng"), without the
+// "/languages/" prefix.
+func entryLanguages(e editionEntry) []string {
+	out := make([]string, 0, len(e.Languages))
+	for _, l := range e.Languages {
+		if code := strings.TrimPrefix(l.Key, "/languages/"); code != "" {
+			out = append(out, code)
+		}
+	}
+	return out
 }
 
 // majorityEditionLanguage returns the most common language across the sampled
@@ -974,10 +1091,7 @@ func (c *Client) setCachedWorkSample(workID string, sample workEditionSample) {
 func (c *Client) FillMissingWorkCovers(ctx context.Context, books []models.Book) int {
 	targets := make([]int, 0, len(books))
 	for i := range books {
-		if books[i].ImageURL != "" || books[i].ForeignID == "" {
-			continue
-		}
-		if p := books[i].MetadataProvider; p != "" && p != "openlibrary" {
+		if books[i].ImageURL != "" || !ownsWork(books[i]) {
 			continue
 		}
 		targets = append(targets, i)
@@ -999,12 +1113,9 @@ func (c *Client) FillMissingWorkCovers(ctx context.Context, books []models.Book)
 // It used to say the entries arrive "most-held printings first". They do not:
 // /works/{id}/editions.json takes no sort parameter and its order is neither
 // publication nor popularity order, so which edition this lands on is not
-// meaningful (#1779). It is still a reasonable cover for a work that has none
-// of its own, which is the only situation it is consulted in, but a work whose
-// arbitrary first editions are a translation can pick up that translation's
-// cover. Making the choice deterministic is the open half of #1779 and needs a
-// wider sample than editionSampleCap, which is a cost decision rather than a
-// one-line change.
+// meaningful (#1779). sampleWorkEditions therefore asks the work's
+// cover_edition first and, failing that, prefers an edition in the sampled
+// language (editionCoverInLanguage); this is the last resort.
 func firstEditionCover(entries []editionEntry) string {
 	for _, e := range entries {
 		if len(e.Covers) > 0 && e.Covers[0] > 0 {

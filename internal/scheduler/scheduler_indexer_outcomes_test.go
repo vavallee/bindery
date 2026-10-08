@@ -47,7 +47,7 @@ func TestSearchBookWithOutcomes_UsesOutcomesWhenAvailable(t *testing.T) {
 	}
 	s := &Scheduler{searcher: stub}
 
-	results, outcomes := s.searchBookWithOutcomes(context.Background(), nil, indexer.MatchCriteria{})
+	results, outcomes, _ := s.searchBookWithOutcomes(context.Background(), nil, indexer.MatchCriteria{})
 
 	if len(results) != 1 {
 		t.Errorf("results = %d, want 1", len(results))
@@ -64,7 +64,7 @@ func TestSearchBookWithOutcomes_FallsBackToPlainSearcher(t *testing.T) {
 	stub := &plainSearcherStub{}
 	s := &Scheduler{searcher: stub}
 
-	_, outcomes := s.searchBookWithOutcomes(context.Background(), nil, indexer.MatchCriteria{})
+	_, outcomes, _ := s.searchBookWithOutcomes(context.Background(), nil, indexer.MatchCriteria{})
 
 	if !stub.called {
 		t.Error("plain SearchBook was not called")

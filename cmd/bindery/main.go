@@ -589,6 +589,10 @@ func main() {
 	sched.WithStoragePaths(cfg.DownloadDir, cfg.AudiobookDownloadDir)
 	sched.WithDownloadClientHealth(downloadHealth, cfg.DownloadPathRemap)
 	sched.WithNotifier(notif)
+	// One log behind GET /search/last-debug, written by both the interactive
+	// search handler and the scheduler's automatic searches (#2154).
+	searchDebugLog := indexer.NewDebugLog()
+	sched.WithSearchDebugLog(searchDebugLog)
 	// Register the Calibre importer as the 24-hour sync job. The scheduler
 	// only fires the job when the syncer is non-nil, so no guard needed here.
 	sched.WithCalibreSyncer(calibreImporter)
@@ -703,7 +707,8 @@ func main() {
 		WithAliases(authorAliasRepo).
 		WithQualityProfiles(qualityProfileRepo).
 		WithEditions(editionRepo).
-		WithSearchResults(searchResults)
+		WithSearchResults(searchResults).
+		WithSearchDebugLog(searchDebugLog)
 	if clients, err := dlClientRepo.List(ctxBoot); err == nil {
 		downloader.RefreshDownloadClientHealthAsync(context.Background(), bgJobs, downloadHealth, clients, cfg.DownloadDir, cfg.AudiobookDownloadDir, cfg.DownloadPathRemap)
 	} else {
