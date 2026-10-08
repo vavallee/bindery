@@ -1319,6 +1319,17 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "This book changed while it was being rebound. Try again.", "reason": conflictReasonChanged})
 		return
 	}
+	// The previous work's provider editions describe the wrong work: their
+	// ISBN would keep steering search, and their unique ids keep them from
+	// the book they belong to (#2781). Only when the identity actually
+	// changed, and never an imported, selected or referenced edition.
+	if h.editions != nil && (oldForeignID != book.ForeignID || oldProvider != book.MetadataProvider) {
+		if n, err := h.editions.DeleteProviderEditionsAfterRebind(r.Context(), book.ID, book.ForeignID, book.MetadataProvider); err != nil {
+			slog.Warn("rebind: failed to remove the previous work's editions", "bookId", book.ID, "error", err)
+		} else if n > 0 {
+			slog.Info("rebind: removed the previous work's provider editions", "bookId", book.ID, "removed", n, "oldForeignId", oldForeignID)
+		}
+	}
 	// MediaType is in the preserved-fields list above because it belongs to the
 	// user, so a rebind is exactly the case the pin exists for: hydration must
 	// not widen the format the user keeps (#2768).

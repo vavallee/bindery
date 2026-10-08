@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -511,6 +512,48 @@ func TestMerge_RollsBackOnFailure(t *testing.T) {
 	_, err = aliasRepo.Merge(ctx, a.ID, a.ID, MergeOptions{})
 	if err == nil {
 		t.Fatal("expected error on self-merge")
+	}
+}
+
+func TestMerge_WritesCanonicalRFC3339UpdatedAt(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	aliasRepo := NewAuthorAliasRepo(database)
+
+	source := seedAuthor(t, authorRepo, "OL-source", "RR Haywood")
+	target := seedAuthor(t, authorRepo, "OL-target", "R.R. Haywood")
+	if err := authorRepo.UpsertAuthorIdentifier(ctx, source.ID, "hc:rr-haywood"); err != nil {
+		t.Fatal(err)
+	}
+
+	b1 := seedBook(t, bookRepo, source.ID, "W1", "Book One")
+
+	if _, err := aliasRepo.Merge(ctx, source.ID, target.ID, MergeOptions{OverwriteDefaults: true}); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+
+	// #2792: the reparenting UPDATE bound a raw time.Time, so the driver stored
+	// Go's time.String() layout ("... +0000 UTC") instead of the RFC3339 shape
+	// every other books writer uses. Read the column back as text and require the
+	// canonical shape; pre-fix this is "2026-... +0000 UTC" and fails to parse.
+	var stored string
+	if err := database.QueryRow(
+		"SELECT CAST(updated_at AS TEXT) FROM books WHERE id = ?", b1.ID,
+	).Scan(&stored); err != nil {
+		t.Fatalf("query book updated_at: %v", err)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, stored); err != nil {
+		t.Errorf("books.updated_at = %q is not RFC3339Nano: %v", stored, err)
+	}
+	if !strings.HasSuffix(stored, "Z") {
+		t.Errorf("books.updated_at = %q does not end with Z (UTC)", stored)
 	}
 }
 

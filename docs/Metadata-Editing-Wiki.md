@@ -29,6 +29,13 @@ Two actions clear locks on their own, deliberately: **Re-bind** and metadata
 **re-map**. Both mean "this is the wrong record, take the new one", so
 Bindery applies the new provider record wholesale.
 
+A re-bind to a different record also drops the editions the metadata provider
+listed for the old record, so their ISBNs no longer steer searches for the
+book. Editions created by the Calibre or Audiobookshelf import for your files
+are kept, and so is the edition you selected for the book and any edition a
+download or a Calibre delivery recorded. Re-binding to the record the book is
+already bound to changes no editions.
+
 ## What you cannot edit: an author's sort name
 
 The value that decides which letter an author files under, in the Authors list

@@ -280,6 +280,45 @@ func scanEditionFrom(s rowScanner) (models.Edition, error) {
 	return e, nil
 }
 
+// DeleteProviderEditionsAfterRebind removes the metadata provider editions a
+// book still carries from the work it was bound to before a rebind (#2781).
+// Those rows describe the wrong work: search used their ISBN for the corrected
+// book, and the unique foreign_id kept the old edition from being attached to
+// the book it does belong to.
+//
+// Only provider editions go. An edition the Calibre or Audiobookshelf importer
+// created ("calibre:" and "abs:" ids) records a file the user has, so it is
+// kept, and so is any edition something still points at: the book's selected
+// edition, which the user chose, and an edition a download or a Calibre
+// delivery recorded. Provider editions are cached provider data, refetched by
+// the next hydration of the new work, not anything the user entered.
+//
+// The book must already carry its new identity (foreignID, provider), checked
+// in the same statement. A metadata write for the old identity is refused by
+// UpsertMetadata's parent check once the identity has changed, so one that
+// landed earlier is removed here and one that comes later cannot land: the
+// two are consistent whichever order they run in. Returns the rows removed.
+func (r *EditionRepo) DeleteProviderEditionsAfterRebind(ctx context.Context, bookID int64, foreignID, provider string) (int64, error) {
+	res, err := r.exec.ExecContext(ctx, `
+		DELETE FROM editions
+		WHERE book_id = ?
+		  AND foreign_id NOT LIKE 'calibre:%'
+		  AND foreign_id NOT LIKE 'abs:%'
+		  AND EXISTS (SELECT 1 FROM books b WHERE b.id = editions.book_id AND b.foreign_id = ? AND b.metadata_provider = ?)
+		  AND NOT EXISTS (SELECT 1 FROM books b WHERE b.id = editions.book_id AND b.selected_edition_id = editions.id)
+		  AND NOT EXISTS (SELECT 1 FROM downloads d WHERE d.edition_id = editions.id)
+		  AND NOT EXISTS (SELECT 1 FROM calibre_deliveries cd WHERE cd.edition_id = editions.id)`,
+		bookID, foreignID, provider)
+	if err != nil {
+		return 0, fmt.Errorf("delete provider editions for rebound book %d: %w", bookID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("provider editions removed for book %d: %w", bookID, err)
+	}
+	return n, nil
+}
+
 func (r *EditionRepo) Delete(ctx context.Context, id int64) error {
 	_, err := r.exec.ExecContext(ctx, `DELETE FROM editions WHERE id = ?`, id)
 	if err != nil {

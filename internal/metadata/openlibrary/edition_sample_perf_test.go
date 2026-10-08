@@ -98,6 +98,11 @@ func itoa(i int) string {
 // FillMissingWorkCovers both sample /works/{id}/editions.json?limit=5 — the
 // same URL — so before #1888 a work missing both language and cover cost two
 // identical round trips. One shared sample now serves both (#1888).
+//
+// Since #1779 the sample also reads the work record first, for its featured
+// cover_edition. The canned body here has none, so each work costs exactly
+// the work record plus the editions sample: two distinct requests, shared by
+// both samplers, never repeated.
 func TestEditionSamplingRoundTripsPerWork(t *testing.T) {
 	const works = 65
 
@@ -113,9 +118,9 @@ func TestEditionSamplingRoundTripsPerWork(t *testing.T) {
 	}
 
 	urls, _ := rt.snapshot()
-	if len(urls) != works {
+	if len(urls) != 2*works {
 		t.Fatalf("edition sampling spent %d OpenLibrary round trips for %d works, want %d "+
-			"(one shared sample per work, not one per sampler)", len(urls), works, works)
+			"(one work record and one shared sample per work, not one per sampler)", len(urls), works, 2*works)
 	}
 
 	seen := map[string]int{}

@@ -366,7 +366,7 @@ func (r *AuthorAliasRepo) Merge(ctx context.Context, sourceID, targetID int64, o
 	// source author row is removed.
 	booksRes, err := tx.ExecContext(ctx,
 		"UPDATE books SET author_id = ?, updated_at = ? WHERE author_id = ?",
-		targetID, time.Now().UTC(), sourceID)
+		targetID, timeValueArg(time.Now().UTC()), sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("reparent books: %w", err)
 	}
