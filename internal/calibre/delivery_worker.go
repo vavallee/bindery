@@ -50,6 +50,12 @@ type deliveryHealthProber interface {
 	HealthDetail(ctx context.Context) (HealthState, error)
 }
 
+// calibredbLocator is what the worker asks before a calibredb pass. Only the
+// calibredb client implements it.
+type calibredbLocator interface {
+	Locate() (string, error)
+}
+
 // metadataUpdater writes to a Calibre row that already exists
 // (PATCH /v1/books/{id}). It is what turns a 409 into a correction.
 type metadataUpdater interface {
@@ -358,6 +364,17 @@ func (d *Deliverer) pass(ctx context.Context) {
 	if mode == ModeCalibredb {
 		target.library = target.cfg.LibraryPath
 	}
+	if locator, ok := adder.(calibredbLocator); ok && mode == ModeCalibredb {
+		// A calibredb that is not there fails every row the same way, and
+		// no retry fixes it (#1940). Leave the rows waiting, untouched and
+		// without spending attempts, and say why on the settings queue view,
+		// so switching to the Bridge plugin delivers them.
+		if _, lerr := locator.Locate(); lerr != nil {
+			slog.Debug("calibre delivery: calibredb not found, waiting", "pending", len(rows), "error", lerr)
+			d.noteReachable(false, lerr.Error())
+			return
+		}
+	}
 	if prober, ok := adder.(deliveryHealthProber); ok && mode == ModePlugin {
 		pctx, cancel := context.WithTimeout(ctx, deliveryHealthTimeout)
 		state, herr := prober.HealthDetail(pctx)
@@ -538,6 +555,11 @@ func (d *Deliverer) deliver(ctx context.Context, row *models.CalibreDelivery, ta
 		// this can only be a wiring bug. Stop without counting an attempt.
 		slog.Warn("calibre delivery: the adder reports the integration disabled while the configured mode is on; this is a wiring bug, please report it",
 			"mode", target.mode, "bookId", book.ID)
+		return deliveryStop
+	case errors.Is(addErr, ErrCalibredbMissing):
+		// calibredb went away between the pass's check and this add. Same
+		// as the check: not the book's fault, not an attempt.
+		d.noteReachable(false, addErr.Error())
 		return deliveryStop
 	case isDeliveryUnreachable(ctx, addErr):
 		// Calibre went away mid batch. Not the book's fault and not an

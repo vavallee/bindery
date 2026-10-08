@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -626,6 +627,35 @@ func TestDeliverer_CalibredbMode(t *testing.T) {
 	}
 	if id := f.calibreID(t); id == nil || *id != 1234 {
 		t.Errorf("books.calibre_id = %v, want 1234", id)
+	}
+}
+
+// TestDeliverer_CalibredbMissingWaitsAndSaysWhy replays #1940. On the
+// official distroless image there is no calibredb, so calibredb mode can
+// never deliver. Every import still looked successful and the only trace
+// was a WARN line. A pass must leave the rows waiting without spending their
+// attempts, and the settings queue view must say calibredb is missing and
+// point at the Bridge plugin.
+func TestDeliverer_CalibredbMissingWaitsAndSaysWhy(t *testing.T) {
+	cfg := Config{Enabled: true, LibraryPath: t.TempDir(), BinaryPath: filepath.Join(t.TempDir(), "calibredb")}
+	f := newWorkerFixture(t, ModeCalibredb, New(cfg))
+	f.cfg = cfg
+	row := f.addFile(t, "a.epub")
+
+	f.d.RunDeliveries(f.ctx)
+
+	got := f.row(t, row.ID)
+	if got.State != models.CalibreDeliveryPending || got.Attempts != 0 {
+		t.Fatalf("#1940: a missing calibredb is not the book's fault; row = %+v, want pending with no attempt spent", got)
+	}
+	h := f.d.Health()
+	if h.Reachable == nil || *h.Reachable {
+		t.Fatalf("#1940: the queue view must report calibredb unusable, got reachable=%v", h.Reachable)
+	}
+	for _, want := range []string{"calibredb is not installed", "Calibre Bridge plugin"} {
+		if !strings.Contains(h.LastError, want) {
+			t.Errorf("#1940: the reason shown must mention %q, got %q", want, h.LastError)
+		}
 	}
 }
 

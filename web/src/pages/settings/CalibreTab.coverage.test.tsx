@@ -114,8 +114,10 @@ describe('CalibreTab coverage', () => {
 
   it('tests calibredb and reports success and failure', async () => {
     seed({ 'calibre.mode': 'calibredb' })
-    mocked.testCalibre.mockResolvedValueOnce({ ok: 'true', version: '', message: 'calibredb 7.0' })
     render(<CalibreTab />)
+    // calibredb mode probes once on its own when the tab opens (#1940).
+    await waitFor(() => expect(mocked.testCalibre).toHaveBeenCalledTimes(1))
+    mocked.testCalibre.mockResolvedValueOnce({ ok: 'true', version: '', message: 'calibredb 7.0' })
     fireEvent.click(await screen.findByText('Test connection'))
     expect(await screen.findByText('✓ calibredb reachable — calibredb 7.0')).toBeInTheDocument()
 

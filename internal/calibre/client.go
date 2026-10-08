@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -21,6 +22,28 @@ import (
 // enabled in settings. Callers treat it as a soft-skip — the importer logs
 // and moves on rather than surfacing it as a failed import.
 var ErrDisabled = errors.New("calibre integration disabled")
+
+// ErrCalibredbMissing means the calibredb executable does not exist where
+// Bindery runs, so calibredb mode cannot deliver anything (#1940). It is a
+// configuration problem, not a property of any one book: the official image
+// is distroless and ships no Calibre at all. The error text carries
+// CalibredbMissingAdvice, so every surface that shows it says what to do.
+var ErrCalibredbMissing = errors.New("calibredb is not installed where Bindery runs")
+
+// CalibredbMissingAdvice is the fix that goes with ErrCalibredbMissing.
+const CalibredbMissingAdvice = "The official Bindery image does not include Calibre, so the calibredb CLI mode cannot work there. Switch the write integration to the Calibre Bridge plugin, or run Bindery where calibredb is installed and set its binary path."
+
+// calibredbMissing wraps ErrCalibredbMissing with the binary that was looked
+// for and the advice.
+func calibredbMissing(binary string) error {
+	return fmt.Errorf("%w (looked for %q). %s", ErrCalibredbMissing, binary, CalibredbMissingAdvice)
+}
+
+// isExecNotFound reports whether err is a failure to start a program that
+// does not exist, as opposed to one that ran and failed.
+func isExecNotFound(err error) bool {
+	return errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist)
+}
 
 // Config is a snapshot of the user-facing Calibre settings. It is built
 // fresh from the settings repo at the start of each import so toggling the
@@ -94,6 +117,9 @@ func (c *Client) Add(ctx context.Context, filePath string, meta Metadata) (int64
 	args = append(args, filePath)
 	out, err := c.run(ctx, c.binary(), args...)
 	if err != nil {
+		if isExecNotFound(err) {
+			return 0, calibredbMissing(c.binary())
+		}
 		return 0, fmt.Errorf("calibredb add: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	id, err := parseAddedID(out)
@@ -139,10 +165,31 @@ func (c *Client) Test(ctx context.Context) (string, error) {
 	}
 	out, err := c.run(ctx, c.binary(), "--version")
 	if err != nil {
+		if isExecNotFound(err) {
+			return "", calibredbMissing(c.binary())
+		}
 		return "", fmt.Errorf("calibredb --version: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+
+// Locate resolves the calibredb executable the client would run, without
+// running it: the configured binary path, or calibredb on PATH. A binary
+// that does not exist is ErrCalibredbMissing (#1940). It is cheap, so the
+// settings save and every delivery pass can ask it.
+func (c *Client) Locate() (string, error) {
+	path, err := lookPath(c.binary())
+	if err != nil {
+		if isExecNotFound(err) {
+			return "", calibredbMissing(c.binary())
+		}
+		return "", fmt.Errorf("calibredb %q: %w", c.binary(), err)
+	}
+	return path, nil
+}
+
+// lookPath is exec.LookPath, a var so tests can stand in for PATH.
+var lookPath = exec.LookPath
 
 var addedIDRe = regexp.MustCompile(`Added book ids:\s*([0-9, ]+)`)
 

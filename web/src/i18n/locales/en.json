@@ -969,6 +969,11 @@
       }
     },
     "calibre": {
+      "calibredbMissing": {
+        "title": "calibredb is not installed where Bindery runs",
+        "body": "Nothing reaches Calibre in this mode. The official Bindery image does not include Calibre, so the calibredb CLI mode cannot work there. Use the Calibre Bridge plugin instead, which runs inside Calibre on another container or host, or run Bindery where calibredb is installed.",
+        "switchToBridge": "Switch to the Calibre Bridge plugin"
+      },
       "transport": {
         "label": "Transport",
         "push": "Push: Bindery sends books to Calibre",

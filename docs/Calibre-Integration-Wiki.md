@@ -49,7 +49,7 @@ Bindery shells out to `calibredb add --with-library <lib> <metadata...> <file>`,
 
 - the Calibre library path must be visible inside the Bindery container or process
 - `calibredb` must be on `PATH`, or **Binary path (optional)** (`calibre.binary_path`) must point at it
-- the official Docker image is distroless and does **not** ship `calibredb`. Either bind mount a Calibre install into the container and set the binary path, or run the Bindery binary on a host that has Calibre installed. `calibredb unreachable` from **Test connection** means this requirement is not met.
+- the official Docker image is distroless and does **not** ship `calibredb`. Either bind mount a Calibre install into the container and set the binary path, or run the Bindery binary on a host that has Calibre installed. `calibredb unreachable` from **Test connection** means this requirement is not met. Bindery also checks on its own: choosing `calibredb` with no calibredb to run still saves the mode, but the Calibre settings tab then shows *calibredb is not installed where Bindery runs* with a button to switch to the Bridge plugin, and does so every time the tab opens until calibredb is found. Books imported meanwhile wait in the delivery queue without using up their retries, and the queue's status line names the missing calibredb, so they are delivered once calibredb is installed or you switch to the Bridge plugin.
 
 Only one process should write a Calibre library at a time. If the Calibre desktop app or Calibre-Web has the same library open, `calibredb add` may fail or the other program may not see the new book until it reloads.
 

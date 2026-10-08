@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -286,7 +287,12 @@ func (h *CalibreHandler) Test(w http.ResponseWriter, r *http.Request) {
 	version, err := client.Test(r.Context())
 	if err != nil {
 		slog.Warn("calibre test failed: probe error", "binary_path", cfg.BinaryPath, "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		body := map[string]string{"error": err.Error()}
+		if errors.Is(err, calibre.ErrCalibredbMissing) {
+			// The settings tab keys its Bridge plugin pointer off this (#1940).
+			body["code"] = warningCalibredbMissing
+		}
+		writeJSON(w, http.StatusBadGateway, body)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{

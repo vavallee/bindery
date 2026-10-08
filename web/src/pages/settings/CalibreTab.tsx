@@ -15,6 +15,20 @@ import { useSaveResult } from './useSaveResult'
 import { secretInputAttrs, urlInputAttrs } from '../../util/inputAttrs'
 import { useModal } from '../../components/useModal'
 
+// The code the server puts on a calibredb mode it cannot run because there is
+// no calibredb where Bindery runs (#1940), on a Test failure and on a save.
+const CALIBREDB_MISSING = 'calibredb_missing'
+
+// calibredbMissingReason returns the server's reason when err is a Test
+// failure for a missing calibredb, and null for any other failure.
+function calibredbMissingReason(err: unknown): string | null {
+  // Read off the body the way the warning below is, rather than by class, so
+  // an error from any request helper shape is understood.
+  const body = (err as { body?: { code?: unknown } } | null)?.body
+  if (body?.code !== CALIBREDB_MISSING) return null
+  return err instanceof Error ? err.message : ''
+}
+
 export default function CalibreTab() {
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -81,6 +95,9 @@ function CalibreSection({
   const [syncError, setSyncError] = useState<string | null>(null)
   const [syncModalOpen, setSyncModalOpen] = useState(false)
   const [bridgeReachable, setBridgeReachable] = useState<boolean | null>(null)
+  // Set when calibredb mode is on and there is no calibredb where Bindery
+  // runs, as on the official image (#1940). Holds the server's reason.
+  const [calibredbMissing, setCalibredbMissing] = useState<string | null>(null)
   // Recent imports + rollback (issue #643).
   const [runs, setRuns] = useState<CalibreImportRun[]>([])
   const [rollbackRun, setRollbackRun] = useState<CalibreImportRun | null>(null)
@@ -157,6 +174,25 @@ function CalibreSection({
       .catch(() => { if (!cancelled) setBridgeReachable(false) })
     return () => { cancelled = true }
   }, [mode, pulling, pluginURL, pluginKey])
+
+  // calibredb mode on a Bindery with no calibredb saves and then drops every
+  // import without a word (#1940), so check whenever the tab shows that mode,
+  // not only when the user thinks to press Test.
+  useEffect(() => {
+    if (mode !== 'calibredb') {
+      setCalibredbMissing(null)
+      return
+    }
+    let cancelled = false
+    api.testCalibre()
+      .then(() => { if (!cancelled) setCalibredbMissing(null) })
+      .catch(err => {
+        if (cancelled) return
+        const missing = calibredbMissingReason(err)
+        if (missing) setCalibredbMissing(missing)
+      })
+    return () => { cancelled = true }
+  }, [mode])
 
   // Poll while an import is running.
   useEffect(() => {
@@ -253,6 +289,8 @@ function CalibreSection({
       if (isPlugin) setBridgeReachable(true)
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'Test failed'
+      const missing = calibredbMissingReason(err)
+      if (missing) setCalibredbMissing(missing)
       const prefix = isPlugin ? '✗ Could not reach plugin' : '✗ calibredb unreachable'
       const body = (err as { body?: { warning?: unknown } } | null)?.body
       const warning = typeof body?.warning === 'string' && body.warning ? body.warning : undefined
@@ -265,7 +303,13 @@ function CalibreSection({
 
   const setMode = async (next: 'off' | 'calibredb' | 'plugin') => {
     setSettings(s => ({ ...s, 'calibre.mode': next }))
-    await api.setSetting('calibre.mode', next).catch(console.error)
+    setCalibredbMissing(null)
+    try {
+      const res = await api.setSetting('calibre.mode', next)
+      if (res?.warningCode === CALIBREDB_MISSING) setCalibredbMissing(res.warning ?? '')
+    } catch (err) {
+      console.error(err)
+    }
   }
 
   const setTransport = async (next: 'push' | 'pull') => {
@@ -337,6 +381,20 @@ function CalibreSection({
             ))}
           </div>
         </div>
+
+        {mode === 'calibredb' && calibredbMissing !== null && (
+          <Alert tier="error" className="text-xs" title={t('settings.calibre.calibredbMissing.title')}>
+            <p>{t('settings.calibre.calibredbMissing.body')}</p>
+            {calibredbMissing && <p className="mt-1 font-mono break-words">{calibredbMissing}</p>}
+            <button
+              type="button"
+              onClick={() => setMode('plugin')}
+              className="mt-2 text-emerald-700 dark:text-emerald-400 underline"
+            >
+              {t('settings.calibre.calibredbMissing.switchToBridge')}
+            </button>
+          </Alert>
+        )}
 
         {mode === 'calibredb' && (
           <div>
