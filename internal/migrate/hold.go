@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/metadata"
-	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/metadata/providerhttp"
 )
 
@@ -24,6 +23,14 @@ const primaryHoldMaxWait = providerhttp.RetryAfterCap
 // not wait it out.
 var primaryHoldWait = 2 * time.Second
 
+// primaryHoldBudget bounds the time one import run may spend waiting out
+// holds, across all its rows. The Readarr and Goodreads imports run detached
+// from the request that started them and cannot be cancelled, so without a
+// budget a primary that refuses for hours would keep the run waiting, and
+// asking, for hours. Once it is spent, a refused lookup is not waited out
+// again. A var so tests need not spend it in real time.
+var primaryHoldBudget = 10 * time.Minute
+
 // lookupWaitingOutHolds runs one importer lookup, and when the primary turned
 // it away because it was holding its requests, waits the hold out and asks
 // again rather than failing the row.
@@ -34,15 +41,26 @@ var primaryHoldWait = 2 * time.Second
 // make the user rerun it, and failing rows in a row would trip the outage
 // breaker in well under a second on the back of a single 429 and fail every
 // row after it.
-func lookupWaitingOutHolds[T any](ctx context.Context, source string, lookup func() (T, metadata.SearchOutcome, error)) (T, metadata.SearchOutcome, error) {
+//
+// Waiting is bounded twice over. A lookup still refused after
+// primaryHoldRetries waits, or refused once the run's primaryHoldBudget is
+// spent, counts toward the outage streak, so a primary that keeps refusing
+// trips the breaker after primaryOutageThreshold such rows and the rest fail
+// at once with a "try again later" reason rather than each asking again.
+func lookupWaitingOutHolds[T any](ctx context.Context, outage *primaryOutage, source string, lookup func() (T, metadata.SearchOutcome, error)) (T, metadata.SearchOutcome, error) {
 	for attempt := 0; ; attempt++ {
 		v, o, err := lookup()
 		wait, held := primaryHold(o)
-		if !held || attempt == primaryHoldRetries {
+		if !held {
+			return v, o, err
+		}
+		if attempt == primaryHoldRetries || outage.holdBudgetSpent(wait) {
+			outage.refusedAfterWaiting(source, o)
 			return v, o, err
 		}
 		slog.Info(source+" import: primary metadata provider is holding requests, waiting before asking again",
 			"primary", o.Primary, "wait", wait, "error", o.FirstErr)
+		start := time.Now()
 		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
@@ -50,6 +68,7 @@ func lookupWaitingOutHolds[T any](ctx context.Context, source string, lookup fun
 			return v, o, err
 		case <-timer.C:
 		}
+		outage.waited += time.Since(start)
 	}
 }
 
@@ -69,11 +88,4 @@ func primaryHold(o metadata.SearchOutcome) (time.Duration, bool) {
 		return primaryHoldWait, true
 	}
 	return 0, false
-}
-
-// isRateLimited reports a provider refusal for rate limit reasons: the shared
-// sentinel every provider client marks with, or Hardcover's own, which its
-// pacer also returns bare.
-func isRateLimited(err error) bool {
-	return errors.Is(err, metadata.ErrRateLimited) || errors.Is(err, hardcover.ErrRateLimited)
 }

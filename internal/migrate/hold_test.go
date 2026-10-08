@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -78,6 +79,73 @@ func TestImportCSVAuthors_WaitsOutAPrimaryHold(t *testing.T) {
 	}
 	if primary.refused == 0 {
 		t.Fatal("the primary never refused, so the test exercised nothing")
+	}
+}
+
+// shortenHoldWait makes a refusal without an end time wait d instead of 2s.
+func shortenHoldWait(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := primaryHoldWait
+	primaryHoldWait = d
+	t.Cleanup(func() { primaryHoldWait = prev })
+}
+
+// refusingPrimary is an OpenLibrary primary that refuses every author search
+// for rate limit reasons until refuse returns false for the name.
+func refusingPrimary(calls *atomic.Int32, refuse func(name string) bool) *stubProvider {
+	return &stubProvider{
+		name: "openlibrary",
+		searchAuthorsFn: func(_ context.Context, name string) ([]models.Author, error) {
+			calls.Add(1)
+			if refuse(name) {
+				return nil, fmt.Errorf("search authors: %w", &providerhttp.StatusError{Code: 429, Body: "Too Many Requests"})
+			}
+			id := "OL" + strings.TrimPrefix(name, "Held Author ") + "A"
+			return []models.Author{{ForeignID: id, Name: name, SortName: name}}, nil
+		},
+		getAuthorFn: func(_ context.Context, id string) (*models.Author, error) {
+			n := strings.TrimSuffix(strings.TrimPrefix(id, "OL"), "A")
+			return &models.Author{ForeignID: id, Name: "Held Author " + n, SortName: "Held Author " + n}, nil
+		},
+	}
+}
+
+func heldAuthorNames(n int) []string {
+	names := make([]string, n)
+	for i := range names {
+		names[i] = fmt.Sprintf("Held Author %d", i+1)
+	}
+	return names
+}
+
+// A primary that never stops refusing must not keep an import waiting and
+// asking for every row: an import of 1000 rows used to run for hours and send
+// thousands of requests, because a refusal was waited out and then left out of
+// the outage streak (#3100 review). A row still refused after its waits counts
+// toward the streak, so the breaker trips after a few rows and the rest fail
+// at once with a reason that says to try later.
+func TestImportCSVAuthors_PrimaryThatKeepsRefusingTripsBreaker(t *testing.T) {
+	shortenHoldWait(t, time.Millisecond)
+	var calls atomic.Int32
+	agg := metadata.NewAggregator(refusingPrimary(&calls, func(string) bool { return true }))
+	repo := db.NewAuthorRepo(newTestDB(t))
+	names := heldAuthorNames(20)
+
+	res, err := ImportCSVAuthors(context.Background(), strings.NewReader(strings.Join(names, "\n")), repo, nil, agg, nil)
+	if err != nil {
+		t.Fatalf("ImportCSVAuthors: %v", err)
+	}
+	// Each of the first primaryOutageThreshold rows asks once and once more
+	// per wait; every row after the trip asks nothing.
+	if limit := int32(primaryOutageThreshold * (primaryHoldRetries + 1)); calls.Load() > limit {
+		t.Errorf("primary asked %d times for %d rows, want at most %d: the breaker never tripped", calls.Load(), len(names), limit)
+	}
+	if res.Added != 0 || res.Errors != len(names) {
+		t.Errorf("Added=%d Errors=%d, want 0/%d", res.Added, res.Errors, len(names))
+	}
+	last := names[len(names)-1]
+	if msg := res.Failures[last]; !strings.Contains(msg, "rate limiting") || !strings.Contains(msg, "try the import again later") {
+		t.Errorf("row %q reason = %q, want it to say the provider is rate limiting and to try later", last, msg)
 	}
 }
 

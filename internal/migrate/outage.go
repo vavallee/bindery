@@ -1,10 +1,14 @@
 package migrate
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/vavallee/bindery/internal/metadata"
+	"github.com/vavallee/bindery/internal/metadata/hardcover"
 )
 
 // primaryOutageThreshold is how many metadata lookups in a row may go
@@ -39,16 +43,22 @@ type primaryOutage struct {
 	// last is the outcome that extended the streak, kept so the rows failed
 	// without asking name the same primary.
 	last metadata.SearchOutcome
+	// waited is how long this run has spent waiting out primary holds,
+	// against primaryHoldBudget.
+	waited time.Duration
 }
 
 // observe records one lookup's outcome.
 //
 // A primary that failed because it is rate limiting us is not down, and is
-// left out of the streak, whichever provider it is. Hardcover's pacer and the
-// shared provider request loop both fail a lookup fast once a hold would
+// left out of the streak here, whichever provider it is. Hardcover's pacer and
+// the shared provider request loop both fail a lookup fast once a hold would
 // outlast the fan out's deadline, so a single 429 could otherwise put three
-// refused lookups in a row within a millisecond and fail every remaining
-// row, where waiting lets the hold pass (#2075). The fan out records failures in
+// refused lookups in a row within a millisecond and fail every remaining row,
+// where waiting lets the hold pass (#2075). lookupWaitingOutHolds does the
+// waiting, and counts a lookup that is still refused afterwards through
+// refusedAfterWaiting, so a primary that never stops refusing still trips
+// the breaker. The fan out records failures in
 // provider order with the primary first, so FirstErr is the primary's error
 // whenever PrimaryFailed is set.
 func (p *primaryOutage) observe(source string, o metadata.SearchOutcome) {
@@ -67,6 +77,25 @@ func (p *primaryOutage) observe(source string, o metadata.SearchOutcome) {
 	}
 }
 
+// refusedAfterWaiting records a lookup the primary still refused after the
+// import waited its holds out, or once the run's wait budget was spent. That
+// is no longer a pause the import can sit through, so it extends the streak
+// like any unanswered lookup.
+func (p *primaryOutage) refusedAfterWaiting(source string, o metadata.SearchOutcome) {
+	p.streak++
+	p.last = o
+	if p.streak == primaryOutageThreshold {
+		slog.Warn(source+" import: primary metadata provider keeps refusing for rate limit reasons, failing the remaining rows without asking it",
+			"primary", o.Primary, "consecutiveRefusals", p.streak, "error", o.FirstErr)
+	}
+}
+
+// holdBudgetSpent reports whether waiting a further wait would take this run
+// past primaryHoldBudget.
+func (p *primaryOutage) holdBudgetSpent(wait time.Duration) bool {
+	return p.waited+wait > primaryHoldBudget
+}
+
 // down reports whether the importer should stop asking the primary.
 func (p *primaryOutage) down() bool {
 	return p.streak >= primaryOutageThreshold
@@ -74,5 +103,22 @@ func (p *primaryOutage) down() bool {
 
 // reason is the per row message for a row failed without a lookup.
 func (p *primaryOutage) reason() string {
+	if isRateLimited(p.last.FirstErr) {
+		return primaryRateLimitedReason(p.last)
+	}
 	return primaryDownReason(p.last)
+}
+
+// primaryRateLimitedReason is the per row message once a primary that kept
+// refusing for rate limit reasons tripped the breaker. Nothing is wrong with
+// the row; the provider wants fewer requests, so the advice is to wait.
+func primaryRateLimitedReason(o metadata.SearchOutcome) string {
+	return fmt.Sprintf("primary metadata provider %s is rate limiting requests, try the import again later", o.Primary)
+}
+
+// isRateLimited reports a provider refusal for rate limit reasons: the shared
+// sentinel every provider client marks with, or Hardcover's own, which its
+// pacer also returns bare.
+func isRateLimited(err error) bool {
+	return errors.Is(err, metadata.ErrRateLimited) || errors.Is(err, hardcover.ErrRateLimited)
 }
