@@ -178,6 +178,13 @@ type Deliverer struct {
 
 	pullMu sync.Mutex
 	pull   pullState
+
+	// hydrateEditions fills in a book's editions on demand (#1853); nil
+	// leaves a book without editions as it is. hydratedAt, guarded by
+	// hydrateMu, is when each book was last asked about.
+	hydrateEditions EditionHydrator
+	hydrateMu       sync.Mutex
+	hydratedAt      map[int64]time.Time
 }
 
 // DeliveryHealth is what the worker last learned about the push target, for
@@ -253,6 +260,42 @@ func (d *Deliverer) WithMetadata(authors AuthorGetter, editions EditionLister, s
 	d.editions = editions
 	d.series = series
 	return d
+}
+
+// EditionHydrator fetches and stores the editions of a book that has none on
+// record. It must not change the book itself.
+type EditionHydrator func(ctx context.Context, book *models.Book) error
+
+// editionHydrateRetry is how long a book whose editions were fetched, with
+// or without success, waits before a delivery asks again. A pull plugin reads
+// a book's metadata and its cover separately, and a book the provider has no
+// editions for would otherwise cost a request on each.
+const editionHydrateRetry = 6 * time.Hour
+
+// WithEditionHydrator lets a delivery fetch the editions of a book that has
+// none on record before it builds the metadata (#1853). Optional.
+func (d *Deliverer) WithEditionHydrator(h EditionHydrator) *Deliverer {
+	d.hydrateEditions = h
+	return d
+}
+
+// hydrateDue reports whether bookID's editions should be fetched now, and
+// records the attempt when they should.
+func (d *Deliverer) hydrateDue(bookID int64) bool {
+	if d.hydrateEditions == nil {
+		return false
+	}
+	d.hydrateMu.Lock()
+	defer d.hydrateMu.Unlock()
+	now := d.now()
+	if last, ok := d.hydratedAt[bookID]; ok && now.Sub(last) < editionHydrateRetry {
+		return false
+	}
+	if d.hydratedAt == nil {
+		d.hydratedAt = map[int64]time.Time{}
+	}
+	d.hydratedAt[bookID] = now
+	return true
 }
 
 // WithCovers lets deliveries carry the book's cover.
@@ -774,6 +817,17 @@ func (d *Deliverer) edition(ctx context.Context, book *models.Book, row *models.
 	if err != nil {
 		slog.Debug("calibre delivery: edition lookup failed", "bookId", book.ID, "error", err)
 		return nil
+	}
+	if len(editions) == 0 && d.hydrateDue(book.ID) {
+		// A book with no editions on record, typically one added by a
+		// Hardcover list sync, which stopped fetching editions in #1784.
+		// Fetch them now, for the one book that is actually reaching Calibre
+		// (#1853), so the handoff carries its ISBN, publisher and the rest.
+		if herr := d.hydrateEditions(ctx, book); herr != nil {
+			slog.Debug("calibre delivery: fetching the book's editions failed", "bookId", book.ID, "error", herr)
+		} else if again, lerr := d.editions.ListByBook(ctx, book.ID); lerr == nil {
+			editions = again
+		}
 	}
 	if row.EditionID != nil {
 		for i := range editions {

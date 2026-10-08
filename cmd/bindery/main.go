@@ -24,6 +24,7 @@ import (
 	"github.com/vavallee/bindery/internal/api"
 	"github.com/vavallee/bindery/internal/auth"
 	oidcauth "github.com/vavallee/bindery/internal/auth/oidc"
+	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/config"
 	"github.com/vavallee/bindery/internal/covers"
@@ -499,6 +500,11 @@ func main() {
 	calibreDeliverer := calibre.NewDeliverer(calibreDeliveryRepo, bookRepo,
 		modeResolver, calibreLoadConfig, calibreAdders.For).
 		WithMetadata(authorRepo, editionRepo, seriesRepo).
+		// A book with no editions on record, as every list synced book is,
+		// gets its Hardcover editions fetched when it reaches Calibre (#1853).
+		WithEditionHydrator(bookhydrate.EditionsOnly(editionRepo, func(ctx context.Context, foreignID string) ([]models.Edition, error) {
+			return metaAgg.GetEditionsFromProvider(ctx, "hardcover", foreignID)
+		})).
 		WithCovers(calibreCovers).
 		WithJobs(bgJobs).
 		// In pull (#2833) the plugin fetches from /bridge/v1 and the

@@ -659,6 +659,81 @@ func TestDeliverer_CalibredbMissingWaitsAndSaysWhy(t *testing.T) {
 	}
 }
 
+// metaCapture is a calibredb shaped adder that keeps the metadata it was
+// handed.
+type metaCapture struct {
+	metas []Metadata
+}
+
+func (m *metaCapture) Add(_ context.Context, _ string, meta Metadata) (int64, error) {
+	m.metas = append(m.metas, meta)
+	return int64(len(m.metas)), nil
+}
+
+// TestDeliverer_FetchesEditionsForABookWithNone replays #1853. A Hardcover
+// list sync stopped storing editions in #1784, so a list synced book reached
+// Calibre with no ISBN, publisher or edition language: the handoff reads
+// them from the editions table, and there were none. The delivery must fetch
+// the book's editions when it has none on record, once, and use them.
+func TestDeliverer_FetchesEditionsForABookWithNone(t *testing.T) {
+	cli := &metaCapture{}
+	f := newWorkerFixture(t, ModeCalibredb, cli)
+	f.cfg.LibraryPath = "/lib"
+	isbn := "9780441172719"
+	calls := 0
+	f.d.WithEditionHydrator(func(ctx context.Context, book *models.Book) error {
+		calls++
+		return f.editions.Upsert(ctx, &models.Edition{
+			ForeignID: "hc-ed:1", BookID: book.ID, Title: book.Title,
+			ISBN13: &isbn, Publisher: "Ace", Format: "EPUB", Language: "eng", IsEbook: true,
+		})
+	})
+	f.addFile(t, "a.epub")
+
+	f.d.RunDeliveries(f.ctx)
+
+	if calls != 1 {
+		t.Fatalf("expected one edition fetch for a book with none, got %d", calls)
+	}
+	if len(cli.metas) != 1 {
+		t.Fatalf("expected one add, got %d", len(cli.metas))
+	}
+	meta := cli.metas[0]
+	if meta.Identifiers["isbn"] != isbn {
+		t.Errorf("#1853: the handoff must carry the fetched edition's ISBN, got identifiers %v", meta.Identifiers)
+	}
+	if meta.Publisher != "Ace" {
+		t.Errorf("#1853: the handoff must carry the fetched edition's publisher, got %q", meta.Publisher)
+	}
+
+	// A second file of the same book within the retry window does not ask
+	// again, and neither does a book that already has editions.
+	f.d.edition(f.ctx, f.book, &models.CalibreDelivery{}, "b.epub")
+	if calls != 1 {
+		t.Errorf("editions on record must not be fetched again, got %d fetches", calls)
+	}
+}
+
+// TestDeliverer_EditionFetchFailureStillDelivers: the fetch is best effort.
+// A provider that fails leaves the handoff as it was, and the book still
+// reaches Calibre.
+func TestDeliverer_EditionFetchFailureStillDelivers(t *testing.T) {
+	cli := &metaCapture{}
+	f := newWorkerFixture(t, ModeCalibredb, cli)
+	f.cfg.LibraryPath = "/lib"
+	f.d.WithEditionHydrator(func(context.Context, *models.Book) error { return errors.New("hardcover down") })
+	row := f.addFile(t, "a.epub")
+
+	f.d.RunDeliveries(f.ctx)
+
+	if got := f.row(t, row.ID); got.State != models.CalibreDeliveryDelivered {
+		t.Fatalf("a failed edition fetch must not hold the delivery back, row = %+v", got)
+	}
+	if _, ok := cli.metas[0].Identifiers["isbn"]; ok {
+		t.Errorf("no edition, no ISBN; got %v", cli.metas[0].Identifiers)
+	}
+}
+
 // The tick and a kick share one lock taken with TryLock: whichever comes
 // second returns at once instead of delivering the same row again.
 func TestDeliverer_OverlappingPassesDoNotDoubleDeliver(t *testing.T) {
