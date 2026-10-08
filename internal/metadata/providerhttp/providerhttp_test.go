@@ -47,7 +47,8 @@ func TestParseRetryAfter(t *testing.T) {
 		{"negative seconds", "-1", 0},
 		{"garbage", "not-a-number-or-date", 0},
 		{"capped", "3600", RetryAfterCap},
-		{"overflowing", "99999999999999999999", 0},
+		{"overflowing", "99999999999999999999", RetryAfterCap},
+		{"overflowing negative", "-99999999999999999999", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -170,5 +171,87 @@ func TestDoKeepsTransportErrorChain(t *testing.T) {
 	err := doErr(ctx, c, nil, Request{Provider: "example", URL: "https://example.invalid/v"})
 	if !errors.Is(err, context.Canceled) || !strings.HasPrefix(err.Error(), "example request: ") {
 		t.Fatalf("err = %v, want a prefixed error matching context.Canceled", err)
+	}
+}
+
+// A hold set by an outage turns other requests away as unavailable, not as a
+// rate limit: the provider is down, it did not ask us to slow down.
+func TestDoHoldCauseClassification(t *testing.T) {
+	for _, tc := range []struct {
+		status    int
+		want, not error
+	}{
+		{http.StatusServiceUnavailable, providererr.ErrUnavailable, providererr.ErrRateLimited},
+		{http.StatusTooManyRequests, providererr.ErrRateLimited, providererr.ErrUnavailable},
+	} {
+		c := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return respond(tc.status, "no", map[string]string{"Retry-After": "20"}), nil
+		})}
+		gate := NewGate()
+		first, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		_ = doErr(first, c, gate, Request{URL: "https://example.invalid/a"})
+		cancel()
+
+		other, cancelOther := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		err := doErr(other, c, gate, Request{URL: "https://example.invalid/b"})
+		cancelOther()
+		var held *HeldError
+		if !errors.As(err, &held) || !errors.Is(err, tc.want) || errors.Is(err, tc.not) {
+			t.Errorf("HTTP %d hold: err = %v, want a *HeldError matching %v and not %v", tc.status, err, tc.want, tc.not)
+		}
+	}
+}
+
+// Final stops the loop at once on an answer waiting will not fix, without
+// holding the gate for anyone else.
+func TestDoFinalIsNotRetried(t *testing.T) {
+	var calls atomic.Int32
+	c := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return respond(http.StatusTooManyRequests, strings.Repeat("x", 1000)+`"reason":"daily"`, nil), nil
+	})}
+	gate := NewGate()
+	var seen []byte
+	err := doErr(context.Background(), c, gate, Request{URL: "https://example.invalid/a", Final: func(_ int, body []byte) bool {
+		seen = body
+		return strings.Contains(string(body), `"daily"`)
+	}})
+	var status *StatusError
+	if !errors.As(err, &status) || !status.Final {
+		t.Fatalf("err = %v, want a *StatusError with Final set", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("requests = %d, want 1", got)
+	}
+	if len(seen) <= errorBodyBytes {
+		t.Errorf("Final saw %d bytes, want more than the %d byte message sample", len(seen), errorBodyBytes)
+	}
+	if until, _ := gate.heldUntil(); !until.IsZero() {
+		t.Errorf("gate held until %v after a final answer, want it open", until)
+	}
+}
+
+// A transport failure whose backoff would outlast the caller's deadline is
+// returned at once instead of sleeping into the timeout.
+func TestDoTransportBackoffRespectsDeadline(t *testing.T) {
+	restore := SetBaseDelay(10 * time.Second)
+	defer restore()
+	var calls atomic.Int32
+	c := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return nil, errors.New("connection refused")
+	})}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	start := time.Now()
+	err := doErr(ctx, c, nil, Request{URL: "https://example.invalid/a"})
+	if err == nil || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("err = %v, want the transport error", err)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Errorf("took %v, want an immediate return rather than a sleep into the deadline", elapsed)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("requests = %d, want 1", got)
 	}
 }

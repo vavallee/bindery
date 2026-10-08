@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vavallee/bindery/internal/httpsec"
@@ -48,6 +49,21 @@ const (
 	MaxDelay  = 8 * time.Second
 )
 
+// backoffBase is the backoff BaseDelay starts from. It only differs from
+// BaseDelay while a test suite has shortened it with SetBaseDelay.
+var backoffBase atomic.Int64
+
+func init() { backoffBase.Store(int64(BaseDelay)) }
+
+// SetBaseDelay replaces the backoff base for the computed (no Retry-After)
+// waits and returns a func that restores the previous one. It exists so
+// provider test suites that exercise retries do not spend real seconds on
+// them; production code never calls it.
+func SetBaseDelay(d time.Duration) (restore func()) {
+	prev := backoffBase.Swap(int64(d))
+	return func() { backoffBase.Store(prev) }
+}
+
 // RetryAfterCap bounds how long a single Retry-After value is honoured for.
 // Providers are expected to send small values; capping defensively means a
 // malformed or hostile header cannot bench a provider for the rest of a run.
@@ -55,6 +71,11 @@ const RetryAfterCap = 30 * time.Second
 
 // errorBodyBytes is how much of an error response is kept for the message.
 const errorBodyBytes = 512
+
+// finalSampleBytes is how much of an error response Request.Final is shown.
+// More than the message keeps, because a provider's machine readable reason
+// (Google Books' "dailyLimitExceeded") can sit past a long human message.
+const finalSampleBytes = 4096
 
 // maxDrainBytes bounds how much of an error response is read and discarded so
 // the transport can return the connection to its pool. Closing after a
@@ -69,6 +90,9 @@ type StatusError struct {
 	Code int
 	// Body is the first part of the response body, with secrets redacted.
 	Body string
+	// Final is set when Request.Final judged the answer not worth retrying,
+	// such as a quota that resets tomorrow.
+	Final bool
 }
 
 func (e *StatusError) Error() string { return fmt.Sprintf("HTTP %d: %s", e.Code, e.Body) }
@@ -84,13 +108,15 @@ func (e *StatusError) Is(target error) bool {
 	return false
 }
 
-// HeldError reports that the provider had asked for quiet until a time past
-// the caller's deadline, so the request was not sent at all. It matches
-// providererr.ErrRateLimited: the caller learns the provider was refusing
-// rather than that it was slow.
+// HeldError reports that the provider's requests were held until a time past
+// the caller's deadline, so the request was not sent at all. Cause is what set
+// the hold: providererr.ErrRateLimited for a 429, providererr.ErrUnavailable
+// for a 502, 503 or 504. It matches its cause through errors.Is, so a caller
+// learns the provider was refusing, or down, rather than that it was slow.
 type HeldError struct {
 	Provider string
 	Until    time.Time
+	Cause    error
 }
 
 func (e *HeldError) Error() string {
@@ -98,11 +124,19 @@ func (e *HeldError) Error() string {
 	if name == "" {
 		name = "metadata provider"
 	}
+	if errors.Is(e.Cause, providererr.ErrUnavailable) {
+		return fmt.Sprintf("%s is unavailable and requests are held until %s, past this request's deadline", name, e.Until.UTC().Format(time.RFC3339))
+	}
 	return fmt.Sprintf("%s asked for requests to wait until %s, past this request's deadline", name, e.Until.UTC().Format(time.RFC3339))
 }
 
-// Is matches providererr.ErrRateLimited.
-func (e *HeldError) Is(target error) bool { return target == providererr.ErrRateLimited }
+// Is matches the hold's cause, a rate limit when none was recorded.
+func (e *HeldError) Is(target error) bool {
+	if e.Cause == nil {
+		return target == providererr.ErrRateLimited
+	}
+	return target == e.Cause
+}
 
 // Gate holds every request to one provider while that provider is refusing.
 // One Gate belongs to one client and is shared by every request it makes. The
@@ -111,13 +145,16 @@ func (e *HeldError) Is(target error) bool { return target == providererr.ErrRate
 type Gate struct {
 	mu    sync.Mutex
 	until time.Time
+	// cause is what set the current hold, reported by a HeldError.
+	cause error
 }
 
 // NewGate returns an open gate.
 func NewGate() *Gate { return &Gate{} }
 
 // hold keeps the gate shut for d from now, unless it is already shut longer.
-func (g *Gate) hold(d time.Duration) {
+// cause is the providererr sentinel the hold reports.
+func (g *Gate) hold(d time.Duration, cause error) {
 	if d <= 0 {
 		return
 	}
@@ -125,14 +162,16 @@ func (g *Gate) hold(d time.Duration) {
 	defer g.mu.Unlock()
 	if until := time.Now().Add(d); until.After(g.until) {
 		g.until = until
+		g.cause = cause
 	}
 }
 
-// heldUntil returns the time the gate opens; the zero time means open.
-func (g *Gate) heldUntil() time.Time {
+// heldUntil returns the time the gate opens, the zero time meaning open, and
+// what shut it.
+func (g *Gate) heldUntil() (time.Time, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.until
+	return g.until, g.cause
 }
 
 // wait blocks until the gate opens. It refuses up front, with a *HeldError,
@@ -141,7 +180,7 @@ func (g *Gate) heldUntil() time.Time {
 // because another request may extend the hold while this one sleeps.
 func (g *Gate) wait(ctx context.Context, provider string) error {
 	for {
-		until := g.heldUntil()
+		until, cause := g.heldUntil()
 		delay := time.Until(until)
 		if delay <= 0 {
 			return nil
@@ -150,7 +189,7 @@ func (g *Gate) wait(ctx context.Context, provider string) error {
 			return err
 		}
 		if deadline, ok := ctx.Deadline(); ok && until.After(deadline) {
-			return &HeldError{Provider: provider, Until: until}
+			return &HeldError{Provider: provider, Until: until, Cause: cause}
 		}
 		if err := sleep(ctx, delay); err != nil {
 			return err
@@ -172,6 +211,11 @@ type Request struct {
 	// rather than turned into a *StatusError, such as a 404 a client maps to
 	// "not found".
 	Pass []int
+	// Final, when set, is shown a non 200 status and the start of its body,
+	// and returns true for one that waiting minutes will not fix, such as a
+	// daily quota. That answer comes back at once as a *StatusError with
+	// Final set, without retrying or holding the gate.
+	Final func(code int, body []byte) bool
 	// Redact flattens transport errors into their redacted text. Set it when
 	// the URL carries a credential: a *url.Error's message embeds the full
 	// URL, so the key would otherwise reach any log line that prints the
@@ -230,7 +274,13 @@ func Do(ctx context.Context, client *http.Client, gate *Gate, r Request) (*http.
 				return nil, transportErr(r, doErr)
 			}
 			lastErr = transportErr(r, doErr)
-			if err := sleep(ctx, BackoffDelay(attempt+1, 0)); err != nil {
+			// Never sleep past the caller's deadline: the retry could not
+			// be sent, and the caller is better off with the real error now.
+			delay := BackoffDelay(attempt+1, 0)
+			if deadline, ok := ctx.Deadline(); ok && time.Now().Add(delay).After(deadline) {
+				return nil, lastErr
+			}
+			if err := sleep(ctx, delay); err != nil {
 				return nil, transportErr(r, err)
 			}
 			continue
@@ -240,17 +290,31 @@ func Do(ctx context.Context, client *http.Client, gate *Gate, r Request) (*http.
 			return resp, nil
 		}
 
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyBytes))
+		sample, _ := io.ReadAll(io.LimitReader(resp.Body, finalSampleBytes))
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrainBytes))
 		_ = resp.Body.Close()
+		body := sample
+		if len(body) > errorBodyBytes {
+			body = body[:errorBodyBytes]
+		}
 		statusErr := &StatusError{Code: resp.StatusCode, Body: httpsec.RedactSecrets(string(body))}
 
+		if r.Final != nil && r.Final(resp.StatusCode, sample) {
+			statusErr.Final = true
+			return nil, statusErr
+		}
 		if !IsRetryableStatus(resp.StatusCode) {
 			return nil, statusErr
 		}
 		// Hold the whole provider, not just this call: the other requests in
-		// flight are what keeps a throttled provider throttled (#2075).
-		gate.hold(BackoffDelay(attempt+1, ParseRetryAfter(resp.Header.Get("Retry-After"))))
+		// flight are what keeps a throttled provider throttled (#2075). The
+		// hold remembers why, so a request it turns away reports an outage
+		// as an outage rather than as a rate limit.
+		cause := providererr.ErrUnavailable
+		if resp.StatusCode == http.StatusTooManyRequests {
+			cause = providererr.ErrRateLimited
+		}
+		gate.hold(BackoffDelay(attempt+1, ParseRetryAfter(resp.Header.Get("Retry-After"))), cause)
 		if attempt == MaxRetries {
 			return nil, statusErr
 		}
@@ -297,7 +361,13 @@ func ParseRetryAfter(v string) time.Duration {
 	if v == "" {
 		return 0
 	}
-	if secs, err := strconv.Atoi(v); err == nil {
+	secs, err := strconv.Atoi(v)
+	var numErr *strconv.NumError
+	if errors.As(err, &numErr) && errors.Is(numErr.Err, strconv.ErrRange) && v[0] != '-' {
+		// A delay too large to parse is a very long one, not none at all.
+		return RetryAfterCap
+	}
+	if err == nil {
 		if secs <= 0 {
 			return 0
 		}
@@ -331,7 +401,7 @@ func BackoffDelay(attempt int, retryAfter time.Duration) time.Duration {
 	}
 	d := MaxDelay
 	if attempt <= 10 {
-		d = BaseDelay << uint(attempt-1) //nolint:gosec // attempt is bounded above, no overflow
+		d = time.Duration(backoffBase.Load()) << uint(attempt-1) //nolint:gosec // attempt is bounded above, no overflow
 	}
 	if d <= 0 || d > MaxDelay {
 		d = MaxDelay

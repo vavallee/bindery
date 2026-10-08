@@ -5,13 +5,16 @@ package googlebooks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/httpsec"
+	"github.com/vavallee/bindery/internal/metadata/providererr"
 	"github.com/vavallee/bindery/internal/metadata/providerhttp"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
@@ -155,9 +158,13 @@ func (c *Client) volumeToBook(item volumeItem) models.Book {
 
 // getJSON goes through the request loop every HTTP metadata provider shares
 // (package providerhttp), so a 429 is retried with Retry-After and backoff
-// instead of failing the lookup outright (#2369). Google Books answers 429
-// when the key's quota runs out, and a refusal holds every request this
-// client makes rather than letting the others keep spending it.
+// instead of failing the lookup outright (#2369), and a refusal holds every
+// request this client makes rather than letting the others keep spending it.
+//
+// A quota that has run out for the day is the exception. Google Books reports
+// it as a 403 or 429 whose reason is dailyLimitExceeded or quotaExceeded, and
+// retrying it only spends more requests on an answer that will not change
+// until tomorrow, so it comes back at once, marked as a rate limit.
 //
 // Redact is set because the API key rides in the query string: a transport
 // error wraps a *url.Error whose message embeds the full URL, so it is
@@ -166,13 +173,41 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, target interface{})
 	resp, err := providerhttp.Do(ctx, c.http, c.gate, providerhttp.Request{
 		URL:    rawURL,
 		Redact: true,
+		Final:  isQuotaExhausted,
 	})
 	if err != nil {
+		var status *providerhttp.StatusError
+		if errors.As(err, &status) && status.Final {
+			return &quotaExhaustedError{err: status}
+		}
 		return err
 	}
 	defer resp.Body.Close()
 	return json.NewDecoder(resp.Body).Decode(target)
 }
+
+// quotaReasonRe matches the reason Google's API error envelope gives for a
+// quota that has run out for the day, as opposed to a per minute throttle
+// ("rateLimitExceeded", "userRateLimitExceeded"), which is worth retrying.
+var quotaReasonRe = regexp.MustCompile(`"reason"\s*:\s*"(dailyLimitExceeded|quotaExceeded)"`)
+
+// isQuotaExhausted reports whether a 403 or 429 is the daily quota refusal.
+func isQuotaExhausted(code int, body []byte) bool {
+	if code != http.StatusForbidden && code != http.StatusTooManyRequests {
+		return false
+	}
+	return quotaReasonRe.Match(body)
+}
+
+// quotaExhaustedError marks a daily quota refusal as a rate limit whatever
+// its status, so scheduled work stops asking instead of walking its queue.
+type quotaExhaustedError struct{ err error }
+
+func (e *quotaExhaustedError) Error() string {
+	return "google books daily quota exhausted: " + e.err.Error()
+}
+func (e *quotaExhaustedError) Unwrap() error        { return e.err }
+func (e *quotaExhaustedError) Is(target error) bool { return target == providererr.ErrRateLimited }
 
 // sortName delegates to textutil.SortName, the same way the openlibrary and
 // hardcover clients do, so all three providers stamp the same sort form on an

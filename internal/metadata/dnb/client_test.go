@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/vavallee/bindery/internal/isbnutil"
+	"github.com/vavallee/bindery/internal/metadata/providerhttp"
 )
 
 // --- Test transport helpers ---
@@ -566,10 +567,12 @@ func TestGetAuthorWorks_Empty(t *testing.T) {
 // raw ID as the per= query term rather than returning an error.
 func TestGetAuthorWorks_ForeignID_NumLookupFails(t *testing.T) {
 	var numCalls, perCalls int
+	var perQuery string
 	c := &Client{
 		http: &http.Client{
 			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-				if strings.HasPrefix(r.URL.Query().Get("query"), "num=") {
+				q := r.URL.Query().Get("query")
+				if strings.HasPrefix(q, "num=") {
 					// Simulate a network error on the num= lookup. The
 					// shared request loop retries it before giving up.
 					numCalls++
@@ -577,6 +580,7 @@ func TestGetAuthorWorks_ForeignID_NumLookupFails(t *testing.T) {
 				}
 				// The per= fallback succeeds.
 				perCalls++
+				perQuery = q
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(sruXMLN("1", marcDuneGerman))),
@@ -589,8 +593,14 @@ func TestGetAuthorWorks_ForeignID_NumLookupFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected fallback to succeed, got error: %v", err)
 	}
-	if numCalls == 0 || perCalls != 1 {
-		t.Errorf("num= calls = %d, per= calls = %d; want the num= lookup tried and one per= fallback", numCalls, perCalls)
+	if numCalls != providerhttp.MaxRetries+1 {
+		t.Errorf("num= calls = %d, want %d: the failed lookup is retried, then given up on", numCalls, providerhttp.MaxRetries+1)
+	}
+	if perCalls != 1 {
+		t.Errorf("per= calls = %d, want exactly one fallback", perCalls)
+	}
+	if perQuery != "per=1234567890" {
+		t.Errorf("fallback query = %q, want the raw ID per=1234567890 since no name could be looked up", perQuery)
 	}
 	if len(books) == 0 {
 		t.Errorf("expected at least 1 book from fallback, got 0")
