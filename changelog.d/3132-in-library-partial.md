@@ -1,0 +1,2 @@
+### Fixed
+- **Partly owned dual format books stay in In Library** (#3132). A book set to Both that already had one format imported showed under Wanted but vanished from Books, In Library. In Library now lists any book with at least one file on disk, and the book still appears under Wanted while a format is missing. The author page filter and In library count follow the same rule. Thanks to SturmB for the report.

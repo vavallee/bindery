@@ -29,6 +29,11 @@ type MediaFilter = '' | 'ebook' | 'audiobook'
 // is a status like any other from the user's point of view, and as a checkbox
 // sitting outside the chip groups it read as belonging to whichever group it
 // happened to wrap next to.
+// A book still wanted (some requested format is missing) that already has a
+// file for another format. It belongs in the library as well as in Wanted.
+const isPartiallyOwned = (b: Book): boolean =>
+  b.status === 'wanted' && !!(b.ebookFilePath || b.audiobookFilePath)
+
 type StatusFilter = '' | 'wanted' | 'imported' | 'skipped' | 'excluded'
 type PublishedFilter = '' | 'released' | 'upcoming'
 type DateSort = 'none' | 'asc' | 'desc'
@@ -517,6 +522,10 @@ export default function AuthorDetailPage() {
       // the selected format has no file yet, the aggregate still supplies
       // 'wanted' and the in-flight states (which have no per-format field).
       const statusOf = (b: Book): string => {
+        // With no type chip, any tracked file puts a wanted book in the library
+        // view as well (#3132). Only the Imported filter remaps it: the book
+        // stays in Wanted because a requested format is still missing.
+        if (!typeFilter && statusFilter === 'imported' && isPartiallyOwned(b)) return 'imported'
         if (!typeFilter || (b.mediaType || 'ebook') !== 'both') return b.status
         const path = typeFilter === 'ebook' ? b.ebookFilePath : b.audiobookFilePath
         return path ? 'imported' : b.status
@@ -615,7 +624,7 @@ export default function AuthorDetailPage() {
     : t('authorMetadataLink.actionFindBetter', 'Find better metadata')
   const counts = {
     total: books.length,
-    imported: books.filter(b => b.status === 'imported').length,
+    imported: books.filter(b => b.status === 'imported' || isPartiallyOwned(b)).length,
     wanted: searchableWantedCount,
     audiobook: books.filter(b => b.mediaType === 'audiobook').length,
   }
