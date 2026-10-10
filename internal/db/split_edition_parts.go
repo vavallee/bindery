@@ -35,8 +35,11 @@ type SplitEditionPart struct {
 // Only a part that is not imported is reported: an imported part is already on
 // disk and there is nothing to stop searching for. The whole has to be a book
 // the user actually has or wants, so it must be imported or monitored, and not
-// excluded. Both rows must belong to the same owner, so one user's library
-// never decides what another user's sweep searches for.
+// excluded — the WHERE clause below and api.eligibleSplitEditionWhole
+// (internal/api/series.go) apply the identical rule to the catalogue diff;
+// an eligibility change here needs the same change made there. Both rows
+// must belong to the same owner, so one user's library never decides what
+// another user's sweep searches for.
 func (r *BookRepo) ListCoveredSplitEditionParts(ctx context.Context, seriesID int64) ([]SplitEditionPart, error) {
 	query := `
 		SELECT sp.series_id, sp.book_id, sp.position_in_series, bp.title, bp.monitored,

@@ -285,3 +285,51 @@ func TestDifferentVolumesCatchesBareTrailingNumbers(t *testing.T) {
 		})
 	}
 }
+
+// TestHasPartMarker and TestStripPartMarker exercise the two helpers
+// directly: moving them here from internal/importer (#2524, so series.go
+// could use them too) left them reached only transitively through
+// internal/importer's own tests, which a per-package coverage profile does
+// not credit to this package.
+func TestHasPartMarker(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "part", in: "The Way of Kings, Part 1", want: true},
+		{name: "pt abbreviation", in: "The Way of Kings, Pt. 2", want: true},
+		{name: "part of", in: "The Great Hunt, Part 2 of 2", want: true},
+		{name: "no marker", in: "The Way of Kings", want: false},
+		{name: "blank", in: "", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HasPartMarker(tc.in); got != tc.want {
+				t.Fatalf("HasPartMarker(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStripPartMarker(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "trailing comma and marker", in: "The Way of Kings, Part 1", want: "The Way of Kings"},
+		{name: "part of", in: "The Great Hunt, Part 2 of 2", want: "The Great Hunt"},
+		{name: "no marker is unchanged", in: "The Way of Kings", want: "The Way of Kings"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := StripPartMarker(tc.in); got != tc.want {
+				t.Fatalf("StripPartMarker(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// The #2524 fractional-position and title-prefix rules are now
+// seriesmatch.SplitEditionPartOf (#3048), tested in split_edition_test.go.

@@ -858,7 +858,10 @@
       "add": "add",
       "addTitle": "Add this missing Hardcover book and search indexers",
       "moreMissing_one": "{{count}} more missing book",
-      "moreMissing_other": "{{count}} more missing books"
+      "moreMissing_other": "{{count}} more missing books",
+      "coveredSection_one": "{{count}} split edition of a book you own",
+      "coveredSection_other": "{{count}} split editions of books you own",
+      "coveredSubtitle": "Part of {{title}}, already in your library"
     },
     "nameModal": {
       "name": "Name",

@@ -742,6 +742,38 @@ export default function SeriesPage() {
                         )}
                       </div>
                     )}
+                    {/* #2524: a split edition (e.g. "Part 1"/"Part 2") of a book
+                        already present is not a missing volume, so it is never
+                        counted or offered an add button — just linked to the
+                        whole work that covers it. Collapsed by default since
+                        this is the exception, not the thing a user came to
+                        check. */}
+                    {diff && diff.covered.length > 0 && (
+                      <details className="px-4 pb-4">
+                        <summary className="cursor-pointer select-none text-xs text-slate-600 dark:text-zinc-500 hover:text-slate-900 dark:hover:text-white">
+                          {t('series.hardcover.coveredSection', { count: diff.covered.length })}
+                        </summary>
+                        <div className="mt-2 space-y-2">
+                          {diff.covered.map(book => (
+                            <Link
+                              key={`${book.foreignBookId}-${book.position}`}
+                              to={`/book/${book.localBookId}`}
+                              className="flex items-center gap-3 p-3 rounded-md bg-slate-200/50 dark:bg-zinc-800/50 hover:bg-slate-300/50 dark:hover:bg-zinc-700/50 transition-colors"
+                            >
+                              <span className="text-xs text-slate-600 dark:text-zinc-500 w-10 flex-shrink-0 font-mono">
+                                #{book.position || '?'}
+                              </span>
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium truncate">{book.title}</p>
+                                <p className="text-xs text-slate-600 dark:text-zinc-500 truncate">
+                                  {t('series.hardcover.coveredSubtitle', { title: book.localTitle })}
+                                </p>
+                              </div>
+                            </Link>
+                          ))}
+                        </div>
+                      </details>
+                    )}
                   </div>
                 )}
               </div>

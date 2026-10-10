@@ -275,6 +275,21 @@ func CleanTitle(title string) string {
 	return strings.Join(out, " ")
 }
 
+// HasPartMarker reports whether s carries an explicit "Part N" / "Pt. N"
+// marker. Shares splitEditionMarkerRe with SplitEditionPartOf (#3048, #2524)
+// rather than keeping a second copy of the same pattern.
+func HasPartMarker(s string) bool {
+	return splitEditionMarkerRe.MatchString(s)
+}
+
+// StripPartMarker removes a "Part N" marker from s and cleans up the
+// whitespace and punctuation left behind: "The Way of Kings, Part 1" ->
+// "The Way of Kings".
+func StripPartMarker(s string) string {
+	s = splitEditionMarkerRe.ReplaceAllString(s, " ")
+	return strings.TrimRight(strings.TrimSpace(s), " ,.:;-_")
+}
+
 // volumeNumberRe matches an EXPLICIT volume marker followed by a number:
 // "Vol. 3", "Volume 3", "Book 3", "Part 3", "#3". A bare trailing number is
 // deliberately not matched — "Fahrenheit 451" and "Catch 22" are titles, not
