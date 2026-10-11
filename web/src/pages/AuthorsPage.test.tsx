@@ -34,8 +34,9 @@ vi.mock('../api/client', async importOriginal => {
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string | Record<string, unknown>) => {
+    t: (key: string, fallback?: string | Record<string, unknown>, opts?: Record<string, unknown>) => {
       const labels: Record<string, string> = {
+        'authors.booksInLibrary': `${String(opts?.have ?? '')} of ${String(opts?.total ?? '')} in library`,
         'authors.title': 'Authors',
         'authors.merge': 'Merge',
         'authors.addAuthor': 'Add Author',
@@ -699,12 +700,12 @@ describe('AuthorsPage — sortable column headers', () => {
     await waitFor(() => expect(sorts()).toContain('az'))
   })
 
-  it('renders the book count from the server instead of an em dash', async () => {
+  it('renders how many books we have and the total from the server instead of an em dash', async () => {
     vi.mocked(api.listAuthors).mockResolvedValue({
       items: [
         {
           id: 1, authorName: 'Prolific', foreignAuthorId: 'OL_P', monitored: true,
-          averageRating: 4, imageUrl: '', statistics: { bookCount: 12, availableBookCount: 0, wantedBookCount: 0 },
+          averageRating: 4, imageUrl: '', statistics: { bookCount: 12, availableBookCount: 5, wantedBookCount: 0 },
         },
       ] as never,
       total: 1, limit: 100, offset: 0,
@@ -719,7 +720,28 @@ describe('AuthorsPage — sortable column headers', () => {
     // Before the backend populated Statistics on the list path this cell was
     // always "—", because the field is `json:"statistics,omitempty"` and no
     // code ever set it on a row read back from SQLite.
-    expect(await screen.findByText('12')).toBeInTheDocument()
+    expect(await screen.findByText('5 / 12')).toBeInTheDocument()
+  })
+
+  it('shows have and total on each card in the grid view', async () => {
+    localStorage.setItem('bindery.view.authors', 'grid')
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [
+        {
+          id: 1, authorName: 'Prolific', foreignAuthorId: 'OL_P', monitored: true,
+          averageRating: 4, imageUrl: '', statistics: { bookCount: 12, availableBookCount: 5, wantedBookCount: 0 },
+        },
+      ] as never,
+      total: 1, limit: 100, offset: 0,
+    })
+
+    render(
+      <MemoryRouter>
+        <AuthorsPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('5 of 12 in library')).toBeInTheDocument()
   })
 })
 

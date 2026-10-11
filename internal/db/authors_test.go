@@ -895,6 +895,77 @@ func TestListPageFiltered_PopulatesBookCount(t *testing.T) {
 	}
 }
 
+// TestListPageFiltered_PopulatesAvailableBookCount pins the "have" half of the
+// Authors list's Books column: only imported books count as held, and the
+// count stays inside the caller's tenancy like the total beside it.
+func TestListPageFiltered_PopulatesAvailableBookCount(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	users := NewUserRepo(database)
+	alice, err := users.Create(ctx, "alice", "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := users.Create(ctx, "bob", "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	authors := NewAuthorRepo(database)
+	shared := &models.Author{ForeignID: "OL_SH", Name: "Shared", SortName: "Shared"}
+	if err := authors.Create(ctx, shared); err != nil {
+		t.Fatal(err)
+	}
+
+	insertBook := func(foreignID, status string, owner any) {
+		t.Helper()
+		if _, err := database.ExecContext(ctx,
+			`INSERT INTO books (foreign_id, author_id, title, sort_title, status, owner_user_id, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+			foreignID, shared.ID, foreignID, foreignID, status, owner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insertBook("B_SHARED_HAVE", models.BookStatusImported, nil)
+	insertBook("B_SHARED_WANTED", models.BookStatusWanted, nil)
+	insertBook("B_SHARED_SKIPPED", models.BookStatusSkipped, nil)
+	insertBook("B_ALICE_HAVE", models.BookStatusImported, alice.ID)
+	insertBook("B_BOB_HAVE_1", models.BookStatusImported, bob.ID)
+	insertBook("B_BOB_HAVE_2", models.BookStatusImported, bob.ID)
+
+	statsFor := func(userID int64) models.AuthorStats {
+		t.Helper()
+		page, _, err := authors.ListPageFiltered(ctx, AuthorListFilter{UserID: userID}, 50, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page) != 1 || page[0].Statistics == nil {
+			t.Fatalf("expected one author with statistics, got %d", len(page))
+		}
+		return *page[0].Statistics
+	}
+
+	for _, tc := range []struct {
+		name        string
+		userID      int64
+		have, total int
+	}{
+		{"alice", alice.ID, 2, 4},
+		{"bob", bob.ID, 3, 5},
+		{"unscoped", 0, 4, 6},
+	} {
+		got := statsFor(tc.userID)
+		if got.AvailableBooks != tc.have || got.BookCount != tc.total {
+			t.Errorf("%s: have %d of %d, want %d of %d", tc.name, got.AvailableBooks, got.BookCount, tc.have, tc.total)
+		}
+	}
+}
+
 // TestListPageFiltered_BookCountIsOwnerScoped keeps the derived count inside the
 // same tenancy boundary as the rows it decorates. An unscoped COUNT would let
 // one user infer how much another user's author holds — the same class of leak

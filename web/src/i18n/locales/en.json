@@ -408,6 +408,7 @@
     "noMatch": "No authors match \"{{query}}\"",
     "colName": "Name",
     "colBooks": "Books",
+    "booksInLibrary": "{{have}} of {{total}} in library",
     "colRating": "Rating",
     "colMonitored": "Monitored",
     "noDescription": "No description available",
