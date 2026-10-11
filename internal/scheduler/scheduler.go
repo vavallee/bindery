@@ -1678,6 +1678,10 @@ func (s *Scheduler) refreshMetadata() {
 	}
 
 	for _, listed := range authors {
+		if err := s.meta.CheckQuota(ctx); err != nil {
+			slog.Warn("metadata refresh stopped", "error", err)
+			return
+		}
 		if !listed.Monitored {
 			continue
 		}

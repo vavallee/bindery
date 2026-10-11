@@ -42,6 +42,10 @@ func refusedBindReason(o metadata.SearchOutcome, foreignID string) string {
 // verdict on the row, which may well match once the primary is back, so it
 // says to retry rather than to fix anything.
 func primaryDownReason(o metadata.SearchOutcome) string {
+	var daily *metadata.DailyQuotaError
+	if errors.As(o.FirstErr, &daily) {
+		return daily.Error()
+	}
 	return fmt.Sprintf("primary metadata provider %s did not answer, run the import again once it responds", o.Primary)
 }
 
@@ -121,8 +125,7 @@ func resolveAndCreateAuthor(
 	if existing := known.find(ctx, name); existing != nil {
 		slog.Info(source+" import: author already in the library, skipped",
 			"name", name, "existing", existing.Name, "foreignId", existing.ForeignID)
-		res.Skipped++
-		return nil
+		return skipExistingAuthor(ctx, authors, name, existing, res)
 	}
 	if outage.down() {
 		res.fail(name, outage.reason())
@@ -158,8 +161,7 @@ func resolveAndCreateAuthor(
 
 	// Skip if already present. Nothing is written, so this needs no guard.
 	if existing, _ := authors.GetByAnyForeignID(ctx, top.ForeignID); existing != nil {
-		res.Skipped++
-		return nil
+		return skipExistingAuthor(ctx, authors, name, existing, res)
 	}
 
 	// The search only fails outright when every provider does, so with the
@@ -201,6 +203,25 @@ func resolveAndCreateAuthor(
 	res.AddedNames = append(res.AddedNames, full.Name)
 	known.add(full)
 	return full
+}
+
+// skipExistingAuthor counts a row whose author is already in the library. A
+// daily hold can interrupt the initial catalogue after the author was
+// committed, so an author whose catalogue was never populated is returned for
+// the caller to queue again, whichever way it was matched. A catalogue the
+// user deliberately emptied stays skipped (the marker survives book deletion).
+func skipExistingAuthor(ctx context.Context, authors *db.AuthorRepo, name string, existing *models.Author, res *Result) *models.Author {
+	populated, err := authors.CataloguePopulatedAt(ctx, existing.ID)
+	if err != nil {
+		// Counted once, as a failure, not also as skipped.
+		res.fail(name, err.Error())
+		return nil
+	}
+	res.Skipped++
+	if populated == nil {
+		return existing
+	}
+	return nil
 }
 
 // libraryAuthors answers "does the library already have an author with this

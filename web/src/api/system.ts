@@ -10,6 +10,7 @@ export interface SystemStatus {
   imageCacheBytes?: number
   enhancedHardcoverApi: boolean
   hardcoverTokenConfigured: boolean
+  hardcoverPausedUntil?: string
   enhancedHardcoverDisabledReason?: 'env_disabled' | 'missing_token' | 'admin_disabled' | string
 }
 

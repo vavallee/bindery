@@ -146,11 +146,12 @@ func TestDiscoveryTick_BackoffStopsAndLeavesCursor(t *testing.T) {
 	// the interval short enough to take them all.
 	f.job.interval = func() (time.Duration, bool) { return time.Hour, true }
 	f.disc.outcomes["OL1A"] = DiscoveryOutcome{Created: 1}
-	f.disc.outcomes["OL2A"] = DiscoveryOutcome{Backoff: true, Err: errors.New("rate limited")}
+	// A held catalogue run can create books before it stops; they still count.
+	f.disc.outcomes["OL2A"] = DiscoveryOutcome{Created: 2, Backoff: true, Err: errors.New("rate limited")}
 
 	res := f.job.tick(context.Background())
-	if !res.Backoff || res.Checked != 1 {
-		t.Fatalf("tick = %+v, want backoff after 1 checked", res)
+	if !res.Backoff || res.Checked != 1 || res.Created != 3 {
+		t.Fatalf("tick = %+v, want backoff after 1 checked with 3 created", res)
 	}
 	if len(f.disc.calls) != 2 {
 		t.Fatalf("discoverer called for %v, want the pass to stop at the refused author", f.disc.calls)

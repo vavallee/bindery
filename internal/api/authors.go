@@ -1760,7 +1760,9 @@ func (h *AuthorHandler) authorAwaitsFirstCatalogue(ctx context.Context, author *
 // The outcome is logged by runCatalogueSync; callers that need it (scheduled
 // discovery, #2236) call runCatalogueSync directly.
 func (h *AuthorHandler) fetchAuthorBooks(ctx context.Context, author *models.Author, opts catalogueSyncOptions) {
-	_, _ = h.runCatalogueSync(ctx, author, opts)
+	if _, err := h.runCatalogueSync(ctx, author, opts); err != nil {
+		slog.Warn("author catalogue sync stopped", "author", author.Name, "error", err)
+	}
 }
 
 // refreshTitleMatch re-reads a row the catalogue sync matched by title. The
@@ -1815,6 +1817,9 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 			h.runningSyncs.start(syncID)
 		}
 		defer h.runningSyncs.done(syncID)
+	}
+	if err := h.meta.CheckQuota(ctx); err != nil {
+		return 0, err
 	}
 	// A manual Refresh Metadata reads the author's profile, catalogue and
 	// Audible catalogue past the metadata cache (#2601). Only those lookups
@@ -2345,7 +2350,14 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		})
 	}
 
+	// A daily hold stops creating books, but the books this run already created
+	// still get hydration, file matching, search and the summary below: the
+	// next sync treats them as existing, so skipping that work would strand them.
+	var quotaErr error
 	for _, b := range candidates {
+		if quotaErr = h.meta.CheckQuota(ctx); quotaErr != nil {
+			break
+		}
 		// A cancelled or timed out run stops creating books rather than
 		// logging one failed insert per remaining work.
 		if ctx.Err() != nil {
@@ -2782,6 +2794,10 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		seededEditions[editionTarget{ForeignID: foreignID}.cacheKey()] = editions
 	}
 	editionCache := h.prefetchHardcoverEditions(ctx, createdTargets, seededEditions)
+	if quotaErr == nil {
+		// Held calls below fail fast, so record the hold and finish local work.
+		quotaErr = h.meta.CheckQuota(ctx)
+	}
 
 	// The author's catalogue as this sync leaves it, for the rival title
 	// check (#2941): read once here instead of once per bound book.
@@ -2827,7 +2843,7 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	if singleWork {
 		slog.Info("single-work catalogue fallback complete",
 			"author", author.Name, "foreignId", opts.onlyForeignID, "added", added)
-		return added, nil
+		return added, quotaErr
 	}
 
 	h.announceDiscoveredBooks(context.WithoutCancel(ctx), author, opts, populatedBefore, createdBooks)
@@ -2888,10 +2904,10 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	if failed+skippedLang+skippedJunk+skippedMediaType+skippedPartBooks+skippedMissingDate+
 		skippedMinPages+skippedMissingISBN+skippedThinCluster > 0 {
 		slog.Warn("author books synced", logArgs...)
-		return added, nil
+		return added, quotaErr
 	}
 	slog.Info("author books synced", logArgs...)
-	return added, nil
+	return added, quotaErr
 }
 
 // keepWorkWithForeignID narrows a provider works list to the single work the

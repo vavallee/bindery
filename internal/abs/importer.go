@@ -425,6 +425,11 @@ func (i *Importer) runLibrary(ctx context.Context, cfg ImportConfig, authorMatch
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if i.meta != nil {
+			if err := i.meta.CheckQuota(ctx); err != nil {
+				return err
+			}
+		}
 		i.setProgress(func(p *ImportProgress) {
 			p.Message = importItemMessage(cfg.DryRun, firstNonEmpty(item.Title, item.ItemID))
 		})
@@ -437,6 +442,11 @@ func (i *Importer) runLibrary(ctx context.Context, cfg ImportConfig, authorMatch
 		result := i.importOne(itemCtx, cfg, run.ID, item, totalStats, allowImmediateImport(item), authorMatcher)
 		itemErr := itemCtx.Err()
 		cancelItem()
+		if i.meta != nil {
+			if err := i.meta.CheckQuota(ctx); err != nil {
+				return err
+			}
+		}
 		if err := ctx.Err(); err != nil {
 			// The run itself was cancelled (shutdown) while this item was in
 			// flight. Returning here, before the enumerator records the item

@@ -129,6 +129,14 @@ const (
 	listSyncSearchPace        = 3 * time.Second
 )
 
+// WithDailyQuota shares exhaustion holds with other Hardcover callers. Only
+// the list fetches before the pass loop call Hardcover, so a hold stops the
+// sync there; the loop itself writes data that was already fetched.
+func (s *ListSyncer) WithDailyQuota(q *hardcover.DailyQuota) *ListSyncer {
+	s.clientFactory = func(token string) hardcoverClient { return hardcover.NewAuthenticated(token).WithDailyQuota(q) }
+	return s
+}
+
 // New creates a new ListSyncer.
 func New(importLists *db.ImportListRepo, authors *db.AuthorRepo, books *db.BookRepo) *ListSyncer {
 	return &ListSyncer{

@@ -333,6 +333,9 @@ func (j *discoveryJob) tick(ctx context.Context) discoveryTickResult {
 			continue
 		}
 		attempted++
+		// Counted before the backoff check: a catalogue run stopped by a daily
+		// hold has still created, and processed, the books it reports.
+		res.Created += out.Created
 		if out.Backoff {
 			res.Backoff = true
 			slog.Warn("job: author discovery stopped, the metadata provider is rate limiting",
@@ -340,7 +343,6 @@ func (j *discoveryJob) tick(ctx context.Context) discoveryTickResult {
 			break
 		}
 		res.Checked++
-		res.Created += out.Created
 		switch {
 		case timedOut:
 			res.TimedOut++

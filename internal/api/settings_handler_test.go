@@ -252,10 +252,12 @@ func TestSettings_AuthorMonitorDefaultsValidation(t *testing.T) {
 func TestSettings_SecretLeakRegression(t *testing.T) {
 	h, repo, ctx := settingsFixture(t)
 	leaky := map[string]string{
-		SettingOIDCProviders:             `[{"id":"okta","clientSecret":"S3CRET"}]`,
-		SettingAuthSessionSecretPrevious: "previous-hmac-key",
-		SettingGrimmoryAPIKey:            "grimmory-api-key",
-		SettingCalibrePluginAPIKey:       "calibre-plugin-key",
+		"auth.hardcover_daily_holds":       `{"example-fingerprint":"2026-09-19T01:00:00Z"}`,
+		"auth.hardcover_daily_hold_secret": "example-only-hold-secret",
+		SettingOIDCProviders:               `[{"id":"okta","clientSecret":"S3CRET"}]`,
+		SettingAuthSessionSecretPrevious:   "previous-hmac-key",
+		SettingGrimmoryAPIKey:              "grimmory-api-key",
+		SettingCalibrePluginAPIKey:         "calibre-plugin-key",
 		// Generic pattern coverage: keys that aren't enumerated but follow
 		// the suffix/prefix conventions must still be filtered.
 		"some_new_provider.api_key":   "secret-by-pattern",

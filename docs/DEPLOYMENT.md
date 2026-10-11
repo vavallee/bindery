@@ -720,6 +720,32 @@ Persistent edition caching would require tracking both completeness and
 provider/account freshness separately from local book refresh timestamps.
 These caches do not implement daily quota accounting or pause/resume.
 
+### Hardcover daily quota pause
+
+When Hardcover reports zero requests remaining in its daily `RateLimit` bucket,
+Bindery persists the reset time in private SQLite settings for that API token.
+Further calls using that token stop until the reset, including after a restart.
+Short per-minute throttling keeps its existing retry behavior; `Retry-After`
+alone is not treated as proof of daily exhaustion. Reset delays must be positive
+and no longer than 24 hours; invalid delays are ignored. The stored token
+fingerprints (HMAC-SHA256 under a random install-local key, also a private
+setting) and reset times are hidden from generic settings endpoints. If either
+stored value is corrupt, Bindery logs a warning and starts fresh instead of
+blocking every request.
+
+Settings → API Keys shows when the configured token can be used again. When
+Hardcover is the primary metadata provider, bulk metadata imports and
+background catalogue work stop on the daily hold rather than repeatedly asking
+an exhausted key; books a catalogue sync already created still finish their
+file matching, searches and summary. When Hardcover is only an enricher, bulk
+work carries on without it: held Hardcover calls fail immediately and ISBN
+lookups fall through to the other providers. A Hardcover list sync stops before
+fetching the list. Retry interrupted imports after the shown time; already
+committed records remain, and ABS keeps its checkpoint on the interrupted item.
+Scheduled jobs can run again on their next scheduled pass. This does not add
+automatic edition-hydration recovery or request accounting.
+Different tokens have separate holds, even if they belong to the same account.
+
 ### Enhanced Hardcover series data deployment note
 
 **Schema:** enhanced series data uses migration `035`, which creates `series_hardcover_links` and backfills links for existing series whose foreign ID already points at Hardcover. Take a normal SQLite backup before upgrading, then let Bindery apply the migration on startup.
