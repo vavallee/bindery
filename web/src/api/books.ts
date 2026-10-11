@@ -32,9 +32,11 @@ export interface Book {
   identifiers?: BookIdentifier[]
   authorId: number
   title: string
+  sortTitle?: string
   description: string
   imageUrl: string
   releaseDate?: string
+  createdAt?: string
   genres: string[]
   monitored: boolean
   status: string
