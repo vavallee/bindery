@@ -39,9 +39,15 @@ describe('index.css', () => {
     expect(block(built, /html:not\(\.dark\)\s*\{/)).toMatch(/color-scheme:\s*light/)
   })
 
+  it('sets text fields, but not selects, to 16px on touch screens', () => {
+    const touch = block(built, /@media \(hover: none\) and \(pointer: coarse\)\s*\{/)
+    expect(touch).toMatch(/input,\s*textarea\s*\{[^}]*font-size:\s*16px/)
+    expect(touch).not.toMatch(/select[^{}]*\{[^}]*font-size/)
+  })
+
   it('reserves room for the select arrow on touch screens only', () => {
     const touch = block(built, /@media \(hover: none\) and \(pointer: coarse\)\s*\{/)
-    expect(block(touch, /select:not\(\[multiple\]\):not\(\[size\]\)\s*\{/)).toMatch(/padding-right:\s*2\.5rem/)
+    expect(block(touch, /select:not\(\[multiple\]\):not\(\[size\]\)\s*\{/)).toMatch(/padding-right:\s*calc\(1\.5em \+ 0\.75rem\)/)
   })
 
   it('caps a select at the width of its container', () => {

@@ -1159,7 +1159,7 @@ function BookDetailPageInner() {
                             paths: group.rows.map(r => r.path),
                           })}
                           disabled={deletingFile || deregistering || deletingBook}
-                          className={`${btn.danger} ${btnSize.md}`}
+                          className={`${btn.danger} ${btnSize.sm}`}
                         >
                           <span aria-hidden>🗑 </span>
                           {group.rows.length > 1 ? t('bookDetail.deleteFiles') : t('bookDetail.deleteFile')}

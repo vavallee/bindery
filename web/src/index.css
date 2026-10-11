@@ -82,31 +82,33 @@
   outline: none;
 }
 
-/* iOS Safari zooms the page in when a form control with a font size under
-   16px takes focus, and leaves it zoomed. Unlayered so it beats the text-sm
-   utilities on individual controls. */
+/* iOS Safari zooms the page in when a text field with a font size under 16px
+   takes focus, and leaves it zoomed. Unlayered so it beats the text-sm
+   utilities on individual controls. Selects are left at their own size: they
+   open a native picker instead of taking the keyboard, and at 16px the
+   compact ones (Wanted format, book media type) dwarfed the rows they sit
+   in. */
 @media (hover: none) and (pointer: coarse) {
   input,
-  select,
   textarea {
     font-size: 16px;
   }
 
-  /* At 16px the select text outgrows the room the px-* utilities leave for
-     the arrow the forms plugin draws (1.5em wide, 0.5rem from the edge), so
-     the value ran under it. Reserve the arrow's width here; desktop keeps
-     the compact padding. */
+  /* The forms plugin draws the select arrow 1.5em wide, 0.5rem from the right
+     edge, and the px-* utilities on each select leave it less room than that,
+     so the value ran under it. Reserve the arrow's width plus a small gap,
+     scaled to the select's own font size. */
   select:not([multiple]):not([size]) {
-    padding-right: 2.5rem;
+    padding-right: calc(1.5em + 0.75rem);
   }
 }
 
-/* A select is as wide as its longest option, and on touch screens that
-   option is set at 16px with 2.5rem kept for the arrow, so a long one ran
-   past a 320px screen (Default monitor mode in Settings, Metadata, made the
-   page 349px wide). Capping it at its container lets the value truncate
-   instead. In the base layer so a max-w-* utility still wins, and it changes
-   nothing for a select that already fits. */
+/* A select is as wide as its longest option, and on touch screens room is
+   also kept for the arrow, so a long one ran past a 320px screen (Default
+   monitor mode in Settings, Metadata, made the page 349px wide). Capping it
+   at its container lets the value truncate instead. In the base layer so a
+   max-w-* utility still wins, and it changes nothing for a select that
+   already fits. */
 @layer base {
   select {
     max-width: 100%;

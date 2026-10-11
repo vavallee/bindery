@@ -20,8 +20,8 @@ import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
 // Below sm the fixed format and action columns left the title about 13px at
 // 375px, so a phone gets three columns and the format and actions move to a
 // second line under the title (see ROW_CONTROLS). On a touch screen from sm
-// up the format column is wider: form controls render at 16px there (see
-// index.css), and "Audiobook" at 16px does not fit in 6rem.
+// up the format column is wider: selects reserve room for their arrow there
+// (see index.css), and "Audiobook" plus that room does not fit in 6rem.
 const ROW_GRID = 'grid grid-cols-[1.5rem_2rem_minmax(0,1fr)] sm:grid-cols-[1.5rem_2rem_1fr_6rem_8.5rem] sm:pointer-coarse:grid-cols-[1.5rem_2rem_1fr_8.5rem_8.5rem] items-center gap-x-3 gap-y-1.5 sm:gap-3'
 // Holds the format select and the actions. A flex line spanning the cover and
 // title columns on a phone; display: contents from sm, so its two children

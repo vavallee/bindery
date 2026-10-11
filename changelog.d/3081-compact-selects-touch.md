@@ -1,0 +1,2 @@
+### Fixed
+- **Dropdowns on phones** (#3081). Dropdowns no longer render oversized on touch screens: they keep the size they were designed at, such as the format picker on Wanted and the Type, Status and Published filters on an author page, and the value still stays clear of the arrow. Text fields are unchanged, so tapping into one still does not zoom the page. The Delete file button on a book page is also a size smaller, to match the row it sits in.
