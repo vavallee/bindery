@@ -608,3 +608,54 @@ func TestAggregator_GetAuthorWorks_NoEnrichersNoCovers(t *testing.T) {
 		t.Errorf("expected empty cover with no enrichers, got %q", got[0].ImageURL)
 	}
 }
+
+// A translation's cover is another book's cover (#3018): the cover-by-ISBN
+// fallback skips editions in another language. Here the book's own edition
+// has no cover at the cover provider and the German translation's does, so
+// the book gets none.
+func TestAggregator_enrichBook_CoverProviderSkipsTranslations(t *testing.T) {
+	own, translation := "9788200000011", "9783000000012"
+	cover := &mockCoverProvider{
+		mockProvider: mockProvider{name: "dnb-cover"},
+		urls:         map[string]string{translation: "https://portal.dnb.de/opac/mvb/cover?isbn=" + translation},
+	}
+	agg := &Aggregator{primary: &mockProvider{name: "nb"}, enrichers: []Provider{cover}, cache: newTTLCache(time.Minute)}
+	book := &models.Book{
+		Title:    "Fjellvinden",
+		Author:   &models.Author{Name: "Kari Nordmann"},
+		Language: "nob",
+		Editions: []models.Edition{{ISBN13: &own, Language: "nob"}, {ISBN13: &translation, Language: "ger"}},
+	}
+	agg.enrichBook(context.Background(), book)
+	if book.ImageURL != "" {
+		t.Errorf("took the translation's cover: %q", book.ImageURL)
+	}
+	if cover.coverCalls != 1 {
+		t.Errorf("cover lookups = %d, want 1 (the own-language edition only)", cover.coverCalls)
+	}
+}
+
+// Same-language editions, and editions or books without a language, are used
+// exactly as before.
+func TestCoverLanguageMatches(t *testing.T) {
+	for _, c := range []struct {
+		book, edition string
+		want          bool
+	}{
+		{"ger", "ger", true},
+		{"ger", "deu", true}, // 639-2/T and /B
+		{"nob", "nor", true}, // Norwegian written standards fold together
+		{"nob", "nno", true},
+		{"en", "eng", true},
+		{"", "ger", true},
+		{"nob", "", true},
+		{"nob", "und", true},
+		{"mul", "ger", true},
+		{"nob", "ger", false},
+		{"eng", "fre", false},
+	} {
+		if got := coverLanguageMatches(c.book, c.edition); got != c.want {
+			t.Errorf("coverLanguageMatches(%q, %q) = %v, want %v", c.book, c.edition, got, c.want)
+		}
+	}
+}

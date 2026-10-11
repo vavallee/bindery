@@ -1,0 +1,2 @@
+### Changed
+- **A book no longer takes a translation's cover** (#3018). When no metadata provider had a cover, Bindery looked one up by the ISBN of every edition of the work, translations included, so a book often showed a translated edition's cover with another title, typically the German one. Only editions in the book's own language, or with no language recorded, are used for that lookup now. A book whose only available cover is a translation's keeps no cover, and you can set one yourself.
