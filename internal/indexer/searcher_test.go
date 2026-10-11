@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1776,53 +1777,61 @@ func TestFilterRelevantDebugEditionQualifierParity(t *testing.T) {
 	}
 }
 
-// TestSearchBook_AggregateTimeout verifies that SearchBook respects the outer
-// searchBookTimeout: when every indexer hangs indefinitely (by blocking until
-// the context is cancelled), the search still returns within a reasonable bound
-// rather than blocking for up to 4×30 s (Finding 2 — aggregate timeout).
-//
-// This test uses an already-cancelled context to avoid waiting for the real
-// 60 s timeout, while still verifying that the timeout is wired into each
-// goroutine so http.NewRequestWithContext sees it.
+// TestSearchBook_AggregateTimeout verifies the outer deadline (#1845): with
+// a live caller context and an indexer that never answers, SearchBook returns
+// empty once its timeout fires, and every request it sent is cancelled, so no
+// worker is left behind waiting on the hung server. Delete the WithTimeout in
+// SearchBook and this test fails instead of passing.
 func TestSearchBook_AggregateTimeout(t *testing.T) {
-	// Create a server that blocks until the request context is cancelled.
+	var started, cancelled atomic.Int32
+	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
-		// The request was cancelled — this is the expected path.
+		started.Add(1)
+		select {
+		case <-r.Context().Done():
+			cancelled.Add(1)
+		case <-release:
+		}
 	}))
+	// Unblock any handler still waiting before Close, so a regression fails
+	// the assertions below rather than hanging in Close.
 	defer srv.Close()
+	defer close(release)
 
-	// Use an already-cancelled context so we don't wait for the real 60 s wall-clock.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
-
+	s := newTestSearcher()
+	s.timeout = 200 * time.Millisecond
 	idxs := []models.Indexer{
-		{ID: 1, Name: "slow-indexer", URL: srv.URL, Enabled: true, Categories: []int{7020}},
+		{ID: 1, Name: "hung-indexer", URL: srv.URL, Enabled: true, Categories: []int{7020}},
 	}
 
-	// SearchBook must return (possibly with zero results) rather than blocking.
-	// With the context already cancelled the goroutine aborts on first HTTP call.
-	results := NewSearcher().SearchBook(ctx, idxs, MatchCriteria{
-		Title:  "Dark Matter",
-		Author: "Blake Crouch",
-	})
-	// We don't assert on results (the indexer was never able to respond),
-	// only that the call returned at all. If the timeout isn't wired in,
-	// this test would hang until the Go test runner kills it.
-	_ = results
-}
+	type outcome struct{ results []newznab.SearchResult }
+	done := make(chan outcome, 1)
+	start := time.Now()
+	go func() {
+		done <- outcome{s.SearchBook(context.Background(), idxs, MatchCriteria{Title: "Fjellvinden", Author: "Kari Nordmann"})}
+	}()
 
-// TestSearchBook_TimeoutConstantExists ensures the searchBookTimeout constant
-// has a positive, sensible value (between 30 s and 300 s).
-func TestSearchBook_TimeoutConstantExists(t *testing.T) {
-	if searchBookTimeout <= 0 {
-		t.Fatalf("searchBookTimeout must be positive, got %v", searchBookTimeout)
+	select {
+	case got := <-done:
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Errorf("SearchBook took %v, want about its 200ms timeout", elapsed)
+		}
+		if len(got.results) != 0 {
+			t.Errorf("results = %d, want none from a hung indexer", len(got.results))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("SearchBook did not return: the outer timeout is not applied")
 	}
-	if searchBookTimeout < 30*time.Second {
-		t.Errorf("searchBookTimeout %v is suspiciously short (< 30s)", searchBookTimeout)
+	if started.Load() == 0 {
+		t.Fatal("the indexer was never queried; the test exercised nothing")
 	}
-	if searchBookTimeout > 5*60*time.Second {
-		t.Errorf("searchBookTimeout %v is suspiciously long (> 5 min)", searchBookTimeout)
+	// The handler sees the cancellation shortly after the client gives up.
+	deadline := time.Now().Add(2 * time.Second)
+	for cancelled.Load() < started.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if c, st := cancelled.Load(), started.Load(); c != st {
+		t.Errorf("%d of %d requests were cancelled; the rest were left hanging", c, st)
 	}
 }
 

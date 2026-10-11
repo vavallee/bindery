@@ -59,6 +59,10 @@ type Searcher struct {
 	// cannot spend a tracker's whole API allowance (#2312). nil disables the
 	// cap entirely, same as health.
 	quota *indexerQuota
+
+	// timeout overrides searchBookTimeout; zero uses it. Only tests set it,
+	// so the outer deadline can be exercised without waiting a minute.
+	timeout time.Duration
 }
 
 // NewSearcher creates a new multi-indexer searcher.
@@ -265,7 +269,11 @@ func filterCategoriesForMedia(cats []int, mediaType string, includeParentCategor
 // The timeout is additional to any deadline already on ctx — whichever fires
 // first wins.
 func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c MatchCriteria) []newznab.SearchResult {
-	ctx, cancel := context.WithTimeout(ctx, searchBookTimeout)
+	timeout := searchBookTimeout
+	if s.timeout > 0 {
+		timeout = s.timeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	var (
