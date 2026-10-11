@@ -9,6 +9,7 @@ import HardcoverSeriesLinkModal from '../components/HardcoverSeriesLinkModal'
 import SeriesNameModal from '../components/SeriesNameModal'
 import MergeSeriesModal from '../components/MergeSeriesModal'
 import { btn, btnSize } from '../components/buttons'
+import { useIsAdmin } from '../auth/AuthContext'
 import Switch from '../components/Switch'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 
@@ -50,6 +51,8 @@ function seriesMissingCounts(series: Series, enhancedHardcoverApi: boolean, diff
 
 export default function SeriesPage() {
   const { t } = useTranslation()
+  // Every series change is admin only (#468); other users browse.
+  const isAdmin = useIsAdmin()
   const { confirm, confirmDialog } = useConfirmDialog()
   const location = useLocation()
   const [seriesList, setSeriesList] = useState<Series[]>([])
@@ -362,12 +365,14 @@ export default function SeriesPage() {
           <span className="text-sm text-slate-600 dark:text-zinc-500">
             {filter === 'all' ? t('series.count', { count: seriesList.length }) : t('series.countFiltered', { shown: filteredSeries.length, total: seriesList.length })}
           </span>
-          <button
-            onClick={() => setShowAddSeries(true)}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-md text-sm font-medium transition-colors"
-          >
-            {t('series.addSeries')}
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setShowAddSeries(true)}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-md text-sm font-medium transition-colors"
+            >
+              {t('series.addSeries')}
+            </button>
+          )}
         </div>
       </div>
 
@@ -465,6 +470,7 @@ export default function SeriesPage() {
                 </div>
 
                 {/* Actions row */}
+                {isAdmin && (
                 <div className="px-4 pb-3 flex items-center gap-3 pointer-coarse:gap-y-5 flex-wrap" onClick={e => e.stopPropagation()}>
                   {/* This flag is a shortlist marker, not a schedule. Nothing
                       reads series.monitored except this page: no job checks a
@@ -568,6 +574,7 @@ export default function SeriesPage() {
                     <span className="ml-auto text-xs text-slate-600 dark:text-zinc-400">{linkResult[series.id]}</span>
                   )}
                 </div>
+                )}
 
                 {isOpen && bookCount > 0 && (
                   <div className="border-t border-slate-200 dark:border-zinc-800 divide-y divide-slate-200/50 dark:divide-zinc-800/50">
@@ -660,7 +667,7 @@ export default function SeriesPage() {
                           </a>
                         )}
                       </div>
-                      {(diff?.missingCount ?? 0) > 0 && (
+                      {isAdmin && (diff?.missingCount ?? 0) > 0 && (
                         <div className="flex items-center gap-2 flex-shrink-0">
                           <select
                             aria-label={t('series.hardcover.formatLabel')}
@@ -726,14 +733,14 @@ export default function SeriesPage() {
                           return (
                             <div key={`${book.foreignBookId}-${book.position}`} className={rowClass}>
                               {rowInner}
-                              <button
+                              {isAdmin && <button
                                 onClick={() => fillGaps(series, book, fillMediaType[series.id] ?? 'ebook')}
                                 disabled={filling === series.id}
                                 className="ml-auto text-xs px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded font-medium flex-shrink-0"
                                 title={t('series.hardcover.addTitle')}
                               >
                                 {filling === series.id ? '…' : t('series.hardcover.add')}
-                              </button>
+                              </button>}
                             </div>
                           )
                         })}

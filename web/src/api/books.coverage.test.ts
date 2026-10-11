@@ -106,6 +106,7 @@ describe('booksApi request shapes', () => {
     await booksApi.getLastSearchDebug()
     await booksApi.enrichAudiobook(4)
     await booksApi.toggleExcluded(4)
+    await booksApi.getBookSeriesExclusions(4)
     await booksApi.rebindBook(4, 'hardcover', 'hc:1')
     await booksApi.rebindBook(4, 'openlibrary', 'OL1W', true)
     expect(seen.map(s => [s.method, s.path + s.query, s.body])).toEqual([
@@ -118,6 +119,7 @@ describe('booksApi request shapes', () => {
       ['GET', '/search/last-debug', undefined],
       ['POST', '/book/4/enrich-audiobook', undefined],
       ['PUT', '/book/4/exclude', undefined],
+      ['GET', '/book/4/series-exclusions', undefined],
       ['POST', '/book/4/rebind', { provider: 'hardcover', foreign_id: 'hc:1', force: false }],
       ['POST', '/book/4/rebind', { provider: 'openlibrary', foreign_id: 'OL1W', force: true }],
     ])

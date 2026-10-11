@@ -290,6 +290,7 @@ PUT    /api/v1/book/{id}                          update monitor / status / meta
 DELETE /api/v1/book/{id}                          remove from library
 DELETE /api/v1/book/{id}/file                     delete imported file(s) on disk (`?format=ebook|audiobook` scopes to one format; `?path=…` deregisters one tracked path WITHOUT deleting anything on disk)
 PUT    /api/v1/book/{id}/exclude                  exclude from future searches
+GET    /api/v1/book/{id}/series-exclusions        the series the book was taken out of: [{seriesForeignId, seriesId, seriesTitle, position}]; seriesId is 0 when nothing resolves the id any more
 POST   /api/v1/book/{id}/rebind                   re-link to a different metadata record
 POST   /api/v1/book/{id}/enrich-audiobook         pull narrator/duration/cover from Audnex
 POST   /api/v1/book/{id}/search                   manual indexer search
@@ -306,7 +307,16 @@ POST   /api/v1/series/{id}/fill                   add the series' missing books 
 POST   /api/v1/series/{id}/split-parts/unmonitor  unmonitor the split edition parts of books already in the series, listed as splitEditionPartBookIds on the series (admin); answers {unmonitored}
 PATCH  /api/v1/series/{id}                        monitor / unmonitor (admin)
 POST   /api/v1/series/{id}/merge                  merge other series into this one: {"sourceIds":[..],"title":"optional rename","dryRun":true} previews (admin)
+POST   /api/v1/series/{id}/books                  add a book or update its position: {"bookId":1,"positionInSeries":"2","primarySeries":true}; positionInSeries is optional (admin)
+DELETE /api/v1/series/{id}/books/{bookId}         take a book out of the series, and keep it out on refresh (admin)
 ```
+
+Taking a book out of a series is remembered (#2554): a refresh that still
+reports the book in that series, under its own provider id or one merged into
+it, leaves it out. Adding the book back with `POST /series/{id}/books` forgets
+that, and so does an admin unlocking all of the book's fields (`PUT /book/{id}`
+with `"lockedFields": []`; another user's unlock leaves the book's series alone). Adding a book as primary makes it the book's only
+primary series. `GET /book/{id}/series-exclusions` lists what was taken out.
 
 `GET /series` returns the bare array it always has. Pagination is opt-in
 (#2345): pass `limit` and/or `offset` and you get an `{items, total, limit,

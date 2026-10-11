@@ -87,6 +87,15 @@ export function useAuth() {
   return ctx
 }
 
+// useIsAdmin gates controls whose endpoints are admin only, such as every
+// series change (#468), so other users are not offered a button that answers
+// 403. Like useIsRequester it also serves components rendered outside the
+// provider (isolated tests), where the answer is true: the full controls they
+// were written for. The server enforces the role either way.
+export function useIsAdmin(): boolean {
+  return useContext(AuthContext)?.isAdmin ?? true
+}
+
 // useIsRequester is for components that also render outside the provider
 // (in isolated tests, for one): with no provider the answer is false, which
 // keeps the full add flow they were written for.

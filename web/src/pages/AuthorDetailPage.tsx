@@ -162,7 +162,10 @@ export default function AuthorDetailPage() {
   // mounted across Previous/Next (only authorId changes), so a plain
   // "already loaded" check on authorSeries.length kept the previous
   // author's series and grouped the new author's books against them.
-  const loadedSeriesAuthorId = useRef<number | null>(null)
+  // Which author and reload the series were loaded for: a manual Refresh
+  // reloads through reloadKey, and its sync can change the series a book is
+  // in, so the grouping is fetched again then too.
+  const loadedSeries = useRef<{ authorId: number; reloadKey: number } | null>(null)
 
   useEffect(() => {
     try { localStorage.setItem('bindery.group.author-detail.series', String(groupBySeries)) } catch { /* ignore */ }
@@ -172,16 +175,19 @@ export default function AuthorDetailPage() {
   // the default flat view never pays for the extra round trip. Failures fall
   // back to an empty set — every book then lands in the Standalone group.
   useEffect(() => {
-    if (!groupBySeries || loadedSeriesAuthorId.current === authorId) return
+    const loaded = loadedSeries.current
+    if (!groupBySeries || (loaded?.authorId === authorId && loaded.reloadKey === reloadKey)) return
     // Drop the previous author's series before fetching, so neither the
     // in flight window nor a failed fetch groups these books against them.
-    setAuthorSeries([])
+    // The same author's stay up while a refresh reload fetches, so the
+    // grouping does not flash every book into Standalone.
+    if (loaded?.authorId !== authorId) setAuthorSeries([])
     let cancelled = false
     api.listAuthorSeries(authorId)
-      .then(s => { if (!cancelled) { setAuthorSeries(s); loadedSeriesAuthorId.current = authorId } })
+      .then(s => { if (!cancelled) { setAuthorSeries(s); loadedSeries.current = { authorId, reloadKey } } })
       .catch(() => { /* leave empty: books fall into Standalone */ })
     return () => { cancelled = true }
-  }, [groupBySeries, authorId])
+  }, [groupBySeries, authorId, reloadKey])
 
   // Filter / sort state — persisted to localStorage under page-scoped keys
   const [typeFilter, setTypeFilter] = useState<MediaFilter>(() => {

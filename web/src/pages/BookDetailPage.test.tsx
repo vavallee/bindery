@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import BookDetailPage, { SearchResultsSection } from './BookDetailPage'
@@ -58,12 +58,25 @@ vi.mock('../api/client', async importOriginal => {
       toggleExcluded: vi.fn(),
       enrichAudiobook: vi.fn(),
       listAuthorSeries: vi.fn(),
+      getBookSeriesExclusions: vi.fn(),
+      linkBookToSeries: vi.fn(),
       bookCalibreState: vi.fn().mockResolvedValue({ state: 'off' }),
       setPrimarySeriesForBook: vi.fn(),
       removeBookFromSeries: vi.fn(),
     },
   }
 })
+
+// Series changes are admin only (#468); a test switches to another user.
+const authState = { isAdmin: true }
+vi.mock('../auth/AuthContext', async importOriginal => ({
+  ...await importOriginal<typeof import('../auth/AuthContext')>(),
+  useIsAdmin: () => authState.isAdmin,
+}))
+const asAnotherUser = () => {
+  authState.isAdmin = false
+  onTestFinished(() => { authState.isAdmin = true })
+}
 
 vi.mock('../components/MediaBadge', () => ({
   default: ({ type }: { type?: string }) => <span data-testid={`badge-${type}`}>{type}</span>,
@@ -232,6 +245,7 @@ beforeEach(() => {
   vi.mocked(api.toggleExcluded).mockImplementation(async () => makeBook({ excluded: true }))
   vi.mocked(api.enrichAudiobook).mockImplementation(async () => makeBook())
   vi.mocked(api.listAuthorSeries).mockResolvedValue([])
+  vi.mocked(api.getBookSeriesExclusions).mockResolvedValue([])
   // jsdom has no clipboard by default.
   Object.defineProperty(navigator, 'clipboard', {
     value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -1229,6 +1243,70 @@ describe('BookDetailPage — header', () => {
     renderBookDetailPage()
     await screen.findByText('Discworld #3')
     expect(screen.queryByText(resolveKey('bookDetail.series.heading')!)).toBeNull()
+  })
+
+  it('lists the series the book was taken out of and restores one where it was (#2554)', async () => {
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([
+      {
+        id: 7,
+        foreignSeriesId: 'ol:s7',
+        title: 'Discworld',
+        description: '',
+        monitored: true,
+        books: [{ seriesId: 7, bookId: 42, positionInSeries: '3', primarySeries: true }],
+      },
+    ] as unknown as Awaited<ReturnType<typeof api.listAuthorSeries>>)
+    vi.mocked(api.getBookSeriesExclusions).mockResolvedValue([
+      { seriesForeignId: 'ol:s8', seriesId: 8, seriesTitle: 'Rincewind', position: '2' },
+      // A series that no longer exists has nothing to restore to.
+      { seriesForeignId: 'ol:gone', seriesId: 0, seriesTitle: '', position: '' },
+    ])
+    vi.mocked(api.linkBookToSeries).mockResolvedValue({} as never)
+
+    renderBookDetailPage()
+    // One membership, so the section is there only for the kept-out series.
+    expect(await screen.findByText(resolveKey('bookDetail.series.keptOutExplainer')!)).toBeInTheDocument()
+    expect(screen.queryByText(resolveKey('bookDetail.series.explainer')!)).toBeNull()
+    const keptOut = screen.getByRole('list', { name: resolveKey('bookDetail.series.keptOutHeading')! })
+    expect(within(keptOut).getAllByRole('listitem')).toHaveLength(1)
+    expect(within(keptOut).getByText('Rincewind #2')).toBeInTheDocument()
+
+    fireEvent.click(within(keptOut).getByRole('button', { name: resolveKey('bookDetail.series.restore')! }))
+    // The book already has a primary series, so the restored one is not.
+    await waitFor(() => expect(api.linkBookToSeries).toHaveBeenCalledWith(8, { bookId: 42, positionInSeries: '2', primarySeries: false }))
+    await waitFor(() => expect(api.getBookSeriesExclusions).toHaveBeenCalledTimes(2))
+  })
+
+  it('shows another user the book\'s series without the controls that need an admin', async () => {
+    asAnotherUser()
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([
+      { id: 7, foreignSeriesId: 'ol:s7', title: 'Fjellserien', description: '', monitored: true,
+        books: [{ seriesId: 7, bookId: 42, positionInSeries: '1', primarySeries: true }] },
+      { id: 8, foreignSeriesId: 'ol:s8', title: 'Havserien', description: '', monitored: true,
+        books: [{ seriesId: 8, bookId: 42, positionInSeries: '', primarySeries: false }] },
+    ] as unknown as Awaited<ReturnType<typeof api.listAuthorSeries>>)
+    vi.mocked(api.getBookSeriesExclusions).mockResolvedValue([
+      { seriesForeignId: 'ol:s9', seriesId: 9, seriesTitle: 'Skogserien', position: '2' },
+    ])
+
+    renderBookDetailPage()
+    const heading = await screen.findByText(resolveKey('bookDetail.series.heading')!)
+    const section = heading.closest('section')!
+    expect(within(section).getAllByRole('listitem')).toHaveLength(2)
+    expect(within(section).queryAllByRole('button')).toHaveLength(0)
+    expect(screen.queryByText(resolveKey('bookDetail.series.keptOutExplainer')!)).toBeNull()
+  })
+
+  it('says so when restoring a series fails', async () => {
+    vi.mocked(api.getBookSeriesExclusions).mockResolvedValue([
+      { seriesForeignId: 'ol:s8', seriesId: 8, seriesTitle: 'Rincewind', position: '2' },
+    ])
+    vi.mocked(api.linkBookToSeries).mockRejectedValue(new Error('series mutations are admin only'))
+
+    renderBookDetailPage()
+    const keptOut = await screen.findByRole('list', { name: resolveKey('bookDetail.series.keptOutHeading')! })
+    fireEvent.click(within(keptOut).getByRole('button', { name: resolveKey('bookDetail.series.restore')! }))
+    expect(await screen.findByText('series mutations are admin only')).toBeInTheDocument()
   })
 
   it('names the series the renamer uses and lets you change it', async () => {

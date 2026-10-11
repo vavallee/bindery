@@ -2102,8 +2102,13 @@
       "fieldReleaseDate": "Release date",
       "lockedHint": "Manually edited — metadata refresh will not overwrite this field",
       "unlockAll": "Unlock all fields",
-      "unlockAllHint": "Let metadata refresh manage every field again",
-      "saveFailed": "Save failed"
+      "unlockAllHint": "Let metadata refresh manage every field and the book's series again",
+      "saveFailed": "Save failed",
+      "fieldSeries": "Series",
+      "seriesNone": "No series",
+      "seriesNew": "New series…",
+      "fieldNewSeries": "New series name",
+      "fieldPosition": "Position"
     },
     "exclude": "Exclude",
     "unexclude": "Un-exclude",
@@ -2196,7 +2201,11 @@
       "removeBody1": "This takes the book out of",
       "removeBody2": "It does not delete the book, its files, or the series itself.",
       "setPrimaryFailed": "Could not change the series used for naming",
-      "removeFailed": "Could not remove the book from that series"
+      "removeFailed": "Could not remove the book from that series",
+      "keptOutHeading": "Kept out of",
+      "keptOutExplainer": "You took this book out of these series, so refreshes leave it out. Restore puts it back where it was.",
+      "restore": "Restore",
+      "restoreFailed": "Could not put the book back in that series"
     },
     "calibreChip": {
       "pending": "Waiting for Calibre",

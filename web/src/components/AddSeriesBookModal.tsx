@@ -67,11 +67,9 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
       setError('Select a book')
       return
     }
+    // A position is optional, as on the server: unnumbered series and
+    // omnibus volumes have none.
     const trimmedPosition = position.trim()
-    if (!trimmedPosition) {
-      setError('Position is required')
-      return
-    }
     setSaving(true)
     setError(null)
     try {
@@ -160,12 +158,11 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block text-sm">
-              <span className="block font-medium text-slate-700 dark:text-zinc-300 mb-1">Position</span>
+              <span className="block font-medium text-slate-700 dark:text-zinc-300 mb-1">Position (optional)</span>
               <input
                 type="text"
                 value={position}
                 onChange={e => setPosition(e.target.value)}
-                placeholder="1"
                 className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
               />
             </label>
@@ -193,7 +190,7 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
           </button>
           <button
             type="submit"
-            disabled={saving || !bookId || !position.trim()}
+            disabled={saving || !bookId}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-md text-sm font-medium"
           >
             {saving ? 'Adding...' : 'Add'}

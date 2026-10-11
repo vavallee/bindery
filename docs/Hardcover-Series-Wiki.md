@@ -111,6 +111,12 @@ The dialog previews every change, including books whose positions differ, before
 
 Undoing an import (ABS, Calibre) made before a merge does not take the merged books back out of the series you kept.
 
+## Fixing One Book's Series
+
+When one book is filed under the wrong series, or is missing its number, fix it from the book: **Edit metadata** has a **Series** field with the author's series, a position, and **New series…** to create one. Picking a series makes it the book's primary series and takes the book out of the one it was filed under; **No series** takes it out of every series it is in. A position is optional.
+
+A refresh does not put a book back into a series you took it out of, here or from the series page, even when the provider still lists it there or the series was merged into another. The book page lists those series with **Restore**, and **Unlock all fields** in Edit metadata hands the book's series back to refresh. Changing series is for admins.
+
 ## Known Behavior
 
 - Hardcover-backed controls require outbound HTTPS access to Hardcover.

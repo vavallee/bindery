@@ -166,6 +166,15 @@ export interface ReassignPreview {
   message?: string
 }
 
+// A series the user took a book out of (#2554), named as it is now (0 and ''
+// when the series no longer exists), with the position the book had.
+export interface BookSeriesExclusion {
+  seriesForeignId: string
+  seriesId: number
+  seriesTitle: string
+  position: string
+}
+
 export const booksApi = {
   // Metadata search
   searchAuthors: (term: string) => request<Author[]>(`/search/author?term=${encodeURIComponent(term)}`),
@@ -234,6 +243,7 @@ export const booksApi = {
   },
   getBook: (id: number) => request<Book>(`/book/${id}`),
   updateBook: (id: number, data: Partial<Book>) => request<Book>(`/book/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getBookSeriesExclusions: (id: number) => request<BookSeriesExclusion[]>(`/book/${id}/series-exclusions`),
   deleteBook: (id: number, deleteFiles = false) =>
     request<void>(`/book/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
   deleteBookFile: (id: number, queryParams = '') => request<Book>(`/book/${id}/file${queryParams}`, { method: 'DELETE' }),

@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -89,5 +92,34 @@ func TestCatalogueSync_MonitorsBooksReportedUnderAMergedSeriesID(t *testing.T) {
 	}
 	if links := linksForBook(t, f, got.ID); len(links) != 1 || links[0].seriesTitle != "Fjellserien" {
 		t.Errorf("links = %+v, want only Fjellserien", links)
+	}
+}
+
+// A book the user takes out of a series stays out: a refresh that still
+// reports it in that series does not put it back (#2554).
+func TestCatalogueSync_KeepsABookTheUserRemovedFromASeriesOut(t *testing.T) {
+	f := newSeriesLinkFixture(t, false)
+	ctx := context.Background()
+	book := f.addImportedBook(t, "OL1W", "Fjellvinden")
+	s := &models.Series{ForeignID: "OL-S-IMPERIAL-RADCH", Title: "Fjellserien"}
+	if err := f.series.CreateOrGet(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.series.LinkBook(ctx, s.ID, book.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+	h := NewSeriesHandler(f.series, f.books, f.authors, nil, nil)
+	id := strconv.FormatInt(s.ID, 10)
+	rec := httptest.NewRecorder()
+	h.RemoveBook(rec, withURLParams(httptest.NewRequest(http.MethodDelete, "/api/v1/series/"+id+"/books/"+strconv.FormatInt(book.ID, 10), nil),
+		map[string]string{"id": id, "bookId": strconv.FormatInt(book.ID, 10)}))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// seriesWork reports the book in that series again.
+	refreshCatalogue(t, f.handler(&stubMetaProvider{works: []models.Book{seriesWork("OL1W", "Fjellvinden", "1")}}), f.author)
+	if links := linksForBook(t, f, book.ID); len(links) != 0 {
+		t.Errorf("links = %+v, want the book kept out of the series it was removed from", links)
 	}
 }

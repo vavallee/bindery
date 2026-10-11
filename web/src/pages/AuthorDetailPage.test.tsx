@@ -1322,6 +1322,29 @@ describe('AuthorDetailPage: manual refresh', () => {
     expect(vi.mocked(api.getAuthor).mock.calls.length).toBe(calls)
   })
 
+  it('regroups by series after a refresh moves a book into one (#2554)', async () => {
+    // Grouped by series: before the refresh the book is in none, the refresh
+    // files it under one, and the page must regroup without a reload.
+    localStorage.setItem('bindery.group.author-detail.series', 'true')
+    const book = makeBook({ id: 7, title: 'Fjellvinden', status: 'imported' })
+    renderAuthorDetailPage([book], 'table')
+    await screen.findByRole('heading', { name: /Standalone/ })
+
+    vi.useFakeTimers()
+    const finishAt = Date.now() + 3000
+    const synced = () => Date.now() >= finishAt
+    vi.mocked(api.getAuthor).mockImplementation(async () => (synced() ? author : { ...author, syncInProgress: true }))
+    vi.mocked(api.listAuthorSeries).mockImplementation(async () => (synced()
+      ? [{ id: 3, foreignSeriesId: 's:3', title: 'Fjellserien', description: '', monitored: false, books: [{ seriesId: 3, bookId: 7, positionInSeries: '1' }] }]
+      : []))
+    vi.mocked(api.refreshAuthor).mockResolvedValue(undefined)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await advance(4000)
+    expect(screen.getByRole('heading', { name: /Fjellserien/ })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /Standalone/ })).toBeNull()
+  })
+
   it('gives up waiting after a minute and shows whatever the server has', async () => {
     renderAuthorDetailPage(oldBooks, 'grid', { description: 'Old bio' })
     await screen.findByRole('heading', { name: 'Ancillary Justice' })

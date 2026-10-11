@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest'
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { ModalHistoryProvider } from '../components/useModal'
@@ -41,6 +41,13 @@ vi.mock('../api/client', async importOriginal => {
     },
   }
 })
+
+// Series changes are admin only (#468); one test switches to another user.
+const authState = { isAdmin: true }
+vi.mock('../auth/AuthContext', async importOriginal => ({
+  ...await importOriginal<typeof import('../auth/AuthContext')>(),
+  useIsAdmin: () => authState.isAdmin,
+}))
 
 function renderSeriesPage(series: Series[], status: SystemStatus = { version: 'dev', commit: 'unknown', buildDate: '', enhancedHardcoverApi: true, hardcoverTokenConfigured: true }) {
   vi.mocked(api.listSeries).mockResolvedValue(series)
@@ -768,7 +775,7 @@ describe('SeriesPage', () => {
 
     expect(within(dialog).queryByText('Dune')).not.toBeInTheDocument()
     fireEvent.click(await within(dialog).findByLabelText(/Dune Messiah/))
-    fireEvent.change(within(dialog).getByLabelText('Position'), { target: { value: '2' } })
+    fireEvent.change(within(dialog).getByLabelText('Position (optional)'), { target: { value: '2' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add' }))
 
     await waitFor(() => expect(api.linkBookToSeries).toHaveBeenCalledWith(30, {
@@ -777,6 +784,29 @@ describe('SeriesPage', () => {
       primarySeries: true,
     }))
     expect(await screen.findByRole('link', { name: /Dune Messiah/ })).toHaveAttribute('href', '/book/102')
+  })
+
+  it('shows another user the series and what is missing, without the controls that need an admin', async () => {
+    authState.isAdmin = false
+    onTestFinished(() => { authState.isAdmin = true })
+    const hardcoverLink = {
+      id: 1, seriesId: 41, hardcoverSeriesId: 'hc-series:7', hardcoverProviderId: '7', hardcoverTitle: 'Fjellserien',
+      hardcoverAuthorName: 'Kari Nordmann', hardcoverBookCount: 2, confidence: 1, linkedBy: 'manual',
+      linkedAt: '2026-01-01T00:00:00Z', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+    }
+    vi.mocked(api.getSeriesHardcoverDiff).mockResolvedValue({
+      seriesId: 41, link: hardcoverLink, present: [],
+      missing: [{ foreignBookId: 'hc:fjellvinden', providerId: '8', title: 'Fjellvinden', position: '2', authorName: 'Kari Nordmann' }],
+      localOnly: [], uncertain: [], presentCount: 0, missingCount: 1,
+    })
+    renderSeriesPage([{ id: 41, foreignSeriesId: 'series-41', title: 'Fjellserien', description: '', monitored: false, books: [], hardcoverLink }])
+
+    fireEvent.click(await screen.findByRole('heading', { name: 'Fjellserien' }))
+    expect(await screen.findByText('Fjellvinden')).toBeInTheDocument()
+    for (const name of [/add series/i, /rename/i, /merge/i, /delete/i, /^add$/i, /add all/i, /add book/i]) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
+    }
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument()
   })
 
   it('adds only the selected Hardcover missing book from its row', async () => {

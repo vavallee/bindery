@@ -126,7 +126,9 @@ func TestSeriesForeignIDLookupsGoThroughResolver(t *testing.T) {
 	literal := regexp.MustCompile("(?s)`[^`]*`|\"(?:[^\"\\\\]|\\\\.)*\"")
 	seriesTable := regexp.MustCompile(`(?i)\b(?:FROM|JOIN|UPDATE|INTO)\s+series(?:[\s),]|$)`)
 	assignment := regexp.MustCompile(`(?i)\bSET\s+foreign_id\s*=`)
-	compares := regexp.MustCompile(`(?i)\bforeign_id\s*(?:=|!=|<>|\bIN\b|\bLIKE\b|\bIS\b)`)
+	// A lookup is equality, IN or LIKE; foreign_id != '' only filters out
+	// series without one.
+	compares := regexp.MustCompile(`(?i)\bforeign_id\s*(?:=|\bIN\b|\bLIKE\b)`)
 
 	files, err := filepath.Glob("*.go")
 	if err != nil {

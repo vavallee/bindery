@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import AuthorsPage from './AuthorsPage'
@@ -105,6 +105,17 @@ vi.mock('../components/usePagination', () => ({
   }),
 }))
 
+// Series changes are admin only (#468); a test switches to another user.
+const authState = { isAdmin: true }
+vi.mock('../auth/AuthContext', async importOriginal => ({
+  ...await importOriginal<typeof import('../auth/AuthContext')>(),
+  useIsAdmin: () => authState.isAdmin,
+}))
+const asAnotherUser = () => {
+  authState.isAdmin = false
+  onTestFinished(() => { authState.isAdmin = true })
+}
+
 vi.mock('../components/Pagination', () => ({ default: () => null }))
 
 describe('AuthorsPage', () => {
@@ -171,6 +182,17 @@ describe('AuthorsPage', () => {
     await waitFor(() => expect(api.listAuthors).toHaveBeenCalled())
     const arg = vi.mocked(api.listAuthors).mock.calls[0][0]
     expect(arg).toMatchObject({ limit: 50, offset: 0 })
+  })
+
+  it('offers another user no Add Series', async () => {
+    asAnotherUser()
+    render(
+      <MemoryRouter>
+        <AuthorsPage />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('button', { name: 'Add Author' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add Series' })).toBeNull()
   })
 
   it('creates a series from the authors toolbar and opens it on the series page', async () => {

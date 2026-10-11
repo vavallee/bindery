@@ -295,8 +295,19 @@ func (r *SeriesRepo) applyMerge(ctx context.Context, plan *SeriesMergePlan) erro
 		add("delete the merged series", `DELETE FROM series WHERE id = ?`, src.ID)
 		if keepAsAlias(src.ForeignID) {
 			add("alias the merged series' id", `INSERT INTO series_aliases (foreign_id, series_id) VALUES (?, ?)`, src.ForeignID, t)
+		} else if src.ForeignID != "" {
+			// Nothing resolves the id any more, so what was kept out of it
+			// has nothing left to stay out of.
+			add("drop the merged series' exclusions", `DELETE FROM book_series_exclusions WHERE series_foreign_id = ?`, src.ForeignID)
 		}
 	}
+	// A book the user took out of one series and that is in the target, or
+	// joined it now, is in the series the exclusion resolves to: forget it,
+	// or the book page lists it as kept out of a series it is in.
+	add("drop exclusions the merge made stale", `DELETE FROM book_series_exclusions
+		WHERE book_id IN (SELECT book_id FROM series_books WHERE series_id = ?)
+		  AND (series_foreign_id = (SELECT foreign_id FROM series WHERE id = ?)
+		       OR series_foreign_id IN (SELECT foreign_id FROM series_aliases WHERE series_id = ?))`, t, t, t)
 	add("update the series", `UPDATE series SET title = ?, monitored = ? WHERE id = ?`, plan.Title, boolToInt(plan.Monitored), t)
 	for _, st := range steps {
 		if _, err := r.exec.ExecContext(ctx, st.query, st.args...); err != nil {

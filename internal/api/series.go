@@ -499,7 +499,9 @@ func (h *SeriesHandler) RemoveBook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "series not found"})
 		return
 	}
-	if err := h.series.UnlinkBook(r.Context(), id, bookID); err != nil {
+	// The user is taking the book out of this series, so it is recorded: a
+	// refresh that still reports the book in it leaves it out (#2554).
+	if _, err := h.series.RemoveBookFromSeries(r.Context(), id, bookID); err != nil {
 		writeServerError(w, r, err)
 		return
 	}
