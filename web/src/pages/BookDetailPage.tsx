@@ -27,6 +27,7 @@ import EditBookModal from '../components/EditBookModal'
 import { formatBytes } from '../util/format'
 import MetadataLinksMenu from '../components/MetadataLinksMenu'
 import { usePolling } from '../components/usePolling'
+import { languageName } from '../util/language'
 
 function formatDuration(seconds?: number): string {
   if (!seconds || seconds <= 0) return ''
@@ -34,29 +35,6 @@ function formatDuration(seconds?: number): string {
   const m = Math.floor((seconds % 3600) / 60)
   if (h > 0) return `${h}h ${m}m`
   return `${m}m`
-}
-
-// Maps ISO-639 language codes (both 639-1 two-letter and 639-2/B three-letter
-// forms) to a full English name. Codes outside this short list fall back to the
-// raw code — indexers and metadata providers only reliably tag a few majors.
-const LANGUAGE_NAMES: Record<string, string> = {
-  en: 'English', eng: 'English',
-  fr: 'French', fre: 'French', fra: 'French',
-  de: 'German', ger: 'German', deu: 'German',
-  nl: 'Dutch', dut: 'Dutch', nld: 'Dutch',
-  es: 'Spanish', spa: 'Spanish',
-  it: 'Italian', ita: 'Italian',
-  pt: 'Portuguese', por: 'Portuguese',
-  ja: 'Japanese', jpn: 'Japanese',
-  zh: 'Chinese', chi: 'Chinese', zho: 'Chinese',
-  ru: 'Russian', rus: 'Russian',
-  tl: 'Tagalog', tgl: 'Tagalog',
-  id: 'Indonesian', ind: 'Indonesian',
-}
-
-function languageName(code?: string): string | null {
-  if (!code) return null
-  return LANGUAGE_NAMES[code.toLowerCase()] ?? code
 }
 
 /** Final path segment, for labelling row-level controls. */
