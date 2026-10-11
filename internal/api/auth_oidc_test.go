@@ -356,21 +356,24 @@ func TestCallback_EmailLink_LinksExistingUser(t *testing.T) {
 	t.Skip("requires full OIDC token signing setup; policy is covered by DB-level LinkOIDCSubject tests")
 }
 
-// TestOIDCHandler_LifetimeCtxFallsBackToBackground is the #846 follow-up
-// guard for the async Manager.Reload goroutine spawned by SetProviders.
-func TestOIDCHandler_LifetimeCtxFallsBackToBackground(t *testing.T) {
-	h := &OIDCHandler{}
-	if h.bgCtx() != context.Background() {
-		t.Error("bgCtx without WithLifetimeCtx must return context.Background()")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
+// TestOIDCHandler_ProviderReloadCancelsOnLifetimeCtx is the #846 guard for the
+// provider reload SetProviders starts (#1844): discovery runs on the lifetime
+// ctx, so shutdown ends it. The issuer never answers, and the test fails if
+// the spawn site goes back to context.Background().
+func TestOIDCHandler_ProviderReloadCancelsOnLifetimeCtx(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	idp := newHangingServer(t)
+
+	h, _ := newOIDCSetProvidersFixture(t)
+	lifetime, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h.WithLifetimeCtx(ctx)
-	if h.bgCtx() != ctx {
-		t.Error("bgCtx with WithLifetimeCtx must return the supplied ctx")
+	h.WithLifetimeCtx(lifetime)
+
+	body := `[{"id":"kc","name":"KC","issuer":"` + idp.URL + `","client_id":"abc","client_secret":"s","scopes":["openid"]}]`
+	rec := httptest.NewRecorder()
+	h.SetProviders(rec, jsonReq(http.MethodPut, "/api/v1/auth/oidc/providers", body, context.Background()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
-	h.WithLifetimeCtx(nil) //nolint:staticcheck // SA1012 testing nil-tolerance contract
-	if h.bgCtx() != ctx {
-		t.Error("WithLifetimeCtx(nil) must not clobber a previously installed ctx")
-	}
+	idp.waitCancelledBy(t, cancel)
 }

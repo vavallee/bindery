@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -1276,6 +1277,72 @@ func (s *ctxCapturingSearcher) SearchAndGrabBook(ctx context.Context, _ models.B
 	// is the production contract we are guarding: the searcher must observe
 	// cancellation rather than running on context.Background().
 	<-ctx.Done()
+}
+
+// waitCancelledBy waits for the searcher to be called, cancels the lifetime
+// ctx, and fails unless the spawned search sees that cancellation (#1844).
+func (s *ctxCapturingSearcher) waitCancelledBy(t *testing.T, cancel context.CancelFunc) {
+	t.Helper()
+	select {
+	case <-s.seen:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the search was not started within 2s")
+	}
+	cancel()
+	s.mu.Lock()
+	got := s.gotCtx
+	s.mu.Unlock()
+	select {
+	case <-got.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("the spawned search did not see the lifetime ctx cancelled")
+	}
+}
+
+// hangingServer answers no request: each one waits until its client gives up,
+// so a test can see whether cancelling a ctx ends an outbound call (#1844).
+type hangingServer struct {
+	*httptest.Server
+	started, cancelled chan struct{}
+	once1, once2       sync.Once
+}
+
+func newHangingServer(t *testing.T) *hangingServer {
+	t.Helper()
+	release := make(chan struct{})
+	h := &hangingServer{started: make(chan struct{}), cancelled: make(chan struct{})}
+	h.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The server only notices a client hanging up once the request body
+		// has been read, so a POST (a qBittorrent login) is drained first.
+		_, _ = io.Copy(io.Discard, r.Body)
+		h.once1.Do(func() { close(h.started) })
+		select {
+		case <-r.Context().Done():
+			h.once2.Do(func() { close(h.cancelled) })
+		case <-release:
+		}
+	}))
+	// Release any request still waiting before Close, so a regression fails
+	// the assertion instead of hanging the test in Close.
+	t.Cleanup(func() { close(release); h.Close() })
+	return h
+}
+
+// waitCancelledBy waits for a request to arrive, cancels the lifetime ctx,
+// and fails unless the request is abandoned because of it.
+func (h *hangingServer) waitCancelledBy(t *testing.T, cancel context.CancelFunc) {
+	t.Helper()
+	select {
+	case <-h.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no request reached the server within 5s")
+	}
+	cancel()
+	select {
+	case <-h.cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelling the lifetime ctx did not end the outbound request")
+	}
 }
 
 // TestBulkHandler_GoroutineCancelsOnLifetimeCtxCancel is the #846 regression

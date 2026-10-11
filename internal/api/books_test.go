@@ -1769,29 +1769,33 @@ func TestBookDeleteFile_PathContainment_RejectsOutsideRoots(t *testing.T) {
 	}
 }
 
-// TestBookHandler_LifetimeCtxFallsBackToBackground pins the bgCtx contract:
-// when WithLifetimeCtx is not called the auto-grab goroutine spawned on a
-// status flip to wanted runs against context.Background() (preserving legacy
-// behaviour for tests that construct the handler bare). When set, the spawn
-// uses the supplied lifetime ctx so Server.Shutdown can cancel it cleanly.
-// This is the #846 follow-up sweep that closed the four remaining handlers
-// that bypassed contextBackground via context.WithoutCancel.
-func TestBookHandler_LifetimeCtxFallsBackToBackground(t *testing.T) {
-	h := &BookHandler{}
-	if h.bgCtx() != context.Background() {
-		t.Error("bgCtx without WithLifetimeCtx must return context.Background()")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
+// TestBookHandler_StatusFlipSearchCancelsOnLifetimeCtx is the #846 guard for
+// the search a status flip to wanted starts (#1844): it runs on the lifetime
+// ctx, so shutdown cancels it. It drives the real Update path and fails if the
+// spawn site goes back to context.Background(). A later WithLifetimeCtx(nil)
+// must not clobber the installed ctx.
+func TestBookHandler_StatusFlipSearchCancelsOnLifetimeCtx(t *testing.T) {
+	searcher := newCtxCapturingSearcher()
+	h, books, author, ctx := bookFixtureWithSearcher(t, searcher)
+	lifetime, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h.WithLifetimeCtx(ctx)
-	if h.bgCtx() != ctx {
-		t.Error("bgCtx with WithLifetimeCtx must return the supplied ctx")
-	}
-	// Nil ctx must be tolerated (matches BulkHandler/AuthorHandler).
+	h.WithLifetimeCtx(lifetime)
 	h.WithLifetimeCtx(nil) //nolint:staticcheck // SA1012 testing nil-tolerance contract
-	if h.bgCtx() != ctx {
-		t.Error("WithLifetimeCtx(nil) must not clobber a previously installed ctx")
+
+	book := &models.Book{
+		ForeignID: "BLIFE", AuthorID: author.ID, Title: "Lifetime", SortTitle: "lifetime",
+		Status: models.BookStatusSkipped, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
 	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	id := strconv.FormatInt(book.ID, 10)
+	rec := httptest.NewRecorder()
+	h.Update(rec, withURLParam(httptest.NewRequest(http.MethodPut, "/api/v1/book/"+id, bytes.NewBufferString(`{"status":"wanted"}`)), "id", id))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	searcher.waitCancelledBy(t, cancel)
 }
 
 // TestParseMonitoredParam covers the #1349 Books-list monitored filter. Only

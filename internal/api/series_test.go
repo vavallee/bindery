@@ -2958,23 +2958,19 @@ func stormlightCatalog() *metadata.SeriesCatalog {
 	}
 }
 
-// TestSeriesHandler_LifetimeCtxFallsBackToBackground is the #846 follow-up
-// guard for fanOutSeriesSearches. Same contract as BookHandler.bgCtx().
-func TestSeriesHandler_LifetimeCtxFallsBackToBackground(t *testing.T) {
-	h := &SeriesHandler{}
-	if h.bgCtx() != context.Background() {
-		t.Error("bgCtx without WithLifetimeCtx must return context.Background()")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
+// TestSeriesHandler_FillSearchesCancelOnLifetimeCtx is the #846 guard for the
+// series fill fan-out (#1844): the searches run on the lifetime ctx, so
+// shutdown cancels them. It drives the real fan-out and fails if the spawn
+// site goes back to context.Background().
+func TestSeriesHandler_FillSearchesCancelOnLifetimeCtx(t *testing.T) {
+	searcher := newCtxCapturingSearcher()
+	h := &SeriesHandler{searcher: searcher}
+	lifetime, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h.WithLifetimeCtx(ctx)
-	if h.bgCtx() != ctx {
-		t.Error("bgCtx with WithLifetimeCtx must return the supplied ctx")
-	}
-	h.WithLifetimeCtx(nil) //nolint:staticcheck // SA1012 testing nil-tolerance contract
-	if h.bgCtx() != ctx {
-		t.Error("WithLifetimeCtx(nil) must not clobber a previously installed ctx")
-	}
+	h.WithLifetimeCtx(lifetime)
+
+	h.fanOutSeriesSearches(context.Background(), []models.Book{{ID: 1, Title: "Fjellvinden"}})
+	searcher.waitCancelledBy(t, cancel)
 }
 
 // lightNovelCatalog builds a Hardcover series catalog whose volume titles
