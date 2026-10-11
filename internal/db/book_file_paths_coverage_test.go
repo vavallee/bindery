@@ -230,19 +230,27 @@ func TestBookListSortOrders(t *testing.T) {
 	mk(zed.ID, "OL-SORT-1", "Apple", models.MediaTypeAudiobook, models.BookStatusWanted, "2001-01-01")
 	mk(amy.ID, "OL-SORT-2", "Banana", models.MediaTypeEbook, models.BookStatusSkipped, "2003-01-01")
 	mk(amy.ID, "OL-SORT-3", "Cherry", models.MediaTypeEbook, models.BookStatusImported, "2002-01-01")
+	// Apple stays unrated, so it sorts last in both rating orders.
+	for fid, rating := range map[string]float64{"OL-SORT-2": 4.5, "OL-SORT-3": 3.2} {
+		if _, err := database.ExecContext(ctx, `UPDATE books SET average_rating = ?, ratings_count = 10 WHERE foreign_id = ?`, rating, fid); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	cases := map[string][]string{
-		"":          {"Apple", "Banana", "Cherry"},
-		"title-za":  {"Cherry", "Banana", "Apple"},
-		"date-new":  {"Banana", "Cherry", "Apple"},
-		"date-old":  {"Apple", "Cherry", "Banana"},
-		"author-az": {"Banana", "Cherry", "Apple"},
-		"author-za": {"Apple", "Banana", "Cherry"},
-		"type-az":   {"Apple", "Banana", "Cherry"},
-		"type-za":   {"Banana", "Cherry", "Apple"},
-		"status-az": {"Cherry", "Banana", "Apple"},
-		"status-za": {"Apple", "Banana", "Cherry"},
-		"bogus":     {"Apple", "Banana", "Cherry"},
+		"":            {"Apple", "Banana", "Cherry"},
+		"title-za":    {"Cherry", "Banana", "Apple"},
+		"date-new":    {"Banana", "Cherry", "Apple"},
+		"date-old":    {"Apple", "Cherry", "Banana"},
+		"author-az":   {"Banana", "Cherry", "Apple"},
+		"author-za":   {"Apple", "Banana", "Cherry"},
+		"type-az":     {"Apple", "Banana", "Cherry"},
+		"type-za":     {"Banana", "Cherry", "Apple"},
+		"status-az":   {"Cherry", "Banana", "Apple"},
+		"status-za":   {"Apple", "Banana", "Cherry"},
+		"rating-asc":  {"Cherry", "Banana", "Apple"},
+		"rating-desc": {"Banana", "Cherry", "Apple"},
+		"bogus":       {"Apple", "Banana", "Cherry"},
 	}
 	for sort, want := range cases {
 		got, total, err := books.ListPageFiltered(ctx, BookListFilter{Sort: sort}, 10, 0)

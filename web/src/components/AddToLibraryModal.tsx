@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Author, Book } from '../api/client'
+import BookRating from './BookRating'
 import type { LibraryRequest } from '../api/client'
 import { useIsRequester } from '../auth/AuthContext'
 import { isbnFromQuery, resolveBookQuery } from '../api/booklookup'
@@ -253,6 +254,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
           {book.releaseDate && (
             <div className="text-xs text-slate-500 dark:text-zinc-600">{new Date(book.releaseDate).getFullYear()}</div>
           )}
+          <BookRating book={book} withCount className="block text-xs text-slate-500 dark:text-zinc-600" />
         </div>
         {book.libraryBookId ? (
           <div className="flex items-center gap-2 flex-shrink-0">

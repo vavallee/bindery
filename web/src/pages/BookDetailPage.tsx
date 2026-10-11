@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { api, BINDERY_BASE, Book, HistoryEvent, MediaType, SearchResult, SearchDebug, Series } from '../api/client'
 import SearchDebugPanel from '../components/SearchDebugPanel'
 import CoverPlaceholder from '../components/CoverPlaceholder'
+import BookRating from '../components/BookRating'
 import MarkdownDescription from '../components/MarkdownDescription'
 import MoreMenu from '../components/MoreMenu'
 import Section from '../components/Section'
@@ -944,6 +945,12 @@ function BookDetailPageInner() {
                 {t('bookDetail.languageUnknown')}
               </span>
             )}
+            {book.averageRating && book.averageRating > 0 ? (
+              <>
+                <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                <BookRating book={book} withCount className="text-slate-600 dark:text-zinc-400" />
+              </>
+            ) : null}
             {book.narrator && (
               <>
                 <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>

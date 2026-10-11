@@ -38,6 +38,9 @@ export interface Book {
   releaseDate?: string
   createdAt?: string
   genres: string[]
+  // Community rating from the metadata providers; 0 when none is known.
+  averageRating?: number
+  ratingsCount?: number
   monitored: boolean
   status: string
   filePath: string

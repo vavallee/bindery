@@ -244,7 +244,8 @@ type BookListFilter struct {
 	// Lets the Books page surface unmonitored/unwanted books (#1349).
 	Monitored *bool
 	// Sort is one of "title-az" (default), "title-za", "date-new", "date-old",
-	// "author-az", "author-za", "type-az", "type-za", "status-az", "status-za".
+	// "author-az", "author-za", "type-az", "type-za", "status-az", "status-za",
+	// "rating-asc", "rating-desc".
 	Sort string
 	// ReleaseFrom / ReleaseBefore bound release_date to [ReleaseFrom, ReleaseBefore)
 	// (ISO date strings; lexical compare works for ISO-8601). Used by the
@@ -308,6 +309,11 @@ func bookSortOrder(sort string) string {
 		return "books.status COLLATE NOCASE ASC, " + bookTitleOrder
 	case "status-za":
 		return "books.status COLLATE NOCASE DESC, " + bookTitleOrder
+	// Unrated books sort last in both directions, like NULL release dates.
+	case "rating-asc":
+		return "books.average_rating <= 0, books.average_rating ASC, " + bookTitleOrder
+	case "rating-desc":
+		return "books.average_rating <= 0, books.average_rating DESC, books.ratings_count DESC, " + bookTitleOrder
 	default:
 		return bookTitleOrder
 	}

@@ -1,0 +1,2 @@
+### Added
+- **Book ratings in the UI** (#3124). The community rating Bindery already stores for each book now shows on the book detail page, in the Books table and grid, in an author's book table and grid, and on book results in Add to Library. The Books table can be sorted by rating, with unrated books last. Hover a rating in a table or on a card to see how many ratings it is based on. OpenLibrary search results now carry a rating too.

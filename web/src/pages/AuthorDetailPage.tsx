@@ -19,6 +19,7 @@ import { canonicalLanguage, languageName } from '../util/language'
 import { btn, btnSize } from '../components/buttons'
 import Switch from '../components/Switch'
 import CoverPlaceholder from '../components/CoverPlaceholder'
+import BookRating from '../components/BookRating'
 import MoreMenu from '../components/MoreMenu'
 import Section from '../components/Section'
 import AuthorSyncNotice from '../components/AuthorSyncNotice'
@@ -801,6 +802,9 @@ export default function AuthorDetailPage() {
           </Link>
         </td>
         <td className="hidden sm:table-cell px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap align-middle">{fmtPublishedYear(book.releaseDate)}</td>
+        <td className="hidden md:table-cell px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap align-middle">
+          {book.averageRating && book.averageRating > 0 ? <BookRating book={book} /> : '—'}
+        </td>
         <td className="hidden sm:table-cell px-3 py-2 text-xs whitespace-nowrap align-middle">
           {mediaLabel(book.mediaType)}
         </td>
@@ -855,6 +859,7 @@ export default function AuthorDetailPage() {
               >
                 Published{sortArrow('date-old', 'date-new')}
               </th>
+              <th className="hidden md:table-cell md:w-24 text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">{t('books.colRating')}</th>
               <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Type</th>
               <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Status</th>
             </tr>
@@ -930,7 +935,10 @@ export default function AuthorDetailPage() {
               {/* No `book.releaseDate &&` guard: fmtPublishedYear already
                   returns an em dash for a missing date, so the conditional only
                   made the row appear and disappear between cards. */}
-              <p className="text-[10px] text-slate-600 dark:text-zinc-500 mt-auto">{fmtPublishedYear(book.releaseDate)}</p>
+              <p className="flex items-center justify-between gap-2 text-[10px] text-slate-600 dark:text-zinc-500 mt-auto">
+                <span>{fmtPublishedYear(book.releaseDate)}</span>
+                <BookRating book={book} />
+              </p>
             </div>
           </Link>
         </div>

@@ -517,10 +517,10 @@ describe('AuthorDetailPage', () => {
     expect(within(table).getByRole('columnheader', { name: 'Status' })).toBeInTheDocument()
 
     // Cells: [0]=row checkbox (bulk select), [1]=title+inline metadata,
-    // [2]=published year, [3]=type, [4]=status. Checkbox column was added
-    // for #791 bulk multi-select.
+    // [2]=published year, [3]=rating, [4]=type, [5]=status. Checkbox column
+    // was added for #791 bulk multi-select.
     const firefightCells = within(rowForTitle('Firefight')).getAllByRole('cell')
-    expect(firefightCells).toHaveLength(5)
+    expect(firefightCells).toHaveLength(6)
     expect(within(firefightCells[0]).getByRole('checkbox')).toBeInTheDocument()
     expect(firefightCells[1]).toHaveTextContent('Wanted')
     expect(firefightCells[1]).toHaveTextContent('📖 Ebook')
@@ -528,16 +528,16 @@ describe('AuthorDetailPage', () => {
     expect(firefightCells[1]).not.toHaveTextContent('2008-01-01')
     expect(firefightCells[2]).toHaveTextContent('2008')
     expect(firefightCells[2]).not.toHaveTextContent('2008-01-01')
-    expect(firefightCells[3]).toHaveTextContent('📖 Ebook')
-    expect(firefightCells[4]).toHaveTextContent('Wanted')
+    expect(firefightCells[4]).toHaveTextContent('📖 Ebook')
+    expect(firefightCells[5]).toHaveTextContent('Wanted')
 
     const snapshotCells = within(rowForTitle('Snapshot')).getAllByRole('cell')
     expect(snapshotCells[1]).toHaveTextContent('Skipped')
     expect(snapshotCells[1]).toHaveTextContent('🎧 Audiobook')
     expect(snapshotCells[1]).toHaveTextContent('2023')
     expect(snapshotCells[2]).toHaveTextContent('2023')
-    expect(snapshotCells[3]).toHaveTextContent('🎧 Audiobook')
-    expect(snapshotCells[4]).toHaveTextContent('Skipped')
+    expect(snapshotCells[4]).toHaveTextContent('🎧 Audiobook')
+    expect(snapshotCells[5]).toHaveTextContent('Skipped')
 
     const dualFormatCells = within(rowForTitle('Dual Format')).getAllByRole('cell')
     expect(dualFormatCells[1]).toHaveTextContent('Imported')
@@ -545,9 +545,9 @@ describe('AuthorDetailPage', () => {
     expect(dualFormatCells[1]).toHaveTextContent('2022')
     expect(dualFormatCells[1]).toHaveTextContent('Excluded')
     expect(dualFormatCells[2]).toHaveTextContent('2022')
-    expect(dualFormatCells[3]).toHaveTextContent('📖🎧 Both')
-    expect(dualFormatCells[4]).toHaveTextContent('Imported')
-    expect(dualFormatCells[4]).toHaveTextContent('Excluded')
+    expect(dualFormatCells[4]).toHaveTextContent('📖🎧 Both')
+    expect(dualFormatCells[5]).toHaveTextContent('Imported')
+    expect(dualFormatCells[5]).toHaveTextContent('Excluded')
   })
 
   it('bulk-excludes selected books via /book/bulk', async () => {
