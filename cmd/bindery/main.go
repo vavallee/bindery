@@ -430,6 +430,9 @@ func main() {
 	}
 	grimmoryPusher := grimmory.NewPusher(grimmoryLoadPushCfg, grimmoryPushRepo)
 	importScanner.WithGrimmory(grimmoryPusher)
+	// The library scan leaves the download folders out when a client saves
+	// inside a library root.
+	importScanner.WithDownloadDir(cfg.DownloadDir)
 	if cfg.AudiobookDownloadDir != "" {
 		importScanner.WithAudiobookDownloadDir(cfg.AudiobookDownloadDir)
 		slog.Info("audiobook download dir configured", "path", cfg.AudiobookDownloadDir)

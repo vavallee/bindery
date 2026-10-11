@@ -4,7 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/importer"
 )
 
 // unitNames returns the sorted basenames of the enumerated units.
@@ -223,5 +226,27 @@ func TestEnumerateImportUnits_UnreadableDirSkipped(t *testing.T) {
 	got := unitNames(units)
 	if len(got) != 1 || got[0] != "book.epub" {
 		t.Errorf("units = %v, want just [book.epub] (locked dir skipped)", got)
+	}
+}
+
+// Folder import leaves hidden and .binderyignore folders out, as the library
+// scan does: importing the library root must not offer a torrent client's
+// ".torrents" copies.
+func TestEnumerateImportUnits_SkipsHiddenAndIgnoredFolders(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"Kari Nordmann", ".torrents/Fjellvinden", "Scratch"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, dir, "Fjellvinden.epub"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "Scratch", importer.LibraryIgnoreFile), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	units, _ := enumerateImportUnits(root, 100, nil)
+	if len(units) != 1 || !strings.HasPrefix(units[0].path, filepath.Join(root, "Kari Nordmann")) {
+		t.Errorf("units = %+v, want only the book under Kari Nordmann", units)
 	}
 }

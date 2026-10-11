@@ -87,6 +87,15 @@ nothing populated the catalogue first. That list is where you can adopt them.
 The sequence that works is always: **populate the catalogue, then scan**. See
 [Bringing in an existing library](#bringing-in-an-existing-library) below.
 
+The scan leaves out folders that are not library content: any folder whose
+name starts with a dot (`.torrents`, `.Trash-1000`), any folder holding a
+`.binderyignore` file (an empty file is enough; everything under that folder
+is skipped), and the download folders (`BINDERY_DOWNLOAD_DIR`,
+`BINDERY_AUDIOBOOK_DOWNLOAD_DIR`) when they sit inside a library folder. The
+same goes for the check that skips searching for books you already have, and
+for importing a folder from **Import**. Entries an earlier scan listed from
+those folders disappear on the next scan.
+
 ### 2. Status and Monitored are two different switches
 
 Every book has a **status** — its acquisition lifecycle:

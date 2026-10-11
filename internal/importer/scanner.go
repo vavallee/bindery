@@ -100,9 +100,11 @@ type Scanner struct {
 	libraryDir           string
 	audiobookDir         string
 	audiobookDownloadDir string
-	absLib               absNotifier
-	absLibraryIDsFn      func() []string
-	notif                eventNotifier
+	// downloadDir is the general download folder; see WithDownloadDir.
+	downloadDir     string
+	absLib          absNotifier
+	absLibraryIDsFn func() []string
+	notif           eventNotifier
 	// unmatchedUnits stores the books a library scan could not match, for
 	// library adoption. Nil stores nothing (see WithUnmatchedUnits).
 	unmatchedUnits UnmatchedUnitStore
@@ -204,6 +206,14 @@ func (s *Scanner) destRenamer(ctx context.Context) *Renamer {
 	}
 	ebook, audiobook := ResolveNamingTemplates(ctx, s.settings)
 	return NewRenamerWithAudiobook(ebook, audiobook)
+}
+
+// WithDownloadDir sets the general download folder. The library scan leaves it
+// out when it sits inside a library root, as it does the audiobook download
+// folder.
+func (s *Scanner) WithDownloadDir(dir string) *Scanner {
+	s.downloadDir = dir
+	return s
 }
 
 // WithAudiobookDownloadDir records the separate audiobook download watch
@@ -2817,7 +2827,7 @@ func (s *Scanner) FindExisting(ctx context.Context, title, authorName, mediaType
 // later query from the parsed entries. See LibrarySnapshot for the staleness
 // contract.
 func (s *Scanner) SnapshotFinder() *LibrarySnapshot {
-	return NewLibrarySnapshot(s.libraryDir, s.audiobookDir)
+	return NewLibrarySnapshot(s.libraryDir, s.audiobookDir).WithExcluded(s.excludedLibraryDirs()...)
 }
 
 // normalizeTitle folds a title into the shared title-comparison alphabet
@@ -3491,17 +3501,93 @@ func (s *Scanner) ScanLibrary(ctx context.Context) {
 // linked folder inside the library is reported, not entered, exactly as
 // filepath.Walk does. A root that cannot be resolved (missing, unreadable)
 // is walked as given, so fn sees the same error it always did.
-func walkRoot(root string, fn filepath.WalkFunc) error {
+//
+// Folders that are not library content are not entered (see skipLibraryDir):
+// a hidden folder, a folder holding a .binderyignore file, and the excluded
+// folders, which are the download folders when a client saves inside a
+// library root. The root itself is always walked.
+func walkRoot(root string, excluded []string, fn filepath.WalkFunc) error {
+	skip := libraryDirSkipper(root, excluded)
+	visit := func(path string, info os.FileInfo, err error) error {
+		if err == nil && info.IsDir() && skip(path) {
+			return filepath.SkipDir
+		}
+		return fn(path, info, err)
+	}
 	resolved, err := filepath.EvalSymlinks(root)
 	if err != nil || resolved == filepath.Clean(root) {
-		return filepath.Walk(root, fn)
+		return filepath.Walk(root, visit)
 	}
 	return filepath.Walk(resolved, func(path string, info os.FileInfo, err error) error {
 		if rel, relErr := filepath.Rel(resolved, path); relErr == nil {
 			path = filepath.Join(root, rel)
 		}
-		return fn(path, info, err)
+		return visit(path, info, err)
 	})
+}
+
+// LibraryIgnoreFile marks a folder the library scan leaves alone, with
+// everything under it, like Audiobookshelf's .ignore and Plex's .plexignore.
+const LibraryIgnoreFile = ".binderyignore"
+
+// SkipLibraryDir reports whether a folder found while walking a library is
+// not library content: a hidden folder (".torrents", ".Trash-1000", a
+// client's ".incomplete"), or one holding a LibraryIgnoreFile. Torrents
+// saved into a hidden folder inside the library are the case this exists
+// for: their copies would otherwise be scanned as unmatched books, one click
+// from being imported or moved out of the client's folder.
+func SkipLibraryDir(dir string) bool {
+	if strings.HasPrefix(filepath.Base(dir), ".") {
+		return true
+	}
+	_, err := os.Lstat(filepath.Join(dir, LibraryIgnoreFile))
+	return err == nil
+}
+
+// libraryDirSkipper returns the folder test walkRoot applies below root:
+// SkipLibraryDir, plus the excluded folders, compared as given and resolved
+// so a download folder named through a symlink is still recognised.
+func libraryDirSkipper(root string, excluded []string) func(string) bool {
+	root = filepath.Clean(root)
+	skipped := make(map[string]bool, 2*len(excluded))
+	for _, dir := range excluded {
+		if dir == "" {
+			continue
+		}
+		skipped[filepath.Clean(dir)] = true
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			skipped[resolved] = true
+		}
+	}
+	return func(dir string) bool {
+		dir = filepath.Clean(dir)
+		if dir == root {
+			return false
+		}
+		if skipped[dir] || SkipLibraryDir(dir) {
+			return true
+		}
+		if len(skipped) > 0 {
+			if resolved, err := filepath.EvalSymlinks(dir); err == nil && skipped[resolved] {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// excludedLibraryDirs is what the library walks leave out besides hidden and
+// ignored folders: the download folders, so a client saving inside a library
+// root (a non-hidden layout such as /books/downloads) is not scanned as
+// library content.
+func (s *Scanner) excludedLibraryDirs() []string {
+	var out []string
+	for _, dir := range []string{s.downloadDir, s.audiobookDownloadDir} {
+		if dir != "" {
+			out = append(out, dir)
+		}
+	}
+	return out
 }
 
 // scanLibrary walks the library directory (and the separate audiobook directory
@@ -3533,7 +3619,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		var files []string
 		// walkRoot enters a root that is itself a symlink and reports paths
 		// under the configured root; links inside it are still not followed.
-		if err := walkRoot(root, func(path string, info os.FileInfo, err error) error {
+		if err := walkRoot(root, s.excludedLibraryDirs(), func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}

@@ -125,7 +125,7 @@ func TestLibrarySnapshot_SymlinkedRootIsWalked(t *testing.T) {
 func TestWalkRoot_ReportsConfiguredPaths(t *testing.T) {
 	root := symlinkedRootLibrary(t)
 	var got []string
-	if err := walkRoot(root, func(path string, info os.FileInfo, err error) error {
+	if err := walkRoot(root, nil, func(path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() {
 			got = append(got, path)
 		}
@@ -146,7 +146,7 @@ func TestWalkRoot_ReportsConfiguredPaths(t *testing.T) {
 	plain := t.TempDir()
 	writeFile(t, filepath.Join(plain, "a.epub"))
 	got = nil
-	_ = walkRoot(plain, func(path string, info os.FileInfo, err error) error {
+	_ = walkRoot(plain, nil, func(path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() {
 			got = append(got, path)
 		}
@@ -157,7 +157,7 @@ func TestWalkRoot_ReportsConfiguredPaths(t *testing.T) {
 	}
 	missing := filepath.Join(plain, "nope")
 	var sawErr bool
-	_ = walkRoot(missing, func(path string, _ os.FileInfo, err error) error {
+	_ = walkRoot(missing, nil, func(path string, _ os.FileInfo, err error) error {
 		if path == missing && err != nil {
 			sawErr = true
 		}

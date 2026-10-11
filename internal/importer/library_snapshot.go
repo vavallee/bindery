@@ -40,6 +40,7 @@ import (
 type LibrarySnapshot struct {
 	libraryDir   string
 	audiobookDir string
+	excluded     []string
 
 	mu    sync.Mutex
 	roots map[string][]libraryEntry
@@ -69,6 +70,14 @@ type libraryEntry struct {
 // only ever sees ebook queries never touches the audiobook root.
 func NewLibrarySnapshot(libraryDir, audiobookDir string) *LibrarySnapshot {
 	return &LibrarySnapshot{libraryDir: libraryDir, audiobookDir: audiobookDir}
+}
+
+// WithExcluded sets folders the walk leaves out, as the library scan does:
+// the download folders when a client saves inside a library root. Hidden and
+// ignored folders are left out regardless (see SkipLibraryDir).
+func (ls *LibrarySnapshot) WithExcluded(dirs ...string) *LibrarySnapshot {
+	ls.excluded = dirs
+	return ls
 }
 
 // findExistingMargin is how far the best file must lead a file of a different
@@ -332,7 +341,7 @@ func (ls *LibrarySnapshot) entriesFor(ctx context.Context, root string) ([]libra
 	if entries, ok := ls.roots[root]; ok {
 		return entries, true
 	}
-	entries, ok := walkLibraryEntries(ctx, root)
+	entries, ok := walkLibraryEntries(ctx, root, ls.excluded)
 	if !ok {
 		return nil, false
 	}
@@ -361,12 +370,12 @@ func (ls *LibrarySnapshot) entriesFor(ctx context.Context, root string) ([]libra
 //     ahead of supplement-class files, so FindExisting answers with a real
 //     container whenever one matches and falls back to a supplement only when
 //     nothing better does. Text-only and PDF-only libraries keep matching.
-func walkLibraryEntries(ctx context.Context, root string) ([]libraryEntry, bool) {
+func walkLibraryEntries(ctx context.Context, root string, excluded []string) ([]libraryEntry, bool) {
 	var entries []libraryEntry
 	audioDirs := make(map[string]bool)
 	// walkRoot enters a root that is itself a symlink, reporting paths under
 	// root as configured, so FindExisting's answer matches book_files rows.
-	_ = walkRoot(root, func(path string, info os.FileInfo, err error) error {
+	_ = walkRoot(root, excluded, func(path string, info os.FileInfo, err error) error {
 		if ctx.Err() != nil {
 			return filepath.SkipAll
 		}

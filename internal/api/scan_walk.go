@@ -73,7 +73,12 @@ func enumerateImportUnits(root string, limit int, skip func(path string, isDir b
 			full := filepath.Join(dir, name)
 			switch {
 			case e.IsDir():
-				subdirs = append(subdirs, full)
+				// Hidden and .binderyignore folders are not library content,
+				// as in the library scan: a torrent client's ".torrents"
+				// copies under the folder being imported stay out of it.
+				if !importer.SkipLibraryDir(full) {
+					subdirs = append(subdirs, full)
+				}
 			case importer.IsAudioFile(full):
 				audioFiles = append(audioFiles, full)
 			case importer.IsEbookFile(full):

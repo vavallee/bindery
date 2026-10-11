@@ -71,6 +71,13 @@ To import such a download, either rename one of the files at the source and retr
 | `BINDERY_LIBRARY_DIR` | Ebook library destination. |
 | `BINDERY_AUDIOBOOK_DIR` | Audiobook library destination. |
 
+A download folder can sit inside the library folder (for example
+`/data/audiobooks/.torrents`, so imports hardlink on the same filesystem and
+torrents keep seeding). The library scan leaves it out: it skips every folder
+whose name starts with a dot, the configured download folders, and any folder
+holding a `.binderyignore` file, so torrent copies are never listed as
+unmatched books or imported a second time.
+
 ## Default audiobook root folder
 
 Settings > Root Folders has two default pickers: **Default root folder** for ebooks and **Default audiobook root folder** for audiobooks. Either one takes priority over its env var, so you can leave `BINDERY_AUDIOBOOK_DIR` unset and choose the folder in the UI instead, which is handy on the Windows binary. Removing a root folder that is a default also clears that default, and Bindery falls back to the env var.
