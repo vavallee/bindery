@@ -291,12 +291,22 @@ func authorBookCount(a models.Author) int {
 // occurrence. primaryProvider is the normalized name of the configured primary
 // metadata provider; pass "" to disable the preference. Records with an empty
 // name pass through untouched. Output order follows the kept records' positions.
+//
+// A kept record that reports no work count takes the largest one its collapsed
+// duplicates reported. Identity and count are separate questions: the primary
+// provider's record must win the first, but Hardcover, DNB and Google Books
+// rarely answer the second, and dropping OpenLibrary's count with its record
+// left the add dialog with nothing to show beside the author.
 func dedupeAuthorsByName(authors []models.Author, primaryProvider string) []models.Author {
 	best := make(map[string]int)
+	maxCount := make(map[string]int)
 	for i := range authors {
 		key := canonicalAuthorKey(authors[i].Name)
 		if key == "" {
 			continue
+		}
+		if n := authorBookCount(authors[i]); n > maxCount[key] {
+			maxCount[key] = n
 		}
 		if j, ok := best[key]; !ok || betterAuthorRecord(authors[i], authors[j], primaryProvider) {
 			best[key] = i
@@ -306,7 +316,18 @@ func dedupeAuthorsByName(authors []models.Author, primaryProvider string) []mode
 	for i := range authors {
 		key := canonicalAuthorKey(authors[i].Name)
 		if key == "" || best[key] == i {
-			out = append(out, authors[i])
+			kept := authors[i]
+			if n := maxCount[key]; n > 0 && authorBookCount(kept) == 0 {
+				// A fresh struct, so the provider's own record is not written
+				// through a shared pointer.
+				stats := models.AuthorStats{}
+				if kept.Statistics != nil {
+					stats = *kept.Statistics
+				}
+				stats.BookCount = n
+				kept.Statistics = &stats
+			}
+			out = append(out, kept)
 		}
 	}
 	return out

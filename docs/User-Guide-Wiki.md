@@ -205,10 +205,15 @@ monitored.
 | **Library imports** (Calibre, Readarr, ABS, Goodreads CSV, author list) | Your existing catalogue — see the next section |
 
 **Add Author** and **Add Book** open the same dialog. Type an author name, a
-title, an ISBN or an ASIN and press Enter; the results list authors first, each
-followed by the books the provider attributes to them, with any remaining books
-under a *Books* divider. Which button you pressed only changes the placeholder.
-What you pick decides what happens next: an author row leads to the monitoring
+title, an ISBN or an ASIN and press Enter. The **All / Books / Authors** control
+under the search box picks what the results show: *Books* is a flat list of
+books, best title match first; *Authors* is author rows only; *All* lists
+authors first, each followed by the books the provider attributes to them, with
+any remaining books under a *Books* divider. **Add Book** opens on *Books*,
+**Add Author** on *Authors*, and the header search on *All*. Every search looks
+up both kinds, so switching views is instant, and each view shows how many
+results it holds. Which button you pressed otherwise only changes the
+placeholder. What you pick decides what happens next: an author row leads to the monitoring
 step (metadata profile, root folder, media type, monitor mode, auto-grab), a
 book row to the single-book step (cover, identifiers, format, search on add).
 Rows that already match something in your library say **In your library** with

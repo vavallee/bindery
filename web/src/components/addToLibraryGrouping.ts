@@ -10,6 +10,10 @@ export type AddResultRow =
   | { kind: 'book'; book: Book }
   | { kind: 'divider' }
 
+// Which kinds of result the list shows. 'all' is the grouped list; the other
+// two are flat lists of one kind, in the order the search returned them.
+export type AddResultFilter = 'all' | 'books' | 'authors'
+
 // The provider prefix of a foreign id ("dnb:123" gives "dnb"); ids without
 // one are OpenLibrary's bare "OL…A" form and get the empty prefix.
 function providerPrefix(id: string): string {
@@ -51,7 +55,12 @@ function bookBelongsTo(book: Book, author: Author, nameCounts: Map<string, numbe
 // Books that match no author row, or whose name matches several, are listed
 // after a divider, so a title search whose author did not come back from the
 // author endpoint is still reachable.
-export function groupAddResults(authors: Author[], books: Book[]): AddResultRow[] {
+//
+// A 'books' or 'authors' filter skips the grouping: the user asked for one
+// kind, so the backend's relevance order for that kind is the whole answer.
+export function groupAddResults(authors: Author[], books: Book[], filter: AddResultFilter = 'all'): AddResultRow[] {
+  if (filter === 'books') return books.map(book => ({ kind: 'book', book }))
+  if (filter === 'authors') return authors.map(author => ({ kind: 'author', author }))
   const idsByName = new Map<string, Set<string>>()
   authors.forEach((author, a) => {
     const n = foldForSearch(author.authorName)

@@ -817,3 +817,73 @@ func TestAggregator_ResolveBookByISBN_StillSkipsResultsWithoutAuthorID(t *testin
 		t.Errorf("expected nil when no provider has an author ForeignID, got %+v", got)
 	}
 }
+
+// The primary provider's record wins the collapse for its identity, but a
+// count only a duplicate reported is still the best available answer to "how
+// many books does this author have", so it rides along on the winner.
+func TestAggregator_SearchAuthors_KeepsBookCountFromCollapsedDuplicate(t *testing.T) {
+	stats := func(n int) *models.AuthorStats { return &models.AuthorStats{BookCount: n} }
+	hc := &mockProvider{name: "hardcover", searchAuthors: []models.Author{
+		{Name: "Patrick Rothfuss", ForeignID: "hc:patrick-rothfuss", MetadataProvider: "hardcover"},
+	}}
+	ol := &mockProvider{name: "openlibrary", searchAuthors: []models.Author{
+		{Name: "Rothfuss, Patrick", ForeignID: "OL1394865A", MetadataProvider: "openlibrary", Statistics: stats(23)},
+		{Name: "Patrick Rothfuss", ForeignID: "OL9999999A", MetadataProvider: "openlibrary", Statistics: stats(4)},
+	}}
+
+	got, err := newTestAggregator(hc, ol).SearchAuthors(context.Background(), "Patrick Rothfuss")
+	if err != nil {
+		t.Fatalf("SearchAuthors: %v", err)
+	}
+	if len(got) != 1 || got[0].ForeignID != "hc:patrick-rothfuss" {
+		t.Fatalf("Hardcover primary must keep the hc: identity, got %+v", got)
+	}
+	if got[0].Statistics == nil || got[0].Statistics.BookCount != 23 {
+		t.Errorf("BookCount: want the largest duplicate's 23, got %+v", got[0].Statistics)
+	}
+	// The provider's own slice must not be written through.
+	if hc.searchAuthors[0].Statistics != nil {
+		t.Errorf("the borrowed count leaked into the provider's record: %+v", hc.searchAuthors[0].Statistics)
+	}
+}
+
+func TestAggregator_SearchAuthors_KeepsWinnersOwnBookCount(t *testing.T) {
+	stats := func(n int) *models.AuthorStats { return &models.AuthorStats{BookCount: n} }
+	hc := &mockProvider{name: "hardcover", searchAuthors: []models.Author{
+		{Name: "Patrick Rothfuss", ForeignID: "hc:patrick-rothfuss", MetadataProvider: "hardcover", Statistics: stats(9)},
+	}}
+	ol := &mockProvider{name: "openlibrary", searchAuthors: []models.Author{
+		{Name: "Patrick Rothfuss", ForeignID: "OL1394865A", MetadataProvider: "openlibrary", Statistics: stats(23)},
+	}}
+
+	got, err := newTestAggregator(hc, ol).SearchAuthors(context.Background(), "Patrick Rothfuss")
+	if err != nil {
+		t.Fatalf("SearchAuthors: %v", err)
+	}
+	if len(got) != 1 || got[0].Statistics == nil || got[0].Statistics.BookCount != 9 {
+		t.Errorf("a winner that reports its own count keeps it, got %+v", got)
+	}
+}
+
+func TestAggregator_SearchAuthors_BorrowedBookCountKeepsWinnersOtherStats(t *testing.T) {
+	hc := &mockProvider{name: "hardcover", searchAuthors: []models.Author{
+		{Name: "Patrick Rothfuss", ForeignID: "hc:patrick-rothfuss", MetadataProvider: "hardcover", Statistics: &models.AuthorStats{AvailableBooks: 2}},
+	}}
+	ol := &mockProvider{name: "openlibrary", searchAuthors: []models.Author{
+		{Name: "Patrick Rothfuss", ForeignID: "OL1394865A", MetadataProvider: "openlibrary", Statistics: &models.AuthorStats{BookCount: 23}},
+	}}
+
+	got, err := newTestAggregator(hc, ol).SearchAuthors(context.Background(), "Patrick Rothfuss")
+	if err != nil {
+		t.Fatalf("SearchAuthors: %v", err)
+	}
+	if len(got) != 1 || got[0].Statistics == nil {
+		t.Fatalf("want one record with statistics, got %+v", got)
+	}
+	if got[0].Statistics.BookCount != 23 || got[0].Statistics.AvailableBooks != 2 {
+		t.Errorf("want the borrowed count beside the winner's own stats, got %+v", got[0].Statistics)
+	}
+	if hc.searchAuthors[0].Statistics.BookCount != 0 {
+		t.Errorf("the borrowed count was written through the provider's pointer: %+v", hc.searchAuthors[0].Statistics)
+	}
+}

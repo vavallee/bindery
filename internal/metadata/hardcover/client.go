@@ -1189,6 +1189,9 @@ type hcAuthor struct {
 	Slug  string   `json:"slug"`
 	Bio   string   `json:"bio"`
 	Image *hcImage `json:"image"`
+	// BooksCount is only set from a search document; the GraphQL author
+	// selections do not ask for it. 0 means unknown.
+	BooksCount int `json:"books_count"`
 }
 
 type hcContribution struct {
@@ -1351,6 +1354,7 @@ type hcAuthorSearchDocument struct {
 	Image       any    `json:"image"`
 	ImageURL    string `json:"image_url"`
 	CachedImage any    `json:"cached_image"`
+	BooksCount  any    `json:"books_count"`
 }
 
 type hcBookSearchEnvelope struct {
@@ -1484,12 +1488,14 @@ func authorSearchDocumentToAuthor(doc hcAuthorSearchDocument) (hcAuthor, bool) {
 	if bio == "" {
 		bio = strings.TrimSpace(doc.Description)
 	}
+	booksCount, _ := searchInt(doc.BooksCount)
 	return hcAuthor{
-		ID:    id,
-		Name:  name,
-		Slug:  slug,
-		Bio:   bio,
-		Image: searchImage(doc.Image, doc.ImageURL, doc.CachedImage),
+		ID:         id,
+		Name:       name,
+		Slug:       slug,
+		Bio:        bio,
+		Image:      searchImage(doc.Image, doc.ImageURL, doc.CachedImage),
+		BooksCount: booksCount,
 	}, true
 }
 
@@ -1825,6 +1831,9 @@ func (c *Client) toAuthor(a hcAuthor) models.Author {
 	}
 	if a.Image != nil {
 		au.ImageURL = a.Image.URL
+	}
+	if a.BooksCount > 0 {
+		au.Statistics = &models.AuthorStats{BookCount: a.BooksCount}
 	}
 	return au
 }

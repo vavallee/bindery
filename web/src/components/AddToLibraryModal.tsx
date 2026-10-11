@@ -6,6 +6,7 @@ import { useIsRequester } from '../auth/AuthContext'
 import { isbnFromQuery, resolveBookQuery } from '../api/booklookup'
 import { splitAuthorSearchResults } from './addAuthorTitleGuard'
 import { groupAddResults } from './addToLibraryGrouping'
+import type { AddResultFilter } from './addToLibraryGrouping'
 import AddAuthorConfirm from './AddAuthorConfirm'
 import { AuthorAddDefaults, loadAuthorAddDefaults } from './authorAddDefaults'
 import AddBookConfirm from './AddBookConfirm'
@@ -26,9 +27,9 @@ interface Props {
   // search hands its query over this way (#2551) so a miss in the library
   // becomes an add without retyping.
   initialQuery?: string
-  // Which button opened the dialog. Only the placeholder changes: the search
-  // itself always fans out to authors and books, because the user's intent is
-  // resolved by what they pick, not by what they said up front (#1227).
+  // Which button opened the dialog. It sets the placeholder and which results
+  // show first (books, authors, or both); the search itself always fans out to
+  // authors and books, so the other kind is one click away (#1227).
   mode?: 'author' | 'book'
   // For a requester, called once a request is sent (the confirm steps send a
   // request instead of adding).
@@ -64,6 +65,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
   const [authors, setAuthors] = useState<Author[]>([])
   const [hiddenAuthors, setHiddenAuthors] = useState<Author[]>([])
   const [showHidden, setShowHidden] = useState(false)
+  const [filter, setFilter] = useState<AddResultFilter>(mode === 'book' ? 'books' : mode === 'author' ? 'authors' : 'all')
   const [books, setBooks] = useState<Book[]>([])
   const [searched, setSearched] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -118,6 +120,9 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
         setHiddenAuthors([])
         setBooks(found)
         setSearchedISBN(isbnFromQuery(q))
+        // An identifier never returns an author, so the Authors view would
+        // hide the one result there is.
+        setFilter(f => (f === 'authors' ? 'books' : f))
       } else {
         let authorError: unknown = null
         let bookError: unknown = null
@@ -178,11 +183,19 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
       ? t('addToLibrary.searchPlaceholderBook')
       : t('addToLibrary.searchPlaceholder')
 
-  const rows = useMemo(
-    () => groupAddResults(showHidden ? [...authors, ...hiddenAuthors] : authors, books),
-    [showHidden, authors, hiddenAuthors, books],
+  const shownAuthors = useMemo(
+    () => (showHidden ? [...authors, ...hiddenAuthors] : authors),
+    [showHidden, authors, hiddenAuthors],
   )
+  const rows = useMemo(() => groupAddResults(shownAuthors, books, filter), [shownAuthors, books, filter])
   const hasRows = rows.length > 0
+  // The Books view has no author rows, so it has none to reveal either.
+  const hiddenCount = filter === 'books' ? 0 : hiddenAuthors.length
+  const filterOptions: { value: AddResultFilter; label: string; count: number | null }[] = [
+    { value: 'all', label: t('addToLibrary.filter.all'), count: null },
+    { value: 'books', label: t('addToLibrary.filter.books'), count: searched ? books.length : null },
+    { value: 'authors', label: t('addToLibrary.filter.authors'), count: searched ? shownAuthors.length : null },
+  ]
 
   const badgeClass = 'px-2 py-0.5 rounded-full bg-slate-300/70 dark:bg-zinc-700 text-[11px] font-medium text-slate-700 dark:text-zinc-300'
   const openClass = 'px-3 py-1 rounded text-xs font-medium border border-slate-400 dark:border-zinc-600 hover:bg-slate-200 dark:hover:bg-zinc-800'
@@ -331,6 +344,22 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
               </button>
             </div>
 
+            <div className="mt-3 flex flex-wrap gap-1" role="group" aria-label={t('addToLibrary.filter.label')}>
+              {filterOptions.map(({ value, label, count }) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={filter === value}
+                  onClick={() => setFilter(value)}
+                  className={`touch-target px-3 py-1 rounded-full text-xs font-medium border ${filter === value
+                    ? 'bg-emerald-600 border-emerald-600 text-white'
+                    : 'border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-zinc-800/60'}`}
+                >
+                  {label}{count !== null && ` (${count})`}
+                </button>
+              ))}
+            </div>
+
             <div className="mt-4 space-y-2 max-h-[50dvh] overflow-y-auto">
               {rows.map((row, i) => {
                 if (row.kind === 'author') return renderAuthorRow(row.author, i)
@@ -342,13 +371,13 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
                   </div>
                 )
               })}
-              {hiddenAuthors.length > 0 && !showHidden && (
+              {hiddenCount > 0 && !showHidden && (
                 <button
                   type="button"
                   onClick={() => setShowHidden(true)}
                   className="w-full px-3 py-2 rounded-md border border-slate-300 dark:border-zinc-700 text-xs font-medium text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-zinc-800/60 transition-colors"
                 >
-                  {t('addToLibrary.showHiddenResults', { count: hiddenAuthors.length })}
+                  {t('addToLibrary.showHiddenResults', { count: hiddenCount })}
                 </button>
               )}
               {partialError && (
@@ -357,7 +386,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
               {searchError && (
                 <p role="alert" className="text-sm text-red-700 dark:text-red-300 text-center py-4">{t('addToLibrary.searchError', { error: searchError })}</p>
               )}
-              {searched && !hasRows && hiddenAuthors.length === 0 && !searching && !searchError && (
+              {searched && !hasRows && hiddenCount === 0 && !searching && !searchError && (
                 <p className="text-sm text-fg-muted text-center py-4">{t('addToLibrary.noResults')}</p>
               )}
             </div>

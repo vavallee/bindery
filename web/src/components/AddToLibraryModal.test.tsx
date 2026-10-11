@@ -13,6 +13,10 @@ vi.mock('react-i18next', () => ({
         'addToLibrary.searchPlaceholderBook': 'Title, ISBN, or ASIN',
         'addToLibrary.searching': 'Searching...',
         'addToLibrary.booksDivider': 'Books',
+        'addToLibrary.filter.label': 'Show',
+        'addToLibrary.filter.all': 'All',
+        'addToLibrary.filter.books': 'Books',
+        'addToLibrary.filter.authors': 'Authors',
         'addToLibrary.select': 'Select',
         'addToLibrary.selectAuthor': 'Select {{name}}',
         'addToLibrary.selectBook': 'Select {{title}}',
@@ -198,7 +202,7 @@ describe('AddToLibraryModal - dialog contract', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('the mode hint only changes the placeholder', () => {
+  it('the mode hint sets the placeholder', () => {
     const { unmount } = render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} mode="author" />)
     expect(screen.getByPlaceholderText('Search by author name...')).toBeInTheDocument()
     unmount()
@@ -801,5 +805,101 @@ describe('AddToLibraryModal - selection and confirm steps', () => {
     expect(screen.queryByText(/^from /)).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Select Matt Dinniman' }))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+describe('AddToLibraryModal - result filter', () => {
+  const onClose = vi.fn()
+  const onAdded = vi.fn()
+
+  const filterButton = (name: RegExp) => within(screen.getByRole('group', { name: 'Show' })).getByRole('button', { name })
+  const rowKinds = () => screen.queryAllByTestId(/^add-result-(author|book)$/).map(r => r.getAttribute('data-testid'))
+  const searchIn = (placeholder: string, value: string) => {
+    fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value } })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.getSetting).mockRejectedValue(new Error('HTTP 404'))
+    vi.mocked(api.searchAuthors).mockResolvedValue([leGuin])
+    vi.mocked(api.searchBooks).mockResolvedValue([dune, dispossessed, lathe])
+  })
+
+  it('opens on All without a mode and keeps the grouped list', async () => {
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
+    expect(filterButton(/^All/)).toHaveAttribute('aria-pressed', 'true')
+    // The pills are short, so each needs the 44px touch hit area.
+    for (const name of [/^All/, /^Books/, /^Authors/]) expect(filterButton(name)).toHaveClass('touch-target')
+    typeAndSearch('le guin')
+    await waitFor(() => expect(screen.getByText('Dune')).toBeInTheDocument())
+    expect(rowKinds()).toEqual(['add-result-author', 'add-result-book', 'add-result-book', 'add-result-book'])
+  })
+
+  it('opens on Books from the book button and lists only books, in search order', async () => {
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} mode="book" />)
+    expect(filterButton(/^Books/)).toHaveAttribute('aria-pressed', 'true')
+    searchIn('Title, ISBN, or ASIN', 'le guin')
+    await waitFor(() => expect(screen.getByText('Dune')).toBeInTheDocument())
+
+    const rows = screen.getAllByTestId(/^add-result-(author|book)$/)
+    expect(rows.map(r => r.getAttribute('data-testid'))).toEqual(['add-result-book', 'add-result-book', 'add-result-book'])
+    // The backend's relevance order, not the author grouping, decides.
+    expect(within(rows[0]).getByText('Dune')).toBeInTheDocument()
+    expect(within(rows[1]).getByText('The Dispossessed')).toBeInTheDocument()
+    expect(within(rows[2]).getByText('The Lathe of Heaven')).toBeInTheDocument()
+    expect(screen.queryByRole('separator')).not.toBeInTheDocument()
+  })
+
+  it('opens on Authors from the author button and lists only authors', async () => {
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} mode="author" />)
+    expect(filterButton(/^Authors/)).toHaveAttribute('aria-pressed', 'true')
+    searchIn('Search by author name...', 'le guin')
+    await waitFor(() => expect(screen.getByText('Ursula K. Le Guin')).toBeInTheDocument())
+    expect(rowKinds()).toEqual(['add-result-author'])
+    expect(screen.queryByText('Dune')).not.toBeInTheDocument()
+  })
+
+  it('switches views without searching again', async () => {
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} mode="book" />)
+    searchIn('Title, ISBN, or ASIN', 'le guin')
+    await waitFor(() => expect(screen.getByText('Dune')).toBeInTheDocument())
+
+    fireEvent.click(filterButton(/^Authors/))
+    expect(rowKinds()).toEqual(['add-result-author'])
+    fireEvent.click(filterButton(/^All/))
+    expect(rowKinds()).toEqual(['add-result-author', 'add-result-book', 'add-result-book', 'add-result-book'])
+    expect(api.searchAuthors).toHaveBeenCalledTimes(1)
+    expect(api.searchBooks).toHaveBeenCalledTimes(1)
+  })
+
+  it('counts the results behind each view once a search has run', async () => {
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} mode="book" />)
+    expect(filterButton(/^Books/)).toHaveTextContent(/^Books$/)
+    searchIn('Title, ISBN, or ASIN', 'le guin')
+    await waitFor(() => expect(screen.getByText('Dune')).toBeInTheDocument())
+    expect(filterButton(/^Books/)).toHaveTextContent('Books (3)')
+    expect(filterButton(/^Authors/)).toHaveTextContent('Authors (1)')
+  })
+
+  it('leaves the hidden author prompt out of the Books view', async () => {
+    // "Dune" echoed back as an author whose top work is Frank Herbert: the
+    // title guard hides it, and Books has no author rows to reveal.
+    vi.mocked(api.searchAuthors).mockResolvedValue([author({ foreignAuthorId: 'OL-ECHO', authorName: 'Dune', disambiguation: 'Frank Herbert' })])
+    vi.mocked(api.searchBooks).mockResolvedValue([dune])
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} mode="book" />)
+    searchIn('Title, ISBN, or ASIN', 'dune')
+    await waitFor(() => expect(screen.getByTestId('add-result-book')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /hidden result/ })).not.toBeInTheDocument()
+    fireEvent.click(filterButton(/^All/))
+    expect(screen.getByRole('button', { name: /hidden result/ })).toBeInTheDocument()
+  })
+
+  it('moves an identifier search off the Authors view, where it can never match', async () => {
+    vi.mocked(api.lookupISBN).mockResolvedValue(dune)
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} mode="author" />)
+    searchIn('Search by author name...', '9780441478125')
+    await waitFor(() => expect(screen.getByText('Dune')).toBeInTheDocument())
+    expect(filterButton(/^Books/)).toHaveAttribute('aria-pressed', 'true')
   })
 })

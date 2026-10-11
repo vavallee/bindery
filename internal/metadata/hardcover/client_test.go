@@ -3150,3 +3150,37 @@ func TestSearchBooks_ExplicitNullContributionIsAnAuthor(t *testing.T) {
 		t.Errorf("Author = %+v, want Frank Herbert — a null role is the author, not a rejected credit", books[0].Author)
 	}
 }
+
+// The Hardcover author search document carries books_count; without it an
+// author row in the add dialog has no work count whenever Hardcover supplies
+// the record.
+func TestSearchAuthors_CarriesBookCount(t *testing.T) {
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		data := map[string]interface{}{
+			"search": map[string]interface{}{
+				"results": map[string]interface{}{
+					"hits": []map[string]interface{}{
+						{"document": map[string]interface{}{"id": 1, "name": "Brandon Sanderson", "slug": "brandon-sanderson", "books_count": 214}},
+						{"document": map[string]interface{}{"id": 2, "name": "Brandon Sanders", "slug": "brandon-sanders"}},
+					},
+				},
+			},
+		}
+		return gqlResponse(t, http.StatusOK, data), nil
+	})
+
+	authors, err := c.SearchAuthors(context.Background(), "Sanderson")
+	if err != nil {
+		t.Fatalf("SearchAuthors: %v", err)
+	}
+	if len(authors) != 2 {
+		t.Fatalf("expected 2 authors, got %d", len(authors))
+	}
+	if authors[0].Statistics == nil || authors[0].Statistics.BookCount != 214 {
+		t.Errorf("BookCount: want 214, got %+v", authors[0].Statistics)
+	}
+	// No count reported means unknown, not zero works.
+	if authors[1].Statistics != nil {
+		t.Errorf("an author without books_count must carry no statistics, got %+v", authors[1].Statistics)
+	}
+}

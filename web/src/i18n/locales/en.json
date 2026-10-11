@@ -1708,6 +1708,12 @@
     "searchPlaceholder": "Author, title, ISBN, or ASIN (for example, Le Guin, Dune, 9780441478125, B0DBJBFHGT)",
     "addBook": "Add Book",
     "booksDivider": "Books",
+    "filter": {
+      "label": "Show",
+      "all": "All",
+      "books": "Books",
+      "authors": "Authors"
+    },
     "partialError": "Some results could not be loaded: {{error}}",
     "selectAuthor": "Select {{name}}",
     "searching": "Searching…",
@@ -1720,7 +1726,7 @@
     "idMissing": "This result has no book ID and cannot be added",
     "topWork": "Top work:",
     "books": "up to {{count}} works",
-    "booksTooltip": "OpenLibrary's raw work count. The actual catalogue added will be smaller after deduplication, language filtering, and junk-title removal.",
+    "booksTooltip": "The metadata provider's raw work count. The actual catalogue added will be smaller after deduplication, language filtering, and junk-title removal.",
     "ratings": "{{count}} ratings",
     "resultProvider": "from {{provider}}",
     "noResults": "No results found",
