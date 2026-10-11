@@ -15,7 +15,7 @@ describe('lazy locale loading', () => {
     await i18nReady
     expect(i18n.hasResourceBundle('en', 'translation')).toBe(true)
     expect(localeLoader('en')).toBeUndefined()
-    for (const code of ['fr', 'de', 'es', 'nl', 'tl', 'id', 'ko']) {
+    for (const code of ['fr', 'de', 'es', 'nl', 'tl', 'id', 'ko', 'nb', 'sv']) {
       expect(localeLoader(code), code).toBeTypeOf('function')
     }
   })

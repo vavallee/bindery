@@ -181,7 +181,7 @@ Cover images are fetched and cached server-side under `<dataDir>/image-cache/` (
 - Full pagination, search, filter, and sort on every list page; preferences persist to `localStorage`.
 - Previous/Next navigation between authors on the author detail page, stepping through the list page you came from.
 - Previous/Next navigation between books, stepping through the list page you came from (Books, an author's own book list, or Wanted).
-- 8 languages — English, French, German, Dutch, Spanish, Filipino (Tagalog), Indonesian, Korean — auto-detected from the browser, override in Settings.
+- 10 languages: English, French, German, Dutch, Spanish, Filipino (Tagalog), Indonesian, Korean, Norwegian (Bokmål) and Swedish. Auto-detected from the browser, override in Settings.
 - **OPDS 1.2 catalogue** at `/opds/` for KOReader, Moon+ Reader, and other reading apps. Sign in with your Bindery username and password over HTTP Basic, or pass your API key as an `X-Api-Key` header or an `?apikey=` query parameter.
 
 **Packaging** — single Go binary with the React frontend embedded via `go:embed`. Distroless container, non-root by default, and a Helm chart that adds a read-only root filesystem, all capabilities dropped and a RuntimeDefault seccomp profile. Helm chart for ArgoCD / Flux. Pure-Go SQLite via `modernc.org/sqlite` — no CGO, no external database.

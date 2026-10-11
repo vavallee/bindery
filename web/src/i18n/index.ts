@@ -35,6 +35,19 @@ export const lazyLocales: BackendModule = {
   },
 }
 
+// Region tags need no mapping: i18next tries `de-DE`, then `de`, so `nb-NO`,
+// `sv-SE` and `sv-FI` already land on `nb` and `sv`. Norwegian is the one case
+// where the browser's base tag is not the bundle's: `no` is the macrolanguage
+// tag some browsers send, and `nn` is Nynorsk, which has no bundle of its own.
+// Nynorsk readers read Bokmål routinely (it is most of what Norwegian software
+// ships in), so both fall back to `nb` before English. The detected tag itself
+// is kept, so dates still format in the reader's own variant.
+export const FALLBACK_LNG = {
+  no: ['nb', 'en'],
+  nn: ['nb', 'en'],
+  default: ['en'],
+}
+
 // Reads from localStorage key 'bindery.lang' first, then falls back to the
 // browser's navigator.language. This mirrors the theme bootstrap so the first
 // paint is already in the right language, with no flash of English or of raw
@@ -63,7 +76,8 @@ export const i18nReady = i18n
     },
     // English is bundled above; the backend supplies everything else.
     partialBundledLanguages: true,
-    fallbackLng: 'en',
+    // `no` and `nn` fall back to `nb` first, see FALLBACK_LNG.
+    fallbackLng: FALLBACK_LNG,
     detection: {
       order: ['localStorage', 'navigator'],
       lookupLocalStorage: 'bindery.lang',
