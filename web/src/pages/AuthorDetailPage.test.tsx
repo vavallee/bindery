@@ -683,6 +683,31 @@ describe('AuthorDetailPage', () => {
     expect(screen.queryByText('Plain Ebook Wanted')).not.toBeInTheDocument()
   })
 
+  it('lists a partially owned dual-format book under Imported and counts it in library (#3132)', async () => {
+    renderAuthorDetailPage(
+      [
+        makeBook({
+          id: 621, title: 'Partly Owned', status: 'wanted', monitored: true,
+          mediaType: 'both', ebookFilePath: '/books/loop.epub', audiobookFilePath: '',
+        }),
+        makeBook({ id: 622, title: 'Nothing Owned', status: 'wanted', monitored: true, mediaType: 'both' }),
+      ],
+      'table',
+    )
+    await screen.findByText('Partly Owned')
+    const stats = await screen.findByTestId('author-stats')
+    expect(within(stats).getByText('In library').parentElement).toHaveTextContent('1')
+
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'imported' } })
+    expect(screen.getByText('Partly Owned')).toBeInTheDocument()
+    expect(screen.queryByText('Nothing Owned')).not.toBeInTheDocument()
+
+    // Still wanted too: one format is missing.
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'wanted' } })
+    expect(screen.getByText('Partly Owned')).toBeInTheDocument()
+    expect(screen.getByText('Nothing Owned')).toBeInTheDocument()
+  })
+
   it("includes 'both' books under either media-type chip (#1406)", async () => {
     renderAuthorDetailPage(
       [

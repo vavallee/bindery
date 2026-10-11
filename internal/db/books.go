@@ -234,7 +234,9 @@ type BookListFilter struct {
 	Search string
 	// Status restricts to books with that status. As a special case, "wanted"
 	// additionally requires monitored = 1 (an unmonitored book is not wanted),
-	// matching the old client-side filter. Empty disables the filter.
+	// matching the old client-side filter. "imported" (In Library) also matches a
+	// wanted book that has at least one tracked file, so a partially owned dual
+	// format book shows under both (#3132). Empty disables the filter.
 	Status string
 	// MediaType is "ebook" (matches ebook/both/unset, mirroring the UI default)
 	// or "audiobook" (matches audiobook/both). Any other value disables it.
@@ -352,12 +354,24 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 		}
 		searchOrder, rankArgs = bookSearchRank(folded)
 	}
-	if f.Status != "" {
+	switch f.Status {
+	case "":
+	case models.BookStatusImported:
+		// In Library means "owns at least one format", not "owns every format
+		// it wants". A dual format book with one file on disk is status
+		// 'wanted' (the other format is missing, #1634) yet is plainly in the
+		// library, so it matches here as well as under Wanted (#3132). EXISTS,
+		// not a JOIN, so a book with several tracked files is still one row and
+		// the total stays a book count. 'skipped' is a user decision and stays
+		// out whether or not a file exists.
+		where += " AND (books.status = ? OR (books.status = ? AND EXISTS (SELECT 1 FROM book_files bf WHERE bf.book_id = books.id)))"
+		args = append(args, models.BookStatusImported, models.BookStatusWanted)
+	case models.BookStatusWanted:
+		where += " AND books.status = ? AND books.monitored = 1"
+		args = append(args, f.Status)
+	default:
 		where += " AND books.status = ?"
 		args = append(args, f.Status)
-		if f.Status == models.BookStatusWanted {
-			where += " AND books.monitored = 1"
-		}
 	}
 	switch f.MediaType {
 	case "ebook":
