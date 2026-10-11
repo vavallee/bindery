@@ -1860,7 +1860,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		audiobookSource := downloadPath
 		usePerFile := false
 		if len(explicitFiles) > 0 {
-			src, perFile := s.resolveAudiobookSource(downloadPath, bookFiles)
+			src, perFile := s.resolveAudiobookSource(downloadPath, bookFiles, isTorrentOwnFolder(ctx))
 			usePerFile = perFile
 			if !perFile {
 				audiobookSource = src

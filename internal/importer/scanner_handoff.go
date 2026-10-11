@@ -600,7 +600,7 @@ func (s *Scanner) dropPlaceAudiobook(ctx context.Context, downloadPath string, b
 	source := downloadPath
 	usePerFile := false
 	if len(explicitFiles) > 0 {
-		src, perFile := s.resolveAudiobookSource(downloadPath, bookFiles)
+		src, perFile := s.resolveAudiobookSource(downloadPath, bookFiles, isTorrentOwnFolder(ctx))
 		usePerFile = perFile
 		if !perFile {
 			source = src

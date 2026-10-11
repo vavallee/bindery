@@ -316,7 +316,7 @@ func TestResolveTorrentFiles_RejectsMalformedNames(t *testing.T) {
 // root is NOT used.
 func TestResolveAudiobookSource_SingleFileReturnsFileItself(t *testing.T) {
 	s, _, _, _ := scannerFixture(t, t.TempDir())
-	got, perFile := s.resolveAudiobookSource("/data/downloads", []string{"/data/downloads/lone.m4b"})
+	got, perFile := s.resolveAudiobookSource("/data/downloads", []string{"/data/downloads/lone.m4b"}, false)
 	if perFile {
 		t.Fatal("single file: expected dir-based placement (perFile=false)")
 	}
@@ -333,7 +333,7 @@ func TestResolveAudiobookSource_CommonSubdirAcceptedAsSource(t *testing.T) {
 	got, perFile := s.resolveAudiobookSource("/data/downloads", []string{
 		"/data/downloads/MyBook/01.m4b",
 		"/data/downloads/MyBook/02.m4b",
-	})
+	}, false)
 	if perFile {
 		t.Fatal("common subdir: expected dir-based placement (perFile=false)")
 	}
@@ -351,7 +351,7 @@ func TestResolveAudiobookSource_SharedRootFallsBackToPerFile(t *testing.T) {
 	_, perFile := s.resolveAudiobookSource("/data/downloads", []string{
 		"/data/downloads/disc01.m4b",
 		"/data/downloads/disc02.m4b",
-	})
+	}, false)
 	if !perFile {
 		t.Fatal("issue #903: files at the shared root must fall back to per-file placement")
 	}

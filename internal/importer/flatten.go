@@ -21,10 +21,14 @@ var audioFlattenExtensions = map[string]bool{
 }
 
 // discDirPattern matches a directory component that names a disc, e.g.
-// "Disc 1", "Disk 02", "CD 3", "CD3", "Part 4", "Volume 2", "Vol. 3". The
-// number is captured. Matching is anchored loosely: the keyword can carry a
-// trailing label ("Disc 1 - Intro") as long as the number follows the keyword.
-var discDirPattern = regexp.MustCompile(`(?i)\b(?:disc|disk|cd|part|volume|vol)\.?\s*0*([0-9]{1,3})\b`)
+// "Disc 1", "Disk 02", "CD 3", "CD3", "Part 4", "Volume 2", "Vol. 3", and the
+// Norwegian and Danish "Del 2" (part). The number is captured. Matching is
+// anchored loosely: the keyword can carry a trailing label ("Disc 1 - Intro")
+// or follow the title ("Fjellvinden CD1", "Fjellvinden_Cd 01") as long as the
+// number follows the keyword. The keyword is bounded by anything but a letter
+// or digit rather than \b, because \b counts "_" as a word character and
+// release names often join the title and the disc with one.
+var discDirPattern = regexp.MustCompile(`(?i)(?:^|[^\p{L}\p{N}])(?:disc|disk|cd|part|del|volume|vol)\.?\s*0*([0-9]{1,3})(?:$|[^\p{L}\p{N}])`)
 
 // trackNumPattern matches a leading or keyword-introduced track number in a
 // file's base name, e.g. "Track 01.mp3", "Chapter 02.mp3", "01 - Title.mp3",

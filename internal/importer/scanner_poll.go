@@ -676,7 +676,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			if dl.Status == models.StateDownloading || dl.Status == models.StateGrabbed {
 				s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
 			}
-			s.tryImportQbittorrent(ctx, qb, client, &dl, downloadPath, bookFiles)
+			s.tryImportQbittorrent(withTorrentOwnFolder(ctx, qbitHasOwnFolder(torrent)), qb, client, &dl, downloadPath, bookFiles)
 		} else if isComplete && dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit {
 			// Bug #7: a previous import attempt failed (e.g. transient filesystem
 			// error, path mismatch). The torrent is still seeding so we have the
@@ -719,7 +719,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			if err := s.downloads.IncrementImportRetryCount(ctx, dl.ID); err != nil {
 				slog.Warn("failed to increment import retry count", "download_id", dl.ID, "error", err)
 			}
-			s.tryImportQbittorrent(ctx, qb, client, &dl, downloadPath, bookFiles)
+			s.tryImportQbittorrent(withTorrentOwnFolder(ctx, qbitHasOwnFolder(torrent)), qb, client, &dl, downloadPath, bookFiles)
 		} else if isFailed && dl.Status != models.StateFailed {
 			slog.Warn("download failed", "title", dl.Title, "state", torrent.State)
 			s.markDownloadFailed(ctx, &dl, "Torrent failed in qBittorrent")
@@ -861,7 +861,8 @@ func (s *Scanner) delugeFilesFor(ctx context.Context, dlc *deluge.Client, client
 // tryImportDeluge attempts to import a completed Deluge download. See
 // tryImportTransmission for the semantics of explicitFiles.
 func (s *Scanner) tryImportDeluge(ctx context.Context, dl *models.Download, downloadPath string, explicitFiles []string) {
-	s.tryImportInternal(ctx, dl, downloadPath, "deluge", safeRemoteID(dl.TorrentID), "", nil, explicitFiles)
+	// downloadPath is save path + torrent name: the torrent's own file or folder.
+	s.tryImportInternal(withTorrentOwnFolder(ctx, true), dl, downloadPath, "deluge", safeRemoteID(dl.TorrentID), "", nil, explicitFiles)
 }
 
 // checkRtorrentDownloads polls rTorrent for status changes.
@@ -1001,7 +1002,8 @@ func (s *Scanner) rtorrentFilesFor(ctx context.Context, rt *rtorrent.Client, cli
 // tryImportRtorrent attempts to import a completed rTorrent download. See
 // tryImportTransmission for the semantics of explicitFiles.
 func (s *Scanner) tryImportRtorrent(ctx context.Context, dl *models.Download, downloadPath string, explicitFiles []string) {
-	s.tryImportInternal(ctx, dl, downloadPath, "rtorrent", safeRemoteID(dl.TorrentID), "", nil, explicitFiles)
+	// downloadPath is d.base_path: the torrent's own file or folder.
+	s.tryImportInternal(withTorrentOwnFolder(ctx, true), dl, downloadPath, "rtorrent", safeRemoteID(dl.TorrentID), "", nil, explicitFiles)
 }
 
 // tryImportSABnzbd attempts to import a completed SABnzbd download into the library.
@@ -1475,7 +1477,14 @@ func hasDotDotSegment(p string) bool {
 // to fall back to per-file placement. This covers the shape where bookFiles
 // share no parent below the (shared) downloadPath, i.e. exactly the
 // dangerous case the issue describes.
-func (s *Scanner) resolveAudiobookSource(downloadPath string, bookFiles []string) (string, bool) {
+//
+// ownFolder says downloadPath is the torrent's own folder rather than the
+// client's shared save path (see withTorrentOwnFolder). Then the common
+// directory may be downloadPath itself and the folder is placed whole, as a
+// Transmission download already is. Without it a multi-disc torrent
+// ("Book/CD1/01.mp3", "Book/CD2/01.mp3") went to per-file placement, which
+// names each file by its base name and blocked the import on the collision.
+func (s *Scanner) resolveAudiobookSource(downloadPath string, bookFiles []string, ownFolder bool) (string, bool) {
 	if len(bookFiles) == 0 {
 		return downloadPath, false
 	}
@@ -1500,10 +1509,46 @@ func (s *Scanner) resolveAudiobookSource(downloadPath string, bookFiles []string
 	// root (the issue #903 shape) and moving downloadPath would catch
 	// unrelated siblings. Outside-downloadPath should never happen if the
 	// remap is consistent; treat the same way.
+	if common == cleanDownload && ownFolder {
+		return cleanDownload, false
+	}
 	if common == cleanDownload || !pathUnderDir(common, cleanDownload) {
 		return "", true
 	}
 	return common, false
+}
+
+// torrentOwnFolderKey marks a context whose download path is the torrent's
+// own folder; see withTorrentOwnFolder.
+type torrentOwnFolderKey struct{}
+
+// withTorrentOwnFolder marks ctx as importing from a download path that is the
+// torrent's own folder or file, not the client's shared save path. The
+// qBittorrent, Deluge and rTorrent pollers pass the torrent's content path;
+// only a qBittorrent torrent without a root folder reports its save path
+// there. Transmission passes the shared save path and never sets it.
+func withTorrentOwnFolder(ctx context.Context, own bool) context.Context {
+	if !own {
+		return ctx
+	}
+	return context.WithValue(ctx, torrentOwnFolderKey{}, true)
+}
+
+func isTorrentOwnFolder(ctx context.Context) bool {
+	v, _ := ctx.Value(torrentOwnFolderKey{}).(bool)
+	return v
+}
+
+// qbitHasOwnFolder reports whether a qBittorrent torrent's content path is a
+// folder of its own: anything but its save path, which is what qBittorrent
+// reports for a multi-file torrent added without a root folder.
+func qbitHasOwnFolder(t qbittorrent.Torrent) bool {
+	content := strings.TrimRight(strings.TrimSpace(t.ContentPath), `/\`)
+	if content == "" {
+		// resolveQbitContentPath fell back to save path + name.
+		return true
+	}
+	return content != strings.TrimRight(strings.TrimSpace(t.SavePath), `/\`)
 }
 
 // PerFileCollisionError reports that two files in one download would flatten
