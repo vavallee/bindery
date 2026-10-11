@@ -1,0 +1,2 @@
+### Security
+- **Built with Go 1.26.9.** The binaries and the container image move from Go 1.26.8 to 1.26.9, which fixes eleven standard library vulnerabilities that `govulncheck` reports as reachable from Bindery's code: nine in `net/http` (GO-2026-6603, 6605, 6609, 6610, 6611, 6612, 6613, 6617) and `net/textproto` (GO-2026-6608), one in `crypto/tls` (GO-2026-6607) and one in `os` (GO-2026-6604).
