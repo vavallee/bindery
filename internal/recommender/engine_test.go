@@ -2,6 +2,7 @@ package recommender
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -497,24 +498,41 @@ func TestEngine_Run_WithMonitoredAuthorProducesCandidate(t *testing.T) {
 	}
 }
 
+// TestEngine_WithClients checks the clients the setters wire are the ones a
+// run asks (#1846): the Hardcover wishlist always, and OpenLibrary's subjects
+// once the library is past the cold start. Pinning the stored instances
+// instead would still pass if Run stopped calling them.
 func TestEngine_WithClients(t *testing.T) {
 	f := newProfileFixtures(t)
+	ctx := context.Background()
+	if err := f.settings.Set(ctx, "recommendations.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	a := seedAuthor(t, f, "Kari Nordmann", "OLA1", true)
+	// Past the 20-book cold start, so genre scoring runs. Each book has its own
+	// genre: the profile's IDF is log(genres / books with the genre), which is
+	// only positive, and so only a top genre, for a genre on few books.
+	for i := 0; i < 20; i++ {
+		seedBook(t, f, a.ID, fmt.Sprintf("OLB%d", i), fmt.Sprintf("Bok %d", i), []string{fmt.Sprintf("genre %d", i)})
+	}
 	e := New(f.books, f.authors, f.series, f.recs, f.settings)
 
 	ol := &fakeSubjectFetcher{}
 	hc := &fakeWishlistFetcher{}
-
 	if ret := e.WithOLClient(ol); ret != e {
 		t.Error("WithOLClient should return the engine")
 	}
 	if ret := e.WithHCClient(hc); ret != e {
 		t.Error("WithHCClient should return the engine")
 	}
-	if e.olClient != ol {
-		t.Error("olClient not wired")
+	if err := e.Run(ctx, f.userID); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
-	if e.hcClient != hc {
-		t.Error("hcClient not wired")
+	if len(ol.called) == 0 {
+		t.Error("the wired OpenLibrary client was never asked for subjects")
+	}
+	if hc.called != 1 {
+		t.Errorf("the wired Hardcover client was asked %d times for the wishlist, want 1", hc.called)
 	}
 }
 

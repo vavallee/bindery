@@ -34,49 +34,71 @@ func (s *stubHCSyncer) Sync(_ context.Context) error {
 	return nil
 }
 
-// TestWithHistory verifies the optional history repo is assigned.
+// TestWithHistory checks the repo WithHistory wires is the one the scheduler
+// records into (#1846): a stalled download it gives up on leaves a history
+// event there. Pinning the stored pointer instead would pass with the
+// recording removed and fail on a harmless wrapper.
 func TestWithHistory(t *testing.T) {
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatalf("OpenMemory: %v", err)
 	}
 	defer database.Close()
+	ctx := context.Background()
+	downloads := db.NewDownloadRepo(database)
+	dl := &models.Download{GUID: "history-guid", Title: "Stalled Release", Status: models.DownloadStatusDownloading, Protocol: "torrent"}
+	if err := downloads.Create(ctx, dl); err != nil {
+		t.Fatalf("create: %v", err)
+	}
 
-	s := &Scheduler{}
+	s := &Scheduler{downloads: downloads, blocklist: db.NewBlocklistRepo(database)}
 	h := db.NewHistoryRepo(database)
 	s.WithHistory(h)
-	if s.history != h {
-		t.Fatal("WithHistory did not assign history repo")
+	s.handleStalledDownload(ctx, dl, nil, downloader.StallClientReported)
+
+	events, err := h.List(ctx)
+	if err != nil {
+		t.Fatalf("list history: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("no history recorded through the repo WithHistory wired")
 	}
 }
 
-// TestWithCalibreSyncer verifies the calibre syncer is stored.
-func TestWithCalibreSyncer(t *testing.T) {
-	s := &Scheduler{}
-	cs := &stubCalibreSyncer{}
+// TestOptionalSyncerJobsRunTheWiredSyncers checks each optional syncer wired
+// through its setter is the one its scheduled job calls (#1846): the Calibre
+// sync, the recommender and the Hardcover list sync each run once when their
+// job fires. Pinning the stored instance instead would still pass if the
+// scheduler stopped invoking them.
+func TestOptionalSyncerJobsRunTheWiredSyncers(t *testing.T) {
+	// The base jobs Start always registers come first, so the optional ones
+	// are the entries after them. Counting them from a bare scheduler keeps
+	// this test from hardcoding the number.
+	bare := &Scheduler{cron: cron.New(cron.WithSeconds())}
+	bare.Start()
+	base := len(bare.cron.Entries())
+	bare.Stop()
+
+	cs, rec, hc := &stubCalibreSyncer{}, &stubRecommender{}, &stubHCSyncer{}
+	s := &Scheduler{cron: cron.New(cron.WithSeconds())}
 	s.WithCalibreSyncer(cs)
-	if s.calibreSyncer != cs {
-		t.Fatal("WithCalibreSyncer did not assign")
-	}
-}
-
-// TestWithRecommender verifies the recommender engine is stored.
-func TestWithRecommender(t *testing.T) {
-	s := &Scheduler{}
-	r := &stubRecommender{}
-	s.WithRecommender(r)
-	if s.recommender != r {
-		t.Fatal("WithRecommender did not assign")
-	}
-}
-
-// TestWithHardcoverSyncer verifies the hardcover syncer is stored.
-func TestWithHardcoverSyncer(t *testing.T) {
-	s := &Scheduler{}
-	hc := &stubHCSyncer{}
+	s.WithRecommender(rec)
 	s.WithHardcoverSyncer(hc)
-	if s.hcSyncer != hc {
-		t.Fatal("WithHardcoverSyncer did not assign")
+	s.Start()
+	defer s.Stop()
+
+	ran := 0
+	for _, e := range s.cron.Entries() {
+		if int(e.ID) > base {
+			e.Job.Run()
+			ran++
+		}
+	}
+	if ran != 3 {
+		t.Fatalf("ran %d optional jobs, want 3 (one per wired syncer)", ran)
+	}
+	if cs.called != 1 || rec.called != 1 || hc.called != 1 {
+		t.Errorf("calls: calibre %d, recommender %d, hardcover %d; want 1 each", cs.called, rec.called, hc.called)
 	}
 }
 
