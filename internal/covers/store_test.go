@@ -107,3 +107,23 @@ func TestStore_ResolveRefusesEscapes(t *testing.T) {
 		t.Error("nil store resolved a reference")
 	}
 }
+
+// PutBytes stores in-memory art (embedded in an audio file or EPUB) under the
+// same reference a file with those bytes gets, with the same checks.
+func TestStore_PutBytes(t *testing.T) {
+	s := NewStore(t.TempDir())
+	fromFile, err := s.Put(writeTemp(t, "cover.jpg", jpegHeader))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromBytes, err := s.PutBytes(jpegHeader)
+	if err != nil || fromBytes != fromFile {
+		t.Errorf("PutBytes = %q, %v; want %q", fromBytes, err, fromFile)
+	}
+	if _, err := s.PutBytes([]byte("<html></html>")); !errors.Is(err, ErrNotImage) {
+		t.Errorf("PutBytes(html) err = %v, want ErrNotImage", err)
+	}
+	if _, err := s.PutBytes(make([]byte, MaxBytes+1)); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("PutBytes(oversize) err = %v, want ErrTooLarge", err)
+	}
+}

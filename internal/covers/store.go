@@ -98,6 +98,15 @@ func (s *Store) Put(src string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return s.PutBytes(body)
+}
+
+// PutBytes is Put for an image already in memory, such as cover art embedded
+// in an audio file or EPUB. The same sniffing and size cap apply.
+func (s *Store) PutBytes(body []byte) (string, error) {
+	if s == nil || s.dir == "" {
+		return "", errors.New("covers: store not configured")
+	}
 	if len(body) > MaxBytes {
 		return "", ErrTooLarge
 	}

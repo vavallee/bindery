@@ -22,6 +22,7 @@ import (
 	"unicode"
 
 	"github.com/vavallee/bindery/internal/calibre"
+	"github.com/vavallee/bindery/internal/covers"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/decision"
 	"github.com/vavallee/bindery/internal/downloader"
@@ -73,6 +74,16 @@ const (
 
 // Scanner checks for completed downloads and imports them into the library.
 type Scanner struct {
+	// covers stores cover art read from book files; nil disables it. See
+	// WithCoverStore.
+	covers *covers.Store
+	// noFileCover remembers files read for a cover that had none, keyed by
+	// path, so the library scan's backfill does not reread them every scan.
+	// See fillCoverFromFile.
+	noFileCover sync.Map
+	// readCover reads a file's cover art; nil uses readFileCover. Tests set
+	// it to count reads.
+	readCover    func(string) []byte
 	downloads    *db.DownloadRepo
 	clients      *db.DownloadClientRepo
 	books        *db.BookRepo
@@ -2241,6 +2252,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		if len(mergeSkippedFiles) > 0 {
 			historyMeta["skippedFiles"] = strings.Join(mergeSkippedFiles, ", ")
 		}
+		s.fillCoverFromFile(ctx, book, destDir)
 		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, historyMeta)
 		s.recordFixMatchMove(ctx, book, destDir)
 		s.notify(ctx, notifierEventBookImported, importedPayload(book, dl, models.MediaTypeAudiobook, destDir, mergeSkippedFiles))
@@ -2433,6 +2445,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// and move-mode cleanup would delete the source of the file that never
 		// landed. The terminal state is decided once, after the loop.
 		slog.Info("book imported", "title", book.Title, "path", destPath)
+		s.fillCoverFromFile(ctx, book, destPath)
 
 		if s.enqueueCalibreDelivery(ctx, book, dl, edition, destPath) {
 			calibreQueued = true
@@ -3948,6 +3961,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			return false
 		}
 		slog.Info("library scan: reconciled book", "title", b.Title, "path", path, "jw", jwScore)
+		s.fillCoverFromFile(ctx, b, registeredPath)
 		trackedPaths[filepath.Clean(registeredPath)] = true
 		if detectedFmt == models.MediaTypeAudiobook {
 			// Sibling tracks of a just-reconciled audiobook folder belong to
@@ -4162,6 +4176,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 					continue
 				}
 				slog.Info("library scan: reconciled book via ASIN", "asin", parsed.ASIN, "title", b.Title, "path", path)
+				s.fillCoverFromFile(ctx, b, registeredPath)
 				trackedPaths[filepath.Clean(registeredPath)] = true
 				if detectedFmt == models.MediaTypeAudiobook {
 					markAudioParent(cleanPath)
@@ -4219,6 +4234,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 					} else {
 						slog.Info("library scan: reconciled book via series position",
 							"series", parsed.Series, "position", parsed.SeriesNumber, "title", book.Title, "path", path)
+						s.fillCoverFromFile(ctx, book, registeredPath)
 						trackedPaths[filepath.Clean(registeredPath)] = true
 						if detectedFmt == models.MediaTypeAudiobook {
 							markAudioParent(cleanPath)
@@ -4338,6 +4354,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			return rankConflictCandidates(title, catalogue, catalogueByAuthor, filesSet, folderSet), reason
 		})
 
+	s.backfillFileCovers(ctx)
 	s.writeScanResult(ctx, len(foundFiles), reconciled, unmatched, alreadyTracked, tagReadFailed, units)
 }
 

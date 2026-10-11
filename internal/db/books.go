@@ -1446,6 +1446,22 @@ func (r *BookRepo) SetImageURL(ctx context.Context, id int64, imageURL string) e
 	return nil
 }
 
+// FillImageURL sets a book's cover only while it has none, and reports
+// whether it did. Covers read from a book's own file use it, so a provider
+// cover that lands between reading the book and writing the cover is kept.
+func (r *BookRepo) FillImageURL(ctx context.Context, id int64, imageURL string) (bool, error) {
+	res, err := r.exec.ExecContext(ctx, "UPDATE books SET image_url=?, updated_at=? WHERE id=? AND image_url=''",
+		imageURL, timeValueArg(time.Now().UTC()), id)
+	if err != nil {
+		return false, fmt.Errorf("fill book %d image_url: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("fill book %d image_url: %w", id, err)
+	}
+	return n > 0, nil
+}
+
 // ListWithLocalImagePath returns books whose image_url is an absolute
 // filesystem path rather than a URL, including excluded ones, so the #2564
 // startup repair can rewrite them. Nothing in Bindery wrote such a value to
@@ -1453,6 +1469,13 @@ func (r *BookRepo) SetImageURL(ctx context.Context, id int64, imageURL string) e
 // alongside the editions that did hold one.
 func (r *BookRepo) ListWithLocalImagePath(ctx context.Context) ([]models.Book, error) {
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE (books.image_url LIKE '/%' OR books.image_url LIKE '_:\\%') ORDER BY books.id", nil)
+}
+
+// ListWithFilesWithoutCover returns books that have at least one file on disk
+// but no cover, so the library scan can fill the cover from the file (see
+// importer.Scanner.WithCoverStore).
+func (r *BookRepo) ListWithFilesWithoutCover(ctx context.Context) ([]models.Book, error) {
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE books.image_url = '' AND EXISTS (SELECT 1 FROM book_files bf WHERE bf.book_id = books.id) ORDER BY books.id", nil)
 }
 
 // SetCalibreID stores the Calibre-assigned book id for the given Bindery

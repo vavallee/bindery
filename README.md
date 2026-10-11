@@ -158,7 +158,7 @@ Repeated provider searches use a bounded five-minute cache, and identical in-fli
 | [Audnex](https://api.audnex.us) | None | Audiobook narrator, duration, cover by ASIN |
 | [Audible](https://audible.com) | None | Supplemental audiobook author lookup — pulls ASINs OL/Hardcover miss |
 
-Cover images are fetched and cached server-side under `<dataDir>/image-cache/` (30-day TTL). Every `imageURL` is rewritten to `/api/v1/images?url=...` before leaving the server — the browser never contacts third-party image hosts directly.
+Cover images are fetched and cached server-side under `<dataDir>/image-cache/` (30-day TTL). A book no provider has a cover for takes one from its own file once imported: the art embedded in an M4B/MP3/FLAC or EPUB, or a `cover.jpg`/`folder.jpg` in a multi-file audiobook's folder. These are kept under `<dataDir>/covers/` and never replace a provider's cover. Every `imageURL` is rewritten to `/api/v1/images?url=...` before leaving the server — the browser never contacts third-party image hosts directly.
 
 **Discover** — personalised recommendations on the **Discover** page from multiple signals: next-in-series for what you're reading, new releases from monitored authors, genre similarity (≥ 20 books in library), OpenLibrary subject popular picks, and Hardcover wishlist cross-reference. Recency scoring is relative to the *median* publication year of your library, so backlist readers aren't penalised. Hard-filters owned, dismissed, excluded-author, wrong-language, sub-3.0-rated and omnibus titles, and drops anything under 50 ratings when nothing else vouches for it. Dismiss / exclude actions persist.
 

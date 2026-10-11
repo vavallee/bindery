@@ -484,6 +484,7 @@ func main() {
 	// but outside it, because the image cache evicts by age and these have
 	// no upstream to refetch from.
 	coverStore := covers.NewStore(filepath.Join(cfg.DataDir, "covers"))
+	importScanner.WithCoverStore(coverStore)
 	calibreImporter := calibre.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, settingsRepo).
 		WithRunTracking(calibreImportRunRepo, calibreSnapshotRepo, calibreProvenanceRepo).
 		WithSeries(seriesRepo).

@@ -48,12 +48,12 @@ func ReadEpubMetadata(path string) (EpubMetadata, error) {
 	}
 	defer func() { _ = zr.Close() }()
 
-	opfPath, err := epubOPFPath(zr)
+	opfPath, err := epubOPFPath(&zr.Reader)
 	if err != nil {
 		return EpubMetadata{}, err
 	}
 
-	opf := findZipFile(zr, opfPath)
+	opf := findZipFile(&zr.Reader, opfPath)
 	if opf == nil {
 		return EpubMetadata{}, fmt.Errorf("epub: opf %q not found in archive", opfPath)
 	}
@@ -133,7 +133,7 @@ func (c *cappedReader) Read(p []byte) (int, error) {
 
 // epubOPFPath reads META-INF/container.xml and returns the full-path of the
 // first rootfile (the OPF package document).
-func epubOPFPath(zr *zip.ReadCloser) (string, error) {
+func epubOPFPath(zr *zip.Reader) (string, error) {
 	f := findZipFile(zr, "META-INF/container.xml")
 	if f == nil {
 		return "", fmt.Errorf("epub: META-INF/container.xml missing")
@@ -261,7 +261,7 @@ func extractISBN(raw string) (isbn13, isbn10 string) {
 
 // findZipFile returns the zip entry whose name matches target (case-sensitive,
 // forward-slash), or nil.
-func findZipFile(zr *zip.ReadCloser, target string) *zip.File {
+func findZipFile(zr *zip.Reader, target string) *zip.File {
 	for _, f := range zr.File {
 		if f.Name == target {
 			return f

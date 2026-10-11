@@ -15,6 +15,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/bookhydrate"
+	"github.com/vavallee/bindery/internal/covers"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/indexer"
@@ -1432,7 +1433,11 @@ func preserveBookStateForMetadataMap(book *models.Book, target *models.Book) {
 	book.SortTitle = firstNonEmpty(target.SortTitle, target.Title)
 	book.OriginalTitle = target.OriginalTitle
 	book.Description = target.Description
-	book.ImageURL = target.ImageURL
+	// The new record's cover replaces the old one, except that a cover read
+	// from the user's own file survives a record that has none.
+	if target.ImageURL != "" || !covers.IsRef(book.ImageURL) {
+		book.ImageURL = target.ImageURL
+	}
 	book.ReleaseDate = target.ReleaseDate
 	book.Genres = target.Genres
 	if book.Genres == nil {
