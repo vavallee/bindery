@@ -2,6 +2,7 @@ package prowlarr
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -9,20 +10,48 @@ import (
 )
 
 // The Prowlarr client must route through the shared outbound-proxy transport
-// like the newznab search client that talks to the same hosts, so sync/test
-// calls honor BINDERY_OUTBOUND_PROXY instead of dialing Prowlarr directly.
-// With a proxy configured the transport is handed back untouched: the dial
-// targets the operator-trusted proxy, and a per-dial SSRF re-check there would
-// reject a LAN or loopback proxy and break every sync.
-func TestGuardedTransport_UsesProxyTransportWhenProxied(t *testing.T) {
+// like the newznab search client that talks to the same hosts, so sync and test
+// calls honor BINDERY_OUTBOUND_PROXY instead of dialing Prowlarr directly
+// (#1847). With a proxy configured, a real client call lands on the proxy. The
+// transport is used as it is there: the dial targets the operator-trusted
+// proxy, and a per-dial SSRF re-check would reject a LAN or loopback proxy and
+// break every sync, which this test's loopback proxy also covers.
+func TestClient_RoutesThroughOutboundProxy(t *testing.T) {
 	t.Cleanup(func() { _, _ = httpsec.ConfigureOutboundProxy("", "", true) })
-
-	if _, err := httpsec.ConfigureOutboundProxy("http://127.0.0.1:0", "", true); err != nil {
+	hit := make(chan string, 1)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case hit <- r.Host + r.URL.Path:
+		default:
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"version":"1.2.3"}`))
+	}))
+	defer proxy.Close()
+	if _, err := httpsec.ConfigureOutboundProxy(proxy.URL, "", true); err != nil {
 		t.Fatalf("ConfigureOutboundProxy: %v", err)
 	}
 
-	if got := guardedTransport(); got != httpsec.DefaultProxyTransport() {
-		t.Errorf("with a proxy configured, guardedTransport() must return the shared proxy transport unchanged; got %#v", got)
+	// The shared transport is built once per process, after startup has
+	// configured the proxy (see sharedGuardedTransport). Other tests in this
+	// package build it first without one, so this client gets the transport
+	// startup would have built with the proxy in place.
+	c := New("http://prowlarr.example:9696", "key")
+	c.http.Transport = guardedTransport()
+	version, err := c.Test(t.Context())
+	if err != nil {
+		t.Fatalf("Test through the proxy: %v", err)
+	}
+	if version != "1.2.3" {
+		t.Errorf("version = %q, want the answer the proxy relayed", version)
+	}
+	select {
+	case got := <-hit:
+		if got != "prowlarr.example:9696/api/v1/system/status" {
+			t.Errorf("proxy saw %q, want the Prowlarr status request", got)
+		}
+	default:
+		t.Error("the request did not go through the configured proxy")
 	}
 }
 
