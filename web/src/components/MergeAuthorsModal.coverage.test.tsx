@@ -69,6 +69,22 @@ describe('MergeAuthorsModal', () => {
     expect(within(target).queryByRole('option', { name: 'Ursula Le Guin' })).toBeNull()
   })
 
+  it('lists authors by last name, as the Authors page does (#2805)', () => {
+    const byLastName = [
+      { ...author(1, 'Andy Weir'), sortName: 'Weir, Andy' },
+      { ...author(2, 'Ursula K. Le Guin'), sortName: 'Le Guin, Ursula K.' },
+      { ...author(3, 'Iain Banks'), sortName: '' },
+      // Two rows with the same sort name are ordered by display name.
+      { ...author(4, 'Ursula Le Guin'), sortName: 'Le Guin, Ursula K.' },
+      { ...author(5, 'Ann Banks'), sortName: '' },
+    ]
+    render(<MergeAuthorsModal authors={byLastName} onClose={vi.fn()} onMerged={vi.fn()} />)
+    const { source } = selects()
+    // A row without a sort name falls back to its display name.
+    expect(within(source).getAllByRole('option').map(o => o.textContent)).toEqual(
+      ['—', 'Ann Banks', 'Iain Banks', 'Ursula K. Le Guin', 'Ursula Le Guin', 'Andy Weir'])
+  })
+
   it('preselects the target, previews the book count and alias, and merges after confirmation', async () => {
     const onClose = vi.fn()
     const onMerged = vi.fn()

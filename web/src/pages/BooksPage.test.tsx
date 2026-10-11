@@ -27,6 +27,8 @@ vi.mock('react-i18next', () => ({
         'books.sortTitleZA': 'Z-A',
         'books.sortNewest': 'Newest',
         'books.sortOldest': 'Oldest',
+        'books.sortAuthorAZ': 'Author A-Z',
+        'books.sortAuthorZA': 'Author Z-A',
         'books.typeLabel': 'Type:',
         'books.empty': 'No books in your library yet',
         'books.emptyHint':
@@ -142,6 +144,23 @@ afterEach(() => {
 })
 
 describe('BooksPage', () => {
+  // #2805: the server has always accepted author-az / author-za, but only the
+  // table's column header reached them, so the grid could not group by author.
+  it('sorts the grid by author from the sort menu', async () => {
+    const sorts: (string | null)[] = []
+    server.use(
+      http.get(apiUrl('/book'), ({ request }) => {
+        sorts.push(new URL(request.url).searchParams.get('sort'))
+        return HttpResponse.json({ items: [makeBook({ id: 1, title: 'Dune' })], total: 1, limit: 50, offset: 0 })
+      }),
+    )
+    renderBooksPage()
+    await waitFor(() => expect(sorts).toContain('title-az'))
+    fireEvent.click(screen.getByRole('button', { name: /Sort/ }))
+    fireEvent.click(await screen.findByRole('radio', { name: 'Author Z-A' }))
+    await waitFor(() => expect(sorts.at(-1)).toBe('author-za'))
+  })
+
   // #2669: with automatic grabbing off the server refuses a bulk search
   // instead of queueing it. This page ignored the response envelope entirely,
   // so it cleared the selection and reloaded as if the search had run.

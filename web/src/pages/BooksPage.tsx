@@ -330,6 +330,8 @@ export default function BooksPage() {
                 { value: 'title-za' as const, label: t('books.sortTitleZA') },
                 { value: 'date-new' as const, label: t('books.sortNewest') },
                 { value: 'date-old' as const, label: t('books.sortOldest') },
+                { value: 'author-az' as const, label: t('books.sortAuthorAZ') },
+                { value: 'author-za' as const, label: t('books.sortAuthorZA') },
               ]}
             />
           </FilterPopover>

@@ -40,8 +40,12 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
     return () => { cancelled = true }
   }, [sourceId])
 
+  // The catalogue's own order, by last name (sortName), so the picker lists
+  // authors as the page it was opened from does (#2805).
   const sorted = useMemo(
-    () => [...authors].sort((a, b) => a.authorName.localeCompare(b.authorName)),
+    () => [...authors].sort((a, b) =>
+      (a.sortName || a.authorName).localeCompare(b.sortName || b.authorName) ||
+      a.authorName.localeCompare(b.authorName)),
     [authors],
   )
   const target = useMemo(() => authors.find(a => a.id === targetId), [authors, targetId])
