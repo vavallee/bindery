@@ -468,8 +468,9 @@ func TestTransliterateQuery(t *testing.T) {
 // When the transliterated cascade finds nothing (mock returns total=0 for
 // everything here), BookSearch retries the whole cascade with the ORIGINAL
 // umlaut spelling to catch the minority of releases that keep the literal
-// umlaut. So the expected traffic is two passes: four transliterated tiers,
-// then four original-spelling tiers.
+// umlaut. Umlauts also decompose, so when that finds nothing too the cascade
+// runs a third time with the decomposed (NFD) spelling. Expected traffic:
+// four transliterated tiers, four original-spelling tiers, four decomposed.
 func TestBookSearch_TransliteratesUmlautQueries(t *testing.T) {
 	type captured struct{ t, q, title, author string }
 	var got []captured
@@ -485,8 +486,8 @@ func TestBookSearch_TransliteratesUmlautQueries(t *testing.T) {
 	if _, err := c.BookSearch(context.Background(), "Harry Potter und der Orden des Phönix", "Jürgen Müller", []int{7020}); err != nil {
 		t.Fatalf("BookSearch: %v", err)
 	}
-	if len(got) != 8 {
-		t.Fatalf("expected 4 transliterated + 4 retry tiers, got %d: %+v", len(got), got)
+	if len(got) != 12 {
+		t.Fatalf("expected 4 transliterated + 4 retry + 4 decomposed tiers, got %d: %+v", len(got), got)
 	}
 	want := []captured{
 		// Pass 1: transliterated (ASCII) spelling.
@@ -499,6 +500,11 @@ func TestBookSearch_TransliteratesUmlautQueries(t *testing.T) {
 		{"search", "Müller Harry Potter und der Orden des Phönix", "", ""},
 		{"search", "Jürgen Müller Harry Potter und der Orden des Phönix", "", ""},
 		{"search", "Harry Potter und der Orden des Phönix", "", ""},
+		// Pass 3: the decomposed spelling, fired only because pass 2 was empty.
+		{"book", "", norm.NFD.String("Harry Potter und der Orden des Phönix"), norm.NFD.String("Jürgen Müller")},
+		{"search", norm.NFD.String("Müller Harry Potter und der Orden des Phönix"), "", ""},
+		{"search", norm.NFD.String("Jürgen Müller Harry Potter und der Orden des Phönix"), "", ""},
+		{"search", norm.NFD.String("Harry Potter und der Orden des Phönix"), "", ""},
 	}
 	for i, w := range want {
 		if got[i] != w {
@@ -577,8 +583,9 @@ func TestBookSearch_NoRetryForAsciiTitle(t *testing.T) {
 
 // TestBookSearch_NoRetryForAccentedNonGermanTitle guards the invariant flagged in
 // the #1610 review: an accented but non-German title (é/ñ, which the query side
-// deliberately does NOT transliterate) must fire exactly one cascade, never the
-// umlaut retry. The gate is queryTitle != origTitle, and it stays false only
+// deliberately does NOT transliterate) must never fire the umlaut retry. It does
+// fire the decomposed (NFD) pass, since é and ñ decompose, so a search that
+// finds nothing costs two cascades: composed, then decomposed. The gate is queryTitle != origTitle, and it stays false only
 // because origTitle (via NormalizeQueryTitle) and TransliterateQuery both compose
 // to NFC first — so even a DECOMPOSED accented title compares equal and does not
 // double-query. Feeding NFD input here is the case that regresses if either NFC
@@ -600,8 +607,8 @@ func TestBookSearch_NoRetryForAccentedNonGermanTitle(t *testing.T) {
 	if _, err := c.BookSearch(context.Background(), title, author, []int{7020}); err != nil {
 		t.Fatalf("BookSearch: %v", err)
 	}
-	if n != 4 {
-		t.Fatalf("accented non-German title must fire exactly one 4-tier cascade "+
+	if n != 8 {
+		t.Fatalf("accented non-German title must fire one composed and one decomposed 4-tier cascade "+
 			"(no umlaut retry), got %d requests", n)
 	}
 }
@@ -1757,5 +1764,80 @@ func TestBookSearch_HTTP429AbortsFallThrough(t *testing.T) {
 	}
 	if got := hits.Load(); got != 1 {
 		t.Errorf("BookSearch sent %d requests after a 429, want 1", got)
+	}
+}
+
+// A tracker that stores a release title decomposed (NFD: "a" + U+030A for
+// "å") and matches query bytes literally answers no composed query, while the
+// author alone finds the release. When the composed passes find nothing, the
+// cascade runs once more with the decomposed spelling, and the decomposed
+// release title passes the tier relevance gate.
+func TestBookSearch_RetryFindsDecomposedReleaseTitle(t *testing.T) {
+	nfdTitle := norm.NFD.String("Fjellåsen - Kari Nordmann")
+	rss := `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel>
+<newznab:response offset="0" total="1"/>
+<item><title>` + nfdTitle + `</title><guid isPermaLink="true">nfd1</guid>
+<link>https://example.com/details/nfd1</link><pubDate>Mon, 10 Apr 2026 12:00:00 +0000</pubDate>
+<enclosure url="https://example.com/getnzb/nfd1" length="5242880" type="application/x-nzb"/>
+<newznab:attr name="category" value="3030"/></item>
+</channel></rss>`
+	var composed, decomposed int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Query()
+		raw := p.Get("title") + p.Get("q")
+		w.Header().Set("Content-Type", "application/xml")
+		// Byte matching: only a query carrying the combining ring finds it.
+		if strings.ContainsRune(raw, '\u030a') {
+			decomposed++
+			w.Write([]byte(rss))
+			return
+		}
+		composed++
+		w.Write([]byte(`<?xml version="1.0"?><rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response total="0"/></channel></rss>`))
+	}))
+	defer srv.Close()
+
+	c := testNew(srv.URL, "testkey")
+	results, err := c.BookSearch(context.Background(), "Fjellåsen", "Kari Nordmann", []int{3030})
+	if err != nil {
+		t.Fatalf("BookSearch: %v", err)
+	}
+	if composed != 4 {
+		t.Errorf("composed requests = %d, want one 4-tier cascade before the decomposed pass", composed)
+	}
+	if decomposed != 1 {
+		t.Errorf("decomposed requests = %d, want 1: tier 1 finds the release and passes the relevance gate", decomposed)
+	}
+	if len(results) != 1 || results[0].Title != nfdTitle {
+		t.Fatalf("results = %+v, want the decomposed release", results)
+	}
+}
+
+// A title and author with no decomposable letter ("ø" is a letter of its own
+// in Unicode, not o + a mark) never pay for the decomposed pass.
+func TestBookSearch_NoDecomposedPassWithoutDecomposableLetters(t *testing.T) {
+	var n int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(`<?xml version="1.0"?><rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel><newznab:response total="0"/></channel></rss>`))
+	}))
+	defer srv.Close()
+
+	c := testNew(srv.URL, "testkey")
+	if _, err := c.BookSearch(context.Background(), "Fjellsjøen", "Kari Nordmann", []int{3030}); err != nil {
+		t.Fatalf("BookSearch: %v", err)
+	}
+	if n != 4 {
+		t.Fatalf("requests = %d, want one 4-tier cascade and no decomposed pass", n)
+	}
+}
+
+// The tier relevance gate reads a decomposed release title as the composed one.
+func TestTitleHasRelevantResult_DecomposedReleaseTitle(t *testing.T) {
+	results := []SearchResult{{Title: norm.NFD.String("Fjellåsen - Kari Nordmann")}}
+	if !titleHasRelevantResult("Fjellåsen", results) {
+		t.Fatal("a decomposed release title was judged irrelevant to its composed book title")
 	}
 }

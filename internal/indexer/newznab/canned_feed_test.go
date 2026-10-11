@@ -62,6 +62,8 @@ func TestFoldForSigWordMatch(t *testing.T) {
 		"Die HÄSCHEN":   "die haeschen",
 		"Über Alles":    "ueber alles",
 		"Plain ASCII 1": "plain ascii 1",
+		// A decomposed release title (a + U+030A) reads as the composed one.
+		"Fjella\u030asen": "fjellåsen",
 	}
 	for in, want := range cases {
 		if got := foldForSigWordMatch(in); got != want {

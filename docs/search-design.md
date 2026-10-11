@@ -40,6 +40,16 @@ only means both are offered to someone who typed either spelling. The `unmatched
 
 Alphabet 1a is alphabet 1 with one deliberate disagreement: an ampersand expands to `" and "` here and is a separator in 1. Dedup asks whether two records are the same book, and providers send both spellings, so the two must reach one key. Alphabet 1 feeds `indexer.ContainsPhrase`, whose keyword side drops "and" as a stop word while the haystack side does not, so expanding there loses the hit. `TestDedupAndTitleMatchAlphabetsDifferOnAmpersand` pins the difference.
 
+Alphabet 5 is the one place Unicode form is varied on purpose. Every reduction
+composes to NFC before comparing, but an indexer compares the query with its
+own stored release titles, and some trackers store titles decomposed (NFD: `a` +
+U+030A for `å`) and match bytes literally, so no composed query ever finds
+them. `BookSearch` therefore runs its query cascade up to three times, stopping
+at the first that finds anything: transliterated, original spelling (when that
+differs), and decomposed (when that differs). A title with no decomposable
+letter never pays for the third. The results all come back through alphabet 1,
+which composes them again.
+
 Everything that folds a string for comparison should reach one of these seven.
 Two that did not, and what they cost:
 

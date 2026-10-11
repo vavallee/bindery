@@ -151,7 +151,10 @@ func ElideApostrophes(s string) string {
 // against the whole haystack, so collapsing punctuation to spaces would only
 // remove separators the substring test already tolerates.
 func foldForSigWordMatch(s string) string {
-	s = strings.ToLower(s)
+	// Composed first, as FoldForTitleMatch does, so a release title a tracker
+	// stores decomposed ("a" + U+030A for "å") holds the same words as the
+	// query's composed title.
+	s = strings.ToLower(norm.NFC.String(s))
 	s = strings.ReplaceAll(s, "'", "")
 	s = strings.ReplaceAll(s, "’", "")
 	return textutil.TransliterateUmlauts(s)

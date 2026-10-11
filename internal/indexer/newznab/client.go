@@ -352,6 +352,13 @@ func (c *Client) Search(ctx context.Context, query string, categories []int) ([]
 // gated on inequality, so titles without umlauts (the common case, and every
 // non-Latin script) never issue a second pass — the cost is one extra cascade
 // only for German titles that the ASCII form failed to find.
+//
+// Some trackers store a release title decomposed (NFD: "a" + U+030A instead of
+// "å") and match query bytes literally, so every composed query misses it while
+// the author alone finds it. When nothing has been found yet and the
+// decomposed spelling differs, the cascade runs once more with it. A title
+// with no decomposable letter (ASCII, "ø", "æ", most non-Latin scripts) never
+// pays for that pass.
 func (c *Client) BookSearch(ctx context.Context, title, author string, categories []int) ([]SearchResult, error) {
 	origTitle := primaryTitleForQuery(title)
 	origAuthor := norm.NFC.String(author)
@@ -374,7 +381,15 @@ func (c *Client) BookSearch(ctx context.Context, title, author string, categorie
 	if len(results) == 0 && (queryTitle != origTitle || queryAuthor != origAuthor) {
 		slog.Debug("indexer book search retry with original umlaut spelling",
 			"title", origTitle, "author", origAuthor)
-		return c.bookSearchTiers(ctx, origTitle, origAuthor, categories)
+		if results, err = c.bookSearchTiers(ctx, origTitle, origAuthor, categories); err != nil {
+			return nil, err
+		}
+	}
+	nfdTitle, nfdAuthor := norm.NFD.String(origTitle), norm.NFD.String(origAuthor)
+	if len(results) == 0 && (nfdTitle != origTitle || nfdAuthor != origAuthor) {
+		slog.Debug("indexer book search retry with decomposed (NFD) spelling",
+			"title", origTitle, "author", origAuthor)
+		return c.bookSearchTiers(ctx, nfdTitle, nfdAuthor, categories)
 	}
 	return results, nil
 }
