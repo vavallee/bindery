@@ -44,3 +44,19 @@ func TestMultiBookPackSpec(t *testing.T) {
 		}
 	})
 }
+
+// TestMultiBookPackSpec_FoundationSearch is #3224: the pack auto-grabbed for
+// Foundation is refused, the single book release from the same search is not,
+// and a pack is still allowed for a book that is itself a bundle.
+func TestMultiBookPackSpec_FoundationSearch(t *testing.T) {
+	foundation := models.Book{Title: "Foundation"}
+	if ok, _ := (MultiBookPackSpec{}).IsSatisfiedBy(Release{Title: "Foundation series by Isaac Asimov EPUB"}, foundation); ok {
+		t.Error("the Foundation series pack was accepted for the single book")
+	}
+	if ok, reason := (MultiBookPackSpec{}).IsSatisfiedBy(Release{Title: "Foundation: HarperVoyager edition by Isaac Asimov, Book 1 EPUB"}, foundation); !ok {
+		t.Errorf("the single book release was refused: %s", reason)
+	}
+	if ok, reason := (MultiBookPackSpec{}).IsSatisfiedBy(Release{Title: "The Foundation Collection Isaac Asimov .EPUB (11 Books)"}, models.Book{Title: "The Foundation Trilogy Omnibus"}); !ok {
+		t.Errorf("a pack was refused for a book that is a bundle: %s", reason)
+	}
+}

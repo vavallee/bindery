@@ -47,6 +47,19 @@ func TestNormalizeLanguageCode(t *testing.T) {
 		{"en-US", "eng"},
 		{"pt_BR", "por"},
 		{"zh-Hans", "chi"},
+		{"zh-Hant-TW", "chi"},
+		{"es-419", "spa"},
+		{"ca-valencia", "cat"},
+		{"xx-YY", "xx"},
+		// #3086. A hyphenated name the tables do not know is a whole value,
+		// not a code with a subtag: it is what gets stored, so cutting it at
+		// the hyphen would lose the rest.
+		{"Serbo-Croatian", "serbo-croatian"},
+		{"Old-English", "old-english"},
+		{"Old-High-German", "old-high-german"},
+		{"Old-High", "old-high"},
+		{"fil-PH", "fil"},
+		{"Haitian_Creole", "haitian_creole"},
 		{"de", "ger"},
 		// Already three-letter: passed through lowercased unchanged.
 		{"eng", "eng"},

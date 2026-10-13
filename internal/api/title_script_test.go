@@ -52,3 +52,30 @@ func TestTitleScript_GroupsCJKButNotHangul(t *testing.T) {
 		}
 	}
 }
+
+// The stored language is the normalised code while a caller may hold a
+// provider's spelling, so the majority script is read over books whose
+// language is the same language in any spelling (#3086).
+func TestMajorityTitleScript_NormalizesBothSides(t *testing.T) {
+	books := []models.Book{
+		{Title: "騎士団長殺し", Language: "jpn"},
+		{Title: "風の歌を聴け", Language: "jpn"},
+		{Title: "Murder of the Commendatore", Language: "eng"},
+	}
+	for _, tc := range []struct {
+		name  string
+		books []models.Book
+		lang  string
+		want  string
+	}{
+		{"stored eng, provider en", books, "en", "Latin"},
+		{"stored jpn, provider ja", books, "ja", "CJK"},
+		{"stored nor, provider nob", []models.Book{{Title: "Barrøy", Language: "nor"}, {Title: "Min kamp", Language: "nor"}}, "nob", "Latin"},
+		{"stored nob, provider nor", []models.Book{{Title: "Barrøy", Language: "nob"}}, "nor", "Latin"},
+		{"different language stays out", books, "swe", ""},
+	} {
+		if got := majorityTitleScript(tc.books, tc.lang); got != tc.want {
+			t.Errorf("%s: majorityTitleScript = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

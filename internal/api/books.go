@@ -554,7 +554,10 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 		book.LockField(models.BookFieldGenres)
 	}
 	if req.Language != nil {
-		book.Language = strings.TrimSpace(*req.Language)
+		// Stored in the same ISO 639-2/B form the providers write (#3086).
+		// Anything NormalizeLanguageCode does not recognise passes through
+		// lowercased, so a hand-typed code is never rejected or dropped.
+		book.Language = models.NormalizeLanguageCode(*req.Language)
 		book.LockField(models.BookFieldLanguage)
 	}
 	if req.ReleaseDate != nil {

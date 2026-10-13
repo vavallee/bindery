@@ -432,7 +432,7 @@ export default function QueuePage() {
                     type="checkbox"
                     checked={allSelected}
                     onChange={e => (e.target.checked ? selectAll() : clearSelection())}
-                    className="rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                    className="rounded-full border-slate-400 dark:border-zinc-600"
                   />
                   {t('queue.selectAll', 'Select all')}
                 </label>
@@ -448,7 +448,7 @@ export default function QueuePage() {
                         type="checkbox"
                         checked={bulkUnmonitor}
                         onChange={e => setBulkUnmonitor(e.target.checked)}
-                        className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                        className="rounded border-slate-400 dark:border-zinc-600"
                       />
                       {t('queue.alsoUnmonitor', 'Also stop monitoring these books')}
                     </label>
@@ -457,7 +457,7 @@ export default function QueuePage() {
                         type="checkbox"
                         checked={bulkDeleteFiles}
                         onChange={e => setBulkDeleteFiles(e.target.checked)}
-                        className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                        className="rounded border-slate-400 dark:border-zinc-600"
                       />
                       {t('queue.deleteFilesLabel', 'Delete downloaded files')}
                     </label>
@@ -499,7 +499,7 @@ export default function QueuePage() {
                     checked={selectedIds.has(item.id)}
                     onChange={() => toggleSelect(item.id)}
                     aria-label={t('queue.selectItem', { title: item.title, defaultValue: 'Select {{title}}' })}
-                    className="mr-3 shrink-0 rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                    className="mr-3 shrink-0 rounded-full border-slate-400 dark:border-zinc-600"
                   />
                   <div className="min-w-0 flex-1">
                     <h3 className="font-medium text-sm [overflow-wrap:anywhere] sm:truncate">{item.title}</h3>

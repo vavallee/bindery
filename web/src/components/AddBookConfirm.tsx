@@ -205,7 +205,7 @@ function AddBookForm({ book, searchedISBN, onBack, onClose, onAdded }: Props) {
               aria-label={t('addToLibrary.book.formatLabel')}
               value={mediaType}
               onChange={e => setMediaType(e.target.value)}
-              className="text-xs bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+              className="text-xs bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1"
               title={t('addToLibrary.book.formatHint')}
             >
               <option value="">{t('addToLibrary.book.defaultFormat')}</option>
@@ -220,7 +220,7 @@ function AddBookForm({ book, searchedISBN, onBack, onClose, onAdded }: Props) {
               type="checkbox"
               checked={searchOnAdd}
               onChange={e => setSearchOnAdd(e.target.checked)}
-              className="accent-emerald-500 mt-0.5 flex-shrink-0"
+              className="mt-0.5 flex-shrink-0"
             />
             <span>
               <span className="font-medium">{t('addToLibrary.book.autoSearchLabel')}</span>

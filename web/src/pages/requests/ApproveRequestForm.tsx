@@ -105,7 +105,7 @@ export default function ApproveRequestForm({ request, onApproved, onCancel }: Pr
         </div>
       </div>
       <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={searchOnAdd} onChange={e => setSearchOnAdd(e.target.checked)} className="accent-emerald-500" />
+        <input type="checkbox" checked={searchOnAdd} onChange={e => setSearchOnAdd(e.target.checked)} />
         {t('requests.admin.searchOnAdd')}
       </label>
       {error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{error}</p>}

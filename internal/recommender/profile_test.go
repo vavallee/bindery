@@ -377,4 +377,14 @@ func TestBuildProfile_MainGenreWeighsPositively(t *testing.T) {
 	if !topNGenres(p, 3)["crime"] {
 		t.Errorf("top 3 genres = %v, want the main genre among them (weights %v)", topNGenres(p, 3), p.GenreWeights)
 	}
+	// TF-IDF over the books: tf * ln(books / books with the genre) peaks for
+	// a genre on about a third of the books, so thriller (5 of 40) edges out
+	// crime (30 of 40), and both sit above romance (3 of 40). Checking the
+	// order, not only the signs, catches a formula that merely avoids
+	// negatives, such as abs(ln(genres / books with the genre)), which puts
+	// crime first and thriller at 0 (#3173 review).
+	w := p.GenreWeights
+	if !(w["thriller"] > w["crime"] && w["crime"] > w["romance"] && w["romance"] > w["history"]) {
+		t.Errorf("weights %v, want thriller > crime > romance > history", w)
+	}
 }

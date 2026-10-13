@@ -54,7 +54,7 @@ export default function FormatList({
                   type="checkbox"
                   checked={item.allowed}
                   onChange={() => toggle(item.quality)}
-                  className="rounded border-slate-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+                  className="rounded border-slate-300 dark:border-zinc-700"
                 />
                 <span className={item.allowed ? 'text-slate-800 dark:text-zinc-200' : 'text-slate-500 dark:text-zinc-500'}>
                   {item.quality}

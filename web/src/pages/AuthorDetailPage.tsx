@@ -68,8 +68,7 @@ const STATUS_FALLBACK: Record<Exclude<StatusFilter, ''>, string> = {
 
 const selectCls =
   'bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded ' +
-  'px-2 py-1 text-xs text-slate-800 dark:text-zinc-200 ' +
-  'focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
+  'px-2 py-1 text-xs text-slate-800 dark:text-zinc-200'
 
 const TODAY = new Date().toISOString().slice(0, 10)
 
@@ -823,7 +822,7 @@ export default function AuthorDetailPage() {
               type="checkbox"
               checked={selected.has(book.id)}
               onChange={() => toggleSelect(book.id)}
-              className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+              className="rounded border-slate-400 dark:border-zinc-600"
               aria-label={`Select ${book.title}`}
             />
           </label>
@@ -912,7 +911,7 @@ export default function AuthorDetailPage() {
                     type="checkbox"
                     checked={allVisibleSelected}
                     onChange={e => e.target.checked ? selectAllVisible() : clearSelection()}
-                    className="rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                    className="rounded border-slate-400 dark:border-zinc-600"
                     title={t('common.selectAllPage')}
                     aria-label={t('common.selectAllPage')}
                   />
@@ -962,7 +961,7 @@ export default function AuthorDetailPage() {
               type="checkbox"
               checked={selected.has(book.id)}
               onChange={() => toggleSelect(book.id)}
-              className={`rounded border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 ${selected.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
+              className={`rounded border-slate-400 dark:border-zinc-600 ${selected.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
               aria-label={`Select ${book.title}`}
             />
           </label>

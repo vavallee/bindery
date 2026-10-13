@@ -24,7 +24,7 @@ func TestTryImportInternal_OneHistoryEventPerDownload(t *testing.T) {
 	dlDir := t.TempDir()
 
 	for _, name := range []string{"book.azw3", "book.epub", "book.mobi"} {
-		if err := os.WriteFile(filepath.Join(dlDir, name), []byte("x"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dlDir, name), bookSized("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -108,7 +108,7 @@ func TestTryImportInternal_SingleFormatHistoryPathIsTheFile(t *testing.T) {
 	libDir := t.TempDir()
 	dlDir := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(dlDir, "book.epub"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dlDir, "book.epub"), bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -227,7 +227,7 @@ func TestTryImportInternal_PartialImportWritesNoImportedRow(t *testing.T) {
 	writeFiles := func(names ...string) string {
 		dir := t.TempDir()
 		for _, n := range names {
-			if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, n), bookSized("x"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 		}

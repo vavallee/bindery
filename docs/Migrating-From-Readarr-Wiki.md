@@ -31,6 +31,10 @@ For files already on disk, use **Library Scan**. It takes the author from your f
 
 Correcting matches works the way you are used to: Bindery's **Fix match** defaults to **Correct the match only**, which, like Readarr's fix match, only changes which book a file is linked to and leaves the file where it is (#2055). If you would rather have Bindery tidy the file into its own layout at the same time, pick **Also move and rename the file**; the confirmation step then names the destination path before anything moves.
 
+## If you ran unpackerr for Readarr
+
+Bindery does not talk to unpackerr the way Readarr did. Point an unpackerr **folder** watch at your torrent download folder instead, with `move_back = true` and `delete_original = false` (the torrent only keeps seeding in copy or hardlink mode); see [RAR-packed torrent releases](Storage-And-Hardlinks-Wiki.md#rar-packed-torrent-releases).
+
 ## Importing your Goodreads library (CSV)
 
 If you tracked your reading on Goodreads, you can seed Bindery's wanted list from a Goodreads library export. This is a one-shot migration aid — it is **not** a live sync. Bindery does not poll Goodreads; if you add books on Goodreads later, re-export and re-import.

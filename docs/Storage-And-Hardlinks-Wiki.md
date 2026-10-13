@@ -108,3 +108,16 @@ The override applies wherever Bindery decides an audiobook's location: regular i
 There is **no per-protocol download folder setting**, and you do not need one. Each download client (qBittorrent, SABnzbd, NZBGet) decides where it places completed files in its own configuration, so they are already separate.
 
 Point them at subfolders of a common root — for example `/data/downloads/torrents` and `/data/downloads/usenet` — set `BINDERY_DOWNLOAD_DIR` to that root, and Bindery reads each completed download from the path the client reports. Bindery accepts completed downloads anywhere at or under `BINDERY_DOWNLOAD_DIR`, so there is no need to consolidate them into one folder.
+
+## RAR-packed torrent releases
+
+Some releases, scene audiobooks especially, are packed as a RAR set: `Title.part1.rar`, `Title.part2.rar`… or `Title.rar`, `Title.r00`, `Title.r01`…. Bindery does not unpack archives. For Usenet that is never a problem, since SABnzbd and NZBGet unpack a job before they report it complete. For torrents, run an unpacker next to Bindery.
+
+[unpackerr](https://github.com/Unpackerr/unpackerr) is the usual choice. Point a **folder** watch at the torrent download folder with:
+
+- `move_back = true`, so the extracted files land in the torrent's own folder, where Bindery looks, rather than a sibling `_unpackerred` folder;
+- `delete_original = false`, so the archive stays. In copy or hardlink mode the torrent then keeps seeding; a moved torrent cannot seed anyway.
+
+A lighter alternative is qBittorrent's *Run external program on torrent finished* (Options → Downloads), with a command that runs `unrar x` on the torrent's first volume into the torrent's folder.
+
+While a completed download holds only an archive, the Queue shows it as waiting for the archive to be extracted. Bindery spends no import retries on it, and imports it as soon as the extracted files appear, without the archive volumes. What happens to the volumes depends on the import mode. In copy and hardlink mode they never go into the library and stay with the client, so seeding is unaffected. In **move** mode, which cannot seed anyway, a whole folder move (an audiobook folder, or a multi-disc or template-named flatten of its top level files) carries the volumes along with the folder into the library rather than deleting them. The exception is a per-file move, such as an ebook release or an audiobook placed file by file: only the book files move and the volumes stay in the download folder. Keeping `delete_original` off so the torrent keeps seeding only helps in copy or hardlink mode. If nothing extracts it within about 30 minutes, the download is blocked with a message naming the archive; once you have extracted it, use **Retry import** on the Queue page.

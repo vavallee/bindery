@@ -81,7 +81,7 @@ func TestTryImportInternal_AudiobookMergesIntoExistingEbookFolder(t *testing.T) 
 
 			// Import the ebook first — this creates the book's real folder.
 			ebookDownloadDir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(ebookDownloadDir, "book.epub"), []byte("epub-bytes"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(ebookDownloadDir, "book.epub"), bookSized("epub-bytes"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			ebookDL := &models.Download{
@@ -121,7 +121,7 @@ func TestTryImportInternal_AudiobookMergesIntoExistingEbookFolder(t *testing.T) 
 			// Now import the audiobook for the SAME book — this is the
 			// collision #1959 describes.
 			audioDownloadDir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(audioDownloadDir, "book.m4b"), []byte("m4b-bytes"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(audioDownloadDir, "book.m4b"), bookSized("m4b-bytes"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			audioDL := &models.Download{
@@ -216,7 +216,7 @@ func TestTryImportInternal_AudiobookMergeSkipsSameNamedFile(t *testing.T) {
 			}
 
 			ebookDownloadDir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(ebookDownloadDir, "book.epub"), []byte("epub-bytes"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(ebookDownloadDir, "book.epub"), bookSized("epub-bytes"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			ebookDL := &models.Download{
@@ -262,7 +262,7 @@ func TestTryImportInternal_AudiobookMergeSkipsSameNamedFile(t *testing.T) {
 			}
 
 			audioDownloadDir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(audioDownloadDir, "book.m4b"), []byte("m4b-bytes"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(audioDownloadDir, "book.m4b"), bookSized("m4b-bytes"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			audiobookCoverBytes := []byte("a completely different audiobook cover")
@@ -349,7 +349,7 @@ func TestTryImportInternal_AudiobookMergeIntoExistingSubdirectory(t *testing.T) 
 			}
 
 			ebookDownloadDir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(ebookDownloadDir, "book.epub"), []byte("epub-bytes"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(ebookDownloadDir, "book.epub"), bookSized("epub-bytes"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			ebookDL := &models.Download{
@@ -395,7 +395,7 @@ func TestTryImportInternal_AudiobookMergeIntoExistingSubdirectory(t *testing.T) 
 			}
 
 			audioDownloadDir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(audioDownloadDir, "book.m4b"), []byte("m4b-bytes"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(audioDownloadDir, "book.m4b"), bookSized("m4b-bytes"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			audioExtrasDir := filepath.Join(audioDownloadDir, "extras")
@@ -463,7 +463,7 @@ func TestTryImportInternal_AudiobookDoesNotMergeIntoStaleEbookRow(t *testing.T) 
 	}
 
 	ebookDownloadDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(ebookDownloadDir, "book.epub"), []byte("epub-bytes"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(ebookDownloadDir, "book.epub"), bookSized("epub-bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ebookDL := &models.Download{
@@ -497,7 +497,7 @@ func TestTryImportInternal_AudiobookDoesNotMergeIntoStaleEbookRow(t *testing.T) 
 	}
 
 	audioDownloadDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(audioDownloadDir, "book.m4b"), []byte("m4b-bytes"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(audioDownloadDir, "book.m4b"), bookSized("m4b-bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	audioDL := &models.Download{
@@ -560,7 +560,7 @@ func TestTryImportInternal_AudiobookTemplateFlattenDoesNotMerge(t *testing.T) {
 	}
 
 	ebookDownloadDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(ebookDownloadDir, "book.epub"), []byte("epub-bytes"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(ebookDownloadDir, "book.epub"), bookSized("epub-bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ebookDL := &models.Download{
@@ -598,7 +598,7 @@ func TestTryImportInternal_AudiobookTemplateFlattenDoesNotMerge(t *testing.T) {
 	}
 
 	audioDownloadDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(audioDownloadDir, "book.m4b"), []byte("m4b-bytes"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(audioDownloadDir, "book.m4b"), bookSized("m4b-bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	audioDL := &models.Download{
@@ -667,7 +667,7 @@ func TestTryImportInternal_MergeRollbackDoesNotDeleteEbook(t *testing.T) {
 			}
 
 			ebookDownloadDir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(ebookDownloadDir, "book.epub"), []byte("epub-bytes"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(ebookDownloadDir, "book.epub"), bookSized("epub-bytes"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			ebookDL := &models.Download{
@@ -699,7 +699,7 @@ func TestTryImportInternal_MergeRollbackDoesNotDeleteEbook(t *testing.T) {
 			}
 
 			audioDownloadDir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(audioDownloadDir, "book.m4b"), []byte("m4b-bytes"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(audioDownloadDir, "book.m4b"), bookSized("m4b-bytes"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			audioDL := &models.Download{
@@ -726,7 +726,7 @@ func TestTryImportInternal_MergeRollbackDoesNotDeleteEbook(t *testing.T) {
 			if _, err := os.Stat(ebookPath); err != nil {
 				t.Fatalf("the co-located ebook was deleted by the failed audiobook import's rollback: %v", err)
 			}
-			if got, err := os.ReadFile(ebookPath); err != nil || string(got) != "epub-bytes" {
+			if got, err := os.ReadFile(ebookPath); err != nil || string(got) != string(bookSized("epub-bytes")) {
 				t.Fatalf("ebook content damaged after rollback: %q err=%v", got, err)
 			}
 		})

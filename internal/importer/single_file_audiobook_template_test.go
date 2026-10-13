@@ -234,7 +234,7 @@ func TestImport_SingleFileAudiobookTemplatedNameCollisionIsSkipped(t *testing.T)
 				t.Fatal(err)
 			}
 			src := filepath.Join(t.TempDir(), "source.m4b")
-			if err := os.WriteFile(src, []byte("m4b-bytes"), 0o644); err != nil {
+			if err := os.WriteFile(src, bookSized("m4b-bytes"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			dl := &models.Download{GUID: "guid-2900-collide-" + t.Name(), Title: "We Who Wrestle with God [M4B]", BookID: &book.ID, Status: models.StateCompleted}

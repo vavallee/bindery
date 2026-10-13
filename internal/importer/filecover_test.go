@@ -56,6 +56,15 @@ func writeCoverEpub(t *testing.T, dst string, epub3 bool, img []byte) {
 			t.Fatal(err)
 		}
 	}
+	// A stored chapter keeps the file above MinPlausibleEbookBytes, which an
+	// import would otherwise leave out as notes (#3224).
+	pad, err := zw.CreateHeader(&zip.FileHeader{Name: "OEBPS/text.xhtml", Method: zip.Store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pad.Write(bytes.Repeat([]byte("x"), int(MinPlausibleEbookBytes))); err != nil {
+		t.Fatal(err)
+	}
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}

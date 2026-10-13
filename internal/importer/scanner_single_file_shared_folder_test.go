@@ -75,7 +75,7 @@ func importSharedEbook(t *testing.T, mode string) (s *Scanner, book *models.Book
 	}
 
 	ebookDownloadDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(ebookDownloadDir, "book.epub"), []byte("epub-bytes"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(ebookDownloadDir, "book.epub"), bookSized("epub-bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ebookDL := &models.Download{
@@ -208,7 +208,7 @@ func TestTryImportInternal_SingleFileAudiobookFailedMergeKeepsTheEbook(t *testin
 
 	// An unreadable source makes the copy fail after the merge decision.
 	audioSrc := filepath.Join(t.TempDir(), "book.m4b")
-	if err := os.WriteFile(audioSrc, []byte("m4b-bytes"), 0o600); err != nil {
+	if err := os.WriteFile(audioSrc, bookSized("m4b-bytes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(audioSrc, 0o000); err != nil {

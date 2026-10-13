@@ -424,8 +424,10 @@ func TestVolumeToBook_Language(t *testing.T) {
 		},
 	}
 	b := c.volumeToBook(item)
-	if b.Language != "fr" {
-		t.Errorf("Language: want 'fr', got %q", b.Language)
+	// Google hands back a two-letter code; it is stored in the ISO 639-2/B
+	// form every other provider writes (#3086).
+	if b.Language != "fre" {
+		t.Errorf("Language: want 'fre', got %q", b.Language)
 	}
 }
 

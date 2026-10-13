@@ -57,10 +57,10 @@ export default function NamingTemplateField({
     ? tokenMeaning(tapped.token, tapped.descKey, !!tapped.ebookOnly && kind === 'audiobook')
     : null
 
-  const validation = validateTemplate(value)
+  const validation = validateTemplate(value, kind)
   const preview = renderTemplate(value, kind)
   const hasErrors =
-    validation.empty || validation.traversal || validation.unknownTokens.length > 0
+    validation.empty || validation.traversal || validation.extInAudiobook || validation.unknownTokens.length > 0
 
   // Insert a token at the caret (or replace the current selection). Falls back
   // to appending when the input is not focused.
@@ -168,6 +168,16 @@ export default function NamingTemplateField({
       {validation.traversal && (
         <p className="text-xs text-red-600 dark:text-red-400 mt-1.5" role="alert">
           {t('settings.general.naming.errorTraversal')}
+        </p>
+      )}
+      {validation.extInAudiobook && (
+        <p className="text-xs text-red-600 dark:text-red-400 mt-1.5" role="alert">
+          {t('settings.general.naming.errorExtInAudiobook')}
+        </p>
+      )}
+      {validation.extNeedsDot && (
+        <p className="text-xs text-amber-600 dark:text-amber-400 mt-1.5" role="alert">
+          {t('settings.general.naming.warnExtNeedsDot')}
         </p>
       )}
       {validation.unknownTokens.length > 0 && (

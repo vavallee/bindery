@@ -72,7 +72,7 @@ func SerializeBookConflictValue(book *models.Book, field string) string {
 	case "release_date":
 		return formatConflictDate(book.ReleaseDate)
 	case "language":
-		return strings.TrimSpace(strings.ToLower(book.Language))
+		return models.NormalizeLanguageCode(book.Language)
 	case "average_rating":
 		if book.AverageRating <= 0 {
 			return ""
@@ -121,7 +121,10 @@ func ApplyBookConflictValue(book *models.Book, field, value string) error {
 	case "release_date":
 		book.ReleaseDate = parseConflictDate(value)
 	case "language":
-		book.Language = strings.TrimSpace(strings.ToLower(value))
+		// A conflict recorded before #3086 holds the spelling its source
+		// used ("en", "english"); what is written to the book is the same
+		// ISO 639-2/B code every other path stores.
+		book.Language = models.NormalizeLanguageCode(value)
 	case "average_rating":
 		book.AverageRating = parseConflictFloat(value)
 	case "ratings_count":
@@ -137,7 +140,10 @@ func normalizeConflictValue(field, value string) string {
 	switch field {
 	case "description":
 		return textutil.CleanDescription(value)
-	case "language", "image_url":
+	case "language":
+		// "en" against "eng" is one language, not a conflict (#3086).
+		return models.NormalizeLanguageCode(value)
+	case "image_url":
 		return strings.ToLower(value)
 	default:
 		return value

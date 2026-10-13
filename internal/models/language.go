@@ -157,6 +157,65 @@ var iso639NameToB = map[string]string{
 // as well as "zh".
 var iso639ChineseToB = map[string]string{"cmn": "chi", "yue": "chi"}
 
+// languagePrimarySubtag splits the language off a tag that carries a region,
+// script or variant subtag ("en-US" gives "en"), and reports whether code is
+// such a tag at all.
+//
+// A separator alone does not make one. A hyphenated name the tables do not
+// know ("Serbo-Croatian", "Old-High-German") is a whole value, and since
+// NormalizeLanguageCode now decides what is stored, cutting it at the hyphen
+// would keep "serbo" or "old" and lose the rest for good (#3086). So the part
+// before the separator has to be a code the tables recognise, whatever follows
+// it ("zh-Hant-TW", "ca-valencia"). A code they do not recognise is only split
+// from a plain region ("fil-PH", "es-419"), the one shape a name cannot be
+// mistaken for.
+func languagePrimarySubtag(code string) (string, bool) {
+	i := strings.IndexAny(code, "-_")
+	if i != 2 && i != 3 {
+		return "", false
+	}
+	primary, rest := code[:i], code[i+1:]
+	if isKnownLanguageCode(primary) || isRegionSubtag(rest) {
+		return primary, true
+	}
+	return "", false
+}
+
+// isRegionSubtag reports whether s has the shape of a BCP 47 region: two
+// letters ("us") or three digits ("419").
+func isRegionSubtag(s string) bool {
+	switch len(s) {
+	case 2:
+		return isASCIILetter(s[0]) && isASCIILetter(s[1])
+	case 3:
+		return isASCIIDigit(s[0]) && isASCIIDigit(s[1]) && isASCIIDigit(s[2])
+	}
+	return false
+}
+
+func isASCIILetter(c byte) bool { return c >= 'a' && c <= 'z' }
+func isASCIIDigit(c byte) bool  { return c >= '0' && c <= '9' }
+
+// isKnownLanguageCode reports whether code is a two- or three-letter code any
+// of the tables above resolve.
+func isKnownLanguageCode(code string) bool {
+	for _, table := range []map[string]string{
+		iso639TwoLetterToB, iso639LegacyTwoLetter, iso639TermToB,
+		iso639NorwegianToB, iso639ChineseToB, languageNames,
+	} {
+		if _, ok := table[code]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// NormalizeLanguageCodeRev is the revision of NormalizeLanguageCode's output.
+// Bump it whenever a change here would give an already-stored language a
+// different value; the startup backfill gated on this marker then
+// re-normalizes existing rows. See runBackfillOnce in internal/db.
+const NormalizeLanguageCodeRev = 1
+
 // NormalizeLanguageCode canonicalizes a language code from any source (an
 // EPUB's dc:language, provider metadata, a hand-edited metadata profile) into
 // the lowercased ISO 639-2/B form the language filter compares against. It
@@ -176,8 +235,8 @@ func NormalizeLanguageCode(code string) string {
 		return b
 	}
 	// Drop a region/script subtag: "en-US", "pt_BR", "zh-Hans".
-	if i := strings.IndexAny(code, "-_"); i > 0 {
-		code = code[:i]
+	if primary, ok := languagePrimarySubtag(code); ok {
+		code = primary
 	}
 	if b, ok := iso639ChineseToB[code]; ok {
 		return b

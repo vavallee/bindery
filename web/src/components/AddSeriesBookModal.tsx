@@ -112,7 +112,7 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search library books..."
-            className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+            className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             autoFocus
           />
 
@@ -140,7 +140,6 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
                       value={book.id}
                       checked={selected}
                       onChange={e => setBookId(e.target.value)}
-                      className="text-emerald-500 focus:ring-emerald-500"
                     />
                     <CoverImage loading="lazy" decoding="async" src={book.imageUrl} alt="" className="w-8 h-10 object-cover rounded flex-shrink-0"
                       fallback={
@@ -164,7 +163,7 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
                 type="text"
                 value={position}
                 onChange={e => setPosition(e.target.value)}
-                className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
               />
             </label>
             <label className="flex items-center gap-2 text-sm mt-6">
@@ -172,7 +171,6 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
                 type="checkbox"
                 checked={primarySeries}
                 onChange={e => setPrimarySeries(e.target.checked)}
-                className="accent-emerald-500"
               />
               Primary series
             </label>

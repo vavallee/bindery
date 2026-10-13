@@ -503,7 +503,7 @@ export default function AuthorsPage() {
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder={t('authors.searchPlaceholder')}
-          className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 placeholder-slate-400 dark:placeholder-zinc-600"
+          className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm placeholder-slate-400 dark:placeholder-zinc-600"
         />
       </div>
 
@@ -581,7 +581,7 @@ export default function AuthorsPage() {
                       type="checkbox"
                       checked={allPageSelected}
                       onChange={e => e.target.checked ? selectAllOnPage() : clearSelection()}
-                      className="rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                      className="rounded-full border-slate-400 dark:border-zinc-600"
                       title="Select all on this page"
                     />
                   </th>
@@ -603,7 +603,7 @@ export default function AuthorsPage() {
                         type="checkbox"
                         checked={selectedIds.has(author.id)}
                         onChange={() => toggleSelect(author.id)}
-                        className="rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                        className="rounded-full border-slate-400 dark:border-zinc-600"
                         onClick={e => e.stopPropagation()}
                       />
                     </td>
@@ -668,7 +668,7 @@ export default function AuthorsPage() {
                   type="checkbox"
                   checked={selectedIds.has(author.id)}
                   onChange={() => toggleSelect(author.id)}
-                  className={`absolute top-2 left-2 z-10 rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 ${selectedIds.has(author.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
+                  className={`absolute top-2 left-2 z-10 rounded-full border-slate-400 dark:border-zinc-600 ${selectedIds.has(author.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
                   title={`Select ${author.authorName}`}
                 />
                 <Link to={`/author/${author.id}`} state={authorNavState(i)} className="flex gap-3 p-4 hover:bg-slate-200/40 dark:hover:bg-zinc-800/40 transition-colors">
@@ -754,7 +754,7 @@ export default function AuthorsPage() {
                   checked={bulkApplyMonitoringToExisting}
                   onChange={e => setBulkApplyMonitoringToExisting(e.target.checked)}
                   disabled={bulkBusy}
-                  className="accent-emerald-500 mt-0.5 flex-shrink-0 disabled:opacity-50"
+                  className="mt-0.5 flex-shrink-0 disabled:opacity-50"
                 />
                 <span>
                   <span className="font-medium">{t('authors.bulkApplyMonitoringToExisting', 'Also apply to their existing books')}</span>
@@ -804,7 +804,7 @@ export default function AuthorsPage() {
                   value={bulkMonitorMode}
                   onChange={e => setBulkMonitorMode(e.target.value as AuthorBulkMonitorMode)}
                   disabled={bulkBusy}
-                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm disabled:opacity-50"
                 >
                   <option value="all">{t('monitorMode.all', 'All books')}</option>
                   <option value="future">{t('monitorMode.future', 'Future books only (grows on refresh)')}</option>
@@ -821,7 +821,7 @@ export default function AuthorsPage() {
                   value={bulkMonitorNewItems}
                   onChange={e => setBulkMonitorNewItems(e.target.value as MonitorNewItems | '')}
                   disabled={bulkBusy}
-                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm disabled:opacity-50"
                 >
                   <option value="">{t('authors.bulkMonitorNewItemsUnchanged', 'Leave unchanged')}</option>
                   <option value="all">{t('monitorNewItems.all', 'Follow monitor mode')}</option>
@@ -847,7 +847,7 @@ export default function AuthorsPage() {
                       setBulkMonitorLatestCount(safe)
                     }}
                     disabled={bulkBusy}
-                    className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+                    className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm disabled:opacity-50"
                   />
                 </div>
               )}
@@ -857,7 +857,7 @@ export default function AuthorsPage() {
                   checked={bulkApplyMonitorModeToExisting}
                   onChange={e => setBulkApplyMonitorModeToExisting(e.target.checked)}
                   disabled={bulkBusy}
-                  className="accent-emerald-500 mt-0.5 flex-shrink-0 disabled:opacity-50"
+                  className="mt-0.5 flex-shrink-0 disabled:opacity-50"
                 />
                 <span>
                   <span className="font-medium">{t('authors.bulkApplyMonitorModeToExisting', 'Apply monitor mode to existing books')}</span>

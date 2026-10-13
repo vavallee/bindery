@@ -1462,6 +1462,8 @@
         "tokenNarrator": "{Narrator} — audiobook narrator(s) (blank if unknown)",
         "tokenExt": "{ext} — file extension, no leading dot (ebook only)",
         "tokenIgnoredAudiobook": "{{token}} is ignored for the audiobook folder template",
+        "errorExtInAudiobook": "Audiobook folders have no file extension, so {ext} is always empty here and would leave a trailing dot in every folder name. Remove it; it belongs in the ebook template.",
+        "warnExtNeedsDot": "There is no dot before {ext}. Files would be named without an extension, such as \"Titleepub\". Use .{ext}.",
         "errorTraversal": "Template must not contain \".\" or \"..\" path segments.",
         "errorUnknownTokens": "Unknown token(s): {{tokens}}. These are case-sensitive and will be written literally.",
         "hintEmpty": "Required — enter at least one token or path segment."

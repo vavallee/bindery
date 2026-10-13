@@ -1,0 +1,2 @@
+### Changed
+- **Form controls share one focus and colour style** (#3085). A focused field now shows a 2px emerald ring instead of the forms plugin's 1px blue one, and checkboxes and radio buttons are emerald everywhere instead of blue on most pages, with a focus outline that stays visible on a checked box. Disabled controls show the not-allowed cursor. The style lives in one base rule, so new controls pick it up without per-element classes.

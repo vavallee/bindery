@@ -60,7 +60,7 @@ func TestBookUpdate_ManualEditLocksFields(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatalf("reload book: %v", err)
 	}
-	if got.Title != "Edited Title" || got.Description != "Edited description" || got.Language != "it" {
+	if got.Title != "Edited Title" || got.Description != "Edited description" || got.Language != "ita" {
 		t.Fatalf("edited values not persisted: %+v", got)
 	}
 	if len(got.Genres) != 2 || got.Genres[0] != "Fantasy" || got.Genres[1] != "Epic" {
@@ -296,5 +296,37 @@ func TestSeriesGenreOverrideIsVisibleAndClearable(t *testing.T) {
 	h.ClearGenres(missingRec, withURLParam(httptest.NewRequest(http.MethodDelete, "/api/v1/series/999/genres", nil), "id", "999"))
 	if missingRec.Code != http.StatusNotFound {
 		t.Fatalf("clear on a missing series = %d, want 404", missingRec.Code)
+	}
+}
+
+// TestBookUpdate_NormalizesLanguage: a language typed into the edit form is
+// stored the way the metadata providers store one, so a hand-edited book does
+// not sit beside its siblings under a second spelling (#3086). Input the
+// normalizer does not recognise is kept, lowercased, rather than rejected.
+func TestBookUpdate_NormalizesLanguage(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	b := seedLockTestBook(t, books, author.ID, "LANG1", "Original Title")
+	id := strconv.FormatInt(b.ID, 10)
+
+	for _, tc := range []struct{ in, want string }{
+		{"en", "eng"},
+		{" EN-us ", "eng"},
+		{"English", "eng"},
+		{"deu", "ger"},
+		{"eng", "eng"},
+		{"Klingon", "klingon"},
+		{"", ""},
+	} {
+		rec := putBook(t, h, id, map[string]any{"language": tc.in})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("language %q: expected 200, got %d: %s", tc.in, rec.Code, rec.Body.String())
+		}
+		got, err := books.GetByID(ctx, b.ID)
+		if err != nil || got == nil {
+			t.Fatalf("reload book: %v", err)
+		}
+		if got.Language != tc.want {
+			t.Errorf("language %q stored as %q, want %q", tc.in, got.Language, tc.want)
+		}
 	}
 }

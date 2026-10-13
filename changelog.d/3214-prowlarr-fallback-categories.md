@@ -1,0 +1,2 @@
+### Fixed
+- **Prowlarr-synced indexers no longer search music, magazine and comics categories.** With no Readarr or LazyLibrarian app in Prowlarr, Bindery took every audio and book category an indexer advertised, so audiobook searches also asked for MP3, lossless and music video releases, and ebook searches for magazines and comics. These are now dropped at sync, and the next Prowlarr sync corrects existing indexers (#3214).

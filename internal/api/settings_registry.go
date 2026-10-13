@@ -361,6 +361,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateInternal,
 	},
 	{
+		Key: "backfill.language_code_rev", Type: SettingTypeInt, Default: "0",
+		Description: "Revision of the language code normalizer the startup backfill last ran at (models.NormalizeLanguageCodeRev). Bindery compares it with the current revision at every start and re-runs the backfill only when they differ. Removing the row is harmless but makes the next start repeat the backfill once.",
+		State:       SettingStateInternal,
+	},
+	{
 		Key: "backfill.search_key_rev", Type: SettingTypeInt, Default: "0",
 		Description: "Revision of the search key normalizer the startup backfill last ran at (the search key normalizer). Bindery compares it with the current revision at every start and re-runs the backfill only when they differ. Removing the row is harmless but makes the next start repeat the backfill once.",
 		State:       SettingStateInternal,

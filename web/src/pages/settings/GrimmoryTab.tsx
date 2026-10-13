@@ -123,7 +123,7 @@ export default function GrimmoryTab() {
           type="checkbox"
           checked={draft.enabled}
           onChange={e => setDraft(prev => ({ ...prev, enabled: e.target.checked }))}
-          className="w-4 h-4 accent-emerald-500"
+          className="w-4 h-4"
         />
         <span className="text-sm font-medium">Enable Grimmory integration</span>
       </label>

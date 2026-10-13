@@ -287,7 +287,7 @@ func seriesCandidates(b models.Book, withSeries map[string]bool) (preferred, fal
 	add(&preferred, b.ForeignID)
 	for _, own := range []bool{true, false} {
 		for _, ed := range b.Editions {
-			if (ed.Language == b.Language) == own && seriesLanguage(b.Language, ed.Language) {
+			if sameLanguage(ed.Language, b.Language) == own && seriesLanguage(b.Language, ed.Language) {
 				add(&preferred, ed.ForeignID)
 			}
 		}
@@ -302,14 +302,24 @@ func seriesCandidates(b models.Book, withSeries map[string]bool) (preferred, fal
 
 // scandinavian are the languages whose editions name an author's series as
 // the Norwegian ones do ("Min kamp", "Barrøy"), often when the Norwegian
-// records name none.
-var scandinavian = map[string]bool{"nob": true, "nno": true, "nor": true, "dan": true, "swe": true}
+// records name none. Keyed by the normalised code, where both Norwegian
+// standards are "nor".
+var scandinavian = map[string]bool{"nor": true, "dan": true, "swe": true}
+
+// sameLanguage reports whether two language codes name the same language,
+// whatever spelling each came in. A stored book carries the normalised code
+// ("nor") while the catalogue reports "nob" or "nno" (#3086).
+func sameLanguage(a, b string) bool {
+	return models.NormalizeLanguageCode(a) == models.NormalizeLanguageCode(b)
+}
 
 // seriesLanguage reports whether an edition in language ed may supply the
 // series of a book in language book: its own language, or between
 // Scandinavian languages. Other translations name the series in their own
 // language ("<series>-romaani"), which is not the series the book belongs to.
+// Both sides are normalised, so a stored "nor" matches a provider "nob".
 func seriesLanguage(book, ed string) bool {
+	book, ed = models.NormalizeLanguageCode(book), models.NormalizeLanguageCode(ed)
 	return ed == book || scandinavian[book] && scandinavian[ed]
 }
 

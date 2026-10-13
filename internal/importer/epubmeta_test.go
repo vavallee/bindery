@@ -2,6 +2,7 @@ package importer
 
 import (
 	"archive/zip"
+	"bytes"
 	"os"
 	"path/filepath"
 	"slices"
@@ -38,6 +39,15 @@ func writeTestEpub(t *testing.T, opfPath, opfBody string) string {
 	}
 	add("META-INF/container.xml", container)
 	add(opfPath, opfBody)
+	// A stored chapter, so the file is not under MinPlausibleEbookBytes: an
+	// import leaves such a file out as notes (#3224).
+	pad, err := zw.CreateHeader(&zip.FileHeader{Name: "chapter1.xhtml", Method: zip.Store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pad.Write(bytes.Repeat([]byte("x"), int(MinPlausibleEbookBytes))); err != nil {
+		t.Fatal(err)
+	}
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}

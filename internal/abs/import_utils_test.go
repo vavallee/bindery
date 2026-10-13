@@ -253,3 +253,27 @@ func TestMergeMediaType_UnknownPreservesTheExistingType(t *testing.T) {
 		}
 	}
 }
+
+// TestNormalizeLanguage_StoresISO6392B: Audiobookshelf holds a language as
+// free text, so the import reduces it to the code the rest of Bindery stores
+// instead of lowercasing it and keeping "en" beside "eng" (#3086).
+func TestNormalizeLanguage_StoresISO6392B(t *testing.T) {
+	t.Parallel()
+
+	for in, want := range map[string]string{
+		"en":      "eng",
+		" EN ":    "eng",
+		"English": "eng",
+		"en-US":   "eng",
+		"eng":     "eng",
+		"de":      "ger",
+		"Deutsch": "ger",
+		"Klingon": "klingon",
+		"":        "",
+		"   ":     "",
+	} {
+		if got := normalizeLanguage(in); got != want {
+			t.Errorf("normalizeLanguage(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

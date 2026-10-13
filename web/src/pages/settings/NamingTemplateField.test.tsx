@@ -188,8 +188,36 @@ describe('validateTemplate', () => {
   })
 })
 
+describe('validateTemplate {ext} checks (#3217)', () => {
+  it('flags {ext} in an audiobook template only', () => {
+    expect(validateTemplate('{Title}.{ext}', 'audiobook').extInAudiobook).toBe(true)
+    expect(validateTemplate('{Title}{ .ext}', 'audiobook').extInAudiobook).toBe(true)
+    expect(validateTemplate('{Author}/{Title}', 'audiobook').extInAudiobook).toBe(false)
+    expect(validateTemplate('{Title}.{ext}', 'book').extInAudiobook).toBe(false)
+  })
+
+  it('flags an ebook {ext} with no dot before it', () => {
+    expect(validateTemplate('{Author}/{Title}{ext}').extNeedsDot).toBe(true)
+    expect(validateTemplate('{Title} {ext}').extNeedsDot).toBe(true)
+    expect(validateTemplate('{Title}.{ext}').extNeedsDot).toBe(false)
+    expect(validateTemplate('{Title}{ext}', 'audiobook').extNeedsDot).toBe(false)
+  })
+})
+
 describe('NamingTemplateField component', () => {
   beforeEach(() => vi.clearAllMocks())
+
+  it('blocks saving an audiobook template with {ext} and explains why', () => {
+    render(<Harness kind="audiobook" initial="{Author} - {Title}.{ext}" />)
+    expect(screen.getByRole('alert').textContent).toContain('errorExtInAudiobook')
+    expect((screen.getByTestId('naming-save-audiobook') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('warns about a missing dot before {ext} without blocking save', () => {
+    render(<Harness initial="{Author}/{Title}{ext}" />)
+    expect(screen.getByRole('alert').textContent).toContain('warnExtNeedsDot')
+    expect((screen.getByTestId('naming-save-book') as HTMLButtonElement).disabled).toBe(false)
+  })
 
   it('shows a live preview that updates as you type', () => {
     render(<Harness initial="{Author}/{Title}.{ext}" />)

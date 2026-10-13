@@ -99,7 +99,7 @@ func newPathOwnedFixture(t *testing.T, mediaType string) *pathOwnedFixture {
 func (f *pathOwnedFixture) ebookDest(t *testing.T) string {
 	t.Helper()
 	src := filepath.Join(f.dir, "Defiance of the Fall 3.epub")
-	if err := os.WriteFile(src, []byte("volume three"), 0o600); err != nil {
+	if err := os.WriteFile(src, bookSized("volume three"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	dest, err := f.scanner.destRenamer(context.Background()).DestPath(f.library, f.author, f.right, "", "", src)
@@ -300,7 +300,7 @@ func TestImport_MultiFileOneOwned_BlockedNotRetried(t *testing.T) {
 	ctx := context.Background()
 	epubDest := f.ebookDest(t)
 	mobi := filepath.Join(f.dir, "Defiance of the Fall 3.mobi")
-	if err := os.WriteFile(mobi, []byte("volume three mobi"), 0o600); err != nil {
+	if err := os.WriteFile(mobi, bookSized("volume three mobi"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	mobiDest, err := f.scanner.destRenamer(ctx).DestPath(f.library, f.author, f.right, "", "", mobi)
@@ -333,7 +333,7 @@ func TestImport_MultiFileOtherFailure_StaysRetryable(t *testing.T) {
 	f := newPathOwnedFixture(t, models.MediaTypeEbook)
 	epubDest := f.ebookDest(t)
 	mobi := filepath.Join(f.dir, "Defiance of the Fall 3.mobi")
-	if err := os.WriteFile(mobi, []byte("volume three mobi"), 0o600); err != nil {
+	if err := os.WriteFile(mobi, bookSized("volume three mobi"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// A directory where the epub must land makes its commit rename fail,

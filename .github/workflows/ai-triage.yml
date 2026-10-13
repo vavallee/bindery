@@ -117,7 +117,7 @@ jobs:
 
       - name: Triage / review with Claude
         if: env.HAS_AUTH == 'true'
-        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
+        uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1.0.240
         env:
           GH_TOKEN: ${{ github.token }}
         with:

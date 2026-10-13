@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vavallee/bindery/internal/models"
 	_ "modernc.org/sqlite"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -372,10 +373,11 @@ func (r *Reader) loadISBN(ctx context.Context, bookID int64) (string, error) {
 	return isbn, nil
 }
 
-// loadLanguage returns the primary ISO 639-2 language code for the book from
-// Calibre's languages table, or empty string if none is set. Calibre stores
-// codes as three-letter ISO 639-2 strings (e.g. "eng", "deu", "fra") which
-// are the same format Bindery uses, so no translation is needed.
+// loadLanguage returns the primary language code for the book from Calibre's
+// languages table, or empty string if none is set. Calibre stores three-letter
+// codes in the ISO 639-2/T spelling ("deu", "fra", "nld") where Bindery stores
+// 639-2/B ("ger", "fre", "dut"), so the code is normalized here; English is
+// "eng" in both, which is why the difference went unnoticed (#3086).
 func (r *Reader) loadLanguage(ctx context.Context, bookID int64) (string, error) {
 	var lang string
 	row := r.db.QueryRowContext(ctx, `
@@ -396,7 +398,7 @@ func (r *Reader) loadLanguage(ctx context.Context, bookID int64) (string, error)
 		}
 		return "", fmt.Errorf("load language for book %d: %w", bookID, err)
 	}
-	return lang, nil
+	return models.NormalizeLanguageCode(lang), nil
 }
 
 // parseSeriesIndex reads Calibre's series_index column. The column is declared

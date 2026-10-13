@@ -352,7 +352,7 @@ function CalibreSection({
               value={settings['calibre.library_path'] ?? ''}
               onChange={e => setSettings(s => ({ ...s, 'calibre.library_path': e.target.value }))}
               placeholder="/data/calibre-library"
-              className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+              className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
             />
             <SaveButton
               result={libraryPathSaveResult}
@@ -414,7 +414,7 @@ function CalibreSection({
                 value={settings['calibre.binary_path'] ?? ''}
                 onChange={e => setSettings(s => ({ ...s, 'calibre.binary_path': e.target.value }))}
                 placeholder="/usr/bin/calibredb"
-                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
               />
               <SaveButton
                 result={binaryPathSaveResult}
@@ -467,7 +467,7 @@ function CalibreSection({
                 value={settings['calibre.plugin_url'] ?? ''}
                 onChange={e => setSettings(s => ({ ...s, 'calibre.plugin_url': e.target.value }))}
                 placeholder="http://calibre.default.svc:8099"
-                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
               />
               <SaveButton
                 result={pluginUrlSaveResult}
@@ -496,7 +496,7 @@ function CalibreSection({
                 value={settings['calibre.plugin_api_key'] ?? ''}
                 onChange={e => setSettings(s => ({ ...s, 'calibre.plugin_api_key': e.target.value }))}
                 placeholder="plugin api key"
-                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
               />
               <SaveButton
                 result={pluginKeySaveResult}
@@ -526,7 +526,7 @@ function CalibreSection({
                 value={settings['calibre.push_path_remap'] ?? ''}
                 onChange={e => setSettings(s => ({ ...s, 'calibre.push_path_remap': e.target.value }))}
                 placeholder="/books:/mnt/user/media/books"
-                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
               />
               <SaveButton
                 result={pushRemapSaveResult}
@@ -723,7 +723,7 @@ function CalibreSection({
               value={settings['cwa.ingest_path'] ?? ''}
               onChange={e => setSettings(s => ({ ...s, 'cwa.ingest_path': e.target.value }))}
               placeholder="/cwa-book-ingest"
-              className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+              className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
             />
             <SaveButton
               result={cwaPathSaveResult}

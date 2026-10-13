@@ -43,7 +43,7 @@ export default function Pagination({
   const btnBase = 'touch-target pointer-coarse:min-w-11 px-2.5 py-1 rounded text-xs font-medium transition-colors'
   const btn = `${btnBase} text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed`
   const btnActive = `${btnBase} bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white`
-  const selectBase = 'pointer-coarse:min-h-11 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-xs text-slate-800 dark:text-zinc-200 focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
+  const selectBase = 'pointer-coarse:min-h-11 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-xs text-slate-800 dark:text-zinc-200'
   // The gap select is styled to read as the "…" it replaces: no chrome until
   // you hover or focus it, at which point it is visibly a control. bg-none
   // drops the forms plugin's arrow, which was drawn over the "…" (#3148).

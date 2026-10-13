@@ -98,7 +98,7 @@ export default function MetadataTab() {
               setSettings(s => ({ ...s, 'metadata.primary_provider': next }))
               await api.setSetting('metadata.primary_provider', next).catch(console.error)
             }}
-            className="w-full max-w-md bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+            className="w-full max-w-md bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
           >
             <option value="openlibrary">{t('settings.general.metadataProviderOpenlibrary', 'OpenLibrary (default)')}</option>
             <option value="dnb">{t('settings.general.metadataProviderDnb', 'DNB — Deutsche Nationalbibliothek (German/DACH)')}</option>
@@ -144,7 +144,7 @@ export default function MetadataTab() {
                 setSettings(s => ({ ...s, 'default.media_type': next }))
                 await api.setSetting('default.media_type', next).catch(console.error)
               }}
-              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
               <option value="ebook">{t('mediaType.ebook', 'Ebook')}</option>
               <option value="audiobook">{t('mediaType.audiobook', 'Audiobook')}</option>
@@ -154,7 +154,7 @@ export default function MetadataTab() {
               <label className="mt-3 flex items-start gap-2 text-sm text-slate-800 dark:text-zinc-200">
                 <input
                   type="checkbox"
-                  className="mt-0.5 accent-emerald-500"
+                  className="mt-0.5"
                   checked={(settings['default.media_type_strict'] ?? 'false') === 'true'}
                   onChange={async e => {
                     const next = e.target.checked ? 'true' : 'false'
@@ -185,7 +185,7 @@ export default function MetadataTab() {
                 setSettings(s => ({ ...s, 'author.default_monitor_mode': next }))
                 await api.setSetting('author.default_monitor_mode', next).catch(console.error)
               }}
-              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
               <option value="all">{t('monitorMode.all', 'All books')}</option>
               <option value="future">{t('monitorMode.future', 'Future books only (grows on refresh)')}</option>
@@ -209,7 +209,7 @@ export default function MetadataTab() {
                     await api.setSetting('author.default_monitor_latest_count', next).catch(console.error)
                   }
                 }}
-                className="w-28 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                className="w-28 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
               />
             </div>
           )}
@@ -344,8 +344,12 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
   const [skipMissingIsbn, setSkipMissingIsbn] = useState(profile?.skipMissingIsbn ?? false)
   const [skipPartBooks, setSkipPartBooks] = useState(profile?.skipPartBooks ?? false)
   const [unknownLanguageBehavior, setUnknownLanguageBehavior] = useState<'pass' | 'fail'>(profile?.unknownLanguageBehavior ?? 'pass')
-  const initialLangs = profile?.allowedLanguages
-    ? profile.allowedLanguages.split(',').map(c => c.trim().toLowerCase()).filter(Boolean)
+  // English is the default for a new profile only. An existing profile opens
+  // with what it stores, and an empty list means any language: defaulting it
+  // to English showed a filter that was not applied, and saving the form
+  // applied it (#3212).
+  const initialLangs = profile
+    ? (profile.allowedLanguages ?? '').split(',').map(c => c.trim().toLowerCase()).filter(c => c && c !== 'any')
     : ['eng']
   const [languages, setLanguages] = useState<string[]>(initialLangs)
   const [saving, setSaving] = useState(false)
@@ -399,6 +403,7 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
               <button
                 type="button"
                 key={l.code}
+                aria-pressed={on}
                 onClick={() => toggleLang(l.code)}
                 className={`text-xs px-2.5 py-1 rounded border transition-colors ${on
                   ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'

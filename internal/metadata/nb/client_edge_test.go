@@ -230,3 +230,44 @@ func TestFillSeries_TranslationFallback(t *testing.T) {
 		}
 	}
 }
+
+// A stored book carries the normalised language ("nor") while the catalogue
+// reports "nob" or "nno" for its editions, so series matching has to compare
+// the two after normalising both (#3086).
+func TestSeriesCandidates_NormalizesBothSides(t *testing.T) {
+	b := models.Book{ForeignID: "nb:a0000000000000000000000000000001", Language: "nor", Editions: []models.Edition{
+		{ForeignID: "nb:a0000000000000000000000000000002", Language: "fin"},
+		{ForeignID: "nb:a0000000000000000000000000000003", Language: "nob"},
+		{ForeignID: "nb:a0000000000000000000000000000004", Language: "nno"},
+	}}
+	with := map[string]bool{"a0000000000000000000000000000001": true, "a0000000000000000000000000000002": true, "a0000000000000000000000000000003": true, "a0000000000000000000000000000004": true}
+	preferred, fallback := seriesCandidates(b, with)
+	if got := strings.Join(preferred, ","); got != "a0000000000000000000000000000001,a0000000000000000000000000000003,a0000000000000000000000000000004" {
+		t.Errorf("preferred = %s", got)
+	}
+	if got := strings.Join(fallback, ","); got != "a0000000000000000000000000000002" {
+		t.Errorf("fallback = %s", got)
+	}
+	for _, tc := range []struct {
+		book, ed string
+		want     bool
+	}{{"nor", "nob", true}, {"nob", "nor", true}, {"nor", "nno", true}, {"nor", "swe", true}, {"nor", "fin", false}, {"nor", "ger", false}} {
+		if got := seriesLanguage(tc.book, tc.ed); got != tc.want {
+			t.Errorf("seriesLanguage(%q, %q) = %v, want %v", tc.book, tc.ed, got, tc.want)
+		}
+	}
+}
+
+// Editions in the book's own language are tried before other Scandinavian
+// ones, and a stored "nor" is the same language as a catalogue "nob".
+func TestSeriesCandidates_OwnLanguageFirstAcrossSpellings(t *testing.T) {
+	b := models.Book{ForeignID: "nb:a0000000000000000000000000000001", Language: "nor", Editions: []models.Edition{
+		{ForeignID: "nb:a0000000000000000000000000000002", Language: "swe"},
+		{ForeignID: "nb:a0000000000000000000000000000003", Language: "nob"},
+	}}
+	with := map[string]bool{"a0000000000000000000000000000001": true, "a0000000000000000000000000000002": true, "a0000000000000000000000000000003": true}
+	preferred, _ := seriesCandidates(b, with)
+	if got := strings.Join(preferred, ","); got != "a0000000000000000000000000000001,a0000000000000000000000000000003,a0000000000000000000000000000002" {
+		t.Errorf("preferred = %s, want the nob edition before the swe one", got)
+	}
+}

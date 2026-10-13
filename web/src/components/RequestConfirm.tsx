@@ -62,7 +62,7 @@ export default function RequestConfirm({ kind, foreignId, title, subtitle, image
             aria-label={t('requests.confirm.formatLabel')}
             value={mediaType}
             onChange={e => setMediaType(e.target.value)}
-            className="text-xs bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+            className="text-xs bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1"
           >
             <option value="">{t('requests.confirm.anyFormat')}</option>
             <option value="ebook">{t('common.ebook')}</option>

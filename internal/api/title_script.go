@@ -59,7 +59,7 @@ func titleScript(title string) string {
 func majorityTitleScript(books []models.Book, language string) string {
 	counts := make(map[string]int, 2)
 	for _, b := range books {
-		if b.Language != language {
+		if models.NormalizeLanguageCode(b.Language) != models.NormalizeLanguageCode(language) {
 			continue
 		}
 		if script := titleScript(b.Title); script != "" {

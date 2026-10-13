@@ -35,7 +35,7 @@ func TestBookSnapshotRestore_RoundTrip(t *testing.T) {
 		Title:            "Original Title",
 		SortTitle:        "Original, Title",
 		ReleaseDate:      tPtr(rel),
-		Language:         "en",
+		Language:         "eng",
 		Status:           "released",
 		FilePath:         "/lib/orig.epub",
 		MetadataProvider: "calibre",
@@ -63,7 +63,7 @@ func TestBookSnapshotRestore_RoundTrip(t *testing.T) {
 	mutated.Title = "Imported Title"
 	mutated.SortTitle = "Imported, Title"
 	mutated.ReleaseDate = tPtr(newRel)
-	mutated.Language = "de"
+	mutated.Language = "ger"
 	mutated.Status = "in_progress"
 	mutated.FilePath = "/lib/imported.epub"
 	mutated.MetadataProvider = "google"

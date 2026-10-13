@@ -2,6 +2,7 @@ package importer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/importer/formatsniff"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -145,10 +147,17 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 		dest, err = s.destRenamer(ctx).AudiobookDestDir(root, author, book, seriesTitle, seriesNum)
 	} else {
 		root := s.effectiveLibraryDir(ctx, author)
-		dest, err = s.destRenamer(ctx).DestPath(root, author, book, seriesTitle, seriesNum, f.Path)
+		dest, err = s.destRenamer(ctx).DestPath(root, author, book, seriesTitle, seriesNum, s.ebookSourceName(ctx, book.ID, f.Path))
 	}
+	// An ebook with no extension that cannot get one back is reported after the
+	// on-disk check below, so one that is also gone from disk still reads as
+	// missing. dest stands in as the current path until then.
+	var noExtErr error
 	if err != nil {
-		return "", ReorgStatusError, err.Error()
+		if !errors.Is(err, ErrEbookNoExtension) {
+			return "", ReorgStatusError, err.Error()
+		}
+		noExtErr, dest = err, f.Path
 	}
 
 	// Mirror the import path's uniqueness handling for audiobook folders. Import
@@ -170,7 +179,7 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 		}
 	}
 
-	if filepath.Clean(dest) == filepath.Clean(f.Path) {
+	if noExtErr == nil && filepath.Clean(dest) == filepath.Clean(f.Path) {
 		return dest, ReorgStatusNoop, ""
 	}
 	// The source must still be on disk to move it.
@@ -179,6 +188,9 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 			return dest, ReorgStatusMissing, "tracked file is not on disk"
 		}
 		return dest, ReorgStatusError, err.Error()
+	}
+	if noExtErr != nil {
+		return "", ReorgStatusError, noExtErr.Error()
 	}
 	// A destination nested inside the source cannot be moved into: the folder
 	// move would have to copy the source into a subdirectory of itself, and the
@@ -205,6 +217,67 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 		return dest, ReorgStatusCollision, "another book already tracks the destination path"
 	}
 	return dest, ReorgStatusMove, ""
+}
+
+// ebookSourceName returns the name DestPath should take the extension from for
+// a tracked ebook. Normally that is the path itself. A file that has lost its
+// extension (#3217) gets it back from the bookRenamed history, which records
+// every Reorganize move as from/to: the extension of the path it was renamed
+// from, followed back through earlier renames, is the one it had before the
+// loss. History is exact where content is blind (azw3 and cbz look like mobi
+// and a bare zip), but content wins where it is conclusive: a file whose bytes
+// are a PDF never gets an .epub name because an old row says so. Only ebook
+// extensions are taken from history, so a stray .m4b can never be recovered.
+func (s *Scanner) ebookSourceName(ctx context.Context, bookID int64, path string) string {
+	if filepath.Ext(path) != "" || s.history == nil {
+		return path
+	}
+	hist := s.historyEbookName(ctx, bookID, path)
+	if hist == "" {
+		return path
+	}
+	histFormat := formatsniff.FromExtension(hist)
+	switch sniffed := sniffContent(path); sniffed {
+	case "":
+		return hist
+	case formatsniff.FormatMOBI:
+		// The Palm family: mobi, azw3 and azw all carry the same signature.
+		if histFormat == formatsniff.FormatMOBI || histFormat == formatsniff.FormatAZW3 || histFormat == "azw" {
+			return hist
+		}
+	}
+	return path
+}
+
+// historyEbookName follows the bookRenamed history back from path to the
+// earliest rename source that still has an ebook extension, or "" for none.
+func (s *Scanner) historyEbookName(ctx context.Context, bookID int64, path string) string {
+	events, err := s.history.ListByBook(ctx, bookID)
+	if err != nil {
+		return ""
+	}
+	cur := path
+	for range events {
+		moved := false
+		for _, e := range events {
+			if e.EventType != models.HistoryEventBookRenamed {
+				continue
+			}
+			var d struct{ From, To string }
+			if json.Unmarshal([]byte(e.Data), &d) != nil || d.To != cur || d.From == "" {
+				continue
+			}
+			if ebookExtensionFormats[formatsniff.FromExtension(d.From)] {
+				return d.From
+			}
+			cur, moved = d.From, true
+			break
+		}
+		if !moved {
+			break
+		}
+	}
+	return ""
 }
 
 func isSingleFile(path string) bool {

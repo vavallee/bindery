@@ -748,7 +748,7 @@ func restoreBookFromSnapshot(book *models.Book, before, after *bookRollbackSnaps
 	restoreString(&book.Title, before.Title, after.Title, &changed)
 	restoreString(&book.SortTitle, before.SortTitle, after.SortTitle, &changed)
 	restoreTimePtr(&book.ReleaseDate, before.ReleaseDate, after.ReleaseDate, &changed)
-	restoreString(&book.Language, before.Language, after.Language, &changed)
+	restoreLanguage(&book.Language, before.Language, after.Language, &changed)
 	restoreString(&book.Status, before.Status, after.Status, &changed)
 	restoreString(&book.FilePath, before.FilePath, after.FilePath, &changed)
 	restoreString(&book.MetadataProvider, before.MetadataProvider, after.MetadataProvider, &changed)
@@ -815,6 +815,23 @@ func restoreString(target *string, before, after string, changed *bool) {
 	if *target != after {
 		return
 	}
+	if *target != before {
+		*changed = true
+	}
+	*target = before
+}
+
+// restoreLanguage is restoreString for a language code. The import run's
+// snapshot can predate the startup backfill that rewrote every stored language
+// into its ISO 639-2/B form (#3086), so "en" recorded by the run and "eng" on
+// the row now are the same value: the row still holds what the run wrote, and
+// is restored. What goes back is normalized too, so a rollback never
+// reintroduces a spelling the backfill removed.
+func restoreLanguage(target *string, before, after string, changed *bool) {
+	if models.NormalizeLanguageCode(*target) != models.NormalizeLanguageCode(after) {
+		return
+	}
+	before = models.NormalizeLanguageCode(before)
 	if *target != before {
 		*changed = true
 	}

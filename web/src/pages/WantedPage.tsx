@@ -255,7 +255,7 @@ export default function WantedPage() {
     }
   }
 
-  const checkboxCls = 'rounded border-slate-400 dark:border-zinc-600 text-emerald-600 focus:ring-emerald-500 focus:ring-offset-0'
+  const checkboxCls = 'rounded border-slate-400 dark:border-zinc-600'
 
   return (
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
@@ -289,7 +289,7 @@ export default function WantedPage() {
         value={search}
         onChange={e => setSearch(e.target.value)}
         placeholder={t('wanted.searchPlaceholder')}
-        className="w-full mb-3 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 placeholder-slate-400 dark:placeholder-zinc-600"
+        className="w-full mb-3 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-1.5 text-sm placeholder-slate-400 dark:placeholder-zinc-600"
       />
 
       {loading ? (
@@ -392,7 +392,7 @@ export default function WantedPage() {
                       <select
                         value={book.mediaType || 'ebook'}
                         onChange={e => changeMediaType(book, e.target.value as 'ebook' | 'audiobook' | 'both')}
-                        className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded text-[11px] px-1.5 py-0.5 focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+                        className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded text-[11px] px-1.5 py-0.5"
                         aria-label={t('wanted.changeFormat', { title: book.title })}
                         title={t('wanted.changeFormat', { title: book.title })}
                       >

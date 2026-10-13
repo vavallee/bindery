@@ -385,7 +385,7 @@ export default function SeriesPage() {
           onChange={e => setSearch(e.target.value)}
           aria-label={t('series.searchPlaceholder')}
           placeholder={t('series.searchPlaceholder')}
-          className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 placeholder-slate-400 dark:placeholder-zinc-600"
+          className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm placeholder-slate-400 dark:placeholder-zinc-600"
         />
         <div role="group" aria-label={t('series.filterLabel')} className="flex gap-1 pointer-coarse:gap-y-5 flex-wrap items-center">
           {availableFilters.map(f => (
@@ -672,7 +672,7 @@ export default function SeriesPage() {
                             value={fillMediaType[series.id] ?? 'ebook'}
                             onChange={e => setFillMediaType(prev => ({ ...prev, [series.id]: e.target.value as MediaType }))}
                             disabled={filling === series.id}
-                            className="text-xs bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 disabled:opacity-50"
+                            className="text-xs bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 disabled:opacity-50"
                             title={t('series.hardcover.formatTitle')}
                           >
                             <option value="ebook">📖 {t('common.ebook')}</option>

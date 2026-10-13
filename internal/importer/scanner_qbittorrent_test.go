@@ -30,7 +30,7 @@ import (
 func TestCheckQbittorrentDownloads_RetriesImportFailed(t *testing.T) {
 	downloadDir := t.TempDir()
 	epubPath := filepath.Join(downloadDir, "testbook.epub")
-	if err := os.WriteFile(epubPath, []byte("epub-content"), 0o644); err != nil {
+	if err := os.WriteFile(epubPath, bookSized("epub-content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	libraryDir := t.TempDir()

@@ -200,7 +200,7 @@ func TestImport_FallsBackToDirWalkWhenFilesUnavailable(t *testing.T) {
 	libraryDir := t.TempDir()
 
 	bookFile := filepath.Join(downloadDir, "fallback-book.epub")
-	if err := os.WriteFile(bookFile, []byte("epub"), 0o644); err != nil {
+	if err := os.WriteFile(bookFile, bookSized("epub"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

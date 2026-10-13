@@ -93,7 +93,7 @@ func TestTryImportInternal_RetryIsIdempotent(t *testing.T) {
 	libraryDir := t.TempDir()
 	downloadPath := t.TempDir()
 	src := filepath.Join(downloadPath, "book.epub")
-	if err := os.WriteFile(src, []byte("epub-bytes"), 0o644); err != nil {
+	if err := os.WriteFile(src, bookSized("epub-bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

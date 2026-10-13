@@ -14,11 +14,11 @@ func TestDiscoverBookFiles_SkipsSymlinks(t *testing.T) {
 	dir := t.TempDir()
 
 	real := filepath.Join(dir, "real.epub")
-	if err := os.WriteFile(real, []byte("book"), 0o644); err != nil {
+	if err := os.WriteFile(real, bookSized("book"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	secret := filepath.Join(dir, "secret.txt")
-	if err := os.WriteFile(secret, []byte("SECRET"), 0o644); err != nil {
+	if err := os.WriteFile(secret, bookSized("SECRET"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	evil := filepath.Join(dir, "evil.epub")
@@ -36,7 +36,7 @@ func TestDiscoverBookFiles_SkipsSymlinks(t *testing.T) {
 	}
 
 	// Walk path (no explicit file list).
-	walked := discoverBookFiles(dir, nil)
+	walked := discoverBookFiles(t.Context(), dir, nil)
 	if !has(walked, real) {
 		t.Errorf("walk: expected the real ebook to be discovered, got %v", walked)
 	}
@@ -45,7 +45,7 @@ func TestDiscoverBookFiles_SkipsSymlinks(t *testing.T) {
 	}
 
 	// Explicit-file path (download client's authoritative file list).
-	explicit := discoverBookFiles(dir, []string{real, evil})
+	explicit := discoverBookFiles(t.Context(), dir, []string{real, evil})
 	if !has(explicit, real) {
 		t.Errorf("explicit: expected the real ebook, got %v", explicit)
 	}

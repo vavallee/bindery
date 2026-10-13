@@ -71,7 +71,7 @@ export default function ConfirmDialog({
                 checked={acknowledged}
                 onChange={e => setAcknowledged(e.target.checked)}
                 disabled={confirming}
-                className="mt-0.5 rounded border-slate-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+                className="mt-0.5 rounded border-slate-300 dark:border-zinc-700"
               />
               <span>{acknowledgeLabel}</span>
             </label>

@@ -21,6 +21,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/isbnutil"
+	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 
 	_ "modernc.org/sqlite"
@@ -471,6 +472,15 @@ func migrate(database *sql.DB) error {
 		return fmt.Errorf("backfill asin case: %w", err)
 	}
 
+	// Google Books, the Audiobookshelf import and the book edit API used to
+	// store a language exactly as it arrived ("en", "english") while the other
+	// write paths stored the ISO 639-2/B code ("eng"), so one author could hold
+	// both spellings. Those paths now go through models.NormalizeLanguageCode;
+	// this brings the rows they already wrote up to it (#3086).
+	if err := runBackfillOnce(database, backfillRevKeyLanguageCode, models.NormalizeLanguageCodeRev, backfillLanguageCodes); err != nil {
+		return fmt.Errorf("backfill language codes: %w", err)
+	}
+
 	return nil
 }
 
@@ -515,6 +525,7 @@ const (
 	backfillRevKeyBookSortKeys = "backfill.book_sort_key_rev"
 	backfillRevKeySearchKeys   = "backfill.search_key_rev"
 	backfillRevKeyASINCase     = "backfill.asin_case_rev"
+	backfillRevKeyLanguageCode = "backfill.language_code_rev"
 )
 
 // BackfillRevisionKeys lists the settings keys that hold the normalizer
@@ -529,6 +540,7 @@ func BackfillRevisionKeys() []string {
 		backfillRevKeyBookSortKeys,
 		backfillRevKeySearchKeys,
 		backfillRevKeyASINCase,
+		backfillRevKeyLanguageCode,
 	}
 }
 
@@ -1304,6 +1316,98 @@ func backfillASINColumn(database *sql.DB, table string) (int, error) {
 	return len(updates), nil
 }
 
+// backfillLanguageCodes re-normalizes every stored language through
+// models.NormalizeLanguageCode, in books.language and editions.language.
+//
+// Comparisons already normalize both sides (models.IsLanguageAllowed), so a
+// stale spelling never changed what the language filter let through. It shows
+// wherever the stored value is used as it is: the API response, the OPDS
+// feed's dc:language, and anything that groups by language, where "en" and
+// "eng" on one author read as two languages (#3086).
+//
+// A value NormalizeLanguageCode does not recognise comes back lowercased and
+// otherwise unchanged, so a language somebody typed by hand is never lost.
+//
+// Unconditional and idempotent like the other backfills; migrate() gates it on
+// backfill.language_code_rev against models.NormalizeLanguageCodeRev.
+func backfillLanguageCodes(database *sql.DB) error {
+	total := 0
+	for _, table := range []string{"books", "editions"} {
+		n, err := backfillLanguageColumn(database, table)
+		if err != nil {
+			return err
+		}
+		total += n
+	}
+	if total > 0 {
+		slog.Info("backfilled language codes", "rows", total)
+	}
+	return nil
+}
+
+// backfillLanguageColumn rewrites <table>.language for every row whose stored
+// value differs from models.NormalizeLanguageCode of itself, and reports how
+// many rows it touched. Table names are compile-time constants from this file,
+// never user input, so interpolating them is safe; only the values are bound.
+func backfillLanguageColumn(database *sql.DB, table string) (int, error) {
+	type pending struct {
+		id       int64
+		language string
+	}
+	// Read phase in its own scope so the cursor closes before the write tx
+	// opens — holding a read cursor across Begin() risks "database is locked".
+	updates, err := func() ([]pending, error) {
+		rows, err := database.Query(fmt.Sprintf(
+			"SELECT id, COALESCE(language, '') FROM %s WHERE COALESCE(language, '') != ''", table))
+		if err != nil {
+			return nil, fmt.Errorf("read %s for language backfill: %w", table, err)
+		}
+		defer rows.Close()
+		var out []pending
+		for rows.Next() {
+			var id int64
+			var stored string
+			if err := rows.Scan(&id, &stored); err != nil {
+				return nil, fmt.Errorf("scan %s row for language backfill: %w", table, err)
+			}
+			if want := models.NormalizeLanguageCode(stored); want != stored {
+				out = append(out, pending{id: id, language: want})
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate %s for language backfill: %w", table, err)
+		}
+		return out, nil
+	}()
+	if err != nil {
+		return 0, err
+	}
+	if len(updates) == 0 {
+		return 0, nil
+	}
+
+	tx, err := database.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin %s language backfill tx: %w", table, err)
+	}
+	stmt, err := tx.Prepare(fmt.Sprintf("UPDATE %s SET language = ? WHERE id = ?", table))
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, fmt.Errorf("prepare %s language backfill: %w", table, err)
+	}
+	defer stmt.Close()
+	for _, u := range updates {
+		if _, err := stmt.Exec(u.language, u.id); err != nil {
+			_ = tx.Rollback()
+			return 0, fmt.Errorf("update language for %s %d: %w", table, u.id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit %s language backfill: %w", table, err)
+	}
+	return len(updates), nil
+}
+
 // backfillFoldedSearchColumn rewrites <table>.search_key from <table>.<source>
 // for every row where the two disagree, and reports how many rows it touched.
 func backfillFoldedSearchColumn(database *sql.DB, table, source string) (int, error) {
@@ -1392,4 +1496,5 @@ func stampBackfillRevisions(database *sql.DB) {
 	markBackfillRevision(database, backfillRevKeyBookSortKeys, bookSortKeyRev)
 	markBackfillRevision(database, backfillRevKeySearchKeys, textutil.FoldForSearchRev)
 	markBackfillRevision(database, backfillRevKeyASINCase, isbnutil.NormalizeASINRev)
+	markBackfillRevision(database, backfillRevKeyLanguageCode, models.NormalizeLanguageCodeRev)
 }

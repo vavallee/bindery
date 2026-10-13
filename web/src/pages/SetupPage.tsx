@@ -63,7 +63,7 @@ export default function SetupPage() {
             autoComplete="username"
             defaultValue="admin"
             required
-            className="w-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
           />
         </label>
         <label className="block">
@@ -74,7 +74,7 @@ export default function SetupPage() {
             id="password"
             autoComplete="new-password"
             required
-            className="w-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
           />
         </label>
         <label className="block">
@@ -85,7 +85,7 @@ export default function SetupPage() {
             id="confirm-password"
             autoComplete="new-password"
             required
-            className="w-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
           />
         </label>
         {error && (
