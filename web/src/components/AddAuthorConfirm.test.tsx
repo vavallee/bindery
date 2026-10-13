@@ -212,6 +212,20 @@ describe('AddAuthorConfirm', () => {
     })
   })
 
+  it('sends auto-grab off once it is unticked, and remembers the choice', async () => {
+    localStorage.removeItem('addAuthor.autoGrab')
+    renderConfirm(author({}))
+    const box = screen.getByRole('checkbox', { name: /Auto-grab books on add/ })
+    expect(box).toBeChecked()
+    fireEvent.click(box)
+    expect(box).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+    await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.addAuthor).mock.calls[0][0]).toMatchObject({ searchOnAdd: false })
+    expect(localStorage.getItem('addAuthor.autoGrab')).toBe('false')
+    localStorage.removeItem('addAuthor.autoGrab')
+  })
+
   it('shows duplicate author conflicts inline with existing-author actions', async () => {
     vi.mocked(api.addAuthor).mockRejectedValue(Object.assign(new Error('author already exists'), {
       status: 409,

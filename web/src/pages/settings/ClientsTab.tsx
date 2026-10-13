@@ -309,11 +309,11 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
       <div className="flex gap-2">
         <div className="flex-1">
           <label className={labelCls}>Name</label>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
         <div className="w-40">
           <label className={labelCls}>Client Type</label>
-          <select value={type} onChange={e => handleTypeChange(e.target.value)} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
+          <select value={type} onChange={e => handleTypeChange(e.target.value)} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm">
             <option value="sabnzbd">SABnzbd</option>
             <option value="nzbget">NZBGet</option>
             <option value="qbittorrent">qBittorrent</option>
@@ -326,8 +326,8 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
       <div>
         <label className={labelCls}>Connection</label>
         <div className="flex gap-2">
-          <input {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
-          <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+          <input {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
+          <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
       </div>
@@ -552,11 +552,11 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
       <div className="flex gap-2">
         <div className="flex-1">
           <label className={labelCls}>Name</label>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
         <div className="w-40">
           <label className={labelCls}>Client Type</label>
-          <select value={type} onChange={e => handleTypeChange(e.target.value as 'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
+          <select value={type} onChange={e => handleTypeChange(e.target.value as 'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm">
             <option value="sabnzbd">SABnzbd</option>
             <option value="nzbget">NZBGet</option>
             <option value="qbittorrent">qBittorrent</option>
@@ -569,8 +569,8 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
       <div>
         <label className={labelCls}>Connection</label>
         <div className="flex gap-2">
-          <input {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
-          <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+          <input {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
+          <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
         <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
       </div>

@@ -68,7 +68,7 @@ func newPairDownload(t *testing.T, downloads *db.DownloadRepo, book *models.Book
 func writeEbookDownload(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "book.epub"), []byte("epub bytes"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "book.epub"), bookSized("epub bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return dir

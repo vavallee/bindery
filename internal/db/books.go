@@ -660,6 +660,10 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 	// was written by anything other than textutil.FoldForSearch is a row the
 	// search box cannot find, and it would fail silently.
 	b.DedupKey = indexer.CanonicalDedupKey(b.Title)
+	// The language is canonicalised here, at the one place every write passes
+	// through, so a provider or copy site that hands over a raw code ("nob",
+	// "deu", "en") cannot undo the startup backfill (#3086).
+	b.Language = models.NormalizeLanguageCode(b.Language)
 
 	lockedJSON, err := json.Marshal(lockedOrEmpty(b.LockedFields))
 	if err != nil {
@@ -783,6 +787,10 @@ func (r *BookRepo) update(ctx context.Context, b *models.Book, expectedUpdatedAt
 	// importers rewrites Title on every update, so recomputing here prevents a
 	// stale key after a title edit/refresh from silently breaking future binds.
 	b.DedupKey = indexer.CanonicalDedupKey(b.Title)
+	// The language is canonicalised here, at the one place every write passes
+	// through, so a provider or copy site that hands over a raw code ("nob",
+	// "deu", "en") cannot undo the startup backfill (#3086).
+	b.Language = models.NormalizeLanguageCode(b.Language)
 
 	lockedJSON, err := json.Marshal(lockedOrEmpty(b.LockedFields))
 	if err != nil {
@@ -844,6 +852,7 @@ func (r *BookRepo) UpdateHydratedMetadata(ctx context.Context, b *models.Book, e
 	if mediaType == "" {
 		mediaType = models.MediaTypeEbook
 	}
+	b.Language = models.NormalizeLanguageCode(b.Language)
 	now := time.Now().UTC()
 	res, err := r.exec.ExecContext(ctx, `
 		UPDATE books SET language=?, image_url=?, media_type=?, status=?, asin=?,
@@ -1457,6 +1466,7 @@ func (r *BookRepo) SetFilePath(ctx context.Context, id int64, filePath string) e
 // caller is responsible for gating on an empty existing value and an unlocked
 // language field. Advance updated_at so pending hydration sees the change.
 func (r *BookRepo) SetLanguage(ctx context.Context, id int64, language string) error {
+	language = models.NormalizeLanguageCode(language)
 	_, err := r.exec.ExecContext(ctx, "UPDATE books SET language=?, updated_at=? WHERE id=?",
 		language, timeValueArg(time.Now().UTC()), id)
 	return err

@@ -281,7 +281,7 @@ export default function LibrarySearch({ className = '', onNavigate, autoFocus }:
           }}
           onFocus={() => { if (rows.length) setOpen(true) }}
           onKeyDown={onKeyDown}
-          className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md pl-8 pr-3 py-1.5 text-sm focus:outline-none focus:border-emerald-500"
+          className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md pl-8 pr-3 py-1.5 text-sm"
         />
       </div>
       <ul

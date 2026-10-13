@@ -48,7 +48,7 @@ func TestTryImportSABnzbd_RefusedHistoryDeleteWarnsButImportSucceeds(t *testing.
 	s, dl, dlRepo, bookRepo, ctx := dataLossFixture(t, libraryDir, "")
 
 	downloadDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(downloadDir, "book.epub"), []byte("epub-content"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(downloadDir, "book.epub"), bookSized("epub-content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

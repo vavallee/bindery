@@ -365,6 +365,59 @@ func TestFetchIndexers_FallsBackToCapabilitiesWhenNoApplications(t *testing.T) {
 	assertCategoryIDs(t, infos[0].Categories, []int{3000, 3030, 7000, 7020})
 }
 
+// #3214: the fallback kept every 3xxx and 7xxx capability, so a general
+// Usenet indexer synced its music, magazine and comics categories and every
+// book search asked for them. The standard non-book subcategories are dropped;
+// localised book IDs still pass (#851), and a parent whose only children were
+// non-book goes too, so a comics tracker is not widened to 7020 by the syncer.
+func TestFetchIndexers_FallbackDropsNonBookSubcategories(t *testing.T) {
+	cases := []struct {
+		name string
+		caps string
+		want []int
+	}{
+		{
+			name: "general usenet indexer",
+			caps: `{"id":3000,"name":"Audio","subCategories":[{"id":3010},{"id":3020},{"id":3030},{"id":3040},{"id":3050},{"id":3060}]},
+				{"id":7000,"name":"Books","subCategories":[{"id":7010},{"id":7020},{"id":7030}]}`,
+			want: []int{3000, 3030, 7000, 7020},
+		},
+		{
+			name: "localised book categories pass",
+			caps: `{"id":7000,"name":"Books","subCategories":[{"id":7020},{"id":7030},{"id":7120}]}`,
+			want: []int{7000, 7020, 7120},
+		},
+		{
+			name: "comics and music only",
+			caps: `{"id":3000,"name":"Audio","subCategories":[{"id":3010}]},
+				{"id":7000,"name":"Books","subCategories":[{"id":7030}]}`,
+			want: nil,
+		},
+		{
+			name: "bare parent with no children is kept",
+			caps: `{"id":3000,"name":"Audio"}`,
+			want: []int{3000},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			indexerBody := `[{"id":3,"name":"Indexer","protocol":"usenet","supportsSearch":true,"categories":[],
+				"capabilities":{"categories":[` + tc.caps + `]}}]`
+			srv := prowlarrClientStub(t, indexerBody, `[]`)
+			defer srv.Close()
+
+			infos, err := New(srv.URL, "key").FetchIndexers(context.Background())
+			if err != nil {
+				t.Fatalf("FetchIndexers: %v", err)
+			}
+			if len(infos) != 1 {
+				t.Fatalf("expected 1 info, got %d", len(infos))
+			}
+			assertCategoryIDs(t, infos[0].Categories, tc.want)
+		})
+	}
+}
+
 func TestFetchIndexers_NonBookIndexerStaysEmptyWithoutApplications(t *testing.T) {
 	// A movie/TV-only indexer has no book or audiobook capabilities, so the
 	// standalone fallback leaves it with no categories (the syncer drops it).
@@ -704,7 +757,9 @@ func TestFetchIndexers_IgnoresNonBookApplicationScopes(t *testing.T) {
 	if len(infos) != 1 {
 		t.Fatalf("expected 1 info, got %d", len(infos))
 	}
-	assertCategoryIDs(t, infos[0].Categories, []int{3000, 3010, 3030, 3040, 3050, 7000, 7020, 7030})
+	// The capability fallback then drops the music and comics subcategories
+	// itself (#3214).
+	assertCategoryIDs(t, infos[0].Categories, []int{3000, 3030, 7000, 7020})
 }
 
 func TestFetchIndexers_KeepsBookApplicationScopes(t *testing.T) {

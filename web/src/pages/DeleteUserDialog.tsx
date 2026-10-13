@@ -4,7 +4,7 @@ import { ManagedUser, UserOwnedRows, UserDeletePlan } from '../api/client'
 import { useModal } from '../components/useModal'
 
 const btnCls = 'px-3 py-1.5 rounded text-sm font-medium transition-colors'
-const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
+const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm'
 
 // The order rows are listed in, and the i18n key for each. Blocklist is left
 // out on purpose: those entries are global and survive either choice, so

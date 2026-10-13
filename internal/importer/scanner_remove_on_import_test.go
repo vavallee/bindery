@@ -69,7 +69,7 @@ func newRemoveOnImportFixture(t *testing.T) *removeOnImportFixture {
 
 	downloadDir := t.TempDir()
 	source := filepath.Join(downloadDir, "book.epub")
-	if err := os.WriteFile(source, []byte("epub-content"), 0o644); err != nil {
+	if err := os.WriteFile(source, bookSized("epub-content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return &removeOnImportFixture{

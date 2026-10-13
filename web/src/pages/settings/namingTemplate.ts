@@ -283,6 +283,10 @@ export interface ValidationResult {
   empty: boolean
   /** True when the template contains a "." or ".." traversal segment. */
   traversal: boolean
+  /** True when an audiobook (folder) template uses {ext}, which renders empty there (#3217). */
+  extInAudiobook: boolean
+  /** True when an ebook template has a bare {ext} with no "." right before it (#3217). */
+  extNeedsDot: boolean
 }
 
 const TOKEN_RE = /\{[^{}]*\}/g
@@ -310,7 +314,7 @@ function groupIsKnown(content: string): boolean {
 // an empty template, and explicit path-traversal segments. These mirror the
 // failure modes the backend would reject (ensureContained) or that produce
 // surprising output (a verbatim "{Titel}" in the folder name).
-export function validateTemplate(template: string): ValidationResult {
+export function validateTemplate(template: string, kind: TemplateKind = 'book'): ValidationResult {
   const matches = template.match(TOKEN_RE) ?? []
   const unknown: string[] = []
   for (const m of matches) {
@@ -320,5 +324,39 @@ export function validateTemplate(template: string): ValidationResult {
     unknownTokens: unknown,
     empty: template.trim() === '',
     traversal: TRAVERSAL_RE.test(template),
+    extInAudiobook: kind === 'audiobook' && templateUsesToken(template, 'ext'),
+    extNeedsDot: kind === 'book' && extLacksDot(template),
   }
+}
+
+// templateUsesToken mirrors templateHasToken in renamer.go: any group that
+// references the token, on its own or inside a conditional group.
+function templateUsesToken(template: string, name: string): boolean {
+  for (const g of template.match(TOKEN_RE) ?? []) {
+    const content = g.slice(1, -1)
+    const simple = SIMPLE_GROUP_RE.exec(content)
+    if (simple && !WIDTH_THEN_LITERAL_RE.test(simple[2] ?? '')) {
+      if (simple[1] === name) return true
+      continue
+    }
+    GROUP_WORD_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = GROUP_WORD_RE.exec(content)) !== null) {
+      if (m[1] === name) return true
+    }
+  }
+  return false
+}
+
+// extLacksDot mirrors EbookTemplateExtNeedsDot in renamer.go: a bare {ext}
+// group whose preceding literal does not end in ".".
+function extLacksDot(template: string): boolean {
+  return template.split(SEP).some(seg => {
+    const re = /\{ext\}/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(seg)) !== null) {
+      if (!seg.slice(0, m.index).endsWith('.')) return true
+    }
+    return false
+  })
 }

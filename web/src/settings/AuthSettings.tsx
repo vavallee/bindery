@@ -7,7 +7,7 @@ import { useClipboardCopy } from '../components/useClipboardCopy'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { secretInputAttrs, urlInputAttrs } from '../util/inputAttrs'
 
-const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
+const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm'
 
 export default function AuthSettings() {
   const { t } = useTranslation()

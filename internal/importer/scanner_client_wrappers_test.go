@@ -73,7 +73,7 @@ func TestTryImportNZBGet_CleanupCalledOnSuccess(t *testing.T) {
 
 	downloadDir := t.TempDir()
 	epub := filepath.Join(downloadDir, "book.epub")
-	if err := os.WriteFile(epub, []byte("epub-content"), 0o644); err != nil {
+	if err := os.WriteFile(epub, bookSized("epub-content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,7 +102,7 @@ func TestTryImportSABnzbd_CleanupCalledOnSuccess(t *testing.T) {
 
 	downloadDir := t.TempDir()
 	epub := filepath.Join(downloadDir, "book.epub")
-	if err := os.WriteFile(epub, []byte("epub-content"), 0o644); err != nil {
+	if err := os.WriteFile(epub, bookSized("epub-content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

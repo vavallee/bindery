@@ -21,7 +21,7 @@ func TestTryImportInternal_UsenetEbookPrunesJobFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	epubSrc := filepath.Join(jobDir, "Stone Blind.epub")
-	if err := os.WriteFile(epubSrc, []byte("epub-bytes"), 0o644); err != nil {
+	if err := os.WriteFile(epubSrc, bookSized("epub-bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -62,7 +62,7 @@ func TestTryImportInternal_UsenetEbookFilePath_PrunesJobFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	epubSrc := filepath.Join(jobDir, "Stone Blind.epub")
-	if err := os.WriteFile(epubSrc, []byte("epub-bytes"), 0o644); err != nil {
+	if err := os.WriteFile(epubSrc, bookSized("epub-bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

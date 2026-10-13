@@ -66,7 +66,7 @@ func (s *Scanner) PreviewImportDestination(ctx context.Context, bookID int64, sr
 	}
 	seriesTitle, seriesNum := s.primarySeriesFor(ctx, book)
 
-	format := previewFormat(srcPath, formatHint)
+	format := previewFormat(ctx, srcPath, formatHint)
 	proposed, status, msg := s.proposedPathFor(ctx, book, author, seriesTitle, seriesNum, models.BookFile{
 		Format: format,
 		Path:   srcPath,
@@ -84,12 +84,12 @@ func (s *Scanner) PreviewImportDestination(ctx context.Context, bookID int64, sr
 // An explicit hint wins (the import path treats a caller-declared format as
 // authoritative); otherwise the extensions decide, via the same
 // detectDownloadFormat the import runs over its discovered files.
-func previewFormat(srcPath, formatHint string) string {
+func previewFormat(ctx context.Context, srcPath, formatHint string) string {
 	if formatHint == models.MediaTypeEbook || formatHint == models.MediaTypeAudiobook {
 		return formatHint
 	}
 	if info, err := os.Stat(srcPath); err == nil && info.IsDir() {
-		return detectDownloadFormat(discoverBookFiles(srcPath, nil))
+		return detectDownloadFormat(discoverBookFiles(ctx, srcPath, nil))
 	}
 	return detectDownloadFormat([]string{filepath.Clean(srcPath)})
 }

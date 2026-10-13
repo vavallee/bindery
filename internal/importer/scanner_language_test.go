@@ -2,6 +2,7 @@ package importer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -37,6 +38,14 @@ func writeEpubWithLanguage(t *testing.T, dst, language string) {
 // at it, and returns the scanner, download, book repo, history repo and ctx.
 func languageFixture(t *testing.T, libraryDir string, book *models.Book) (*Scanner, *models.Download, *db.BookRepo, *db.HistoryRepo, context.Context) {
 	t.Helper()
+	s, dl, bookRepo, hist, ctx, _ := languageFixtureDB(t, libraryDir, book)
+	return s, dl, bookRepo, hist, ctx
+}
+
+// languageFixtureDB is languageFixture that also hands back the database, for
+// a test that has to plant a row the repository would not write.
+func languageFixtureDB(t *testing.T, libraryDir string, book *models.Book) (*Scanner, *models.Download, *db.BookRepo, *db.HistoryRepo, context.Context, *sql.DB) {
+	t.Helper()
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +79,7 @@ func languageFixture(t *testing.T, libraryDir string, book *models.Book) (*Scann
 	if err := dlRepo.Create(ctx, dl); err != nil {
 		t.Fatal(err)
 	}
-	return s, dl, bookRepo, histRepo, ctx
+	return s, dl, bookRepo, histRepo, ctx, database
 }
 
 // TestTryImportInternal_FillsLanguageFromEpub verifies the #1160 import-time
@@ -194,11 +203,12 @@ func TestTryImportInternal_CorrectsLanguageWhenEpubDisagrees(t *testing.T) {
 }
 
 // TestTryImportInternal_NoCorrectionWhenLanguagesAgree guards against a write
-// and a history row on every single import. The stored value is deliberately
-// the two-letter "en" a provider supplies rather than the canonical "eng":
-// the catalogue is NOT normalised on write, so comparing raw strings would see
-// "en" against the EPUB's normalised "eng", call it a disagreement, and
-// "correct" every English book to English on every import (#1729).
+// and a history row on every single import. The book is created with the
+// two-letter "en" a provider supplies rather than the canonical "eng"; the
+// repository now canonicalises that on write (#3086), so the stored value is
+// "eng", but the importer still has to compare normalised, or a row written
+// before that would read as a disagreement and be "corrected" to English on
+// every import (#1729).
 func TestTryImportInternal_NoCorrectionWhenLanguagesAgree(t *testing.T) {
 	t.Parallel()
 
@@ -215,7 +225,14 @@ func TestTryImportInternal_NoCorrectionWhenLanguagesAgree(t *testing.T) {
 				Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook,
 				Language: stored,
 			}
-			s, dl, bookRepo, hist, ctx := languageFixture(t, libraryDir, book)
+			s, dl, bookRepo, hist, ctx, database := languageFixtureDB(t, libraryDir, book)
+			// The repository canonicalises on write, so a row that still
+			// carries the raw spelling (one written before #3086) has to be
+			// planted with SQL. Without it this test never reaches the
+			// normalise-before-compare in applyEmbeddedLanguage.
+			if _, err := database.ExecContext(ctx, "UPDATE books SET language = ? WHERE id = ?", stored, book.ID); err != nil {
+				t.Fatal(err)
+			}
 
 			s.tryImportInternal(ctx, dl, downloadPath, "qbittorrent", "abc123", "", nil, nil)
 

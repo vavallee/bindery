@@ -171,7 +171,7 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
     }
   }
 
-  const selectClass = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500'
+  const selectClass = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm'
 
   return (
     <>
@@ -275,7 +275,7 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
               })()}
             </p>
             <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
-              <input type="checkbox" checked={searchOnAdd} onChange={e => setSearchOnAdd(e.target.checked)} className="accent-emerald-500 mt-0.5 flex-shrink-0" />
+              <input type="checkbox" checked={searchOnAdd} onChange={e => setSearchOnAdd(e.target.checked)} className="mt-0.5 flex-shrink-0" />
               <span>
                 <span className="font-medium">{t('addToLibrary.author.autoGrabLabel')}</span>
                 <span className="block text-xs text-fg-muted mt-0.5">{t('addToLibrary.author.autoGrabHint')}</span>

@@ -81,7 +81,7 @@ function SeedRatioField({ value, onChange, source }: { value: number | null | un
           className={`${inputCls} flex-1 disabled:opacity-50`}
         />
         <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-400 whitespace-nowrap">
-          <input type="checkbox" checked={unlimited} onChange={toggleUnlimited} className="accent-emerald-600 dark:accent-emerald-500" />
+          <input type="checkbox" checked={unlimited} onChange={toggleUnlimited} />
           {t('settings.indexers.form.seedRatioUnlimited')}
         </label>
       </div>
@@ -227,7 +227,7 @@ function FreeleechOnlyField({ value, onChange }: { value: boolean; onChange: (v:
   return (
     <div>
       <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-400">
-        <input type="checkbox" checked={value} onChange={e => onChange(e.target.checked)} className="accent-emerald-600 dark:accent-emerald-500" />
+        <input type="checkbox" checked={value} onChange={e => onChange(e.target.checked)} />
         {t('settings.indexers.form.freeleechOnly')}
       </label>
       <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.freeleechOnlyHint')}</p>
@@ -243,7 +243,7 @@ function ParentCategoriesField({ value, onChange }: { value: boolean; onChange: 
   return (
     <div>
       <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-400">
-        <input type="checkbox" checked={value} onChange={e => onChange(e.target.checked)} className="accent-emerald-600 dark:accent-emerald-500" />
+        <input type="checkbox" checked={value} onChange={e => onChange(e.target.checked)} />
         {t('settings.indexers.form.includeParentCategories')}
       </label>
       <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.indexers.form.includeParentCategoriesHint')}</p>
@@ -611,11 +611,11 @@ function EditIndexerForm({ indexer, onClose, onSaved }: { indexer: Indexer; onCl
       <div className="flex gap-2">
         <div className="flex-1">
           <label className={labelCls}>{t('settings.indexers.form.name')}</label>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder={t('settings.indexers.form.namePlaceholder')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+          <input value={name} onChange={e => setName(e.target.value)} placeholder={t('settings.indexers.form.namePlaceholder')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
         <div className="w-48">
           <label className={labelCls}>{t('settings.indexers.form.type')}</label>
-          <select value={type} onChange={e => setType(e.target.value)} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
+          <select value={type} onChange={e => setType(e.target.value)} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm">
             <option value="newznab">{t('settings.indexers.form.typeNewznabUsenet')}</option>
             <option value="torznab">{t('settings.indexers.form.typeTorznabTorrent')}</option>
           </select>
@@ -697,11 +697,11 @@ function AddIndexerForm({ onClose, onAdded }: { onClose: () => void; onAdded: (i
       <div className="flex gap-2">
         <div className="flex-1">
           <label className={labelCls}>{t('settings.indexers.form.name')}</label>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder={t('settings.indexers.form.namePlaceholderExample')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600" />
+          <input value={name} onChange={e => setName(e.target.value)} placeholder={t('settings.indexers.form.namePlaceholderExample')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
         <div className="w-40">
           <label className={labelCls}>{t('settings.indexers.form.type')}</label>
-          <select value={type} onChange={e => setType(e.target.value as 'newznab' | 'torznab')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600">
+          <select value={type} onChange={e => setType(e.target.value as 'newznab' | 'torznab')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm">
             <option value="newznab">{t('settings.indexers.form.typeNewznab')}</option>
             <option value="torznab">{t('settings.indexers.form.typeTorznab')}</option>
           </select>

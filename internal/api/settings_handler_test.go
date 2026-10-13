@@ -884,6 +884,33 @@ func TestValidateSettingValue_AudiobookFileTemplate(t *testing.T) {
 	}
 }
 
+// TestSettings_AudiobookFolderTemplateRejectsExt covers #3217: audiobook
+// folders render {ext} empty, so a template carrying it is refused at save time
+// and nothing is stored. The same template is fine for ebooks.
+func TestSettings_AudiobookFolderTemplateRejectsExt(t *testing.T) {
+	h, repo, ctx := settingsFixture(t)
+	for _, v := range []string{"{Author} - {Title}.{ext}", "{Title}{ext}", "{Title}{.ext}"} {
+		body := bytes.NewBufferString(`{"value":"` + v + `"}`)
+		req := withKey(httptest.NewRequest(http.MethodPut, "/api/v1/settings/naming_template_audiobook", body), "naming_template_audiobook")
+		rec := httptest.NewRecorder()
+		h.Set(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%q: status = %d, want 400", v, rec.Code)
+		}
+	}
+	if got, _ := repo.Get(ctx, "naming_template_audiobook"); got != nil && got.Value != "" {
+		t.Errorf("rejected template was stored: %q", got.Value)
+	}
+	for _, v := range []string{"{Author}/{Title} ({Year})", ""} {
+		if err := validateSettingValue("naming_template_audiobook", v); err != nil {
+			t.Errorf("%q should be accepted: %v", v, err)
+		}
+	}
+	if err := validateSettingValue("naming.bookTemplate", "{Author}/{Title}.{ext}"); err != nil {
+		t.Errorf("ebook template with {ext} must stay valid: %v", err)
+	}
+}
+
 // TestValidateSettingValue_DropPairGating covers the #942 pair-gating keys:
 // the boolean opt-in and the positive-integer-hours escape-hatch timeout.
 func TestValidateSettingValue_DropPairGating(t *testing.T) {

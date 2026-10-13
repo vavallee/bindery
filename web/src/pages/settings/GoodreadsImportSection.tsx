@@ -134,7 +134,7 @@ export default function GoodreadsImportSection() {
             <label key={shelf} className="inline-flex items-center gap-2 text-sm text-slate-700 dark:text-zinc-300">
               <input
                 type="checkbox"
-                className="rounded border-slate-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+                className="rounded border-slate-300 dark:border-zinc-700"
                 checked={shelves.has(shelf)}
                 disabled={uploading || committing}
                 onChange={() => toggleShelf(shelf)}

@@ -377,17 +377,54 @@ func hasBookOrAudiobookCategory(categories []int) bool {
 	return false
 }
 
+// nonBookCategories are the standard Newznab subcategories inside the book
+// and audio ranges that never hold books: music (3010 MP3, 3020 Video, 3040
+// Lossless, 3050 Other, 3060 Foreign), 7010 Books/Mags and 7030 Books/Comics.
+// The search sends every stored category in the range, so keeping these asks
+// an indexer for its music, magazines and comics on every book search (#3214).
+// Localised and non-standard book IDs (31xx, 71xx, MaM-style) are not listed
+// and still pass, as #851 needs.
+var nonBookCategories = map[int]bool{
+	3010: true, 3020: true, 3040: true, 3050: true, 3060: true,
+	7010: true, 7030: true,
+}
+
 // bookCapabilityCategories returns an indexer's advertised capability
 // categories restricted to the book and audiobook ranges. It is the
 // standalone-Prowlarr fallback for FetchIndexers (issue #763): with no
 // application scope to consult, the indexer's own capabilities are the only
 // signal for whether it can serve books.
+//
+// A parent (3000, 7000) is kept only when a book child in its range survives,
+// or when the indexer lists no children there at all. An indexer whose only
+// 7xxx child is Comics must not keep a bare 7000, which the syncer widens to
+// 7020 and would send ebook searches to a comics tracker.
 func bookCapabilityCategories(indexer remoteIndexer) []int {
-	var out []int
+	var kept []int
+	hasChild := map[int]bool{}  // range (3 or 7) -> any child advertised
+	bookChild := map[int]bool{} // range -> a book child survived
 	for _, id := range categoryIDs(indexer.Capabilities.Categories) {
-		if isBookOrAudiobookCategory(id) {
-			out = append(out, id)
+		if !isBookOrAudiobookCategory(id) {
+			continue
 		}
+		parent := id%1000 == 0
+		if !parent {
+			hasChild[id/1000] = true
+		}
+		if nonBookCategories[id] {
+			continue
+		}
+		if !parent {
+			bookChild[id/1000] = true
+		}
+		kept = append(kept, id)
+	}
+	var out []int
+	for _, id := range kept {
+		if id%1000 == 0 && hasChild[id/1000] && !bookChild[id/1000] {
+			continue
+		}
+		out = append(out, id)
 	}
 	return out
 }

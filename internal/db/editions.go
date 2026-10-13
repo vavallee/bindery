@@ -105,6 +105,8 @@ func (r *EditionRepo) ListByBook(ctx context.Context, bookID int64) ([]models.Ed
 // publisher, num_pages, asin, monitored) are preserved on update so a
 // re-import never flattens metadata the user has curated in-UI.
 func (r *EditionRepo) Upsert(ctx context.Context, e *models.Edition) error {
+	// Canonicalised at the write so no provider's raw code survives (#3086).
+	e.Language = models.NormalizeLanguageCode(e.Language)
 	now := time.Now().UTC()
 	isEbook := 0
 	if e.IsEbook {
@@ -167,6 +169,7 @@ func (r *EditionRepo) UpsertMetadata(ctx context.Context, e *models.Edition, exp
 	for _, value := range []*string{&e.Title, &e.Publisher, &e.Format, &e.Language, &e.ImageURL, &e.EditionInfo} {
 		*value = strings.TrimSpace(*value)
 	}
+	e.Language = models.NormalizeLanguageCode(e.Language)
 	if e.Title == "" {
 		e.Title = "Unknown Edition"
 	}

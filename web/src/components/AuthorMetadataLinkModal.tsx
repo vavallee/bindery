@@ -118,7 +118,7 @@ export default function AuthorMetadataLinkModal({ author, onClose, onLinked }: P
               enterKeyHint="search"
               value={query}
               onChange={event => setQuery(event.target.value)}
-              className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
               placeholder={t('authorMetadataLink.searchPlaceholder', 'Search by author name…')}
               autoFocus
             />

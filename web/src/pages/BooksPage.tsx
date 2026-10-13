@@ -299,7 +299,7 @@ export default function BooksPage() {
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder={t('books.searchPlaceholder')}
-          className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 placeholder-slate-400 dark:placeholder-zinc-600"
+          className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm placeholder-slate-400 dark:placeholder-zinc-600"
         />
         <div className="flex gap-1 pointer-coarse:gap-y-5 flex-wrap">
           {(['', 'wanted', 'imported', 'skipped'] as const).map(s => (
@@ -418,7 +418,7 @@ export default function BooksPage() {
                       type="checkbox"
                       checked={allPageSelected}
                       onChange={e => e.target.checked ? selectAllOnPage() : clearSelection()}
-                      className="rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                      className="rounded-full border-slate-400 dark:border-zinc-600"
                       title="Select all on this page"
                     />
                   </th>
@@ -451,7 +451,7 @@ export default function BooksPage() {
                           type="checkbox"
                           checked={selectedIds.has(book.id)}
                           onChange={() => toggleSelect(book.id)}
-                          className="rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                          className="rounded-full border-slate-400 dark:border-zinc-600"
                         />
                       </label>
                     </td>
@@ -521,7 +521,7 @@ export default function BooksPage() {
                     type="checkbox"
                     checked={selectedIds.has(book.id)}
                     onChange={() => toggleSelect(book.id)}
-                    className={`rounded-full border-slate-400 dark:border-zinc-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 ${selectedIds.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
+                    className={`rounded-full border-slate-400 dark:border-zinc-600 ${selectedIds.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
                     title={`Select ${book.title}`}
                   />
                 </label>

@@ -9,7 +9,7 @@ import type { UserRole } from '../auth/AuthContext'
 import { literalInputAttrs } from '../util/inputAttrs'
 import { BELOW_SM, useMediaQuery } from '../components/useMediaQuery'
 
-const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600'
+const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm'
 const btnCls = 'px-3 py-1.5 rounded text-sm font-medium transition-colors'
 
 export default function UsersPage() {
@@ -159,7 +159,6 @@ export default function UsersPage() {
         checked={u.autoApproveRequests}
         onChange={e => void handleAutoApproveChange(u, e.target.checked)}
         aria-label={t('users.autoApproveFor', { username: u.username })}
-        className="accent-emerald-500"
       />
       {t('users.autoApprove')}
     </label>

@@ -192,7 +192,7 @@ func TestImportInternal_ThreeFileBundle_TracksAllInBookFiles(t *testing.T) {
 
 	// Create three book files that simulate a multi-format NZB download.
 	for _, name := range []string{"book.epub", "book.mobi", "book.pdf"} {
-		if err := os.WriteFile(filepath.Join(dlDir, name), []byte("x"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dlDir, name), bookSized("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -344,7 +344,7 @@ func TestTryImportInternal_HistoryEventIncludesFormat(t *testing.T) {
 	libDir := t.TempDir()
 	dlDir := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(dlDir, "book.epub"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dlDir, "book.epub"), bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -444,7 +444,7 @@ func TestImportSuccess_FiresBookImported(t *testing.T) {
 	libDir := t.TempDir()
 	dlDir := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(dlDir, "book.epub"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dlDir, "book.epub"), bookSized("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

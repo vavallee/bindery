@@ -70,7 +70,7 @@ func delugeStub(t *testing.T, hash, savePath string) *httptest.Server {
 // path) so the download stayed at "downloading" forever.
 func TestCheckDelugeDownloads_ImportsOnSeeding(t *testing.T) {
 	downloadDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(downloadDir, "testbook.epub"), []byte("epub-content"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(downloadDir, "testbook.epub"), bookSized("epub-content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	libraryDir := t.TempDir()

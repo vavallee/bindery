@@ -88,7 +88,7 @@ export default function MergeSeriesModal({ target, series, onClose, onMerged }: 
             onChange={e => setFilter(e.target.value)}
             placeholder={t('series.merge.filterPlaceholder')}
             aria-label={t('series.merge.filterPlaceholder')}
-            className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+            className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
           />
           <ul className="max-h-48 overflow-y-auto space-y-1" aria-label={t('series.merge.sourcesLabel')}>
             {candidates.map(s => (
@@ -112,7 +112,7 @@ export default function MergeSeriesModal({ target, series, onClose, onMerged }: 
               value={title}
               onChange={e => { setTitle(e.target.value); setPlan(null) }}
               placeholder={target.title}
-              className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             />
           </div>
 

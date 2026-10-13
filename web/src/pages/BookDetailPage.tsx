@@ -1068,7 +1068,7 @@ function BookDetailPageInner() {
               value={mt}
               onChange={e => saveField({ mediaType: e.target.value as MediaType })}
               disabled={saving}
-              className="w-fit bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600 disabled:opacity-50"
+              className="w-fit bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1.5 text-sm disabled:opacity-50"
               title={t('bookDetail.mediaTypeHint')}
             >
               <option value="ebook">📖 {t('common.ebook')}</option>
@@ -1511,7 +1511,7 @@ function BookDetailPageInner() {
                   value={asinDraft}
                   onChange={e => setAsinDraft(e.target.value.toUpperCase())}
                   placeholder="B08GB58KD5"
-                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
                 />
               </div>
               <button

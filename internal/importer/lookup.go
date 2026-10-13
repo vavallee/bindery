@@ -506,7 +506,17 @@ func (s *Scanner) matchBookForDownload(ctx context.Context, files []string, rele
 	// Tier 2: release filename, via the same catalogue lookup manual import
 	// uses, but with no layout roots: the folders above a completed download
 	// are the client's and the release's, never an author's.
+	//
+	// The tracks of a multi-file audiobook are skipped: their names are track
+	// names ("01. Track 1.mp3", "11 - Spor 11.mp3"), not titles, and the first
+	// of hundreds to loosely resemble a catalogue title won before the
+	// release title below was consulted. A lone audio file keeps its say; a
+	// single-file audiobook is often named after the book.
+	tracks := countAudioFiles(files) > 1
 	for _, f := range files {
+		if tracks && IsAudioFile(f) {
+			continue
+		}
 		res, err := s.lookup(ctx, f)
 		if err != nil {
 			slog.Debug("filename lookup failed", "file", f, "error", err)
@@ -516,6 +526,14 @@ func (s *Scanner) matchBookForDownload(ctx context.Context, files []string, rele
 			a, err := s.authors.GetByID(ctx, res.Book.AuthorID)
 			if err != nil {
 				slog.Warn("matched book but failed to load author", "bookID", res.Book.ID, "error", err)
+			}
+			// Nobody reviews this match, so a lone loose title match is not
+			// enough: the title must match exactly or the author must agree,
+			// the rule bulk folder import applies (#1402).
+			if !filenameMatchCorroborated(f, res, a) {
+				slog.Debug("filename lookup match not corroborated; not used",
+					"file", f, "title", res.ParsedTitle, "book", res.Book.Title)
+				continue
 			}
 			slog.Info("matched download via filename lookup",
 				"file", f, "title", res.ParsedTitle, "author", res.ParsedAuthor, "bookID", res.Book.ID)
@@ -701,6 +719,35 @@ func lookupDetectFormat(path string) string {
 		return models.MediaTypeAudiobook
 	}
 	return detectDownloadFormat([]string{path})
+}
+
+// filenameMatchCorroborated reports whether a confident filename lookup is
+// strong enough to bind an unmatched download without anyone reviewing it: an
+// ASIN match, an exact (normalised) title, or a parsed author that agrees with
+// the book's. A loose title overlap with no author is what bound a track file
+// named "11. Track 11.mp3" to an unrelated book with an 11 in its title.
+func filenameMatchCorroborated(file string, res LookupResult, author *models.Author) bool {
+	if res.Book == nil {
+		return false
+	}
+	if asin := ParseFilename(file).ASIN; asin != "" && asin == res.Book.ASIN {
+		return true
+	}
+	if normalizeTitle(res.Book.Title) == normalizeTitle(res.ParsedTitle) {
+		return true
+	}
+	return author != nil && res.ParsedAuthor != "" && lookupAuthorMatch(res.ParsedAuthor, author.Name)
+}
+
+// countAudioFiles counts the audio files among files.
+func countAudioFiles(files []string) int {
+	n := 0
+	for _, f := range files {
+		if IsAudioFile(f) {
+			n++
+		}
+	}
+	return n
 }
 
 // lookupAuthorMatch returns true when parsed and catalogue author names refer

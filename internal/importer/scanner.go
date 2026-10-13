@@ -608,8 +608,16 @@ func importSourcePresent(downloadPath string, explicitFiles []string) bool {
 	// Stat'd rather than run through importableSourceFile: a symlinked
 	// download root is an ordinary deployment shape, and discoverBookFiles
 	// decides what inside it is importable.
-	_, err := os.Stat(downloadPath)
-	return err == nil
+	if _, err := os.Stat(downloadPath); err != nil {
+		return false
+	}
+	// A release packed as a RAR set has nothing to import until an unpacker
+	// extracts it (#3203). Counted as present, every poll spent a retry and the
+	// download was blocked about 90 seconds after completing, before unpackerr
+	// (one minute start delay by default) had begun. As not present, it waits
+	// on the skip streak, up to importSkipLimit, and imports once the extracted
+	// files appear.
+	return archiveAwaitingExtraction(downloadPath) == ""
 }
 
 // importSkipState is one download's consecutive-skip streak, plus a snapshot of
@@ -675,6 +683,10 @@ func importContentMissingReason(savePath string) string {
 // skip streak runs out. It must not tell the user to wait: by the time it is
 // written, waiting is precisely what has already failed importSkipLimit times.
 func importSourceGoneReason(downloadPath string) string {
+	if archive := archiveAwaitingExtraction(downloadPath); archive != "" {
+		return fmt.Sprintf("this download holds only an archive (%s), and nothing extracted it in the %d checks Bindery waited. Bindery does not unpack archives: an unpacker such as unpackerr has to extract it into %s (see Storage and Hardlinks, RAR-packed torrent releases). Once the files are there, use Retry import on the Queue page.",
+			filepath.Base(archive), importSkipLimit, downloadPath)
+	}
 	return fmt.Sprintf("the download client still reports this download as complete, but none of its files are on this host — checked %d times at %s and found nothing to import. Either the files were moved or deleted after the download finished, or the client's paths do not map into Bindery (set PathRemap on the download client). Fix that and use Retry import on the Queue page, or grab the release again from search.",
 		importSkipLimit, downloadPath)
 }
@@ -905,6 +917,18 @@ func (s *Scanner) failImport(ctx context.Context, dl *models.Download, status mo
 		"title":   dl.Title,
 		"message": reason,
 	})
+}
+
+// blockTinyOnlyDownload blocks a download whose only ebook files are under
+// MinPlausibleEbookBytes (#3224). Retrying cannot change that, so it is blocked
+// with the override named, and the path is kept for manual import.
+func (s *Scanner) blockTinyOnlyDownload(ctx context.Context, dl *models.Download, downloadPath string) {
+	s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
+	// importPending cannot go straight to blocked.
+	s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
+	s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf(
+		"nothing was imported: the only ebook files in %q are under %d bytes, too small to be a book. If one of them really is the book, use manual import",
+		downloadPath, MinPlausibleEbookBytes))
 }
 
 // recordUnmatchedImportPath persists where a completed download's files are so a
@@ -1568,7 +1592,14 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// callers that can't (or don't yet) supply a file list (SABnzbd/NZBGet
 	// per-job destDir, plus the RPC-failure fallback path for torrent
 	// clients).
-	bookFiles := discoverBookFiles(downloadPath, explicitFiles)
+	//
+	// An ebook file under MinPlausibleEbookBytes is left out: a release's
+	// notes or link .txt is not a second format of the book (#3224). A manual
+	// import keeps every file, as it is the override for a book that small.
+	bookFiles, tooSmallFiles := discoverBookFilesSized(downloadPath, explicitFiles, !isManualImport(ctx))
+	for _, f := range tooSmallFiles {
+		slog.Info("skipping a file too small to be a book", "file", f, "minBytes", MinPlausibleEbookBytes)
+	}
 
 	if len(bookFiles) == 0 {
 		// Before failing, check whether the book is already in the library. This
@@ -1592,6 +1623,12 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			}
 			return
 		}
+		// Everything the download held was too small to be a book. Retrying
+		// cannot change that, so block it and point at the override.
+		if len(tooSmallFiles) > 0 {
+			s.blockTinyOnlyDownload(ctx, dl, downloadPath)
+			return
+		}
 		// Distinguish "path doesn't exist on this host" from "path exists but has
 		// no recognised book files".
 		//
@@ -1609,6 +1646,16 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				"path", downloadPath, "title", dl.Title)
 			s.failImport(ctx, dl, models.StateImportFailed,
 				fmt.Sprintf("nothing at %q on this host — the download may still be finishing (qBittorrent writes to its temp/incomplete directory first), the files may have been moved or deleted since, or Bindery and the download client may see different filesystem roots (set PathRemap on the download client)", downloadPath))
+			return
+		}
+		if archive := archiveAwaitingExtraction(downloadPath); archive != "" {
+			// A RAR-packed release (#3203). The retries that follow wait for an
+			// unpacker without spending attempts (importSourcePresent), and the
+			// message says what the download is waiting for.
+			slog.Info("download holds only an archive; waiting for it to be extracted",
+				"path", downloadPath, "archive", filepath.Base(archive))
+			s.failImport(ctx, dl, models.StateImportFailed,
+				fmt.Sprintf("waiting for %s to be extracted: this download holds only an archive, and Bindery does not unpack archives. An unpacker such as unpackerr has to extract it into %q; the import runs once the files are there.", filepath.Base(archive), downloadPath))
 			return
 		}
 		slog.Warn("no book files found in download", "path", downloadPath)
@@ -2008,7 +2055,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 						return s.renamer.AudiobookFileName(tmpl, author, book, seriesTitle, seriesNum, strings.TrimPrefix(ext, "."), index+1)
 					}
 					slog.Info("renaming audiobook files per template", "src", audiobookSource, "dst", destDir, "mode", flattenMode, "template", tmpl)
-					dirErr = flattenAudiobookDirNamed(importCtx, flattenMode, audiobookSource, destDir, namer)
+					dirErr = flattenAudiobookDirFiltered(importCtx, flattenMode, audiobookSource, destDir, namer, flattenSidecarSkip(mode))
 					if dirErr == nil && mode == "move" && importCtx.Err() == nil {
 						if rmErr := os.RemoveAll(audiobookSource); rmErr != nil {
 							slog.Warn("could not remove source after move-mode audiobook rename", "src", audiobookSource, "error", rmErr)
@@ -2034,7 +2081,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 						flattenMode = "copy"
 					}
 					slog.Info("flattening multi-disc audiobook", "src", audiobookSource, "dst", destDir, "mode", flattenMode)
-					dirErr = flattenAudiobookDir(importCtx, flattenMode, audiobookSource, destDir)
+					dirErr = flattenAudiobookDirFiltered(importCtx, flattenMode, audiobookSource, destDir, partName, flattenSidecarSkip(mode))
 					if dirErr == nil && mode == "move" && importCtx.Err() == nil {
 						if rmErr := os.RemoveAll(audiobookSource); rmErr != nil {
 							slog.Warn("flatten: could not remove source after move-mode flatten", "src", audiobookSource, "error", rmErr)
@@ -2318,7 +2365,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	ebookRoot := s.effectiveLibraryDir(ctx, author)
 	ebookMode := s.resolveImportMode(configuredMode, downloadPath, ebookRoot)
 	calibreQueued := false
-	for _, srcFile := range bookFiles {
+	for _, srcFile := range orderByBookTitle(book, bookFiles) {
 		if book == nil {
 			// Try to match from filename
 			parsed := ParseFilename(srcFile)
@@ -2924,6 +2971,16 @@ func titleSigTokens(s string) []string {
 	return out
 }
 
+// titleTokenSet is the set of distinct titleSigTokens of s.
+func titleTokenSet(s string) map[string]bool {
+	toks := titleSigTokens(s)
+	set := make(map[string]bool, len(toks))
+	for _, w := range toks {
+		set[w] = true
+	}
+	return set
+}
+
 // titleMatch returns true when bookTitle and parsedTitle refer to the same work.
 // It handles numeric titles (1984, 2001), article normalization ("Title, The"),
 // and uses dynamic overlap thresholds so short titles still match correctly.
@@ -2964,29 +3021,28 @@ func titleWordsMatch(bookTitle, parsedTitle string) bool {
 		return true
 	}
 
-	btTok := titleSigTokens(bookTitle)
-	ptTok := titleSigTokens(parsedTitle)
-	if len(btTok) == 0 || len(ptTok) == 0 {
+	// Distinct words on both sides: a word repeated in one title is still one
+	// word of evidence. Counting each occurrence let a track file named
+	// "11. Track 11.mp3" share two words with any title holding "11" and
+	// clear the threshold below on a single number.
+	btSet := titleTokenSet(bookTitle)
+	ptSet := titleTokenSet(parsedTitle)
+	if len(btSet) == 0 || len(ptSet) == 0 {
 		return false
 	}
 
-	btSet := make(map[string]bool, len(btTok))
-	for _, w := range btTok {
-		btSet[w] = true
-	}
-
 	overlap := 0
-	for _, w := range ptTok {
+	for w := range ptSet {
 		if btSet[w] {
 			overlap++
 		}
 	}
 
-	// Dynamic threshold: require overlap >= min(len(ptTok), len(btTok), 2).
+	// Dynamic threshold: require overlap >= min(len(ptSet), len(btSet), 2).
 	// For single-token titles (e.g. "1984") require at least 1 match.
-	minLen := len(ptTok)
-	if len(btTok) < minLen {
-		minLen = len(btTok)
+	minLen := len(ptSet)
+	if len(btSet) < minLen {
+		minLen = len(btSet)
 	}
 	required := 2
 	if minLen < 2 {
@@ -3121,9 +3177,24 @@ type scanBook struct {
 	normTitle string
 	normLen   int
 	// reconcilable is isReconcileCandidate for the book: the scan may claim
-	// a file for it on its own. Only the suggestion pool holds books without
-	// it (#2879).
+	// a file for it on its own. Books without it can block title claims
+	// and appear as suggestions (#2879).
 	reconcilable bool
+}
+
+// titleReconcileHit is one catalogue book that cleared every title-tier gate for
+// a single reading of a file. reconcileByTitle collects these and then
+// chooses; a gate failure is not a hit (#2941).
+type titleReconcileHit struct {
+	sb      *scanBook
+	score   float64
+	blocked bool
+	// claimed is the part of blocked that means an earlier file of this pass
+	// already took the book's slot for this format. Only that sets
+	// claimBlocked, which files a supplement-class sidecar with its container
+	// (#2188); a book the scan may not claim at all (Skipped, or already
+	// holding a file) blocks the hit without making the file a sidecar.
+	claimed bool
 }
 
 func newScanBook(b *models.Book, reconcilable bool) scanBook {
@@ -4013,14 +4084,23 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	var unmatchedFiles unmatchedCollector
 	var reconciled, unmatched, alreadyTracked, tagReadFailed int
 
-	// tryReconcileTitle attempts to reconcile path to the given wanted book via
-	// the fuzzy title tier, returning true once a book is claimed. The
-	// candidate's author is already known to satisfy authorMatch — see the
-	// title tier in the file loop below.
+	// titleReconcileMargin is how far the best hit must lead the runner-up
+	// before the scan claims the file (#2941). It is findExistingMargin, so the
+	// scan and the add path settle a near tie the same way from one constant.
+	// It sits beside the 0.85 gate below: a score under that floor is never a
+	// hit, and two hits closer than this margin are left unmatched unless one
+	// of them is an exact normalised title.
+	const titleReconcileMargin = findExistingMargin
+
+	// tryReconcileTitle reports whether one catalogue book clears the fuzzy title
+	// tier for this reading of the file. It does not claim: reconcileByTitle
+	// scores every candidate, then picks. The candidate's author is already
+	// known to satisfy authorMatch — see the title tier in the file loop below.
 	var titleCand []int // reused candidate-index scratch
+	var titleHits []titleReconcileHit
 	// claimBlocked records that the file currently being processed matched a book
-	// whose slot for its format had already been claimed earlier in the pass. It
-	// is reset per file and read only in the unmatched branch, where it tells a
+	// that cannot accept another file of this format. It is reset per file
+	// and read only in the unmatched branch, where it tells a
 	// supplement-class sidecar apart from a genuine orphan (#2188).
 	var claimBlocked bool
 	// registeredPath is what the file currently being processed is recorded as
@@ -4037,11 +4117,11 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	// to be a book (#2944). Every tier still runs its claim check, so a
 	// notes .txt whose book a real container already claimed is recognised
 	// as that container's sidecar (#2188), but no tier attaches it: the gate
-	// sits after the claim check and before AddBookFile. A 1 KB notes file
-	// reconciled onto a Wanted book flipped it to Imported and the real
-	// ebook was never searched for.
+	// sits after the claim check and before AddBookFile (in claimTitleHit for
+	// this tier). A 1 KB notes file reconciled onto a Wanted book flipped it
+	// to Imported and the real ebook was never searched for.
 	var fileTooSmall bool
-	tryReconcileTitle := func(sb *scanBook, path, cleanPath, title, normParsed, detectedFmt string) bool {
+	tryReconcileTitle := func(sb *scanBook, path, title, normParsed, detectedFmt string) (titleReconcileHit, bool) {
 		b := sb.book
 		// Length gate: Jaro-Winkler is bounded above by 0.8 + 0.2·(minLen/
 		// maxLen), so a score >= 0.85 is impossible once the shorter normalised
@@ -4051,13 +4131,13 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			lo, hi = hi, lo
 		}
 		if lo == 0 || lo*4 < hi {
-			return false
+			return titleReconcileHit{}, false
 		}
 		// Require Jaro-Winkler >= 0.85 to prevent low-confidence matches from
 		// reconciling the wrong book after a delete+rescan (#343).
 		jwScore := textutil.JaroWinkler(sb.normTitle, normParsed)
 		if jwScore < 0.85 {
-			return false
+			return titleReconcileHit{}, false
 		}
 		// Two volumes of one series clear any similarity threshold:
 		// "Defiance of the Fall 17" against "Defiance of the Fall 01" scores
@@ -4070,17 +4150,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		if libraryVolumeConflict(title, fileLayoutTitle, b.Title) {
 			slog.Debug("library scan: title match rejected (different series volume)",
 				"title", b.Title, "path", path, "fileTitle", title, "folderTitle", fileLayoutTitle, "jw", jwScore)
-			return false
-		}
-		// This book already took a file of this format earlier in the pass. The
-		// claim check used to run before the title gate; it runs after it now so
-		// that claimBlocked means "a book this file actually matches is taken",
-		// not "some unrelated book is taken" (#2188). Jaro-Winkler on two short
-		// normalised titles is far cheaper than the root lookup below, which still
-		// gets skipped.
-		if reconciledBooks[bookFormatClaim{b.ID, detectedFmt}] {
-			claimBlocked = true
-			return false
+			return titleReconcileHit{}, false
 		}
 		// File must live under the candidate book's effective library root to
 		// prevent cross-author mismapping after delete+rescan (#343).
@@ -4088,8 +4158,27 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		if !pathUnderDir(path, effDir) {
 			slog.Debug("library scan: title+author match rejected (outside library root)",
 				"title", b.Title, "path", path, "root", effDir)
-			return false
+			// A book another file already claimed still makes this file its
+			// sidecar when the root check turns the file away (#2188), as it
+			// did when the claim check ran first.
+			if reconciledBooks[bookFormatClaim{b.ID, detectedFmt}] {
+				claimBlocked = true
+			}
+			return titleReconcileHit{}, false
 		}
+		existingPath := b.EbookFilePath
+		if detectedFmt == models.MediaTypeAudiobook {
+			existingPath = b.AudiobookFilePath
+		}
+		_, existingErr := os.Stat(existingPath)
+		claimed := reconciledBooks[bookFormatClaim{b.ID, detectedFmt}]
+		blocked := !sb.reconcilable || existingErr == nil || claimed
+		return titleReconcileHit{sb: sb, score: jwScore, blocked: blocked, claimed: claimed}, true
+	}
+
+	// claimTitleHit records the chosen hit and reports a write error as unmatched.
+	claimTitleHit := func(hit titleReconcileHit, path, cleanPath, detectedFmt string) bool {
+		b := hit.sb.book
 		if fileTooSmall {
 			slog.Debug("library scan: title+author match rejected (too small to be a book)",
 				"title", b.Title, "path", path)
@@ -4099,7 +4188,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			slog.Error("library scan: failed to update book", "id", b.ID, "error", err)
 			return false
 		}
-		slog.Info("library scan: reconciled book", "title", b.Title, "path", path, "jw", jwScore)
+		slog.Info("library scan: reconciled book", "title", b.Title, "path", path, "jw", hit.score)
 		s.fillCoverFromFile(ctx, b, registeredPath)
 		trackedPaths[filepath.Clean(registeredPath)] = true
 		if detectedFmt == models.MediaTypeAudiobook {
@@ -4113,35 +4202,101 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	}
 
 	// reconcileByTitle runs the fuzzy title tier for one reading of a file,
-	// returning true once a book is claimed.
+	// returning true once a book is claimed. Every candidate is scored. The
+	// best hit is claimed when it is the only one, when its normalised title
+	// is identical to the file (score 1) and strictly ahead of the runner-up,
+	// or when it leads by titleReconcileMargin. A closer pair is left
+	// unmatched (#2941).
+	//
+	// The catalogue is built on first use, so a scan whose files all resolve
+	// before the title tier, and leave nothing unmatched, pays nothing for it.
+	// The suggestion ranking below shares the same build.
+	var catalogue []scanBook
+	var catalogueByAuthor map[int64][]int
+	ensureCatalogue := func() {
+		if catalogueByAuthor == nil {
+			catalogue, catalogueByAuthor = suggestionCatalogue(allBooks, wantedBooks)
+		}
+	}
 	reconcileByTitle := func(path, cleanPath, detectedFmt, title, author, layoutAuthor string) bool {
+		ensureCatalogue()
 		// normalizeTitle strips leading articles and inverts comma-suffix
 		// sort form ("Title, A" → "title") so librarian-sorted folders
 		// reconcile correctly (#513). Hoisted: computed once per file.
 		normParsed := normalizeTitle(title)
 		// authorMatch is part of the title-tier predicate. Resolving the
 		// matching authors first lets the candidate list be built from just
-		// their books (booksByAuthor), iterated in library order. A nil set
+		// their books (catalogueByAuthor), iterated in library order. A nil set
 		// means the parsed author is empty or initials only, so authorMatch
-		// accepts any author and every wanted book is a candidate.
+		// accepts any author and every catalogue book is considered.
 		authorSet, _ := resolveAuthors(author, layoutAuthor)
+		titleHits = titleHits[:0]
+		consider := func(sb *scanBook) {
+			if hit, ok := tryReconcileTitle(sb, path, title, normParsed, detectedFmt); ok {
+				titleHits = append(titleHits, hit)
+			}
+		}
 		if authorSet == nil {
-			for i := range wantedBooks {
-				if tryReconcileTitle(&wantedBooks[i], path, cleanPath, title, normParsed, detectedFmt) {
-					return true
+			for i := range catalogue {
+				consider(&catalogue[i])
+			}
+		} else {
+			titleCand = titleCand[:0]
+			for id := range authorSet {
+				titleCand = append(titleCand, catalogueByAuthor[id]...)
+			}
+			slices.Sort(titleCand) // restore library order across authors
+			for _, idx := range titleCand {
+				consider(&catalogue[idx])
+			}
+		}
+		hits := titleHits
+		if len(hits) > 1 {
+			slices.SortStableFunc(hits, func(a, b titleReconcileHit) int {
+				if a.score > b.score {
+					return -1
+				}
+				if a.score < b.score {
+					return 1
+				}
+				return 0
+			})
+		}
+		if len(hits) > 0 {
+			best := hits[0]
+			// An exact normalised title that is wanted, still claimable and
+			// strictly ahead of every other hit owns the file, whatever
+			// blocked books lie within the margin. A blocked near sibling (a
+			// Skipped book, or one already holding a file) must not push a
+			// file named exactly as the wanted book back to Unmatched, which
+			// would leave that book Wanted and downloaded again. This is the
+			// exact-strictly-ahead rule FindExisting uses (fileBelongsToRival).
+			// A tie at 1.0, or a blocked best, still refuses below.
+			exactLead := best.score == 1 && !best.blocked && (len(hits) == 1 || best.score > hits[1].score)
+			if !exactLead {
+				for _, hit := range hits {
+					if hit.blocked && best.score-hit.score < titleReconcileMargin {
+						if hit.claimed {
+							claimBlocked = true
+						}
+						return false
+					}
 				}
 			}
-			return false
-		}
-		titleCand = titleCand[:0]
-		for id := range authorSet {
-			titleCand = append(titleCand, booksByAuthor[id]...)
-		}
-		slices.Sort(titleCand) // restore library order across authors
-		for _, idx := range titleCand {
-			if tryReconcileTitle(&wantedBooks[idx], path, cleanPath, title, normParsed, detectedFmt) {
-				return true
+			if len(hits) > 1 {
+				runner := hits[1]
+				// An exact normalised title still wins inside the margin.
+				// A tie at 1.0 is not strictly ahead, so it is left unmatched.
+				exact := best.score == 1 && best.score > runner.score
+				if !exact && best.score-runner.score < titleReconcileMargin {
+					slog.Debug("library scan: title match rejected (close title scores)",
+						"title", best.sb.book.Title, "jw", best.score,
+						"runnerUp", runner.sb.book.Title, "runnerUpJw", runner.score,
+						"path", path)
+					return false
+				}
 			}
+			return claimTitleHit(best, path, cleanPath, detectedFmt)
 		}
 		return false
 	}
@@ -4468,16 +4623,10 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	// resolved author they are drawn from every book of that author, not only
 	// the ones the scan may claim by itself: a Skipped book, or one already
 	// Imported with a file elsewhere, is often exactly what an untracked copy
-	// is (#2879). Built on first use, so a scan with nothing unmatched pays
-	// nothing for it. Excluded books are not in allBooks and so are never
-	// offered.
-	var catalogue []scanBook
-	var catalogueByAuthor map[int64][]int
+	// is (#2879). Excluded books are not in allBooks and so are never offered.
 	units := s.recordUnmatchedUnits(ctx, &unmatchedFiles, scanRoots, rootsWithFiles, scanStartedAt,
 		func(rep unmatchedScanFile, ev unitEvidence) ([]db.UnmatchedCandidate, string) {
-			if catalogueByAuthor == nil {
-				catalogue, catalogueByAuthor = suggestionCatalogue(allBooks, wantedBooks)
-			}
+			ensureCatalogue()
 			if !ev.conflict() {
 				authorSet, _ := resolveAuthors(rep.author, rep.layoutAuthor)
 				return rankCandidates(rep.title, rep.layoutTitle, wantedBooks, catalogue, catalogueByAuthor, authorSet), ""

@@ -90,10 +90,10 @@ func TestTryImportInternal_PartialFailureDoesNotDeleteUnlandedSource(t *testing.
 	downloadPath := t.TempDir()
 	epubSrc := filepath.Join(downloadPath, "book.epub")
 	mobiSrc := filepath.Join(downloadPath, "book.mobi")
-	if err := os.WriteFile(epubSrc, []byte("epub-bytes"), 0o644); err != nil {
+	if err := os.WriteFile(epubSrc, bookSized("epub-bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(mobiSrc, []byte("mobi-bytes"), 0o644); err != nil {
+	if err := os.WriteFile(mobiSrc, bookSized("mobi-bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -142,7 +142,7 @@ func TestTryImportInternal_PartialFailureDoesNotDeleteUnlandedSource(t *testing.
 	}
 
 	// The original mobi content must be unchanged (not a truncated/partial copy).
-	if data, err := os.ReadFile(mobiSrc); err != nil || string(data) != "mobi-bytes" {
+	if data, err := os.ReadFile(mobiSrc); err != nil || string(data) != string(bookSized("mobi-bytes")) {
 		t.Errorf("mobi source corrupted/changed after failed import: data=%q err=%v", data, err)
 	}
 }

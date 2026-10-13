@@ -536,7 +536,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 value={settings['naming.audiobook_file_template'] ?? ''}
                 onChange={e => setSettings(s => ({ ...s, 'naming.audiobook_file_template': e.target.value }))}
                 placeholder="{Title} - Part {Part:3}.{ext}"
-                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm font-mono"
               />
               <SaveButton
                 result={audiobookFileResult}
@@ -560,7 +560,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               <select
                 value={settings['search.preferredLanguage'] ?? 'en'}
                 onChange={e => setSettings(s => ({ ...s, 'search.preferredLanguage': e.target.value }))}
-                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
               >
                 <option value="any">{t('settings.general.preferredLanguageAny')}</option>
                 <option value="en">{t('settings.general.preferredLanguageEn')}</option>
@@ -770,7 +770,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 setSettings(s => ({ ...s, 'search.interval': next }))
                 await api.setSetting('search.interval', next).catch(console.error)
               }}
-              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
               <option value="6h">6 hours</option>
               <option value="12h">12 hours (default)</option>
@@ -807,7 +807,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 setSettings(s => ({ ...s, 'hardcover.sync_interval': next }))
                 await api.setSetting('hardcover.sync_interval', next).catch(console.error)
               }}
-              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
               <option value="1h">1 hour</option>
               <option value="3h">3 hours</option>
@@ -851,7 +851,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 setSettings(s => ({ ...s, 'authors.discovery.interval': next }))
                 await api.setSetting('authors.discovery.interval', next).catch(console.error)
               }}
-              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
               <option value="off">{t('settings.general.discoveryOff')}</option>
               <option value="24h">{t('settings.general.discoveryDaily')}</option>
@@ -1012,7 +1012,7 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
             value={cfg.mode}
             onChange={e => setMode(e.target.value as AuthStatus['mode'])}
             disabled={savingMode}
-            className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+            className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
           >
             <option value="enabled">Enabled</option>
             <option value="local-only">Local only (bypass for private IPs)</option>

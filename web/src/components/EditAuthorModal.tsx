@@ -183,7 +183,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                   <select
                     value={qualityProfileId ?? ''}
                     onChange={e => setQualityProfileId(e.target.value ? Number(e.target.value) : null)}
-                    className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
                   >
                     {qualityProfiles.map(p => (
                       <option key={p.id} value={p.id}>{p.name}</option>
@@ -197,7 +197,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                   <select
                     value={metadataProfileId ?? ''}
                     onChange={e => setMetadataProfileId(e.target.value ? Number(e.target.value) : null)}
-                    className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
                   >
                     {metadataProfiles.map(p => (
                       <option key={p.id} value={p.id}>{p.name}</option>
@@ -211,7 +211,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                   <select
                     value={rootFolderId ?? ''}
                     onChange={e => setRootFolderId(e.target.value ? Number(e.target.value) : null)}
-                    className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
                   >
                     {rootFolders.map(rf => (
                       <option key={rf.id} value={rf.id}>{rf.path}</option>
@@ -225,7 +225,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                   <select
                     value={audiobookRootFolderId ?? ''}
                     onChange={e => setAudiobookRootFolderId(e.target.value ? Number(e.target.value) : null)}
-                    className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
                   >
                     <option value="">{t('editAuthorModal.audiobookRootFolderDefault', 'Use global audiobook folder')}</option>
                     {rootFolders.map(rf => (
@@ -240,7 +240,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                 <select
                   value={monitorMode}
                   onChange={e => setMonitorMode(e.target.value as AuthorMonitorMode)}
-                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
                 >
                   <option value="all">{t('monitorMode.all', 'All books')}</option>
                   <option value="future">{t('monitorMode.future', 'Future books only (grows on refresh)')}</option>
@@ -254,7 +254,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                 <select
                   value={monitorNewItems}
                   onChange={e => setMonitorNewItems(e.target.value as MonitorNewItems)}
-                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
                 >
                   <option value="all">{t('monitorNewItems.all', 'Follow monitor mode')}</option>
                   <option value="none">{t('monitorNewItems.none', 'Don’t add them')}</option>
@@ -278,7 +278,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                             type="checkbox"
                             checked={selectedSet.has(s.id)}
                             onChange={() => toggleSeries(s.id)}
-                            className="accent-emerald-500 mt-0.5 flex-shrink-0"
+                            className="mt-0.5 flex-shrink-0"
                           />
                           <span className="flex-1">
                             <span className="font-medium">{s.title}</span>
@@ -312,7 +312,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                     min={1}
                     value={monitorLatestCount}
                     onChange={e => setMonitorLatestCount(Math.max(1, Number(e.target.value) || 1))}
-                    className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
                   />
                 </div>
               )}
@@ -321,7 +321,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                   type="checkbox"
                   checked={applyMonitorModeToExisting}
                   onChange={e => setApplyMonitorModeToExisting(e.target.checked)}
-                  className="accent-emerald-500 mt-0.5 flex-shrink-0"
+                  className="mt-0.5 flex-shrink-0"
                 />
                 <span>
                   <span className="font-medium">{t('editAuthorModal.applyMonitorModeToExisting', 'Apply monitor mode to existing books')}</span>
@@ -342,7 +342,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                     value={genreOverride}
                     onChange={e => setGenreOverride(e.target.value)}
                     placeholder="Fantasy, Epic"
-                    className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                    className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
                   />
                   <button
                     type="button"

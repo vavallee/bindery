@@ -119,6 +119,51 @@ select:not([multiple]):not([size]):not(.bg-none) {
   }
 }
 
+/* One focus and colour style for every form control (#3085). The forms plugin
+   draws a field's focus as a 1px ring plus the border, and a checkbox or radio
+   in currentColor, both in its default blue; the per-element focus:border-*,
+   focus:ring-* and text-emerald-* overrides had drifted into five versions,
+   and the accent-* ones did nothing (the plugin sets appearance: none). This
+   recolours the plugin's own ring and fill to emerald-600 on light and
+   emerald-500 on dark, the pair Settings → Indexers already used, which keeps
+   3:1 against every surface (WCAG 1.4.11). A field's ring is 2px, since the
+   border keeps its colour (a border utility outranks the base layer). Specific
+   enough to beat the plugin's :where() selectors; a utility on an element still
+   wins, so a control that means something else (a red destructive checkbox)
+   keeps its own colour. */
+@layer base {
+  :is(input:not([type='checkbox'], [type='radio']), select, textarea):focus {
+    --tw-ring-color: var(--color-emerald-600);
+    --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+  }
+  html.dark :is(input:not([type='checkbox'], [type='radio']), select, textarea):focus {
+    --tw-ring-color: var(--color-emerald-500);
+  }
+  input:is([type='checkbox'], [type='radio']) {
+    color: var(--color-emerald-600);
+  }
+  /* An outline with a gap, not the plugin's ring: the ring's offset is
+     painted white, a halo on the dark theme, and without the offset an
+     emerald ring merges into a checked box's emerald fill. */
+  input:is([type='checkbox'], [type='radio']):focus {
+    --tw-ring-shadow: 0 0 #0000;
+    --tw-ring-offset-shadow: 0 0 #0000;
+  }
+  input:is([type='checkbox'], [type='radio']):focus-visible {
+    outline: 2px solid var(--color-emerald-600);
+    outline-offset: 2px;
+  }
+  html.dark input:is([type='checkbox'], [type='radio']) {
+    color: var(--color-emerald-500);
+  }
+  html.dark input:is([type='checkbox'], [type='radio']):focus-visible {
+    outline-color: var(--color-emerald-500);
+  }
+  :disabled {
+    cursor: not-allowed;
+  }
+}
+
 /* Native controls (select popups, date pickers, scrollbars) follow
    color-scheme, not the page colours, so the dark theme still opened white
    pickers. Tracks the .dark class rather than the OS setting because the

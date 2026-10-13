@@ -160,7 +160,7 @@ export default function HistoryPage() {
         <select
           value={typeFilter}
           onChange={e => handleFilterChange(e.target.value)}
-          className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-1.5 text-sm text-slate-800 dark:text-zinc-200 focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+          className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-1.5 text-sm text-slate-800 dark:text-zinc-200"
         >
           <option value="">{t('history.allEventTypes')}</option>
           {eventTypes.map(et => (

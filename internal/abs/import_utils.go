@@ -168,8 +168,12 @@ func normalizeLibraryIDs(primary string, values []string) []string {
 	return out
 }
 
+// normalizeLanguage reduces whatever Audiobookshelf holds for a language
+// ("en", "English", "en-US") to the ISO 639-2/B code every other write path
+// stores, so one library does not carry the same language under several
+// spellings (#3086).
 func normalizeLanguage(language string) string {
-	return strings.ToLower(strings.TrimSpace(language))
+	return models.NormalizeLanguageCode(language)
 }
 
 func normalizeAuthorName(name string) string {

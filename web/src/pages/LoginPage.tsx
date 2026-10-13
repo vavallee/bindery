@@ -103,7 +103,7 @@ export default function LoginPage() {
             autoComplete="username"
             autoFocus
             required
-            className="w-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
           />
         </Field>
         <Field label={t('login.password')}>
@@ -113,7 +113,7 @@ export default function LoginPage() {
             id="password"
             autoComplete="current-password"
             required
-            className="w-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
           />
         </Field>
         <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-zinc-400">

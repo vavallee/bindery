@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -351,6 +352,8 @@ func TestFreshDatabaseStampsBackfillsWithoutScanning(t *testing.T) {
 		{backfillRevKeySortKeys, authorSortKeyRev},
 		{backfillRevKeyBookSortKeys, bookSortKeyRev},
 		{backfillRevKeySearchKeys, textutil.FoldForSearchRev},
+		{backfillRevKeyASINCase, isbnutil.NormalizeASINRev},
+		{backfillRevKeyLanguageCode, models.NormalizeLanguageCodeRev},
 	} {
 		got, ok := settingValue(t, database, want.key)
 		if !ok || got != strconv.Itoa(want.rev) {

@@ -224,7 +224,7 @@ export default function SettingsPage() {
             value={tab}
             onChange={e => setTab(e.target.value as Tab)}
             aria-label={t('settings.sectionLabel')}
-            className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-slate-400 dark:focus:border-zinc-600"
+            className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
           >
             <option value="general">{t('settings.tabs.general')}</option>
             <option value="about">{t('settings.tabs.about', 'About')}</option>

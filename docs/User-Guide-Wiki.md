@@ -390,8 +390,31 @@ finished download and place each book's files against the right book record.
 A release is only judged a pack on wording that single books do not use about
 themselves. `Part 1-2` is left alone, because that is how one long audiobook
 is split, and so is `Trilogy`, because real single books are subtitled "Book
-III of the X Trilogy". If the book you are tracking is itself a bundle (a box
-set as one record), matching packs are allowed for it.
+III of the X Trilogy". A bare `series` or `collection` is left alone too, but
+the shapes only a pack uses are caught: `Foundation series by Isaac Asimov`
+when only pack or format words (EPUB, `7 Books`, `Full Series`, `eBook Pack`,
+`Kindle Edition`, `Updated 2021`) or a list of two or more commas or three
+titles joined by `and` follow the author, a range after the series word such
+as `Discworld Series 1-41`, `Series (1-7)` or `Series - Isaac Asimov 1-7`, a bracketed count of two or more such as
+`(11 Books)`, `Books Collection` (plural only), `Series Pack` and `Saga eBooks`.
+A single title after the author names one book and is not a pack: `Discworld
+Series by Terry Pratchett - Guards! Guards!`, `Series by C.S. Lewis, The
+Magician's Nephew`, `Series by Pierce Brown, Book 1`, `[1 Book]`, a spaced
+`Series 1 - 2`. If the book you are tracking is
+itself a bundle (a box set as one record), matching packs are allowed for it.
+
+A pack whose name gives no sign of it can still be grabbed. When a download
+holds several ebook files of one format, the one whose file name or EPUB title
+is closest to the book is imported, and so is the one an external drop folder
+receives, in both its flat and templated layouts. A file is only moved ahead of
+the one that would have gone first when its name or title clearly matches the
+book, for example `Wheel of Time 01 - The Eye of the World` for the book `The
+Eye of the World`; names that say nothing keep the order they have on disk. An ebook file under 4 KiB in a download, such as the notes or link
+`.txt` a release ships beside the book, is not imported as a second format. A
+download that holds nothing else is blocked, whether the import is managed or
+goes to an external drop folder, and Manual Import places a file that small if
+it really is the book, in either mode. A manual import of such a file for a
+book set to both formats is still held for its sibling and released with it. Audiobook tracks are never judged by size.
 
 **Grab.** Torznab (torrent) indexers route to your torrent client, Newznab
 (usenet) to your NZB client — which is why the client's protocol must match
@@ -638,6 +661,8 @@ to the records. Things worth knowing before you judge the results:
   the titles look; it goes to volume 1 if that book is in your library, and
   otherwise waits on **Import → In your library**, where volume 17 is not
   offered as its suggestion either (#2860).
+- An exact title is attached in preference to a shorter partial one, and two
+  near-tied non-exact titles are left for you to choose (#2941).
 
 ## Adopting files already in your library
 
@@ -736,7 +761,8 @@ Things worth knowing:
   cannot be adopted. Ignore it, or delete it from the folder. A notes file
   beside the book file that matched is still counted quietly as that book's
   companion and not listed. Audiobook tracks are not judged by size, and
-  files already tracked are not affected (#2944). If a file that small really
+  files already tracked are not affected (#2944). The same floor applies to
+  the files an automatic import takes from a download (#3224). If a file that small really
   is the book, **Manual Import** is the override: it imports whatever file
   you pick, whatever its size.
 - **In your audiobooks folder** / **In your ebooks folder**: when
@@ -791,6 +817,21 @@ a file that changed under you is skipped instead of moved somewhere stale. A
 move is always a move, never a copy, so hardlinks survive and nothing is
 duplicated. Bindery also prunes the folder a file left behind when it empties,
 and refreshes the `metadata.opf` sidecar when you have that turned on.
+
+The file extension comes from the file's current name. If a file has lost its
+extension (for example from a template with `{Title}{ext}` and no dot), Bindery
+takes it back from the file's rename history, or failing that from what is
+inside the file (epub, mobi, pdf and similar). History is preferred, except
+that a file whose contents are clearly a different format (a PDF, say) gets the
+extension of its contents. Content sniffing cannot tell mobi, azw3 and prc
+apart, so a file recovered that way gets `.mobi`, which Calibre and Kindle tools
+read by content. Fix the template to
+`{Title}.{ext}` and run Rename files again to repair those files. A file whose
+extension cannot be worked out is shown as **Error** and left alone, and so is
+any move where the template would produce a name with no extension. Put a dot
+before `{ext}` in the ebook template, and leave `{ext}` out of the audiobook
+folder template, which names a folder and has no extension to fill in. Saving
+an audiobook template with `{ext}` is refused.
 
 Three scopes, all the same preview:
 

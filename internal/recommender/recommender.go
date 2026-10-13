@@ -164,7 +164,10 @@ func hardFilter(candidates []models.RecommendationCandidate, p *UserProfile) []m
 		if c.AuthorName != "" && p.ExcludedAuthors[strings.ToLower(c.AuthorName)] {
 			continue
 		}
-		if p.PreferredLanguage != "" && c.Language != "" && c.Language != p.PreferredLanguage {
+		// Compared normalized: the preference is a two-letter setting ("en")
+		// and a candidate carries the stored ISO 639-2/B code ("eng") (#3086).
+		if p.PreferredLanguage != "" && c.Language != "" &&
+			models.NormalizeLanguageCode(c.Language) != models.NormalizeLanguageCode(p.PreferredLanguage) {
 			continue
 		}
 		// Suppress candidates with too few ratings, but only for types where we have no

@@ -2,10 +2,12 @@ package importer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -105,7 +107,7 @@ func (s *Scanner) downloadImportMode(ctx context.Context, downloadPath, formatHi
 	}
 	format := formatHint
 	if format != models.MediaTypeAudiobook && format != models.MediaTypeEbook {
-		format = detectDownloadFormat(discoverBookFiles(downloadPath, explicitFiles))
+		format = detectDownloadFormat(discoverBookFiles(ctx, downloadPath, explicitFiles))
 	}
 	if format == models.MediaTypeAudiobook {
 		return audiobookMode
@@ -263,12 +265,39 @@ func (s *Scanner) pushToCWA(ctx context.Context, srcPath string) {
 // discoverBookFiles returns the book files for a download. An explicit
 // per-torrent file list (issue #903) is authoritative; otherwise it walks the
 // download path for recognised book files. Shared by the normal import flow
-// and the external-mode drop handoff.
-func discoverBookFiles(downloadPath string, explicitFiles []string) []string {
-	if len(explicitFiles) > 0 {
-		return filterImportableFiles(explicitFiles)
+// and the external-mode drop handoff. Ebook files under MinPlausibleEbookBytes
+// are left out unless ctx is a manual import, which is the override for a file
+// that small; discoverBookFilesSized reports the ones left out.
+func discoverBookFiles(ctx context.Context, downloadPath string, explicitFiles []string) []string {
+	files, _ := discoverBookFilesSized(downloadPath, explicitFiles, !isManualImport(ctx))
+	return files
+}
+
+// discoverBookFilesSized is discoverBookFiles plus the ebook files it left out
+// for being too small to be a book (#3224). A download can carry a notes or
+// link file beside the book, such as the 253 byte "www.site.txt" a release
+// ships at its root, and importing it would add a second "format" to the book.
+// The size comes from the entry the walk (or the presence check) already read,
+// so no file is statted a second time.
+//
+// dropTiny false keeps every file: a manual import is the explicit override for
+// a file that small that really is the book (see TooSmallToBeABook). Audiobook
+// tracks are never judged, so a short clip stays.
+func discoverBookFilesSized(downloadPath string, explicitFiles []string, dropTiny bool) (files, tooSmall []string) {
+	keep := func(path string, size int64) {
+		if dropTiny && TooSmallToBeABook(path, size) {
+			tooSmall = append(tooSmall, path)
+			return
+		}
+		files = append(files, path)
 	}
-	var bookFiles []string
+	if len(explicitFiles) > 0 {
+		paths, infos := filterImportableFilesInfo(explicitFiles)
+		for i, p := range paths {
+			keep(p, infos[i].Size())
+		}
+		return files, tooSmall
+	}
 	if err := filepath.Walk(downloadPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
@@ -283,13 +312,13 @@ func discoverBookFiles(downloadPath string, explicitFiles []string) []string {
 			return nil
 		}
 		if IsBookFile(path) {
-			bookFiles = append(bookFiles, path)
+			keep(path, info.Size())
 		}
 		return nil
 	}); err != nil {
 		slog.Warn("failed to walk download path", "path", downloadPath, "error", err)
 	}
-	return bookFiles
+	return files, tooSmall
 }
 
 // filterImportableFiles reduces a download client's authoritative file list
@@ -315,16 +344,27 @@ func discoverBookFiles(downloadPath string, explicitFiles []string) []string {
 // and falling through to tryImportInternal's path checks describes the
 // situation better than a failure raised from inside the mover.
 func filterImportableFiles(paths []string) []string {
+	out, _ := filterImportableFilesInfo(paths)
+	return out
+}
+
+// filterImportableFilesInfo is filterImportableFiles that also returns what
+// the check read for each kept path, so a caller can use the size without
+// statting the file again.
+func filterImportableFilesInfo(paths []string) ([]string, []os.FileInfo) {
 	out := paths[:0:0]
+	infos := make([]os.FileInfo, 0, len(paths))
 	for _, p := range paths {
-		if !importableSourceFile(p) {
+		fi, ok := importableSourceInfo(p)
+		if !ok {
 			slog.Warn("skipping download-client file: not a regular file on this host (missing, unreadable, or a symlink)",
 				"path", p)
 			continue
 		}
 		out = append(out, p)
+		infos = append(infos, fi)
 	}
-	return out
+	return out, infos
 }
 
 // importableSourceFile is the single-path predicate behind
@@ -335,11 +375,17 @@ func filterImportableFiles(paths []string) []string {
 // filter, so every poll spent an attempt on a list the importer had already
 // emptied.
 func importableSourceFile(p string) bool {
+	_, ok := importableSourceInfo(p)
+	return ok
+}
+
+// importableSourceInfo is importableSourceFile that also returns what it read.
+func importableSourceInfo(p string) (os.FileInfo, bool) {
 	fi, err := os.Lstat(p)
-	if err != nil {
-		return false
+	if err != nil || fi.Mode()&os.ModeSymlink != 0 {
+		return nil, false
 	}
-	return fi.Mode()&os.ModeSymlink == 0
+	return fi, true
 }
 
 // dropSettings reads the external-mode drop-folder configuration (#941) for
@@ -412,8 +458,9 @@ func (s *Scanner) dropToFolder(ctx context.Context, dl *models.Download, downloa
 
 	// The format decides the destination (#1632): audiobooks may have a drop
 	// folder of their own, so it is resolved before the folder is read.
-	bookFiles := discoverBookFiles(downloadPath, explicitFiles)
-	detectedFormat := detectDownloadFormat(bookFiles)
+	bookFiles, tooSmallFiles := discoverBookFilesSized(downloadPath, explicitFiles, !isManualImport(ctx))
+	// Files left out for their size still say which format this is.
+	detectedFormat := detectDownloadFormat(append(slices.Clone(bookFiles), tooSmallFiles...))
 	if formatHint == models.MediaTypeAudiobook || formatHint == models.MediaTypeEbook {
 		detectedFormat = formatHint
 	}
@@ -424,6 +471,10 @@ func (s *Scanner) dropToFolder(ctx context.Context, dl *models.Download, downloa
 	}
 
 	if len(bookFiles) == 0 {
+		if len(tooSmallFiles) > 0 {
+			s.blockTinyOnlyDownload(ctx, dl, downloadPath)
+			return true
+		}
 		if _, statErr := os.Stat(downloadPath); os.IsNotExist(statErr) {
 			s.failImport(ctx, dl, models.StateImportFailed,
 				fmt.Sprintf("download path not found: %q — configure PathRemap on the download client", downloadPath))
@@ -493,7 +544,12 @@ func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, aut
 
 	var placed int
 	var lastErr error
-	for _, srcFile := range bookFiles {
+	// Files of one format share a destination, and dropPlaceFile replaces what
+	// is there, so the last of them used to win. The file closest to the book
+	// goes first and takes the destination; a later file for the same one is
+	// left (#3224).
+	placedDests := make(map[string]struct{}, len(bookFiles))
+	for _, srcFile := range orderByBookTitle(book, bookFiles) {
 		var fileDest string
 		if layout == "templated" {
 			d, derr := s.destRenamer(ctx).DestPath(folder, author, book, seriesTitle, seriesNum, srcFile)
@@ -505,17 +561,25 @@ func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, aut
 		} else {
 			fileDest = filepath.Join(folder, s.renamer.DropEbookName(author, book, srcFile))
 		}
+		if _, taken := placedDests[fileDest]; taken {
+			slog.Info("drop: another file already holds this destination, leaving it",
+				"src", srcFile, "dst", fileDest)
+			continue
+		}
 		if perr := dropPlaceFile(importCtx, srcFile, fileDest, linkMode); perr != nil {
 			lastErr = perr
 			continue
 		}
+		placedDests[fileDest] = struct{}{}
 		placed++
 	}
 	if placed == 0 {
 		if lastErr == nil {
 			lastErr = fmt.Errorf("no book files could be placed")
 		}
-		return "", false, lastErr
+		// A template that cannot name an ebook with an extension is the
+		// operator's to fix, so it blocks rather than spending retries.
+		return "", errors.Is(lastErr, ErrEbookNoExtension), lastErr
 	}
 	return folder, false, nil
 }
@@ -526,6 +590,10 @@ func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, aut
 // (StateImportFailed — retryable as-is).
 func (s *Scanner) failDrop(ctx context.Context, dl *models.Download, blocked bool, err error) {
 	if blocked {
+		// importPending cannot move straight to importBlocked, and a drop runs
+		// from importPending, so without this the block was dropped silently
+		// and the download sat pending.
+		s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
 		s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf("drop folder destination invalid: %v", err))
 		return
 	}

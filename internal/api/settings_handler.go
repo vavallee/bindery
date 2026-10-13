@@ -864,6 +864,14 @@ func validateSettingValue(key, value string) error {
 		if !importer.AudiobookTemplateHasPart(value) {
 			return fmt.Errorf("naming.audiobook_file_template must include a {Part} token so each track gets a unique name")
 		}
+	case "naming_template_audiobook":
+		// Audiobook folders render {ext} empty, so a copied ebook template such
+		// as "{Author} - {Title}.{ext}" makes folders named "Author - Title."
+		// and uniquifying then splits one book across "Title.", "Title. (2)"
+		// and so on (#3217).
+		if importer.AudiobookTemplateUsesExt(value) {
+			return fmt.Errorf("naming_template_audiobook names a folder, so {ext} is always empty there and would leave a trailing dot in every folder name. Remove {ext}; it belongs in the ebook template")
+		}
 	case SettingImportDropLinkMode:
 		if value == "" {
 			return nil

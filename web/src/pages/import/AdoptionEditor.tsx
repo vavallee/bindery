@@ -99,7 +99,6 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
                     name={`adopt-${item.id}`}
                     checked={chosen?.id === o.book.id}
                     onChange={() => setChosen(o.book)}
-                    className="text-emerald-600 focus:ring-emerald-500"
                   />
                   <span className="min-w-0 flex-1 truncate text-sm text-slate-800 dark:text-zinc-200">
                     {o.book.title}

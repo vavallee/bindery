@@ -574,6 +574,10 @@ func TestBookConflictValues_RoundTrip(t *testing.T) {
 		{"release_date", "2021-03-04", "2021-03-04"},
 		{"release_date", "2020-01-02T23:30:00-05:00", "2020-01-03"},
 		{"language", " ENG ", "eng"},
+		// #3086. A conflict recorded before the upgrade still holds the
+		// spelling its source used; applying it stores the normalized code.
+		{"language", "en", "eng"},
+		{"language", "English", "eng"},
 		{"average_rating", " 4.25 ", "4.25"},
 		{"ratings_count", " 120 ", "120"},
 		{"description", "Some <b>text</b>", SerializeBookConflictValue(&models.Book{Description: "Some <b>text</b>"}, "description")},

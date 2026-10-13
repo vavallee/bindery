@@ -116,7 +116,7 @@ func TestDrop_EbookFlatCopy(t *testing.T) {
 
 	downloadDir := t.TempDir()
 	src := filepath.Join(downloadDir, "whatever.epub")
-	if err := os.WriteFile(src, []byte("epub bytes"), 0o644); err != nil {
+	if err := os.WriteFile(src, bookSized("epub bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	dl := newDropDownload(t, downloads, book, ctx)
@@ -128,8 +128,8 @@ func TestDrop_EbookFlatCopy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("drop file not found at %s: %v", dst, err)
 	}
-	if string(got) != "epub bytes" {
-		t.Errorf("drop contents = %q, want %q", got, "epub bytes")
+	if string(got) != string(bookSized("epub bytes")) {
+		t.Errorf("drop contents = %q, want %q", got, bookSized("epub bytes"))
 	}
 	if _, err := os.Stat(src); err != nil {
 		t.Errorf("source removed after drop (copy semantics expected): %v", err)
@@ -151,7 +151,7 @@ func TestDrop_EbookTemplated(t *testing.T) {
 	setDropSettings(t, settings, ctx, map[string]string{"import.drop_folder": dropDir, "import.drop_layout": "templated"})
 
 	downloadDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(downloadDir, "x.epub"), []byte("epub"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(downloadDir, "x.epub"), bookSized("epub"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	dl := newDropDownload(t, downloads, book, ctx)
@@ -176,7 +176,7 @@ func TestDrop_EbookHardlink(t *testing.T) {
 
 	downloadDir := t.TempDir()
 	src := filepath.Join(downloadDir, "x.epub")
-	if err := os.WriteFile(src, []byte("epub"), 0o644); err != nil {
+	if err := os.WriteFile(src, bookSized("epub"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	dl := newDropDownload(t, downloads, book, ctx)
@@ -263,7 +263,7 @@ func TestDrop_PlacementFailureFailsImport(t *testing.T) {
 	setDropSettings(t, settings, ctx, map[string]string{"import.drop_folder": badDrop})
 
 	downloadDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(downloadDir, "x.epub"), []byte("epub"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(downloadDir, "x.epub"), bookSized("epub"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	dl := newDropDownload(t, downloads, book, ctx)

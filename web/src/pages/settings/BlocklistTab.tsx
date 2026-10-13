@@ -113,7 +113,6 @@ export default function BlocklistTab() {
                         type="checkbox"
                         checked={allSelected}
                         onChange={toggleAll}
-                        className="accent-emerald-500"
                       />
                     </th>
                     <th className="text-left px-4 py-3 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase tracking-wider">{t('blocklist.colTitle')}</th>
@@ -130,7 +129,6 @@ export default function BlocklistTab() {
                           type="checkbox"
                           checked={selected.has(entry.id)}
                           onChange={() => toggleSelect(entry.id)}
-                          className="accent-emerald-500"
                         />
                       </td>
                       <td className="px-4 py-3 max-w-xs">
@@ -169,7 +167,6 @@ export default function BlocklistTab() {
                 type="checkbox"
                 checked={allSelected}
                 onChange={toggleAll}
-                className="accent-emerald-500"
               />
               <span className="text-xs text-slate-600 dark:text-zinc-500">{t('blocklist.selectAll')}</span>
             </div>
@@ -183,7 +180,7 @@ export default function BlocklistTab() {
                     type="checkbox"
                     checked={selected.has(entry.id)}
                     onChange={() => toggleSelect(entry.id)}
-                    className="accent-emerald-500 mt-0.5 flex-shrink-0"
+                    className="mt-0.5 flex-shrink-0"
                   />
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-slate-800 dark:text-zinc-200 [overflow-wrap:anywhere]">{entry.title}</p>

@@ -101,7 +101,7 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
             <select
               value={sourceId}
               onChange={e => setSourceId(e.target.value ? Number(e.target.value) : '')}
-              className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
               <option value="">—</option>
               {sorted.filter(a => a.id !== targetId).map(a => (
@@ -115,7 +115,7 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
             <select
               value={targetId}
               onChange={e => setTargetId(e.target.value ? Number(e.target.value) : '')}
-              className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
               <option value="">—</option>
               {sorted.filter(a => a.id !== sourceId).map(a => (

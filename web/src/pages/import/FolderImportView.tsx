@@ -160,7 +160,7 @@ export default function FolderImportView() {
             checked={showImported}
             onChange={e => handleToggleShowImported(e.target.checked)}
             disabled={scanning}
-            className="rounded border-slate-400 dark:border-zinc-600 text-emerald-600 focus:ring-emerald-500 focus:ring-offset-0"
+            className="rounded border-slate-400 dark:border-zinc-600"
           />
           {t('manualImport.showImported', 'Show already imported')}
         </label>
