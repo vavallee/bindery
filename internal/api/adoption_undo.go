@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/models"
 )
 
 // Undo, the compensation a failed adopt runs, and the recovery of claims a
@@ -94,7 +95,7 @@ func (h *AdoptionHandler) Undo(w http.ResponseWriter, r *http.Request) {
 
 func recordOf(u *db.UnmatchedUnit) db.AdoptionRecord {
 	return db.AdoptionRecord{
-		BookID: u.BookID, CreatedBookID: u.CreatedBookID, CreatedAuthorID: u.CreatedAuthorID,
+		BookID: u.BookID, PriorBookStatus: u.PriorBookStatus, CreatedBookID: u.CreatedBookID, CreatedAuthorID: u.CreatedAuthorID,
 		CreatedBookFingerprint: u.CreatedBookFingerprint, Registered: u.Registered,
 	}
 }
@@ -115,9 +116,27 @@ func (h *AdoptionHandler) reverse(ctx context.Context, unitID int64, rec db.Adop
 		}
 		used = now != "" && now != rec.CreatedBookFingerprint
 	}
+	var statusBeforeUntrack string
+	if rec.CreatedBookID == 0 && rec.BookID > 0 && rec.PriorBookStatus == models.BookStatusSkipped {
+		if b, err := h.books.GetByID(ctx, rec.BookID); err == nil && b != nil {
+			statusBeforeUntrack = b.Status
+		}
+	}
 	for _, f := range rec.Registered {
 		if _, err := h.untrackFile(ctx, f.Path, f.BookID); err != nil {
 			return false, fmt.Errorf("untrack %s: %w", f.Path, err)
+		}
+	}
+	if rec.CreatedBookID == 0 && rec.BookID > 0 && rec.PriorBookStatus == models.BookStatusSkipped && statusBeforeUntrack == models.BookStatusImported {
+		b, err := h.books.GetByID(ctx, rec.BookID)
+		if err != nil {
+			return false, fmt.Errorf("load book %d to restore prior status: %w", rec.BookID, err)
+		}
+		if b != nil && b.Status == models.BookStatusWanted {
+			b.Status = models.BookStatusSkipped
+			if err := h.books.Update(ctx, b); err != nil {
+				return false, fmt.Errorf("restore skipped status on book %d: %w", rec.BookID, err)
+			}
 		}
 	}
 	if used {
