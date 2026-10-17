@@ -25,6 +25,7 @@ import (
 	"github.com/vavallee/bindery/internal/covers"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/decision"
+	"github.com/vavallee/bindery/internal/dirperm"
 	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/importer/formatsniff"
 	"github.com/vavallee/bindery/internal/indexer"
@@ -2069,7 +2070,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				s.failImport(ctx, dl, models.StateImportBlocked, collErr.Error())
 				return
 			}
-			if err := os.MkdirAll(destDir, 0o750); err != nil {
+			if err := os.MkdirAll(destDir, dirperm.Library()); err != nil {
 				dirErr = fmt.Errorf("create audiobook dest dir: %w", err)
 			} else {
 				// Basenames rather than full paths: rollbackPlacedFiles
@@ -2245,7 +2246,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					slog.Info("merging audiobook file into the book's existing shared folder",
 						"title", book.Title, "bookID", book.ID, "dst", destDir, "mode", mode)
 				}
-				if err := os.MkdirAll(destDir, 0o750); err != nil {
+				if err := os.MkdirAll(destDir, dirperm.Library()); err != nil {
 					dirErr = fmt.Errorf("create audiobook dest dir: %w", err)
 				} else {
 					name := s.singleAudiobookFileName(ctx, author, book, seriesTitle, seriesNum, audiobookSource)
