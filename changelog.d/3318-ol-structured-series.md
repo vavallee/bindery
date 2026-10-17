@@ -1,0 +1,2 @@
+### Fixed
+- **OpenLibrary series are read again** (#3318). OpenLibrary has been moving works to a new kind of series record that carries only a link to the series, not its name, and Bindery skipped those, so books that relied on OpenLibrary for their series lost them. Bindery now looks up the series name, once per series, and links the books as before. An author refresh picks up the series for books already in your library.

@@ -1,14 +1,54 @@
 package openlibrary
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"regexp"
+	"strings"
+)
 
 // OpenLibrary API response types
 
 // flexStringSlice unmarshals a JSON array whose elements may be plain strings
 // or objects (e.g. {"key": "...", "title": "..."}). Strings are kept as-is;
-// objects are decoded by extracting the "title" field when present, otherwise
-// they are skipped. This handles schema variance in the OpenLibrary works API.
+// objects are decoded by extracting the "title" field when present. This
+// handles schema variance in the OpenLibrary works API.
+//
+// A work's series has a third shape, OpenLibrary's structured series record:
+// {"series": {"key": "/series/OL327402L"}, "position": "21"}. It names no
+// series, only a key, so it is kept as "/series/OL327402L #21" and the client
+// resolves the key to the series name (Client.resolveSeriesKeys). Before, it
+// was skipped like any object without a title, so every work moved to the
+// structured form lost its series.
 type flexStringSlice []string
+
+// seriesKeyRe is the only shape of series key passed on: it ends up in a URL.
+var seriesKeyRe = regexp.MustCompile(`^/series/OL\d+L$`)
+
+// seriesPositionRe is a position parseSeriesRef can read after "#".
+var seriesPositionRe = regexp.MustCompile(`^\d+(?:\.\d+)?$`)
+
+// seriesKeyEntry renders a structured series record as "<key> #<position>",
+// or "" when it has no usable key. A position that isn't a plain number is
+// left off rather than read as part of the series name.
+func seriesKeyEntry(obj map[string]json.RawMessage) string {
+	var ref struct {
+		Key string `json:"key"`
+	}
+	if raw, ok := obj["series"]; !ok || json.Unmarshal(raw, &ref) != nil || !seriesKeyRe.MatchString(ref.Key) {
+		return ""
+	}
+	var pos string
+	if raw, ok := obj["position"]; ok {
+		var n json.Number
+		if json.Unmarshal(raw, &pos) != nil && json.Unmarshal(raw, &n) == nil {
+			pos = n.String()
+		}
+	}
+	if pos = strings.TrimSpace(pos); seriesPositionRe.MatchString(pos) {
+		return ref.Key + " #" + pos
+	}
+	return ref.Key
+}
 
 func (f *flexStringSlice) UnmarshalJSON(data []byte) error {
 	var raw []json.RawMessage
@@ -28,6 +68,10 @@ func (f *flexStringSlice) UnmarshalJSON(data []byte) error {
 				if err := json.Unmarshal(titleRaw, &title); err == nil && title != "" {
 					*f = append(*f, title)
 				}
+				continue
+			}
+			if entry := seriesKeyEntry(obj); entry != "" {
+				*f = append(*f, entry)
 			}
 		}
 	}
