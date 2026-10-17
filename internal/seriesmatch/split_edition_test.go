@@ -30,3 +30,24 @@ func TestSplitEditionPartOf(t *testing.T) {
 		})
 	}
 }
+
+func TestSplitEditionTitleOf(t *testing.T) {
+	cases := []struct {
+		name, partTitle, wholeTitle string
+		want                        bool
+	}{
+		{"marker and subtitle", "The Eye of the World, Part 1 of 2: From The Two Rivers", "The Eye of the World", true},
+		{"pt abbreviation", "The Way of Kings Pt. 2", "The Way of Kings", true},
+		{"no marker", "The Eye of the World: The Graphic Novel, Volume One", "The Eye of the World", false},
+		{"part of a different book", "The Great Hunt, Part 1 of 2", "The Eye of the World", false},
+		{"bare marker", "Part 1", "The Eye of the World", false},
+		{"blank whole", "The Eye of the World, Part 1", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SplitEditionTitleOf(tc.partTitle, tc.wholeTitle); got != tc.want {
+				t.Fatalf("SplitEditionTitleOf(%q, %q) = %v, want %v", tc.partTitle, tc.wholeTitle, got, tc.want)
+			}
+		})
+	}
+}

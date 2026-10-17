@@ -34,6 +34,16 @@ func SplitEditionPartOf(partTitle, partPosition, wholeTitle, wholePosition strin
 	if !ok || !SamePosition(floor, wholePosition) {
 		return false
 	}
+	return SplitEditionTitleOf(partTitle, wholeTitle)
+}
+
+// SplitEditionTitleOf is signal 2 of SplitEditionPartOf on its own: partTitle
+// is wholeTitle followed by a "Part N" marker. It is only a sound test by
+// itself where signal 1 cannot be evaluated, which is a part and a whole that
+// share no series (#3324): each series numbers its own volumes, so a position
+// in one says nothing about a position in the other. Inside one series, use
+// SplitEditionPartOf.
+func SplitEditionTitleOf(partTitle, wholeTitle string) bool {
 	loc := splitEditionMarkerRe.FindStringIndex(partTitle)
 	if loc == nil {
 		return false
