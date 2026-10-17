@@ -630,6 +630,15 @@ type catalogueSyncOptions struct {
 	// whole library.
 	refreshFromProvider bool
 
+	// enrichProfile asks the author enrichers (#3287) during the profile
+	// refresh, whatever the author's enrichment stamp says. Only the two
+	// single author actions a user takes set it, adding the author and its
+	// Refresh button, so a new author gets its photo and bio straight away.
+	// Bulk refresh, Refresh all, scheduled discovery and the imports leave it
+	// off: they span many authors, and the staggered profile refresh
+	// enriches those one at a time behind the stamp instead.
+	enrichProfile bool
+
 	// ownerForUnownedAuthor owns the books this run creates when the author
 	// has no owner. Add Book's single work fallback sets it to the caller
 	// under tenancy, so a book picked under a shared author belongs to the
@@ -787,12 +796,9 @@ func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, auth
 	} else if strings.TrimSpace(author.SortName) == "" {
 		author.SortName = sortName(author.Name)
 	}
-	if desc := textutil.CleanDescription(upstream.Description); desc != "" {
-		author.Description = desc
-	}
-	if imageURL := strings.TrimSpace(upstream.ImageURL); imageURL != "" {
-		author.ImageURL = imageURL
-	}
+	// The credit travels with an enriched photo or bio (#3287).
+	models.MergeProfileField(&author.Description, &author.DescriptionSource, textutil.CleanDescription(upstream.Description), upstream.DescriptionSource)
+	models.MergeProfileField(&author.ImageURL, &author.ImageSource, strings.TrimSpace(upstream.ImageURL), upstream.ImageSource)
 	if disambiguation := strings.TrimSpace(upstream.Disambiguation); disambiguation != "" {
 		author.Disambiguation = disambiguation
 	}
@@ -1450,7 +1456,7 @@ func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": h.refreshConflictMessage(author.ID)})
 		return
 	}
-	h.fetchAuthorBooksAsync(author, catalogueSyncOptions{mediaType: h.resolveDefaultMediaType(r.Context()), discovery: true, refreshFromProvider: true, syncClaimed: true})
+	h.fetchAuthorBooksAsync(author, catalogueSyncOptions{mediaType: h.resolveDefaultMediaType(r.Context()), discovery: true, refreshFromProvider: true, enrichProfile: true, syncClaimed: true})
 	writeJSON(w, http.StatusAccepted, map[string]string{"message": "refresh started"})
 }
 
@@ -1580,12 +1586,8 @@ func (h *AuthorHandler) relinkCalibreAuthor(ctx context.Context, author *models.
 	// route it. A blanket "openlibrary" mislabelled every dnb: and hc: link,
 	// including the primary's own match on a Hardcover or DNB primary (#2332).
 	author.MetadataProvider = models.AuthorProviderFromForeignID(full.ForeignID)
-	if full.ImageURL != "" {
-		author.ImageURL = full.ImageURL
-	}
-	if desc := textutil.CleanDescription(full.Description); desc != "" {
-		author.Description = desc
-	}
+	models.MergeProfileField(&author.ImageURL, &author.ImageSource, strings.TrimSpace(full.ImageURL), full.ImageSource)
+	models.MergeProfileField(&author.Description, &author.DescriptionSource, textutil.CleanDescription(full.Description), full.DescriptionSource)
 	if full.SortName != "" {
 		author.SortName = full.SortName
 	}
@@ -1616,7 +1618,7 @@ func (h *AuthorHandler) relinkCalibreAuthor(ctx context.Context, author *models.
 // and swallowed — the catalogue sync that follows must still run. Identity
 // (ForeignID/Name/MetadataProvider) and user-controlled monitoring fields are
 // never touched here; only the read-only profile fields are merged.
-func (h *AuthorHandler) refreshAuthorProfile(ctx context.Context, author *models.Author) {
+func (h *AuthorHandler) refreshAuthorProfile(ctx context.Context, author *models.Author, enrich bool) {
 	if h.meta == nil || author == nil {
 		return
 	}
@@ -1629,6 +1631,19 @@ func (h *AuthorHandler) refreshAuthorProfile(ctx context.Context, author *models
 	if upstream == nil {
 		return
 	}
+	// An add or a Refresh click asks the enrichers (#3287) whatever the
+	// stamp says; their own cache still keeps a repeat click off the
+	// network. A full answer is stamped, so the staggered refresh leaves
+	// this author alone for a month. Every other sync leaves enrichment to
+	// that refresh.
+	enrichAnswered := enrich && h.meta.EnrichAuthor(ctx, upstream)
+	defer func() {
+		if enrichAnswered {
+			if err := h.authors.StampEnrichment(ctx, author.ID, time.Now()); err != nil {
+				slog.Warn("author profile refresh: could not record enrichment", "author", author.Name, "error", err)
+			}
+		}
+	}()
 	now := time.Now().UTC()
 	if !mergeAuthorProfileFields(author, upstream) {
 		// Nothing new, so skip the whole row write, but the profile was
@@ -1645,6 +1660,7 @@ func (h *AuthorHandler) refreshAuthorProfile(ctx context.Context, author *models
 	author.LastMetadataRefreshAt = &now
 	if err := h.authors.Update(ctx, author); err != nil {
 		slog.Warn("author profile refresh: save failed", "author", author.Name, "error", err)
+		enrichAnswered = false
 		return
 	}
 	slog.Info("refreshed author profile from metadata provider",
@@ -1658,13 +1674,8 @@ func (h *AuthorHandler) refreshAuthorProfile(ctx context.Context, author *models
 // changed so the caller can skip a redundant DB write. SortName is only filled
 // when missing, since the local sort order may have been curated.
 func mergeAuthorProfileFields(author, upstream *models.Author) bool {
-	changed := false
-	if desc := textutil.CleanDescription(upstream.Description); desc != "" && desc != author.Description {
-		author.Description = desc
-		changed = true
-	}
-	if imageURL := strings.TrimSpace(upstream.ImageURL); imageURL != "" && imageURL != author.ImageURL {
-		author.ImageURL = imageURL
+	changed := models.MergeProfileField(&author.Description, &author.DescriptionSource, textutil.CleanDescription(upstream.Description), upstream.DescriptionSource)
+	if models.MergeProfileField(&author.ImageURL, &author.ImageSource, strings.TrimSpace(upstream.ImageURL), upstream.ImageSource) {
 		changed = true
 	}
 	if disambiguation := strings.TrimSpace(upstream.Disambiguation); disambiguation != "" && disambiguation != author.Disambiguation {
@@ -1886,7 +1897,7 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	// author usually already existed before this request, and an Add Book is
 	// not a request to rewrite their profile.
 	if !wasCalibre && !singleWork {
-		h.refreshAuthorProfile(metaCtx, author)
+		h.refreshAuthorProfile(metaCtx, author, opts.enrichProfile)
 	}
 
 	// Load the author's secondary provider identities so supplemental

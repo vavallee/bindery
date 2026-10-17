@@ -156,6 +156,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingMetadataAuthorWikidata, Type: SettingTypeBool, Default: "false",
+		Description: "Fill an author's missing photo and bio from Wikimedia Commons and Wikipedia, found on Wikidata by the author's authority ID (NORAF, GND, BnF or OpenLibrary), never by name. Off by default: while off, Wikimedia is sent no request. A change applies to the next metadata lookup, without a restart.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: "search.preferredLanguage", Type: SettingTypeString, Default: "",
 		Description: "Preferred release language, used to rank search results and to build the recommendation taste profile. Empty means no preference.",
 		State:       SettingStateActive,

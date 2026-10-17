@@ -309,6 +309,7 @@ func main() {
 	bootProviders := metaProviders.build(ctxBoot)
 	bootProviders.log("metadata providers configured")
 	metaAgg := metadata.NewAggregator(bootProviders.primary, bootProviders.enrichers...)
+	metaAgg.SetAuthorEnrichers(bootProviders.authorEnrichers...)
 
 	// Optional CLI subcommand: `bindery migrate {csv,readarr} <path>`.
 	// Runs the import and exits; does not start the HTTP server. Useful

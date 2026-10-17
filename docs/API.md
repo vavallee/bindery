@@ -1381,7 +1381,8 @@ unset key:
 never selects them never contacts either library.
 
 A `PUT` (or `DELETE`) of `metadata.primary_provider`, `googlebooks.apiKey`,
-`google_books_api_key` or `hardcover.api_token` rebuilds the metadata providers
+`google_books_api_key`, `hardcover.api_token` or
+`metadata.author_enrichment.wikidata` (#3287) rebuilds the metadata providers
 before it answers, so the next lookup already uses the new set, with no restart
 (#1771). The `PUT` response for those keys carries an extra boolean:
 

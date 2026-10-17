@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/vavallee/bindery/internal/api"
@@ -11,6 +12,7 @@ import (
 	"github.com/vavallee/bindery/internal/metadata/bnf"
 	"github.com/vavallee/bindery/internal/metadata/googlebooks"
 	"github.com/vavallee/bindery/internal/metadata/nb"
+	"github.com/vavallee/bindery/internal/metadata/wikidata"
 )
 
 // metadataProviders owns every metadata client for the life of the process
@@ -34,6 +36,9 @@ type metadataProviders struct {
 	nb          metadata.Provider
 	bnf         metadata.Provider
 	googleBooks *googlebooks.Client
+	// wikidata is the opt in author enricher (#3287). Building it sends
+	// nothing; it is only asked once SettingMetadataAuthorWikidata is on.
+	wikidata *wikidata.Client
 
 	// mu serialises apply. Each apply reads the settings and installs what it
 	// read; without it two saves racing could install the older read last.
@@ -53,6 +58,7 @@ func newMetadataProviders(settings *db.SettingsRepo, openLibrary, dnbClient, har
 		nb:          nb.New(),
 		bnf:         bnf.New(),
 		googleBooks: googlebooks.New(""),
+		wikidata:    wikidata.New(),
 	}
 }
 
@@ -63,6 +69,8 @@ type metadataProviderSet struct {
 	primaryName string
 	primary     metadata.Provider
 	enrichers   []metadata.Provider
+	// authorEnrichers fill an author's empty photo and bio (#3287).
+	authorEnrichers []metadata.AuthorEnricher
 	// googleBooksKeyed and hardcoverToken are for the log line only.
 	googleBooksKeyed bool
 	hardcoverToken   bool
@@ -81,6 +89,9 @@ func (m *metadataProviders) build(ctx context.Context) metadataProviderSet {
 	m.googleBooks.SetAPIKey(gbKey)
 	set := m.assemble(resolveMetadataPrimaryProvider(configuredPrimary, hcToken), gbKey != "")
 	set.hardcoverToken = hcToken
+	if s, _ := m.settings.Get(ctx, api.SettingMetadataAuthorWikidata); s != nil && strings.EqualFold(strings.TrimSpace(s.Value), "true") {
+		set.authorEnrichers = append(set.authorEnrichers, m.wikidata)
+	}
 	return set
 }
 
@@ -150,6 +161,7 @@ func (m *metadataProviders) apply(ctx context.Context, agg *metadata.Aggregator)
 	if err := agg.Reconfigure(set.primary, set.enrichers...); err != nil {
 		return err
 	}
+	agg.SetAuthorEnrichers(set.authorEnrichers...)
 	set.log("metadata providers reconfigured")
 	return nil
 }
@@ -161,7 +173,11 @@ func (s metadataProviderSet) log(msg string) {
 	for _, p := range s.enrichers {
 		names = append(names, p.Name())
 	}
-	slog.Info(msg, "primary", s.primaryName, "enrichers", names, "googlebooks_keyed", s.googleBooksKeyed)
+	authorNames := make([]string, 0, len(s.authorEnrichers))
+	for _, e := range s.authorEnrichers {
+		authorNames = append(authorNames, e.Name())
+	}
+	slog.Info(msg, "primary", s.primaryName, "enrichers", names, "author_enrichers", authorNames, "googlebooks_keyed", s.googleBooksKeyed)
 	if s.primaryName != "hardcover" && !s.hardcoverToken {
 		slog.Info("hardcover enrichment idle: no api token configured")
 	}
@@ -176,6 +192,7 @@ var metadataProviderSettingKeys = map[string]bool{
 	api.SettingGoogleBooksAPIKey:       true,
 	api.LegacySettingGoogleBooksAPIKey: true,
 	api.SettingHardcoverAPIToken:       true,
+	api.SettingMetadataAuthorWikidata:  true,
 }
 
 // metadataProvidersReconfigurer adapts metadataProviders to the settings

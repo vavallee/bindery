@@ -34,7 +34,7 @@ func TestRefreshAuthorProfile_StampsFreshnessEvenWhenUnchanged(t *testing.T) {
 		t.Fatalf("precondition: author already stamped %v", author.LastMetadataRefreshAt)
 	}
 
-	f.h.refreshAuthorProfile(context.Background(), author)
+	f.h.refreshAuthorProfile(context.Background(), author, false)
 
 	got, err := f.authors.GetByID(context.Background(), author.ID)
 	if err != nil || got == nil {
@@ -52,7 +52,7 @@ func TestRefreshAuthorProfile_FailureDoesNotStamp(t *testing.T) {
 	f := newCoreFixture(t, provider)
 	author := seedWells(t, f.authors)
 
-	f.h.refreshAuthorProfile(context.Background(), author)
+	f.h.refreshAuthorProfile(context.Background(), author, false)
 
 	got, err := f.authors.GetByID(context.Background(), author.ID)
 	if err != nil || got == nil {

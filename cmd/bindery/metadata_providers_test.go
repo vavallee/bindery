@@ -314,3 +314,41 @@ func TestResolveMetadataPrimaryProvider(t *testing.T) {
 		})
 	}
 }
+
+// TestWikidataAuthorEnricherIsOptInAndAppliesLive covers #3287: the Wikidata
+// author enricher is off until its setting is saved as true, a save wires it
+// into the running aggregator without a restart, and clearing it removes it.
+// Saving the setting must also be one of the keys that triggers a rebuild.
+func TestWikidataAuthorEnricherIsOptInAndAppliesLive(t *testing.T) {
+	m, repo := metadataProvidersFixture(t)
+	ctx := context.Background()
+	set := m.build(ctx)
+	agg := metadata.NewAggregator(set.primary, set.enrichers...)
+	agg.SetAuthorEnrichers(set.authorEnrichers...)
+	if names := agg.AuthorEnricherNames(); len(names) != 0 {
+		t.Fatalf("a default boot wired author enrichers %v; Wikidata must be opt in", names)
+	}
+	if !metadataProviderSettingKeys[api.SettingMetadataAuthorWikidata] {
+		t.Fatal("saving the Wikidata setting does not trigger a provider rebuild")
+	}
+
+	if err := repo.Set(ctx, api.SettingMetadataAuthorWikidata, "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.apply(ctx, agg); err != nil {
+		t.Fatal(err)
+	}
+	if names := agg.AuthorEnricherNames(); len(names) != 1 || names[0] != "wikidata" {
+		t.Fatalf("after switching it on: author enrichers %v, want [wikidata]", names)
+	}
+
+	if err := repo.Set(ctx, api.SettingMetadataAuthorWikidata, "false"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.apply(ctx, agg); err != nil {
+		t.Fatal(err)
+	}
+	if names := agg.AuthorEnricherNames(); len(names) != 0 {
+		t.Errorf("after switching it off: author enrichers %v, want none", names)
+	}
+}

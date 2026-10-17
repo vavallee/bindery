@@ -60,6 +60,8 @@ func cloneAuthors(authors []models.Author) []models.Author {
 		a.RootFolderID = clonePointer(a.RootFolderID)
 		a.AudiobookRootFolderID = clonePointer(a.AudiobookRootFolderID)
 		a.LastMetadataRefreshAt = clonePointer(a.LastMetadataRefreshAt)
+		a.DescriptionSource = clonePointer(a.DescriptionSource)
+		a.ImageSource = clonePointer(a.ImageSource)
 		a.ProviderIdentifiers = maps.Clone(a.ProviderIdentifiers)
 		a.Books = cloneBooks(a.Books)
 		a.Statistics = clonePointer(a.Statistics)

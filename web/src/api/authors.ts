@@ -3,6 +3,16 @@ import type { Book } from './books'
 import type { Series } from './series'
 import type { Page } from './common'
 
+// Credit for an author photo or bio that an author enricher filled in from a
+// source other than the author's provider (#3287), as that source's licence asks.
+export interface ProfileSource {
+  provider: string
+  url: string
+  credit?: string
+  license?: string
+  licenseUrl?: string
+}
+
 export interface Author {
   id: number
   foreignAuthorId: string
@@ -13,6 +23,10 @@ export interface Author {
   sortName: string
   description: string
   imageUrl: string
+  // Set when the bio or photo came from an author enricher (#3287); absent
+  // when it is the provider's own.
+  descriptionSource?: ProfileSource
+  imageSource?: ProfileSource
   disambiguation: string
   ratingsCount: number
   averageRating: number

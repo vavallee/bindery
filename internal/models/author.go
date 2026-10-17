@@ -40,6 +40,13 @@ type Author struct {
 	MetadataProvider      string     `json:"metadataProvider"`
 	LastMetadataRefreshAt *time.Time `json:"lastMetadataRefreshAt"`
 
+	// DescriptionSource and ImageSource credit a bio or photo that an author
+	// enricher filled in from another source (#3287), for the attribution
+	// that source's licence asks for. Nil means the value is the primary
+	// provider's own, or empty.
+	DescriptionSource *ProfileSource `json:"descriptionSource,omitempty"`
+	ImageSource       *ProfileSource `json:"imageSource,omitempty"`
+
 	// ProviderIdentifiers carries the author_identifiers rows for this author,
 	// keyed by provider, so a caller that has already loaded them can hand the
 	// metadata layer the identity it needs without giving it database access.
@@ -427,4 +434,48 @@ func (a Author) ProviderIdentity(provider string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// ProfileSource is the attribution for an author profile field filled from a
+// source other than the author's primary provider: where it came from, the
+// page to credit, and the licence the source publishes it under. Credit
+// names the creator where the licence asks for one (a Commons photo's
+// author); it is empty for text credited to the site as a whole.
+type ProfileSource struct {
+	Provider   string `json:"provider"`
+	URL        string `json:"url"`
+	Credit     string `json:"credit,omitempty"`
+	License    string `json:"license,omitempty"`
+	LicenseURL string `json:"licenseUrl,omitempty"`
+}
+
+// MergeProfileField applies one refreshed profile value (a photo or a bio) and
+// its credit to the stored ones, and reports whether anything changed.
+//
+// A value the primary provider returned itself (src nil) replaces what is
+// stored, as refreshes always have. A value an author enricher filled in
+// (src set, #3287) only fills an empty field or replaces an earlier enriched
+// value: it never displaces a value from the primary provider or one a user
+// chose, such as an Audiobookshelf conflict resolution. An empty value
+// changes nothing, so a sparse refresh never clears a field (#1463).
+func MergeProfileField(cur *string, curSrc **ProfileSource, val string, src *ProfileSource) bool {
+	if val == "" {
+		return false
+	}
+	if src != nil && *cur != "" && *curSrc == nil {
+		return false
+	}
+	if val == *cur && profileSourceEqual(*curSrc, src) {
+		return false
+	}
+	*cur = val
+	*curSrc = src
+	return true
+}
+
+func profileSourceEqual(a, b *ProfileSource) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }

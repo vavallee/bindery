@@ -510,6 +510,14 @@ func (i *Importer) planUpstreamAuthorMerge(ctx context.Context, cfg ImportConfig
 		}
 	}
 	for _, field := range authorConflictFields {
+		// A credited photo or bio (an enricher's, #3287) on either side is
+		// not an ABS conflict: it follows the merge rule every refresh uses,
+		// so it never displaces the library's own value and its credit
+		// always travels with it.
+		if applied, ok := mergeCreditedAuthorField(author, full, field); ok {
+			changed = changed || applied
+			continue
+		}
 		fieldResult, fieldChanged, conflict, err := i.planConflictField(ctx, cfg, item, entityTypeAuthor, author.ID, field,
 			SerializeAuthorConflictValue(author, field),
 			SerializeAuthorConflictValue(full, field),

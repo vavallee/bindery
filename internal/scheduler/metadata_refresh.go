@@ -33,6 +33,10 @@ const (
 	// metadataRefreshInterval is how often each author's profile is due: one
 	// day, the cadence of the job before it was staggered.
 	metadataRefreshInterval = 24 * time.Hour
+	// authorEnrichmentInterval is how long an enrichment answer, a miss
+	// included, holds before the refresh asks the enrichers again (#3287).
+	// It is stamped on the author row, so a restart does not reset it.
+	authorEnrichmentInterval = 30 * 24 * time.Hour
 
 	// maxMetadataRefreshBatch caps how many authors one hourly tick refreshes.
 	// Discovery caps at 25 (maxDiscoveryBatch) because one discovery check is
@@ -302,9 +306,21 @@ loop:
 			continue
 		}
 
+		// Enrichment rides on this paced pass, never on GetAuthor, and only
+		// once its stamp has aged, so a library is asked about at most once a
+		// month however often it is refreshed or restarted.
+		enrichAnswered := false
+		if s.enrichmentDue(ctx, author.ID) {
+			enrichAnswered = s.meta.EnrichAuthor(ctx, updated)
+		}
 		if s.persistRefreshedAuthor(ctx, &author, updated, current.UpdatedAtRaw) {
 			refreshed++
 			slog.Debug("refreshed author", "author", author.Name)
+			if enrichAnswered {
+				if err := s.authors.StampEnrichment(ctx, author.ID, time.Now()); err != nil {
+					slog.Warn("failed to record author enrichment", "author", author.Name, "error", err)
+				}
+			}
 		}
 	}
 
@@ -332,12 +348,10 @@ func (s *Scheduler) persistRefreshedAuthor(ctx context.Context, author, updated 
 	// actually carries a value: a sparse OpenLibrary refresh must not
 	// clobber a previously enriched description/ratings with empties
 	// (#1463). Same guard the ImageURL update has always had.
-	if updated.Description != "" {
-		author.Description = updated.Description
-	}
-	if updated.ImageURL != "" {
-		author.ImageURL = updated.ImageURL
-	}
+	// MergeProfileField also keeps an enriched photo or bio (#3287) from
+	// displacing one the primary provider or a user supplied.
+	models.MergeProfileField(&author.Description, &author.DescriptionSource, updated.Description, updated.DescriptionSource)
+	models.MergeProfileField(&author.ImageURL, &author.ImageSource, updated.ImageURL, updated.ImageSource)
 	if updated.AverageRating != 0 {
 		author.AverageRating = updated.AverageRating
 	}
@@ -362,6 +376,14 @@ func (s *Scheduler) persistRefreshedAuthor(ctx context.Context, author, updated 
 		return false
 	}
 	return true
+}
+
+// enrichmentDue reports whether authorID's enrichment stamp is missing or
+// older than authorEnrichmentInterval. A failed read counts as due: the
+// enricher's own cache still keeps a repeat from reaching the network.
+func (s *Scheduler) enrichmentDue(ctx context.Context, authorID int64) bool {
+	last, err := s.authors.LastEnrichmentAt(ctx, authorID)
+	return err != nil || last == nil || time.Since(*last) >= authorEnrichmentInterval
 }
 
 // hasCalibrePrefix reports a Calibre-imported author. Those have synthetic

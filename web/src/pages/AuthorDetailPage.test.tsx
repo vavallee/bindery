@@ -329,6 +329,63 @@ describe('AuthorDetailPage', () => {
     expect(screen.queryByTestId('bnf-source-credit')).toBeNull()
   })
 
+  // #3287: a photo or bio an author enricher filled in carries its credit.
+  it('credits an enriched photo and bio with their source, creator and licence', async () => {
+    renderAuthorDetailPage([], 'grid', {
+      foreignAuthorId: 'nb:author:90000001',
+      authorName: 'Kari Nordmann',
+      metadataProvider: 'nb',
+      imageUrl: 'https://upload.example/k.jpg',
+      imageSource: { provider: 'wikimedia-commons', url: 'https://commons.example/wiki/File:K.jpg', credit: 'Ola Nordmann', license: 'CC BY-SA 4.0' },
+      description: 'Kari Nordmann is a writer.',
+      descriptionSource: { provider: 'wikipedia', url: 'https://no.wikipedia.example/wiki/Kari_Nordmann', license: 'CC BY-SA 4.0' },
+    })
+
+    const photo = await screen.findByTestId('author-photo-credit')
+    expect(photo.textContent).toBe('Photo: Ola Nordmann, CC BY-SA 4.0, via Wikimedia Commons')
+    expect(photo).toHaveAttribute('href', 'https://commons.example/wiki/File:K.jpg')
+    const bio = screen.getByTestId('author-bio-credit')
+    expect(bio.textContent).toBe('Bio from Wikipedia, CC BY-SA 4.0')
+    expect(bio).toHaveAttribute('href', 'https://no.wikipedia.example/wiki/Kari_Nordmann')
+  })
+
+  // A Commons file that names no photographer is still credited, with its
+  // licence; a source the page has no label for is shown by its own name.
+  it('credits a photo with no named photographer, and an unknown source by name', async () => {
+    renderAuthorDetailPage([], 'grid', {
+      imageUrl: 'https://upload.example/k.jpg',
+      imageSource: { provider: 'wikimedia-commons', url: 'https://commons.example/wiki/File:K.jpg', license: 'CC BY 2.5' },
+      description: 'Kari Nordmann is a writer.',
+      descriptionSource: { provider: 'example-encyclopedia', url: 'https://encyclopedia.example/k' },
+    })
+    expect((await screen.findByTestId('author-photo-credit')).textContent).toBe('Photo: CC BY 2.5, via Wikimedia Commons')
+    // No licence stated: the credit still names the source, without a
+    // dangling separator.
+    expect(screen.getByTestId('author-bio-credit').textContent).toBe('Bio from example-encyclopedia')
+  })
+
+  // A credit URL comes from a third party: anything but http(s) keeps the
+  // credit text and drops the link.
+  it('does not link a credit whose URL is not http(s)', async () => {
+    renderAuthorDetailPage([], 'grid', {
+      imageUrl: 'https://upload.example/k.jpg',
+      imageSource: { provider: 'wikimedia-commons', url: 'javascript:alert(1)', license: 'CC BY 2.5' },
+      description: 'Kari Nordmann is a writer.',
+      descriptionSource: { provider: 'wikipedia', url: 'data:text/html,hi', license: 'CC BY-SA 4.0' },
+    })
+    const photo = await screen.findByTestId('author-photo-credit')
+    expect(photo.textContent).toBe('Photo: CC BY 2.5, via Wikimedia Commons')
+    expect(photo).not.toHaveAttribute('href')
+    expect(screen.getByTestId('author-bio-credit')).not.toHaveAttribute('href')
+  })
+
+  it('shows no enrichment credit for a photo and bio from the author\'s own provider', async () => {
+    renderAuthorDetailPage([], 'grid', { imageUrl: 'https://covers.example/a.jpg', description: 'From the provider.' })
+    await screen.findByRole('heading', { level: 2 })
+    expect(screen.queryByTestId('author-photo-credit')).toBeNull()
+    expect(screen.queryByTestId('author-bio-credit')).toBeNull()
+  })
+
   it('shows link metadata for unlinked authors', async () => {
     renderAuthorDetailPage([], 'grid', {
       foreignAuthorId: 'abs:author:library:emilia-jae',

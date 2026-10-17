@@ -523,7 +523,13 @@
     "deleteConfirm": "Vil du slette {{author}} og alle bøkene ({{count}})?",
     "deleteWithFilesConfirm": "Vil du slette {{author}}, alle bøkene ({{count}}) OG filene eller mappene på disken ({{withFiles}})?\n\nDette kan ikke angres.",
     "deleteTitle": "Slett forfatter",
-    "deleteFilesAcknowledge": "Jeg forstår at filene på disken blir slettet."
+    "deleteFilesAcknowledge": "Jeg forstår at filene på disken blir slettet.",
+    "credit": {
+      "photo": "Foto: {{credit}}, {{license}}, via {{source}}",
+      "photoNoCredit": "Foto: {{license}}, via {{source}}",
+      "bio": "Biografi fra {{source}}, {{license}}",
+      "bioNoLicense": "Biografi fra {{source}}"
+    }
   },
   "catalogueReconciliation": {
     "title": "Avstem katalogen",
@@ -1354,7 +1360,9 @@
       "rotateSessionSecretConfirm": "Vil du rotere hemmeligheten for signering av økter? Eksisterende pålogginger fortsetter å virke i en overgangsperiode via den forrige hemmeligheten. En ny rotasjon avslutter denne perioden.",
       "rotateSessionSecretTitle": "Roter økthemmelighet",
       "rotateSessionSecretAcknowledge": "Jeg forstår at en ny rotasjon vil logge ut alle.",
-      "defaultMediaTypeHint": "Brukes for nye forfattere, og for bøker du legger til enkeltvis, når ingenting er valgt eksplisitt. Eksisterende oppføringer påvirkes ikke: endre forfattere med massehandlingen på Forfattere-siden, og bøker fra Bøker-siden med Angi e-bok, Angi lydbok eller Angi begge, som også dekker de ønskede bøkene dine når Bøker er filtrert på Ønsket."
+      "defaultMediaTypeHint": "Brukes for nye forfattere, og for bøker du legger til enkeltvis, når ingenting er valgt eksplisitt. Eksisterende oppføringer påvirkes ikke: endre forfattere med massehandlingen på Forfattere-siden, og bøker fra Bøker-siden med Angi e-bok, Angi lydbok eller Angi begge, som også dekker de ønskede bøkene dine når Bøker er filtrert på Ønsket.",
+      "authorWikidataLabel": "Forfatterbilder og biografier fra Wikidata",
+      "authorWikidataHint": "Fyller inn manglende bilde og biografi for en forfatter fra Wikimedia Commons og Wikipedia, funnet på Wikidata via forfatterens autoritets-ID fra biblioteket (NORAF, GND, BnF eller OpenLibrary), aldri via navn. Oppslagene følger den daglige forfatteroppdateringen, og hvert bilde og hver biografi krediteres på forfatterens side. Så lenge dette er av, sendes ingen forespørsler til Wikimedia."
     },
     "import": {
       "csvHeading": "CSV med forfatternavn",

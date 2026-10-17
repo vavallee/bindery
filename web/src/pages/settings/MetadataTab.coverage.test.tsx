@@ -118,6 +118,21 @@ describe('MetadataTab library defaults', () => {
     await waitFor(() => expect(screen.getAllByRole('combobox')[2]).toHaveValue('all'))
   })
 
+  // #3287: Wikidata author enrichment is opt in and saved as a plain setting.
+  it('switches Wikidata author enrichment on and off', async () => {
+    seedSettings({ 'autoGrab.enabled': 'true', 'recommendations.enabled': 'false' })
+    render(<MetadataTab />)
+    await waitFor(() => expect(api.listSettings).toHaveBeenCalled())
+    expect(screen.getByText('settings.general.authorWikidataLabel')).toBeInTheDocument()
+    const wikidata = screen.getAllByRole('switch')[2]
+    expect(wikidata).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(wikidata)
+    await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('metadata.author_enrichment.wikidata', 'true'))
+    expect(wikidata).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(wikidata)
+    await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('metadata.author_enrichment.wikidata', 'false'))
+  })
+
   it('toggles auto-grab off and recommendations on', async () => {
     seedSettings({ 'autoGrab.enabled': 'true', 'recommendations.enabled': 'false' })
     render(<MetadataTab />)

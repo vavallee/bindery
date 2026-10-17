@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
+import { safeHref } from '../util/safeHref'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { api, ApiError, Author, AuthorAlias, Book, BookBulkAction, MediaType, Series } from '../api/client'
 import { usePolling } from '../components/usePolling'
@@ -1102,6 +1103,35 @@ export default function AuthorDetailPage() {
                 </span>
               ) : null
             })()}
+            {/* A photo or bio an author enricher filled in carries the credit
+                its licence asks for: a Commons photo names its photographer
+                and licence, Wikipedia text its source and licence (#3287). */}
+            {author.imageSource && (
+              <a
+                data-testid="author-photo-credit"
+                href={safeHref(author.imageSource.url) || undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:underline"
+              >
+                {author.imageSource.credit
+                  ? t('authorDetail.credit.photo', { credit: author.imageSource.credit, license: author.imageSource.license ?? '', source: profileSourceLabel(author.imageSource.provider), defaultValue: 'Photo: {{credit}}, {{license}}, via {{source}}' })
+                  : t('authorDetail.credit.photoNoCredit', { license: author.imageSource.license ?? '', source: profileSourceLabel(author.imageSource.provider), defaultValue: 'Photo: {{license}}, via {{source}}' })}
+              </a>
+            )}
+            {author.descriptionSource && (
+              <a
+                data-testid="author-bio-credit"
+                href={safeHref(author.descriptionSource.url) || undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:underline"
+              >
+                {author.descriptionSource.license
+                  ? t('authorDetail.credit.bio', { license: author.descriptionSource.license, source: profileSourceLabel(author.descriptionSource.provider), defaultValue: 'Bio from {{source}}, {{license}}' })
+                  : t('authorDetail.credit.bioNoLicense', { source: profileSourceLabel(author.descriptionSource.provider), defaultValue: 'Bio from {{source}}' })}
+              </a>
+            )}
           </div>
 
           {/* Four fixed cells, replacing a run-on sentence. The audiobook count
@@ -1516,4 +1546,16 @@ export default function AuthorDetailPage() {
       />
     </div>
   )
+}
+
+// profileSourceLabel names the source an author enricher credits (#3287).
+function profileSourceLabel(provider: string): string {
+  switch (provider) {
+    case 'wikimedia-commons':
+      return 'Wikimedia Commons'
+    case 'wikipedia':
+      return 'Wikipedia'
+    default:
+      return provider
+  }
 }
