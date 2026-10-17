@@ -193,6 +193,46 @@ does not choose it sends BnF no request at all, not even at startup.
   The page count and ISBN filters judge BnF works on the editions the
   catalogue already returned, so they add no request.
 
+## Wikidata, Wikimedia Commons and Wikipedia
+
+Sources: <https://www.wikidata.org/wiki/Wikidata:Licensing>, the Wikimedia
+Foundation User-Agent Policy
+(<https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy>)
+and API Usage Guidelines
+(<https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_API_Usage_Guidelines>,
+version 1.0 of 2024-08-26). Reviewed 2026-10-15. Only contacted while
+`metadata.author_enrichment.wikidata` is on (#3287): an install that has not
+switched it on sends Wikimedia no request.
+
+The author enricher in `internal/metadata/wikidata` looks an author up on
+Wikidata by an authority ID Bindery already stores (NORAF for `nb:` authors,
+GND, BnF, OpenLibrary), never by name, and fills a photo or bio the author's
+primary provider left empty. Three sources, three sets of terms:
+
+- **Wikidata's structured data is CC0.** The item lookup, its identifiers and
+  the image file name need no credit.
+- **Wikipedia text is CC BY-SA 4.0.** The bio is the article's lead summary.
+  The author page credits it with "Bio from Wikipedia, CC BY-SA 4.0", linking
+  to the article it came from. The text is stored as the author description,
+  the way descriptions from the other providers are.
+- **Commons photos are licensed per file** (CC BY, CC BY-SA, public domain and
+  others). The enricher reads each file's author and licence from Commons and
+  stores them with the image URL; the author page shows "Photo: <author>,
+  <licence>, via Wikimedia Commons", linking to the file's page. A file whose
+  licence Commons does not state is not used, because it cannot be credited.
+  Photos are served through `/api/v1/images` like covers, so a browser never
+  hot-links Commons.
+
+The API Usage Guidelines ask an operator to identify their client, to obey
+rate limiting replies, and not to send concurrent or bursty traffic. Bindery
+sends its own User-Agent (`bindery/<version>`, with the project URL as the
+contact; the guidelines' "operator" is whoever runs the install), honours
+`Retry-After` on a 429 or 503 and then holds back (15 minutes when no
+`Retry-After` is given), and asks one author at a time on the staggered
+author refresh (#3275), so a library is spread over the day. Answers, a miss
+included, are kept for 30 days, so an author with no photo is not asked about
+every day.
+
 ## Audible
 
 `internal/metadata/audible` calls an unpublished Amazon endpoint, and Amazon's

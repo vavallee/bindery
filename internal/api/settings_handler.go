@@ -82,6 +82,13 @@ const SettingDefaultAudiobookRootFolderID = "library.defaultAudiobookRootFolderI
 // removed.
 const SettingMetadataPrimaryProvider = "metadata.primary_provider"
 
+// SettingMetadataAuthorWikidata switches on the Wikidata author enricher
+// (#3287): an author whose primary provider has no photo or bio gets one from
+// Wikimedia Commons and Wikipedia, found by the authority ID Bindery already
+// stores. Off by default, so an install that has not chosen it sends
+// Wikimedia nothing.
+const SettingMetadataAuthorWikidata = "metadata.author_enrichment.wikidata"
+
 // MetadataPrimaryProviders lists the accepted values of
 // SettingMetadataPrimaryProvider, in the order the UI presents them. The first
 // entry is the default used when the setting is empty or unset.

@@ -255,6 +255,27 @@ export default function MetadataTab() {
             />
           </div>
         </div>
+
+        {/* Author photos and bios from Wikidata (#3287). Opt in, like NB and
+            BnF: while off, Wikimedia is sent no request. */}
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.authorWikidataLabel', 'Author photos and bios from Wikidata')}</label>
+              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.authorWikidataHint', 'Fills an author\'s missing photo and bio from Wikimedia Commons and Wikipedia, found on Wikidata by the author\'s library authority ID (NORAF, GND, BnF or OpenLibrary), never by name. Lookups ride on the daily author refresh, and each photo and bio is credited on the author\'s page. While this is off, Wikimedia is sent no request.')}</p>
+            </div>
+            <Toggle
+              checked={(settings['metadata.author_enrichment.wikidata'] ?? 'false') === 'true'}
+              onChange={async () => {
+                const current = (settings['metadata.author_enrichment.wikidata'] ?? 'false').toLowerCase()
+                const next = current === 'true' ? 'false' : 'true'
+                setSettings(s => ({ ...s, 'metadata.author_enrichment.wikidata': next }))
+                await api.setSetting('metadata.author_enrichment.wikidata', next).catch(console.error)
+              }}
+              title={(settings['metadata.author_enrichment.wikidata'] ?? 'false') === 'true' ? t('common.disable') : t('common.enable')}
+            />
+          </div>
+        </div>
         </div>
       </section>
 

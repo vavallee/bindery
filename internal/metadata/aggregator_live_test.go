@@ -503,7 +503,7 @@ func TestAggregatorDelegatesLoadCoreOnce(t *testing.T) {
 				coreMethods[fn.Name.Name] = true
 			case "Aggregator":
 				switch fn.Name.Name {
-				case "Reconfigure", "ProviderNames", "WithAudnexClient", "WithAudibleCatalogue":
+				case "Reconfigure", "ProviderNames", "SetAuthorEnrichers", "AuthorEnricherNames", "WithAudnexClient", "WithAudibleCatalogue":
 					continue
 				}
 				delegates[fn.Name.Name] = true

@@ -283,3 +283,48 @@ describe('uploadBookCover (#3017)', () => {
     expect(type).toBe('application/octet-stream')
   })
 })
+
+// The author photo upload is the same request shape as the cover (#3287).
+describe('uploadAuthorPhoto (#3287)', () => {
+  beforeEach(() => {
+    document.cookie = 'bindery_csrf=; Max-Age=0; path=/'
+    window.history.pushState(null, '', '/')
+  })
+
+  it('POSTs the image as the body with its own type and the CSRF token', async () => {
+    let seen: { type: string | null; csrf: string | null; size: number } | null = null
+    server.use(
+      http.get(apiUrl('/auth/csrf'), () => HttpResponse.json({ csrfToken: 't' })),
+      http.post(apiUrl('/author/7/photo'), async ({ request }) => {
+        seen = {
+          type: request.headers.get('Content-Type'),
+          csrf: request.headers.get('X-CSRF-Token'),
+          size: (await request.arrayBuffer()).byteLength,
+        }
+        return HttpResponse.json({ id: 7, imageUrl: '/api/v1/images?url=bindery-cover%3Aabc', imageSource: { provider: 'user', url: '' } })
+      }),
+    )
+    const { api, initCSRF } = await loadClient()
+    await initCSRF()
+
+    const res = await api.uploadAuthorPhoto(7, imageBytes([1, 2, 3, 4], 'image/png'))
+
+    expect(seen).toEqual({ type: 'image/png', csrf: 't', size: 4 })
+    expect(res.imageSource?.provider).toBe('user')
+  })
+
+  it('sends a typeless blob as octet-stream for the server to sniff', async () => {
+    let type: string | null = null
+    server.use(
+      http.get(apiUrl('/auth/csrf'), () => HttpResponse.json({ csrfToken: 't' })),
+      http.post(apiUrl('/author/7/photo'), ({ request }) => {
+        type = request.headers.get('Content-Type')
+        return HttpResponse.json({ id: 7 })
+      }),
+    )
+    const { api, initCSRF } = await loadClient()
+    await initCSRF()
+    await api.uploadAuthorPhoto(7, imageBytes([1]))
+    expect(type).toBe('application/octet-stream')
+  })
+})

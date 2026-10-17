@@ -152,6 +152,23 @@ export default function AuthorDetailPage() {
   const [showCatalogueReconciliation, setShowCatalogueReconciliation] = useState(false)
   const [showDuplicateCandidates, setShowDuplicateCandidates] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Sets the photo from an image the user picks, like a book cover (#3017,
+  // #3287). The response is the bare author, so only its photo fields are
+  // taken: the page keeps its books, stats and series as they are.
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const uploadPhoto = async (file: File | undefined) => {
+    if (!author || !file) return
+    setUploadingPhoto(true)
+    setError(null)
+    try {
+      const updated = await api.uploadAuthorPhoto(author.id, file)
+      setAuthor(a => (a ? { ...a, imageUrl: updated.imageUrl, imageSource: updated.imageSource } : a))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('authorDetail.photo.uploadFailed', 'Could not upload the photo'))
+    } finally {
+      setUploadingPhoto(false)
+    }
+  }
   // The sync poll stopped trying (#3058): a 404/403, or a few failures in a row.
   const [syncGaveUp, setSyncGaveUp] = useState(false)
   const syncFailures = useRef(0)
@@ -1069,6 +1086,18 @@ export default function AuthorDetailPage() {
               </div>
             }
           />
+          <label className={`touch-target mt-2 block text-center text-xs text-accent-text hover:underline cursor-pointer has-[:focus-visible]:underline ${uploadingPhoto ? 'opacity-50 pointer-events-none' : ''}`}>
+            {uploadingPhoto
+              ? t('authorDetail.photo.uploading', 'Uploading…')
+              : author.imageUrl ? t('authorDetail.photo.change', 'Change photo') : t('authorDetail.photo.upload', 'Upload photo')}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="sr-only"
+              disabled={uploadingPhoto}
+              onChange={e => { void uploadPhoto(e.target.files?.[0]); e.target.value = '' }}
+            />
+          </label>
         </div>
         <div className="min-w-0 flex-1">
           <h2 className="text-2xl font-bold mb-1 [overflow-wrap:anywhere]">{author.authorName}</h2>
@@ -1102,6 +1131,35 @@ export default function AuthorDetailPage() {
                 </span>
               ) : null
             })()}
+            {/* A photo or bio an author enricher filled in carries the credit
+                its licence asks for: a Commons photo names its photographer
+                and licence, Wikipedia text its source and licence (#3287). */}
+            {author.imageSource && author.imageSource.provider !== 'user' && (
+              <a
+                data-testid="author-photo-credit"
+                href={author.imageSource.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:underline"
+              >
+                {author.imageSource.credit
+                  ? t('authorDetail.credit.photo', { credit: author.imageSource.credit, license: author.imageSource.license ?? '', source: profileSourceLabel(author.imageSource.provider), defaultValue: 'Photo: {{credit}}, {{license}}, via {{source}}' })
+                  : t('authorDetail.credit.photoNoCredit', { license: author.imageSource.license ?? '', source: profileSourceLabel(author.imageSource.provider), defaultValue: 'Photo: {{license}}, via {{source}}' })}
+              </a>
+            )}
+            {author.descriptionSource && author.descriptionSource.provider !== 'user' && (
+              <a
+                data-testid="author-bio-credit"
+                href={author.descriptionSource.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:underline"
+              >
+                {author.descriptionSource.license
+                  ? t('authorDetail.credit.bio', { license: author.descriptionSource.license, source: profileSourceLabel(author.descriptionSource.provider), defaultValue: 'Bio from {{source}}, {{license}}' })
+                  : t('authorDetail.credit.bioNoLicense', { source: profileSourceLabel(author.descriptionSource.provider), defaultValue: 'Bio from {{source}}' })}
+              </a>
+            )}
           </div>
 
           {/* Four fixed cells, replacing a run-on sentence. The audiobook count
@@ -1516,4 +1574,16 @@ export default function AuthorDetailPage() {
       />
     </div>
   )
+}
+
+// profileSourceLabel names the source an author enricher credits (#3287).
+function profileSourceLabel(provider: string): string {
+  switch (provider) {
+    case 'wikimedia-commons':
+      return 'Wikimedia Commons'
+    case 'wikipedia':
+      return 'Wikipedia'
+    default:
+      return provider
+  }
 }

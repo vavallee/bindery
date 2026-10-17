@@ -21,6 +21,7 @@ vi.mock('../api/client', async importOriginal => {
       searchAuthorLinkCandidates: vi.fn(),
       relinkAuthorUpstream: vi.fn(),
       updateAuthor: vi.fn(),
+      uploadAuthorPhoto: vi.fn(),
       deleteAuthor: vi.fn(),
       deleteAuthorAlias: vi.fn(),
       searchAuthorWanted: vi.fn(),
@@ -327,6 +328,86 @@ describe('AuthorDetailPage', () => {
     renderAuthorDetailPage([], 'grid', { createdAt: '2026-10-01T08:00:00Z' })
     await screen.findByRole('heading', { level: 2 })
     expect(screen.queryByTestId('bnf-source-credit')).toBeNull()
+  })
+
+  // #3287: a photo or bio an author enricher filled in carries its credit.
+  it('credits an enriched photo and bio with their source, creator and licence', async () => {
+    renderAuthorDetailPage([], 'grid', {
+      foreignAuthorId: 'nb:author:90000001',
+      authorName: 'Kari Nordmann',
+      metadataProvider: 'nb',
+      imageUrl: 'https://upload.example/k.jpg',
+      imageSource: { provider: 'wikimedia-commons', url: 'https://commons.example/wiki/File:K.jpg', credit: 'Ola Nordmann', license: 'CC BY-SA 4.0' },
+      description: 'Kari Nordmann is a writer.',
+      descriptionSource: { provider: 'wikipedia', url: 'https://no.wikipedia.example/wiki/Kari_Nordmann', license: 'CC BY-SA 4.0' },
+    })
+
+    const photo = await screen.findByTestId('author-photo-credit')
+    expect(photo.textContent).toBe('Photo: Ola Nordmann, CC BY-SA 4.0, via Wikimedia Commons')
+    expect(photo).toHaveAttribute('href', 'https://commons.example/wiki/File:K.jpg')
+    const bio = screen.getByTestId('author-bio-credit')
+    expect(bio.textContent).toBe('Bio from Wikipedia, CC BY-SA 4.0')
+    expect(bio).toHaveAttribute('href', 'https://no.wikipedia.example/wiki/Kari_Nordmann')
+  })
+
+  // #3287: the photo upload mirrors the book cover upload (#3017).
+  it('uploads a photo picked from the author page and shows no credit for it', async () => {
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'photo.png', { type: 'image/png' })
+    vi.mocked(api.uploadAuthorPhoto).mockResolvedValue({ ...author, imageUrl: '/api/v1/images?url=bindery-cover%3Aabc', imageSource: { provider: 'user', url: '' } })
+    renderAuthorDetailPage([], 'grid', { imageUrl: '' })
+    const input = await screen.findByLabelText('Upload photo')
+    expect(input.closest('label')).toHaveClass('touch-target')
+    fireEvent.change(input, { target: { files: [file] } })
+    await waitFor(() => expect(api.uploadAuthorPhoto).toHaveBeenCalledWith(42, file))
+    expect(await screen.findByLabelText('Change photo')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: author.authorName })).toHaveAttribute('src', '/api/v1/images?url=bindery-cover%3Aabc')
+    // A photo the user chose is theirs: there is nobody to credit.
+    expect(screen.queryByTestId('author-photo-credit')).toBeNull()
+  })
+
+  it('reports a failed photo upload', async () => {
+    vi.mocked(api.uploadAuthorPhoto).mockRejectedValue(new Error('send a JPEG, PNG, WebP or GIF image'))
+    renderAuthorDetailPage([], 'grid', { imageUrl: '' })
+    const input = await screen.findByLabelText('Upload photo')
+    fireEvent.change(input, { target: { files: [new File(['x'], 'notes.txt', { type: 'text/plain' })] } })
+    expect(await screen.findByText('send a JPEG, PNG, WebP or GIF image')).toBeInTheDocument()
+  })
+
+  it('falls back to a plain message when the upload fails without an Error', async () => {
+    vi.mocked(api.uploadAuthorPhoto).mockRejectedValue('network down')
+    renderAuthorDetailPage([], 'grid', { imageUrl: '' })
+    const input = await screen.findByLabelText('Upload photo')
+    fireEvent.change(input, { target: { files: [new File(['x'], 'photo.png', { type: 'image/png' })] } })
+    expect(await screen.findByText('Could not upload the photo')).toBeInTheDocument()
+  })
+
+  it('sends nothing when the file picker is cancelled', async () => {
+    renderAuthorDetailPage([], 'grid', { imageUrl: '' })
+    const input = await screen.findByLabelText('Upload photo')
+    fireEvent.change(input, { target: { files: [] } })
+    expect(api.uploadAuthorPhoto).not.toHaveBeenCalled()
+  })
+
+  // A Commons file that names no photographer is still credited, with its
+  // licence; a source the page has no label for is shown by its own name.
+  it('credits a photo with no named photographer, and an unknown source by name', async () => {
+    renderAuthorDetailPage([], 'grid', {
+      imageUrl: 'https://upload.example/k.jpg',
+      imageSource: { provider: 'wikimedia-commons', url: 'https://commons.example/wiki/File:K.jpg', license: 'CC BY 2.5' },
+      description: 'Kari Nordmann is a writer.',
+      descriptionSource: { provider: 'example-encyclopedia', url: 'https://encyclopedia.example/k' },
+    })
+    expect((await screen.findByTestId('author-photo-credit')).textContent).toBe('Photo: CC BY 2.5, via Wikimedia Commons')
+    // No licence stated: the credit still names the source, without a
+    // dangling separator.
+    expect(screen.getByTestId('author-bio-credit').textContent).toBe('Bio from example-encyclopedia')
+  })
+
+  it('shows no enrichment credit for a photo and bio from the author\'s own provider', async () => {
+    renderAuthorDetailPage([], 'grid', { imageUrl: 'https://covers.example/a.jpg', description: 'From the provider.' })
+    await screen.findByRole('heading', { level: 2 })
+    expect(screen.queryByTestId('author-photo-credit')).toBeNull()
+    expect(screen.queryByTestId('author-bio-credit')).toBeNull()
   })
 
   it('shows link metadata for unlinked authors', async () => {

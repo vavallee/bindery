@@ -129,6 +129,36 @@ func (a *Aggregator) Reconfigure(primary Provider, enrichers ...Provider) error 
 	return nil
 }
 
+// SetAuthorEnrichers replaces the author enrichers, asked in order. Like
+// Reconfigure it publishes a new core, so a lookup already running finishes on
+// the list it started with. Nil enrichers are dropped.
+func (a *Aggregator) SetAuthorEnrichers(enrichers ...AuthorEnricher) {
+	if a == nil {
+		return
+	}
+	list := make([]AuthorEnricher, 0, len(enrichers))
+	for _, e := range enrichers {
+		if e != nil {
+			list = append(list, e)
+		}
+	}
+	a.update(func(c *aggregatorCore) { c.authorEnrichers = list })
+}
+
+// AuthorEnricherNames returns the names of the author enrichers in the order
+// they are asked.
+func (a *Aggregator) AuthorEnricherNames() []string {
+	c := a.load()
+	if c == nil {
+		return nil
+	}
+	names := make([]string, 0, len(c.authorEnrichers))
+	for _, e := range c.authorEnrichers {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
 // ProviderNames returns the normalized names of the current provider set,
 // primary first and then the enrichers in the order they are asked. It reads
 // the set once, so the answer is one set's, never a mix of two.

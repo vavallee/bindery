@@ -95,3 +95,40 @@ func TestCoverRoute_BodyCaps(t *testing.T) {
 		t.Fatalf("2 MiB non-image: status %d, want 415", rec.Code)
 	}
 }
+
+// TestAuthorPhotoRoute_BodyCaps holds the author photo route (#3287) to the
+// same body caps as the cover route, through the router wide middleware.
+func TestAuthorPhotoRoute_BodyCaps(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	authors := db.NewAuthorRepo(database)
+	author := &models.Author{ForeignID: "nb:author:1", Name: "Kari Nordmann", SortName: "Nordmann, Kari", MetadataProvider: "nb"}
+	if err := authors.Create(context.Background(), author); err != nil {
+		t.Fatal(err)
+	}
+	h := api.NewAuthorHandler(authors, nil, db.NewBookRepo(database), nil, nil, nil, db.NewMetadataProfileRepo(database), nil).
+		WithCoverStore(covers.NewStore(t.TempDir()))
+	r := chi.NewRouter()
+	r.Use(api.PreserveRawBody)
+	r.Use(api.MaxRequestBody)
+	registerAuthorPhotoRoutes(r, h)
+	post := func(body []byte) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/author/"+strconv.FormatInt(author.ID, 10)+"/photo", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := post(pngOfSize(2 << 20)); rec.Code != http.StatusOK {
+		t.Fatalf("2 MiB png: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := post(pngOfSize(covers.MaxBytes)); rec.Code != http.StatusOK {
+		t.Fatalf("png at the limit: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := post(pngOfSize(covers.MaxBytes + (1 << 20))); rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "10 MB") {
+		t.Fatalf("far over the limit: status %d body %s", rec.Code, rec.Body.String())
+	}
+}

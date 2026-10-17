@@ -3,6 +3,16 @@ import type { Book } from './books'
 import type { Series } from './series'
 import type { Page } from './common'
 
+// Credit for an author photo or bio that an author enricher filled in from a
+// source other than the author's provider (#3287), as that source's licence asks.
+export interface ProfileSource {
+  provider: string
+  url: string
+  credit?: string
+  license?: string
+  licenseUrl?: string
+}
+
 export interface Author {
   id: number
   foreignAuthorId: string
@@ -13,6 +23,10 @@ export interface Author {
   sortName: string
   description: string
   imageUrl: string
+  // Set when the bio or photo came from an author enricher (#3287); absent
+  // when it is the provider's own.
+  descriptionSource?: ProfileSource
+  imageSource?: ProfileSource
   disambiguation: string
   ratingsCount: number
   averageRating: number
@@ -315,6 +329,9 @@ export interface UpdateAuthorRequest {
   // when monitorMode === 'series'. Backend rejects ids that don't belong to
   // this author.
   monitoredSeriesIds?: number[]
+  // A bio set by hand (#3287). It is kept as the user's own, so no refresh
+  // replaces it; an empty string clears it for the provider to fill again.
+  description?: string
 }
 
 export const authorsApi = {
@@ -347,6 +364,10 @@ export const authorsApi = {
   getAuthor: (id: number) => request<Author>(`/author/${id}`),
   addAuthor: (data: AddAuthorRequest) => request<Author>('/author', { method: 'POST', body: JSON.stringify(data) }),
   updateAuthor: (id: number, data: UpdateAuthorRequest) => request<Author>(`/author/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  // The author counterpart of uploadBookCover (#3287): the photo is stored by
+  // Bindery and kept as the user's own.
+  uploadAuthorPhoto: (id: number, image: Blob) =>
+    request<Author>(`/author/${id}/photo`, { method: 'POST', body: image, headers: { 'Content-Type': image.type || 'application/octet-stream' } }),
   // Genre override (#1446): set + lock the genre list on every book of the
   // author so metadata refresh keeps the user's taxonomy.
   applyAuthorGenres: (id: number, genres: string[]) =>

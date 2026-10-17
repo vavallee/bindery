@@ -1,0 +1,2 @@
+### Added
+- **Author photos and bios from Wikidata** (#3287). An author whose provider has no photo or bio, as is the case for every Nasjonalbiblioteket, BnF and DNB author, can now get one from Wikimedia Commons and Wikipedia, found on Wikidata by the authority ID Bindery already stores, never by name. It is off by default: switch it on in Settings, Metadata. Lookups ride on the daily author refresh, each photo and bio is credited on the author's page with its source and licence, and an enriched value never replaces one from the author's own provider or one you chose.

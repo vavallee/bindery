@@ -550,7 +550,19 @@
     "deleteConfirm": "Delete {{author}} and all {{count}} book(s)?",
     "deleteWithFilesConfirm": "Delete {{author}}, all {{count}} book(s), AND {{withFiles}} file(s) or folder(s) on disk?\n\nThis cannot be undone.",
     "deleteTitle": "Delete author",
-    "deleteFilesAcknowledge": "I understand the files on disk will be deleted."
+    "deleteFilesAcknowledge": "I understand the files on disk will be deleted.",
+    "credit": {
+      "photo": "Photo: {{credit}}, {{license}}, via {{source}}",
+      "photoNoCredit": "Photo: {{license}}, via {{source}}",
+      "bio": "Bio from {{source}}, {{license}}",
+      "bioNoLicense": "Bio from {{source}}"
+    },
+    "photo": {
+      "upload": "Upload photo",
+      "change": "Change photo",
+      "uploading": "Uploading…",
+      "uploadFailed": "Could not upload the photo"
+    }
   },
   "catalogueReconciliation": {
     "title": "Reconcile catalogue",
@@ -1616,7 +1628,9 @@
       "rotateSessionSecretConfirm": "Rotate the session signing secret? Existing logins keep working during a rotation window via the previous secret; a second rotation closes that window.",
       "rotateSessionSecretTitle": "Rotate session secret",
       "rotateSessionSecretAcknowledge": "I understand a second rotation will sign everyone out.",
-      "defaultMediaTypeHint": "Applied to new authors, and to books you add on their own, when no explicit choice is made. Existing rows are unaffected: change authors with the Authors page bulk action, and books from the Books page with Set ebook, Set audiobook or Set both, which also covers your wanted list once Books is filtered to Wanted."
+      "defaultMediaTypeHint": "Applied to new authors, and to books you add on their own, when no explicit choice is made. Existing rows are unaffected: change authors with the Authors page bulk action, and books from the Books page with Set ebook, Set audiobook or Set both, which also covers your wanted list once Books is filtered to Wanted.",
+      "authorWikidataLabel": "Author photos and bios from Wikidata",
+      "authorWikidataHint": "Fills an author's missing photo and bio from Wikimedia Commons and Wikipedia, found on Wikidata by the author's library authority ID (NORAF, GND, BnF or OpenLibrary), never by name. Lookups ride on the daily author refresh, and each photo and bio is credited on the author's page. While this is off, Wikimedia is sent no request."
     },
     "import": {
       "csvHeading": "CSV of author names",
@@ -2331,5 +2345,9 @@
     "back": "Back",
     "force": "Re-bind anyway",
     "submitting": "Re-binding…"
+  },
+  "editAuthorModal": {
+    "bio": "Bio",
+    "bioHint": "A bio you write here stays as you wrote it: no refresh replaces it. Clear it to let the metadata provider fill it again."
   }
 }

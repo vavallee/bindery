@@ -29,6 +29,14 @@ and BnF, which are wired only when primary. Switching the primary away from eith
 therefore leaves its `nb:` or `bnf:` authors with no provider to sync from until
 they are relinked.
 
+An author's photo and bio come from the author's own provider. When it has none,
+the optional *author enrichers* fill the gap after `GetAuthor`: today that is
+Wikidata, found by the authority ID the author already carries (NORAF, GND, BnF
+or OpenLibrary) and only while `metadata.author_enrichment.wikidata` is on
+(#3287). An enriched value never replaces one from the provider or one a user
+chose, and carries the credit its licence asks for (see
+[third-party-data.md](third-party-data.md#wikidata-wikimedia-commons-and-wikipedia)).
+
 ## Components
 
 | Layer | Stack | Notes |

@@ -332,12 +332,10 @@ func (s *Scheduler) persistRefreshedAuthor(ctx context.Context, author, updated 
 	// actually carries a value: a sparse OpenLibrary refresh must not
 	// clobber a previously enriched description/ratings with empties
 	// (#1463). Same guard the ImageURL update has always had.
-	if updated.Description != "" {
-		author.Description = updated.Description
-	}
-	if updated.ImageURL != "" {
-		author.ImageURL = updated.ImageURL
-	}
+	// MergeProfileField also keeps an enriched photo or bio (#3287) from
+	// displacing one the primary provider or a user supplied.
+	models.MergeProfileField(&author.Description, &author.DescriptionSource, updated.Description, updated.DescriptionSource)
+	models.MergeProfileField(&author.ImageURL, &author.ImageSource, updated.ImageURL, updated.ImageSource)
 	if updated.AverageRating != 0 {
 		author.AverageRating = updated.AverageRating
 	}

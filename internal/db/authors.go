@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -57,11 +58,11 @@ func (e *AuthorIdentifierConflictError) Unwrap() error {
 const authorSelectCols = `id, foreign_id, name, sort_name, description, image_url, disambiguation,
 	       ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
 	       audiobook_root_folder_id, monitor_mode, monitor_latest_count, monitor_new_items, metadata_provider, last_metadata_refresh_at,
-	       created_at, updated_at, COALESCE(owner_user_id, 0), CAST(updated_at AS TEXT)`
+	       created_at, updated_at, COALESCE(owner_user_id, 0), CAST(updated_at AS TEXT), description_source, image_source`
 const authorSelectColsA = `a.id, a.foreign_id, a.name, a.sort_name, a.description, a.image_url, a.disambiguation,
 		       a.ratings_count, a.average_rating, a.monitored, a.quality_profile_id, a.metadata_profile_id, a.root_folder_id,
 		       a.audiobook_root_folder_id, a.monitor_mode, a.monitor_latest_count, a.monitor_new_items, a.metadata_provider, a.last_metadata_refresh_at,
-		       a.created_at, a.updated_at, COALESCE(a.owner_user_id, 0), CAST(a.updated_at AS TEXT)`
+		       a.created_at, a.updated_at, COALESCE(a.owner_user_id, 0), CAST(a.updated_at AS TEXT), a.description_source, a.image_source`
 
 func (r *AuthorRepo) List(ctx context.Context) ([]models.Author, error) {
 	return r.ListByUser(ctx, 0)
@@ -548,11 +549,12 @@ func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerU
 		INSERT INTO authors (foreign_id, name, sort_name, sort_key, name_sort_key, search_key, description, image_url, disambiguation,
 		                     ratings_count, average_rating, monitored, quality_profile_id, metadata_profile_id, root_folder_id,
 		                     audiobook_root_folder_id, monitor_mode, monitor_latest_count, monitor_new_items, metadata_provider, owner_user_id,
-		                     created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                     created_at, updated_at, description_source, image_source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), authorSortKey(a.Name), textutil.FoldForSearch(a.Name), a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID, a.MetadataProfileID, a.RootFolderID,
-		a.AudiobookRootFolderID, a.MonitorMode, a.MonitorLatestCount, a.MonitorNewItems, a.MetadataProvider, ownerArg, timeValueArg(now), timeValueArg(now))
+		a.AudiobookRootFolderID, a.MonitorMode, a.MonitorLatestCount, a.MonitorNewItems, a.MetadataProvider, ownerArg, timeValueArg(now), timeValueArg(now),
+		encodeProfileSource(a.DescriptionSource), encodeProfileSource(a.ImageSource))
 	if err != nil {
 		return fmt.Errorf("create author: %w", err)
 	}
@@ -857,13 +859,15 @@ func (r *AuthorRepo) update(ctx context.Context, exec dbExecutor, a *models.Auth
 		UPDATE authors SET foreign_id=?, name=?, sort_name=?, sort_key=?, name_sort_key=?, search_key=?, description=?, image_url=?, disambiguation=?,
 		                   ratings_count=?, average_rating=?, monitored=?, quality_profile_id=?,
 		                   metadata_profile_id=?, root_folder_id=?, audiobook_root_folder_id=?, monitor_mode=?,
-		                   monitor_latest_count=?, monitor_new_items=?, metadata_provider=?, last_metadata_refresh_at=?, updated_at=?
+		                   monitor_latest_count=?, monitor_new_items=?, metadata_provider=?, last_metadata_refresh_at=?, updated_at=?,
+		                   description_source=?, image_source=?
 		WHERE id=?`
 	args := []any{
 		a.ForeignID, a.Name, a.SortName, authorSortKey(a.SortName), authorSortKey(a.Name), textutil.FoldForSearch(a.Name), a.Description, a.ImageURL, a.Disambiguation,
 		a.RatingsCount, a.AverageRating, a.Monitored, a.QualityProfileID,
 		a.MetadataProfileID, a.RootFolderID, a.AudiobookRootFolderID, a.MonitorMode,
-		a.MonitorLatestCount, a.MonitorNewItems, a.MetadataProvider, timeArg(a.LastMetadataRefreshAt), timeValueArg(now), a.ID,
+		a.MonitorLatestCount, a.MonitorNewItems, a.MetadataProvider, timeArg(a.LastMetadataRefreshAt), timeValueArg(now),
+		encodeProfileSource(a.DescriptionSource), encodeProfileSource(a.ImageSource), a.ID,
 	}
 	if expectedUpdatedAt != "" {
 		query += ` AND CAST(updated_at AS TEXT)=?`
@@ -1076,14 +1080,18 @@ func scanAuthorFrom(s rowScanner) (models.Author, error) {
 	// DATETIME column it can parse, so only the cast keeps the stored text a
 	// guarded write compares against (UpdateIfUnchanged).
 	var lastMetadataRefreshAtStr, createdAtStr, updatedAtStr, updatedAtRaw sql.NullString
+	var descriptionSource, imageSource string
 	err := s.Scan(&a.ID, &a.ForeignID, &a.Name, &a.SortName, &a.Description, &a.ImageURL,
 		&a.Disambiguation, &a.RatingsCount, &a.AverageRating, &monitored,
 		&a.QualityProfileID, &a.MetadataProfileID, &a.RootFolderID, &a.AudiobookRootFolderID,
 		&a.MonitorMode, &a.MonitorLatestCount, &a.MonitorNewItems, &a.MetadataProvider,
-		&lastMetadataRefreshAtStr, &createdAtStr, &updatedAtStr, &a.OwnerUserID, &updatedAtRaw)
+		&lastMetadataRefreshAtStr, &createdAtStr, &updatedAtStr, &a.OwnerUserID, &updatedAtRaw,
+		&descriptionSource, &imageSource)
 	if err != nil {
 		return a, err
 	}
+	a.DescriptionSource = decodeProfileSource(descriptionSource)
+	a.ImageSource = decodeProfileSource(imageSource)
 	if lm, perr := parseFlexibleTime(lastMetadataRefreshAtStr); perr != nil {
 		slog.Warn("unparseable author.last_metadata_refresh_at, leaving nil", "author_id", a.ID, "value", lastMetadataRefreshAtStr.String, "error", perr)
 	} else {
@@ -1135,4 +1143,30 @@ func (r *AuthorRepo) UnmonitoredAuthorIDs(ctx context.Context) (map[int64]bool, 
 		ids[id] = true
 	}
 	return ids, rows.Err()
+}
+
+// encodeProfileSource stores an author profile credit (#3287) as JSON text,
+// and nil as the empty string the column defaults to.
+func encodeProfileSource(src *models.ProfileSource) string {
+	if src == nil {
+		return ""
+	}
+	b, err := json.Marshal(src)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// decodeProfileSource reads a credit back. Empty or unreadable text is no
+// credit: a malformed row must not stop the author from loading.
+func decodeProfileSource(text string) *models.ProfileSource {
+	if text == "" {
+		return nil
+	}
+	var src models.ProfileSource
+	if err := json.Unmarshal([]byte(text), &src); err != nil || src.Provider == "" {
+		return nil
+	}
+	return &src
 }

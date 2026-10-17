@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useId } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Author, AuthorMonitorMode, MetadataProfile, MonitorNewItems, QualityProfile, RootFolder, Series, UpdateAuthorRequest } from '../api/client'
 import { useModal } from './useModal'
@@ -29,6 +29,10 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
   const [monitorLatestCount, setMonitorLatestCount] = useState(author.monitorLatestCount ?? 1)
   const [applyMonitorModeToExisting, setApplyMonitorModeToExisting] = useState(false)
   const [monitoredSeriesIds, setMonitoredSeriesIds] = useState<number[]>(author.monitoredSeriesIds ?? [])
+  // A bio typed here is kept as the user's own (#3287); clearing it lets the
+  // provider or an enricher fill it again.
+  const [description, setDescription] = useState(author.description ?? '')
+  const bioId = useId()
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -134,6 +138,9 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
     if (applyMonitorModeToExisting) {
       patch.applyMonitorModeToExisting = true
     }
+    if (description.trim() !== (author.description ?? '').trim()) {
+      patch.description = description.trim()
+    }
     // Only include the series selection on the wire when the user is in
     // series mode and the set actually differs from what came back from the
     // Get. An undefined field leaves the existing selection untouched.
@@ -179,6 +186,17 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
             <p className="text-sm text-slate-600 dark:text-zinc-500">{t('common.loading', 'Loading…')}</p>
           ) : (
             <>
+              <div className="mb-3">
+                <label htmlFor={bioId} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.bio', 'Bio')}</label>
+                <textarea
+                  id={bioId}
+                  value={description}
+                  onChange={e => setDescription(e.target.value)}
+                  rows={4}
+                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
+                />
+                <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1">{t('editAuthorModal.bioHint', 'A bio you write here stays as you wrote it: no refresh replaces it. Clear it to let the metadata provider fill it again.')}</p>
+              </div>
               {qualityProfiles.length > 0 && (
                 <div className="mb-3">
                   <label htmlFor={`${fid}-1`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.qualityProfile', 'Quality profile')}</label>

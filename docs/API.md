@@ -80,9 +80,10 @@ POST   /api/v1/author                             add an author (triggers async 
 POST   /api/v1/author/book                        add one book by foreign id (creates its author if needed)
 POST   /api/v1/author/bulk                        bulk add/update
 GET    /api/v1/author/{id}                        author detail
-PUT    /api/v1/author/{id}                        update monitored / metadata profile
+PUT    /api/v1/author/{id}                        update monitored / metadata profile, or the bio: `description` set by hand is kept as the user's own and no refresh replaces it; an empty string clears it for the provider to fill again (#3287)
 DELETE /api/v1/author/{id}                        remove (with optional file delete)
 POST   /api/v1/author/{id}/refresh                re-pull profile and works, skipping the metadata cache; 409 while a sync for that author is running
+POST   /api/v1/author/{id}/photo                  set the photo from the request body, as `POST /book/{id}/cover` does for a cover (raw JPEG, PNG, WebP or GIF, max 10 MB; 413 over the limit, 415 for anything else); stored locally and kept as the user's own, so no refresh or enricher replaces it. Answers the author (#3287)
 GET    /api/v1/author/{id}/catalogue-reconciliation
                                                     preview stale metadata-only Wanted rows
 POST   /api/v1/author/{id}/catalogue-reconciliation
@@ -1381,7 +1382,8 @@ unset key:
 never selects them never contacts either library.
 
 A `PUT` (or `DELETE`) of `metadata.primary_provider`, `googlebooks.apiKey`,
-`google_books_api_key` or `hardcover.api_token` rebuilds the metadata providers
+`google_books_api_key`, `hardcover.api_token` or
+`metadata.author_enrichment.wikidata` (#3287) rebuilds the metadata providers
 before it answers, so the next lookup already uses the new set, with no restart
 (#1771). The `PUT` response for those keys carries an extra boolean:
 

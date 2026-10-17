@@ -309,6 +309,7 @@ func main() {
 	bootProviders := metaProviders.build(ctxBoot)
 	bootProviders.log("metadata providers configured")
 	metaAgg := metadata.NewAggregator(bootProviders.primary, bootProviders.enrichers...)
+	metaAgg.SetAuthorEnrichers(bootProviders.authorEnrichers...)
 
 	// Optional CLI subcommand: `bindery migrate {csv,readarr} <path>`.
 	// Runs the import and exits; does not start the HTTP server. Useful
@@ -649,7 +650,8 @@ func main() {
 		WithRoots(libraryRoots).
 		WithLifetimeCtx(appCtx).
 		WithNotifier(notif). // bookAnnounced when a refresh or discovery adds books (#2236)
-		WithJobs(bgJobs)     // drain an in-flight author catalogue sync on shutdown (#2371)
+		WithJobs(bgJobs).    // drain an in-flight author catalogue sync on shutdown (#2371)
+		WithCoverStore(coverStore)
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
 	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).
 		WithSettings(settingsRepo).
@@ -972,6 +974,7 @@ func main() {
 		r.Put("/author/{id}/genres", authorHandler.ApplyGenres)
 		r.Delete("/author/{id}", authorHandler.Delete)
 		r.Post("/author/{id}/refresh", authorHandler.Refresh)
+		registerAuthorPhotoRoutes(r, authorHandler)
 		r.Get("/author/{id}/catalogue-reconciliation", authorHandler.PreviewCatalogueReconciliation)
 		r.Post("/author/{id}/catalogue-reconciliation", authorHandler.ApplyCatalogueReconciliation)
 		r.Get("/author/{id}/relink-upstream/candidates", authorHandler.RelinkCandidates)
