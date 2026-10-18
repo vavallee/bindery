@@ -743,4 +743,3 @@ func (r *UnmatchedUnitRepo) PriorBookStatusForBook(ctx context.Context, bookID, 
 	}
 	return status, err
 }
-
