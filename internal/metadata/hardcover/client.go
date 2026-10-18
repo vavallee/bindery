@@ -349,7 +349,8 @@ func (c *Client) GetAuthorWorks(ctx context.Context, authorForeignID string) ([]
 }
 
 // GetAuthorWorkLanguageEvidence resolves language-filter evidence in one
-// bounded GraphQL query for the whole author catalogue. It asks only whether
+// bounded GraphQL query for the whole author catalogue, two when some works
+// are named by numeric id (see fetchWorkEditions). It asks only whether
 // each Hardcover work has an edition in one of the profile's allowed
 // languages and uses distinct_on(book_id), so the response contains at most
 // one small row per work. The explicit limit equals the unique requested work
@@ -396,40 +397,16 @@ func (c *Client) GetAuthorWorkLanguageEvidence(ctx context.Context, books []mode
 		return nil, metadata.ErrProviderNotConfigured
 	}
 
-	const gql = `query GetAuthorWorkLanguageEvidence($slugs: [String!]!, $bookIds: [Int!]!, $languageCodes: [String!]!, $limit: Int!) {
-		editions(
-			where: {
-				_and: [
-					{_or: [{book: {slug: {_in: $slugs}}}, {book_id: {_in: $bookIds}}]},
-					{language: {_or: [{code2: {_in: $languageCodes}}, {code3: {_in: $languageCodes}}]}}
-				]
-			},
-			distinct_on: [book_id],
-			order_by: [{book_id: asc}, {id: asc}],
-			limit: $limit
-		) {
-			book { id slug }
-			language { code2 code3 language }
-		}
-	}`
-	var resp struct {
-		Data struct {
-			Editions []struct {
-				Book     hcBookRef   `json:"book"`
-				Language *hcLanguage `json:"language"`
-			} `json:"editions"`
-		} `json:"data"`
-	}
-	if err := c.query(ctx, gql, map[string]any{
-		"slugs":         slugs,
-		"bookIds":       bookIDs,
-		"languageCodes": models.LanguageCodeVariants(allowed),
-		"limit":         len(evidence),
-	}, &resp); err != nil {
+	editions, err := c.fetchWorkEditions(ctx, "GetAuthorWorkLanguageEvidence",
+		"$languageCodes: [String!]!",
+		"{language: {_or: [{code2: {_in: $languageCodes}}, {code3: {_in: $languageCodes}}]}}",
+		map[string]any{"languageCodes": models.LanguageCodeVariants(allowed)},
+		slugs, bookIDs)
+	if err != nil {
 		return nil, fmt.Errorf("hardcover get author work language evidence: %w", err)
 	}
 
-	// A successful, explicitly bounded distinct query proves absence of an allowed
+	// Successful, explicitly bounded distinct queries prove absence of an allowed
 	// edition. Preserve the default edition only as known non-allowed evidence;
 	// it never gets to overrule a matching edition returned below.
 	for _, book := range books {
@@ -447,7 +424,7 @@ func (c *Client) GetAuthorWorkLanguageEvidence(ctx context.Context, books []mode
 			evidence[key] = metadata.AuthorWorkLanguageEvidence{State: metadata.AuthorWorkLanguageNotAllowed, Language: language}
 		}
 	}
-	for _, edition := range resp.Data.Editions {
+	for _, edition := range editions {
 		key := edition.Book.foreignID()
 		if _, ok := evidence[key]; !ok {
 			continue
@@ -462,6 +439,93 @@ func (c *Client) GetAuthorWorkLanguageEvidence(ctx context.Context, books []mode
 	return evidence, nil
 }
 
+// hcWorkEdition is one row of fetchWorkEditions: a work and the language of
+// the one edition kept for it.
+type hcWorkEdition struct {
+	Book     hcBookRef   `json:"book"`
+	Language *hcLanguage `json:"language"`
+}
+
+// fetchWorkEditions returns, for the works named by slugs and by numeric book
+// ids, the editions that pass editionFilter, at most one per work:
+// distinct_on(book_id) keeps the first by edition id. filterVarDecls declares
+// the variables editionFilter uses, and filterVars carries their values.
+//
+// The slugs and the book ids go out as separate queries and their rows are
+// merged, never joined in one _or. Hardcover cannot serve an _or between the
+// book.slug relationship and the book_id column from an index, so that query
+// ran until Hardcover cancelled it with HTTP 408 after about 15 s, for every
+// author, while either predicate alone answers in under a second (#3333).
+// Book ids are filled only for numeric slugs, so this is normally the slug
+// query alone. Each query declares only the variables it uses, because
+// Hasura refuses any other with validation-failed.
+//
+// Each query is bounded by the number of works it names. Any failure returns
+// an error and no rows: callers read a successful result as proof that a work
+// it leaves out has no such edition, which holds only if every query
+// succeeded.
+func (c *Client) fetchWorkEditions(ctx context.Context, name, filterVarDecls, editionFilter string, filterVars map[string]any, slugs []string, bookIDs []int) ([]hcWorkEdition, error) {
+	lookups := []struct {
+		predicate, varDecl, varName string
+		values                      any
+		count                       int
+	}{
+		{"{book: {slug: {_in: $slugs}}}", "$slugs: [String!]!", "slugs", slugs, len(slugs)},
+		{"{book_id: {_in: $bookIds}}", "$bookIds: [Int!]!", "bookIds", bookIDs, len(bookIDs)},
+	}
+	var editions []hcWorkEdition
+	seen := make(map[int]bool)
+	for _, lookup := range lookups {
+		if lookup.count == 0 {
+			continue
+		}
+		varDecls := lookup.varDecl
+		if filterVarDecls != "" {
+			varDecls += ", " + filterVarDecls
+		}
+		gql := `query ` + name + `(` + varDecls + `, $limit: Int!) {
+		editions(
+			where: {
+				_and: [
+					` + lookup.predicate + `,
+					` + editionFilter + `
+				]
+			},
+			distinct_on: [book_id],
+			order_by: [{book_id: asc}, {id: asc}],
+			limit: $limit
+		) {
+			book { id slug }
+			language { code2 code3 language }
+		}
+	}`
+		vars := make(map[string]any, len(filterVars)+2)
+		for k, v := range filterVars {
+			vars[k] = v
+		}
+		vars[lookup.varName] = lookup.values
+		vars["limit"] = lookup.count
+		var resp struct {
+			Data struct {
+				Editions []hcWorkEdition `json:"editions"`
+			} `json:"data"`
+		}
+		if err := c.query(ctx, gql, vars, &resp); err != nil {
+			return nil, err
+		}
+		for _, edition := range resp.Data.Editions {
+			// Both queries keep one edition per work under the same order,
+			// so a work they both name comes back as the same row twice.
+			if seen[edition.Book.ID] {
+				continue
+			}
+			seen[edition.Book.ID] = true
+			editions = append(editions, edition)
+		}
+	}
+	return editions, nil
+}
+
 // resolveBlankWorkLanguages settles the works the allowed-language query left
 // indeterminate only because they carry no language of their own. Hardcover
 // sets a work's language from its default ebook or audio edition, which is
@@ -473,7 +537,7 @@ func (c *Client) GetAuthorWorkLanguageEvidence(ctx context.Context, books []mode
 // language Hardcover records by name only, which the code match misses) keeps
 // it. A work with no language recorded on any edition stays indeterminate.
 //
-// One bounded distinct_on query, like the one above. It is best effort: a
+// The same bounded distinct_on lookup as above. It is best effort: a
 // failure leaves the works indeterminate, which is what they were before it
 // ran, rather than discarding the evidence already established.
 func (c *Client) resolveBlankWorkLanguages(ctx context.Context, books []models.Book, allowed []string, evidence map[string]metadata.AuthorWorkLanguageEvidence) {
@@ -498,39 +562,13 @@ func (c *Client) resolveBlankWorkLanguages(ctx context.Context, books []models.B
 		return
 	}
 
-	const gql = `query GetAuthorWorkKnownLanguages($slugs: [String!]!, $bookIds: [Int!]!, $limit: Int!) {
-		editions(
-			where: {
-				_and: [
-					{_or: [{book: {slug: {_in: $slugs}}}, {book_id: {_in: $bookIds}}]},
-					{language: {id: {_is_null: false}}}
-				]
-			},
-			distinct_on: [book_id],
-			order_by: [{book_id: asc}, {id: asc}],
-			limit: $limit
-		) {
-			book { id slug }
-			language { code2 code3 language }
-		}
-	}`
-	var resp struct {
-		Data struct {
-			Editions []struct {
-				Book     hcBookRef   `json:"book"`
-				Language *hcLanguage `json:"language"`
-			} `json:"editions"`
-		} `json:"data"`
-	}
-	if err := c.query(ctx, gql, map[string]any{
-		"slugs":   slugs,
-		"bookIds": bookIDs,
-		"limit":   len(slugs),
-	}, &resp); err != nil {
+	editions, err := c.fetchWorkEditions(ctx, "GetAuthorWorkKnownLanguages",
+		"", "{language: {id: {_is_null: false}}}", nil, slugs, bookIDs)
+	if err != nil {
 		slog.Debug("hardcover: known edition language lookup failed; blank-language works stay indeterminate", "works", len(slugs), "error", err)
 		return
 	}
-	for _, edition := range resp.Data.Editions {
+	for _, edition := range editions {
 		key := edition.Book.foreignID()
 		if !asked[key] {
 			continue

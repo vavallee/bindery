@@ -1,0 +1,2 @@
+### Fixed
+- **Hardcover language checks no longer time out on every author refresh** (#3333). When a metadata profile restricts languages, Bindery asks Hardcover which of an author's works have an edition in an allowed language. Hardcover could not answer that query in time and cancelled it after about 15 seconds, so every author with Hardcover works spent close to a minute on retries during a refresh, and those works fell back to their default-edition language. The lookup now uses queries Hardcover answers in under a second, so the edition languages are checked again.
