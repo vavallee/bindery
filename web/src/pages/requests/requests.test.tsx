@@ -34,6 +34,9 @@ vi.mock('react-i18next', () => ({
         'requests.admin.metadataProfile': 'Metadata profile',
         'requests.admin.rootFolder': 'Root folder',
         'requests.admin.monitorMode': 'Monitor',
+        'requests.admin.requestedBy': 'asked by {{username}} on {{date}}',
+        'requests.admin.createdByAPIKey': 'made for them with the API key',
+        'requests.admin.createdByAdmin': 'made for them by {{username}}',
       }
       const s = strings[key] ?? key
       return s.replace(/\{\{(\w+)\}\}/g, (_m, name: string) => String(vars[name] ?? ''))
@@ -116,6 +119,23 @@ describe('RequestsPage', () => {
     await waitFor(() => expect(screen.queryByText('Dune')).not.toBeInTheDocument())
     expect(changed).toHaveBeenCalled()
     window.removeEventListener('bindery:requests-changed', changed)
+  })
+
+  it('says who made a request on its owner\'s behalf', async () => {
+    vi.mocked(api.listRequestQueue).mockResolvedValue({
+      items: [
+        req({ id: 1, title: 'By key', username: 'reader', createdVia: 'api_key' }),
+        req({ id: 2, title: 'By admin', username: 'reader', createdVia: 'admin', createdBy: 'boss' }),
+        req({ id: 3, title: 'Own', username: 'reader' }),
+      ],
+      total: 3, limit: 50, offset: 0,
+    })
+    render(<RequestsPage />)
+
+    const row = async (title: string) => (await screen.findByText(title)).closest('li') as HTMLElement
+    expect(within(await row('By key')).getByText(/made for them with the API key/)).toBeInTheDocument()
+    expect(within(await row('By admin')).getByText(/made for them by boss/)).toBeInTheDocument()
+    expect(within(await row('Own')).queryByText(/made for them/)).not.toBeInTheDocument()
   })
 
   it('offers the author choices prefilled from the instance defaults', async () => {

@@ -77,10 +77,10 @@ func TestRequestRepo_ReopenRespectsCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustRequest(t, repo, owner.ID, models.RequestKindBook, "OL2W")
-	if err := repo.Reopen(ctx, approved.ID, owner.ID, "", "{}", 1); !errors.Is(err, ErrRequestCapReached) {
+	if err := repo.Reopen(ctx, approved.ID, owner.ID, "", "{}", "", nil, 1); !errors.Is(err, ErrRequestCapReached) {
 		t.Fatalf("reopen at the cap: %v, want ErrRequestCapReached", err)
 	}
-	if err := repo.Reopen(ctx, approved.ID, owner.ID, "", "{}", 2); err != nil {
+	if err := repo.Reopen(ctx, approved.ID, owner.ID, "", "{}", "", nil, 2); err != nil {
 		t.Fatalf("reopen under the cap: %v", err)
 	}
 }
@@ -111,7 +111,7 @@ func TestRequestRepo_CapCountsRequestsBeingApproved(t *testing.T) {
 	if err := repo.Complete(ctx, approved.ID, c.ClaimToken, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Reopen(ctx, approved.ID, owner.ID, "", "{}", 1); !errors.Is(err, ErrRequestCapReached) {
+	if err := repo.Reopen(ctx, approved.ID, owner.ID, "", "{}", "", nil, 1); !errors.Is(err, ErrRequestCapReached) {
 		t.Fatalf("reopen at the cap with one request being approved: %v, want ErrRequestCapReached", err)
 	}
 }

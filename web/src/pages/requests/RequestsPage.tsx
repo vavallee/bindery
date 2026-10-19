@@ -111,6 +111,8 @@ export default function RequestsPage() {
                     {mediaTypeLabel(t, r.mediaType)}
                     {' · '}
                     {t('requests.admin.requestedBy', { username: r.username ?? '', date: new Date(r.createdAt).toLocaleDateString() })}
+                    {r.createdVia === 'api_key' && <>{' · '}{t('requests.admin.createdByAPIKey')}</>}
+                    {r.createdVia === 'admin' && <>{' · '}{t('requests.admin.createdByAdmin', { username: r.createdBy || t('requests.admin.deletedAdmin') })}</>}
                   </div>
                   {r.status === 'declined' && r.declineReason && (
                     <p className="text-xs mt-1">{t('requests.mine.reason', { reason: r.declineReason })}</p>

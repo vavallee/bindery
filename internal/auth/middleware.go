@@ -152,6 +152,10 @@ const (
 	// sessionLookupFailedCtxKey marks a request that carried a correctly
 	// signed session cookie whose epoch or revocation check could not run.
 	sessionLookupFailedCtxKey ctxKey = "auth.session_lookup_failed"
+	// adminByModeCtxKey marks a request that holds the admin role only
+	// because the auth mode admits it (disabled mode, or a local client in
+	// local-only mode), not because an admin signed in or sent the API key.
+	adminByModeCtxKey ctxKey = "auth.admin_by_mode"
 )
 
 // StatusClientClosedRequest is the nginx convention for a request the client
@@ -184,6 +188,23 @@ func AuthedViaAPIKey(ctx context.Context) bool {
 // key. Exported only so tests can construct the same state Middleware sets.
 func WithAPIKeyAuth(ctx context.Context) context.Context {
 	return context.WithValue(ctx, viaAPIKeyCtxKey, true)
+}
+
+// AdminByAuthMode reports whether the request holds the admin role only
+// because the auth mode admits it: an anonymous caller in disabled mode or a
+// local client in local-only mode, or a non-admin session the mode elevated.
+// False for an admin's own session and for the API key. Handlers that must
+// know a person or the key really asked, rather than "whoever reached the
+// install", check it alongside the role.
+func AdminByAuthMode(ctx context.Context) bool {
+	v, _ := ctx.Value(adminByModeCtxKey).(bool)
+	return v
+}
+
+// WithAdminByAuthMode returns a context marked as AdminByAuthMode. Exported
+// only so tests can construct the same state Middleware sets.
+func WithAdminByAuthMode(ctx context.Context) context.Context {
+	return context.WithValue(ctx, adminByModeCtxKey, true)
 }
 
 // operatorWarnOnce keeps a missing-operator install from logging on every
@@ -604,7 +625,14 @@ func Middleware(p Provider) func(http.Handler) http.Handler {
 				// Without the role, RequireAdmin-protected endpoints answer
 				// "admin role required" 403: first for local-only (#799), and
 				// for disabled mode until this branch absorbed it.
+				//
+				// An admin's own session passes through here too in local-only
+				// mode; only a caller the mode raised to admin is marked.
+				signedInAdmin := (cookieValid || proxyValid) && UserRoleFromContext(r.Context()) == RoleAdmin
 				ctx := context.WithValue(r.Context(), userRoleCtxKey, "admin")
+				if !signedInAdmin {
+					ctx = context.WithValue(ctx, adminByModeCtxKey, true)
+				}
 				ctx = withOperatorUserID(ctx, p)
 				r = r.WithContext(ctx)
 				next.ServeHTTP(w, r)
