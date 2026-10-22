@@ -867,7 +867,11 @@
     "matchBookSearch": "Search for a book",
     "matchBookSearching": "Searching…",
     "matchBookSearchBtn": "Search",
-    "matchBookCancel": "Cancel"
+    "matchBookCancel": "Cancel",
+    "statusView": "Show",
+    "viewAll": "All ({{count}})",
+    "viewActive": "Active ({{count}})",
+    "viewFailed": "Failed ({{count}})"
   },
   "series": {
     "searchPlaceholder": "Search series…",

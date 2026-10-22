@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router'
 import QueuePage, { MatchBookControl } from './QueuePage'
 import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
 import { api } from '../api/client'
-import { acceptConfirm } from '../test-utils'
+import { acceptConfirm, clickBulkAction } from '../test-utils'
 import type { Download, PendingRelease, QueueItem, QueueListResponse } from '../api/client'
 
 vi.mock('../api/client', async importOriginal => {
@@ -311,7 +311,7 @@ describe('QueuePage', () => {
     const b = screen.getByText('Flood B')
     fireEvent.click(within(b.closest('div')!.parentElement!).getByRole('checkbox'))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove selected' }))
+    clickBulkAction('Remove selected')
     await acceptConfirm()
 
     // unmonitorBooks defaults ON (undo a mass import); deleteFiles defaults OFF.
@@ -329,8 +329,9 @@ describe('QueuePage', () => {
 
     await screen.findByText('A')
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select all' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Delete downloaded files' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Remove selected' }))
+    // The remove options are in the Remove confirmation, not the toolbar.
+    clickBulkAction('Remove selected')
+    fireEvent.click(within(await screen.findByTestId('confirm-dialog')).getByRole('checkbox', { name: 'Delete downloaded files' }))
     await acceptConfirm()
 
     await waitFor(() => expect(api.bulkDeleteQueue).toHaveBeenCalledWith([1, 2], { deleteFiles: true, unmonitorBooks: true }))
@@ -724,7 +725,7 @@ describe('QueuePage manual match (#1589)', () => {
     await screen.findByText('Failed Grab')
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select Failed Grab' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select Failed Import' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Retry selected' }))
+    clickBulkAction('Retry selected')
     await acceptConfirm()
 
     await waitFor(() => expect(api.bulkRetryQueue).toHaveBeenCalledWith([50, 51]))
@@ -741,8 +742,8 @@ describe('QueuePage manual match (#1589)', () => {
 
     await screen.findByText('Downloading Now')
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select all' }))
-    expect(screen.getByRole('button', { name: 'Remove selected' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Retry selected' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('bulk-action-bar')).toBeInTheDocument()
+    expect(() => clickBulkAction('Retry selected')).toThrow()
   })
 
   it('offers Retry all failed when only blocked imports are queued (#2336)', async () => {
@@ -895,5 +896,25 @@ describe('QueuePage on a phone', () => {
     expect(time).toHaveTextContent(exact)
     fireEvent.click(time)
     expect(time).not.toHaveTextContent(exact)
+  })
+})
+
+describe('QueuePage status view', () => {
+  // "29 failed" over a list with no visible active section left it unclear
+  // whether the queue held only failures.
+  it('splits the list into active and failed rows, with counts', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
+      makeQueueItem({ id: 1, title: 'Going', status: 'downloading' }),
+      makeQueueItem({ id: 2, title: 'Broken', status: 'failed' }),
+    ] })
+    renderQueuePage()
+    await screen.findByText('Going')
+    const view = screen.getByRole('group', { name: 'queue.statusView' })
+    fireEvent.click(within(view).getByRole('button', { name: /queue\.viewFailed/ }))
+    expect(screen.queryByText('Going')).toBeNull()
+    expect(screen.getByText('Broken')).toBeInTheDocument()
+    fireEvent.click(within(view).getByRole('button', { name: /queue\.viewActive/ }))
+    expect(screen.getByText('Going')).toBeInTheDocument()
+    expect(screen.queryByText('Broken')).toBeNull()
   })
 })

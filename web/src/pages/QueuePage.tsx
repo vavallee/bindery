@@ -14,6 +14,8 @@ import { formatBytes } from '../util/format'
 import { downloadStatusBadge, isFailed, isMatchable, isResendable, isRetryable } from '../components/downloadStatus'
 import { ModalPanel } from '../components/useModal'
 import { notifyFailedQueueChanged } from '../components/useFailedQueueCount'
+import BulkActionBar from '../components/BulkActionBar'
+import FilterBar from '../components/FilterBar'
 
 export default function QueuePage() {
   const { t } = useTranslation()
@@ -39,8 +41,10 @@ export default function QueuePage() {
   // just the visible page. unmonitor defaults on so undoing a mass import
   // actually stops the scheduler re-grabbing; delete-files defaults off.
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set())
-  const [bulkUnmonitor, setBulkUnmonitor] = useState(true)
-  const [bulkDeleteFiles, setBulkDeleteFiles] = useState(false)
+  // Which rows the list shows. The queue mixes downloads in flight with
+  // failures that need a hand; "29 failed" above a list with no visible
+  // active section left it unclear whether the queue was only failures.
+  const [statusView, setStatusView] = useState<'' | 'active' | 'failed'>('')
   const [bulkResult, setBulkResult] = useState<string | null>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
 
@@ -81,13 +85,16 @@ export default function QueuePage() {
 
   // Paginate the queue client-side so a large queue (hundreds/thousands of
   // items) doesn't render every row at once and blow up the DOM.
-  const { pageItems: queuePage, paginationProps: queuePaginationProps } = usePagination(queue, 50, 'queue')
+  const shownQueue = statusView === 'failed'
+    ? queue.filter(q => isFailed(q.status))
+    : statusView === 'active' ? queue.filter(q => !isFailed(q.status)) : queue
+  const { pageItems: queuePage, paginationProps: queuePaginationProps } = usePagination(shownQueue, 50, 'queue')
 
-  // Select-all reflects the WHOLE queue, not just the visible page — the point
-  // is clearing a flood that spans many pages. Indeterminate when only some are
-  // selected, mirroring BooksPage.
-  const allSelected = queue.length > 0 && queue.every(q => selectedIds.has(q.id))
-  const someSelected = queue.some(q => selectedIds.has(q.id)) && !allSelected
+  // Select-all reflects every row the status view shows, not just the visible
+  // page — the point is clearing a flood that spans many pages. Indeterminate
+  // when only some are selected, mirroring BooksPage.
+  const allSelected = shownQueue.length > 0 && shownQueue.every(q => selectedIds.has(q.id))
+  const someSelected = shownQueue.some(q => selectedIds.has(q.id)) && !allSelected
   useEffect(() => {
     if (selectAllRef.current) selectAllRef.current.indeterminate = someSelected
   }, [someSelected])
@@ -100,7 +107,7 @@ export default function QueuePage() {
       return next
     })
   }
-  const selectAll = () => setSelectedIds(new Set(queue.map(q => q.id)))
+  const selectAll = () => setSelectedIds(new Set(shownQueue.map(q => q.id)))
   const clearSelection = () => setSelectedIds(new Set())
 
   // Open the remove dialog. The file-deletion choice always starts unchecked
@@ -312,15 +319,25 @@ export default function QueuePage() {
   // immediately re-grab them — the recovery path for an accidental mass import.
   const removeSelected = async () => {
     if (selectedIds.size === 0) return
+    // The two options ride the confirmation instead of sitting in the
+    // toolbar: they only mean anything for Remove, and the dialog is where the
+    // count is named. Unmonitoring defaults on (undo a mass import); deleting
+    // files defaults off so downloaded data and torrent seeds stay on disk.
+    const options = { deleteFiles: false, unmonitorBooks: true }
     if (!await confirm({
       title: t('common.confirmTitle'),
-      body: t('queue.removeSelectedConfirm', { count: selectedIds.size, defaultValue: 'Remove {{count}} item(s) from the queue?' }),
+      body: (
+        <>
+          <p>{t('queue.removeSelectedConfirm', { count: selectedIds.size, defaultValue: 'Remove {{count}} item(s) from the queue?' })}</p>
+          <QueueRemoveOptions value={options} />
+        </>
+      ),
       confirmLabel: t('common.remove'),
     })) return
     setBulkBusy(true)
     setBulkResult(null)
     try {
-      const { results } = await api.bulkDeleteQueue([...selectedIds], { deleteFiles: bulkDeleteFiles, unmonitorBooks: bulkUnmonitor })
+      const { results } = await api.bulkDeleteQueue([...selectedIds], options)
       const entries = Object.values(results ?? {})
       const failed = entries.filter(r => !r.ok).length
       const ok = entries.length - failed
@@ -369,7 +386,7 @@ export default function QueuePage() {
   }
 
   return (
-    <div>
+    <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
       {confirmDialog}
       <h2 className="text-2xl font-bold mb-6">{t('queue.title')}</h2>
 
@@ -434,61 +451,23 @@ export default function QueuePage() {
                     type="checkbox"
                     checked={allSelected}
                     onChange={e => (e.target.checked ? selectAll() : clearSelection())}
-                    className="rounded-full border-slate-400 dark:border-zinc-600"
+                    className="rounded border-slate-400 dark:border-zinc-600"
                   />
                   {t('queue.selectAll', 'Select all')}
                 </label>
+                <FilterBar
+                  status={{
+                    value: statusView,
+                    onChange: setStatusView,
+                    label: t('queue.statusView', 'Show'),
+                    options: [
+                      { value: '', label: t('queue.viewAll', { count: queue.length, defaultValue: 'All ({{count}})' }) },
+                      { value: 'active', label: t('queue.viewActive', { count: queue.length - failedItems.length, defaultValue: 'Active ({{count}})' }) },
+                      { value: 'failed', label: t('queue.viewFailed', { count: failedItems.length, defaultValue: 'Failed ({{count}})' }) },
+                    ],
+                  }}
+                />
               </div>
-              {selectedIds.size > 0 && (
-                <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-                  <span className="text-xs font-medium text-slate-700 dark:text-zinc-300">
-                    {t('queue.selectedCount', { count: selectedIds.size, defaultValue: '{{count}} selected' })}
-                  </span>
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                    <label className="flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={bulkUnmonitor}
-                        onChange={e => setBulkUnmonitor(e.target.checked)}
-                        className="rounded border-slate-400 dark:border-zinc-600"
-                      />
-                      {t('queue.alsoUnmonitor', 'Also stop monitoring these books')}
-                    </label>
-                    <label className="flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={bulkDeleteFiles}
-                        onChange={e => setBulkDeleteFiles(e.target.checked)}
-                        className="rounded border-slate-400 dark:border-zinc-600"
-                      />
-                      {t('queue.deleteFilesLabel', 'Delete downloaded files')}
-                    </label>
-                    {retryableSelection.length > 0 && (
-                      <button
-                        onClick={retrySelected}
-                        disabled={bulkBusy}
-                        className="px-2.5 py-1 text-xs rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-medium"
-                      >
-                        {t('queue.retrySelected', 'Retry selected')}
-                      </button>
-                    )}
-                    <button
-                      onClick={removeSelected}
-                      disabled={bulkBusy}
-                      className="px-2.5 py-1 text-xs rounded border border-red-300 dark:border-red-900 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50 font-medium"
-                    >
-                      {t('queue.removeSelected', 'Remove selected')}
-                    </button>
-                    <button
-                      onClick={clearSelection}
-                      disabled={bulkBusy}
-                      className="px-2.5 py-1 text-xs rounded text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50 font-medium"
-                    >
-                      {t('queue.clearSelection', 'Clear selection')}
-                    </button>
-                  </div>
-                </div>
-              )}
               {bulkResult && (
                 <div className="px-3 py-2 text-xs text-slate-700 dark:text-zinc-300 bg-amber-100 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/40 rounded-lg">
                   {bulkResult}
@@ -501,7 +480,7 @@ export default function QueuePage() {
                     checked={selectedIds.has(item.id)}
                     onChange={() => toggleSelect(item.id)}
                     aria-label={t('queue.selectItem', { title: item.title, defaultValue: 'Select {{title}}' })}
-                    className="mr-3 shrink-0 rounded-full border-slate-400 dark:border-zinc-600"
+                    className="mr-3 shrink-0 rounded border-slate-400 dark:border-zinc-600"
                   />
                   <div className="min-w-0 flex-1">
                     <h3 className="font-medium text-sm [overflow-wrap:anywhere] sm:truncate">{item.title}</h3>
@@ -746,6 +725,17 @@ export default function QueuePage() {
           </ModalPanel>
         </div>
       )}
+      <BulkActionBar
+        count={selectedIds.size}
+        onClear={clearSelection}
+        busy={bulkBusy}
+        actions={[
+          // A retry only applies to a failed row, so it is offered only when
+          // the selection holds one (#2295).
+          ...(retryableSelection.length > 0 ? [{ label: t('queue.retrySelected', 'Retry selected'), onClick: () => void retrySelected() }] : []),
+          { label: t('queue.removeSelected', 'Remove selected'), onClick: () => void removeSelected(), variant: 'danger' as const },
+        ]}
+      />
     </div>
   )
 }
@@ -856,6 +846,37 @@ export function MatchBookControl({ disabled, onMatch, alreadyMatched = false }: 
       <button onClick={() => setOpen(false)} className="text-[10px] text-fg-muted hover:underline">
         {t('queue.matchBookCancel', 'Cancel')}
       </button>
+    </div>
+  )
+}
+
+// The Remove selected options, inside its confirmation. `value` is read after
+// the dialog closes, so the boxes write through to it as well as to their own
+// state (the dialog renders this once and does not re-render it from outside).
+function QueueRemoveOptions({ value }: { value: { deleteFiles: boolean; unmonitorBooks: boolean } }) {
+  const { t } = useTranslation()
+  const [unmonitor, setUnmonitor] = useState(value.unmonitorBooks)
+  const [deleteFiles, setDeleteFiles] = useState(value.deleteFiles)
+  return (
+    <div className="mt-3 space-y-2 text-sm">
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={unmonitor}
+          onChange={e => { setUnmonitor(e.target.checked); value.unmonitorBooks = e.target.checked }}
+          className="rounded border-slate-400 dark:border-zinc-600"
+        />
+        {t('queue.alsoUnmonitor', 'Also stop monitoring these books')}
+      </label>
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={deleteFiles}
+          onChange={e => { setDeleteFiles(e.target.checked); value.deleteFiles = e.target.checked }}
+          className="rounded border-slate-400 dark:border-zinc-600"
+        />
+        {t('queue.deleteFilesLabel', 'Delete downloaded files')}
+      </label>
     </div>
   )
 }

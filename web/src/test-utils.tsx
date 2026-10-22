@@ -42,8 +42,11 @@ export function confirmDialog(): HTMLElement | null {
 /** Tick the acknowledge box if there is one, then confirm. */
 export async function acceptConfirm(): Promise<void> {
   const dialog = await screen.findByTestId('confirm-dialog')
-  const acknowledge = within(dialog).queryByRole('checkbox')
-  if (acknowledge) fireEvent.click(acknowledge)
+  // A gated confirmation has one acknowledgement box. A dialog that carries
+  // options instead (Queue's Remove selected) has several, which are the
+  // test's to set, not this helper's.
+  const boxes = within(dialog).queryAllByRole('checkbox')
+  if (boxes.length === 1) fireEvent.click(boxes[0])
   const buttons = within(dialog).getAllByRole('button')
   fireEvent.click(buttons[buttons.length - 1])
 }
