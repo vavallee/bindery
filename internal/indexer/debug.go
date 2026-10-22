@@ -276,7 +276,7 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 	results = dedupe(results)
 	dbg.Pipeline.AfterDedupe = len(results)
 
-	results, junkFilters := filterUsenetJunkDebug(results)
+	results, junkFilters := filterUsenetJunkDebug(results, junkScope{MediaType: c.MediaType, WantedTitle: c.Title})
 	dbg.Filters = append(dbg.Filters, junkFilters...)
 	dbg.Pipeline.AfterUsenetJunk = len(results)
 
@@ -306,11 +306,11 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 
 // filterUsenetJunkDebug is filterUsenetJunk instrumented to record which
 // results were dropped and why.
-func filterUsenetJunkDebug(results []newznab.SearchResult) ([]newznab.SearchResult, []FilterDebug) {
+func filterUsenetJunkDebug(results []newznab.SearchResult, sc junkScope) ([]newznab.SearchResult, []FilterDebug) {
 	out := make([]newznab.SearchResult, 0, len(results))
 	var dropped []FilterDebug
 	for _, r := range results {
-		if reason := usenetJunkReason(r.Title); reason != "" {
+		if reason := usenetJunkReason(r.Title, sc); reason != "" {
 			dropped = append(dropped, FilterDebug{
 				Title:       r.Title,
 				IndexerName: r.IndexerName,

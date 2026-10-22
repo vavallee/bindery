@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/vavallee/bindery/internal/models"
 )
 
 // Per-chapter fragments (#3268, part 3).
@@ -36,18 +38,44 @@ import (
 //   - "Catch 22 of Them", "1 of a Kind": MM must be digits, and "Catch22"
 //     does not hold a chapter marker because "ch" must start a word.
 //
+// Lone parts of a set (#3417). Bindery imports one grab as one book and cannot
+// assemble several grabs, so a release that says it is one slice of a set is a
+// partial book whatever MM is. "Part 3 of 5" is therefore dropped for an
+// audiobook, and so are "Pt 2 of 3", "Disc 2 of 4" and "CD 3 of 8". The cost,
+// accepted on purpose, is that a recording posted as "Part 1 of 2" is no longer
+// eligible. The rule is kept as narrow as it can be:
+//
+//   - the counter must follow a part word (part, pt, disc, disk, cd) directly,
+//     so "Book 3 of 12" and a bare "3 of 5" are not touched;
+//   - MM must be 2 or more, so "Part 1 of 1" is a whole recording;
+//   - a range ("Parts 1-5 of 5", "Part 1-2 of 5") is not a lone part;
+//   - "all parts" or "complete audiobook" in the name means the set is in one
+//     release;
+//   - it applies only when the title names an audio container, or names no
+//     format and the search is for an audiobook, so ebooks and ebook searches
+//     are never touched;
+//   - a counter that the wanted book's own title contains is kept.
+//
 // Known limits: a title that really contains "NN of MM" with MM 10 or more and
-// no ebook format ("12 of 56 Stories") is dropped, and a fragment posted as
-// "Part 3 of 8" is kept because MM is under 10.
+// no ebook format ("12 of 56 Stories") is dropped; a lone part posted without a
+// part word ("3 of 5") is kept when MM is under 10; and a whole recording posted
+// under a "Part 1 of 2" name is dropped.
 
 // reasonChapterFragment is the FilterDebug reason for a per-chapter fragment.
 const reasonChapterFragment = "looks like one chapter or part of a larger post (Ch NN, NN of MM)"
+
+// reasonLoneAudioPart is the FilterDebug reason for one part of a multipart set.
+const reasonLoneAudioPart = "looks like one part of a multipart audiobook set (Part N of M), which Bindery cannot assemble"
 
 var (
 	chapterMarkerRe = regexp.MustCompile(`(?i)\b(?:ch|chapter)\.?\s*\d{1,3}\b`)
 	nOfMRe          = regexp.MustCompile(`(?i)\b(\d{1,3})\s*of\s*(\d{2,3})\b`)
 	audioFormatRe   = regexp.MustCompile(`(?i)\b(?:mp3|m4a|m4b|flac|ogg|aac|wav|wma|opus)\b`)
 	ebookFormatRe   = regexp.MustCompile(`(?i)\b(?:epub3?|kepub|azw3?|mobi|pdf|djvu|cbr|cbz|fb2|lit|prc|rtf|txt|doc|docx|kfx|ebook|html?)\b`)
+	// partOfRe is a part word straight before "N of M".
+	partOfRe = regexp.MustCompile(`(?i)\b(?:part|pt|disc|disk|cd)\.?\s*#?\s*(\d{1,3})\s*of\s*(\d{1,3})\b`)
+	// wholeSetRe says the release carries every part.
+	wholeSetRe = regexp.MustCompile(`(?i)\ball\s+(?:\d+\s+)?parts\b|\bcomplete\s+(?:audiobook|book|set|recording)\b`)
 	// precedingWordRe captures the last word before an index.
 	precedingWordRe = regexp.MustCompile(`(?i)([a-z]+)\.?\s*#?\s*$`)
 )
@@ -91,15 +119,55 @@ func isChapterFragment(title string) bool {
 	return audioFormatRe.MatchString(title) || !ebookFormatRe.MatchString(title)
 }
 
+// junkScope is what the usenet junk filter knows about the search. The zero
+// value (a free text search) applies only the rules that need no context.
+type junkScope struct {
+	// MediaType is models.MediaTypeEbook or models.MediaTypeAudiobook, or "".
+	MediaType string
+	// WantedTitle is the wanted book's title, "" when unknown.
+	WantedTitle string
+}
+
+func squashSpaces(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.ReplaceAll(s, "_", " ")), " "))
+}
+
+// isLoneAudioPart reports whether title is one part of a multipart audiobook
+// set, as described above.
+func isLoneAudioPart(title string, sc junkScope) bool {
+	title = strings.ReplaceAll(title, "_", " ")
+	audio := audioFormatRe.MatchString(title)
+	if !audio && (ebookFormatRe.MatchString(title) || sc.MediaType != models.MediaTypeAudiobook) {
+		return false
+	}
+	if wholeSetRe.MatchString(title) {
+		return false
+	}
+	wanted := squashSpaces(sc.WantedTitle)
+	for _, m := range partOfRe.FindAllStringSubmatch(title, -1) {
+		if total, _ := strconv.Atoi(m[2]); total < 2 {
+			continue
+		}
+		if wanted != "" && strings.Contains(wanted, squashSpaces(m[0])) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // usenetJunkReason returns why title is dropped by the usenet junk filter, or
 // "" when it is kept. filterUsenetJunk and filterUsenetJunkDebug share it so the
 // pipeline and the debug view cannot disagree.
-func usenetJunkReason(title string) string {
+func usenetJunkReason(title string, sc junkScope) string {
 	if usenetJunkRe.MatchString(title) {
 		return reasonRawPosting
 	}
 	if isChapterFragment(title) {
 		return reasonChapterFragment
+	}
+	if isLoneAudioPart(title, sc) {
+		return reasonLoneAudioPart
 	}
 	return ""
 }

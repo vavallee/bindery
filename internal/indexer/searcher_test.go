@@ -668,7 +668,7 @@ func TestFilterUsenetJunk(t *testing.T) {
 		`Russell-The.Sparrow.EPUB`,
 	}
 	input := toResults(append(junk, keepers...)...)
-	out := filterUsenetJunk(input)
+	out := filterUsenetJunk(input, junkScope{})
 	if len(out) != len(keepers) {
 		t.Errorf("expected %d survivors, got %d: %v", len(keepers), len(out), resultTitles(out))
 	}

@@ -211,15 +211,33 @@ no format at all. A title that names an ebook format (epub, epub3, kepub, mobi,
 azw, azw3, kfx, pdf, doc, docx, html, htm, ebook, lit, prc, djvu, cbr, cbz, fb2,
 rtf, txt) is never dropped by this rule. An underscore counts as a space, so
 `Author_Title_Ch63_of_71_mp3` is dropped like the dotted form. The rule is exact
-about counters: a whole book `Part 1 of 2` and any `NN of MM` with MM under 10
-are kept, since a long audiobook is often posted as a few parts; a chapter
-marker or `NN of MM` with MM of 10 or more is dropped unless an ebook format or a
-series count word spares it.
+about counters: a bare `NN of MM` with MM under 10 is kept; a chapter marker or
+`NN of MM` with MM of 10 or more is dropped unless an ebook format or a series
+count word spares it.
+
+One more shape is dropped for audiobooks: a single part of a set. Bindery
+imports one grab as one book and cannot join several grabs, so `Part 3 of 5`,
+`Pt 2 of 3`, `Disc 2 of 4` and `CD 3 of 8` are partial books whatever the total
+is. The reason shown is `looks like one part of a multipart audiobook set (Part
+N of M), which Bindery cannot assemble`. The rule is narrow:
+
+- the counter must come straight after part, pt, disc, disk or cd, and the total
+  must be 2 or more (`Part 1 of 1` is kept; `Book 3 of 5` and a bare `3 of 5`
+  are not parts);
+- it applies to a title that names an audio format, or to one that names no
+  format when the search is for an audiobook. An ebook format in the name, or an
+  ebook search with no audio format in the name, is never affected;
+- a range such as `Parts 1-5 of 5`, or a name with `all parts` or `complete
+  audiobook`, is kept as the whole set;
+- a counter that the wanted book's own title contains is kept.
+
+The price is that a recording posted as `Part 1 of 2` is no longer eligible.
 
 The file size is not used. A fragment is recognised by its name only, so an
 ebook with a chapter counter and no format word in its name is dropped too.
 
-What this does not catch: a fragment posted as `Part 3 of 8`, a fragment with
+What this does not catch: a fragment posted as a bare `3 of 8` with no part
+word, a fragment with
 only a bare number and no counter word, and a fragment named in another
 language. It can wrongly drop a whole release whose own title contains `NN of
 MM` with MM of 10 or more, no ebook format and no series count word in front

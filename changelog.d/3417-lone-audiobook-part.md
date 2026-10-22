@@ -1,0 +1,2 @@
+### Fixed
+- **One part of a multipart audiobook is no longer grabbed as the whole book** (#3417): a release named "Part 3 of 5", "Pt 2 of 3", "Disc 2 of 4" or "CD 3 of 8" is now filtered out of audiobook search, because Bindery imports one grab as one book and cannot join several. The search debug view shows why. Ranges ("Parts 1-5 of 5"), "all parts" and "complete audiobook" releases, ebooks and "Book 3 of 12" series numbers are not affected. A recording posted as "Part 1 of 2" is no longer eligible. Reported on Discord by .king.420.

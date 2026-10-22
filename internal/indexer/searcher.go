@@ -369,7 +369,7 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 	wg.Wait()
 
 	results = dedupe(results)
-	results = filterUsenetJunk(results)
+	results = filterUsenetJunk(results, junkScope{MediaType: c.MediaType, WantedTitle: c.Title})
 	results = filterNonBookContent(results)
 	results, _ = filterRelevantWithContext(results, c.Title, c.Author, c.AuthorAliases, c.context())
 	rankResults(results, c)
@@ -450,7 +450,7 @@ func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, q
 	wg.Wait()
 
 	results = dedupe(results)
-	results = filterUsenetJunk(results)
+	results = filterUsenetJunk(results, junkScope{})
 	results = filterNonBookContent(results)
 	rankResults(results, MatchCriteria{Title: query})
 	return results
@@ -1398,10 +1398,10 @@ var usenetJunkRe = regexp.MustCompile(
 
 // filterUsenetJunk drops results whose titles look like raw per-article
 // postings rather than coherent releases.
-func filterUsenetJunk(results []newznab.SearchResult) []newznab.SearchResult {
+func filterUsenetJunk(results []newznab.SearchResult, sc junkScope) []newznab.SearchResult {
 	out := make([]newznab.SearchResult, 0, len(results))
 	for _, r := range results {
-		if usenetJunkReason(r.Title) == "" {
+		if usenetJunkReason(r.Title, sc) == "" {
 			out = append(out, r)
 		}
 	}
