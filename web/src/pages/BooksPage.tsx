@@ -6,7 +6,13 @@ import ViewToggle from '../components/ViewToggle'
 import BulkNotice from '../components/BulkNotice'
 import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
 import { bookStatusBadge } from '../components/bookStatus'
-import FilterPopover, { FilterGroup } from '../components/FilterPopover'
+import { FilterGroup } from '../components/FilterPopover'
+import FilterBar from '../components/FilterBar'
+import DataTable, { type Column } from '../components/DataTable'
+import Checkbox from '../components/Checkbox'
+import { nextSort, splitSort } from '../components/tableSort'
+import { SkeletonCards, SkeletonRows } from '../components/Skeleton'
+import EmptyState from '../components/EmptyState'
 import BookStatusLegend from '../components/BookStatusLegend'
 import { useView } from '../components/useView'
 import GettingStartedGuidance from '../components/GettingStartedGuidance'
@@ -19,7 +25,7 @@ import { oneOf, useListParams, useUrlSearchInput } from '../components/useListPa
 import AddToLibraryModal from '../components/AddToLibraryModal'
 import BookRating from '../components/BookRating'
 import CoverImage from '../components/CoverImage'
-import { primaryFill } from '../components/buttons'
+import { btn } from '../components/buttons'
 import { errorText } from '../util/errorText'
 import CoverPlaceholder from '../components/CoverPlaceholder'
 
@@ -43,6 +49,15 @@ const MEDIA_FILTERS: readonly MediaFilter[] = ['', 'ebook', 'audiobook', 'both']
 // Query-string keys and their defaults. A value equal to its default is left
 // out of the URL, so an untouched list stays at a clean /books.
 const LIST_DEFAULTS = { q: '', status: '', media: '', sort: 'title-az' }
+// The table's sortable columns and the whitelisted sort values behind them.
+const BOOK_COLUMN_SORTS = {
+  title: { asc: 'title-az', desc: 'title-za' },
+  author: { asc: 'author-az', desc: 'author-za' },
+  year: { asc: 'date-old', desc: 'date-new' },
+  rating: { asc: 'rating-asc', desc: 'rating-desc' },
+  type: { asc: 'type-az', desc: 'type-za' },
+  status: { asc: 'status-az', desc: 'status-za' },
+}
 
 
 // statusLabel is populated at render time from t() — see BooksPage
@@ -96,7 +111,6 @@ export default function BooksPage() {
   const [showAddBook, setShowAddBook] = useState(false)
   const addBookButtonRef = useRef<HTMLButtonElement>(null)
   const addBookWasOpenRef = useRef(false)
-  const selectAllRef = useRef<HTMLInputElement>(null)
   const loadRequestRef = useRef(0)
 
   const monitoredParam = monitoredFilter === 'monitored' ? true : monitoredFilter === 'unmonitored' ? false : undefined
@@ -160,14 +174,6 @@ export default function BooksPage() {
     try { localStorage.setItem('bindery.filter.books.monitored', monitoredFilter) } catch { /* ignore */ }
   }, [monitoredFilter])
 
-  // Keep the select-all checkbox indeterminate state in sync. "Page" here is
-  // the server-returned page held in `books`.
-  const allPageSelected = books.length > 0 && books.every(b => selectedIds.has(b.id))
-  const somePageSelected = books.some(b => selectedIds.has(b.id)) && !allPageSelected
-  useEffect(() => {
-    if (selectAllRef.current) selectAllRef.current.indeterminate = somePageSelected
-  }, [somePageSelected])
-
   useEffect(() => {
     document.title = `${t('nav.books', 'Books')} · Bindery`
     return () => { document.title = 'Bindery' }
@@ -218,47 +224,6 @@ export default function BooksPage() {
     }
   }
 
-  const statusBtnCls = (active: boolean) =>
-    `touch-target px-3 py-1 rounded-md text-xs font-medium transition-colors ${active ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-fg-muted hover:text-slate-900 dark:hover:text-white'}`
-
-  // Clicking a column header sorts by that column: first click ascending, a
-  // second click on the same column flips to descending (mirrors the sort
-  // buttons, which use the same whitelisted keys the backend accepts).
-  const toggleSort = (asc: SortMode, desc: SortMode) =>
-    setSort(sort === asc ? desc : asc)
-
-  // SortableHeader renders a clickable <th> with an ▲/▼ affordance when its
-  // column is the active sort. asc/desc are the whitelisted keys for the column.
-  //
-  // The affordance matters more than it looks. Tailwind v4's Preflight does not
-  // give <button> a pointer cursor (v3 did), so without cursor-pointer these
-  // headers were clickable but indistinguishable from plain text: no cursor
-  // change, and the ▲/▼ only renders once a column is already the active sort.
-  // A user reading the Sort toolbar above the table — which offers only title
-  // and date — reasonably concluded type and status could not be sorted at all,
-  // when in fact both have worked since v1.28.0. AuthorDetailPage's sortable
-  // header already carried cursor-pointer select-none; this matches it.
-  const SortableHeader = ({ label, asc, desc, className = '' }: { label: string; asc: SortMode; desc: SortMode; className?: string }) => {
-    const active = sort === asc || sort === desc
-    const arrow = sort === asc ? ' ▲' : sort === desc ? ' ▼' : ''
-    return (
-      <th className={`text-left px-3 py-2 text-xs font-medium uppercase ${className}`}>
-        <button
-          type="button"
-          onClick={() => toggleSort(asc, desc)}
-          aria-label={label}
-          title={t('books.sortByColumn', { column: label, defaultValue: 'Sort by {{column}}' })}
-          className={`inline-flex items-center gap-0.5 uppercase transition-colors cursor-pointer select-none ${active ? 'text-slate-900 dark:text-white' : 'text-fg-muted hover:text-slate-900 dark:hover:text-white'}`}
-        >
-          {label}
-          {active
-            ? <span aria-hidden="true">{arrow}</span>
-            : <span aria-hidden="true" className="opacity-40">↕</span>}
-        </button>
-      </th>
-    )
-  }
-
   // This page's loaded ids, in order — handed to BookDetailPage as router
   // state (#2548) for Previous/Next; see BookNavState there.
   const bookIds = books.map(b => b.id)
@@ -267,6 +232,81 @@ export default function BooksPage() {
   // BookDetailPage.tsx for how Back uses it to skip the whole chain.
   const bookNavState = (index: number) => ({ ids: bookIds, index, hopDepth: 1 })
 
+  const columnSort = splitSort(sort, BOOK_COLUMN_SORTS)
+  const sortByColumn = (key: string) => setSort(nextSort(sort, key, BOOK_COLUMN_SORTS) as SortMode)
+
+  const bookColumns: Column<Book>[] = [
+    {
+      key: 'title',
+      header: t('books.colTitle'),
+      sortKey: 'title',
+      className: 'max-w-[18rem] sm:max-w-none',
+      cell: (book, i) => (
+        <Link to={`/book/${book.id}`} state={bookNavState(i)} className="flex items-center gap-2 min-w-0" onClick={e => e.stopPropagation()}>
+          <CoverImage loading="lazy" decoding="async" src={book.imageUrl} alt="" className="w-6 h-9 object-cover rounded flex-shrink-0"
+            fallback={<CoverPlaceholder id={book.id} title={book.title} size="xs" className="w-6 h-9 rounded flex-shrink-0" />}
+          />
+          <span className="text-slate-800 dark:text-zinc-200 truncate">{book.title}</span>
+        </Link>
+      ),
+    },
+    {
+      key: 'author',
+      header: t('books.colAuthor'),
+      sortKey: 'author',
+      className: 'whitespace-nowrap hidden md:table-cell',
+      cell: book => book.author ? (
+        <Link
+          to={`/author/${book.authorId}`}
+          className="text-fg-muted hover:text-emerald-500 dark:hover:text-emerald-400"
+          onClick={e => e.stopPropagation()}
+        >
+          {book.author.authorName}
+        </Link>
+      ) : '—',
+    },
+    {
+      key: 'year',
+      header: t('books.colYear'),
+      sortKey: 'year',
+      className: 'text-fg-muted whitespace-nowrap hidden sm:table-cell',
+      cell: book => (book.releaseDate ? new Date(book.releaseDate).getFullYear() : '—'),
+    },
+    {
+      key: 'rating',
+      header: t('books.colRating'),
+      sortKey: 'rating',
+      className: 'text-fg-muted whitespace-nowrap hidden lg:table-cell',
+      cell: book => (book.averageRating && book.averageRating > 0 ? <BookRating book={book} /> : '—'),
+    },
+    {
+      key: 'type',
+      header: t('books.colType'),
+      sortKey: 'type',
+      className: 'text-xs whitespace-nowrap',
+      cell: book => book.mediaType === 'both'
+        ? `📖🎧 ${t('common.ebook')} + ${t('common.audiobook')}`
+        : book.mediaType === 'audiobook'
+          ? `🎧 ${t('common.audiobook')}`
+          : `📖 ${t('common.ebook')}`,
+    },
+    {
+      key: 'status',
+      header: t('books.colStatus'),
+      sortKey: 'status',
+      className: 'whitespace-nowrap',
+      cell: book => {
+        const badge = bookStatusBadge(book.status, book.monitored, t)
+        return (
+          <span title={badge.description} className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
+            {badge.label}
+          </span>
+        )
+      },
+    },
+  ]
+
+
   return (
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
       {confirmDialog}
@@ -274,12 +314,11 @@ export default function BooksPage() {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h2 className="text-2xl font-bold">{t('books.title')}</h2>
         <div className="ml-auto flex items-center gap-3 flex-wrap justify-end">
-          <span className="text-sm text-fg-muted">{t('books.countLabel', { count: total, defaultValue: '{{count}} books' })}</span>
           <ViewToggle view={view} onChange={setView} />
           <Link
             to="/books/duplicates"
             title={t('books.reviewDuplicatesHint', 'Find titles across the library that look like the same book; nothing changes until you exclude a row')}
-            className="px-3 py-2 rounded-md text-sm font-medium bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 text-slate-800 dark:text-zinc-200 transition-colors"
+            className={`${btn.secondary} px-3 py-2 text-sm`}
           >
             {t('books.reviewDuplicates', 'Review duplicates')}
           </Link>
@@ -287,222 +326,115 @@ export default function BooksPage() {
             ref={addBookButtonRef}
             type="button"
             onClick={() => setShowAddBook(true)}
-            className={`px-4 py-2 ${primaryFill} rounded-md text-sm font-medium transition-colors`}
+            className={`${btn.primary} px-4 py-2 text-sm`}
           >
             {t('addToLibrary.addBook')}
           </button>
         </div>
       </div>
 
-      {/* Controls */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
-        <input
-          enterKeyHint="search"
-          type="search"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder={t('books.searchPlaceholder')}
-          className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
-        />
-        <div className="flex gap-1 pointer-coarse:gap-y-5 flex-wrap">
-          {(['', 'wanted', 'imported', 'skipped'] as const).map(s => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={statusBtnCls(statusFilter === s)}
-            >
-              {s ? (t(statusLabelKeys[s]) ?? s) : t('common.all')}
-            </button>
-          ))}
-          <BookStatusLegend />
-        </div>
-      </div>
-
-      {/* Sort and the secondary facets live behind two disclosures rather than
-          a second wrapping row of pills. Status stays out in the open above:
-          it is the one people change constantly, and burying it would trade
-          tidiness for the thing this page is for.
-
-          In table view the sort control is dropped entirely, because the column
-          headers already sort and offering both invites them to disagree. */}
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        {view === 'grid' && (
-          <FilterPopover label={t('common.sort', 'Sort')} ariaLabel={t('books.sortLabel')}>
-            <FilterGroup
-              label={t('books.sortLabel')}
-              value={sort}
-              onChange={setSort}
-              options={[
-                { value: 'title-az' as const, label: t('books.sortTitleAZ') },
-                { value: 'title-za' as const, label: t('books.sortTitleZA') },
-                { value: 'date-new' as const, label: t('books.sortNewest') },
-                { value: 'date-old' as const, label: t('books.sortOldest') },
-                { value: 'author-az' as const, label: t('books.sortAuthorAZ') },
-                { value: 'author-za' as const, label: t('books.sortAuthorZA') },
-              ]}
-            />
-          </FilterPopover>
-        )}
-
-        <FilterPopover label={t('common.filters', 'Filters')} activeCount={activeFilterCount}>
-          <FilterGroup
-            label={t('books.typeLabel')}
-            value={mediaFilter}
-            onChange={setMediaFilter}
-            options={[
-              { value: '' as const, label: t('common.all') },
-              { value: 'ebook' as const, label: `📖 ${t('common.ebook')}`, ariaLabel: t('common.ebook') },
-              { value: 'audiobook' as const, label: `🎧 ${t('common.audiobook')}`, ariaLabel: t('common.audiobook') },
-              // The Ebook/Audiobook filters deliberately include dual-format
-              // books, so neither one isolates them; this does.
-              { value: 'both' as const, label: `📖🎧 ${t('common.both')}`, ariaLabel: t('common.both') },
-            ]}
-          />
-          <FilterGroup
-            label={t('books.filterMonitored', 'Monitored:')}
-            value={monitoredFilter}
-            onChange={setMonitoredFilter}
-            options={[
-              { value: '' as const, label: t('books.filterAll', 'All') },
-              { value: 'monitored' as const, label: t('books.filterMonitoredOnly', 'Monitored') },
-              { value: 'unmonitored' as const, label: t('books.filterUnmonitored', 'Unmonitored') },
-            ]}
-          />
-        </FilterPopover>
-
-        {/* An applied filter is never only visible inside the popover. */}
-        {mediaFilter && (
-          <button
-            onClick={() => setMediaFilter('')}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-200 dark:bg-zinc-800 text-xs text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700"
-          >
-            {t(`common.${mediaFilter}`)}
-            <span aria-hidden="true">✕</span>
-            <span className="sr-only">{t('common.clearFilter', 'Clear filter')}</span>
-          </button>
-        )}
-        {monitoredFilter && (
-          <button
-            onClick={() => setMonitoredFilter('')}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-200 dark:bg-zinc-800 text-xs text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700"
-          >
-            {monitoredFilter === 'monitored' ? t('books.filterMonitoredOnly', 'Monitored') : t('books.filterUnmonitored', 'Unmonitored')}
-            <span aria-hidden="true">✕</span>
-            <span className="sr-only">{t('common.clearFilter', 'Clear filter')}</span>
-          </button>
-        )}
-      </div>
+      <FilterBar
+        search={{ value: search, onChange: setSearch, placeholder: t('books.searchPlaceholder') }}
+        status={{
+          value: statusFilter,
+          onChange: setStatusFilter,
+          label: t('books.colStatus'),
+          options: STATUS_FILTERS.map(s => ({ value: s, label: s ? t(statusLabelKeys[s]) : t('common.all') })),
+          help: <BookStatusLegend />,
+        }}
+        sort={{
+          value: sort,
+          onChange: setSort,
+          label: t('books.sortLabel'),
+          options: [
+            { value: 'title-az' as const, label: t('books.sortTitleAZ') },
+            { value: 'title-za' as const, label: t('books.sortTitleZA') },
+            { value: 'date-new' as const, label: t('books.sortNewest') },
+            { value: 'date-old' as const, label: t('books.sortOldest') },
+            { value: 'author-az' as const, label: t('books.sortAuthorAZ') },
+            { value: 'author-za' as const, label: t('books.sortAuthorZA') },
+            // Every sort a column header can set is here too, so after a
+            // header click (or a link carrying one) the popover still shows
+            // which sort is on, in grid view as well.
+            { value: 'rating-desc' as const, label: t('books.sortRatingHigh', 'Highest rated') },
+            { value: 'rating-asc' as const, label: t('books.sortRatingLow', 'Lowest rated') },
+            { value: 'type-az' as const, label: t('books.sortTypeAZ', 'Type A–Z') },
+            { value: 'type-za' as const, label: t('books.sortTypeZA', 'Type Z–A') },
+            { value: 'status-az' as const, label: t('books.sortStatusAZ', 'Status A–Z') },
+            { value: 'status-za' as const, label: t('books.sortStatusZA', 'Status Z–A') },
+          ],
+        }}
+        filters={{
+          activeCount: activeFilterCount,
+          content: (
+            <>
+              <FilterGroup
+                label={t('books.typeLabel')}
+                value={mediaFilter}
+                onChange={setMediaFilter}
+                options={[
+                  { value: '' as const, label: t('common.all') },
+                  { value: 'ebook' as const, label: `📖 ${t('common.ebook')}`, ariaLabel: t('common.ebook') },
+                  { value: 'audiobook' as const, label: `🎧 ${t('common.audiobook')}`, ariaLabel: t('common.audiobook') },
+                  // The Ebook/Audiobook filters deliberately include dual-format
+                  // books, so neither one isolates them; this does.
+                  { value: 'both' as const, label: `📖🎧 ${t('common.both')}`, ariaLabel: t('common.both') },
+                ]}
+              />
+              <FilterGroup
+                label={t('books.filterMonitored', 'Monitored:')}
+                value={monitoredFilter}
+                onChange={setMonitoredFilter}
+                options={[
+                  { value: '' as const, label: t('books.filterAll', 'All') },
+                  { value: 'monitored' as const, label: t('books.filterMonitoredOnly', 'Monitored') },
+                  { value: 'unmonitored' as const, label: t('books.filterUnmonitored', 'Unmonitored') },
+                ]}
+              />
+            </>
+          ),
+        }}
+        chips={[
+          ...(mediaFilter ? [{ key: 'media', label: t(`common.${mediaFilter}`), onClear: () => setMediaFilter('') }] : []),
+          ...(monitoredFilter ? [{
+            key: 'monitored',
+            label: monitoredFilter === 'monitored' ? t('books.filterMonitoredOnly', 'Monitored') : t('books.filterUnmonitored', 'Unmonitored'),
+            onClear: () => setMonitoredFilter(''),
+          }] : []),
+        ]}
+        // At the end of the filter row, as on Authors, so a filter's effect
+        // is read where the filter is (and announced, see FilterBar).
+        summary={loading ? '' : t('books.countLabel', { count: total, defaultValue: '{{count}} books' })}
+      />
 
       {loading ? (
-        <div className="text-fg-muted">{t('common.loading')}</div>
+        view === 'table' ? <SkeletonRows /> : <SkeletonCards />
       ) : total === 0 ? (
-        <div className="text-center py-16 text-fg-muted">
-          {!debouncedSearch && !statusFilter && !mediaFilter && !monitoredFilter ? (
-            <>
-              {needsAny && <GettingStartedGuidance reasonKey="gettingStarted.reasonBooks" needsIndexer={needsIndexer} needsClient={needsClient} />}
-              <p className="font-medium">{t('books.empty')}</p>
-              <p className="text-sm mt-1">{t('books.emptyHint')}</p>
-            </>
-          ) : (
-            <p>{t('books.noMatch')}</p>
-          )}
-        </div>
+        !debouncedSearch && !statusFilter && !mediaFilter && !monitoredFilter ? (
+          <EmptyState title={t('books.empty')} hint={t('books.emptyHint')}>
+            {needsAny && <GettingStartedGuidance reasonKey="gettingStarted.reasonBooks" needsIndexer={needsIndexer} needsClient={needsClient} />}
+          </EmptyState>
+        ) : (
+          <EmptyState variant="no-match" title={t('books.noMatch')} />
+        )
       ) : (
         view === 'table' ? (
-        <div className="border border-slate-200 dark:border-zinc-800 rounded-lg overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
-                  <th className="px-3 py-2 w-8">
-                    <input
-                      ref={selectAllRef}
-                      type="checkbox"
-                      checked={allPageSelected}
-                      onChange={e => e.target.checked ? selectAllOnPage() : clearSelection()}
-                      className="rounded-full border-slate-400 dark:border-zinc-600"
-                      title={t('common.selectAllPage', 'Select all on this page')}
-                    />
-                  </th>
-                  <SortableHeader label={t('books.colTitle')} asc="title-az" desc="title-za" />
-                  <SortableHeader label={t('books.colAuthor')} asc="author-az" desc="author-za" className="hidden md:table-cell" />
-                  <SortableHeader label={t('books.colYear')} asc="date-old" desc="date-new" className="hidden sm:table-cell" />
-                  <SortableHeader label={t('books.colRating')} asc="rating-asc" desc="rating-desc" className="hidden lg:table-cell" />
-                  <SortableHeader label={t('books.colType')} asc="type-az" desc="type-za" />
-                  <SortableHeader label={t('books.colStatus')} asc="status-az" desc="status-za" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
-                {books.map((book, i) => (
-                  <tr
-                    key={book.id}
-                    className={`hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer ${selectedIds.has(book.id) ? 'bg-emerald-500/10 dark:bg-emerald-500/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'}`}
-                    // Client-side, matching the <Link> in this same row (was a
-                    // full page reload via window.location.href while the
-                    // link inside it routed client-side, so one row had two
-                    // different navigation behaviours — also the reason
-                    // Previous/Next state couldn't reach the detail page from
-                    // anywhere in the row except the title text).
-                    onClick={() => navigate(`/book/${book.id}`, { state: bookNavState(i) })}
-                  >
-                    <td className="px-3 py-2 w-8" onClick={e => e.stopPropagation()}>
-                      {/* The label fills the cell, so the whole cell toggles
-                          the box: the 16px box alone is hard to tap. */}
-                      <label className="flex items-center -mx-3 -my-2 px-3 py-2 cursor-pointer pointer-coarse:min-h-11">
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(book.id)}
-                          onChange={() => toggleSelect(book.id)}
-                          className="rounded-full border-slate-400 dark:border-zinc-600"
-                        />
-                      </label>
-                    </td>
-                    <td className="px-3 py-2">
-                      <Link to={`/book/${book.id}`} state={bookNavState(i)} className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                        <CoverImage loading="lazy" decoding="async" src={book.imageUrl} alt="" className="w-6 h-9 object-cover rounded flex-shrink-0"
-                          fallback={<CoverPlaceholder id={book.id} title={book.title} size="xs" className="w-6 h-9 rounded flex-shrink-0" />}
-                        />
-                        <span className="text-slate-800 dark:text-zinc-200 truncate">{book.title}</span>
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap hidden md:table-cell">
-                      {book.author ? (
-                        <Link
-                          to={`/author/${book.authorId}`}
-                          className="text-fg-muted hover:text-emerald-500 dark:hover:text-emerald-400"
-                          onClick={e => e.stopPropagation()}
-                        >
-                          {book.author.authorName}
-                        </Link>
-                      ) : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-fg-muted whitespace-nowrap hidden sm:table-cell">{book.releaseDate ? new Date(book.releaseDate).getFullYear() : '—'}</td>
-                    <td className="px-3 py-2 text-fg-muted whitespace-nowrap hidden lg:table-cell">
-                      {book.averageRating && book.averageRating > 0 ? <BookRating book={book} /> : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-xs whitespace-nowrap">
-                      {book.mediaType === 'both'
-                        ? `📖🎧 ${t('common.ebook')} + ${t('common.audiobook')}`
-                        : book.mediaType === 'audiobook'
-                          ? `🎧 ${t('common.audiobook')}`
-                          : `📖 ${t('common.ebook')}`}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {(() => {
-                        const badge = bookStatusBadge(book.status, book.monitored, t)
-                        return (
-                          <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
-                            {badge.label}
-                          </span>
-                        )
-                      })()}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <DataTable
+          rows={books}
+          rowKey={b => b.id}
+          rowLabel={b => b.title}
+          ariaLabel={t('books.title')}
+          sort={{ ...columnSort, onSort: sortByColumn }}
+          selection={{
+            selected: selectedIds,
+            onToggle: toggleSelect,
+            onToggleAll: select => (select ? selectAllOnPage() : clearSelection()),
+          }}
+          // Client-side, matching the <Link> in the title cell, so the whole
+          // row carries the same Previous/Next state as the title text.
+          onRowClick={(book, i) => navigate(`/book/${book.id}`, { state: bookNavState(i) })}
+          columns={bookColumns}
+        />
         ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
           {books.map((book, i) => (
@@ -517,13 +449,11 @@ export default function BooksPage() {
                   className="absolute top-0 left-0 z-10 flex p-2 pointer-coarse:p-3.5 cursor-pointer"
                   onClick={e => e.stopPropagation()}
                 >
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={selectedIds.has(book.id)}
                     onChange={() => toggleSelect(book.id)}
-                    className={`rounded-full border-slate-400 dark:border-zinc-600 ${selectedIds.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
-                    title={`Select ${book.title}`}
-                    aria-label={`Select ${book.title}`}
+                    label={t('dataTable.selectRow', 'Select {{name}}', { name: book.title })}
+                    className={selectedIds.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}
                   />
                 </label>
                 <Link to={`/book/${book.id}`} state={bookNavState(i)} aria-label={book.title} className="block w-full h-full rounded-t-lg focus-visible:-outline-offset-2">
@@ -541,7 +471,7 @@ export default function BooksPage() {
                   {(() => {
                     const badge = bookStatusBadge(book.status, book.monitored, t)
                     return (
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
+                      <span title={badge.description} className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.colorClass}`}>
                         {badge.label}
                       </span>
                     )
@@ -552,12 +482,13 @@ export default function BooksPage() {
                   {book.mediaType === 'both' && (
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">{t('common.ebook')}</span>
                   )}
+                  {/* Was a bare "?" with no legend entry. It says what it means now. */}
                   {!book.language && (
                     <span
                       className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-200 text-amber-900 dark:bg-amber-900/50 dark:text-amber-300"
                       title={t('books.languageUnknown', 'Metadata source did not report a language for this book.')}
                     >
-                      ?
+                      {t('books.languageUnknownBadge', 'No language')}
                     </span>
                   )}
                 </div>
@@ -566,11 +497,13 @@ export default function BooksPage() {
                     <p className="text-[10px] text-fg-muted">{new Date(book.releaseDate).getFullYear()}</p>
                   )}
                   <BookRating book={book} className="text-[10px] text-fg-muted" />
+                  {/* An action that fetches a file, styled as one. As a green
+                      text link it read as navigation. */}
                   {book.filePath && (
                     <a
                       href={`${BINDERY_BASE}/api/v1/book/${book.id}/file`}
                       onClick={e => e.stopPropagation()}
-                      className="touch-target inline-block pointer-coarse:py-1.5 text-[10px] text-accent-text hover:underline"
+                      className="touch-target inline-flex items-center gap-0.5 rounded px-1 pointer-coarse:py-1.5 text-[10px] font-medium text-slate-700 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-800"
                       title={t('books.downloadFile')}
                     >
                       {t('books.download')}

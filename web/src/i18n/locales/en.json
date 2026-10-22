@@ -763,7 +763,16 @@
     "sortByColumn": "Sort by {{column}}",
     "reviewDuplicates": "Review duplicates",
     "reviewDuplicatesHint": "Find titles across the library that look like the same book; nothing changes until you exclude a row",
-    "languageUnknown": "Metadata source did not report a language for this book."
+    "languageUnknown": "Metadata source did not report a language for this book.",
+    "sortRatingHigh": "Highest rated",
+    "sortRatingLow": "Lowest rated",
+    "sortTypeAZ": "Type A–Z",
+    "sortTypeZA": "Type Z–A",
+    "sortStatusAZ": "Status A–Z",
+    "sortStatusZA": "Status Z–A",
+    "languageUnknownBadge": "No language",
+    "countLabel_one": "{{count}} book",
+    "countLabel_other": "{{count}} books"
   },
   "wanted": {
     "title": "Wanted",

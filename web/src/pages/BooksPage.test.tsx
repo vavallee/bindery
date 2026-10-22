@@ -17,7 +17,7 @@ import { api, type Book } from '../api/client'
 // human-readable strings.
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: string | Record<string, unknown>) => {
+    t: (key: string, options?: string | Record<string, unknown>, extra?: Record<string, unknown>) => {
       const labels: Record<string, string> = {
         'books.title': 'Books',
         'books.countLabel': 'books',
@@ -68,7 +68,7 @@ vi.mock('react-i18next', () => ({
         'search.autoGrabDisabled': 'No search was run. Automatic grabbing is off.',
       }
       if (labels[key]) return labels[key]
-      if (typeof options === 'string') return options
+      if (typeof options === 'string') return options.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(extra?.[k] ?? ''))
       return key
     },
   }),
@@ -406,6 +406,22 @@ describe('BooksPage — sortable column headers', () => {
     await waitFor(() => expect(sorts).toContain('status-az'))
   })
 
+  // A header sort the Sort popover did not list left it with nothing
+  // checked, so the control read as if no sort were on.
+  it('shows a header sort as the checked option in the Sort popover', async () => {
+    localStorage.setItem('bindery.view.books', 'table')
+    server.use(
+      http.get(apiUrl('/book'), () =>
+        HttpResponse.json({ items: [makeBook({ id: 1, title: 'Dune' })], total: 1, limit: 50, offset: 0 }),
+      ),
+    )
+    renderBooksPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Status' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Sort/ }))
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Status A–Z' })).toHaveAttribute('aria-checked', 'true'))
+    localStorage.clear()
+  })
+
   it('marks every sortable header as clickable, not only the active one', async () => {
     server.use(
       http.get(apiUrl('/book'), () =>
@@ -428,6 +444,73 @@ describe('BooksPage — sortable column headers', () => {
       expect(header.className).toContain('cursor-pointer')
       expect(header).toHaveAttribute('title')
     }
+  })
+})
+
+describe('BooksPage — filter chips, table cells and select-all', () => {
+  beforeEach(() => {
+    localStorage.setItem('bindery.view.books', 'table')
+  })
+
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('shows a chip per active filter, clears it, and says nothing matches when the list is empty', async () => {
+    localStorage.setItem('bindery.filter.books.monitored', 'unmonitored')
+    const media: Array<string | null> = []
+    server.use(
+      http.get(apiUrl('/book'), ({ request }) => {
+        media.push(new URL(request.url).searchParams.get('mediaType'))
+        return HttpResponse.json({ items: [], total: 0, limit: 50, offset: 0 })
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/?media=audiobook']}>
+        <BooksPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('No books match your search.')).toBeInTheDocument()
+    expect(media[media.length - 1]).toBe('audiobook')
+    const chips = screen.getAllByText('✕').map(x => x.closest('button')!)
+    expect(chips.map(c => c.textContent)).toEqual([
+      expect.stringContaining('Audiobook'),
+      expect.stringContaining('Unmonitored'),
+    ])
+
+    fireEvent.click(chips[0])
+    await waitFor(() => expect(media[media.length - 1]).toBeNull())
+    fireEvent.click(screen.getAllByText('✕')[0].closest('button')!)
+    await waitFor(() => expect(screen.getByText('No books in your library yet')).toBeInTheDocument())
+  })
+
+  it('renders author, year and format cells, and select-all on the page toggles every row', async () => {
+    server.use(
+      http.get(apiUrl('/book'), () =>
+        HttpResponse.json({
+          items: [
+            makeBook({ id: 1, title: 'Dune', releaseDate: '1965-08-01T00:00:00Z', mediaType: 'both', author: { id: 1, authorName: 'Frank Herbert' } as Book['author'] }),
+            makeBook({ id: 2, title: 'Emma', mediaType: 'audiobook' }),
+          ],
+          total: 2,
+          limit: 50,
+          offset: 0,
+        }),
+      ),
+    )
+    renderBooksPage()
+
+    expect(await screen.findByRole('link', { name: 'Frank Herbert' })).toHaveAttribute('href', '/author/1')
+    expect(screen.getByText('1965')).toBeInTheDocument()
+    expect(screen.getByText(/📖🎧 Ebook \+ Audiobook/)).toBeInTheDocument()
+    expect(screen.getByText('🎧 Audiobook')).toBeInTheDocument()
+
+    const all = screen.getByRole('checkbox', { name: 'Select all on this page' })
+    fireEvent.click(all)
+    await waitFor(() => expect(screen.getAllByRole('checkbox').every(c => (c as HTMLInputElement).checked)).toBe(true))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all on this page' }))
+    await waitFor(() => expect(screen.getAllByRole('checkbox').some(c => (c as HTMLInputElement).checked)).toBe(false))
   })
 })
 

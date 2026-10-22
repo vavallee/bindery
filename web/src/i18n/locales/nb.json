@@ -718,7 +718,8 @@
     "ratingsCount_other": "{{formatted}} vurderinger",
     "reviewDuplicates": "Gå gjennom duplikater",
     "reviewDuplicatesHint": "Finn titler i hele biblioteket som ser ut til å være samme bok. Ingenting endres før du ekskluderer en rad",
-    "languageUnknown": "Metadatakilden oppga ikke språket for denne boken."
+    "languageUnknown": "Metadatakilden oppga ikke språket for denne boken.",
+    "languageUnknownBadge": "Uten språk"
   },
   "wanted": {
     "title": "Ønsket",
