@@ -722,3 +722,30 @@ describe('WantedPage author monitoring hint', () => {
     expect(hints).toHaveLength(1)
   })
 })
+
+describe('WantedPage filter bar', () => {
+  it('sends sort and format to the server, and searches the page on screen after confirming', async () => {
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([makeBook({ id: 1, title: 'Dune' }), makeBook({ id: 2, title: 'Hyperion' })]))
+    renderWantedPage()
+    await screen.findByRole('link', { name: 'Dune' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'books.sortLabel' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'books.sortNewest' }))
+    await waitFor(() => expect(api.listWantedPage).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'date-new' })))
+
+    fireEvent.click(screen.getByRole('button', { name: /^common\.filters/ }))
+    fireEvent.click(screen.getByRole('radio', { name: 'common.audiobook' }))
+    await waitFor(() => expect(api.listWantedPage).toHaveBeenLastCalledWith(expect.objectContaining({ mediaType: 'audiobook', sort: 'date-new' })))
+
+    // One page-level search instead of a green Search button per row. While
+    // it runs the row buttons are off, so no book is sent twice.
+    let finish: (v: unknown) => void = () => {}
+    vi.mocked(api.bulkActionWanted).mockImplementationOnce(() => new Promise(r => { finish = r }) as never)
+    fireEvent.click(await screen.findByRole('button', { name: 'wanted.searchPage' }))
+    await acceptConfirm()
+    await waitFor(() => expect(api.bulkActionWanted).toHaveBeenCalledWith([1, 2], 'search'))
+    for (const b of screen.getAllByRole('button', { name: 'Search' })) expect(b).toBeDisabled()
+    await act(async () => { finish({ results: {} }) })
+    await waitFor(() => { for (const b of screen.getAllByRole('button', { name: 'Search' })) expect(b).toBeEnabled() })
+  })
+})
