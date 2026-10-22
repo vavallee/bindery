@@ -23,6 +23,7 @@ import { canonicalLanguage, languageName } from '../util/language'
 import { btn, btnSize } from '../components/buttons'
 import Switch from '../components/Switch'
 import CoverPlaceholder from '../components/CoverPlaceholder'
+import Checkbox from '../components/Checkbox'
 import BookRating from '../components/BookRating'
 import MoreMenu from '../components/MoreMenu'
 import Section from '../components/Section'
@@ -31,6 +32,9 @@ import CatalogueReconciliationModal from '../components/CatalogueReconciliationM
 import DuplicateCandidatesModal from '../components/DuplicateCandidatesModal'
 import CoverImage from '../components/CoverImage'
 import { errorText } from '../util/errorText'
+import FilterBar from '../components/FilterBar'
+import { FilterGroup } from '../components/FilterPopover'
+import BookStatusLegend from '../components/BookStatusLegend'
 
 type MediaFilter = '' | 'ebook' | 'audiobook'
 // 'excluded' folds in what used to be a separate "Show excluded" checkbox. It
@@ -69,10 +73,6 @@ const STATUS_FALLBACK: Record<Exclude<StatusFilter, ''>, string> = {
   skipped: 'Skipped',
   excluded: 'Excluded',
 }
-
-const selectCls =
-  'bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded ' +
-  'px-2 py-1 text-xs text-slate-800 dark:text-zinc-200'
 
 const TODAY = new Date().toISOString().slice(0, 10)
 
@@ -189,7 +189,6 @@ export default function AuthorDetailPage() {
   // accidentally swept up by select-all.
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
-  const selectAllRef = useRef<HTMLInputElement>(null)
 
   const [view, setView] = useView('author-detail', 'grid')
 
@@ -755,9 +754,6 @@ export default function AuthorDetailPage() {
 
   const allVisibleSelected = filteredBooks.length > 0 && filteredBooks.every(b => selected.has(b.id))
   const someVisibleSelected = filteredBooks.some(b => selected.has(b.id)) && !allVisibleSelected
-  useEffect(() => {
-    if (selectAllRef.current) selectAllRef.current.indeterminate = someVisibleSelected
-  }, [someVisibleSelected])
 
   const selectAllVisible = () => setSelected(new Set(filteredBooks.map(b => b.id)))
 
@@ -841,12 +837,10 @@ export default function AuthorDetailPage() {
           {/* The label fills the cell, so the whole cell toggles the box: the
               16px box alone is hard to tap. */}
           <label className="flex items-center -mx-3 -my-2 px-3 py-2 cursor-pointer pointer-coarse:min-h-11">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={selected.has(book.id)}
               onChange={() => toggleSelect(book.id)}
-              className="rounded border-slate-400 dark:border-zinc-600"
-              aria-label={`Select ${book.title}`}
+              label={`Select ${book.title}`}
             />
           </label>
         </td>
@@ -929,14 +923,11 @@ export default function AuthorDetailPage() {
             <tr className="bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
               <th className="w-10 px-3 py-2">
                 {withHeaderControls && (
-                  <input
-                    ref={selectAllRef}
-                    type="checkbox"
+                  <Checkbox
                     checked={allVisibleSelected}
-                    onChange={e => e.target.checked ? selectAllVisible() : clearSelection()}
-                    className="rounded border-slate-400 dark:border-zinc-600"
-                    title={t('common.selectAllPage')}
-                    aria-label={t('common.selectAllPage')}
+                    indeterminate={someVisibleSelected}
+                    onChange={select => (select ? selectAllVisible() : clearSelection())}
+                    label={t('common.selectAllPage')}
                   />
                 )}
               </th>
@@ -981,12 +972,11 @@ export default function AuthorDetailPage() {
             className="absolute top-0 left-0 z-10 flex p-2 pointer-coarse:p-3.5 cursor-pointer"
             onClick={e => e.stopPropagation()}
           >
-            <input
-              type="checkbox"
+            <Checkbox
               checked={selected.has(book.id)}
               onChange={() => toggleSelect(book.id)}
-              className={`rounded border-slate-400 dark:border-zinc-600 ${selected.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
-              aria-label={`Select ${book.title}`}
+              className={selected.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}
+              label={`Select ${book.title}`}
             />
           </label>
           <Link
@@ -1417,100 +1407,102 @@ export default function AuthorDetailPage() {
           </>
         }
       >
-        {/* Selects on one line, replacing three labelled chip groups
-            totalling ten buttons plus an ml-auto "Select all" that wrapped to a
-            second row and read as if it belonged to the Published group. The
-            selects also expose `skipped`, which has been in StatusFilter all
-            along but was never offered. */}
+        {/* The shared filter bar. This row used to be six native selects
+            (Type, Status, Published, Monitored, Language, Sort), the densest
+            control row in the app and a third filter pattern beside Books and
+            Wanted. Status is the inline segment, as on Books; the secondary
+            facets sit behind Filters, each applied one shown as a chip. The
+            Excluded status is still a status: it widens the fetch to excluded
+            rows (#103). */}
         {books.length > 0 && (
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
-              {t('authorDetail.filters.type', 'Type')}
-              <select
-                value={typeFilter}
-                onChange={e => setTypeFilter(e.target.value as MediaFilter)}
-                className={selectCls}
-              >
-                <option value="">{t('authorDetail.filters.allTypes', 'All types')}</option>
-                <option value="ebook">📖 {t('common.ebook')}</option>
-                <option value="audiobook">🎧 {t('common.audiobook')}</option>
-              </select>
-            </label>
-
-            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
-              {t('authorDetail.filters.status', 'Status')}
-              <select
-                value={statusFilter}
-                onChange={e => setStatusFilter(e.target.value as StatusFilter)}
-                className={selectCls}
-              >
-                {STATUS_FILTERS.map(s => (
-                  <option key={s || 'all'} value={s}>
-                    {s === ''
-                      ? t('authorDetail.filters.allStatuses', 'All statuses')
-                      : t(`authorDetail.filters.status_${s}`, STATUS_FALLBACK[s])}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
-              {t('authorDetail.filters.published', 'Published')}
-              <select
-                value={publishedFilter}
-                onChange={e => setPublishedFilter(e.target.value as PublishedFilter)}
-                className={selectCls}
-              >
-                <option value="">{t('authorDetail.filters.allPublished', 'Any date')}</option>
-                <option value="released">{t('authorDetail.filters.released', 'Released')}</option>
-                <option value="upcoming">{t('authorDetail.filters.upcoming', 'Upcoming')}</option>
-              </select>
-            </label>
-
-            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
-              {t('authorDetail.filters.monitored', 'Monitored')}
-              <select
-                value={monitoredFilter}
-                onChange={e => setMonitoredFilter(e.target.value as MonitoredFilter)}
-                className={selectCls}
-              >
-                <option value="">{t('authorDetail.filters.allMonitored', 'Any')}</option>
-                <option value="monitored">{t('authorDetail.filters.monitoredOnly', 'Monitored')}</option>
-                <option value="unmonitored">{t('authorDetail.filters.unmonitoredOnly', 'Unmonitored')}</option>
-              </select>
-            </label>
-
-            {languages.length > 1 && (
-              <label className="flex items-center gap-1.5 text-xs text-fg-muted">
-                {t('authorDetail.filters.language', 'Language')}
-                <select
-                  value={activeLanguage}
-                  onChange={e => setLanguageFilter(e.target.value)}
-                  className={selectCls}
-                >
-                  <option value="">{t('authorDetail.filters.allLanguages', 'All languages')}</option>
-                  {languages.map(l => <option key={l} value={l}>{languageName(l)}</option>)}
-                </select>
-              </label>
-            )}
-
-            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
-              {t('authorDetail.filters.sort', 'Sort')}
-              <select
-                value={sort}
-                onChange={e => setSort(e.target.value as SortMode)}
-                className={selectCls}
-              >
-                <option value="">{t('authorDetail.filters.sortDefault', 'Default')}</option>
-                <option value="title-az">{t('authorDetail.filters.sortTitleAZ', 'Title A–Z')}</option>
-                <option value="title-za">{t('authorDetail.filters.sortTitleZA', 'Title Z–A')}</option>
-                <option value="date-new">{t('authorDetail.filters.sortNewest', 'Published, newest')}</option>
-                <option value="date-old">{t('authorDetail.filters.sortOldest', 'Published, oldest')}</option>
-                <option value="added-new">{t('authorDetail.filters.sortAddedNew', 'Added, newest')}</option>
-                <option value="added-old">{t('authorDetail.filters.sortAddedOld', 'Added, oldest')}</option>
-              </select>
-            </label>
-
+          <FilterBar
+            status={{
+              value: statusFilter,
+              onChange: setStatusFilter,
+              label: t('authorDetail.filters.status', 'Status'),
+              options: STATUS_FILTERS.map(s => ({
+                value: s,
+                label: s === '' ? t('common.all', 'All') : t(`authorDetail.filters.status_${s}`, STATUS_FALLBACK[s]),
+              })),
+              help: <BookStatusLegend />,
+            }}
+            sort={{
+              value: sort,
+              onChange: setSort,
+              label: t('authorDetail.filters.sort', 'Sort'),
+              options: [
+                { value: '' as const, label: t('authorDetail.filters.sortDefault', 'Default') },
+                { value: 'title-az' as const, label: t('authorDetail.filters.sortTitleAZ', 'Title A–Z') },
+                { value: 'title-za' as const, label: t('authorDetail.filters.sortTitleZA', 'Title Z–A') },
+                { value: 'date-new' as const, label: t('authorDetail.filters.sortNewest', 'Published, newest') },
+                { value: 'date-old' as const, label: t('authorDetail.filters.sortOldest', 'Published, oldest') },
+                { value: 'added-new' as const, label: t('authorDetail.filters.sortAddedNew', 'Added, newest') },
+                { value: 'added-old' as const, label: t('authorDetail.filters.sortAddedOld', 'Added, oldest') },
+              ],
+            }}
+            filters={{
+              activeCount: [typeFilter, publishedFilter, monitoredFilter, activeLanguage].filter(Boolean).length,
+              content: (
+                <>
+                  <FilterGroup
+                    label={t('authorDetail.filters.type', 'Type')}
+                    value={typeFilter}
+                    onChange={setTypeFilter}
+                    options={[
+                      { value: '' as const, label: t('authorDetail.filters.allTypes', 'All types') },
+                      { value: 'ebook' as const, label: `📖 ${t('common.ebook')}`, ariaLabel: t('common.ebook') },
+                      { value: 'audiobook' as const, label: `🎧 ${t('common.audiobook')}`, ariaLabel: t('common.audiobook') },
+                    ]}
+                  />
+                  <FilterGroup
+                    label={t('authorDetail.filters.published', 'Published')}
+                    value={publishedFilter}
+                    onChange={setPublishedFilter}
+                    options={[
+                      { value: '' as const, label: t('authorDetail.filters.allPublished', 'Any date') },
+                      { value: 'released' as const, label: t('authorDetail.filters.released', 'Released') },
+                      { value: 'upcoming' as const, label: t('authorDetail.filters.upcoming', 'Upcoming') },
+                    ]}
+                  />
+                  <FilterGroup
+                    label={t('authorDetail.filters.monitored', 'Monitored')}
+                    value={monitoredFilter}
+                    onChange={setMonitoredFilter}
+                    options={[
+                      { value: '' as const, label: t('authorDetail.filters.allMonitored', 'Any') },
+                      { value: 'monitored' as const, label: t('authorDetail.filters.monitoredOnly', 'Monitored') },
+                      { value: 'unmonitored' as const, label: t('authorDetail.filters.unmonitoredOnly', 'Unmonitored') },
+                    ]}
+                  />
+                  {languages.length > 1 && (
+                    <FilterGroup
+                      label={t('authorDetail.filters.language', 'Language')}
+                      value={activeLanguage}
+                      onChange={setLanguageFilter}
+                      options={[
+                        { value: '', label: t('authorDetail.filters.allLanguages', 'All languages') },
+                        ...languages.map(l => ({ value: l, label: languageName(l) ?? l })),
+                      ]}
+                    />
+                  )}
+                </>
+              ),
+            }}
+            chips={[
+              ...(typeFilter ? [{ key: 'type', label: typeFilter === 'ebook' ? t('common.ebook') : t('common.audiobook'), onClear: () => setTypeFilter('') }] : []),
+              ...(publishedFilter ? [{
+                key: 'published',
+                label: publishedFilter === 'released' ? t('authorDetail.filters.released', 'Released') : t('authorDetail.filters.upcoming', 'Upcoming'),
+                onClear: () => setPublishedFilter(''),
+              }] : []),
+              ...(monitoredFilter ? [{
+                key: 'monitored',
+                label: monitoredFilter === 'monitored' ? t('authorDetail.filters.monitoredOnly', 'Monitored') : t('authorDetail.filters.unmonitoredOnly', 'Unmonitored'),
+                onClear: () => setMonitoredFilter(''),
+              }] : []),
+              ...(activeLanguage ? [{ key: 'language', label: languageName(activeLanguage) ?? activeLanguage, onClear: () => setLanguageFilter('') }] : []),
+            ]}
+          >
             {/* Select/deselect every currently displayed book (#1172). Operates on
                 filteredBooks, so it respects the active filters and composes
                 with the per-book checkboxes used by the bulk action bar. */}
@@ -1523,7 +1515,7 @@ export default function AuthorDetailPage() {
                 {allVisibleSelected ? t('authorDetail.bulk.deselectAll') : t('authorDetail.bulk.selectAll')}
               </button>
             )}
-          </div>
+          </FilterBar>
         )}
 
         {syncing && (
@@ -1577,6 +1569,10 @@ export default function AuthorDetailPage() {
         actions={[
           { label: t('authorDetail.bulk.monitor'), onClick: () => runBulk('monitor', t('authorDetail.bulk.monitor')) },
           { label: t('authorDetail.bulk.unmonitor'), onClick: () => runBulk('unmonitor', t('authorDetail.bulk.unmonitor')) },
+          // Search the selected books rather than all of this author's
+          // wanted ones: on a catalogue padded with editions, the header's
+          // "Search N wanted" is the wrong tool (#2267).
+          { label: t('common.search'), onClick: () => runBulk('search', t('common.search')) },
           // Media-type corrections are author-scoped work in practice — a sync
           // mistags several titles under one author — so they belong here as
           // well as on the global Books view (#2066).
