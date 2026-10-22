@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useSearchParams } from 'react-router'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { api, Book, PendingRelease, QueueItem } from '../api/client'
 import BookAuthorLink from '../components/BookAuthorLink'
@@ -15,6 +16,10 @@ import { downloadStatusBadge, isFailed, isMatchable, isResendable, isRetryable }
 import { ModalPanel } from '../components/useModal'
 import { errorText } from '../util/errorText'
 import { notifyFailedQueueChanged } from '../components/useFailedQueueCount'
+import BulkActionBar from '../components/BulkActionBar'
+import FilterBar from '../components/FilterBar'
+import EmptyState from '../components/EmptyState'
+import Checkbox from '../components/Checkbox'
 
 export default function QueuePage() {
   const { t } = useTranslation()
@@ -40,10 +45,25 @@ export default function QueuePage() {
   // just the visible page. unmonitor defaults on so undoing a mass import
   // actually stops the scheduler re-grabbing; delete-files defaults off.
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set())
-  const [bulkUnmonitor, setBulkUnmonitor] = useState(true)
-  const [bulkDeleteFiles, setBulkDeleteFiles] = useState(false)
+  // Which rows the list shows. The queue mixes downloads in flight with
+  // failures that need a hand; "29 failed" above a list with no visible
+  // active section left it unclear whether the queue was only failures.
+  // The view lives in the URL (?view=failed), so a reload or a shared link
+  // lands on the same list. An unknown value reads as All and is dropped from
+  // the URL rather than left there.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const viewParam = searchParams.get('view')
+  const statusView: '' | 'active' | 'failed' = viewParam === 'active' || viewParam === 'failed' ? viewParam : ''
+  useEffect(() => {
+    if (viewParam !== null && statusView === '') {
+      setSearchParams(prev => {
+        const p = new URLSearchParams(prev)
+        p.delete('view')
+        return p
+      }, { replace: true })
+    }
+  }, [viewParam, statusView, setSearchParams])
   const [bulkResult, setBulkResult] = useState<string | null>(null)
-  const selectAllRef = useRef<HTMLInputElement>(null)
 
   // Guard against stale responses and set-state-after-unmount: `mounted` is
   // checked before every setState and flipped on unmount, so a poll that
@@ -82,16 +102,35 @@ export default function QueuePage() {
 
   // Paginate the queue client-side so a large queue (hundreds/thousands of
   // items) doesn't render every row at once and blow up the DOM.
-  const { pageItems: queuePage, paginationProps: queuePaginationProps } = usePagination(queue, 50, 'queue')
+  const shownQueue = statusView === 'failed'
+    ? queue.filter(q => isFailed(q.status))
+    : statusView === 'active' ? queue.filter(q => !isFailed(q.status)) : queue
+  const { pageItems: queuePage, paginationProps: queuePaginationProps, reset: resetQueuePage } = usePagination(shownQueue, 50, 'queue')
 
-  // Select-all reflects the WHOLE queue, not just the visible page — the point
-  // is clearing a flood that spans many pages. Indeterminate when only some are
-  // selected, mirroring BooksPage.
-  const allSelected = queue.length > 0 && queue.every(q => selectedIds.has(q.id))
-  const someSelected = queue.some(q => selectedIds.has(q.id)) && !allSelected
-  useEffect(() => {
-    if (selectAllRef.current) selectAllRef.current.indeterminate = someSelected
-  }, [someSelected])
+  // Changing the view clears the selection. Rows selected under All and then
+  // hidden by Failed must not ride along into Remove selected: the dialog
+  // would name rows the list no longer shows, and remove them. It also goes
+  // back to the first page: page 5 of All clamped to the last page of Failed.
+  const setStatusView = (next: '' | 'active' | 'failed') => {
+    setSelectedIds(new Set())
+    resetQueuePage()
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (next) p.set('view', next)
+      else p.delete('view')
+      return p
+    }, { replace: true })
+  }
+
+  // Select-all reflects every row the status view shows, not just the visible
+  // page — the point is clearing a flood that spans many pages. Indeterminate
+  // when only some are selected, mirroring BooksPage.
+  // Every bulk action works on the selected rows the view still shows. The
+  // view change clears the selection, but a poll can also move a selected
+  // row out of the view (a download fails while Active is shown).
+  const selectedShown = shownQueue.filter(q => selectedIds.has(q.id))
+  const allSelected = shownQueue.length > 0 && selectedShown.length === shownQueue.length
+  const someSelected = selectedShown.length > 0 && !allSelected
 
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => {
@@ -101,7 +140,7 @@ export default function QueuePage() {
       return next
     })
   }
-  const selectAll = () => setSelectedIds(new Set(queue.map(q => q.id)))
+  const selectAll = () => setSelectedIds(new Set(shownQueue.map(q => q.id)))
   const clearSelection = () => setSelectedIds(new Set())
 
   // Open the remove dialog. The file-deletion choice always starts unchecked
@@ -238,7 +277,7 @@ export default function QueuePage() {
   // The selected rows a retry can actually do something with. Remove selected
   // works on anything; a retry only applies to a failed row, so the button is
   // offered only when the selection holds one (#2295).
-  const retryableSelection = queue.filter(q => selectedIds.has(q.id) && (isRetryable(q.status) || isResendable(q.status)))
+  const retryableSelection = selectedShown.filter(q => isRetryable(q.status) || isResendable(q.status))
 
   // Bulk actions over failed/blocked items, done client-side over the existing
   // per-item endpoints (no new API). Retry covers every state the retry-import
@@ -312,16 +351,27 @@ export default function QueuePage() {
   // on) also stops monitoring each linked book so the scheduler doesn't
   // immediately re-grab them — the recovery path for an accidental mass import.
   const removeSelected = async () => {
-    if (selectedIds.size === 0) return
+    const ids = selectedShown.map(q => q.id)
+    if (ids.length === 0) return
+    // The two options ride the confirmation instead of sitting in the
+    // toolbar: they only mean anything for Remove, and the dialog is where the
+    // count is named. Unmonitoring defaults on (undo a mass import); deleting
+    // files defaults off so downloaded data and torrent seeds stay on disk.
+    let options = { deleteFiles: false, unmonitorBooks: true }
     if (!await confirm({
       title: t('common.confirmTitle'),
-      body: t('queue.removeSelectedConfirm', { count: selectedIds.size, defaultValue: 'Remove {{count}} item(s) from the queue?' }),
+      body: (
+        <>
+          <p>{t('queue.removeSelectedConfirm', { count: ids.length, defaultValue: 'Remove {{count}} item(s) from the queue?' })}</p>
+          <QueueRemoveOptions initial={options} onChange={next => { options = next }} />
+        </>
+      ),
       confirmLabel: t('common.remove'),
     })) return
     setBulkBusy(true)
     setBulkResult(null)
     try {
-      const { results } = await api.bulkDeleteQueue([...selectedIds], { deleteFiles: bulkDeleteFiles, unmonitorBooks: bulkUnmonitor })
+      const { results } = await api.bulkDeleteQueue(ids, options)
       const entries = Object.values(results ?? {})
       const failed = entries.filter(r => !r.ok).length
       const ok = entries.length - failed
@@ -370,7 +420,7 @@ export default function QueuePage() {
   }
 
   return (
-    <div>
+    <div className={selectedShown.length > 0 ? 'pb-16' : ''}>
       {confirmDialog}
       <h2 className="text-2xl font-bold mb-6">{t('queue.title')}</h2>
 
@@ -430,79 +480,52 @@ export default function QueuePage() {
               )}
               <div className="flex flex-wrap items-center justify-between gap-2 px-1">
                 <label className="flex items-center gap-2 text-xs text-fg-muted cursor-pointer select-none">
-                  <input
-                    ref={selectAllRef}
-                    type="checkbox"
+                  <Checkbox
                     checked={allSelected}
-                    onChange={e => (e.target.checked ? selectAll() : clearSelection())}
-                    className="rounded-full border-slate-400 dark:border-zinc-600"
+                    indeterminate={someSelected}
+                    onChange={select => (select ? selectAll() : clearSelection())}
+                    label={t('queue.selectAll', 'Select all')}
                   />
                   {t('queue.selectAll', 'Select all')}
                 </label>
+                <FilterBar
+                  status={{
+                    value: statusView,
+                    onChange: setStatusView,
+                    label: t('queue.statusView', 'Show'),
+                    options: [
+                      { value: '', label: t('queue.viewAll', { count: queue.length, defaultValue: 'All ({{count}})' }) },
+                      { value: 'active', label: t('queue.viewActive', { count: queue.length - failedItems.length, defaultValue: 'Active ({{count}})' }) },
+                      { value: 'failed', label: t('queue.viewFailed', { count: failedItems.length, defaultValue: 'Failed ({{count}})' }) },
+                    ],
+                  }}
+                />
               </div>
-              {selectedIds.size > 0 && (
-                <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-                  <span className="text-xs font-medium text-slate-700 dark:text-zinc-300">
-                    {t('queue.selectedCount', { count: selectedIds.size, defaultValue: '{{count}} selected' })}
-                  </span>
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                    <label className="flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={bulkUnmonitor}
-                        onChange={e => setBulkUnmonitor(e.target.checked)}
-                        className="rounded border-slate-400 dark:border-zinc-600"
-                      />
-                      {t('queue.alsoUnmonitor', 'Also stop monitoring these books')}
-                    </label>
-                    <label className="flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={bulkDeleteFiles}
-                        onChange={e => setBulkDeleteFiles(e.target.checked)}
-                        className="rounded border-slate-400 dark:border-zinc-600"
-                      />
-                      {t('queue.deleteFilesLabel', 'Delete downloaded files')}
-                    </label>
-                    {retryableSelection.length > 0 && (
-                      <button
-                        onClick={retrySelected}
-                        disabled={bulkBusy}
-                        className="px-2.5 py-1 text-xs rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-medium"
-                      >
-                        {t('queue.retrySelected', 'Retry selected')}
-                      </button>
-                    )}
-                    <button
-                      onClick={removeSelected}
-                      disabled={bulkBusy}
-                      className="px-2.5 py-1 text-xs rounded border border-red-300 dark:border-red-900 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50 font-medium"
-                    >
-                      {t('queue.removeSelected', 'Remove selected')}
-                    </button>
-                    <button
-                      onClick={clearSelection}
-                      disabled={bulkBusy}
-                      className="px-2.5 py-1 text-xs rounded text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50 font-medium"
-                    >
-                      {t('queue.clearSelection', 'Clear selection')}
-                    </button>
-                  </div>
-                </div>
-              )}
               {bulkResult && (
                 <div className="px-3 py-2 text-xs text-slate-700 dark:text-zinc-300 bg-amber-100 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/40 rounded-lg">
                   {bulkResult}
                 </div>
               )}
+              {shownQueue.length === 0 && (
+                <EmptyState
+                  variant="no-match"
+                  title={statusView === 'failed'
+                    ? t('queue.viewFailedEmpty', 'No failed downloads')
+                    : t('queue.viewActiveEmpty', 'No downloads in progress')}
+                  action={
+                    <button type="button" onClick={() => setStatusView('')} className={btn.secondary}>
+                      {t('queue.viewShowAll', 'Show all')}
+                    </button>
+                  }
+                />
+              )}
               {queuePage.map(item => (
                 <div key={item.id} className={`flex flex-wrap sm:flex-nowrap items-center justify-between p-3 border rounded-lg bg-slate-100 dark:bg-zinc-900 ${selectedIds.has(item.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800'}`}>
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={selectedIds.has(item.id)}
                     onChange={() => toggleSelect(item.id)}
-                    aria-label={t('queue.selectItem', { title: item.title, defaultValue: 'Select {{title}}' })}
-                    className="mr-3 shrink-0 rounded-full border-slate-400 dark:border-zinc-600"
+                    label={t('queue.selectItem', { title: item.title, defaultValue: 'Select {{title}}' })}
+                    className="mr-3 shrink-0"
                   />
                   <div className="min-w-0 flex-1">
                     <h3 className="font-medium text-sm [overflow-wrap:anywhere] sm:truncate">{item.title}</h3>
@@ -747,6 +770,17 @@ export default function QueuePage() {
           </ModalPanel>
         </div>
       )}
+      <BulkActionBar
+        count={selectedShown.length}
+        onClear={clearSelection}
+        busy={bulkBusy}
+        actions={[
+          // A retry only applies to a failed row, so it is offered only when
+          // the selection holds one (#2295).
+          ...(retryableSelection.length > 0 ? [{ label: t('queue.retrySelected', 'Retry selected'), onClick: () => void retrySelected() }] : []),
+          { label: t('queue.removeSelected', 'Remove selected'), onClick: () => void removeSelected(), variant: 'danger' as const },
+        ]}
+      />
     </div>
   )
 }
@@ -857,6 +891,39 @@ export function MatchBookControl({ disabled, onMatch, alreadyMatched = false }: 
       <button onClick={() => setOpen(false)} className="text-[10px] text-fg-muted hover:underline">
         {t('queue.matchBookCancel', 'Cancel')}
       </button>
+    </div>
+  )
+}
+
+// The Remove selected options, inside its confirmation. The dialog renders
+// this once and does not re-render it from outside, so the boxes keep their
+// own state and report every change through onChange; the caller reads the
+// last report after the dialog closes.
+type RemoveOptions = { deleteFiles: boolean; unmonitorBooks: boolean }
+function QueueRemoveOptions({ initial, onChange }: { initial: RemoveOptions; onChange: (next: RemoveOptions) => void }) {
+  const { t } = useTranslation()
+  const [unmonitor, setUnmonitor] = useState(initial.unmonitorBooks)
+  const [deleteFiles, setDeleteFiles] = useState(initial.deleteFiles)
+  return (
+    <div className="mt-3 space-y-2 text-sm">
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={unmonitor}
+          onChange={e => { setUnmonitor(e.target.checked); onChange({ deleteFiles, unmonitorBooks: e.target.checked }) }}
+          className="rounded border-slate-400 dark:border-zinc-600"
+        />
+        {t('queue.alsoUnmonitor', 'Also stop monitoring these books')}
+      </label>
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={deleteFiles}
+          onChange={e => { setDeleteFiles(e.target.checked); onChange({ deleteFiles: e.target.checked, unmonitorBooks: unmonitor }) }}
+          className="rounded border-slate-400 dark:border-zinc-600"
+        />
+        {t('queue.deleteFilesLabel', 'Delete downloaded files')}
+      </label>
     </div>
   )
 }

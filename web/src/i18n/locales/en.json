@@ -956,7 +956,14 @@
     },
     "pendingGrabbing": "Grabbing…",
     "pendingGrab": "Grab Now",
-    "pendingHeading": "Pending Releases ({{n}})"
+    "pendingHeading": "Pending Releases ({{n}})",
+    "statusView": "Show",
+    "viewAll": "All ({{count}})",
+    "viewActive": "Active ({{count}})",
+    "viewFailed": "Failed ({{count}})",
+    "viewFailedEmpty": "No failed downloads",
+    "viewActiveEmpty": "No downloads in progress",
+    "viewShowAll": "Show all"
   },
   "series": {
     "searchPlaceholder": "Search series…",
