@@ -35,6 +35,7 @@ import { errorText } from '../util/errorText'
 import FilterBar from '../components/FilterBar'
 import { FilterGroup } from '../components/FilterPopover'
 import BookStatusLegend from '../components/BookStatusLegend'
+import { BELOW_SM, useMediaQuery } from '../components/useMediaQuery'
 
 type MediaFilter = '' | 'ebook' | 'audiobook'
 // 'excluded' folds in what used to be a separate "Show excluded" checkbox. It
@@ -123,6 +124,7 @@ export default function AuthorDetailPage() {
   const { t } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
   const authorId = Number(id)
+  const narrow = useMediaQuery(BELOW_SM)
 
   const [author, setAuthor] = useState<Author | null>(null)
   const [books, setBooks] = useState<Book[]>([])
@@ -1235,21 +1237,24 @@ export default function AuthorDetailPage() {
                 ? t('authorDetail.actions.searching', 'Searching…')
                 : t('authorDetail.actions.searchWanted', { count: searchableWantedCount, defaultValue: 'Search {{count}} wanted' })}
             </button>
-            <button
+            {/* On a phone the row keeps the switch, the primary action and
+                More; Refresh and Edit fold into More rather than wrapping the
+                row onto a second line. */}
+            {!narrow && <button
               onClick={handleRefresh}
               disabled={refreshing}
               className={`${btn.secondary} ${btnSize.sm}`}
               title={t('authorDetail.actions.refreshHint', "Fetch this author's catalogue from the metadata provider again. Books you do not have are added according to Monitor new items. Nothing is downloaded until the next wanted search.")}
             >
               {refreshing ? t('authorDetail.actions.refreshing', 'Refreshing…') : t('authorDetail.actions.refresh', 'Refresh')}
-            </button>
-            <button
+            </button>}
+            {!narrow && <button
               onClick={() => setShowEdit(true)}
               className={`${btn.secondary} ${btnSize.sm}`}
               title={t('authorDetail.actions.editHint', 'Edit quality, metadata, and root folder')}
             >
               {t('authorDetail.actions.edit', 'Edit')}
-            </button>
+            </button>}
             {/* The rest were eight controls on one row, which wrapped and left
                 Delete orphaned on a line of its own — the most destructive
                 action given the most prominence by accident. */}
@@ -1257,6 +1262,10 @@ export default function AuthorDetailPage() {
               label={t('common.more', 'More')}
               buttonClassName={`${btn.secondary} ${btnSize.sm}`}
               items={[
+                ...(narrow ? [
+                  { label: refreshing ? t('authorDetail.actions.refreshing', 'Refreshing…') : t('authorDetail.actions.refresh', 'Refresh'), onSelect: handleRefresh, disabled: refreshing },
+                  { label: t('authorDetail.actions.edit', 'Edit'), onSelect: () => setShowEdit(true) },
+                ] : []),
                 {
                   label: t('authorDetail.actions.renameFiles', 'Rename files'),
                   title: t('authorDetail.actions.renameFilesHint', 'Move this author’s files to match the current naming template'),
