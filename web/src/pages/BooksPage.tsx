@@ -312,6 +312,7 @@ export default function BooksPage() {
               {s ? (t(statusLabelKeys[s]) ?? s) : t('common.all')}
             </button>
           ))}
+          <BookStatusLegend />
         </div>
       </div>
 
@@ -389,8 +390,6 @@ export default function BooksPage() {
           </button>
         )}
       </div>
-
-      <BookStatusLegend />
 
       {loading ? (
         <div className="text-fg-muted">{t('common.loading')}</div>
