@@ -82,11 +82,11 @@ does ship is the failure that matters.
 | @remix-run/route-pattern | 0.22.1 | MIT |
 | cookie-es | 3.1.1 | MIT |
 | html-parse-stringify | 4.0.1 | MIT |
-| i18next | 26.4.2 | MIT |
+| i18next | 26.4.6 | MIT |
 | i18next-browser-languagedetector | 8.2.1 | MIT |
-| react | 19.3.0 | MIT |
-| react-dom | 19.3.0 | MIT |
-| react-i18next | 17.0.16 | MIT |
+| react | 19.3.1 | MIT |
+| react-dom | 19.3.1 | MIT |
+| react-i18next | 17.0.18 | MIT |
 | react-router | 8.4.0 | MIT |
 | scheduler | 0.28.0 | MIT |
 | typescript | 6.0.3 | Apache-2.0 |
@@ -1842,7 +1842,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 29. MIT — npm:i18next@26.4.2 (LICENSE)
+### 29. MIT — npm:i18next@26.4.6 (LICENSE)
 
 ```
 The MIT License (MIT)
@@ -1868,7 +1868,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 30. MIT — npm:react-i18next@17.0.16 (LICENSE)
+### 30. MIT — npm:react-i18next@17.0.18 (LICENSE)
 
 ```
 The MIT License (MIT)
@@ -1922,13 +1922,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 32. MIT — npm:react-dom@19.3.0 (LICENSE)
+### 32. MIT — npm:react-dom@19.3.1 (LICENSE)
 
 <details>
 <summary>Applies to 4 dependencies</summary>
 
-- npm:react-dom@19.3.0 (LICENSE)
-- npm:react@19.3.0 (LICENSE)
+- npm:react-dom@19.3.1 (LICENSE)
+- npm:react@19.3.1 (LICENSE)
 - npm:scheduler@0.28.0 (LICENSE)
 - npm:use-sync-external-store@1.6.0 (LICENSE)
 
