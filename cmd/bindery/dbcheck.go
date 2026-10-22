@@ -179,8 +179,9 @@ CASCADE rows are removed, ON DELETE SET NULL references are cleared.
 	}
 	fmt.Printf("remaining violations: %d\n", report.Remaining)
 	if report.Remaining > 0 {
-		fmt.Println("\nSome violations could not be repaired automatically — the schema declares no safe")
-		fmt.Println("ON DELETE action for them. Report the lines above at https://github.com/vavallee/bindery/issues.")
+		fmt.Println("\nSome violations were left alone: the schema declares no safe ON DELETE action for")
+		fmt.Println("them, or the database refused to repair them. The skipped lines above say which.")
+		fmt.Println("If they look wrong, report them at https://github.com/vavallee/bindery/issues.")
 	}
 	return 0
 }

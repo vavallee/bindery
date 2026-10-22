@@ -141,7 +141,7 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
       </td>
       <td className={`${cellCls} md:w-[36%]`}>
         {outcomeLine ? (
-          <p role="status" className="truncate text-xs text-emerald-700 dark:text-emerald-400" title={outcomeLine}>{outcomeLine}</p>
+          <p role="status" className="truncate text-xs text-accent-text" title={outcomeLine}>{outcomeLine}</p>
         ) : item.state === 'adopted' && item.book ? (
           <p className="truncate text-xs text-fg-muted">
             {t('adoption.row.adoptedAs', 'Adopted as')}{' '}

@@ -1,2 +1,0 @@
-### Added
-- **Grab a release the filters dropped** (#2334). Interactive search on a book page used to throw away anything the title and author check or the language filter rejected, so when a filter got it wrong you could see the release in the search details and still not grab it. Those releases now sit in a collapsed "Filtered (N)" section under the results, with the reason on each row and the same Grab button. Video and other non book junk stays out of it. The free text Search page does not have this yet. Thanks to omegaliterosmalakas on Discord for the report.

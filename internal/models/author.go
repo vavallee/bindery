@@ -436,6 +436,11 @@ func (a Author) ProviderIdentity(provider string) (string, bool) {
 	return "", false
 }
 
+// ProfileSourceUser marks a photo or bio the user set by hand: an uploaded
+// photo or a bio typed in Edit Author. No refresh replaces it, from the
+// primary provider or an enricher, until the user clears or changes it.
+const ProfileSourceUser = "user"
+
 // ProfileSource is the attribution for an author profile field filled from a
 // source other than the author's primary provider: where it came from, the
 // page to credit, and the licence the source publishes it under. Credit
@@ -456,10 +461,11 @@ type ProfileSource struct {
 // stored, as refreshes always have. A value an author enricher filled in
 // (src set, #3287) only fills an empty field or replaces an earlier enriched
 // value: it never displaces a value from the primary provider or one a user
-// chose, such as an Audiobookshelf conflict resolution. An empty value
-// changes nothing, so a sparse refresh never clears a field (#1463).
+// chose, such as an Audiobookshelf conflict resolution. A value the user set
+// by hand (ProfileSourceUser) is replaced by nothing. An empty value changes
+// nothing, so a sparse refresh never clears a field (#1463).
 func MergeProfileField(cur *string, curSrc **ProfileSource, val string, src *ProfileSource) bool {
-	if val == "" {
+	if val == "" || (*curSrc != nil && (*curSrc).Provider == ProfileSourceUser) {
 		return false
 	}
 	if src != nil && *cur != "" && *curSrc == nil {

@@ -1,0 +1,2 @@
+### Added
+- **Set an author's photo and bio yourself** (#3287). The author page has an Upload photo link under the photo, working like the book cover upload: the image is stored by Bindery and stays as you chose it. Edit Author has a Bio field. A photo or bio you set is never replaced by a refresh or by Wikidata. To hand it back, use Remove photo under an uploaded photo, which fetches the provider's or Wikidata's photo straight away, or clear the bio.

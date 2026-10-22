@@ -120,14 +120,14 @@ export default function SearchPage() {
       )}
 
       {results !== null && results.length === 0 && (
-        <div className="text-center py-10 text-sm text-slate-500 dark:text-zinc-500 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+        <div className="text-center py-10 text-sm text-fg-muted border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
           {t('search.noResults')}
         </div>
       )}
 
       {results !== null && results.length > 0 && (
         <div>
-          <p className="text-xs text-slate-500 dark:text-zinc-500 mb-2">{t('search.resultCount', { count: results.length })}</p>
+          <p className="text-xs text-fg-muted mb-2">{t('search.resultCount', { count: results.length })}</p>
           <div className="space-y-1">
             {results.map(r => (
               <div
@@ -136,13 +136,13 @@ export default function SearchPage() {
               >
                 <div className="min-w-0 mr-3">
                   <span className="truncate block text-slate-800 dark:text-zinc-200">{r.title}</span>
-                  <span className="text-slate-500 dark:text-zinc-500 truncate block">
+                  <span className="text-fg-muted truncate block">
                     {r.indexerName}{r.size ? ` · ${formatBytes(r.size)}` : ''}{r.grabs ? ` · ${r.grabs} grabs` : ''}
                     {r.language && <span className="ml-2 uppercase">{r.language}</span>}
                   </span>
                 </div>
                 {grabbed.has(r.guid) ? (
-                  <span className="px-3 py-2 text-emerald-600 dark:text-emerald-400 text-[11px] font-medium flex-shrink-0">
+                  <span className="px-3 py-2 text-accent-text text-[11px] font-medium flex-shrink-0">
                     {t('search.grabbed')}
                   </span>
                 ) : (

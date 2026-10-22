@@ -390,9 +390,9 @@ export default function QueuePage() {
       )}
 
       {loading ? (
-        <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
+        <div className="text-fg-muted">{t('common.loading')}</div>
       ) : queue.length === 0 && pending.length === 0 ? (
-        <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
+        <div className="text-center py-16 text-fg-muted">
           <p>{t('queue.empty')}</p>
           <ImportHints />
         </div>
@@ -402,7 +402,7 @@ export default function QueuePage() {
             <div className="space-y-2">
               {failedItems.length > 0 && (
                 <div className="flex items-center justify-between gap-2 px-1">
-                  <span className="text-xs text-slate-600 dark:text-zinc-400">
+                  <span className="text-xs text-fg-muted">
                     {t('queue.failedCount', { count: failedItems.length, defaultValue: '{{count}} failed' })}
                   </span>
                   <div className="flex gap-2">
@@ -426,7 +426,7 @@ export default function QueuePage() {
                 </div>
               )}
               <div className="flex flex-wrap items-center justify-between gap-2 px-1">
-                <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-zinc-400 cursor-pointer select-none">
+                <label className="flex items-center gap-2 text-xs text-fg-muted cursor-pointer select-none">
                   <input
                     ref={selectAllRef}
                     type="checkbox"
@@ -443,7 +443,7 @@ export default function QueuePage() {
                     {t('queue.selectedCount', { count: selectedIds.size, defaultValue: '{{count}} selected' })}
                   </span>
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                    <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-400 cursor-pointer select-none">
+                    <label className="flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer select-none">
                       <input
                         type="checkbox"
                         checked={bulkUnmonitor}
@@ -452,7 +452,7 @@ export default function QueuePage() {
                       />
                       {t('queue.alsoUnmonitor', 'Also stop monitoring these books')}
                     </label>
-                    <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-400 cursor-pointer select-none">
+                    <label className="flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer select-none">
                       <input
                         type="checkbox"
                         checked={bulkDeleteFiles}
@@ -480,7 +480,7 @@ export default function QueuePage() {
                     <button
                       onClick={clearSelection}
                       disabled={bulkBusy}
-                      className="px-2.5 py-1 text-xs rounded text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50 font-medium"
+                      className="px-2.5 py-1 text-xs rounded text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50 font-medium"
                     >
                       {t('queue.clearSelection', 'Clear selection')}
                     </button>
@@ -509,15 +509,15 @@ export default function QueuePage() {
                         the author link above and the hints below. */}
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs pointer-coarse:my-3.5 pointer-coarse:gap-y-5">
                       <DownloadStatusChip status={item.status} />
-                      <span className="text-slate-600 dark:text-zinc-500">{formatBytes(item.size)}</span>
+                      <span className="text-fg-muted">{formatBytes(item.size)}</span>
                       {item.percentage && (
                         <span className="text-blue-400">{item.percentage}%</span>
                       )}
                       {item.timeLeft && (
-                        <span className="text-slate-600 dark:text-zinc-500">{t('queue.remaining', { time: item.timeLeft })}</span>
+                        <span className="text-fg-muted">{t('queue.remaining', { time: item.timeLeft })}</span>
                       )}
                       {item.protocol && (
-                        <span className="text-slate-500 dark:text-zinc-600">{item.protocol}</span>
+                        <span className="text-fg-muted">{item.protocol}</span>
                       )}
                       {(() => {
                         const ts = getContextualTimestamp(item)
@@ -525,7 +525,7 @@ export default function QueuePage() {
                           <TapToReveal
                             label={ts.label}
                             detail={ts.absolute}
-                            className="touch-target text-slate-500 dark:text-zinc-600"
+                            className="touch-target text-fg-muted"
                           />
                         ) : null
                       })()}
@@ -535,17 +535,17 @@ export default function QueuePage() {
                         otherwise show an "Import Failed" pill with no explanation
                         until the next scanner check writes a new one. */}
                     {item.status === 'importFailed' && !item.errorMessage && (
-                      <div className="mt-1 text-xs text-slate-600 dark:text-zinc-400 bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1">
+                      <div className="mt-1 text-xs text-fg-muted bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1">
                         Queued for another import attempt — the scanner picks it up on its next check.
                       </div>
                     )}
                     {item.status === 'importBlocked' && !item.errorMessage && (
-                      <div className="mt-1 text-xs text-slate-600 dark:text-zinc-400 bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1">
+                      <div className="mt-1 text-xs text-fg-muted bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1">
                         Import blocked — manual intervention required (check library path permissions)
                       </div>
                     )}
                     {item.errorMessage && (
-                      <div className="mt-1 text-xs text-slate-600 dark:text-zinc-400 bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1 break-words">
+                      <div className="mt-1 text-xs text-fg-muted bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1 break-words">
                         <span className="font-medium">
                           {item.status === 'importFailed'
                             ? 'Import failed: '
@@ -556,10 +556,10 @@ export default function QueuePage() {
                         {summarizeError(item.errorMessage)}
                         {item.errorMessage.length > ERROR_SUMMARY_LEN && (
                           <details className="mt-1">
-                            <summary className="cursor-pointer text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">
+                            <summary className="cursor-pointer text-fg-muted hover:text-slate-900 dark:hover:text-white">
                               {t('queue.errorDetails', 'Show full error')}
                             </summary>
-                            <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-[10px] text-slate-600 dark:text-zinc-400">
+                            <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-[10px] text-fg-muted">
                               {item.errorMessage.slice(0, 4000)}
                             </pre>
                           </details>
@@ -567,7 +567,7 @@ export default function QueuePage() {
                       </div>
                     )}
                     {isMatchable(item.status) && !item.book && (
-                      <div className="mt-1 text-xs text-slate-600 dark:text-zinc-400 bg-slate-200/70 dark:bg-zinc-800/70 rounded px-2 py-1 break-words">
+                      <div className="mt-1 text-xs text-fg-muted bg-slate-200/70 dark:bg-zinc-800/70 rounded px-2 py-1 break-words">
                         {t('queue.retryImportHint')}
                       </div>
                     )}
@@ -575,7 +575,7 @@ export default function QueuePage() {
                         already has a book was matched — survives reload so the
                         user isn't left wondering whether the match took (#1589). */}
                     {isMatchable(item.status) && item.book && (
-                      <div className="mt-1 text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-400/10 rounded px-2 py-1 break-words">
+                      <div className="mt-1 text-xs text-accent-text bg-emerald-400/10 rounded px-2 py-1 break-words">
                         {t('queue.matchedTo', { title: item.book.title, defaultValue: `Matched to ${item.book.title} — use Retry import to import it.` })}
                       </div>
                     )}
@@ -585,7 +585,7 @@ export default function QueuePage() {
                       </div>
                     )}
                     {matchMessages[item.id] && (
-                      <div className="mt-1 text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-400/10 rounded px-2 py-1 break-words">
+                      <div className="mt-1 text-xs text-accent-text bg-emerald-400/10 rounded px-2 py-1 break-words">
                         {matchMessages[item.id]}
                       </div>
                     )}
@@ -651,7 +651,7 @@ export default function QueuePage() {
 
           {pending.length > 0 && (
             <div>
-              <h3 className="text-sm font-semibold text-slate-600 dark:text-zinc-400 mb-2 flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-fg-muted mb-2 flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
                 Pending Releases ({pending.length})
               </h3>
@@ -664,12 +664,12 @@ export default function QueuePage() {
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
                         <span className="text-amber-600 dark:text-amber-400">{item.reason}</span>
                         {item.size > 0 && (
-                          <span className="text-slate-500 dark:text-zinc-500">{formatBytes(item.size)}</span>
+                          <span className="text-fg-muted">{formatBytes(item.size)}</span>
                         )}
                         {item.quality && (
-                          <span className="text-slate-500 dark:text-zinc-500">{item.quality}</span>
+                          <span className="text-fg-muted">{item.quality}</span>
                         )}
-                        <span className="text-slate-500 dark:text-zinc-500">{item.protocol}</span>
+                        <span className="text-fg-muted">{item.protocol}</span>
                       </div>
                     </div>
                     <div className="ml-4 flex items-center gap-2 flex-shrink-0">
@@ -682,7 +682,7 @@ export default function QueuePage() {
                       </button>
                       <button
                         onClick={() => handleDismissPending(item.id)}
-                        className="px-3 py-1.5 text-xs text-slate-500 dark:text-zinc-500 hover:text-red-400 rounded"
+                        className="px-3 py-1.5 text-xs text-fg-muted hover:text-red-400 rounded"
                       >
                         Dismiss
                       </button>
@@ -708,7 +708,7 @@ export default function QueuePage() {
             onClick={e => e.stopPropagation()}
           >
             <h3 id="queue-remove-title" className="text-lg font-semibold mb-2">{t('queue.removeTitle')}</h3>
-            <p className="text-sm text-slate-600 dark:text-zinc-400 break-words">
+            <p className="text-sm text-fg-muted break-words">
               {t('queue.removeBody', { title: deleteTarget.title })}
             </p>
             <label className="mt-4 flex items-start gap-2 cursor-pointer">
@@ -720,7 +720,7 @@ export default function QueuePage() {
               />
               <span className="text-sm">
                 <span className="font-medium">{t('queue.removeDeleteFiles')}</span>
-                <span className="block text-xs text-slate-500 dark:text-zinc-500">
+                <span className="block text-xs text-fg-muted">
                   {t('queue.removeDeleteFilesHint')}
                 </span>
               </span>
@@ -774,7 +774,7 @@ function DownloadStatusHint({ status }: { status: string }) {
   const { description } = downloadStatusBadge(status, t)
   if (!description) return null
   return (
-    <div className="mt-1 text-xs text-slate-600 dark:text-zinc-400 bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1">
+    <div className="mt-1 text-xs text-fg-muted bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1">
       {description}
     </div>
   )
@@ -844,14 +844,14 @@ export function MatchBookControl({ disabled, onMatch, alreadyMatched = false }: 
             <button
               key={b.id}
               onClick={() => { setOpen(false); onMatch(b.id) }}
-              className="block w-full text-left text-xs px-1 py-0.5 rounded text-emerald-700 dark:text-emerald-400 hover:bg-slate-200 dark:hover:bg-zinc-800"
+              className="block w-full text-left text-xs px-1 py-0.5 rounded text-accent-text hover:bg-slate-200 dark:hover:bg-zinc-800"
             >
               {b.title}{b.author ? ` (${b.author.authorName})` : ''}
             </button>
           ))}
         </div>
       )}
-      <button onClick={() => setOpen(false)} className="text-[10px] text-slate-500 dark:text-zinc-500 hover:underline">
+      <button onClick={() => setOpen(false)} className="text-[10px] text-fg-muted hover:underline">
         {t('queue.matchBookCancel', 'Cancel')}
       </button>
     </div>

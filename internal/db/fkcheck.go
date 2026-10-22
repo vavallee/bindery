@@ -3,10 +3,13 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
+
+	"modernc.org/sqlite"
 )
 
 // This file holds the referential-integrity tooling that keeps a pre-existing
@@ -188,14 +191,26 @@ func SummariseViolations(violations []ForeignKeyViolation) []string {
 // fkAction describes what the schema says should have happened to a child row
 // when its parent was deleted.
 type fkAction struct {
-	onDelete string
-	columns  []string // the child-side column(s) of this foreign key
+	onDelete   string
+	columns    []string // the child-side column(s) of this foreign key
+	parent     string   // the parent table
+	parentCols []string // the parent-side column(s); empty means the parent's primary key
+}
+
+// fkExecer is the surface the repair needs, satisfied by *sql.DB and *sql.Tx.
+// A batch runs on a *sql.Tx, which holds the pool's only connection, so every
+// query inside it MUST go through the transaction and never back through the
+// pool: that would wait forever on the connection the transaction holds.
+type fkExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
 // foreignKeyActions reads `PRAGMA foreign_key_list(table)` and returns, keyed by
-// the foreign key's id, the declared ON DELETE action and the child columns.
-func foreignKeyActions(ctx context.Context, database *sql.DB, table string) (map[int]fkAction, error) {
-	rows, err := database.QueryContext(ctx, `SELECT "id", "from", "on_delete" FROM pragma_foreign_key_list(?)`, table)
+// the foreign key's id, the declared ON DELETE action, the child columns and
+// the parent they point at.
+func foreignKeyActions(ctx context.Context, ex fkExecer, table string) (map[int]fkAction, error) {
+	rows, err := ex.QueryContext(ctx, `SELECT "id", "table", "from", "to", "on_delete" FROM pragma_foreign_key_list(?) ORDER BY "id", "seq"`, table)
 	if err != nil {
 		return nil, fmt.Errorf("foreign_key_list(%s): %w", table, err)
 	}
@@ -204,19 +219,84 @@ func foreignKeyActions(ctx context.Context, database *sql.DB, table string) (map
 	actions := make(map[int]fkAction)
 	for rows.Next() {
 		var id int
-		var from, onDelete string
-		if err := rows.Scan(&id, &from, &onDelete); err != nil {
+		var parent, from, onDelete string
+		var to sql.NullString
+		if err := rows.Scan(&id, &parent, &from, &to, &onDelete); err != nil {
 			return nil, fmt.Errorf("scan foreign_key_list(%s): %w", table, err)
 		}
 		a := actions[id]
 		a.onDelete = strings.ToUpper(onDelete)
+		a.parent = parent
 		a.columns = append(a.columns, from)
+		if to.Valid {
+			a.parentCols = append(a.parentCols, to.String)
+		}
 		actions[id] = a
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate foreign_key_list(%s): %w", table, err)
 	}
 	return actions, nil
+}
+
+// Repair actions, as DriftAction names them. The preview shown to an operator
+// and the repair itself both go through DriftAction, so what is promised is
+// what is done.
+const (
+	DriftActionDelete = "delete" // ON DELETE CASCADE: remove the row
+	DriftActionClear  = "clear"  // ON DELETE SET NULL: clear the reference
+	DriftActionKeep   = "keep"   // anything else: report and leave alone
+)
+
+// DriftAction maps a declared ON DELETE action onto what a repair does.
+func DriftAction(onDelete string) string {
+	switch strings.ToUpper(onDelete) {
+	case "CASCADE":
+		return DriftActionDelete
+	case "SET NULL":
+		return DriftActionClear
+	default:
+		return DriftActionKeep
+	}
+}
+
+// orphanGuard returns an SQL condition that is true only while the child row
+// STILL has no parent, mirroring what foreign_key_check reports: a row with any
+// NULL key column is never a violation. A repair works from a list of rowids
+// taken earlier, possibly a minute earlier on a large database, so each
+// statement re-checks it. Without the guard a rowid freed by an earlier cascade
+// and reused by a new insert, or a parent re-created in the meantime, would
+// have the repair delete a healthy row.
+func orphanGuard(ctx context.Context, ex fkExecer, child string, a fkAction) (string, error) {
+	parentCols := a.parentCols
+	if len(parentCols) == 0 {
+		rows, err := ex.QueryContext(ctx, `SELECT "name" FROM pragma_table_info(?) WHERE "pk" > 0 ORDER BY "pk"`, a.parent)
+		if err != nil {
+			return "", fmt.Errorf("table_info(%s): %w", a.parent, err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				return "", err
+			}
+			parentCols = append(parentCols, name)
+		}
+		if err := rows.Err(); err != nil {
+			return "", err
+		}
+	}
+	if len(parentCols) == 0 || len(parentCols) != len(a.columns) {
+		return "", fmt.Errorf("cannot match the columns of %s to %s", child, a.parent)
+	}
+	notNull := make([]string, 0, len(a.columns))
+	match := make([]string, 0, len(a.columns))
+	for i, col := range a.columns {
+		notNull = append(notNull, fmt.Sprintf("%s.%s IS NOT NULL", quoteIdent(child), quoteIdent(col)))
+		match = append(match, fmt.Sprintf("p.%s = %s.%s", quoteIdent(parentCols[i]), quoteIdent(child), quoteIdent(col)))
+	}
+	return fmt.Sprintf("%s AND NOT EXISTS (SELECT 1 FROM %s AS p WHERE %s)",
+		strings.Join(notNull, " AND "), quoteIdent(a.parent), strings.Join(match, " AND ")), nil
 }
 
 // RepairReport records what RepairForeignKeyViolations did.
@@ -226,6 +306,137 @@ type RepairReport struct {
 	Skipped   int      // rows left alone because no safe action is declared
 	SkipNotes []string // one line per distinct reason a row was skipped
 	Remaining int      // violations still present after the repair
+}
+
+// repairer resolves violations one row at a time and accumulates the report.
+// It is the single implementation behind the CLI (RepairForeignKeyViolations)
+// and the Settings cleanup (RepairForeignKeyDrift), so both resolve a row the
+// same way.
+type repairer struct {
+	report      RepairReport
+	skipSeen    map[string]bool
+	actionCache map[string]map[int]fkAction
+	guardCache  map[string]string
+	noGuard     map[string]bool
+}
+
+func newRepairer() *repairer {
+	return &repairer{
+		skipSeen:    make(map[string]bool),
+		actionCache: make(map[string]map[int]fkAction),
+		guardCache:  make(map[string]string),
+		noGuard:     make(map[string]bool),
+	}
+}
+
+func (r *repairer) skip(note string) {
+	r.report.Skipped++
+	if !r.skipSeen[note] {
+		r.skipSeen[note] = true
+		r.report.SkipNotes = append(r.report.SkipNotes, note)
+	}
+}
+
+func (r *repairer) apply(ctx context.Context, ex fkExecer, v ForeignKeyViolation) error {
+	if !v.RowID.Valid {
+		r.skip(fmt.Sprintf("%s: WITHOUT ROWID table, cannot address the row", v.Table))
+		return nil
+	}
+	actions, ok := r.actionCache[v.Table]
+	if !ok {
+		var err error
+		actions, err = foreignKeyActions(ctx, ex, v.Table)
+		if err != nil {
+			return err
+		}
+		r.actionCache[v.Table] = actions
+	}
+	action, ok := actions[v.FKID]
+	if !ok {
+		r.skip(fmt.Sprintf("%s: no foreign key with id %d", v.Table, v.FKID))
+		return nil
+	}
+
+	kind := DriftAction(action.onDelete)
+	if kind == DriftActionKeep {
+		// NO ACTION / RESTRICT / SET DEFAULT: the schema does not say what
+		// should happen, so guessing risks throwing away real data.
+		r.skip(fmt.Sprintf("%s -> %s: ON DELETE %s, no safe automatic repair", v.Table, v.Parent, action.onDelete))
+		return nil
+	}
+
+	key := fmt.Sprintf("%s#%d", v.Table, v.FKID)
+	if r.noGuard[key] {
+		r.skip(fmt.Sprintf("%s -> %s: cannot verify the row is still an orphan", v.Table, v.Parent))
+		return nil
+	}
+	guard, ok := r.guardCache[key]
+	if !ok {
+		g, err := orphanGuard(ctx, ex, v.Table, action)
+		if err != nil {
+			r.noGuard[key] = true
+			r.skip(fmt.Sprintf("%s -> %s: cannot verify the row is still an orphan", v.Table, v.Parent))
+			return nil
+		}
+		guard = g
+		r.guardCache[key] = g
+	}
+
+	switch kind {
+	case DriftActionDelete:
+		res, err := ex.ExecContext(ctx,
+			fmt.Sprintf(`DELETE FROM %s WHERE rowid = ? AND %s`, quoteIdent(v.Table), guard), v.RowID.Int64)
+		if err != nil {
+			if isConstraintError(err) {
+				r.skip(constraintSkipNote(v))
+				return nil
+			}
+			return fmt.Errorf("delete orphan %s rowid %d: %w", v.Table, v.RowID.Int64, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			r.report.Deleted += int(n)
+		}
+	case DriftActionClear:
+		sets := make([]string, 0, len(action.columns))
+		for _, col := range action.columns {
+			sets = append(sets, quoteIdent(col)+" = NULL")
+		}
+		res, err := ex.ExecContext(ctx,
+			fmt.Sprintf(`UPDATE %s SET %s WHERE rowid = ? AND %s`, quoteIdent(v.Table), strings.Join(sets, ", "), guard),
+			v.RowID.Int64)
+		if err != nil {
+			if isConstraintError(err) {
+				r.skip(constraintSkipNote(v))
+				return nil
+			}
+			return fmt.Errorf("clear dangling reference on %s rowid %d: %w", v.Table, v.RowID.Int64, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			r.report.Nulled += int(n)
+		}
+	}
+	return nil
+}
+
+// isConstraintError reports whether SQLite refused a statement on a constraint
+// (a RESTRICT child still pointing at the row, a NOT NULL column that SET NULL
+// would empty). SQLite undoes just that statement and leaves an enclosing
+// transaction usable, so one such row is a skip, not a reason to abandon the
+// batch: otherwise every rerun would stop at the same row.
+//
+// The check is on the driver's error code, the SQLITE_CONSTRAINT primary code
+// (extended codes such as NOT NULL, CHECK, FOREIGN KEY and a trigger's RAISE
+// all carry it in their low byte), never on message text.
+func isConstraintError(err error) bool {
+	var se *sqlite.Error
+	return errors.As(err, &se) && se.Code()&0xff == sqliteConstraint
+}
+
+// sqliteConstraint is SQLITE_CONSTRAINT, the primary result code.
+const sqliteConstraint = 19
+
+func constraintSkipNote(v ForeignKeyViolation) string {
+	return fmt.Sprintf("%s -> %s: a constraint refused the repair of at least one row, left as it is", v.Table, v.Parent)
 }
 
 // RepairForeignKeyViolations replays the ON DELETE action that never fired.
@@ -238,67 +449,14 @@ type RepairReport struct {
 // exactly as the original delete would have.
 //
 // The caller is responsible for confirming with the operator first; this
-// function does not prompt and does not take a backup.
+// function does not prompt and does not take a backup. It is for the offline
+// CLI, which owns the database. The running app uses RepairForeignKeyDrift,
+// which does the same per-row work in bounded batches.
 func RepairForeignKeyViolations(ctx context.Context, database *sql.DB, violations []ForeignKeyViolation) (RepairReport, error) {
-	var report RepairReport
-	skipSeen := make(map[string]bool)
-	skip := func(note string) {
-		report.Skipped++
-		if !skipSeen[note] {
-			skipSeen[note] = true
-			report.SkipNotes = append(report.SkipNotes, note)
-		}
-	}
-
-	actionCache := make(map[string]map[int]fkAction)
+	r := newRepairer()
 	for _, v := range violations {
-		if !v.RowID.Valid {
-			skip(fmt.Sprintf("%s: WITHOUT ROWID table, cannot address the row", v.Table))
-			continue
-		}
-		actions, ok := actionCache[v.Table]
-		if !ok {
-			var err error
-			actions, err = foreignKeyActions(ctx, database, v.Table)
-			if err != nil {
-				return report, err
-			}
-			actionCache[v.Table] = actions
-		}
-		action, ok := actions[v.FKID]
-		if !ok {
-			skip(fmt.Sprintf("%s: no foreign key with id %d", v.Table, v.FKID))
-			continue
-		}
-
-		switch action.onDelete {
-		case "CASCADE":
-			res, err := database.ExecContext(ctx,
-				fmt.Sprintf(`DELETE FROM %s WHERE rowid = ?`, quoteIdent(v.Table)), v.RowID.Int64)
-			if err != nil {
-				return report, fmt.Errorf("delete orphan %s rowid %d: %w", v.Table, v.RowID.Int64, err)
-			}
-			if n, _ := res.RowsAffected(); n > 0 {
-				report.Deleted += int(n)
-			}
-		case "SET NULL":
-			sets := make([]string, 0, len(action.columns))
-			for _, col := range action.columns {
-				sets = append(sets, quoteIdent(col)+" = NULL")
-			}
-			res, err := database.ExecContext(ctx,
-				fmt.Sprintf(`UPDATE %s SET %s WHERE rowid = ?`, quoteIdent(v.Table), strings.Join(sets, ", ")),
-				v.RowID.Int64)
-			if err != nil {
-				return report, fmt.Errorf("clear dangling reference on %s rowid %d: %w", v.Table, v.RowID.Int64, err)
-			}
-			if n, _ := res.RowsAffected(); n > 0 {
-				report.Nulled += int(n)
-			}
-		default:
-			// NO ACTION / RESTRICT / SET DEFAULT: the schema does not say what
-			// should happen, so guessing risks throwing away real data.
-			skip(fmt.Sprintf("%s -> %s: ON DELETE %s, no safe automatic repair", v.Table, v.Parent, action.onDelete))
+		if err := r.apply(ctx, database, v); err != nil {
+			return r.report, err
 		}
 	}
 
@@ -306,10 +464,10 @@ func RepairForeignKeyViolations(ctx context.Context, database *sql.DB, violation
 	// than assuming Deleted+Nulled covered everything.
 	remaining, err := ForeignKeyViolations(ctx, database)
 	if err != nil {
-		return report, err
+		return r.report, err
 	}
-	report.Remaining = len(remaining)
-	return report, nil
+	r.report.Remaining = len(remaining)
+	return r.report, nil
 }
 
 // quoteIdent wraps a SQLite identifier in double quotes. Identifiers here come

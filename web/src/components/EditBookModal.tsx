@@ -187,7 +187,7 @@ export default function EditBookModal({ book, onClose, onSaved, onSeriesSaved, s
       >
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
           <h3 id={titleId} className="text-lg font-semibold">{t('bookDetail.edit.title', 'Edit metadata')}</h3>
-          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">
+          <p className="text-xs text-fg-muted mt-0.5">
             {t('bookDetail.edit.subtitle', 'Edited fields are locked so metadata refresh keeps your values.')}
           </p>
         </div>
@@ -282,7 +282,7 @@ export default function EditBookModal({ book, onClose, onSaved, onSeriesSaved, s
             </button>
           )}
           <div className="ml-auto flex gap-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white">
               {t('common.cancel')}
             </button>
             <button

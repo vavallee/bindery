@@ -58,7 +58,7 @@ export function FilterGroup<T extends string>({
                   : 'text-slate-700 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700'
               }`}
             >
-              <span aria-hidden="true" className={`w-3 text-emerald-600 dark:text-emerald-400 ${active ? '' : 'opacity-0'}`}>
+              <span aria-hidden="true" className={`w-3 text-accent-text ${active ? '' : 'opacity-0'}`}>
                 ✓
               </span>
               <span className="truncate">{opt.label}</span>

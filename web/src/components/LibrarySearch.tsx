@@ -209,7 +209,7 @@ export default function LibrarySearch({ className = '', onNavigate, autoFocus }:
             role="option"
             aria-selected={isActive}
             data-testid="library-search-add"
-            className={`${base} ${tone} border-t border-slate-200 dark:border-zinc-800 text-emerald-700 dark:text-emerald-400 font-medium`}
+            className={`${base} ${tone} border-t border-slate-200 dark:border-zinc-800 text-accent-text font-medium`}
             onMouseDown={e => e.preventDefault()}
             onClick={() => choose(row)}
             onMouseEnter={() => setActive(i)}

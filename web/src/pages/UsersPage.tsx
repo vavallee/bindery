@@ -142,7 +142,7 @@ export default function UsersPage() {
       className={`px-2 py-0.5 rounded text-xs font-medium border border-slate-300 dark:border-zinc-700 ${
         u.role === 'admin'
           ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400'
-          : 'bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400'
+          : 'bg-slate-100 dark:bg-zinc-800 text-fg-muted'
       }`}
     >
       <option value="admin">{t('users.roleAdmin')}</option>
@@ -154,7 +154,7 @@ export default function UsersPage() {
   // Only a requester queues requests, so the toggle is shown for that role.
   // The value stays on the account if the role changes and comes back with it.
   const autoApproveToggle = (u: ManagedUser) => u.role === 'requester' && (
-    <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-zinc-400">
+    <label className="flex items-center gap-2 text-xs text-fg-muted">
       <input
         type="checkbox"
         checked={u.autoApproveRequests}
@@ -184,7 +184,7 @@ export default function UsersPage() {
 
   if (!isAdmin) {
     return (
-      <div className="text-center py-20 text-slate-500 dark:text-zinc-500">
+      <div className="text-center py-20 text-fg-muted">
         Admin access required.
       </div>
     )
@@ -206,9 +206,9 @@ export default function UsersPage() {
         />
       )}
 
-      {loading && <p className="text-sm text-slate-500 dark:text-zinc-500">{t('common.loading')}</p>}
+      {loading && <p className="text-sm text-fg-muted">{t('common.loading')}</p>}
       {error && <p className="text-sm text-red-500">{error}</p>}
-      {!loading && <p className="text-xs text-slate-500 dark:text-zinc-500">{t('users.autoApproveHint')}</p>}
+      {!loading && <p className="text-xs text-fg-muted">{t('users.autoApproveHint')}</p>}
 
       {!loading && narrow && (
         // Below sm each user is a card, as on History. The five column table
@@ -221,10 +221,10 @@ export default function UsersPage() {
                 <span className="font-medium min-w-0 [overflow-wrap:anywhere]">
                   {u.username}
                   {u.username === status?.username && (
-                    <span className="ml-2 text-xs text-slate-500 dark:text-zinc-500">({t('users.you')})</span>
+                    <span className="ml-2 text-xs text-fg-muted">({t('users.you')})</span>
                   )}
                 </span>
-                <span className="shrink-0 text-xs text-slate-500 dark:text-zinc-500">
+                <span className="shrink-0 text-xs text-fg-muted">
                   {new Date(u.createdAt).toLocaleDateString()}
                 </span>
               </div>
@@ -245,10 +245,10 @@ export default function UsersPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950">
-                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-zinc-400">{t('users.colUsername')}</th>
-                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-zinc-400">{t('users.colRole')}</th>
-                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-zinc-400">{t('users.colAutoApprove')}</th>
-                <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-zinc-400">{t('users.colCreated')}</th>
+                <th className="px-4 py-3 text-left font-medium text-fg-muted">{t('users.colUsername')}</th>
+                <th className="px-4 py-3 text-left font-medium text-fg-muted">{t('users.colRole')}</th>
+                <th className="px-4 py-3 text-left font-medium text-fg-muted">{t('users.colAutoApprove')}</th>
+                <th className="px-4 py-3 text-left font-medium text-fg-muted">{t('users.colCreated')}</th>
                 <th className="px-4 py-3"><span className="sr-only">{t('wanted.colActions')}</span></th>
               </tr>
             </thead>
@@ -258,7 +258,7 @@ export default function UsersPage() {
                   <td className="px-4 py-3 font-medium">
                     {u.username}
                     {u.username === status?.username && (
-                      <span className="ml-2 text-xs text-slate-500 dark:text-zinc-500">({t('users.you')})</span>
+                      <span className="ml-2 text-xs text-fg-muted">({t('users.you')})</span>
                     )}
                   </td>
                   <td className="px-4 py-3">
@@ -267,7 +267,7 @@ export default function UsersPage() {
                   <td className="px-4 py-3">
                     {autoApproveToggle(u)}
                   </td>
-                  <td className="px-4 py-3 text-slate-500 dark:text-zinc-500">
+                  <td className="px-4 py-3 text-fg-muted">
                     {new Date(u.createdAt).toLocaleDateString()}
                   </td>
                   <td className="px-4 py-3">
@@ -287,7 +287,7 @@ export default function UsersPage() {
         <form onSubmit={handleCreate} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label htmlFor={`${fid}-username`} className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">{t('users.fieldUsername')}</label>
+              <label htmlFor={`${fid}-username`} className="block text-xs font-medium text-fg-muted mb-1">{t('users.fieldUsername')}</label>
               <input
                 id={`${fid}-username`}
                 {...literalInputAttrs}
@@ -299,7 +299,7 @@ export default function UsersPage() {
               />
             </div>
             <div>
-              <label htmlFor={`${fid}-password`} className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">{t('users.fieldPassword')}</label>
+              <label htmlFor={`${fid}-password`} className="block text-xs font-medium text-fg-muted mb-1">{t('users.fieldPassword')}</label>
               <input
                 id={`${fid}-password`}
                 type="password"
@@ -312,7 +312,7 @@ export default function UsersPage() {
             </div>
           </div>
           <div>
-            <label htmlFor={`${fid}-role`} className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">{t('users.fieldRole')}</label>
+            <label htmlFor={`${fid}-role`} className="block text-xs font-medium text-fg-muted mb-1">{t('users.fieldRole')}</label>
             <select
               id={`${fid}-role`}
               className={inputCls}
@@ -323,7 +323,7 @@ export default function UsersPage() {
               <option value="admin">{t('users.roleAdmin')}</option>
               <option value="requester">{t('users.roleRequester')}</option>
             </select>
-            <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">{t('users.roleRequesterHint')}</p>
+            <p className="mt-1 text-xs text-fg-muted">{t('users.roleRequesterHint')}</p>
           </div>
           {createError && <p className="text-sm text-red-500">{createError}</p>}
           <button

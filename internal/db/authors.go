@@ -756,8 +756,10 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 		    sort_key          = CASE WHEN ? != '' THEN ? ELSE sort_key END,
 		    name_sort_key     = CASE WHEN ? != '' THEN ? ELSE name_sort_key END,
 		    search_key        = CASE WHEN ? != '' THEN ? ELSE search_key END,
-		    description       = CASE WHEN ? != '' THEN ? ELSE description END,
-		    image_url         = CASE WHEN ? != '' THEN ? ELSE image_url END,
+		    description       = CASE WHEN ? != '' AND COALESCE(json_extract(NULLIF(description_source, ''), '$.provider'), '') != ? THEN ? ELSE description END,
+		    description_source = CASE WHEN ? != '' AND COALESCE(json_extract(NULLIF(description_source, ''), '$.provider'), '') != ? THEN '' ELSE description_source END,
+		    image_url         = CASE WHEN ? != '' AND COALESCE(json_extract(NULLIF(image_source, ''), '$.provider'), '') != ? THEN ? ELSE image_url END,
+		    image_source      = CASE WHEN ? != '' AND COALESCE(json_extract(NULLIF(image_source, ''), '$.provider'), '') != ? THEN '' ELSE image_source END,
 		    disambiguation    = CASE WHEN ? != '' THEN ? ELSE disambiguation END,
 		    metadata_provider = COALESCE(NULLIF(?, ''), metadata_provider),
 		    updated_at        = ?
@@ -768,8 +770,14 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 		target.SortName, authorSortKey(target.SortName), // sort_key CASE WHEN ?!='' THEN ? ELSE sort_key
 		target.Name, authorSortKey(target.Name), // name_sort_key CASE WHEN ?!='' THEN ? ELSE name_sort_key
 		target.Name, textutil.FoldForSearch(target.Name), // search_key CASE WHEN ?!='' THEN ? ELSE search_key
-		target.Description, target.Description, // description CASE WHEN ? != '' THEN ?
-		target.ImageURL, target.ImageURL, // image_url
+		// A bio or photo the user set by hand (provider models.ProfileSourceUser
+		// in its credit column) is kept (#3287); a provider value that does
+		// replace the stored one drops its credit, as models.MergeProfileField
+		// does for a primary value.
+		target.Description, models.ProfileSourceUser, target.Description, // description
+		target.Description, models.ProfileSourceUser, // description_source cleared with it
+		target.ImageURL, models.ProfileSourceUser, target.ImageURL, // image_url
+		target.ImageURL, models.ProfileSourceUser, // image_source cleared with it
 		target.Disambiguation, target.Disambiguation, // disambiguation
 		target.MetadataProvider, // metadata_provider = COALESCE(NULLIF(?,''), metadata_provider)
 		timeValueArg(now),       // updated_at

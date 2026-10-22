@@ -1,2 +1,0 @@
-### Fixed
-- **Disc folders named after the book are one audiobook** (#3327). A multi disc audiobook ripped from CD often has each disc folder named after the book, such as `Fjellvinden (2002)/Fjellvinden Disc 1`, and Bindery treated each disc as a separate book, both on the Import page and in the library scan. A disc folder that starts with its book folder's own title and ends in a CD or disc number now counts as one disc of that book. Folders named `Book 1`, `Vol 1` or after a different title stay separate, as before.

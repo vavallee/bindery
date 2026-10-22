@@ -89,7 +89,7 @@ export default function ABSConflictPanel({
             </span>
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 cursor-pointer">{title}</label>
-              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{description}</p>
+              <p className="text-xs text-fg-muted mt-0.5">{description}</p>
             </div>
           </div>
         </button>
@@ -104,7 +104,7 @@ export default function ABSConflictPanel({
       {show && (
         <>
           {unresolvedGroups.length === 0 && resolvedGroups.length === 0 && (
-            <p className="text-sm text-slate-500 dark:text-zinc-500">{emptyMessage}</p>
+            <p className="text-sm text-fg-muted">{emptyMessage}</p>
           )}
 
           {unresolvedGroups.map(group => (
@@ -112,7 +112,7 @@ export default function ABSConflictPanel({
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-slate-800 dark:text-zinc-200">{group[0].entityName}</p>
-                  <p className="text-[11px] text-slate-500 dark:text-zinc-500 uppercase tracking-wide">{entityType}</p>
+                  <p className="text-[11px] text-fg-muted uppercase tracking-wide">{entityType}</p>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <RelinkButton conflict={group[0]} relinkAction={relinkAction} />
@@ -123,16 +123,16 @@ export default function ABSConflictPanel({
                 <div key={conflict.id} className="rounded border border-amber-200 dark:border-amber-900/60 bg-white/70 dark:bg-zinc-950/30 px-3 py-2 space-y-2 overflow-hidden">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-xs font-medium text-slate-700 dark:text-zinc-300 min-w-0">{conflict.fieldLabel}</span>
-                    <span className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-zinc-500 text-right">Using {conflict.appliedSource || 'upstream'}</span>
+                    <span className="text-[10px] uppercase tracking-wide text-fg-muted text-right">Using {conflict.appliedSource || 'upstream'}</span>
                   </div>
                   <div className="grid min-w-0 gap-2 md:grid-cols-2 text-xs">
                     <div className="min-w-0 rounded border border-slate-200 dark:border-zinc-800 px-2 py-2 bg-slate-50 dark:bg-zinc-950 overflow-hidden">
                       <div className="font-medium text-slate-700 dark:text-zinc-300 mb-1">ABS</div>
-                      <div className="text-slate-600 dark:text-zinc-400 whitespace-pre-wrap break-all min-w-0">{conflict.absValue || 'Empty'}</div>
+                      <div className="text-fg-muted whitespace-pre-wrap break-all min-w-0">{conflict.absValue || 'Empty'}</div>
                     </div>
                     <div className="min-w-0 rounded border border-slate-200 dark:border-zinc-800 px-2 py-2 bg-slate-50 dark:bg-zinc-950 overflow-hidden">
                       <div className="font-medium text-slate-700 dark:text-zinc-300 mb-1">Upstream</div>
-                      <div className="text-slate-600 dark:text-zinc-400 whitespace-pre-wrap break-all min-w-0">{conflict.upstreamValue || 'Empty'}</div>
+                      <div className="text-fg-muted whitespace-pre-wrap break-all min-w-0">{conflict.upstreamValue || 'Empty'}</div>
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -158,7 +158,7 @@ export default function ABSConflictPanel({
 
           {resolvedGroups.length > 0 && (
             <div className="space-y-2">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-zinc-500">{resolvedHeading}</p>
+              <p className="text-xs font-medium uppercase tracking-wide text-fg-muted">{resolvedHeading}</p>
               {resolvedGroups.map(group => (
                 <div key={`${group[0].entityType}:${group[0].localId}`} className="rounded border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950 px-3 py-2 space-y-1">
                   <div className="flex items-center justify-between gap-3">
@@ -166,7 +166,7 @@ export default function ABSConflictPanel({
                     <RelinkButton conflict={group[0]} relinkAction={relinkAction} />
                   </div>
                   {group.map(conflict => (
-                    <div key={conflict.id} className="flex items-center justify-between gap-3 text-xs text-slate-600 dark:text-zinc-400">
+                    <div key={conflict.id} className="flex items-center justify-between gap-3 text-xs text-fg-muted">
                       <span>{conflict.fieldLabel}</span>
                       <span>Prefers {conflict.preferredSource || conflict.appliedSource}</span>
                     </div>

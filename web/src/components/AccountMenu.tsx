@@ -124,7 +124,7 @@ export default function AccountMenu({
         title={updateAvailable ? `${triggerLabel}. ${t('nav.updateAvailable')}` : triggerLabel}
         onClick={() => (open ? close(false) : openMenu('first'))}
         onKeyDown={onTriggerKeyDown}
-        className={`relative block p-2 rounded-md transition-colors ${open ? 'bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/50 dark:hover:bg-zinc-800/50'}`}
+        className={`relative block p-2 rounded-md transition-colors ${open ? 'bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white' : 'text-fg-muted hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/50 dark:hover:bg-zinc-800/50'}`}
       >
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2} aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />

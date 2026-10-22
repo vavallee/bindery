@@ -78,12 +78,12 @@ export default function AuthSettings() {
         {t('settings.oidc.heading')}
       </h3>
       <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
-        <p className="text-xs text-slate-600 dark:text-zinc-500">
+        <p className="text-xs text-fg-muted">
           {t('settings.oidc.description')}
         </p>
 
         {displayed.length === 0 && !showAdd && (
-          <p className="text-sm text-slate-500 dark:text-zinc-500">{t('settings.oidc.empty')}</p>
+          <p className="text-sm text-fg-muted">{t('settings.oidc.empty')}</p>
         )}
 
         {displayed.map(p => (
@@ -209,11 +209,11 @@ function AddProviderForm({
       <p className="text-xs font-medium text-slate-700 dark:text-zinc-300">{t('settings.oidc.addHeading')}</p>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label htmlFor={`${fid}-1`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.oidc.fieldId')}</label>
+          <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.oidc.fieldId')}</label>
           <input id={`${fid}-1`} value={id} onChange={e => setId(e.target.value)} required placeholder="google" className={inputCls} />
         </div>
         <div>
-          <label htmlFor={`${fid}-2`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.oidc.fieldName')}</label>
+          <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">{t('settings.oidc.fieldName')}</label>
           <input id={`${fid}-2`} value={name} onChange={e => setName(e.target.value)} required placeholder="Google" className={inputCls} />
         </div>
       </div>
@@ -221,13 +221,13 @@ function AddProviderForm({
           Eliminates the most common setup mistake: registering a URL that
           doesn't match what Bindery actually sends. */}
       <div>
-        <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+        <label className="block text-xs text-fg-muted mb-1">
           {t('settings.oidc.fieldCallbackUrl')}
         </label>
         <div className="flex gap-2 items-center">
-          <code className="flex-1 text-xs font-mono px-3 py-2 rounded bg-slate-50 dark:bg-zinc-950 border border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-400 truncate min-w-0">
+          <code className="flex-1 text-xs font-mono px-3 py-2 rounded bg-slate-50 dark:bg-zinc-950 border border-slate-300 dark:border-zinc-700 text-fg-muted truncate min-w-0">
             {callbackPreview || (
-              <span className="italic text-slate-400 dark:text-zinc-600">
+              <span className="italic text-fg-muted">
                 {t('settings.oidc.callbackUrlEmpty')}
               </span>
             )}
@@ -244,7 +244,7 @@ function AddProviderForm({
         {callbackClipboard.status === 'manual' && (
           <ClipboardManualFallback text={callbackClipboard.manualText} className="mt-2" />
         )}
-        <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-1">
+        <p className="text-[11px] text-fg-muted mt-1">
           {t('settings.oidc.callbackUrlHint')}
         </p>
         {baseConfigured === false && (
@@ -257,20 +257,20 @@ function AddProviderForm({
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label htmlFor={`${fid}-3`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.oidc.fieldClientId')}</label>
+          <label htmlFor={`${fid}-3`} className="block text-xs text-fg-muted mb-1">{t('settings.oidc.fieldClientId')}</label>
           <input id={`${fid}-3`} value={clientId} onChange={e => setClientId(e.target.value)} required className={inputCls} />
         </div>
         <div>
-          <label htmlFor={`${fid}-4`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.oidc.fieldClientSecret')}</label>
+          <label htmlFor={`${fid}-4`} className="block text-xs text-fg-muted mb-1">{t('settings.oidc.fieldClientSecret')}</label>
           <input id={`${fid}-4`} {...secretInputAttrs} value={clientSecret} onChange={e => setClientSecret(e.target.value)} required type="password" className={inputCls} />
         </div>
       </div>
       <div>
-        <label htmlFor={`${fid}-5`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.oidc.fieldScopes')}</label>
+        <label htmlFor={`${fid}-5`} className="block text-xs text-fg-muted mb-1">{t('settings.oidc.fieldScopes')}</label>
         <input id={`${fid}-5`} value={scopes} onChange={e => setScopes(e.target.value)} className={inputCls} />
       </div>
       <div className="flex gap-2 justify-end">
-        <button type="button" onClick={onCancel} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">
+        <button type="button" onClick={onCancel} className="px-3 py-1.5 text-sm text-fg-muted">
           {t('common.cancel')}
         </button>
         <button
@@ -332,7 +332,7 @@ function IssuerField({ value, onChange }: { value: string; onChange: (v: string)
   }
   return (
     <div>
-      <label htmlFor={`${fid}-1`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+      <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">
         {t('settings.oidc.fieldIssuer')}
       </label>
       <div className="flex gap-2">
@@ -370,24 +370,24 @@ function DiscoveryResultView({ result, entered }: { result: DiscoveryResult; ent
   }
   const { discovered, mismatch } = result
   return (
-    <div className="text-[11px] mt-1.5 space-y-0.5 text-slate-600 dark:text-zinc-400">
+    <div className="text-[11px] mt-1.5 space-y-0.5 text-fg-muted">
       {mismatch ? (
         <p className="text-amber-700 dark:text-amber-400 break-all">
           {t('settings.oidc.testDiscoveryMismatch', { entered, discovered: discovered.issuer })}
         </p>
       ) : (
-        <p className="text-emerald-700 dark:text-emerald-400">{t('settings.oidc.testDiscoveryOk')}</p>
+        <p className="text-accent-text">{t('settings.oidc.testDiscoveryOk')}</p>
       )}
       <p className="break-all">
-        <span className="text-slate-500 dark:text-zinc-500">authorize:</span>{' '}
+        <span className="text-fg-muted">authorize:</span>{' '}
         {discovered.authorization_endpoint}
       </p>
       <p className="break-all">
-        <span className="text-slate-500 dark:text-zinc-500">token:</span> {discovered.token_endpoint}
+        <span className="text-fg-muted">token:</span> {discovered.token_endpoint}
       </p>
       {discovered.scopes_supported && discovered.scopes_supported.length > 0 && (
         <p className="break-all">
-          <span className="text-slate-500 dark:text-zinc-500">scopes:</span>{' '}
+          <span className="text-fg-muted">scopes:</span>{' '}
           {discovered.scopes_supported.join(' ')}
         </p>
       )}

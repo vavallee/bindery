@@ -90,7 +90,7 @@ export default function RequestsPage() {
       {/* Centered, with a hint line, so this reads like the Queue, Discover and
           Import empty states instead of a stray left aligned sentence. */}
       {!loading && !error && items.length === 0 && (
-        <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
+        <div className="text-center py-16 text-fg-muted">
           <p>{filter === 'pending' ? t('requests.admin.emptyPending') : t('requests.admin.empty')}</p>
           <p className="mt-1 text-sm">
             {filter === 'pending' ? t('requests.admin.emptyPendingHint') : t('requests.admin.emptyHint')}

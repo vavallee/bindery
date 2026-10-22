@@ -62,7 +62,7 @@ export default function QualityTab() {
           {t('settings.quality.newProfile')}
         </button>
       </div>
-      <p className="text-xs text-slate-600 dark:text-zinc-500 mb-4">
+      <p className="text-xs text-fg-muted mb-4">
         {t('settings.quality.description')}
       </p>
       {creating && (
@@ -72,7 +72,7 @@ export default function QualityTab() {
         />
       )}
       {profiles.length === 0 && !creating ? (
-        <p className="text-slate-600 dark:text-zinc-500 text-sm">{t('settings.quality.empty')}</p>
+        <p className="text-fg-muted text-sm">{t('settings.quality.empty')}</p>
       ) : (
         <div className="space-y-3">
           {profiles.map(p => (
@@ -145,9 +145,9 @@ function ProfileRow({
                 const heading = kind === 'ebook' ? t('settings.quality.ebookList') : t('settings.quality.audiobookList')
                 return (
                   <div key={kind}>
-                    <p className="text-[10px] text-slate-500 dark:text-zinc-600 mb-1">
+                    <p className="text-[10px] text-fg-muted mb-1">
                       {heading}
-                      {list.length > 1 && <span className="ml-1.5 text-slate-400 dark:text-zinc-700">{t('settings.quality.bestFirst')}</span>}
+                      {list.length > 1 && <span className="ml-1.5">{t('settings.quality.bestFirst')}</span>}
                     </p>
                     <ul aria-label={heading} className="flex flex-wrap gap-1.5">
                       {list.map((item, i) => (
@@ -155,7 +155,7 @@ function ProfileRow({
                           key={item.quality}
                           className={`text-[10px] px-2 py-0.5 rounded ${item.allowed
                             ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                            : 'bg-slate-200 dark:bg-zinc-800 text-slate-500 dark:text-zinc-500'}`}
+                            : 'bg-slate-200 dark:bg-zinc-800 text-fg-muted'}`}
                         >
                           {i + 1}. {item.quality}
                         </li>
@@ -171,7 +171,7 @@ function ProfileRow({
           <button
             type="button"
             onClick={onEdit}
-            className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
+            className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white"
           >
             {t('common.edit')}
           </button>
@@ -269,7 +269,7 @@ function QualityProfileForm({
 
       <div>
         <label className={labelCls}>{t('settings.quality.formPreference')}</label>
-        <p className="text-[11px] text-slate-500 dark:text-zinc-500 mb-2">
+        <p className="text-[11px] text-fg-muted mb-2">
           {t('settings.quality.formPreferenceHint')}
         </p>
         <div className="space-y-4">
@@ -295,7 +295,7 @@ function QualityProfileForm({
           type="button"
           onClick={onClose}
           disabled={saving}
-          className="px-3 py-1.5 text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50"
+          className="px-3 py-1.5 text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50"
         >
           {t('common.cancel')}
         </button>

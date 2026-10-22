@@ -29,10 +29,10 @@ const TRIGGER_HINTS: Array<{ key: string; label: string; labelKey?: string }> = 
 function TriggerHints() {
   const { t } = useTranslation()
   return (
-    <ul className="mt-2 space-y-0.5 text-xs text-slate-500 dark:text-zinc-500" aria-label={t('settings.notifications.triggerHintsLabel')}>
+    <ul className="mt-2 space-y-0.5 text-xs text-fg-muted" aria-label={t('settings.notifications.triggerHintsLabel')}>
       {TRIGGER_HINTS.map(h => (
         <li key={h.key}>
-          <span className="font-medium text-slate-600 dark:text-zinc-400">{h.labelKey ? t(h.labelKey) : h.label}</span>
+          <span className="font-medium text-fg-muted">{h.labelKey ? t(h.labelKey) : h.label}</span>
           {': '}
           {t(`settings.notifications.eventHints.${h.key}`)}
         </li>
@@ -67,7 +67,7 @@ export default function NotificationsTab() {
         </button>
       </div>
       {notifications.length === 0 ? (
-        <p className="text-slate-600 dark:text-zinc-500 text-sm">{t('settings.notifications.empty')}</p>
+        <p className="text-fg-muted text-sm">{t('settings.notifications.empty')}</p>
       ) : (
         <div className="space-y-2">
           {notifications.map(n => (
@@ -84,21 +84,21 @@ export default function NotificationsTab() {
                       title={n.enabled ? t('common.disable') : t('common.enable')}
                     />
                     <div className="min-w-0">
-                      <h4 className={`font-medium text-sm ${!n.enabled ? 'text-slate-600 dark:text-zinc-500' : ''}`}>{n.name}</h4>
-                      <p className="text-xs text-slate-600 dark:text-zinc-500 truncate mt-0.5">{n.url}</p>
+                      <h4 className={`font-medium text-sm ${!n.enabled ? 'text-fg-muted' : ''}`}>{n.name}</h4>
+                      <p className="text-xs text-fg-muted truncate mt-0.5">{n.url}</p>
                       <div className="flex flex-wrap gap-1 mt-2">
-                        {n.onGrab && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{t('settings.notifications.onGrab')}</span>}
-                        {n.onImport && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{t('settings.notifications.onImport')}</span>}
-                        {n.onUpgrade && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{t('settings.notifications.onUpgrade')}</span>}
-                        {n.onFailure && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{t('settings.notifications.onFailure')}</span>}
-                        {n.onHealth && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{t('settings.notifications.onHealth')}</span>}
-                        {n.onBookAnnounced && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{t('settings.notifications.onBookAnnounced')}</span>}
-                        {n.onRequestCreated && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{t('settings.notifications.onRequestCreated')}</span>}
+                        {n.onGrab && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{t('settings.notifications.onGrab')}</span>}
+                        {n.onImport && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{t('settings.notifications.onImport')}</span>}
+                        {n.onUpgrade && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{t('settings.notifications.onUpgrade')}</span>}
+                        {n.onFailure && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{t('settings.notifications.onFailure')}</span>}
+                        {n.onHealth && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{t('settings.notifications.onHealth')}</span>}
+                        {n.onBookAnnounced && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{t('settings.notifications.onBookAnnounced')}</span>}
+                        {n.onRequestCreated && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{t('settings.notifications.onRequestCreated')}</span>}
                       </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0">
-                    <button onClick={() => setEditingNotification(editingNotification === n.id ? null : n.id)} className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">{t('common.edit')}</button>
+                    <button onClick={() => setEditingNotification(editingNotification === n.id ? null : n.id)} className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white">{t('common.edit')}</button>
                     <button
                       onClick={async () => {
                         try {
@@ -108,13 +108,13 @@ export default function NotificationsTab() {
                           setNotificationTestResult(prev => ({ ...prev, [n.id]: { ok: false, msg: t('common.connFail', { error: err instanceof Error ? err.message : 'Unknown error' }) } }))
                         }
                       }}
-                      className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
+                      className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white"
                     >
                       {t('common.test')}
                     </button>
                     {confirmDeleteNotification === n.id ? (
                       <span className="flex items-center gap-1.5">
-                        <span className="text-xs text-slate-500 dark:text-zinc-500">{t('common.delete')}?</span>
+                        <span className="text-xs text-fg-muted">{t('common.delete')}?</span>
                         <button
                           onClick={async () => {
                             await api.deleteNotification(n.id)
@@ -123,7 +123,7 @@ export default function NotificationsTab() {
                           }}
                           className={`text-xs font-medium ${dangerLink}`}
                         >{t('common.yes')}</button>
-                        <button onClick={() => setConfirmDeleteNotification(null)} className="text-xs text-slate-500 dark:text-zinc-500 hover:text-slate-700 dark:hover:text-zinc-300">{t('common.no')}</button>
+                        <button onClick={() => setConfirmDeleteNotification(null)} className="text-xs text-fg-muted hover:text-slate-700 dark:hover:text-zinc-300">{t('common.no')}</button>
                       </span>
                     ) : (
                       <button onClick={() => setConfirmDeleteNotification(n.id)} className={`text-xs ${dangerLink}`}>
@@ -206,7 +206,7 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
     `px-3 py-1.5 rounded text-xs font-medium border transition-colors cursor-pointer select-none ${
       active
         ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
-        : 'bg-slate-200 dark:bg-zinc-800 border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-400'
+        : 'bg-slate-200 dark:bg-zinc-800 border-slate-300 dark:border-zinc-700 text-fg-muted'
     }`
 
   return (
@@ -221,12 +221,12 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
       </div>
       <input {...urlInputAttrs} value={url} onChange={e => setUrl(e.target.value)} placeholder="Webhook URL" className={inputCls} />
       <div>
-        <label htmlFor={`${fid}-1`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">ntfy topic (optional)</label>
+        <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">ntfy topic (optional)</label>
         <input id={`${fid}-1`} value={topic} onChange={e => setTopic(e.target.value)} placeholder="my-topic" className={inputCls} />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">For ntfy: set the topic here and point the URL at the ntfy server root (e.g. https://ntfy.sh). Bindery then posts a JSON body ntfy renders natively, instead of printing raw JSON.</p>
+        <p className="text-xs text-fg-muted mt-1">For ntfy: set the topic here and point the URL at the ntfy server root (e.g. https://ntfy.sh). Bindery then posts a JSON body ntfy renders natively, instead of printing raw JSON.</p>
       </div>
       <div>
-        <label htmlFor={`${fid}-2`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Custom headers (JSON, optional)</label>
+        <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">Custom headers (JSON, optional)</label>
         <textarea id={`${fid}-2`}
           value={headers}
           onChange={e => setHeaders(e.target.value)}
@@ -234,10 +234,10 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
           rows={3}
           className={`${inputCls} font-mono text-xs`}
         />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">For ntfy auth, Discord routing, or any custom header. Leave blank to send none.</p>
+        <p className="text-xs text-fg-muted mt-1">For ntfy auth, Discord routing, or any custom header. Leave blank to send none.</p>
       </div>
       <div>
-        <p className="text-xs text-slate-600 dark:text-zinc-400 mb-2">Trigger on:</p>
+        <p className="text-xs text-fg-muted mb-2">Trigger on:</p>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => setOnGrab(!onGrab)} title={triggerTitle(t, 'grab')} className={toggleCls(onGrab)}>Grab</button>
           <button type="button" onClick={() => setOnImport(!onImport)} title={triggerTitle(t, 'import')} className={toggleCls(onImport)}>Import</button>
@@ -255,7 +255,7 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
         </div>
       )}
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-fg-muted">Cancel</button>
         <button onClick={submit} disabled={saving} className={`px-3 py-1.5 ${primaryFill} disabled:opacity-60 disabled:cursor-not-allowed rounded text-sm font-medium`}>Save</button>
       </div>
     </div>
@@ -307,7 +307,7 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
     `px-3 py-1.5 rounded text-xs font-medium border transition-colors cursor-pointer select-none ${
       active
         ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
-        : 'bg-slate-200 dark:bg-zinc-800 border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-400'
+        : 'bg-slate-200 dark:bg-zinc-800 border-slate-300 dark:border-zinc-700 text-fg-muted'
     }`
 
   return (
@@ -322,12 +322,12 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
       </div>
       <input {...urlInputAttrs} value={url} onChange={e => setUrl(e.target.value)} placeholder="Webhook URL" className={inputCls} />
       <div>
-        <label htmlFor={`${fid}-1`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">ntfy topic (optional)</label>
+        <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">ntfy topic (optional)</label>
         <input id={`${fid}-1`} value={topic} onChange={e => setTopic(e.target.value)} placeholder="my-topic" className={inputCls} />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">For ntfy: set the topic here and point the URL at the ntfy server root (e.g. https://ntfy.sh). Bindery then posts a JSON body ntfy renders natively, instead of printing raw JSON.</p>
+        <p className="text-xs text-fg-muted mt-1">For ntfy: set the topic here and point the URL at the ntfy server root (e.g. https://ntfy.sh). Bindery then posts a JSON body ntfy renders natively, instead of printing raw JSON.</p>
       </div>
       <div>
-        <label htmlFor={`${fid}-2`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Custom headers (JSON, optional)</label>
+        <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">Custom headers (JSON, optional)</label>
         <textarea id={`${fid}-2`}
           value={headers}
           onChange={e => setHeaders(e.target.value)}
@@ -335,10 +335,10 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
           rows={3}
           className={`${inputCls} font-mono text-xs`}
         />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">For ntfy auth, Discord routing, or any custom header. Leave blank to send none.</p>
+        <p className="text-xs text-fg-muted mt-1">For ntfy auth, Discord routing, or any custom header. Leave blank to send none.</p>
       </div>
       <div>
-        <p className="text-xs text-slate-600 dark:text-zinc-400 mb-2">Trigger on:</p>
+        <p className="text-xs text-fg-muted mb-2">Trigger on:</p>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => setOnGrab(!onGrab)} title={triggerTitle(t, 'grab')} className={toggleCls(onGrab)}>Grab</button>
           <button type="button" onClick={() => setOnImport(!onImport)} title={triggerTitle(t, 'import')} className={toggleCls(onImport)}>Import</button>
@@ -356,7 +356,7 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
         </div>
       )}
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">Cancel</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-fg-muted">Cancel</button>
         <button onClick={submit} disabled={saving} className={`px-3 py-1.5 ${primaryFill} disabled:opacity-60 disabled:cursor-not-allowed rounded text-sm font-medium`}>Save</button>
       </div>
     </div>

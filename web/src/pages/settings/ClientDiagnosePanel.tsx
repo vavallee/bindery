@@ -25,7 +25,7 @@ export default function ClientDiagnosePanel({ result, onClose }: Props) {
   const { t } = useTranslation()
   const clipboard = useClipboardCopy()
   const firstProblem = result.checks.find(c => c.status === 'fail') ?? result.checks.find(c => c.status === 'warn')
-  const labelCls = 'text-slate-600 dark:text-zinc-400'
+  const labelCls = 'text-fg-muted'
   const mediaLabel = (m?: DiagnoseMediaType) => m ? t(`settings.clients.diagnose.media.${m}`) : ''
   const checkTitle = (c: DiagnoseCheck) => {
     const title = t(`settings.clients.diagnose.check.${c.code}`, c.code)
@@ -44,11 +44,11 @@ export default function ClientDiagnosePanel({ result, onClose }: Props) {
           <button
             type="button"
             onClick={() => { void clipboard.copy(buildDiagnoseReport(result)) }}
-            className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
+            className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white"
           >
             {clipboard.status === 'copied' ? t('settings.clients.diagnose.copied') : t('settings.clients.diagnose.copyReport')}
           </button>
-          <button type="button" onClick={onClose} className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">
+          <button type="button" onClick={onClose} className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white">
             {t('settings.clients.diagnose.close')}
           </button>
         </div>
@@ -73,11 +73,11 @@ export default function ClientDiagnosePanel({ result, onClose }: Props) {
             <div className="min-w-0">
               <div>
                 <span className="font-medium">{checkTitle(c)}</span>
-                <span className="ml-2 text-slate-500 dark:text-zinc-500">{t(`settings.clients.diagnose.status.${c.status}`, c.status)}</span>
+                <span className="ml-2 text-fg-muted">{t(`settings.clients.diagnose.status.${c.status}`, c.status)}</span>
               </div>
               <p className={`${labelCls} break-words`}>{c.message}</p>
               {c.fix && c.status !== 'pass' && c.status !== 'skipped' && (
-                <p className="text-slate-500 dark:text-zinc-500 break-words">{c.fix}</p>
+                <p className="text-fg-muted break-words">{c.fix}</p>
               )}
             </div>
           </li>

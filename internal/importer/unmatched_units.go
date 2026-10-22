@@ -34,6 +34,12 @@ const (
 	// candidateThreshold is the lowest title similarity offered as a
 	// suggestion. The reconcile itself needs 0.85; below that a person decides.
 	candidateThreshold = 0.60
+	// differentWorkSuggestionFloor is the score from which a suggestion that
+	// names a different work is dropped. It is the reconcile's own 0.85 gate:
+	// a title this close is one the scan would have claimed but for the
+	// different-work check, and the UI treats the top of this range as a one
+	// click match.
+	differentWorkSuggestionFloor = 0.85
 	// maxCandidates is how many suggestions a unit keeps.
 	maxCandidates = 3
 )
@@ -433,6 +439,18 @@ func rankCandidates(title, layoutTitle string, wanted, catalogue []scanBook, cat
 			return
 		}
 		if libraryVolumeConflict(title, layoutTitle, sb.book.Title) {
+			return
+		}
+		// A title that scores as high as the scan's own gate yet has words of
+		// its own that the file lacks, and the reverse, is another work:
+		// Order of the Phoenix at 0.929 for the Deathly Hallows folder cleared
+		// the one click Confirm threshold in the UI (#3388). Below the gate a
+		// suggestion is a loose guess that a person judges ("A Martyrs Tale"
+		// beside "The Martian"), and different words are what it looks like,
+		// so only the high scorers are dropped. The book folder's title may
+		// name the candidate where the file's does not, so both are asked.
+		if score >= differentWorkSuggestionFloor && titlesNameDifferentWorks(title, sb.book.Title) &&
+			(layoutTitle == "" || titlesNameDifferentWorks(layoutTitle, sb.book.Title)) {
 			return
 		}
 		out = append(out, scored{db.UnmatchedCandidate{BookID: sb.book.ID, Score: score}, sb.reconcilable})

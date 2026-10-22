@@ -829,6 +829,28 @@ to the records. Things worth knowing before you judge the results:
   offered as its suggestion either (#2860).
 - An exact title is attached in preference to a shorter partial one, and two
   near-tied non-exact titles are left for you to choose (#2941).
+- A file is never attached to a book that is a different work with a similar
+  title. Titles in one series share most of their words, so the similarity
+  score alone cannot tell `Harry Potter en de Relieken van de Dood` from
+  `Harry Potter en de Orde van de Feniks`. After the best title is chosen, the
+  scan sets aside the words both titles share and compares what is left. When
+  each title has words the other lacks and none of them is close (`relieken
+  dood` against `orde feniks`), the file is left unmatched for **Import → In
+  your library**, even when the book it really belongs to is excluded. A
+  book that close in title is not offered as the file's suggestion either, so
+  Confirm never points at it. Loose, low scoring guesses are still listed for
+  you to judge. A title with a subtitle added or dropped, a spelling or accent variant
+  (`Æsop` and `Aesop`), a series note in brackets, an abbreviation (`Dr.` and
+  `Doctor`, `Mr.`, `Mrs.`, `St.`, `Jr.`, `vs`) and the Philosopher's Stone and
+  Sorcerer's Stone pair are still the same work. Other alternate titles of one
+  book are not recognised and wait on the Import page. Adding a book runs the
+  same check before it decides you already own the book (#3388). This check
+  only adds rejections: it never makes a file match that did not before, and it
+  does not stop a title that contains the other, such as `Dune` and `Dune
+  Messiah`, from matching as it always did. It can also leave a genuine match
+  unmatched, for example when the file name carries a word the catalogue title
+  does not, such as the author's name, so that file waits on the Import page to
+  be confirmed.
 
 ## Adopting files already in your library
 

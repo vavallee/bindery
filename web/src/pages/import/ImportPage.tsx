@@ -48,7 +48,7 @@ export default function ImportPage() {
     `px-3 py-1.5 rounded-md text-sm font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-500 ${
       active
         ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow-sm'
-        : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'
+        : 'text-fg-muted hover:text-slate-900 dark:hover:text-white'
     }`
 
   return (

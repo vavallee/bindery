@@ -111,7 +111,7 @@ export default function ClientsTab({ clients, setClients }: Props) {
         </button>
       </div>
       {clients.length === 0 ? (
-        <p className="text-slate-600 dark:text-zinc-500 text-sm">{t('settings.clients.empty')}</p>
+        <p className="text-fg-muted text-sm">{t('settings.clients.empty')}</p>
       ) : (
         <div className="space-y-2">
           {clients.map(c => (
@@ -127,16 +127,16 @@ export default function ClientsTab({ clients, setClients }: Props) {
                     title={c.enabled ? t('common.disable') : t('common.enable')}
                   />
                   <div className="min-w-0">
-                    <h4 className={`font-medium text-sm ${!c.enabled ? 'text-slate-600 dark:text-zinc-500' : ''}`}>{c.name}</h4>
-                    <p className="text-xs text-slate-600 dark:text-zinc-500">{c.host}:{c.port} ({c.category})</p>
+                    <h4 className={`font-medium text-sm ${!c.enabled ? 'text-fg-muted' : ''}`}>{c.name}</h4>
+                    <p className="text-xs text-fg-muted">{c.host}:{c.port} ({c.category})</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  <button onClick={() => setEditingClient(editingClient === c.id ? null : c.id)} className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">{t('common.edit')}</button>
+                  <button onClick={() => setEditingClient(editingClient === c.id ? null : c.id)} className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white">{t('common.edit')}</button>
                   <button
                     id={`client-test-${c.id}`}
                     onClick={() => { void runTest(c) }}
-                    className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
+                    className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white"
                   >
                     {t('common.test')}
                   </button>
@@ -144,13 +144,13 @@ export default function ClientsTab({ clients, setClients }: Props) {
                     onClick={() => { void runDiagnose(c.id) }}
                     disabled={diagnosing === c.id}
                     aria-expanded={!!diagnosis[c.id]?.result}
-                    className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50"
+                    className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50"
                   >
                     {diagnosing === c.id ? t('settings.clients.diagnose.running') : t('settings.clients.diagnose.button')}
                   </button>
                   {confirmDeleteClient === c.id ? (
                     <span className="flex items-center gap-1.5">
-                      <span className="text-xs text-slate-500 dark:text-zinc-500">{t('common.delete')}?</span>
+                      <span className="text-xs text-fg-muted">{t('common.delete')}?</span>
                       <button
                         onClick={async () => {
                           await api.deleteDownloadClient(c.id)
@@ -159,7 +159,7 @@ export default function ClientsTab({ clients, setClients }: Props) {
                         }}
                         className={`text-xs font-medium ${dangerLink}`}
                       >{t('common.yes')}</button>
-                      <button onClick={() => setConfirmDeleteClient(null)} className="text-xs text-slate-500 dark:text-zinc-500 hover:text-slate-700 dark:hover:text-zinc-300">{t('common.no')}</button>
+                      <button onClick={() => setConfirmDeleteClient(null)} className="text-xs text-fg-muted hover:text-slate-700 dark:hover:text-zinc-300">{t('common.no')}</button>
                     </span>
                   ) : (
                     <button onClick={() => setConfirmDeleteClient(c.id)} className={`text-xs ${dangerLink}`}>
@@ -258,7 +258,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   const [removeOnImport, setRemoveOnImport] = useState(client.removeOnImport || false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; warn?: string } | null>(null)
-  const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
+  const labelCls = 'block text-xs text-fg-muted mb-1'
 
   const handleTypeChange = (newType: string) => {
     setType(newType)
@@ -373,7 +373,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
           <input id={`${fid}-7`} {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
           <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
+        <p className="text-xs text-fg-muted mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
       </div>
       <div className="flex items-center gap-2">
         <input
@@ -388,7 +388,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
       <div>
         <label htmlFor={`${fid}-3`} className={labelCls}>URL Base</label>
         <input id={`${fid}-3`} value={urlBase} onChange={e => setUrlBase(e.target.value)} placeholder={type === 'rtorrent' ? '/RPC2' : '/sabnzbd'} className={inputCls} />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{type === 'rtorrent'
+        <p className="text-xs text-fg-muted mt-1">{type === 'rtorrent'
           ? t('settings.clients.rtorrentUrlBaseHelp')
           : <>Optional path prefix for reverse proxy deployments (e.g. <code className="font-mono">/sabnzbd</code>). Leave blank for direct connections.</>}</p>
         {scgiIgnored.length > 0 && (
@@ -416,22 +416,22 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
           type="password"
           className={inputCls}
         />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{credentialStored
+        <p className="text-xs text-fg-muted mt-1">{credentialStored
           ? t('settings.clients.credentialKeepHint')
           : t('settings.clients.credentialUnsetHint')}</p>
       </div>
       <div>
         <label htmlFor={`${fid}-5`} className={labelCls}>{type === 'transmission' ? 'Download Directory' : 'Category / Label'}</label>
         <input id={`${fid}-5`} value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? '/downloads (leave blank for default)' : 'books'} className={inputCls} />
-        {type === 'transmission' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
-        {type === 'deluge' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
-        {type === 'rtorrent' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.rtorrentCategoryHelp')}</p>}
+        {type === 'transmission' && <p className="text-xs text-fg-muted mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
+        {type === 'deluge' && <p className="text-xs text-fg-muted mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
+        {type === 'rtorrent' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.rtorrentCategoryHelp')}</p>}
       </div>
       {type !== 'transmission' && (
         <div>
           <label htmlFor={`${fid}-6`} className={labelCls}>{t('settings.clients.audiobookCategoryLabel')}</label>
           <input id={`${fid}-6`} value={categoryAudiobook} onChange={e => setCategoryAudiobook(e.target.value)} placeholder={t('settings.clients.audiobookCategoryPlaceholder')} className={inputCls} />
-          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.audiobookCategoryHelp')}</p>
+          <p className="text-xs text-fg-muted mt-1">{t('settings.clients.audiobookCategoryHelp')}</p>
         </div>
       )}
       <PathRemapField
@@ -454,7 +454,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
             />
             <label htmlFor={`edit-remove-on-import-${client.id}`} className={labelCls}>{t('settings.clients.removeOnImportLabel')}</label>
           </div>
-          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.removeOnImportHelp')}</p>
+          <p className="text-xs text-fg-muted mt-1">{t('settings.clients.removeOnImportHelp')}</p>
         </div>
       )}
       {saveError && <p className="text-sm text-red-500">{saveError}</p>}
@@ -471,8 +471,8 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
         </div>
       )}
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
-        <button onClick={handleTest} disabled={testing || !host} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{testing ? t('common.testing') : t('common.test')}</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-fg-muted">{t('common.cancel')}</button>
+        <button onClick={handleTest} disabled={testing || !host} className="px-3 py-1.5 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{testing ? t('common.testing') : t('common.test')}</button>
         <button onClick={submit} disabled={saving} className={`px-3 py-1.5 ${primaryFill} rounded text-sm font-medium disabled:opacity-50`}>{t('common.save')}</button>
       </div>
     </div>
@@ -506,7 +506,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   const [removeOnImport, setRemoveOnImport] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; warn?: string } | null>(null)
-  const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
+  const labelCls = 'block text-xs text-fg-muted mb-1'
 
   const isPasswordClient = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'deluge' || t === 'rtorrent'
   // rTorrent authenticates with HTTP basic auth on the RPC endpoint, so it takes
@@ -617,7 +617,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
           <input id={`${fid}-8`} {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
           <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
+        <p className="text-xs text-fg-muted mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
       </div>
       <div className="flex items-center gap-2">
         <input
@@ -632,7 +632,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
       <div>
         <label htmlFor={`${fid}-3`} className={labelCls}>URL Base</label>
         <input id={`${fid}-3`} value={urlBase} onChange={e => setUrlBase(e.target.value)} placeholder={type === 'rtorrent' ? '/RPC2' : '/sabnzbd'} className={inputCls} />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{type === 'rtorrent'
+        <p className="text-xs text-fg-muted mt-1">{type === 'rtorrent'
           ? t('settings.clients.rtorrentUrlBaseHelp')
           : <>Optional path prefix for reverse proxy deployments (e.g. <code className="font-mono">/sabnzbd</code>). Leave blank for direct connections.</>}</p>
         {scgiIgnored.length > 0 && (
@@ -654,15 +654,15 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
       <div>
         <label htmlFor={`${fid}-6`} className={labelCls}>{type === 'transmission' ? 'Download Directory' : 'Category / Label'}</label>
         <input id={`${fid}-6`} value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? '/downloads (leave blank for default)' : 'books'} className={inputCls} />
-        {type === 'transmission' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
-        {type === 'deluge' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
-        {type === 'rtorrent' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.rtorrentCategoryHelp')}</p>}
+        {type === 'transmission' && <p className="text-xs text-fg-muted mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
+        {type === 'deluge' && <p className="text-xs text-fg-muted mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
+        {type === 'rtorrent' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.rtorrentCategoryHelp')}</p>}
       </div>
       {type !== 'transmission' && (
         <div>
           <label htmlFor={`${fid}-7`} className={labelCls}>{t('settings.clients.audiobookCategoryLabel')}</label>
           <input id={`${fid}-7`} value={categoryAudiobook} onChange={e => setCategoryAudiobook(e.target.value)} placeholder={t('settings.clients.audiobookCategoryPlaceholder')} className={inputCls} />
-          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.audiobookCategoryHelp')}</p>
+          <p className="text-xs text-fg-muted mt-1">{t('settings.clients.audiobookCategoryHelp')}</p>
         </div>
       )}
       <PathRemapField
@@ -685,7 +685,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
             />
             <label htmlFor="add-remove-on-import" className={labelCls}>{t('settings.clients.removeOnImportLabel')}</label>
           </div>
-          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.removeOnImportHelp')}</p>
+          <p className="text-xs text-fg-muted mt-1">{t('settings.clients.removeOnImportHelp')}</p>
         </div>
       )}
       {saveError && <p className="text-sm text-red-500">{saveError}</p>}
@@ -702,8 +702,8 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         </div>
       )}
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
-        <button onClick={handleTest} disabled={testing || !host} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{testing ? t('common.testing') : t('common.test')}</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-fg-muted">{t('common.cancel')}</button>
+        <button onClick={handleTest} disabled={testing || !host} className="px-3 py-1.5 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{testing ? t('common.testing') : t('common.test')}</button>
         <button onClick={submit} disabled={saving} className={`px-3 py-1.5 ${primaryFill} rounded text-sm font-medium disabled:opacity-50`}>{t('common.save')}</button>
       </div>
     </div>

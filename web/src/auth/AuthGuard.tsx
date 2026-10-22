@@ -19,7 +19,7 @@ export default function AuthGuard({ children }: { children: ReactNode }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-slate-500 dark:text-zinc-500 text-sm">
+      <div className="min-h-screen flex items-center justify-center text-fg-muted text-sm">
         Loading…
       </div>
     )
@@ -73,7 +73,7 @@ function ServerUnavailable({ refresh }: { refresh: () => Promise<void> }) {
   }, [attempt, busy, retry])
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-3 px-4 text-center text-slate-500 dark:text-zinc-500 text-sm">
+    <div className="min-h-screen flex flex-col items-center justify-center gap-3 px-4 text-center text-fg-muted text-sm">
       <p>{t('common.serverUnavailable', 'Bindery is not answering right now.')}</p>
       <button
         type="button"

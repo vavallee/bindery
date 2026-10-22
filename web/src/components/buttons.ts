@@ -33,7 +33,7 @@ export const btn = {
   // Secondary action (filled neutral, lower weight than primary).
   secondary: `${base} bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 text-slate-800 dark:text-zinc-200 focus-visible:ring-slate-400`,
   // Tertiary action (ghost, lowest emphasis — e.g. row "Refresh").
-  ghost: `${base} text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-zinc-800/60 focus-visible:ring-slate-400`,
+  ghost: `${base} text-fg-muted hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-zinc-800/60 focus-visible:ring-slate-400`,
   // Destructive action: ghost-danger button (outlined + tinted hover). AA-safe
   // in both themes. Pair with a confirmation at the call site — this is styling,
   // not a guard.

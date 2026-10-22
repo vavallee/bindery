@@ -80,9 +80,11 @@ POST   /api/v1/author                             add an author (triggers async 
 POST   /api/v1/author/book                        add one book by foreign id (creates its author if needed)
 POST   /api/v1/author/bulk                        bulk add/update
 GET    /api/v1/author/{id}                        author detail
-PUT    /api/v1/author/{id}                        update monitored / metadata profile
+PUT    /api/v1/author/{id}                        update monitored / metadata profile, or the bio: `description` set by hand is kept as the user's own and no refresh replaces it; an empty string clears it for the provider to fill again (#3287). 409 when the author changed since it was read, such as a scheduled refresh in between: reload and save again
 DELETE /api/v1/author/{id}                        remove (with optional file delete)
 POST   /api/v1/author/{id}/refresh                re-pull profile and works, skipping the metadata cache; 409 while a sync for that author is running
+POST   /api/v1/author/{id}/photo                  set the photo from the request body, as `POST /book/{id}/cover` does for a cover (raw JPEG, PNG, WebP or GIF, max 10 MB; 413 over the limit, 415 for anything else); stored locally and kept as the user's own, so no refresh or enricher replaces it. 409 when the author changed since it was read. Answers the author (#3287)
+DELETE /api/v1/author/{id}/photo                  remove a photo set with the POST above, then refresh the author's profile as its Refresh button does, so the provider's or an enricher's photo shows at once. 409 for a photo the user didn't upload, or when the author changed since it was read. The stored file stays, since the cover store is shared with book covers. Answers the author (#3287)
 GET    /api/v1/author/{id}/catalogue-reconciliation
                                                     preview stale metadata-only Wanted rows
 POST   /api/v1/author/{id}/catalogue-reconciliation
@@ -985,6 +987,8 @@ GET    /api/v1/system/logs/export                 the same rows as a downloadabl
 GET    /api/v1/system/loglevel                    current log level (admin)
 PUT    /api/v1/system/loglevel                    runtime log-level switch, debug/info/warn/error (admin)
 POST   /api/v1/system/db-integrity                on demand foreign key drift check, read only (admin)
+POST   /api/v1/system/db-integrity/cleanup/preview  what a cleanup would do, per relationship, plus a confirmation token (admin)
+POST   /api/v1/system/db-integrity/cleanup        back up, then clean up the previewed rows (admin)
 GET    /api/v1/images?url=<encoded>               proxied + cached cover image (30-day TTL)
 ```
 
@@ -1019,8 +1023,93 @@ running gets `409` straight away. A scan is stopped after 60 seconds with
 `504`, and a client that disconnects stops it too. While it runs the scan
 pins a WAL snapshot, which the 60 second limit bounds. Admin only, like
 `/system/storage`. To preview the affected rows from the command line use
-`bindery db-check`; the cleanup is `bindery db-repair` with the yes flag (see
-[DEPLOYMENT.md](DEPLOYMENT.md#database-foreign-key-integrity)).
+`bindery db-check`; the offline cleanup is `bindery db-repair` with the yes flag
+(see [DEPLOYMENT.md](DEPLOYMENT.md#database-foreign-key-integrity)).
+
+The cleanup (#3357) is two more routes, both admin only, both POST, both behind
+the same CSRF guards as every other write:
+
+`POST /api/v1/system/db-integrity/cleanup/preview` scans exactly as above and
+adds what a cleanup would do with each relationship, plus a `previewToken`. It
+changes nothing.
+
+```json
+{
+  "relationships": [
+    {"childTable": "book_files", "parentTable": "books", "onDelete": "CASCADE", "violations": 4, "action": "delete"},
+    {"childTable": "downloads", "parentTable": "books", "onDelete": "SET NULL", "violations": 2, "action": "clear"},
+    {"childTable": "authors", "parentTable": "users", "onDelete": "NO ACTION", "violations": 1, "action": "keep"}
+  ],
+  "total": 7, "fixable": 6, "unfixable": 1,
+  "checkedAt": "2026-10-19T12:00:00Z",
+  "previewToken": "1792410000.<digest>.<signature>",
+  "expiresAt": "2026-10-19T12:15:00Z"
+}
+```
+
+`action` is `delete` (`ON DELETE CASCADE`: the rows are removed), `clear`
+(`ON DELETE SET NULL`: the reference is cleared and the row kept) or `keep`
+(anything else: reported and left alone). Each relationship also carries
+`fixable`, how many of its `violations` a cleanup can really resolve. Rows it
+cannot address (a `WITHOUT ROWID` table) or cannot confirm as orphaned with the
+repair's own test, or whose `SET NULL` column must have a value, are counted in
+`violations` but not in `fixable`. The preview cannot cheaply know when another
+table restricts a delete, so `fixable` can still overstate there; such rows show
+up as skipped afterwards. A schema with `RAISE(ROLLBACK)` triggers is not
+supported by the cleanup. A
+relationship with none repairable has `action` `skipped`. `fixable` and
+`unfixable` at the top level are the sums. `previewToken` is absent when nothing
+is fixable. It is signed with a key that exists only in the running process, so
+it expires when Bindery restarts, and after 15 minutes either way.
+
+`POST /api/v1/system/db-integrity/cleanup` takes
+`{"confirm": true, "previewToken": "..."}` and refuses to do anything without
+both: a missing or false `confirm`, or a missing or forged token, is `400`, and
+an expired token is `409`. It then scans again and compares the result with the
+preview: if the numbers moved, the answer is `409` (`the database changed since
+the preview`) and a fresh preview is needed. Only one check, preview or cleanup
+runs at a time, and a second request gets `409` straight away. Then, in order:
+
+1. A backup of the database is written to the `backups` folder under
+   `BINDERY_DATA_DIR`, the same snapshot the backup endpoint takes. If it
+   cannot be written the answer is `500` and nothing is repaired.
+2. The rows are resolved the way `bindery db-repair` resolves them (the two share
+   one implementation), in transactions of 500 rows, so the rest of Bindery keeps
+   answering between batches.
+3. A fresh scan reports what is left.
+
+```json
+{
+  "deleted": 4, "cleared": 2, "skipped": 1,
+  "skipNotes": ["authors -> users: ON DELETE NO ACTION, no safe automatic repair"],
+  "remaining": [{"childTable": "authors", "parentTable": "users", "onDelete": "NO ACTION", "violations": 1, "action": "keep"}],
+  "remainingTotal": 1,
+  "verified": true,
+  "backupPath": "/config/backups/bindery_20261019_120000_pre-fk-cleanup.db",
+  "backupName": "bindery_20261019_120000_pre-fk-cleanup.db",
+  "durationMs": 1200,
+  "completedAt": "2026-10-19T12:00:05Z"
+}
+```
+
+A row the database refuses to repair (a `NOT NULL` column that clearing would
+empty, a row something else still restricts) is skipped with a note in
+`skipNotes` and left as it is; it does not stop the rest of the cleanup, and a
+rerun does not fail on it. Whatever `remaining` lists after a cleanup was not
+repaired, so a relationship with a `CASCADE` or `SET NULL` rule shows `action`
+`skipped` there, and one with no rule shows `keep`.
+
+`verified` is false when the scan afterwards could not run, in which case
+`remaining` means nothing. A failure after the backup (`500`, or `504` when the
+15 minute limit is hit) answers with `backupPath` so the backup can be found; the
+body never carries the underlying error, which goes to the log. A client that
+disconnects stops the cleanup at the next batch boundary and is logged at info
+as `cancelled`, not as a failure. Each batch is all or
+nothing but the cleanup as a whole is not: batches already committed stay, and
+running the cleanup again carries on, because every row is checked to still be
+an orphan before it is touched. Admins are named in the log (`audit: database
+drift cleanup started` and `finished`, with the user id, the counts and the
+backup name).
 
 `POST /api/v1/library/scan` answers `202` with `{"message": "library scan
 started"}` when it starts a scan. While a scan is already running it no longer

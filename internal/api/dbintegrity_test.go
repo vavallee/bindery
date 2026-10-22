@@ -71,7 +71,7 @@ func TestDBIntegrityCheck_Shape(t *testing.T) {
 }
 
 func TestDBIntegrityCheck_CleanIsEmptyArray(t *testing.T) {
-	h := NewDBIntegrityHandler(nil, "")
+	h := NewDBIntegrityHandler(nil, "", nil)
 	h.scan = emptyScan
 	rec := postIntegrity(context.Background(), h)
 	if !strings.Contains(rec.Body.String(), `"relationships":[]`) || !strings.Contains(rec.Body.String(), `"total":0`) {
@@ -97,7 +97,7 @@ func TestDBIntegrityCheck_RealDatabase(t *testing.T) {
 	// ":memory:" and "file:" paths cannot be reopened, so they must use the
 	// shared connection rather than scanning a fresh empty database.
 	for _, path := range []string{"", ":memory:", "file:x.db"} {
-		rec := postIntegrity(context.Background(), NewDBIntegrityHandler(database, path))
+		rec := postIntegrity(context.Background(), NewDBIntegrityHandler(database, path, nil))
 		var got dbIntegrityResponse
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatal(err)

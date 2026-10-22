@@ -20,7 +20,10 @@ func (h *stubDBIntegrityHandler) Check(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// The route table is exactly one POST. A GET here would let a link prefetcher
+func (h *stubDBIntegrityHandler) Preview(w http.ResponseWriter, r *http.Request) { h.Check(w, r) }
+func (h *stubDBIntegrityHandler) Cleanup(w http.ResponseWriter, r *http.Request) { h.Check(w, r) }
+
+// The route table is exactly three POSTs. A GET here would let a link prefetcher
 // or crawler start a full database scan.
 func TestDBIntegrityRoutesEnumerated(t *testing.T) {
 	router := chi.NewRouter()
@@ -33,7 +36,7 @@ func TestDBIntegrityRoutesEnumerated(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(mounted)
-	if got := strings.Join(mounted, "\n"); got != "POST /system/db-integrity" {
+	if got := strings.Join(mounted, "\n"); got != "POST /system/db-integrity\nPOST /system/db-integrity/cleanup\nPOST /system/db-integrity/cleanup/preview" {
 		t.Fatalf("mounted routes:\n%s", got)
 	}
 	rec := httptest.NewRecorder()

@@ -63,7 +63,7 @@ export default function ConfirmDialog({
           <h3 id={titleId} className="text-lg font-semibold text-slate-800 dark:text-zinc-200">{title}</h3>
         </div>
         <div className="p-4 flex-1 overflow-y-auto space-y-4">
-          <div className="text-sm text-slate-600 dark:text-zinc-400 leading-relaxed">{body}</div>
+          <div className="text-sm text-fg-muted leading-relaxed">{body}</div>
           {needsAcknowledgement && (
             <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-zinc-300 cursor-pointer">
               <input

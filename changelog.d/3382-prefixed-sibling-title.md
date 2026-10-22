@@ -1,0 +1,2 @@
+### Fixed
+- **Another volume no longer approved when your library names it with the series prefix** (#3382): If your library holds `Rotten School: Punk'd and skunked` as its own book, releases such as `[Rotten School 11] Punk'd and Skunked` are now rejected for the wanted bare `Rotten School` entry, in either apostrophe spelling, even when the standalone `Punk'd and Skunked` row is excluded. A search for `Punk'd and Skunked` itself and a plain `Rotten School` release are unaffected. Thanks to foobarbigtime for reporting and diagnosing it.

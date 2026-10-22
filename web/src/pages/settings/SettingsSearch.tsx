@@ -143,13 +143,13 @@ export default function SettingsSearch({ tabs, isAdmin, settingKeys, onPick, onA
                 {r.kind === 'tab' ? r.tabLabel : r.kind === 'heading' ? r.heading : r.settingKey}
               </span>
               {r.kind !== 'tab' && (
-                <span className="text-xs text-slate-600 dark:text-zinc-400">{r.tabLabel}</span>
+                <span className="text-xs text-fg-muted">{r.tabLabel}</span>
               )}
             </li>
           ))}
         </ul>
         {total > results.length && (
-          <p className="px-3 py-2 text-xs text-slate-600 dark:text-zinc-400 border-t border-slate-200 dark:border-zinc-800">
+          <p className="px-3 py-2 text-xs text-fg-muted border-t border-slate-200 dark:border-zinc-800">
             {t('settings.search.more', { shown: results.length, total })}
           </p>
         )}
@@ -158,7 +158,7 @@ export default function SettingsSearch({ tabs, isAdmin, settingKeys, onPick, onA
         {open ? (results.length === 0 ? t('settings.search.none') : (total > results.length ? t('settings.search.moreAnnounce', { shown: results.length, total }) : t('settings.search.count', { count: results.length }))) : ''}
       </p>
       {open && results.length === 0 && (
-        <p className="mt-1 text-xs text-slate-600 dark:text-zinc-400" aria-hidden="true">{t('settings.search.none')}</p>
+        <p className="mt-1 text-xs text-fg-muted" aria-hidden="true">{t('settings.search.none')}</p>
       )}
     </div>
   )

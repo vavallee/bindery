@@ -122,12 +122,12 @@ export default function GoodreadsImportSection() {
       <h3 className="text-base font-semibold mb-2 text-slate-800 dark:text-zinc-200">
         {t('settings.import.goodreadsHeading')}
       </h3>
-      <p className="text-xs text-slate-600 dark:text-zinc-500 mb-3">
+      <p className="text-xs text-fg-muted mb-3">
         {t('settings.import.goodreadsDescription')}
       </p>
 
       <div className="mb-3">
-        <span className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+        <span className="block text-xs text-fg-muted mb-1">
           {t('settings.import.goodreadsShelfLabel')}
         </span>
         <div className="flex flex-col gap-1">
@@ -144,7 +144,7 @@ export default function GoodreadsImportSection() {
             </label>
           ))}
         </div>
-        <p className="text-xs text-slate-500 dark:text-zinc-600 mt-1">
+        <p className="text-xs text-fg-muted mt-1">
           {t('settings.import.goodreadsShelfHint')}
         </p>
       </div>
@@ -171,7 +171,7 @@ export default function GoodreadsImportSection() {
           <div className="text-sm font-medium text-slate-800 dark:text-zinc-200">
             {t('settings.import.goodreadsPreviewHeading')}
           </div>
-          <div className="text-xs text-slate-600 dark:text-zinc-500">
+          <div className="text-xs text-fg-muted">
             {t('settings.import.goodreadsPreviewSummary', {
               total: preview.totalRows,
               resolved: preview.resolved,
@@ -191,7 +191,7 @@ export default function GoodreadsImportSection() {
                   <li key={r.row.rowNumber}>
                     <span className="text-slate-800 dark:text-zinc-200">{r.row.title}</span>
                     {' — '}
-                    <span className="text-slate-500 dark:text-zinc-500">{r.reason}</span>
+                    <span className="text-fg-muted">{r.reason}</span>
                   </li>
                 ))}
               </ul>
@@ -201,14 +201,14 @@ export default function GoodreadsImportSection() {
               >
                 {t('settings.import.goodreadsDownloadFailed')}
               </button>
-              <p className="mt-1 text-slate-500 dark:text-zinc-600">
+              <p className="mt-1 text-fg-muted">
                 {t('settings.import.goodreadsDownloadHint')}
               </p>
             </details>
           )}
 
           {preview.resolved === 0 ? (
-            <p className="text-xs text-slate-500 dark:text-zinc-500">
+            <p className="text-xs text-fg-muted">
               {t('settings.import.goodreadsNoResolved')}
             </p>
           ) : (
@@ -249,7 +249,7 @@ export default function GoodreadsImportSection() {
                 <li key={title}>
                   <span className="text-slate-800 dark:text-zinc-200">{title}</span>
                   {': '}
-                  <span className="text-slate-500 dark:text-zinc-500">{reason}</span>
+                  <span className="text-fg-muted">{reason}</span>
                 </li>
               ))}
             </ul>

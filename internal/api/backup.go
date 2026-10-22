@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -147,13 +148,6 @@ func (h *BackupHandler) List(w http.ResponseWriter, r *http.Request) {
 // this is measured in seconds, not milliseconds. The endpoint is user-initiated
 // (no scheduled job) so the cost lands on the user who pressed the button.
 func (h *BackupHandler) Create(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-	dir := h.backupDir()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create backup directory"})
-		return
-	}
-
 	label := ""
 	if r.Body != nil {
 		// Optional {"label": "..."} body — a user-supplied tag folded into the
@@ -166,6 +160,45 @@ func (h *BackupHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&body); err == nil {
 			label = sanitizeBackupLabel(body.Label)
 		}
+	}
+
+	snap, err := h.CreateSnapshot(r.Context(), label)
+	if err != nil {
+		if errors.Is(err, errBackupDir) {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create backup directory"})
+			return
+		}
+		writeServerError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"name":       snap.Name,
+		"size":       snap.Size,
+		"modTime":    time.Now().UTC(),
+		"durationMs": snap.Duration.Milliseconds(),
+	})
+}
+
+// errBackupDir marks a failure to create the backups directory.
+var errBackupDir = errors.New("failed to create backup directory")
+
+// BackupSnapshot describes a backup file CreateSnapshot wrote.
+type BackupSnapshot struct {
+	Name     string
+	Path     string
+	Size     int64
+	Duration time.Duration
+}
+
+// CreateSnapshot writes a backup the way the Backup endpoint does and is the
+// one place that does it: the Settings backup button and the foreign key
+// cleanup (#3357) both take their backup here, so there is a single mechanism
+// to keep correct. label is already sanitised (sanitizeBackupLabel) or empty.
+func (h *BackupHandler) CreateSnapshot(ctx context.Context, label string) (BackupSnapshot, error) {
+	start := time.Now()
+	dir := h.backupDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return BackupSnapshot{}, fmt.Errorf("%w: %w", errBackupDir, err)
 	}
 
 	timestamp := start.UTC().Format("20060102_150405")
@@ -184,11 +217,10 @@ func (h *BackupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// the .tmp lying around and re-fail this call with SQLITE_ERROR.
 	_ = os.Remove(tmpPath)
 
-	if err := h.vacuumInto(r.Context(), tmpPath); err != nil {
+	if err := h.vacuumInto(ctx, tmpPath); err != nil {
 		_ = os.Remove(tmpPath)
 		slog.Error("backup failed", "error", err)
-		writeServerError(w, r, err)
-		return
+		return BackupSnapshot{}, err
 	}
 	// Match the live DB file's 0600 mode. VACUUM INTO honours umask, which on
 	// many distros leaves the file world-readable, exposing bcrypt hashes,
@@ -196,14 +228,12 @@ func (h *BackupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		_ = os.Remove(tmpPath)
 		slog.Error("backup chmod failed", "error", err)
-		writeServerError(w, r, err)
-		return
+		return BackupSnapshot{}, err
 	}
 	if err := os.Rename(tmpPath, destPath); err != nil {
 		_ = os.Remove(tmpPath)
 		slog.Error("backup rename failed", "error", err)
-		writeServerError(w, r, err)
-		return
+		return BackupSnapshot{}, err
 	}
 
 	info, _ := os.Stat(destPath)
@@ -221,12 +251,7 @@ func (h *BackupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// log is the heads-up to size the schedule appropriately.
 	duration := time.Since(start)
 	slog.Info("backup created", "file", destName, "size", size, "duration_ms", duration.Milliseconds())
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"name":       destName,
-		"size":       size,
-		"modTime":    time.Now().UTC(),
-		"durationMs": duration.Milliseconds(),
-	})
+	return BackupSnapshot{Name: destName, Path: destPath, Size: size, Duration: duration}, nil
 }
 
 // vacuumInto runs `VACUUM INTO 'dst'` against the live database. SQLite does
@@ -238,7 +263,22 @@ func (h *BackupHandler) vacuumInto(ctx context.Context, dst string) error {
 		return fmt.Errorf("backup handler has no database handle")
 	}
 	stmt := `VACUUM INTO '` + strings.ReplaceAll(dst, `'`, `''`) + `'` // #nosec G202 -- dst is server-generated (backupDir + timestamp), never user input; SQLite refuses bind params in VACUUM INTO so interpolation is required
-	if _, err := h.db.ExecContext(ctx, stmt); err != nil {
+	// VACUUM INTO is O(db size) and only reads the source, so on a real file it
+	// runs on its own read only connection. On the pool it would hold the app's
+	// ONE connection for the whole copy and stall /health, sign in and the UI
+	// (measured in #3357 on a large database). In-memory and file: URI
+	// databases cannot be reopened and still use the pool.
+	exec := h.db.ExecContext
+	if db.IsReopenablePath(h.dbPath) {
+		ro, err := sql.Open("sqlite", db.SQLiteFileURI(h.dbPath, "mode=ro&_pragma=busy_timeout(5000)"))
+		if err != nil {
+			return fmt.Errorf("open %q read-only: %w", h.dbPath, err)
+		}
+		defer func() { _ = ro.Close() }()
+		ro.SetMaxOpenConns(1)
+		exec = ro.ExecContext
+	}
+	if _, err := exec(ctx, stmt); err != nil {
 		return fmt.Errorf("vacuum into %q: %w", dst, err)
 	}
 	return nil

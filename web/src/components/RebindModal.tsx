@@ -148,7 +148,7 @@ export default function RebindModal({ book, onClose, onSuccess }: Props) {
     >
       <div className="p-5 sm:p-6">
         <h2 id="book-rebind-title" className="text-lg font-semibold">{t('bookRebind.title')}</h2>
-        <p id="book-rebind-description" className="mt-1 text-sm text-slate-600 dark:text-zinc-400">
+        <p id="book-rebind-description" className="mt-1 text-sm text-fg-muted">
           {t('bookRebind.description', { title: book.title })}
         </p>
 
@@ -190,9 +190,9 @@ export default function RebindModal({ book, onClose, onSuccess }: Props) {
                       {t(searching ? 'bookRebind.searching' : 'bookRebind.searchButton')}
                     </button>
                   </div>
-                  <p className="mt-2 text-xs text-slate-600 dark:text-zinc-400">{t('bookRebind.searchHint')}</p>
+                  <p className="mt-2 text-xs text-fg-muted">{t('bookRebind.searchHint')}</p>
                 </form>
-                <div role="status" className="mt-4 text-sm text-slate-600 dark:text-zinc-400">
+                <div role="status" className="mt-4 text-sm text-fg-muted">
                   {searching ? t('bookRebind.searching') : searched ? t(results.length ? 'bookRebind.resultCount' : 'bookRebind.noResults', { count: results.length }) : null}
                 </div>
                 {results.length > 0 && (
@@ -209,12 +209,12 @@ export default function RebindModal({ book, onClose, onSuccess }: Props) {
                             <CoverImage src={candidate.imageUrl} alt="" loading="lazy" decoding="async" className="h-16 w-11 shrink-0 rounded object-cover" />
                             <span className="min-w-0 flex-1 text-sm">
                               <span className="block break-words font-medium">{candidate.title}</span>
-                              <span className="block text-slate-600 dark:text-zinc-400">{candidate.author?.authorName || t('bookRebind.unknownAuthor')}</span>
-                              <span className="block break-words text-xs text-slate-600 dark:text-zinc-400">
+                              <span className="block text-fg-muted">{candidate.author?.authorName || t('bookRebind.unknownAuthor')}</span>
+                              <span className="block break-words text-xs text-fg-muted">
                                 {providerDisplayName(providerFromBookForeignId(candidate.foreignBookId))} · {candidate.foreignBookId}
                                 {candidate.releaseDate ? ` · ${candidate.releaseDate.slice(0, 4)}` : ''}
                               </span>
-                              {isEdition && <span className="mt-1 block text-xs text-slate-600 dark:text-zinc-400">{t('bookRebind.editionHint')}</span>}
+                              {isEdition && <span className="mt-1 block text-xs text-fg-muted">{t('bookRebind.editionHint')}</span>}
                             </span>
                           </label>
                           {!!candidate.libraryBookId && (
@@ -244,7 +244,7 @@ export default function RebindModal({ book, onClose, onSuccess }: Props) {
                 <div>
                   <label htmlFor="rebind-id" className="mb-1 block text-sm font-medium">{t('bookRebind.identifier')}</label>
                   <input id="rebind-id" value={foreignId} onChange={event => { setForeignId(event.target.value); setError(null) }} disabled={submitting} placeholder={provider === 'openlibrary' ? 'OL12345W' : 'hc:12345'} className={inputClass} />
-                  <p className="mt-2 text-xs text-slate-600 dark:text-zinc-400">{t(`bookRebind.${provider}Hint`)}</p>
+                  <p className="mt-2 text-xs text-fg-muted">{t(`bookRebind.${provider}Hint`)}</p>
                 </div>
               </form>
             )}

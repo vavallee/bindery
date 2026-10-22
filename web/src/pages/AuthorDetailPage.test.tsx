@@ -21,6 +21,8 @@ vi.mock('../api/client', async importOriginal => {
       searchAuthorLinkCandidates: vi.fn(),
       relinkAuthorUpstream: vi.fn(),
       updateAuthor: vi.fn(),
+      uploadAuthorPhoto: vi.fn(),
+      clearAuthorPhoto: vi.fn(),
       deleteAuthor: vi.fn(),
       deleteAuthorAlias: vi.fn(),
       searchAuthorWanted: vi.fn(),
@@ -347,6 +349,112 @@ describe('AuthorDetailPage', () => {
     const bio = screen.getByTestId('author-bio-credit')
     expect(bio.textContent).toBe('Bio from Wikipedia, CC BY-SA 4.0')
     expect(bio).toHaveAttribute('href', 'https://no.wikipedia.example/wiki/Kari_Nordmann')
+  })
+
+  // #3287: the photo upload mirrors the book cover upload (#3017).
+  it('uploads a photo picked from the author page and shows no credit for it', async () => {
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'photo.png', { type: 'image/png' })
+    vi.mocked(api.uploadAuthorPhoto).mockResolvedValue({ ...author, imageUrl: '/api/v1/images?url=bindery-cover%3Aabc', imageSource: { provider: 'user', url: '' } })
+    renderAuthorDetailPage([], 'grid', { imageUrl: '' })
+    const input = await screen.findByLabelText('Upload photo')
+    expect(input.closest('label')).toHaveClass('touch-target')
+    fireEvent.change(input, { target: { files: [file] } })
+    await waitFor(() => expect(api.uploadAuthorPhoto).toHaveBeenCalledWith(42, file))
+    expect(await screen.findByLabelText('Change photo')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: author.authorName })).toHaveAttribute('src', '/api/v1/images?url=bindery-cover%3Aabc')
+    // A photo the user chose is theirs: there is nobody to credit.
+    expect(screen.queryByTestId('author-photo-credit')).toBeNull()
+  })
+
+  it('reports a failed photo upload', async () => {
+    vi.mocked(api.uploadAuthorPhoto).mockRejectedValue(new Error('send a JPEG, PNG, WebP or GIF image'))
+    renderAuthorDetailPage([], 'grid', { imageUrl: '' })
+    const input = await screen.findByLabelText('Upload photo')
+    fireEvent.change(input, { target: { files: [new File(['x'], 'notes.txt', { type: 'text/plain' })] } })
+    expect(await screen.findByText('send a JPEG, PNG, WebP or GIF image')).toBeInTheDocument()
+  })
+
+  it('falls back to a plain message when the upload fails without an Error', async () => {
+    vi.mocked(api.uploadAuthorPhoto).mockRejectedValue('network down')
+    renderAuthorDetailPage([], 'grid', { imageUrl: '' })
+    const input = await screen.findByLabelText('Upload photo')
+    fireEvent.change(input, { target: { files: [new File(['x'], 'photo.png', { type: 'image/png' })] } })
+    expect(await screen.findByText('Could not upload the photo')).toBeInTheDocument()
+  })
+
+  // Removing an uploaded photo hands the field back: the answer carries the
+  // provider's photo, credited if an enricher found it.
+  it('removes an uploaded photo and shows the one that replaces it', async () => {
+    vi.mocked(api.clearAuthorPhoto).mockResolvedValue({ ...author, imageUrl: 'https://upload.example/k.jpg', imageSource: { provider: 'wikimedia-commons', url: 'https://commons.example/wiki/File:K.jpg', license: 'CC BY 2.5' } })
+    renderAuthorDetailPage([], 'grid', { imageUrl: '/api/v1/images?url=bindery-cover%3Aabc', imageSource: { provider: 'user', url: '' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove photo' }))
+    await waitFor(() => expect(api.clearAuthorPhoto).toHaveBeenCalledWith(42))
+    expect(await screen.findByTestId('author-photo-credit')).toHaveTextContent('Photo: CC BY 2.5, via Wikimedia Commons')
+    expect(screen.queryByRole('button', { name: 'Remove photo' })).toBeNull()
+  })
+
+  // A bio the user wrote is theirs: nobody to credit (#3287).
+  it('shows no bio credit for a bio the user wrote', async () => {
+    renderAuthorDetailPage([], 'grid', { description: 'Mine.', descriptionSource: { provider: 'user', url: '' } })
+    await screen.findByRole('heading', { level: 2 })
+    expect(screen.queryByTestId('author-bio-credit')).toBeNull()
+  })
+
+  it('accepts exactly the image types the server stores', async () => {
+    renderAuthorDetailPage([], 'grid', { imageUrl: '' })
+    expect(await screen.findByLabelText('Upload photo')).toHaveAttribute('accept', 'image/jpeg,image/png,image/webp,image/gif')
+  })
+
+  // While one photo request runs, neither control can start another.
+  it('disables both photo controls while uploading or removing', async () => {
+    const user = { imageUrl: '/api/v1/images?url=bindery-cover%3Aabc', imageSource: { provider: 'user', url: '' } }
+    vi.mocked(api.uploadAuthorPhoto).mockReturnValue(new Promise(() => {}))
+    renderAuthorDetailPage([], 'grid', user)
+    fireEvent.change(await screen.findByLabelText('Change photo'), { target: { files: [new File(['x'], 'p.png', { type: 'image/png' })] } })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove photo' })).toBeDisabled())
+    expect(document.querySelector('input[type=file]')).toBeDisabled()
+    cleanup()
+
+    vi.mocked(api.clearAuthorPhoto).mockReturnValue(new Promise(() => {}))
+    renderAuthorDetailPage([], 'grid', user)
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove photo' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Removing…' })).toBeDisabled())
+    expect(document.querySelector('input[type=file]')).toBeDisabled()
+  })
+
+  it('asks to reload when the author changed while removing the photo', async () => {
+    vi.mocked(api.clearAuthorPhoto).mockRejectedValue(new ApiError(409, { error: 'this author changed while you were saving; reload and try again' }, 'Conflict'))
+    renderAuthorDetailPage([], 'grid', { imageUrl: '/api/v1/images?url=bindery-cover%3Aabc', imageSource: { provider: 'user', url: '' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove photo' }))
+    expect(await screen.findByText('This author changed while you were saving. Reload the page and try again.')).toBeInTheDocument()
+  })
+
+  it('says why when the photo to remove was not one the user uploaded', async () => {
+    vi.mocked(api.clearAuthorPhoto).mockRejectedValue(new ApiError(409, { error: 'only a photo you uploaded can be removed', code: 'photo_not_uploaded' }, 'Conflict'))
+    renderAuthorDetailPage([], 'grid', { imageUrl: '/api/v1/images?url=bindery-cover%3Aabc', imageSource: { provider: 'user', url: '' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove photo' }))
+    expect(await screen.findByText('Only a photo you uploaded can be removed. Reload the page to see the current photo.')).toBeInTheDocument()
+  })
+
+  it('offers no Remove photo for a photo the user did not upload', async () => {
+    renderAuthorDetailPage([], 'grid', { imageUrl: 'https://covers.example/a.jpg' })
+    await screen.findByRole('heading', { level: 2 })
+    expect(screen.queryByRole('button', { name: 'Remove photo' })).toBeNull()
+  })
+
+  it('reports a failed photo removal', async () => {
+    vi.mocked(api.clearAuthorPhoto).mockRejectedValue('network down')
+    renderAuthorDetailPage([], 'grid', { imageUrl: '/api/v1/images?url=bindery-cover%3Aabc', imageSource: { provider: 'user', url: '' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove photo' }))
+    expect(await screen.findByText('Could not remove the photo')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Remove photo' })).toBeEnabled()
+  })
+
+  it('sends nothing when the file picker is cancelled', async () => {
+    renderAuthorDetailPage([], 'grid', { imageUrl: '' })
+    const input = await screen.findByLabelText('Upload photo')
+    fireEvent.change(input, { target: { files: [] } })
+    expect(api.uploadAuthorPhoto).not.toHaveBeenCalled()
   })
 
   // A Commons file that names no photographer is still credited, with its

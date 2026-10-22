@@ -186,6 +186,9 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 				if isAuthorIdentityConflict(err) {
 					return createAuthorResult{}, &authorConflictError{Message: "upstream author already exists locally"}
 				}
+				if errors.Is(err, errAuthorRowChanged) {
+					return createAuthorResult{}, &authorConflictError{Message: errAuthorChanged}
+				}
 				return createAuthorResult{}, err
 			}
 			mediaType := req.MediaType

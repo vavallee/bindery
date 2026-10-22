@@ -142,7 +142,7 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
           <h3 id={titleId} className="text-base font-semibold">
             {t('bookDetail.fixMatch.title', 'Reassign file to another book')}
           </h3>
-          <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500 font-mono break-all sm:truncate" title={path}>
+          <p className="mt-1 text-xs text-fg-muted font-mono break-all sm:truncate" title={path}>
             {path}
           </p>
         </div>
@@ -151,7 +151,7 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
           <div className="flex-1 min-h-0 overflow-y-auto p-4">
             {/* Said up front, before a book is even picked, so nobody discovers
                 it from the list of candidates alone. */}
-            <p className="mb-3 text-xs text-slate-600 dark:text-zinc-400">
+            <p className="mb-3 text-xs text-fg-muted">
               {t(
                 'bookDetail.fixMatch.moveNotice',
                 'By default this only corrects which book the file belongs to and leaves the file where it is. You can also have Bindery move and rename it into the chosen book’s folder.',
@@ -168,9 +168,9 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
             />
             {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
             <div className="mt-3 max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-zinc-800">
-              {loading && <p className="py-3 text-xs text-slate-500 dark:text-zinc-500">{t('common.loading')}</p>}
+              {loading && <p className="py-3 text-xs text-fg-muted">{t('common.loading')}</p>}
               {!loading && term.trim().length >= 2 && results.length === 0 && (
-                <p className="py-3 text-xs text-slate-500 dark:text-zinc-500">
+                <p className="py-3 text-xs text-fg-muted">
                   {t('bookDetail.fixMatch.noResults', 'No matching books in your library')}
                 </p>
               )}
@@ -183,7 +183,7 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
                 >
                   <span className="text-sm font-medium text-slate-900 dark:text-white">{b.title}</span>
                   {b.author?.authorName && (
-                    <span className="text-xs text-slate-500 dark:text-zinc-500"> · {b.author.authorName}</span>
+                    <span className="text-xs text-fg-muted"> · {b.author.authorName}</span>
                   )}
                 </button>
               ))}
@@ -197,7 +197,7 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
               {t('bookDetail.fixMatch.reassigningTo', 'Reassigning to')}{' '}
               <span className="font-medium text-slate-900 dark:text-white">{target.title}</span>
               {target.author?.authorName && (
-                <span className="text-slate-500 dark:text-zinc-500"> · {target.author.authorName}</span>
+                <span className="text-fg-muted"> · {target.author.authorName}</span>
               )}
             </p>
 
@@ -218,7 +218,7 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
                   <span className="font-medium text-slate-900 dark:text-white">
                     {t('bookDetail.fixMatch.modeLinkOnly', 'Correct the match only')}
                   </span>
-                  <span className="block text-slate-500 dark:text-zinc-500">
+                  <span className="block text-fg-muted">
                     {t(
                       'bookDetail.fixMatch.modeLinkOnlyHint',
                       'The file stays where it is, under its current name. Only the book it belongs to changes.',
@@ -239,7 +239,7 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
                   <span className="font-medium text-slate-900 dark:text-white">
                     {t('bookDetail.fixMatch.modeRelocate', 'Also move and rename the file')}
                   </span>
-                  <span className="block text-slate-500 dark:text-zinc-500">
+                  <span className="block text-fg-muted">
                     {t(
                       'bookDetail.fixMatch.modeRelocateHint',
                       'Bindery moves the file into the chosen book’s folder and renames it from your naming template.',
@@ -252,7 +252,7 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
             {!relocate && (
               <dl className="mt-3 space-y-2 text-xs">
                 <div>
-                  <dt className="text-slate-500 dark:text-zinc-500">
+                  <dt className="text-fg-muted">
                     {t('bookDetail.fixMatch.staysAtLabel', 'The file stays at')}
                   </dt>
                   <dd className="font-mono break-all text-slate-700 dark:text-zinc-300">{path}</dd>
@@ -282,7 +282,7 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
             )}
 
             {relocate && !movesOnDisk && (
-              <p className="mt-3 text-xs text-slate-600 dark:text-zinc-400">
+              <p className="mt-3 text-xs text-fg-muted">
                 {t(
                   'bookDetail.fixMatch.noopNotice',
                   'This file is already where your naming template puts it for that book, so only the metadata link changes.',
@@ -293,18 +293,18 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
             {relocate && (
             <dl className="mt-3 space-y-2 text-xs">
               <div>
-                <dt className="text-slate-500 dark:text-zinc-500">
+                <dt className="text-fg-muted">
                   {t('bookDetail.fixMatch.currentPathLabel', 'Current path')}
                 </dt>
                 <dd className="font-mono break-all text-slate-700 dark:text-zinc-300">{path}</dd>
               </div>
               <div>
-                <dt className="text-slate-500 dark:text-zinc-500">
+                <dt className="text-fg-muted">
                   {t('bookDetail.fixMatch.destinationLabel', 'It will be moved to')}
                 </dt>
                 <dd className="font-mono break-all text-slate-900 dark:text-white">
                   {previewLoading && (
-                    <span className="font-sans text-slate-500 dark:text-zinc-500">
+                    <span className="font-sans text-fg-muted">
                       {t('bookDetail.fixMatch.destinationLoading', 'Working out the destination…')}
                     </span>
                   )}

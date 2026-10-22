@@ -37,7 +37,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-4 py-2 border-t border-slate-200 dark:border-zinc-800 first:border-t-0 first:pt-0">
       <span className="text-sm font-medium text-slate-800 dark:text-zinc-200">{label}</span>
-      <span className="text-sm text-slate-600 dark:text-zinc-400 text-right break-all">{children}</span>
+      <span className="text-sm text-fg-muted text-right break-all">{children}</span>
     </div>
   )
 }
@@ -57,16 +57,16 @@ export default function AboutTab() {
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">
           {t('settings.about.title', 'About')}
         </h3>
-        <p className="text-xs text-slate-600 dark:text-zinc-500 mb-3">
+        <p className="text-xs text-fg-muted mb-3">
           {t('settings.about.hint', 'Build details for this Bindery instance. Include the version and commit when filing a bug report.')}
         </p>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
           {failed ? (
-            <p className="text-sm text-slate-600 dark:text-zinc-400">
+            <p className="text-sm text-fg-muted">
               {t('settings.about.loadError', 'Could not load build details.')}
             </p>
           ) : !status ? (
-            <p className="text-sm text-slate-600 dark:text-zinc-400">
+            <p className="text-sm text-fg-muted">
               {t('common.loading', 'Loading…')}
             </p>
           ) : (

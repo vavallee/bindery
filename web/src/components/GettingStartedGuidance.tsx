@@ -34,7 +34,7 @@ export default function GettingStartedGuidance({ reasonKey, needsIndexer, needsC
       <h3 className="text-sm font-semibold text-slate-900 dark:text-white mb-1">
         {t('gettingStarted.title')}
       </h3>
-      <p className="text-sm text-slate-600 dark:text-zinc-400 mb-3">
+      <p className="text-sm text-fg-muted mb-3">
         {reason}
       </p>
       <div className="flex flex-wrap gap-2">

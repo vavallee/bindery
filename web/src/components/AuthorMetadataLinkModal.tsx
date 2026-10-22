@@ -173,12 +173,12 @@ export default function AuthorMetadataLinkModal({ author, onClose, onLinked }: P
                         have never used.
                       */}
                       {candidate.previouslyLinked && (
-                        <span className="px-1.5 py-0.5 rounded border border-slate-400 dark:border-zinc-600 text-[10px] text-slate-600 dark:text-zinc-400">
+                        <span className="px-1.5 py-0.5 rounded border border-slate-400 dark:border-zinc-600 text-[10px] text-fg-muted">
                           {t('authorMetadataLink.previouslyLinked', 'previously linked')}
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-slate-600 dark:text-zinc-500 flex flex-wrap gap-x-3">
+                    <div className="text-xs text-fg-muted flex flex-wrap gap-x-3">
                       {candidate.disambiguation && <span>{candidate.disambiguation}</span>}
                       {candidate.statistics?.bookCount ? <span>{t('authorMetadataLink.books', { count: candidate.statistics.bookCount, defaultValue: '{{count}} books' })}</span> : null}
                       {candidate.ratingsCount ? <span>{t('authorMetadataLink.ratings', { count: candidate.ratingsCount, defaultValue: '{{count}} ratings' })}</span> : null}
@@ -217,7 +217,7 @@ export default function AuthorMetadataLinkModal({ author, onClose, onLinked }: P
               </div>
             ))}
             {!searching && visibleResults.length === 0 && !error && (
-              <p className="text-sm text-slate-600 dark:text-zinc-500 text-center py-6">
+              <p className="text-sm text-fg-muted text-center py-6">
                 {t('authorMetadataLink.noResults', 'No alternate metadata candidates found')}
               </p>
             )}
@@ -225,7 +225,7 @@ export default function AuthorMetadataLinkModal({ author, onClose, onLinked }: P
         </div>
 
         <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">{t('common.cancel')}</button>
+          <button onClick={onClose} className="px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white">{t('common.cancel')}</button>
         </div>
       </div>
     </div>

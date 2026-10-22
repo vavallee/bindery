@@ -14,7 +14,7 @@ const ENTRIES: Array<{ status: string; monitored: boolean }> = [
 export default function BookStatusLegend() {
   const { t } = useTranslation()
   return (
-    <details className="mb-4 text-xs text-slate-600 dark:text-zinc-400">
+    <details className="mb-4 text-xs text-fg-muted">
       <summary className="cursor-pointer select-none hover:text-slate-900 dark:hover:text-white">
         {t('books.legendTitle', 'What do the status labels mean?')}
       </summary>
