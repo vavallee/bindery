@@ -9,6 +9,7 @@ import AdoptionRail from './AdoptionRail'
 import AdoptionSummary from './AdoptionSummary'
 import AdoptionTable from './AdoptionTable'
 import { defaultAdoptionFilters, useAdoptionList } from './useAdoptionList'
+import { matchStrength, preselectable } from './adoptionMatch'
 
 // AdoptionView is the Import page's "In your library" view. It lays out the
 // summary strip, the folder rail, the toolbar and the list, and chooses which
@@ -48,6 +49,37 @@ export default function AdoptionView() {
       confirmLabel: t('adoption.ignoreFolder.confirm', 'Ignore folder'),
     })) return
     await list.ignoreFolder(folder)
+  }
+
+  // Rows on this page whose suggestion already earns a one click Confirm:
+  // title within STRONG_MATCH_SCORE and the same author. With two hundred
+  // books waiting, confirming them one by one was the slow part of the page.
+  const strongItems = filters.state === 'pending'
+    ? state.items.filter(i => {
+        if (i.state !== 'pending' || state.outcomes[i.id]) return false
+        const top = preselectable(i)
+        return !!top && matchStrength(i, top) === 'strong'
+      })
+    : []
+  const [confirmingStrong, setConfirmingStrong] = useState(false)
+  const confirmStrong = async () => {
+    const batch = strongItems
+    if (!await confirm({
+      title: t('adoption.confirmStrong.title', { count: batch.length, defaultValue: 'Confirm {{count}} strong matches?' }),
+      body: t('adoption.confirmStrong.body', 'Each book is adopted as its suggestion, the same as pressing Confirm on every row. Every one can be undone from its row or the Adopted list.'),
+      confirmLabel: t('adoption.confirmStrong.confirm', 'Confirm all'),
+    })) return
+    setConfirmingStrong(true)
+    try {
+      // One at a time: each adopt moves files on the server, and a burst of
+      // them all at once is the "search storm" shape on the import side.
+      for (const item of batch) {
+        const top = preselectable(item)
+        if (top) await list.adopt(item, { bookId: top.book.id }, top.book)
+      }
+    } finally {
+      setConfirmingStrong(false)
+    }
   }
 
   const folders = filters.state === 'pending' ? state.facets?.folders ?? [] : []
@@ -102,6 +134,17 @@ export default function AdoptionView() {
         />
         <div className="min-w-0">
           <AdoptionFacets ref={searchRef} filters={filters} facets={state.facets} summary={state.summary} onChange={list.setFilter} />
+
+          {strongItems.length > 1 && (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-emerald-300/60 dark:border-emerald-900/60 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2 text-sm">
+              <span className="text-emerald-900 dark:text-emerald-200">
+                {t('adoption.confirmStrong.summary', { count: strongItems.length, defaultValue: '{{count}} books on this page have a strong match.' })}
+              </span>
+              <button type="button" onClick={() => void confirmStrong()} disabled={confirmingStrong} className={`${btn.primary} ${btnSize.sm}`}>
+                {t('adoption.confirmStrong.button', { count: strongItems.length, defaultValue: 'Confirm {{count}} strong matches' })}
+              </button>
+            </div>
+          )}
 
           {state.loadError && (
             <p role="alert" className="mb-3 text-sm text-red-600 dark:text-red-400">{state.loadError}</p>

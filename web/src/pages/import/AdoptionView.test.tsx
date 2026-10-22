@@ -417,3 +417,43 @@ describe('AdoptionView', () => {
     expect(within(inner).queryByRole('button', { name: 'Add author' })).toBeNull()
   })
 })
+
+describe('AdoptionView confidence', () => {
+  // "Staat van Orde" was offered as a Possible match for "Star Wars
+  // Battlefront II", at the same weight as a near miss.
+  it('does not offer a suggestion below the weak-match score, and lists it collapsed in the editor', async () => {
+    const miss = item({
+      id: 70, parsedTitle: 'Staat van Orde', relPath: 'Andy Weir/Staat van Orde.epub',
+      candidates: [{ book: { ...martian, title: 'Star Wars Battlefront II' }, score: 0.31 }], topScore: 0.31,
+    })
+    serve(listResponse([miss]))
+    const table = await renderView()
+    const row = within(table).getByRole('row', { name: 'Staat van Orde' })
+    expect(within(row).queryByText('Possible match')).toBeNull()
+    expect(within(row).getByText('No good match')).toBeInTheDocument()
+
+    fireEvent.click(within(row).getByRole('button', { name: '1 low-confidence suggestion' }))
+    const editor = await screen.findByRole('region', { name: 'Which book is Staat van Orde?' })
+    expect(within(editor).getByText('Low-confidence suggestions (1)')).toBeInTheDocument()
+    // Never chosen for the reader.
+    expect(within(editor).getByRole('radio', { name: /Star Wars Battlefront II/ })).not.toBeChecked()
+  })
+
+  it('confirms every strong match on the page in one step, after asking', async () => {
+    const second = item({
+      id: 5, parsedTitle: 'Project Hail Mary', relPath: 'Andy Weir/Project Hail Mary.epub',
+      candidates: [{ book: { ...martian, id: 43, title: 'Project Hail Mary' }, score: 0.99 }], topScore: 0.99,
+    })
+    serve(listResponse([suggested, second, weak]))
+    const adopted: string[] = []
+    server.use(http.post(apiUrl('/library/unmatched/:id/adopt'), async ({ params, request }) => {
+      adopted.push(`${String(params.id)}:${JSON.stringify(await request.json())}`)
+      return HttpResponse.json({ ...suggested, id: Number(params.id), state: 'adopted' })
+    }))
+    await renderView()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm 2 strong matches' }))
+    const dialog = await screen.findByTestId('confirm-dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm all' }))
+    await waitFor(() => expect(adopted).toEqual(['1:{"bookId":42}', '5:{"bookId":43}']))
+  })
+})

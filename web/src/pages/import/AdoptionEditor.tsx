@@ -6,7 +6,7 @@ import BookPicker from '../../components/import/BookPicker'
 import CatalogueAdder from '../../components/import/CatalogueAdder'
 import { bookStatusBadge } from '../../components/bookStatus'
 import { adoptionHint, scorePercent, unitDisplayName } from './adoptionHint'
-import { preselectable } from './adoptionMatch'
+import { isWeakCandidate, preselectable } from './adoptionMatch'
 
 interface Props {
   item: AdoptionItem
@@ -45,7 +45,9 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
   const searchRef = useRef<HTMLInputElement>(null)
   // A folder author's look alike is listed but never chosen for the reader
   // when the files name someone else (#2942).
-  const [chosen, setChosen] = useState<AdoptionBookRef | null>(preselectable(item)?.book ?? null)
+  // A low-confidence suggestion is never chosen for the reader either.
+  const initial = preselectable(item)
+  const [chosen, setChosen] = useState<AdoptionBookRef | null>(initial && !isWeakCandidate(initial) ? initial.book : null)
   const [searched, setSearched] = useState<AdoptionBookRef | null>(null)
   const name = unitDisplayName(item)
 
@@ -69,6 +71,43 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
   ]
   const more = item.fileCount - item.members.length
 
+  // A suggestion from the library search has no score and is always likely.
+  const unlikely = options.filter(o => o.score !== undefined && isWeakCandidate({ book: o.book, score: o.score }))
+  const likely = options.filter(o => !unlikely.includes(o))
+  const renderOption = (o: (typeof options)[number]) => {
+    const pct = o.score === undefined ? null : scorePercent(o.score)
+    return (
+      <label key={o.book.id} className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-slate-100 dark:hover:bg-zinc-800/60">
+        <input
+          type="radio"
+          name={`adopt-${item.id}`}
+          checked={chosen?.id === o.book.id}
+          onChange={() => setChosen(o.book)}
+        />
+        <span className="min-w-0 flex-1 truncate text-sm text-slate-800 dark:text-zinc-200">
+          {o.book.title}
+          {o.book.authorName && <span className="text-xs text-fg-muted"> · {o.book.authorName}</span>}
+        </span>
+        {o.folderAuthorOnly && (
+          <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+            {t('adoption.editor.folderAuthorOnly', 'Folder author only')}
+          </span>
+        )}
+        <StatusPill status={o.book.status} monitored={o.book.monitored} />
+        {pct !== null ? (
+          <span className="flex items-center gap-2" aria-label={t('adoption.editor.score', { percent: pct, defaultValue: '{{percent}}% title match' })}>
+            <span aria-hidden="true" className="hidden sm:block h-1.5 w-24 overflow-hidden rounded-full bg-slate-200 dark:bg-zinc-800">
+              <span className={`block h-full rounded-full ${pct >= 80 && !o.folderAuthorOnly ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${pct}%` }} />
+            </span>
+            <span className="w-9 text-right text-xs tabular-nums text-fg-muted">{pct}%</span>
+          </span>
+        ) : (
+          <span className="text-xs text-fg-muted">{t('adoption.editor.fromSearch', 'From search')}</span>
+        )}
+      </label>
+    )
+  }
+
   return (
     <div role="region" aria-labelledby={headingId} onKeyDown={onKeyDown} className="space-y-4">
       <h4 id={headingId} className="text-sm font-semibold text-slate-800 dark:text-zinc-200">
@@ -89,41 +128,23 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
           <legend className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
             {t('adoption.editor.suggestions', 'Suggestions')}
           </legend>
-          <div className="divide-y divide-slate-200 dark:divide-zinc-800 rounded border border-slate-200 dark:border-zinc-800">
-            {options.map(o => {
-              const pct = o.score === undefined ? null : scorePercent(o.score)
-              return (
-                <label key={o.book.id} className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-slate-100 dark:hover:bg-zinc-800/60">
-                  <input
-                    type="radio"
-                    name={`adopt-${item.id}`}
-                    checked={chosen?.id === o.book.id}
-                    onChange={() => setChosen(o.book)}
-                  />
-                  <span className="min-w-0 flex-1 truncate text-sm text-slate-800 dark:text-zinc-200">
-                    {o.book.title}
-                    {o.book.authorName && <span className="text-xs text-fg-muted"> · {o.book.authorName}</span>}
-                  </span>
-                  {o.folderAuthorOnly && (
-                    <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                      {t('adoption.editor.folderAuthorOnly', 'Folder author only')}
-                    </span>
-                  )}
-                  <StatusPill status={o.book.status} monitored={o.book.monitored} />
-                  {pct !== null ? (
-                    <span className="flex items-center gap-2" aria-label={t('adoption.editor.score', { percent: pct, defaultValue: '{{percent}}% title match' })}>
-                      <span aria-hidden="true" className="hidden sm:block h-1.5 w-24 overflow-hidden rounded-full bg-slate-200 dark:bg-zinc-800">
-                        <span className={`block h-full rounded-full ${pct >= 80 && !o.folderAuthorOnly ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${pct}%` }} />
-                      </span>
-                      <span className="w-9 text-right text-xs tabular-nums text-fg-muted">{pct}%</span>
-                    </span>
-                  ) : (
-                    <span className="text-xs text-fg-muted">{t('adoption.editor.fromSearch', 'From search')}</span>
-                  )}
-                </label>
-              )
-            })}
-          </div>
+          {likely.length > 0 && (
+            <div className="divide-y divide-slate-200 dark:divide-zinc-800 rounded border border-slate-200 dark:border-zinc-800">
+              {likely.map(renderOption)}
+            </div>
+          )}
+          {/* Suggestions too far from the title to offer, still listed so a
+              right one the scorer undervalued can be picked. Never hidden. */}
+          {unlikely.length > 0 && (
+            <details className="mt-2" open={likely.length === 0 && unlikely.some(o => o.book.id === chosen?.id)}>
+              <summary className="cursor-pointer select-none text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white">
+                {t('adoption.editor.lowConfidence', { count: unlikely.length, defaultValue: 'Low-confidence suggestions ({{count}})' })}
+              </summary>
+              <div className="mt-1 divide-y divide-slate-200 dark:divide-zinc-800 rounded border border-dashed border-slate-300 dark:border-zinc-700">
+                {unlikely.map(renderOption)}
+              </div>
+            </details>
+          )}
         </fieldset>
       )}
       {chosen?.status === 'imported' && (
