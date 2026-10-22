@@ -15,6 +15,8 @@ import Switch from '../components/Switch'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import CoverImage from '../components/CoverImage'
 import CoverPlaceholder from '../components/CoverPlaceholder'
+import { SkeletonRows } from '../components/Skeleton'
+import EmptyState from '../components/EmptyState'
 
 // Series page filters (#2871). Each is computed from the series list the page
 // already loaded; none of them marks, monitors, searches or fills anything.
@@ -97,18 +99,27 @@ export default function SeriesPage() {
   // entry with new state (useModal), which must not refetch the list or
   // re-expand the series the page was first opened on.
   const navSeriesId = (location.state as { seriesId?: number } | null)?.seriesId
+  // A failed load is said as one, with a retry. Rendered as the empty state it
+  // read "No series found" plus a hint that blamed the metadata provider.
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   useEffect(() => {
-    Promise.all([api.listSeries(), api.status()])
+    setLoadError(null)
+    // Both arrive before the list renders: the status decides the Hardcover
+    // counts, the Unlinked filter and the link buttons, so a list shown first
+    // would jump when it lands. A failed status does not block the list; it
+    // renders as if enhanced Hardcover were off.
+    Promise.all([api.listSeries(), api.status().catch(err => { console.error(err); return null })])
       .then(([list, status]) => {
         setSeriesList(list)
-        setSystemStatus(status)
+        if (status) setSystemStatus(status)
         if (navSeriesId) {
           setExpanded(navSeriesId)
         }
       })
-      .catch(console.error)
+      .catch(err => setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false))
-  }, [navSeriesId])
+  }, [navSeriesId, loadAttempt])
 
   // Arriving with a series to open (the author page's series headings, the
   // header search) lands on its card: the list holds every series, so the
@@ -485,12 +496,15 @@ export default function SeriesPage() {
       </div>
 
       {loading ? (
-        <div className="text-fg-muted">{t('common.loading')}</div>
+        <SkeletonRows rows={4} />
+      ) : loadError ? (
+        <EmptyState
+          title={t('series.loadFailed', 'Could not load series')}
+          hint={loadError}
+          action={<button type="button" onClick={() => { setLoading(true); setLoadAttempt(n => n + 1) }} className={btn.secondary}>{t('common.retry', 'Retry')}</button>}
+        />
       ) : seriesList.length === 0 ? (
-        <div className="text-center py-16 text-fg-muted">
-          <p className="text-lg mb-2">{t('series.emptyTitle')}</p>
-          <p className="text-sm">{t('series.emptyHint')}</p>
-        </div>
+        <EmptyState title={t('series.emptyTitle')} hint={t('series.emptyHint')} />
       ) : filteredSeries.length === 0 ? (
         <div className="text-center py-16 text-fg-muted" role="status">
           <p>

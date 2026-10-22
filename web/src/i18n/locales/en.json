@@ -826,7 +826,9 @@
     "colSize": "Size",
     "colDate": "Date",
     "blocklist": "Blocklist",
-    "delete": "Delete"
+    "delete": "Delete",
+    "loadFailed": "Could not load history",
+    "noMatch": "No {{type}} events"
   },
   "queue": {
     "title": "Queue",
@@ -946,7 +948,7 @@
     "rename": "Rename",
     "addBook": "Add Book",
     "emptyTitle": "No series found",
-    "emptyHint": "Series are populated automatically from your monitored authors' books",
+    "emptyHint": "Series come from your metadata provider when it reports them for a book. If none show up, link a Hardcover series or add one by hand.",
     "noBooks": "No books in this series yet",
     "missingBadge": "{{count}} missing",
     "bookCount_one": "{{count}} book",
@@ -1049,7 +1051,8 @@
       "done_one": "{{count}} split part unmonitored",
       "done_other": "{{count}} split parts unmonitored",
       "failed": "Could not unmonitor the split parts"
-    }
+    },
+    "loadFailed": "Could not load series"
   },
   "importHints": {
     "heading": "Already have files on disk?",
@@ -1817,7 +1820,9 @@
       "defaultMonitorModeHint": "Applied to newly added authors. Existing authors keep their current mode unless edited.",
       "defaultMonitorLatestCountLabel": "Latest book count",
       "audiobookFileTemplate": "Audiobook file naming (per track)",
-      "audiobookFileTemplateHint": "Leave empty to keep the download’s original file layout. Set a template to rename every audiobook track in playback order; it must include {Part}. A single-file audiobook is renamed too, as part 1, unless {Part} sits in a group with its own text, such as {Title}{ - Pt. Part:3}.{ext}, which is left out when there is only one file."
+      "audiobookFileTemplateHint": "Leave empty to keep the download’s original file layout. Set a template to rename every audiobook track in playback order; it must include {Part}. A single-file audiobook is renamed too, as part 1, unless {Part} sits in a group with its own text, such as {Title}{ - Pt. Part:3}.{ext}, which is left out when there is only one file.",
+      "themeDark": "Dark",
+      "themeLight": "Light"
     },
     "import": {
       "csvHeading": "CSV of author names",
