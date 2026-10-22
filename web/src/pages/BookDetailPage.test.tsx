@@ -393,6 +393,13 @@ describe('BookDetailPage — header & metadata', () => {
   })
 })
 
+// Every delete lives in the File section's More menu. Opens it and picks one.
+async function sectionDelete(name: string | RegExp) {
+  const actions = within(await screen.findByTestId('file-section-actions'))
+  fireEvent.click(actions.getByRole('button', { name: /More/ }))
+  fireEvent.click(await screen.findByRole('menuitem', { name }))
+}
+
 describe('BookDetailPage — file section actions', () => {
   // A tracked row names itself with ?path=, which is the only form that can
   // pick one file out of several of the same format (#2408).
@@ -456,8 +463,7 @@ describe('BookDetailPage — file section actions', () => {
     const download = await screen.findByRole('link', { name: 'Download legacy-thing' })
     expect(download).toHaveAttribute('href', '/api/v1/book/42/file')
 
-    const group = within(screen.getByTestId('file-group-audiobook'))
-    fireEvent.click(group.getByRole('button', { name: /Delete file/ }))
+    await sectionDelete('Delete all files')
     fireEvent.click(await screen.findByRole('checkbox'))
     fireEvent.click(screen.getByRole('button', { name: 'Delete from disk' }))
     await waitFor(() => expect(api.deleteBookFile).toHaveBeenCalledWith(42, ''))
@@ -484,17 +490,25 @@ describe('BookDetailPage — file section actions', () => {
     await waitFor(() => expect(api.toggleExcluded).toHaveBeenCalledWith(42))
   })
 
-  it('keeps Download on the row and Delete on the format group, Re-bind on the section', async () => {
+  it('keeps Download on the row, deletes in the section menu, Fix match on the row, Re-bind under Metadata source', async () => {
     vi.mocked(api.getBook).mockResolvedValue(makeBook({ filePath: '/library/book.epub' }))
     renderBookDetailPage()
     const group = within(await screen.findByTestId('file-group-ebook'))
     // Download moved to the row (#2408): a group of several files has no one
     // file to hand back, so the group header cannot honestly offer it.
     expect(group.getByRole('link', { name: 'Download book.epub' })).toBeInTheDocument()
-    expect(group.getByRole('button', { name: /Delete file/ })).toBeInTheDocument()
+    // No always-visible red delete: one screen had four ways to delete one
+    // file. Every delete is in the File section's More menu.
+    expect(group.queryByRole('button', { name: /Delete file/ })).toBeNull()
+    expect(within(screen.getByTestId('file-section-actions')).queryByRole('button', { name: 'Re-bind' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Re-bind' })).toBeInTheDocument()
-    // One file → nothing to disambiguate, so Fix match stays at the surface.
-    expect(screen.getByRole('button', { name: 'Fix match' })).toBeInTheDocument()
+    // Fix match is a per-file action, so it is on the file's row only.
+    expect(screen.queryByRole('button', { name: 'Fix match' })).toBeNull()
+    fireEvent.click(group.getByRole('button', { name: 'More actions for book.epub' }))
+    expect(await screen.findByRole('menuitem', { name: 'Fix match' })).toBeEnabled()
+    // With one file, deleting it is Delete all files, not a second row item.
+    expect(screen.queryByRole('menuitem', { name: 'Delete this file' })).toBeNull()
+    fireEvent.keyDown(document, { key: 'Escape' })
     // …and the overflow ones off the row, until a menu is opened.
     expect(screen.queryByRole('button', { name: 'Exclude' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Rename files' })).toBeNull()
@@ -525,13 +539,18 @@ describe('BookDetailPage — file section actions', () => {
     expect(await screen.findByRole('menuitem', { name: 'Rename files' })).toBeEnabled()
   })
 
-  it('scopes the group delete to that format after confirmation', async () => {
+  it('scopes a format delete to that format after confirmation', async () => {
     vi.mocked(api.getBook).mockResolvedValue(
-      makeBook({ bookFiles: [makeFile({ id: 1, format: 'ebook', path: '/library/book.epub' })] }),
+      makeBook({
+        mediaType: 'both',
+        bookFiles: [
+          makeFile({ id: 1, format: 'ebook', path: '/library/book.epub' }),
+          makeFile({ id: 2, format: 'audiobook', path: '/library/book-audio' }),
+        ],
+      }),
     )
     renderBookDetailPage()
-    const group = within(await screen.findByTestId('file-group-ebook'))
-    fireEvent.click(group.getByRole('button', { name: /Delete file/ }))
+    await sectionDelete('Delete Ebook files')
     // ConfirmDialog gates the confirm button behind the acknowledgement.
     fireEvent.click(await screen.findByRole('checkbox'))
     fireEvent.click(screen.getByRole('button', { name: 'Delete from disk' }))
@@ -551,8 +570,7 @@ describe('BookDetailPage — file section actions', () => {
       }),
     )
     renderBookDetailPage()
-    const group = within(await screen.findByTestId('file-group-ebook'))
-    fireEvent.click(group.getByRole('button', { name: /Delete file/ }))
+    await sectionDelete('Delete all files')
 
     const dialog = await screen.findByText(/Permanently delete 2 file/)
     expect(dialog).toBeInTheDocument()
@@ -1061,13 +1079,13 @@ describe('BookDetailPage — dual-format book', () => {
     renderBookDetailPage()
 
     const audio = within(await screen.findByTestId('file-group-audiobook'))
-    // Download is per row and tracked, so it names its own path; Delete stays
-    // format-scoped because deleting the whole format IS a group action.
+    // Download is per row and tracked, so it names its own path; deleting a
+    // whole format is in the section menu and stays format-scoped.
     expect(audio.getByRole('link', { name: 'Download book-audio' })).toHaveAttribute(
       'href',
       '/api/v1/book/42/file?path=%2Flibrary%2Fbook-audio',
     )
-    fireEvent.click(audio.getByRole('button', { name: /Delete file/ }))
+    await sectionDelete('Delete Audiobook files')
     fireEvent.click(await screen.findByRole('checkbox'))
     fireEvent.click(screen.getByRole('button', { name: 'Delete from disk' }))
     await waitFor(() => expect(api.deleteBookFile).toHaveBeenCalledWith(42, '?format=audiobook'))
@@ -1093,8 +1111,8 @@ describe('BookDetailPage — dual-format book', () => {
 
     const ebookGroup = within(screen.getByTestId('file-group-ebook'))
     expect(ebookGroup.getByTestId('badge-ebook')).toBeInTheDocument()
-    // The epub's own group must delete only the epub.
-    fireEvent.click(ebookGroup.getByRole('button', { name: /Delete file/ }))
+    // Deleting the epub's format must delete only the epub.
+    await sectionDelete('Delete Ebook files')
     fireEvent.click(await screen.findByRole('checkbox'))
     fireEvent.click(screen.getByRole('button', { name: 'Delete from disk' }))
     await waitFor(() => expect(api.deleteBookFile).toHaveBeenCalledWith(42, '?format=ebook'))
@@ -1576,10 +1594,10 @@ describe('BookDetailPage — header', () => {
     vi.mocked(api.getBook).mockResolvedValue(makeBook({ filePath: '/library/book.epub' }))
     renderBookDetailPage()
 
-    const deleteFile = await screen.findByRole('button', { name: /Delete file/ })
-    expect(deleteFile.className).not.toContain('bg-red-600')
+    await screen.findByTestId('file-group-ebook')
+    expect(document.querySelector('.bg-red-600')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'More' }))
+    fireEvent.click(within(screen.getByTestId('file-section-actions')).getByRole('button', { name: 'More' }))
     const deleteBook = await screen.findByRole('menuitem', { name: 'Delete book + files…' })
     expect(deleteBook.className).toContain('text-red-700')
     expect(deleteBook.className).not.toContain('bg-red-600')
@@ -1844,17 +1862,19 @@ describe('BookDetailPage metadata source (#1707)', () => {
 describe('BookDetailPage — monitor toggle (#2417)', () => {
   it('renders a switch carrying the monitored state', async () => {
     renderBookDetailPage()
-    const toggle = await screen.findByRole('switch', { name: 'Unmonitor' })
+    // Named by its visible text; the state is aria-checked, the action the tooltip.
+    const toggle = await screen.findByRole('switch', { name: 'Monitored' })
     expect(toggle).toHaveAttribute('aria-checked', 'true')
+    expect(toggle).toHaveAttribute('title', 'Unmonitor')
   })
 
   it('unmonitors a monitored book and reflects it in the status badge', async () => {
     renderBookDetailPage()
 
-    fireEvent.click(await screen.findByRole('switch', { name: 'Unmonitor' }))
+    fireEvent.click(await screen.findByRole('switch', { name: 'Monitored' }))
 
     await waitFor(() => expect(api.updateBook).toHaveBeenCalledWith(42, { monitored: false }))
-    expect(await screen.findByRole('switch', { name: 'Monitor' })).toHaveAttribute('aria-checked', 'false')
+    expect(await screen.findByRole('switch', { name: 'Monitored' })).toHaveAttribute('aria-checked', 'false')
     expect(screen.getByText('Not monitored')).toBeInTheDocument()
   })
 
@@ -1862,12 +1882,12 @@ describe('BookDetailPage — monitor toggle (#2417)', () => {
     vi.mocked(api.getBook).mockResolvedValue(makeBook({ monitored: false }))
     renderBookDetailPage()
 
-    const toggle = await screen.findByRole('switch', { name: 'Monitor' })
+    const toggle = await screen.findByRole('switch', { name: 'Monitored' })
     expect(toggle).toHaveAttribute('aria-checked', 'false')
     fireEvent.click(toggle)
 
     await waitFor(() => expect(api.updateBook).toHaveBeenCalledWith(42, { monitored: true }))
-    expect(await screen.findByRole('switch', { name: 'Unmonitor' })).toHaveAttribute('aria-checked', 'true')
+    expect(await screen.findByRole('switch', { name: 'Monitored' })).toHaveAttribute('aria-checked', 'true')
   })
 
   it('disables the switch while the update is in flight, so one click sends one PUT', async () => {
@@ -1875,7 +1895,7 @@ describe('BookDetailPage — monitor toggle (#2417)', () => {
     vi.mocked(api.updateBook).mockImplementation(() => new Promise<Book>(resolve => { settle = resolve }))
 
     renderBookDetailPage()
-    const toggle = await screen.findByRole('switch', { name: 'Unmonitor' })
+    const toggle = await screen.findByRole('switch', { name: 'Monitored' })
     fireEvent.click(toggle)
 
     await waitFor(() => expect(toggle).toBeDisabled())
@@ -1883,7 +1903,7 @@ describe('BookDetailPage — monitor toggle (#2417)', () => {
     expect(api.updateBook).toHaveBeenCalledTimes(1)
 
     await act(async () => { settle?.(makeBook({ monitored: false })) })
-    expect(await screen.findByRole('switch', { name: 'Monitor' })).toBeEnabled()
+    expect(await screen.findByRole('switch', { name: 'Monitored' })).toBeEnabled()
   })
 })
 
@@ -2069,7 +2089,7 @@ describe('BookDetailPage — Previous/Next navigation (#2548, book side)', () =>
     renderBookDetailPage({ pathname: '/book/42', state: { ids: [42, 43], index: 0 } })
     await screen.findByRole('heading', { name: 'The Final Empire' })
 
-    fireEvent.click(screen.getByRole('switch', { name: 'Unmonitor' }))
+    fireEvent.click(screen.getByRole('switch', { name: 'Monitored' }))
     expect(await screen.findByText('Save failed')).toBeInTheDocument()
 
     fireEvent.click(screen.getByLabelText('Next book'))
@@ -2237,5 +2257,17 @@ describe('BookDetailPage — audnex enrich', () => {
 
     expect(await screen.findByText('This book changed while it was being enriched. Try again.')).toBeInTheDocument()
     expect(screen.queryByText('Enrich failed')).not.toBeInTheDocument()
+  })
+})
+
+describe('BookDetailPage — metadata you already have', () => {
+  // Genres were saved and editable but shown nowhere; the monitored switch had
+  // no visible label and read as Monitored only by inference.
+  it('shows the genres and labels the monitored switch', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ genres: ['Dystopia', 'Classics'] }))
+    renderBookDetailPage()
+    const genres = await screen.findByRole('list', { name: 'Genres' })
+    expect(within(genres).getAllByRole('listitem').map(li => li.textContent)).toEqual(['Dystopia', 'Classics'])
+    expect(screen.getByRole('switch')).toHaveTextContent('Monitored')
   })
 })
