@@ -713,7 +713,9 @@
     "showExcluded": "Show excluded",
     "sortByColumn": "Sort by {{column}}",
     "reviewDuplicates": "Review duplicates",
-    "reviewDuplicatesHint": "Find titles across the library that look like the same book; nothing changes until you exclude a row"
+    "reviewDuplicatesHint": "Find titles across the library that look like the same book; nothing changes until you exclude a row",
+    "languageUnknownBadge": "No language",
+    "languageUnknownHint": "The metadata source did not report a language for this book."
   },
   "wanted": {
     "title": "Wanted",

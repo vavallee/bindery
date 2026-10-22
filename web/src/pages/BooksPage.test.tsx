@@ -17,7 +17,7 @@ import { api, type Book } from '../api/client'
 // human-readable strings.
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: string | Record<string, unknown>) => {
+    t: (key: string, options?: string | Record<string, unknown>, extra?: Record<string, unknown>) => {
       const labels: Record<string, string> = {
         'books.title': 'Books',
         'books.countLabel': 'books',
@@ -69,7 +69,7 @@ vi.mock('react-i18next', () => ({
         'search.autoGrabDisabled': 'No search was run. Automatic grabbing is off.',
       }
       if (labels[key]) return labels[key]
-      if (typeof options === 'string') return options
+      if (typeof options === 'string') return options.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(extra?.[k] ?? ''))
       return key
     },
   }),

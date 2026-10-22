@@ -76,7 +76,7 @@ describe('small controls get a 44px hit area on touch screens', () => {
   })
 
   it.each([
-    ['pages/BooksPage.tsx', 'const statusBtnCls'],
+    ['components/FilterBar.tsx', 'const statusBtnCls'],
     ['pages/import/AdoptionFacets.tsx', 'const pill'],
   ])('%s status filter chips', (file, decl) => {
     const s = src(file)
@@ -97,7 +97,7 @@ describe('small controls get a 44px hit area on touch screens', () => {
   // With the 4px gap of a wrapped row, the second row's chips took taps aimed
   // at the bottom of the first row's. On touch the rows sit 20px apart.
   it.each([
-    ['pages/BooksPage.tsx', '<div className="flex gap-1 pointer-coarse:gap-y-5 flex-wrap">'],
+    ['components/FilterBar.tsx', 'className="flex gap-1 pointer-coarse:gap-y-5 flex-wrap"'],
     ['pages/SeriesPage.tsx', `aria-label={t('series.filterLabel')} className="flex gap-1 pointer-coarse:gap-y-5 flex-wrap items-center"`],
     ['pages/import/AdoptionFacets.tsx', `aria-label={t('adoption.stateLabel', 'Show')} className="flex gap-1 pointer-coarse:gap-y-5 flex-wrap items-center"`],
   ])('%s wrapped chip rows leave room for the hit areas', (file, row) => {
@@ -112,12 +112,14 @@ describe('small controls get a 44px hit area on touch screens', () => {
     expect(classOf('App.tsx', "\n                  {t('login.signOut')}\n                ")).toContain('touch-target')
   })
 
-  it.each(['pages/BooksPage.tsx', 'pages/AuthorDetailPage.tsx'])('%s book checkboxes, through a label round the box', file => {
-    const s = src(file)
-    // Grid cards: the label is the tap area, larger on touch.
-    expect(s).toContain('className="absolute top-0 left-0 z-10 flex p-2 pointer-coarse:p-3.5 cursor-pointer"')
-    // Table rows: the label fills the cell.
-    expect(s).toContain('<label className="flex items-center -mx-3 -my-2 px-3 py-2 cursor-pointer pointer-coarse:min-h-11">')
+  // Grid cards: the label is the tap area, larger on touch.
+  it.each(['pages/BooksPage.tsx', 'pages/AuthorsPage.tsx', 'pages/AuthorDetailPage.tsx'])('%s grid card checkboxes, through a label round the box', file => {
+    expect(src(file)).toContain('className="absolute top-0 left-0 z-10 flex p-2 pointer-coarse:p-3.5 cursor-pointer"')
+  })
+
+  // Table rows: the label fills the cell. Every list table is DataTable.
+  it.each(['components/DataTable.tsx', 'pages/AuthorDetailPage.tsx'])('%s table row checkboxes, through a label that fills the cell', file => {
+    expect(src(file)).toContain('<label className="flex items-center -mx-3 -my-2 px-3 py-2 cursor-pointer pointer-coarse:min-h-11">')
   })
 })
 
