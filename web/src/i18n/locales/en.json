@@ -2516,5 +2516,10 @@
     "genreOverrideDone": "Updated {{count}} book(s).",
     "bio": "Bio",
     "bioHint": "A bio you write here stays as you wrote it: no refresh replaces it. Clear it to let the metadata provider fill it again."
+  },
+  "dataTable": {
+    "selectPage": "Select all on this page",
+    "selectRow": "Select {{name}}",
+    "actions": "Actions"
   }
 }

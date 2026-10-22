@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 interface Props<K extends string> {
@@ -11,6 +12,8 @@ interface Props<K extends string> {
   // natural direction.
   onSort: (key: K) => void
   className?: string
+  /** Rendered after the sort button, outside it: a help popover must not sort. */
+  extra?: ReactNode
 }
 
 // Chevrons drawn as SVG in the same outline style as the header icons, so the
@@ -25,13 +28,13 @@ function SortIcon({ state }: { state: 'asc' | 'desc' | 'none' }) {
   )
 }
 
-// SortHeader is a clickable column header showing the active sort. BooksPage
-// and AuthorDetailPage each carry their own copy; this is the third, so it
-// lives here, and moving those two onto it is a separate change.
+// SortHeader is a clickable column header showing the active sort. Every list
+// table sorts through it (via DataTable); the per-page copies it replaced drew
+// ▲/▼ glyphs that depended on the font and disagreed on the idle state.
 //
 // Tailwind v4's Preflight gives <button> no pointer cursor, so the header sets
 // cursor-pointer itself; without it a sortable column reads as plain text.
-export default function SortHeader<K extends string>({ label, sortKey, activeKey, direction, onSort, className = '' }: Props<K>) {
+export default function SortHeader<K extends string>({ label, sortKey, activeKey, direction, onSort, className = '', extra }: Props<K>) {
   const { t } = useTranslation()
   const active = sortKey === activeKey
   return (
@@ -49,6 +52,7 @@ export default function SortHeader<K extends string>({ label, sortKey, activeKey
         {label}
         <SortIcon state={active ? direction : 'none'} />
       </button>
+      {extra}
     </th>
   )
 }
