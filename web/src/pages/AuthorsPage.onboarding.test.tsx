@@ -33,7 +33,7 @@ vi.mock('react-i18next', () => ({
         'gettingStarted.downloadClients': 'Set up Download Clients',
         'common.dismiss': 'Dismiss',
       }
-      return labels[key] ?? fallback ?? key
+      return labels[key] ?? (typeof fallback === 'string' ? fallback : key)
     },
   }),
 }))

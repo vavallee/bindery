@@ -18,7 +18,7 @@ import { api, type Author, type Book } from '../api/client'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: string | Record<string, unknown>) => {
+    t: (key: string, options?: string | Record<string, unknown>, extra?: Record<string, unknown>) => {
       const labels: Record<string, string> = {
         'common.all': 'All',
         'books.statusWanted': 'Wanted',
@@ -30,7 +30,9 @@ vi.mock('react-i18next', () => ({
         'wanted.showExcluded': 'Show excluded',
       }
       if (labels[key]) return labels[key]
-      if (typeof options === 'string') return options
+      // Interpolate a string default the way i18next would, so a row's
+      // "Select {{name}}" box is findable by the row's name.
+      if (typeof options === 'string') return options.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(extra?.[k] ?? ''))
       return key
     },
   }),
