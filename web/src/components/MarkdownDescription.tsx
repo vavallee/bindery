@@ -10,8 +10,14 @@ interface MarkdownDescriptionProps {
   collapsedLines?: number
 }
 
-const referenceDefinitionRE = /^\s*\[[^\]]+\]:\s+\S+/
-const sourcesLineRE = /^\s*\(Sources?:\s*.*\)\s*$/i
+// Reference definitions, with or without the space after the colon:
+// OpenLibrary bios carry both "[1]: https://…" and "[1]:https://…".
+const referenceDefinitionRE = /^\s*\[[^\]]+\]:\s*\S+/
+// A citation line: "(Sources: …)", or the "([Source][1])" / "(Source.)" form
+// Wikipedia-derived bios end with, which renders as a bare "(Source.)".
+const sourcesLineRE = /^\s*\(\s*(?:Sources?:\s*.*|\[?Sources?\]?(?:\[[^\]]*\])?\s*\.?\s*)\)\s*$/i
+// The same citation trailing the last sentence of a paragraph.
+const trailingSourceRE = /\s*\(\s*\[?Sources?\]?(?:\[[^\]]*\])?\s*\.?\s*\)\s*$/i
 // Inline tokens, in priority order: [text](url) inline link, [text][ref]
 // reference link (rendered as plain text — the [ref]: defs are stripped),
 // **bold**, *italic*.
@@ -23,6 +29,7 @@ function cleanMarkdownDescription(text: string): string {
     .replace(/\r/g, '\n')
     .split('\n')
     .filter(line => !referenceDefinitionRE.test(line) && !sourcesLineRE.test(line))
+    .map(line => line.replace(trailingSourceRE, ''))
     .join('\n')
     .trim()
 }
