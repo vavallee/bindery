@@ -15,6 +15,7 @@ import { formatBytes } from '../util/format'
 import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
 import CoverImage from '../components/CoverImage'
 import { primaryFill } from '../components/buttons'
+import { FilteredResultsSection } from './BookDetailPage'
 
 // Shared grid template so the header row and every list row line up exactly.
 // columns: checkbox · cover · title+author · format · actions
@@ -43,6 +44,9 @@ export default function WantedPage() {
   const [loading, setLoading] = useState(true)
   const [searchingId, setSearchingId] = useState<number | null>(null)
   const [results, setResults] = useState<SearchResult[]>([])
+  // Releases the relevance and language filters dropped (#2334, #3364).
+  const [filtered, setFiltered] = useState<SearchResult[]>([])
+  const [filteredTotal, setFilteredTotal] = useState<number | undefined>(undefined)
   const [showResults, setShowResults] = useState<number | null>(null)
   // Page, search and the excluded toggle live in the URL so going back from a
   // book lands on the same page of the same list (#3052).
@@ -139,6 +143,8 @@ export default function WantedPage() {
     try {
       const res = await api.searchBook(book.id)
       setResults(res.results)
+      setFiltered(res.filtered ?? [])
+      setFilteredTotal(res.filteredTotal)
       setShowResults(book.id)
     } catch (err) {
       console.error(err)
@@ -443,7 +449,9 @@ export default function WantedPage() {
 
                 {showResults === book.id && results.length === 0 && (
                   <div className="px-3 pb-2 text-xs text-fg-muted">
-                    {t('wanted.noIndexerResults')}
+                    {filtered.length > 0
+                      ? t('bookDetail.noResultsFiltered', { count: filteredTotal ?? filtered.length })
+                      : t('wanted.noIndexerResults')}
                   </div>
                 )}
 
@@ -489,6 +497,18 @@ export default function WantedPage() {
                         </button>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {showResults === book.id && filtered.length > 0 && (
+                  <div className="px-3 pb-2">
+                    <FilteredResultsSection
+                      filtered={filtered}
+                      total={filteredTotal}
+                      bookMediaType={book.mediaType}
+                      grabbing={grabbingGuid}
+                      onGrab={r => grab(r, book)}
+                    />
                   </div>
                 )}
               </div>
