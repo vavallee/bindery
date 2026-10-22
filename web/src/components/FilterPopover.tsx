@@ -50,6 +50,7 @@ export function FilterGroup<T extends string>({
               type="button"
               role="radio"
               aria-checked={active}
+              data-value={opt.value}
               aria-label={opt.ariaLabel}
               onClick={() => onChange(opt.value)}
               className={`flex items-center gap-2 px-2 py-1.5 rounded text-left text-sm transition-colors ${

@@ -37,6 +37,8 @@ vi.mock('react-i18next', () => ({
     t: (key: string, fallback?: string | Record<string, unknown>, opts?: Record<string, unknown>) => {
       const labels: Record<string, string> = {
         'authors.booksInLibrary': `${String(opts?.have ?? '')} of ${String(opts?.total ?? '')} in library`,
+        'dataTable.selectRow': `Select ${String(opts?.name ?? '')}`,
+        'dataTable.selectPage': 'Select all on this page',
         'authors.title': 'Authors',
         'authors.merge': 'Merge',
         'authors.addAuthor': 'Add Author',
@@ -213,7 +215,9 @@ describe('AuthorsPage', () => {
       </MemoryRouter>,
     )
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Add Series' }))
+    // Add series is a rare action, so it sits in the header's More menu.
+    fireEvent.click(await screen.findByRole('button', { name: 'More author actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add Series' }))
     const dialog = await screen.findByRole('dialog', { name: 'Add Series' })
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Dune Chronicles' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add Series' }))
@@ -551,11 +555,15 @@ describe('AuthorsPage — filter and sort popovers', () => {
 
   // The column headers already sort in table view. Offering a sort control as
   // well invites the two to disagree about what is active.
-  it('drops the sort control in table view, where the headers do the job', async () => {
+  // The Sort control used to vanish in table view, which read as a page
+  // without sort. The headers and the control drive the same value, so they
+  // cannot disagree.
+  it('keeps the sort control in table view too', async () => {
     localStorage.setItem('bindery.view.authors', 'table')
     await renderPage()
 
-    expect(screen.queryByRole('button', { name: /Sort/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^Sort/ }))
+    expect(screen.getByRole('radio', { name: 'Recent' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Filters/ })).toBeInTheDocument()
   })
 
