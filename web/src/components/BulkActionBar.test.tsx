@@ -24,13 +24,46 @@ let restore: () => void = () => {}
 afterEach(() => restore())
 
 describe('BulkActionBar', () => {
-  it('shows every action inline on a wide screen', () => {
+  it('shows the first four actions inline on a wide screen, with Delete held back in More', () => {
     restore = mockMatchMedia(false)
-    render(<BulkActionBar count={2} actions={actions()} onClear={vi.fn()} />)
-    for (const label of ['Monitor', 'Unmonitor', 'Search', 'Set ebook', 'Delete', 'bulkActionBar.clear']) {
+    const list = actions()
+    render(<BulkActionBar count={2} actions={list} onClear={vi.fn()} />)
+    for (const label of ['Monitor', 'Unmonitor', 'Search', 'Set ebook', 'bulkActionBar.clear']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
     }
-    expect(screen.queryByRole('button', { name: /common\.more/ })).not.toBeInTheDocument()
+    // Delete sat beside Clear in a flat row of every action. It is never
+    // inline now, however few actions there are.
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /bulkActionBar\.more/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
+    expect(list[4].onClick).toHaveBeenCalled()
+  })
+
+  it('caps inline actions at four on a wide screen', () => {
+    restore = mockMatchMedia(false)
+    const list: BulkAction[] = ['A', 'B', 'C', 'D', 'E', 'F'].map(label => ({ label, onClick: vi.fn() }))
+    render(<BulkActionBar count={1} actions={list} onClear={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'D' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'E' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /bulkActionBar\.more/ }))
+    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map(i => i.textContent)).toEqual(['E', 'F'])
+  })
+
+  it('renders a choice as one menu inline, and as prefixed items in More', () => {
+    restore = mockMatchMedia(false)
+    const ebook = vi.fn()
+    const format: BulkAction = { label: 'Set format', choices: [{ label: 'Ebook', onClick: ebook }, { label: 'Both', onClick: vi.fn() }] }
+    const { unmount } = render(<BulkActionBar count={1} actions={[format]} onClear={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Set format/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Ebook' }))
+    expect(ebook).toHaveBeenCalled()
+    unmount()
+
+    restore()
+    restore = mockMatchMedia(true)
+    render(<BulkActionBar count={1} actions={[...actions().slice(0, 2), format]} onClear={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: /bulkActionBar\.more/ }))
+    expect(screen.getByRole('menuitem', { name: 'Set format: Ebook' })).toBeInTheDocument()
   })
 
   // Seven or eight buttons wrapped to four or five rows on a phone, and the
@@ -46,7 +79,7 @@ describe('BulkActionBar', () => {
     expect(screen.queryByRole('button', { name: 'Search' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
 
-    const more = screen.getByRole('button', { name: /common\.more/ })
+    const more = screen.getByRole('button', { name: /bulkActionBar\.more/ })
     expect(more).toHaveAttribute('aria-haspopup', 'menu')
     expect(more).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(more)
@@ -68,7 +101,7 @@ describe('BulkActionBar', () => {
   it('needs no More menu on a phone when the actions fit', () => {
     restore = mockMatchMedia(true)
     render(<BulkActionBar count={1} actions={actions().slice(0, 2)} onClear={vi.fn()} />)
-    expect(screen.queryByRole('button', { name: /common\.more/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /bulkActionBar\.more/ })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'bulkActionBar.clear' })).toBeInTheDocument()
   })
 
@@ -76,13 +109,13 @@ describe('BulkActionBar', () => {
     restore = mockMatchMedia(true)
     const list: BulkAction[] = [...actions().slice(0, 2), { label: 'Set both', onClick: vi.fn(), variant: 'caution' }]
     render(<BulkActionBar count={2} actions={list} onClear={vi.fn()} />)
-    fireEvent.click(screen.getByRole('button', { name: /common\.more/ }))
+    fireEvent.click(screen.getByRole('button', { name: /bulkActionBar\.more/ }))
     expect(screen.getByRole('menuitem', { name: 'Set both' }).className).toContain('text-amber-700')
   })
 
   it('disables the More menu items while busy', () => {
     restore = mockMatchMedia(true)
     render(<BulkActionBar count={2} actions={actions()} onClear={vi.fn()} busy />)
-    expect(screen.getByRole('button', { name: /common\.more/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /bulkActionBar\.more/ })).toBeDisabled()
   })
 })
