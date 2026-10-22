@@ -2005,7 +2005,6 @@
     "unexclude": "Ta bort exkludering",
     "excludeHint": "Exkludera boken från sökningar och sidan Önskade",
     "unexcludeHint": "Ta med boken i sökningar och på sidan Önskade igen",
-    "deleteFile": "Ta bort fil",
     "deleteThisFile": "Ta bort den här filen",
     "deleteThisFileHint": "Ta bort endast den här filen permanent från disken",
     "deletingFile": "Tar bort…",
