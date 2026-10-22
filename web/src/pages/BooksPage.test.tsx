@@ -17,7 +17,7 @@ import { api, type Book } from '../api/client'
 // human-readable strings.
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: string | Record<string, unknown>) => {
+    t: (key: string, options?: string | Record<string, unknown>, extra?: Record<string, unknown>) => {
       const labels: Record<string, string> = {
         'books.title': 'Books',
         'books.countLabel': 'books',
@@ -68,7 +68,7 @@ vi.mock('react-i18next', () => ({
         'search.autoGrabDisabled': 'No search was run. Automatic grabbing is off.',
       }
       if (labels[key]) return labels[key]
-      if (typeof options === 'string') return options
+      if (typeof options === 'string') return options.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(extra?.[k] ?? ''))
       return key
     },
   }),
@@ -404,6 +404,22 @@ describe('BooksPage — sortable column headers', () => {
 
     click('Status')
     await waitFor(() => expect(sorts).toContain('status-az'))
+  })
+
+  // A header sort the Sort popover did not list left it with nothing
+  // checked, so the control read as if no sort were on.
+  it('shows a header sort as the checked option in the Sort popover', async () => {
+    localStorage.setItem('bindery.view.books', 'table')
+    server.use(
+      http.get(apiUrl('/book'), () =>
+        HttpResponse.json({ items: [makeBook({ id: 1, title: 'Dune' })], total: 1, limit: 50, offset: 0 }),
+      ),
+    )
+    renderBooksPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Status' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Sort/ }))
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Status A–Z' })).toHaveAttribute('aria-checked', 'true'))
+    localStorage.clear()
   })
 
   it('marks every sortable header as clickable, not only the active one', async () => {
