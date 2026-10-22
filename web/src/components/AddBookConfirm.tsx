@@ -7,6 +7,7 @@ import RequestConfirm from './RequestConfirm'
 import { metadataSourceLink, providerDisplayName, providerFromBookForeignId } from '../util/metadataSource'
 import MetadataLinksMenu from './MetadataLinksMenu'
 import CoverImage from './CoverImage'
+import CoverPlaceholder from './CoverPlaceholder'
 import { primaryFill } from './buttons'
 
 // The confirm step for a book picked in AddToLibraryModal: the large cover,
@@ -128,14 +129,7 @@ function AddBookForm({ book, searchedISBN, onBack, onClose, onAdded }: Props) {
       <div className="p-4 flex-1 overflow-y-auto">
         <div className="flex items-start gap-4 rounded-md border border-slate-300 dark:border-zinc-700 bg-slate-200/50 dark:bg-zinc-800/50 p-4">
           <CoverImage src={book.imageUrl} alt={t('addToLibrary.book.coverAlt', { title: book.title })} className="w-28 aspect-[2/3] object-cover rounded-md flex-shrink-0"
-            fallback={
-              <div className="w-28 aspect-[2/3] rounded-md bg-slate-300 dark:bg-zinc-800 flex flex-col items-center justify-center gap-2 px-2 text-center text-fg-muted flex-shrink-0">
-                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5} aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
-                </svg>
-                <span className="text-xs">{t('addToLibrary.book.noCover')}</span>
-              </div>
-            }
+            fallback={<CoverPlaceholder id={book.id || `ol-${book.foreignBookId}`} title={book.title} size="sm" show="initials" className="w-28 aspect-[2/3] rounded-md flex-shrink-0" />}
           />
           <div className="min-w-0 flex-1">
             <h4 ref={headingRef} tabIndex={-1} className="rounded-sm font-semibold leading-snug break-words focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-500">{book.title}</h4>

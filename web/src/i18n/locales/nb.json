@@ -746,7 +746,6 @@
     "colTitleAuthor": "Tittel og forfatter",
     "colFormat": "Format",
     "colActions": "Handlinger",
-    "noCover": "Uten omslag",
     "authorUnknown": "Ukjent forfatter",
     "changeFormat": "Endre format for {{title}}",
     "authorNotMonitored": "Forfatteren er ikke overvåket, så det søkes ikke automatisk etter denne boken",
@@ -2477,7 +2476,6 @@
     "book": {
       "confirmAdd": "Legg til bok",
       "coverAlt": "Omslag til {{title}}",
-      "noCover": "Uten omslag",
       "published": "Utgitt",
       "language": "Språk",
       "resultFormat": "Metadataformat",

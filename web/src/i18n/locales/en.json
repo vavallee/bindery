@@ -782,7 +782,6 @@
     "colTitleAuthor": "Title & author",
     "colFormat": "Format",
     "colActions": "Actions",
-    "noCover": "No cover",
     "authorUnknown": "Author unknown",
     "changeFormat": "Change format for {{title}}",
     "authorNotMonitored": "Author not monitored, so this is not searched automatically",
@@ -2519,7 +2518,6 @@
     "book": {
       "confirmAdd": "Add book",
       "coverAlt": "{{title}} cover",
-      "noCover": "No cover",
       "published": "Published",
       "language": "Language",
       "resultFormat": "Metadata format",

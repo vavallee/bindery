@@ -21,6 +21,7 @@ import BookRating from '../components/BookRating'
 import CoverImage from '../components/CoverImage'
 import { primaryFill } from '../components/buttons'
 import { errorText } from '../util/errorText'
+import CoverPlaceholder from '../components/CoverPlaceholder'
 
 type SortMode =
   | 'title-az' | 'title-za'
@@ -459,9 +460,7 @@ export default function BooksPage() {
                     <td className="px-3 py-2">
                       <Link to={`/book/${book.id}`} state={bookNavState(i)} className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
                         <CoverImage loading="lazy" decoding="async" src={book.imageUrl} alt="" className="w-6 h-9 object-cover rounded flex-shrink-0"
-                          fallback={
-                            <div className="w-6 h-9 bg-slate-200 dark:bg-zinc-800 rounded flex-shrink-0" />
-                          }
+                          fallback={<CoverPlaceholder id={book.id} title={book.title} size="xs" className="w-6 h-9 rounded flex-shrink-0" />}
                         />
                         <span className="text-slate-800 dark:text-zinc-200 truncate">{book.title}</span>
                       </Link>
@@ -527,16 +526,9 @@ export default function BooksPage() {
                     aria-label={`Select ${book.title}`}
                   />
                 </label>
-                <Link to={`/book/${book.id}`} state={bookNavState(i)} className="block w-full h-full rounded-t-lg focus-visible:-outline-offset-2">
+                <Link to={`/book/${book.id}`} state={bookNavState(i)} aria-label={book.title} className="block w-full h-full rounded-t-lg focus-visible:-outline-offset-2">
                   <CoverImage loading="lazy" decoding="async" src={book.imageUrl} alt={book.title} className="w-full h-full object-cover"
-                    fallback={
-                      <div className="w-full h-full flex flex-col items-center justify-center gap-2 p-3 text-center">
-                        <svg className="w-8 h-8 text-slate-400 dark:text-zinc-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5} aria-hidden="true">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
-                        </svg>
-                        <span className="text-xs font-medium text-slate-700 dark:text-zinc-300 line-clamp-3">{book.title}</span>
-                      </div>
-                    }
+                    fallback={<CoverPlaceholder id={book.id} title={book.title} show="initials" className="w-full h-full" />}
                   />
                 </Link>
               </div>

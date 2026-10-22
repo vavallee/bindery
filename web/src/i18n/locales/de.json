@@ -168,7 +168,6 @@
     "colTitleAuthor": "Titel & Autor",
     "colFormat": "Format",
     "colActions": "Aktionen",
-    "noCover": "Kein Cover",
     "authorUnknown": "Autor unbekannt",
     "changeFormat": "Format für {{title}} ändern"
   },
@@ -458,7 +457,6 @@
     "book": {
       "confirmAdd": "Buch hinzufügen",
       "coverAlt": "Cover von {{title}}",
-      "noCover": "Kein Cover",
       "published": "Veröffentlicht",
       "language": "Sprache",
       "resultFormat": "Metadatenformat",

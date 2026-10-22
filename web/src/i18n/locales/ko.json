@@ -237,7 +237,6 @@
     "colTitleAuthor": "제목 및 저자",
     "colFormat": "형식",
     "colActions": "작업",
-    "noCover": "표지 없음",
     "authorUnknown": "저자 불명",
     "changeFormat": "{{title}}의 형식 변경"
   },
@@ -768,7 +767,6 @@
     "book": {
       "confirmAdd": "도서 추가",
       "coverAlt": "{{title}} 표지",
-      "noCover": "표지 없음",
       "published": "출판일",
       "language": "언어",
       "resultFormat": "메타데이터 형식",

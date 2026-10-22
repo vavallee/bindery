@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, useLocation } from 'react-router'
 import WantedPage from './WantedPage'
 import { api } from '../api/client'
+import { coverColorFor } from '../components/coverPalette'
 import type { Author, Book, Download, SearchResult } from '../api/client'
 
 vi.mock('../api/client', async importOriginal => {
@@ -67,7 +68,6 @@ vi.mock('react-i18next', () => ({
         'wanted.colTitleAuthor': 'Title & author',
         'wanted.colFormat': 'Format',
         'wanted.colActions': 'Actions',
-        'wanted.noCover': 'No cover',
         'wanted.authorUnknown': 'Author unknown',
         'wanted.authorNotMonitored': 'Author not monitored, so this is not searched automatically',
         'search.autoGrabDisabled': 'No search was run. Automatic grabbing is off.',
@@ -241,8 +241,8 @@ describe('WantedPage', () => {
   })
 
   // A cover that fails to load, such as a stored cover the list returned raw
-  // before #3146, shows the No cover slot rather than a broken image.
-  it('shows the No cover slot when a cover fails to load', async () => {
+  // before #3146, shows the shared cover placeholder rather than a broken image.
+  it('shows the cover placeholder when a cover fails to load', async () => {
     vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([
       makeBook({ id: 1, title: 'Fjellvinden', imageUrl: '/api/v1/images?url=bindery-cover%3Agone.jpg' }),
     ]))
@@ -250,10 +250,13 @@ describe('WantedPage', () => {
     const { container } = renderWantedPage()
 
     await screen.findByRole('link', { name: 'Fjellvinden' })
-    expect(screen.queryByText('No cover')).toBeNull()
     fireEvent.error(container.querySelector('img')!)
     expect(container.querySelector('img')).toBeNull()
-    expect(screen.getByText('No cover')).toBeInTheDocument()
+    // The shared placeholder: the book's own palette ground, seeded by its id,
+    // where the old fallback was a fixed grey box.
+    const tile = container.querySelector('.w-8.h-11[aria-hidden]')!
+    expect(tile.className).toContain(coverColorFor(1).className.split(' ')[0])
+    expect(tile.className).not.toContain('bg-slate-200')
   })
 
   it('renders the column header row with a select-all checkbox', async () => {
