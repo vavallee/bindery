@@ -13,6 +13,7 @@ import { btn, btnSize, primaryFill } from '../components/buttons'
 import { formatBytes } from '../util/format'
 import { downloadStatusBadge, isFailed, isMatchable, isResendable, isRetryable } from '../components/downloadStatus'
 import { ModalPanel } from '../components/useModal'
+import { notifyFailedQueueChanged } from '../components/useFailedQueueCount'
 
 export default function QueuePage() {
   const { t } = useTranslation()
@@ -60,6 +61,7 @@ export default function QueuePage() {
     ]).then(([q, p]) => {
       if (!mounted.current) return
       setQueue(q.items ?? [])
+      notifyFailedQueueChanged((q.items ?? []).filter(it => isFailed(it.status)).length)
       setPartial(!!q.partial)
       setStaleClients((q.staleClients ?? []).map(c => c.name).filter((n): n is string => !!n))
       setPending(p)

@@ -9,11 +9,14 @@ import CoverPlaceholder from './CoverPlaceholder'
 // LibrarySearch is the header typeahead over the caller's own catalogue
 // (#2551). It only ever talks to /search/library; the metadata providers are
 // reached through the trailing "Add … to Bindery" row, which hands the query
-// to AddToLibraryModal. Indexer search stays on /search (the magnifier).
+// to AddToLibraryModal. Indexer search is the row above it, which opens
+// /search with the query: it used to be a separate magnifier icon beside this
+// box, the same glyph with a different scope, which nobody could tell apart.
 //
 // The row model is one flat list so keyboard navigation does not care about
-// the section a row sits in: authors, then books, then series, then the add
-// row, which is always present while there is a query.
+// the section a row sits in: authors, then books, then series, then the
+// indexer row and the add row, both always present while there is a query.
+// Enter with nothing highlighted still takes the add row, the last one.
 
 const DEBOUNCE_MS = 300
 
@@ -21,6 +24,7 @@ type Row =
   | { kind: 'author'; id: number; label: string; sub?: string; imageUrl?: string }
   | { kind: 'book'; id: number; label: string; sub?: string; imageUrl?: string; authorId: number }
   | { kind: 'series'; id: number; label: string }
+  | { kind: 'indexers'; label: string }
   | { kind: 'add'; label: string }
 
 interface Props {
@@ -30,11 +34,12 @@ interface Props {
   autoFocus?: boolean
 }
 
-function toRows(res: LibrarySearchResponse, addLabel: string): Row[] {
+function toRows(res: LibrarySearchResponse, addLabel: string, indexersLabel: string): Row[] {
   const rows: Row[] = []
   for (const a of res.authors) rows.push({ kind: 'author', id: a.id, label: a.name, imageUrl: a.imageUrl })
   for (const b of res.books) rows.push({ kind: 'book', id: b.id, label: b.title, sub: b.authorName, imageUrl: b.imageUrl, authorId: b.authorId })
   for (const s of res.series) rows.push({ kind: 'series', id: s.id, label: s.title })
+  rows.push({ kind: 'indexers', label: indexersLabel })
   rows.push({ kind: 'add', label: addLabel })
   return rows
 }
@@ -104,7 +109,10 @@ export default function LibrarySearch({ className = '', onNavigate, autoFocus }:
   }, [open])
 
   const addLabel = t('librarySearch.addToBindery', { query: trimmed })
-  const rows: Row[] = trimmed ? (results ? toRows(results, addLabel) : [{ kind: 'add', label: addLabel }]) : []
+  const indexersLabel = t('librarySearch.searchIndexers', { query: trimmed, defaultValue: 'Search indexers for “{{query}}”' })
+  const rows: Row[] = trimmed
+    ? (results ? toRows(results, addLabel, indexersLabel) : [{ kind: 'indexers', label: indexersLabel }, { kind: 'add', label: addLabel }])
+    : []
   const hasMatches = !!results && (results.authors.length + results.books.length + results.series.length > 0)
 
   const reset = () => {
@@ -114,6 +122,12 @@ export default function LibrarySearch({ className = '', onNavigate, autoFocus }:
   }
 
   const choose = (row: Row) => {
+    if (row.kind === 'indexers') {
+      navigate(`/search?q=${encodeURIComponent(trimmed)}`)
+      reset()
+      onNavigate?.()
+      return
+    }
     if (row.kind === 'add') {
       setAddQuery(trimmed)
       setOpen(false)
@@ -181,7 +195,7 @@ export default function LibrarySearch({ className = '', onNavigate, autoFocus }:
   }
 
   const optionId = (i: number) => `${listId}-opt-${i}`
-  const sectionLabel: Record<Exclude<Row['kind'], 'add'>, string> = {
+  const sectionLabel: Record<Exclude<Row['kind'], 'add' | 'indexers'>, string> = {
     author: t('librarySearch.authors'),
     book: t('librarySearch.books'),
     series: t('librarySearch.series'),
@@ -191,7 +205,7 @@ export default function LibrarySearch({ className = '', onNavigate, autoFocus }:
     const out: React.ReactNode[] = []
     let lastKind: Row['kind'] | null = null
     rows.forEach((row, i) => {
-      if (row.kind !== 'add' && row.kind !== lastKind) {
+      if (row.kind !== 'add' && row.kind !== 'indexers' && row.kind !== lastKind) {
         out.push(
           <li key={`h-${row.kind}`} role="presentation" className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
             {sectionLabel[row.kind]}
@@ -202,6 +216,27 @@ export default function LibrarySearch({ className = '', onNavigate, autoFocus }:
       const isActive = i === active
       const base = 'flex items-center gap-3 px-3 py-2 text-sm cursor-pointer'
       const tone = isActive ? 'bg-slate-200 dark:bg-zinc-800' : 'hover:bg-slate-200/60 dark:hover:bg-zinc-800/60'
+      if (row.kind === 'indexers') {
+        out.push(
+          <li
+            key="indexers"
+            id={optionId(i)}
+            role="option"
+            aria-selected={isActive}
+            data-testid="library-search-indexers"
+            className={`${base} ${tone} border-t border-slate-200 dark:border-zinc-800 text-slate-700 dark:text-zinc-300`}
+            onMouseDown={e => e.preventDefault()}
+            onClick={() => choose(row)}
+            onMouseEnter={() => setActive(i)}
+          >
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+            </svg>
+            <span className="truncate">{row.label}</span>
+          </li>,
+        )
+        return
+      }
       if (row.kind === 'add') {
         out.push(
           <li

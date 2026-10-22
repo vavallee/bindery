@@ -64,6 +64,8 @@ vi.mock('./api/client', () => ({
     // The Import nav badge reads this once for an admin.
     unmatchedSummary: vi.fn().mockResolvedValue({ pending: 0, pendingFiles: 0, ignored: 0, adopted: 0, scan: {} }),
     pendingRequestCount: vi.fn().mockResolvedValue({ count: 3 }),
+    // The Activity failed-downloads badge reads the queue once for an admin.
+    listQueue: vi.fn().mockResolvedValue({ items: [] }),
   },
 }))
 
@@ -369,6 +371,25 @@ describe('Shell: Import nav badge', () => {
   it('never asks for the count as a non admin', () => {
     renderShell()
     expect(api.unmatchedSummary).not.toHaveBeenCalled()
+    expect(api.listQueue).not.toHaveBeenCalled()
+  })
+
+  // Failed downloads are more urgent than books waiting on a decision, and
+  // used to get no badge at all.
+  it('shows failed downloads on the Activity entry for an admin', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({
+      items: [
+        { id: 1, status: 'failed' },
+        { id: 2, status: 'downloading' },
+        { id: 3, status: 'importFailed' },
+      ] as never,
+    })
+    authState.value = { status: { authenticated: true, setupRequired: false, mode: 'enabled' }, logout: logoutMock, isAdmin: true }
+    renderShell()
+    const desktopNav = document.querySelector('nav.hidden.xl\\:flex') as HTMLElement
+    const activity = () => Array.from(desktopNav.querySelectorAll('a')).find(a => a.getAttribute('href') === '/wanted')
+    // Two of the three rows are failures (failed, importFailed).
+    await vi.waitFor(() => expect(activity()?.querySelector('[aria-label="nav.queueFailed"]')?.textContent).toBe('2'))
   })
 })
 

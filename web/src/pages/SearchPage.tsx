@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, isNoDownloadClientError, SearchResult } from '../api/client'
 import { formatBytes } from '../util/format'
@@ -10,7 +10,10 @@ import { primaryFill } from '../components/buttons'
 export default function SearchPage() {
   const { t } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
-  const [query, setQuery] = useState('')
+  // The header search's "Search indexers for …" row lands here with ?q=.
+  const [searchParams] = useSearchParams()
+  const initialQuery = searchParams.get('q') ?? ''
+  const [query, setQuery] = useState(initialQuery)
   const [results, setResults] = useState<SearchResult[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [grabbing, setGrabbing] = useState<string | null>(null)
@@ -28,8 +31,8 @@ export default function SearchPage() {
     return () => { document.title = 'Bindery' }
   }, [])
 
-  const search = async () => {
-    const q = query.trim()
+  const search = async (raw: string = query) => {
+    const q = raw.trim()
     if (!q) return
     setSearching(true)
     setError(null)
@@ -44,6 +47,17 @@ export default function SearchPage() {
       setSearching(false)
     }
   }
+
+  // Arriving from the header with a query runs it once, so the row reads as
+  // "search for this" rather than "go to a page and type it again".
+  const ranInitial = useRef(false)
+  useEffect(() => {
+    if (ranInitial.current || !initialQuery.trim()) return
+    ranInitial.current = true
+    void search(initialQuery)
+    // search is recreated each render; this runs once per mount on purpose.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuery])
 
   const grab = async (r: SearchResult) => {
     setGrabbing(r.guid)
