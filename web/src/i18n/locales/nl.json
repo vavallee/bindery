@@ -168,7 +168,6 @@
     "colTitleAuthor": "Titel & auteur",
     "colFormat": "Formaat",
     "colActions": "Acties",
-    "noCover": "Geen omslag",
     "authorUnknown": "Auteur onbekend",
     "changeFormat": "Formaat wijzigen voor {{title}}"
   },
@@ -458,7 +457,6 @@
     "book": {
       "confirmAdd": "Boek toevoegen",
       "coverAlt": "Omslag van {{title}}",
-      "noCover": "Geen omslag",
       "published": "Gepubliceerd",
       "language": "Taal",
       "resultFormat": "Metadataformaat",

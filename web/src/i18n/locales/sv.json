@@ -648,7 +648,6 @@
     "colTitleAuthor": "Titel och författare",
     "colFormat": "Format",
     "colActions": "Åtgärder",
-    "noCover": "Inget omslag",
     "authorUnknown": "Okänd författare",
     "changeFormat": "Ändra format för {{title}}",
     "authorNotMonitored": "Författaren är inte bevakad, så boken söks inte automatiskt"
@@ -1658,7 +1657,6 @@
     "book": {
       "confirmAdd": "Lägg till bok",
       "coverAlt": "Omslag till {{title}}",
-      "noCover": "Inget omslag",
       "published": "Utgiven",
       "language": "Språk",
       "resultFormat": "Metadataformat",

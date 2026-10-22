@@ -14,6 +14,7 @@ import { useIsAdmin } from '../auth/AuthContext'
 import Switch from '../components/Switch'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import CoverImage from '../components/CoverImage'
+import CoverPlaceholder from '../components/CoverPlaceholder'
 
 // Series page filters (#2871). Each is computed from the series list the page
 // already loaded; none of them marks, monitors, searches or fills anything.
@@ -672,7 +673,7 @@ export default function SeriesPage() {
                           src={entry.book?.imageUrl}
                           alt={entry.book?.title}
                           className="w-8 h-10 object-cover rounded flex-shrink-0"
-                          fallback={<div className="w-8 h-10 bg-slate-200 dark:bg-zinc-800 rounded flex-shrink-0" />}
+                          fallback={<CoverPlaceholder id={entry.bookId} title={entry.book?.title ?? ''} size="xs" className="w-8 h-10 rounded flex-shrink-0" />}
                         />
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">
@@ -785,9 +786,7 @@ export default function SeriesPage() {
                                 #{book.position || '?'}
                               </span>
                               <CoverImage loading="lazy" decoding="async" src={book.imageUrl} alt={book.title} className="w-8 h-10 object-cover rounded flex-shrink-0"
-                                fallback={
-                                  <div className="w-8 h-10 bg-slate-200 dark:bg-zinc-800 rounded flex-shrink-0" />
-                                }
+                                fallback={<CoverPlaceholder id={book.localBookId ?? `hc-${book.foreignBookId}`} title={book.title} size="xs" className="w-8 h-10 rounded flex-shrink-0" />}
                               />
                               <div className="min-w-0">
                                 <p className="text-sm font-medium truncate">{book.title}</p>
