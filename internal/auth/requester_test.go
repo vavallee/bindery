@@ -20,6 +20,7 @@ var requesterDeniedRoutes = []struct{ method, path string }{
 	// Grabbing and the download queue.
 	{http.MethodPost, "/api/v1/queue/grab"},
 	{http.MethodGet, "/api/v1/queue"},
+	{http.MethodGet, "/api/v1/queue/failed-count"},
 	{http.MethodDelete, "/api/v1/queue/7"},
 	{http.MethodPost, "/api/v1/queue/bulk-delete"},
 	{http.MethodPost, "/api/v1/queue/7/retry-import"},

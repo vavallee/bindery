@@ -745,6 +745,31 @@ func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// failedStates are the download states the queue shows as failed: the ones
+// that need a retry or a removal. They match FAILED_STATUSES in
+// web/src/components/downloadStatus.ts.
+var failedStates = []models.DownloadState{models.StateFailed, models.StateImportFailed, models.StateImportBlocked}
+
+// FailedCount answers GET /queue/failed-count with {"failed": n}: the number
+// behind the nav's failed-downloads badge. It reads the downloads table only.
+// List also asks every download client for live progress, which is the wrong
+// cost for a badge on every page, and a count that only refreshed on a full
+// queue read went stale while the Queue page was closed. Scoped the same way
+// as List.
+func (h *QueueHandler) FailedCount(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var uid int64
+	if auth.EnforceTenancy() && auth.UserRoleFromContext(ctx) != "admin" {
+		uid = auth.UserIDFromContext(ctx)
+	}
+	n, err := h.downloads.CountByStatuses(ctx, uid, failedStates...)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"failed": n})
+}
+
 type arrQueueResponse struct {
 	Page          int              `json:"page,omitempty"`
 	PageSize      int              `json:"pageSize,omitempty"`
