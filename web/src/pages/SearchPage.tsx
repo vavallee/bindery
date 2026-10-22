@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, isNoDownloadClientError, SearchResult } from '../api/client'
 import { formatBytes } from '../util/format'
@@ -11,7 +11,10 @@ import { errorText } from '../util/errorText'
 export default function SearchPage() {
   const { t } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
-  const [query, setQuery] = useState('')
+  // The header search's "Search indexers for …" row lands here with ?q=.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initialQuery = searchParams.get('q') ?? ''
+  const [query, setQuery] = useState(initialQuery)
   const [results, setResults] = useState<SearchResult[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [grabbing, setGrabbing] = useState<string | null>(null)
@@ -23,28 +26,53 @@ export default function SearchPage() {
   // empty, which the first-run guidance (#960) didn't cover (#968).
   const [needsClient, setNeedsClient] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const lastRun = useRef('')
+  // Two quick header searches: only the latest one's answer is shown, even
+  // when the earlier, slower one comes back last.
+  const searchSeq = useRef(0)
 
   useEffect(() => {
     document.title = `${t('search.pageTitle', 'Search')} · Bindery`
     return () => { document.title = 'Bindery' }
   }, [t])
 
-  const search = async () => {
-    const q = query.trim()
+  const search = async (raw: string = query) => {
+    const q = raw.trim()
     if (!q) return
+    // The URL follows the query, so a reload or Back keeps it, and the effect
+    // below knows this one already ran.
+    lastRun.current = q
+    if (searchParams.get('q') !== q) setSearchParams({ q }, { replace: true })
     setSearching(true)
     setError(null)
     setNeedsClient(false)
     setResults(null)
+    const seq = ++searchSeq.current
     try {
       const r = await api.searchIndexers(q)
-      setResults(r)
+      if (seq === searchSeq.current) setResults(r)
     } catch (e) {
-      setError(errorText(e, t('search.searchFailed', 'Search failed')))
+      if (seq === searchSeq.current) setError(errorText(e, t('search.searchFailed', 'Search failed')))
     } finally {
-      setSearching(false)
+      if (seq === searchSeq.current) setSearching(false)
     }
   }
+
+  // Arriving from the header with a query runs it, so the row reads as
+  // "search for this" rather than "go to a page and type it again". That
+  // includes a header search for a new query made while already on /search:
+  // the page stays mounted and only ?q= changes, so the effect keys on the
+  // query, not on mount. lastRun stops a search typed here from running
+  // twice; it also means a header search for the query already shown does
+  // not run again (the URL does not change), and Search on the page does.
+  useEffect(() => {
+    const q = initialQuery.trim()
+    if (!q || q === lastRun.current) return
+    setQuery(initialQuery)
+    void search(initialQuery)
+    // search is recreated each render; the query is the only trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuery])
 
   const grab = async (r: SearchResult) => {
     setGrabbing(r.guid)

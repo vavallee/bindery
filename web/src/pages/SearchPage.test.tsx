@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, useNavigate } from 'react-router'
 import SearchPage from './SearchPage'
 import { ApiError, api } from '../api/client'
 import type { Download, SearchResult } from '../api/client'
@@ -197,5 +197,53 @@ describe('SearchPage forced re-grab (#2289)', () => {
     expect(await screen.findByText(/already in the queue/)).toBeInTheDocument()
     expect(screen.queryByText(en.search.forceTitle)).not.toBeInTheDocument()
     expect(api.grab).toHaveBeenCalledTimes(1)
+  })
+})
+
+// The header's "Search indexers for …" row lands here with ?q=.
+describe('SearchPage ?q=', () => {
+  beforeEach(() => { vi.mocked(api.searchIndexers).mockReset() })
+
+  it('runs the query it arrives with', async () => {
+    vi.mocked(api.searchIndexers).mockResolvedValue([makeResult({ guid: 'a', title: 'Dune release' })])
+    render(<MemoryRouter initialEntries={['/search?q=dune']}><SearchPage /></MemoryRouter>)
+    expect(await screen.findByText('Dune release')).toBeInTheDocument()
+    expect(api.searchIndexers).toHaveBeenCalledTimes(1)
+    expect(api.searchIndexers).toHaveBeenCalledWith('dune')
+    expect(screen.getByDisplayValue('dune')).toBeInTheDocument()
+  })
+
+  it('runs a new header query while the page is already open', async () => {
+    vi.mocked(api.searchIndexers)
+      .mockResolvedValueOnce([makeResult({ guid: 'a', title: 'Dune release' })])
+      .mockResolvedValueOnce([makeResult({ guid: 'b', title: 'Emma release' })])
+    // Stands in for the header: same route, new ?q=, page stays mounted.
+    function HeaderSearch() {
+      const navigate = useNavigate()
+      return <button type="button" onClick={() => navigate('/search?q=emma')}>header</button>
+    }
+    render(<MemoryRouter initialEntries={['/search?q=dune']}><HeaderSearch /><SearchPage /></MemoryRouter>)
+    await screen.findByText('Dune release')
+    fireEvent.click(screen.getByRole('button', { name: 'header' }))
+    expect(await screen.findByText('Emma release')).toBeInTheDocument()
+    expect(screen.queryByText('Dune release')).toBeNull()
+    expect(api.searchIndexers).toHaveBeenLastCalledWith('emma')
+  })
+
+  it('shows the latest query when an earlier, slower search answers last', async () => {
+    let answerDune: (r: SearchResult[]) => void = () => {}
+    vi.mocked(api.searchIndexers)
+      .mockImplementationOnce(() => new Promise(r => { answerDune = r }))
+      .mockResolvedValueOnce([makeResult({ guid: 'b', title: 'Emma release' })])
+    function HeaderSearch() {
+      const navigate = useNavigate()
+      return <button type="button" onClick={() => navigate('/search?q=emma')}>header</button>
+    }
+    render(<MemoryRouter initialEntries={['/search?q=dune']}><HeaderSearch /><SearchPage /></MemoryRouter>)
+    fireEvent.click(screen.getByRole('button', { name: 'header' }))
+    expect(await screen.findByText('Emma release')).toBeInTheDocument()
+    await act(async () => { answerDune([makeResult({ guid: 'a', title: 'Dune release' })]) })
+    expect(screen.queryByText('Dune release')).toBeNull()
+    expect(screen.getByText('Emma release')).toBeInTheDocument()
   })
 })

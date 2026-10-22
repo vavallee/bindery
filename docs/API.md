@@ -730,6 +730,7 @@ GET    /api/v1/queue                              downloads with live downloader
                                                   Retry import, Match to book or Remove. Older imports are on the History page
        -> {"items":[..],"partial":true,"staleClients":[{"clientId":1,"name":"qBit","message":".."}]}
                                                   partial means a download client did not answer in time, so items is short
+GET    /api/v1/queue/failed-count                 {"failed": n}: downloads in failed, importFailed or importBlocked, read from the database only (the nav badge)
 POST   /api/v1/queue/grab                         submit a search result to the download client
                                                   a guid a recent search returned is grabbed from the server's
                                                   record (raw URL) for every caller; otherwise only the API key

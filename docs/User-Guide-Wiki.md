@@ -39,8 +39,9 @@ software identify and file it. Bindery does not work that way, because books
 have no TVDB equivalent and no scene naming convention — reverse-identifying
 an arbitrary release is unreliable. The escape hatches:
 
-- **Search Indexers** (the magnifier icon in the header) — free-text search
-  across all your indexers; any result can be grabbed.
+- **Search Indexers** (`/search`) — free-text search across all your
+  indexers; any result can be grabbed. Reach it from the header search: type
+  the text and pick *Search indexers for "…"*.
 - **Import** (`/import`): **In your library** lists the books a library scan
   could not match, for you to adopt in place ([Adopting files already in your
   library](#adopting-files-already-in-your-library)). **From a folder** points
@@ -58,19 +59,23 @@ only at what is already in Bindery. As you type it lists matching authors
 (including pen names), books (by title or author) and series, and selecting a
 row opens it (a series row opens the Series page with that series expanded and
 scrolled into view; so does a series heading on an author page that is grouped
-by series). The last row is always *Add "…" to Bindery*, which
+by series). Below the matches, *Search indexers for "…"* opens
+indexer search with the same text and runs it. The last row is always *Add "…" to Bindery*, which
 opens the **Add to library** dialog with the same text already searched against
 your metadata providers, so a miss in the library turns into an add without
 retyping. Pressing Enter with nothing highlighted opens that dialog too, even
-when the list has library hits; use the arrow keys to pick a hit instead. It
-does not query indexers; that stays with the magnifier.
+when the list has library hits; use the arrow keys to pick a hit instead. The
+library search itself never queries indexers; only that one row does.
 
 **Where the pages live.** The top bar carries five entries. **Library** holds
 Authors, Books and Series; **Activity** holds Wanted, Queue and History (plus
 Requests for an admin); **Import**, **Calendar** and **Discover** are pages of
 their own. Opening a group lands on its first page and a row of tabs above the
 content switches between the rest, so every page keeps the address it always
-had. On a phone the menu lists the same pages, indented under their group.
+had (`/activity` itself goes to Wanted). For an admin, Import carries the
+number of books waiting on a decision, and Activity and its Queue tab carry
+the number of failed downloads, in red. On a phone the menu lists the same
+pages, indented under their group.
 
 ## Five rules that answer most questions
 

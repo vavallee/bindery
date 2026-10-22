@@ -100,7 +100,9 @@
     "requestsPending": "{{count}} pending requests",
     "toggleMenu": "Toggle menu",
     "themeLight": "Switch to light mode",
-    "themeDark": "Switch to dark mode"
+    "themeDark": "Switch to dark mode",
+    "queueFailed_one": "{{count}} failed download",
+    "queueFailed_other": "{{count}} failed downloads"
   },
   "librarySearch": {
     "label": "Search library",
@@ -111,7 +113,8 @@
     "searching": "Searching…",
     "noMatches": "Nothing in your library matches",
     "addToBindery": "Add \"{{query}}\" to Bindery",
-    "failed": "Library search failed"
+    "failed": "Library search failed",
+    "searchIndexers": "Search indexers for “{{query}}”"
   },
   "notFound": {
     "title": "Page not found",

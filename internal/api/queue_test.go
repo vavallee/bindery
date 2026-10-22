@@ -2213,3 +2213,74 @@ func TestQueueDelete_GateOffPreservesLegacyBehavior(t *testing.T) {
 		t.Errorf("legacy: bob should be able to delete alice's download (gate off); status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// The nav badge's count comes from the downloads table alone and counts the
+// three failed states, nothing else.
+func TestQueueFailedCount_CountsFailedStatesOnly(t *testing.T) {
+	h, _, downloads, _, _, ctx := queueFixture(t)
+	for i, st := range []models.DownloadState{
+		models.StateFailed, models.StateImportFailed, models.StateImportBlocked,
+		models.StateDownloading, models.StateImported, models.StateImportHeld,
+	} {
+		if err := downloads.Create(ctx, &models.Download{
+			GUID: fmt.Sprintf("g%d", i), Title: fmt.Sprintf("t%d", i), Status: st,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := httptest.NewRecorder()
+	h.FailedCount(rec, httptest.NewRequest(http.MethodGet, "/api/v1/queue/failed-count", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]int
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["failed"] != 3 {
+		t.Fatalf("failed = %d, want 3", got["failed"])
+	}
+}
+
+// Under tenancy a non admin counts only their own failed downloads; an admin,
+// or a deployment without tenancy, counts every one.
+func TestQueueFailedCount_ScopedUnderTenancy(t *testing.T) {
+	h, database, alice, bob, dlA, dlB := seedTwoUserDownloads(t)
+	for _, id := range []int64{dlA, dlB} {
+		if _, err := database.Exec("UPDATE downloads SET status=? WHERE id=?", models.StateImportFailed, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func(r *http.Request) int {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.FailedCount(rec, r)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+		}
+		var got map[string]int
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got["failed"]
+	}
+	const target = "/api/v1/queue/failed-count"
+
+	auth.SetEnforceTenancyForTests(t, true)
+	if n := count(reqAsUser(http.MethodGet, target, alice)); n != 1 {
+		t.Errorf("alice under tenancy = %d, want 1", n)
+	}
+	if n := count(reqAsUser(http.MethodGet, target, bob)); n != 1 {
+		t.Errorf("bob under tenancy = %d, want 1", n)
+	}
+	admin := httptest.NewRequest(http.MethodGet, target, nil)
+	admin = admin.WithContext(auth.WithUserRole(auth.WithUserID(admin.Context(), alice), "admin"))
+	if n := count(admin); n != 2 {
+		t.Errorf("admin under tenancy = %d, want 2", n)
+	}
+
+	auth.SetEnforceTenancyForTests(t, false)
+	if n := count(reqAsUser(http.MethodGet, target, alice)); n != 2 {
+		t.Errorf("alice without tenancy = %d, want 2", n)
+	}
+}
