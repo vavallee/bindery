@@ -10,7 +10,6 @@ vi.mock('react-i18next', () => ({
         'addToLibrary.adding': 'Adding...',
         'addToLibrary.book.confirmAdd': 'Add book',
         'addToLibrary.book.coverAlt': '{{title}} cover',
-        'addToLibrary.book.noCover': 'No cover',
         'addToLibrary.book.published': 'Published',
         'addToLibrary.book.language': 'Language',
         'addToLibrary.book.resultFormat': 'Metadata format',
@@ -160,7 +159,8 @@ describe('AddBookConfirm', () => {
     // The backend only requires foreignBookId, so the dialog must not refuse
     // to send the request.
     renderConfirm(book({ foreignBookId: 'OL999M', title: 'Standalone Edition', author: undefined }))
-    expect(screen.getByText('No cover')).toBeInTheDocument()
+    // No cover: the shared placeholder, initials on the book's colour.
+    expect(screen.getByText('SE')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Add book' }))
     await waitFor(() => expect(api.addBook).toHaveBeenCalled())
     expect(vi.mocked(api.addBook).mock.calls[0][0]).toMatchObject({ foreignBookId: 'OL999M', foreignAuthorId: '', authorName: '' })

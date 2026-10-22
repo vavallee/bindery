@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { api, LibrarySearchResponse } from '../api/client'
 import AddToLibraryModal, { AddedToLibrary } from './AddToLibraryModal'
 import CoverImage from './CoverImage'
+import CoverPlaceholder from './CoverPlaceholder'
 
 // LibrarySearch is the header typeahead over the caller's own catalogue
 // (#2551). It only ever talks to /search/library; the metadata providers are
@@ -237,7 +238,9 @@ export default function LibrarySearch({ className = '', onNavigate, autoFocus }:
             <CoverImage
               loading="lazy" decoding="async" src={row.imageUrl} alt=""
               className={`flex-shrink-0 object-cover rounded ${row.kind === 'author' ? 'w-7 h-7 rounded-full' : 'w-7 h-10'}`}
-              fallback={<span aria-hidden="true" className={`flex-shrink-0 bg-slate-300 dark:bg-zinc-700 ${row.kind === 'author' ? 'w-7 h-7 rounded-full' : 'w-7 h-10 rounded'}`} />}
+              fallback={row.kind === 'author'
+                ? <span aria-hidden="true" className="flex-shrink-0 bg-slate-300 dark:bg-zinc-700 w-7 h-7 rounded-full" />
+                : <CoverPlaceholder id={row.id} title={row.label} size="xs" className="flex-shrink-0 w-7 h-10 rounded" />}
             />
           )}
           <span className="min-w-0">
