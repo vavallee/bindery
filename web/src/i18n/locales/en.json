@@ -2367,7 +2367,9 @@
       "seriesNone": "No series",
       "seriesNew": "New series…",
       "fieldNewSeries": "New series name",
-      "fieldPosition": "Position"
+      "fieldPosition": "Position",
+      "genresPlaceholder": "e.g. Fantasy, Epic",
+      "languagePlaceholder": "e.g. en"
     },
     "exclude": "Exclude",
     "unexclude": "Un-exclude",
@@ -2471,7 +2473,10 @@
       "pending": "Waiting for Calibre",
       "delivered": "In Calibre",
       "failed": "Calibre failed"
-    }
+    },
+    "monitoredLabel": "Monitored",
+    "genresLabel": "Genres",
+    "deleteFormatFiles": "Delete {{format}} files"
   },
   "bookRebind": {
     "title": "Re-bind metadata",

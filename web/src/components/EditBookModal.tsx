@@ -218,7 +218,7 @@ export default function EditBookModal({ book, onClose, onSaved, onSeriesSaved, s
               {t('bookDetail.edit.fieldGenres', 'Genres (comma-separated)')}
               {lockBadge('genres')}
             </label>
-            <input id="edit-book-genres" type="text" value={genres} onChange={e => setGenres(e.target.value)} className={inputCls} placeholder="Fantasy, Epic" />
+            <input id="edit-book-genres" type="text" value={genres} onChange={e => setGenres(e.target.value)} className={inputCls} placeholder={t('bookDetail.edit.genresPlaceholder', 'e.g. Fantasy, Epic')} />
           </div>
           <div className="flex gap-3">
             <div className="flex-1">
@@ -226,7 +226,7 @@ export default function EditBookModal({ book, onClose, onSaved, onSeriesSaved, s
                 {t('bookDetail.edit.fieldLanguage', 'Language')}
                 {lockBadge('language')}
               </label>
-              <input id="edit-book-language" type="text" value={language} onChange={e => setLanguage(e.target.value)} className={inputCls} placeholder="en" />
+              <input id="edit-book-language" type="text" value={language} onChange={e => setLanguage(e.target.value)} className={inputCls} placeholder={t('bookDetail.edit.languagePlaceholder', 'e.g. en')} />
             </div>
             <div className="flex-1">
               <label className={labelCls} htmlFor="edit-book-releasedate">
