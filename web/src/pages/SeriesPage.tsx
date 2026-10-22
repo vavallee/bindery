@@ -15,6 +15,8 @@ import Switch from '../components/Switch'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import CoverImage from '../components/CoverImage'
 import CoverPlaceholder from '../components/CoverPlaceholder'
+import { SkeletonRows } from '../components/Skeleton'
+import EmptyState from '../components/EmptyState'
 
 // Series page filters (#2871). Each is computed from the series list the page
 // already loaded; none of them marks, monitors, searches or fills anything.
@@ -477,12 +479,9 @@ export default function SeriesPage() {
       </div>
 
       {loading ? (
-        <div className="text-fg-muted">{t('common.loading')}</div>
+        <SkeletonRows rows={4} />
       ) : seriesList.length === 0 ? (
-        <div className="text-center py-16 text-fg-muted">
-          <p className="text-lg mb-2">{t('series.emptyTitle')}</p>
-          <p className="text-sm">{t('series.emptyHint')}</p>
-        </div>
+        <EmptyState title={t('series.emptyTitle')} hint={t('series.emptyHint')} />
       ) : filteredSeries.length === 0 ? (
         <div className="text-center py-16 text-fg-muted" role="status">
           <p>

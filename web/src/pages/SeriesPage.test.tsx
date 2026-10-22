@@ -86,7 +86,7 @@ describe('SeriesPage', () => {
     fireEvent.change(search, { target: { value: 'missing series' } })
     expect(screen.getByRole('status')).toHaveTextContent('No series match "missing series"')
     expect(screen.queryByRole('heading', { level: 3 })).not.toBeInTheDocument()
-    expect(screen.queryByText(/Series are populated automatically/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Series come from your metadata provider/)).not.toBeInTheDocument()
 
     fireEvent.change(search, { target: { value: '' } })
     expect(screen.getByRole('heading', { name: 'The Stormlight Archive' })).toBeInTheDocument()
@@ -100,7 +100,7 @@ describe('SeriesPage', () => {
 
     expect(await screen.findByText('No series found')).toBeInTheDocument()
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Stormlight' } })
-    expect(screen.getByText(/Series are populated automatically/)).toBeInTheDocument()
+    expect(screen.getByText(/Series come from your metadata provider/)).toBeInTheDocument()
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 

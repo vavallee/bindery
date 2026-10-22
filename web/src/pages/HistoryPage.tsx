@@ -6,6 +6,9 @@ import Pagination from '../components/Pagination'
 import { useServerPagination } from '../components/usePagination'
 import { dangerLink } from '../components/buttons'
 import { formatBytes } from '../util/format'
+import { SkeletonRows } from '../components/Skeleton'
+import EmptyState from '../components/EmptyState'
+import { decodeEntities } from '../util/decodeEntities'
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
   grabbed: 'bg-blue-500/20 text-blue-700 dark:text-blue-400',
@@ -248,12 +251,9 @@ export default function HistoryPage() {
       </div>
 
       {loading ? (
-        <div className="text-fg-muted">{t('common.loading')}</div>
+        <SkeletonRows />
       ) : events.length === 0 ? (
-        <div className="text-center py-16 text-fg-muted">
-          <p>{t('history.empty')}</p>
-          <p className="mt-1 text-sm">{t('history.emptyHint')}</p>
-        </div>
+        <EmptyState title={t('history.empty')} hint={t('history.emptyHint')} />
       ) : (
         <>
           {/* Desktop table */}
@@ -285,8 +285,8 @@ export default function HistoryPage() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-slate-800 dark:text-zinc-200 max-w-md">
-                          <div className="truncate" title={event.sourceTitle}>
-                            {event.sourceTitle || <span className="text-fg-muted">—</span>}
+                          <div className="truncate" title={decodeEntities(event.sourceTitle)}>
+                            {decodeEntities(event.sourceTitle) || <span className="text-fg-muted">—</span>}
                           </div>
                           <BookAuthorLink book={event.book} />
                           {detail && (
@@ -363,7 +363,7 @@ export default function HistoryPage() {
                     <span className="text-[10px] text-fg-muted">{formatDate(event.createdAt)}</span>
                   </div>
                   <p className="text-sm text-slate-800 dark:text-zinc-200 [overflow-wrap:anywhere] mb-1">
-                    {event.sourceTitle || <span className="text-fg-muted">—</span>}
+                    {decodeEntities(event.sourceTitle) || <span className="text-fg-muted">—</span>}
                   </p>
                   <BookAuthorLink book={event.book} />
                   {detail && (
