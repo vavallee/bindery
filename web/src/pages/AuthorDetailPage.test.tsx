@@ -6,7 +6,7 @@ import AuthorDetailPage from './AuthorDetailPage'
 import { api, ApiError } from '../api/client'
 import type { Author, Book } from '../api/client'
 import '../i18n'
-import { acceptConfirm, cancelConfirm, confirmDialog, clickBulkAction } from '../test-utils'
+import { acceptConfirm, cancelConfirm, confirmDialog, clickBulkAction, mockMatchMedia } from '../test-utils'
 
 vi.mock('../api/client', async importOriginal => {
   const actual = await importOriginal<typeof import('../api/client')>()
@@ -2402,5 +2402,21 @@ describe('AuthorDetailPage: sync running on load', () => {
     await screen.findByRole('heading', { name: 'Fjellvinden' })
     expect(screen.getByRole('status')).not.toHaveTextContent('Books appear here when it finishes')
     expect(screen.getByRole('status')).toHaveTextContent('Fetching this author’s catalogue')
+  })
+})
+
+describe('AuthorDetailPage on a phone', () => {
+  it('folds Refresh and Edit into More so the action row stays on one line', async () => {
+    const restore = mockMatchMedia(q => q.includes('40rem'))
+    try {
+      renderAuthorDetailPage([makeBook({ id: 1, title: 'A', status: 'imported' })])
+      await screen.findByRole('heading', { name: 'A' })
+      expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: /^More/ }))
+      expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeInTheDocument()
+      expect(screen.getByRole('menuitem', { name: 'Refresh' })).toBeInTheDocument()
+    } finally {
+      restore()
+    }
   })
 })
