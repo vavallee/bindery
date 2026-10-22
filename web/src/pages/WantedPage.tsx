@@ -16,6 +16,7 @@ import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
 import CoverImage from '../components/CoverImage'
 import { primaryFill } from '../components/buttons'
 import { FilteredResultsSection } from './BookDetailPage'
+import CoverPlaceholder from '../components/CoverPlaceholder'
 
 // Shared grid template so the header row and every list row line up exactly.
 // columns: checkbox · cover · title+author · format · actions
@@ -352,14 +353,7 @@ export default function WantedPage() {
 
                   {/* uniform cover slot */}
                   <CoverImage loading="lazy" decoding="async" src={book.imageUrl} alt="" className="w-8 h-11 object-cover rounded bg-slate-200 dark:bg-zinc-800"
-                    fallback={
-                      <div
-                        className="w-8 h-11 rounded bg-slate-200 dark:bg-zinc-800 grid place-items-center text-[8px] text-fg-muted text-center leading-tight"
-                        aria-hidden
-                      >
-                        {t('wanted.noCover')}
-                      </div>
-                    }
+                    fallback={<CoverPlaceholder id={book.id} title={book.title} size="xs" className="w-8 h-11 rounded" />}
                   />
 
                   {/* title + author · year */}
