@@ -28,7 +28,7 @@ import type { TFunction } from 'i18next'
 // and the legend used to show the four swatches with no explanation at all.
 const statusDescriptions: Record<string, [string, string]> = {
   wanted: ['bookStatus.wantedDescription', 'A format is missing and Bindery will search for it on the next sweep.'],
-  imported: ['bookStatus.importedDescription', 'Every format this book wants is on disk.'],
+  imported: ['bookStatus.importedDescription', 'Every format this book wants is on disk. A book with only some of its formats reads Wanted, and the In library filter still lists it.'],
   skipped: ['bookStatus.skippedDescription', 'Blocklisted or excluded. Bindery will not search for it and it stays off the Wanted page.'],
 }
 

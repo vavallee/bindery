@@ -727,13 +727,13 @@ describe('AuthorDetailPage', () => {
     expect(snapshotCells[5]).toHaveTextContent('Skipped')
 
     const dualFormatCells = within(rowForTitle('Dual Format')).getAllByRole('cell')
-    expect(dualFormatCells[1]).toHaveTextContent('Imported')
+    expect(dualFormatCells[1]).toHaveTextContent('In library')
     expect(dualFormatCells[1]).toHaveTextContent('📖🎧 Both')
     expect(dualFormatCells[1]).toHaveTextContent('2022')
     expect(dualFormatCells[1]).toHaveTextContent('Excluded')
     expect(dualFormatCells[2]).toHaveTextContent('2022')
     expect(dualFormatCells[4]).toHaveTextContent('📖🎧 Both')
-    expect(dualFormatCells[5]).toHaveTextContent('Imported')
+    expect(dualFormatCells[5]).toHaveTextContent('In library')
     expect(dualFormatCells[5]).toHaveTextContent('Excluded')
   })
 

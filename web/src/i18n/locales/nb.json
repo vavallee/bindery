@@ -2745,7 +2745,7 @@
   },
   "bookStatus": {
     "wanted": "Ønsket",
-    "imported": "Importert",
+    "imported": "I biblioteket",
     "skipped": "Hoppet over",
     "notMonitored": "Ikke overvåket",
     "wantedDescription": "Et format mangler, og Bindery søker etter det i neste søkerunde.",
@@ -2793,7 +2793,6 @@
     "fileHeading": "Fil",
     "mediaTypeLabel": "Medietype",
     "mediaTypeHint": "Endre medietype",
-    "wantedFormatLabel": "Ønsket",
     "formatNotOnDisk": "Ikke lastet ned",
     "noFile": "Ingen fil på disken",
     "fileCount": "{{count}} fil(er)",

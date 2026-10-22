@@ -65,7 +65,7 @@ const STATUS_FILTERS: readonly StatusFilter[] = [
 // locale missing these keys still renders words rather than key names.
 const STATUS_FALLBACK: Record<Exclude<StatusFilter, ''>, string> = {
   wanted: 'Wanted',
-  imported: 'Imported',
+  imported: 'In library',
   skipped: 'Skipped',
   excluded: 'Excluded',
 }

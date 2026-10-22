@@ -857,7 +857,7 @@ refuses to save that.
 
 ## A book shows a file path that no longer exists
 
-Symptom: you moved or renamed a book's file (or the folder holding it), scanned, and the book still shows the old path. It keeps saying **In Library**, download and delete act on a file that isn't there, and rescanning changes nothing.
+Symptom: you moved or renamed a book's file (or the folder holding it), scanned, and the book still shows the old path. It keeps saying **In library**, download and delete act on a file that isn't there, and rescanning changes nothing.
 
 What happens: Bindery tracks files as rows, and registering a file at a new location *adds* a row rather than replacing the old one, so the book ends up owning both. Older versions always rendered the oldest row, so once the old path was dead it stayed on screen ([#2186](https://github.com/vavallee/bindery/issues/2186)).
 

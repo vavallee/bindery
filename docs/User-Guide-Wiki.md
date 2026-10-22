@@ -142,13 +142,13 @@ default; tick it to bring every book of those authors into line in one action.
 
 Two related labels:
 
-- **In Library** = Bindery can see at least one file for the book on disk. That is
+- **In library** = Bindery can see at least one file for the book on disk. That is
   status `imported`, and also a `wanted` book of format *Both* that already has
   one of its two formats: it stays on the Wanted page while the other format is
-  missing, and it is listed under In Library as well (#3132). The Books page,
+  missing, and it is listed under In library as well (#3132). The Books page,
   an author page's In library count and the have / total number on the Authors
   list all use this one rule. With a format filter set, the book has to own
-  that format, so Audiobook plus In Library does not list a book that only has
+  that format, so Audiobook plus In library does not list a book that only has
   an ebook.
 - **Exclude vs Delete**: a metadata refresh only adds books back for an author
   you monitor and have set to take new items, so for those authors deleting an
@@ -484,7 +484,7 @@ Usenet clients have no seeding, so the limits do nothing there.
 
 **Import.** When the client reports the job complete, Bindery matches it to
 the book, places the file per your import mode and naming template, and marks
-the book **In Library**. Ebooks land under the author's root folder (falling
+the book **In library**. Ebooks land under the author's root folder (falling
 back to the default root folder, then `BINDERY_LIBRARY_DIR`); audiobooks have
 their own chain (the author's audiobook root folder, then the default audiobook
 root folder, then `BINDERY_AUDIOBOOK_DIR`). Both defaults are set under
@@ -916,7 +916,7 @@ How to work through the list:
   selected, and adopt it from there.
 - Suggestions come from **every book by the author the scan matched**,
   whatever its status, and each shows that status. A book you skipped or one
-  that is already **Imported** is never a one click Confirm; adopting into a
+  that is already **In library** is never a one click Confirm; adopting into a
   book that already has a file adds the new file alongside it (#2879).
   Suggestions are worked out by the scan, so a book added since the last scan
   appears after the next one; until then, search for it in the editor.
@@ -1345,7 +1345,7 @@ old catalogue rows during refresh. To apply the new catalogue rules to an
 author's existing rows, open the author, choose **More → Reconcile catalogue…**,
 and review the preview. Every candidate starts selected; clear any row you do
 not want to remove before applying. Apply removes only selected metadata-only
-rows whose status is still Wanted. Imported books, excluded books, books in
+rows whose status is still Wanted. Books in the library, excluded books, books in
 another active status, and any row with `filePath`, `ebookFilePath`,
 `audiobookFilePath`, or a tracked `book_files` entry are protected. No files
 are deleted. Apply fetches the provider again and rechecks the database
@@ -1386,7 +1386,7 @@ than two of its rows are still included.
 **The evidence on each row.** Under every title the review shows what Bindery
 already knows about that row, so you can decide without opening each book:
 whether it has files (ebook, audiobook, and the format, such as epub or m4b),
-its status (Wanted, In Library, Skipped), release year, language, ISBN, ASIN,
+its status (Wanted, In library, Skipped), release year, language, ISBN, ASIN,
 and series with position. The rows are numbered, and above them the group
 lists what the rows agree or disagree on:
 
@@ -1448,7 +1448,7 @@ before.
 
 The Books column of the Authors table reads *have / total*, for example 5 / 12,
 and each card in the grid says how many of the author's books are in your library,
-by the In Library rule under rule 2 near the top of this page (#3092). An author with no books shows a dash.
+by the In library rule under rule 2 near the top of this page (#3092). An author with no books shows a dash.
 On an author's own page the book list has a **Sort** control (title, published,
 added, each both ways) and Monitored and Language filters beside Type, Status and
 Published (#3087); books with no release date sort last.

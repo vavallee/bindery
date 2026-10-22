@@ -344,7 +344,7 @@ fingerprint and the next request rescans.
 ### Books
 
 ```
-GET    /api/v1/book?status=wanted                 filter by status (wanted, imported, skipped); `imported` is the In Library view and also lists a `wanted` book that already has at least one tracked file (of that format when `mediaType` is set), so a partly owned dual format book appears under both
+GET    /api/v1/book?status=wanted                 filter by status (wanted, imported, skipped); `imported` is the In library view and also lists a `wanted` book that already has at least one tracked file (of that format when `mediaType` is set), so a partly owned dual format book appears under both
 POST   /api/v1/book/bulk                          bulk monitor / status flip / exclude / unexclude (`"expectNoFiles": true` skips books that have files on `exclude`)
 GET    /api/v1/book/{id}                          book detail (with editions, history, formats; `importInFlight: true` while a download for it is still on its way into the library)
 PUT    /api/v1/book/{id}                          update monitor / status / metadata
