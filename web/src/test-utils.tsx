@@ -83,3 +83,33 @@ export function mockMatchMedia(matches: boolean | ((query: string) => boolean)):
     else delete (window as { matchMedia?: unknown }).matchMedia
   }
 }
+
+// Clicks a bulk action by its label wherever BulkActionBar put it: inline,
+// inside an inline choice menu ("Set format"), or behind the More menu, where
+// a choice is listed as "<label>: <choice>". The bar caps its inline actions
+// and never shows a destructive one inline, so a test that only clicked an
+// inline button would be testing the layout rather than the action.
+// `where` pins the action's place: 'menu' fails if the action is an inline
+// button (Delete must stay behind More bulk actions), 'inline' fails if it is
+// only in a menu. Left out, either place is accepted.
+export function clickBulkAction(name: string, where?: 'inline' | 'menu'): void {
+  const bar = screen.getByTestId('bulk-action-bar')
+  const direct = within(bar).queryAllByRole('button').find(b => b.textContent === name && b.getAttribute('aria-haspopup') !== 'menu')
+  if (direct && where === 'menu') throw new Error(`bulk action ${name} is inline, expected it in a menu`)
+  if (!direct && where === 'inline') throw new Error(`bulk action ${name} is not an inline button`)
+  if (direct) {
+    fireEvent.click(direct)
+    return
+  }
+  const matches = (el: HTMLElement) => el.textContent === name || (el.textContent ?? '').endsWith(`: ${name}`)
+  for (const trigger of within(bar).queryAllByRole('button').filter(b => b.getAttribute('aria-haspopup') === 'menu')) {
+    fireEvent.click(trigger)
+    const item = screen.queryAllByRole('menuitem').find(matches)
+    if (item) {
+      fireEvent.click(item)
+      return
+    }
+    fireEvent.keyDown(document, { key: 'Escape' })
+  }
+  throw new Error(`no bulk action named ${name}`)
+}
