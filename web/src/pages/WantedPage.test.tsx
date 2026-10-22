@@ -5,6 +5,7 @@ import { MemoryRouter, useLocation } from 'react-router'
 import WantedPage from './WantedPage'
 import { api } from '../api/client'
 import type { Author, Book, Download, SearchResult } from '../api/client'
+import { clickBulkAction } from '../test-utils'
 
 vi.mock('../api/client', async importOriginal => {
   const actual = await importOriginal<typeof import('../api/client')>()
@@ -578,9 +579,7 @@ describe('WantedPage', () => {
     fireEvent.click(screen.getByTitle('Select Dune'))
     fireEvent.click(screen.getByTitle('Select Hyperion'))
 
-    const bulkBar = screen.getByText('2 selected').closest('div')
-    if (!bulkBar) throw new Error('Bulk action bar was not rendered')
-    fireEvent.click(within(bulkBar).getByRole('button', { name: label }))
+    clickBulkAction(label)
 
     await waitFor(() => expect(api.bulkActionWanted).toHaveBeenCalledWith([1, 2], action))
     await waitFor(() => expect(api.listWantedPage).toHaveBeenCalledTimes(2))
@@ -617,9 +616,7 @@ describe('WantedPage', () => {
     fireEvent.click(screen.getByTitle('Select Dune'))
     fireEvent.click(screen.getByTitle('Select Hyperion'))
 
-    const bulkBar = screen.getByText('2 selected').closest('div')
-    if (!bulkBar) throw new Error('Bulk action bar was not rendered')
-    fireEvent.click(within(bulkBar).getByRole('button', { name: 'Search' }))
+    clickBulkAction('Search')
 
     expect(await screen.findByText('No search was run. Automatic grabbing is off.')).toBeInTheDocument()
     // The selection survives, so flipping the setting and pressing Search

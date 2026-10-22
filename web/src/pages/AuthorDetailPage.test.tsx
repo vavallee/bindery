@@ -6,7 +6,7 @@ import AuthorDetailPage from './AuthorDetailPage'
 import { api, ApiError } from '../api/client'
 import type { Author, Book } from '../api/client'
 import '../i18n'
-import { acceptConfirm, cancelConfirm, confirmDialog } from '../test-utils'
+import { acceptConfirm, cancelConfirm, confirmDialog, clickBulkAction } from '../test-utils'
 
 vi.mock('../api/client', async importOriginal => {
   const actual = await importOriginal<typeof import('../api/client')>()
@@ -780,8 +780,7 @@ describe('AuthorDetailPage', () => {
     fireEvent.click(within(row1).getByRole('checkbox'))
     fireEvent.click(within(row2).getByRole('checkbox'))
 
-    const excludeBtn = await screen.findByRole('button', { name: 'Exclude' })
-    fireEvent.click(excludeBtn)
+    clickBulkAction('Exclude')
     await acceptConfirm()
 
     await waitFor(() => {
@@ -808,7 +807,7 @@ describe('AuthorDetailPage', () => {
     fireEvent.click(within(rowForTitle('Mistagged One')).getByRole('checkbox'))
     fireEvent.click(within(rowForTitle('Mistagged Two')).getByRole('checkbox'))
 
-    fireEvent.click(await screen.findByRole('button', { name: '📖🎧 Set Both' }))
+    clickBulkAction('📖🎧 Set Both')
 
     await waitFor(() => {
       expect(api.bulkActionBooks).toHaveBeenCalledWith([301, 302], 'set_media_type', 'both')
@@ -1920,7 +1919,7 @@ describe('AuthorDetailPage — selection (#2456, #2457)', () => {
     expect(checkboxFor('Not Picked')).not.toBeChecked()
     expect(screen.getByText('2 selected')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '📖🎧 Set Both' }))
+    clickBulkAction('📖🎧 Set Both')
     await waitFor(() => expect(api.bulkActionBooks).toHaveBeenLastCalledWith([501, 502], 'set_media_type', 'both'))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Clear' })).not.toBeDisabled())
 
@@ -1950,19 +1949,19 @@ describe('AuthorDetailPage — selection (#2456, #2457)', () => {
     fireEvent.click(checkboxFor('Gone Book'))
     fireEvent.click(checkboxFor('Stuck Book'))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    clickBulkAction('Delete')
     expect(within(await screen.findByTestId('confirm-dialog')).getByText(/Delete 2 book/)).toBeInTheDocument()
     await acceptConfirm()
     await waitFor(() => expect(api.bulkActionBooks).toHaveBeenCalledWith([601, 602], 'delete', undefined))
     await waitFor(() => expect(screen.queryByText('Gone Book')).toBeNull())
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).not.toBeDisabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Clear' })).not.toBeDisabled())
 
     // The book that failed to delete is still picked, so retrying is one click.
     expect(checkboxFor('Stuck Book')).toBeChecked()
     expect(screen.getByText('1 selected')).toBeInTheDocument()
 
     vi.mocked(api.bulkActionBooks).mockResolvedValueOnce({ results: { '602': { ok: true } } })
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    clickBulkAction('Delete')
     expect(within(await screen.findByTestId('confirm-dialog')).getByText(/Delete 1 book/)).toBeInTheDocument()
     await acceptConfirm()
     await waitFor(() => expect(api.bulkActionBooks).toHaveBeenLastCalledWith([602], 'delete', undefined))
@@ -1983,7 +1982,7 @@ describe('AuthorDetailPage — selection (#2456, #2457)', () => {
     vi.mocked(api.listAllBooks).mockRejectedValue(new Error('offline'))
     fireEvent.click(checkboxFor('Doomed Book'))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    clickBulkAction('Delete')
     await acceptConfirm()
     await waitFor(() => expect(api.bulkActionBooks).toHaveBeenCalledWith([701], 'delete', undefined))
     // The stale row is still on screen, but it must not stay selected: a

@@ -673,11 +673,17 @@ export default function AuthorsPage() {
           { label: t('common.monitor'), onClick: () => openMonitoringBulk('monitor') },
           { label: t('common.unmonitor'), onClick: () => openMonitoringBulk('unmonitor') },
           { label: t('common.search'), onClick: () => runBulk('search') },
-          { label: t('authors.bulkRefreshMetadata', 'Refresh metadata'), onClick: () => runBulk('refresh') },
+          {
+            label: t('bulkActionBar.setFormat', 'Set format'),
+            onClick: () => {},
+            choices: [
+              { label: t('authors.bulkSetEbook', 'Set ebook'), onClick: () => runBulkSetMediaType('ebook') },
+              { label: t('authors.bulkSetAudiobook', 'Set audiobook'), onClick: () => runBulkSetMediaType('audiobook') },
+              { label: t('authors.bulkSetBoth', 'Set both'), onClick: () => runBulkSetMediaType('both') },
+            ],
+          },
           { label: t('authors.bulkSetMonitorMode', 'Set monitor mode'), onClick: openBulkMonitorMode },
-          { label: t('authors.bulkSetEbook', 'Set ebook'), onClick: () => runBulkSetMediaType('ebook') },
-          { label: t('authors.bulkSetAudiobook', 'Set audiobook'), onClick: () => runBulkSetMediaType('audiobook') },
-          { label: t('authors.bulkSetBoth', 'Set both'), onClick: () => runBulkSetMediaType('both') },
+          { label: t('authors.bulkRefreshMetadata', 'Refresh metadata'), onClick: () => runBulk('refresh') },
           { label: t('common.delete'), onClick: () => runBulk('delete'), variant: 'danger' },
         ]}
       />

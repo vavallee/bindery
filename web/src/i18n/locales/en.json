@@ -2060,7 +2060,9 @@
   },
   "bulkActionBar": {
     "selected": "{{count}} selected",
-    "clear": "Clear"
+    "clear": "Clear",
+    "setFormat": "Set format",
+    "more": "More bulk actions"
   },
   "discover": {
     "title": "Discover",

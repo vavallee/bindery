@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import AuthorsPage from './AuthorsPage'
 import { api } from '../api/client'
 import type { Series } from '../api/client'
+import { clickBulkAction } from '../test-utils'
 
 const { navigateMock } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
@@ -259,7 +260,7 @@ describe('AuthorsPage', () => {
     fireEvent.click(await screen.findByTitle('Select Andy Weir'))
 
     // The bulk bar appears; click the new "Refresh metadata" action.
-    fireEvent.click(await screen.findByRole('button', { name: 'Refresh metadata' }))
+    clickBulkAction('Refresh metadata')
 
     await waitFor(() =>
       expect(api.bulkActionAuthors).toHaveBeenCalledWith([7], 'refresh', undefined, false),
@@ -294,7 +295,7 @@ describe('AuthorsPage', () => {
     )
 
     fireEvent.click(await screen.findByTitle('Select Andy Weir'))
-    fireEvent.click(await screen.findByRole('button', { name: 'Set monitor mode' }))
+    clickBulkAction('Set monitor mode')
 
     expect(await screen.findByRole('dialog', { name: 'Set monitor mode' })).toBeInTheDocument()
     expect(screen.getByText('Selected authors: 1')).toBeInTheDocument()
@@ -330,7 +331,7 @@ describe('AuthorsPage', () => {
     )
 
     fireEvent.click(await screen.findByTitle('Select Andy Weir'))
-    fireEvent.click(await screen.findByRole('button', { name: 'Set monitor mode' }))
+    clickBulkAction('Set monitor mode')
     fireEvent.change(await screen.findByLabelText('Monitor mode'), { target: { value: 'latest' } })
     fireEvent.change(screen.getByLabelText('Latest book count'), { target: { value: '3' } })
     fireEvent.click(screen.getByRole('button', { name: 'Apply monitor mode' }))
@@ -372,7 +373,7 @@ describe('AuthorsPage', () => {
     )
 
     fireEvent.click(await screen.findByTitle('Select Andy Weir'))
-    fireEvent.click(await screen.findByRole('button', { name: 'Set monitor mode' }))
+    clickBulkAction('Set monitor mode')
     fireEvent.click(screen.getByRole('checkbox', { name: /apply monitor mode to existing books/i }))
     fireEvent.click(screen.getByRole('button', { name: 'Apply monitor mode' }))
 
@@ -413,7 +414,7 @@ describe('AuthorsPage', () => {
     )
 
     fireEvent.click(await screen.findByTitle('Select Andy Weir'))
-    fireEvent.click(await screen.findByRole('button', { name: 'Set monitor mode' }))
+    clickBulkAction('Set monitor mode')
     fireEvent.click(screen.getByRole('button', { name: 'Apply monitor mode' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('author not found')

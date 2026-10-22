@@ -1571,16 +1571,13 @@ export default function AuthorDetailPage() {
           // mistags several titles under one author — so they belong here as
           // well as on the global Books view (#2066).
           {
-            label: t('books.setEbook'),
-            onClick: () => runBulk('set_media_type', t('books.setEbook'), undefined, 'ebook'),
-          },
-          {
-            label: t('books.setAudiobook'),
-            onClick: () => runBulk('set_media_type', t('books.setAudiobook'), undefined, 'audiobook'),
-          },
-          {
-            label: t('books.setBoth'),
-            onClick: () => runBulk('set_media_type', t('books.setBoth'), undefined, 'both'),
+            label: t('bulkActionBar.setFormat', 'Set format'),
+            onClick: () => {},
+            choices: [
+              { label: t('books.setEbook'), onClick: () => runBulk('set_media_type', t('books.setEbook'), undefined, 'ebook') },
+              { label: t('books.setAudiobook'), onClick: () => runBulk('set_media_type', t('books.setAudiobook'), undefined, 'audiobook') },
+              { label: t('books.setBoth'), onClick: () => runBulk('set_media_type', t('books.setBoth'), undefined, 'both') },
+            ],
           },
           {
             label: t('authorDetail.bulk.exclude'),
