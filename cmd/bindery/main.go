@@ -1039,6 +1039,7 @@ func main() {
 
 		// Queue
 		r.Get("/queue", queueHandler.List)
+		r.Get("/queue/failed-count", queueHandler.FailedCount)
 		r.Post("/queue/grab", queueHandler.Grab)
 		r.Post("/queue/{id}/retry-import", queueHandler.RetryImport)
 		// Retry the download itself: re-sends the release the row holds to the
