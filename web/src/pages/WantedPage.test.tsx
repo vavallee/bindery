@@ -5,7 +5,7 @@ import { MemoryRouter, useLocation } from 'react-router'
 import WantedPage from './WantedPage'
 import { api } from '../api/client'
 import type { Author, Book, Download, SearchResult } from '../api/client'
-import { clickBulkAction } from '../test-utils'
+import { acceptConfirm, clickBulkAction } from '../test-utils'
 
 vi.mock('../api/client', async importOriginal => {
   const actual = await importOriginal<typeof import('../api/client')>()
@@ -707,5 +707,26 @@ describe('WantedPage author monitoring hint', () => {
     await screen.findByText('Dune')
     const hints = screen.getAllByText('Author not monitored, so this is not searched automatically')
     expect(hints).toHaveLength(1)
+  })
+})
+
+describe('WantedPage filter bar', () => {
+  it('sends sort and format to the server, and searches the page on screen after confirming', async () => {
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([makeBook({ id: 1, title: 'Dune' }), makeBook({ id: 2, title: 'Hyperion' })]))
+    renderWantedPage()
+    await screen.findByRole('link', { name: 'Dune' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'books.sortLabel' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'books.sortNewest' }))
+    await waitFor(() => expect(api.listWantedPage).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'date-new' })))
+
+    fireEvent.click(screen.getByRole('button', { name: /^common\.filters/ }))
+    fireEvent.click(screen.getByRole('radio', { name: 'common.audiobook' }))
+    await waitFor(() => expect(api.listWantedPage).toHaveBeenLastCalledWith(expect.objectContaining({ mediaType: 'audiobook', sort: 'date-new' })))
+
+    // One page-level search instead of a green Search button per row.
+    fireEvent.click(await screen.findByRole('button', { name: 'wanted.searchPage' }))
+    await acceptConfirm()
+    await waitFor(() => expect(api.bulkActionWanted).toHaveBeenCalledWith([1, 2], 'search'))
   })
 })

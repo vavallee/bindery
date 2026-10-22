@@ -1179,9 +1179,10 @@ func sweepMatchesFormat(name, format string) bool {
 // time, which is what the Wanted page asks for so a library with thousands of
 // wanted books is not serialised on every 5 second poll.
 //
-// `search` and `offset` apply to the paged form only. `total` counts every
-// wanted book the caller can see that matches the filters (scope,
-// includeExcluded, search), ignoring limit and offset, so a page count can be
+// `search`, `mediaType`, `sort` and `offset` apply to the paged form only.
+// `total` counts every wanted book the caller can see that matches the
+// filters (scope, includeExcluded, search, mediaType), ignoring limit and
+// offset, so a page count can be
 // drawn from it. The paged form is ordered like the bare one (sort title)
 // until a search is typed, which ranks by relevance as the Books list does.
 func (h *BookHandler) ListWanted(w http.ResponseWriter, r *http.Request) {
@@ -1223,10 +1224,16 @@ func (h *BookHandler) ListWanted(w http.ResponseWriter, r *http.Request) {
 // listWantedPage is the paged form of ListWanted.
 func (h *BookHandler) listWantedPage(w http.ResponseWriter, r *http.Request, scope int64, includeExcluded bool) {
 	limit, offset := parseLimitOffset(r, bookListDefaultLimit, bookListMaxLimit)
+	// mediaType and sort are the Books list's own parameters, read and
+	// whitelisted by ListPageFiltered the same way, so the Wanted page can
+	// filter by format and order by date or author instead of offering
+	// thousands of rows in title order only.
 	books, total, err := h.books.ListPageFiltered(r.Context(), db.BookListFilter{
 		UserID:          scope,
 		Search:          strings.TrimSpace(r.URL.Query().Get("search")),
 		Status:          models.BookStatusWanted,
+		MediaType:       r.URL.Query().Get("mediaType"),
+		Sort:            r.URL.Query().Get("sort"),
 		IncludeExcluded: includeExcluded,
 	}, limit, offset)
 	if err != nil {

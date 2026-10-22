@@ -8,13 +8,17 @@ import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
 import { useServerPagination } from '../components/usePagination'
-import { useListParams, useUrlSearchInput } from '../components/useListParams'
+import { oneOf, useListParams, useUrlSearchInput } from '../components/useListParams'
+import FilterBar from '../components/FilterBar'
+import { FilterGroup } from '../components/FilterPopover'
+import { SkeletonRows } from '../components/Skeleton'
+import EmptyState from '../components/EmptyState'
 import { usePolling } from '../components/usePolling'
 import { safeHref } from '../util/safeHref'
 import { formatBytes } from '../util/format'
 import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
 import CoverImage from '../components/CoverImage'
-import { primaryFill } from '../components/buttons'
+import { btn, btnSize, primaryFill } from '../components/buttons'
 import { FilteredResultsSection } from './BookDetailPage'
 import CoverPlaceholder from '../components/CoverPlaceholder'
 
@@ -33,7 +37,9 @@ const ROW_GRID = 'grid grid-cols-[1.5rem_2rem_minmax(0,1fr)] sm:grid-cols-[1.5re
 const ROW_CONTROLS = 'col-start-2 col-span-2 flex flex-wrap items-center gap-2 sm:contents'
 
 // Query-string keys and their defaults; defaults stay out of the URL.
-const LIST_DEFAULTS = { q: '', excluded: '' }
+const LIST_DEFAULTS = { q: '', excluded: '', media: '', sort: 'title-az' }
+const SORT_MODES = ['title-az', 'title-za', 'date-new', 'date-old', 'author-az', 'author-za'] as const
+const MEDIA_FILTERS = ['', 'ebook', 'audiobook', 'both'] as const
 
 export default function WantedPage() {
   const { t } = useTranslation()
@@ -79,7 +85,9 @@ export default function WantedPage() {
   // The query a total belongs to, minus the page. The snap back to the last
   // page may only use a total fetched for the query on screen (see BooksPage).
   const searchQuery = list.values.q
-  const queryKey = JSON.stringify([searchQuery, showExcluded])
+  const sort = oneOf(list.values.sort, SORT_MODES, 'title-az')
+  const mediaFilter = oneOf(list.values.media, MEDIA_FILTERS, '')
+  const queryKey = JSON.stringify([searchQuery, showExcluded, sort, mediaFilter])
   const [totalKey, setTotalKey] = useState<string | null>(null)
   const { page, pageSize, paginationProps } = useServerPagination(total, 50, 'wanted', {
     page: list.page,
@@ -99,13 +107,16 @@ export default function WantedPage() {
       offset: (page - 1) * pageSize,
       search: searchQuery || undefined,
       includeExcluded: showExcluded,
+      mediaType: mediaFilter || undefined,
+      // The server's default is title order; only send a choice.
+      sort: sort === 'title-az' ? undefined : sort,
     }).then(({ items, total }) => {
       if (request !== loadRequestRef.current || !mounted.current) return
       setBooks(items)
       setTotal(total)
       setTotalKey(queryKey)
     })
-  }, [page, pageSize, searchQuery, showExcluded, queryKey])
+  }, [page, pageSize, searchQuery, showExcluded, sort, mediaFilter, queryKey])
 
   const load = () => {
     fetchPage().catch(console.error).finally(() => { if (mounted.current) setLoading(false) })
@@ -216,7 +227,7 @@ export default function WantedPage() {
   const pageItemIds = pageItems.map(b => b.id)
 
   // A selection only means something on the page it was made on.
-  useEffect(() => { setSelectedIds(new Set()) }, [list.page, list.values.q, showExcluded])
+  useEffect(() => { setSelectedIds(new Set()) }, [list.page, queryKey])
 
   // Keep the select-all checkbox indeterminate state in sync.
   const allPageSelected = pageItems.length > 0 && pageItems.every(b => selectedIds.has(b.id))
@@ -265,6 +276,28 @@ export default function WantedPage() {
 
   const checkboxCls = 'rounded border-slate-400 dark:border-zinc-600'
 
+  const searchPage = async () => {
+    if (pageItems.length === 0) return
+    if (!await confirm({
+      title: t('common.confirmTitle'),
+      body: t('wanted.searchPageConfirm', { count: pageItems.length, defaultValue: 'Search indexers for the {{count}} books on this page?' }),
+      confirmLabel: t('common.search'),
+    })) return
+    setBulkBusy(true)
+    try {
+      const res = await api.bulkActionWanted(pageItemIds, 'search')
+      if (isAutoGrabRefusal(res)) {
+        showToast(t('search.autoGrabDisabled'))
+        return
+      }
+      load()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Bulk action failed')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   return (
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
       {confirmDialog}
@@ -274,43 +307,85 @@ export default function WantedPage() {
         </div>
       )}
 
-      {/* Page header: title · count · show-excluded */}
-      <div className="flex items-center gap-3 mb-3">
+      {/* Page header: title and the one page-level action. Searching every
+          row's indexers one Search button at a time does not scale to a
+          backlog of thousands; this searches the rows on screen, which the
+          filters below decide. */}
+      <div className="flex flex-wrap items-center gap-3 mb-3">
         <h2 className="text-xl font-semibold text-slate-800 dark:text-zinc-200">{t('wanted.title')}</h2>
-        <span className="text-xs text-fg-muted">
-          {t('books.countLabel', { count: total, defaultValue: '{{count}} books' })}
-        </span>
-        <label className="ml-auto flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={showExcluded}
-            onChange={e => setShowExcluded(e.target.checked)}
-            className={checkboxCls}
-          />
-          {t('wanted.showExcluded')}
-        </label>
+        {pageItems.length > 0 && (
+          <button
+            type="button"
+            onClick={searchPage}
+            disabled={bulkBusy}
+            className={`ml-auto ${btn.primary} ${btnSize.md}`}
+            title={t('wanted.searchPageHint', 'Search indexers for every book on this page. Narrow the list with the filters first.')}
+          >
+            {t('wanted.searchPage', { count: pageItems.length, defaultValue: 'Search these {{count}}' })}
+          </button>
+        )}
       </div>
 
-      <input
-        enterKeyHint="search"
-        type="search"
-        value={search}
-        onChange={e => setSearch(e.target.value)}
-        placeholder={t('wanted.searchPlaceholder')}
-        className="w-full mb-3 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-1.5 text-sm"
+      <FilterBar
+        search={{ value: search, onChange: setSearch, placeholder: t('wanted.searchPlaceholder') }}
+        sort={{
+          value: sort,
+          onChange: next => updateList({ sort: next, page: null }),
+          label: t('books.sortLabel'),
+          options: [
+            { value: 'title-az' as const, label: t('books.sortTitleAZ') },
+            { value: 'title-za' as const, label: t('books.sortTitleZA') },
+            { value: 'date-new' as const, label: t('books.sortNewest') },
+            { value: 'date-old' as const, label: t('books.sortOldest') },
+            { value: 'author-az' as const, label: t('books.sortAuthorAZ') },
+            { value: 'author-za' as const, label: t('books.sortAuthorZA') },
+          ],
+        }}
+        filters={{
+          activeCount: [mediaFilter, showExcluded ? '1' : ''].filter(Boolean).length,
+          content: (
+            <>
+              <FilterGroup
+                label={t('books.typeLabel')}
+                value={mediaFilter}
+                onChange={next => updateList({ media: next, page: null })}
+                options={[
+                  { value: '' as const, label: t('common.all') },
+                  { value: 'ebook' as const, label: `📖 ${t('common.ebook')}`, ariaLabel: t('common.ebook') },
+                  { value: 'audiobook' as const, label: `🎧 ${t('common.audiobook')}`, ariaLabel: t('common.audiobook') },
+                  { value: 'both' as const, label: `📖🎧 ${t('common.both')}`, ariaLabel: t('common.both') },
+                ]}
+              />
+              {/* Excluded books are hidden by default. Showing them widens the
+                  list, so it lives with the filters as a facet with an
+                  explicit "Hidden" default rather than as a loose checkbox. */}
+              <FilterGroup
+                label={t('wanted.excludedLabel', 'Excluded books')}
+                value={showExcluded ? 'show' : ''}
+                onChange={next => setShowExcluded(next === 'show')}
+                options={[
+                  { value: '' as const, label: t('wanted.excludedHidden', 'Hidden') },
+                  { value: 'show' as const, label: t('wanted.showExcluded') },
+                ]}
+              />
+            </>
+          ),
+        }}
+        chips={[
+          ...(mediaFilter ? [{ key: 'media', label: t(`common.${mediaFilter}`), onClear: () => updateList({ media: null, page: null }) }] : []),
+          ...(showExcluded ? [{ key: 'excluded', label: t('wanted.showExcluded'), onClear: () => setShowExcluded(false) }] : []),
+        ]}
+        summary={loading ? undefined : t('books.countLabel', { count: total, defaultValue: '{{count}} books' })}
       />
 
       {loading ? (
-        <div className="text-fg-muted">{t('common.loading')}</div>
-      ) : total === 0 && !searchQuery ? (
-        <div className="text-center py-16 text-fg-muted">
-          <p>{t('wanted.empty')}</p>
+        <SkeletonRows />
+      ) : total === 0 && !searchQuery && !mediaFilter ? (
+        <EmptyState title={t('wanted.empty')}>
           <ImportHints />
-        </div>
+        </EmptyState>
       ) : total === 0 ? (
-        <div className="text-center py-16 text-fg-muted">
-          <p>{t('wanted.noMatch')}</p>
-        </div>
+        <EmptyState variant="no-match" title={t('wanted.noMatch')} />
       ) : (
         <div className="border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden">
           {/* Column-header row with select-all checkbox */}
@@ -424,7 +499,7 @@ export default function WantedPage() {
                         type="button"
                         onClick={() => unmonitor(book)}
                         disabled={unmonitoringId === book.id}
-                        className="px-2 py-1 rounded text-xs font-medium bg-slate-200 dark:bg-zinc-800 hover:bg-amber-100 dark:hover:bg-amber-900/30 hover:text-amber-700 dark:hover:text-amber-400 text-slate-700 dark:text-zinc-300 disabled:opacity-50 transition-colors"
+                        className={`${btn.ghost} px-2 py-1 text-xs`}
                         title={t('wanted.unmonitorHint')}
                       >
                         {unmonitoringId === book.id ? '…' : t('common.unmonitor')}
@@ -433,7 +508,7 @@ export default function WantedPage() {
                         type="button"
                         onClick={() => searchBook(book)}
                         disabled={searchingId === book.id}
-                        className={`px-2 py-1 rounded text-xs font-medium ${primaryFill} disabled:opacity-50 transition-colors`}
+                        className={`${btn.secondary} px-2 py-1 text-xs`}
                       >
                         {searchingId === book.id ? t('wanted.searching') : t('common.search')}
                       </button>

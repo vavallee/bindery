@@ -746,7 +746,14 @@
     "noCover": "No cover",
     "authorUnknown": "Author unknown",
     "changeFormat": "Change format for {{title}}",
-    "authorNotMonitored": "Author not monitored, so this is not searched automatically"
+    "authorNotMonitored": "Author not monitored, so this is not searched automatically",
+    "searchPage_one": "Search this book",
+    "searchPage_other": "Search these {{count}}",
+    "searchPageHint": "Search indexers for every book on this page. Narrow the list with the filters first.",
+    "searchPageConfirm_one": "Search indexers for the {{count}} book on this page?",
+    "searchPageConfirm_other": "Search indexers for the {{count}} books on this page?",
+    "excludedLabel": "Excluded books",
+    "excludedHidden": "Hidden"
   },
   "history": {
     "title": "History",
