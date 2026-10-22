@@ -595,6 +595,11 @@ func (r *SeriesRepo) EnsureHardcoverLinkFromForeignID(ctx context.Context, serie
 		Confidence:        0.8,
 		LinkedBy:          "auto",
 	})
+	if errors.Is(err, ErrHardcoverIDLinked) {
+		// Another series already holds this id; the unscored auto path never
+		// takes it over (#3368).
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
@@ -621,13 +626,23 @@ func (r *SeriesRepo) UpsertHardcoverLink(ctx context.Context, link *models.Serie
 	if link.HardcoverProviderID == "" {
 		link.HardcoverProviderID = strings.TrimPrefix(link.HardcoverSeriesID, HardcoverSeriesIDPrefix)
 	}
-	_, err := r.db.ExecContext(ctx, `
+	prefixed, bare := hardcoverIDForms(link.HardcoverSeriesID)
+	// The guard is part of the statement, not a lookup before it, so two
+	// callers racing for one Hardcover id cannot both pass it (SQLite runs a
+	// statement atomically under its single writer). A series whose link
+	// already names the id may always rewrite it, which keeps metadata
+	// refreshes working on a library that already holds a duplicate.
+	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO series_hardcover_links (
 			series_id, hardcover_series_id, hardcover_provider_id, hardcover_slug,
 			hardcover_title, hardcover_author_name, hardcover_book_count, link_confidence,
 			linked_by, linked_at, created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		WHERE EXISTS (SELECT 1 FROM series_hardcover_links WHERE series_id = ? AND hardcover_series_id IN (?, ?))
+		   OR (NOT EXISTS (SELECT 1 FROM series_hardcover_links WHERE series_id <> ? AND hardcover_series_id IN (?, ?))
+		       AND NOT EXISTS (SELECT 1 FROM series WHERE id <> ? AND foreign_id = ?)
+		       AND NOT EXISTS (SELECT 1 FROM series_aliases WHERE series_id <> ? AND foreign_id = ?))
 		ON CONFLICT(series_id) DO UPDATE SET
 			hardcover_series_id = excluded.hardcover_series_id,
 			hardcover_provider_id = excluded.hardcover_provider_id,
@@ -654,9 +669,20 @@ func (r *SeriesRepo) UpsertHardcoverLink(ctx context.Context, link *models.Serie
 		link.LinkedAt,
 		now,
 		now,
+		link.SeriesID, prefixed, bare,
+		link.SeriesID, prefixed, bare,
+		link.SeriesID, prefixed,
+		link.SeriesID, prefixed,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert series hardcover link: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		owner, err := r.hardcoverIDOwner(ctx, link.HardcoverSeriesID, link.SeriesID)
+		if err != nil {
+			return err
+		}
+		return &HardcoverLinkConflictError{HardcoverSeriesID: link.HardcoverSeriesID, SeriesID: owner}
 	}
 	stored, err := r.GetHardcoverLink(ctx, link.SeriesID)
 	if err != nil {
@@ -666,6 +692,103 @@ func (r *SeriesRepo) UpsertHardcoverLink(ctx context.Context, link *models.Serie
 		*link = *stored
 	}
 	return nil
+}
+
+// ErrHardcoverIDLinked reports a Hardcover series id that another series
+// already holds (#3368). Match it with errors.Is; the error is a
+// *HardcoverLinkConflictError carrying that series' id.
+var ErrHardcoverIDLinked = errors.New("hardcover series id is already linked to another series")
+
+// HardcoverLinkConflictError is returned by UpsertHardcoverLink when the
+// Hardcover id belongs to a different series. SeriesID is that series (0 if it
+// vanished in between).
+type HardcoverLinkConflictError struct {
+	HardcoverSeriesID string
+	SeriesID          int64
+}
+
+func (e *HardcoverLinkConflictError) Error() string {
+	return fmt.Sprintf("hardcover series %s is already linked to series %d", e.HardcoverSeriesID, e.SeriesID)
+}
+
+func (e *HardcoverLinkConflictError) Is(target error) bool { return target == ErrHardcoverIDLinked }
+
+// hardcoverIDForms returns the prefixed ("hc-series:42") and bare ("42")
+// spellings of a Hardcover series id. Links are stored in whichever form the
+// caller sent, so the guards compare both. Only the prefixed form is ever
+// matched against series.foreign_id.
+func hardcoverIDForms(id string) (prefixed, bare string) {
+	bare = strings.TrimPrefix(strings.TrimSpace(id), HardcoverSeriesIDPrefix)
+	return HardcoverSeriesIDPrefix + bare, bare
+}
+
+// hardcoverIDOwner returns the series other than except that holds the given
+// Hardcover id: by link, by provider foreign id, or by merge alias. 0 if none.
+func (r *SeriesRepo) hardcoverIDOwner(ctx context.Context, hardcoverID string, except int64) (int64, error) {
+	prefixed, bare := hardcoverIDForms(hardcoverID)
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT series_id FROM series_hardcover_links WHERE series_id <> ? AND hardcover_series_id IN (?, ?)
+		UNION ALL SELECT id FROM series WHERE id <> ? AND foreign_id = ?
+		UNION ALL SELECT series_id FROM series_aliases WHERE series_id <> ? AND foreign_id = ?
+		LIMIT 1`, except, prefixed, bare, except, prefixed, except, prefixed).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find owner of hardcover series %s: %w", hardcoverID, err)
+	}
+	return id, nil
+}
+
+// HardcoverDuplicate is a Hardcover series id that more than one series holds.
+type HardcoverDuplicate struct {
+	HardcoverSeriesID string
+	SeriesIDs         []int64
+}
+
+// ListHardcoverDuplicates reports Hardcover ids held by more than one series,
+// counting both links and hc-series foreign ids. Read only: it is how a
+// library that duplicated before the guards (#3368) can see what to merge
+// (#2554). Nothing is changed.
+func (r *SeriesRepo) ListHardcoverDuplicates(ctx context.Context) ([]HardcoverDuplicate, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT hc, series_id FROM (
+			SELECT CASE WHEN hardcover_series_id LIKE 'hc-series:%' THEN hardcover_series_id
+			            ELSE 'hc-series:' || hardcover_series_id END AS hc, series_id
+			FROM series_hardcover_links
+			UNION
+			SELECT foreign_id, id FROM series WHERE foreign_id LIKE 'hc-series:%'
+			UNION
+			SELECT foreign_id, series_id FROM series_aliases WHERE foreign_id LIKE 'hc-series:%'
+		) ORDER BY hc, series_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list hardcover duplicates: %w", err)
+	}
+	defer rows.Close()
+	groups := map[string][]int64{}
+	var order []string
+	for rows.Next() {
+		var hc string
+		var id int64
+		if err := rows.Scan(&hc, &id); err != nil {
+			return nil, err
+		}
+		if _, ok := groups[hc]; !ok {
+			order = append(order, hc)
+		}
+		groups[hc] = append(groups[hc], id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var out []HardcoverDuplicate
+	for _, hc := range order {
+		if len(groups[hc]) > 1 {
+			out = append(out, HardcoverDuplicate{HardcoverSeriesID: hc, SeriesIDs: groups[hc]})
+		}
+	}
+	return out, nil
 }
 
 func (r *SeriesRepo) DeleteHardcoverLink(ctx context.Context, seriesID int64) error {
@@ -738,14 +861,24 @@ func (r *SeriesRepo) CreateOrGet(ctx context.Context, s *models.Series) error {
 		return fmt.Errorf("upsert series %q: refusing to create a series with an empty foreign_id", s.Title)
 	}
 	now := time.Now().UTC()
-	// The alias check is part of the INSERT, not a lookup before it: SQLite
-	// runs one statement atomically under its single writer, so a refresh
-	// racing a merge (#2554) cannot recreate the row the merge just removed.
+	// A Hardcover series id another series is already linked to (a series
+	// added by hand, say) names that series, not a new one (#3368). Empty for
+	// any other provider's id, which disables that clause.
+	hcID := ""
+	if strings.HasPrefix(s.ForeignID, HardcoverSeriesIDPrefix) {
+		hcID = s.ForeignID
+	}
+	_, hcBare := hardcoverIDForms(hcID)
+	// The alias and link checks are part of the INSERT, not a lookup before
+	// it: SQLite runs one statement atomically under its single writer, so a
+	// refresh racing a merge (#2554) cannot recreate the row the merge just
+	// removed, nor two syncs race a link into a second row.
 	result, err := r.db.ExecContext(ctx,
 		`INSERT OR IGNORE INTO series (foreign_id, title, description, created_at)
 		 SELECT ?, ?, ?, ?
-		 WHERE NOT EXISTS (SELECT 1 FROM series_aliases WHERE foreign_id = ?)`,
-		s.ForeignID, s.Title, s.Description, now, s.ForeignID)
+		 WHERE NOT EXISTS (SELECT 1 FROM series_aliases WHERE foreign_id = ?)
+		   AND (? = '' OR NOT EXISTS (SELECT 1 FROM series_hardcover_links WHERE hardcover_series_id IN (?, ?)))`,
+		s.ForeignID, s.Title, s.Description, now, s.ForeignID, hcID, hcID, hcBare)
 	if err != nil {
 		return fmt.Errorf("upsert series: %w", err)
 	}
@@ -757,7 +890,16 @@ func (r *SeriesRepo) CreateOrGet(ctx context.Context, s *models.Series) error {
 	}
 	// The series exists, under this id or as the series it was merged into.
 	row := r.db.QueryRowContext(ctx, seriesByForeignIDSQL, s.ForeignID, s.ForeignID)
-	if err := row.Scan(&s.ID); err != nil {
+	err = row.Scan(&s.ID)
+	if errors.Is(err, sql.ErrNoRows) && hcID != "" {
+		// Not under this id: the series that links to it. Its own foreign id
+		// differs (manual:..., or another provider's), so callers must go by
+		// s.ID, which they already do.
+		err = r.db.QueryRowContext(ctx,
+			"SELECT series_id FROM series_hardcover_links WHERE hardcover_series_id IN (?, ?) ORDER BY series_id LIMIT 1",
+			hcID, hcBare).Scan(&s.ID)
+	}
+	if err != nil {
 		return fmt.Errorf("get existing series id: %w", err)
 	}
 	return nil

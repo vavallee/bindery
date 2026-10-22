@@ -392,6 +392,28 @@ var hardcoverSeriesForeignIDRe = regexp.MustCompile(`^hc-series:[0-9]{1,18}$`)
 // needed. It is never held across the provider call.
 var createMu sync.Mutex
 
+// writeHardcoverLinkConflict answers 409 with the owning series id when err
+// says the Hardcover id is already linked to another series (#3368). The
+// explicit link routes reject rather than merge: moving a link between series
+// is the series merge's job (#2554), and the call is the user's.
+func writeHardcoverLinkConflict(w http.ResponseWriter, err error) bool {
+	var conflict *db.HardcoverLinkConflictError
+	if !errors.As(err, &conflict) {
+		return false
+	}
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":    "this hardcover series is already linked to another series",
+		"seriesId": conflict.SeriesID,
+	})
+	return true
+}
+
+func writeHardcoverLinkConflictOr(w http.ResponseWriter, r *http.Request, err error) {
+	if !writeHardcoverLinkConflict(w, err) {
+		writeServerError(w, r, err)
+	}
+}
+
 // duplicateHardcoverSeries answers 409 with the existing series id when one of
 // the given Hardcover ids is already in the library. It reports whether it
 // wrote a response (a duplicate or an error).
@@ -486,7 +508,7 @@ func (h *SeriesHandler) createFromHardcover(w http.ResponseWriter, r *http.Reque
 			slog.Error("series: could not roll back a series whose hardcover link failed",
 				"seriesID", series.ID, "error", delErr)
 		}
-		writeServerError(w, r, err)
+		writeHardcoverLinkConflictOr(w, r, err)
 		return
 	}
 	series.HardcoverLink = link
@@ -1026,6 +1048,9 @@ type seriesHardcoverAutoResponse struct {
 	Link       *models.SeriesHardcoverLink   `json:"link,omitempty"`
 	Candidates []seriesHardcoverSearchResult `json:"candidates"`
 	Reason     string                        `json:"reason,omitempty"`
+	// ExistingSeriesID names the series that already holds the top
+	// candidate's Hardcover id, when that is why nothing was linked.
+	ExistingSeriesID int64 `json:"existingSeriesId,omitempty"`
 }
 
 type seriesHardcoverDiffBook struct {
@@ -1174,6 +1199,17 @@ func (h *SeriesHandler) AutoLinkHardcover(w http.ResponseWriter, r *http.Request
 		LinkedBy:            "auto",
 	}
 	if err := h.series.UpsertHardcoverLink(r.Context(), link); err != nil {
+		var conflict *db.HardcoverLinkConflictError
+		if errors.As(err, &conflict) {
+			// Automatic linking never takes an id another series holds, and
+			// never merges on its own (#3368).
+			writeJSON(w, http.StatusOK, seriesHardcoverAutoResponse{
+				Candidates:       candidates,
+				Reason:           "already linked to another series",
+				ExistingSeriesID: conflict.SeriesID,
+			})
+			return
+		}
 		writeServerError(w, r, err)
 		return
 	}
@@ -1217,7 +1253,7 @@ func (h *SeriesHandler) PutHardcoverLink(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := h.series.UpsertHardcoverLink(r.Context(), link); err != nil {
-		writeServerError(w, r, err)
+		writeHardcoverLinkConflictOr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, link)

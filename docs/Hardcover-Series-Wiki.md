@@ -75,6 +75,12 @@ When you click **Search** on an unlinked series, Bindery first attempts an autom
 
 If that evidence is missing, Bindery shows candidates for manual selection instead of linking automatically.
 
+## One Series Per Hardcover Series
+
+A Hardcover series is held by at most one series in your library. When an author sync, an Audiobookshelf import or a Hardcover list sync meets a Hardcover series you already linked to a series of your own, it files the books under your series instead of creating a second one. Choosing a Hardcover series for a series (or adding one) when another series already holds it is refused with a message naming that series, and automatic linking skips it. To combine two series, use merge on the Series page.
+
+Libraries that already hold two series for one Hardcover series are not changed. Bindery logs a warning at startup naming the Hardcover id and the series ids, so you can merge them.
+
 ## How the Catalog Diff Binds Local Books
 
 The diff pairs each local book in the series with at most one catalog entry, in two passes. A local book whose provider ID matches a catalog entry binds to it first, whatever the library order. Only then are the remaining local books matched by title, and a title match is never allowed across positions: a book the series files at position 4 cannot bind to catalog volume 9 however similar the titles are. Title matches are made in order of each book's best score, ties in library order. A book whose best entry is already taken moves on to its next best, unless a book with the same title holds an entry it matches better than that next best. The same title means the same numbers, and two titles at least as close to each other as the book is to that entry. The two rows are then copies of one book (a duplicate import, or an ebook and an audiobook row) and the second is listed as Local only, with or without stored positions: a second copy of The Way of Kings does not claim The Way of Kings Prime, which stays in Missing. That is logged at DEBUG as `series diff: local book is a second copy of a book already bound, left Local only`. A book whose best entry went to a different book, such as "He Who Fights with Monsters 4" losing the bare series title to volume 1, is not a copy and moves on to its own entry.

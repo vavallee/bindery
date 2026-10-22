@@ -324,6 +324,17 @@ func main() {
 		return
 	}
 
+	// Read-only report of Hardcover ids that more than one series holds, from
+	// before the guards in SeriesRepo (#3368). Merge them from the series page.
+	if dups, err := seriesRepo.ListHardcoverDuplicates(ctxBoot); err != nil {
+		slog.Warn("could not check for duplicate hardcover series", "error", err)
+	} else {
+		for _, d := range dups {
+			slog.Warn("several series share one hardcover id; merge them from the series page",
+				"hardcoverId", d.HardcoverSeriesID, "seriesIds", d.SeriesIDs)
+		}
+	}
+
 	// Optional CLI subcommand: `bindery reconcile-series`.
 	// Re-fetches OpenLibrary series data for every already-ingested book and
 	// populates the series / series_books tables. Run once when upgrading from

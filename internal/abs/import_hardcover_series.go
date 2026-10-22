@@ -349,7 +349,7 @@ func (i *Importer) upsertHardcoverSeries(ctx context.Context, cfg ImportConfig, 
 	if catalog == nil || strings.TrimSpace(catalog.Title) == "" || strings.TrimSpace(catalog.ForeignID) == "" {
 		return seriesUpsertResult{}, nil
 	}
-	existing, err := i.series.GetByForeignID(ctx, catalog.ForeignID)
+	existing, err := i.series.GetByHardcoverSeriesID(ctx, catalog.ForeignID)
 	if err != nil {
 		return seriesUpsertResult{}, err
 	}
@@ -520,7 +520,7 @@ func (i *Importer) linkExistingHardcoverCatalogBooks(ctx context.Context, cfg Im
 	if catalog == nil || author == nil {
 		return 0, nil
 	}
-	seriesRow, err := i.series.GetByForeignID(ctx, catalog.ForeignID)
+	seriesRow, err := i.series.GetByHardcoverSeriesID(ctx, catalog.ForeignID)
 	if err != nil {
 		return 0, err
 	}
