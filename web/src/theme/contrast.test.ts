@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { COVER_COLORS, COVER_FG, coverColorFor } from '../components/coverPalette'
+import { SELECTED_HOVER_DARK } from '../components/DataTable'
+import dataTableSource from '../components/DataTable.tsx?raw'
 import postcss from 'postcss'
 import tailwindcss from '@tailwindcss/postcss'
 
@@ -202,5 +204,14 @@ describe('CoverPlaceholder palette', () => {
   it('spreads ids across the whole palette', () => {
     const seen = new Set(Array.from({ length: 400 }, (_, i) => coverColorFor(i + 1).className))
     expect(seen.size).toBe(COVER_COLORS.length)
+  })
+})
+
+// A selected table row under the pointer in dark mode. emerald-900 left the
+// muted text at 3.8:1.
+describe('DataTable selected row hover', () => {
+  it('keeps muted text AA in dark mode', () => {
+    expect(dataTableSource).toContain(`dark:hover:bg-[${SELECTED_HOVER_DARK}]`)
+    expect(contrast(token('fg-muted', 'dark'), SELECTED_HOVER_DARK)).toBeGreaterThanOrEqual(AA_NORMAL)
   })
 })
