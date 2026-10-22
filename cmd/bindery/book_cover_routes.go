@@ -20,3 +20,16 @@ func registerBookCoverRoutes(r chi.Router, h bookCoverRouteHandler) {
 	// it tell an oversize cover from one exactly at the limit.
 	r.With(api.WithMaxBody(covers.MaxBytes+1)).Post("/book/{id}/cover", h.UploadCover)
 }
+
+type authorPhotoRouteHandler interface {
+	UploadPhoto(http.ResponseWriter, *http.Request)
+	ClearPhoto(http.ResponseWriter, *http.Request)
+}
+
+// registerAuthorPhotoRoutes mounts the author photo upload route, with the
+// same raised body cap as the cover upload, and the route that clears an
+// uploaded photo (#3287).
+func registerAuthorPhotoRoutes(r chi.Router, h authorPhotoRouteHandler) {
+	r.With(api.WithMaxBody(covers.MaxBytes+1)).Post("/author/{id}/photo", h.UploadPhoto)
+	r.Delete("/author/{id}/photo", h.ClearPhoto)
+}

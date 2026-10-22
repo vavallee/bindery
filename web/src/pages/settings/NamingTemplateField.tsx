@@ -85,7 +85,7 @@ export default function NamingTemplateField({
   return (
     <div>
       <label className={labelCls}>{label}</label>
-      {hint && <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">{hint}</p>}
+      {hint && <p className="text-xs text-fg-muted mb-2">{hint}</p>}
 
       {/* Token picker */}
       <div className="flex flex-wrap gap-1.5 mb-2" role="group" aria-label={t('settings.general.naming.tokenPickerLabel')}>
@@ -116,7 +116,7 @@ export default function NamingTemplateField({
       </div>
       {tappedTokenMeaning && (
         // Touch screens only: on a desktop the tooltip already says this.
-        <p data-testid={`naming-token-meaning-${kind}`} aria-live="polite" className="hidden pointer-coarse:block text-xs text-slate-600 dark:text-zinc-400 -mt-1 mb-2">
+        <p data-testid={`naming-token-meaning-${kind}`} aria-live="polite" className="hidden pointer-coarse:block text-xs text-fg-muted -mt-1 mb-2">
           {tappedTokenMeaning}
         </p>
       )}
@@ -141,8 +141,8 @@ export default function NamingTemplateField({
 
       {/* Live preview */}
       {!validation.empty && (
-        <p className="text-xs text-slate-600 dark:text-zinc-400 mt-1.5">
-          <span className="text-slate-500 dark:text-zinc-500">
+        <p className="text-xs text-fg-muted mt-1.5">
+          <span className="text-fg-muted">
             {t('settings.general.naming.previewLabel')}
           </span>{' '}
           <code
@@ -161,7 +161,7 @@ export default function NamingTemplateField({
         // role="alert" so screen readers announce the still-blocking empty
         // state (Save stays disabled). Kept visually muted — it's a "required"
         // prompt, not a hard error like traversal — but still announced.
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1.5" role="alert">
+        <p className="text-xs text-fg-muted mt-1.5" role="alert">
           {t('settings.general.naming.hintEmpty', 'Required — enter at least one token or path segment.')}
         </p>
       )}

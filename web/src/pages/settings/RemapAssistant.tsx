@@ -47,9 +47,9 @@ export default function RemapAssistant({ clientId, clientType, remotePath, candi
       className="mt-1 p-3 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-50 dark:bg-zinc-900/60 text-xs space-y-2"
     >
       <h5 className="font-semibold text-sm">{t('settings.clients.remapAssist.heading')}</h5>
-      {current && <p className="text-slate-600 dark:text-zinc-400">{t('settings.clients.remapAssist.intro')}</p>}
+      {current && <p className="text-fg-muted">{t('settings.clients.remapAssist.intro')}</p>}
       <p>
-        <span className="text-slate-600 dark:text-zinc-400">{t('settings.clients.remapAssist.clientPath')}: </span>
+        <span className="text-fg-muted">{t('settings.clients.remapAssist.clientPath')}: </span>
         <code className="font-mono break-all">{remotePath}</code>
       </p>
       {!current && note && <p role="note">{t(`settings.clients.remapAssist.note.${note}`)}</p>}
@@ -63,7 +63,7 @@ export default function RemapAssistant({ clientId, clientType, remotePath, candi
         </select>
       </div>
       <div aria-live="polite">
-        <span className="text-slate-600 dark:text-zinc-400">{t('settings.clients.remapAssist.previewLabel')}: </span>
+        <span className="text-fg-muted">{t('settings.clients.remapAssist.previewLabel')}: </span>
         <code className="font-mono break-all">{current.before}</code>
         <span aria-hidden="true">{' -> '}</span>
         <code className="font-mono break-all">{current.after}</code>

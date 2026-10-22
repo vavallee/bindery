@@ -655,7 +655,8 @@ func main() {
 		WithRoots(libraryRoots).
 		WithLifetimeCtx(appCtx).
 		WithNotifier(notif). // bookAnnounced when a refresh or discovery adds books (#2236)
-		WithJobs(bgJobs)     // drain an in-flight author catalogue sync on shutdown (#2371)
+		WithJobs(bgJobs).    // drain an in-flight author catalogue sync on shutdown (#2371)
+		WithCoverStore(coverStore)
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
 	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).
 		WithSettings(settingsRepo).
@@ -978,6 +979,7 @@ func main() {
 		r.Put("/author/{id}/genres", authorHandler.ApplyGenres)
 		r.Delete("/author/{id}", authorHandler.Delete)
 		r.Post("/author/{id}/refresh", authorHandler.Refresh)
+		registerAuthorPhotoRoutes(r, authorHandler)
 		r.Get("/author/{id}/catalogue-reconciliation", authorHandler.PreviewCatalogueReconciliation)
 		r.Post("/author/{id}/catalogue-reconciliation", authorHandler.ApplyCatalogueReconciliation)
 		r.Get("/author/{id}/relink-upstream/candidates", authorHandler.RelinkCandidates)
@@ -1198,7 +1200,7 @@ func main() {
 
 		// Foreign key drift report, admin-only and on demand (see
 		// registerDBIntegrityRoutes).
-		registerDBIntegrityRoutes(r, api.NewDBIntegrityHandler(database, cfg.DBPath))
+		registerDBIntegrityRoutes(r, api.NewDBIntegrityHandler(database, cfg.DBPath, backupHandler))
 
 		// Library. The scan status returns server filesystem paths, so it is
 		// admin only (#2361); see registerLibraryScanStatusRoute.

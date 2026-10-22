@@ -110,7 +110,7 @@ export default function HardcoverSeriesAddSearch({ onCreated, onExisting }: Prop
       {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
 
       {results && results.length === 0 && !error && (
-        <p className="text-sm text-slate-600 dark:text-zinc-500">{t('series.addFromHardcover.noResults')}</p>
+        <p className="text-sm text-fg-muted">{t('series.addFromHardcover.noResults')}</p>
       )}
 
       {results && results.length > 0 && (
@@ -126,12 +126,12 @@ export default function HardcoverSeriesAddSearch({ onCreated, onExisting }: Prop
                 <div className="flex items-start gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="font-semibold truncate">{result.title}</div>
-                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600 dark:text-zinc-400">
+                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-muted">
                       {result.authorName && <span>{result.authorName}</span>}
                       <span>{t('series.addFromHardcover.bookCount', { count: result.bookCount })}</span>
                     </div>
                     {preview.length > 0 && (
-                      <p className="mt-2 text-xs text-slate-600 dark:text-zinc-500 line-clamp-2 italic">
+                      <p className="mt-2 text-xs text-fg-muted line-clamp-2 italic">
                         {preview.join(', ')}
                       </p>
                     )}
@@ -151,7 +151,7 @@ export default function HardcoverSeriesAddSearch({ onCreated, onExisting }: Prop
                     onClick={() => void add(result)}
                     disabled={addingId !== null}
                     aria-label={t('series.addFromHardcover.addResult', { title: result.title })}
-                    className="px-3 py-1.5 text-sm rounded-md border border-emerald-600 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50 flex-shrink-0"
+                    className="px-3 py-1.5 text-sm rounded-md border border-emerald-600 text-accent-text hover:bg-emerald-500/10 disabled:opacity-50 flex-shrink-0"
                   >
                     {addingId === result.foreignId ? t('series.addFromHardcover.adding') : t('series.addFromHardcover.add')}
                   </button>

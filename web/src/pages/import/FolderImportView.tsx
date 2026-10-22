@@ -151,10 +151,10 @@ export default function FolderImportView() {
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
-        <p className="text-sm text-slate-600 dark:text-zinc-400">
+        <p className="text-sm text-fg-muted">
           {t('manualImport.description', 'Scan a folder of files anywhere on disk, match each book to one already in your catalogue, and import it into your library. Matching is against your catalogue, so add the author first if they are not in Bindery yet. A file with no match can be added from a metadata search.')}
         </p>
-        <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-400 cursor-pointer select-none">
+        <label className="ml-auto flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer select-none">
           <input
             type="checkbox"
             checked={showImported}
@@ -199,7 +199,7 @@ export default function FolderImportView() {
           already imported", so say that rather than claim the folder is empty
           (#2480). */}
       {items && items.length === 0 && (
-        <p className="text-sm text-slate-500 dark:text-zinc-500">
+        <p className="text-sm text-fg-muted">
           {showImported
             ? t('manualImport.empty', 'No book files or folders found here.')
             : t('manualImport.emptyHidesImported', 'Nothing new to import here. Files already in your library are hidden; tick Show already imported to list them.')}

@@ -158,7 +158,7 @@ export default function LogsTab() {
         {/* Level filter pills. They wrap: five pills and the label in one
             unbreakable row pushed a phone page out to about 406px. */}
         <div className="flex flex-wrap items-center gap-1.5 text-xs" data-testid="log-level-filter">
-          <span className="text-[10px] font-medium uppercase text-slate-400 dark:text-zinc-600 mr-1">View</span>
+          <span className="text-[10px] font-medium uppercase text-fg-muted mr-1">View</span>
           {(['all', 'debug', 'info', 'warn', 'error'] as const).map(f => (
             <button
               key={f}
@@ -170,7 +170,7 @@ export default function LogsTab() {
                 ? f === 'error' ? 'bg-red-600 text-white'
                   : f === 'warn' ? 'bg-amber-500 text-white'
                   : 'bg-slate-700 dark:bg-zinc-600 text-white'
-                : 'bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`}
+                : 'bg-slate-200 dark:bg-zinc-800 text-fg-muted hover:text-slate-900 dark:hover:text-white'}`}
             >
               {f.toUpperCase()}
             </button>
@@ -179,7 +179,7 @@ export default function LogsTab() {
 
         {/* Runtime log level */}
         <div className="flex items-center gap-2 text-xs">
-          <label htmlFor={`${fid}-level`} className="text-slate-500 dark:text-zinc-500 font-medium">Runtime level</label>
+          <label htmlFor={`${fid}-level`} className="text-fg-muted font-medium">Runtime level</label>
           <select
             id={`${fid}-level`}
             value={logLevel}
@@ -201,15 +201,15 @@ export default function LogsTab() {
         <button
           onClick={() => setLogAutoRefresh(v => !v)}
           className={`text-xs px-2.5 py-1 rounded border transition-colors ${logAutoRefresh
-            ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
-            : 'border-slate-300 dark:border-zinc-700 text-slate-500 dark:text-zinc-500'}`}
+            ? 'border-emerald-500 text-accent-text'
+            : 'border-slate-300 dark:border-zinc-700 text-fg-muted'}`}
         >
           {logAutoRefresh ? `⏸ ${t('settings.logs.autoRefresh')}` : `▶ ${t('settings.logs.autoRefresh')}`}
         </button>
 
         <button
           onClick={() => fetchLogs(0)}
-          className="text-xs px-2.5 py-1 rounded border border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
+          className="text-xs px-2.5 py-1 rounded border border-slate-300 dark:border-zinc-700 text-fg-muted hover:text-slate-900 dark:hover:text-white"
         >
           {t('common.refresh')}
         </button>
@@ -220,7 +220,7 @@ export default function LogsTab() {
           width at the 16px touch font ran past a 320px screen. */}
       <div className="flex flex-wrap items-center gap-2 mb-3 text-xs">
         <div className="flex items-center gap-1 w-full sm:w-auto min-w-0">
-          <span className="text-slate-500 dark:text-zinc-500">{t('settings.logs.from')}</span>
+          <span className="text-fg-muted">{t('settings.logs.from')}</span>
           <input
             type="datetime-local"
             aria-label={t('settings.logs.from')}
@@ -230,7 +230,7 @@ export default function LogsTab() {
           />
         </div>
         <div className="flex items-center gap-1 w-full sm:w-auto min-w-0">
-          <span className="text-slate-500 dark:text-zinc-500">{t('settings.logs.to')}</span>
+          <span className="text-fg-muted">{t('settings.logs.to')}</span>
           <input
             type="datetime-local"
             aria-label={t('settings.logs.to')}
@@ -264,7 +264,7 @@ export default function LogsTab() {
             setLogFrom(''); setLogTo(''); setLogComponent(''); setLogSearch(''); setLogFilter('all')
             fetchLogs(0, {})
           }}
-          className="px-2 py-1 rounded border border-slate-300 dark:border-zinc-700 text-slate-500 dark:text-zinc-500 text-xs"
+          className="px-2 py-1 rounded border border-slate-300 dark:border-zinc-700 text-fg-muted text-xs"
         >
           {t('settings.logs.clearFilters')}
         </button>
@@ -276,7 +276,7 @@ export default function LogsTab() {
           download
           data-testid="download-logs"
           title={t('settings.logs.downloadHint')}
-          className="px-2 py-1 rounded border border-slate-300 dark:border-zinc-700 text-slate-500 dark:text-zinc-500 text-xs hover:text-slate-900 dark:hover:text-white"
+          className="px-2 py-1 rounded border border-slate-300 dark:border-zinc-700 text-fg-muted text-xs hover:text-slate-900 dark:hover:text-white"
         >
           ⬇ {t('settings.logs.download')}
         </a>
@@ -290,14 +290,14 @@ export default function LogsTab() {
             return /[\s=]/.test(s) ? `${k}="${s.replace(/"/g, '\\"')}"` : `${k}=${s}`
           }
           if (logEntries.length === 0) {
-            return <p className="text-slate-500 dark:text-zinc-600 p-4 text-center">{t('settings.logs.noEntries')}</p>
+            return <p className="text-fg-muted p-4 text-center">{t('settings.logs.noEntries')}</p>
           }
           const rows = logEntries.map((e, i) => {
             const levelCls =
               e.level === 'ERROR' ? 'text-red-500 dark:text-red-400' :
               e.level === 'WARN'  ? 'text-amber-600 dark:text-amber-400' :
-              e.level === 'DEBUG' ? 'text-slate-400 dark:text-zinc-500' :
-              'text-emerald-600 dark:text-emerald-400'
+              e.level === 'DEBUG' ? 'text-fg-muted' :
+              'text-accent-text'
             // Support both ring buffer (time/msg/attrs) and DB (ts/message/fields) shapes.
             const rawTs = e.ts ?? e.time ?? ''
             const d = new Date(rawTs)
@@ -320,12 +320,12 @@ export default function LogsTab() {
                 {rows.map(r => (
                   <li key={r.key} data-testid="log-entry" className="px-3 py-1.5 border-b border-slate-200 dark:border-zinc-900">
                     <div className="flex flex-wrap items-baseline gap-x-2">
-                      <span className="text-slate-500 dark:text-zinc-600 whitespace-nowrap" title={r.iso}>{r.ts}</span>
+                      <span className="text-fg-muted whitespace-nowrap" title={r.iso}>{r.ts}</span>
                       <span className={`font-semibold ${r.levelCls}`}>{r.level}</span>
-                      {r.component && <span className="text-slate-500 dark:text-zinc-500">{r.component}</span>}
+                      {r.component && <span className="text-fg-muted">{r.component}</span>}
                     </div>
                     <div className="text-slate-800 dark:text-zinc-200 break-words whitespace-pre-wrap">{r.msgText}</div>
-                    {r.attrStr && <div className="text-slate-500 dark:text-zinc-500 break-words whitespace-pre-wrap">{r.attrStr}</div>}
+                    {r.attrStr && <div className="text-fg-muted break-words whitespace-pre-wrap">{r.attrStr}</div>}
                   </li>
                 ))}
               </ul>
@@ -343,11 +343,11 @@ export default function LogsTab() {
               <tbody>
                 {rows.map(r => (
                   <tr key={r.key} className="border-b border-slate-200 dark:border-zinc-900 hover:bg-slate-100 dark:hover:bg-zinc-900/50">
-                    <td className="pl-3 pr-2 py-0.5 text-slate-500 dark:text-zinc-600 whitespace-nowrap align-top" title={r.iso}>{r.ts}</td>
+                    <td className="pl-3 pr-2 py-0.5 text-fg-muted whitespace-nowrap align-top" title={r.iso}>{r.ts}</td>
                     <td className={`pr-2 py-0.5 whitespace-nowrap font-semibold align-top ${r.levelCls}`}>{r.level}</td>
-                    <td className="pr-2 py-0.5 text-slate-500 dark:text-zinc-500 whitespace-nowrap align-top">{r.component}</td>
+                    <td className="pr-2 py-0.5 text-fg-muted whitespace-nowrap align-top">{r.component}</td>
                     <td className="pr-2 py-0.5 text-slate-800 dark:text-zinc-200 break-words whitespace-pre-wrap align-top">{r.msgText}</td>
-                    <td className="pr-3 py-0.5 text-slate-500 dark:text-zinc-500 break-words whitespace-pre-wrap align-top">{r.attrStr}</td>
+                    <td className="pr-3 py-0.5 text-fg-muted break-words whitespace-pre-wrap align-top">{r.attrStr}</td>
                   </tr>
                 ))}
               </tbody>
@@ -358,7 +358,7 @@ export default function LogsTab() {
       </div>
 
       {/* Pagination */}
-      <div className="flex items-center gap-3 mt-2 text-xs text-slate-600 dark:text-zinc-400">
+      <div className="flex items-center gap-3 mt-2 text-xs text-fg-muted">
         <button
           disabled={logPage === 0}
           onClick={() => fetchLogs(logPage - 1)}
@@ -376,7 +376,7 @@ export default function LogsTab() {
         </button>
       </div>
 
-      <p className="text-xs text-slate-500 dark:text-zinc-600 mt-2">
+      <p className="text-xs text-fg-muted mt-2">
         {t('settings.logs.persistNote')} {t('settings.logs.downloadNote')}
       </p>
 
@@ -387,7 +387,7 @@ export default function LogsTab() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="min-w-0">
               <label htmlFor={`${fid}-retention`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.logRetentionLabel')}</label>
-              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.logRetentionHint')}</p>
+              <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.logRetentionHint')}</p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <input
@@ -399,7 +399,7 @@ export default function LogsTab() {
                 onChange={e => setSettings(s => ({ ...s, 'log.retention_days': e.target.value }))}
                 className="w-20 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-sm text-right"
               />
-              <span className="text-sm text-slate-600 dark:text-zinc-400">{t('settings.general.days')}</span>
+              <span className="text-sm text-fg-muted">{t('settings.general.days')}</span>
               <SaveButton
                 result={retentionResult}
                 saving={saving === 'log.retention_days'}
@@ -421,7 +421,7 @@ export default function LogsTab() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-0" data-testid="backup-create-row">
             <div className="min-w-0">
               <p className="text-sm text-slate-700 dark:text-zinc-300">{t('settings.general.backupCreate')}</p>
-              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.backupHint')}</p>
+              <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.backupHint')}</p>
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:flex-shrink-0">
               <input
@@ -454,13 +454,13 @@ export default function LogsTab() {
           </p>
           {backups.length > 0 && (
             <div className="mt-3 border-t border-slate-200 dark:border-zinc-800 pt-3">
-              <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">{t('settings.general.existingBackups')}</p>
+              <p className="text-xs text-fg-muted mb-2">{t('settings.general.existingBackups')}</p>
               <ul className="space-y-1">
                 {backups.map(b => (
-                  <li key={b.name} className="flex items-center justify-between text-xs text-slate-600 dark:text-zinc-400">
+                  <li key={b.name} className="flex items-center justify-between text-xs text-fg-muted">
                     <span>
                       <span className="font-mono">{b.name}</span>
-                      <span className="ml-2 text-slate-500 dark:text-zinc-500">{formatBytesZero(b.size)} · {formatRelativeTime(b.modTime)}</span>
+                      <span className="ml-2 text-fg-muted">{formatBytesZero(b.size)} · {formatRelativeTime(b.modTime)}</span>
                     </span>
                     <button
                       onClick={() => handleDeleteBackup(b.name)}
@@ -484,7 +484,7 @@ export default function LogsTab() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.telemetryLabel')}</label>
-              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.telemetryHint')}</p>
+              <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.telemetryHint')}</p>
             </div>
             <Toggle
               checked={(settings['telemetry.enabled'] ?? 'true') !== 'false'}
@@ -497,7 +497,7 @@ export default function LogsTab() {
               title={(settings['telemetry.enabled'] ?? 'true') !== 'false' ? t('common.disable') : t('common.enable')}
             />
           </div>
-          <p className="text-xs text-slate-500 dark:text-zinc-600">
+          <p className="text-xs text-fg-muted">
             {t('settings.general.telemetryDetail')}
           </p>
         </div>

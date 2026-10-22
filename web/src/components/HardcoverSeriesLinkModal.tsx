@@ -129,7 +129,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
           <button
             type="button"
             onClick={onClose}
-            className="text-2xl leading-none text-slate-500 dark:text-zinc-500 hover:text-slate-900 dark:hover:text-white"
+            className="text-2xl leading-none text-fg-muted hover:text-slate-900 dark:hover:text-white"
             aria-label="Close"
           >
             ×
@@ -141,10 +141,10 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
             <div className="rounded-md border border-sky-500/30 bg-sky-500/10 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs uppercase tracking-wide text-slate-600 dark:text-zinc-400">Currently linked</p>
+                  <p className="text-xs uppercase tracking-wide text-fg-muted">Currently linked</p>
                   <p className="font-semibold truncate">{currentLink.hardcoverTitle}</p>
                   {currentLink.hardcoverAuthorName && (
-                    <p className="text-xs text-slate-600 dark:text-zinc-400 mt-0.5">{currentLink.hardcoverAuthorName}</p>
+                    <p className="text-xs text-fg-muted mt-0.5">{currentLink.hardcoverAuthorName}</p>
                   )}
                   {hardcoverSeriesUrl(currentLink.hardcoverSlug) && (
                     <a
@@ -207,14 +207,14 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
                       <span className={`mt-1 h-4 w-4 rounded-full border flex-shrink-0 ${selectedResult ? 'border-emerald-500 bg-emerald-500' : 'border-slate-400 dark:border-zinc-500'}`} />
                       <div className="min-w-0 flex-1">
                         <div className="font-semibold truncate">{result.title}</div>
-                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600 dark:text-zinc-400">
+                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-muted">
                           {result.authorName && <span>{result.authorName}</span>}
                           <span>{result.bookCount} {result.bookCount === 1 ? 'book' : 'books'}</span>
                           {result.readersCount > 0 && <span>{result.readersCount.toLocaleString()} readers</span>}
                           {result.confidence && <span>{formatConfidence(result.confidence)} match</span>}
                         </div>
                         {previewBooks.length > 0 && (
-                          <p className="mt-2 text-xs text-slate-600 dark:text-zinc-500 line-clamp-2 italic">
+                          <p className="mt-2 text-xs text-fg-muted line-clamp-2 italic">
                             {previewBooks.slice(0, 4).join(', ')}
                           </p>
                         )}
@@ -235,21 +235,21 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
                         View on Hardcover ↗
                       </a>
                     ) : (
-                      <span className="text-xs text-slate-500 dark:text-zinc-500">No Hardcover page for this result</span>
+                      <span className="text-xs text-fg-muted">No Hardcover page for this result</span>
                     )}
                   </div>
                 </div>
               )
             })}
-            {searching && <p className="text-sm text-slate-600 dark:text-zinc-500 text-center py-4">Searching...</p>}
+            {searching && <p className="text-sm text-fg-muted text-center py-4">Searching...</p>}
             {!searching && results.length === 0 && !error && (
-              <p className="text-sm text-slate-600 dark:text-zinc-500 text-center py-4">No Hardcover series found.</p>
+              <p className="text-sm text-fg-muted text-center py-4">No Hardcover series found.</p>
             )}
           </div>
         </div>
 
         <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end gap-3">
-          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white">
             Cancel
           </button>
           <button

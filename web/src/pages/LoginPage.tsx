@@ -66,7 +66,7 @@ export default function LoginPage() {
   if (status?.mode === 'proxy') {
     return (
       <CardShell title={t('login.title')} subtitle="">
-        <p className="text-sm text-slate-600 dark:text-zinc-400 text-center py-2">
+        <p className="text-sm text-fg-muted text-center py-2">
           {t('login.proxyHint')}
         </p>
       </CardShell>
@@ -90,7 +90,7 @@ export default function LoginPage() {
           {localAuthEnabled && (
             <div className="relative flex items-center gap-3 py-1">
               <div className="flex-1 border-t border-slate-200 dark:border-zinc-800" />
-              <span className="text-xs text-slate-500 dark:text-zinc-500">{t('login.orLocal')}</span>
+              <span className="text-xs text-fg-muted">{t('login.orLocal')}</span>
               <div className="flex-1 border-t border-slate-200 dark:border-zinc-800" />
             </div>
           )}
@@ -120,7 +120,7 @@ export default function LoginPage() {
             className="w-full bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
           />
         </Field>
-        <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-zinc-400">
+        <label className="flex items-center gap-2 text-sm text-fg-muted">
           <input
             type="checkbox"
             name="rememberMe"
@@ -141,7 +141,7 @@ export default function LoginPage() {
         </button>
       </form>
       ) : oidcProviders.length === 0 ? (
-        <p className="text-sm text-slate-600 dark:text-zinc-400 text-center py-2">
+        <p className="text-sm text-fg-muted text-center py-2">
           {t('login.contactAdmin')}
         </p>
       ) : null}
@@ -158,7 +158,7 @@ export function CardShell({ title, subtitle, children }: { title: string; subtit
             <Logo alt="" className="w-12 h-12 rounded-full" />
             <h1 className="text-2xl font-bold tracking-tight">Bindery</h1>
           </div>
-          {subtitle && <div className="text-xs text-slate-500 dark:text-zinc-500 mt-2">{subtitle}</div>}
+          {subtitle && <div className="text-xs text-fg-muted mt-2">{subtitle}</div>}
         </div>
         <div className="border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded-lg p-6 shadow-sm">
           <h2 className="text-lg font-semibold mb-4">{title}</h2>
@@ -193,7 +193,7 @@ function HostNotAllowedNotice({ mode, host }: { mode: string; host: string }) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">{label}</span>
+      <span className="block text-xs font-medium text-fg-muted mb-1">{label}</span>
       {children}
     </label>
   )

@@ -1,4 +1,4 @@
-FROM golang:1.26.9-alpine@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade AS builder
+FROM golang:1.26.10-alpine@sha256:9ce231b28998b32e116927c61aa5c406183061d4f3f2d61b292c88e7f6bdf7ca AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
 # Distroless runtime — parity with the main Dockerfile. The binary is a static
 # CGO-free build (modernc.org/sqlite is pure Go), so distroless/static is
 # sufficient: no runtime sqlite package, no shell, minimal attack surface.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:516757106de35205efb70b91ba03f6f1298424a0678c603255cf2852a7000087
 COPY --from=builder /telemetry-server /telemetry-server
 # Numeric non-root UID, matching runAsUser in the deployment (which lives in
 # the homelab repo at kubernetes/apps/default/bindery-ping).

@@ -110,7 +110,7 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
         <h2 id="catalogue-reconciliation-title" className="text-base font-semibold text-slate-900 dark:text-white">
           {t('catalogueReconciliation.title', 'Reconcile catalogue')}
         </h2>
-        <p className="mt-1 text-xs text-slate-500 dark:text-zinc-400">
+        <p className="mt-1 text-xs text-fg-muted">
           {t('catalogueReconciliation.description', {
             author: authorName,
             defaultValue: 'Compare {{author}}’s metadata-only Wanted rows with the current provider and metadata profile.',
@@ -118,7 +118,7 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
         </p>
 
         {loading ? (
-          <p className="mt-4 text-sm text-slate-500 dark:text-zinc-400">
+          <p className="mt-4 text-sm text-fg-muted">
             {t('catalogueReconciliation.loading', 'Checking the current provider catalogue…')}
           </p>
         ) : error && !result ? (
@@ -131,14 +131,14 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
               <SummaryCell label={t('catalogueReconciliation.kept', 'Still accepted')} value={result.summary.kept} />
             </div>
 
-            <p className="mt-3 text-xs text-slate-600 dark:text-zinc-400">
+            <p className="mt-3 text-xs text-fg-muted">
               {t('catalogueReconciliation.context', {
                 provider: result.provider,
                 profile: result.profileName,
                 defaultValue: 'Provider: {{provider}} · Profile: {{profile}}',
               })}
             </p>
-            <p className="mt-3 text-xs text-slate-600 dark:text-zinc-400">
+            <p className="mt-3 text-xs text-fg-muted">
               {t('catalogueReconciliation.safeguards', {
                 files: result.summary.protectedFiles,
                 imported: result.summary.protectedImported,
@@ -149,7 +149,7 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
             </p>
 
             {result.summary.indeterminate > 0 && (
-              <p className="mt-2 text-xs text-slate-600 dark:text-zinc-400">
+              <p className="mt-2 text-xs text-fg-muted">
                 {t('catalogueReconciliation.indeterminate', {
                   count: result.summary.indeterminate,
                   defaultValue: '{{count}} row(s) were kept because provider or profile evidence was incomplete.',
@@ -173,7 +173,7 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
                   })}
                 </div>
               ) : candidates.length === 0 ? (
-                <p className="text-sm text-slate-600 dark:text-zinc-400">
+                <p className="text-sm text-fg-muted">
                   {t('catalogueReconciliation.noSafeCandidates', 'No metadata-only Wanted rows are safe to remove.')}
                 </p>
               ) : (
@@ -195,7 +195,7 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
                           />
                           <span>
                             <span className="block font-medium text-slate-800 dark:text-zinc-200">{candidate.title}</span>
-                            <span className="mt-0.5 flex flex-wrap gap-x-2 text-slate-500 dark:text-zinc-500">
+                            <span className="mt-0.5 flex flex-wrap gap-x-2 text-fg-muted">
                               <span>{t(`catalogueReconciliation.reasons.${candidate.reason}`, reasonDefaults[candidate.reason])}</span>
                               <span aria-hidden="true">·</span>
                               <span>{candidate.metadataProvider}</span>
@@ -218,7 +218,7 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
                       {indeterminateRows.map(row => (
                         <li key={row.bookId} className="px-3 py-2 text-xs">
                           <span className="block font-medium text-slate-800 dark:text-zinc-200">{row.title}</span>
-                          <span className="mt-0.5 flex flex-wrap gap-x-2 text-slate-500 dark:text-zinc-500">
+                          <span className="mt-0.5 flex flex-wrap gap-x-2 text-fg-muted">
                             <span>{t(`catalogueReconciliation.indeterminateReasons.${row.reason}`, indeterminateReasonDefaults[row.reason])}</span>
                             <span aria-hidden="true">·</span>
                             <span>{row.metadataProvider}</span>
@@ -263,7 +263,7 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
 function SummaryCell({ label, value, tone }: { label: string; value: number; tone?: 'danger' }) {
   return (
     <div className="bg-white px-3 py-2 dark:bg-zinc-900">
-      <div className="text-[11px] text-slate-500 dark:text-zinc-500">{label}</div>
+      <div className="text-[11px] text-fg-muted">{label}</div>
       <div className={`text-lg font-semibold tabular-nums ${tone === 'danger' ? 'text-red-700 dark:text-red-300' : 'text-slate-900 dark:text-white'}`}>
         {value}
       </div>

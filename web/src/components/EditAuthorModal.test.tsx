@@ -135,6 +135,36 @@ describe('EditAuthorModal', () => {
     })
   })
 
+  // #3287: a bio written here is sent only when it changed, trimmed; an
+  // emptied field sends an empty string so the server clears it.
+  it('sends the bio only when it changed', async () => {
+    render(<EditAuthorModal author={{ ...baseAuthor, description: 'Old bio.' }} onClose={onClose} onSaved={onSaved} />)
+    const bio = await screen.findByLabelText('Bio')
+    expect(bio).toHaveValue('Old bio.')
+    fireEvent.change(bio, { target: { value: '  Kari Nordmann writes about the fjells.  ' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(api.updateAuthor).toHaveBeenCalledTimes(1))
+    expect(api.updateAuthor).toHaveBeenCalledWith(42, { description: 'Kari Nordmann writes about the fjells.' })
+  })
+
+  it('sends a bio written for an author that had none', async () => {
+    const withoutBio = { ...baseAuthor } as Partial<typeof baseAuthor>
+    delete withoutBio.description
+    render(<EditAuthorModal author={withoutBio as typeof baseAuthor} onClose={onClose} onSaved={onSaved} />)
+    const bio = await screen.findByLabelText('Bio')
+    expect(bio).toHaveValue('')
+    fireEvent.change(bio, { target: { value: 'Kari Nordmann writes about the fjells.' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(api.updateAuthor).toHaveBeenCalledWith(42, { description: 'Kari Nordmann writes about the fjells.' }))
+  })
+
+  it('sends an empty bio to clear it', async () => {
+    render(<EditAuthorModal author={{ ...baseAuthor, description: 'Old bio.' }} onClose={onClose} onSaved={onSaved} />)
+    fireEvent.change(await screen.findByLabelText('Bio'), { target: { value: '   ' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(api.updateAuthor).toHaveBeenCalledWith(42, { description: '' }))
+  })
+
   it('sends monitorNewItems when changed and defaults to all (#1348)', async () => {
     render(<EditAuthorModal author={baseAuthor} onClose={onClose} onSaved={onSaved} />)
 
@@ -256,6 +286,18 @@ describe('EditAuthorModal', () => {
       monitorMode: 'series',
       monitoredSeriesIds: [2],
     })
+  })
+
+  // A save the server refused because the author changed meanwhile (#3287)
+  // tells the user to reload rather than showing the raw 409 text.
+  it('asks to reload when the author changed while saving', async () => {
+    vi.mocked(api.updateAuthor).mockRejectedValue(Object.assign(new Error('this author changed while you were saving; reload and try again'), { status: 409 }))
+    render(<EditAuthorModal author={baseAuthor} onClose={onClose} onSaved={onSaved} />)
+    const { metadata } = await getSelects()
+    fireEvent.change(metadata, { target: { value: '11' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    expect(await screen.findByText('This author changed while you were saving. Reload the page and try again.')).toBeInTheDocument()
+    expect(onSaved).not.toHaveBeenCalled()
   })
 
   it('shows an error message when save fails', async () => {

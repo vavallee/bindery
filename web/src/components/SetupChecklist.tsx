@@ -186,7 +186,7 @@ export default function SetupChecklist() {
           <span className="text-fg-muted whitespace-nowrap">{t('setupChecklist.next', 'Next:')}</span>
           <span className="text-slate-800 dark:text-zinc-200 truncate">{t(next.labelKey, next.fallback)}</span>
           {next.to && (
-            <Link to={next.to} className="text-emerald-700 dark:text-emerald-400 hover:underline whitespace-nowrap">
+            <Link to={next.to} className="text-accent-text hover:underline whitespace-nowrap">
               {t(next.actionKey!, next.actionFallback!)}
             </Link>
           )}

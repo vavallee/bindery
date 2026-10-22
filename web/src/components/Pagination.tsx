@@ -41,17 +41,17 @@ export default function Pagination({
   // On touch every control is at least 44px wide with a 44px hit area, and
   // wrapped rows sit 20px apart, so neighbouring hit areas never overlap.
   const btnBase = 'touch-target pointer-coarse:min-w-11 px-2.5 py-1 rounded text-xs font-medium transition-colors'
-  const btn = `${btnBase} text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed`
+  const btn = `${btnBase} text-fg-muted hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed`
   const btnActive = `${btnBase} bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white`
   const selectBase = 'pointer-coarse:min-h-11 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-xs text-slate-800 dark:text-zinc-200'
   // The gap select is styled to read as the "…" it replaces: no chrome until
   // you hover or focus it, at which point it is visibly a control. bg-none
   // drops the forms plugin's arrow, which was drawn over the "…" (#3148).
-  const gapSelect = `${btnBase} pointer-coarse:min-h-11 appearance-none cursor-pointer bg-transparent bg-none text-center text-slate-500 dark:text-zinc-600 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-zinc-800 focus:outline-hidden focus:ring-1 focus:ring-slate-400 dark:focus:ring-zinc-600`
+  const gapSelect = `${btnBase} pointer-coarse:min-h-11 appearance-none cursor-pointer bg-transparent bg-none text-center text-fg-muted hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-zinc-800 focus:outline-hidden focus:ring-1 focus:ring-slate-400 dark:focus:ring-zinc-600`
 
   return (
     <div className="flex flex-col items-center gap-3 mt-6 pt-4 border-t border-slate-200 dark:border-zinc-800 sm:flex-row sm:justify-between">
-      <div className="text-xs text-slate-600 dark:text-zinc-500">
+      <div className="text-xs text-fg-muted">
         {start}–{end} of {totalItems}
       </div>
       <div className="flex flex-wrap justify-center items-center gap-1 pointer-coarse:gap-y-5">
@@ -84,7 +84,7 @@ export default function Pagination({
         <button onClick={() => onPageChange(totalPages)} disabled={page === totalPages} className={btn}>»</button>
       </div>
       <div className="flex items-center gap-2">
-        <span className="text-xs text-slate-600 dark:text-zinc-500">{t('pagination.perPage')}:</span>
+        <span className="text-xs text-fg-muted">{t('pagination.perPage')}:</span>
         <select
           aria-label={t('pagination.perPage')}
           value={pageSize}

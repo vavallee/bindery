@@ -29,7 +29,7 @@ export default function AdoptionRail({ folders, total, activeFolder, onShow }: P
         className={`flex w-full items-center gap-2 whitespace-nowrap rounded-md px-2.5 py-1.5 text-left text-sm transition-colors ${
           active
             ? 'bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white font-medium'
-            : 'text-slate-600 dark:text-zinc-400 hover:bg-slate-200/60 dark:hover:bg-zinc-800/60 hover:text-slate-900 dark:hover:text-white'
+            : 'text-fg-muted hover:bg-slate-200/60 dark:hover:bg-zinc-800/60 hover:text-slate-900 dark:hover:text-white'
         }`}
       >
         {dot && <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot === 'amber' ? 'bg-amber-500' : 'bg-slate-400 dark:bg-zinc-600'}`} />}

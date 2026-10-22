@@ -6,4 +6,4 @@
 export const inputCls =
   'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm'
 
-export const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
+export const labelCls = 'block text-xs text-fg-muted mb-1'

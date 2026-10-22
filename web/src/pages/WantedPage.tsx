@@ -270,10 +270,10 @@ export default function WantedPage() {
       {/* Page header: title · count · show-excluded */}
       <div className="flex items-center gap-3 mb-3">
         <h2 className="text-xl font-semibold text-slate-800 dark:text-zinc-200">{t('wanted.title')}</h2>
-        <span className="text-xs text-slate-500 dark:text-zinc-500">
+        <span className="text-xs text-fg-muted">
           {t('books.countLabel', { count: total, defaultValue: '{{count}} books' })}
         </span>
-        <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-400 cursor-pointer select-none">
+        <label className="ml-auto flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer select-none">
           <input
             type="checkbox"
             checked={showExcluded}
@@ -294,20 +294,20 @@ export default function WantedPage() {
       />
 
       {loading ? (
-        <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
+        <div className="text-fg-muted">{t('common.loading')}</div>
       ) : total === 0 && !searchQuery ? (
-        <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
+        <div className="text-center py-16 text-fg-muted">
           <p>{t('wanted.empty')}</p>
           <ImportHints />
         </div>
       ) : total === 0 ? (
-        <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
+        <div className="text-center py-16 text-fg-muted">
           <p>{t('wanted.noMatch')}</p>
         </div>
       ) : (
         <div className="border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden">
           {/* Column-header row with select-all checkbox */}
-          <div className={`${ROW_GRID} px-3 py-2 border-b border-slate-200 dark:border-zinc-800 bg-slate-200/60 dark:bg-zinc-800/60 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-zinc-500`}>
+          <div className={`${ROW_GRID} px-3 py-2 border-b border-slate-200 dark:border-zinc-800 bg-slate-200/60 dark:bg-zinc-800/60 text-[11px] font-medium uppercase tracking-wide text-fg-muted`}>
             <input
               ref={selectAllRef}
               type="checkbox"
@@ -348,7 +348,7 @@ export default function WantedPage() {
                   <CoverImage loading="lazy" decoding="async" src={book.imageUrl} alt="" className="w-8 h-11 object-cover rounded bg-slate-200 dark:bg-zinc-800"
                     fallback={
                       <div
-                        className="w-8 h-11 rounded bg-slate-200 dark:bg-zinc-800 grid place-items-center text-[8px] text-slate-400 dark:text-zinc-600 text-center leading-tight"
+                        className="w-8 h-11 rounded bg-slate-200 dark:bg-zinc-800 grid place-items-center text-[8px] text-fg-muted text-center leading-tight"
                         aria-hidden
                       >
                         {t('wanted.noCover')}
@@ -370,7 +370,7 @@ export default function WantedPage() {
                     {/* The padding, undone by the negative margin, leaves the
                         author link's focus ring room inside the truncate box,
                         which would otherwise clip it (#3237). */}
-                    <div className="truncate p-1 -m-1 text-xs text-slate-500 dark:text-zinc-500">
+                    <div className="truncate p-1 -m-1 text-xs text-fg-muted">
                       {authorName ? (
                         <Link
                           to={`/author/${book.authorId}`}
@@ -405,7 +405,7 @@ export default function WantedPage() {
                         <option value="both">{t('books.mediaBoth')}</option>
                       </select>
                       {book.mediaType === 'both' && (
-                        <div className="mt-0.5 text-[10px] text-slate-500 dark:text-zinc-500 truncate">
+                        <div className="mt-0.5 text-[10px] text-fg-muted truncate">
                           {book.ebookFilePath ? t('wanted.ebookDone') : t('wanted.ebookNeeded')}
                           {' · '}
                           {book.audiobookFilePath ? t('wanted.audiobookDone') : t('wanted.audiobookNeeded')}
@@ -442,7 +442,7 @@ export default function WantedPage() {
                 </div>
 
                 {showResults === book.id && results.length === 0 && (
-                  <div className="px-3 pb-2 text-xs text-slate-600 dark:text-zinc-500">
+                  <div className="px-3 pb-2 text-xs text-fg-muted">
                     {t('wanted.noIndexerResults')}
                   </div>
                 )}
@@ -453,7 +453,7 @@ export default function WantedPage() {
                       <div key={r.guid} className="flex items-center justify-between p-2 bg-slate-200/50 dark:bg-zinc-800/50 rounded text-xs">
                         <div className="min-w-0 mr-3">
                           <span className="truncate block">{r.title}</span>
-                          <span className="text-slate-600 dark:text-zinc-500 truncate block">
+                          <span className="text-fg-muted truncate block">
                             {r.indexerName} &middot; {formatBytes(r.size)} &middot; {r.grabs} grabs
                             {safeHref(r.infoUrl) && (
                               <>

@@ -68,6 +68,8 @@ The Calibre-watched drop folder ([#64](https://github.com/vavallee/bindery/issue
 
   What replaced it: [#1717](https://github.com/vavallee/bindery/issues/1717) treats **slskd** as a download client rather than a protocol to implement. slskd is already the sidecar, exposing a REST API with key auth, search, and `transfers/downloads` — the same enqueue-then-poll shape `internal/downloader/adapter.go` assumes for every other client. It's in **Next up** above.
 
+- **Running a custom script after an import** ([#3025](https://github.com/vavallee/bindery/issues/3025)). A script runs as Bindery itself, so it can read the database, and every credential Bindery holds is stored there in plain text. That turns an admin account compromise into code execution in the container. The image has no shell, so most people would hit a confusing failure, and the project would end up supporting whatever a script does to a library behind Bindery's back, since renames, merges and deletes fight with file tracking and duplicate handling. What covers the same jobs: the post import drop folder (a small service watching it can run ffmpeg or anything else), the `bookImported` webhook for a listener on your side, and Audiobookshelf's M4B Encoder for merging tracks. A specific validator the ebook and audiobook content checks do not cover is worth its own issue.
+
 ## Explicitly out of scope
 
 These get asked often enough to warrant a standing answer. They're not on the roadmap and new issues requesting them will be closed with a link here.

@@ -1,1 +1,0 @@
-**Database check no longer reports a false clean result for in-memory databases.** When `BINDERY_DB_PATH` is `:memory:` or a `file:` URI the check now scans the live database instead of opening an empty one. The Norwegian and Swedish repair notes also name the yes flag correctly.

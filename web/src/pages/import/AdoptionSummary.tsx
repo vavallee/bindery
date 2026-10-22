@@ -60,7 +60,7 @@ export default function AdoptionSummary({ summary, scan, onScan, nudgeScan }: Pr
         </ul>
         <div className="flex items-center gap-3">
           {nudgeScan && !running && (
-            <p className="text-xs text-emerald-700 dark:text-emerald-400">{t('adoption.summary.nudge', 'Author added. Scan now to match their files.')}</p>
+            <p className="text-xs text-accent-text">{t('adoption.summary.nudge', 'Author added. Scan now to match their files.')}</p>
           )}
           <button type="button" onClick={onScan} disabled={running} className={`${nudgeScan ? btn.primary : btn.secondary} ${btnSize.md}`}>
             {running ? t('adoption.summary.scanningButton', 'Scanning…') : t('adoption.summary.scanNow', 'Scan now')}

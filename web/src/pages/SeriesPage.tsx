@@ -422,7 +422,7 @@ export default function SeriesPage() {
       <div className="flex items-center justify-between gap-3 flex-wrap mb-6">
         <h2 className="text-2xl font-bold">{t('series.title')}</h2>
         <div className="flex items-center gap-3">
-          <span className="text-sm text-slate-600 dark:text-zinc-500">
+          <span className="text-sm text-fg-muted">
             {!narrowed ? t('series.count', { count: seriesList.length }) : t('series.countFiltered', { shown: filteredSeries.length, total: seriesList.length })}
           </span>
           {isAdmin && (
@@ -454,7 +454,7 @@ export default function SeriesPage() {
               aria-pressed={filter === f}
               onClick={() => selectFilter(f)}
               title={f === 'missing' && enhancedHardcoverApi ? t('series.filterMissingHint') : undefined}
-              className={`touch-target px-3 py-1 rounded-md text-xs font-medium transition-colors ${filter === f ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`}
+              className={`touch-target px-3 py-1 rounded-md text-xs font-medium transition-colors ${filter === f ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-fg-muted hover:text-slate-900 dark:hover:text-white'}`}
             >
               {t(`series.filter.${f}`)}
             </button>
@@ -467,7 +467,7 @@ export default function SeriesPage() {
               type="button"
               aria-pressed={size === z}
               onClick={() => selectSize(z)}
-              className={`touch-target px-3 py-1 rounded-md text-xs font-medium transition-colors ${size === z ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`}
+              className={`touch-target px-3 py-1 rounded-md text-xs font-medium transition-colors ${size === z ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-fg-muted hover:text-slate-900 dark:hover:text-white'}`}
             >
               {t(`series.size.${z}`)}
             </button>
@@ -476,14 +476,14 @@ export default function SeriesPage() {
       </div>
 
       {loading ? (
-        <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
+        <div className="text-fg-muted">{t('common.loading')}</div>
       ) : seriesList.length === 0 ? (
-        <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
+        <div className="text-center py-16 text-fg-muted">
           <p className="text-lg mb-2">{t('series.emptyTitle')}</p>
           <p className="text-sm">{t('series.emptyHint')}</p>
         </div>
       ) : filteredSeries.length === 0 ? (
-        <div className="text-center py-16 text-slate-600 dark:text-zinc-500" role="status">
+        <div className="text-center py-16 text-fg-muted" role="status">
           <p>
             {!narrowed
               ? t('series.noMatch', { query: search })
@@ -525,7 +525,7 @@ export default function SeriesPage() {
                     <div className="min-w-0">
                       <h3 className="font-semibold [overflow-wrap:anywhere] sm:truncate">{series.title}</h3>
                       {series.description && (
-                        <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1 line-clamp-2">{series.description}</p>
+                        <p className="text-xs text-fg-muted mt-1 line-clamp-2">{series.description}</p>
                       )}
                     </div>
                     <div className="flex-shrink-0 flex items-center gap-2">
@@ -534,10 +534,10 @@ export default function SeriesPage() {
                           {t('series.missingBadge', { count: displayMissingCount })}
                         </span>
                       )}
-                      <span className="text-xs text-slate-600 dark:text-zinc-500 bg-slate-200 dark:bg-zinc-800 px-2 py-0.5 rounded-full">
+                      <span className="text-xs text-fg-muted bg-slate-200 dark:bg-zinc-800 px-2 py-0.5 rounded-full">
                         {t('series.bookCount', { count: bookCount })}
                       </span>
-                      <span className="text-slate-500 dark:text-zinc-600 text-xs">{isOpen ? '▲' : '▼'}</span>
+                      <span className="text-fg-muted text-xs">{isOpen ? '▲' : '▼'}</span>
                     </div>
                   </div>
                 </div>
@@ -641,10 +641,10 @@ export default function SeriesPage() {
                     </button>
                   )}
                   {fillResult[series.id] && (
-                    <span className="ml-auto text-xs text-emerald-600 dark:text-emerald-400">{fillResult[series.id]}</span>
+                    <span className="ml-auto text-xs text-accent-text">{fillResult[series.id]}</span>
                   )}
                   {!fillResult[series.id] && linkResult[series.id] && (
-                    <span className="ml-auto text-xs text-slate-600 dark:text-zinc-400">{linkResult[series.id]}</span>
+                    <span className="ml-auto text-xs text-fg-muted">{linkResult[series.id]}</span>
                   )}
                 </div>
                 )}
@@ -657,7 +657,7 @@ export default function SeriesPage() {
                         to={`/book/${entry.bookId}`}
                         className="flex items-center gap-3 px-4 py-3 bg-slate-100/80 dark:bg-zinc-900/80 hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 transition-colors"
                       >
-                        <span className="text-xs text-slate-600 dark:text-zinc-500 w-10 flex-shrink-0 font-mono">
+                        <span className="text-xs text-fg-muted w-10 flex-shrink-0 font-mono">
                           #{entry.positionInSeries || '?'}
                         </span>
                         <CoverImage loading="lazy" decoding="async"
@@ -671,7 +671,7 @@ export default function SeriesPage() {
                             {entry.book?.title ?? t('series.bookFallback', { id: entry.bookId })}
                           </p>
                           {entry.book?.releaseDate && (
-                            <p className="text-xs text-slate-600 dark:text-zinc-500">
+                            <p className="text-xs text-fg-muted">
                               {new Date(entry.book.releaseDate).getFullYear()}
                             </p>
                           )}
@@ -683,7 +683,7 @@ export default function SeriesPage() {
                                 ? 'bg-emerald-500/20 text-emerald-400'
                                 : entry.book.status === 'wanted'
                                 ? 'bg-amber-500/20 text-amber-400'
-                                : 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'
+                                : 'bg-slate-300 dark:bg-zinc-700 text-fg-muted dark:text-zinc-300'
                             }`}>
                               {t(`bookStatus.${entry.book.status}`, { defaultValue: entry.book.status })}
                             </span>
@@ -695,7 +695,7 @@ export default function SeriesPage() {
                           )}
                           {splitPartIds.has(entry.bookId) && (
                             <span
-                              className="text-xs px-2 py-0.5 rounded bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400"
+                              className="text-xs px-2 py-0.5 rounded bg-slate-300 dark:bg-zinc-700 text-fg-muted dark:text-zinc-300"
                               title={t('series.splitParts.badgeHint')}
                             >
                               {t('series.splitParts.badge')}
@@ -708,7 +708,7 @@ export default function SeriesPage() {
                 )}
 
                 {isOpen && bookCount === 0 && (
-                  <div className="border-t border-slate-200 dark:border-zinc-800 px-4 py-3 text-sm text-slate-600 dark:text-zinc-500">
+                  <div className="border-t border-slate-200 dark:border-zinc-800 px-4 py-3 text-sm text-fg-muted">
                     {t('series.noBooks')}
                   </div>
                 )}
@@ -718,7 +718,7 @@ export default function SeriesPage() {
                     <div className="px-4 py-3 flex items-center justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-sm font-medium truncate">{t('series.hardcover.heading', { title: series.hardcoverLink.hardcoverTitle })}</p>
-                        <p className="text-xs text-slate-600 dark:text-zinc-500">
+                        <p className="text-xs text-fg-muted">
                           {diff ? t('series.hardcover.diffSummary', { present: diff.presentCount, missing: diff.missingCount }) : t('series.hardcover.checking')}
                         </p>
                         {/* Way back to the record this series is linked to
@@ -762,7 +762,7 @@ export default function SeriesPage() {
                       )}
                     </div>
                     {diffLoading[series.id] && (
-                      <div className="px-4 pb-3 text-sm text-slate-600 dark:text-zinc-500">{t('series.hardcover.loadingBooks')}</div>
+                      <div className="px-4 pb-3 text-sm text-fg-muted">{t('series.hardcover.loadingBooks')}</div>
                     )}
                     {diffErrors[series.id] && (
                       <div className="px-4 pb-3 text-sm text-rose-600 dark:text-rose-400">{diffErrors[series.id]}</div>
@@ -773,7 +773,7 @@ export default function SeriesPage() {
                           const rowClass = 'flex items-center gap-3 p-3 rounded-md bg-slate-200/50 dark:bg-zinc-800/50'
                           const rowInner = (
                             <>
-                              <span className="text-xs text-slate-600 dark:text-zinc-500 w-10 flex-shrink-0 font-mono">
+                              <span className="text-xs text-fg-muted w-10 flex-shrink-0 font-mono">
                                 #{book.position || '?'}
                               </span>
                               <CoverImage loading="lazy" decoding="async" src={book.imageUrl} alt={book.title} className="w-8 h-10 object-cover rounded flex-shrink-0"
@@ -783,7 +783,7 @@ export default function SeriesPage() {
                               />
                               <div className="min-w-0">
                                 <p className="text-sm font-medium truncate">{book.title}</p>
-                                {book.authorName && <p className="text-xs text-slate-600 dark:text-zinc-500 truncate">{book.authorName}</p>}
+                                {book.authorName && <p className="text-xs text-fg-muted truncate">{book.authorName}</p>}
                               </div>
                             </>
                           )
@@ -815,7 +815,7 @@ export default function SeriesPage() {
                           )
                         })}
                         {diff.missing.length > 8 && (
-                          <p className="text-xs text-slate-600 dark:text-zinc-500 px-1">{t('series.hardcover.moreMissing', { count: diff.missing.length - 8 })}</p>
+                          <p className="text-xs text-fg-muted px-1">{t('series.hardcover.moreMissing', { count: diff.missing.length - 8 })}</p>
                         )}
                       </div>
                     )}
@@ -827,7 +827,7 @@ export default function SeriesPage() {
                         check. */}
                     {diff && diff.covered.length > 0 && (
                       <details className="px-4 pb-4">
-                        <summary className="cursor-pointer select-none text-xs text-slate-600 dark:text-zinc-500 hover:text-slate-900 dark:hover:text-white">
+                        <summary className="cursor-pointer select-none text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white">
                           {t('series.hardcover.coveredSection', { count: diff.covered.length })}
                         </summary>
                         <div className="mt-2 space-y-2">
@@ -837,12 +837,12 @@ export default function SeriesPage() {
                               to={`/book/${book.localBookId}`}
                               className="flex items-center gap-3 p-3 rounded-md bg-slate-200/50 dark:bg-zinc-800/50 hover:bg-slate-300/50 dark:hover:bg-zinc-700/50 transition-colors"
                             >
-                              <span className="text-xs text-slate-600 dark:text-zinc-500 w-10 flex-shrink-0 font-mono">
+                              <span className="text-xs text-fg-muted w-10 flex-shrink-0 font-mono">
                                 #{book.position || '?'}
                               </span>
                               <div className="min-w-0">
                                 <p className="text-sm font-medium truncate">{book.title}</p>
-                                <p className="text-xs text-slate-600 dark:text-zinc-500 truncate">
+                                <p className="text-xs text-fg-muted truncate">
                                   {t('series.hardcover.coveredSubtitle', { title: book.localTitle })}
                                 </p>
                               </div>

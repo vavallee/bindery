@@ -1,2 +1,0 @@
-### Added
-- **Check the database for drift from Settings** (#3356). Older versions could leave rows behind that point at a parent that was deleted. Settings, General now has a "Check database" button (admins only) that counts those rows per relationship and shows what the schema would have done to them. It only reads, and only runs when you press it. The cleanup is still `bindery db-repair` on the command line for now.

@@ -13,7 +13,7 @@ export default function ImportHints() {
       <p className="text-sm font-medium text-slate-700 dark:text-zinc-300">
         {t('importHints.heading')}
       </p>
-      <p className="mt-1 text-xs text-slate-600 dark:text-zinc-500">
+      <p className="mt-1 text-xs text-fg-muted">
         {t('importHints.body')}
       </p>
       <div className="mt-3 flex flex-wrap gap-2">

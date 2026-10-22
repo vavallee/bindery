@@ -34,7 +34,7 @@ const codeSpans = (text: string) => [...text.matchAll(/`[^`]*`/g)].map(m => m[0]
 // Swedish spell the same way. A value identical to English passes only when
 // every word in it is on this list, so a whole untranslated sentence cannot.
 const SHARED_WORDS = new Set(
-  `Bindery Hardcover OpenLibrary Open Library Google Books Audible Audnexus OPDS OPF EPUB MOBI AZW3 PDF M4B MP3
+  `Bindery Hardcover OpenLibrary Open Library Google Books Audible Audnexus audnex OPDS OPF EPUB MOBI AZW3 PDF M4B MP3
    Prowlarr Jackett Readarr Sonarr Radarr Lidarr SABnzbd NZBGet qBittorrent Transmission Deluge rTorrent Torznab
    Newznab Calibre Audiobookshelf Grimmory Kavita Komga OIDC OAuth SSO Discord Slack Telegram ntfy Apprise Gotify
    Pushover Home Assistant Webhook Usenet ISBN ISBN10 ISBN13 ASIN URL API JSON CSV ID UUID HTTP HTTPS DNS IP
@@ -42,7 +42,7 @@ const SHARED_WORDS = new Set(
    Token Client Secret Issuer Debug Info Warn Error Trace Auto Commit Global`.split(/\s+/).filter(Boolean).map(w => w.toLowerCase()),
 )
 const SHARED_BY_LOCALE: Record<string, Set<string>> = {
-  nb: new Set('import status format filter serie serier logo type test proxy port host admin server'.split(' ')),
+  nb: new Set('import status format filter serie serier logo type test proxy port host admin server system'.split(' ')),
   sv: new Set('import status format filter serie serier logo version proxy port host admin server'.split(' ')),
 }
 

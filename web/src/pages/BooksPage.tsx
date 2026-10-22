@@ -217,7 +217,7 @@ export default function BooksPage() {
   }
 
   const statusBtnCls = (active: boolean) =>
-    `touch-target px-3 py-1 rounded-md text-xs font-medium transition-colors ${active ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`
+    `touch-target px-3 py-1 rounded-md text-xs font-medium transition-colors ${active ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-fg-muted hover:text-slate-900 dark:hover:text-white'}`
 
   // Clicking a column header sorts by that column: first click ascending, a
   // second click on the same column flips to descending (mirrors the sort
@@ -246,7 +246,7 @@ export default function BooksPage() {
           onClick={() => toggleSort(asc, desc)}
           aria-label={label}
           title={t('books.sortByColumn', { column: label, defaultValue: 'Sort by {{column}}' })}
-          className={`inline-flex items-center gap-0.5 uppercase transition-colors cursor-pointer select-none ${active ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`}
+          className={`inline-flex items-center gap-0.5 uppercase transition-colors cursor-pointer select-none ${active ? 'text-slate-900 dark:text-white' : 'text-fg-muted hover:text-slate-900 dark:hover:text-white'}`}
         >
           {label}
           {active
@@ -393,9 +393,9 @@ export default function BooksPage() {
       <BookStatusLegend />
 
       {loading ? (
-        <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
+        <div className="text-fg-muted">{t('common.loading')}</div>
       ) : total === 0 ? (
-        <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
+        <div className="text-center py-16 text-fg-muted">
           {!debouncedSearch && !statusFilter && !mediaFilter && !monitoredFilter ? (
             <>
               {needsAny && <GettingStartedGuidance reasonKey="gettingStarted.reasonBooks" needsIndexer={needsIndexer} needsClient={needsClient} />}
@@ -470,15 +470,15 @@ export default function BooksPage() {
                       {book.author ? (
                         <Link
                           to={`/author/${book.authorId}`}
-                          className="text-slate-600 dark:text-zinc-400 hover:text-emerald-500 dark:hover:text-emerald-400"
+                          className="text-fg-muted hover:text-emerald-500 dark:hover:text-emerald-400"
                           onClick={e => e.stopPropagation()}
                         >
                           {book.author.authorName}
                         </Link>
                       ) : '—'}
                     </td>
-                    <td className="px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap hidden sm:table-cell">{book.releaseDate ? new Date(book.releaseDate).getFullYear() : '—'}</td>
-                    <td className="px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap hidden lg:table-cell">
+                    <td className="px-3 py-2 text-fg-muted whitespace-nowrap hidden sm:table-cell">{book.releaseDate ? new Date(book.releaseDate).getFullYear() : '—'}</td>
+                    <td className="px-3 py-2 text-fg-muted whitespace-nowrap hidden lg:table-cell">
                       {book.averageRating && book.averageRating > 0 ? <BookRating book={book} /> : '—'}
                     </td>
                     <td className="px-3 py-2 text-xs whitespace-nowrap">
@@ -543,7 +543,7 @@ export default function BooksPage() {
               <div className="p-2">
                 <h3 className="text-xs font-medium truncate" title={book.title}>{book.title}</h3>
                 {book.author && (
-                  <p className="text-[10px] text-slate-500 dark:text-zinc-500 truncate mt-0.5">{book.author.authorName}</p>
+                  <p className="text-[10px] text-fg-muted truncate mt-0.5">{book.author.authorName}</p>
                 )}
                 <div className="flex items-center gap-1 mt-1 flex-wrap">
                   {(() => {
@@ -571,9 +571,9 @@ export default function BooksPage() {
                 </div>
                 <div className="flex items-center justify-between mt-0.5">
                   {book.releaseDate && (
-                    <p className="text-[10px] text-slate-600 dark:text-zinc-500">{new Date(book.releaseDate).getFullYear()}</p>
+                    <p className="text-[10px] text-fg-muted">{new Date(book.releaseDate).getFullYear()}</p>
                   )}
-                  <BookRating book={book} className="text-[10px] text-slate-600 dark:text-zinc-500" />
+                  <BookRating book={book} className="text-[10px] text-fg-muted" />
                   {book.filePath && (
                     <a
                       href={`${BINDERY_BASE}/api/v1/book/${book.id}/file`}

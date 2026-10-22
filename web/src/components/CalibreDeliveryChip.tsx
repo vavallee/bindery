@@ -5,7 +5,7 @@ import type { BookCalibreState } from '../api/client'
 
 const tones: Record<string, string> = {
   pending: 'bg-sky-500/20 text-sky-700 dark:text-sky-400',
-  delivered: 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400',
+  delivered: 'bg-emerald-500/20 text-accent-text',
   failed: 'bg-red-500/20 text-red-700 dark:text-red-400',
 }
 

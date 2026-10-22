@@ -52,14 +52,14 @@ export default function RootFoldersTab() {
     }
   }
 
-  const badgeCls = 'ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 font-medium'
+  const badgeCls = 'ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-accent-text font-medium'
 
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-lg font-semibold">{t('settings.rootfolders.heading')}</h3>
       </div>
-      <p className="text-sm text-slate-600 dark:text-zinc-400 mb-4">
+      <p className="text-sm text-fg-muted mb-4">
         {t('settings.rootfolders.description')} (<code className="font-mono bg-slate-200 dark:bg-zinc-800 px-1 rounded text-xs">BINDERY_LIBRARY_DIR</code>).
       </p>
 
@@ -84,7 +84,7 @@ export default function RootFoldersTab() {
                       </span>
                     )}
                   </p>
-                  <p className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">{t('settings.rootfolders.free', { size: formatBytesZero(rf.freeSpace) })}</p>
+                  <p className="text-xs text-fg-muted mt-0.5">{t('settings.rootfolders.free', { size: formatBytesZero(rf.freeSpace) })}</p>
                 </div>
                 <button
                   onClick={async () => {
@@ -115,7 +115,7 @@ export default function RootFoldersTab() {
           <label htmlFor="default-root-folder" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
             {t('settings.rootfolders.defaultLabel')}
           </label>
-          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">{t('settings.rootfolders.defaultHint')}</p>
+          <p className="text-xs text-fg-muted mb-2">{t('settings.rootfolders.defaultHint')}</p>
           <select
             id="default-root-folder"
             value={defaultRootFolderId}
@@ -135,7 +135,7 @@ export default function RootFoldersTab() {
           <label htmlFor="default-audiobook-root-folder" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
             {t('settings.rootfolders.audiobookDefaultLabel')}
           </label>
-          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">{t('settings.rootfolders.audiobookDefaultHint')}</p>
+          <p className="text-xs text-fg-muted mb-2">{t('settings.rootfolders.audiobookDefaultHint')}</p>
           <select
             id="default-audiobook-root-folder"
             value={defaultAudiobookRootFolderId}

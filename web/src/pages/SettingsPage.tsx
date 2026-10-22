@@ -84,7 +84,7 @@ function SettingsNavLink({ tab, active, onSelect, label, badge }: { tab: Tab; ac
       className={`w-full text-left px-3 py-1.5 rounded-md text-sm transition-colors ${badge ? 'flex items-center gap-2 ' : ''}${
         active === tab
           ? 'bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white font-medium'
-          : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-zinc-800/50'
+          : 'text-fg-muted hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-zinc-800/50'
       }`}
     >
       {badge ? (
@@ -104,7 +104,7 @@ function SettingsNavLink({ tab, active, onSelect, label, badge }: { tab: Tab; ac
 // dark:-aware palette).
 function TabFallback({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2 py-8 text-sm text-slate-600 dark:text-zinc-500">
+    <div className="flex items-center gap-2 py-8 text-sm text-fg-muted">
       <span
         className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600 dark:border-zinc-700 dark:border-t-zinc-400"
         aria-hidden="true"
@@ -300,7 +300,7 @@ export default function SettingsPage() {
 
             {isAdmin && ADMIN_GROUPS.map((group, i) => (
               <div key={group.key} className={`${i === 0 ? 'pt-4' : 'pt-3'} pb-0.5`}>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-zinc-600 px-3 mb-1">{t(`settings.groups.${group.key}`)}</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-muted px-3 mb-1">{t(`settings.groups.${group.key}`)}</p>
                 {group.tabs.map(id => (
                   <SettingsNavLink
                     key={id}

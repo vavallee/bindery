@@ -113,7 +113,7 @@ export default function CalendarPage() {
           {!isCurrentMonth && (
             <button
               onClick={goToToday}
-              className="px-3 py-1.5 text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white border border-slate-300 dark:border-zinc-700 rounded transition-colors"
+              className="px-3 py-1.5 text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white border border-slate-300 dark:border-zinc-700 rounded transition-colors"
             >
               {t('calendar.today')}
             </button>
@@ -121,7 +121,7 @@ export default function CalendarPage() {
           <button
             onClick={prevMonth}
             aria-label={t('calendar.prevMonth')}
-            className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded transition-colors"
+            className="px-3 py-1.5 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded transition-colors"
           >
             ‹
           </button>
@@ -131,7 +131,7 @@ export default function CalendarPage() {
           <button
             onClick={nextMonth}
             aria-label={t('calendar.nextMonth')}
-            className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded transition-colors"
+            className="px-3 py-1.5 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded transition-colors"
           >
             ›
           </button>
@@ -139,7 +139,7 @@ export default function CalendarPage() {
       </div>
 
       {loading ? (
-        <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
+        <div className="text-fg-muted">{t('common.loading')}</div>
       ) : (
         <>
           {/* Grid calendar — hidden on mobile, shown sm+ */}
@@ -147,7 +147,7 @@ export default function CalendarPage() {
             {/* Day headers */}
             <div className="grid grid-cols-7 bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
               {dayNames.map((d, i) => (
-                <div key={i} className="py-2 text-center text-xs font-medium text-slate-600 dark:text-zinc-500 uppercase tracking-wider">
+                <div key={i} className="py-2 text-center text-xs font-medium text-fg-muted uppercase tracking-wider">
                   {d}
                 </div>
               ))}
@@ -168,7 +168,7 @@ export default function CalendarPage() {
                     {day && (
                       <>
                         <div className={`text-xs font-medium mb-1 w-6 h-6 flex items-center justify-center rounded-full ${
-                          isToday ? 'bg-emerald-600 text-white' : 'text-slate-600 dark:text-zinc-400'
+                          isToday ? 'bg-emerald-600 text-white' : 'text-fg-muted'
                         }`}>
                           {day}
                         </div>
@@ -195,7 +195,7 @@ export default function CalendarPage() {
           <div className="sm:hidden border border-slate-200 dark:border-zinc-800 rounded-lg overflow-hidden mb-4">
             <div className="grid grid-cols-7 bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
               {dayNamesNarrow.map((d, i) => (
-                <div key={i} className="py-2 text-center text-xs font-medium text-slate-600 dark:text-zinc-500">
+                <div key={i} className="py-2 text-center text-xs font-medium text-fg-muted">
                   {d}
                 </div>
               ))}
@@ -222,7 +222,7 @@ export default function CalendarPage() {
                       className={`${cellCls} touch-manipulation`}
                     >
                       <span className={`w-6 h-6 flex items-center justify-center rounded-full text-xs ${
-                        isToday ? 'bg-emerald-600 text-white' : 'text-slate-600 dark:text-zinc-400'
+                        isToday ? 'bg-emerald-600 text-white' : 'text-fg-muted'
                       }`}>
                         {day}
                       </span>
@@ -238,7 +238,7 @@ export default function CalendarPage() {
                     {day && (
                       <>
                         <span className={`w-6 h-6 flex items-center justify-center rounded-full text-xs ${
-                          isToday ? 'bg-emerald-600 text-white' : 'text-slate-600 dark:text-zinc-400'
+                          isToday ? 'bg-emerald-600 text-white' : 'text-fg-muted'
                         }`}>
                           {day}
                         </span>
@@ -254,7 +254,7 @@ export default function CalendarPage() {
           {hasReleases ? (
             <div className="mt-4 border border-slate-200 dark:border-zinc-800 rounded-lg overflow-hidden">
               <div className="flex items-center justify-between gap-3 px-4 py-2 bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
-                <p className="text-xs text-slate-600 dark:text-zinc-400 font-medium" aria-live="polite">
+                <p className="text-xs text-fg-muted font-medium" aria-live="polite">
                   {selectedDay !== null
                     ? t('calendar.releasingOn', { date: dayOfMonthLabel(lang, viewYear, viewMonth, selectedDay) })
                     : t('calendar.releasingIn', { month: monthLabel(lang, viewYear, viewMonth, { month: 'long' }), year: viewYear })}
@@ -276,13 +276,13 @@ export default function CalendarPage() {
                   .flatMap(([day, dayBooks]) =>
                     dayBooks.map(book => (
                       <div key={book.id} className="flex items-center gap-3 px-4 py-3">
-                        <span className="text-xs text-slate-600 dark:text-zinc-500 w-12 flex-shrink-0">
+                        <span className="text-xs text-fg-muted w-12 flex-shrink-0">
                           {dayOfMonthLabel(lang, viewYear, viewMonth, Number(day))}
                         </span>
                         <CoverImage loading="lazy" decoding="async" src={book.imageUrl} alt="" className="w-8 h-10 object-cover rounded flex-shrink-0" />
                         <span className="text-sm text-slate-800 dark:text-zinc-200 min-w-0 truncate">{book.title}</span>
                         {book.author && (
-                          <span className="text-xs text-slate-600 dark:text-zinc-500 flex-shrink-0 hidden sm:block">
+                          <span className="text-xs text-fg-muted flex-shrink-0 hidden sm:block">
                             {book.author.authorName}
                           </span>
                         )}
@@ -292,7 +292,7 @@ export default function CalendarPage() {
               </div>
             </div>
           ) : (
-            <p className="mt-4 text-center text-sm text-slate-500 dark:text-zinc-600">
+            <p className="mt-4 text-center text-sm text-fg-muted">
               {t('calendar.noReleases')}
             </p>
           )}

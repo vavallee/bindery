@@ -9,7 +9,7 @@ import { BookRef } from '../api/client'
 export default function BookAuthorLink({ book, className }: { book?: BookRef; className?: string }) {
   if (!book) return null
   return (
-    <p className={`text-xs text-slate-600 dark:text-zinc-400 truncate ${className ?? ''}`}>
+    <p className={`text-xs text-fg-muted truncate ${className ?? ''}`}>
       <Link
         to={`/book/${book.id}`}
         className="hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"

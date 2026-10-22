@@ -61,16 +61,16 @@ const BookPicker = forwardRef<HTMLInputElement, Props>(function BookPicker({ onP
           <button
             type="button"
             onClick={onCancel}
-            className="text-xs text-slate-500 dark:text-zinc-400 hover:underline"
+            className="text-xs text-fg-muted hover:underline"
           >
             {t('common.cancel', 'Cancel')}
           </button>
         )}
       </div>
       <div className="mt-2 max-h-48 overflow-y-auto divide-y divide-slate-100 dark:divide-zinc-800">
-        {loading && <p className="py-2 text-xs text-slate-500 dark:text-zinc-500">{t('common.loading', 'Loading…')}</p>}
+        {loading && <p className="py-2 text-xs text-fg-muted">{t('common.loading', 'Loading…')}</p>}
         {!loading && term.trim().length >= 2 && results.length === 0 && (
-          <p className="py-2 text-xs text-slate-500 dark:text-zinc-500">
+          <p className="py-2 text-xs text-fg-muted">
             {t('manualImport.noResults', 'No matching books in your library.')}
           </p>
         )}
@@ -84,7 +84,7 @@ const BookPicker = forwardRef<HTMLInputElement, Props>(function BookPicker({ onP
           >
             <span className="text-xs font-medium text-slate-900 dark:text-white">{b.title}</span>
             {b.author?.authorName && (
-              <span className="text-[11px] text-slate-500 dark:text-zinc-500"> · {b.author.authorName}</span>
+              <span className="text-[11px] text-fg-muted"> · {b.author.authorName}</span>
             )}
           </button>
         ))}

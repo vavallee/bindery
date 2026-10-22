@@ -143,10 +143,37 @@ and three more:
   starts with the wanted title and a number of 2 or more counts, so titles that
   end in a number, such as `Catch-22` or `Apollo 13`, are unaffected.
   A stored series position switches this off, so a duplicate row never hides
-  the wanted volume's own release. Known trade-off: with a library title
+  the wanted volume's own release. The same goes for a library title with the
+  series prefix and no number: with `Rotten School - Punk'd and skunked` in
+  the library (excluded books are not listed, so the standalone `Punk'd and
+  Skunked` row does not help), `R L Stine - [Rotten School 11] - Punk'd and
+  Skunked (epub)` is dropped for the wanted `Rotten School` (`release names
+  another title after this one`), whichever way the apostrophe is spelled.
+  The prefix must be followed by a dash, colon or bracket. A suffix that
+  describes an edition is not read as a book: one that starts or ends with a
+  word for edition (`German Edition`, `Edicion en Espanol`, `Deutsche Ausgabe`,
+  `Norsk utgave`), starts with an ordinal or a language name (`10th Anniversary
+  Edition`, `Second Printing`), mentions an anniversary, or is made only of
+  words such as `Large Print`, `Movie Tie-in` and `A Novel`. A library title
+  that is the same book written with its subtitle (`Sapiens: A Brief History
+  of Humankind` next to `Sapiens`, a duplicate from another provider) never
+  rejects the release that carries the whole title straight after the wanted
+  one, in any punctuation (`Sapiens - A Brief History of Humankind`). Only
+  connecting words (the, a, an, and, or, of, in, to, by, for, with, at, from,
+  on) may sit between the two; a number, a roman numeral, a short word such as
+  `Mr`, or a number before the wanted title (`11 - Rotten School - ...`) still
+  counts as another book. If the library also holds the subtitle as a book of
+  its own, that book still counts. Searching for `Punk'd and Skunked` itself
+  still finds these releases.
+
+- Known trade-off of the two rules above: with a library title
   `Dune 2 - Illustrated Edition` and no stored position, the plain `Dune -
   Illustrated Edition (epub)` is dropped for the wanted `Dune`, because the
-  words after the number count as another title.
+  words after the number count as another title. Known misses that stay kept,
+  as on main: a number after the suffix (`Punk'd and Skunked - Book 11`,
+  `#11`), a backtick used as the apostrophe, and a real book whose suffix
+  starts with an ordinal or a language name or reads like an edition (`Second
+  Foundation`, `Edition Zero`, `Anniversary Waltz`).
 
 The limit: with no series position, no library title that matches the main
 title, and no full title among the results, a lone `Legion (2012)` is still

@@ -4391,6 +4391,22 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 					return false
 				}
 			}
+			// The winner is settled; now ask whether it is the file's book at
+			// all. A shared series name carries the score: "Harry Potter en de
+			// Relieken van de Dood" against "Harry Potter en de Orde van de
+			// Feniks" is 0.929, and the volume veto has no number to read in a
+			// Dutch catalogue title. With the file's own book excluded nothing
+			// competed and the file went to the next best title (#3388). Words
+			// each title has that the other lacks, none of them close, name two
+			// works, so the file is left unmatched. This runs on the winner and
+			// not on every candidate so the ranking above, and the near ties it
+			// leaves unmatched (#2941), are exactly what they were. A different
+			// work is not a book this file matches, so claimBlocked stays unset.
+			if titlesNameDifferentWorks(title, best.sb.book.Title) {
+				slog.Debug("library scan: title match rejected (different work)",
+					"title", best.sb.book.Title, "path", path, "fileTitle", title, "jw", best.score)
+				return false
+			}
 			return claimTitleHit(best, path, cleanPath, detectedFmt)
 		}
 		return false

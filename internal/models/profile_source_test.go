@@ -24,6 +24,8 @@ func TestMergeProfileField(t *testing.T) {
 		{"enriched value replaces an earlier enriched one", "wiki", enriched, "wiki2", other, "wiki2", other, true},
 		{"empty value changes nothing", "kept", nil, "", nil, "kept", nil, false},
 		{"same primary value is no change", "same", nil, "same", nil, "same", nil, false},
+		{"primary value never replaces the user's own", "mine", &ProfileSource{Provider: ProfileSourceUser}, "primary", nil, "mine", &ProfileSource{Provider: ProfileSourceUser}, false},
+		{"enriched value never replaces the user's own", "mine", &ProfileSource{Provider: ProfileSourceUser}, "wiki", enriched, "mine", &ProfileSource{Provider: ProfileSourceUser}, false},
 		{"same value with a changed credit takes the new credit", "wiki", enriched, "wiki", other, "wiki", other, true},
 		{"same value now from the primary drops the credit", "wiki", enriched, "wiki", nil, "wiki", nil, true},
 		{"same value and credit is no change", "wiki", enriched, "wiki", &ProfileSource{Provider: "wikipedia", URL: "https://no.wikipedia.example/k"}, "wiki", enriched, false},

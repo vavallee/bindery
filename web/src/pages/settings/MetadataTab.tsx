@@ -144,7 +144,7 @@ export default function MetadataTab() {
           <label htmlFor={`${fid}-5`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
             {t('settings.general.metadataProviderLabel', 'Primary metadata provider')}
           </label>
-          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+          <p className="text-xs text-fg-muted mb-2">
             {t('settings.general.metadataProviderHint', 'Selects the source used for author and book search, and decides what an author\'s catalogue looks like. DNB (Deutsche Nationalbibliothek) is recommended for German, Austrian, and Swiss catalogues — it covers German-language publications since 1913 where OpenLibrary coverage is thin. Nasjonalbiblioteket (the National Library of Norway) is recommended for Norwegian catalogues — it holds every Norwegian publication by legal deposit, under its original Norwegian title where OpenLibrary often has only the English translation. BnF (Bibliothèque nationale de France) is recommended for French-language libraries: legal deposit puts nearly every book published in France in its catalogue, under the French edition title, translator included, where OpenLibrary often has only the original English title. Contains data from the Bibliothèque nationale de France under the Licence Ouverte / Open Licence 2.0, with the date each record was retrieved shown on its book and author pages; BnF does not endorse Bindery. Hardcover is a curated catalogue: fewer translation editions, omnibus bundles, and non-book entries than OpenLibrary, at the cost of a thinner long tail. OpenLibrary remains the default. Whichever you pick, the other providers are still used as enrichers, except Nasjonalbiblioteket and BnF, which are only queried when chosen as the primary.')}
           </p>
           <select id={`${fid}-5`}
@@ -169,7 +169,7 @@ export default function MetadataTab() {
           {/* The Licence Ouverte asks for credit to the source and the date of
               retrieval wherever the data is shown with its provider (#3144). */}
           {settings['metadata.primary_provider'] === 'bnf' && (
-            <p className="text-xs text-slate-600 dark:text-zinc-500 mt-2" data-testid="bnf-credit">
+            <p className="text-xs text-fg-muted mt-2" data-testid="bnf-credit">
               {t('settings.general.metadataProviderBnfCredit', 'Contains data from the Bibliothèque nationale de France (BnF) under the Licence Ouverte / Open Licence 2.0, with the date each record was retrieved shown on its book and author pages. BnF does not endorse Bindery. Only BnF\'s catalogue records are used: no cover images are fetched, and BnF is contacted only while it is the primary provider.')}
             </p>
           )}
@@ -179,7 +179,7 @@ export default function MetadataTab() {
               author from their stored foreign ID: authors already in the
               library keep their existing provider. Without saying so the
               predictable outcome is flip, see no change, flip back. */}
-          <p className="text-xs text-slate-500 dark:text-zinc-600 mt-1">
+          <p className="text-xs text-fg-muted mt-1">
             {t('settings.general.metadataProviderLiveHint', 'Takes effect from the next lookup, with no restart. Authors already in your library stay linked to the provider they were added from; the new primary applies to authors you add afterwards. To move an existing author, use "Link metadata" on their page.')}
           </p>
         </div>
@@ -191,7 +191,7 @@ export default function MetadataTab() {
           <h4 className="text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
             {t('settings.general.enrichersHeading', 'Enrichers')}
           </h4>
-          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+          <p className="text-xs text-fg-muted mb-2">
             {t('settings.general.enrichersHint', 'These providers fill in what the primary leaves empty. Untick one and Bindery stops using it as an enricher, which means fewer requests but less fill in: DNB also supplies covers through its cover service, and Hardcover also supplies curated genres, series and edition language evidence. Takes effect from the next lookup, with no restart.')}
           </p>
           <div className="space-y-2">
@@ -209,7 +209,7 @@ export default function MetadataTab() {
                   />
                   <span>
                     {t(row.labelKey, row.label)}
-                    <span className="block text-xs text-slate-600 dark:text-zinc-500">
+                    <span className="block text-xs text-fg-muted">
                       {isPrimary
                         ? t('settings.general.enricherPrimaryNote', 'This is the primary provider, so it cannot be turned off.')
                         : t(row.hintKey, row.hint)}
@@ -236,7 +236,7 @@ export default function MetadataTab() {
                 />
                 <span>
                   {t(row.labelKey, row.label)}
-                  <span className="block text-xs text-slate-600 dark:text-zinc-500">{t(row.hintKey, row.hint)}</span>
+                  <span className="block text-xs text-fg-muted">{t(row.hintKey, row.hint)}</span>
                 </span>
               </label>
             ))}
@@ -254,7 +254,7 @@ export default function MetadataTab() {
             <label htmlFor={`${fid}-6`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.defaultMediaTypeLabel', 'Default media type')}
             </label>
-            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+            <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.defaultMediaTypeHint', 'Applied to new authors, and to books you add on their own, when no explicit choice is made. Existing rows are unaffected: change authors with the Authors page bulk action, and books from the Books page with Set ebook, Set audiobook or Set both, which also covers your wanted list once Books is filtered to Wanted.')}
             </p>
             <select id={`${fid}-6`}
@@ -284,7 +284,7 @@ export default function MetadataTab() {
                 />
                 <span>
                   {t('settings.general.strictMediaTypeLabel', 'Restrict new books to this media type')}
-                  <span className="block text-xs text-slate-600 dark:text-zinc-500">
+                  <span className="block text-xs text-fg-muted">
                     {t('settings.general.strictMediaTypeHint', 'Skip catalogue books available only in the other format, and narrow dual-format books to this one. Prevents monitoring books you can never grab. Governs catalogue population only: a book you add yourself is always created in the format you picked.')}
                   </span>
                 </span>
@@ -295,7 +295,7 @@ export default function MetadataTab() {
             <label htmlFor={`${fid}-7`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.defaultMonitorModeLabel', 'Default monitor mode')}
             </label>
-            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+            <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.defaultMonitorModeHint', 'Applied to newly added authors. Existing authors keep their current mode unless edited.')}
             </p>
             <select id={`${fid}-7`}
@@ -340,7 +340,7 @@ export default function MetadataTab() {
           <div className="flex items-center justify-between">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.autoGrabLabel')}</label>
-              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.autoGrabHint')}</p>
+              <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.autoGrabHint')}</p>
             </div>
             <Toggle
               checked={(settings['autoGrab.enabled'] ?? 'true') !== 'false'}
@@ -360,7 +360,7 @@ export default function MetadataTab() {
           <div className="flex items-center justify-between">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.recommendationsLabel')}</label>
-              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.recommendationsHint')}</p>
+              <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.recommendationsHint')}</p>
             </div>
             <Toggle
               checked={(settings['recommendations.enabled'] ?? 'false') === 'true'}
@@ -381,7 +381,7 @@ export default function MetadataTab() {
           <div className="flex items-center justify-between gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.authorWikidataLabel', 'Author photos and bios from Wikidata')}</label>
-              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.authorWikidataHint', 'Fills an author\'s missing photo and bio from Wikimedia Commons and Wikipedia, found on Wikidata by the author\'s library authority ID (NORAF, GND, BnF or OpenLibrary), never by name. Lookups ride on the daily author refresh, and each photo and bio is credited on the author\'s page. While this is off, Wikimedia is sent no request.')}</p>
+              <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.authorWikidataHint', 'Fills an author\'s missing photo and bio from Wikimedia Commons and Wikipedia, found on Wikidata by the author\'s library authority ID (NORAF, GND, BnF or OpenLibrary), never by name. Lookups ride on the daily author refresh, and each photo and bio is credited on the author\'s page. While this is off, Wikimedia is sent no request.')}</p>
             </div>
             <Toggle
               checked={(settings['metadata.author_enrichment.wikidata'] ?? 'false') === 'true'}
@@ -405,7 +405,7 @@ export default function MetadataTab() {
             {t('settings.metadata.newProfile')}
           </button>
         </div>
-        <p className="text-xs text-slate-600 dark:text-zinc-500 mb-4">
+        <p className="text-xs text-fg-muted mb-4">
           {t('settings.metadata.description')}
         </p>
         {creating && (
@@ -415,7 +415,7 @@ export default function MetadataTab() {
           />
         )}
         {profiles.length === 0 && !creating ? (
-          <p className="text-slate-600 dark:text-zinc-500 text-sm">{t('settings.metadata.empty')}</p>
+          <p className="text-fg-muted text-sm">{t('settings.metadata.empty')}</p>
         ) : (
           <div className="space-y-3">
             {profiles.map(p => (
@@ -431,19 +431,19 @@ export default function MetadataTab() {
                   <div className="flex items-start justify-between">
                     <div className="min-w-0">
                       <h4 className="font-medium text-sm">{p.name}</h4>
-                      <div className="flex flex-wrap gap-3 mt-2 text-xs text-slate-600 dark:text-zinc-400">
+                      <div className="flex flex-wrap gap-3 mt-2 text-xs text-fg-muted">
                         <span>{t('settings.metadata.minPages')} <span className="text-slate-800 dark:text-zinc-200">{p.minPages === 0 ? 'none' : p.minPages}</span></span>
                         <span>{t('settings.metadata.minEditionCount')} <span className="text-slate-800 dark:text-zinc-200">{p.minEditionCount === 0 ? 'none' : p.minEditionCount}</span></span>
                         <span>{t('settings.metadata.languages')} <span className="text-slate-800 dark:text-zinc-200">{formatLanguageList(p.allowedLanguages)}</span></span>
                       </div>
                       <div className="flex flex-wrap gap-1.5 mt-2">
-                        {p.skipMissingDate && <span className="text-[10px] px-2 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{t('settings.metadata.skipMissingDate')}</span>}
-                        {p.skipMissingIsbn && <span className="text-[10px] px-2 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{t('settings.metadata.skipMissingIsbn')}</span>}
-                        {p.skipPartBooks && <span className="text-[10px] px-2 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded">{t('settings.metadata.skipPartBooks')}</span>}
+                        {p.skipMissingDate && <span className="text-[10px] px-2 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{t('settings.metadata.skipMissingDate')}</span>}
+                        {p.skipMissingIsbn && <span className="text-[10px] px-2 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{t('settings.metadata.skipMissingIsbn')}</span>}
+                        {p.skipPartBooks && <span className="text-[10px] px-2 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{t('settings.metadata.skipPartBooks')}</span>}
                       </div>
                     </div>
                     <div className="flex items-center gap-3 flex-shrink-0">
-                      <button onClick={() => setEditing(p)} className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">{t('common.edit')}</button>
+                      <button onClick={() => setEditing(p)} className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white">{t('common.edit')}</button>
                       <button
                         onClick={async () => {
                           if (!await confirm({
@@ -536,11 +536,11 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
   return (
     <form onSubmit={submit} className="p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-50 dark:bg-zinc-900/50 space-y-4">
       <div>
-        <label htmlFor={`${fid}-1`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.metadata.formName')}</label>
+        <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.metadata.formName')}</label>
         <input id={`${fid}-1`} value={name} onChange={e => setName(e.target.value)} required className={inputCls} placeholder={t('settings.metadata.formNamePlaceholder')} />
       </div>
       <div>
-        <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-2">{t('settings.metadata.formLanguages')}</label>
+        <label className="block text-xs text-fg-muted mb-2">{t('settings.metadata.formLanguages')}</label>
         <div className="flex flex-wrap gap-2">
           {KNOWN_LANGUAGES.map(l => {
             const on = languages.includes(l.code)
@@ -552,19 +552,19 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
                 onClick={() => toggleLang(l.code)}
                 className={`text-xs px-2.5 py-1 rounded border transition-colors ${on
                   ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                  : 'bg-slate-200 dark:bg-zinc-800 border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-400 hover:border-slate-400 dark:hover:border-zinc-600'}`}
+                  : 'bg-slate-200 dark:bg-zinc-800 border-slate-300 dark:border-zinc-700 text-fg-muted hover:border-slate-400 dark:hover:border-zinc-600'}`}
               >
                 {l.label}
               </button>
             )
           })}
         </div>
-        <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-2">
+        <p className="text-[11px] text-fg-muted mt-2">
           {t('settings.metadata.formLanguagesHint')}
         </p>
       </div>
       <div>
-        <label htmlFor={`${fid}-2`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.metadata.formUnknownLanguage')}</label>
+        <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">{t('settings.metadata.formUnknownLanguage')}</label>
         <select id={`${fid}-2`}
           value={unknownLanguageBehavior}
           onChange={e => setUnknownLanguageBehavior(e.target.value as 'pass' | 'fail')}
@@ -573,22 +573,22 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
           <option value="pass">{t('settings.metadata.formUnknownLanguagePass')}</option>
           <option value="fail">{t('settings.metadata.formUnknownLanguageFail')}</option>
         </select>
-        <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-2">
+        <p className="text-[11px] text-fg-muted mt-2">
           {t('settings.metadata.formUnknownLanguageHint')}
         </p>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label htmlFor={`${fid}-3`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.metadata.formMinPages')}</label>
+          <label htmlFor={`${fid}-3`} className="block text-xs text-fg-muted mb-1">{t('settings.metadata.formMinPages')}</label>
           <input id={`${fid}-3`} type="number" min={0} value={minPages} onChange={e => setMinPages(Number(e.target.value))} className={inputCls} />
         </div>
         <div>
-          <label htmlFor={`${fid}-4`} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.metadata.formMinEditionCount')}</label>
+          <label htmlFor={`${fid}-4`} className="block text-xs text-fg-muted mb-1">{t('settings.metadata.formMinEditionCount')}</label>
           <input id={`${fid}-4`} type="number" min={0} value={minEditionCount} onChange={e => setMinEditionCount(Number(e.target.value))} className={inputCls} />
         </div>
       </div>
       {minEditionCount > 0 && (
-        <p className="text-[11px] text-slate-500 dark:text-zinc-500">
+        <p className="text-[11px] text-fg-muted">
           {t('settings.metadata.formMinEditionCountHint')}
         </p>
       )}
@@ -608,7 +608,7 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
       </div>
       {err && <div className="text-xs text-red-400">{err}</div>}
       <div className="flex justify-end gap-2">
-        <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">
+        <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white">
           {t('common.cancel')}
         </button>
         <button type="submit" disabled={saving} className={`px-3 py-1.5 ${primaryFill} disabled:opacity-50 rounded text-xs font-medium`}>

@@ -49,7 +49,7 @@ func TestDBIntegrityScanDoesNotBlockTheApp(t *testing.T) {
 
 	started := make(chan struct{})
 	release := make(chan struct{})
-	h := api.NewDBIntegrityHandler(conn, path)
+	h := api.NewDBIntegrityHandler(conn, path, nil)
 	h.SetScanHook(func() {
 		close(started)
 		<-release

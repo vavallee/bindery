@@ -21,8 +21,8 @@ interface Props {
 
 const statusStyles: Record<string, string> = {
   move: 'text-sky-600 dark:text-sky-400',
-  moved: 'text-emerald-600 dark:text-emerald-400',
-  noop: 'text-slate-400 dark:text-zinc-500',
+  moved: 'text-accent-text',
+  noop: 'text-fg-muted',
   collision: 'text-amber-600 dark:text-amber-400',
   missing: 'text-amber-600 dark:text-amber-400',
   error: 'text-red-600 dark:text-red-400',
@@ -95,18 +95,18 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
         onClick={e => e.stopPropagation()}
       >
         <h2 id={titleId} className="text-base font-semibold mb-1 text-slate-900 dark:text-white">Rename files</h2>
-        <p className="text-xs text-slate-500 dark:text-zinc-400 mb-4">
+        <p className="text-xs text-fg-muted mb-4">
           Move the files for{' '}
           <span className="font-medium text-slate-700 dark:text-zinc-200">{label}</span> to match the
           current naming template. Files already in the right place are left alone.
         </p>
 
         {loading ? (
-          <p className="text-sm text-slate-500 dark:text-zinc-400">Computing changes…</p>
+          <p className="text-sm text-fg-muted">Computing changes…</p>
         ) : error && !moves.length ? (
           <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
         ) : moves.length === 0 ? (
-          <p className="text-sm text-slate-500 dark:text-zinc-400">No tracked files to rename.</p>
+          <p className="text-sm text-fg-muted">No tracked files to rename.</p>
         ) : (
           <div className="overflow-y-auto flex-1 -mx-2 px-2">
             <ul className="space-y-3">
@@ -122,7 +122,7 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
         )}
 
         <div className="mt-4 pt-4 border-t border-slate-200 dark:border-zinc-800 flex items-center gap-2">
-          <span className="text-xs text-slate-500 dark:text-zinc-400">
+          <span className="text-xs text-fg-muted">
             {applied
               ? `${applied.summary.moved} moved, ${applied.summary.failed} failed`
               : `${movable.length} of ${moves.length} will move`}
@@ -161,18 +161,18 @@ function MoveRow({ move }: { move: ReorganizeMove }) {
         </span>
         <span className="text-slate-400 dark:text-zinc-600">·</span>
         <span className="text-slate-600 dark:text-zinc-300 truncate">{move.bookTitle}</span>
-        <span className="uppercase text-[10px] tracking-wide text-slate-400 dark:text-zinc-600">
+        <span className="uppercase text-[10px] tracking-wide text-fg-muted">
           {move.format}
         </span>
       </div>
-      <div className="font-mono text-slate-500 dark:text-zinc-500 break-all">
+      <div className="font-mono text-fg-muted break-all">
         <div>
-          <span className="text-slate-400 dark:text-zinc-600">from </span>
+          <span className="text-fg-muted">from </span>
           {move.current}
         </div>
         {move.status !== 'noop' && (
           <div>
-            <span className="text-slate-400 dark:text-zinc-600">to </span>
+            <span className="text-fg-muted">to </span>
             {move.proposed}
           </div>
         )}

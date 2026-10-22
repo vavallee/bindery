@@ -166,12 +166,12 @@ export default function DuplicateGroupCard({ group, busyBooks, onToggle, onExclu
             >
               <span className="min-w-0">
                 <span className="flex items-baseline gap-1.5">
-                  <span className="shrink-0 text-[11px] text-slate-400 dark:text-zinc-500">{rowNumber.get(book.id)}.</span>
+                  <span className="shrink-0 text-[11px] text-fg-muted">{rowNumber.get(book.id)}.</span>
                   {showAuthor ? (
                     <Link
                       to={`/book/${book.id}`}
                       className={`block truncate font-medium hover:underline ${book.excluded
-                        ? 'text-slate-400 line-through dark:text-zinc-500'
+                        ? 'text-fg-muted line-through'
                         : 'text-slate-800 dark:text-zinc-200'}`}
                     >
                       {book.title}
@@ -179,7 +179,7 @@ export default function DuplicateGroupCard({ group, busyBooks, onToggle, onExclu
                   ) : (
                     <span
                       className={`block truncate font-medium ${book.excluded
-                        ? 'text-slate-400 line-through dark:text-zinc-500'
+                        ? 'text-fg-muted line-through'
                         : 'text-slate-800 dark:text-zinc-200'}`}
                     >
                       {book.title}
@@ -192,8 +192,8 @@ export default function DuplicateGroupCard({ group, busyBooks, onToggle, onExclu
                   {book.excluded && chip(t('duplicateCandidates.excluded', 'Excluded'), 'warn')}
                   {renderRules(book.rules)}
                 </span>
-                <span className="mt-1 block text-[11px] text-slate-600 dark:text-zinc-400" data-testid={`duplicate-evidence-${book.id}`}>
-                  <span className={book.hasFiles ? 'font-medium text-emerald-700 dark:text-emerald-400' : ''}>{fileText(book)}</span>
+                <span className="mt-1 block text-[11px] text-fg-muted" data-testid={`duplicate-evidence-${book.id}`}>
+                  <span className={book.hasFiles ? 'font-medium text-accent-text' : ''}>{fileText(book)}</span>
                   {evidenceItems(book).map((item, i) => (
                     <span key={i}>
                       <span className="mx-1 text-slate-400 dark:text-zinc-600">·</span>
@@ -232,15 +232,15 @@ export default function DuplicateGroupCard({ group, busyBooks, onToggle, onExclu
           </button>
         </div>
       ) : withheld === 'conflict' ? (
-        <p className="mt-2 text-[11px] text-slate-500 dark:text-zinc-400">
+        <p className="mt-2 text-[11px] text-fg-muted">
           {t('duplicateReview.noSuggestionConflict', 'The rows disagree, so nothing is suggested. Check the evidence before excluding a row.')}
         </p>
       ) : withheld === 'several-with-files' ? (
-        <p className="mt-2 text-[11px] text-slate-500 dark:text-zinc-400">
+        <p className="mt-2 text-[11px] text-fg-muted">
           {t('duplicateReview.noSuggestionFiles', 'More than one row has files, so nothing is suggested.')}
         </p>
       ) : withheld === 'no-evidence' ? (
-        <p className="mt-2 text-[11px] text-slate-500 dark:text-zinc-400">
+        <p className="mt-2 text-[11px] text-fg-muted">
           {t('duplicateReview.noSuggestionEvidence', 'Nothing ties every empty row to the row with files (no shared ISBN, ASIN, series position or matching title), so nothing is suggested.')}
         </p>
       ) : null}
