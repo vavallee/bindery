@@ -209,7 +209,14 @@ export default function UsersPage() {
 
       {loading && <p className="text-sm text-fg-muted">{t('common.loading')}</p>}
       {error && <p className="text-sm text-red-700 dark:text-red-400">{error}</p>}
-      {!loading && <p className="text-xs text-fg-muted">{t('users.autoApproveHint')}</p>}
+      {/* What Auto-approve does, said as that column's note and only when a
+          requester is listed: as a bare paragraph under the heading it read
+          as the page's description. */}
+      {!loading && users.some(u => u.role === 'requester') && (
+        <p className="text-xs text-fg-muted">
+          <span className="font-medium">{t('users.colAutoApprove')}:</span> {t('users.autoApproveHint')}
+        </p>
+      )}
 
       {!loading && narrow && (
         // Below sm each user is a card, as on History. The five column table

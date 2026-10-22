@@ -872,7 +872,9 @@
     "colDate": "Date",
     "blocklist": "Blocklist",
     "delete": "Delete",
-    "blocklistHint": "Add to blocklist — prevents this release from being grabbed again"
+    "blocklistHint": "Add to blocklist — prevents this release from being grabbed again",
+    "loadFailed": "Could not load history",
+    "noMatch": "No {{type}} events"
   },
   "queue": {
     "title": "Queue",
@@ -1012,7 +1014,7 @@
     "rename": "Rename",
     "addBook": "Add Book",
     "emptyTitle": "No series found",
-    "emptyHint": "Series are populated automatically from your monitored authors' books",
+    "emptyHint": "Series come from your metadata provider when it reports them for a book. If none show up, link a Hardcover series or add one by hand.",
     "noBooks": "No books in this series yet",
     "missingBadge": "{{count}} missing",
     "bookCount_one": "{{count}} book",
@@ -1149,7 +1151,8 @@
       "noResults": "No Hardcover series found.",
       "saving": "Saving…",
       "confirm": "Confirm Selection"
-    }
+    },
+    "loadFailed": "Could not load series"
   },
   "importHints": {
     "heading": "Already have files on disk?",
@@ -2277,7 +2280,9 @@
         "updated": "Password updated",
         "updating": "Updating…",
         "change": "Change password"
-      }
+      },
+      "themeDark": "Dark",
+      "themeLight": "Light"
     },
     "import": {
       "csvHeading": "CSV of author names",

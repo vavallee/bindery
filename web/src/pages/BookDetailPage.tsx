@@ -31,6 +31,7 @@ import MetadataLinksMenu from '../components/MetadataLinksMenu'
 import { usePolling } from '../components/usePolling'
 import { languageName } from '../util/language'
 import CoverImage from '../components/CoverImage'
+import { decodeEntities } from '../util/decodeEntities'
 
 function formatDuration(seconds?: number): string {
   if (!seconds || seconds <= 0) return ''
@@ -1719,8 +1720,8 @@ function BookDetailPageInner() {
                     {t(`bookDetail.event.${ev.eventType}`, ev.eventType)}
                   </span>
                   {ev.sourceTitle && (
-                    <span className="font-mono text-[11px] text-fg-muted truncate" title={ev.sourceTitle}>
-                      {ev.sourceTitle}
+                    <span className="font-mono text-[11px] text-fg-muted truncate" title={decodeEntities(ev.sourceTitle)}>
+                      {decodeEntities(ev.sourceTitle)}
                     </span>
                   )}
                 </span>

@@ -945,7 +945,6 @@
     "rename": "Gi nytt navn",
     "addBook": "Legg til bok",
     "emptyTitle": "Fant ingen serier",
-    "emptyHint": "Seriene fylles ut automatisk fra bøkene til forfatterne du overvåker",
     "noBooks": "Ingen bøker i denne serien ennå",
     "missingBadge": "{{count}} mangler",
     "bookCount_one": "{{count}} bok",

@@ -96,3 +96,23 @@ describe('UsersPage roles', () => {
     expect(screen.queryByRole('checkbox', { name: 'Auto-approve requests for admin' })).not.toBeInTheDocument()
   })
 })
+
+// The Auto-approve note belongs to that column, which only means something
+// for a requester; with none listed it read as the page's description.
+describe('UsersPage auto-approve note', () => {
+  it('shows the note only when a requester is listed', async () => {
+    vi.mocked(api.listUsers).mockResolvedValue([
+      { id: 1, username: 'admin', role: 'admin', createdAt: '2026-01-01T00:00:00Z', autoApproveRequests: false },
+    ])
+    const { unmount } = render(<UsersPage />)
+    await screen.findAllByText('admin')
+    expect(screen.queryByText('users.autoApproveHint')).toBeNull()
+    unmount()
+    vi.mocked(api.listUsers).mockResolvedValue([
+      { id: 1, username: 'admin', role: 'admin', createdAt: '2026-01-01T00:00:00Z', autoApproveRequests: false },
+      { id: 3, username: 'guest', role: 'requester', createdAt: '2026-01-01T00:00:00Z', autoApproveRequests: false },
+    ])
+    render(<UsersPage />)
+    expect(await screen.findByText('users.autoApproveHint')).toBeInTheDocument()
+  })
+})

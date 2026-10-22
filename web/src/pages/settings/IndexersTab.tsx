@@ -374,7 +374,17 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                     title={idx.enabled ? t('common.disable') : t('common.enable')}
                   />
                   <div className="min-w-0">
-                    <h4 className={`font-medium text-sm truncate ${!idx.enabled ? 'text-fg-muted' : ''}`}>{idx.name}</h4>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <h4 className={`font-medium text-sm truncate ${!idx.enabled ? 'text-fg-muted' : ''}`}>{idx.name}</h4>
+                      {/* Synced from Prowlarr: managed there, said here, so
+                          the direct and proxied indexers are told apart by
+                          more than their URL. */}
+                      {idx.prowlarrInstanceId != null && (
+                        <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300">
+                          Prowlarr
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-fg-muted truncate">{idx.url}</p>
                   </div>
                 </div>
