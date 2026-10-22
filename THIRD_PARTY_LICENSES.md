@@ -47,7 +47,7 @@ does ship is the failure that matters.
 | [github.com/coreos/go-oidc/v3](https://github.com/coreos/go-oidc/blob/v3.21.0/LICENSE) | v3.21.0 | Apache-2.0 | yes |
 | [github.com/dhowden/tag](https://github.com/dhowden/tag/blob/3d75831295e8/LICENSE) | v0.0.0-20240417053706-3d75831295e8 | BSD-2-Clause | — |
 | [github.com/dustin/go-humanize](https://github.com/dustin/go-humanize/blob/v1.0.1/LICENSE) | v1.0.1 | MIT | — |
-| [github.com/go-chi/chi/v5](https://github.com/go-chi/chi/blob/v5.3.2/LICENSE) | v5.3.2 | MIT | — |
+| [github.com/go-chi/chi/v5](https://github.com/go-chi/chi/blob/v5.5.0/LICENSE) | v5.5.0 | MIT | — |
 | [github.com/go-jose/go-jose/v4](https://github.com/go-jose/go-jose/blob/v4.1.4/LICENSE) | v4.1.4 | Apache-2.0 | — |
 | [github.com/google/uuid](https://github.com/google/uuid/blob/v1.6.0/LICENSE) | v1.6.0 | BSD-3-Clause | — |
 | [github.com/mattn/go-isatty](https://github.com/mattn/go-isatty/blob/v0.0.24/LICENSE) | v0.0.24 | MIT | — |
@@ -1612,7 +1612,7 @@ SOFTWARE.
 <http://www.opensource.org/licenses/mit-license.php>
 ```
 
-### 20. MIT — github.com/go-chi/chi/v5@v5.3.2 (LICENSE)
+### 20. MIT — github.com/go-chi/chi/v5@v5.5.0 (LICENSE)
 
 ```
 Copyright (c) 2015-present Peter Kieltyka (https://github.com/pkieltyka), Google Inc.
