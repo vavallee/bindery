@@ -257,7 +257,8 @@
       "alreadyImported": "This book already has its files. Adopting adds these alongside them, and nothing is replaced or deleted.",
       "conflictLabel": "Author conflict",
       "conflict": "The files say {{files}}, but the folder says {{folder}}. A book by {{folder}} is only a look alike, so none is chosen for you.",
-      "folderAuthorOnly": "Folder author only"
+      "folderAuthorOnly": "Folder author only",
+      "lowConfidence": "Low-confidence suggestions ({{count}})"
     },
     "col": {
       "book": "Book",
@@ -322,7 +323,10 @@
     "moreFor": "More actions for {{name}}",
     "match": {
       "strong": "Strong match",
-      "possible": "Possible match"
+      "possible": "Possible match",
+      "none": "No good match",
+      "weakCount_one": "See {{count}} suggestion",
+      "weakCount_other": "See {{count}} suggestions"
     },
     "short": {
       "authorMissing": "{{author}} is not in your library",
@@ -346,6 +350,22 @@
       "adoptFailed": "Could not adopt this book",
       "ignoreFailed": "Could not ignore this book",
       "undoFailed": "Could not undo"
+    },
+    "confirmStrong": {
+      "title": "Confirm {{count}} strong matches?",
+      "body": "Each book is adopted as its suggestion, the same as pressing Confirm on every row. Every one can be undone from its row or the Adopted list.",
+      "confirm": "Confirm all",
+      "summary": "{{count}} books on this page have a strong match.",
+      "button": "Confirm {{count}} strong matches",
+      "listLabel": "Files and the books they go to",
+      "goesTo": "goes to",
+      "stopped": "Adopted {{done}} of {{count}}, then stopped: {{name}} could not be adopted. Its row says why.",
+      "done_one": "Adopted {{count}}.",
+      "done_other": "Adopted {{count}}.",
+      "doneSkipped_one": "Adopted {{count}}. {{skipped}} changed since you confirmed and were left alone.",
+      "doneSkipped_other": "Adopted {{count}}. {{skipped}} changed since you confirmed and were left alone.",
+      "stoppedSkipped_one": "{{count}} changed since you confirmed and were left alone.",
+      "stoppedSkipped_other": "{{count}} changed since you confirmed and were left alone."
     }
   },
   "search": {
