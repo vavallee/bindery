@@ -634,7 +634,17 @@ func primaryTitleForQuery(title string) string {
 	if i := strings.Index(title, ":"); i > 0 {
 		title = title[:i]
 	}
-	return StripFormatQualifiers(NormalizeQueryTitle(title))
+	return strings.Join(strings.Fields(wildcardToSpace(StripFormatQualifiers(NormalizeQueryTitle(title)))), " ")
+}
+
+// wildcardToSpace turns the asterisk into a word break in an outgoing query.
+// Titles that censor a word ("The Subtle Art of Not Giving a F*ck") keep the
+// asterisk in the catalogue, but Prowlarr's shared term sanitiser deletes it,
+// so the indexer was asked for "Fck" and found nothing (#1637). Sent as two
+// words the same indexer finds the release. The relevance gates already read
+// the asterisk as a separator, so only the query changes.
+func wildcardToSpace(s string) string {
+	return strings.ReplaceAll(s, "*", " ")
 }
 
 // formatQualifierRe matches a parenthesised FORMAT qualifier anywhere in a
