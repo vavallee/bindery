@@ -12,7 +12,7 @@ import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import EditAuthorModal from '../components/EditAuthorModal'
 import AuthorMetadataLinkModal from '../components/AuthorMetadataLinkModal'
 import RenameFilesModal from '../components/RenameFilesModal'
-import BulkActionBar from '../components/BulkActionBar'
+import BulkActionBar, { type BulkAction } from '../components/BulkActionBar'
 import { useView } from '../components/useView'
 import MarkdownDescription from '../components/MarkdownDescription'
 import { authorProviderKey, canLinkAuthorMetadata } from '../util/authorMetadata'
@@ -1035,6 +1035,20 @@ export default function AuthorDetailPage() {
   const renderBooks = (list: Book[], withHeaderControls = true) =>
     view === 'table' ? renderTable(list, withHeaderControls) : renderGrid(list)
 
+  // The Excluded view lists only excluded books, so there the one exclusion
+  // action is the way back (#3454). It leads that view's bar so the cap on
+  // inline actions does not push it behind More.
+  const exclusionAction: BulkAction = statusFilter === 'excluded'
+    ? {
+        label: t('authorDetail.bulk.unexclude', 'Un-exclude'),
+        onClick: () => runBulk('unexclude', t('authorDetail.bulk.unexclude', 'Un-exclude')),
+      }
+    : {
+        label: t('authorDetail.bulk.exclude'),
+        variant: 'caution',
+        onClick: () => runBulk('exclude', t('authorDetail.bulk.exclude'), t('authorDetail.bulk.excludeConfirm', { count: selected.size })),
+      }
+
   return (
     // One width shared with BookDetailPage — see the note there.
     <div className={`max-w-7xl ${selected.size > 0 ? 'pb-20' : ''}`}>
@@ -1567,6 +1581,7 @@ export default function AuthorDetailPage() {
         onClear={clearSelection}
         busy={bulkBusy}
         actions={[
+          ...(statusFilter === 'excluded' ? [exclusionAction] : []),
           { label: t('authorDetail.bulk.monitor'), onClick: () => runBulk('monitor', t('authorDetail.bulk.monitor')) },
           { label: t('authorDetail.bulk.unmonitor'), onClick: () => runBulk('unmonitor', t('authorDetail.bulk.unmonitor')) },
           // Search the selected books rather than all of this author's
@@ -1577,29 +1592,14 @@ export default function AuthorDetailPage() {
           // mistags several titles under one author — so they belong here as
           // well as on the global Books view (#2066).
           {
-            label: t('books.setEbook'),
-            onClick: () => runBulk('set_media_type', t('books.setEbook'), undefined, 'ebook'),
+            label: t('bulkActionBar.setFormat', 'Set format'),
+            choices: [
+              { label: t('common.ebook'), onClick: () => runBulk('set_media_type', t('books.setEbook'), undefined, 'ebook') },
+              { label: t('common.audiobook'), onClick: () => runBulk('set_media_type', t('books.setAudiobook'), undefined, 'audiobook') },
+              { label: t('common.both'), onClick: () => runBulk('set_media_type', t('books.setBoth'), undefined, 'both') },
+            ],
           },
-          {
-            label: t('books.setAudiobook'),
-            onClick: () => runBulk('set_media_type', t('books.setAudiobook'), undefined, 'audiobook'),
-          },
-          {
-            label: t('books.setBoth'),
-            onClick: () => runBulk('set_media_type', t('books.setBoth'), undefined, 'both'),
-          },
-          // The Excluded view lists only excluded books, so there the one
-          // exclusion action is the way back (#3454).
-          statusFilter === 'excluded'
-            ? {
-                label: t('authorDetail.bulk.unexclude', 'Un-exclude'),
-                onClick: () => runBulk('unexclude', t('authorDetail.bulk.unexclude', 'Un-exclude')),
-              }
-            : {
-                label: t('authorDetail.bulk.exclude'),
-                variant: 'caution' as const,
-                onClick: () => runBulk('exclude', t('authorDetail.bulk.exclude'), t('authorDetail.bulk.excludeConfirm', { count: selected.size })),
-              },
+          ...(statusFilter === 'excluded' ? [] : [exclusionAction]),
           {
             label: t('authorDetail.bulk.delete'),
             variant: 'danger',

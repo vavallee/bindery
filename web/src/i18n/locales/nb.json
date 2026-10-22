@@ -460,10 +460,7 @@
     "bulkApplyMonitoringToExistingHint": "Endrer alle bøkene til de valgte forfatterne slik at de samsvarer. La det være av hvis du bare vil endre forfatterne.",
     "booksInLibrary": "{{have}} av {{total}} i biblioteket",
     "booksInLibraryHint": "En bok telles så snart minst én av filene dens er i biblioteket ditt.",
-    "bulkSetMediaTypeConfirm": "Vil du sette medietypen for alle bøkene til de {{count}} valgte forfatterne til {{mediaType}}? Dette skriver om eksisterende bokrader og kan føre til at det vurderes på nytt om bøkene er ønsket eller mangler.",
-    "bulkSetEbook": "Sett til e-bok",
-    "bulkSetAudiobook": "Sett til lydbok",
-    "bulkSetBoth": "Sett til begge"
+    "bulkSetMediaTypeConfirm": "Vil du sette medietypen for alle bøkene til de {{count}} valgte forfatterne til {{mediaType}}? Dette skriver om eksisterende bokrader og kan føre til at det vurderes på nytt om bøkene er ønsket eller mangler."
   },
   "authorDetail": {
     "nav": {

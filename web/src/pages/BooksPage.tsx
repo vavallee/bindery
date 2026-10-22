@@ -526,9 +526,14 @@ export default function BooksPage() {
           { label: t('common.monitor'), onClick: () => runBulk('monitor') },
           { label: t('common.unmonitor'), onClick: () => runBulk('unmonitor') },
           { label: t('common.search'), onClick: () => runBulk('search') },
-          { label: t('books.setEbook'), onClick: () => runBulk('set_media_type', 'ebook') },
-          { label: t('books.setAudiobook'), onClick: () => runBulk('set_media_type', 'audiobook') },
-          { label: t('books.setBoth'), onClick: () => runBulk('set_media_type', 'both') },
+          {
+            label: t('bulkActionBar.setFormat', 'Set format'),
+            choices: [
+              { label: t('common.ebook'), onClick: () => runBulk('set_media_type', 'ebook') },
+              { label: t('common.audiobook'), onClick: () => runBulk('set_media_type', 'audiobook') },
+              { label: t('common.both'), onClick: () => runBulk('set_media_type', 'both') },
+            ],
+          },
           { label: t('common.delete'), onClick: () => runBulk('delete'), variant: 'danger' },
         ]}
       />

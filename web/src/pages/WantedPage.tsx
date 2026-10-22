@@ -521,7 +521,25 @@ export default function WantedPage() {
         actions={[
           { label: t('common.search'), onClick: () => runBulk('search') },
           { label: t('common.unmonitor'), onClick: () => runBulk('unmonitor') },
-          { label: t('common.blocklist'), onClick: () => runBulk('blocklist'), variant: 'danger' },
+          {
+            label: t('common.blocklist'),
+            // Blocklisting marks each book skipped and unmonitored, so it
+            // leaves Wanted and is never searched again: the confirmation
+            // names how many.
+            onClick: async () => {
+              if (!await confirm({
+                title: t('common.confirmTitle'),
+                body: t('wanted.blocklistSelectedConfirm', {
+                  count: selectedIds.size,
+                  defaultValue_one: 'Blocklist {{count}} book? It is marked skipped, leaves Wanted and is not searched again.',
+                  defaultValue: 'Blocklist {{count}} books? They are marked skipped, leave Wanted and are not searched again.',
+                }),
+                confirmLabel: t('common.blocklist'),
+              })) return
+              await runBulk('blocklist')
+            },
+            variant: 'danger',
+          },
         ]}
       />
     </div>
