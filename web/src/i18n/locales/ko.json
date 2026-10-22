@@ -881,7 +881,7 @@
   },
   "bookStatus": {
     "wanted": "찾는 중",
-    "imported": "가져옴",
+    "imported": "라이브러리에 있음",
     "skipped": "건너뜀",
     "notMonitored": "모니터링 안 함"
   },
