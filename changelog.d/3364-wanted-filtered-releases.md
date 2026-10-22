@@ -1,2 +1,0 @@
-### Added
-- **Filtered releases on the Wanted page** (#3364). The Search button on a wanted book now shows the same collapsed "Filtered (N)" section the book page has, so a release the title, author or language filter dropped can be grabbed from there too. When every release was filtered, the message says so instead of reporting no results. The free text Search page is unchanged: it applies none of those filters, so it has nothing to show.

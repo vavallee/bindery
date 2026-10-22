@@ -1,2 +1,0 @@
-### Fixed
-- **Author photos and bios after Refresh all** (#3398): Refresh all, refreshing selected authors and scheduled discovery now fill a missing photo or bio from Wikidata when the author is due, instead of postponing it by a day each time they run. They enrich at most 100 authors an hour between them and leave the rest to the background refresh, lookups still go to Wikimedia one author at a time, and each author is asked at most once a month.
