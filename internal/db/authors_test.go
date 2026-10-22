@@ -1089,6 +1089,7 @@ func TestListPageFiltered_ColumnHeaderSorts(t *testing.T) {
 	seed("Ann", 4.5, true, 1)
 	seed("Bea", 2.0, false, 3)
 	seed("Cal", 3.0, true, 2)
+	seed("Dee", 0, false, 0)
 
 	names := func(sort string) []string {
 		t.Helper()
@@ -1107,15 +1108,16 @@ func TestListPageFiltered_ColumnHeaderSorts(t *testing.T) {
 		sort string
 		want []string
 	}{
-		{"books-asc", []string{"Ann", "Cal", "Bea"}},
-		{"books-desc", []string{"Bea", "Cal", "Ann"}},
-		{"rating-asc", []string{"Bea", "Cal", "Ann"}},
-		{"rating-desc", []string{"Ann", "Cal", "Bea"}},
+		{"books-asc", []string{"Dee", "Ann", "Cal", "Bea"}},
+		{"books-desc", []string{"Bea", "Cal", "Ann", "Dee"}},
+		// Dee is unrated and goes last either way.
+		{"rating-asc", []string{"Bea", "Cal", "Ann", "Dee"}},
+		{"rating-desc", []string{"Ann", "Cal", "Bea", "Dee"}},
 		// Ties on the monitored flag fall back to sort_key, so Ann precedes Cal.
-		{"monitored-asc", []string{"Bea", "Ann", "Cal"}},
-		{"monitored-desc", []string{"Ann", "Cal", "Bea"}},
+		{"monitored-asc", []string{"Bea", "Dee", "Ann", "Cal"}},
+		{"monitored-desc", []string{"Ann", "Cal", "Bea", "Dee"}},
 		// Unknown keys must not error or reorder unpredictably.
-		{"nonsense", []string{"Ann", "Bea", "Cal"}},
+		{"nonsense", []string{"Ann", "Bea", "Cal", "Dee"}},
 	} {
 		if got := names(tc.sort); !slices.Equal(got, tc.want) {
 			t.Errorf("sort %q = %v, want %v", tc.sort, got, tc.want)

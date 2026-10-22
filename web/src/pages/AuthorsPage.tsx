@@ -7,7 +7,13 @@ import AddToLibraryModal from '../components/AddToLibraryModal'
 import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import SeriesNameModal from '../components/SeriesNameModal'
 import BulkActionBar from '../components/BulkActionBar'
-import FilterPopover, { FilterGroup } from '../components/FilterPopover'
+import { FilterGroup } from '../components/FilterPopover'
+import FilterBar from '../components/FilterBar'
+import DataTable, { type Column } from '../components/DataTable'
+import Checkbox from '../components/Checkbox'
+import { nextSort, splitSort } from '../components/tableSort'
+import { SkeletonCards, SkeletonRows } from '../components/Skeleton'
+import EmptyState from '../components/EmptyState'
 import MoreMenu from '../components/MoreMenu'
 import Pagination from '../components/Pagination'
 import { useServerPagination } from '../components/usePagination'
@@ -23,24 +29,19 @@ import Switch from '../components/Switch'
 import { ModalPanel } from '../components/useModal'
 import CoverImage from '../components/CoverImage'
 import { errorText } from '../util/errorText'
+import { SORT_MODES, type SortMode } from './authorSortModes'
 
-// 'az' | 'za' sort by name and back the existing toolbar buttons; the rest are
-// the column-header sorts (#1349), whitelisted server-side by authorSortOrder.
-type SortMode =
-  | 'az' | 'za'
-  | 'name-az' | 'name-za'
-  | 'recent'
-  | 'books-asc' | 'books-desc'
-  | 'rating-asc' | 'rating-desc'
-  | 'monitored-asc' | 'monitored-desc'
 type MonitoredFilter = '' | 'monitored' | 'unmonitored'
 
-const SORT_MODES: readonly SortMode[] = [
-  'az', 'za', 'name-az', 'name-za', 'recent', 'books-asc', 'books-desc',
-  'rating-asc', 'rating-desc', 'monitored-asc', 'monitored-desc',
-]
 // Query-string keys and their defaults; defaults stay out of the URL.
 const LIST_DEFAULTS = { q: '', sort: 'az' }
+// The table's sortable columns and the whitelisted sort values behind them.
+const AUTHOR_COLUMN_SORTS = {
+  name: { asc: 'az', desc: 'za' },
+  books: { asc: 'books-asc', desc: 'books-desc' },
+  rating: { asc: 'rating-asc', desc: 'rating-desc' },
+  monitored: { asc: 'monitored-asc', desc: 'monitored-desc' },
+}
 
 export default function AuthorsPage() {
   const { t } = useTranslation()
@@ -100,7 +101,6 @@ export default function AuthorsPage() {
   // A message from the last bulk action that is not an exception, e.g. the
   // server refusing a search because automatic grabbing is off (#2669).
   const [bulkNotice, setBulkNotice] = useState<string | null>(null)
-  const selectAllRef = useRef<HTMLInputElement>(null)
   // "Refresh all metadata" background job (#863). refreshStatus mirrors the
   // persisted server-side progress; refreshing is the in-flight flag that drives
   // polling and disables the button.
@@ -231,14 +231,6 @@ export default function AuthorsPage() {
     await api.updateAuthor(author.id, { monitored: !author.monitored })
     load()
   }
-
-  // Keep the select-all checkbox indeterminate state in sync. "Page" here is
-  // the server-returned page held in `authors`.
-  const allPageSelected = authors.length > 0 && authors.every(a => selectedIds.has(a.id))
-  const somePageSelected = authors.some(a => selectedIds.has(a.id)) && !allPageSelected
-  useEffect(() => {
-    if (selectAllRef.current) selectAllRef.current.indeterminate = somePageSelected
-  }, [somePageSelected])
 
   useEffect(() => {
     document.title = `${t('nav.authors', 'Authors')} · Bindery`
@@ -379,32 +371,11 @@ export default function AuthorsPage() {
     navigate('/series', { state: { seriesId: series.id } })
   }
 
-  // Column-header sorting, mirroring BooksPage: first click ascending, a second
-  // click on the same column flips to descending. Both keys are whitelisted
-  // server-side, so an unknown value can only ever fall back to the name sort.
-  const toggleSort = (asc: SortMode, desc: SortMode) =>
-    setSort(sort === asc ? desc : asc)
-
-  const SortableHeader = ({ label, asc, desc }: { label: string; asc: SortMode; desc: SortMode }) => {
-    const active = sort === asc || sort === desc
-    const arrow = sort === asc ? '▲' : '▼'
-    return (
-      <th className="text-left px-3 py-2 text-xs font-medium uppercase">
-        <button
-          type="button"
-          onClick={() => toggleSort(asc, desc)}
-          aria-label={label}
-          title={t('authors.sortByColumn', { column: label, defaultValue: 'Sort by {{column}}' })}
-          className={`inline-flex items-center gap-0.5 uppercase transition-colors cursor-pointer select-none ${active ? 'text-slate-900 dark:text-white' : 'text-fg-muted hover:text-slate-900 dark:hover:text-white'}`}
-        >
-          {label}
-          {active
-            ? <span aria-hidden="true">{arrow}</span>
-            : <span aria-hidden="true" className="opacity-40">↕</span>}
-        </button>
-      </th>
-    )
-  }
+  // Column-header sorting: first click ascending, a second click on the same
+  // column flips to descending. Both keys are whitelisted server-side, so an
+  // unknown value can only ever fall back to the name sort.
+  const columnSort = splitSort(sort, AUTHOR_COLUMN_SORTS)
+  const sortByColumn = (key: string) => setSort(nextSort(sort, key, AUTHOR_COLUMN_SORTS) as SortMode)
 
   // Only OpenLibrary supplies an author-level rating, and only for authors it
   // resolved by search rather than by direct id. Hardcover and DNB supply none
@@ -412,6 +383,62 @@ export default function AuthorsPage() {
   // Drop it when this page has nothing to put in it, rather than removing it
   // outright and costing OpenLibrary users a real sort key.
   const anyRating = authors.some(a => a.averageRating > 0)
+
+  const authorColumns: Column<Author>[] = [
+    {
+      key: 'name',
+      header: t('authors.colName'),
+      sortKey: 'name',
+      cell: (author, i) => (
+        <Link to={`/author/${author.id}`} state={authorNavState(i)} className="flex items-center gap-2">
+          <CoverImage loading="lazy" decoding="async" src={author.imageUrl} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0"
+            fallback={
+              <div className="w-7 h-7 rounded-full bg-slate-200 dark:bg-zinc-800 flex items-center justify-center text-xs font-bold text-fg-muted flex-shrink-0">
+                {author.authorName.charAt(0)}
+              </div>
+            }
+          />
+          <span className="text-slate-800 dark:text-zinc-200 truncate hover:text-emerald-500">{author.authorName}</span>
+        </Link>
+      ),
+    },
+    {
+      key: 'books',
+      header: t('authors.colBooks'),
+      sortKey: 'books',
+      className: 'text-fg-muted whitespace-nowrap tabular-nums',
+      cell: author => (
+        <span
+          title={author.statistics && author.statistics.bookCount > 0
+            ? `${t('authors.booksInLibrary', '{{have}} of {{total}} in library', { have: author.statistics.availableBookCount, total: author.statistics.bookCount })}. ${t('authors.booksInLibraryHint', 'A book counts once at least one of its files is in your library.')}`
+            : undefined}
+        >
+          {author.statistics && author.statistics.bookCount > 0 ? `${author.statistics.availableBookCount} / ${author.statistics.bookCount}` : '—'}
+        </span>
+      ),
+    },
+    ...(anyRating ? [{
+      key: 'rating',
+      header: t('authors.colRating'),
+      sortKey: 'rating',
+      className: 'text-fg-muted whitespace-nowrap',
+      cell: (author: Author) => (author.averageRating > 0 ? `★ ${author.averageRating.toFixed(2)}` : '—'),
+    }] : []),
+    {
+      key: 'monitored',
+      header: t('authors.colMonitored'),
+      sortKey: 'monitored',
+      className: 'whitespace-nowrap',
+      // The table is the management view, so monitoring stays a switch here.
+      cell: author => (
+        <Switch
+          checked={author.monitored}
+          onChange={() => handleToggleMonitored(author)}
+          label={author.monitored ? t('authors.stopMonitoring', 'Stop monitoring') : t('authors.startMonitoring', 'Monitor')}
+        />
+      ),
+    },
+  ]
 
   // This page's loaded ids, in order — handed to AuthorDetailPage as router
   // state (#2548) for Previous/Next; see AuthorNavState there.
@@ -422,54 +449,37 @@ export default function AuthorsPage() {
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
       {confirmDialog}
       <BulkNotice message={bulkNotice} onDismiss={() => setBulkNotice(null)} />
-      {/* Page header. The outer row wraps and the toolbar is pinned to the
-          container width below `sm`, so a phone puts the buttons on their own
-          lines under the title instead of letting the group claim more room
-          than the viewport has. Books, Series and History already lay their
-          headers out this way. */}
+      {/* Page header: one primary action, everything else behind "More".
+          The toolbar used to be five equal buttons (Refresh all metadata,
+          Merge, Add Book, Add Series, Add Author), so the daily action sat in
+          a row with a rare, heavy one (Refresh all re-fetches every author)
+          and the eye had to read every label to find it. Add author stays a
+          single click; the rest are one more. The row wraps below `sm` and
+          keeps the primary first. */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h2 className="text-2xl font-bold min-w-0">{t('authors.title')}</h2>
-        <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto justify-start sm:justify-end">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           <ViewToggle view={view} onChange={setView} />
-          <button
-            onClick={handleRefreshAll}
-            disabled={refreshing || total === 0}
-            className="px-3 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium transition-colors"
-            title={t('authors.refreshAllTip')}
-          >
-            {refreshing ? t('authors.refreshAllRunning') : t('authors.refreshAll')}
-          </button>
-          <button
-            onClick={openMerge}
-            disabled={total < 2}
-            className="px-3 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium transition-colors"
-            title={t('authors.mergeTip')}
-          >
-            {t('authors.merge')}
-          </button>
-          <button
-            onClick={() => setAddMode('book')}
-            className="px-4 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded-md text-sm font-medium transition-colors"
-          >
-            {t('addToLibrary.addBook')}
-          </button>
-          {/* Creating a series is admin only (#468). */}
-          {isAdmin && (
-            <button
-              onClick={() => setShowAddSeries(true)}
-              className="px-4 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded-md text-sm font-medium transition-colors"
-            >
-              {t('series.addSeries')}
-            </button>
-          )}
-          {/* Below `sm` the five buttons wrap and the primary action used to
-              land on the second row, under Refresh all metadata, Merge and Add
-              Book. `order-first` pulls it to the front of the wrapped group on a
-              phone only; the DOM order is untouched, so the desktop row keeps
-              its usual secondary-then-primary reading order. */}
+          <MoreMenu
+            label={t('common.more', 'More')}
+            ariaLabel={t('authors.pageActions', 'More author actions')}
+            items={[
+              { label: t('addToLibrary.addBook'), onSelect: () => setAddMode('book') },
+              // Creating a series is admin only (#468).
+              ...(isAdmin ? [{ label: t('series.addSeries'), onSelect: () => setShowAddSeries(true) }] : []),
+              { label: t('authors.merge'), onSelect: openMerge, disabled: total < 2, title: t('authors.mergeTip') },
+              {
+                label: refreshing ? t('authors.refreshAllRunning') : t('authors.refreshAll'),
+                onSelect: handleRefreshAll,
+                disabled: refreshing || total === 0,
+                title: t('authors.refreshAllTip'),
+                caution: true,
+              },
+            ]}
+          />
           <button
             onClick={() => setAddMode('author')}
-            className={`order-first sm:order-none px-4 py-2 ${primaryFill} rounded-md text-sm font-medium transition-colors`}
+            className={`order-first sm:order-none ${btn.primary} px-4 py-2 text-sm`}
           >
             {t('authors.addAuthor')}
           </button>
@@ -496,184 +506,114 @@ export default function AuthorsPage() {
         </div>
       )}
 
-      {/* Search & Sort controls */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-4">
-        <input
-          enterKeyHint="search"
-          type="search"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder={t('authors.searchPlaceholder')}
-          className="flex-1 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
-        />
-      </div>
-
-      {/* Sort and the monitored facet behind two disclosures rather than five
-          sort pills plus a labelled filter row. The Filters trigger carries a
-          count and the applied value also renders as a removable chip, so a
-          filter that is on is never only visible inside the popover.
-
-          Table view drops the sort control: the column headers already sort. */}
-      <div className="flex items-center gap-2 mb-6 flex-wrap">
-        {view === 'grid' && (
-          <FilterPopover label={t('common.sort', 'Sort')}>
+      <FilterBar
+        search={{ value: search, onChange: setSearch, placeholder: t('authors.searchPlaceholder') }}
+        sort={{
+          value: sort,
+          onChange: setSort,
+          label: t('common.sort', 'Sort'),
+          options: [
+            { value: 'az' as const, label: t('authors.sortAZ') },
+            { value: 'za' as const, label: t('authors.sortZA') },
+            { value: 'name-az' as const, label: t('authors.sortFirstNameAZ') },
+            { value: 'name-za' as const, label: t('authors.sortFirstNameZA') },
+            { value: 'recent' as const, label: t('authors.sortRecent') },
+            // Every sort a column header can set is here too, so after a
+            // header click (or a link carrying one) the popover still shows
+            // which sort is on.
+            { value: 'books-desc' as const, label: t('authors.sortMostBooks', 'Most books') },
+            { value: 'books-asc' as const, label: t('authors.sortFewestBooks', 'Fewest books') },
+            { value: 'rating-desc' as const, label: t('authors.sortRatingHigh', 'Highest rated') },
+            { value: 'rating-asc' as const, label: t('authors.sortRatingLow', 'Lowest rated') },
+            { value: 'monitored-desc' as const, label: t('authors.sortMonitoredFirst', 'Monitored first') },
+            { value: 'monitored-asc' as const, label: t('authors.sortUnmonitoredFirst', 'Not monitored first') },
+          ],
+        }}
+        filters={{
+          activeCount: monitoredFilter ? 1 : 0,
+          content: (
             <FilterGroup
-              label={t('common.sort', 'Sort')}
-              value={sort}
-              onChange={setSort}
+              label={t('authors.filterMonitored')}
+              value={monitoredFilter}
+              onChange={setMonitoredFilter}
               options={[
-                { value: 'az' as const, label: t('authors.sortAZ') },
-                { value: 'za' as const, label: t('authors.sortZA') },
-                { value: 'name-az' as const, label: t('authors.sortFirstNameAZ') },
-                { value: 'name-za' as const, label: t('authors.sortFirstNameZA') },
-                { value: 'recent' as const, label: t('authors.sortRecent') },
+                { value: '' as const, label: t('authors.filterAll') },
+                { value: 'monitored' as const, label: t('authors.filterMonitoredOnly') },
+                { value: 'unmonitored' as const, label: t('authors.filterUnmonitored') },
               ]}
             />
-          </FilterPopover>
-        )}
-
-        <FilterPopover label={t('common.filters', 'Filters')} activeCount={monitoredFilter ? 1 : 0}>
-          <FilterGroup
-            label={t('authors.filterMonitored')}
-            value={monitoredFilter}
-            onChange={setMonitoredFilter}
-            options={[
-              { value: '' as const, label: t('authors.filterAll') },
-              { value: 'monitored' as const, label: t('authors.filterMonitoredOnly') },
-              { value: 'unmonitored' as const, label: t('authors.filterUnmonitored') },
-            ]}
-          />
-        </FilterPopover>
-
-        {monitoredFilter && (
-          <button
-            onClick={() => setMonitoredFilter('')}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-200 dark:bg-zinc-800 text-xs text-slate-700 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-zinc-700"
-          >
-            {monitoredFilter === 'monitored' ? t('authors.filterMonitoredOnly') : t('authors.filterUnmonitored')}
-            <span aria-hidden="true">✕</span>
-            <span className="sr-only">{t('common.clearFilter', 'Clear filter')}</span>
-          </button>
-        )}
-      </div>
+          ),
+        }}
+        chips={monitoredFilter ? [{
+          key: 'monitored',
+          label: monitoredFilter === 'monitored' ? t('authors.filterMonitoredOnly') : t('authors.filterUnmonitored'),
+          onClear: () => setMonitoredFilter(''),
+        }] : []}
+        summary={loading ? '' : t('authors.countLabel', { count: total, defaultValue: '{{count}} authors' })}
+      />
 
       <SetupChecklist />
 
       {loading ? (
-        <div className="text-fg-muted">{t('common.loading')}</div>
+        view === 'table' ? <SkeletonRows /> : <SkeletonCards cards={8} />
       ) : total === 0 && !debouncedSearch && !monitoredFilter ? (
-        <div className="text-center py-16 text-fg-muted">
-          <p className="text-lg mb-2">{t('authors.empty')}</p>
-          <p className="text-sm">{t('authors.emptyHint')}</p>
-        </div>
+        <EmptyState title={t('authors.empty')} hint={t('authors.emptyHint')} />
       ) : total === 0 ? (
-        <div className="text-center py-16 text-fg-muted">
-          <p>{t('authors.noMatch', { query: search })}</p>
-        </div>
+        <EmptyState
+          variant="no-match"
+          title={t('authors.noMatch', { query: search })}
+          action={monitoredFilter ? (
+            <button type="button" onClick={() => setMonitoredFilter('')} className={`${btn.secondary} ${btnSize.md}`}>
+              {t('common.clearFilter', 'Clear filter')}
+            </button>
+          ) : undefined}
+        />
       ) : view === 'table' ? (
-        <div className="border border-slate-200 dark:border-zinc-800 rounded-lg overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
-                  <th className="px-3 py-2 w-8">
-                    <input
-                      ref={selectAllRef}
-                      type="checkbox"
-                      checked={allPageSelected}
-                      onChange={e => e.target.checked ? selectAllOnPage() : clearSelection()}
-                      className="rounded-full border-slate-400 dark:border-zinc-600"
-                      title={t('common.selectAllPage', 'Select all on this page')}
-                    />
-                  </th>
-                  <SortableHeader label={t('authors.colName')} asc="az" desc="za" />
-                  <SortableHeader label={t('authors.colBooks')} asc="books-asc" desc="books-desc" />
-                  {anyRating && <SortableHeader label={t('authors.colRating')} asc="rating-asc" desc="rating-desc" />}
-                  <SortableHeader label={t('authors.colMonitored')} asc="monitored-asc" desc="monitored-desc" />
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
-                {authors.map((author, i) => (
-                  <tr
-                    key={author.id}
-                    className={`hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 ${selectedIds.has(author.id) ? 'bg-emerald-500/10 dark:bg-emerald-500/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'}`}
-                  >
-                    <td className="px-3 py-2 w-8">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(author.id)}
-                        onChange={() => toggleSelect(author.id)}
-                        className="rounded-full border-slate-400 dark:border-zinc-600"
-                        onClick={e => e.stopPropagation()}
-                      />
-                    </td>
-                    <td className="px-3 py-2">
-                      <Link to={`/author/${author.id}`} state={authorNavState(i)} className="flex items-center gap-2">
-                        <CoverImage loading="lazy" decoding="async" src={author.imageUrl} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0"
-                          fallback={
-                            <div className="w-7 h-7 rounded-full bg-slate-200 dark:bg-zinc-800 flex items-center justify-center text-xs font-bold text-fg-muted flex-shrink-0">
-                              {author.authorName.charAt(0)}
-                            </div>
-                          }
-                        />
-                        <span className="text-slate-800 dark:text-zinc-200 truncate hover:text-emerald-500">{author.authorName}</span>
-                      </Link>
-                    </td>
-                    <td
-                      className="px-3 py-2 text-fg-muted whitespace-nowrap tabular-nums"
-                      title={author.statistics && author.statistics.bookCount > 0
-                        ? `${t('authors.booksInLibrary', '{{have}} of {{total}} in library', { have: author.statistics.availableBookCount, total: author.statistics.bookCount })}. ${t('authors.booksInLibraryHint', 'A book counts once at least one of its files is in your library.')}`
-                        : undefined}
-                    >
-                      {author.statistics && author.statistics.bookCount > 0 ? `${author.statistics.availableBookCount} / ${author.statistics.bookCount}` : '—'}
-                    </td>
-                    {anyRating && (
-                      <td className="px-3 py-2 text-fg-muted whitespace-nowrap">
-                        {author.averageRating > 0 ? `★ ${author.averageRating.toFixed(2)}` : '—'}
-                      </td>
-                    )}
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <Switch
-                        checked={author.monitored}
-                        onChange={() => handleToggleMonitored(author)}
-                        label={author.monitored ? t('authors.stopMonitoring', 'Stop monitoring') : t('authors.startMonitoring', 'Monitor')}
-                      />
-                    </td>
-                    <td className="px-3 py-2 text-right whitespace-nowrap">
-                      <MoreMenu
-                        label={t('common.moreActions', 'More')}
-                        ariaLabel={t('authors.moreActionsFor', 'More actions for {{name}}', { name: author.authorName })}
-                        buttonClassName={`${btn.ghost} ${btnSize.sm}`}
-                        items={[
-                          { label: t('common.refresh'), onSelect: () => { api.refreshAuthor(author.id).then(load) } },
-                          { label: t('common.delete'), onSelect: () => handleDelete(author.id), danger: true },
-                        ]}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <DataTable
+          rows={authors}
+          rowKey={a => a.id}
+          rowLabel={a => a.authorName}
+          ariaLabel={t('authors.title')}
+          sort={{ ...columnSort, onSort: sortByColumn }}
+          selection={{
+            selected: selectedIds,
+            onToggle: toggleSelect,
+            onToggleAll: select => (select ? selectAllOnPage() : clearSelection()),
+          }}
+          columns={authorColumns}
+          rowActions={author => (
+            <MoreMenu
+              label={t('common.moreActions', 'More')}
+              ariaLabel={t('authors.moreActionsFor', 'More actions for {{name}}', { name: author.authorName })}
+              buttonClassName={`${btn.ghost} ${btnSize.sm}`}
+              items={[
+                { label: t('common.refresh'), onSelect: () => { api.refreshAuthor(author.id).then(load) } },
+                { label: t('common.delete'), onSelect: () => handleDelete(author.id), danger: true },
+              ]}
+            />
+          )}
+        />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {authors.map((author, i) => (
             <div
               key={author.id}
+              data-testid="author-card"
               className={`border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden hover:border-emerald-500 transition-colors ${selectedIds.has(author.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800'}`}
             >
               <div className="relative">
-                <input
-                  type="checkbox"
-                  checked={selectedIds.has(author.id)}
-                  onChange={() => toggleSelect(author.id)}
-                  className={`absolute top-2 left-2 z-10 rounded-full border-slate-400 dark:border-zinc-600 ${selectedIds.has(author.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
-                  title={`Select ${author.authorName}`}
-                  aria-label={`Select ${author.authorName}`}
-                />
-                <Link to={`/author/${author.id}`} state={authorNavState(i)} className="flex gap-3 p-4 rounded-t-lg focus-visible:-outline-offset-2 hover:bg-slate-200/40 dark:hover:bg-zinc-800/40 transition-colors">
+                <label
+                  className="absolute top-0 left-0 z-10 flex p-2 pointer-coarse:p-3.5 cursor-pointer"
+                  onClick={e => e.stopPropagation()}
+                >
+                  <Checkbox
+                    checked={selectedIds.has(author.id)}
+                    onChange={() => toggleSelect(author.id)}
+                    label={t('dataTable.selectRow', 'Select {{name}}', { name: author.authorName })}
+                    className={selectedIds.has(author.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}
+                  />
+                </label>
+                <Link to={`/author/${author.id}`} state={authorNavState(i)} className="flex gap-3 p-4 pl-9 rounded-t-lg focus-visible:-outline-offset-2 hover:bg-slate-200/40 dark:hover:bg-zinc-800/40 transition-colors">
                   <CoverImage loading="lazy" decoding="async" src={author.imageUrl} alt={author.authorName} className="w-16 h-16 rounded-full object-cover flex-shrink-0"
                     fallback={
                       <div className="w-16 h-16 rounded-full bg-slate-200 dark:bg-zinc-800 flex items-center justify-center flex-shrink-0 text-xl font-bold text-fg-muted">
@@ -683,9 +623,12 @@ export default function AuthorsPage() {
                   />
                   <div className="min-w-0">
                     <h3 className="font-semibold truncate">{author.authorName}</h3>
-                    <p className="text-xs text-fg-muted mt-1 line-clamp-2">
-                      {author.description || t('authors.noDescription')}
-                    </p>
+                    {/* No placeholder sentence when there is no description:
+                        the table shows nothing for the same missing data, and
+                        "No description available" on most cards was noise. */}
+                    {author.description && (
+                      <p className="text-xs text-fg-muted mt-1 line-clamp-2">{author.description}</p>
+                    )}
                     {author.statistics && author.statistics.bookCount > 0 && (
                       <p className="text-xs text-fg-muted mt-1 tabular-nums">
                         {t('authors.booksInLibrary', '{{have}} of {{total}} in library', { have: author.statistics.availableBookCount, total: author.statistics.bookCount })}
@@ -694,19 +637,21 @@ export default function AuthorsPage() {
                   </div>
                 </Link>
               </div>
+              {/* A browse card shows monitored as a badge, not a switch. Sixty
+                  live toggles on a page whose job is finding an author read as
+                  settings to flip. Monitoring changes from the card's menu, the
+                  table's switch, the bulk bar or the author page. */}
               <div className="flex items-center justify-between px-4 py-2 bg-slate-200/50 dark:bg-zinc-800/50 border-t border-slate-200 dark:border-zinc-800">
-                <Switch
-                  checked={author.monitored}
-                  onChange={() => handleToggleMonitored(author)}
-                  label={author.monitored ? t('authors.stopMonitoring', 'Stop monitoring') : t('authors.startMonitoring', 'Monitor')}
-                >
-                  {author.monitored ? t('authors.monitored') : t('authors.unmonitored')}
-                </Switch>
+                <MonitoredBadge monitored={author.monitored} />
                 <MoreMenu
                   label={t('common.moreActions', 'More')}
                   ariaLabel={t('authors.moreActionsFor', 'More actions for {{name}}', { name: author.authorName })}
                   buttonClassName={`${btn.ghost} ${btnSize.sm}`}
                   items={[
+                    {
+                      label: author.monitored ? t('authors.stopMonitoring', 'Stop monitoring') : t('authors.startMonitoring', 'Monitor'),
+                      onSelect: () => handleToggleMonitored(author),
+                    },
                     { label: t('common.refresh'), onSelect: () => { api.refreshAuthor(author.id).then(load) }, title: t('authors.refreshMetadata', 'Refresh metadata') },
                     { label: t('common.delete'), onSelect: () => handleDelete(author.id), danger: true },
                   ]}
@@ -915,5 +860,17 @@ export default function AuthorsPage() {
         />
       )}
     </div>
+  )
+}
+
+// Read-only monitored state for a browse card. Deliberately not shaped like
+// the Switch (see Switch.tsx: a badge and a toggle must not look alike).
+function MonitoredBadge({ monitored }: { monitored: boolean }) {
+  const { t } = useTranslation()
+  return (
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium ${monitored ? 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-400' : 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-300'}`}>
+      <span aria-hidden="true">{monitored ? '●' : '○'}</span>
+      {monitored ? t('authors.monitored') : t('authors.unmonitored')}
+    </span>
   )
 }

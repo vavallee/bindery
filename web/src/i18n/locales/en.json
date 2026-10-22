@@ -463,7 +463,16 @@
     "bulkSetMediaTypeConfirm": "Set the media type for every book of {{count}} selected authors to {{mediaType}}? This rewrites existing book rows and may re-evaluate wanted/missing status.",
     "bulkSetEbook": "Set ebook",
     "bulkSetAudiobook": "Set audiobook",
-    "bulkSetBoth": "Set both"
+    "bulkSetBoth": "Set both",
+    "pageActions": "More author actions",
+    "countLabel_one": "{{count}} author",
+    "countLabel_other": "{{count}} authors",
+    "sortMostBooks": "Most books",
+    "sortFewestBooks": "Fewest books",
+    "sortRatingHigh": "Highest rated",
+    "sortRatingLow": "Lowest rated",
+    "sortMonitoredFirst": "Monitored first",
+    "sortUnmonitoredFirst": "Not monitored first"
   },
   "authorDetail": {
     "nav": {
