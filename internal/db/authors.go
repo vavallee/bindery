@@ -162,10 +162,12 @@ func authorSortOrder(sort string) string {
 		return "book_count ASC, sort_key ASC"
 	case "books-desc":
 		return "book_count DESC, sort_key ASC"
+	// Unrated authors (0) sort last in both directions, as books do:
+	// "Lowest rated" listed every unrated author first.
 	case "rating-asc":
-		return "average_rating ASC, sort_key ASC"
+		return "average_rating <= 0, average_rating ASC, sort_key ASC"
 	case "rating-desc":
-		return "average_rating DESC, sort_key ASC"
+		return "average_rating <= 0, average_rating DESC, sort_key ASC"
 	case "monitored-asc":
 		return "monitored ASC, sort_key ASC"
 	case "monitored-desc":
