@@ -2849,7 +2849,6 @@
     "unexclude": "Opphev ekskludering",
     "excludeHint": "Ekskluder denne boken fra søk og Ønsket-siden",
     "unexcludeHint": "Ta med denne boken i søk og på Ønsket-siden igjen",
-    "deleteFile": "Slett fil",
     "deleteThisFile": "Slett denne filen",
     "deleteThisFileHint": "Slett bare denne filen permanent fra disken",
     "deletingFile": "Sletter…",

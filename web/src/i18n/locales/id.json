@@ -602,7 +602,6 @@
     "unexclude": "Un-exclude",
     "excludeHint": "Exclude this book from searches and the Wanted page",
     "unexcludeHint": "Un-exclude this book from searches and the Wanted page",
-    "deleteFile": "Delete file",
     "deletingFile": "Deleting…",
     "audiobookHeading": "Audiobook metadata",
     "asinLabel": "ASIN (Audible identifier)",

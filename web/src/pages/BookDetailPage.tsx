@@ -960,6 +960,10 @@ function BookDetailPageInner() {
         : t('bookDetail.searchEbookIndexers')
 
   const groupIsUntyped = (g: { rows: FileRow[] }) => g.rows.some(r => r.legacyUntyped)
+  // Format groups that hold at least one file, for the per-format deletes.
+  const filledGroups = groups.filter(g => g.rows.length > 0)
+  const mediaTypeName = (format: MediaType) =>
+    format === 'audiobook' ? t('common.audiobook') : format === 'both' ? t('common.both') : t('common.ebook')
 
   // Download is per ROW, not per format group (#2408).
   //
@@ -1055,16 +1059,22 @@ function BookDetailPageInner() {
               )
             })()}
             {/* The badge only reports monitoring; changing it meant going back
-                to the Books list and using the bulk action (#2417). No state
-                text next to the switch — the badge already carries it, and the
-                label matches the list's Monitor / Unmonitor wording. */}
+                to the Books list and using the bulk action (#2417). The switch
+                is labelled: unlabelled, it was "Monitored" only by inference
+                from the author page. */}
             <Switch
               checked={book.monitored}
               onChange={() => saveField({ monitored: !book.monitored })}
-              label={book.monitored ? t('common.unmonitor') : t('common.monitor')}
+              // The accessible name is the visible text, so "click Monitored"
+              // works by voice (WCAG 2.5.3); aria-checked carries on or off.
+              // The tooltip keeps saying what a click does.
+              label={t('bookDetail.monitoredLabel', 'Monitored')}
+              title={book.monitored ? t('common.unmonitor') : t('common.monitor')}
               disabled={saving}
               className="px-1"
-            />
+            >
+              {t('bookDetail.monitoredLabel', 'Monitored')}
+            </Switch>
             {book.excluded && (
               <span className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
                 {t('bookDetail.excludedBadge')}
@@ -1131,6 +1141,15 @@ function BookDetailPageInner() {
               </>
             )}
           </div>
+
+          {/* Genres were saved and editable but shown nowhere on the page. */}
+          {book.genres && book.genres.length > 0 && (
+            <ul className="flex flex-wrap gap-1.5 mt-2" aria-label={t('bookDetail.genresLabel', 'Genres')}>
+              {book.genres.map(g => (
+                <li key={g} className="px-2 py-0.5 rounded bg-slate-200 dark:bg-zinc-800 text-[11px] text-slate-700 dark:text-zinc-300">{g}</li>
+              ))}
+            </ul>
+          )}
 
           {/* Clamped with show more/less, matching AuthorDetailPage. max-w-prose
               keeps the line length readable now the page runs to 7xl. */}
@@ -1313,32 +1332,12 @@ function BookDetailPageInner() {
                         <span className="text-xs text-fg-muted">
                           {t('bookDetail.fileCount', { count: group.rows.length })}
                         </span>
-                        {/* No Download here any more: a group of three epubs
-                            has no single file to hand back, which is exactly
-                            how #2408 shipped. Each row carries its own. Delete
-                            stays, because deleting the whole format IS a
-                            group-level action and the per-row Deregister in
-                            the overflow menu is a different thing. */}
-                        {/* Ghost-danger, not solid red. Deleting the file is
-                            reversible by re-downloading; solid red stays
-                            reserved for "Delete book + files" in the Danger
-                            zone, which is not. ?format=-scoped so the sibling
-                            format survives — except the bare legacy row,
-                            whose proxy format the server may contradict; that
-                            one goes format-less, exact because it is the only
-                            file (see FileRow.legacyUntyped). */}
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget({
-                            format: groupIsUntyped(group) ? undefined : group.format,
-                            paths: group.rows.map(r => r.path),
-                          })}
-                          disabled={deletingFile || deregistering || deletingBook}
-                          className={`${btn.danger} ${btnSize.sm}`}
-                        >
-                          <span aria-hidden>🗑 </span>
-                          {group.rows.length > 1 ? t('bookDetail.deleteFiles') : t('bookDetail.deleteFile')}
-                        </button>
+                        {/* No Download here: a group of three epubs has no
+                            single file to hand back, which is exactly how
+                            #2408 shipped. Each row carries its own. No Delete
+                            either: deleting a format lives in the section's
+                            More menu with every other delete, so one screen
+                            has one place to delete from instead of four. */}
                       </div>
 
                       <ul>
@@ -1389,12 +1388,19 @@ function BookDetailPageInner() {
                               ariaLabel={t('bookDetail.rowMore', { name: baseName(row.path) })}
                               buttonClassName="shrink-0 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5 text-fg-muted"
                               items={[
+                                // Fix match is about one file (which book it
+                                // belongs to), so it lives on the file's row
+                                // only. Re-bind, about the book's metadata
+                                // record, is in the Metadata source section.
                                 {
                                   label: t('bookDetail.fixMatch.button', 'Fix match'),
                                   title: t('bookDetail.fixMatch.hint', 'Say which book this file really belongs to'),
                                   disabled: deletingFile || deregistering || deletingBook,
                                   onSelect: () => setFixMatchRow(row),
                                 },
+                                // With one file, deleting it is "Delete all
+                                // files" in the section menu; listing it here
+                                // too was a second place for the same action.
                                 {
                                   label: t('bookDetail.deregister.button'),
                                   title: row.tracked
@@ -1403,7 +1409,7 @@ function BookDetailPageInner() {
                                   disabled: !row.tracked || deletingFile || deregistering || deletingBook,
                                   onSelect: () => setDeregisterTarget(row),
                                 },
-                                {
+                                ...(rows.length > 1 ? [{
                                   label: t('bookDetail.deleteThisFile', 'Delete this file'),
                                   title: t('bookDetail.deleteThisFileHint', 'Permanently delete only this file from disk'),
                                   danger: true,
@@ -1412,7 +1418,7 @@ function BookDetailPageInner() {
                                     singlePath: row.path,
                                     paths: [row.path],
                                   }),
-                                },
+                                }] : []),
                               ]}
                             />
                           </li>
@@ -1437,21 +1443,13 @@ function BookDetailPageInner() {
             className="mt-4 pt-4 border-t border-slate-200 dark:border-zinc-800 flex flex-wrap items-center gap-2"
             data-testid="file-section-actions"
           >
-            <button type="button" onClick={() => setShowRebind(true)} className={actionBtnCls}>
-              {t('bookDetail.rebind')}
-            </button>
-            {/* With exactly one file there is nothing to disambiguate, so keep
-                Fix match at the surface it used to live on instead of one
-                level down in the row menu. Multi-file books pick per row. */}
-            {rows.length === 1 && (
-              <button
-                type="button"
-                onClick={() => setFixMatchRow(rows[0])}
-                disabled={deletingFile || deregistering || deletingBook}
-                className={actionBtnCls}
-                title={t('bookDetail.fixMatch.hint', 'Say which book this file really belongs to')}
-              >
-                {t('bookDetail.fixMatch.button', 'Fix match')}
+            {/* Re-bind changes which metadata record the book is, not which
+                book a file belongs to, so it sits with the Metadata source
+                below, whose sentence explains it. Here only when that section
+                has nothing to show. */}
+            {identityRows.length === 0 && (
+              <button type="button" onClick={() => setShowRebind(true)} className={actionBtnCls}>
+                {t('bookDetail.rebind')}
               </button>
             )}
             {/* Exclude and Rename files are the rarely-reached ones; keeping
@@ -1477,6 +1475,19 @@ function BookDetailPageInner() {
                   disabled: !hasAnyFile || deletingFile || deregistering || deletingBook,
                   onSelect: () => setShowRename(true),
                 },
+                // Delete one format's files, where the book has files in more
+                // than one format. ?format=-scoped so the sibling format
+                // survives (the bare legacy row goes format-less, exact
+                // because it is then the only file; see FileRow.legacyUntyped).
+                ...(filledGroups.length > 1 ? filledGroups.map(group => ({
+                  label: t('bookDetail.deleteFormatFiles', { format: mediaTypeName(group.format), defaultValue: 'Delete {{format}} files' }),
+                  danger: true,
+                  disabled: deletingFile || deregistering || deletingBook,
+                  onSelect: () => setDeleteTarget({
+                    format: groupIsUntyped(group) ? undefined : group.format,
+                    paths: group.rows.map(r => r.path),
+                  }),
+                })) : []),
                 {
                   // The only caller allowed to send a format-less DELETE.
                   // Kept out of the per-group controls so the wide delete is
@@ -1575,9 +1586,14 @@ function BookDetailPageInner() {
               <ClipboardManualFallback text={idClipboard.manualText} />
             </div>
           )}
-          <p className="mt-3 text-xs text-fg-muted">
-            {t('bookDetail.metadataSource.hint', 'Re-bind this book if the record above is the wrong one.')}
-          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button type="button" onClick={() => setShowRebind(true)} className={actionBtnCls}>
+              {t('bookDetail.rebind')}
+            </button>
+            <p className="text-xs text-fg-muted">
+              {t('bookDetail.metadataSource.hint', 'Re-bind this book if the record above is the wrong one.')}
+            </p>
+          </div>
         </Section>
       )}
 
@@ -1695,11 +1711,18 @@ function BookDetailPageInner() {
                   aria-hidden
                   className={`w-2 h-2 rounded-full flex-shrink-0 ${eventDotColors[ev.eventType] ?? 'bg-slate-400 dark:bg-zinc-600'}`}
                 />
-                <span className="font-medium text-slate-700 dark:text-zinc-300 flex-shrink-0">
-                  {t(`bookDetail.event.${ev.eventType}`, ev.eventType)}
-                </span>
-                <span className="font-mono text-xs text-fg-muted truncate min-w-0">
-                  {ev.sourceTitle || '—'}
+                {/* The event is the line you scan; the release name is detail,
+                    so it sits under it, smaller and muted, instead of beside it
+                    at the same weight. */}
+                <span className="flex flex-col min-w-0">
+                  <span className="font-medium text-slate-700 dark:text-zinc-300">
+                    {t(`bookDetail.event.${ev.eventType}`, ev.eventType)}
+                  </span>
+                  {ev.sourceTitle && (
+                    <span className="font-mono text-[11px] text-fg-muted truncate" title={ev.sourceTitle}>
+                      {ev.sourceTitle}
+                    </span>
+                  )}
                 </span>
                 <span className="ml-auto text-xs text-fg-muted whitespace-nowrap flex-shrink-0">
                   {new Date(ev.createdAt).toLocaleString()}

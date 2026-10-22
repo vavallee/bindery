@@ -2911,13 +2911,14 @@
       "seriesNone": "No series",
       "seriesNew": "New series…",
       "fieldNewSeries": "New series name",
-      "fieldPosition": "Position"
+      "fieldPosition": "Position",
+      "genresPlaceholder": "e.g. Fantasy, Epic",
+      "languagePlaceholder": "e.g. en"
     },
     "exclude": "Exclude",
     "unexclude": "Un-exclude",
     "excludeHint": "Exclude this book from searches and the Wanted page",
     "unexcludeHint": "Un-exclude this book from searches and the Wanted page",
-    "deleteFile": "Delete file",
     "deleteThisFile": "Delete this file",
     "deleteThisFileHint": "Permanently delete only this file from disk",
     "deletingFile": "Deleting…",
@@ -3023,7 +3024,10 @@
       "ebooks": "Ebooks ({{n}})",
       "audiobooks": "Audiobooks ({{n}})",
       "all": "Results ({{n}})"
-    }
+    },
+    "monitoredLabel": "Monitored",
+    "genresLabel": "Genres",
+    "deleteFormatFiles": "Delete {{format}} files"
   },
   "bookRebind": {
     "title": "Re-bind metadata",
