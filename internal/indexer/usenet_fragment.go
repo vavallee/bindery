@@ -31,35 +31,44 @@ import (
 //
 // What this deliberately does not drop:
 //
-//   - "Part 1 of 2", "Part 2 of 2" and the like. MM under 10 is the shape of
-//     one recording split into a few parts, the normal form of a long
-//     audiobook, and the multi-book pack code (pack.go) already makes the same
-//     call for "part".
+//   - "Part 1 of 2" and "Part 2 of 2". A two part posting is the likeliest
+//     shape of one recording split in two, and the multi-book pack code
+//     (pack.go) already makes the same call for "part".
 //   - "Catch 22 of Them", "1 of a Kind": MM must be digits, and "Catch22"
 //     does not hold a chapter marker because "ch" must start a word.
 //
 // Lone parts of a set (#3417). Bindery imports one grab as one book and cannot
 // assemble several grabs, so a release that says it is one slice of a set is a
-// partial book whatever MM is. "Part 3 of 5" is therefore dropped for an
-// audiobook, and so are "Pt 2 of 3", "Disc 2 of 4" and "CD 3 of 8". The cost,
-// accepted on purpose, is that a recording posted as "Part 1 of 2" is no longer
-// eligible. The rule is kept as narrow as it can be:
+// partial book. "Part 3 of 5" is therefore dropped for an audiobook, and so are
+// "Pt 2 of 3", "Disc 2 of 4" and "CD 3 of 8". The cost, accepted on purpose, is
+// that a recording posted as "Part 1 of 3" is no longer eligible. The rule is
+// kept as narrow as it can be:
 //
 //   - the counter must follow a part word (part, pt, disc, disk, cd) directly,
 //     so "Book 3 of 12" and a bare "3 of 5" are not touched;
-//   - MM must be 2 or more, so "Part 1 of 1" is a whole recording;
-//   - a range ("Parts 1-5 of 5", "Part 1-2 of 5") is not a lone part;
-//   - "all parts" or "complete audiobook" in the name means the set is in one
-//     release;
+//   - MM must be 3 or more. "Part 1 of 2" is the likeliest shape of one
+//     recording split in two, while "Part N of 5" is almost certainly a slice;
+//   - "all parts" or the word "complete" in the name means the set is in one
+//     release ("Disc 1 of 8 Complete"). "Unabridged" is not such a word,
+//     because individual parts are routinely labelled unabridged;
 //   - it applies only when the title names an audio container, or names no
 //     format and the search is for an audiobook, so ebooks and ebook searches
 //     are never touched;
 //   - a counter that the wanted book's own title contains is kept.
 //
+// The rule runs on every result, so it applies to torrent results as well as
+// usenet ones. The wanted title is the one the search used, which keeps its
+// subtitle; only the unsearched half of a bilingual "A / B" title (see
+// SearchTitle) is not seen, and a release named in the other language would not
+// carry that phrase anyway.
+//
+// Known false keeps (a lone part that is not recognised): "Part 3/5", "3/5",
+// "Part III of V", "Vol 3 of 5", "Part One of Two".
+//
 // Known limits: a title that really contains "NN of MM" with MM 10 or more and
 // no ebook format ("12 of 56 Stories") is dropped; a lone part posted without a
 // part word ("3 of 5") is kept when MM is under 10; and a whole recording posted
-// under a "Part 1 of 2" name is dropped.
+// under a "Part 1 of 3" or longer name is dropped.
 
 // reasonChapterFragment is the FilterDebug reason for a per-chapter fragment.
 const reasonChapterFragment = "looks like one chapter or part of a larger post (Ch NN, NN of MM)"
@@ -75,7 +84,7 @@ var (
 	// partOfRe is a part word straight before "N of M".
 	partOfRe = regexp.MustCompile(`(?i)\b(?:part|pt|disc|disk|cd)\.?\s*#?\s*(\d{1,3})\s*of\s*(\d{1,3})\b`)
 	// wholeSetRe says the release carries every part.
-	wholeSetRe = regexp.MustCompile(`(?i)\ball\s+(?:\d+\s+)?parts\b|\bcomplete\s+(?:audiobook|book|set|recording)\b`)
+	wholeSetRe = regexp.MustCompile(`(?i)\ball\s+(?:\d+\s+)?parts\b|\bcomplete\b`)
 	// precedingWordRe captures the last word before an index.
 	precedingWordRe = regexp.MustCompile(`(?i)([a-z]+)\.?\s*#?\s*$`)
 )
@@ -145,7 +154,7 @@ func isLoneAudioPart(title string, sc junkScope) bool {
 	}
 	wanted := squashSpaces(sc.WantedTitle)
 	for _, m := range partOfRe.FindAllStringSubmatch(title, -1) {
-		if total, _ := strconv.Atoi(m[2]); total < 2 {
+		if total, _ := strconv.Atoi(m[2]); total < 3 {
 			continue
 		}
 		if wanted != "" && strings.Contains(wanted, squashSpaces(m[0])) {
