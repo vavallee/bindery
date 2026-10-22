@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next'
 import type { AdoptionItem } from '../../api/client'
-import { matchStrength, preselectable } from './adoptionMatch'
+import { isWeakCandidate, matchStrength, preselectable } from './adoptionMatch'
 
 // The one sentence a row says about itself. It is written from facts the scan
 // recorded (the parsed author, the closest title) and ends in the thing to do
@@ -25,7 +25,10 @@ export function adoptionHint(item: AdoptionItem, t: TFunction): AdoptionHintText
   const author = item.parsedAuthor
   // A look alike by the folder's author is not what the row is about when the
   // files name someone else (#2942); the hint speaks of the files' author.
-  const top = preselectable(item)
+  // A suggestion below WEAK_MATCH_SCORE is not offered as a match, so the
+  // sentence speaks as if there were none, like the row does.
+  const candidate = preselectable(item)
+  const top = isWeakCandidate(candidate) ? undefined : candidate
 
   if (item.reason === 'too_small') {
     return {
