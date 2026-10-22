@@ -418,11 +418,23 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 	if err != nil {
 		return nil, 0, err
 	}
+	// With a search, relevance leads only under the default sort: none,
+	// title-az (which every list starts on), or a value bookSortOrder does
+	// not know and reads as title order. A sort the reader picked, such as
+	// Newest, leads and relevance breaks its ties: ranked first, the chosen
+	// sort only reordered books within one rank tier and looked ignored while
+	// the control still said Newest.
+	sortOrder := bookSortOrder(f.Sort)
+	orderBy := searchOrder + sortOrder
+	if searchOrder != "" && sortOrder != bookTitleOrder {
+		orderBy = sortOrder + ", " + strings.TrimSuffix(searchOrder, ", ")
+	}
 	q := bookCTE + " SELECT " + bookColumns + " FROM books " + bookJoins + " " + where +
-		" ORDER BY " + searchOrder + bookSortOrder(f.Sort) + " LIMIT ? OFFSET ?"
+		" ORDER BY " + orderBy + " LIMIT ? OFFSET ?"
 	// The rank placeholders live in ORDER BY, which the parser reaches after
 	// WHERE, so their values follow the filter's. The count query above has no
-	// ORDER BY and therefore takes args alone.
+	// ORDER BY and therefore takes args alone. Moving the rank after the sort
+	// keeps the order of the placeholders: the sort clauses bind none.
 	pageArgs := append(append(append([]any{}, args...), rankArgs...), limit, offset)
 	books, err := r.query(ctx, q, pageArgs)
 	if err != nil {

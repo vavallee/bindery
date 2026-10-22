@@ -758,7 +758,14 @@
     "changeFormat": "Change format for {{title}}",
     "authorNotMonitored": "Author not monitored, so this is not searched automatically",
     "blocklistSelectedConfirm_one": "Blocklist {{count}} book? It is marked skipped, leaves Wanted and is not searched again.",
-    "blocklistSelectedConfirm_other": "Blocklist {{count}} books? They are marked skipped, leave Wanted and are not searched again."
+    "blocklistSelectedConfirm_other": "Blocklist {{count}} books? They are marked skipped, leave Wanted and are not searched again.",
+    "searchPage_one": "Search this page ({{count}})",
+    "searchPage_other": "Search this page ({{count}})",
+    "searchPageHint": "Search indexers for every book on this page. Narrow the list with the filters first.",
+    "searchPageConfirm_one": "Search indexers for the {{count}} book on this page?",
+    "searchPageConfirm_other": "Search indexers for the {{count}} books on this page?",
+    "excludedLabel": "Excluded books",
+    "excludedHidden": "Hidden"
   },
   "history": {
     "title": "History",
