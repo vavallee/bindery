@@ -1577,11 +1577,18 @@ export default function AuthorDetailPage() {
             label: t('books.setBoth'),
             onClick: () => runBulk('set_media_type', t('books.setBoth'), undefined, 'both'),
           },
-          {
-            label: t('authorDetail.bulk.exclude'),
-            variant: 'caution',
-            onClick: () => runBulk('exclude', t('authorDetail.bulk.exclude'), t('authorDetail.bulk.excludeConfirm', { count: selected.size })),
-          },
+          // The Excluded view lists only excluded books, so there the one
+          // exclusion action is the way back (#3454).
+          statusFilter === 'excluded'
+            ? {
+                label: t('authorDetail.bulk.unexclude', 'Un-exclude'),
+                onClick: () => runBulk('unexclude', t('authorDetail.bulk.unexclude', 'Un-exclude')),
+              }
+            : {
+                label: t('authorDetail.bulk.exclude'),
+                variant: 'caution' as const,
+                onClick: () => runBulk('exclude', t('authorDetail.bulk.exclude'), t('authorDetail.bulk.excludeConfirm', { count: selected.size })),
+              },
           {
             label: t('authorDetail.bulk.delete'),
             variant: 'danger',

@@ -765,6 +765,37 @@ describe('AuthorDetailPage', () => {
     })
   })
 
+  // #3454: Exclude was offered on every selection and the Excluded view had
+  // no way back. There the bar swaps it for Un-exclude, with no confirmation:
+  // it undoes a hiding rather than hiding anything.
+  it('offers Un-exclude instead of Exclude in the Excluded view (#3454)', async () => {
+    vi.mocked(api.bulkActionBooks).mockResolvedValue({
+      results: { '201': { ok: true }, '202': { ok: true } },
+    })
+    const kept = makeBook({ id: 200, title: 'Still Here', status: 'imported' })
+    const gone1 = makeBook({ id: 201, title: 'Hidden One', status: 'wanted', excluded: true })
+    const gone2 = makeBook({ id: 202, title: 'Hidden Two', status: 'wanted', excluded: true })
+    renderAuthorDetailPage([kept, gone1, gone2], 'table')
+
+    await screen.findByText('Still Here')
+    fireEvent.click(within(rowForTitle('Still Here')).getByRole('checkbox'))
+    expect(await screen.findByRole('button', { name: 'Exclude' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Un-exclude' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'excluded' } })
+    await screen.findByText('Hidden One')
+    fireEvent.click(within(rowForTitle('Hidden One')).getByRole('checkbox'))
+    fireEvent.click(within(rowForTitle('Hidden Two')).getByRole('checkbox'))
+
+    expect(screen.queryByRole('button', { name: 'Exclude' })).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: 'Un-exclude' }))
+
+    await waitFor(() => {
+      expect(api.bulkActionBooks).toHaveBeenCalledWith([201, 202], 'unexclude', undefined)
+    })
+  })
+
   // #2066: the author page's book list had no media-type bulk action at all,
   // so correcting several mistagged titles under one author meant editing each
   // book or leaving the page for the global Books view.

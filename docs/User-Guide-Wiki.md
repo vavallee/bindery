@@ -154,6 +154,9 @@ Two related labels:
   unwanted catalogue book is temporary — the next refresh recreates it.
   **Exclude** is the sticky action for every author: it hides the book, keeps
   it out of searches, and a refresh will not recreate it under a new id either.
+  To bring excluded books back, set the author page's status filter to
+  **Excluded**, tick the books and choose **Un-exclude**; a single book has the
+  same button on its own page.
 
 ### 3. Bindery never watches folders
 

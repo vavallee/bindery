@@ -463,6 +463,7 @@
       "monitor": "Monitor",
       "unmonitor": "Unmonitor",
       "exclude": "Exclude",
+      "unexclude": "Un-exclude",
       "delete": "Delete",
       "excludeConfirm": "Exclude {{count}} book(s)? Excluded books are hidden and blocked from re-import on the next metadata refresh.",
       "deleteConfirm": "Delete {{count}} book(s)? Files on disk are not removed.",
