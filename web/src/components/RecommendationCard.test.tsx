@@ -92,6 +92,14 @@ describe('RecommendationCard — rendering', () => {
     expect(screen.getByText('(1200)')).toBeInTheDocument()
   })
 
+  it('states the rating as a number and hides the stars from screen readers (#3084)', () => {
+    const { container } = render(<RecommendationCard rec={{ ...baseRec, rating: 4.24 }} onDismiss={vi.fn()} onAdd={vi.fn()} onExcludeAuthor={vi.fn()} />)
+    expect(screen.getByText('4.2')).toBeInTheDocument()
+    expect(screen.getByText('Rated 4.2 out of 5')).toHaveClass('sr-only')
+    const filled = container.querySelectorAll('[aria-hidden="true"] svg.text-amber-500')
+    expect(filled).toHaveLength(4)
+  })
+
   it('hides ratings count when ratingsCount is 0', () => {
     const rec = { ...baseRec, ratingsCount: 0 }
     render(<RecommendationCard rec={rec} onDismiss={vi.fn()} onAdd={vi.fn()} onExcludeAuthor={vi.fn()} />)

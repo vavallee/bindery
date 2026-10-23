@@ -86,6 +86,13 @@ type Indexer struct {
 	// of the cap is spent. It is never persisted and anything a client sends in
 	// it is ignored. nil on an indexer with no cap set.
 	DailyQueriesUsed *int `json:"dailyQueriesUsed,omitempty"`
+	// DownloadClientID pins this indexer to one download client (#3080). nil,
+	// the default, keeps today's routing. When set, every grab from this
+	// indexer goes to that client and to no other: a disabled, missing or
+	// wrong protocol client fails the grab instead of falling back. It is local
+	// configuration like Priority and the seed limits, so a Prowlarr sync keeps
+	// it.
+	DownloadClientID *int64 `json:"downloadClientId"`
 	// Search health, written by the searcher rather than by the user (#1935).
 	// All four are nil on an indexer that has never been searched.
 	//
@@ -106,6 +113,15 @@ type Indexer struct {
 	LastSuccessAt  *time.Time `json:"lastSuccessAt,omitempty"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	UpdatedAt      time.Time  `json:"updatedAt"`
+}
+
+// Protocol is the release protocol this indexer serves: torznab is torrent and
+// everything else is usenet, the same mapping the searcher stamps on results.
+func (i Indexer) Protocol() string {
+	if i.Type == "torznab" {
+		return "torrent"
+	}
+	return "usenet"
 }
 
 // NeedsAttention reports whether the last search against this indexer failed

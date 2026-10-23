@@ -3,7 +3,7 @@ import { act, render, screen, fireEvent, waitFor, within } from '@testing-librar
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { ModalHistoryProvider } from '../components/useModal'
 import SeriesPage from './SeriesPage'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import type { Book, Series, SeriesHardcoverLink, SeriesHardcoverSearchResult, SystemStatus } from '../api/client'
 import i18n from '../i18n'
 import { acceptConfirm } from '../test-utils'
@@ -615,6 +615,226 @@ describe('SeriesPage', () => {
 
     await waitFor(() => expect(api.createSeries).toHaveBeenCalledWith({ title: 'Dune Chronicles' }))
     expect(await screen.findByRole('heading', { name: 'Dune Chronicles' })).toBeInTheDocument()
+  })
+
+  describe('adding a series from Hardcover (#1706)', () => {
+    const stormlightResult: SeriesHardcoverSearchResult = {
+      foreignId: 'hc-series:42',
+      providerId: '42',
+      slug: 'the-stormlight-archive',
+      title: 'The Stormlight Archive',
+      authorName: 'Brandon Sanderson',
+      bookCount: 4,
+      readersCount: 900,
+      books: ['The Way of Kings', 'Words of Radiance', 'Oathbringer', 'Rhythm of War', 'Wind and Truth'],
+    }
+    const link: SeriesHardcoverLink = {
+      id: 1,
+      seriesId: 31,
+      hardcoverSeriesId: 'hc-series:42',
+      hardcoverProviderId: '42',
+      hardcoverTitle: 'The Stormlight Archive',
+      hardcoverAuthorName: 'Brandon Sanderson',
+      hardcoverBookCount: 4,
+      confidence: 1,
+      linkedBy: 'manual',
+      linkedAt: '2026-01-01T00:00:00Z',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    }
+    const created: Series = {
+      id: 31,
+      foreignSeriesId: 'manual:series:31',
+      title: 'The Stormlight Archive',
+      description: '',
+      monitored: false,
+      books: [],
+      hardcoverLink: link,
+    }
+    const emptyDiff = { seriesId: 31, link, present: [], missing: [], localOnly: [], uncertain: [], covered: [], presentCount: 0, missingCount: 0 }
+
+    async function openAddModal() {
+      fireEvent.click(await screen.findByRole('button', { name: 'Add Series' }))
+      return screen.findByRole('dialog', { name: 'Add Series' })
+    }
+
+    async function searchFor(dialog: HTMLElement, term: string) {
+      fireEvent.change(within(dialog).getByRole('searchbox', { name: 'Search Hardcover for a series' }), { target: { value: term } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Search' }))
+      await within(dialog).findByText('Brandon Sanderson')
+    }
+
+    it('offers the Hardcover search only when enhanced Hardcover is on', async () => {
+      const off: SystemStatus = { version: 'dev', commit: 'unknown', buildDate: '', enhancedHardcoverApi: false, hardcoverTokenConfigured: true, enhancedHardcoverDisabledReason: 'env_disabled' }
+      const view = renderSeriesPage([], off)
+      let dialog = await openAddModal()
+      expect(within(dialog).queryByRole('searchbox', { name: 'Search Hardcover for a series' })).not.toBeInTheDocument()
+      expect(within(dialog).getByLabelText('Name')).toBeInTheDocument()
+      view.unmount()
+
+      renderSeriesPage([])
+      dialog = await openAddModal()
+      expect(within(dialog).getByRole('searchbox', { name: 'Search Hardcover for a series' })).toBeInTheDocument()
+      expect(within(dialog).getByLabelText('Name')).toBeInTheDocument()
+    })
+
+    it('searches on submit and previews the first books of each result', async () => {
+      vi.mocked(api.searchHardcoverSeries).mockResolvedValue([stormlightResult])
+      renderSeriesPage([])
+      const dialog = await openAddModal()
+
+      const box = within(dialog).getByRole('searchbox', { name: 'Search Hardcover for a series' })
+      fireEvent.change(box, { target: { value: 'storm' } })
+      fireEvent.change(box, { target: { value: 'stormlight' } })
+      expect(api.searchHardcoverSeries).not.toHaveBeenCalled()
+      fireEvent.keyDown(box, { key: 'Enter' })
+
+      expect(await within(dialog).findByText('Brandon Sanderson')).toBeInTheDocument()
+      expect(api.searchHardcoverSeries).toHaveBeenCalledTimes(1)
+      expect(api.searchHardcoverSeries).toHaveBeenCalledWith('stormlight', 10)
+      expect(within(dialog).getByText('4 books')).toBeInTheDocument()
+      expect(within(dialog).getByText('The Way of Kings, Words of Radiance, Oathbringer, Rhythm of War')).toBeInTheDocument()
+      expect(api.createSeries).not.toHaveBeenCalled()
+    })
+
+    it('creates and links the picked series, expands it and loads its diff without adding books', async () => {
+      vi.mocked(api.searchHardcoverSeries).mockResolvedValue([stormlightResult])
+      vi.mocked(api.createSeries).mockResolvedValue(created)
+      vi.mocked(api.getSeriesHardcoverDiff).mockResolvedValue(emptyDiff)
+      renderSeriesPage([])
+      vi.mocked(api.listSeries).mockResolvedValue([created])
+      const dialog = await openAddModal()
+      await searchFor(dialog, 'stormlight')
+
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Add The Stormlight Archive' }))
+
+      await waitFor(() => expect(api.createSeries).toHaveBeenCalledWith({
+        hardcover: {
+          foreignId: 'hc-series:42',
+          providerId: '42',
+          slug: 'the-stormlight-archive',
+          title: 'The Stormlight Archive',
+          authorName: 'Brandon Sanderson',
+          bookCount: 4,
+          confidence: undefined,
+        },
+      }))
+      expect(await screen.findByRole('heading', { name: 'The Stormlight Archive' })).toBeInTheDocument()
+      await waitFor(() => expect(api.getSeriesHardcoverDiff).toHaveBeenCalledWith(31))
+      // Only an expanded card shows its book list.
+      expect(await screen.findByText('No books in this series yet')).toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Add Series' })).not.toBeInTheDocument()
+      expect(api.fillSeries).not.toHaveBeenCalled()
+      expect(api.fillSeriesAll).not.toHaveBeenCalled()
+    })
+
+    it('opens the existing series when the Hardcover series is already in the library', async () => {
+      const existing: Series = { ...created, id: 7, title: 'My Stormlight', hardcoverLink: { ...link, seriesId: 7 } }
+      vi.mocked(api.searchHardcoverSeries).mockResolvedValue([stormlightResult])
+      vi.mocked(api.createSeries).mockRejectedValue(new ApiError(409, { error: 'this hardcover series is already in your library', seriesId: 7 }, 'Conflict'))
+      vi.mocked(api.getSeriesHardcoverDiff).mockResolvedValue({ ...emptyDiff, seriesId: 7 })
+      renderSeriesPage([existing])
+      const dialog = await openAddModal()
+      await searchFor(dialog, 'stormlight')
+
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Add The Stormlight Archive' }))
+
+      await waitFor(() => expect(api.getSeriesHardcoverDiff).toHaveBeenCalledWith(7))
+      expect(screen.queryByRole('dialog', { name: 'Add Series' })).not.toBeInTheDocument()
+      expect(screen.getByText('Already in your library')).toBeInTheDocument()
+    })
+
+    it('shows the provider error and keeps the modal open', async () => {
+      vi.mocked(api.searchHardcoverSeries).mockResolvedValue([stormlightResult])
+      vi.mocked(api.createSeries).mockRejectedValue(new ApiError(502, { error: 'metadata provider request failed' }, 'Bad Gateway'))
+      renderSeriesPage([])
+      const dialog = await openAddModal()
+      await searchFor(dialog, 'stormlight')
+
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Add The Stormlight Archive' }))
+
+      expect(await within(dialog).findByText('metadata provider request failed')).toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: 'Add Series' })).toBeInTheDocument()
+    })
+
+    it('keeps Enter in the Hardcover search from submitting the modal form', async () => {
+      vi.mocked(api.searchHardcoverSeries).mockResolvedValue([stormlightResult])
+      renderSeriesPage([])
+      const dialog = await openAddModal()
+      const box = within(dialog).getByRole('searchbox', { name: 'Search Hardcover for a series' })
+      fireEvent.change(box, { target: { value: 'stormlight' } })
+
+      // fireEvent returns false when the handler called preventDefault, which
+      // is what stops the enclosing form's implicit submit.
+      expect(fireEvent.keyDown(box, { key: 'Enter' })).toBe(false)
+      await within(dialog).findByText('Brandon Sanderson')
+      expect(api.createSeries).not.toHaveBeenCalled()
+      expect(within(dialog).queryByText('Series name is required')).not.toBeInTheDocument()
+    })
+
+    it('disables Add while a create is in flight so a double click makes one request', async () => {
+      vi.mocked(api.searchHardcoverSeries).mockResolvedValue([stormlightResult])
+      vi.mocked(api.createSeries).mockReturnValue(new Promise(() => {}))
+      renderSeriesPage([])
+      const dialog = await openAddModal()
+      await searchFor(dialog, 'stormlight')
+
+      const add = within(dialog).getByRole('button', { name: 'Add The Stormlight Archive' })
+      fireEvent.click(add)
+      fireEvent.click(add)
+
+      expect(api.createSeries).toHaveBeenCalledTimes(1)
+      expect(add).toBeDisabled()
+    })
+
+    it('clears a title search that would hide the series just created', async () => {
+      const other: Series = { id: 2, foreignSeriesId: 's-2', title: 'Café Chronicles', description: '', monitored: false, books: [] }
+      vi.mocked(api.searchHardcoverSeries).mockResolvedValue([stormlightResult])
+      vi.mocked(api.createSeries).mockResolvedValue(created)
+      vi.mocked(api.getSeriesHardcoverDiff).mockResolvedValue(emptyDiff)
+      renderSeriesPage([other])
+      fireEvent.change(await screen.findByRole('searchbox', { name: 'Search series…' }), { target: { value: 'cafe' } })
+      vi.mocked(api.listSeries).mockResolvedValue([other, created])
+      const dialog = await openAddModal()
+      await searchFor(dialog, 'stormlight')
+
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Add The Stormlight Archive' }))
+
+      expect(await screen.findByRole('heading', { name: 'The Stormlight Archive' })).toBeInTheDocument()
+      expect(screen.getByRole('searchbox', { name: 'Search series…' })).toHaveValue('')
+    })
+
+    it('clears a title search that would hide the existing series a 409 opens', async () => {
+      const other: Series = { id: 2, foreignSeriesId: 's-2', title: 'Café Chronicles', description: '', monitored: false, books: [] }
+      const existing: Series = { ...created, id: 7, title: 'My Stormlight', hardcoverLink: { ...link, seriesId: 7 } }
+      vi.mocked(api.searchHardcoverSeries).mockResolvedValue([stormlightResult])
+      vi.mocked(api.createSeries).mockRejectedValue(new ApiError(409, { error: 'already', seriesId: 7 }, 'Conflict'))
+      vi.mocked(api.getSeriesHardcoverDiff).mockResolvedValue({ ...emptyDiff, seriesId: 7 })
+      renderSeriesPage([other, existing])
+      fireEvent.change(await screen.findByRole('searchbox', { name: 'Search series…' }), { target: { value: 'cafe' } })
+      expect(screen.queryByRole('heading', { name: 'My Stormlight' })).not.toBeInTheDocument()
+      const dialog = await openAddModal()
+      await searchFor(dialog, 'stormlight')
+
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Add The Stormlight Archive' }))
+
+      expect(await screen.findByRole('heading', { name: 'My Stormlight' })).toBeInTheDocument()
+      expect(screen.getByRole('searchbox', { name: 'Search series…' })).toHaveValue('')
+    })
+
+    it('still creates a series by typing its name', async () => {
+      const manual: Series = { id: 15, foreignSeriesId: 'manual:series:15', title: 'Dune Chronicles', description: '', monitored: false, books: [] }
+      vi.mocked(api.createSeries).mockResolvedValue(manual)
+      renderSeriesPage([])
+      vi.mocked(api.listSeries).mockResolvedValue([manual])
+      const dialog = await openAddModal()
+
+      fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Dune Chronicles' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Add Series' }))
+
+      await waitFor(() => expect(api.createSeries).toHaveBeenCalledWith({ title: 'Dune Chronicles' }))
+      expect(api.searchHardcoverSeries).not.toHaveBeenCalled()
+    })
   })
 
   it('renames and deletes a series without deleting linked books', async () => {
@@ -1486,6 +1706,102 @@ describe('SeriesPage filters', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Shortlisted' }))
     fireEvent.click(screen.getByRole('button', { name: 'Missing books' }))
     expect(headings()).toEqual(['Gappy'])
+  })
+
+  // Book count filter (#3317): computed from series.books.length alone.
+  describe('size filter', () => {
+    const sized = [
+      series(1, 'Solo', [book(11, 'imported')]),
+      series(2, 'Pair', [book(21, 'imported'), book(22, 'wanted')], { monitored: true }),
+      series(3, 'Trio', [book(31, 'imported'), book(32, 'imported'), book(33, 'imported')]),
+      series(4, 'Empty Shell', []),
+    ]
+    const sizeGroup = () => screen.getByRole('group', { name: 'Series size' })
+
+    it('narrows to one book series and to series with two or more', async () => {
+      renderAt(sized, enhancedOff)
+      expect(await screen.findByRole('heading', { name: 'Solo' })).toBeInTheDocument()
+      expect(within(sizeGroup()).getByRole('button', { name: 'Any size' })).toHaveAttribute('aria-pressed', 'true')
+
+      fireEvent.click(within(sizeGroup()).getByRole('button', { name: '1 book' }))
+      expect(headings()).toEqual(['Solo'])
+      expect(within(sizeGroup()).getByRole('button', { name: '1 book' })).toHaveAttribute('aria-pressed', 'true')
+      expect(currentSearch).toBe('?size=single')
+      expect(screen.getByText('1 of 4 series')).toBeInTheDocument()
+
+      fireEvent.click(within(sizeGroup()).getByRole('button', { name: '2+ books' }))
+      expect(headings()).toEqual(['Pair', 'Trio'])
+      expect(currentSearch).toBe('?size=multi')
+      expect(screen.getByText('2 of 4 series')).toBeInTheDocument()
+
+      fireEvent.click(within(sizeGroup()).getByRole('button', { name: 'Any size' }))
+      expect(headings()).toHaveLength(4)
+      expect(currentSearch).toBe('')
+      expect(screen.getByText('4 series')).toBeInTheDocument()
+
+      // Read only.
+      expect(api.fillSeries).not.toHaveBeenCalled()
+      expect(api.fillSeriesAll).not.toHaveBeenCalled()
+      expect(api.monitorSeries).not.toHaveBeenCalled()
+      expect(api.getSeriesHardcoverDiff).not.toHaveBeenCalled()
+      expect(api.listSeries).toHaveBeenCalledTimes(1)
+    })
+
+    it('reads the size from the URL and ignores an unknown value', async () => {
+      const { unmount } = renderAt(sized, enhancedOff, '/series?size=multi')
+      expect(await screen.findByRole('heading', { name: 'Pair' })).toBeInTheDocument()
+      expect(headings()).toEqual(['Pair', 'Trio'])
+      unmount()
+
+      renderAt(sized, enhancedOff, '/series?size=bogus')
+      expect(await screen.findByRole('heading', { name: 'Solo' })).toBeInTheDocument()
+      expect(headings()).toHaveLength(4)
+      expect(within(sizeGroup()).getByRole('button', { name: 'Any size' })).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByText('4 series')).toBeInTheDocument()
+    })
+
+    it('combines with the status filter, keeping both params, and with the title search', async () => {
+      renderAt(sized, enhancedOff, '/series?filter=missing')
+      expect(await screen.findByRole('heading', { name: 'Pair' })).toBeInTheDocument()
+      fireEvent.click(within(sizeGroup()).getByRole('button', { name: '1 book' }))
+      expect(headings()).toEqual([])
+      expect(screen.getByRole('status')).toHaveTextContent('No series match this filter')
+      expect(currentSearch).toBe('?filter=missing&size=single')
+
+      fireEvent.click(within(sizeGroup()).getByRole('button', { name: '2+ books' }))
+      expect(headings()).toEqual(['Pair'])
+      fireEvent.click(screen.getByRole('button', { name: 'All' }))
+      expect(currentSearch).toBe('?size=multi')
+      expect(headings()).toEqual(['Pair', 'Trio'])
+
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Search series…' }), { target: { value: 'tri' } })
+      expect(headings()).toEqual(['Trio'])
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Search series…' }), { target: { value: 'solo' } })
+      expect(headings()).toEqual([])
+      expect(screen.getByRole('status')).toHaveTextContent('No series match "solo" with this filter')
+    })
+
+    it('treats a series that arrives without a books key as empty, in neither group', async () => {
+      // The API omits `books` for an empty series (json omitempty).
+      const noKey = { ...series(5, 'No Key', []), books: undefined } as unknown as Series
+      const { unmount } = renderAt([...sized, noKey], enhancedOff, '/series?size=single')
+      expect(await screen.findByRole('heading', { name: 'Solo' })).toBeInTheDocument()
+      expect(headings()).toEqual(['Solo'])
+      unmount()
+
+      renderAt([...sized, noKey], enhancedOff, '/series?size=multi')
+      expect(await screen.findByRole('heading', { name: 'Pair' })).toBeInTheDocument()
+      expect(headings()).toEqual(['Pair', 'Trio'])
+    })
+
+    it('starts the list clean when the size changes, like the status filter', async () => {
+      renderAt(sized, enhancedOff)
+      expect(await screen.findByRole('heading', { name: 'Solo' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('heading', { name: 'Solo' }))
+      // The open card is not kept past a change of size: the list starts clean.
+      fireEvent.click(within(sizeGroup()).getByRole('button', { name: '2+ books' }))
+      expect(headings()).toEqual(['Pair', 'Trio'])
+    })
   })
 })
 

@@ -113,7 +113,7 @@ func ValidateBaseURLSecure(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := httpsec.ValidateOutboundURL(u, httpsec.PolicyLANLoopback); err != nil {
+	if err := httpsec.ValidateOutboundURL(u, httpsec.PolicyService); err != nil {
 		return "", fmt.Errorf("base_url %q: %w", raw, err)
 	}
 	return u, nil
@@ -162,8 +162,8 @@ func NewClient(baseURL, apiKey string) (*Client, error) {
 		// cannot reach a link-local or metadata address.
 		httpClient: &http.Client{
 			Timeout:       defaultTimeout,
-			Transport:     httpsec.DirectGuardedTransport(httpsec.PolicyLANLoopback),
-			CheckRedirect: httpsec.RedirectGuard(httpsec.PolicyLANLoopback),
+			Transport:     httpsec.DirectGuardedTransport(httpsec.PolicyService),
+			CheckRedirect: httpsec.RedirectGuard(httpsec.PolicyService),
 		},
 		userAgent: useragent.Get(),
 	}, nil

@@ -69,6 +69,31 @@ func (r *HistoryRepo) FirstEventAt(ctx context.Context, eventType string) (*time
 	return &t, nil
 }
 
+// HasEventOfType reports whether at least one history row has any of the given
+// event types, stopping at the first match so it stays cheap on a large table.
+func (r *HistoryRepo) HasEventOfType(ctx context.Context, eventTypes ...string) (bool, error) {
+	if len(eventTypes) == 0 {
+		return false, nil
+	}
+	args := make([]interface{}, len(eventTypes))
+	marks := make([]string, len(eventTypes))
+	for i, t := range eventTypes {
+		args[i] = t
+		marks[i] = "?"
+	}
+	var one int
+	err := r.db.QueryRowContext(ctx,
+		"SELECT 1 FROM history WHERE event_type IN ("+strings.Join(marks, ",")+") LIMIT 1", args...,
+	).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("history event lookup: %w", err)
+	}
+	return true, nil
+}
+
 func (r *HistoryRepo) ListByBook(ctx context.Context, bookID int64) ([]models.HistoryEvent, error) {
 	return r.query(ctx, "SELECT "+historyColumns+" FROM history WHERE book_id=? ORDER BY created_at DESC", bookID)
 }

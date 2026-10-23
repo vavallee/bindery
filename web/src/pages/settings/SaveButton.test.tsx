@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import SaveButton from './SaveButton'
+import { primaryFill } from '../../components/buttons'
 import { useSaveResult } from './useSaveResult'
 
 // Harness that wires the button to the real hook, so these assertions cover the
@@ -19,7 +20,8 @@ describe('SaveButton', () => {
 
     fireEvent.click(screen.getByTestId('save'))
     await waitFor(() => expect(screen.getByTestId('save')).toHaveTextContent('Saved ✓'))
-    expect(screen.getByTestId('save').className).toContain('bg-emerald-500')
+    // Saved keeps the primary fill and its white text (#3265).
+    expect(screen.getByTestId('save').className).toContain(primaryFill)
 
     vi.advanceTimersByTime(2000)
     await waitFor(() => expect(screen.getByTestId('save')).toHaveTextContent(/^common\.save$/))

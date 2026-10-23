@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { ApproveRequestChoices, LibraryRequest } from '../../api/client'
 import { AuthorAddDefaults, loadAuthorAddDefaults } from '../../components/authorAddDefaults'
+import { primaryFill } from '../../components/buttons'
 
 interface Props {
   request: LibraryRequest
@@ -111,7 +112,7 @@ export default function ApproveRequestForm({ request, onApproved, onCancel }: Pr
       {error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{error}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="px-3 py-1.5 text-sm text-fg-muted">{t('common.cancel')}</button>
-        <button type="submit" disabled={sending || (isAuthor && !defaults)} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-sm font-medium text-white">
+        <button type="submit" disabled={sending || (isAuthor && !defaults)} className={`px-3 py-1.5 ${primaryFill} disabled:opacity-50 rounded text-sm font-medium`}>
           {sending ? t('requests.admin.approving') : t('requests.admin.confirmApprove')}
         </button>
       </div>

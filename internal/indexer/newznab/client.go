@@ -89,9 +89,9 @@ func (c *Client) SetHTTPClient(h *http.Client) {
 // indexer hostname can flip its DNS record to 169.254.169.254 (cloud
 // metadata) or an RFC1918 address after the initial check passes. The
 // per-connection re-validation catches a post-TTL rebind before connect(2).
-// PolicyLAN is used because indexers legitimately run on LAN addresses;
-// loopback, link-local, and cloud-metadata remain blocked under all
-// policies.
+// PolicyService is used because indexers legitimately run on LAN and loopback
+// addresses. Link-local is refused unless the operator sets
+// BINDERY_ALLOW_LINK_LOCAL_SERVICES (#2036); cloud metadata never is.
 var (
 	sharedTransportOnce sync.Once
 	sharedTransport     *http.Transport
@@ -113,7 +113,7 @@ func sharedTransportInstance() *http.Transport {
 		transportBuildCount.Add(1)
 		sharedTransport = &http.Transport{
 			Proxy:                 httpsec.ProxyFunc(),
-			DialContext:           httpsec.NewDialContext(httpsec.PolicyLANLoopback),
+			DialContext:           httpsec.NewDialContext(httpsec.PolicyService),
 			MaxIdleConns:          100,
 			MaxIdleConnsPerHost:   8,
 			IdleConnTimeout:       90 * time.Second,
@@ -140,6 +140,9 @@ func newHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: sharedTransportInstance(),
+		// An indexer is a remote party: its redirects never get the link-local
+		// allowance and never reach cloud metadata (#2036).
+		CheckRedirect: httpsec.RedirectGuard(httpsec.PolicyService),
 	}
 }
 
@@ -191,6 +194,39 @@ func SignDownloadURLFor(rawURL, indexerURL, apiKey string) string {
 		baseHost = strings.ToLower(u.Host)
 	}
 	return signDownloadURL(rawURL, baseHost, apiKey)
+}
+
+// DownloadHostMatchesIndexer reports whether a download URL is on the host the
+// indexer is configured at, using the same normalisation SignDownloadURLFor
+// uses. Unlike signing it needs no stored key and ignores whether the URL is
+// already signed, so it answers "could this release have come from that
+// indexer" for the cases signing cannot (#3080).
+//
+// The comparison is on the host name only: case is ignored, one trailing dot is
+// dropped, and the port is ignored in every combination (explicit against none,
+// the scheme's default against none, two different explicit ports). Ignoring a
+// differing port is deliberate and errs the safe way for a pin: Prowlarr builds
+// download links from its own application URL, which need not carry the port
+// the indexer was recorded with, and a spurious match only refuses a grab the
+// user can retry with an indexer id, whereas a spurious miss would put a
+// private tracker's release on the public client. Signing keeps its own, exact
+// comparison (signDownloadURL); this function does not change it. A host that
+// differs by a "www." or any other subdomain is a different host, and punycode
+// is not folded to Unicode, so those remain misses.
+func DownloadHostMatchesIndexer(rawURL, indexerURL string) bool {
+	base := pinHostName(normalizeEndpointURL(indexerURL))
+	rel := pinHostName(rawURL)
+	return base != "" && base == rel
+}
+
+// pinHostName returns the lower case host name of raw without its port or a
+// single trailing dot, or "" when raw has none.
+func pinHostName(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
 }
 
 // HasAPIKey reports whether a download URL already carries an apikey.
@@ -598,7 +634,17 @@ func primaryTitleForQuery(title string) string {
 	if i := strings.Index(title, ":"); i > 0 {
 		title = title[:i]
 	}
-	return StripFormatQualifiers(NormalizeQueryTitle(title))
+	return strings.Join(strings.Fields(wildcardToSpace(StripFormatQualifiers(NormalizeQueryTitle(title)))), " ")
+}
+
+// wildcardToSpace turns the asterisk into a word break in an outgoing query.
+// Titles that censor a word ("The Subtle Art of Not Giving a F*ck") keep the
+// asterisk in the catalogue, but Prowlarr's shared term sanitiser deletes it,
+// so the indexer was asked for "Fck" and found nothing (#1637). Sent as two
+// words the same indexer finds the release. The relevance gates already read
+// the asterisk as a separator, so only the query changes.
+func wildcardToSpace(s string) string {
+	return strings.ReplaceAll(s, "*", " ")
 }
 
 // formatQualifierRe matches a parenthesised FORMAT qualifier anywhere in a

@@ -9,7 +9,7 @@ import MarkdownDescription from '../components/MarkdownDescription'
 import MoreMenu from '../components/MoreMenu'
 import Section from '../components/Section'
 import Switch from '../components/Switch'
-import { btn, btnSize, dangerLink } from '../components/buttons'
+import { btn, btnSize, dangerLink, primaryFill } from '../components/buttons'
 import { useIsAdmin } from '../auth/AuthContext'
 import MediaBadge from '../components/MediaBadge'
 import CalibreDeliveryChip from '../components/CalibreDeliveryChip'
@@ -148,25 +148,28 @@ const resultRowCls = (approved?: boolean) =>
       : 'bg-slate-100 dark:bg-zinc-900 border-slate-200 dark:border-zinc-800'
   }`
 
-export function SearchResultsSection({
-  results,
-  bookMediaType,
+// ReleaseRow is one release with its Grab button. The main results and the
+// filtered section (#2334) both render it, so a filtered release is grabbed
+// by exactly the same path as any other.
+function ReleaseRow({
+  r,
+  fmt,
   grabbing,
   onGrab,
 }: {
-  results: SearchResult[]
-  bookMediaType?: string
+  r: SearchResult
+  fmt?: 'ebook' | 'audiobook'
   grabbing: string | null
   onGrab: (r: SearchResult) => void
 }) {
-  const renderRow = (r: SearchResult, fmt?: 'ebook' | 'audiobook') => (
-    <div key={r.guid} className={resultRowCls(r.approved)}>
+  return (
+    <div className={resultRowCls(r.approved)}>
       <div className="min-w-0 mr-3">
         <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
           {fmt && <MediaBadge type={fmt} />}
           <span className="truncate text-slate-800 dark:text-zinc-200">{r.title}</span>
         </div>
-        <span className="text-slate-500 dark:text-zinc-500 truncate block">
+        <span className="text-fg-muted truncate block">
           {r.indexerName} · {formatBytes(r.size)} · {r.grabs} grabs
           {safeHref(r.infoUrl) && (
             <>
@@ -188,11 +191,27 @@ export function SearchResultsSection({
       <button
         onClick={() => onGrab(r)}
         disabled={grabbing !== null}
-        className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0"
+        className={`px-3 py-2 ${primaryFill} disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0`}
       >
         {grabbing === r.guid ? 'Grabbing…' : 'Grab'}
       </button>
     </div>
+  )
+}
+
+export function SearchResultsSection({
+  results,
+  bookMediaType,
+  grabbing,
+  onGrab,
+}: {
+  results: SearchResult[]
+  bookMediaType?: string
+  grabbing: string | null
+  onGrab: (r: SearchResult) => void
+}) {
+  const renderRow = (r: SearchResult, fmt?: 'ebook' | 'audiobook') => (
+    <ReleaseRow key={r.guid} r={r} fmt={fmt} grabbing={grabbing} onGrab={onGrab} />
   )
 
   if (bookMediaType === 'both') {
@@ -220,6 +239,63 @@ export function SearchResultsSection({
     <section className="mb-6">
       <h3 className="text-sm font-semibold mb-2 text-slate-800 dark:text-zinc-200">Results ({results.length})</h3>
       <div className="space-y-1">{results.slice(0, 20).map(r => renderRow(r))}</div>
+    </section>
+  )
+}
+
+// FilteredResultsSection lists the releases Bindery's relevance and language
+// filters removed (#2334), collapsed by default, each with the reason and the
+// same Grab button as any other release. Hidden when there are none. The filters
+// are right far more often than wrong, so the default view stays as it was;
+// this is the way out when one of them is wrong about a release you can see.
+export function FilteredResultsSection({
+  filtered,
+  total,
+  bookMediaType,
+  grabbing,
+  onGrab,
+}: {
+  filtered: SearchResult[]
+  total?: number
+  bookMediaType?: string
+  grabbing: string | null
+  onGrab: (r: SearchResult) => void
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  if (filtered.length === 0) return null
+  return (
+    <section className="mb-6" data-testid="filtered-results">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        className="text-sm font-semibold text-slate-800 dark:text-zinc-200 hover:underline"
+      >
+        <span aria-hidden className="inline-block w-4">{open ? '▾' : '▸'}</span>
+        {t('bookDetail.filteredHeading', { count: total ?? filtered.length })}
+      </button>
+      {open && (
+        <div className="mt-2">
+          <p className="text-xs text-fg-muted mb-2">
+            {t('bookDetail.filteredHint')}
+            {total !== undefined && total > filtered.length && (
+              <> {t('bookDetail.filteredCapped', { shown: filtered.length, total })}</>
+            )}
+          </p>
+          <div className="space-y-1">
+            {filtered.map(r => (
+              <ReleaseRow
+                key={r.guid}
+                r={r}
+                fmt={bookMediaType === 'both' && (r.mediaType === 'ebook' || r.mediaType === 'audiobook') ? r.mediaType : undefined}
+                grabbing={grabbing}
+                onGrab={onGrab}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   )
 }
@@ -279,6 +355,9 @@ function BookDetailPageInner() {
   const [autoSearching, setAutoSearching] = useState(false)
   const [autoSearchNotice, setAutoSearchNotice] = useState<string | null>(null)
   const [results, setResults] = useState<SearchResult[] | null>(null)
+  // Releases the relevance and language filters dropped (#2334).
+  const [filtered, setFiltered] = useState<SearchResult[]>([])
+  const [filteredTotal, setFilteredTotal] = useState<number | undefined>(undefined)
   const [searchDebug, setSearchDebug] = useState<SearchDebug | null>(null)
   // #1636: the results of an interactive search render below the metadata
   // sections, often well below the fold, and a sweep can take 10 to 18
@@ -495,6 +574,8 @@ function BookDetailPageInner() {
     if (!book) return
     setSearching(true)
     setResults(null)
+    setFiltered([])
+    setFilteredTotal(undefined)
     setSearchDebug(null)
     setError(null)
     // A leftover "automatic search started" banner over a fresh list of
@@ -507,6 +588,8 @@ function BookDetailPageInner() {
       ])
       setHasIndexers(indexers.length > 0)
       setResults(r.results)
+      setFiltered(r.filtered ?? [])
+      setFilteredTotal(r.filteredTotal)
       setSearchDebug(r.debug ?? null)
       setRevealResults(true)
     } catch (e) {
@@ -611,6 +694,8 @@ function BookDetailPageInner() {
       setBook(b)
       setEvents(h.items)
       setResults(null)
+      setFiltered([])
+      setFilteredTotal(undefined)
     } catch (e) {
       setError(e instanceof Error ? e.message : t('bookDetail.grabFailed'))
     } finally {
@@ -758,7 +843,7 @@ function BookDetailPageInner() {
           short. */}
       <button
         onClick={() => navigate(-backSteps)}
-        className="text-emerald-600 dark:text-emerald-400 hover:underline"
+        className="text-accent-text hover:underline"
       >
         {t('bookDetail.back')}
       </button>
@@ -793,7 +878,7 @@ function BookDetailPageInner() {
     return (
       <div className="max-w-7xl">
         {navRow}
-        <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
+        <div className="text-fg-muted">{t('common.loading')}</div>
       </div>
     )
   }
@@ -801,7 +886,7 @@ function BookDetailPageInner() {
     return (
       <div className="max-w-7xl">
         {navRow}
-        <div className="text-slate-600 dark:text-zinc-500">{t('bookDetail.notFound')}</div>
+        <div className="text-fg-muted">{t('bookDetail.notFound')}</div>
       </div>
     )
   }
@@ -939,7 +1024,7 @@ function BookDetailPageInner() {
               {book.author?.authorName && (
                 <Link
                   to={`/author/${book.authorId}`}
-                  className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline"
+                  className="text-sm text-accent-text hover:underline"
                 >
                   {book.author.authorName}
                 </Link>
@@ -987,14 +1072,14 @@ function BookDetailPageInner() {
             {publishedDate && (
               <>
                 <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
-                <span className="text-slate-600 dark:text-zinc-400">
+                <span className="text-fg-muted">
                   {t('bookDetail.publishedDate', { date: publishedDate })}
                 </span>
               </>
             )}
             <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
             {lang ? (
-              <span className="text-slate-600 dark:text-zinc-400">{lang}</span>
+              <span className="text-fg-muted">{lang}</span>
             ) : (
               <span
                 className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400"
@@ -1006,13 +1091,13 @@ function BookDetailPageInner() {
             {book.averageRating && book.averageRating > 0 ? (
               <>
                 <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
-                <BookRating book={book} withCount className="text-slate-600 dark:text-zinc-400" />
+                <BookRating book={book} withCount className="text-fg-muted" />
               </>
             ) : null}
             {book.narrator && (
               <>
                 <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
-                <span className="text-slate-600 dark:text-zinc-400">
+                <span className="text-fg-muted">
                   {t('bookDetail.narratedBy', { narrator: book.narrator })}
                 </span>
               </>
@@ -1020,13 +1105,13 @@ function BookDetailPageInner() {
             {book.durationSeconds ? (
               <>
                 <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
-                <span className="text-slate-600 dark:text-zinc-400">{formatDuration(book.durationSeconds)}</span>
+                <span className="text-fg-muted">{formatDuration(book.durationSeconds)}</span>
               </>
             ) : null}
             {series.map(s => (
               <span key={s.id} className="contents">
                 <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
-                <span className="text-slate-600 dark:text-zinc-400">
+                <span className="text-fg-muted">
                   {s.position
                     ? t('bookDetail.seriesPosition', {
                         series: s.title,
@@ -1060,7 +1145,7 @@ function BookDetailPageInner() {
               with the search action — not in the File card, which is about the
               file(s) actually on disk. */}
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <label htmlFor="book-media-type" className="text-xs text-slate-500 dark:text-zinc-500">
+            <label htmlFor="book-media-type" className="text-xs text-fg-muted">
               {t('bookDetail.mediaTypeLabel')}
             </label>
             <select
@@ -1126,7 +1211,7 @@ function BookDetailPageInner() {
       {(series.length > 1 || restorable.length > 0) && (
         <Section title={t('bookDetail.series.heading')}>
           {series.length > 1 && (<>
-          <p className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.series.explainer')}</p>
+          <p className="text-xs text-fg-muted">{t('bookDetail.series.explainer')}</p>
           <ul className="mt-3 space-y-2">
             {series.map(s => (
               <li key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
@@ -1140,7 +1225,7 @@ function BookDetailPageInner() {
                     : s.title}
                 </span>
                 {s.primary ? (
-                  <span className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.series.namesFiles')}</span>
+                  <span className="text-xs text-fg-muted">{t('bookDetail.series.namesFiles')}</span>
                 ) : isAdmin && (
                   <button
                     type="button"
@@ -1167,11 +1252,11 @@ function BookDetailPageInner() {
           </>)}
           {restorable.length > 0 && (
             <div className={series.length > 1 ? 'mt-4' : ''}>
-              <p className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.series.keptOutExplainer')}</p>
+              <p className="text-xs text-fg-muted">{t('bookDetail.series.keptOutExplainer')}</p>
               <ul className="mt-2 space-y-2" aria-label={t('bookDetail.series.keptOutHeading')}>
                 {restorable.map(e => (
                   <li key={e.seriesForeignId} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                    <span className="text-slate-500 dark:text-zinc-400 line-through decoration-slate-400">
+                    <span className="text-fg-muted line-through decoration-slate-400">
                       {e.position
                         ? t('bookDetail.seriesPosition', { series: e.seriesTitle, position: e.position, defaultValue: '{{series}} #{{position}}' })
                         : e.seriesTitle}
@@ -1194,7 +1279,7 @@ function BookDetailPageInner() {
             {/* The declared media type is what search and monitoring hunt for.
                 It is labelled as intent because the files below may disagree
                 with it, and when they do the files are the truth. */}
-            <span className="text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.wantedFormatLabel')}</span>
+            <span className="text-xs text-fg-muted">{t('bookDetail.wantedFormatLabel')}</span>
             <span className="w-fit">
               <MediaBadge type={mt} />
             </span>
@@ -1215,7 +1300,7 @@ function BookDetailPageInner() {
                     // dual-format book simply vanishes.
                     <div className="px-3 py-2 flex flex-wrap items-center gap-2">
                       <MediaBadge type={group.format} />
-                      <span className="text-xs text-slate-500 dark:text-zinc-500">
+                      <span className="text-xs text-fg-muted">
                         {t('bookDetail.formatNotOnDisk')}
                       </span>
                     </div>
@@ -1223,7 +1308,7 @@ function BookDetailPageInner() {
                     <>
                       <div className="px-3 py-2 flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-zinc-800">
                         <MediaBadge type={group.format} />
-                        <span className="text-xs text-slate-500 dark:text-zinc-500">
+                        <span className="text-xs text-fg-muted">
                           {t('bookDetail.fileCount', { count: group.rows.length })}
                         </span>
                         {/* No Download here any more: a group of three epubs
@@ -1261,13 +1346,13 @@ function BookDetailPageInner() {
                             className="px-3 py-2 flex items-center gap-2 min-w-0 border-t first:border-t-0 border-slate-100 dark:border-zinc-900"
                           >
                             <code
-                              className="min-w-0 font-mono text-xs text-slate-500 dark:text-zinc-500 break-all sm:truncate"
+                              className="min-w-0 font-mono text-xs text-fg-muted break-all sm:truncate"
                               title={row.path}
                             >
                               {row.path}
                             </code>
                             {!!row.sizeBytes && (
-                              <span className="shrink-0 text-xs text-slate-400 dark:text-zinc-600">
+                              <span className="shrink-0 text-xs text-fg-muted">
                                 {formatBytes(row.sizeBytes)}
                               </span>
                             )}
@@ -1286,7 +1371,7 @@ function BookDetailPageInner() {
                             <button
                               type="button"
                               onClick={() => copyPath(row.path)}
-                              className="shrink-0 text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5"
+                              className="shrink-0 text-fg-muted hover:text-slate-700 dark:hover:text-zinc-200 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5"
                               aria-label={t('bookDetail.copyPath')}
                             >
                               <span aria-hidden>⧉</span>{' '}
@@ -1300,7 +1385,7 @@ function BookDetailPageInner() {
                               // as "More" are indistinguishable to a screen
                               // reader.
                               ariaLabel={t('bookDetail.rowMore', { name: baseName(row.path) })}
-                              buttonClassName="shrink-0 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5 text-slate-500 dark:text-zinc-400"
+                              buttonClassName="shrink-0 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5 text-fg-muted"
                               items={[
                                 {
                                   label: t('bookDetail.fixMatch.button', 'Fix match'),
@@ -1337,7 +1422,7 @@ function BookDetailPageInner() {
               ))}
             </div>
           ) : (
-            <p className="mt-4 text-xs text-slate-500 dark:text-zinc-500">{t('bookDetail.noFile')}</p>
+            <p className="mt-4 text-xs text-fg-muted">{t('bookDetail.noFile')}</p>
           )}
 
           {pathClipboard.status === 'manual' && (
@@ -1449,13 +1534,13 @@ function BookDetailPageInner() {
                     {t('bookDetail.metadataSource.current', 'Current')}
                   </span>
                 )}
-                <code className="font-mono text-xs text-slate-600 dark:text-zinc-400 select-all break-all">
+                <code className="font-mono text-xs text-fg-muted select-all break-all">
                   {row.foreignId}
                 </code>
                 <button
                   type="button"
                   onClick={() => copyId(row.foreignId)}
-                  className="shrink-0 text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5"
+                  className="shrink-0 text-fg-muted hover:text-slate-700 dark:hover:text-zinc-200 text-xs border border-slate-300 dark:border-zinc-700 rounded px-1.5 py-0.5"
                   aria-label={t('bookDetail.metadataSource.copyId', { id: row.foreignId, defaultValue: 'Copy {{id}}' })}
                 >
                   <span aria-hidden>⧉</span>{' '}
@@ -1468,7 +1553,7 @@ function BookDetailPageInner() {
                     href={row.link.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline"
+                    className="text-xs text-accent-text hover:underline"
                   >
                     {t('common.viewOnSource', { source: row.link.label, defaultValue: 'View on {{source}} ↗' })}
                   </a>
@@ -1476,7 +1561,7 @@ function BookDetailPageInner() {
                 {/* BnF's Licence Ouverte asks for the source and the date
                     wherever its data is shown (#3144). */}
                 {row.primary && row.provider === 'bnf' && bnfRetrieved && (
-                  <span className="text-xs text-slate-600 dark:text-zinc-500 basis-full" data-testid="bnf-source-credit">
+                  <span className="text-xs text-fg-muted basis-full" data-testid="bnf-source-credit">
                     {t('common.bnfSourceCredit', { date: bnfRetrieved, defaultValue: 'Data from the BnF, Licence Ouverte / Open Licence 2.0, retrieved {{date}}' })}
                   </span>
                 )}
@@ -1488,7 +1573,7 @@ function BookDetailPageInner() {
               <ClipboardManualFallback text={idClipboard.manualText} />
             </div>
           )}
-          <p className="mt-3 text-xs text-slate-500 dark:text-zinc-500">
+          <p className="mt-3 text-xs text-fg-muted">
             {t('bookDetail.metadataSource.hint', 'Re-bind this book if the record above is the wrong one.')}
           </p>
         </Section>
@@ -1500,7 +1585,7 @@ function BookDetailPageInner() {
           <div>
             <div className="flex flex-col sm:flex-row sm:items-end gap-2">
               <div className="flex-1">
-                <label htmlFor="book-asin" className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+                <label htmlFor="book-asin" className="block text-xs text-fg-muted mb-1">
                   {t('bookDetail.asinLabel')}
                 </label>
                 <input
@@ -1550,12 +1635,14 @@ function BookDetailPageInner() {
           scroll-mt clears the sticky header. */}
       <div ref={searchResultsRef} data-testid="search-results-region" className="scroll-mt-20">
         {results !== null && results.length === 0 && (
-          <div className="mt-6 text-center py-6 text-sm text-slate-600 dark:text-zinc-500 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          <div className="mt-6 text-center py-6 text-sm text-fg-muted border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
             {hasIndexers === false ? (
               <>
                 {t('bookDetail.noIndexers')}{' '}
                 <Link to="/settings" className="underline">{t('nav.settings')}</Link>.
               </>
+            ) : filtered.length > 0 ? (
+              t('bookDetail.noResultsFiltered', { count: filteredTotal ?? filtered.length })
             ) : (
               t('bookDetail.noResults')
             )}
@@ -1582,6 +1669,18 @@ function BookDetailPageInner() {
             />
           </div>
         )}
+
+        {filtered.length > 0 && (
+          <div className="mt-2">
+            <FilteredResultsSection
+              filtered={filtered}
+              total={filteredTotal}
+              bookMediaType={book.mediaType}
+              grabbing={grabbing}
+              onGrab={grab}
+            />
+          </div>
+        )}
       </div>
 
       {/* ===== History section ===== */}
@@ -1597,10 +1696,10 @@ function BookDetailPageInner() {
                 <span className="font-medium text-slate-700 dark:text-zinc-300 flex-shrink-0">
                   {t(`bookDetail.event.${ev.eventType}`, ev.eventType)}
                 </span>
-                <span className="font-mono text-xs text-slate-500 dark:text-zinc-500 truncate min-w-0">
+                <span className="font-mono text-xs text-fg-muted truncate min-w-0">
                   {ev.sourceTitle || '—'}
                 </span>
-                <span className="ml-auto text-xs text-slate-500 dark:text-zinc-500 whitespace-nowrap flex-shrink-0">
+                <span className="ml-auto text-xs text-fg-muted whitespace-nowrap flex-shrink-0">
                   {new Date(ev.createdAt).toLocaleString()}
                 </span>
               </div>

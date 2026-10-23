@@ -23,6 +23,9 @@ const sources = import.meta.glob('../**/*.{ts,tsx}', { query: '?raw', import: 'd
 // concatenation are skipped — this is a guard, not a parser.
 const CALL_RE = /\bt\(\s*'([A-Za-z0-9_.]+)'\s*,\s*'((?:[^'\\]|\\.)*)'\s*\)/g
 
+// Matches the key of any t('a.b.c' …) or t("a.b.c" …) call, whatever follows it.
+const KEY_RE = /\bt\(\s*['"]([A-Za-z0-9_.]+)['"]/g
+
 function unescape(raw: string): string {
   return raw.replace(/\\'/g, "'").replace(/\\n/g, '\n').replace(/\\\\/g, '\\')
 }
@@ -43,7 +46,7 @@ describe('inline i18next defaults', () => {
       if (/\.test\.tsx?$/.test(file)) continue
       for (const [, key, raw] of source.matchAll(CALL_RE)) {
         const value = lookup(key)
-        if (typeof value !== 'string') continue // key not in en.json: the default is live
+        if (typeof value !== 'string') continue // missing keys are the next test's job
         checked++
         const inline = unescape(raw)
         if (value !== inline) {
@@ -59,5 +62,29 @@ describe('inline i18next defaults', () => {
       mismatches,
       `Update en.json (it is what renders), not just the inline default:\n\n${mismatches.join('\n\n')}`,
     ).toEqual([])
+  })
+
+  // A key missing from en.json still renders, from the inline default, so
+  // nothing looks wrong in English. But every other locale is translated from
+  // en.json, so a key that never lands there never gets translated: nb was
+  // found missing 68 of them this way. Template-literal keys (t(`a.${b}`)) are
+  // not checked.
+  it('exist in en.json for every static key', () => {
+    const missing = new Set<string>()
+    let checked = 0
+
+    for (const [file, source] of Object.entries(sources)) {
+      if (/\.test\.tsx?$/.test(file)) continue
+      for (const [, key] of source.matchAll(KEY_RE)) {
+        checked++
+        // Plural keys live in en.json as key_one / key_other.
+        if (typeof lookup(key) !== 'string' && typeof lookup(`${key}_other`) !== 'string') {
+          missing.add(`${file} — ${key}`)
+        }
+      }
+    }
+
+    expect(checked).toBeGreaterThan(1000)
+    expect([...missing], 'Add these keys to en.json so they can be translated:').toEqual([])
   })
 })

@@ -53,7 +53,13 @@
     "dismiss": "Lukk",
     "showDetails": "Vis detaljer",
     "hideDetails": "Skjul detaljer",
-    "apply": "Bruk"
+    "apply": "Bruk",
+    "serverUnavailable": "Bindery svarer ikke akkurat nå.",
+    "retry": "Prøv igjen",
+    "retrying": "Prøver igjen…",
+    "bnfSourceCredit": "Data fra BnF, Licence Ouverte / Open Licence 2.0, hentet {{date}}",
+    "close": "Lukk",
+    "unknownError": "Ukjent feil"
   },
   "monitorMode": {
     "all": "Alle bøker",
@@ -90,7 +96,8 @@
     "request": "Be om",
     "myRequests": "Mine forespørsler",
     "requests": "Forespørsler",
-    "requestsPending": "{{count}} ventende forespørsler"
+    "requestsPending": "{{count}} ventende forespørsler",
+    "toggleMenu": "Vis eller skjul menyen"
   },
   "librarySearch": {
     "label": "Søk i biblioteket",
@@ -336,7 +343,10 @@
     "noClient": {
       "body": "Ingenting ble hentet fordi ingen aktivert nedlastingsklient kan håndtere denne utgivelsen. Legg til eller aktiver en nedlastingsklient for å starte nedlastinger.",
       "action": "Sett opp nedlastingsklienter"
-    }
+    },
+    "forceTitle": "Hente denne utgivelsen på nytt?",
+    "forceBody": "Bindery har allerede importert denne utgivelsen én gang. Hent den likevel bare hvis filene fra den importen mangler: så lenge de fortsatt finnes, hoppes den nye nedlastingen over som et duplikat. Ingenting fjernes fra nedlastingsklienten, og bokens nåværende filer blir liggende der de er.",
+    "forceConfirm": "Hent likevel"
   },
   "login": {
     "title": "Logg inn",
@@ -425,7 +435,13 @@
     "moreActionsFor": "Flere handlinger for {{name}}",
     "refreshMetadata": "Oppdater metadata",
     "bulkApplyMonitoringToExisting": "Bruk også på bøkene de allerede har",
-    "bulkApplyMonitoringToExistingHint": "Endrer alle bøkene til de valgte forfatterne slik at de samsvarer. La det være av hvis du bare vil endre forfatterne."
+    "bulkApplyMonitoringToExistingHint": "Endrer alle bøkene til de valgte forfatterne slik at de samsvarer. La det være av hvis du bare vil endre forfatterne.",
+    "booksInLibrary": "{{have}} av {{total}} i biblioteket",
+    "booksInLibraryHint": "En bok telles så snart minst én av filene dens er i biblioteket ditt.",
+    "bulkSetMediaTypeConfirm": "Vil du sette medietypen for alle bøkene til de {{count}} valgte forfatterne til {{mediaType}}? Dette skriver om eksisterende bokrader og kan føre til at det vurderes på nytt om bøkene er ønsket eller mangler.",
+    "bulkSetEbook": "Sett til e-bok",
+    "bulkSetAudiobook": "Sett til lydbok",
+    "bulkSetBoth": "Sett til begge"
   },
   "authorDetail": {
     "nav": {
@@ -518,12 +534,45 @@
       "status_wanted": "Ønsket",
       "status_imported": "Importert",
       "status_skipped": "Hoppet over",
-      "status_excluded": "Ekskludert"
+      "status_excluded": "Ekskludert",
+      "monitored": "Overvåket",
+      "allMonitored": "Alle",
+      "monitoredOnly": "Overvåket",
+      "unmonitoredOnly": "Ikke overvåket",
+      "language": "Språk",
+      "allLanguages": "Alle språk",
+      "sort": "Sorter",
+      "sortDefault": "Standard",
+      "sortTitleAZ": "Tittel A–Å",
+      "sortTitleZA": "Tittel Å–A",
+      "sortNewest": "Utgitt, nyeste først",
+      "sortOldest": "Utgitt, eldste først",
+      "sortAddedNew": "Lagt til, nyeste først",
+      "sortAddedOld": "Lagt til, eldste først"
     },
     "deleteConfirm": "Vil du slette {{author}} og alle bøkene ({{count}})?",
     "deleteWithFilesConfirm": "Vil du slette {{author}}, alle bøkene ({{count}}) OG filene eller mappene på disken ({{withFiles}})?\n\nDette kan ikke angres.",
     "deleteTitle": "Slett forfatter",
-    "deleteFilesAcknowledge": "Jeg forstår at filene på disken blir slettet."
+    "deleteFilesAcknowledge": "Jeg forstår at filene på disken blir slettet.",
+    "credit": {
+      "photo": "Foto: {{credit}}, {{license}}, via {{source}}",
+      "photoNoCredit": "Foto: {{license}}, via {{source}}",
+      "bio": "Biografi fra {{source}}, {{license}}",
+      "bioNoLicense": "Biografi fra {{source}}"
+    },
+    "syncing": "Henter katalogen til denne forfatteren. Bøkene vises her når det er ferdig, og for en stor katalog kan det ta noen minutter.",
+    "syncingMore": "Henter katalogen til denne forfatteren. Eventuelle nye bøker vises her når det er ferdig.",
+    "saveConflict": "Forfatteren ble endret mens du lagret. Last inn siden på nytt og prøv igjen.",
+    "photo": {
+      "upload": "Last opp bilde",
+      "change": "Bytt bilde",
+      "uploading": "Laster opp…",
+      "uploadFailed": "Kunne ikke laste opp bildet",
+      "remove": "Fjern bildet",
+      "removing": "Fjerner…",
+      "removeFailed": "Kunne ikke fjerne bildet"
+    },
+    "photoNotUploaded": "Bare et bilde du har lastet opp, kan fjernes. Last inn siden på nytt for å se det gjeldende bildet."
   },
   "catalogueReconciliation": {
     "title": "Avstem katalogen",
@@ -620,7 +669,14 @@
     "unexclude": "Opphev ekskludering",
     "excluded": "Ekskludert",
     "showExcluded": "Vis ekskluderte",
-    "sortByColumn": "Sorter etter {{column}}"
+    "sortByColumn": "Sorter etter {{column}}",
+    "sortAuthorAZ": "Forfatter A–Å",
+    "sortAuthorZA": "Forfatter Å–A",
+    "colRating": "Vurdering",
+    "ratingsCount_one": "{{formatted}} vurdering",
+    "ratingsCount_other": "{{formatted}} vurderinger",
+    "reviewDuplicates": "Gå gjennom duplikater",
+    "reviewDuplicatesHint": "Finn titler i hele biblioteket som ser ut til å være samme bok. Ingenting endres før du ekskluderer en rad"
   },
   "wanted": {
     "title": "Ønsket",
@@ -678,7 +734,16 @@
     "colSize": "Størrelse",
     "colDate": "Dato",
     "blocklist": "Blokker",
-    "delete": "Slett"
+    "delete": "Slett",
+    "blocklistFailed": "Kunne ikke blokkere denne utgivelsen.",
+    "contentCheckEbook": "Filen ser ut til å være en annen bok",
+    "contentCheckAudiobook": "Filene inneholder andre bøker",
+    "contentCheckEbookEntry": "«{{title}}» av {{author}}",
+    "contentCheckEbookTitleOnly": "«{{title}}»",
+    "contentCheckEbookAuthorOnly": "av {{author}}",
+    "contentCheckAudiobookEntry": "{{title}} ({{count}})",
+    "contentCheckRetitled": "Alle filene har tittelen «{{title}}» ({{count}} filer), så den ble importert som en utgave med ny tittel",
+    "contentCheckTruncated": "Innholdssjekken ble avbrutt og hoppet over"
   },
   "queue": {
     "title": "Kø",
@@ -730,9 +795,37 @@
       "importExternalHint": "Overlevert til det eksterne importverktøyet. Bindery venter på at den eksterne importøren skal plassere filen, så raden blir stående her til det skjer.",
       "importHeld": "Venter på det andre formatet",
       "importHeldHint": "Holdes tilbake til det andre formatet kommer. Denne boken skal ha både e-bok og lydbok, og begge importeres samtidig."
-    }
+    },
+    "matchImporting": "Koblet. Importerer nå, og statusen oppdateres om kort tid.",
+    "matchQueued": "Koblet. Importen kjører ved neste sjekk av nedlastingsklienten.",
+    "matchNoFiles": "Koblet til boken, men de nedlastede filene ble ikke funnet, så de kunne ikke importeres automatisk. Importer dem på nytt med Manuell filimport, eller last dem ned på nytt.",
+    "matchedTo": "Koblet til {{title}}. Bruk Prøv importen igjen for å importere den.",
+    "matchBookHint": "Koble denne nedlastingen til en eksisterende bok og importer den",
+    "matchBookChange": "Koble til en annen bok",
+    "matchBook": "Koble til bok",
+    "matchBookPlaceholder": "Søk i biblioteket ditt",
+    "matchBookSearch": "Søk etter en bok",
+    "matchBookSearching": "Søker…",
+    "matchBookSearchBtn": "Søk",
+    "matchBookCancel": "Avbryt"
   },
   "series": {
+    "addFromHardcover": {
+      "searchLabel": "Søk etter en serie på Hardcover",
+      "searchPlaceholder": "Søk etter en serie på Hardcover",
+      "search": "Søk",
+      "searching": "Søker…",
+      "noResults": "Fant ingen Hardcover-serier.",
+      "searchFailed": "Søket på Hardcover mislyktes",
+      "bookCount_one": "{{count}} bok",
+      "bookCount_other": "{{count}} bøker",
+      "viewOnHardcover": "Vis på Hardcover ↗",
+      "add": "Legg til",
+      "adding": "Legger til…",
+      "addResult": "Legg til {{title}}",
+      "addFailed": "Kunne ikke legge til serien",
+      "alreadyAdded": "Allerede i biblioteket ditt"
+    },
     "searchPlaceholder": "Søk i serier…",
     "noMatch": "Ingen serier samsvarer med «{{query}}»",
     "deleteConfirm": "Slette «{{title}}» fra Serier? Tilknyttede bøker blir værende i biblioteket.",
@@ -747,6 +840,12 @@
       "complete": "Komplette",
       "unlinked": "Ikke koblet til Hardcover",
       "shortlisted": "På kortlisten"
+    },
+    "sizeLabel": "Seriestørrelse",
+    "size": {
+      "any": "Alle størrelser",
+      "single": "1 bok",
+      "multi": "2+ bøker"
     },
     "filterMissingHint": "Serier som viser merket for manglende bøker. Med Hardcover-kobling slått på teller dette bøker i katalogen som du ikke har ennå, akkurat som merket gjør.",
     "merge": {
@@ -773,6 +872,93 @@
       "confirmBody_one": "Slå {{count}} serie sammen med «{{title}}»? Den sammenslåtte serien slettes, og dette kan ikke angres.",
       "confirmBody_other": "Slå {{count}} serier sammen med «{{title}}»? De sammenslåtte seriene slettes, og dette kan ikke angres.",
       "failed": "Sammenslåingen mislyktes"
+    },
+    "title": "Serier",
+    "count_one": "{{count}} serie",
+    "count_other": "{{count}} serier",
+    "addSeries": "Legg til serie",
+    "renameSeries": "Gi serien nytt navn",
+    "rename": "Gi nytt navn",
+    "addBook": "Legg til bok",
+    "emptyTitle": "Fant ingen serier",
+    "emptyHint": "Seriene fylles ut automatisk fra bøkene til forfatterne du overvåker",
+    "noBooks": "Ingen bøker i denne serien ennå",
+    "missingBadge": "{{count}} mangler",
+    "bookCount_one": "{{count}} bok",
+    "bookCount_other": "{{count}} bøker",
+    "bookFallback": "Bok {{id}}",
+    "excluded": "Ekskludert",
+    "shortlist": {
+      "add": "Legg til på kortlisten",
+      "remove": "Fjern fra kortlisten",
+      "on": "På kortlisten",
+      "off": "Ikke på kortlisten",
+      "hint": "Merker serien så du finner den igjen. Bindery sjekker ennå ikke selv om en serie på kortlisten har fått nye bøker; bruk Fyll hull."
+    },
+    "genre": {
+      "set": "Angi sjanger",
+      "active": "Sjanger ✓",
+      "setHint": "Sett de samme sjangrene på alle bøkene i denne serien og lås dem mot metadataoppdatering",
+      "activeHint": "Sjangeroverstyring er aktiv: {{genres}}. Bøker som legges til senere, arver den. Klikk for å endre eller fjerne den.",
+      "activeHintEmpty": "Sjangeroverstyring er aktiv (ingen sjangre). Bøker som legges til senere, arver den. Klikk for å endre eller fjerne den.",
+      "prompt": "Angi sjangre for alle bøkene i «{{title}}» (kommaseparert). Sjangrene låses mot metadataoppdatering og brukes på bøker som legges til senere. La feltet stå tomt for å fjerne overstyringen.",
+      "removed": "Sjangeroverstyringen er fjernet",
+      "applied_one": "Sjangre satt på {{count}} bok",
+      "applied_other": "Sjangre satt på {{count}} bøker",
+      "failed": "Kunne ikke bruke sjangrene"
+    },
+    "fill": {
+      "button": "Fyll hull",
+      "queuing": "Legger i kø…",
+      "nothing": "Ingenting å fylle",
+      "queued_one": "{{count}} bok lagt i kø",
+      "queued_other": "{{count}} bøker lagt i kø",
+      "failed": "Mislyktes",
+      "skippedByProfile_one": "{{count}} hoppet over av metadataprofilen",
+      "skippedByProfile_other": "{{count}} hoppet over av metadataprofilen",
+      "skippedSplitParts_one": "{{count}} delbind hoppet over",
+      "skippedSplitParts_other": "{{count}} delbind hoppet over"
+    },
+    "hardcover": {
+      "searching": "Søker…",
+      "search": "Søk",
+      "searchTitle": "Søk i Hardcover-serier",
+      "linkedTo": "Koblet til {{title}}",
+      "autoLink": "Koble automatisk",
+      "manualLink": "Koble manuelt",
+      "heading": "Hardcover: {{title}}",
+      "diffSummary": "{{present}} funnet · {{missing}} mangler",
+      "checking": "Sjekker Hardcover-katalogen…",
+      "loadingBooks": "Laster inn bøker fra Hardcover…",
+      "diffFailed": "Kunne ikke laste inn sammenligningen med Hardcover",
+      "searchFailed": "Søket i Hardcover mislyktes",
+      "formatLabel": "Format som skal legges til",
+      "formatTitle": "Velg hvilket format som skal legges til",
+      "addAll": "legg til alle",
+      "add": "legg til",
+      "addTitle": "Legg til denne manglende Hardcover-boken og søk i indekserere",
+      "moreMissing_one": "{{count}} manglende bok til",
+      "moreMissing_other": "{{count}} manglende bøker til",
+      "coveredSection_one": "{{count}} delt utgave av en bok du har",
+      "coveredSection_other": "{{count}} delte utgaver av bøker du har",
+      "coveredSubtitle": "Del av {{title}}, som allerede er i biblioteket ditt"
+    },
+    "nameModal": {
+      "name": "Navn",
+      "placeholder": "Serienavn",
+      "required": "Serienavn må fylles ut",
+      "failed": "Kunne ikke lagre serien"
+    },
+    "splitParts": {
+      "badge": "Delbind",
+      "badgeHint": "Ett bind av en delt utgave av en bok som allerede er i denne serien. Fyll hull og søket etter ønskede bøker hopper over det.",
+      "unmonitor_one": "Slutt å overvåke {{count}} delbind",
+      "unmonitor_other": "Slutt å overvåke {{count}} delbind",
+      "unmonitorHint": "Slutt å søke etter delbind av bøker du allerede har. Ingenting slettes.",
+      "confirm": "Slutte å overvåke delbindene av bøker som allerede er i denne serien? De blir i biblioteket og forsvinner fra Ønsket, og du kan overvåke hvert av dem igjen fra boksiden.",
+      "done_one": "{{count}} delbind overvåkes ikke lenger",
+      "done_other": "{{count}} delbind overvåkes ikke lenger",
+      "failed": "Kunne ikke slutte å overvåke delbindene"
     }
   },
   "importHints": {
@@ -800,7 +986,11 @@
     "noReleases": "Ingen overvåkede bøker utgis denne måneden",
     "releasingIn": "Utgis i {{month}} {{year}}",
     "prevMonth": "Forrige måned",
-    "nextMonth": "Neste måned"
+    "nextMonth": "Neste måned",
+    "dayReleases_one": "{{date}}: {{count}} utgivelse",
+    "dayReleases_other": "{{date}}: {{count}} utgivelser",
+    "releasingOn": "Utgis {{date}}",
+    "showWholeMonth": "Vis hele måneden"
   },
   "settings": {
     "title": "Innstillinger",
@@ -885,7 +1075,9 @@
         "applying": "Utfører…",
         "cancel": "Avbryt",
         "error": "Tilbakerullingen mislyktes: {{error}}",
-        "appliedSummary": "Tilbakerullingen er fullført. Slettet: {{deleted}}, koblinger fjernet: {{unlinked}}, hoppet over: {{skipped}}, feil: {{failed}}."
+        "appliedSummary": "Tilbakerullingen er fullført. Slettet: {{deleted}}, koblinger fjernet: {{unlinked}}, hoppet over: {{skipped}}, feil: {{failed}}.",
+        "nothingToRollBack": "Ingenting å rulle tilbake. Denne importen etterlot ingenting Bindery kan angre.",
+        "nothingToRollBackDryRun": "Ingenting å rulle tilbake. Dette var en prøvekjøring, så biblioteket ditt ble aldri endret."
       },
       "deliveries": {
         "heading": "Leveringskø",
@@ -927,6 +1119,34 @@
         "actionFailed": "Det fungerte ikke: {{error}}",
         "lastCheckIn": "Calibre tok sist kontakt {{time}}",
         "neverCheckedIn": "Calibre har ikke tatt kontakt siden Bindery startet"
+      },
+      "calibredbMissing": {
+        "title": "calibredb kan ikke kjøre der Bindery kjører",
+        "body": "Ingenting når fram til Calibre i denne modusen. Det offisielle Bindery-imaget inneholder ikke Calibre og kan ikke kjøre en Calibre-installasjon som er montert inn i det, så calibredb-CLI-modusen kan ikke fungere der. Bruk heller programtillegget Calibre Bridge, som kjører inne i Calibre i en annen container eller på en annen vert, eller kjør Bindery der calibredb er installert.",
+        "switchToBridge": "Bytt til programtillegget Calibre Bridge"
+      },
+      "pushAll": {
+        "label": "Send alle til Calibre",
+        "description": "Legg alle importerte bøker i kø for programtillegget Calibre Bridge. Bøker som allerede er levert, sendes ikke på nytt, og bøkene i køen sendes så snart Calibre kan nås.",
+        "bridgeUnreachable": "Bridge kan ikke nås akkurat nå. Bøker du sender, venter i køen til den kan nås.",
+        "needPluginUrl": "Angi URL-en til programtillegget først",
+        "queueing": "Legger i kø…",
+        "startFailed": "Sendingen kunne ikke startes",
+        "working": "Arbeider…",
+        "idle": "Inaktiv",
+        "pushed": "Sendt",
+        "alreadyInCalibre": "Allerede i Calibre",
+        "failed": "Mislyktes",
+        "skipped": "Hoppet over",
+        "syncFailed": "Synkroniseringen mislyktes: {{error}}",
+        "done": "Ferdig. Sendt: {{pushed}}, allerede i Calibre: {{already}}, mislyktes: {{failed}}, hoppet over: {{skipped}}.",
+        "errorTitle": "Tittel",
+        "errorReason": "Årsak",
+        "skipTitle": "Ikke sendt",
+        "skipReason": "Hvorfor",
+        "close": "Lukk",
+        "closeRunningHint": "Lukk. Bøkene i køen fortsetter å sendes i bakgrunnen.",
+        "closeAndKeepGoing": "Lukk og fortsett"
       }
     },
     "indexers": {
@@ -977,13 +1197,21 @@
         "freeleechOnlyHint": "Automatisk henting fra denne indeksereren begrenses til freeleech-utgivelser. Alt annet holdes tilbake i ventekøen for manuell godkjenning. Interaktivt søk viser fortsatt alt. Ment for private trackere der ratio betyr noe; la det være av for offentlige trackere og Usenet.",
         "dailyQueryLimit": "Daglig grense for spørringer",
         "dailyQueryLimitPlaceholder": "f.eks. 1000",
-        "dailyQueryLimitHint": "Slutt å søke i denne indeksereren når den har fått angitt antall spørringer de siste 24 timene. La stå tom for ingen grense. Spørringer telles i blokker på én time, så kapasiteten kommer tilbake én time om gangen i stedet for alt på én gang, og en blokk frigjøres først når den ligger en hel time utenfor vinduet. Enheten er spørringer, ikke bøker: én bok koster mellom én og åtte, avhengig av hvor langt søket må falle tilbake. Bruk dette på trackere med en daglig API-kvote, slik at én planlagt søkerunde over et stort bibliotek ikke kan bruke opp hele kvoten. Test-knappen er unntatt og telles aldri."
+        "dailyQueryLimitHint": "Slutt å søke i denne indeksereren når den har fått angitt antall spørringer de siste 24 timene. La stå tom for ingen grense. Spørringer telles i blokker på én time, så kapasiteten kommer tilbake én time om gangen i stedet for alt på én gang, og en blokk frigjøres først når den ligger en hel time utenfor vinduet. Enheten er spørringer, ikke bøker: én bok koster mellom én og åtte, avhengig av hvor langt søket må falle tilbake. Bruk dette på trackere med en daglig API-kvote, slik at én planlagt søkerunde over et stort bibliotek ikke kan bruke opp hele kvoten. Test-knappen er unntatt og telles aldri.",
+        "downloadClient": "Nedlastingsklient",
+        "downloadClientDefault": "Standard (automatisk ruting)",
+        "downloadClientDisabledOption": "{{name}} (deaktivert)",
+        "downloadClientWrongProtocolOption": "{{name}} (feil protokoll)",
+        "downloadClientHint": "Send alt som hentes fra denne indeksereren, til én nedlastingsklient, uansett hva prioriteten eller kategoriruting sier. La stå på Standard for å la Bindery velge. Er den valgte klienten deaktivert, mangler eller ikke kan nås, mislykkes hentingen med en feil i stedet for å gå til en annen klient, så trafikk fra private trackere aldri når den offentlige klienten din. Bare aktiverte klienter med protokollen til denne indeksereren vises."
       },
       "quotaUsage": "{{used}} av {{limit}} spørringer de siste 24 timene",
       "quotaReached": "Den daglige grensen på {{limit}} spørringer er nådd. Denne indeksereren hoppes over til den eldste timen med spørringer faller ut av vinduet.",
       "healthAuthFail": "Denne indeksereren avviste det siste søket og vil fortsette å avvise til noen retter opp feilen: {{error}}",
       "healthFail": "Siste søk mislyktes: {{error}}",
-      "cooldown": "Hastighetsbegrenset. Søkene gjenopptas {{until}}: {{error}}"
+      "cooldown": "Hastighetsbegrenset. Søkene gjenopptas {{until}}: {{error}}",
+      "pinnedClientDisabled": "Låst til nedlastingsklienten {{name}}, som er deaktivert. Det som hentes fra denne indeksereren, mislykkes og går ikke til en annen klient før du aktiverer den eller velger en annen.",
+      "pinnedClientWrongProtocol": "Låst til nedlastingsklienten {{name}}, som har feil protokoll for denne indeksereren. Det som hentes fra denne indeksereren, mislykkes og går ikke til en annen klient før du velger en klient som passer.",
+      "pinnedClientMissing": "Låst til en nedlastingsklient som ikke finnes lenger. Det som hentes fra denne indeksereren, mislykkes til du velger en annen."
     },
     "prowlarr": {
       "heading": "Prowlarr",
@@ -1083,6 +1311,26 @@
           "hardlinks": "Harde lenker",
           "indexer_reach": "Klientens tilgang til indekserere"
         }
+      },
+      "audiobookCategoryPlaceholder": "lydbøker",
+      "remapAssist": {
+        "heading": "Foreslå en stiomkobling",
+        "intro": "Bindery ser ikke mappen klienten skriver til. Hvis klienten og Bindery deler samme lagring under ulike stier, velger du mappen der Bindery ser den.",
+        "clientPath": "Klienten skriver til",
+        "chooseLabel": "Bindery ser den lagringen under",
+        "source": {
+          "ebookDownloadDir": "nedlastingsmappe for e-bøker",
+          "audiobookDownloadDir": "nedlastingsmappe for lydbøker",
+          "library": "bibliotekmappe"
+        },
+        "note": {
+          "samePath": "Bindery bruker den samme stien, så en omkobling ville ikke endret noe. Lagringen til klienten er ikke montert inn i Bindery-containeren på den stien. Monter den der, for eksempel som et delt volum, i stedet for å legge til en omkobling.",
+          "unsupportedChars": "Denne stien inneholder et komma eller et kolon, som omkoblingssyntaksen ikke kan romme, så ingen regel kan foreslås. Skriv stiomkoblingen selv i redigeringsskjemaet for klienten, eller gi mappen nytt navn."
+        },
+        "previewLabel": "Forhåndsvisning",
+        "apply": "Bruk denne omkoblingen",
+        "applying": "Bruker…",
+        "failed": "Kunne ikke lagre omkoblingen: {{error}}"
       }
     },
     "notifications": {
@@ -1263,7 +1511,9 @@
         "tokenIgnoredAudiobook": "{{token}} ignoreres i mappemalen for lydbøker",
         "errorTraversal": "Malen kan ikke inneholde stisegmentene «.» eller «..».",
         "errorUnknownTokens": "Ukjente plassholdere: {{tokens}}. De skiller mellom store og små bokstaver og blir skrevet ut som de er.",
-        "hintEmpty": "Påkrevd: skriv inn minst én plassholder eller ett stisegment."
+        "hintEmpty": "Påkrevd: skriv inn minst én plassholder eller ett stisegment.",
+        "errorExtInAudiobook": "Lydbokmapper har ingen filendelse, så {ext} er alltid tom her og ville etterlatt et punktum på slutten av hvert mappenavn. Fjern den; den hører hjemme i malen for e-bøker.",
+        "warnExtNeedsDot": "Det står ikke noe punktum foran {ext}. Filene ville fått navn uten filendelse, for eksempel «Tittelepub». Bruk .{ext}."
       },
       "apiKeys": "Eksterne API-nøkler",
       "googleBooksKey": "API-nøkkel for Google Books",
@@ -1280,6 +1530,51 @@
       "storageHealthMissing": "Mangler",
       "storageHealthReadOnly": "Ikke skrivbar",
       "storageHealthChecking": "Sjekker…",
+      "dbCheck": "Databasesjekk",
+      "dbCheckHint": "Leter etter rader som peker på en forelder som ikke finnes lenger, rester fra eldre versjoner. Den leser hele databasen, så den kjører bare når du trykker på knappen, og den endrer ingenting.",
+      "dbCheckButton": "Sjekk databasen",
+      "dbCheckRunning": "Sjekker…",
+      "dbCheckClean": "Ingen avvik funnet. Alle rader peker på en forelder som finnes.",
+      "dbCheckFound_one": "{{count}} rad peker på en forelder som ikke finnes lenger.",
+      "dbCheckFound_other": "{{count}} rader peker på en forelder som ikke finnes lenger.",
+      "dbCheckColRelationship": "Relasjon (barn til forelder)",
+      "dbCheckColRows": "Rader uten forelder",
+      "dbCheckColOnDelete": "Da forelderen ble slettet, sier skjemaet",
+      "dbCheckOnDeleteCascade": "Slett raden",
+      "dbCheckOnDeleteSetNull": "Fjern referansen, behold raden",
+      "dbCheckOnDeleteOther": "Ingen automatisk handling",
+      "dbCheckOnDeleteUnknown": "Ukjent",
+      "dbCheckCheckedAt": "Sjekket {{time}}",
+      "dbCheckFailed": "Sjekken feilet: {{message}}",
+      "dbCheckFailedGeneric": "Kunne ikke kjøre sjekken.",
+      "dbCheckRepairNote": "Du kan også gjøre dette fra kommandolinjen, som fungerer selv når Bindery ikke vil starte: forhåndsvis de berørte radene med bindery db-check og rett dem med bindery db-repair og yes-flagget. db-repair tar ikke sikkerhetskopi, så ta sikkerhetskopi av databasen først.",
+      "dbCheckDocsLink": "Slik fungerer db-repair",
+      "dbCleanupButton": "Forhåndsvis opprydding",
+      "dbCleanupPreviewing": "Forhåndsviser…",
+      "dbCleanupPreviewTitle": "Hva en opprydding vil gjøre",
+      "dbCleanupColAction": "Hva som skjer",
+      "dbCleanupActionDelete": "Slett radene",
+      "dbCleanupActionClear": "Fjern referansen, behold radene",
+      "dbCleanupActionKeep": "La stå",
+      "dbCleanupActionSkipped": "Kan ikke repareres automatisk, blir stående som de er",
+      "dbCleanupPartial": "{{count}} av disse kan ikke repareres automatisk og blir stående som de er.",
+      "dbCleanupSummary": "Rader som slettes eller får fjernet referansen: {{fixable}}. Rader som får stå: {{unfixable}}.",
+      "dbCleanupCascadeNote": "Når en rad slettes, slettes også det som henger under den, akkurat som om forelderen var slettet på riktig måte. Tallene over inkluderer ikke disse radene.",
+      "dbCleanupBackupNote": "Før noe endres, lagrer Bindery en sikkerhetskopi av databasen i mappen for sikkerhetskopier og forteller deg hvor den ligger. Hvis sikkerhetskopien ikke kan lages, endres ingenting.",
+      "dbCleanupSlowNote": "På en veldig stor database kan dette ta flere minutter. La denne siden stå åpen.",
+      "dbCleanupNothing": "Ingenting her kan ryddes automatisk.",
+      "dbCleanupConfirm": "Ta sikkerhetskopi og rydd opp",
+      "dbCleanupConfirming": "Rydder opp…",
+      "dbCleanupCancel": "Avbryt",
+      "dbCleanupDone": "Oppryddingen er ferdig. Slettet {{deleted}}, fjernet referansen på {{cleared}}, latt stå {{skipped}}.",
+      "dbCleanupBackupAt": "Sikkerhetskopi lagret her: {{path}}",
+      "dbCleanupRemaining_one": "{{count}} rad peker fortsatt på en forelder som ikke finnes.",
+      "dbCleanupRemaining_other": "{{count}} rader peker fortsatt på en forelder som ikke finnes.",
+      "dbCleanupRemainingNone": "En ny sjekk finner ingen avvik.",
+      "dbCleanupNotVerified": "Oppryddingen ble kjørt, men sjekken etterpå kunne ikke fullføres. Kjør sjekken på nytt.",
+      "dbCleanupFailed": "Oppryddingen feilet: {{message}}",
+      "dbCleanupFailedGeneric": "Kunne ikke kjøre oppryddingen.",
+      "dbCleanupPreviewFailed": "Forhåndsvisningen feilet: {{message}}",
       "importModeHardlinkWarning": "⚠ Hardlenke er valgt, men dette oppsettet kan ikke lage hardlenker, så importer blir kopiert i stedet (tregere og bruker dobbelt så mye diskplass). Legg nedlastingsmappen og biblioteket på samme filsystem eller volum, eller bytt til Automatisk.",
       "storageHardlinkOk": "Nedlastinger og bibliotek deler filsystem, så ferdige nedlastinger hardlenkes inn i biblioteket (umiddelbart og uten ekstra diskplass).",
       "storageHardlinkWarning": "Nedlastinger og bibliotek ligger på forskjellige filsystemer, så importer kopierer filene i stedet for å hardlenke dem (tregere og bruker dobbelt så mye diskplass). Legg begge på samme volum for å kunne bruke hardlenker.",
@@ -1354,7 +1649,66 @@
       "rotateSessionSecretConfirm": "Vil du rotere hemmeligheten for signering av økter? Eksisterende pålogginger fortsetter å virke i en overgangsperiode via den forrige hemmeligheten. En ny rotasjon avslutter denne perioden.",
       "rotateSessionSecretTitle": "Roter økthemmelighet",
       "rotateSessionSecretAcknowledge": "Jeg forstår at en ny rotasjon vil logge ut alle.",
-      "defaultMediaTypeHint": "Brukes for nye forfattere, og for bøker du legger til enkeltvis, når ingenting er valgt eksplisitt. Eksisterende oppføringer påvirkes ikke: endre forfattere med massehandlingen på Forfattere-siden, og bøker fra Bøker-siden med Angi e-bok, Angi lydbok eller Angi begge, som også dekker de ønskede bøkene dine når Bøker er filtrert på Ønsket."
+      "defaultMediaTypeHint": "Brukes for nye forfattere, og for bøker du legger til enkeltvis, når ingenting er valgt eksplisitt. Eksisterende oppføringer påvirkes ikke: endre forfattere med massehandlingen på Forfattere-siden, og bøker fra Bøker-siden med Angi e-bok, Angi lydbok eller Angi begge, som også dekker de ønskede bøkene dine når Bøker er filtrert på Ønsket.",
+      "authorWikidataLabel": "Forfatterbilder og biografier fra Wikidata",
+      "authorWikidataHint": "Fyller inn manglende bilde og biografi for en forfatter fra Wikimedia Commons og Wikipedia, funnet på Wikidata via forfatterens autoritets-ID fra biblioteket (NORAF, GND, BnF eller OpenLibrary), aldri via navn. Oppslagene følger den daglige forfatteroppdateringen, og hvert bilde og hver biografi krediteres på forfatterens side. Når dette er slått av, sendes det ingen forespørsler til Wikimedia.",
+      "enrichersHeading": "Berikere",
+      "enrichersHint": "Disse leverandørene fyller inn det primærleverandøren lar stå tomt. Fjerner du haken for én av dem, slutter Bindery å bruke den som beriker. Det gir færre forespørsler, men færre felt blir fylt ut: DNB leverer også omslag gjennom sin omslagstjeneste, og Hardcover leverer også kuraterte sjangere, serier og språkopplysninger om utgaver. Gjelder fra neste oppslag, uten omstart.",
+      "enricherPrimaryNote": "Dette er primærleverandøren, så den kan ikke slås av.",
+      "enricherOpenlibraryLabel": "OpenLibrary",
+      "enricherOpenlibraryHint": "Beskrivelser, omslag og emner.",
+      "enricherHardcoverLabel": "Hardcover",
+      "enricherHardcoverHint": "Vurderinger, kuraterte sjangere og serier. Brukes ikke før et API-token er lagret.",
+      "enricherGooglebooksLabel": "Google Books",
+      "enricherGooglebooksHint": "Beskrivelser og omslag. Brukes bare når en Google Books API-nøkkel er lagret.",
+      "enricherDnbLabel": "DNB (Det tyske nasjonalbiblioteket)",
+      "enricherDnbHint": "Opplysninger og omslag for tyskspråklige bøker. Trygt å slå av hvis du ikke leser tysk.",
+      "audiobookSourcesHeading": "Lydbokkilder",
+      "audibleLabel": "Audible-katalogen",
+      "audibleHint": "Legger lydbøker til i forfatterens katalog. Bruker et upublisert Amazon-endepunkt, ikke et dokumentert API.",
+      "audnexHint": "Innleser, spilletid og omslag for lydbøker. En proxy drevet av fellesskapet, som henter de samme Audible-dataene.",
+      "sourcesSaveFailed": "Endringen kunne ikke lagres og ble tilbakestilt. Prøv igjen.",
+      "hardcoverTokenRejected": "Hardcover avviste API-tokenet, så forespørsler til Hardcover er satt på pause. Lagre et token som virker, nedenfor, eller bruk Test tilkobling når det er rettet hos Hardcover.",
+      "hardcoverPausedUntil": "Hardcover er satt på pause til {{time}} fordi den daglige kvoten er nådd. Prøv avbrutte importer på nytt etter dette tidspunktet.",
+      "ebookContentCheck": "Sjekk innholdet i e-bøker",
+      "ebookContentCheckHint": "Når en e-boknedlasting er ferdig, sammenlignes tittelen og forfatteren i selve EPUB-filen med boken den ble hentet for. Advar, som er standard, importerer den og noterer avviket på historikkoppføringen og i webhooks. Blokker avviser nedlastingen, blokkerer utgivelsen og beholder boken som ønsket. Av hopper over sjekken. Koble til bok og manuell import hopper alltid over den.",
+      "audiobookContentCheck": "Sjekk innholdet i lydbøker",
+      "audiobookContentCheckHint": "Når en lydboknedlasting er ferdig, leses taggene i lydfilene og sammenlignes med boken den ble hentet for. Advar, som er standard, importerer den og lister opp de andre bøkene som ble funnet, på historikkoppføringen og i webhooks. Blokker avviser nedlastingen, blokkerer utgivelsen og beholder boken som ønsket. Av hopper over sjekken og leser ingen tagger. Koble til bok og manuell import hopper alltid over den.",
+      "contentCheckOff": "Av",
+      "contentCheckWarn": "Advar (importer og noter det)",
+      "contentCheckBlock": "Blokker (avvis nedlastingen)",
+      "scanCheckBack": "Skanningen har startet. Sjekk resultatene om litt.",
+      "scanQueued": "En skanning kjører allerede. En ny starter så snart den er ferdig, så filer som er lagt til siden den startet, blir også tatt med.",
+      "metadataProviderNb": "Nasjonalbiblioteket (norsk)",
+      "metadataProviderBnf": "BnF (Bibliothèque nationale de France, fransk)",
+      "metadataProviderBnfCredit": "Inneholder data fra Bibliothèque nationale de France (BnF) under Licence Ouverte / Open Licence 2.0. Datoen hver post ble hentet, vises på bok- og forfattersidene. BnF går ikke god for Bindery. Bare katalogpostene til BnF brukes: ingen omslagsbilder hentes, og BnF kontaktes bare mens den er primærleverandør.",
+      "metadataProviderLiveHint": "Gjelder fra neste oppslag, uten omstart. Forfattere som allerede er i biblioteket ditt, forblir koblet til leverandøren de ble lagt til fra; den nye primærleverandøren gjelder forfattere du legger til etterpå. For å flytte en eksisterende forfatter bruker du «Koble metadata» på siden deres.",
+      "audnexLabel": "audnex",
+      "enhancedHardcoverStatusEnabled": "Aktivert",
+      "enhancedHardcoverStatusEnvDisabled": "Deaktivert av BINDERY_ENHANCED_HARDCOVER_API=false.",
+      "enhancedHardcoverStatusMissingToken": "Legg til et API-token for Hardcover for å aktivere denne funksjonen.",
+      "enhancedHardcoverStatusAdminDisabled": "Slå dette på for å aktivere de utvidede seriefunksjonene.",
+      "hardcoverApiToken": "API-token for Hardcover",
+      "hardcoverTokenConfigured": "Token er satt opp",
+      "hardcoverTokenNotConfigured": "Ingen token er satt opp",
+      "hardcoverApiTokenConfiguredPlaceholder": "Det lagrede tokenet er skjult. Skriv inn et nytt token for å rotere det.",
+      "hardcoverApiTokenPlaceholder": "Lim inn et API-token for Hardcover",
+      "hardcoverSaveToken": "Lagre API-tokenet for Hardcover",
+      "hardcoverClearToken": "Fjern API-tokenet for Hardcover",
+      "hardcoverTestApi": "Test Hardcover-API-et",
+      "hardcoverApiTokenLink": "Opprett eller kopier et API-token for Hardcover",
+      "hardcoverTestOk": "Koblet til Hardcover-API-et.",
+      "hardcoverTestFailed": "Testen av Hardcover-API-et mislyktes.",
+      "enhancedHardcoverSeries": "Utvidede Hardcover-serier",
+      "enhancedHardcoverSeriesHint": "Bruk seriematching fra Hardcover, katalogsammenligninger og utfylling av manglende bøker.",
+      "defaultMediaTypeLabel": "Standard medietype",
+      "strictMediaTypeLabel": "Begrens nye bøker til denne medietypen",
+      "strictMediaTypeHint": "Hopp over bøker i katalogen som bare finnes i det andre formatet, og snevre inn bøker som finnes i begge formater, til dette. Hindrer at du overvåker bøker du aldri kan hente. Gjelder bare utfylling av katalogen: en bok du legger til selv, opprettes alltid i formatet du valgte.",
+      "defaultMonitorModeLabel": "Standard overvåkingsmodus",
+      "defaultMonitorModeHint": "Brukes for forfattere som legges til. Eksisterende forfattere beholder modusen sin med mindre de redigeres.",
+      "defaultMonitorLatestCountLabel": "Antall nyeste bøker",
+      "audiobookFileTemplate": "Navngiving av lydbokfiler (per spor)",
+      "audiobookFileTemplateHint": "La stå tomt for å beholde filoppsettet fra nedlastingen. Angi en mal for å gi hvert lydbokspor nytt navn i avspillingsrekkefølge; den må inneholde {Part}. En lydbok med én fil får også nytt navn, som del 1, med mindre {Part} står i en gruppe med egen tekst, som {Title}{ - Pt. Part:3}.{ext}, som utelates når det bare er én fil."
     },
     "import": {
       "csvHeading": "CSV med forfatternavn",
@@ -1365,13 +1719,16 @@
       "readarrDescription": "Last opp readarr.db (vanligvis under /config/readarr.db). Forfattere slås opp på nytt mot den primære metadataleverandøren din og reserveleverandørene. Indekserere, nedlastingsklienter og oppføringer i blokkeringslisten overføres direkte. Kjør en skanning av biblioteket etterpå for å finne treff for bokfilene du allerede har.",
       "uploadReadarr": "Last opp readarr.db",
       "importingReadarr": "Importerer (kan ta noen minutter)…",
+      "catalogueFetching": "Henter forfatterkataloger: {{done}} av {{total}}",
+      "catalogueFetched": "Forfatterkataloger hentet: {{done}} av {{total}}",
+      "catalogueHint": "Dette kjører i bakgrunnen med omtrent 3 sekunder per forfatter, så 500 forfattere tar rundt 25 minutter. Du kan forlate denne siden.",
       "resultRequested": "forespurt",
       "resultAdded": "lagt til",
       "resultSkipped": "hoppet over (finnes allerede)",
       "resultFailed": "mislyktes",
       "showFailures": "Vis {{count}} feil",
       "hardcoverHeading": "Leselister fra Hardcover",
-      "hardcoverDescription": "Synkroniser bøker fra leselistene dine på Hardcover. Den lagrede API-tokenen for Hardcover brukes som standard. Nyvalgte lister med global token lagres deaktivert til du aktiverer dem.",
+      "hardcoverDescription": "Synkroniser bøker fra leselistene dine på Hardcover. Det lagrede API-tokenet for Hardcover brukes som standard. Nyvalgte lister med globalt token lagres deaktivert til du aktiverer dem.",
       "hardcoverAddButton": "+ Legg til Hardcover-liste",
       "hardcoverName": "Navn",
       "hardcoverNamePlaceholder": "f.eks. Vil lese",
@@ -1381,13 +1738,13 @@
       "hardcoverLoadOverride": "Last inn lister fra token",
       "hardcoverUseSavedToken": "Bruk lagret token",
       "hardcoverSavedOnly": "Kun lagret",
-      "hardcoverOverrideConfigured": "Egen token",
-      "hardcoverGlobalToken": "Global token",
+      "hardcoverOverrideConfigured": "Eget token",
+      "hardcoverGlobalToken": "Globalt token",
       "hardcoverNotSelected": "Ikke valgt",
       "hardcoverBooksCount": "{{count}} bøker",
       "hardcoverSyncNow": "Synkroniser nå",
       "hardcoverSyncing": "Synkroniserer…",
-      "hardcoverTokenOverride": "Egen token",
+      "hardcoverTokenOverride": "Eget token",
       "hardcoverMediaType": "Medietype",
       "hardcoverMediaTypeHint": "Formatet synkroniserte bøker opprettes i. Automatisk bruker det Hardcover oppgir.",
       "downloadBooks": "Last ned bøker fra denne listen",
@@ -1399,9 +1756,9 @@
       "ownerLabel": "Eier",
       "ownerHint": "Hvem som ser bøker synkronisert fra denne listen. Global viser dem for alle brukere.",
       "ownerGlobal": "Global (alle brukere)",
-      "hardcoverTokenOverridePlaceholderConfigured": "Den egne tokenen er skjult. Skriv inn en ny token for å erstatte den.",
-      "hardcoverTokenOverridePlaceholder": "Lim inn en egen token for denne listen",
-      "hardcoverClearOverride": "Fjern egen token",
+      "hardcoverTokenOverridePlaceholderConfigured": "Det egne tokenet er skjult. Skriv inn et nytt token for å erstatte det.",
+      "hardcoverTokenOverridePlaceholder": "Lim inn et eget token for denne listen",
+      "hardcoverClearOverride": "Fjern eget token",
       "hardcoverList": "Liste",
       "hardcoverListPlaceholder": "Skriv inn token for å laste inn lister",
       "hardcoverListLoading": "Laster inn lister…",
@@ -1447,7 +1804,7 @@
       "goodreadsCommitResult": "{{added}} lagt til · {{skipped}} hoppet over · {{failed}} mislyktes",
       "goodreadsNoResolved": "Ingen rader kunne slås opp, så det er ingenting å importere. Prøv et bredere hyllefilter, eller se gjennom radene uten treff nedenfor.",
       "goodreadsUploadFailed": "Opplastingen mislyktes",
-      "configureHardcoverToken": "Angi API-tokenen for Hardcover i innstillingene for API-nøkler →",
+      "configureHardcoverToken": "Angi API-tokenet for Hardcover i innstillingene for API-nøkler →",
       "folderMovedHeading": "Importer fra en mappe",
       "folderMovedBody": "Skanning av en mappe og import av det som gir treff, finner du nå på Import-siden, ved siden av bøkene som en skanning av biblioteket ikke fant treff for.",
       "folderMovedLink": "Åpne Import"
@@ -1509,7 +1866,26 @@
       "sectionInternal": "Binderys egen bokføring",
       "sectionInert": "Ikke lenger i bruk",
       "sectionUnknown": "Ukjente nøkler"
-    }
+    },
+    "sectionLabel": "Del av innstillingene",
+    "search": {
+      "label": "Finn en fane eller del i innstillingene",
+      "placeholder": "Prøv telemetri, navngiving eller en innstillingsnøkkel",
+      "results": "Søkeresultater i innstillingene",
+      "none": "Ingen fane eller del passer",
+      "count_one": "{{count}} treff",
+      "count_other": "{{count}} treff",
+      "more": "Viser {{shown}} av {{total}}. Skriv mer for å snevre inn.",
+      "moreAnnounce": "{{total}} treff, viser de første {{shown}}. Skriv mer for å snevre inn."
+    },
+    "groups": {
+      "sources": "Kilder",
+      "library": "Bibliotek",
+      "integrations": "Integrasjoner",
+      "system": "System"
+    },
+    "previewBadge": "Forhåndsvisning",
+    "tabWithPreview": "{{tab}} (forhåndsvisning)"
   },
   "addToLibrary": {
     "title": "Legg til i biblioteket",
@@ -1599,6 +1975,12 @@
       "addFailed": "Kunne ikke legge til boken",
       "alreadyInLibrary": "Finnes allerede i biblioteket ditt. Endre format eller overvåking på boksiden.",
       "openExisting": "Åpne eksisterende bok"
+    },
+    "filter": {
+      "label": "Vis",
+      "all": "Alle",
+      "books": "Bøker",
+      "authors": "Forfattere"
     }
   },
   "authorMetadataLink": {
@@ -1664,7 +2046,8 @@
       "coldStart": "Legg til flere bøker for å få personlige sjangeranbefalinger.",
       "goToSettings": "Gå til bokanbefalinger"
     },
-    "moreActionsFor": "Flere handlinger for {{title}}"
+    "moreActionsFor": "Flere handlinger for {{title}}",
+    "ratingLabel": "Vurdert til {{rating}} av 5"
   },
   "gettingStarted": {
     "title": "Kom i gang",
@@ -1690,7 +2073,14 @@
     "grab": "Hent en bok",
     "import": "Første bok importert",
     "progress": "{{done}} av {{total}} trinn fullført",
-    "next": "Neste:"
+    "next": "Neste:",
+    "blocked": {
+      "title": "Importene har et problem akkurat nå",
+      "storage": "En bibliotek- eller nedlastingsmappe er ikke tilgjengelig, så importer som bruker den, vil mislykkes.",
+      "storageAction": "Sjekk lagringen",
+      "indexer": "Ingen indekserer er aktivert, så ingenting kan søkes etter.",
+      "downloadClient": "Ingen nedlastingsklient er aktivert, eller alle aktiverte klienter mislyktes ved forrige helsesjekk (kan ikke nås, eller nedlastingsmappen kan ikke leses), så ferdige nedlastinger kan ikke importeres."
+    }
   },
   "protocolMismatch": {
     "torrent": "En Torznab-indekserer er aktivert, men ingen torrent-nedlastingsklient (qBittorrent, Transmission, Deluge, rTorrent) er det. Utgivelsene den finner, kan derfor aldri lastes ned.",
@@ -1865,6 +2255,10 @@
     "autoSearchFailed": "Automatisk søk mislyktes",
     "noIndexers": "Ingen indekserere er konfigurert. Legg til en under",
     "noResults": "Ingen treff i noen indekserere. Utvid søkedetaljene nedenfor for å se hvorfor.",
+    "noResultsFiltered": "Ingen utgivelser passet til boken, men {{count}} ble filtrert bort. Åpne «Filtrert» nedenfor for å se hvorfor.",
+    "filteredHeading": "Filtrert ({{count}})",
+    "filteredHint": "Bindery-filtrene sorterte bort disse. Hent en hvis du vet at det er riktig utgivelse.",
+    "filteredCapped": "Viser {{shown}} av {{total}}.",
     "fileHeading": "Fil",
     "mediaTypeLabel": "Medietype",
     "mediaTypeHint": "Endre medietype",
@@ -1918,7 +2312,12 @@
       "lockedHint": "Redigert manuelt, så metadataoppdateringer overskriver ikke dette feltet",
       "unlockAll": "Lås opp alle felt",
       "unlockAllHint": "La metadataoppdateringer styre alle felt igjen",
-      "saveFailed": "Lagring mislyktes"
+      "saveFailed": "Lagring mislyktes",
+      "fieldSeries": "Serie",
+      "seriesNone": "Ingen serie",
+      "seriesNew": "Ny serie…",
+      "fieldNewSeries": "Navn på ny serie",
+      "fieldPosition": "Nummer"
     },
     "exclude": "Ekskluder",
     "unexclude": "Opphev ekskludering",
@@ -1946,7 +2345,13 @@
       "destinationUnknown": "Bindery klarte ikke å finne ut hvor filen skal. Den blir likevel flyttet og får nytt navn.",
       "confirmButton": "Flytt og knytt til boken",
       "confirmButtonNoop": "Knytt til boken",
-      "backButton": "Velg en annen bok"
+      "backButton": "Velg en annen bok",
+      "modeLegend": "Hva skal skje med filen?",
+      "modeLinkOnly": "Bare rett koblingen",
+      "modeLinkOnlyHint": "Filen blir liggende der den er, med det navnet den har nå. Bare boken den hører til, endres.",
+      "modeRelocate": "Flytt filen og gi den nytt navn også",
+      "modeRelocateHint": "Bindery flytter filen inn i mappen til den valgte boken og gir den nytt navn etter navnemalen din.",
+      "staysAtLabel": "Filen blir liggende i"
     },
     "metadataSource": {
       "heading": "Metadatakilde",
@@ -1993,7 +2398,8 @@
       "showLess": "Vis mindre"
     },
     "renameFiles": {
-      "button": "Gi filer nytt navn"
+      "button": "Gi filer nytt navn",
+      "hint": "Flytt filene til denne boken slik at de følger gjeldende navnemal"
     },
     "series": {
       "heading": "Serier",
@@ -2005,7 +2411,11 @@
       "removeBody1": "Dette tar boken ut av",
       "removeBody2": "uten å slette boken, filene eller selve serien.",
       "setPrimaryFailed": "Kunne ikke endre serien som brukes i filnavn",
-      "removeFailed": "Kunne ikke fjerne boken fra den serien"
+      "removeFailed": "Kunne ikke fjerne boken fra den serien",
+      "keptOutHeading": "Holdt utenfor",
+      "keptOutExplainer": "Du tok denne boken ut av disse seriene, så oppdateringer holder den utenfor. Gjenopprett setter den tilbake der den var.",
+      "restore": "Gjenopprett",
+      "restoreFailed": "Kunne ikke sette boken tilbake i den serien"
     },
     "calibreChip": {
       "pending": "Venter på Calibre",
@@ -2041,5 +2451,71 @@
     "back": "Tilbake",
     "force": "Koble om likevel",
     "submitting": "Kobler om…"
+  },
+  "duplicateReview": {
+    "pageTitle": "Duplikater",
+    "backToBooks": "← Bøker",
+    "groupCount": "{{count}} gruppe(r)",
+    "pageDescription": "Titler av samme forfatter som ser ut til å være samme bok, i hele biblioteket. Raden med filer er merket for å beholdes, og grunnlaget viser om radene stemmer overens. Ingenting endres før du ekskluderer en rad.",
+    "groupLabel": "Duplikatgruppe: {{title}}",
+    "signalsLabel": "Grunnlag på tvers av radene",
+    "agreementLabel": "Trolig samme bok:",
+    "conflictLabel": "Kan være forskjellige bøker:",
+    "signals": {
+      "shared-isbn": "Radene {{rows}} har felles ISBN {{values}}",
+      "shared-asin": "Radene {{rows}} har felles ASIN {{values}}",
+      "same-series-position": "Radene {{rows}} er begge nr. {{position}} i {{series}}",
+      "series-position-conflict": "Radene {{rows}} har ulike plasser i {{series}}: {{positions}}",
+      "year-conflict": "Radene {{rows}} ble utgitt med flere års mellomrom: {{values}}",
+      "language-conflict": "Radene {{rows}} er på ulike språk: {{values}}"
+    },
+    "keep": "Beholdes: har filer",
+    "hasFiles": "Har filer",
+    "noFiles": "Ingen filer",
+    "isbn": "ISBN {{isbn}}",
+    "isbnMore": "ISBN {{isbn}} (+{{count}})",
+    "asin": "ASIN {{asin}}",
+    "excludeEmpty": "Ekskluder de tomme radene i denne gruppen ({{count}})",
+    "excludeEmptyTitle": "Ekskludere tomme rader ({{count}})?",
+    "excludeEmptyBody": "Behold «{{keep}}», som har filer, og ekskluder:\n{{rows}}\n\nEkskluderte rader forsvinner fra Ønsket, og det søkes ikke lenger etter dem. Du kan ta dem med igjen senere.",
+    "excludeEmptyPartial": "Rader som ikke kunne ekskluderes: {{count}}",
+    "excludeEmptySkipped": "Rader som ble hoppet over fordi de nå har filer: {{count}}. Gå gjennom gruppen på nytt.",
+    "excludeWithFilesTitle": "Ekskludere en rad som har filer?",
+    "excludeWithFilesBody": "«{{title}}» har filer i biblioteket ditt. Ekskluderer du den, skjules den fra Ønsket, og det søkes ikke lenger etter den. Filene blir liggende på disken.",
+    "noSuggestionConflict": "Radene stemmer ikke overens, så ingenting foreslås. Sjekk grunnlaget før du ekskluderer en rad.",
+    "noSuggestionFiles": "Mer enn én rad har filer, så ingenting foreslås.",
+    "noSuggestionEvidence": "Ingenting knytter hver tomme rad til raden med filer (ingen felles ISBN, ASIN, plass i serien eller lik tittel), så ingenting foreslås."
+  },
+  "mediaType": {
+    "ebook": "E-bok",
+    "audiobook": "Lydbok",
+    "both": "Begge"
+  },
+  "editAuthorModal": {
+    "genreOverrideFail": "Kunne ikke bruke sjangrene",
+    "saveFail": "Kunne ikke lagre",
+    "title": "Rediger forfatter",
+    "qualityProfile": "Kvalitetsprofil",
+    "metadataProfile": "Metadataprofil",
+    "rootFolder": "Rotmappe",
+    "audiobookRootFolder": "Rotmappe for lydbøker",
+    "audiobookRootFolderDefault": "Bruk den globale lydbokmappen",
+    "audiobookRootFolderHint": "Hvor lydbøkene til denne forfatteren lagres. Atskilt fra rotmappen for e-bøker.",
+    "monitorMode": "Overvåkingsmodus",
+    "monitorNewItems": "Overvåk nyoppdagede bøker",
+    "monitorNewItemsHint": "Gjelder bøker som en metadataoppdatering finner etter at forfatteren ble lagt til. «Ikke legg dem til» holder en oppdatering til bøkene du allerede har, i stedet for å hente inn hele den eldre katalogen. En forfatter som ikke overvåkes, tar uansett aldri imot nye bøker.",
+    "monitoredSeries": "Overvåkede serier",
+    "monitoredSeriesEmpty": "Fant ingen serier for denne forfatteren ennå. Oppdater forfatteren for å hente seriedata først.",
+    "seriesNoHardcoverLink": "(ingen Hardcover-kobling)",
+    "seriesNoHardcoverWarning": "Noen av de valgte seriene har ingen Hardcover-kobling. Bare bøker Bindery allerede kjenner til, blir overvåket, og manglende bøker fylles ikke ut automatisk.",
+    "monitorLatestCount": "Antall nyeste bøker",
+    "applyMonitorModeToExisting": "Bruk overvåkingsmodusen på eksisterende bøker",
+    "applyMonitorModeToExistingHint": "Ellers gjelder dette bare bøker som oppdages ved senere oppdateringer.",
+    "genreOverride": "Sjangeroverstyring",
+    "genreOverrideHint": "Sett de samme sjangrene på alle bøkene av denne forfatteren og lås dem, slik at metadataoppdatering beholder verdiene dine. Kommaseparert.",
+    "genreOverrideApply": "Bruk på alle bøker",
+    "genreOverrideDone": "Bøker oppdatert: {{count}}.",
+    "bio": "Biografi",
+    "bioHint": "En biografi du skriver her, blir stående slik du skrev den: ingen oppdatering erstatter den. Tøm feltet for å la metadatakilden fylle den inn igjen."
   }
 }

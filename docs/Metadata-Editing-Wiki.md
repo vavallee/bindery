@@ -16,7 +16,7 @@ Open a book's detail page and click **Edit**. You can change:
 | Release date | `YYYY-MM-DD`, or clear it entirely |
 | Series | The author's series, with a position; admin only. See [Fixing one book's series](Hardcover-Series-Wiki.md#fixing-one-books-series) |
 
-Every field you edit is **locked**: the nightly metadata refresh, the
+Every field you edit is **locked**: the scheduled metadata refresh, the
 author-works sync, and Audiobookshelf/Calibre re-imports keep your value
 instead of overwriting it. Locked fields show a 🔒 badge in the edit dialog.
 

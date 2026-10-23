@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, Author, AuthorMonitorMode, MetadataProfile, MonitorNewItems, QualityProfile, RootFolder, Series, UpdateAuthorRequest } from '../api/client'
 import { useModal } from './useModal'
+import { primaryFill } from './buttons'
+import { authorSaveError } from '../util/authorSaveError'
 
 interface Props {
   author: Author
@@ -10,6 +12,7 @@ interface Props {
 }
 
 export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
+  const fid = useId()
   const { t } = useTranslation()
 
   const [qualityProfiles, setQualityProfiles] = useState<QualityProfile[]>([])
@@ -27,6 +30,10 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
   const [monitorLatestCount, setMonitorLatestCount] = useState(author.monitorLatestCount ?? 1)
   const [applyMonitorModeToExisting, setApplyMonitorModeToExisting] = useState(false)
   const [monitoredSeriesIds, setMonitoredSeriesIds] = useState<number[]>(author.monitoredSeriesIds ?? [])
+  // A bio typed here is kept as the user's own (#3287); clearing it lets the
+  // provider or an enricher fill it again.
+  const [description, setDescription] = useState(author.description ?? '')
+  const bioId = useId()
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -132,6 +139,9 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
     if (applyMonitorModeToExisting) {
       patch.applyMonitorModeToExisting = true
     }
+    if (description.trim() !== (author.description ?? '').trim()) {
+      patch.description = description.trim()
+    }
     // Only include the series selection on the wire when the user is in
     // series mode and the set actually differs from what came back from the
     // Get. An undefined field leaves the existing selection untouched.
@@ -156,7 +166,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
       onSaved(updated)
       onClose()
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('editAuthorModal.saveFail', 'Failed to save'))
+      setError(authorSaveError(err, t, t('editAuthorModal.saveFail', 'Failed to save')))
     } finally {
       setSaving(false)
     }
@@ -169,18 +179,29 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
       <div {...panelProps} className="bg-slate-100 dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg w-full max-w-lg shadow-2xl modal-max-h flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
           <h3 id={titleId} className="text-lg font-semibold">{t('editAuthorModal.title', 'Edit Author')}</h3>
-          <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1">{author.authorName}</p>
+          <p className="text-xs text-fg-muted mt-1">{author.authorName}</p>
         </div>
 
         <div className="p-4 flex-1 overflow-y-auto">
           {loading ? (
-            <p className="text-sm text-slate-600 dark:text-zinc-500">{t('common.loading', 'Loading…')}</p>
+            <p className="text-sm text-fg-muted">{t('common.loading', 'Loading…')}</p>
           ) : (
             <>
+              <div className="mb-3">
+                <label htmlFor={bioId} className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.bio', 'Bio')}</label>
+                <textarea
+                  id={bioId}
+                  value={description}
+                  onChange={e => setDescription(e.target.value)}
+                  rows={4}
+                  className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
+                />
+                <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1">{t('editAuthorModal.bioHint', 'A bio you write here stays as you wrote it: no refresh replaces it. Clear it to let the metadata provider fill it again.')}</p>
+              </div>
               {qualityProfiles.length > 0 && (
                 <div className="mb-3">
-                  <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.qualityProfile', 'Quality profile')}</label>
-                  <select
+                  <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.qualityProfile', 'Quality profile')}</label>
+                  <select id={`${fid}-1`}
                     value={qualityProfileId ?? ''}
                     onChange={e => setQualityProfileId(e.target.value ? Number(e.target.value) : null)}
                     className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -193,8 +214,8 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
               )}
               {metadataProfiles.length > 0 && (
                 <div className="mb-3">
-                  <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.metadataProfile', 'Metadata profile')}</label>
-                  <select
+                  <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.metadataProfile', 'Metadata profile')}</label>
+                  <select id={`${fid}-2`}
                     value={metadataProfileId ?? ''}
                     onChange={e => setMetadataProfileId(e.target.value ? Number(e.target.value) : null)}
                     className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -207,8 +228,8 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
               )}
               {rootFolders.length > 0 && (
                 <div className="mb-3">
-                  <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.rootFolder', 'Root folder')}</label>
-                  <select
+                  <label htmlFor={`${fid}-3`} className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.rootFolder', 'Root folder')}</label>
+                  <select id={`${fid}-3`}
                     value={rootFolderId ?? ''}
                     onChange={e => setRootFolderId(e.target.value ? Number(e.target.value) : null)}
                     className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -221,8 +242,8 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
               )}
               {rootFolders.length > 0 && (
                 <div className="mb-3">
-                  <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.audiobookRootFolder', 'Audiobook root folder')}</label>
-                  <select
+                  <label htmlFor={`${fid}-4`} className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.audiobookRootFolder', 'Audiobook root folder')}</label>
+                  <select id={`${fid}-4`}
                     value={audiobookRootFolderId ?? ''}
                     onChange={e => setAudiobookRootFolderId(e.target.value ? Number(e.target.value) : null)}
                     className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -232,12 +253,12 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                       <option key={rf.id} value={rf.id}>{rf.path}</option>
                     ))}
                   </select>
-                  <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('editAuthorModal.audiobookRootFolderHint', "Where this author's audiobooks are stored. Separate from the ebook root folder.")}</p>
+                  <p className="text-xs text-fg-muted mt-1">{t('editAuthorModal.audiobookRootFolderHint', "Where this author's audiobooks are stored. Separate from the ebook root folder.")}</p>
                 </div>
               )}
               <div className="mb-3">
-                <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.monitorMode', 'Monitor mode')}</label>
-                <select
+                <label htmlFor={`${fid}-5`} className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.monitorMode', 'Monitor mode')}</label>
+                <select id={`${fid}-5`}
                   value={monitorMode}
                   onChange={e => setMonitorMode(e.target.value as AuthorMonitorMode)}
                   className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -250,8 +271,8 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                 </select>
               </div>
               <div className="mb-3">
-                <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.monitorNewItems', 'Monitor newly discovered books')}</label>
-                <select
+                <label htmlFor={`${fid}-6`} className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.monitorNewItems', 'Monitor newly discovered books')}</label>
+                <select id={`${fid}-6`}
                   value={monitorNewItems}
                   onChange={e => setMonitorNewItems(e.target.value as MonitorNewItems)}
                   className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -259,15 +280,15 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                   <option value="all">{t('monitorNewItems.all', 'Follow monitor mode')}</option>
                   <option value="none">{t('monitorNewItems.none', 'Don’t add them')}</option>
                 </select>
-                <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('editAuthorModal.monitorNewItemsHint', 'Applies to books a metadata refresh finds after the author was added. “Don’t add them” keeps a refresh to the books you already have, instead of pulling in the back-catalogue. An unmonitored author never takes new books either way.')}</p>
+                <p className="text-xs text-fg-muted mt-1">{t('editAuthorModal.monitorNewItemsHint', 'Applies to books a metadata refresh finds after the author was added. “Don’t add them” keeps a refresh to the books you already have, instead of pulling in the back-catalogue. An unmonitored author never takes new books either way.')}</p>
               </div>
               {monitorMode === 'series' && (
                 <div className="mb-3">
-                  <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.monitoredSeries', 'Monitored series')}</label>
+                  <label className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.monitoredSeries', 'Monitored series')}</label>
                   {!seriesLoaded ? (
-                    <p className="text-xs text-slate-500 dark:text-zinc-500">{t('common.loading', 'Loading…')}</p>
+                    <p className="text-xs text-fg-muted">{t('common.loading', 'Loading…')}</p>
                   ) : authorSeries.length === 0 ? (
-                    <p className="text-xs text-slate-500 dark:text-zinc-500">
+                    <p className="text-xs text-fg-muted">
                       {t('editAuthorModal.monitoredSeriesEmpty', 'No series found for this author yet. Refresh the author to pull series data first.')}
                     </p>
                   ) : (
@@ -288,7 +309,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                                 warning below is where the consequence lives
                                 and it stays amber. */}
                             {!s.hardcoverLink && (
-                              <span className="ml-2 text-xs text-slate-500 dark:text-zinc-500">
+                              <span className="ml-2 text-xs text-fg-muted">
                                 {t('editAuthorModal.seriesNoHardcoverLink', '(no Hardcover link)')}
                               </span>
                             )}
@@ -306,8 +327,8 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
               )}
               {monitorMode === 'latest' && (
                 <div className="mb-3">
-                  <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('editAuthorModal.monitorLatestCount', 'Latest book count')}</label>
-                  <input
+                  <label htmlFor={`${fid}-7`} className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.monitorLatestCount', 'Latest book count')}</label>
+                  <input id={`${fid}-7`}
                     type="number"
                     min={1}
                     value={monitorLatestCount}
@@ -325,14 +346,14 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                 />
                 <span>
                   <span className="font-medium">{t('editAuthorModal.applyMonitorModeToExisting', 'Apply monitor mode to existing books')}</span>
-                  <span className="block text-xs text-slate-600 dark:text-zinc-400 mt-0.5">{t('editAuthorModal.applyMonitorModeToExistingHint', 'Otherwise this only affects books discovered in future refreshes.')}</span>
+                  <span className="block text-xs text-fg-muted mt-0.5">{t('editAuthorModal.applyMonitorModeToExistingHint', 'Otherwise this only affects books discovered in future refreshes.')}</span>
                 </span>
               </label>
               <div className="mt-4 pt-4 border-t border-slate-200 dark:border-zinc-800">
                 <label className="block text-sm font-medium mb-1" htmlFor="author-genre-override">
                   {t('editAuthorModal.genreOverride', 'Genre override')}
                 </label>
-                <p className="text-xs text-slate-600 dark:text-zinc-400 mb-2">
+                <p className="text-xs text-fg-muted mb-2">
                   {t('editAuthorModal.genreOverrideHint', 'Set the same genres on every book by this author and lock them so metadata refresh keeps your values. Comma-separated.')}
                 </p>
                 <div className="flex gap-2">
@@ -354,13 +375,13 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                   </button>
                 </div>
                 {genreApplied !== null && (
-                  <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">
+                  <p className="text-xs text-accent-text mt-1">
                     {t('editAuthorModal.genreOverrideDone', 'Updated {{count}} book(s).', { count: genreApplied })}
                   </p>
                 )}
               </div>
               {error && (
-                <p className="text-sm text-red-600 dark:text-red-400 mt-2">{error}</p>
+                <p className="text-sm text-red-700 dark:text-red-400 mt-2">{error}</p>
               )}
             </>
           )}
@@ -370,14 +391,14 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
           <button
             onClick={onClose}
             disabled={saving}
-            className="px-4 py-2 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50"
+            className="px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50"
           >
             {t('common.cancel', 'Cancel')}
           </button>
           <button
             onClick={save}
             disabled={loading || saving}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-md text-sm font-medium text-white"
+            className={`px-4 py-2 ${primaryFill} disabled:opacity-50 rounded-md text-sm font-medium`}
           >
             {saving ? t('common.saving', 'Saving…') : t('common.save', 'Save')}
           </button>

@@ -205,6 +205,8 @@ func embeddedCover(filePath string) []byte {
 		return audioCover(filePath)
 	case IsEpubFile(filePath):
 		return epubCover(filePath)
+	case IsKindleFile(filePath):
+		return kindleCover(filePath)
 	}
 	return nil
 }

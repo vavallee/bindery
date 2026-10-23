@@ -8,6 +8,7 @@ import { AuthorAddDefaults, DEFAULT_MONITOR_LATEST_COUNT, DEFAULT_MONITOR_MODE }
 import { useNeedsSetup } from './useNeedsSetup'
 import { authorProviderKey } from '../util/authorMetadata'
 import { providerDisplayName } from '../util/metadataSource'
+import { primaryFill } from './buttons'
 
 // The confirm step for an author picked in AddToLibraryModal: monitoring
 // controls, the outcome sentence and the add call. Renders the dialog body and
@@ -177,7 +178,7 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
     <>
       <div className="p-4 flex-1 overflow-y-auto">
         <div className="rounded-md border border-slate-300 dark:border-zinc-700 bg-slate-200/50 dark:bg-zinc-800/50 p-3">
-          <div ref={headingRef} tabIndex={-1} className="font-medium rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">{author.authorName}</div>
+          <div ref={headingRef} tabIndex={-1} className="font-medium rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-500">{author.authorName}</div>
           {author.disambiguation && <div className="mt-0.5 text-sm text-fg-muted">{author.disambiguation}</div>}
         </div>
 
@@ -309,8 +310,8 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
 
       <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end gap-2">
         <button type="button" onClick={onBack} disabled={adding} className="mr-auto px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{t('addToLibrary.backToResults')}</button>
-        <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">{t('common.cancel')}</button>
-        <button type="button" onClick={addAuthor} disabled={adding || !defaults} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium text-white">{adding ? t('addToLibrary.adding') : t('addToLibrary.author.confirmAdd')}</button>
+        <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white">{t('common.cancel')}</button>
+        <button type="button" onClick={addAuthor} disabled={adding || !defaults} className={`px-4 py-2 ${primaryFill} disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium`}>{adding ? t('addToLibrary.adding') : t('addToLibrary.author.confirmAdd')}</button>
       </div>
     </>
   )

@@ -281,6 +281,14 @@ fragment per PR; format and examples are in
 5. Run the full local check suite above — every item must pass.
 6. Open a PR. Tie it to the tracking issue with `Closes #NN` in the body when applicable.
 
+## Claiming an issue
+
+Comment on the issue to say you are working on it. A maintainer will assign it to you; people without triage rights cannot self-assign, so the comment is the request. Search open issues and open PRs for the same thing first, so two people do not build it twice.
+
+A claim with no PR, comment or commit for 14 days gets one nudge. If there is still nothing after another 14 days, a maintainer unassigns it and says so on the issue, and the work is open to anyone again. That is not a penalty, plans change and it keeps issues from sitting reserved.
+
+Your PR branch is yours; maintainers only merge main into it. If a PR stays idle past a deadline stated on it, a maintainer may take it over and will say so on the PR. For anything large or design heavy, open or comment on the issue before writing code, as the README asks.
+
 ## Commit messages
 
 Follows [Conventional Commits](https://www.conventionalcommits.org/) loosely. Recent examples from the repo:

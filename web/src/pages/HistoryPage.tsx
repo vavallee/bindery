@@ -9,13 +9,13 @@ import { formatBytes } from '../util/format'
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
   grabbed: 'bg-blue-500/20 text-blue-700 dark:text-blue-400',
-  bookImported: 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400',
-  imported: 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400',
+  bookImported: 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-400',
+  imported: 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-400',
   downloadFailed: 'bg-red-500/20 text-red-700 dark:text-red-400',
   importFailed: 'bg-red-500/20 text-red-700 dark:text-red-400',
   deleted: 'bg-red-500/20 text-red-700 dark:text-red-400',
   renamed: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
-  ignored: 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400',
+  ignored: 'bg-slate-300 dark:bg-zinc-700 text-fg-muted dark:text-zinc-300',
   bookFileRenamed: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
   // Amber rather than green: the import worked, but the file turned out not to
   // be the edition the catalogue described, which is worth a second look.
@@ -45,7 +45,65 @@ function parseEventData(data: string): { message?: string; path?: string; size?:
 // Detail line shown under the source title. Most events carry a `message` or a
 // `path`; a language correction carries `from`/`to` ISO codes, which only mean
 // anything shown together.
-function eventDetail(type: string, parsed: ReturnType<typeof parseEventData>): string {
+type Translate = (key: string, opts?: Record<string, unknown>) => string
+
+function eventDetail(type: string, parsed: ReturnType<typeof parseEventData>, t: Translate): string {
+  const usual = baseEventDetail(type, parsed)
+  const check = type === 'bookImported' ? contentCheckDetail(parsed.contentCheck, t) : ''
+  return check && usual ? `${check} \u00b7 ${usual}` : check || usual
+}
+
+function nonEmptyString(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : ''
+}
+
+// A bookImported row written while the content check was on warn (#3015,
+// #3246) carries `contentCheck`: what the files said about themselves when it
+// was not the grabbed book. Shown so a warn that nobody opens the raw event for
+// is still read. An ebook lists the file's own title and author; an audiobook
+// lists the other works its tracks named, with how many tracks each. The data
+// comes from files, so every entry is checked before it is read, and the words
+// around the values come from the translation.
+function contentCheckDetail(raw: unknown, t: Translate): string {
+  if (!raw || typeof raw !== 'object') return ''
+  const cc = raw as { kind?: unknown; mismatches?: unknown; retitled?: unknown; truncated?: unknown }
+  if (!Array.isArray(cc.mismatches) || cc.mismatches.length === 0) return quietContentCheckNote(cc, t)
+  const found = (cc.mismatches as unknown[])
+    .map((m): string => {
+      if (!m || typeof m !== 'object' || Array.isArray(m)) return ''
+      const entry = m as { title?: unknown; author?: unknown; count?: unknown }
+      const title = nonEmptyString(entry.title)
+      if (cc.kind === 'ebook') {
+        const author = nonEmptyString(entry.author)
+        if (title && author) return t('history.contentCheckEbookEntry', { title, author })
+        if (title) return t('history.contentCheckEbookTitleOnly', { title })
+        if (author) return t('history.contentCheckEbookAuthorOnly', { author })
+        return ''
+      }
+      if (!title) return ''
+      return typeof entry.count === 'number' ? t('history.contentCheckAudiobookEntry', { title, count: entry.count }) : title
+    })
+    .filter(Boolean)
+    .join(', ')
+  if (!found) return ''
+  const label = cc.kind === 'ebook' ? t('history.contentCheckEbook') : t('history.contentCheckAudiobook')
+  return `${label}: ${found}`
+}
+
+// The notes a content check leaves when it found nothing wrong: every file named
+// the same other title (a retitled or translated edition passes), or the check
+// ran out of time and was skipped. One quiet line, no headline.
+function quietContentCheckNote(cc: { retitled?: unknown; truncated?: unknown }, t: Translate): string {
+  if (cc.retitled && typeof cc.retitled === 'object' && !Array.isArray(cc.retitled)) {
+    const rt = cc.retitled as { title?: unknown; files?: unknown }
+    const title = nonEmptyString(rt.title)
+    if (title && typeof rt.files === 'number') return t('history.contentCheckRetitled', { title, count: rt.files })
+  }
+  if (cc.truncated === true) return t('history.contentCheckTruncated')
+  return ''
+}
+
+function baseEventDetail(type: string, parsed: ReturnType<typeof parseEventData>): string {
   if (type === 'bookLanguageCorrected') {
     const from = typeof parsed.from === 'string' ? parsed.from : ''
     const to = typeof parsed.to === 'string' ? parsed.to : ''
@@ -99,6 +157,7 @@ export default function HistoryPage() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [typeFilter, setTypeFilter] = useState('')
+  const [toast, setToast] = useState<string | null>(null)
 
   const { page, pageSize, paginationProps, reset } = useServerPagination(total, 100, 'history')
 
@@ -128,6 +187,12 @@ export default function HistoryPage() {
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
+    if (!toast) return
+    const timer = setTimeout(() => setToast(null), 5000)
+    return () => clearTimeout(timer)
+  }, [toast])
+
+  useEffect(() => {
     document.title = 'History · Bindery'
     return () => { document.title = 'Bindery' }
   }, [])
@@ -145,8 +210,15 @@ export default function HistoryPage() {
     setTotal(prev => Math.max(0, prev - 1))
   }
 
+  // Unlike delete, blocklisting can be refused (an event with no release GUID
+  // has nothing to match), so keep the row and say why when it fails.
   const handleBlocklist = async (id: number) => {
-    await api.blocklistFromHistory(id).catch(console.error)
+    try {
+      await api.blocklistFromHistory(id)
+    } catch (err) {
+      setToast(err instanceof Error && err.message ? err.message : t('history.blocklistFailed'))
+      return
+    }
     setEvents(prev => prev.filter(e => e.id !== id))
     setTotal(prev => Math.max(0, prev - 1))
   }
@@ -155,9 +227,15 @@ export default function HistoryPage() {
 
   return (
     <div>
+      {toast && (
+        <div role="alert" className="fixed bottom-safe-6 right-safe-6 z-50 px-4 py-2.5 bg-red-600 text-white rounded-lg shadow-lg text-sm font-medium animate-fade-in">
+          {toast}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h2 className="text-2xl font-bold">{t('history.title')}</h2>
         <select
+          aria-label={t('history.colType')}
           value={typeFilter}
           onChange={e => handleFilterChange(e.target.value)}
           className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-1.5 text-sm text-slate-800 dark:text-zinc-200"
@@ -170,9 +248,9 @@ export default function HistoryPage() {
       </div>
 
       {loading ? (
-        <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
+        <div className="text-fg-muted">{t('common.loading')}</div>
       ) : events.length === 0 ? (
-        <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
+        <div className="text-center py-16 text-fg-muted">
           <p>{t('history.empty')}</p>
           <p className="mt-1 text-sm">{t('history.emptyHint')}</p>
         </div>
@@ -184,35 +262,35 @@ export default function HistoryPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
-                    <th className="text-left px-4 py-3 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase tracking-wider">{t('history.colEvent')}</th>
-                    <th className="text-left px-4 py-3 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase tracking-wider">{t('history.colSourceTitle')}</th>
-                    <th className="text-left px-4 py-3 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase tracking-wider">{t('history.colType')}</th>
-                    <th className="text-left px-4 py-3 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase tracking-wider">{t('history.colSize')}</th>
-                    <th className="text-left px-4 py-3 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase tracking-wider">{t('history.colDate')}</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-fg-muted uppercase tracking-wider">{t('history.colEvent')}</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-fg-muted uppercase tracking-wider">{t('history.colSourceTitle')}</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-fg-muted uppercase tracking-wider">{t('history.colType')}</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-fg-muted uppercase tracking-wider">{t('history.colSize')}</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-fg-muted uppercase tracking-wider">{t('history.colDate')}</th>
                     <th className="px-4 py-3" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
                   {events.map(event => {
                     const parsed = parseEventData(event.data)
-                    const detail = eventDetail(event.eventType, parsed)
+                    const detail = eventDetail(event.eventType, parsed, t)
                     const isError = event.eventType === 'downloadFailed' || event.eventType === 'importFailed'
                     const size = typeof parsed.size === 'number' ? parsed.size : 0
                     const mt = detectMediaType(event.sourceTitle)
                     return (
                       <tr key={event.id} className="bg-slate-100/50 dark:bg-zinc-900/50 hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 transition-colors">
                         <td className="px-4 py-3 align-top">
-                          <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${EVENT_TYPE_COLORS[event.eventType] ?? 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}>
+                          <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${EVENT_TYPE_COLORS[event.eventType] ?? 'bg-slate-300 dark:bg-zinc-700 text-fg-muted dark:text-zinc-300'}`}>
                             {eventLabel(event.eventType)}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-slate-800 dark:text-zinc-200 max-w-md">
                           <div className="truncate" title={event.sourceTitle}>
-                            {event.sourceTitle || <span className="text-slate-500 dark:text-zinc-600">—</span>}
+                            {event.sourceTitle || <span className="text-fg-muted">—</span>}
                           </div>
                           <BookAuthorLink book={event.book} />
                           {detail && (
-                            <div className={`mt-1 text-xs break-words ${isError ? 'text-red-600 dark:text-red-400' : 'text-slate-600 dark:text-zinc-500'}`}>
+                            <div className={`mt-1 text-xs break-words ${isError ? 'text-red-700 dark:text-red-400' : 'text-fg-muted'}`}>
                               {detail}
                             </div>
                           )}
@@ -223,20 +301,20 @@ export default function HistoryPage() {
                           ) : mt === 'ebook' ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] font-medium">📖 Ebook</span>
                           ) : (
-                            <span className="text-slate-500 dark:text-zinc-600">—</span>
+                            <span className="text-fg-muted">—</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-slate-600 dark:text-zinc-400 whitespace-nowrap align-top text-xs font-mono">
-                          {formatBytes(size) || <span className="text-slate-500 dark:text-zinc-600">—</span>}
+                        <td className="px-4 py-3 text-fg-muted whitespace-nowrap align-top text-xs font-mono">
+                          {formatBytes(size) || <span className="text-fg-muted">—</span>}
                         </td>
-                        <td className="px-4 py-3 text-slate-600 dark:text-zinc-400 whitespace-nowrap align-top text-xs">
+                        <td className="px-4 py-3 text-fg-muted whitespace-nowrap align-top text-xs">
                           {formatDate(event.createdAt)}
                         </td>
                         <td className="px-4 py-3 text-right align-top whitespace-nowrap">
                           {BLOCKLISTABLE.has(event.eventType) && (
                             <button
                               onClick={() => handleBlocklist(event.id)}
-                              className="text-xs text-amber-400 hover:text-amber-300 transition-colors mr-3"
+                              className="text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors mr-3"
                               title="Add to blocklist — prevents this release from being grabbed again"
                             >
                               {t('history.blocklist')}
@@ -261,7 +339,7 @@ export default function HistoryPage() {
           <div className="sm:hidden space-y-2">
             {events.map(event => {
               const parsed = parseEventData(event.data)
-              const detail = eventDetail(event.eventType, parsed)
+              const detail = eventDetail(event.eventType, parsed, t)
               const isError = event.eventType === 'downloadFailed' || event.eventType === 'importFailed'
               const size = typeof parsed.size === 'number' ? parsed.size : 0
               const mt = detectMediaType(event.sourceTitle)
@@ -269,7 +347,7 @@ export default function HistoryPage() {
                 <div key={event.id} className="border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100/50 dark:bg-zinc-900/50 p-3">
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium flex-shrink-0 ${EVENT_TYPE_COLORS[event.eventType] ?? 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-400'}`}>
+                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium flex-shrink-0 ${EVENT_TYPE_COLORS[event.eventType] ?? 'bg-slate-300 dark:bg-zinc-700 text-fg-muted dark:text-zinc-300'}`}>
                         {eventLabel(event.eventType)}
                       </span>
                       {mt === 'audiobook' && (
@@ -279,17 +357,17 @@ export default function HistoryPage() {
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] font-medium">📖</span>
                       )}
                       {size > 0 && (
-                        <span className="text-[10px] text-slate-600 dark:text-zinc-500 font-mono">{formatBytes(size)}</span>
+                        <span className="text-[10px] text-fg-muted font-mono">{formatBytes(size)}</span>
                       )}
                     </div>
-                    <span className="text-[10px] text-slate-600 dark:text-zinc-500">{formatDate(event.createdAt)}</span>
+                    <span className="text-[10px] text-fg-muted">{formatDate(event.createdAt)}</span>
                   </div>
                   <p className="text-sm text-slate-800 dark:text-zinc-200 [overflow-wrap:anywhere] mb-1">
-                    {event.sourceTitle || <span className="text-slate-500 dark:text-zinc-600">—</span>}
+                    {event.sourceTitle || <span className="text-fg-muted">—</span>}
                   </p>
                   <BookAuthorLink book={event.book} />
                   {detail && (
-                    <p className={`text-xs break-words mb-2 ${isError ? 'text-red-600 dark:text-red-400' : 'text-slate-600 dark:text-zinc-500'}`}>
+                    <p className={`text-xs break-words mb-2 ${isError ? 'text-red-700 dark:text-red-400' : 'text-fg-muted'}`}>
                       {detail}
                     </p>
                   )}
@@ -297,7 +375,7 @@ export default function HistoryPage() {
                     {BLOCKLISTABLE.has(event.eventType) && (
                       <button
                         onClick={() => handleBlocklist(event.id)}
-                        className="touch-target text-xs text-amber-400 hover:text-amber-300 transition-colors py-1"
+                        className="touch-target text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors py-1"
                       >
                         {t('history.blocklist')}
                       </button>

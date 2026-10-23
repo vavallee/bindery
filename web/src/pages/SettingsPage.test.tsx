@@ -393,6 +393,11 @@ async function openLogsTab() {
   await screen.findByRole('heading', { name: 'settings.logs.heading' })
 }
 
+// The Settings search box is also a combobox now, so pick the select by tag.
+function clientTypeSelect() {
+  return screen.getAllByRole('combobox').find(el => el.tagName === 'SELECT') as HTMLSelectElement
+}
+
 function sectionForHeading(name: string) {
   const heading = screen.getByRole('heading', { name })
   const section = heading.closest('section')
@@ -1451,7 +1456,7 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.indexers.addButton' }))
     fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.namePlaceholderExample'), { target: { value: 'SceneNZBs' } })
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'torznab' } })
+    fireEvent.change(screen.getByDisplayValue('settings.indexers.form.typeNewznab'), { target: { value: 'torznab' } })
     fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.urlPlaceholderExample'), { target: { value: 'http://prowlarr:9696/1/api' } })
     fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.apiKey'), { target: { value: 'scene-key' } })
     fireEvent.change(screen.getByDisplayValue('7020'), { target: { value: '7020, 7120, bad, 3030' } })
@@ -1472,6 +1477,7 @@ describe('SettingsPage', () => {
         inactiveSeedTimeMinutes: null,
         freeleechOnly: false,
         dailyQueryLimit: null,
+        downloadClientId: null,
       })
     })
     expect(await screen.findByText('SceneNZBs')).toBeInTheDocument()
@@ -1485,7 +1491,7 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
     fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.namePlaceholder'), { target: { value: 'DrunkenSlug' } })
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'torznab' } })
+    fireEvent.change(screen.getByDisplayValue('settings.indexers.form.typeNewznabUsenet'), { target: { value: 'torznab' } })
     fireEvent.change(screen.getByPlaceholderText('settings.indexers.form.urlPlaceholder'), { target: { value: 'https://slug.example.com/api' } })
     fireEvent.change(screen.getByPlaceholderText('••••••••'), { target: { value: 'slug-key' } })
     fireEvent.change(screen.getByDisplayValue('7020, 3030'), { target: { value: '7020, bad, 3030' } })
@@ -1505,6 +1511,7 @@ describe('SettingsPage', () => {
         inactiveSeedTimeMinutes: null,
         freeleechOnly: false,
         dailyQueryLimit: null,
+        downloadClientId: null,
       })
     })
     expect(await screen.findByText('DrunkenSlug')).toBeInTheDocument()
@@ -1893,22 +1900,22 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'settings.clients.addButton' }))
     fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'stale-key' } })
 
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'nzbget' } })
+    fireEvent.change(clientTypeSelect(), { target: { value: 'nzbget' } })
     expect(screen.getByPlaceholderText('Name')).toHaveValue('NZBGet')
     expect(screen.getByPlaceholderText('Port')).toHaveValue('6789')
     expect(screen.getByPlaceholderText('Username')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Password')).toHaveValue('')
 
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'qbittorrent' } })
+    fireEvent.change(clientTypeSelect(), { target: { value: 'qbittorrent' } })
     expect(screen.getByPlaceholderText('Name')).toHaveValue('qBittorrent')
     expect(screen.getByPlaceholderText('Port')).toHaveValue('8080')
 
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'transmission' } })
+    fireEvent.change(clientTypeSelect(), { target: { value: 'transmission' } })
     expect(screen.getByPlaceholderText('Name')).toHaveValue('Transmission')
     expect(screen.getByPlaceholderText('Port')).toHaveValue('9091')
     expect(screen.getByText('Download Directory')).toBeInTheDocument()
 
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'deluge' } })
+    fireEvent.change(clientTypeSelect(), { target: { value: 'deluge' } })
     expect(screen.getByPlaceholderText('Name')).toHaveValue('Deluge')
     expect(screen.getByPlaceholderText('Port')).toHaveValue('8112')
     expect(screen.getByText('Category / Label')).toBeInTheDocument()
@@ -1916,7 +1923,7 @@ describe('SettingsPage', () => {
 
     // rTorrent authenticates with HTTP basic auth, so — unlike Deluge — it has
     // a username, and its URL Base is the full RPC path rather than a prefix.
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'rtorrent' } })
+    fireEvent.change(clientTypeSelect(), { target: { value: 'rtorrent' } })
     expect(screen.getByPlaceholderText('Name')).toHaveValue('rTorrent')
     expect(screen.getByPlaceholderText('Port')).toHaveValue('8080')
     expect(screen.getByText('Category / Label')).toBeInTheDocument()
@@ -1936,7 +1943,7 @@ describe('SettingsPage', () => {
     await openClientsTab()
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.clients.addButton' }))
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: type } })
+    fireEvent.change(clientTypeSelect(), { target: { value: type } })
     fireEvent.change(screen.getByPlaceholderText('Host'), { target: { value: `${type}.local` } })
     if (username) {
       fireEvent.change(screen.getByPlaceholderText('Username'), { target: { value: username } })
@@ -1976,7 +1983,7 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
     fireEvent.change(screen.getByPlaceholderText('Name'), { target: { value: 'qBit Books' } })
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'qbittorrent' } })
+    fireEvent.change(clientTypeSelect(), { target: { value: 'qbittorrent' } })
     fireEvent.change(screen.getByPlaceholderText('Host'), { target: { value: 'qbittorrent' } })
     fireEvent.change(screen.getByPlaceholderText('Port'), { target: { value: '8081' } })
     fireEvent.click(screen.getByRole('checkbox', { name: 'Use SSL' }))

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
@@ -33,14 +34,19 @@ type indexerSearcher interface {
 }
 
 type IndexerHandler struct {
-	indexers  *db.IndexerRepo
-	books     *db.BookRepo
-	authors   *db.AuthorRepo
-	aliases   *db.AuthorAliasRepo
-	profiles  *db.MetadataProfileRepo
-	searcher  indexerSearcher
-	settings  *db.SettingsRepo
-	blocklist *db.BlocklistRepo
+	indexers *db.IndexerRepo
+	// clients validates a download client pin (#3080) on save. Optional: when
+	// nil, any pin is refused rather than stored unchecked.
+	clients            *db.DownloadClientRepo
+	books              *db.BookRepo
+	authors            *db.AuthorRepo
+	aliases            *db.AuthorAliasRepo
+	libraryContextWarn sync.Once
+	series             *db.SeriesRepo // optional; the wanted book's series position for the relevance filter (#3268)
+	profiles           *db.MetadataProfileRepo
+	searcher           indexerSearcher
+	settings           *db.SettingsRepo
+	blocklist          *db.BlocklistRepo
 	// qualityProfiles is optional; when set, the author's allowed-formats list
 	// annotates interactive search results (#1693).
 	qualityProfiles *db.QualityProfileRepo
@@ -71,6 +77,20 @@ func (h *IndexerHandler) WithSearchDebugLog(l *indexer.DebugLog) *IndexerHandler
 	if l != nil {
 		h.lastDebug = l
 	}
+	return h
+}
+
+// WithDownloadClients attaches the download client repo, which a per-indexer
+// download client pin (#3080) is validated against on save.
+func (h *IndexerHandler) WithDownloadClients(clients *db.DownloadClientRepo) *IndexerHandler {
+	h.clients = clients
+	return h
+}
+
+// WithSeries attaches the series repo so interactive search can give the
+// relevance filter the wanted book's series position (#3268). Optional.
+func (h *IndexerHandler) WithSeries(series *db.SeriesRepo) *IndexerHandler {
+	h.series = series
 	return h
 }
 
@@ -189,6 +209,70 @@ func validateDailyQueryLimit(idx models.Indexer) error {
 	return nil
 }
 
+// validateDownloadClientPin checks an indexer's download client pin (#3080) on
+// save. The client must exist and serve the indexer's protocol. It must also be
+// enabled, but only when the pin is new or changed: disabling a client is
+// allowed, and an unrelated edit of an indexer pinned to a disabled client has
+// to keep saving. A disabled pinned client fails its grabs instead.
+func (h *IndexerHandler) validateDownloadClientPin(ctx context.Context, idx models.Indexer, stored *models.Indexer) error {
+	if idx.DownloadClientID == nil {
+		return nil
+	}
+	var c *models.DownloadClient
+	if h.clients != nil {
+		var err error
+		if c, err = h.clients.GetByID(ctx, *idx.DownloadClientID); err != nil {
+			return err
+		}
+	}
+	if c == nil {
+		return errPinInvalid(fmt.Sprintf("downloadClientId %d: that download client does not exist", *idx.DownloadClientID))
+	}
+	// A wrong protocol is refused only when this request sets the pin or the
+	// indexer type. Otherwise an unrelated update, such as disabling the
+	// indexer, would be blocked by a client changed behind the pin's back, and
+	// the grab fails loudly at grab time anyway.
+	pinChanged := stored == nil || stored.DownloadClientID == nil || *stored.DownloadClientID != *idx.DownloadClientID
+	typeChanged := stored == nil || effectiveIndexerType(stored.Type) != effectiveIndexerType(idx.Type)
+	if got := db.ClientProtocol(c.Type); got != idx.Protocol() && (pinChanged || typeChanged) {
+		return errPinInvalid(fmt.Sprintf("download client %q is a %s client but this indexer is %s, so it cannot be pinned to it; pick a %s client",
+			c.Name, got, idx.Protocol(), idx.Protocol()))
+	}
+	if pinChanged && !c.Enabled {
+		return errPinInvalid(fmt.Sprintf("download client %q is disabled; enable it first or pick another", c.Name))
+	}
+	return nil
+}
+
+// effectiveIndexerType reads an empty type as the default, usenet, which is what
+// Indexer.Protocol and the searcher already do, so an update body that sends an
+// empty type is not a change of type for an indexer that is already usenet.
+func effectiveIndexerType(t string) string {
+	if t == "" {
+		return "newznab"
+	}
+	return t
+}
+
+// pinInvalidError is a 400 about the download client pin, as opposed to a
+// storage failure.
+type pinInvalidError string
+
+func (e pinInvalidError) Error() string { return string(e) }
+
+func errPinInvalid(msg string) error { return pinInvalidError(msg) }
+
+// writePinError answers a failed validateDownloadClientPin: a 400 for a bad
+// pin, a generic 500 for a storage fault.
+func writePinError(w http.ResponseWriter, r *http.Request, err error) {
+	var bad pinInvalidError
+	if errors.As(err, &bad) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": bad.Error()})
+		return
+	}
+	writeServerError(w, r, err)
+}
+
 // maxSeedTimeMinutes bounds the per-indexer seed time limits (#2206) at ten
 // years. Nothing real needs more, and it keeps the value well inside the int32
 // that qBittorrent parses it into.
@@ -296,7 +380,7 @@ func (h *IndexerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and url required"})
 		return
 	}
-	if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyLANLoopback); err != nil {
+	if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyService); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -310,6 +394,10 @@ func (h *IndexerHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if idx.Type == "" {
 		idx.Type = "newznab"
+	}
+	if err := h.validateDownloadClientPin(r.Context(), idx, nil); err != nil {
+		writePinError(w, r, err)
+		return
 	}
 	if len(idx.Categories) == 0 {
 		// Books (7000 parent, 7020 ebook) + Audio/Audiobook (3030).
@@ -383,6 +471,11 @@ func (h *IndexerHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
+	// An explicit empty type means "keep the stored type": saved as empty it
+	// would be read as usenet and flip a torznab indexer's protocol.
+	if idx.Type == "" {
+		idx.Type = existing.Type
+	}
 	// The API key is write-only, so it needs the raw body: the struct decode
 	// above cannot tell an omitted key from an explicitly blank one, and the
 	// web app sends the redacted (blank) value straight back on every save.
@@ -398,7 +491,7 @@ func (h *IndexerHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	idx.APIKey = apiKey
 	if idx.URL != "" {
-		if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyLANLoopback); err != nil {
+		if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyService); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -409,6 +502,10 @@ func (h *IndexerHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateSeedTimeLimits(idx); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := h.validateDownloadClientPin(r.Context(), idx, existing); err != nil {
+		writePinError(w, r, err)
 		return
 	}
 	idx.ID = id
@@ -470,7 +567,7 @@ func (h *IndexerHandler) Test(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if idx.URL != "" {
-		if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyLANLoopback); err != nil {
+		if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyService); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -510,7 +607,7 @@ func (h *IndexerHandler) TestConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "url required"})
 		return
 	}
-	if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyLANLoopback); err != nil {
+	if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyService); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -599,6 +696,22 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	if book.ReleaseDate != nil {
 		crit.Year = book.ReleaseDate.Year()
 	}
+	// What the library knows about the wanted book, for the relevance filter
+	// (#3268). Two reads per search; the author's titles are scoped to the
+	// caller like every other book listing.
+	indexer.WarnLibraryContextMissing(&h.libraryContextWarn, "interactive search", h.series == nil, h.books == nil)
+	var seriesRead indexer.SeriesReader
+	if h.series != nil {
+		seriesRead = h.series.GetPrimarySeriesForBook
+	}
+	var booksRead indexer.AuthorBooksReader
+	if h.books != nil {
+		uid := auth.UserIDFromContext(r.Context())
+		booksRead = func(ctx context.Context, authorID int64) ([]models.Book, error) {
+			return h.books.ListByAuthorAndUser(ctx, authorID, uid)
+		}
+	}
+	crit.SetLibraryContext(r.Context(), *book, seriesRead, booksRead)
 	if h.editions != nil {
 		if eds, err := h.editions.ListByBook(r.Context(), book.ID); err != nil {
 			slog.Warn("failed to load editions for search ISBN", "book_id", book.ID, "error", err)
@@ -613,6 +726,9 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	// filterCategoriesForMedia, silently dropping all audiobook results.
 	var results []newznab.SearchResult
 	var dbg *indexer.SearchDebug
+	// Releases the relevance stage dropped, kept whole for the "filtered"
+	// section (#2334). Never mixed into results: only this handler reads them.
+	var relDropped []indexer.DroppedRelease
 	if book.MediaType == models.MediaTypeBoth {
 		// Both legs copy crit, so each carries the profile and ranks by its
 		// own list: ebooks by the ebook list, audiobooks by the audiobook list.
@@ -633,6 +749,7 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 			for i := range res {
 				res[i].MediaType = "ebook"
 			}
+			stampDropped(d, "ebook")
 			ebookCh <- searchOut{res, d}
 		}()
 		go func() {
@@ -640,6 +757,7 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 			for i := range res {
 				res[i].MediaType = "audiobook"
 			}
+			stampDropped(d, "audiobook")
 			audioCh <- searchOut{res, d}
 		}()
 		ebookOut := <-ebookCh
@@ -653,6 +771,12 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		// score is now load bearing rather than incidental.
 		results = append(ebookResults, audioResults...)
 		results = indexer.DedupeResults(results)
+		if ebookDbg != nil {
+			relDropped = append(relDropped, ebookDbg.Dropped...)
+		}
+		if audioDbg != nil {
+			relDropped = append(relDropped, audioDbg.Dropped...)
+		}
 		// Merge debug info from both searches.
 		if ebookDbg != nil && audioDbg != nil {
 			merged := *ebookDbg
@@ -676,6 +800,13 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		results, dbg = h.searcher.SearchBookWithDebug(r.Context(), idxs, crit)
+		if dbg != nil {
+			relDropped = dbg.Dropped
+		}
+	}
+	if dbg != nil {
+		// The debug log keeps this payload; it must not keep raw URLs.
+		dbg.Dropped = nil
 	}
 
 	// Build decision specs.
@@ -684,20 +815,26 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	// Language filter: author profile takes precedence, fall back to global setting.
 	beforeLang := len(results)
 	filterDesc := ""
+	var langDropped []newznab.SearchResult
 	if len(allowedLangs) > 0 {
-		results = indexer.FilterByAllowedLanguages(results, allowedLangs)
+		results, langDropped = indexer.SplitByAllowedLanguages(results, allowedLangs)
 		filterDesc = "allowed=" + strings.Join(allowedLangs, ",")
 	} else if s, _ := h.settings.Get(r.Context(), "search.preferredLanguage"); s != nil {
-		results = indexer.FilterByLanguage(results, s.Value)
+		results, langDropped = indexer.SplitByLanguage(results, s.Value)
 		filterDesc = "filter=" + s.Value
 	}
+	langReason := "release name tagged with a language outside the profile (" + filterDesc + ")"
 	if dbg != nil && beforeLang != len(results) {
 		dbg.Filters = append(dbg.Filters, indexer.FilterDebug{
-			Stage:  "language",
-			Reason: "release name tagged with a language outside the profile (" + filterDesc + ")",
+			Stage:  indexer.StageLanguage,
+			Reason: langReason,
 			Title:  "(" + strconv.Itoa(beforeLang-len(results)) + " result(s) dropped)",
 		})
 	}
+	// Releases the relevance and language stages removed, offered behind a
+	// collapsed section so the user can still grab one deliberately (#2334).
+	// Language drops come first: they are the right book in the wrong tag.
+	filtered, filteredTotal := collectFiltered(results, langDropped, langReason, relDropped)
 
 	// Blocklist spec.
 	if h.blocklist != nil {
@@ -724,11 +861,6 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 
 	decisions := dm.Evaluate(releases, *book)
 
-	type searchDecision struct {
-		newznab.SearchResult
-		Approved  bool   `json:"approved"`
-		Rejection string `json:"rejection,omitempty"`
-	}
 	out := make([]searchDecision, len(decisions))
 	for i, d := range decisions {
 		res := results[i]
@@ -753,6 +885,20 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Filtered releases are recorded first so the main results are the newest
+	// entries and the last the registry's cap would evict. They go out
+	// labelled not approved with the stage's reason; they are not run through
+	// the decision specs, which judge a release that passed the filters.
+	filteredOut := make([]searchDecision, len(filtered))
+	rawFiltered := make([]newznab.SearchResult, len(filtered))
+	for i, f := range filtered {
+		rawFiltered[i] = f.Result
+		res := f.Result
+		redactSearchResult(&res)
+		filteredOut[i] = searchDecision{SearchResult: res, Approved: false, Rejection: f.Reason}
+	}
+	h.searchResults.remember(rawFiltered)
+
 	// Every result is grabbable, approved or not: a rejection only labels it.
 	// The registry keeps the raw URL, before the redaction above, so a grab
 	// never depends on the URL the client posts back.
@@ -770,8 +916,103 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"results": out,
-		"debug":   dbg,
+		// filtered is the releases the relevance and language filters removed,
+		// same item shape as results with approved=false and the filter's
+		// reason as rejection, capped at maxFilteredReleases. filteredTotal is
+		// the count before the cap.
+		"filtered":      filteredOut,
+		"filteredTotal": filteredTotal,
+		"debug":         dbg,
 	})
+}
+
+// searchDecision is one release in an interactive search response: the search
+// result plus the verdict on it.
+type searchDecision struct {
+	newznab.SearchResult
+	Approved  bool   `json:"approved"`
+	Rejection string `json:"rejection,omitempty"`
+}
+
+// maxFilteredReleases bounds the "filtered" array of one interactive search,
+// and with it the registry entries a search adds beyond its main results. A
+// generic title can have hundreds of unrelated hits dropped by the relevance
+// filter; a collapsed list of that size helps nobody, and remembering all of
+// them would let one search push earlier searches out of the registry. The
+// relevance drops are ranked best first, so the cap keeps the likeliest ones.
+const maxFilteredReleases = 100
+
+// stampDropped sets the media type on a dual-format leg's dropped releases, as
+// the leg's main results are stamped.
+func stampDropped(d *indexer.SearchDebug, mediaType string) {
+	if d == nil {
+		return
+	}
+	for i := range d.Dropped {
+		d.Dropped[i].Result.MediaType = mediaType
+	}
+}
+
+// collectFiltered gathers the language drops and the relevance drops into one
+// list: de-duplicated by GUID, never repeating a release that is in the main
+// results, GUID-less ones skipped (a grab needs a GUID), capped at
+// maxFilteredReleases. It returns the capped list and the count before the cap.
+func collectFiltered(kept, langDropped []newznab.SearchResult, langReason string, relDropped []indexer.DroppedRelease) ([]indexer.DroppedRelease, int) {
+	// Keyed the way the registry and the UI key a release: the GUID with its
+	// credentials stripped, so two releases differing only in credentials are
+	// one release here too.
+	seen := make(map[string]bool, len(kept))
+	for _, r := range kept {
+		seen[registryKey(r.GUID)] = true
+	}
+	var all []indexer.DroppedRelease
+	add := func(d indexer.DroppedRelease) {
+		if d.Result.GUID == "" || seen[registryKey(d.Result.GUID)] {
+			return
+		}
+		seen[registryKey(d.Result.GUID)] = true
+		all = append(all, d)
+	}
+	for _, r := range langDropped {
+		add(indexer.DroppedRelease{Result: r, Stage: indexer.StageLanguage, Reason: langReason})
+	}
+	for _, d := range relDropped {
+		add(d)
+	}
+	all = interleaveByMediaType(all)
+	total := len(all)
+	if total > maxFilteredReleases {
+		all = all[:maxFilteredReleases]
+	}
+	return all, total
+}
+
+// interleaveByMediaType round robins releases across media types, keeping each
+// type's own order, so the cap keeps the best of each format of a dual-format
+// book rather than all of one format's. Without a media type (a single-format
+// book) it is the identity.
+func interleaveByMediaType(in []indexer.DroppedRelease) []indexer.DroppedRelease {
+	var order []string
+	groups := map[string][]indexer.DroppedRelease{}
+	for _, d := range in {
+		mt := d.Result.MediaType
+		if _, ok := groups[mt]; !ok {
+			order = append(order, mt)
+		}
+		groups[mt] = append(groups[mt], d)
+	}
+	if len(order) < 2 {
+		return in
+	}
+	out := make([]indexer.DroppedRelease, 0, len(in))
+	for i := 0; len(out) < len(in); i++ {
+		for _, mt := range order {
+			if i < len(groups[mt]) {
+				out = append(out, groups[mt][i])
+			}
+		}
+	}
+	return out
 }
 
 // LastSearchDebug returns the newest search audit trail the caller may see,

@@ -44,6 +44,7 @@ beforeEach(() => {
     version: 'dev', commit: 'unknown', buildDate: '', enhancedHardcoverApi: false, hardcoverTokenConfigured: false,
   })
   vi.mocked(api.updateMetadataProfile).mockReset()
+  vi.mocked(api.addMetadataProfile).mockReset()
   vi.mocked(api.updateMetadataProfile).mockResolvedValue(profile(''))
 })
 
@@ -67,6 +68,42 @@ describe('Metadata profile language selection', () => {
     render(<MetadataTab />)
     fireEvent.click(await screen.findByRole('button', { name: 'common.edit' }))
     expect(pressedLanguages()).toEqual(['French', 'Norwegian'])
+  })
+
+  // #3240: the profile form's labels name their fields.
+  it('names the profile fields by their labels', async () => {
+    vi.mocked(api.listMetadataProfiles).mockResolvedValue([profile('eng')])
+    render(<MetadataTab />)
+    fireEvent.click(await screen.findByRole('button', { name: 'common.edit' }))
+    expect(screen.getByLabelText('settings.metadata.formMinPages').tagName).toBe('INPUT')
+    expect(screen.getByLabelText('settings.metadata.formUnknownLanguage').tagName).toBe('SELECT')
+  })
+
+  // #3293: Create turns an empty list into English, so a new profile with no
+  // language ticked has to say "any" itself.
+  it('saves a new profile with no language ticked as any language', async () => {
+    vi.mocked(api.listMetadataProfiles).mockResolvedValue([])
+    vi.mocked(api.addMetadataProfile).mockResolvedValue(profile('any'))
+    render(<MetadataTab />)
+    fireEvent.click(await screen.findByRole('button', { name: 'settings.metadata.newProfile' }))
+    fireEvent.change(screen.getByLabelText('settings.metadata.formName'), { target: { value: 'Anything' } })
+    fireEvent.click(screen.getByRole('button', { name: 'English' }))
+    expect(pressedLanguages()).toEqual([])
+    fireEvent.click(screen.getByRole('button', { name: 'settings.metadata.createProfile' }))
+    await waitFor(() => expect(api.addMetadataProfile).toHaveBeenCalled())
+    expect(vi.mocked(api.addMetadataProfile).mock.calls[0][0].allowedLanguages).toBe('any')
+  })
+
+  it('still sends the ticked languages when a new profile has some', async () => {
+    vi.mocked(api.listMetadataProfiles).mockResolvedValue([])
+    vi.mocked(api.addMetadataProfile).mockResolvedValue(profile('eng,fre'))
+    render(<MetadataTab />)
+    fireEvent.click(await screen.findByRole('button', { name: 'settings.metadata.newProfile' }))
+    fireEvent.change(screen.getByLabelText('settings.metadata.formName'), { target: { value: 'Two' } })
+    fireEvent.click(screen.getByRole('button', { name: 'French' }))
+    fireEvent.click(screen.getByRole('button', { name: 'settings.metadata.createProfile' }))
+    await waitFor(() => expect(api.addMetadataProfile).toHaveBeenCalled())
+    expect(vi.mocked(api.addMetadataProfile).mock.calls[0][0].allowedLanguages).toBe('eng,fre')
   })
 
   it('still defaults a new profile to English', async () => {

@@ -89,7 +89,9 @@ describe('MetadataTab library defaults', () => {
     expect(mediaType).toHaveValue('ebook')
     expect(monitorMode).toHaveValue('all')
 
-    const strict = screen.getByRole('checkbox')
+    const outsideSources = () =>
+      screen.queryAllByRole('checkbox').filter(c => !c.closest('[data-testid="metadata-sources"]'))
+    const strict = outsideSources()[0]
     fireEvent.click(strict)
     await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('default.media_type_strict', 'true'))
     expect(strict).toBeChecked()
@@ -97,7 +99,7 @@ describe('MetadataTab library defaults', () => {
     fireEvent.change(mediaType, { target: { value: 'both' } })
     await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('default.media_type', 'both'))
     // The strict flag only makes sense when a single format is the default.
-    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(outsideSources()).toHaveLength(0)
 
     fireEvent.change(monitorMode, { target: { value: 'latest' } })
     await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_mode', 'latest'))
@@ -116,6 +118,21 @@ describe('MetadataTab library defaults', () => {
     render(<MetadataTab />)
     await waitFor(() => expect(api.listSettings).toHaveBeenCalled())
     await waitFor(() => expect(screen.getAllByRole('combobox')[2]).toHaveValue('all'))
+  })
+
+  // #3287: Wikidata author enrichment is opt in and saved as a plain setting.
+  it('switches Wikidata author enrichment on and off', async () => {
+    seedSettings({ 'autoGrab.enabled': 'true', 'recommendations.enabled': 'false' })
+    render(<MetadataTab />)
+    await waitFor(() => expect(api.listSettings).toHaveBeenCalled())
+    expect(screen.getByText('settings.general.authorWikidataLabel')).toBeInTheDocument()
+    const wikidata = screen.getAllByRole('switch')[2]
+    expect(wikidata).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(wikidata)
+    await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('metadata.author_enrichment.wikidata', 'true'))
+    expect(wikidata).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(wikidata)
+    await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('metadata.author_enrichment.wikidata', 'false'))
   })
 
   it('toggles auto-grab off and recommendations on', async () => {

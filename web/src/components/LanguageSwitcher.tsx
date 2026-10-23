@@ -14,7 +14,7 @@ const LANGUAGES = [
   { code: 'sv', label: 'Svenska' },
 ]
 
-export default function LanguageSwitcher() {
+export default function LanguageSwitcher({ id }: { id?: string }) {
   const { i18n, t } = useTranslation()
 
   // 'system' means we clear the localStorage key and let the detector use navigator.language
@@ -33,6 +33,7 @@ export default function LanguageSwitcher() {
 
   return (
     <select
+      id={id}
       value={current}
       onChange={e => handleChange(e.target.value)}
       className="shrink-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"

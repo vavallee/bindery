@@ -827,11 +827,20 @@ func TestGetAuthorWorkLanguageEvidence_BatchesAllowedEditionLookup(t *testing.T)
 		if !slices.Equal(gotCodes, []string{"en", "eng"}) {
 			t.Errorf("languageCodes = %v, want [en eng]", gotCodes)
 		}
-		bookIDs, ok := req.Variables["bookIds"].([]interface{})
-		if !ok || len(bookIDs) != 1 || bookIDs[0] != float64(42) {
-			t.Errorf("bookIds = %#v, want [42]", req.Variables["bookIds"])
-		}
-		if limit := req.Variables["limit"]; limit != float64(6) {
+		if _, byID := req.Variables["bookIds"]; byID {
+			// hc:42 is named by numeric id, so it also gets a book_id query,
+			// sent on its own rather than in an _or with the slugs (#3333).
+			bookIDs, ok := req.Variables["bookIds"].([]interface{})
+			if !ok || len(bookIDs) != 1 || bookIDs[0] != float64(42) {
+				t.Errorf("bookIds = %#v, want [42]", req.Variables["bookIds"])
+			}
+			if _, ok := req.Variables["slugs"]; ok {
+				t.Errorf("book_id query also sent slugs: %#v", req.Variables)
+			}
+			if limit := req.Variables["limit"]; limit != float64(1) {
+				t.Errorf("book_id limit = %#v, want 1", limit)
+			}
+		} else if limit := req.Variables["limit"]; limit != float64(6) {
 			t.Errorf("limit = %#v, want 6 unique applicable works", limit)
 		}
 		return gqlResponse(t, http.StatusOK, map[string]interface{}{
@@ -875,8 +884,8 @@ func TestGetAuthorWorkLanguageEvidence_BatchesAllowedEditionLookup(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requests != 1 {
-		t.Fatalf("requests = %d, want one batch request", requests)
+	if requests != 2 {
+		t.Fatalf("requests = %d, want one batch request per predicate (slug, book_id)", requests)
 	}
 	want := map[string]metadata.AuthorWorkLanguageEvidence{
 		"hc:translated-default": {State: metadata.AuthorWorkLanguageAllowed, Language: "eng"},

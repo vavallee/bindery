@@ -27,6 +27,8 @@ vi.mock('react-i18next', () => ({
       if (key === 'books.countLabel') return `${String(options?.count)} books`
       if (key === 'wanted.selectBook') return `Select ${String(options?.title)}`
       if (key === 'wanted.changeFormat') return `Change format for ${String(options?.title)}`
+      if (key === 'bookDetail.filteredHeading') return `Filtered (${String(options?.count)})`
+      if (key === 'bookDetail.noResultsFiltered') return `None matched, ${String(options?.count)} filtered.`
       if (key === 'bulkActionBar.selected') return `${String(options?.count)} selected`
 
       const labels: Record<string, string> = {
@@ -394,6 +396,67 @@ describe('WantedPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Search' }))
 
     expect(await screen.findByText('No results found on any indexer.')).toBeInTheDocument()
+  })
+
+  it('offers the releases the filters dropped, collapsed, and grabs one by its guid (#3364)', async () => {
+    const book = makeBook({ id: 1, title: 'Dune' })
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([book]))
+    vi.mocked(api.searchBook).mockResolvedValue({
+      results: [makeResult({ guid: 'kept', title: 'Dune 2026 EPUB' })],
+      filtered: [makeResult({ guid: 'dropped', title: 'Dune Messiah', nzbUrl: '', rejection: 'title mismatch' })],
+      filteredTotal: 7,
+      debug: null,
+    })
+    vi.mocked(api.grab).mockResolvedValue({ id: 5 } as Download)
+
+    renderWantedPage()
+
+    await screen.findByRole('link', { name: 'Dune' })
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+
+    // Collapsed: the heading carries the full count, the release is hidden.
+    const heading = await screen.findByRole('button', { name: /Filtered/ })
+    expect(heading).toHaveTextContent('7')
+    expect(screen.queryByText('Dune Messiah')).not.toBeInTheDocument()
+
+    fireEvent.click(heading)
+    expect(await screen.findByText('Dune Messiah')).toBeInTheDocument()
+    expect(screen.getByText(/title mismatch/)).toBeInTheDocument()
+
+    const row = screen.getByText('Dune Messiah').closest('div.flex.items-center.justify-between') as HTMLElement
+    fireEvent.click(within(row).getByRole('button', { name: 'Grab' }))
+    await waitFor(() => expect(api.grab).toHaveBeenCalled())
+    expect(vi.mocked(api.grab).mock.calls[0][0]).toMatchObject({ guid: 'dropped', bookId: 1 })
+  })
+
+  it('points at the filtered section when every release was filtered (#3364)', async () => {
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([makeBook({ id: 1, title: 'Dune' })]))
+    vi.mocked(api.searchBook).mockResolvedValue({
+      results: [],
+      filtered: [makeResult({ guid: 'dropped', title: 'Dune Messiah' })],
+      debug: null,
+    })
+
+    renderWantedPage()
+
+    await screen.findByRole('link', { name: 'Dune' })
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+
+    expect(await screen.findByText('None matched, 1 filtered.')).toBeInTheDocument()
+    expect(screen.queryByText('No results found on any indexer.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Filtered/ })).toBeInTheDocument()
+  })
+
+  it('shows no filtered section when the server sends none (older server)', async () => {
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([makeBook({ id: 1, title: 'Dune' })]))
+    vi.mocked(api.searchBook).mockResolvedValue({ results: [makeResult({ guid: 'k', title: 'Kept' })], debug: null })
+
+    renderWantedPage()
+
+    await screen.findByRole('link', { name: 'Dune' })
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    await screen.findByText('Kept')
+    expect(screen.queryByRole('button', { name: /Filtered/ })).not.toBeInTheDocument()
   })
 
   it('grabs a result, shows transient states, and refreshes wanted books', async () => {

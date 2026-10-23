@@ -47,7 +47,7 @@ does ship is the failure that matters.
 | [github.com/coreos/go-oidc/v3](https://github.com/coreos/go-oidc/blob/v3.21.0/LICENSE) | v3.21.0 | Apache-2.0 | yes |
 | [github.com/dhowden/tag](https://github.com/dhowden/tag/blob/3d75831295e8/LICENSE) | v0.0.0-20240417053706-3d75831295e8 | BSD-2-Clause | — |
 | [github.com/dustin/go-humanize](https://github.com/dustin/go-humanize/blob/v1.0.1/LICENSE) | v1.0.1 | MIT | — |
-| [github.com/go-chi/chi/v5](https://github.com/go-chi/chi/blob/v5.3.2/LICENSE) | v5.3.2 | MIT | — |
+| [github.com/go-chi/chi/v5](https://github.com/go-chi/chi/blob/v5.5.0/LICENSE) | v5.5.0 | MIT | — |
 | [github.com/go-jose/go-jose/v4](https://github.com/go-jose/go-jose/blob/v4.1.4/LICENSE) | v4.1.4 | Apache-2.0 | — |
 | [github.com/google/uuid](https://github.com/google/uuid/blob/v1.6.0/LICENSE) | v1.6.0 | BSD-3-Clause | — |
 | [github.com/mattn/go-isatty](https://github.com/mattn/go-isatty/blob/v0.0.24/LICENSE) | v0.0.24 | MIT | — |
@@ -82,11 +82,11 @@ does ship is the failure that matters.
 | @remix-run/route-pattern | 0.22.1 | MIT |
 | cookie-es | 3.1.1 | MIT |
 | html-parse-stringify | 4.0.1 | MIT |
-| i18next | 26.4.2 | MIT |
+| i18next | 26.4.6 | MIT |
 | i18next-browser-languagedetector | 8.2.1 | MIT |
-| react | 19.3.0 | MIT |
-| react-dom | 19.3.0 | MIT |
-| react-i18next | 17.0.16 | MIT |
+| react | 19.3.1 | MIT |
+| react-dom | 19.3.1 | MIT |
+| react-i18next | 17.0.18 | MIT |
 | react-router | 8.4.0 | MIT |
 | scheduler | 0.28.0 | MIT |
 | typescript | 6.0.3 | Apache-2.0 |
@@ -1612,7 +1612,7 @@ SOFTWARE.
 <http://www.opensource.org/licenses/mit-license.php>
 ```
 
-### 20. MIT — github.com/go-chi/chi/v5@v5.3.2 (LICENSE)
+### 20. MIT — github.com/go-chi/chi/v5@v5.5.0 (LICENSE)
 
 ```
 Copyright (c) 2015-present Peter Kieltyka (https://github.com/pkieltyka), Google Inc.
@@ -1842,7 +1842,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 29. MIT — npm:i18next@26.4.2 (LICENSE)
+### 29. MIT — npm:i18next@26.4.6 (LICENSE)
 
 ```
 The MIT License (MIT)
@@ -1868,7 +1868,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 30. MIT — npm:react-i18next@17.0.16 (LICENSE)
+### 30. MIT — npm:react-i18next@17.0.18 (LICENSE)
 
 ```
 The MIT License (MIT)
@@ -1922,13 +1922,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 32. MIT — npm:react-dom@19.3.0 (LICENSE)
+### 32. MIT — npm:react-dom@19.3.1 (LICENSE)
 
 <details>
 <summary>Applies to 4 dependencies</summary>
 
-- npm:react-dom@19.3.0 (LICENSE)
-- npm:react@19.3.0 (LICENSE)
+- npm:react-dom@19.3.1 (LICENSE)
+- npm:react@19.3.1 (LICENSE)
 - npm:scheduler@0.28.0 (LICENSE)
 - npm:use-sync-external-store@1.6.0 (LICENSE)
 

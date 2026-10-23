@@ -117,6 +117,10 @@ func main() {
 			"bypassLocal", cfg.OutboundProxyBypassLocal)
 	}
 
+	if httpsec.LinkLocalServicesEnabled() {
+		slog.Warn(httpsec.LinkLocalServicesEnvVar + " is on: the service URLs you type (indexers, Prowlarr, download clients, Audiobookshelf, Grimmory, Calibre plugin) may use link-local addresses. Cloud metadata addresses stay blocked.")
+	}
+
 	slog.Info("starting bindery",
 		"version", version,
 		"commit", commit,
@@ -309,6 +313,8 @@ func main() {
 	bootProviders := metaProviders.build(ctxBoot)
 	bootProviders.log("metadata providers configured")
 	metaAgg := metadata.NewAggregator(bootProviders.primary, bootProviders.enrichers...)
+	metaAgg.SetAuthorEnrichers(bootProviders.authorEnrichers...)
+	metaAgg.SetAudiobookSourcesDisabled(bootProviders.audibleOff, bootProviders.audnexOff)
 
 	// Optional CLI subcommand: `bindery migrate {csv,readarr} <path>`.
 	// Runs the import and exits; does not start the HTTP server. Useful
@@ -316,6 +322,17 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
 		runMigrate(cfg, authorRepo, indexerRepo, dlClientRepo, blocklistRepo, settingsRepo, metaAgg)
 		return
+	}
+
+	// Read-only report of Hardcover ids that more than one series holds, from
+	// before the guards in SeriesRepo (#3368). Merge them from the series page.
+	if dups, err := seriesRepo.ListHardcoverDuplicates(ctxBoot); err != nil {
+		slog.Warn("could not check for duplicate hardcover series", "error", err)
+	} else {
+		for _, d := range dups {
+			slog.Warn("several series share one hardcover id; merge them from the series page",
+				"hardcoverId", d.HardcoverSeriesID, "seriesIds", d.SeriesIDs)
+		}
 	}
 
 	// Optional CLI subcommand: `bindery reconcile-series`.
@@ -365,6 +382,10 @@ func main() {
 	// profile: a downloaded EPUB in a language the profile does not allow is
 	// rejected and blocklisted instead of relabelling the book (#2998).
 	importScanner.WithLanguageEnforcement(metadataProfileRepo, blocklistRepo)
+	// And the file's own title and author against the book it was grabbed for,
+	// with the author's aliases standing in for the author, so a pen name such
+	// as "Franklin W. Dixon" is not read as a different writer (#3015).
+	importScanner.WithAuthorAliases(authorAliasRepo)
 	importScanner.WithClientHealth(downloadHealth)
 	importScanner.WithJobs(bgJobs) // drain manual scans on shutdown (#1458)
 
@@ -470,6 +491,7 @@ func main() {
 		WithVersion(version).
 		WithStoragePaths(cfg.LibraryDir, cfg.AudiobookDir, rootFolderRepo).
 		WithMetadata(metaAgg).
+		WithSeriesMatchState(db.NewABSSeriesMatchRepo(database)).
 		WithEnhancedHardcoverSeriesEnabled(func(ctx context.Context) bool {
 			return api.HardcoverFeatureStateFor(ctx, settingsRepo, cfg.EnhancedHardcoverAPI).EnhancedHardcoverAPI
 		}).
@@ -533,6 +555,7 @@ func main() {
 		authorRepo, bookRepo, indexerRepo, downloadRepo, dlClientRepo, settingsRepo, blocklistRepo)
 	sched.WithHistory(historyRepo)
 	sched.WithAliases(authorAliasRepo)
+	sched.WithSeries(seriesRepo)
 	sched.WithMetadataProfiles(metadataProfileRepo)
 	sched.WithQualityProfiles(qualityProfileRepo)
 	sched.WithEditions(editionRepo)
@@ -643,7 +666,8 @@ func main() {
 		WithRoots(libraryRoots).
 		WithLifetimeCtx(appCtx).
 		WithNotifier(notif). // bookAnnounced when a refresh or discovery adds books (#2236)
-		WithJobs(bgJobs)     // drain an in-flight author catalogue sync on shutdown (#2371)
+		WithJobs(bgJobs).    // drain an in-flight author catalogue sync on shutdown (#2371)
+		WithCoverStore(coverStore)
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
 	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).
 		WithSettings(settingsRepo).
@@ -660,8 +684,10 @@ func main() {
 	searchResults := api.NewSearchResultRegistry()
 	indexerHandler := api.NewIndexerHandler(indexerRepo, bookRepo, authorRepo, metadataProfileRepo, idxSearcher, settingsRepo, blocklistRepo).
 		WithAliases(authorAliasRepo).
+		WithSeries(seriesRepo).
 		WithQualityProfiles(qualityProfileRepo).
 		WithEditions(editionRepo).
+		WithDownloadClients(dlClientRepo).
 		WithSearchResults(searchResults).
 		WithSearchDebugLog(searchDebugLog)
 	if clients, err := dlClientRepo.List(ctxBoot); err == nil {
@@ -669,7 +695,7 @@ func main() {
 	} else {
 		slog.Warn("download client startup health check skipped", "error", err)
 	}
-	setupStateHandler := api.NewSetupStateHandler(indexerRepo, dlClientRepo, authorRepo, settingsRepo)
+	setupStateHandler := api.NewSetupStateHandler(indexerRepo, dlClientRepo, authorRepo, settingsRepo).WithBlockedChecks(cfg, downloadHealth, historyRepo, rootFolderRepo)
 	dlClientHandler := api.NewDownloadClientHandler(dlClientRepo).
 		WithHealth(downloadHealth).
 		WithContentBreakerReset(importScanner.ResetContentBreaker).
@@ -964,6 +990,7 @@ func main() {
 		r.Put("/author/{id}/genres", authorHandler.ApplyGenres)
 		r.Delete("/author/{id}", authorHandler.Delete)
 		r.Post("/author/{id}/refresh", authorHandler.Refresh)
+		registerAuthorPhotoRoutes(r, authorHandler)
 		r.Get("/author/{id}/catalogue-reconciliation", authorHandler.PreviewCatalogueReconciliation)
 		r.Post("/author/{id}/catalogue-reconciliation", authorHandler.ApplyCatalogueReconciliation)
 		r.Get("/author/{id}/relink-upstream/candidates", authorHandler.RelinkCandidates)
@@ -1181,6 +1208,10 @@ func main() {
 
 		// Storage paths, admin-only (see registerStorageRoutes).
 		registerStorageRoutes(r, api.NewStorageHandler(cfg))
+
+		// Foreign key drift report, admin-only and on demand (see
+		// registerDBIntegrityRoutes).
+		registerDBIntegrityRoutes(r, api.NewDBIntegrityHandler(database, cfg.DBPath, backupHandler))
 
 		// Library. The scan status returns server filesystem paths, so it is
 		// admin only (#2361); see registerLibraryScanStatusRoute.

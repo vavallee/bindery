@@ -4,6 +4,7 @@ import { api } from '../../api/client'
 import type { LibraryRequest, RequestStatus } from '../../api/client'
 import ApproveRequestForm from './ApproveRequestForm'
 import { mediaTypeLabel, REQUESTS_CHANGED_EVENT, requestStatusClass, requestStatusLabel } from './requestLabels'
+import { primaryFill } from '../../components/buttons'
 
 type Filter = RequestStatus | 'all'
 const FILTERS: Filter[] = ['pending', 'approved', 'declined', 'all']
@@ -89,7 +90,7 @@ export default function RequestsPage() {
       {/* Centered, with a hint line, so this reads like the Queue, Discover and
           Import empty states instead of a stray left aligned sentence. */}
       {!loading && !error && items.length === 0 && (
-        <div className="text-center py-16 text-slate-600 dark:text-zinc-500">
+        <div className="text-center py-16 text-fg-muted">
           <p>{filter === 'pending' ? t('requests.admin.emptyPending') : t('requests.admin.empty')}</p>
           <p className="mt-1 text-sm">
             {filter === 'pending' ? t('requests.admin.emptyPendingHint') : t('requests.admin.emptyHint')}
@@ -119,7 +120,7 @@ export default function RequestsPage() {
                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${requestStatusClass(r)}`}>{requestStatusLabel(t, r)}</span>
                   {r.status === 'pending' && approving !== r.id && declining !== r.id && (
                     <>
-                      <button type="button" onClick={() => { setApproving(r.id); setDeclining(null) }} aria-label={t('requests.admin.approveLabel', { title: r.title })} className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium text-white">
+                      <button type="button" onClick={() => { setApproving(r.id); setDeclining(null) }} aria-label={t('requests.admin.approveLabel', { title: r.title })} className={`px-3 py-1 ${primaryFill} rounded text-xs font-medium`}>
                         {t('requests.admin.approve')}
                       </button>
                       <button type="button" onClick={() => { setDeclining(r.id); setApproving(null); setReason('') }} aria-label={t('requests.admin.declineLabel', { title: r.title })} className="px-3 py-1 rounded text-xs font-medium border border-slate-300 dark:border-zinc-700">

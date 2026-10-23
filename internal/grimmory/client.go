@@ -104,7 +104,7 @@ func ValidateBaseURLSecure(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := httpsec.ValidateOutboundURL(u, httpsec.PolicyLANLoopback); err != nil {
+	if err := httpsec.ValidateOutboundURL(u, httpsec.PolicyService); err != nil {
 		return "", fmt.Errorf("base_url %q: %w", raw, err)
 	}
 	return u, nil

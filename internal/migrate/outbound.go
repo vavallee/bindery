@@ -21,5 +21,5 @@ import (
 // migration tests depend on a working resolver. Never reassign it from
 // production code.
 var validateMigratedURL = func(raw string) error {
-	return httpsec.ValidateOutboundURL(raw, httpsec.PolicyLANLoopback)
+	return httpsec.ValidateOutboundURL(raw, httpsec.PolicyService)
 }

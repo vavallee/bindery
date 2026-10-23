@@ -72,7 +72,15 @@ const sendFailedMessage = "failed to send the release to the download client"
 // sendError carries the download client's own failure for the logs and the
 // download row. Error() keeps the full text; only errSendFailed is matched by
 // errors.Is, so callers branch on the kind without relaying the cause.
-type sendError struct{ cause error }
+type sendError struct {
+	cause error
+	// pin is set when the client was the indexer's pinned one (#3080), so the
+	// failure can say no other client was tried.
+	pin *pinTarget
+}
+
+// pinTarget names the indexer and the client of a pinned grab.
+type pinTarget struct{ indexer, client string }
 
 func (e *sendError) Error() string   { return errSendFailed.Error() + ": " + e.cause.Error() }
 func (e *sendError) Unwrap() []error { return []error{errSendFailed, e.cause} }
@@ -81,8 +89,34 @@ func (e *sendError) Unwrap() []error { return []error{errSendFailed, e.cause} }
 // a network failure (refused, timed out, unknown container name). The hint is
 // fixed text chosen by the class of failure, so it names no host and no URL,
 // and it is what tells a user the client is down, not that the release is bad.
-func sendFailedText(err error) string {
-	return sendFailedMessage + nethint.ForErr(err)
+func sendFailedText(ctx context.Context, err error) string {
+	text := sendFailedMessage + nethint.ForErr(err)
+	var se *sendError
+	if errors.As(err, &se) && se.pin != nil {
+		if isAdminCtx(ctx) {
+			text += fmt.Sprintf(". Indexer %q is pinned to download client %q, so no other client was tried", se.pin.indexer, se.pin.client)
+		} else {
+			text += fmt.Sprintf(". Indexer %q is pinned to one download client, so no other client was tried", se.pin.indexer)
+		}
+	}
+	return text
+}
+
+// isAdminCtx reports whether the request is an admin's. Auth disabled and API
+// key callers are stamped admin by the auth middleware.
+func isAdminCtx(ctx context.Context) bool {
+	return auth.UserRoleFromContext(ctx) == "admin"
+}
+
+// codeIndexerClientUnavailable is the code on the 400 for a grab whose
+// indexer's pinned download client cannot take it (#3080). It is not
+// codeNoDownloadClient on purpose: that code drives a "go add a client" setup
+// nudge, which would be wrong when clients exist and the pin is the problem.
+const codeIndexerClientUnavailable = "indexer_client_unavailable"
+
+// pinnedMessage renders a pin failure for the caller's role.
+func pinnedMessage(ctx context.Context, perr *db.PinnedClientError) string {
+	return perr.Message(isAdminCtx(ctx))
 }
 
 // writeGrabError answers an error from grab or resendRelease. A missing client
@@ -90,12 +124,20 @@ func sendFailedText(err error) string {
 // a refused or unreachable client is a generic 502, since the text comes from
 // the client; anything else is a storage fault and a generic 500.
 func writeGrabError(w http.ResponseWriter, r *http.Request, err error) {
+	var perr *db.PinnedClientError
+	var aerr *ambiguousPinError
 	switch {
+	case errors.As(err, &aerr):
+		slog.Warn("grab: the release could not be tied to one indexer and a matching indexer is pinned", "method", r.Method, "path", r.URL.Path, "error", aerr.Error())
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": aerr.Message(isAdminCtx(r.Context())), "code": codeIndexerClientUnavailable})
+	case errors.As(err, &perr):
+		slog.Warn("grab: the indexer's pinned download client cannot take the release", "method", r.Method, "path", r.URL.Path, "error", perr.Error())
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": pinnedMessage(r.Context(), perr), "code": codeIndexerClientUnavailable})
 	case errors.Is(err, errNoDownloadClient):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error(), "code": codeNoDownloadClient})
 	case errors.Is(err, errSendFailed):
 		slog.Warn("grab: download client did not take the release", "method", r.Method, "path", r.URL.Path, "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": sendFailedText(err)})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": sendFailedText(r.Context(), err)})
 	default:
 		writeServerError(w, r, err)
 	}
@@ -110,14 +152,20 @@ const codeNoDownloadClient = "no_download_client"
 // handlers already treat as safe (a conflict, a missing book, no client) pass
 // through, a send failure is generic, and a storage fault is logged and
 // replaced.
-func queueItemMessage(err error) string {
+func queueItemMessage(ctx context.Context, err error) string {
+	var perr *db.PinnedClientError
+	var aerr *ambiguousPinError
 	switch {
+	case errors.As(err, &aerr):
+		return aerr.Message(isAdminCtx(ctx))
+	case errors.As(err, &perr):
+		return pinnedMessage(ctx, perr)
 	case errors.Is(err, errNoDownloadClient), errors.Is(err, errAlreadyGrabbed),
 		errors.Is(err, errRetryNotResendable), errors.Is(err, errGrabBookNotFound):
 		return err.Error()
 	case errors.Is(err, errSendFailed):
 		slog.Warn("bulk queue item: download client did not take the release", "error", err)
-		return sendFailedText(err)
+		return sendFailedText(ctx, err)
 	default:
 		slog.Error("bulk queue item failed", "error", err)
 		return "internal server error"
@@ -1280,7 +1328,7 @@ func (h *QueueHandler) BulkRetry(w http.ResponseWriter, r *http.Request) {
 			accepted, found, err := h.downloads.ResetImportRetry(ctx, id)
 			switch {
 			case err != nil:
-				setResult(id, queueRetryResult{Error: queueItemMessage(err)})
+				setResult(id, queueRetryResult{Error: queueItemMessage(ctx, err)})
 			case !found:
 				setResult(id, queueRetryResult{Error: "download not found"})
 			case !accepted:
@@ -1292,7 +1340,7 @@ func (h *QueueHandler) BulkRetry(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if _, err := h.resendRelease(ctx, target); err != nil {
-			setResult(id, queueRetryResult{Error: queueItemMessage(err)})
+			setResult(id, queueRetryResult{Error: queueItemMessage(ctx, err)})
 			return
 		}
 		setResult(id, queueRetryResult{OK: true, Action: retryActionResend})
@@ -1318,6 +1366,31 @@ func (h *QueueHandler) selectClient(ctx context.Context, protocol, mediaType str
 		return nil, h.noProtocolClientError(ctx, protocol)
 	}
 	return db.PickClientForMediaType(candidates, mediaType), nil
+}
+
+// clientForGrab picks the client for a grab. An indexer pinned to a download
+// client (#3080) gets exactly that client, whatever the protocol routing, media
+// type or priority would have chosen, or a *db.PinnedClientError when it cannot
+// be used: there is no fallback, because falling back is how a private
+// tracker's traffic reaches the public client. The returned pinTarget is
+// non-nil only for a pinned grab. An unpinned indexer, or no indexer, takes
+// selectClient exactly as before.
+func (h *QueueHandler) clientForGrab(ctx context.Context, indexerID *int64, protocol, mediaType string) (*models.DownloadClient, *pinTarget, error) {
+	if h.indexers != nil && indexerID != nil && *indexerID != 0 {
+		idx, err := h.indexers.GetByID(ctx, *indexerID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if idx != nil && idx.DownloadClientID != nil {
+			c, err := h.clients.ResolvePinnedClient(ctx, idx, protocol)
+			if err != nil {
+				return nil, nil, err
+			}
+			return c, &pinTarget{indexer: idx.Name, client: c.Name}, nil
+		}
+	}
+	c, err := h.selectClient(ctx, protocol, mediaType)
+	return c, nil, err
 }
 
 // noProtocolClientError builds an actionable "no enabled download client" error.
@@ -1473,18 +1546,6 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	// ebook category (#2933). See grabMediaType.
 	req.MediaType = grabMediaType(req.MediaType, req.Title)
 
-	client, err := h.selectClient(ctx, req.Protocol, req.MediaType)
-	if err != nil {
-		// selectClient already produced an actionable, protocol-aware message
-		// (see noProtocolClientError); propagate it rather than flattening it
-		// to the generic "no enabled download client configured".
-		return nil, err
-	}
-	if client == nil {
-		return nil, h.noProtocolClientError(ctx, req.Protocol)
-	}
-
-	protocol := downloader.ProtocolForClient(client.Type)
 	// Tenancy (#1457): stamp from the request identity. API key and trusted
 	// local requests carry the first admin's id (auth.withOperatorUserID), so
 	// they own what they grab like any signed-in user. A request reaches here
@@ -1504,14 +1565,55 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	// hands back an apikey-less download URL plus the indexer id; sign it
 	// server-side here. No-op when the URL already carries a key (scheduler /
 	// retry paths) or its host does not match the indexer.
-	nzbURL, hostMatched := h.signNZBURL(ctx, req.NZBURL, indexerID)
-	// The host-match fallback knows which indexer signed the URL, so record it.
-	// Without this the row keeps a nil (or dangling) IndexerID for precisely the
-	// API callers the fallback exists for, and both the queue's indexer
-	// attribution and resolveSeedLimits' per-indexer overrides are lost (#2053).
-	if hostMatched != nil {
+	// One decision says which indexer the grab belongs to, before signing gets
+	// a say (#3080). Signing only counts indexers that can sign and picks by
+	// luck of who holds a key, so it may fill in an attribution the decision
+	// left open but never replaces or overrides one. See resolveGrabPin.
+	var decision grabPinDecision
+	if h.indexers != nil {
+		idxs, err := h.indexers.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		decision = resolveGrabPin(indexerID, req.NZBURL, idxs)
+	}
+	if decision.Kind == pinRefuse {
+		return nil, &ambiguousPinError{reason: decision.Reason, pinned: decision.Pinned}
+	}
+	signWith := indexerID
+	if decision.Kind == pinUseIndexer {
+		id := decision.IndexerID
+		signWith = &id
+	}
+	nzbURL, hostMatched := h.signNZBURL(ctx, req.NZBURL, signWith)
+	if decision.Kind == pinUseIndexer {
+		// The decided indexer is the row's indexer, whoever signed the URL.
+		id := decision.IndexerID
+		indexerID = &id
+	} else if hostMatched != nil {
+		// Nothing decided: the host-match fallback knows which indexer signed
+		// the URL, so record it. Without this the row keeps a nil (or dangling)
+		// IndexerID for precisely the API callers the fallback exists for, and
+		// both the queue's indexer attribution and resolveSeedLimits'
+		// per-indexer overrides are lost (#2053).
 		indexerID = hostMatched
 	}
+
+	// The client is chosen only now, after the host match above has settled
+	// which indexer the release came from: an indexer pinned to a download
+	// client (#3080) must be found even when the caller sent no indexer id.
+	client, pin, err := h.clientForGrab(ctx, indexerID, req.Protocol, req.MediaType)
+	if err != nil {
+		// Both selectClient (see noProtocolClientError) and a failed pin
+		// produce an actionable message; propagate it rather than flattening
+		// it to the generic "no enabled download client configured".
+		return nil, err
+	}
+	if client == nil {
+		return nil, h.noProtocolClientError(ctx, req.Protocol)
+	}
+	protocol := downloader.ProtocolForClient(client.Type)
+
 	dl := &models.Download{
 		GUID:             req.GUID,
 		BookID:           bookID,
@@ -1571,7 +1673,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		if h.notif != nil {
 			h.notif.Send(ctx, notifier.EventDownloadFailed, map[string]any{"title": req.Title, "message": err.Error()})
 		}
-		return nil, &sendError{cause: err}
+		return nil, &sendError{cause: err, pin: pin}
 	}
 
 	if remoteID := sendRes.RemoteID; remoteID != "" {
@@ -1869,7 +1971,7 @@ func (h *QueueHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.removeQueueItem(ctx, &target, opts); err != nil {
-			setResult(id, bulkItemResult{Error: queueItemMessage(err)})
+			setResult(id, bulkItemResult{Error: queueItemMessage(ctx, err)})
 			return
 		}
 		setResult(id, bulkItemResult{OK: true})

@@ -38,6 +38,16 @@ var unambiguousBundleTitleRe = regexp.MustCompile(`(?i)` +
 	// also match "boxed" used as an ordinary word in a real title ("Boxed
 	// In"), which the parenthesized form this was ported from never does.
 	`|\(\s*boxed\s*\)` +
+	// Trailing parenthesized "(Set)" (#3013), e.g. "Just Beyond (Set)". The
+	// parentheses carry the same weight as in "(Boxed)": a real title that
+	// uses the word says "Set in Stone" or "Upset", and a longer
+	// parenthetical such as "(Set in Paris)" or "(Settings)" does not match
+	// because only the whole word between the brackets counts. Anchored to
+	// the end of the title: a "(Set)" with text after it ("Foo (Set): A
+	// Novel", "Ready (Set) Go") is part of a title, not a product label.
+	// Residual: a trailing "(Set)" on a title that really is one book is
+	// caught; the observed catalogue shape is always the trailing label.
+	`|\(\s*set\s*\)\s*$` +
 	`|\bcollection\s*set\b` +
 	`|\bcarton\s+of\s+\d+\s+signed\s+cop` +
 	`|\b\d+\s*(?:books?|vol(?:ume)?s?)\s+set\b`) // "3 Books Set", "5 Volumes Set"
@@ -62,6 +72,23 @@ var ambiguousBundleTitleRe = regexp.MustCompile(`(?i:` +
 	`|\bbooks?\s+\d+\s*-\s*\d+\b` + // "Books 1-3". Could also match a real single
 	// volume a publisher numbered like "Book 1 to 2", which is not observed
 	// in the wild but is noted rather than left a surprise.
+	// "Harry Potter (series) 1-3" (#3013). The parenthesised word needs a
+	// numeric range right after it: a bare "Redwall (Series)" is a label some
+	// providers append to a single volume, not a count.
+	`|\(\s*series\s*\)\s*\d+\s*-\s*\d+\b` +
+	// A trailing count of two or more with no "set" word: "How To Train Your
+	// Dragon - 10 Books", "Dragon Riders (3 Books)", with one optional trailing
+	// "!" or "." ("... - 10 Books!"). Anchored to the end of the
+	// title so "10 Books That Changed America" (a single nonfiction title) is
+	// spared; a count of one is a single book. Residual: a real title that
+	// merely ends in "<N> Books" ("Top 100 Books") is caught, which is why it
+	// sits behind SkipPartBooks. Spelled numbers are never matched.
+	`|\b(?:[2-9]|\d{2,})\s+books\s*[)\]]?\s*[!.]?\s*$` +
+	// A leading count with up to three words before "Books!": the retailer
+	// listing shape "2 Daniel Silva Books! 1) The Order of Death". The "!"
+	// glued to "Books" is the discriminator; "100 Books You Must Read" and
+	// "10 Books That Changed America" have no "!" there and are spared.
+	`|^\s*(?:[2-9]|\d{2,})\s+(?:[^\s!]+\s+){0,3}books\s*!` +
 	`)` +
 	`|(?:[^/]+\s+/\s+){2,}[^/]+` + // "Title A / Title B / Title C" multi-title anthology naming
 	`|\([^()]+\s+/\s+[^()]+\)\s*$`) // "Prefix (Title A / Title B)", 2-title anthology naming inside parens
@@ -128,17 +155,18 @@ func hasNonLeadingOmnibus(title string) bool {
 }
 
 // IsUnambiguousBundleTitle reports whether title names a box set, boxed set,
-// collection set, signed-copy carton or "N books/volumes set": the tier
-// confident enough to prune from every author catalogue without waiting on a
-// profile setting (#1780). See unambiguousBundleTitleRe.
+// collection set, trailing parenthesised "(Set)", signed-copy carton or "N
+// books/volumes set": the tier confident enough to prune from every author
+// catalogue without waiting on a profile setting (#1780). See unambiguousBundleTitleRe.
 func IsUnambiguousBundleTitle(title string) bool {
 	return unambiguousBundleTitleRe.MatchString(title)
 }
 
 // isAmbiguousBundleTitle reports whether title matches one of the
 // lower-confidence bundle shapes: a bare trailing "omnibus", the
-// slash-separated multi-title namings, a bundle-naming bracket, or "Books
-// N-M". Only consulted for profiles that opted in via SkipPartBooks.
+// slash-separated multi-title namings, a bundle-naming bracket, "Books
+// N-M", "(series) N-M", or an "N Books" count. Only consulted for profiles
+// that opted in via SkipPartBooks.
 func isAmbiguousBundleTitle(title string) bool {
 	return ambiguousBundleTitleRe.MatchString(title) ||
 		hasNonLeadingOmnibus(title) ||

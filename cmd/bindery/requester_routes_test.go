@@ -78,6 +78,9 @@ func (s universalStub) Approve(w http.ResponseWriter, _ *http.Request)          
 func (s universalStub) Decline(w http.ResponseWriter, _ *http.Request)               { s.h(w) }
 func (s universalStub) Diagnose(w http.ResponseWriter, _ *http.Request)              { s.h(w) }
 func (s universalStub) Summary(w http.ResponseWriter, _ *http.Request)               { s.h(w) }
+func (s universalStub) Check(w http.ResponseWriter, _ *http.Request)                 { s.h(w) }
+func (s universalStub) Preview(w http.ResponseWriter, _ *http.Request)               { s.h(w) }
+func (s universalStub) Cleanup(w http.ResponseWriter, _ *http.Request)               { s.h(w) }
 func (s universalStub) Adopt(w http.ResponseWriter, _ *http.Request)                 { s.h(w) }
 func (s universalStub) Undo(w http.ResponseWriter, _ *http.Request)                  { s.h(w) }
 func (s universalStub) Ignore(w http.ResponseWriter, _ *http.Request)                { s.h(w) }
@@ -94,6 +97,7 @@ func registerEnumerableRoutes(r chi.Router) {
 	registerOIDCDiscoveryRoutes(r, s)
 	registerSystemLogRoutes(r, s)
 	registerStorageRoutes(r, s)
+	registerDBIntegrityRoutes(r, s)
 	registerLibraryScanStatusRoute(r, s)
 	registerSeriesRoutes(r, s)
 	registerGrimmoryRoutes(r, s)

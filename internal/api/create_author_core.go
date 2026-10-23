@@ -186,6 +186,9 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 				if isAuthorIdentityConflict(err) {
 					return createAuthorResult{}, &authorConflictError{Message: "upstream author already exists locally"}
 				}
+				if errors.Is(err, errAuthorRowChanged) {
+					return createAuthorResult{}, &authorConflictError{Message: errAuthorChanged}
+				}
 				return createAuthorResult{}, err
 			}
 			mediaType := req.MediaType
@@ -260,5 +263,5 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 // show the author as having no books while the sync was still fetching.
 func (h *AuthorHandler) startAddSync(author *models.Author, mediaType string, autoSearch bool) {
 	h.runningSyncs.start(author.ID)
-	h.fetchAuthorBooksAsync(author, catalogueSyncOptions{autoSearch: autoSearch, mediaType: mediaType, syncClaimed: true})
+	h.fetchAuthorBooksAsync(author, catalogueSyncOptions{autoSearch: autoSearch, mediaType: mediaType, enrichProfile: true, syncClaimed: true})
 }

@@ -58,6 +58,9 @@ type ImportConfig struct {
 	Label      string
 	Enabled    bool
 	DryRun     bool
+	// Full forces every item through the Hardcover series match again,
+	// ignoring recorded outcomes (#2173).
+	Full bool
 }
 
 func (c ImportConfig) normalized() ImportConfig {
@@ -214,6 +217,8 @@ type Importer struct {
 	provenance             *db.ABSProvenanceRepo
 	reviews                *db.ABSReviewItemRepo
 	conflicts              *db.ABSMetadataConflictRepo
+	seriesMatchState       *db.ABSSeriesMatchRepo
+	seriesMatchClock       func() time.Time
 	meta                   *metadata.Aggregator
 	newClient              importClientFactory
 	hardcoverSeriesEnabled enhancedHardcoverSeriesEnabledFunc

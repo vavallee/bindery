@@ -164,6 +164,20 @@ select:not([multiple]):not([size]):not(.bg-none) {
   }
 }
 
+/* A card whose link fills it and clips its overflow (the author page's book
+   cards, #3237): the link's own ring would be cut off by the card, or, drawn
+   inside, painted over by the cover. So the card carries the ring while its
+   link has keyboard focus, in the same colours as the rule below. */
+@layer base {
+  [data-focus-card]:has(> a:focus-visible) {
+    outline: 2px solid var(--color-emerald-600);
+    outline-offset: 2px;
+  }
+  html.dark [data-focus-card]:has(> a:focus-visible) {
+    outline-color: var(--color-emerald-500);
+  }
+}
+
 /* One keyboard focus style for buttons and links (#3228), the other half of
    #3085. Without it most of them got each browser's default outline: auto,
    whose look changed from control to control and browser to browser, and
@@ -180,6 +194,20 @@ select:not([multiple]):not([size]):not(.bg-none) {
   }
   html.dark :is(button, a[href], [role='button'], [role='tab'], summary):focus-visible {
     outline-color: var(--color-emerald-500);
+  }
+}
+
+/* Placeholder text in the secondary-text token (#3084). The forms plugin
+   gives every input and textarea a gray-500 placeholder, 3.9:1 on the light
+   fields and 3.1:1 on the dark ones, and a few search boxes overrode it with
+   slate-400 / zinc-600 (2.1:1 and 1.9:1). Placeholders here carry hints and
+   example values, so they are text that needs 4.5:1: fg-muted (slate-600 /
+   zinc-400) is the AA shade the app already uses for secondary text. html
+   in the selector outranks the plugin's input::placeholder. */
+@layer base {
+  html :is(input, textarea)::placeholder {
+    color: var(--fg-muted);
+    opacity: 1;
   }
 }
 

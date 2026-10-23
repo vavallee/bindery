@@ -25,6 +25,14 @@ type ReadarrProgress struct {
 	Error      string         `json:"error,omitempty"`
 	FinishedAt *time.Time     `json:"finishedAt,omitempty"`
 	Result     *ReadarrResult `json:"result,omitempty"`
+
+	// Catalogue backfill. After the database import finishes, the catalogue of
+	// each author it added is fetched in the background, 3 seconds per author.
+	// These stay readable (and keep moving) after running turns false, and
+	// reset when the next import starts. In memory only: a restart zeroes them.
+	CatalogueRunning bool `json:"catalogueRunning"`
+	CatalogueTotal   int  `json:"catalogueTotal"`
+	CatalogueDone    int  `json:"catalogueDone"`
 }
 
 // ReadarrImporter manages async execution of a Readarr DB import. A single
@@ -43,6 +51,10 @@ type ReadarrImporter struct {
 	mu       sync.Mutex
 	running  bool
 	progress ReadarrProgress
+
+	// catalogue counts the detached catalogue backfill, which outlives the
+	// import goroutine. It has its own lock.
+	catalogue catalogueTracker
 
 	// testStartHook, if set, is called at goroutine start before import work
 	// begins. Tests use it to block the goroutine and exercise the 409 guard.
@@ -79,8 +91,11 @@ func (imp *ReadarrImporter) SetTestStartHook(fn func()) { imp.testStartHook = fn
 // Safe to call at any time.
 func (imp *ReadarrImporter) Progress() ReadarrProgress {
 	imp.mu.Lock()
-	defer imp.mu.Unlock()
-	return imp.progress
+	p := imp.progress
+	imp.mu.Unlock()
+	c := imp.catalogue.snapshot()
+	p.CatalogueRunning, p.CatalogueTotal, p.CatalogueDone = c.Running, c.Total, c.Done
+	return p
 }
 
 // Start kicks off the import of the SQLite file at tmpPath in a goroutine
@@ -102,6 +117,7 @@ func (imp *ReadarrImporter) Start(ctx context.Context, tmpPath string) error {
 		Message:   "import started — this may take several minutes",
 	}
 	imp.mu.Unlock()
+	imp.catalogue.reset()
 
 	go func() {
 		defer os.Remove(tmpPath) // always clean up the spool file
@@ -110,7 +126,7 @@ func (imp *ReadarrImporter) Start(ctx context.Context, tmpPath string) error {
 			imp.testStartHook()
 		}
 		slog.Info("readarr import: starting", "tmpPath", tmpPath)
-		res, err := ImportReadarr(ctx, tmpPath,
+		res, err := ImportReadarr(withCatalogueTracker(ctx, &imp.catalogue), tmpPath,
 			imp.authors, imp.indexers, imp.clients, imp.blocklist, imp.settings, imp.meta, imp.onNewAuthor)
 
 		now := time.Now()

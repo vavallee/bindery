@@ -64,6 +64,13 @@ func (i *Importer) matchHardcoverSeries(ctx context.Context, cfg ImportConfig, r
 	if author != nil && strings.TrimSpace(author.Name) != "" {
 		authorName = strings.TrimSpace(author.Name)
 	}
+	inputHash := seriesMatchInputHash(item, queries, authorName, book.ID)
+	if i.seriesMatchAlreadyDone(ctx, cfg, book, item.ItemID, inputHash) {
+		return metadataMergeResult{}, seriesUpsertResult{}
+	}
+	// incomplete is set when a Hardcover call failed. A failed call says
+	// nothing about the item, so no outcome is recorded and the next run retries.
+	incomplete := false
 	// Search first, collecting every (query, result) pair, then fetch the
 	// catalogs those results point at concurrently, then score. Splitting the
 	// three phases buys two things over the nested loop this replaces.
@@ -87,6 +94,7 @@ func (i *Importer) matchHardcoverSeries(ctx context.Context, cfg ImportConfig, r
 		results, err := i.meta.SearchSeries(ctx, query.Title, 5)
 		if err != nil {
 			slog.Warn("abs import: hardcover series search failed", "itemID", item.ItemID, "query", query.Title, "error", err)
+			incomplete = true
 			continue
 		}
 		for _, result := range results {
@@ -111,6 +119,9 @@ func (i *Importer) matchHardcoverSeries(ctx context.Context, cfg ImportConfig, r
 			catalog, err := i.meta.GetSeriesCatalog(ctx, foreignID)
 			if err != nil {
 				slog.Warn("abs import: hardcover series catalog failed", "itemID", item.ItemID, "series", foreignID, "error", err)
+				catalogMu.Lock()
+				incomplete = true
+				catalogMu.Unlock()
 				return
 			}
 			if catalog == nil {
@@ -141,9 +152,15 @@ func (i *Importer) matchHardcoverSeries(ctx context.Context, cfg ImportConfig, r
 	}
 	selected, ambiguous := selectHardcoverSeriesCandidate(candidates)
 	if ambiguous {
+		if !incomplete {
+			i.recordSeriesMatch(ctx, cfg, item.ItemID, inputHash, seriesMatchOutcomeMiss)
+		}
 		return metadataMergeResult{Messages: []string{"hardcover series link skipped: match was ambiguous"}}, seriesUpsertResult{}
 	}
 	if selected == nil {
+		if !incomplete {
+			i.recordSeriesMatch(ctx, cfg, item.ItemID, inputHash, seriesMatchOutcomeMiss)
+		}
 		return metadataMergeResult{}, seriesUpsertResult{}
 	}
 
@@ -151,6 +168,9 @@ func (i *Importer) matchHardcoverSeries(ctx context.Context, cfg ImportConfig, r
 	if err != nil {
 		slog.Warn("abs import: hardcover series link failed", "itemID", item.ItemID, "series", selected.Catalog.ForeignID, "error", err)
 		return metadataMergeResult{}, seriesUpsertResult{}
+	}
+	if seriesResult.Linked {
+		i.recordSeriesMatch(ctx, cfg, item.ItemID, inputHash, seriesMatchOutcomeMatched)
 	}
 
 	metaResult := metadataMergeResult{}
@@ -329,7 +349,7 @@ func (i *Importer) upsertHardcoverSeries(ctx context.Context, cfg ImportConfig, 
 	if catalog == nil || strings.TrimSpace(catalog.Title) == "" || strings.TrimSpace(catalog.ForeignID) == "" {
 		return seriesUpsertResult{}, nil
 	}
-	existing, err := i.series.GetByForeignID(ctx, catalog.ForeignID)
+	existing, err := i.series.GetByHardcoverSeriesID(ctx, catalog.ForeignID)
 	if err != nil {
 		return seriesUpsertResult{}, err
 	}
@@ -500,7 +520,7 @@ func (i *Importer) linkExistingHardcoverCatalogBooks(ctx context.Context, cfg Im
 	if catalog == nil || author == nil {
 		return 0, nil
 	}
-	seriesRow, err := i.series.GetByForeignID(ctx, catalog.ForeignID)
+	seriesRow, err := i.series.GetByHardcoverSeriesID(ctx, catalog.ForeignID)
 	if err != nil {
 		return 0, err
 	}

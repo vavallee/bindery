@@ -127,6 +127,27 @@ func (h *ManualImportHandler) outsideRootsMessage(ctx context.Context) string {
 	return base + ": " + strings.Join(roots, ", ")
 }
 
+// unreadableMessage is the answer for a path that is written inside a library
+// root but cannot be resolved. Claiming it is "outside the library" while
+// listing the root that contains it sent a reporter chasing a configuration
+// fault that was really a missing file (#3332). Only the file's own name is
+// echoed, which the caller already supplied; the directory stays out of it.
+func unreadableMessage(path string) string {
+	return "Bindery cannot read this file: " + filepath.Base(path) +
+		". It may have been moved, renamed or the drive may be unmounted. " +
+		"Check the file exists at this path inside the container."
+}
+
+// containFailure maps a refused containment check to the status and message
+// the manual-import routes return. A real escape stays 403 with the roots
+// listed; an in-root path that cannot be read is 404 with a plain explanation.
+func (h *ManualImportHandler) containFailure(ctx context.Context, path string, res ContainResult) (int, string) {
+	if res == ContainUnreadable {
+		return http.StatusNotFound, unreadableMessage(path)
+	}
+	return http.StatusForbidden, h.outsideRootsMessage(ctx)
+}
+
 // pathNotAccessible logs why path could not be stat'ed and returns the fixed
 // client-facing text. The os error names the full path and the errno, so it
 // stays in the log. The path has already resolved inside a library root by the
@@ -149,9 +170,10 @@ func (h *ManualImportHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path must be absolute"})
 		return
 	}
-	resolved, ok := h.roots.ResolveContained(r.Context(), path)
-	if !ok {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": h.outsideRootsMessage(r.Context())})
+	resolved, res := h.roots.CheckContained(r.Context(), path)
+	if res != ContainOK {
+		status, msg := h.containFailure(r.Context(), path, res)
+		writeJSON(w, status, map[string]string{"error": msg})
 		return
 	}
 	// Operate on the symlink-resolved path so the containment check and the
@@ -212,9 +234,10 @@ func (h *ManualImportHandler) validateImport(ctx context.Context, rawPath string
 	}
 	// Resolve symlinks and confirm containment so a symlink inside a root that
 	// points outside it can't redirect the read/move to an arbitrary file.
-	resolved, ok := h.roots.ResolveContained(ctx, path)
-	if !ok {
-		return "", nil, http.StatusForbidden, h.outsideRootsMessage(ctx)
+	resolved, res := h.roots.CheckContained(ctx, path)
+	if res != ContainOK {
+		status, msg := h.containFailure(ctx, path, res)
+		return "", nil, status, msg
 	}
 	path = resolved
 	if bookID <= 0 {
@@ -445,9 +468,10 @@ func (h *ManualImportHandler) ReassignPreview(w http.ResponseWriter, r *http.Req
 	}
 	// Same containment rules as Lookup: resolve symlinks and confirm the path
 	// sits under a configured library root before reporting anything about it.
-	resolved, ok := h.roots.ResolveContained(r.Context(), path)
-	if !ok {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": h.outsideRootsMessage(r.Context())})
+	resolved, res := h.roots.CheckContained(r.Context(), path)
+	if res != ContainOK {
+		status, msg := h.containFailure(r.Context(), path, res)
+		writeJSON(w, status, map[string]string{"error": msg})
 		return
 	}
 	path = resolved
@@ -550,11 +574,11 @@ func (h *ManualImportHandler) removeStaleSource(ctx context.Context, src string,
 	}
 	// Never delete src while a book still tracks it in book_files — another
 	// record may legitimately own this exact path. Fail safe on error (#1368).
-	if owned, err := h.books.PathOwnedByOtherBook(ctx, src, 0); err != nil {
+	if owned, err := pathGuardedByOtherBook(ctx, h.books, 0, src); err != nil {
 		slog.Warn("reassign cleanup: could not verify source ownership; leaving file in place", "path", src, "error", err)
 		return
 	} else if owned {
-		slog.Warn("reassign cleanup: source path still tracked by a book; leaving file in place", "path", src)
+		slog.Warn("reassign cleanup: source path still tracked by a book, or inside a folder one tracks; leaving file in place", "path", src)
 		return
 	}
 	if err := os.Remove(src); err != nil {
@@ -688,9 +712,10 @@ func (h *ManualImportHandler) resolveImportFolder(ctx context.Context, rawPath s
 	if !filepath.IsAbs(path) {
 		return "", http.StatusBadRequest, "path must be absolute"
 	}
-	resolved, ok := h.roots.ResolveContained(ctx, path)
-	if !ok {
-		return "", http.StatusForbidden, h.outsideRootsMessage(ctx)
+	resolved, res := h.roots.CheckContained(ctx, path)
+	if res != ContainOK {
+		status, msg := h.containFailure(ctx, path, res)
+		return "", status, msg
 	}
 	info, err := os.Stat(resolved) //nolint:gosec // #nosec G304 -- resolved by ResolveContained after symlink-aware root containment; route requires admin
 	if err != nil {

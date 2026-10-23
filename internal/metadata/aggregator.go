@@ -36,10 +36,18 @@ import (
 type aggregatorCore struct {
 	primary   Provider
 	enrichers []Provider
-	audnex    AudnexBookClient
-	audible   audibleCatalogue
-	cache     *ttlCache
-	requests  *requestCache
+	// authorEnrichers fill an author's empty photo and bio after GetAuthor
+	// (#3287). Empty unless one is switched on.
+	authorEnrichers []AuthorEnricher
+	audnex          AudnexBookClient
+	audible         audibleCatalogue
+	// audibleOff and audnexOff are the operator's switches for the two
+	// audiobook sources that are not enrichers (#1890, #2015). While set, the
+	// source is not contacted and nothing cached from it is served.
+	audibleOff bool
+	audnexOff  bool
+	cache      *ttlCache
+	requests   *requestCache
 }
 
 // AudnexBookClient is the narrow audnex capability the aggregator needs for
@@ -792,9 +800,13 @@ func (a *aggregatorCore) GetAuthor(ctx context.Context, foreignID string) (*mode
 		a.cache.set(key, cloneAuthor(author))
 		return author, nil
 	}
-	return cachedRequest(ctx, a, a.cache, "author", key, func(ctx context.Context) (*models.Author, error) {
+	author, err := cachedRequest(ctx, a, a.cache, "author", key, func(ctx context.Context) (*models.Author, error) {
 		return provider.GetAuthor(ctx, foreignID)
 	}, cloneAuthor)
+	if err != nil {
+		return nil, err
+	}
+	return author, nil
 }
 
 func (a *aggregatorCore) GetBook(ctx context.Context, foreignID string) (*models.Book, error) {

@@ -23,7 +23,7 @@ func (r *IndexerRepo) List(ctx context.Context) ([]models.Indexer, error) {
 		SELECT id, name, type, url, api_key, categories, include_parent_categories, priority, enabled, supports_search,
 		       prowlarr_instance_id, prowlarr_indexer_id, seed_ratio, seed_ratio_source, freeleech_only,
 		       seed_time_minutes, seed_time_source, inactive_seed_time_minutes,
-		       daily_query_limit,
+		       daily_query_limit, download_client_id,
 		       last_error, last_error_code, last_failure_at, last_success_at, created_at, updated_at
 		FROM indexers ORDER BY priority`)
 	if err != nil {
@@ -47,7 +47,7 @@ func (r *IndexerRepo) GetByID(ctx context.Context, id int64) (*models.Indexer, e
 		SELECT id, name, type, url, api_key, categories, include_parent_categories, priority, enabled, supports_search,
 		       prowlarr_instance_id, prowlarr_indexer_id, seed_ratio, seed_ratio_source, freeleech_only,
 		       seed_time_minutes, seed_time_source, inactive_seed_time_minutes,
-		       daily_query_limit,
+		       daily_query_limit, download_client_id,
 		       last_error, last_error_code, last_failure_at, last_success_at, created_at, updated_at
 		FROM indexers WHERE id=?`, id)
 	if err != nil {
@@ -70,7 +70,7 @@ func (r *IndexerRepo) ListByProwlarrInstance(ctx context.Context, instanceID int
 		SELECT id, name, type, url, api_key, categories, include_parent_categories, priority, enabled, supports_search,
 		       prowlarr_instance_id, prowlarr_indexer_id, seed_ratio, seed_ratio_source, freeleech_only,
 		       seed_time_minutes, seed_time_source, inactive_seed_time_minutes,
-		       daily_query_limit,
+		       daily_query_limit, download_client_id,
 		       last_error, last_error_code, last_failure_at, last_success_at, created_at, updated_at
 		FROM indexers WHERE prowlarr_instance_id=?`, instanceID)
 	if err != nil {
@@ -98,13 +98,13 @@ func (r *IndexerRepo) Create(ctx context.Context, idx *models.Indexer) error {
 		INSERT INTO indexers (name, type, url, api_key, categories, include_parent_categories, priority, enabled, supports_search,
 		                      prowlarr_instance_id, prowlarr_indexer_id, seed_ratio, seed_ratio_source, freeleech_only,
 		                      seed_time_minutes, seed_time_source, inactive_seed_time_minutes,
-		                      daily_query_limit, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                      daily_query_limit, download_client_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		idx.Name, idx.Type, idx.URL, idx.APIKey, string(catsJSON), idx.IncludeParentCategories,
 		idx.Priority, idx.Enabled, idx.SupportsSearch,
 		idx.ProwlarrInstanceID, idx.ProwlarrIndexerID, idx.SeedRatio, idx.SeedRatioSource, idx.FreeleechOnly,
 		idx.SeedTimeMinutes, idx.SeedTimeSource, idx.InactiveSeedTimeMinutes,
-		idx.DailyQueryLimit, now, now)
+		idx.DailyQueryLimit, idx.DownloadClientID, now, now)
 	if err != nil {
 		return fmt.Errorf("create indexer: %w", err)
 	}
@@ -128,12 +128,12 @@ func (r *IndexerRepo) Update(ctx context.Context, idx *models.Indexer) error {
 		UPDATE indexers SET name=?, type=?, url=?, api_key=?, categories=?, include_parent_categories=?, priority=?,
 		                    enabled=?, supports_search=?, seed_ratio=?, seed_ratio_source=?, freeleech_only=?,
 		                    seed_time_minutes=?, seed_time_source=?, inactive_seed_time_minutes=?,
-		                    daily_query_limit=?, updated_at=?
+		                    daily_query_limit=?, download_client_id=?, updated_at=?
 		WHERE id=?`,
 		idx.Name, idx.Type, idx.URL, idx.APIKey, string(catsJSON), idx.IncludeParentCategories,
 		idx.Priority, idx.Enabled, idx.SupportsSearch, idx.SeedRatio, idx.SeedRatioSource, idx.FreeleechOnly,
 		idx.SeedTimeMinutes, idx.SeedTimeSource, idx.InactiveSeedTimeMinutes,
-		idx.DailyQueryLimit, now, idx.ID)
+		idx.DailyQueryLimit, idx.DownloadClientID, now, idx.ID)
 	return err
 }
 
@@ -176,7 +176,7 @@ func scanIndexer(s indexerScanner) (models.Indexer, error) {
 		&catsJSON, &includeParentCategories, &idx.Priority, &enabled, &supportsSearch,
 		&idx.ProwlarrInstanceID, &idx.ProwlarrIndexerID, &idx.SeedRatio, &idx.SeedRatioSource, &freeleechOnly,
 		&idx.SeedTimeMinutes, &idx.SeedTimeSource, &idx.InactiveSeedTimeMinutes,
-		&idx.DailyQueryLimit,
+		&idx.DailyQueryLimit, &idx.DownloadClientID,
 		&idx.LastError, &idx.LastErrorCode, &idx.LastFailureAt, &idx.LastSuccessAt,
 		&idx.CreatedAt, &idx.UpdatedAt,
 	); err != nil {

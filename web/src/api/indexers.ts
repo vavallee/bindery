@@ -42,6 +42,11 @@ export interface Indexer {
   // requests rather than books: one book on one indexer costs between one and
   // eight, depending on how far the query cascade falls through.
   dailyQueryLimit?: number | null
+  // Download client this indexer is pinned to (#3080). null/omitted = no pin
+  // (automatic routing). When set, every grab from this indexer goes to that
+  // client and fails rather than falling back if it cannot take it. The
+  // client must be enabled and of the indexer's protocol when pinning.
+  downloadClientId?: number | null
   // How much of dailyQueryLimit is spent, written by the backend rather than
   // the user, and absent on an indexer with no cap. It lags the live tally by
   // up to one flush interval, so it is a display figure and not the number the

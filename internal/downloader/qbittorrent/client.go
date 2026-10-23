@@ -110,8 +110,8 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 		http: &http.Client{
 			Timeout:       15 * time.Second,
 			Jar:           jar,
-			Transport:     httpsec.DirectGuardedTransport(httpsec.PolicyLANLoopback),
-			CheckRedirect: httpsec.RedirectGuard(httpsec.PolicyLANLoopback),
+			Transport:     httpsec.DirectGuardedTransport(httpsec.PolicyService),
+			CheckRedirect: httpsec.RedirectGuard(httpsec.PolicyService),
 		},
 		fetchTransport: httpsec.GuardedTransport(httpsec.DownloadFetchPolicy()),
 		validateTorrentURL: func(raw string) error {

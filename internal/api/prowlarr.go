@@ -123,7 +123,7 @@ func (h *ProwlarrHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "url is required"})
 		return
 	}
-	if err := httpsec.ValidateOutboundURL(p.URL, httpsec.PolicyLANLoopback); err != nil {
+	if err := httpsec.ValidateOutboundURL(p.URL, httpsec.PolicyService); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid indexer URL: " + err.Error()})
 		return
 	}
@@ -179,7 +179,7 @@ func (h *ProwlarrHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	existing.APIKey = apiKey
 	existing.ID = id
-	if err := httpsec.ValidateOutboundURL(existing.URL, httpsec.PolicyLANLoopback); err != nil {
+	if err := httpsec.ValidateOutboundURL(existing.URL, httpsec.PolicyService); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid indexer URL: " + err.Error()})
 		return
 	}

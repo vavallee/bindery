@@ -33,7 +33,7 @@ beforeAll(() => {
     showModal: { configurable: true, value: function (this: HTMLDialogElement) { this.setAttribute('open', '') } },
     close: { configurable: true, value: function (this: HTMLDialogElement) { this.removeAttribute('open') } },
   })
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledFrame: 'error' })
   mswFetch = globalThis.fetch
 
   const fetchWithRelativeApiURLs: typeof fetch = (input, init) =>

@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useId } from 'react'
 import { api, GrimmoryConfig, GrimmorySyncStatus, GrimmoryTestResult } from '../../api/client'
 import { inputCls } from './formStyles'
 import { literalInputAttrs, secretInputAttrs, urlInputAttrs } from '../../util/inputAttrs'
+import { primaryFill } from '../../components/buttons'
 
 export default function GrimmoryTab() {
+  const fid = useId()
   const [config, setConfig] = useState<GrimmoryConfig | null>(null)
   const [draft, setDraft] = useState({ baseUrl: '', apiKey: '', username: '', password: '', enabled: false })
   const [loading, setLoading] = useState(true)
@@ -102,7 +104,7 @@ export default function GrimmoryTab() {
     }
   }
 
-  if (loading) return <div className="text-slate-600 dark:text-zinc-500">Loading…</div>
+  if (loading) return <div className="text-fg-muted">Loading…</div>
 
   const credsConfigured = Boolean(config?.apiKeyConfigured || (config?.username && config?.passwordConfigured))
 
@@ -110,7 +112,7 @@ export default function GrimmoryTab() {
     <div className="space-y-6 max-w-lg">
       <div>
         <h3 className="text-lg font-semibold mb-1">Grimmory</h3>
-        <p className="text-xs text-slate-600 dark:text-zinc-500 mb-4">
+        <p className="text-xs text-fg-muted mb-4">
           Push imported ebooks to a{' '}
           <a href="https://grimmory.org" target="_blank" rel="noopener noreferrer" className="underline">Grimmory</a>{' '}
           self-hosted library. Every successful ebook import is uploaded to Grimmory's <strong>BookDrop</strong> inbox,
@@ -130,8 +132,8 @@ export default function GrimmoryTab() {
 
       <div className="space-y-3">
         <div>
-          <label className="block text-xs font-medium mb-1">Server URL</label>
-          <input
+          <label htmlFor={`${fid}-1`} className="block text-xs font-medium mb-1">Server URL</label>
+          <input id={`${fid}-1`}
             {...urlInputAttrs}
             type="text"
             value={draft.baseUrl}
@@ -141,8 +143,8 @@ export default function GrimmoryTab() {
           />
         </div>
         <div>
-          <label className="block text-xs font-medium mb-1">Username</label>
-          <input
+          <label htmlFor={`${fid}-2`} className="block text-xs font-medium mb-1">Username</label>
+          <input id={`${fid}-2`}
             {...literalInputAttrs}
             type="text"
             value={draft.username}
@@ -152,13 +154,13 @@ export default function GrimmoryTab() {
           />
         </div>
         <div>
-          <label className="block text-xs font-medium mb-1">
+          <label htmlFor={`${fid}-3`} className="block text-xs font-medium mb-1">
             Password
-            <span className="ml-1 text-slate-500 dark:text-zinc-500 font-normal">
+            <span className="ml-1 text-fg-muted font-normal">
               {config?.passwordConfigured && !draft.password ? '(configured — leave blank to keep)' : ''}
             </span>
           </label>
-          <input
+          <input id={`${fid}-3`}
             {...secretInputAttrs}
             type="password"
             value={draft.password}
@@ -166,19 +168,19 @@ export default function GrimmoryTab() {
             placeholder={config?.passwordConfigured ? '••••••••' : ''}
             className={inputCls}
           />
-          <p className="mt-1 text-[11px] text-slate-500 dark:text-zinc-500">
+          <p className="mt-1 text-[11px] text-fg-muted">
             Bindery signs in to Grimmory with these credentials (current Grimmory has no API tokens).
             Use an account with upload permission — a dedicated one is a good idea.
           </p>
         </div>
         <div>
-          <label className="block text-xs font-medium mb-1">
+          <label htmlFor={`${fid}-4`} className="block text-xs font-medium mb-1">
             API token
-            <span className="ml-1 text-slate-500 dark:text-zinc-500 font-normal">
+            <span className="ml-1 text-fg-muted font-normal">
               {config?.apiKeyConfigured && !draft.apiKey ? '(configured — leave blank to keep)' : '(optional)'}
             </span>
           </label>
-          <input
+          <input id={`${fid}-4`}
             {...secretInputAttrs}
             type="password"
             value={draft.apiKey}
@@ -186,7 +188,7 @@ export default function GrimmoryTab() {
             placeholder="Only if a future Grimmory release adds token auth"
             className={inputCls}
           />
-          <p className="mt-1 text-[11px] text-slate-500 dark:text-zinc-500">
+          <p className="mt-1 text-[11px] text-fg-muted">
             If set, the token is sent as a Bearer credential and the username/password login is skipped
             (<a href="https://github.com/orgs/grimmory-tools/discussions/1487" target="_blank" rel="noopener noreferrer" className="underline">grimmory-tools#1487</a>).
           </p>
@@ -197,7 +199,7 @@ export default function GrimmoryTab() {
         <button
           onClick={save}
           disabled={saving}
-          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-sm font-medium"
+          className={`px-4 py-2 ${primaryFill} disabled:opacity-50 rounded text-sm font-medium`}
         >
           {saving ? 'Saving…' : 'Save'}
         </button>
@@ -210,17 +212,17 @@ export default function GrimmoryTab() {
         </button>
       </div>
 
-      {saveError && <p className="text-red-500 text-xs">{saveError}</p>}
-      {testError && <p className="text-red-500 text-xs">{testError}</p>}
+      {saveError && <p className="text-red-700 dark:text-red-400 text-xs">{saveError}</p>}
+      {testError && <p className="text-red-700 dark:text-red-400 text-xs">{testError}</p>}
       {testResult && (
-        <p className={`text-xs ${testResult.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>
+        <p className={`text-xs ${testResult.ok ? 'text-accent-text' : 'text-red-700 dark:text-red-400'}`}>
           {testResult.message}
         </p>
       )}
 
       <div className="pt-4 border-t border-slate-200 dark:border-zinc-800">
         <h4 className="text-sm font-semibold mb-1">Push library to Grimmory</h4>
-        <p className="text-xs text-slate-600 dark:text-zinc-500 mb-3">
+        <p className="text-xs text-fg-muted mb-3">
           Upload every imported ebook that hasn't been pushed yet. Already-pushed files are skipped, so
           re-running is safe.
         </p>
@@ -232,20 +234,20 @@ export default function GrimmoryTab() {
           {sync?.running ? 'Pushing…' : 'Push all to Grimmory'}
         </button>
         {!config?.enabled && (
-          <p className="mt-2 text-[11px] text-slate-500 dark:text-zinc-500">Enable and save the integration first.</p>
+          <p className="mt-2 text-[11px] text-fg-muted">Enable and save the integration first.</p>
         )}
-        {syncError && <p className="mt-2 text-red-500 text-xs">{syncError}</p>}
+        {syncError && <p className="mt-2 text-red-700 dark:text-red-400 text-xs">{syncError}</p>}
         {sync && (sync.running || sync.finishedAt) && (
-          <div className="mt-3 text-xs text-slate-600 dark:text-zinc-400 space-y-1">
+          <div className="mt-3 text-xs text-fg-muted space-y-1">
             <p>
               {sync.message}
               {' — '}
               {sync.stats.processed}/{sync.stats.total} processed, {sync.stats.pushed} pushed,{' '}
               {sync.stats.alreadyPushed} already pushed, {sync.stats.failed} failed
             </p>
-            {sync.error && <p className="text-red-500">{sync.error}</p>}
+            {sync.error && <p className="text-red-700 dark:text-red-400">{sync.error}</p>}
             {sync.errors.length > 0 && (
-              <ul className="list-disc ml-4 text-red-500">
+              <ul className="list-disc ml-4 text-red-700 dark:text-red-400">
                 {sync.errors.slice(0, 5).map(e => (
                   <li key={`${e.bookId}-${e.path}`}>{e.title}: {e.reason}</li>
                 ))}
@@ -255,7 +257,7 @@ export default function GrimmoryTab() {
           </div>
         )}
         {sync && sync.totalPushedFiles > 0 && (
-          <p className="mt-2 text-[11px] text-slate-500 dark:text-zinc-500">
+          <p className="mt-2 text-[11px] text-fg-muted">
             {sync.totalPushedFiles} file{sync.totalPushedFiles === 1 ? '' : 's'} pushed so far
             {sync.lastPushedAt ? `, last at ${new Date(sync.lastPushedAt).toLocaleString()}` : ''}.
           </p>

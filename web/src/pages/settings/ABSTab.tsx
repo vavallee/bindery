@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, ABSConfig, ABSImportProgress, ABSImportRun, ABSLibrary, ABSMetadataConflict, ABSReviewItem, ABSRollbackAction, ABSRollbackResult, ABSTestResult, Author, Book } from '../../api/client'
@@ -6,6 +6,7 @@ import ABSConflictPanel from '../../components/ABSAuthorConflictsPanel'
 import { inputCls } from './formStyles'
 import PathRemapField from './PathRemapField'
 import { secretInputAttrs, urlInputAttrs } from '../../util/inputAttrs'
+import { slateFill, primaryFill } from '../../components/buttons'
 
 const absReviewResultLimit = 10
 
@@ -39,6 +40,7 @@ export default function ABSTab() {
 }
 
 function AudiobookshelfSection() {
+  const fid = useId()
   const { t } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
   const [config, setConfig] = useState<ABSConfig | null>(null)
@@ -448,7 +450,7 @@ function AudiobookshelfSection() {
   }
 
   if (loading) {
-    return <section className="text-sm text-slate-500 dark:text-zinc-500">Loading Audiobookshelf…</section>
+    return <section className="text-sm text-fg-muted">Loading Audiobookshelf…</section>
   }
 
   const hasImportCredentials = Boolean(draft.apiKey.trim() || config?.apiKeyConfigured)
@@ -530,7 +532,7 @@ function AudiobookshelfSection() {
       <div className="flex items-center justify-between mb-2 gap-4">
         <div>
           <h3 className="text-base font-semibold text-slate-800 dark:text-zinc-200">Audiobookshelf</h3>
-          <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1">
+          <p className="text-xs text-fg-muted mt-1">
             Configure one ABS source, test API-key auth, pick book libraries, then import ABS metadata into the Bindery catalog.
           </p>
           {draft.enabled && (
@@ -553,11 +555,11 @@ function AudiobookshelfSection() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h4 className="text-sm font-medium text-slate-800 dark:text-zinc-200">Libraries</h4>
-            <p className="text-[11px] text-slate-600 dark:text-zinc-500 mt-0.5">
+            <p className="text-[11px] text-fg-muted mt-0.5">
               Select each ABS book library to import from this source.
             </p>
           </div>
-          <span className="text-[11px] text-slate-500 dark:text-zinc-500 whitespace-nowrap">
+          <span className="text-[11px] text-fg-muted whitespace-nowrap">
             {draft.libraryIds.length} selected
           </span>
         </div>
@@ -589,7 +591,7 @@ function AudiobookshelfSection() {
                   />
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{lib.name || lib.id}</span>
-                    <span className="block truncate text-[11px] text-slate-500 dark:text-zinc-500">
+                    <span className="block truncate text-[11px] text-fg-muted">
                       {lib.provider ? `${lib.provider} · ${lib.id}` : lib.id}
                     </span>
                   </span>
@@ -598,18 +600,18 @@ function AudiobookshelfSection() {
             })}
           </div>
         ) : (
-          <p className="mt-3 text-xs text-slate-500 dark:text-zinc-500">
+          <p className="mt-3 text-xs text-fg-muted">
             No libraries selected. Use Test connection or List libraries to discover accessible book libraries.
           </p>
         )}
-        {libraryError && <div className="mt-2 text-sm text-red-600 dark:text-red-400">{libraryError}</div>}
+        {libraryError && <div className="mt-2 text-sm text-red-700 dark:text-red-400">{libraryError}</div>}
       </div>
 
       <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
         <div className="grid gap-4 md:grid-cols-2">
           <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Source label</label>
-            <input
+            <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">Source label</label>
+            <input id={`${fid}-1`}
               value={draft.label}
               onChange={e => setDraft(prev => ({ ...prev, label: e.target.value }))}
               placeholder="Audiobookshelf"
@@ -617,8 +619,8 @@ function AudiobookshelfSection() {
             />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Base URL</label>
-            <input
+            <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">Base URL</label>
+            <input id={`${fid}-2`}
               {...urlInputAttrs}
               value={draft.baseUrl}
               onChange={e => setDraft(prev => ({ ...prev, baseUrl: e.target.value }))}
@@ -629,8 +631,8 @@ function AudiobookshelfSection() {
         </div>
 
         <div>
-          <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">API key</label>
-          <input
+          <label htmlFor={`${fid}-3`} className="block text-xs text-fg-muted mb-1">API key</label>
+          <input id={`${fid}-3`}
             {...secretInputAttrs}
             value={draft.apiKey}
             onChange={e => setDraft(prev => ({ ...prev, apiKey: e.target.value }))}
@@ -638,7 +640,7 @@ function AudiobookshelfSection() {
             placeholder={config?.apiKeyConfigured ? 'Saved key is hidden. Enter a new key to rotate it.' : 'Paste an ABS API key'}
             className={inputCls}
           />
-          <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-1">
+          <p className="text-[11px] text-fg-muted mt-1">
             {config?.apiKeyConfigured
               ? 'A key is already stored and stays write-only. Leaving this blank keeps the saved key. Use a key for a user that can access the selected book libraries; ABS admin permissions are not required.'
               : 'Use a key for a user that can access the selected book libraries. ABS admin permissions are not required, and the saved key never comes back to the browser after you store it.'}
@@ -652,9 +654,9 @@ function AudiobookshelfSection() {
             {testResult.defaultLibraryId ? ` · default library ${testResult.defaultLibraryId}` : ''}
           </div>
         )}
-        {saveError && <div className="text-sm text-red-600 dark:text-red-400">{saveError}</div>}
-        {testError && <div className="text-sm text-red-600 dark:text-red-400">{testError}</div>}
-        {libraryError && <div className="text-sm text-red-600 dark:text-red-400">{libraryError}</div>}
+        {saveError && <div className="text-sm text-red-700 dark:text-red-400">{saveError}</div>}
+        {testError && <div className="text-sm text-red-700 dark:text-red-400">{testError}</div>}
+        {libraryError && <div className="text-sm text-red-700 dark:text-red-400">{libraryError}</div>}
 
         <PathRemapField
           id="abs-path-remap"
@@ -669,21 +671,21 @@ function AudiobookshelfSection() {
           <button
             onClick={save}
             disabled={saving}
-            className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50"
+            className={`px-3 py-2 ${primaryFill} rounded text-sm font-medium disabled:opacity-50`}
           >
             {saving ? 'Saving…' : 'Save source'}
           </button>
           <button
             onClick={testConnection}
             disabled={testing}
-            className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm font-medium disabled:opacity-50"
+            className={`px-3 py-2 ${slateFill} rounded text-sm font-medium disabled:opacity-50`}
           >
             {testing ? 'Testing…' : 'Test connection'}
           </button>
           <button
             onClick={() => loadLibraries(probePayload())}
             disabled={listing}
-            className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm font-medium disabled:opacity-50"
+            className={`px-3 py-2 ${slateFill} rounded text-sm font-medium disabled:opacity-50`}
           >
             {listing ? 'Loading…' : 'List libraries'}
           </button>
@@ -693,12 +695,12 @@ function AudiobookshelfSection() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div className="min-w-0">
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">Catalog import</label>
-              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">
+              <p className="text-xs text-fg-muted mt-0.5">
                 Import authors, books, series, and editions from the selected ABS libraries. Shared filesystem paths are reconciled into Bindery ownership automatically; when ABS and Bindery use different mount prefixes, add a path translation above. Non-visible paths stay metadata-only and are counted for manual follow-up.
               </p>
             </div>
             <div className="flex flex-col items-start sm:items-end gap-2 flex-shrink-0 flex-wrap">
-              <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-zinc-400">
+              <label className="flex items-center gap-2 text-xs text-fg-muted">
                 <input
                   type="checkbox"
                   checked={importDryRun}
@@ -711,7 +713,7 @@ function AudiobookshelfSection() {
                   onClick={() => startImport(true)}
                   disabled={!canStartImport}
                   title={hasUnsavedABSConfig ? 'Save Audiobookshelf settings before starting an import' : undefined}
-                  className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm font-medium disabled:opacity-50"
+                  className={`px-3 py-2 ${slateFill} rounded text-sm font-medium disabled:opacity-50`}
                 >
                   Preview changes
                 </button>
@@ -738,12 +740,12 @@ function AudiobookshelfSection() {
             </p>
           )}
 
-          {importError && <div className="text-sm text-red-600 dark:text-red-400">{importError}</div>}
+          {importError && <div className="text-sm text-red-700 dark:text-red-400">{importError}</div>}
 
           {importProgress && (importProgress.running || importProgress.stats || importProgress.error) && (
             <div className="rounded border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950 px-3 py-2 space-y-2">
               {importProgress.running && (
-                <div className="flex justify-between text-xs text-slate-600 dark:text-zinc-400 gap-3">
+                <div className="flex justify-between text-xs text-fg-muted gap-3">
                   <span>{importProgress.message || 'Working…'}</span>
                   <span>{importProgress.processed} processed</span>
                 </div>
@@ -754,7 +756,7 @@ function AudiobookshelfSection() {
                 </p>
               )}
               {!importProgress.running && importProgress.error && (
-                <p className="text-xs text-red-600 dark:text-red-400">{importProgress.dryRun ? 'Dry-run failed' : 'Import failed'}: {importProgress.error}</p>
+                <p className="text-xs text-red-700 dark:text-red-400">{importProgress.dryRun ? 'Dry-run failed' : 'Import failed'}: {importProgress.error}</p>
               )}
               {!importProgress.running && importProgress.stats && (
                 <p className="text-xs text-slate-700 dark:text-zinc-300">
@@ -781,11 +783,11 @@ function AudiobookshelfSection() {
                     </p>
                     <div className="mt-1 space-y-1">
                       {[...importProgress.results].reverse().map(result => (
-                        <div key={`${result.itemId}-${result.bookId ?? 0}`} className="flex justify-between gap-3 text-[11px] text-slate-600 dark:text-zinc-400">
+                        <div key={`${result.itemId}-${result.bookId ?? 0}`} className="flex justify-between gap-3 text-[11px] text-fg-muted">
                           <span className="min-w-0 flex-1 overflow-hidden">
                             <span className="block truncate">{result.title || result.itemId}</span>
                             {result.message && (
-                              <span className="block truncate text-[10px] text-slate-500 dark:text-zinc-500">{result.message}</span>
+                              <span className="block truncate text-[10px] text-fg-muted">{result.message}</span>
                             )}
                           </span>
                           <span className="flex-shrink-0 uppercase tracking-wide">{result.outcome}</span>
@@ -800,7 +802,7 @@ function AudiobookshelfSection() {
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700 dark:text-zinc-300">
                           Authors
                         </p>
-                        <p className="mt-1 text-[11px] text-slate-600 dark:text-zinc-400">
+                        <p className="mt-1 text-[11px] text-fg-muted">
                           {importProgress.stats.authorsCreated} created, {importProgress.stats.authorsLinked} linked.
                         </p>
                       </div>
@@ -809,7 +811,7 @@ function AudiobookshelfSection() {
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700 dark:text-zinc-300">
                           Series
                         </p>
-                        <p className="mt-1 text-[11px] text-slate-600 dark:text-zinc-400">
+                        <p className="mt-1 text-[11px] text-fg-muted">
                           {importProgress.stats.seriesCreated} created, {importProgress.stats.seriesLinked} linked.
                         </p>
                       </div>
@@ -818,7 +820,7 @@ function AudiobookshelfSection() {
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700 dark:text-zinc-300">
                           Editions
                         </p>
-                        <p className="mt-1 text-[11px] text-slate-600 dark:text-zinc-400">
+                        <p className="mt-1 text-[11px] text-fg-muted">
                           {importProgress.stats.editionsAdded} added, {importProgress.stats.ownedMarked} formats marked owned.
                         </p>
                       </div>
@@ -827,7 +829,7 @@ function AudiobookshelfSection() {
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700 dark:text-zinc-300">
                           Follow-up
                         </p>
-                        <p className="mt-1 text-[11px] text-slate-600 dark:text-zinc-400">
+                        <p className="mt-1 text-[11px] text-fg-muted">
                           {importProgress.stats.reviewQueued} queued for review, {importProgress.stats.pendingManual} pending manual, {importProgress.stats.metadataConflicts} conflicts queued.
                         </p>
                       </div>
@@ -842,18 +844,18 @@ function AudiobookshelfSection() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-medium text-slate-800 dark:text-zinc-200">Recent runs</p>
-                <p className="text-xs text-slate-600 dark:text-zinc-500">Use a dry-run before a live import, then preview rollback against the exact batch if you need to unwind it safely.</p>
+                <p className="text-xs text-fg-muted">Use a dry-run before a live import, then preview rollback against the exact batch if you need to unwind it safely.</p>
               </div>
               <button
                 onClick={() => refreshRuns().catch(() => {})}
-                className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm font-medium"
+                className={`px-3 py-2 ${slateFill} rounded text-sm font-medium`}
               >
                 Refresh runs
               </button>
             </div>
 
             {runs.length === 0 && (
-              <p className="text-sm text-slate-500 dark:text-zinc-500">No ABS import runs recorded yet.</p>
+              <p className="text-sm text-fg-muted">No ABS import runs recorded yet.</p>
             )}
 
             {runs.slice(0, 5).map(run => {
@@ -865,7 +867,7 @@ function AudiobookshelfSection() {
                     <p className="text-sm font-medium text-slate-800 dark:text-zinc-200 truncate">
                       Run #{run.id} · {run.dryRun ? 'Dry-run' : 'Live import'} · {absRunStatusLabel(run.status)}
                     </p>
-                    <p className="text-[11px] text-slate-500 dark:text-zinc-500">
+                    <p className="text-[11px] text-fg-muted">
                       {new Date(run.startedAt).toLocaleString()} · {run.source.label || run.sourceLabel} · {absRunLibraryLabel(run)}
                     </p>
                   </div>
@@ -874,14 +876,14 @@ function AudiobookshelfSection() {
                       <button
                         onClick={() => previewRollback(run.id)}
                         disabled={rolledBack || rollbackPreviewingRunId === run.id || rollbackApplyingRunId === run.id}
-                        className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium disabled:opacity-50"
+                        className={`px-3 py-1.5 ${slateFill} rounded text-xs font-medium disabled:opacity-50`}
                       >
                         {rollbackPreviewingRunId === run.id ? 'Previewing…' : 'Preview rollback'}
                       </button>
                       <button
                         onClick={() => applyRollback(run.id)}
                         disabled={rolledBack || rollbackApplyingRunId === run.id || rollbackPreviewingRunId === run.id}
-                        className={`px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50 ${rolledBack ? 'bg-slate-500 cursor-not-allowed' : 'bg-amber-600 hover:bg-amber-500'}`}
+                        className={`px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50 ${rolledBack ? 'bg-slate-500 text-white cursor-not-allowed' : 'bg-amber-600 hover:bg-amber-500'}`}
                       >
                         {rolledBack ? 'Rolled back' : rollbackApplyingRunId === run.id ? 'Rolling back…' : 'Apply rollback'}
                       </button>
@@ -917,13 +919,13 @@ function AudiobookshelfSection() {
                           {rollbackResult.preview ? 'Would delete or change' : 'Deleted or changed'}
                         </p>
                         {rollbackPreviewChanges.length === 0 ? (
-                          <p className="text-[11px] text-slate-600 dark:text-zinc-400 mt-1">No entities would be deleted or changed.</p>
+                          <p className="text-[11px] text-fg-muted mt-1">No entities would be deleted or changed.</p>
                         ) : (
                           <div className="mt-1 max-h-64 space-y-1 overflow-y-auto pr-1">
                             {rollbackPreviewChanges.map(action => (
                               <div key={`change-${action.entityType}-${action.externalId}-${action.localId}-${action.action}`} className="text-[11px] text-slate-700 dark:text-zinc-300">
                                 <span className="font-medium">{rollbackActionLabel(action)}</span>
-                                <span className="block text-slate-500 dark:text-zinc-500 truncate">{rollbackActionDetail(action)}</span>
+                                <span className="block text-fg-muted truncate">{rollbackActionDetail(action)}</span>
                               </div>
                             ))}
                           </div>
@@ -935,13 +937,13 @@ function AudiobookshelfSection() {
                           {rollbackResult.preview ? 'Would be retained' : 'Retained'}
                         </p>
                         {rollbackPreviewRetained.length === 0 ? (
-                          <p className="text-[11px] text-slate-600 dark:text-zinc-400 mt-1">No retained entities reported.</p>
+                          <p className="text-[11px] text-fg-muted mt-1">No retained entities reported.</p>
                         ) : (
                           <div className="mt-1 max-h-64 space-y-1 overflow-y-auto pr-1">
                             {rollbackPreviewRetained.map(action => (
                               <div key={`retain-${action.entityType}-${action.externalId}-${action.localId}-${action.action}`} className="text-[11px] text-slate-700 dark:text-zinc-300">
                                 <span className="font-medium">{rollbackActionLabel(action)}</span>
-                                <span className="block text-slate-500 dark:text-zinc-500 truncate">{rollbackActionDetail(action)}</span>
+                                <span className="block text-fg-muted truncate">{rollbackActionDetail(action)}</span>
                               </div>
                             ))}
                           </div>
@@ -954,7 +956,7 @@ function AudiobookshelfSection() {
               )
             })}
 
-            {rollbackError && <div className="text-sm text-red-600 dark:text-red-400">{rollbackError}</div>}
+            {rollbackError && <div className="text-sm text-red-700 dark:text-red-400">{rollbackError}</div>}
           </div>
         </div>
 
@@ -991,7 +993,7 @@ function AudiobookshelfSection() {
                 </span>
                 <div>
                   <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 cursor-pointer">No-match books</label>
-                  <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">
+                  <p className="text-xs text-fg-muted mt-0.5">
                     Low-confidence ABS items stay here until you explicitly import or dismiss them, which keeps bad metadata out of the main catalog.
                   </p>
                 </div>
@@ -999,7 +1001,7 @@ function AudiobookshelfSection() {
             </button>
             <button
               onClick={() => refreshReviewItems().catch(() => {})}
-              className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm font-medium flex-shrink-0"
+              className={`px-3 py-2 ${slateFill} rounded text-sm font-medium flex-shrink-0`}
             >
               Refresh
             </button>
@@ -1008,13 +1010,13 @@ function AudiobookshelfSection() {
           {showReviewItems && (
             <>
               {reviewItems.length === 0 && (
-                <p className="text-sm text-slate-500 dark:text-zinc-500">No queued ABS review items.</p>
+                <p className="text-sm text-fg-muted">No queued ABS review items.</p>
               )}
 
               {groupedReviewItems.map(group => (
                 <div key={group.runId ?? 'unknown'} className="space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2 px-1">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-zinc-400">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-fg-muted">
                       {group.runId !== null
                         ? t('settings.abs.review.runHeading', { runId: group.runId, count: group.items.length, defaultValue: 'Run #{{runId}} · {{count}} items' })
                         : t('settings.abs.review.unknownRunHeading', { count: group.items.length, defaultValue: 'Older items · {{count}}' })}
@@ -1037,7 +1039,7 @@ function AudiobookshelfSection() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-slate-800 dark:text-zinc-200 truncate">{item.title || item.itemId}</p>
-                      <p className="text-xs text-slate-600 dark:text-zinc-400 truncate">{item.primaryAuthor || 'Unknown author'}</p>
+                      <p className="text-xs text-fg-muted truncate">{item.primaryAuthor || 'Unknown author'}</p>
                       {item.resolvedAuthorName && (
                         <p className="text-[11px] text-emerald-700 dark:text-emerald-300 truncate">Author: {item.resolvedAuthorName}</p>
                       )}
@@ -1073,7 +1075,7 @@ function AudiobookshelfSection() {
                         <button
                           onClick={() => searchReviewAuthors(item)}
                           disabled={authorSearchId === item.id}
-                          className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium disabled:opacity-50"
+                          className={`px-3 py-2 ${slateFill} rounded text-xs font-medium disabled:opacity-50`}
                         >
                           {authorSearchId === item.id ? 'Searching...' : 'Author'}
                         </button>
@@ -1089,7 +1091,7 @@ function AudiobookshelfSection() {
                               className="w-full text-left rounded border border-slate-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-950/40 px-2 py-1.5 text-xs hover:border-emerald-400 disabled:opacity-50"
                             >
                               <span className="block font-medium text-slate-800 dark:text-zinc-200 truncate">{author.authorName}</span>
-                              {author.disambiguation && <span className="block text-[11px] text-slate-500 dark:text-zinc-500 truncate">{author.disambiguation}</span>}
+                              {author.disambiguation && <span className="block text-[11px] text-fg-muted truncate">{author.disambiguation}</span>}
                             </button>
                           ))}
                         </div>
@@ -1106,7 +1108,7 @@ function AudiobookshelfSection() {
                         <button
                           onClick={() => searchReviewBooks(item)}
                           disabled={bookSearchId === item.id}
-                          className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium disabled:opacity-50"
+                          className={`px-3 py-2 ${slateFill} rounded text-xs font-medium disabled:opacity-50`}
                         >
                           {bookSearchId === item.id ? 'Searching...' : 'Book'}
                         </button>
@@ -1122,7 +1124,7 @@ function AudiobookshelfSection() {
                               className="w-full text-left rounded border border-slate-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-950/40 px-2 py-1.5 text-xs hover:border-emerald-400 disabled:opacity-50"
                             >
                               <span className="block font-medium text-slate-800 dark:text-zinc-200 truncate">{book.title}</span>
-                              {book.author?.authorName && <span className="block text-[11px] text-slate-500 dark:text-zinc-500 truncate">{book.author.authorName}</span>}
+                              {book.author?.authorName && <span className="block text-[11px] text-fg-muted truncate">{book.author.authorName}</span>}
                             </button>
                           ))}
                         </div>
@@ -1140,7 +1142,7 @@ function AudiobookshelfSection() {
                     <button
                       onClick={() => dismissReviewItem(item.id)}
                       disabled={reviewActionId === item.id}
-                      className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium disabled:opacity-50"
+                      className={`px-3 py-1.5 ${slateFill} rounded text-xs font-medium disabled:opacity-50`}
                     >
                       Dismiss
                     </button>
@@ -1152,7 +1154,7 @@ function AudiobookshelfSection() {
             </>
           )}
 
-          {reviewError && <div className="text-sm text-red-600 dark:text-red-400">{reviewError}</div>}
+          {reviewError && <div className="text-sm text-red-700 dark:text-red-400">{reviewError}</div>}
         </div>
 
         <ABSConflictPanel

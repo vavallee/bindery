@@ -44,7 +44,7 @@ export default function SortHeader<K extends string>({ label, sortKey, activeKey
         type="button"
         onClick={() => onSort(sortKey)}
         title={t('books.sortByColumn', { column: label, defaultValue: 'Sort by {{column}}' })}
-        className={`inline-flex items-center gap-1 uppercase tracking-wide transition-colors cursor-pointer select-none ${active ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'}`}
+        className={`inline-flex items-center gap-1 uppercase tracking-wide transition-colors cursor-pointer select-none ${active ? 'text-slate-900 dark:text-white' : 'text-fg-muted hover:text-slate-900 dark:hover:text-white'}`}
       >
         {label}
         <SortIcon state={active ? direction : 'none'} />

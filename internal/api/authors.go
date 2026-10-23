@@ -22,6 +22,7 @@ import (
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/concurrency"
+	"github.com/vavallee/bindery/internal/covers"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/indexer"
@@ -61,7 +62,23 @@ func isPartBookTitle(title string) bool {
 	return metadata.IsBundleTitle(title)
 }
 
+// syncEnrichmentsPerHour caps how many due authors the many-author syncs
+// (Refresh all, bulk refresh, scheduled discovery) enrich in a rolling hour
+// between them (#3398). The staggered profile refresh enriches the rest, at
+// its own pace, so a large library is never asked about in one burst. A var
+// only so tests can lower it.
+var syncEnrichmentsPerHour = 100
+
 type AuthorHandler struct {
+	// syncEnrich counts the enrichments those syncs spent in the current
+	// hour; see takeSyncEnrichment.
+	syncEnrichMu     sync.Mutex
+	syncEnrichWindow time.Time
+	syncEnrichCount  int
+
+	// coverStore holds photos uploaded through POST /author/{id}/photo,
+	// the same store book covers are uploaded to (#3017).
+	coverStore                  *covers.Store
 	authors                     *db.AuthorRepo
 	aliases                     *db.AuthorAliasRepo
 	books                       *db.BookRepo
@@ -630,6 +647,15 @@ type catalogueSyncOptions struct {
 	// whole library.
 	refreshFromProvider bool
 
+	// enrichProfile asks the author enrichers (#3287) during the profile
+	// refresh, whatever the author's enrichment stamp says. Only the two
+	// single author actions a user takes set it, adding the author and its
+	// Refresh button, so a new author gets its photo and bio straight away.
+	// Bulk refresh, Refresh all and scheduled discovery leave it off but
+	// still enrich an author that is due, within syncEnrichmentsPerHour
+	// (#3398); the imports never ask.
+	enrichProfile bool
+
 	// ownerForUnownedAuthor owns the books this run creates when the author
 	// has no owner. Add Book's single work fallback sets it to the caller
 	// under tenancy, so a book picked under a shared author belongs to the
@@ -774,6 +800,7 @@ func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, auth
 	if author == nil || upstream == nil {
 		return errors.New("author relink requires local and upstream authors")
 	}
+	snapshot := author.UpdatedAtRaw
 	oldName := author.Name
 	oldForeignID := strings.TrimSpace(author.ForeignID)
 	if foreignID := strings.TrimSpace(upstream.ForeignID); foreignID != "" {
@@ -787,12 +814,9 @@ func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, auth
 	} else if strings.TrimSpace(author.SortName) == "" {
 		author.SortName = sortName(author.Name)
 	}
-	if desc := textutil.CleanDescription(upstream.Description); desc != "" {
-		author.Description = desc
-	}
-	if imageURL := strings.TrimSpace(upstream.ImageURL); imageURL != "" {
-		author.ImageURL = imageURL
-	}
+	// The credit travels with an enriched photo or bio (#3287).
+	models.MergeProfileField(&author.Description, &author.DescriptionSource, textutil.CleanDescription(upstream.Description), upstream.DescriptionSource)
+	models.MergeProfileField(&author.ImageURL, &author.ImageSource, strings.TrimSpace(upstream.ImageURL), upstream.ImageSource)
 	if disambiguation := strings.TrimSpace(upstream.Disambiguation); disambiguation != "" {
 		author.Disambiguation = disambiguation
 	}
@@ -816,7 +840,7 @@ func (h *AuthorHandler) relinkExistingAuthorToUpstream(ctx context.Context, auth
 	}
 	now := time.Now().UTC()
 	author.LastMetadataRefreshAt = &now
-	if err := h.authors.Update(ctx, author); err != nil {
+	if err := h.updateAuthorIfUnchanged(ctx, author, snapshot); err != nil {
 		return err
 	}
 	aliasSource := oldForeignID
@@ -1025,10 +1049,28 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// not touch the existing selection" — an explicit empty array clears
 		// it. Validated against the author's own series before persistence.
 		MonitoredSeriesIDs *[]int64 `json:"monitoredSeriesIds"`
+		// Description sets the author's bio by hand. It is kept as the
+		// user's own, so no refresh replaces it; an empty string clears it
+		// and lets the provider or an enricher fill it again (#3287).
+		Description *string `json:"description"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
+	}
+	if req.Description != nil {
+		desc := strings.TrimSpace(*req.Description)
+		if len(desc) > maxAuthorDescriptionBytes {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "description is longer than 20000 bytes"})
+			return
+		}
+		if desc != author.Description {
+			author.Description = desc
+			author.DescriptionSource = nil
+			if desc != "" {
+				author.DescriptionSource = &models.ProfileSource{Provider: models.ProfileSourceUser}
+			}
+		}
 	}
 	if req.Monitored != nil {
 		author.Monitored = *req.Monitored
@@ -1071,8 +1113,7 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		author.AudiobookRootFolderID = nil
 	}
 
-	if err := h.authors.Update(r.Context(), author); err != nil {
-		writeServerError(w, r, err)
+	if !h.saveAuthorIfUnchanged(w, r, author) {
 		return
 	}
 
@@ -1295,6 +1336,10 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "upstream author already exists locally"})
 			return
 		}
+		if errors.Is(err, errAuthorRowChanged) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": errAuthorChanged})
+			return
+		}
 		writeServerError(w, r, err)
 		return
 	}
@@ -1450,7 +1495,7 @@ func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": h.refreshConflictMessage(author.ID)})
 		return
 	}
-	h.fetchAuthorBooksAsync(author, catalogueSyncOptions{mediaType: h.resolveDefaultMediaType(r.Context()), discovery: true, refreshFromProvider: true, syncClaimed: true})
+	h.fetchAuthorBooksAsync(author, catalogueSyncOptions{mediaType: h.resolveDefaultMediaType(r.Context()), discovery: true, refreshFromProvider: true, enrichProfile: true, syncClaimed: true})
 	writeJSON(w, http.StatusAccepted, map[string]string{"message": "refresh started"})
 }
 
@@ -1545,6 +1590,7 @@ func (h *AuthorHandler) relinkCalibreAuthor(ctx context.Context, author *models.
 	if h.meta == nil {
 		return errNoMetadataAggregator
 	}
+	snapshot := author.UpdatedAtRaw
 	results, outcome, err := h.meta.SearchAuthorsWithOutcome(ctx, author.Name)
 	if err != nil {
 		return err
@@ -1580,12 +1626,8 @@ func (h *AuthorHandler) relinkCalibreAuthor(ctx context.Context, author *models.
 	// route it. A blanket "openlibrary" mislabelled every dnb: and hc: link,
 	// including the primary's own match on a Hardcover or DNB primary (#2332).
 	author.MetadataProvider = models.AuthorProviderFromForeignID(full.ForeignID)
-	if full.ImageURL != "" {
-		author.ImageURL = full.ImageURL
-	}
-	if desc := textutil.CleanDescription(full.Description); desc != "" {
-		author.Description = desc
-	}
+	models.MergeProfileField(&author.ImageURL, &author.ImageSource, strings.TrimSpace(full.ImageURL), full.ImageSource)
+	models.MergeProfileField(&author.Description, &author.DescriptionSource, textutil.CleanDescription(full.Description), full.DescriptionSource)
 	if full.SortName != "" {
 		author.SortName = full.SortName
 	}
@@ -1598,7 +1640,7 @@ func (h *AuthorHandler) relinkCalibreAuthor(ctx context.Context, author *models.
 	if full.AverageRating > 0 {
 		author.AverageRating = full.AverageRating
 	}
-	if err := h.authors.Update(ctx, author); err != nil {
+	if err := h.updateAuthorIfUnchanged(ctx, author, snapshot); err != nil {
 		return err
 	}
 	slog.Info("relinked calibre author to metadata provider",
@@ -1616,10 +1658,13 @@ func (h *AuthorHandler) relinkCalibreAuthor(ctx context.Context, author *models.
 // and swallowed — the catalogue sync that follows must still run. Identity
 // (ForeignID/Name/MetadataProvider) and user-controlled monitoring fields are
 // never touched here; only the read-only profile fields are merged.
-func (h *AuthorHandler) refreshAuthorProfile(ctx context.Context, author *models.Author) {
+func (h *AuthorHandler) refreshAuthorProfile(ctx context.Context, author *models.Author, enrich bool) {
 	if h.meta == nil || author == nil {
 		return
 	}
+	// The row as read before the provider call. The write below is guarded
+	// on it, so a photo or bio saved while the call is in flight wins.
+	snapshot := author.UpdatedAtRaw
 	upstream, err := h.meta.GetAuthor(ctx, author.ForeignID)
 	if err != nil {
 		slog.Warn("author profile refresh: metadata lookup failed",
@@ -1629,17 +1674,65 @@ func (h *AuthorHandler) refreshAuthorProfile(ctx context.Context, author *models
 	if upstream == nil {
 		return
 	}
-	if !mergeAuthorProfileFields(author, upstream) {
-		return // provider returned nothing new — skip a no-op write
-	}
+	// enrich is set by the caller (#3287): always for an add or a Refresh
+	// click, whose repeat the enrichers' own cache keeps off the network,
+	// and for the other refresh-path syncs once the stamp has aged. A full
+	// answer is stamped, so the author is not asked again for a month.
+	enrichAnswered := enrich && h.meta.EnrichAuthor(ctx, upstream)
+	defer func() {
+		if enrichAnswered {
+			if err := h.authors.StampEnrichment(ctx, author.ID, time.Now()); err != nil {
+				slog.Warn("author profile refresh: could not record enrichment", "author", author.Name, "error", err)
+			}
+		}
+	}()
 	now := time.Now().UTC()
+	if !mergeAuthorProfileFields(author, upstream) {
+		// Nothing new, so skip the whole row write, but the profile was
+		// checked: stamp freshness with a single column write so the
+		// staggered background refresh does not fetch it again today (#2595).
+		// A failure is only logged, the stamp is an optimisation.
+		if err := h.authors.StampMetadataRefresh(ctx, author.ID, now); err != nil {
+			slog.Warn("author profile refresh: could not record freshness", "author", author.Name, "error", err)
+			return
+		}
+		author.LastMetadataRefreshAt = &now
+		return
+	}
 	author.LastMetadataRefreshAt = &now
-	if err := h.authors.Update(ctx, author); err != nil {
-		slog.Warn("author profile refresh: save failed", "author", author.Name, "error", err)
+	// Dropped rather than retried when the row moved, as the scheduler does
+	// (persistRefreshedAuthor): the next Refresh or scheduled pass picks the
+	// profile up again.
+	written, err := h.authors.UpdateIfUnchanged(ctx, author, snapshot)
+	if err != nil || !written {
+		if err != nil {
+			slog.Warn("author profile refresh: save failed", "author", author.Name, "error", err)
+		} else {
+			slog.Info("author profile refresh skipped: the author changed while its profile was being fetched",
+				"author", author.Name, "authorId", author.ID)
+		}
+		enrichAnswered = false
 		return
 	}
 	slog.Info("refreshed author profile from metadata provider",
 		"author", author.Name, "foreignId", author.ForeignID)
+}
+
+// takeSyncEnrichment spends one of the hour's syncEnrichmentsPerHour on a
+// many-author sync, reporting false once the hour's budget is gone. A fixed
+// window from the first spend: simple, and the staggered refresh picks up
+// whatever a full window leaves due.
+func (h *AuthorHandler) takeSyncEnrichment(now time.Time) bool {
+	h.syncEnrichMu.Lock()
+	defer h.syncEnrichMu.Unlock()
+	if now.Sub(h.syncEnrichWindow) >= time.Hour {
+		h.syncEnrichWindow, h.syncEnrichCount = now, 0
+	}
+	if h.syncEnrichCount >= syncEnrichmentsPerHour {
+		return false
+	}
+	h.syncEnrichCount++
+	return true
 }
 
 // mergeAuthorProfileFields copies provider-supplied profile fields onto the
@@ -1649,13 +1742,8 @@ func (h *AuthorHandler) refreshAuthorProfile(ctx context.Context, author *models
 // changed so the caller can skip a redundant DB write. SortName is only filled
 // when missing, since the local sort order may have been curated.
 func mergeAuthorProfileFields(author, upstream *models.Author) bool {
-	changed := false
-	if desc := textutil.CleanDescription(upstream.Description); desc != "" && desc != author.Description {
-		author.Description = desc
-		changed = true
-	}
-	if imageURL := strings.TrimSpace(upstream.ImageURL); imageURL != "" && imageURL != author.ImageURL {
-		author.ImageURL = imageURL
+	changed := models.MergeProfileField(&author.Description, &author.DescriptionSource, textutil.CleanDescription(upstream.Description), upstream.DescriptionSource)
+	if models.MergeProfileField(&author.ImageURL, &author.ImageSource, strings.TrimSpace(upstream.ImageURL), upstream.ImageSource) {
 		changed = true
 	}
 	if disambiguation := strings.TrimSpace(upstream.Disambiguation); disambiguation != "" && disambiguation != author.Disambiguation {
@@ -1675,6 +1763,25 @@ func mergeAuthorProfileFields(author, upstream *models.Author) bool {
 		changed = true
 	}
 	return changed
+}
+
+// errAuthorRowChanged reports that a whole-row author write was refused
+// because the row changed after the snapshot it was built from was read.
+var errAuthorRowChanged = errors.New("author changed since it was read")
+
+// updateAuthorIfUnchanged writes the whole author row only if it still matches
+// snapshot, the UpdatedAtRaw read before a provider call. The relinks rebuild
+// the row from that snapshot, so an unguarded write would undo a photo, bio or
+// setting saved during the call (#3287).
+func (h *AuthorHandler) updateAuthorIfUnchanged(ctx context.Context, author *models.Author, snapshot string) error {
+	written, err := h.authors.UpdateIfUnchanged(ctx, author, snapshot)
+	if err != nil {
+		return err
+	}
+	if !written {
+		return errAuthorRowChanged
+	}
+	return nil
 }
 
 // FetchAuthorBooks populates the author's catalogue from the metadata provider.
@@ -1876,8 +1983,18 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	// Single-work runs are skipped for the same reason as the re-link: the
 	// author usually already existed before this request, and an Add Book is
 	// not a request to rewrite their profile.
+	//
+	// An add and the Refresh button always enrich. The other refresh-path
+	// syncs (Refresh all, bulk refresh, scheduled discovery) enrich when it
+	// is due: they stamp the profile fresh, which takes the author out of the
+	// staggered refresh that would otherwise have enriched it, so leaving it
+	// to that refresh postponed enrichment by a day each time they ran. They
+	// share a budget of syncEnrichmentsPerHour, so Refresh all on a large
+	// library enriches the first due authors and leaves the rest due for the
+	// staggered refresh. An import still never asks.
 	if !wasCalibre && !singleWork {
-		h.refreshAuthorProfile(metaCtx, author)
+		enrich := opts.enrichProfile || (opts.discovery && h.authors.EnrichmentDue(metaCtx, author.ID) && h.takeSyncEnrichment(time.Now()))
+		h.refreshAuthorProfile(metaCtx, author, enrich)
 	}
 
 	// Load the author's secondary provider identities so supplemental

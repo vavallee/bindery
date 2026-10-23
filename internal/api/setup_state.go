@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/telemetry"
 )
@@ -30,6 +31,15 @@ type SetupState struct {
 	// Complete is true once the pipeline is configured AND has produced an
 	// import — the point at which the checklist has nothing left to say.
 	Complete bool `json:"complete"`
+
+	// Blocked is true when this install has imported through Bindery before
+	// but cannot import right now, and has been that way for a couple of
+	// minutes. See setup_blocked.go for exactly what is checked. Only admins
+	// see it set. BlockedReason names the problem and the fix but never a
+	// path. BlockedArea is one of the blockedArea* constants.
+	Blocked       bool   `json:"blocked"`
+	BlockedReason string `json:"blockedReason,omitempty"`
+	BlockedArea   string `json:"blockedArea,omitempty"`
 }
 
 // SetupStateHandler serves GET /api/v1/system/setup-state.
@@ -38,6 +48,8 @@ type SetupStateHandler struct {
 	clients  *db.DownloadClientRepo
 	authors  *db.AuthorRepo
 	settings *db.SettingsRepo
+
+	blocked blockedChecker
 }
 
 func NewSetupStateHandler(indexers *db.IndexerRepo, clients *db.DownloadClientRepo, authors *db.AuthorRepo, settings *db.SettingsRepo) *SetupStateHandler {
@@ -94,5 +106,12 @@ func (h *SetupStateHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	state.Complete = state.HasIndexer && state.HasClient && state.HasAuthor && state.HasImport
+
+	// Blocked is admin-only: it describes folders and client health, which
+	// this endpoint's non-admin callers are not otherwise shown. Auth
+	// disabled and API key callers are stamped admin by the middleware.
+	if auth.UserRoleFromContext(ctx) == "admin" {
+		h.blocked.apply(ctx, h.clients, &state)
+	}
 	writeJSON(w, http.StatusOK, state)
 }

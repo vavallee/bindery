@@ -214,7 +214,7 @@ func (h *DownloadClientHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if c.Category == "" {
 		c.Category = "books"
 	}
-	if err := httpsec.ValidateOutboundURL(downloadClientURL(&c), httpsec.PolicyLANLoopback); err != nil {
+	if err := httpsec.ValidateOutboundURL(downloadClientURL(&c), httpsec.PolicyService); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -276,7 +276,7 @@ func (h *DownloadClientHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if !applyHostToClient(w, &c) {
 			return
 		}
-		if err := httpsec.ValidateOutboundURL(downloadClientURL(&c), httpsec.PolicyLANLoopback); err != nil {
+		if err := httpsec.ValidateOutboundURL(downloadClientURL(&c), httpsec.PolicyService); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -403,6 +403,14 @@ func (h *DownloadClientHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.clients.Delete(r.Context(), id); err != nil {
+		// An indexer pinned to this client (#3080): refuse, and name them,
+		// because deleting it would quietly send their grabs to the default
+		// client, which is what the pin exists to prevent.
+		var pinned *db.ClientPinnedError
+		if errors.As(err, &pinned) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": pinned.Error(), "indexers": pinned.Indexers})
+			return
+		}
 		writeServerError(w, r, err)
 		return
 	}
@@ -461,7 +469,7 @@ func (h *DownloadClientHandler) Test(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := httpsec.ValidateOutboundURL(downloadClientURL(client), httpsec.PolicyLANLoopback); err != nil {
+	if err := httpsec.ValidateOutboundURL(downloadClientURL(client), httpsec.PolicyService); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -472,15 +480,45 @@ func (h *DownloadClientHandler) Test(w http.ResponseWriter, r *http.Request) {
 	health := h.refreshClientHealth(r.Context(), client)
 	pathVis := downloader.CheckCompletedPathVisibility(r.Context(), client, h.downloadDir, h.audiobookDownloadDir, h.downloadPathRemap)
 	resp := struct {
-		Message        string                       `json:"message"`
-		Health         *models.DownloadClientHealth `json:"health,omitempty"`
-		PathVisibility *downloader.PathVisibility   `json:"pathVisibility,omitempty"`
+		Message         string                       `json:"message"`
+		Health          *models.DownloadClientHealth `json:"health,omitempty"`
+		PathVisibility  *downloader.PathVisibility   `json:"pathVisibility,omitempty"`
+		RemapCandidates []downloader.RemapCandidate  `json:"remapCandidates,omitempty"`
+		// RemapNote says why no candidate is offered when that is worth
+		// telling the user: "samePath" or "unsupportedChars".
+		RemapNote string `json:"remapNote,omitempty"`
 	}{
 		Message:        "Connection verified",
 		Health:         health,
 		PathVisibility: pathVisibilityForResponse(pathVis),
 	}
+	resp.RemapCandidates, resp.RemapNote = h.remapCandidates(r.Context(), client, pathVis)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// remapCandidates offers Bindery's own folders as the right hand side of a path
+// remap (#2031), only when the client's folder is not visible and the client
+// type reports one. The route is admin only like the rest of the download
+// client surface, because the folders are the operator's own configuration.
+//
+// Read only by construction: it returns folders and a previewed join, never a
+// remap string, and writes nothing. The UI saves a remap through the normal
+// update route.
+func (h *DownloadClientHandler) remapCandidates(ctx context.Context, client *models.DownloadClient, vis downloader.PathVisibility) ([]downloader.RemapCandidate, string) {
+	if vis.Status != downloader.PathNotVisible || vis.RemotePath == "" {
+		return nil, ""
+	}
+	// The folder the client is expected to write to comes first, then the
+	// other download folder, then the library roots. Existence is not checked
+	// here: the Test the UI re-runs after Apply is that check.
+	roots := []downloader.RemapRoot{
+		{Path: downloader.ExpectedDownloadDirForClient(client, models.MediaTypeEbook, h.downloadDir, h.audiobookDownloadDir), Source: downloader.RemapSourceEbookDir},
+		{Path: downloader.ExpectedDownloadDirForClient(client, models.MediaTypeAudiobook, h.downloadDir, h.audiobookDownloadDir), Source: downloader.RemapSourceAudiobookDir},
+	}
+	for _, p := range h.roots.Configured(ctx) {
+		roots = append(roots, downloader.RemapRoot{Path: p, Source: downloader.RemapSourceLibrary})
+	}
+	return downloader.RemapCandidates(client.Type, vis.RemotePath, roots)
 }
 
 // pathVisibilityForResponse returns the path-visibility result for the Test
@@ -516,7 +554,7 @@ func (h *DownloadClientHandler) TestConfig(w http.ResponseWriter, r *http.Reques
 		c.Port = 8080
 	}
 	h.hydrateTestConfigCredentials(r.Context(), &c)
-	if err := httpsec.ValidateOutboundURL(downloadClientURL(&c), httpsec.PolicyLANLoopback); err != nil {
+	if err := httpsec.ValidateOutboundURL(downloadClientURL(&c), httpsec.PolicyService); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}

@@ -259,6 +259,26 @@ func NormalizeLanguageCode(code string) string {
 	return code
 }
 
+// releaseRegionToB maps the country codes scene release groups put in a
+// release name's language slot where the country code is not the language's
+// own ISO 639-1 code: "-WEB-SE-" is a Swedish release, but ISO 639-1 "se" is
+// Northern Sami, and "dk" is no language code at all (#3271). Kept apart from
+// the ISO tables because it is only right for release names: a book or file
+// tagged "se" really is Northern Sami.
+var releaseRegionToB = map[string]string{
+	"se": "swe", "dk": "dan",
+}
+
+// NormalizeReleaseLanguageCode is NormalizeLanguageCode for a language code
+// read from a scene release name, which may be one of the country codes in
+// releaseRegionToB instead of a language code.
+func NormalizeReleaseLanguageCode(code string) string {
+	if b, ok := releaseRegionToB[strings.ToLower(strings.TrimSpace(code))]; ok {
+		return b
+	}
+	return NormalizeLanguageCode(code)
+}
+
 // languageNames gives the English name of each language Bindery recognises,
 // keyed by the ISO 639-2/B code NormalizeLanguageCode produces, so a message
 // can say "Swedish" rather than "swe".

@@ -370,7 +370,7 @@ func checkDiagConfig(_ context.Context, st *diagState) []diagCheckResult {
 			Fix:     "Edit the client and put only a hostname or IP address in Host, with the port and URL base in their own fields.",
 		})
 	}
-	if err := httpsec.ValidateOutboundURL(downloadClientURL(st.client), httpsec.PolicyLANLoopback); err != nil {
+	if err := httpsec.ValidateOutboundURL(downloadClientURL(st.client), httpsec.PolicyService); err != nil {
 		return one(diagCheckResult{
 			Status:  diagFail,
 			Message: fmt.Sprintf("Bindery will not connect to the saved address: %s", errText(err)),

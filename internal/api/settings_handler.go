@@ -82,6 +82,68 @@ const SettingDefaultAudiobookRootFolderID = "library.defaultAudiobookRootFolderI
 // removed.
 const SettingMetadataPrimaryProvider = "metadata.primary_provider"
 
+// SettingMetadataAuthorWikidata switches on the Wikidata author enricher
+// (#3287): an author whose primary provider has no photo or bio gets one from
+// Wikimedia Commons and Wikipedia, found by the authority ID Bindery already
+// stores. Off by default, so an install that has not chosen it sends
+// Wikimedia nothing.
+const SettingMetadataAuthorWikidata = "metadata.author_enrichment.wikidata"
+
+// SettingMetadataEnrichersDisabled lists the metadata enrichers an operator
+// has turned off (#1890): a comma separated list of names from
+// MetadataEnrichers, plus the audiobook sources "audible" and "audnex"
+// (#2015), which are not enrichers but are switched the same way. Empty, the default, leaves every enricher on. The
+// primary provider is never switched off by it: a name that matches the
+// current primary is ignored, so changing the primary cannot leave an install
+// with no metadata source.
+const SettingMetadataEnrichersDisabled = "metadata.enrichers_disabled"
+
+// MetadataEnrichers lists the providers that run as enrichers and so may be
+// named in SettingMetadataEnrichersDisabled, in the order the UI presents
+// them. Nasjonalbiblioteket and BnF are not here: they are only ever queried
+// as the primary.
+var MetadataEnrichers = []string{"openlibrary", "hardcover", "googlebooks", "dnb"}
+
+// ParseMetadataEnrichersDisabled splits a stored
+// SettingMetadataEnrichersDisabled value into trimmed, lowercased, deduplicated
+// names in the order given. Names are not checked here; see
+// IsMetadataSourceToggleName.
+func ParseMetadataEnrichersDisabled(value string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, part := range strings.Split(value, ",") {
+		name := strings.ToLower(strings.TrimSpace(part))
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+// MetadataAudiobookSources lists the two audiobook sources that are not
+// enrichers but can be named in SettingMetadataEnrichersDisabled (#2015):
+// the Audible catalogue and the audnex lookup.
+var MetadataAudiobookSources = []string{"audible", "audnex"}
+
+// MetadataSourceToggles is every name SettingMetadataEnrichersDisabled
+// accepts: the enrichers, then the audiobook sources.
+func MetadataSourceToggles() []string {
+	return append(append([]string(nil), MetadataEnrichers...), MetadataAudiobookSources...)
+}
+
+// IsMetadataSourceToggleName reports whether name may appear in
+// SettingMetadataEnrichersDisabled.
+func IsMetadataSourceToggleName(name string) bool {
+	for _, p := range MetadataSourceToggles() {
+		if name == p {
+			return true
+		}
+	}
+	return false
+}
+
 // MetadataPrimaryProviders lists the accepted values of
 // SettingMetadataPrimaryProvider, in the order the UI presents them. The first
 // entry is the default used when the setting is empty or unset.
@@ -224,6 +286,38 @@ const (
 	// (what Storyteller pair gating, #942, wants).
 	SettingImportAudiobookDropFolder = "import.audiobook.drop_folder"
 )
+
+// Post-download content checks (#3015, #3246). After a download is tied to a
+// wanted book, the importer compares what the files say about themselves (an
+// EPUB's title and author, an audiobook's album and track tags) with that book.
+// Each media type has its own setting: "off" skips the check, "warn" (the
+// default, and what an unset or unrecognised value reads as) imports and records
+// what was found on the bookImported event and webhook as contentCheck, and
+// "block" refuses the download like the language and format checks do. The
+// importer reads both keys as string literals to avoid an import cycle; keep the
+// literals in sync.
+const (
+	SettingImportEbookContentCheck     = "import.ebook.content_check"
+	SettingImportAudiobookContentCheck = "import.audiobook.content_check"
+)
+
+// contentCheckValues are the values the content check settings accept, in the
+// order the UI offers them.
+var contentCheckValues = []string{"off", "warn", "block"}
+
+// validateContentCheckValue checks one content check mode. Empty is accepted and
+// reads as the default, warn.
+func validateContentCheckValue(key, value string) error {
+	if value == "" {
+		return nil
+	}
+	for _, v := range contentCheckValues {
+		if value == v {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s %q is not one of: %s", key, value, strings.Join(contentCheckValues, ", "))
+}
 
 // importModeValues are the values import.mode and import.audiobook.mode both
 // accept, in the order the UI offers them.
@@ -697,6 +791,9 @@ func normalizeSettingValue(key, value string) string {
 	if key == SettingHardcoverAPIToken {
 		return hardcover.NormalizeAPIToken(value)
 	}
+	if key == SettingMetadataEnrichersDisabled {
+		return strings.Join(ParseMetadataEnrichersDisabled(value), ",")
+	}
 	return value
 }
 
@@ -904,6 +1001,8 @@ func validateSettingValue(key, value string) error {
 		if err != nil || n <= 0 {
 			return fmt.Errorf("import.drop_pair_gating_timeout_hours %q must be a positive integer number of hours", value)
 		}
+	case SettingImportEbookContentCheck, SettingImportAudiobookContentCheck:
+		return validateContentCheckValue(key, value)
 	case SettingImportMode, SettingImportAudiobookMode:
 		// Empty = auto for import.mode, "same as import.mode" for the
 		// audiobook override (#1632). Both accept exactly the same values.
@@ -990,6 +1089,14 @@ func validateSettingValue(key, value string) error {
 		if !IsMetadataPrimaryProviderValid(value) {
 			return fmt.Errorf("metadata.primary_provider %q is not one of: %s", value, strings.Join(MetadataPrimaryProviders, ", "))
 		}
+	case SettingMetadataEnrichersDisabled:
+		// Unknown names are refused rather than dropped, like an unknown
+		// primary provider, so a typo does not look saved and do nothing.
+		for _, name := range ParseMetadataEnrichersDisabled(value) {
+			if !IsMetadataSourceToggleName(name) {
+				return fmt.Errorf("%s: %q is not one of: %s", key, name, strings.Join(MetadataSourceToggles(), ", "))
+			}
+		}
 	case SettingCalibrePushPathRemap:
 		if value == "" {
 			return nil
@@ -1017,7 +1124,7 @@ func validateSettingValue(key, value string) error {
 		// Block link-local and cloud-metadata so the Calibre plugin URL can't
 		// be used as an admin-only SSRF foot-gun (mirrors ABS / Grimmory /
 		// indexer / prowlarr / downloadclient validation).
-		if err := httpsec.ValidateOutboundURL(value, httpsec.PolicyLANLoopback); err != nil {
+		if err := httpsec.ValidateOutboundURL(value, httpsec.PolicyService); err != nil {
 			return fmt.Errorf("plugin_url %q: %w", value, err)
 		}
 	case SettingABSBaseURL:

@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -346,12 +347,20 @@ func (h *SeriesHandler) UnmonitorSplitEditionParts(w http.ResponseWriter, r *htt
 	writeJSON(w, http.StatusOK, map[string]int64{"unmonitored": n})
 }
 
+// Create makes a series. With a "hardcover" object it creates the series from
+// a Hardcover search result and links it in one step (#1706); without one it
+// is the manual, title only path it always was.
 func (h *SeriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Title string `json:"title"`
+		Title     string                      `json:"title"`
+		Hardcover *seriesHardcoverLinkRequest `json:"hardcover"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if body.Hardcover != nil {
+		h.createFromHardcover(w, r, body.Title, *body.Hardcover)
 		return
 	}
 	title, validationErr := validateSeriesTitle(body.Title)
@@ -365,6 +374,145 @@ func (h *SeriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, series)
+}
+
+// Bounds on the client supplied Hardcover fields. The catalogue overrides them
+// whenever it answers, so only fallbacks (the slug) are ever stored from here.
+const (
+	hardcoverCreateTextMax = 500
+	hardcoverCreateSlugMax = 200
+)
+
+var hardcoverSeriesForeignIDRe = regexp.MustCompile(`^hc-series:[0-9]{1,18}$`)
+
+// createMu serialises the duplicate check, insert and link store of
+// createFromHardcover, so parallel identical requests cannot each pass the
+// check and create several series for one Hardcover series. The app is a
+// single process and the route is admin only, so no database constraint is
+// needed. It is never held across the provider call.
+var createMu sync.Mutex
+
+// writeHardcoverLinkConflict answers 409 with the owning series id when err
+// says the Hardcover id is already linked to another series (#3368). The
+// explicit link routes reject rather than merge: moving a link between series
+// is the series merge's job (#2554), and the call is the user's.
+func writeHardcoverLinkConflict(w http.ResponseWriter, err error) bool {
+	var conflict *db.HardcoverLinkConflictError
+	if !errors.As(err, &conflict) {
+		return false
+	}
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":    "this hardcover series is already linked to another series",
+		"seriesId": conflict.SeriesID,
+	})
+	return true
+}
+
+func writeHardcoverLinkConflictOr(w http.ResponseWriter, r *http.Request, err error) {
+	if !writeHardcoverLinkConflict(w, err) {
+		writeServerError(w, r, err)
+	}
+}
+
+// duplicateHardcoverSeries answers 409 with the existing series id when one of
+// the given Hardcover ids is already in the library. It reports whether it
+// wrote a response (a duplicate or an error).
+func (h *SeriesHandler) duplicateHardcoverSeries(w http.ResponseWriter, r *http.Request, ids ...string) bool {
+	for _, hcID := range ids {
+		existing, err := h.series.GetByHardcoverSeriesID(r.Context(), hcID)
+		if err != nil {
+			writeServerError(w, r, err)
+			return true
+		}
+		if existing != nil {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":    "this hardcover series is already in your library",
+				"seriesId": existing.ID,
+			})
+			return true
+		}
+	}
+	return false
+}
+
+// createFromHardcover creates a series from a Hardcover search result and
+// links it. A Hardcover series that is already in the library is not created
+// twice: the answer is 409 carrying the existing series id, which the UI opens
+// instead of showing an error. The id is checked before the provider is asked
+// (so a duplicate costs no Hardcover call), and again under createMu once the
+// catalogue has resolved it. An id the provider does not know is a 404 and
+// creates nothing; the provider is asked first, so a failure never creates a
+// series either. If storing the link still fails the new series is deleted
+// again, so no orphan is left behind.
+func (h *SeriesHandler) createFromHardcover(w http.ResponseWriter, r *http.Request, rawTitle string, req seriesHardcoverLinkRequest) {
+	if !h.requireEnhancedHardcoverAPI(w, r) {
+		return
+	}
+	ctx := r.Context()
+	req.ForeignID = strings.TrimSpace(req.ForeignID)
+	if req.ForeignID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "hardcover.foreignId is required"})
+		return
+	}
+	if !hardcoverSeriesForeignIDRe.MatchString(req.ForeignID) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "hardcover.foreignId is not a hardcover series id"})
+		return
+	}
+	if len(req.Title) > hardcoverCreateTextMax || len(req.AuthorName) > hardcoverCreateTextMax ||
+		len(req.ProviderID) > hardcoverCreateSlugMax || len(req.Slug) > hardcoverCreateSlugMax {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "hardcover fields are too long"})
+		return
+	}
+	if req.BookCount < 0 {
+		req.BookCount = 0
+	}
+	if req.Confidence > 1 {
+		req.Confidence = 1
+	}
+
+	if h.duplicateHardcoverSeries(w, r, req.ForeignID) {
+		return
+	}
+	link, found, err := h.linkFromRequestCatalog(ctx, 0, req, "manual")
+	if err != nil {
+		if errors.Is(err, errSeriesMetadataProvider) {
+			writeUpstreamError(w, err)
+			return
+		}
+		writeServerError(w, r, err)
+		return
+	}
+	if !found {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "hardcover series not found"})
+		return
+	}
+	title, validationErr := validateSeriesTitle(firstNonEmpty(strings.TrimSpace(rawTitle), link.HardcoverTitle, strings.TrimSpace(req.Title)))
+	if validationErr != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": validationErr})
+		return
+	}
+
+	createMu.Lock()
+	defer createMu.Unlock()
+	if h.duplicateHardcoverSeries(w, r, req.ForeignID, link.HardcoverSeriesID) {
+		return
+	}
+	series, err := h.series.CreateManual(ctx, title)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	link.SeriesID = series.ID
+	if err := h.series.UpsertHardcoverLink(ctx, link); err != nil {
+		if delErr := h.series.Delete(context.WithoutCancel(ctx), series.ID); delErr != nil {
+			slog.Error("series: could not roll back a series whose hardcover link failed",
+				"seriesID", series.ID, "error", delErr)
+		}
+		writeHardcoverLinkConflictOr(w, r, err)
+		return
+	}
+	series.HardcoverLink = link
+	writeSeries(w, http.StatusCreated, series)
 }
 
 func (h *SeriesHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -900,6 +1048,9 @@ type seriesHardcoverAutoResponse struct {
 	Link       *models.SeriesHardcoverLink   `json:"link,omitempty"`
 	Candidates []seriesHardcoverSearchResult `json:"candidates"`
 	Reason     string                        `json:"reason,omitempty"`
+	// ExistingSeriesID names the series that already holds the top
+	// candidate's Hardcover id, when that is why nothing was linked.
+	ExistingSeriesID int64 `json:"existingSeriesId,omitempty"`
 }
 
 type seriesHardcoverDiffBook struct {
@@ -1048,6 +1199,17 @@ func (h *SeriesHandler) AutoLinkHardcover(w http.ResponseWriter, r *http.Request
 		LinkedBy:            "auto",
 	}
 	if err := h.series.UpsertHardcoverLink(r.Context(), link); err != nil {
+		var conflict *db.HardcoverLinkConflictError
+		if errors.As(err, &conflict) {
+			// Automatic linking never takes an id another series holds, and
+			// never merges on its own (#3368).
+			writeJSON(w, http.StatusOK, seriesHardcoverAutoResponse{
+				Candidates:       candidates,
+				Reason:           "already linked to another series",
+				ExistingSeriesID: conflict.SeriesID,
+			})
+			return
+		}
 		writeServerError(w, r, err)
 		return
 	}
@@ -1091,7 +1253,7 @@ func (h *SeriesHandler) PutHardcoverLink(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := h.series.UpsertHardcoverLink(r.Context(), link); err != nil {
-		writeServerError(w, r, err)
+		writeHardcoverLinkConflictOr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, link)
@@ -1373,6 +1535,14 @@ func scoreHardcoverCandidate(series *models.Series, result seriesHardcoverSearch
 }
 
 func (h *SeriesHandler) linkFromRequest(ctx context.Context, seriesID int64, body seriesHardcoverLinkRequest, linkedBy string) (*models.SeriesHardcoverLink, error) {
+	link, _, err := h.linkFromRequestCatalog(ctx, seriesID, body, linkedBy)
+	return link, err
+}
+
+// linkFromRequestCatalog is linkFromRequest that also reports whether the
+// provider's catalogue knew the series. When it did not, the link is only the
+// client's own words; PutHardcoverLink accepts that, series creation does not.
+func (h *SeriesHandler) linkFromRequestCatalog(ctx context.Context, seriesID int64, body seriesHardcoverLinkRequest, linkedBy string) (*models.SeriesHardcoverLink, bool, error) {
 	confidence := body.Confidence
 	if confidence <= 0 {
 		confidence = 1
@@ -1389,14 +1559,14 @@ func (h *SeriesHandler) linkFromRequest(ctx context.Context, seriesID int64, bod
 		LinkedBy:            linkedBy,
 	}
 	if h.meta == nil {
-		return link, nil
+		return link, false, nil
 	}
 	catalog, err := h.meta.GetSeriesCatalog(ctx, body.ForeignID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errSeriesMetadataProvider, err)
+		return nil, false, fmt.Errorf("%w: %w", errSeriesMetadataProvider, err)
 	}
 	if catalog == nil {
-		return link, nil
+		return link, false, nil
 	}
 	link.HardcoverSeriesID = catalog.ForeignID
 	link.HardcoverProviderID = catalog.ProviderID
@@ -1406,7 +1576,7 @@ func (h *SeriesHandler) linkFromRequest(ctx context.Context, seriesID int64, bod
 	link.HardcoverTitle = catalog.Title
 	link.HardcoverAuthorName = catalog.AuthorName
 	link.HardcoverBookCount = catalog.BookCount
-	return link, nil
+	return link, true, nil
 }
 
 func (h *SeriesHandler) hardcoverCatalog(ctx context.Context, foreignID string) (*metadata.SeriesCatalog, error) {

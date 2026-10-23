@@ -82,6 +82,18 @@ beforeEach(() => {
   m.listProwlarr.mockResolvedValue([])
 })
 
+// #3240: the add form's labels name their fields, for screen readers and so a
+// click on the label focuses the field.
+describe('IndexersTab add form labels', () => {
+  it('names the fields by their labels', () => {
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: 'settings.indexers.addButton' }))
+    expect(screen.getByLabelText('settings.indexers.form.name').tagName).toBe('INPUT')
+    expect(screen.getByLabelText('settings.indexers.form.type').tagName).toBe('SELECT')
+    expect(screen.getByLabelText('settings.indexers.form.url').tagName).toBe('INPUT')
+  })
+})
+
 describe('IndexersTab indexer rows', () => {
   it('shows the empty state with no indexers', () => {
     render(<Harness />)

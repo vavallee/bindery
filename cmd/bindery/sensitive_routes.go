@@ -226,6 +226,27 @@ func registerStorageRoutes(r chi.Router, h storageRouteHandler) {
 	})
 }
 
+type dbIntegrityRouteHandler interface {
+	Check(http.ResponseWriter, *http.Request)
+	Preview(http.ResponseWriter, *http.Request)
+	Cleanup(http.ResponseWriter, *http.Request)
+}
+
+// registerDBIntegrityRoutes mounts the on demand foreign key drift report
+// (#3356) and its cleanup (#3357). Admin-only: a scan reads the whole database
+// and names the schema's tables, and the cleanup deletes rows. All POST, never
+// GET, so a prefetcher or crawler cannot start a scan or a repair, and all
+// behind the CSRF guards useAPIAuth installs. The cleanup additionally needs a
+// token from the preview route and an explicit confirm field.
+func registerDBIntegrityRoutes(r chi.Router, h dbIntegrityRouteHandler) {
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
+		r.Post("/system/db-integrity", h.Check)
+		r.Post("/system/db-integrity/cleanup/preview", h.Preview)
+		r.Post("/system/db-integrity/cleanup", h.Cleanup)
+	})
+}
+
 // adoptionRouteHandler is the surface registerAdoptionRoutes needs.
 type adoptionRouteHandler interface {
 	List(http.ResponseWriter, *http.Request)

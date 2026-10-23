@@ -89,3 +89,15 @@ type ABSReviewItem struct {
 	CreatedAt               time.Time `json:"createdAt"`
 	UpdatedAt               time.Time `json:"updatedAt"`
 }
+
+// ABSSeriesMatchState records what the Hardcover series match concluded for one
+// ABS item (#2173). Outcome is "matched" or "miss"; InputHash digests the inputs
+// the match read, so a changed item no longer agrees with it.
+type ABSSeriesMatchState struct {
+	SourceID  string
+	LibraryID string
+	ItemID    string
+	InputHash string
+	Outcome   string
+	CheckedAt time.Time
+}

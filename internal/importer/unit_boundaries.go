@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // The helpers below decide where one book ends and the next begins. Both the
@@ -32,6 +34,33 @@ import (
 // audio beneath every candidate before it merges anything.
 var discFolderRe = regexp.MustCompile(`(?i)^(cd|dis[ck]|part|pt|chapter|ch)\s*[._-]?\s*\d+$`)
 
+// titledDiscRe splits a disc folder named after its book, "<title> Disc 1",
+// "<title> CD2", "<title> (Disc 03)", into the title and the disc label. Only
+// cd/disc labels count here: a title followed by "Part 2" names a part of a
+// series as often as a disc.
+var titledDiscRe = regexp.MustCompile(`(?i)^(.+?)(?:[\s._-]+[(\[]?|[(\[])\s*(?:cd|dis[ck])\s*[._-]?\s*\d+\s*[)\]]?$`)
+
+// isTitledDisc reports whether name is a disc folder of the book folder
+// parentName: the book's own title followed by a cd/disc label, as CD rips
+// often name each disc after its album tag (#3327). The title must be the
+// parent's, compared the way book titles are, so a disc label after any other
+// prefix ("Havgapet Disc 1" under "Fjellvinden (2002)") is a different book.
+func isTitledDisc(name, parentName string) bool {
+	m := titledDiscRe.FindStringSubmatch(name)
+	if m == nil {
+		return false
+	}
+	title := textutil.FoldForTitleMatch(cleanLayoutTitle(parentName))
+	return title != "" && textutil.FoldForTitleMatch(cleanLayoutTitle(m[1])) == title
+}
+
+// isDiscSetName reports whether name is one disc of the multi-disc audiobook in
+// the book folder parentName, by the narrow library rule: a bare cd/disc label
+// (discSetNameRe), or the book's own title followed by one (isTitledDisc).
+func isDiscSetName(name, parentName string) bool {
+	return discSetNameRe.MatchString(name) || isTitledDisc(name, parentName)
+}
+
 // IsDiscFolderName reports whether a directory's base name looks like one disc
 // or part of a multi-disc audiobook. The name alone; see AllDiscFolders for
 // the check that also requires audio beneath it.
@@ -40,12 +69,18 @@ func IsDiscFolderName(name string) bool {
 }
 
 // AllDiscFolders reports whether every directory in dirs is a disc/part folder
-// (by name) that actually holds audio somewhere beneath it. Both conditions are
+// (by name) that actually holds audio somewhere beneath it. With titled set it
+// also takes a cd/disc label after the parent folder's own title (#3327). The
+// caller sets it only for a parent at book depth, at least two levels under a
+// root: one level down the parent is an author folder, and "Kari Nordmann
+// Disc 1" there must not make the author folder a book. Both conditions are
 // required so a shelf of audiobook folders with numeric-ish names isn't collapsed
 // into one book, and an empty "CD1" placeholder doesn't fake a multi-disc set.
-func AllDiscFolders(dirs []string) bool {
+func AllDiscFolders(dirs []string, titled bool) bool {
 	for _, d := range dirs {
-		if !discFolderRe.MatchString(filepath.Base(d)) {
+		name := filepath.Base(d)
+		isDisc := discFolderRe.MatchString(name) || titled && isTitledDisc(name, filepath.Base(filepath.Dir(d)))
+		if !isDisc {
 			return false
 		}
 		if !dirSubtreeHasAudio(d) {

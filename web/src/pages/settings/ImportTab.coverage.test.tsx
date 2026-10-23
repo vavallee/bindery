@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
 
 // Keys only: the assertions name i18n keys, never English copy.
 vi.mock('react-i18next', () => ({
@@ -13,6 +13,7 @@ vi.mock('../../api/client', () => ({
   BINDERY_BASE: '',
   api: {
     uploadMigrate: vi.fn(),
+    readarrImportStatus: vi.fn(),
     lookupManualImport: vi.fn(),
     manualImport: vi.fn(),
     listImportLists: vi.fn(),
@@ -84,6 +85,7 @@ describe('ImportTab coverage', () => {
     mocked.hardcoverLists.mockResolvedValue({ account: 'reader', lists: [] })
     mocked.listUsers.mockResolvedValue([{ id: 2, username: 'alice', role: 'user' }])
     mocked.importListSyncStatus.mockResolvedValue(progress())
+    mocked.readarrImportStatus.mockResolvedValue({ running: false })
   })
 
 
@@ -105,9 +107,12 @@ describe('ImportTab coverage', () => {
 
   it('uploads a Readarr database and shows each section', async () => {
     mocked.uploadMigrate.mockResolvedValue({
-      authors: { requested: 2, added: 2 },
-      indexers: { requested: 1, added: 1 },
-      downloadClients: {},
+      running: false,
+      result: {
+        authors: { requested: 2, added: 2 },
+        indexers: { requested: 1, added: 1 },
+        downloadClients: {},
+      },
     })
     const { container } = render(<ImportTab />)
     fireEvent.change(fileInput(container, '.db'), { target: { files: [new File(['x'], 'readarr.db')] } })
@@ -117,6 +122,117 @@ describe('ImportTab coverage', () => {
     expect(screen.queryByText('Blocklist')).not.toBeInTheDocument()
     expect(mocked.uploadMigrate).toHaveBeenCalledWith('readarr', expect.any(FormData))
     expect(screen.getByText('0 requested · 0 added · 0 skipped (already exist) · 0 failed')).toBeInTheDocument()
+  })
+
+  describe('Readarr catalogue backfill progress', () => {
+    const FETCHING = (done: number, total: number) =>
+      `settings.import.catalogueFetching ${JSON.stringify({ done, total })}`
+    const FETCHED = (done: number, total: number) =>
+      `settings.import.catalogueFetched ${JSON.stringify({ done, total })}`
+
+    afterEach(() => { vi.useRealTimers() })
+
+    async function startImport(container: HTMLElement) {
+      fireEvent.change(fileInput(container, '.db'), { target: { files: [new File(['x'], 'readarr.db')] } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    }
+
+    it('keeps polling after the database import is done, shows X of Y, and stops at Y of Y', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: false })
+      const result = { authors: { requested: 10, added: 10 } }
+      mocked.uploadMigrate.mockResolvedValue({ running: true })
+      mocked.readarrImportStatus
+        .mockResolvedValueOnce({ running: false }) // mount probe
+        .mockResolvedValueOnce({ running: false, result, catalogueRunning: true, catalogueTotal: 10, catalogueDone: 3 })
+        .mockResolvedValueOnce({ running: false, result, catalogueRunning: true, catalogueTotal: 10, catalogueDone: 7 })
+        .mockResolvedValue({ running: false, result, catalogueRunning: false, catalogueTotal: 10, catalogueDone: 10 })
+      const { container } = render(<ImportTab />)
+      await startImport(container)
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(screen.getByText(FETCHING(3, 10))).toBeInTheDocument()
+      // The database phase is done, yet the poll carries on.
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(screen.getByText(FETCHING(7, 10))).toBeInTheDocument()
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(screen.getByText(FETCHED(10, 10))).toBeInTheDocument()
+      expect(screen.queryByText('settings.import.catalogueHint')).not.toBeInTheDocument()
+
+      const calls = mocked.readarrImportStatus.mock.calls.length
+      await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+      expect(mocked.readarrImportStatus.mock.calls.length).toBe(calls) // stopped
+    })
+
+    it('ends gracefully when a restarted server has lost the counters', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: false })
+      mocked.uploadMigrate.mockResolvedValue({ running: false, catalogueRunning: true, catalogueTotal: 5, catalogueDone: 1 })
+      // After a restart: not running, and the catalogue fields are absent.
+      mocked.readarrImportStatus.mockResolvedValue({ running: false })
+      const { container } = render(<ImportTab />)
+      await startImport(container)
+      expect(screen.getByText(FETCHING(1, 5))).toBeInTheDocument()
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(screen.queryByText(FETCHING(1, 5))).not.toBeInTheDocument()
+      expect(screen.queryByTestId('readarr-catalogue-progress')).not.toBeInTheDocument()
+      const calls = mocked.readarrImportStatus.mock.calls.length
+      await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+      expect(mocked.readarrImportStatus.mock.calls.length).toBe(calls)
+    })
+
+    it('never shows more done than the total', async () => {
+      mocked.uploadMigrate.mockResolvedValue({ running: false, catalogueRunning: true, catalogueTotal: 5, catalogueDone: 9 })
+      const { container } = render(<ImportTab />)
+      fireEvent.change(fileInput(container, '.db'), { target: { files: [new File(['x'], 'readarr.db')] } })
+      expect(await screen.findByText(FETCHING(5, 5))).toBeInTheDocument()
+      expect(screen.queryByText(FETCHING(9, 5))).not.toBeInTheDocument()
+    })
+
+    it('disables the Readarr upload while the database phase is running', async () => {
+      mocked.uploadMigrate.mockResolvedValue({ running: true })
+      const { container } = render(<ImportTab />)
+      fireEvent.change(fileInput(container, '.db'), { target: { files: [new File(['x'], 'readarr.db')] } })
+      await waitFor(() => expect(mocked.uploadMigrate).toHaveBeenCalled())
+      // Wait for the upload itself to finish, so only the running flag can disable it.
+      await screen.findByText('settings.import.importingReadarr', { selector: 'p' })
+      expect(fileInput(container, '.db')).toBeDisabled()
+    })
+
+    it('does not hide a running backfill when a CSV is uploaded', async () => {
+      mocked.readarrImportStatus.mockResolvedValue({ running: false, catalogueRunning: true, catalogueTotal: 40, catalogueDone: 12 })
+      mocked.uploadMigrate.mockResolvedValue({ requested: 1, added: 1, skipped: 0, errors: 0 })
+      const { container } = render(<ImportTab />)
+      expect(await screen.findByText(FETCHING(12, 40))).toBeInTheDocument()
+      fireEvent.change(fileInput(container, '.csv'), { target: { files: [new File(['a'], 'a.csv')] } })
+      expect(await screen.findByText('1 requested · 1 added · 0 skipped (already exist) · 0 failed')).toBeInTheDocument()
+      expect(screen.getByText(FETCHING(12, 40))).toBeInTheDocument()
+    })
+
+    it('ignores a late mount probe once a Readarr upload has started', async () => {
+      let resolveProbe: (v: unknown) => void = () => {}
+      mocked.readarrImportStatus.mockReturnValue(new Promise(r => { resolveProbe = r }))
+      mocked.uploadMigrate.mockResolvedValue({ running: false, result: { authors: { requested: 1, added: 1 } } })
+      const { container } = render(<ImportTab />)
+      fireEvent.change(fileInput(container, '.db'), { target: { files: [new File(['x'], 'readarr.db')] } })
+      expect(await screen.findByText('Authors')).toBeInTheDocument()
+      await act(async () => { resolveProbe({ running: false, catalogueRunning: true, catalogueTotal: 9, catalogueDone: 1 }) })
+      expect(screen.queryByTestId('readarr-catalogue-progress')).not.toBeInTheDocument()
+    })
+
+    it('treats an older server with no catalogue fields as having none', async () => {
+      mocked.uploadMigrate.mockResolvedValue({ running: false, result: { authors: { requested: 1, added: 1 } } })
+      const { container } = render(<ImportTab />)
+      fireEvent.change(fileInput(container, '.db'), { target: { files: [new File(['x'], 'readarr.db')] } })
+      expect(await screen.findByText('Authors')).toBeInTheDocument()
+      expect(screen.queryByTestId('readarr-catalogue-progress')).not.toBeInTheDocument()
+    })
+
+    it('picks up a backfill already running when the page opens', async () => {
+      mocked.readarrImportStatus.mockResolvedValue({ running: false, catalogueRunning: true, catalogueTotal: 40, catalogueDone: 12 })
+      render(<ImportTab />)
+      expect(await screen.findByText(FETCHING(12, 40))).toBeInTheDocument()
+      expect(screen.getByText('settings.import.catalogueHint')).toBeInTheDocument()
+    })
   })
 
   it('shows an upload failure and ignores an empty file selection', async () => {

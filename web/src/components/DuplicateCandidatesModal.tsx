@@ -51,7 +51,7 @@ export default function DuplicateCandidatesModal({ authorId, authorName, onClose
           <h2 id="duplicate-candidates-title" className="text-base font-semibold text-slate-900 dark:text-white">
             {t('duplicateCandidates.title', 'Review duplicate titles')}
           </h2>
-          <p className="mt-1 text-xs text-slate-500 dark:text-zinc-400">
+          <p className="mt-1 text-xs text-fg-muted">
             {t('duplicateCandidates.description', {
               author: authorName,
               defaultValue: 'Titles for {{author}} that look like the same book. Nothing changes until you exclude a row.',
@@ -59,14 +59,14 @@ export default function DuplicateCandidatesModal({ authorId, authorName, onClose
           </p>
 
           {loading && !result ? (
-            <p className="mt-4 text-sm text-slate-500 dark:text-zinc-400">
+            <p className="mt-4 text-sm text-fg-muted">
               {t('duplicateCandidates.loading', 'Scanning the catalogue…')}
             </p>
           ) : error && !result ? (
-            <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>
+            <p className="mt-4 text-sm text-red-700 dark:text-red-400">{error}</p>
           ) : result ? (
             result.count === 0 ? (
-              <p className="mt-4 text-sm text-slate-600 dark:text-zinc-400">
+              <p className="mt-4 text-sm text-fg-muted">
                 {t('duplicateCandidates.empty', 'No duplicate titles found.')}
               </p>
             ) : (
@@ -84,7 +84,7 @@ export default function DuplicateCandidatesModal({ authorId, authorName, onClose
             )
           ) : null}
 
-          {error && result && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
+          {error && result && <p className="mt-3 text-sm text-red-700 dark:text-red-400">{error}</p>}
 
           <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 pt-4 dark:border-zinc-800">
             <button type="button" onClick={load} disabled={loading} className={`${btn.secondary} ${btnSize.sm}`}>

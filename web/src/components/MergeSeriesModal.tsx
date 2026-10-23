@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from './useConfirmDialog'
 import { api, Series, SeriesMergePlan } from '../api/client'
 import { useModal } from './useModal'
+import { primaryFill } from './buttons'
 
 interface Props {
   target: Series
@@ -79,7 +80,7 @@ export default function MergeSeriesModal({ target, series, onClose, onMerged }: 
       >
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
           <h3 id={titleId} className="text-lg font-semibold">{t('series.merge.title', { title: target.title })}</h3>
-          <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1">{t('series.merge.description')}</p>
+          <p className="text-xs text-fg-muted mt-1">{t('series.merge.description')}</p>
         </div>
 
         <div className="p-4 space-y-3 overflow-y-auto">
@@ -96,17 +97,17 @@ export default function MergeSeriesModal({ target, series, onClose, onMerged }: 
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
                   <input type="checkbox" checked={selected.includes(s.id)} onChange={() => toggle(s.id)} />
                   <span>{s.title}</span>
-                  <span className="text-xs text-slate-500 dark:text-zinc-500">{t('series.merge.bookCount', { count: s.books?.length ?? 0 })}</span>
+                  <span className="text-xs text-fg-muted">{t('series.merge.bookCount', { count: s.books?.length ?? 0 })}</span>
                 </label>
               </li>
             ))}
             {candidates.length === 0 && (
-              <li className="text-xs text-slate-500 dark:text-zinc-500">{t('series.merge.noCandidates')}</li>
+              <li className="text-xs text-fg-muted">{t('series.merge.noCandidates')}</li>
             )}
           </ul>
 
           <div>
-            <label htmlFor="merge-series-title" className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('series.merge.renameLabel')}</label>
+            <label htmlFor="merge-series-title" className="block text-xs text-fg-muted mb-1">{t('series.merge.renameLabel')}</label>
             <input
               id="merge-series-title"
               value={title}
@@ -138,7 +139,7 @@ export default function MergeSeriesModal({ target, series, onClose, onMerged }: 
             </div>
           )}
 
-          {error && <p className="text-xs text-red-600 dark:text-red-400" role="alert">{error}</p>}
+          {error && <p className="text-xs text-red-700 dark:text-red-400" role="alert">{error}</p>}
         </div>
 
         <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end gap-2">
@@ -149,7 +150,7 @@ export default function MergeSeriesModal({ target, series, onClose, onMerged }: 
             <button
               onClick={() => apply(plan)}
               disabled={busy}
-              className="text-sm px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
+              className={`text-sm px-3 py-1.5 rounded ${primaryFill} disabled:opacity-50`}
             >
               {t('series.merge.apply')}
             </button>
@@ -157,7 +158,7 @@ export default function MergeSeriesModal({ target, series, onClose, onMerged }: 
             <button
               onClick={() => run(true)}
               disabled={busy || selected.length === 0}
-              className="text-sm px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
+              className={`text-sm px-3 py-1.5 rounded ${primaryFill} disabled:opacity-50`}
             >
               {t('series.merge.preview')}
             </button>

@@ -220,6 +220,19 @@ func (s *HealthStore) Get(id int64) *models.DownloadClientHealth {
 	return &models.DownloadClientHealth{Status: HealthError, Message: strings.Join(msgs, ". ")}
 }
 
+// ProbeStatus returns the status of the path probe alone, ignoring advisories,
+// or "" when nothing has been recorded for the client. Callers asking "can this
+// client's finished downloads be read" want this rather than Get, which folds
+// advisories (blocklist paused, missing unpackers) into an error.
+func (s *HealthStore) ProbeStatus(id int64) string {
+	if s == nil || id == 0 {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.byID[id].Status
+}
+
 func (s *HealthStore) Attach(client *models.DownloadClient) {
 	if s == nil || client == nil {
 		return

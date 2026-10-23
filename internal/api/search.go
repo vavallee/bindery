@@ -291,6 +291,13 @@ func (h *SearchHandler) lookupByASIN(w http.ResponseWriter, r *http.Request, asi
 		writeUpstreamError(w, err)
 		return
 	}
+	if book == nil && h.meta.AudnexDisabled() {
+		// The lookup was skipped, not empty: say so rather than claim no book.
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("ASIN %s could not be looked up because the audnex source is turned off in Settings, Metadata. Turn it on, or try searching by title instead.", asin),
+		})
+		return
+	}
 	if book == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": fmt.Sprintf("No book found for ASIN %s. Check the identifier, or try searching by title instead.", asin),

@@ -106,8 +106,8 @@ func fileTitleScore(want, path string) float64 {
 	if score < containedTitleScore && containsTokens(titleTokens(base), titleTokens(want)) {
 		score = containedTitleScore
 	}
-	if IsEpubFile(path) {
-		if meta, err := ReadEpubMetadata(path); err == nil && meta.Title != "" {
+	if HasEmbeddedMetadata(path) {
+		if meta, err := ReadEbookMetadata(path); err == nil && meta.Title != "" {
 			score = max(score, textutil.JaroWinkler(want, normalizeTitle(meta.Title)))
 		}
 	}

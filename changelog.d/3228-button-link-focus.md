@@ -1,2 +1,0 @@
-### Changed
-- **Buttons and links share one keyboard focus style** (#3228). A button or link focused from the keyboard now shows a 2px emerald outline with a small gap, the same colours as the form fields since #3085, instead of each browser's default ring, which changed look from control to control and was hard to see in Safari's dark theme. A mouse click draws no ring. Controls that already had their own focus ring keep it.

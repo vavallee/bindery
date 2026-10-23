@@ -156,6 +156,15 @@ func (ls *LibrarySnapshot) FindExistingAmong(ctx context.Context, title, authorN
 	if best == nil {
 		return ""
 	}
+	// Two words of a series name are enough for titleWordsMatch, so "Harry
+	// Potter en de Relieken van de Dood" passed for "Harry Potter en de Orde
+	// van de Feniks" and the new book read as owned. The library scan refuses
+	// the same pair, on its winner as here (#3388).
+	if titlesNameDifferentWorks(best.title, title) {
+		slog.Debug("library: existing file names a different work, not offering it",
+			"title", title, "path", best.path, "fileTitle", best.title)
+		return ""
+	}
 	return best.path
 }
 

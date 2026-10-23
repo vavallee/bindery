@@ -24,6 +24,9 @@ func TestIsUnambiguousBundleTitle(t *testing.T) {
 		{"Skyward Series 3 Books Set", true},
 		{"The Lord of the Rings Boxset", true},
 		{"Discworld 5 Volumes Set", true},
+		{"Just Beyond (Set)", true},  // #3013, R. L. Stine, OL28394382W
+		{"Goosebumps ( SET )", true}, // padding inside the parentheses
+		{"Goosebumps (set)", true},   // case insensitive, like (Boxed)
 
 		// Ambiguous tier: still gated behind SkipPartBooks, so false here.
 		{"The Silmarillion Omnibus", false},
@@ -45,12 +48,34 @@ func TestIsUnambiguousBundleTitle(t *testing.T) {
 		{"The Complete History of Middle-Earth", false},
 		{"Boxed In", false},
 		{"Set This House on Fire", false},
+
 		{"Collected Short Stories [51 stories]", false},
 		{"A Novel [Set in Wartime London]", false},
 		{"Leviathan Wakes", false},
 		{"Catch 22", false},
 		{"Fahrenheit 451", false},
 		{"", false},
+
+		// Near misses for the "(Set)" branch (#3013). Only the whole
+		// parenthesised word at the END of the title counts: a bare "set" is
+		// an everyday word, a longer parenthetical that starts with it
+		// describes a setting, and a "(Set)" with text after it is part of a
+		// title rather than a product label. A trailing "!" or "." is not
+		// accepted: no real bundle listing was observed with one, and each
+		// extra allowance widens an unconditional filter.
+		{"The Set", false},
+		{"Set in Stone", false},
+		{"Upset", false},
+		{"Sunset Boulevard", false},
+		{"Offset", false},
+		{"Reset (Set in Paris)", false},
+		{"Hotel (Settings)", false},
+		{"Gold (Settled)", false},
+		{"A Novel (Setup)", false},
+		{"Foo (Set): A Novel", false},
+		{"Foo (SET) 2", false},
+		{"Ready (Set) Go", false},
+		{"Ready (Set) Go (Set)", true}, // only the trailing one is the label
 	}
 	for _, c := range cases {
 		if got := IsUnambiguousBundleTitle(c.title); got != c.want {
@@ -101,6 +126,82 @@ func TestIsBundleTitle(t *testing.T) {
 	for _, c := range cases {
 		if got := IsBundleTitle(c.title); got != c.want {
 			t.Errorf("IsBundleTitle(%q) = %v, want %v", c.title, got, c.want)
+		}
+	}
+}
+
+// TestBundleTitleMarkers3013 pins the ambiguous-tier markers added for #3013
+// ("(series) N-N", a trailing "N Books", "N Name Books!") and, more
+// importantly, the real titles they must not touch: this filter drops
+// catalogue works, so a false positive silently hides a real book.
+//
+// Every row states both tiers. The ambiguous markers must be false in
+// IsUnambiguousBundleTitle (they only run for profiles that enabled
+// SkipPartBooks) and true in IsBundleTitle.
+func TestBundleTitleMarkers3013(t *testing.T) {
+	cases := []struct {
+		title     string
+		unambig   bool
+		ambiguous bool // IsBundleTitle
+	}{
+		// Positives from the issue.
+		{"Just Beyond (Set)", true, true},
+		{"How To Train Your Dragon - 10 Books", false, true},
+		{"Harry Potter (series) 1-3", false, true},
+		{"Harry Potter (series) 1-4", false, true},
+		{"2 Daniel Silva Books! 1) The Order of Death", false, true},
+
+		// Shape variants of the same markers.
+		{"Harry Potter (Series) 1 - 7", false, true},
+		{"Harry Potter (SERIES) 1-3", false, true},
+		{"Dragon Riders (3 Books)", false, true},
+		{"Dragon Riders: 12 Books", false, true},
+		{"5 Stephen King Books!", false, true},
+		{"How To Train Your Dragon - 10 Books!", false, true},
+		{"How To Train Your Dragon - 10 books.", false, true},
+		{"Dragon Riders (3 Books)!", false, true},
+
+		// Near misses that must survive both tiers.
+		{"The Set", false, false},
+		{"Set in Stone", false, false},
+		{"Upset", false, false},
+		{"Sunset Boulevard", false, false},
+		{"Offset", false, false},
+		// A parenthesised "(Series)" with no range is a label, not a count.
+		{"Redwall (Series)", false, false},
+		{"Harry Potter (series)", false, false},
+		{"Mastering Python (Second Edition)", false, false},
+		// Spelled numbers are never counted.
+		{"The Seven Books of Magic", false, false},
+		{"Ten Books of Wisdom", false, false},
+		{"Book 3: The Third", false, false},
+		// The trailing-count tolerance for "!" and "." must not start
+		// matching mid-title.
+		{"Oh No! 2 Books Are Missing", false, false},
+		{"Wow. 3 Books. A Story", false, false},
+		// Numbers as part of a real title.
+		{"1984", false, false},
+		{"11/22/63", false, false},
+		{"Catch-22", false, false},
+		{"Fahrenheit 451", false, false},
+		{"The 5 Love Languages", false, false},
+		{"2 Fast 2 Furious", false, false},
+		{"The 7 Habits of Highly Effective People", false, false},
+		// "N Books" mid-title is a nonfiction title about books, not a
+		// bundle: neither marker anchors on the number unless "Books" ends
+		// the title or carries the "!" of a retailer bundle listing.
+		{"10 Books That Changed America", false, false},
+		{"100 Books You Must Read Before You Die", false, false},
+		{"The 100 Best Books Ever", false, false},
+		// A count of one is a single book.
+		{"Life in Letters - 1 Book", false, false},
+	}
+	for _, c := range cases {
+		if got := IsUnambiguousBundleTitle(c.title); got != c.unambig {
+			t.Errorf("IsUnambiguousBundleTitle(%q) = %v, want %v", c.title, got, c.unambig)
+		}
+		if got := IsBundleTitle(c.title); got != c.ambiguous {
+			t.Errorf("IsBundleTitle(%q) = %v, want %v", c.title, got, c.ambiguous)
 		}
 	}
 }

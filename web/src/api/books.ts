@@ -158,6 +158,12 @@ export interface SearchDebug {
 
 export interface SearchBookResponse {
   results: SearchResult[]
+  // Releases the relevance and language filters removed (#2334): same shape as
+  // results, approved=false with the filter's reason in rejection, capped by
+  // the server. Grab them like any other release. Absent from older servers.
+  filtered?: SearchResult[]
+  // How many the filters removed before the cap; at least filtered.length.
+  filteredTotal?: number
   debug: SearchDebug | null
 }
 

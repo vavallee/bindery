@@ -7,6 +7,7 @@ import RequestConfirm from './RequestConfirm'
 import { metadataSourceLink, providerDisplayName, providerFromBookForeignId } from '../util/metadataSource'
 import MetadataLinksMenu from './MetadataLinksMenu'
 import CoverImage from './CoverImage'
+import { primaryFill } from './buttons'
 
 // The confirm step for a book picked in AddToLibraryModal: the large cover,
 // identifiers, format and search-on-add, and the add call. Renders the dialog
@@ -128,7 +129,7 @@ function AddBookForm({ book, searchedISBN, onBack, onClose, onAdded }: Props) {
         <div className="flex items-start gap-4 rounded-md border border-slate-300 dark:border-zinc-700 bg-slate-200/50 dark:bg-zinc-800/50 p-4">
           <CoverImage src={book.imageUrl} alt={t('addToLibrary.book.coverAlt', { title: book.title })} className="w-28 aspect-[2/3] object-cover rounded-md flex-shrink-0"
             fallback={
-              <div className="w-28 aspect-[2/3] rounded-md bg-slate-300 dark:bg-zinc-800 flex flex-col items-center justify-center gap-2 px-2 text-center text-slate-600 dark:text-zinc-400 flex-shrink-0">
+              <div className="w-28 aspect-[2/3] rounded-md bg-slate-300 dark:bg-zinc-800 flex flex-col items-center justify-center gap-2 px-2 text-center text-fg-muted flex-shrink-0">
                 <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5} aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
                 </svg>
@@ -137,7 +138,7 @@ function AddBookForm({ book, searchedISBN, onBack, onClose, onAdded }: Props) {
             }
           />
           <div className="min-w-0 flex-1">
-            <h4 ref={headingRef} tabIndex={-1} className="rounded-sm font-semibold leading-snug break-words focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">{book.title}</h4>
+            <h4 ref={headingRef} tabIndex={-1} className="rounded-sm font-semibold leading-snug break-words focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-500">{book.title}</h4>
             {book.author?.authorName && <p className="mt-1 text-sm text-fg-muted">{book.author.authorName}</p>}
             <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
               {book.releaseDate && <>
@@ -170,7 +171,7 @@ function AddBookForm({ book, searchedISBN, onBack, onClose, onAdded }: Props) {
         </div>
 
         {searchedISBN && (
-          <div className="mt-3 text-[11px] leading-5 text-slate-500 dark:text-zinc-500">
+          <div className="mt-3 text-[11px] leading-5 text-fg-muted">
             <div className="font-medium">{t('addToLibrary.book.searchedIsbn')}</div>
             <div className="font-mono">{searchedISBN}</div>
           </div>
@@ -178,7 +179,7 @@ function AddBookForm({ book, searchedISBN, onBack, onClose, onAdded }: Props) {
 
         {visibleISBNs.length > 0 && (
           <div
-            className="mt-3 text-[11px] leading-5 text-slate-500 dark:text-zinc-500"
+            className="mt-3 text-[11px] leading-5 text-fg-muted"
             title={t('addToLibrary.book.identifiersHint')}
           >
             <div className="font-medium">{t('addToLibrary.book.isbns')}</div>
@@ -243,8 +244,8 @@ function AddBookForm({ book, searchedISBN, onBack, onClose, onAdded }: Props) {
 
       <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end gap-2">
         <button type="button" onClick={onBack} disabled={adding} className="mr-auto px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{t('addToLibrary.backToResults')}</button>
-        <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">{t('common.cancel')}</button>
-        <button type="button" onClick={addBook} disabled={adding} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium text-white">{adding ? t('addToLibrary.adding') : t('addToLibrary.book.confirmAdd')}</button>
+        <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white">{t('common.cancel')}</button>
+        <button type="button" onClick={addBook} disabled={adding} className={`px-4 py-2 ${primaryFill} disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium`}>{adding ? t('addToLibrary.adding') : t('addToLibrary.book.confirmAdd')}</button>
       </div>
     </>
   )

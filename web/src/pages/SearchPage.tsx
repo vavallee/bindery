@@ -5,6 +5,7 @@ import { api, isNoDownloadClientError, SearchResult } from '../api/client'
 import { formatBytes } from '../util/format'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { grabWithForceConfirm } from '../util/forceGrab'
+import { primaryFill } from '../components/buttons'
 
 export default function SearchPage() {
   const { t } = useTranslation()
@@ -94,7 +95,7 @@ export default function SearchPage() {
         <button
           type="submit"
           disabled={searching || !query.trim()}
-          className="shrink-0 whitespace-nowrap px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-sm font-medium"
+          className={`shrink-0 whitespace-nowrap px-4 py-2 ${primaryFill} disabled:opacity-50 rounded text-sm font-medium`}
         >
           {searching ? t('search.searching') : t('search.submit')}
         </button>
@@ -111,7 +112,7 @@ export default function SearchPage() {
           <p className="mb-2">{t('search.noClient.body')}</p>
           <Link
             to="/settings?tab=clients"
-            className="inline-block px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-sm font-medium transition-colors"
+            className={`inline-block px-3 py-1.5 ${primaryFill} rounded-md text-sm font-medium transition-colors`}
           >
             {t('search.noClient.action')}
           </Link>
@@ -119,14 +120,14 @@ export default function SearchPage() {
       )}
 
       {results !== null && results.length === 0 && (
-        <div className="text-center py-10 text-sm text-slate-500 dark:text-zinc-500 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+        <div className="text-center py-10 text-sm text-fg-muted border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
           {t('search.noResults')}
         </div>
       )}
 
       {results !== null && results.length > 0 && (
         <div>
-          <p className="text-xs text-slate-500 dark:text-zinc-500 mb-2">{t('search.resultCount', { count: results.length })}</p>
+          <p className="text-xs text-fg-muted mb-2">{t('search.resultCount', { count: results.length })}</p>
           <div className="space-y-1">
             {results.map(r => (
               <div
@@ -135,20 +136,20 @@ export default function SearchPage() {
               >
                 <div className="min-w-0 mr-3">
                   <span className="truncate block text-slate-800 dark:text-zinc-200">{r.title}</span>
-                  <span className="text-slate-500 dark:text-zinc-500 truncate block">
+                  <span className="text-fg-muted truncate block">
                     {r.indexerName}{r.size ? ` · ${formatBytes(r.size)}` : ''}{r.grabs ? ` · ${r.grabs} grabs` : ''}
                     {r.language && <span className="ml-2 uppercase">{r.language}</span>}
                   </span>
                 </div>
                 {grabbed.has(r.guid) ? (
-                  <span className="px-3 py-2 text-emerald-600 dark:text-emerald-400 text-[11px] font-medium flex-shrink-0">
+                  <span className="px-3 py-2 text-accent-text text-[11px] font-medium flex-shrink-0">
                     {t('search.grabbed')}
                   </span>
                 ) : (
                   <button
                     onClick={() => grab(r)}
                     disabled={grabbing !== null}
-                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0"
+                    className={`px-3 py-2 ${primaryFill} disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0`}
                   >
                     {grabbing === r.guid ? t('search.grabbing') : t('search.grab')}
                   </button>

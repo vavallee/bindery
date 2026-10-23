@@ -85,6 +85,40 @@ func TestArchiveAwaitingExtraction(t *testing.T) {
 	}
 }
 
+// A notes file beside the volumes is not the extracted book, so the folder
+// still waits for an unpacker (#3232). An ebook of a plausible size does end
+// the wait, and so does a small audio track, since only ebook formats are
+// judged by size.
+func TestArchiveAwaitingExtraction_IgnoresTinyEbookFiles(t *testing.T) {
+	small := []byte("visit www.example-site.com")
+	big := make([]byte, MinPlausibleEbookBytes)
+	for _, tc := range []struct {
+		name    string
+		file    string
+		content []byte
+		waits   bool
+	}{
+		{"tiny txt notes file", "www.example-site.com.txt", small, true},
+		{"tiny extracted epub", "Fjellvinden.epub", small, true},
+		{"epub at the size floor", "Fjellvinden.epub", big, false},
+		{"tiny audio track", "01 Spor 1.mp3", small, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			folder, _ := rarRelease(t)
+			if err := os.WriteFile(filepath.Join(folder, tc.file), tc.content, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got := archiveAwaitingExtraction(folder)
+			if tc.waits && filepath.Base(got) != "Fjellvinden.part1.rar" {
+				t.Errorf("got %q, want the first volume", got)
+			}
+			if !tc.waits && got != "" {
+				t.Errorf("got %q, want none", got)
+			}
+		})
+	}
+}
+
 // Counted as present, an archive-only folder spent a retry on every poll.
 func TestImportSourcePresent_WaitsForArchiveExtraction(t *testing.T) {
 	folder, _ := rarRelease(t)

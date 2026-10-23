@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { BINDERY_BASE, Recommendation } from '../api/client'
 import MoreMenu from './MoreMenu'
 import CoverImage from './CoverImage'
+import { primaryFill } from './buttons'
 
 interface RecommendationCardProps {
   rec: Recommendation
@@ -11,13 +12,17 @@ interface RecommendationCardProps {
 }
 
 export default function RecommendationCard({ rec, onDismiss, onAdd, onExcludeAuthor }: RecommendationCardProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
 
   const imageUrl = rec.imageUrl
     ? `${BINDERY_BASE}/api/v1/images?url=${encodeURIComponent(rec.imageUrl)}`
     : ''
 
   const stars = Math.round(rec.rating * 2) / 2
+  // The number carries the rating; the stars beside it are decoration. On the
+  // light card no amber is both still gold and 3:1 against the empty stars
+  // (#3084), so the stars no longer have to carry it alone.
+  const rating = rec.rating.toLocaleString(i18n?.resolvedLanguage, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 
   return (
     <div className="bg-slate-100 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg overflow-hidden flex flex-col">
@@ -39,16 +44,16 @@ export default function RecommendationCard({ rec, onDismiss, onAdd, onExcludeAut
       <div className="p-3 flex flex-col flex-1">
         {/* Title and author */}
         <h4 className="font-medium text-sm leading-snug line-clamp-2" title={rec.title}>{rec.title}</h4>
-        <p className="text-xs text-slate-500 dark:text-zinc-500 truncate mt-0.5">{rec.authorName}</p>
+        <p className="text-xs text-fg-muted truncate mt-0.5">{rec.authorName}</p>
 
         {/* Star rating */}
         {rec.rating > 0 && (
           <div className="flex items-center gap-1 mt-1.5">
-            <div className="flex">
+            <div className="flex" aria-hidden="true">
               {[1, 2, 3, 4, 5].map(i => (
                 <svg
                   key={i}
-                  className={`w-3 h-3 ${i <= stars ? 'text-amber-400' : 'text-slate-300 dark:text-zinc-700'}`}
+                  className={`w-3 h-3 ${i <= stars ? 'text-amber-500 dark:text-amber-400' : 'text-slate-300 dark:text-zinc-700'}`}
                   fill="currentColor"
                   viewBox="0 0 20 20"
                 >
@@ -56,8 +61,12 @@ export default function RecommendationCard({ rec, onDismiss, onAdd, onExcludeAut
                 </svg>
               ))}
             </div>
+            <span className="text-[10px] text-fg-muted">
+              <span aria-hidden="true">{rating}</span>
+              <span className="sr-only">{t('discover.ratingLabel', 'Rated {{rating}} out of 5', { rating })}</span>
+            </span>
             {rec.ratingsCount > 0 && (
-              <span className="text-[10px] text-slate-400 dark:text-zinc-600">({rec.ratingsCount})</span>
+              <span className="text-[10px] text-fg-muted">({rec.ratingsCount})</span>
             )}
           </div>
         )}
@@ -66,7 +75,7 @@ export default function RecommendationCard({ rec, onDismiss, onAdd, onExcludeAut
         {rec.genres.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1.5">
             {rec.genres.slice(0, 2).map(genre => (
-              <span key={genre} className="px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 rounded text-[10px] text-slate-600 dark:text-zinc-400 truncate max-w-[90px]">
+              <span key={genre} className="px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 rounded text-[10px] text-fg-muted truncate max-w-[90px]">
                 {genre}
               </span>
             ))}
@@ -80,13 +89,13 @@ export default function RecommendationCard({ rec, onDismiss, onAdd, onExcludeAut
         <div className="flex items-center gap-1.5 mt-3">
           <button
             onClick={() => onAdd(rec.id)}
-            className="flex-1 px-2 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-medium transition-colors"
+            className={`flex-1 px-2 py-1.5 ${primaryFill} rounded text-xs font-medium transition-colors`}
           >
             {t('discover.addToWanted')}
           </button>
           <button
             onClick={() => onDismiss(rec.id)}
-            className="px-2 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs text-slate-600 dark:text-zinc-400 transition-colors"
+            className="px-2 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs text-fg-muted transition-colors"
             aria-label={t('discover.dismiss')}
             title={t('discover.dismiss')}
           >
@@ -95,7 +104,7 @@ export default function RecommendationCard({ rec, onDismiss, onAdd, onExcludeAut
           <MoreMenu
             label={t('common.moreActions', 'More')}
             ariaLabel={t('discover.moreActionsFor', 'More actions for {{title}}', { title: rec.title })}
-            buttonClassName="px-1.5 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs text-slate-600 dark:text-zinc-400 transition-colors"
+            buttonClassName="px-1.5 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs text-fg-muted transition-colors"
             items={[
               {
                 label: t('discover.dontSuggestAuthor', { author: rec.authorName }),

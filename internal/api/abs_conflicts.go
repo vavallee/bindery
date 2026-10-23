@@ -185,7 +185,9 @@ func (h *ABSConflictHandler) applyConflictChoice(r *http.Request, conflict *mode
 		if err := abs.ApplyAuthorConflictValue(author, conflict.FieldName, value); err != nil {
 			return err
 		}
-		author.LastMetadataRefreshAt = &now
+		// No freshness stamp here: choosing a value fetches nothing from a
+		// provider, and a stamp would make the staggered profile refresh
+		// skip this author for a day (#2595).
 		return h.authors.Update(r.Context(), author)
 	case "book":
 		book, err := h.books.GetByID(r.Context(), conflict.LocalID)

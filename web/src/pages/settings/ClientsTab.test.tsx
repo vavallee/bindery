@@ -72,6 +72,16 @@ beforeEach(() => {
   vi.mocked(api.testDownloadClientConfig).mockResolvedValue({ message: 'Connection verified' })
 })
 
+// #3240: the edit form's labels name their fields.
+describe('download client edit form labels', () => {
+  it('names the fields by their labels', () => {
+    renderTab([makeClient()])
+    openEditForm()
+    expect(screen.getByLabelText('Name').tagName).toBe('INPUT')
+    expect(screen.getByLabelText('Client Type').tagName).toBe('SELECT')
+  })
+})
+
 describe('download client edit form credentials', () => {
   it('never seeds the credential field from the client', () => {
     renderTab([makeClient({ apiKeyConfigured: true })])

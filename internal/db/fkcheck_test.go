@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -383,5 +384,105 @@ func TestMigrate072SurvivesUnrelatedOrphans(t *testing.T) {
 	}
 	if err := migrate(database); err != nil {
 		t.Fatalf("migration 072 aborted by unrelated orphan drift (#1972): %v", err)
+	}
+}
+
+// TestForeignKeyDriftReport pins the per relationship grouping the Settings
+// drift check reports (#3356): child AND parent table, the declared ON DELETE
+// action, and counts only.
+func TestForeignKeyDriftReport(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+
+	got, err := ForeignKeyDriftReport(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Fatalf("clean database: got %#v, want an empty non nil slice", got)
+	}
+
+	// Orphans in three relationships: books -> authors (book 2), book_files ->
+	// books (file 1), downloads -> books (download 1).
+	seedOrphanRows(t, database)
+	// A second book_files orphan so a count above one is exercised.
+	for _, s := range []string{
+		`PRAGMA foreign_keys = OFF`,
+		`INSERT INTO book_files (id, book_id, format, path) VALUES (9, 77, 'ebook', '/l/9.epub')`,
+		`PRAGMA foreign_keys = ON`,
+	} {
+		if _, err := database.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err = ForeignKeyDriftReport(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type key struct{ child, parent string }
+	byRel := map[key]ForeignKeyDrift{}
+	for _, d := range got {
+		byRel[key{d.ChildTable, d.ParentTable}] = d
+	}
+	for k, want := range map[key]int{
+		{"books", "authors"}:    1,
+		{"book_files", "books"}: 2,
+		{"downloads", "books"}:  1,
+	} {
+		d, ok := byRel[k]
+		if !ok {
+			t.Fatalf("missing relationship %v in %#v", k, got)
+		}
+		if d.Violations != want {
+			t.Errorf("%v violations = %d, want %d", k, d.Violations, want)
+		}
+		if d.OnDelete == "" {
+			t.Errorf("%v has no declared ON DELETE action", k)
+		}
+	}
+	if byRel[key{"book_files", "books"}].OnDelete != "CASCADE" {
+		t.Errorf("book_files -> books on delete = %q, want CASCADE", byRel[key{"book_files", "books"}].OnDelete)
+	}
+	if len(got) != 3 {
+		t.Errorf("got %d relationships, want 3: %#v", len(got), got)
+	}
+
+	// Counts only: the report type must not grow a row id or row contents.
+	typ := reflect.TypeOf(ForeignKeyDrift{})
+	for i := 0; i < typ.NumField(); i++ {
+		switch typ.Field(i).Name {
+		case "ChildTable", "ParentTable", "OnDelete", "Violations":
+		default:
+			t.Errorf("ForeignKeyDrift has unexpected field %q: the report is counts only", typ.Field(i).Name)
+		}
+	}
+
+	// Read only: the scan left every orphan where it was.
+	var n int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM book_files`).Scan(&n); err != nil || n != 3 {
+		t.Errorf("book_files rows = %d (err %v), want 3 untouched", n, err)
+	}
+}
+
+// The scan honours its context instead of running to completion.
+func TestForeignKeyDriftReportCancelled(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := ForeignKeyDriftReport(ctx, database); err == nil {
+		t.Fatal("cancelled context did not stop the scan")
+	}
+	// And the connection is released: a follow up query works.
+	if _, err := ForeignKeyDriftReport(context.Background(), database); err != nil {
+		t.Fatalf("connection not released after cancel: %v", err)
 	}
 }

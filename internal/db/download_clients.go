@@ -319,9 +319,22 @@ func (r *DownloadClientRepo) Update(ctx context.Context, c *models.DownloadClien
 	return err
 }
 
+// Delete removes a client. It is refused with a *ClientPinnedError while any
+// indexer is pinned to the client (#3080): quietly unpinning those indexers
+// would send their grabs to the default client, which is the fallback the pin
+// exists to prevent. The foreign key on indexers.download_client_id is the
+// backstop for a pin written between the check and the delete.
 func (r *DownloadClientRepo) Delete(ctx context.Context, id int64) error {
-	_, err := r.db.ExecContext(ctx, "DELETE FROM download_clients WHERE id=?", id)
-	return err
+	if err := r.pinnedError(ctx, id); err != nil {
+		return err
+	}
+	if _, err := r.db.ExecContext(ctx, "DELETE FROM download_clients WHERE id=?", id); err != nil {
+		if pinned := r.pinnedError(ctx, id); pinned != nil {
+			return pinned
+		}
+		return err
+	}
+	return nil
 }
 
 // PickClientForMediaType selects the best client from a list for the given

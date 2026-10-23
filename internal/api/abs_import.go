@@ -29,6 +29,12 @@ type ABSImportHandler struct {
 
 type absImportStartRequest struct {
 	DryRun *bool `json:"dryRun"`
+	// LibraryIDs narrows the run to a subset of the configured libraries.
+	// Omitted or empty means every configured library (#2173).
+	LibraryIDs []string `json:"libraryIds"`
+	// Full re-runs the Hardcover series match for every item, ignoring
+	// recorded outcomes (#2173).
+	Full bool `json:"full"`
 }
 
 func NewABSImportHandler(importer absImporterAPI, loadCfg func(context.Context) ABSStoredConfig) *ABSImportHandler {
@@ -57,6 +63,37 @@ func (h *ABSImportHandler) Start(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DryRun != nil {
 		runCfg.DryRun = *req.DryRun
+	}
+	runCfg.Full = req.Full
+	if len(req.LibraryIDs) > 0 {
+		configured := normalizeABSLibraryIDs(cfg.LibraryID, cfg.LibraryIDs)
+		wanted := normalizeABSLibraryIDs("", req.LibraryIDs)
+		known := make(map[string]struct{}, len(configured))
+		for _, id := range configured {
+			known[id] = struct{}{}
+		}
+		if len(wanted) == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "libraryIds has no usable ids"})
+			return
+		}
+		for _, id := range wanted {
+			if _, ok := known[id]; !ok {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown library id: " + id})
+				return
+			}
+		}
+		asked := make(map[string]struct{}, len(wanted))
+		for _, id := range wanted {
+			asked[id] = struct{}{}
+		}
+		subset := make([]string, 0, len(wanted))
+		for _, id := range configured {
+			if _, ok := asked[id]; ok {
+				subset = append(subset, id)
+			}
+		}
+		runCfg.LibraryID = subset[0]
+		runCfg.LibraryIDs = subset
 	}
 	if err := runCfg.Validate(); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})

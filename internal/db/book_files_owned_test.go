@@ -238,3 +238,71 @@ func TestBookFileRepo_PathOwnedVariantsOnAnOrphanRow(t *testing.T) {
 		}
 	}
 }
+
+// TestBookFileRepo_PathUnderOtherBookDir (#3336): a folder row covers every
+// file below it at any depth, not a sibling that only shares its name prefix, a
+// row of the asking book. A folder left by a deleted book still covers: refusing
+// to unlink is the safe answer when ownership is unclear.
+func TestBookFileRepo_PathUnderOtherBookDir(t *testing.T) {
+	database, author, gone := openTestDB(t)
+	ctx := context.Background()
+	files := NewBookFileRepo(database)
+	box := secondBook(t, database, author.ID, "Box")
+	child := secondBook(t, database, author.ID, "Child")
+	if err := files.Add(ctx, box.ID, models.MediaTypeAudiobook, "/lib/A/Box"); err != nil {
+		t.Fatal(err)
+	}
+	if err := files.Add(ctx, gone.ID, models.MediaTypeAudiobook, "/lib/A/Gone"); err != nil {
+		t.Fatal(err)
+	}
+	orphanBookRows(t, database, gone.ID)
+
+	for _, c := range []struct {
+		name    string
+		path    string
+		exclude int64
+		want    bool
+	}{
+		{"direct child", "/lib/A/Box/01.mp3", child.ID, true},
+		{"deep descendant", "/lib/A/Box/Vol 2/Disc 1/01.mp3", child.ID, true},
+		{"unclean path", "/lib/A/Box/Vol 2/../Vol 3/01.mp3", child.ID, true},
+		{"the folder's own book", "/lib/A/Box/Vol 2/01.mp3", box.ID, false},
+		{"name prefix sibling", "/lib/A/Box 2/01.mp3", child.ID, false},
+		{"the folder row itself is not its own ancestor", "/lib/A/Box", child.ID, false},
+		{"folder left by a deleted book still covers", "/lib/A/Gone/01.mp3", child.ID, true},
+		{"untracked", "/lib/B/01.mp3", child.ID, false},
+	} {
+		got, err := files.PathUnderOtherBookDir(ctx, c.path, c.exclude)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestBookFileRepo_PathUnderOtherBookDir_StoredTrailingSlash: Track stores
+// a path as given, so a folder row may carry a trailing separator. The guard
+// must see it from both sides (#3336).
+func TestBookFileRepo_PathUnderOtherBookDir_StoredTrailingSlash(t *testing.T) {
+	database, author, _ := openTestDB(t)
+	ctx := context.Background()
+	files := NewBookFileRepo(database)
+	outer := secondBook(t, database, author.ID, "Outer")
+	inner := secondBook(t, database, author.ID, "Inner")
+	if err := files.Add(ctx, outer.ID, models.MediaTypeAudiobook, "/lib/F/"); err != nil {
+		t.Fatal(err)
+	}
+	if err := files.Add(ctx, inner.ID, models.MediaTypeAudiobook, "/lib/F/sub/"); err != nil {
+		t.Fatal(err)
+	}
+	// The outer folder is stored with a slash: the inner book is under it.
+	if got, err := files.PathUnderOtherBookDir(ctx, "/lib/F/sub/b1.mp3", inner.ID); err != nil || !got {
+		t.Errorf("outer stored as F/: got %v, %v, want true", got, err)
+	}
+	// The inner folder is stored with a slash: a file in it is under the inner book.
+	if got, err := files.PathUnderOtherBookDir(ctx, "/lib/F/sub/b1.mp3", outer.ID); err != nil || !got {
+		t.Errorf("inner stored as F/sub/: got %v, %v, want true", got, err)
+	}
+}

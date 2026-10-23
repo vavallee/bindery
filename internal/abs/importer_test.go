@@ -48,7 +48,7 @@ func newABSImporterFixture(t *testing.T) (*Importer, *db.AuthorRepo, *db.BookRep
 		provenanceRepo,
 		reviewRepo,
 		conflictRepo,
-	)
+	).WithSeriesMatchState(db.NewABSSeriesMatchRepo(database))
 	return importer, authorRepo, bookRepo, seriesRepo, editionRepo, provenanceRepo, runRepo, runEntityRepo, reviewRepo, conflictRepo
 }
 

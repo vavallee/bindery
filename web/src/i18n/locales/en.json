@@ -58,7 +58,8 @@
     "dismiss": "Dismiss",
     "showDetails": "Show details",
     "hideDetails": "Hide details",
-    "apply": "Apply"
+    "apply": "Apply",
+    "unknownError": "Unknown error"
   },
   "monitorMode": {
     "all": "All books",
@@ -436,7 +437,11 @@
     "moreActionsFor": "More actions for {{name}}",
     "refreshMetadata": "Refresh metadata",
     "bulkApplyMonitoringToExisting": "Also apply to their existing books",
-    "bulkApplyMonitoringToExistingHint": "Rewrites every book of the selected authors to match. Leave it off to change the authors only."
+    "bulkApplyMonitoringToExistingHint": "Rewrites every book of the selected authors to match. Leave it off to change the authors only.",
+    "bulkSetMediaTypeConfirm": "Set the media type for every book of {{count}} selected authors to {{mediaType}}? This rewrites existing book rows and may re-evaluate wanted/missing status.",
+    "bulkSetEbook": "Set ebook",
+    "bulkSetAudiobook": "Set audiobook",
+    "bulkSetBoth": "Set both"
   },
   "authorDetail": {
     "nav": {
@@ -550,7 +555,24 @@
     "deleteConfirm": "Delete {{author}} and all {{count}} book(s)?",
     "deleteWithFilesConfirm": "Delete {{author}}, all {{count}} book(s), AND {{withFiles}} file(s) or folder(s) on disk?\n\nThis cannot be undone.",
     "deleteTitle": "Delete author",
-    "deleteFilesAcknowledge": "I understand the files on disk will be deleted."
+    "deleteFilesAcknowledge": "I understand the files on disk will be deleted.",
+    "credit": {
+      "photo": "Photo: {{credit}}, {{license}}, via {{source}}",
+      "photoNoCredit": "Photo: {{license}}, via {{source}}",
+      "bio": "Bio from {{source}}, {{license}}",
+      "bioNoLicense": "Bio from {{source}}"
+    },
+    "saveConflict": "This author changed while you were saving. Reload the page and try again.",
+    "photo": {
+      "upload": "Upload photo",
+      "change": "Change photo",
+      "uploading": "Uploading…",
+      "uploadFailed": "Could not upload the photo",
+      "remove": "Remove photo",
+      "removing": "Removing…",
+      "removeFailed": "Could not remove the photo"
+    },
+    "photoNotUploaded": "Only a photo you uploaded can be removed. Reload the page to see the current photo."
   },
   "catalogueReconciliation": {
     "title": "Reconcile catalogue",
@@ -723,6 +745,15 @@
   },
   "history": {
     "title": "History",
+    "blocklistFailed": "Could not blocklist this release.",
+    "contentCheckEbook": "The file looks like another book",
+    "contentCheckAudiobook": "The files include other books",
+    "contentCheckEbookEntry": "\"{{title}}\" by {{author}}",
+    "contentCheckEbookTitleOnly": "\"{{title}}\"",
+    "contentCheckEbookAuthorOnly": "by {{author}}",
+    "contentCheckAudiobookEntry": "{{title}} ({{count}})",
+    "contentCheckRetitled": "Every file is titled \"{{title}}\" ({{count}} files), so it was imported as a retitled edition",
+    "contentCheckTruncated": "The content check was cut short and skipped",
     "allEventTypes": "All event types",
     "events": {
       "grabbed": "Grabbed",
@@ -798,7 +829,19 @@
       "importExternalHint": "Handed off to the external import tool. Bindery is waiting for the external importer to place the file, so this row stays here until it does.",
       "importHeld": "Held for Pair",
       "importHeldHint": "Held until the paired format arrives. This book wants both an ebook and an audiobook, and both are imported together."
-    }
+    },
+    "matchImporting": "Matched — importing now; the status will update shortly.",
+    "matchQueued": "Matched — the import will run on the next download-client check.",
+    "matchNoFiles": "Matched to the book, but the downloaded files could not be located to import automatically. Re-import them with Manual file import, or re-download.",
+    "matchedTo": "Matched to {{title}} — use Retry import to import it.",
+    "matchBookHint": "Attach this download to an existing book and import it",
+    "matchBookChange": "Match to a different book",
+    "matchBook": "Match to book",
+    "matchBookPlaceholder": "Search your library",
+    "matchBookSearch": "Search for a book",
+    "matchBookSearching": "Searching…",
+    "matchBookSearchBtn": "Search",
+    "matchBookCancel": "Cancel"
   },
   "series": {
     "searchPlaceholder": "Search series…",
@@ -816,11 +859,33 @@
       "unlinked": "Not linked to Hardcover",
       "shortlisted": "Shortlisted"
     },
+    "sizeLabel": "Series size",
+    "size": {
+      "any": "Any size",
+      "single": "1 book",
+      "multi": "2+ books"
+    },
     "filterMissingHint": "Series showing a missing badge. With Hardcover linking on, this counts catalogue books you do not have yet, exactly as the badge does.",
     "title": "Series",
     "count_one": "{{count}} series",
     "count_other": "{{count}} series",
     "addSeries": "Add Series",
+    "addFromHardcover": {
+      "searchLabel": "Search Hardcover for a series",
+      "searchPlaceholder": "Search Hardcover for a series",
+      "search": "Search",
+      "searching": "Searching...",
+      "noResults": "No Hardcover series found.",
+      "searchFailed": "Hardcover search failed",
+      "bookCount_one": "{{count}} book",
+      "bookCount_other": "{{count}} books",
+      "viewOnHardcover": "View on Hardcover ↗",
+      "add": "Add",
+      "adding": "Adding...",
+      "addResult": "Add {{title}}",
+      "addFailed": "Could not add the series",
+      "alreadyAdded": "Already in your library"
+    },
     "renameSeries": "Rename Series",
     "rename": "Rename",
     "addBook": "Add Book",
@@ -983,6 +1048,16 @@
       "advanced": "Advanced"
     },
     "sectionLabel": "Settings section",
+    "search": {
+      "label": "Find a settings tab or section",
+      "placeholder": "Try telemetry, naming or a setting key",
+      "results": "Settings search results",
+      "none": "No matching tab or section",
+      "count_one": "{{count}} result",
+      "count_other": "{{count}} results",
+      "more": "Showing {{shown}} of {{total}}. Keep typing to narrow it down.",
+      "moreAnnounce": "{{total}} results, showing the first {{shown}}. Keep typing to narrow it down."
+    },
     "groups": {
       "sources": "Sources",
       "library": "Library",
@@ -1175,8 +1250,16 @@
         "freeleechOnlyHint": "Automatic grabs from this indexer are limited to freeleech releases; anything else is held in the Pending queue for manual approval. Interactive search still shows everything. For private trackers where ratio matters — leave off for public trackers and Usenet.",
         "dailyQueryLimit": "Daily query limit",
         "dailyQueryLimitPlaceholder": "e.g. 1000",
-        "dailyQueryLimitHint": "Stop searching this indexer once it has been sent this many requests in the last 24 hours. Leave blank for no limit. Requests are counted in hourly blocks, so capacity comes back an hour at a time rather than all at once, and a block is only released after it is a full hour outside the window. The unit is requests, not books: one book costs between one and eight depending on how far the search has to fall back. Use it on trackers with a daily API allowance, so one scheduled sweep over a large library cannot spend the whole thing. The Test button is exempt and never counts."
+        "dailyQueryLimitHint": "Stop searching this indexer once it has been sent this many requests in the last 24 hours. Leave blank for no limit. Requests are counted in hourly blocks, so capacity comes back an hour at a time rather than all at once, and a block is only released after it is a full hour outside the window. The unit is requests, not books: one book costs between one and eight depending on how far the search has to fall back. Use it on trackers with a daily API allowance, so one scheduled sweep over a large library cannot spend the whole thing. The Test button is exempt and never counts.",
+        "downloadClient": "Download client",
+        "downloadClientDefault": "Default (automatic routing)",
+        "downloadClientDisabledOption": "{{name}} (disabled)",
+        "downloadClientWrongProtocolOption": "{{name}} (wrong protocol)",
+        "downloadClientHint": "Send every grab from this indexer to one download client, whatever its priority or category routing says. Leave on Default to let Bindery choose. If the chosen client is disabled, missing or unreachable the grab fails with an error instead of going to another client, so private tracker traffic never reaches your public client. Only enabled clients of this indexer's protocol are listed."
       },
+      "pinnedClientDisabled": "Pinned to download client {{name}}, which is disabled. Grabs from this indexer will fail, and will not go to another client, until you enable it or choose a different one.",
+      "pinnedClientWrongProtocol": "Pinned to download client {{name}}, which is the wrong protocol for this indexer. Grabs from this indexer will fail, and will not go to another client, until you choose a matching client.",
+      "pinnedClientMissing": "Pinned to a download client that no longer exists. Grabs from this indexer will fail until you choose a different one.",
       "quotaUsage": "{{used}} of {{limit}} queries in the last 24 hours",
       "quotaReached": "Daily query limit of {{limit}} reached. This indexer is being skipped until the oldest hour of queries falls out of the window.",
       "healthAuthFail": "This indexer rejected the last search and will keep rejecting until someone fixes it: {{error}}",
@@ -1229,6 +1312,25 @@
       "credentialKeepHint": "Bindery no longer sends a saved password or API key back to the browser. Leave this blank to keep the one already stored.",
       "credentialUnsetHint": "No credential is stored for this client yet.",
       "unknownError": "Unknown error",
+      "remapAssist": {
+        "heading": "Suggest a path remap",
+        "intro": "Bindery can't see the folder the client writes to. If the client and Bindery share the same storage under different paths, pick the folder where Bindery sees it.",
+        "clientPath": "The client writes to",
+        "chooseLabel": "Bindery sees that storage at",
+        "source": {
+          "ebookDownloadDir": "ebook download folder",
+          "audiobookDownloadDir": "audiobook download folder",
+          "library": "library folder"
+        },
+        "note": {
+          "samePath": "Bindery uses this same path, so a remap would change nothing. The client's storage is not mounted into the Bindery container at that path. Mount it there, for example as a shared volume, instead of adding a remap.",
+          "unsupportedChars": "This path contains a comma or a colon, which the remap syntax cannot hold, so no rule can be suggested. Write the path remap by hand in the client's edit form, or rename the folder."
+        },
+        "previewLabel": "Preview",
+        "apply": "Apply this remap",
+        "applying": "Applying...",
+        "failed": "Could not save the remap: {{error}}"
+      },
       "diagnose": {
         "button": "Diagnose",
         "running": "Diagnosing…",
@@ -1434,6 +1536,13 @@
       "audiobookImportMode": "Audiobook import mode",
       "audiobookImportModeHint": "Leave on Same as ebooks to handle every download with the Import Mode above. Pick another mode to treat audiobooks differently, for example External for ebooks so Calibre-Web-Automated ingests them, and Copy or Hardlink for audiobooks so they land in the audiobook folder where Audiobookshelf finds them.",
       "audiobookImportModeSame": "Same as ebooks",
+      "ebookContentCheck": "Check ebook contents",
+      "ebookContentCheckHint": "When an ebook download finishes, compare the EPUB's own title and author with the book it was grabbed for. Warn, the default, imports it and notes the mismatch on the History entry and in webhooks. Block refuses the download, blocklists the release and keeps the book Wanted. Off skips the check. Match to book and manual import always skip it.",
+      "audiobookContentCheck": "Check audiobook contents",
+      "audiobookContentCheckHint": "When an audiobook download finishes, read the audio tags of its files and compare them with the book it was grabbed for. Warn, the default, imports it and lists the other books found on the History entry and in webhooks. Block refuses the download, blocklists the release and keeps the book Wanted. Off skips the check and reads no tags. Match to book and manual import always skip it.",
+      "contentCheckOff": "Off",
+      "contentCheckWarn": "Warn (import and note it)",
+      "contentCheckBlock": "Block (refuse the download)",
       "audiobookDropFolder": "Audiobook drop folder",
       "audiobookDropFolderHint": "Optional. Where External mode hands off audiobooks, for example a folder Audiobookshelf or Storyteller watches. Leave empty to use the ebook Drop folder, or to hand off in place when that is empty too. Layout and Placement below apply to both formats.",
       "dropLayout": "Layout",
@@ -1483,6 +1592,51 @@
       "storageHealthMissing": "Missing",
       "storageHealthReadOnly": "Not writable",
       "storageHealthChecking": "Checking…",
+      "dbCheck": "Database check",
+      "dbCheckHint": "Looks for rows that point at a parent that no longer exists, left over from older versions. It reads the whole database, so it only runs when you press the button, and it changes nothing.",
+      "dbCheckButton": "Check database",
+      "dbCheckRunning": "Checking…",
+      "dbCheckClean": "No drift found. Every row points at a parent that exists.",
+      "dbCheckFound_one": "{{count}} row points at a parent that no longer exists.",
+      "dbCheckFound_other": "{{count}} rows point at a parent that no longer exists.",
+      "dbCheckColRelationship": "Relationship (child to parent)",
+      "dbCheckColRows": "Rows with a missing parent",
+      "dbCheckColOnDelete": "When the parent was deleted, the schema says",
+      "dbCheckOnDeleteCascade": "Delete the row",
+      "dbCheckOnDeleteSetNull": "Clear the reference, keep the row",
+      "dbCheckOnDeleteOther": "No automatic action",
+      "dbCheckOnDeleteUnknown": "Unknown",
+      "dbCheckCheckedAt": "Checked {{time}}",
+      "dbCheckFailed": "The check failed: {{message}}",
+      "dbCheckFailedGeneric": "Could not run the check.",
+      "dbCheckRepairNote": "You can also do this from the command line, which works even when Bindery will not start: preview the affected rows with bindery db-check, then fix them with bindery db-repair and the yes flag. db-repair does not take a backup, so back up the database first.",
+      "dbCheckDocsLink": "How db-repair works",
+      "dbCleanupButton": "Preview cleanup",
+      "dbCleanupPreviewing": "Previewing…",
+      "dbCleanupPreviewTitle": "What a cleanup would do",
+      "dbCleanupColAction": "What happens",
+      "dbCleanupActionDelete": "Delete the rows",
+      "dbCleanupActionClear": "Clear the reference, keep the rows",
+      "dbCleanupActionKeep": "Leave alone",
+      "dbCleanupActionSkipped": "Cannot be repaired automatically, left as they are",
+      "dbCleanupPartial": "{{count}} of these cannot be repaired automatically and will be left as they are.",
+      "dbCleanupSummary": "Rows that would be deleted or have their reference cleared: {{fixable}}. Rows that would be left alone: {{unfixable}}.",
+      "dbCleanupCascadeNote": "Deleting a row also deletes whatever hangs off it, the same as if its parent had been deleted properly. The numbers above do not include those rows.",
+      "dbCleanupBackupNote": "Before anything changes, Bindery saves a backup of the database in its backups folder and tells you where it is. If the backup cannot be made, nothing is changed.",
+      "dbCleanupSlowNote": "On a very large database this can take several minutes. Keep this page open.",
+      "dbCleanupNothing": "Nothing here can be cleaned up automatically.",
+      "dbCleanupConfirm": "Back up and clean up",
+      "dbCleanupConfirming": "Cleaning up…",
+      "dbCleanupCancel": "Cancel",
+      "dbCleanupDone": "Cleanup finished. Deleted {{deleted}}, cleared {{cleared}}, left alone {{skipped}}.",
+      "dbCleanupBackupAt": "Backup saved at {{path}}",
+      "dbCleanupRemaining_one": "{{count}} row still points at a parent that does not exist.",
+      "dbCleanupRemaining_other": "{{count}} rows still point at a parent that does not exist.",
+      "dbCleanupRemainingNone": "A fresh check finds no drift.",
+      "dbCleanupNotVerified": "The cleanup ran, but the check afterwards could not finish. Run the check again.",
+      "dbCleanupFailed": "The cleanup failed: {{message}}",
+      "dbCleanupFailedGeneric": "Could not run the cleanup.",
+      "dbCleanupPreviewFailed": "The preview failed: {{message}}",
       "importModeHardlinkWarning": "⚠ Hardlink is selected, but this setup can't hardlink — imports will copy instead (slower and uses double the disk). Put the download folder and library on the same filesystem/volume, or switch to Auto.",
       "storageHardlinkOk": "Downloads and library share a filesystem — completed downloads are hardlinked into the library (instant, no extra disk).",
       "storageHardlinkWarning": "Downloads and library are on different filesystems — imports will copy files instead of hardlinking (slower and uses double the disk). Put both on the same volume to enable hardlinks.",
@@ -1563,7 +1717,51 @@
       "rotateSessionSecretConfirm": "Rotate the session signing secret? Existing logins keep working during a rotation window via the previous secret; a second rotation closes that window.",
       "rotateSessionSecretTitle": "Rotate session secret",
       "rotateSessionSecretAcknowledge": "I understand a second rotation will sign everyone out.",
-      "defaultMediaTypeHint": "Applied to new authors, and to books you add on their own, when no explicit choice is made. Existing rows are unaffected: change authors with the Authors page bulk action, and books from the Books page with Set ebook, Set audiobook or Set both, which also covers your wanted list once Books is filtered to Wanted."
+      "defaultMediaTypeHint": "Applied to new authors, and to books you add on their own, when no explicit choice is made. Existing rows are unaffected: change authors with the Authors page bulk action, and books from the Books page with Set ebook, Set audiobook or Set both, which also covers your wanted list once Books is filtered to Wanted.",
+      "authorWikidataLabel": "Author photos and bios from Wikidata",
+      "authorWikidataHint": "Fills an author's missing photo and bio from Wikimedia Commons and Wikipedia, found on Wikidata by the author's library authority ID (NORAF, GND, BnF or OpenLibrary), never by name. Lookups ride on the daily author refresh, and each photo and bio is credited on the author's page. While this is off, Wikimedia is sent no request.",
+      "enrichersHeading": "Enrichers",
+      "enrichersHint": "These providers fill in what the primary leaves empty. Untick one and Bindery stops using it as an enricher, which means fewer requests but less fill in: DNB also supplies covers through its cover service, and Hardcover also supplies curated genres, series and edition language evidence. Takes effect from the next lookup, with no restart.",
+      "enricherPrimaryNote": "This is the primary provider, so it cannot be turned off.",
+      "enricherOpenlibraryLabel": "OpenLibrary",
+      "enricherOpenlibraryHint": "Descriptions, covers and subjects.",
+      "enricherHardcoverLabel": "Hardcover",
+      "enricherHardcoverHint": "Ratings, curated genres and series. Idle until an API token is stored.",
+      "enricherGooglebooksLabel": "Google Books",
+      "enricherGooglebooksHint": "Descriptions and covers. Only used once a Google Books API key is stored.",
+      "enricherDnbLabel": "DNB (Deutsche Nationalbibliothek)",
+      "enricherDnbHint": "German language details and covers. Safe to turn off if you read no German.",
+      "audiobookSourcesHeading": "Audiobook sources",
+      "audibleLabel": "Audible catalogue",
+      "audibleHint": "Adds audiobooks to an author's catalogue. It uses an unpublished Amazon endpoint, not a documented API.",
+      "audnexLabel": "audnex",
+      "audnexHint": "Narrator, runtime and cover for audiobooks. A community proxy over the same Audible data.",
+      "sourcesSaveFailed": "Could not save that change, so it was put back. Try again.",
+      "enhancedHardcoverStatusEnabled": "Enabled",
+      "enhancedHardcoverStatusEnvDisabled": "Disabled by BINDERY_ENHANCED_HARDCOVER_API=false.",
+      "enhancedHardcoverStatusMissingToken": "Add a Hardcover API token to enable this feature.",
+      "enhancedHardcoverStatusAdminDisabled": "Turn this on to enable enhanced series features.",
+      "hardcoverApiToken": "Hardcover API Token",
+      "hardcoverTokenConfigured": "Token configured",
+      "hardcoverTokenNotConfigured": "No token configured",
+      "hardcoverApiTokenConfiguredPlaceholder": "Saved token is hidden. Enter a new token to rotate it.",
+      "hardcoverApiTokenPlaceholder": "Paste a Hardcover API token",
+      "hardcoverSaveToken": "Save Hardcover API token",
+      "hardcoverClearToken": "Clear Hardcover API token",
+      "hardcoverTestApi": "Test Hardcover API",
+      "hardcoverApiTokenLink": "Create or copy a Hardcover API token",
+      "hardcoverTestOk": "Hardcover API connected.",
+      "hardcoverTestFailed": "Hardcover API test failed.",
+      "enhancedHardcoverSeries": "Enhanced Hardcover series",
+      "enhancedHardcoverSeriesHint": "Use Hardcover-backed series matching, catalog diffs, and missing-book fill.",
+      "defaultMediaTypeLabel": "Default media type",
+      "strictMediaTypeLabel": "Restrict new books to this media type",
+      "strictMediaTypeHint": "Skip catalogue books available only in the other format, and narrow dual-format books to this one. Prevents monitoring books you can never grab. Governs catalogue population only: a book you add yourself is always created in the format you picked.",
+      "defaultMonitorModeLabel": "Default monitor mode",
+      "defaultMonitorModeHint": "Applied to newly added authors. Existing authors keep their current mode unless edited.",
+      "defaultMonitorLatestCountLabel": "Latest book count",
+      "audiobookFileTemplate": "Audiobook file naming (per track)",
+      "audiobookFileTemplateHint": "Leave empty to keep the download’s original file layout. Set a template to rename every audiobook track in playback order; it must include {Part}. A single-file audiobook is renamed too, as part 1, unless {Part} sits in a group with its own text, such as {Title}{ - Pt. Part:3}.{ext}, which is left out when there is only one file."
     },
     "import": {
       "csvHeading": "CSV of author names",
@@ -1574,6 +1772,9 @@
       "readarrDescription": "Upload readarr.db (typically under /config/readarr.db). Authors are resolved again against your primary metadata provider and its fallbacks. Indexers, download clients, and blocklist entries port directly. Run a library scan afterward to match existing book files.",
       "uploadReadarr": "Upload readarr.db",
       "importingReadarr": "Importing (may take minutes)…",
+      "catalogueFetching": "Fetching catalogues: {{done}} of {{total}}",
+      "catalogueFetched": "Catalogues fetched: {{done}} of {{total}}",
+      "catalogueHint": "This runs in the background at about 3 seconds per author, so 500 authors take around 25 minutes. You can leave this page.",
       "resultRequested": "requested",
       "resultAdded": "added",
       "resultSkipped": "skipped (already exist)",
@@ -1879,7 +2080,8 @@
       "coldStart": "Add more books to unlock personalized genre recommendations.",
       "goToSettings": "Go to book recommendations"
     },
-    "moreActionsFor": "More actions for {{title}}"
+    "moreActionsFor": "More actions for {{title}}",
+    "ratingLabel": "Rated {{rating}} out of 5"
   },
   "gettingStarted": {
     "title": "Getting started",
@@ -1905,7 +2107,14 @@
     "grab": "Grab a book",
     "import": "First book imported",
     "progress": "{{done}} of {{total}} steps done",
-    "next": "Next:"
+    "next": "Next:",
+    "blocked": {
+      "title": "Imports have a problem right now",
+      "storage": "A library or download folder is not available, so imports that use it will fail.",
+      "storageAction": "Check storage",
+      "indexer": "No indexer is enabled, so nothing can be searched.",
+      "downloadClient": "No download client is enabled, or every enabled one failed its last health check (unreachable, or its download folder is not readable), so finished downloads cannot be imported."
+    }
   },
   "protocolMismatch": {
     "torrent": "A Torznab indexer is enabled but no torrent download client (qBittorrent, Transmission, Deluge, rTorrent) is — its releases can be found but never downloaded.",
@@ -2080,6 +2289,10 @@
     "autoSearchFailed": "Automatic search failed",
     "noIndexers": "No indexers configured — add one in",
     "noResults": "No results on any indexer — expand Search details below to see why.",
+    "noResultsFiltered": "No releases matched this book, but {{count}} were filtered out. Open Filtered below to see why.",
+    "filteredHeading": "Filtered ({{count}})",
+    "filteredHint": "Bindery's filters dropped these. Grab one if you know it is the right release.",
+    "filteredCapped": "Showing {{shown}} of {{total}}.",
     "fileHeading": "File",
     "mediaTypeLabel": "Media type",
     "mediaTypeHint": "Change media type",
@@ -2219,7 +2432,8 @@
       "showLess": "Show less"
     },
     "renameFiles": {
-      "button": "Rename files"
+      "button": "Rename files",
+      "hint": "Move this book’s files to match the current naming template"
     },
     "series": {
       "heading": "Series",
@@ -2271,5 +2485,37 @@
     "back": "Back",
     "force": "Re-bind anyway",
     "submitting": "Re-binding…"
+  },
+  "mediaType": {
+    "ebook": "Ebook",
+    "audiobook": "Audiobook",
+    "both": "Both"
+  },
+  "editAuthorModal": {
+    "genreOverrideFail": "Genre apply failed",
+    "saveFail": "Failed to save",
+    "title": "Edit Author",
+    "qualityProfile": "Quality profile",
+    "metadataProfile": "Metadata profile",
+    "rootFolder": "Root folder",
+    "audiobookRootFolder": "Audiobook root folder",
+    "audiobookRootFolderDefault": "Use global audiobook folder",
+    "audiobookRootFolderHint": "Where this author's audiobooks are stored. Separate from the ebook root folder.",
+    "monitorMode": "Monitor mode",
+    "monitorNewItems": "Monitor newly discovered books",
+    "monitorNewItemsHint": "Applies to books a metadata refresh finds after the author was added. “Don’t add them” keeps a refresh to the books you already have, instead of pulling in the back-catalogue. An unmonitored author never takes new books either way.",
+    "monitoredSeries": "Monitored series",
+    "monitoredSeriesEmpty": "No series found for this author yet. Refresh the author to pull series data first.",
+    "seriesNoHardcoverLink": "(no Hardcover link)",
+    "seriesNoHardcoverWarning": "Some selected series have no Hardcover link. Only books Bindery already knows about will be monitored — missing entries will not be auto-filled.",
+    "monitorLatestCount": "Latest book count",
+    "applyMonitorModeToExisting": "Apply monitor mode to existing books",
+    "applyMonitorModeToExistingHint": "Otherwise this only affects books discovered in future refreshes.",
+    "genreOverride": "Genre override",
+    "genreOverrideHint": "Set the same genres on every book by this author and lock them so metadata refresh keeps your values. Comma-separated.",
+    "genreOverrideApply": "Apply to all books",
+    "genreOverrideDone": "Updated {{count}} book(s).",
+    "bio": "Bio",
+    "bioHint": "A bio you write here stays as you wrote it: no refresh replaces it. Clear it to let the metadata provider fill it again."
   }
 }

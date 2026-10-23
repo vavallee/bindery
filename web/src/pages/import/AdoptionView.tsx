@@ -104,7 +104,7 @@ export default function AdoptionView() {
           <AdoptionFacets ref={searchRef} filters={filters} facets={state.facets} summary={state.summary} onChange={list.setFilter} />
 
           {state.loadError && (
-            <p role="alert" className="mb-3 text-sm text-red-600 dark:text-red-400">{state.loadError}</p>
+            <p role="alert" className="mb-3 text-sm text-red-700 dark:text-red-400">{state.loadError}</p>
           )}
           {!state.loaded ? (
             <div className="py-10 text-center text-sm text-fg-muted">{t('common.loading', 'Loading…')}</div>

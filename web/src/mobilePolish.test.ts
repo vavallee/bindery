@@ -85,7 +85,7 @@ describe('small controls get a 44px hit area on touch screens', () => {
 
   it('the Blocklist and Delete buttons on the History cards', () => {
     const s = src('pages/HistoryPage.tsx')
-    expect(s).toMatch(/className="touch-target text-xs text-amber-400[^"]*"\s*>\s*\{t\('history\.blocklist'\)\}/)
+    expect(s).toMatch(/className="touch-target text-xs text-amber-700 dark:text-amber-400[^"]*"\s*>\s*\{t\('history\.blocklist'\)\}/)
     expect(s).toMatch(/className=\{`touch-target text-xs py-1 \$\{dangerLink\}`\}\s*>\s*\{t\('history\.delete'\)\}/)
   })
 

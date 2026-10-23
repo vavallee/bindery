@@ -225,20 +225,51 @@ func resolveWithMissingTail(p string) (string, bool) {
 // A nil receiver opts out (returns the cleaned path, true), mirroring Contains
 // and preserving behaviour for callers/tests that have not wired roots.
 func (r *LibraryRoots) ResolveContained(ctx context.Context, p string) (string, bool) {
+	resolved, res := r.CheckContained(ctx, p)
+	return resolved, res == ContainOK
+}
+
+// ContainResult says why CheckContained accepted or refused a path.
+type ContainResult int
+
+const (
+	// ContainOK: the path resolved inside a configured root.
+	ContainOK ContainResult = iota
+	// ContainOutside: the path is not under any root, or it resolves outside
+	// every root (a symlink or ".." out). This is the only refusal that means
+	// "outside the library".
+	ContainOutside
+	// ContainUnreadable: the path resolves inside a root but cannot be
+	// resolved (missing, renamed, unmounted, dangling link, permission
+	// denied), so containment could not be proven. It is refused exactly like
+	// ContainOutside; only the explanation differs.
+	ContainUnreadable
+)
+
+// CheckContained is ResolveContained with the reason for a refusal. The accept
+// decision is identical: ok if and only if ResolveContained would accept. The
+// extra detail only separates "outside the library" from "inside the library
+// on paper but unreadable", so callers can word the error truthfully.
+func (r *LibraryRoots) CheckContained(ctx context.Context, p string) (string, ContainResult) {
 	if r == nil {
-		return filepath.Clean(p), true
+		return filepath.Clean(p), ContainOK
 	}
 	p = strings.TrimSpace(p)
 	if p == "" || !filepath.IsAbs(p) {
-		return "", false
+		return "", ContainOutside
 	}
-	resolved, err := filepath.EvalSymlinks(filepath.Clean(p))
+	clean := filepath.Clean(p)
+	resolved, err := filepath.EvalSymlinks(clean)
 	if err != nil {
 		// Broken link, missing file, or permission denied: can't prove
 		// containment, so refuse. (Contains is lenient here for the delete
 		// path, where the input is a trusted DB row rather than a
 		// user-supplied path that might be a symlink out of the library.)
-		return "", false
+		// Whether it resolves inside a root decides only the wording.
+		if r.resolvesInRoot(ctx, clean) {
+			return "", ContainUnreadable
+		}
+		return "", ContainOutside
 	}
 	// Fail closed when no roots are configured: an admin-triggered file
 	// read/move outside any library is too dangerous to allow-all. (Contains
@@ -253,10 +284,85 @@ func (r *LibraryRoots) ResolveContained(ctx context.Context, p string) (string, 
 		// "scan everything under /books"), unlike the delete path where a root
 		// is never a deletable book. Allow root-equality here (#1373).
 		if containsUnderOrEqualRoot(resolved, realRoot) {
-			return resolved, true
+			return resolved, ContainOK
 		}
 	}
-	return "", false
+	return "", ContainOutside
+}
+
+// resolvesInRoot reports whether the cleaned absolute path p, once its deepest
+// existing ancestor is resolved through every symlink and the missing tail is
+// appended, lands under (or at) a configured root. It is used only to pick the
+// wording of a refusal and never to accept a path. It deliberately ignores how
+// p was typed: a path that runs through a link pointing outside every root
+// resolves outside, so it must be indistinguishable from any other outside
+// path, whether or not the file exists there.
+func (r *LibraryRoots) resolvesInRoot(ctx context.Context, p string) bool {
+	real, ok := r.resolveRootPrefix(ctx, p)
+	return ok && r.underAnyRoot(ctx, real)
+}
+
+// resolveRootPrefix resolves the deepest existing ancestor of p through
+// every symlink and appends the missing tail. It reports false when it cannot
+// decide: a name that exists but does not resolve (a dangling link, a link
+// loop) is not followed. Following one would mean joining its target onto a
+// directory and cleaning the result, and ".." in a target applies after the
+// kernel resolves the component before it, so string arithmetic would put the
+// file somewhere else. Such a path is refused as outside, the same answer
+// every other undecidable path gets.
+func (r *LibraryRoots) resolveRootPrefix(ctx context.Context, p string) (string, bool) {
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real, true
+	}
+	parent := filepath.Dir(p)
+	if parent == p {
+		return p, true
+	}
+	base := filepath.Base(p)
+	head, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		head, ok := r.resolveRootPrefix(ctx, parent)
+		if !ok {
+			return "", false
+		}
+		return filepath.Join(head, base), true
+	}
+	// The parent resolved, so look the name up among its entries. The listing
+	// uses the resolved parent and only compares names, so no raw path reaches a
+	// filesystem call. A name that is listed yet did not resolve is a dangling
+	// link or a loop. An unreadable parent lists nothing, so its children count
+	// as missing, as they would for any caller that cannot see them.
+	//
+	// Only a parent that resolves inside a configured root is listed. Anywhere
+	// else the answer is "outside" whatever the listing would say, so a
+	// directory outside the library is never read at all.
+	if !r.underAnyRoot(ctx, head) {
+		return filepath.Join(head, base), true
+	}
+	if entries, err := readDirForWording(head); err == nil {
+		for _, e := range entries {
+			if e.Name() == base {
+				return "", false
+			}
+		}
+	}
+	return filepath.Join(head, base), true
+}
+
+// readDirForWording is os.ReadDir behind a seam so a test can prove which
+// directories the wording check reads.
+var readDirForWording = os.ReadDir
+
+func (r *LibraryRoots) underAnyRoot(ctx context.Context, p string) bool {
+	for _, root := range r.resolveRoots(ctx) {
+		if containsUnderOrEqualRoot(p, root) {
+			return true
+		}
+		if rr, err := filepath.EvalSymlinks(root); err == nil && containsUnderOrEqualRoot(p, rr) {
+			return true
+		}
+	}
+	return false
 }
 
 // containsUnderOrEqualRoot is containsUnderRoot but also accepts p == root. Used
@@ -329,7 +435,7 @@ func safeRemoveBookPath(ctx context.Context, roots *LibraryRoots, owner bookFile
 		if owner == nil {
 			return false
 		}
-		otherOwns, ownErr := owner.PathOwnedByOtherBook(ctx, path, excludeBookID)
+		otherOwns, ownErr := pathGuardedByOtherBook(ctx, owner, excludeBookID, path)
 		if ownErr != nil {
 			fields := append([]any{"path", path, "operation", "book_file_delete", "error", ownErr}, logFields...)
 			slog.Warn("path ownership: could not verify book_files ownership; skipping disk delete", fields...)
@@ -362,7 +468,7 @@ func safeRemoveBookPathExact(ctx context.Context, roots *LibraryRoots, owner boo
 		if owner == nil {
 			return false
 		}
-		otherOwns, ownErr := owner.PathOwnedByOtherBook(ctx, path, excludeBookID)
+		otherOwns, ownErr := pathGuardedByOtherBook(ctx, owner, excludeBookID, path)
 		if ownErr != nil {
 			fields := append([]any{"path", path, "operation", "book_file_delete", "error", ownErr}, logFields...)
 			slog.Warn("path ownership: could not verify book_files ownership; skipping disk delete", fields...)
@@ -404,4 +510,19 @@ func safeRemoveBookPathExact(ctx context.Context, roots *LibraryRoots, owner boo
 // path column is globally UNIQUE, so any hit is a single unambiguous owner.
 type bookFileOwner interface {
 	PathOwnedByOtherBook(ctx context.Context, path string, excludeBookID int64) (bool, error)
+	// PathUnderOtherBookDir reports whether a book other than
+	// excludeBookID tracks a folder containing path (#3336).
+	PathUnderOtherBookDir(ctx context.Context, path string, excludeBookID int64) (bool, error)
+}
+
+// pathGuardedByOtherBook is the single ownership predicate every delete sweep
+// uses: the path is another book's row, or sits under a folder another
+// book tracks. A folder row owns what is below it even when no row names the
+// file exactly, so an exact-path check alone let a sweep through a box set's
+// folder take files from a nested book's folder (#3336).
+func pathGuardedByOtherBook(ctx context.Context, owner bookFileOwner, excludeBookID int64, path string) (bool, error) {
+	if owned, err := owner.PathOwnedByOtherBook(ctx, path, excludeBookID); err != nil || owned {
+		return owned, err
+	}
+	return owner.PathUnderOtherBookDir(ctx, path, excludeBookID)
 }

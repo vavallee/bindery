@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/models"
 )
 
 const (
@@ -51,7 +52,7 @@ func MarkFirst(ctx context.Context, settings *db.SettingsRepo, key string) {
 
 // GatherFunnel fills the Setup*Day fields on f from the recorded first-event
 // timestamps. Grab and import first-times are derived from the history table
-// on first sight (MIN(created_at) of the "grabbed" / "imported" events) and
+// on first sight (MIN(created_at) of the "grabbed" / "bookImported" events) and
 // then pinned via SetIfAbsent, so later history pruning cannot lose them.
 //
 // Offsets are whole days since SettingInstallCreatedAt, clamped out (field
@@ -70,8 +71,8 @@ func GatherFunnel(ctx context.Context, settings *db.SettingsRepo, history *db.Hi
 		event string
 		key   string
 	}{
-		{"grabbed", SettingFirstGrabAt},
-		{"imported", SettingFirstImportAt},
+		{models.HistoryEventGrabbed, SettingFirstGrabAt},
+		{models.HistoryEventBookImported, SettingFirstImportAt},
 	} {
 		if _, exists := settingTime(ctx, settings, d.key); exists {
 			continue

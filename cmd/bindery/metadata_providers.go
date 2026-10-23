@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/vavallee/bindery/internal/api"
@@ -11,6 +12,7 @@ import (
 	"github.com/vavallee/bindery/internal/metadata/bnf"
 	"github.com/vavallee/bindery/internal/metadata/googlebooks"
 	"github.com/vavallee/bindery/internal/metadata/nb"
+	"github.com/vavallee/bindery/internal/metadata/wikidata"
 )
 
 // metadataProviders owns every metadata client for the life of the process
@@ -34,6 +36,9 @@ type metadataProviders struct {
 	nb          metadata.Provider
 	bnf         metadata.Provider
 	googleBooks *googlebooks.Client
+	// wikidata is the opt in author enricher (#3287). Building it sends
+	// nothing; it is only asked once SettingMetadataAuthorWikidata is on.
+	wikidata *wikidata.Client
 
 	// mu serialises apply. Each apply reads the settings and installs what it
 	// read; without it two saves racing could install the older read last.
@@ -53,6 +58,7 @@ func newMetadataProviders(settings *db.SettingsRepo, openLibrary, dnbClient, har
 		nb:          nb.New(),
 		bnf:         bnf.New(),
 		googleBooks: googlebooks.New(""),
+		wikidata:    wikidata.New(),
 	}
 }
 
@@ -63,9 +69,15 @@ type metadataProviderSet struct {
 	primaryName string
 	primary     metadata.Provider
 	enrichers   []metadata.Provider
+	// authorEnrichers fill an author's empty photo and bio (#3287).
+	authorEnrichers []metadata.AuthorEnricher
 	// googleBooksKeyed and hardcoverToken are for the log line only.
 	googleBooksKeyed bool
 	hardcoverToken   bool
+	// audibleOff and audnexOff mirror the audible and audnex entries of
+	// metadata.enrichers_disabled (#1890, #2015).
+	audibleOff bool
+	audnexOff  bool
 }
 
 // build reads the settings and returns the provider set they select. It is
@@ -79,8 +91,19 @@ func (m *metadataProviders) build(ctx context.Context) metadataProviderSet {
 	hcToken := api.GetHardcoverAPIToken(ctx, m.settings) != ""
 	gbKey := googleBooksAPIKey(ctx, m.settings)
 	m.googleBooks.SetAPIKey(gbKey)
-	set := m.assemble(resolveMetadataPrimaryProvider(configuredPrimary, hcToken), gbKey != "")
+	disabledValue := ""
+	if s, _ := m.settings.Get(ctx, api.SettingMetadataEnrichersDisabled); s != nil {
+		disabledValue = s.Value
+	}
+	disabled := parseDisabledEnrichers(disabledValue)
+	set := m.assemble(resolveMetadataPrimaryProvider(configuredPrimary, hcToken), gbKey != "", disabled)
 	set.hardcoverToken = hcToken
+	// Audible and audnex are not enrichers, so assemble does not see them.
+	set.audibleOff = disabled["audible"]
+	set.audnexOff = disabled["audnex"]
+	if s, _ := m.settings.Get(ctx, api.SettingMetadataAuthorWikidata); s != nil && strings.EqualFold(strings.TrimSpace(s.Value), "true") {
+		set.authorEnrichers = append(set.authorEnrichers, m.wikidata)
+	}
 	return set
 }
 
@@ -97,28 +120,48 @@ func (m *metadataProviders) build(ctx context.Context) metadataProviderSet {
 //   - "hardcover" trades breadth for a cleaner, editorially curated
 //     catalogue: no translation editions masquerading as separate works, no
 //     omnibus bundles, no non-book merchandise rows (#2040).
-func (m *metadataProviders) assemble(primaryName string, googleBooksKeyed bool) metadataProviderSet {
+//
+// disabled names the enrichers the operator turned off (#1890). The primary is
+// never skipped: an entry naming it is ignored.
+func (m *metadataProviders) assemble(primaryName string, googleBooksKeyed bool, disabled map[string]bool) metadataProviderSet {
 	set := metadataProviderSet{
 		primaryName:      primaryName,
 		primary:          m.primaryFor(primaryName),
 		googleBooksKeyed: googleBooksKeyed,
 	}
-	if googleBooksKeyed {
+	on := func(name string) bool { return name != primaryName && !disabled[name] }
+	if googleBooksKeyed && on("googlebooks") {
 		set.enrichers = append(set.enrichers, m.googleBooks)
 	}
-	if primaryName != "hardcover" {
+	if on("hardcover") {
 		// The enricher is registered whether or not a token is set: the token
 		// is read live per request through WithTokenSource, so configuring one
 		// later takes effect without a restart (#2075).
 		set.enrichers = append(set.enrichers, m.hardcover)
 	}
-	if primaryName != "openlibrary" {
+	if on("openlibrary") {
 		set.enrichers = append(set.enrichers, m.openLibrary)
 	}
-	if primaryName != "dnb" {
+	if on("dnb") {
 		set.enrichers = append(set.enrichers, m.dnb)
 	}
 	return set
+}
+
+// parseDisabledEnrichers turns a stored metadata.enrichers_disabled value into
+// a lookup set. Unknown names are ignored with a warning: the settings API
+// refuses them, so one here came from a hand edited database or a downgrade,
+// and must not stop the providers from being built.
+func parseDisabledEnrichers(value string) map[string]bool {
+	out := map[string]bool{}
+	for _, name := range api.ParseMetadataEnrichersDisabled(value) {
+		if !api.IsMetadataSourceToggleName(name) {
+			slog.Warn("ignoring unknown name in metadata.enrichers_disabled", "name", name)
+			continue
+		}
+		out[name] = true
+	}
+	return out
 }
 
 // primaryFor is the provider wired as primary for name, a value
@@ -150,6 +193,8 @@ func (m *metadataProviders) apply(ctx context.Context, agg *metadata.Aggregator)
 	if err := agg.Reconfigure(set.primary, set.enrichers...); err != nil {
 		return err
 	}
+	agg.SetAuthorEnrichers(set.authorEnrichers...)
+	agg.SetAudiobookSourcesDisabled(set.audibleOff, set.audnexOff)
 	set.log("metadata providers reconfigured")
 	return nil
 }
@@ -161,8 +206,16 @@ func (s metadataProviderSet) log(msg string) {
 	for _, p := range s.enrichers {
 		names = append(names, p.Name())
 	}
-	slog.Info(msg, "primary", s.primaryName, "enrichers", names, "googlebooks_keyed", s.googleBooksKeyed)
-	if s.primaryName != "hardcover" && !s.hardcoverToken {
+	authorNames := make([]string, 0, len(s.authorEnrichers))
+	for _, e := range s.authorEnrichers {
+		authorNames = append(authorNames, e.Name())
+	}
+	slog.Info(msg, "primary", s.primaryName, "enrichers", names, "author_enrichers", authorNames, "googlebooks_keyed", s.googleBooksKeyed)
+	hasHardcover := false
+	for _, p := range s.enrichers {
+		hasHardcover = hasHardcover || p.Name() == "hardcover"
+	}
+	if hasHardcover && !s.hardcoverToken {
 		slog.Info("hardcover enrichment idle: no api token configured")
 	}
 }
@@ -172,10 +225,12 @@ func (s metadataProviderSet) log(msg string) {
 // spellings, and the Hardcover token, because a stored hardcover primary
 // with no token falls back to OpenLibrary and comes back when one is saved.
 var metadataProviderSettingKeys = map[string]bool{
-	api.SettingMetadataPrimaryProvider: true,
-	api.SettingGoogleBooksAPIKey:       true,
-	api.LegacySettingGoogleBooksAPIKey: true,
-	api.SettingHardcoverAPIToken:       true,
+	api.SettingMetadataPrimaryProvider:   true,
+	api.SettingGoogleBooksAPIKey:         true,
+	api.LegacySettingGoogleBooksAPIKey:   true,
+	api.SettingHardcoverAPIToken:         true,
+	api.SettingMetadataAuthorWikidata:    true,
+	api.SettingMetadataEnrichersDisabled: true,
 }
 
 // metadataProvidersReconfigurer adapts metadataProviders to the settings

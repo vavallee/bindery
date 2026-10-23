@@ -41,6 +41,10 @@ type PathVisibility struct {
 	// Path is the resolved, path-remapped local path that was stat'd. Empty for
 	// PathUnknown.
 	Path string `json:"path,omitempty"`
+	// RemotePath is the completed folder exactly as the client reports it,
+	// before any remap, cleaned in the client's own namespace. It is the left
+	// hand side a path remap needs (#2031). Empty for PathUnknown.
+	RemotePath string `json:"remotePath,omitempty"`
 }
 
 // CheckCompletedPathVisibility resolves the client's completed-downloads path,
@@ -153,9 +157,10 @@ func createdOnGrabVisibility(missing PathVisibility) PathVisibility {
 		return missing
 	}
 	return PathVisibility{
-		Status:  PathVisible,
-		Path:    localPath,
-		Message: fmt.Sprintf("Bindery can read %q, where the client creates the folder %q on its first download.", parent, localPath),
+		Status:     PathVisible,
+		Path:       localPath,
+		RemotePath: missing.RemotePath,
+		Message:    fmt.Sprintf("Bindery can read %q, where the client creates the folder %q on its first download.", parent, localPath),
 	}
 }
 
@@ -246,20 +251,23 @@ func statRemappedPath(client *models.DownloadClient, clientPath, expectedHint, g
 	if localPath == "." || localPath == "" {
 		return PathVisibility{Status: PathUnknown}
 	}
+	remotePath := pathmap.CleanClientPath(clientPath)
 	if info, err := os.Stat(localPath); err == nil {
 		if !info.IsDir() {
 			// A file where a directory is expected is unusual but readable; still
 			// report visible since Bindery can reach it.
 			return PathVisibility{
-				Status:  PathVisible,
-				Path:    localPath,
-				Message: fmt.Sprintf("Bindery can read the client's completed-downloads path at %q.", localPath),
+				Status:     PathVisible,
+				Path:       localPath,
+				RemotePath: remotePath,
+				Message:    fmt.Sprintf("Bindery can read the client's completed-downloads path at %q.", localPath),
 			}
 		}
 		return PathVisibility{
-			Status:  PathVisible,
-			Path:    localPath,
-			Message: fmt.Sprintf("Bindery can read the client's completed-downloads folder at %q.", localPath),
+			Status:     PathVisible,
+			Path:       localPath,
+			RemotePath: remotePath,
+			Message:    fmt.Sprintf("Bindery can read the client's completed-downloads folder at %q.", localPath),
 		}
 	}
 
@@ -281,5 +289,5 @@ func statRemappedPath(client *models.DownloadClient, clientPath, expectedHint, g
 	if expected := strings.TrimSpace(expectedHint); expected != "" {
 		msg += fmt.Sprintf(" Bindery is configured to read from %s.", expected)
 	}
-	return PathVisibility{Status: PathNotVisible, Message: msg, Path: localPath}
+	return PathVisibility{Status: PathNotVisible, Message: msg, Path: localPath, RemotePath: remotePath}
 }

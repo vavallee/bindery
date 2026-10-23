@@ -66,6 +66,12 @@ differs), and decomposed (when that differs). A title with no decomposable
 letter never pays for the third. The results all come back through alphabet 1,
 which composes them again.
 
+The outgoing title also has its asterisk replaced by a space (`F*ck` is sent as
+`F ck`). Prowlarr's shared term sanitiser deletes the character instead of
+separating on it, so `F*ck` reached the indexer as `Fck` and matched nothing
+(#1637). Alphabet 1 already reads the asterisk as a separator, so matching the
+results is unchanged.
+
 Everything that folds a string for comparison should reach one of these seven.
 Two that did not, and what they cost:
 

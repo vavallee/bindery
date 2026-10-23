@@ -193,7 +193,7 @@ func TestReconcileScan_AdoptedRowSeenAgain(t *testing.T) {
 		if token == "" {
 			t.Fatal("claim failed")
 		}
-		if ok, err := repo.CompleteAdoption(ctx, u.ID, token, AdoptionRecord{BookID: book.ID, Registered: []RegisteredFile{{Path: p, BookID: book.ID}}}); err != nil || !ok {
+		if ok, err := repo.CompleteAdoption(ctx, u.ID, token, AdoptionRecord{BookID: book.ID, PriorBookStatus: "skipped", Registered: []RegisteredFile{{Path: p, BookID: book.ID}}}); err != nil || !ok {
 			t.Fatalf("complete: ok=%v err=%v", ok, err)
 		}
 	}
@@ -209,11 +209,11 @@ func TestReconcileScan_AdoptedRowSeenAgain(t *testing.T) {
 	if _, err := repo.ReconcileScan(ctx, units, ReconcileScanOptions{StartedAt: scanStart}); err != nil {
 		t.Fatal(err)
 	}
-	if got := unitByPath(t, database, repo, "/lib/A/before.epub"); got.State != UnmatchedStatePending || len(got.Registered) != 0 {
-		t.Fatalf("stale adoption = %+v, want pending with nothing registered", got)
+	if got := unitByPath(t, database, repo, "/lib/A/before.epub"); got.State != UnmatchedStatePending || len(got.Registered) != 0 || got.PriorBookStatus != "" {
+		t.Fatalf("stale adoption = %+v, want pending with nothing registered and empty prior_book_status", got)
 	}
-	if got := unitByPath(t, database, repo, "/lib/A/during.epub"); got.State != UnmatchedStateAdopted {
-		t.Fatalf("adoption during the scan = %+v, want still adopted", got)
+	if got := unitByPath(t, database, repo, "/lib/A/during.epub"); got.State != UnmatchedStateAdopted || got.PriorBookStatus != "skipped" {
+		t.Fatalf("adoption during the scan = %+v, want still adopted with prior_book_status 'skipped'", got)
 	}
 }
 
@@ -477,15 +477,15 @@ func TestMigrate088_OverPopulatedDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 100 adds a column to the table 088 creates, so it reruns with it.
-	for _, file := range []string{"088_unmatched_units.sql", "100_unmatched_units_files_author.sql"} {
+	// 098 and 100 add columns to the table 088 creates, so they rerun with it.
+	for _, file := range []string{"088_unmatched_units.sql", "098_unmatched_units_prior_status.sql", "100_unmatched_units_files_author.sql"} {
 		v := migrationVersionForTest(t, file)
 		if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = ?`, v); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := migrate(database); err != nil {
-		t.Fatalf("rerun migrations 088 and 100: %v", err)
+		t.Fatalf("rerun migrations 088, 098, and 100: %v", err)
 	}
 
 	var n int
@@ -518,6 +518,55 @@ func TestMigrate088_OverPopulatedDatabase(t *testing.T) {
 	}
 	if got := unitByPath(t, database, repo, "/lib/A/x.epub"); got.BookID != 0 || got.CreatedBookID != 0 {
 		t.Fatalf("book references after delete = %+v, want cleared", got)
+	}
+}
+
+func TestUnmatchedUnits_PriorBookStatusForBook(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	books := NewBookRepo(database)
+	authors := NewAuthorRepo(database)
+	author := &models.Author{ForeignID: "ol:a", Name: "Ann Leckie", SortName: "Leckie, Ann", MetadataProvider: "openlibrary"}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{ForeignID: "ol:b", AuthorID: author.ID, Title: "Ancillary Justice",
+		Status: models.BookStatusSkipped, MediaType: models.MediaTypeEbook, MetadataProvider: "openlibrary"}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	u1 := scanUnit("/lib/A/part1.epub")
+	u2 := scanUnit("/lib/A/part2.epub")
+	if _, err := repo.ReconcileScan(ctx, []UnmatchedUnitScan{u1, u2}, ReconcileScanOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	unit1 := unitByPath(t, database, repo, "/lib/A/part1.epub")
+	unit2 := unitByPath(t, database, repo, "/lib/A/part2.epub")
+
+	// Initially no prior status
+	status, err := repo.PriorBookStatusForBook(ctx, book.ID, unit2.ID)
+	if err != nil || status != "" {
+		t.Fatalf("before adoption: status=%q err=%v, want empty", status, err)
+	}
+
+	// Adopt unit1 with prior status skipped
+	token1, _ := repo.Claim(ctx, unit1.ID, UnmatchedStatePending, UnmatchedStateAdopting)
+	rec1 := AdoptionRecord{BookID: book.ID, PriorBookStatus: "skipped", Registered: []RegisteredFile{{Path: "/lib/A/part1.epub", BookID: book.ID}}}
+	if ok, err := repo.CompleteAdoption(ctx, unit1.ID, token1, rec1); err != nil || !ok {
+		t.Fatalf("complete unit1: %v", err)
+	}
+
+	// Now querying for unit2 finds unit1's recorded prior status "skipped"
+	status, err = repo.PriorBookStatusForBook(ctx, book.ID, unit2.ID)
+	if err != nil || status != "skipped" {
+		t.Fatalf("after unit1 adoption: status=%q err=%v, want 'skipped'", status, err)
+	}
+
+	// Querying for unit1 (exceptID=unit1.ID) excludes unit1 itself
+	status, err = repo.PriorBookStatusForBook(ctx, book.ID, unit1.ID)
+	if err != nil || status != "" {
+		t.Fatalf("for unit1 itself: status=%q err=%v, want empty", status, err)
 	}
 }
 

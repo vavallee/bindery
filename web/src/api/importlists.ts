@@ -72,6 +72,41 @@ export interface ImportListSyncProgress {
   stats: ImportListSyncStats
 }
 
+// MigrateResult is one section of an import summary (authors, indexers, ...).
+export interface MigrateResult {
+  requested?: number
+  added?: number
+  skipped?: number
+  errors?: number
+  addedNames?: string[]
+  failures?: Record<string, string>
+}
+
+export interface ReadarrResult {
+  authors?: MigrateResult
+  indexers?: MigrateResult
+  downloadClients?: MigrateResult
+  blocklist?: MigrateResult
+}
+
+// ReadarrImportProgress is the polled shape of GET /migrate/readarr/status.
+// The upload answers 202 with this snapshot. `running` covers only the database
+// import; the catalogue backfill that follows (one author every 3 seconds) is
+// reported by the catalogue* fields and keeps going after `running` is false.
+// The catalogue fields are optional because an older server omits them, and
+// they are in memory only, so a restart zeroes them.
+export interface ReadarrImportProgress {
+  running: boolean
+  startedAt?: string
+  finishedAt?: string
+  message?: string
+  error?: string
+  result?: ReadarrResult
+  catalogueRunning?: boolean
+  catalogueTotal?: number
+  catalogueDone?: number
+}
+
 // GoodreadsRow mirrors a parsed Goodreads CSV row returned in a preview.
 export interface GoodreadsRow {
   rowNumber: number
@@ -126,6 +161,7 @@ export const importListsApi = {
     }),
   uploadMigrate: <T>(endpoint: 'csv' | 'readarr', body: FormData) =>
     uploadFile<T>(`/migrate/${endpoint}`, body),
+  readarrImportStatus: () => request<ReadarrImportProgress>('/migrate/readarr/status'),
 
   // Goodreads CSV import — two steps: a dry-run preview that resolves every
   // row, then a commit of the resolved books keyed by the preview token.

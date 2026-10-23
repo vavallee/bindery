@@ -33,6 +33,10 @@ export interface SeriesHardcoverSearchResult {
   confidence?: number
 }
 
+// The slice of a Hardcover search result POST /series needs to create and link.
+export type SeriesHardcoverCreateRef = Pick<SeriesHardcoverSearchResult,
+  'foreignId' | 'providerId' | 'slug' | 'title' | 'authorName' | 'bookCount' | 'confidence'>
+
 export interface SeriesHardcoverAutoResponse {
   linked: boolean
   link?: SeriesHardcoverLink
@@ -142,7 +146,12 @@ export interface SeriesMergePlan {
 export const seriesApi = {
   // Series
   listSeries: () => request<Series[]>('/series'),
-  createSeries: (data: { title: string }) => request<Series>('/series', { method: 'POST', body: JSON.stringify(data) }),
+  // With `hardcover` (a Hardcover search result) the server creates the series
+  // and links it in one step (#1706); `title` then defaults to the Hardcover
+  // one. A series already linked to that Hardcover series answers 409 with its
+  // id in `body.seriesId`.
+  createSeries: (data: { title?: string; hardcover?: SeriesHardcoverCreateRef }) =>
+    request<Series>('/series', { method: 'POST', body: JSON.stringify(data) }),
   getSeries: (id: number) => request<Series>(`/series/${id}`),
   updateSeries: (id: number, data: { title: string }) => request<Series>(`/series/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   monitorSeries: (id: number, monitored: boolean) => request<{ monitored: boolean }>(`/series/${id}`, { method: 'PATCH', body: JSON.stringify({ monitored }) }),

@@ -74,6 +74,15 @@ describe('AdvancedTab control selection', () => {
     await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('calibre.sync_on_startup', 'true'))
   })
 
+  // #3240: the key label above a switch pointed at setting-<key>, which no
+  // element had, so it named nothing. Toggle now takes that id.
+  it('links the key label to its switch', async () => {
+    seed([descriptor({ key: 'calibre.sync_on_startup', type: 'bool', default: 'false' })])
+    render(<AdvancedTab />)
+    await screen.findByRole('switch', { name: 'calibre.sync_on_startup' })
+    expect(screen.getByLabelText('calibre.sync_on_startup')).toHaveAttribute('role', 'switch')
+  })
+
   it('renders an enum descriptor as a select offering exactly its values plus the default', async () => {
     seed([descriptor({ key: 'default.media_type', type: 'enum', default: 'ebook', values: ['ebook', 'audiobook', 'both'] })])
     render(<AdvancedTab />)

@@ -91,7 +91,7 @@ func TestGatherFunnel_DerivesGrabAndImportFromHistory(t *testing.T) {
 	// stamps time.Now(), so anchor relative to now.
 	setFunnelTime(t, settings, SettingInstallCreatedAt, time.Now().UTC().Add(-49*time.Hour))
 
-	for _, ev := range []string{"grabbed", "imported"} {
+	for _, ev := range []string{models.HistoryEventGrabbed, models.HistoryEventBookImported} {
 		if err := history.Create(ctx, &models.HistoryEvent{EventType: ev, SourceTitle: "x"}); err != nil {
 			t.Fatalf("create history %s: %v", ev, err)
 		}

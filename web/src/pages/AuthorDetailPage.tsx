@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
+import { safeHref } from '../util/safeHref'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { api, ApiError, Author, AuthorAlias, Book, BookBulkAction, MediaType, Series } from '../api/client'
 import { usePolling } from '../components/usePolling'
@@ -16,6 +17,7 @@ import MarkdownDescription from '../components/MarkdownDescription'
 import { authorProviderKey, canLinkAuthorMetadata } from '../util/authorMetadata'
 import { metadataRetrievedDate, metadataSourceLink } from '../util/metadataSource'
 import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
+import { authorSaveError } from '../util/authorSaveError'
 import { canonicalLanguage, languageName } from '../util/language'
 import { btn, btnSize } from '../components/buttons'
 import Switch from '../components/Switch'
@@ -152,6 +154,25 @@ export default function AuthorDetailPage() {
   const [showCatalogueReconciliation, setShowCatalogueReconciliation] = useState(false)
   const [showDuplicateCandidates, setShowDuplicateCandidates] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Sets the photo from an image the user picks, like a book cover (#3017,
+  // #3287). The response is the bare author, so only its photo fields are
+  // taken: the page keeps its books, stats and series as they are.
+  const [uploadingPhoto, setUploadingPhoto] = useState<'upload' | 'remove' | null>(null)
+  const changePhoto = async (action: 'upload' | 'remove', file?: File) => {
+    if (!author || (action === 'upload' && !file)) return
+    setUploadingPhoto(action)
+    setError(null)
+    try {
+      const updated = action === 'upload' ? await api.uploadAuthorPhoto(author.id, file as File) : await api.clearAuthorPhoto(author.id)
+      setAuthor(a => (a ? { ...a, imageUrl: updated.imageUrl, imageSource: updated.imageSource } : a))
+    } catch (e) {
+      setError(authorSaveError(e, t, action === 'upload'
+        ? t('authorDetail.photo.uploadFailed', 'Could not upload the photo')
+        : t('authorDetail.photo.removeFailed', 'Could not remove the photo')))
+    } finally {
+      setUploadingPhoto(null)
+    }
+  }
   // The sync poll stopped trying (#3058): a 404/403, or a few failures in a row.
   const [syncGaveUp, setSyncGaveUp] = useState(false)
   const syncFailures = useRef(0)
@@ -447,7 +468,7 @@ export default function AuthorDetailPage() {
       await api.updateAuthor(author.id, { monitored: !author.monitored })
       setAuthor({ ...author, monitored: !author.monitored })
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Update failed')
+      setError(authorSaveError(e, t, 'Update failed'))
     }
   }
 
@@ -738,8 +759,8 @@ export default function AuthorDetailPage() {
 
   const selectAllVisible = () => setSelected(new Set(filteredBooks.map(b => b.id)))
 
-  if (loading) return <div className="text-slate-600 dark:text-zinc-500">Loading…</div>
-  if (!author) return <div className="text-slate-600 dark:text-zinc-500">Author not found</div>
+  if (loading) return <div className="text-fg-muted">Loading…</div>
+  if (!author) return <div className="text-fg-muted">Author not found</div>
 
   const searchableWantedCount = books.filter(b => b.status === 'wanted' && b.monitored && !b.excluded).length
   // Relinking is valid for every author — the backend accepts any record and the
@@ -858,10 +879,10 @@ export default function AuthorDetailPage() {
                     </span>
                   )
                 })()}
-                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400">
+                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 dark:bg-zinc-800 text-fg-muted">
                   {mediaLabel(book.mediaType)}
                 </span>
-                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400">
+                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 dark:bg-zinc-800 text-fg-muted">
                   {fmtPublishedYear(book.releaseDate)}
                 </span>
                 {book.excluded && (
@@ -873,8 +894,8 @@ export default function AuthorDetailPage() {
             </span>
           </Link>
         </td>
-        <td className="hidden sm:table-cell px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap align-middle">{fmtPublishedYear(book.releaseDate)}</td>
-        <td className="hidden md:table-cell px-3 py-2 text-slate-600 dark:text-zinc-400 whitespace-nowrap align-middle">
+        <td className="hidden sm:table-cell px-3 py-2 text-fg-muted whitespace-nowrap align-middle">{fmtPublishedYear(book.releaseDate)}</td>
+        <td className="hidden md:table-cell px-3 py-2 text-fg-muted whitespace-nowrap align-middle">
           {book.averageRating && book.averageRating > 0 ? <BookRating book={book} /> : '—'}
         </td>
         <td className="hidden sm:table-cell px-3 py-2 text-xs whitespace-nowrap align-middle">
@@ -918,22 +939,22 @@ export default function AuthorDetailPage() {
                 )}
               </th>
               <th
-                className="w-full sm:w-[46%] text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase cursor-pointer select-none hover:text-slate-900 dark:hover:text-white"
+                className="w-full sm:w-[46%] text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase cursor-pointer select-none hover:text-slate-900 dark:hover:text-white"
                 onClick={() => toggleSort('title-az', 'title-za')}
                 title="Sort by title"
               >
                 Title{sortArrow('title-az', 'title-za')}
               </th>
               <th
-                className="hidden sm:table-cell sm:w-28 text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase cursor-pointer select-none hover:text-slate-900 dark:hover:text-white whitespace-nowrap"
+                className="hidden sm:table-cell sm:w-28 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase cursor-pointer select-none hover:text-slate-900 dark:hover:text-white whitespace-nowrap"
                 onClick={() => toggleSort('date-old', 'date-new')}
                 title="Sort by publication date"
               >
                 Published{sortArrow('date-old', 'date-new')}
               </th>
-              <th className="hidden md:table-cell md:w-24 text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">{t('books.colRating')}</th>
-              <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Type</th>
-              <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-zinc-400 uppercase">Status</th>
+              <th className="hidden md:table-cell md:w-24 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase">{t('books.colRating')}</th>
+              <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase">Type</th>
+              <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase">Status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
@@ -949,6 +970,7 @@ export default function AuthorDetailPage() {
       {list.map(book => (
         <div
           key={book.id}
+          data-focus-card
           className={`relative border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden group transition-colors ${selected.has(book.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800 hover:border-emerald-500'}`}
         >
           {/* The label is the tap area: 32px round the box, 44px on a touch
@@ -968,7 +990,7 @@ export default function AuthorDetailPage() {
           <Link
             to={`/book/${book.id}`}
             state={bookNavState(book)}
-            className="block"
+            className="block focus-visible:outline-hidden"
             onClick={e => { selectingClick(e, book) }}
           >
             <div className="aspect-[2/3] bg-slate-200 dark:bg-zinc-800 relative">
@@ -1007,7 +1029,7 @@ export default function AuthorDetailPage() {
               {/* No `book.releaseDate &&` guard: fmtPublishedYear already
                   returns an em dash for a missing date, so the conditional only
                   made the row appear and disappear between cards. */}
-              <p className="flex items-center justify-between gap-2 text-[10px] text-slate-600 dark:text-zinc-500 mt-auto">
+              <p className="flex items-center justify-between gap-2 text-[10px] text-fg-muted mt-auto">
                 <span>{fmtPublishedYear(book.releaseDate)}</span>
                 <BookRating book={book} />
               </p>
@@ -1033,12 +1055,12 @@ export default function AuthorDetailPage() {
             must fall back to navigate(-1) or Back would strand those flows
             on the Authors list instead of where they came from. */}
         {navState ? (
-          <Link to="/" className="text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">← Back</Link>
+          <Link to="/" className="text-fg-muted hover:text-slate-900 dark:hover:text-white">← Back</Link>
         ) : (
           <button
             type="button"
             onClick={() => navigate(-1)}
-            className="text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
+            className="text-fg-muted hover:text-slate-900 dark:hover:text-white"
           >
             ← Back
           </button>
@@ -1063,18 +1085,43 @@ export default function AuthorDetailPage() {
         <div className="w-32 flex-shrink-0">
           <CoverImage src={author.imageUrl} alt={author.authorName} className="w-full rounded-full shadow-lg aspect-square object-cover"
             fallback={
-              <div className="aspect-square rounded-full bg-slate-200 dark:bg-zinc-800 flex items-center justify-center text-2xl font-bold text-slate-500 dark:text-zinc-600">
+              <div className="aspect-square rounded-full bg-slate-200 dark:bg-zinc-800 flex items-center justify-center text-2xl font-bold text-fg-muted">
                 {author.authorName.charAt(0).toUpperCase()}
               </div>
             }
           />
+          <label className={`touch-target mt-2 block text-center text-xs text-accent-text hover:underline cursor-pointer has-[:focus-visible]:underline ${uploadingPhoto ? 'opacity-50 pointer-events-none' : ''}`}>
+            {uploadingPhoto === 'upload'
+              ? t('authorDetail.photo.uploading', 'Uploading…')
+              : author.imageUrl ? t('authorDetail.photo.change', 'Change photo') : t('authorDetail.photo.upload', 'Upload photo')}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="sr-only"
+              disabled={uploadingPhoto !== null}
+              onChange={e => { void changePhoto('upload', e.target.files?.[0]); e.target.value = '' }}
+            />
+          </label>
+          {/* Only an uploaded photo can be removed: the provider's or an
+              enricher's would come straight back on the refresh that
+              removing runs (#3287). */}
+          {author.imageSource?.provider === 'user' && (
+            <button
+              type="button"
+              className="touch-target block w-full text-center text-xs text-slate-600 dark:text-zinc-400 hover:underline disabled:opacity-50"
+              disabled={uploadingPhoto !== null}
+              onClick={() => { void changePhoto('remove') }}
+            >
+              {uploadingPhoto === 'remove' ? t('authorDetail.photo.removing', 'Removing…') : t('authorDetail.photo.remove', 'Remove photo')}
+            </button>
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <h2 className="text-2xl font-bold mb-1 [overflow-wrap:anywhere]">{author.authorName}</h2>
           {author.disambiguation && (
-            <p className="text-xs text-slate-600 dark:text-zinc-500">{author.disambiguation}</p>
+            <p className="text-xs text-fg-muted">{author.disambiguation}</p>
           )}
-          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-slate-600 dark:text-zinc-500">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-fg-muted">
             {author.averageRating > 0 && (
               <span>★ {author.averageRating.toFixed(2)} ({author.ratingsCount.toLocaleString()} ratings)</span>
             )}
@@ -1085,7 +1132,7 @@ export default function AuthorDetailPage() {
                   href={src.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-emerald-600 dark:text-emerald-400 hover:underline"
+                  className="text-accent-text hover:underline"
                 >
                   {t('common.viewOnSource', { source: src.label, defaultValue: 'View on {{source}} ↗' })}
                 </a>
@@ -1101,6 +1148,35 @@ export default function AuthorDetailPage() {
                 </span>
               ) : null
             })()}
+            {/* A photo or bio an author enricher filled in carries the credit
+                its licence asks for: a Commons photo names its photographer
+                and licence, Wikipedia text its source and licence (#3287). */}
+            {author.imageSource && author.imageSource.provider !== 'user' && (
+              <a
+                data-testid="author-photo-credit"
+                href={safeHref(author.imageSource.url) || undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:underline"
+              >
+                {author.imageSource.credit
+                  ? t('authorDetail.credit.photo', { credit: author.imageSource.credit, license: author.imageSource.license ?? '', source: profileSourceLabel(author.imageSource.provider), defaultValue: 'Photo: {{credit}}, {{license}}, via {{source}}' })
+                  : t('authorDetail.credit.photoNoCredit', { license: author.imageSource.license ?? '', source: profileSourceLabel(author.imageSource.provider), defaultValue: 'Photo: {{license}}, via {{source}}' })}
+              </a>
+            )}
+            {author.descriptionSource && author.descriptionSource.provider !== 'user' && (
+              <a
+                data-testid="author-bio-credit"
+                href={safeHref(author.descriptionSource.url) || undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:underline"
+              >
+                {author.descriptionSource.license
+                  ? t('authorDetail.credit.bio', { license: author.descriptionSource.license, source: profileSourceLabel(author.descriptionSource.provider), defaultValue: 'Bio from {{source}}, {{license}}' })
+                  : t('authorDetail.credit.bioNoLicense', { source: profileSourceLabel(author.descriptionSource.provider), defaultValue: 'Bio from {{source}}' })}
+              </a>
+            )}
           </div>
 
           {/* Four fixed cells, replacing a run-on sentence. The audiobook count
@@ -1117,7 +1193,7 @@ export default function AuthorDetailPage() {
               { key: 'audiobooks', label: t('authorDetail.stats.audiobooks', 'Audiobooks'), value: counts.audiobook },
             ].map(cell => (
               <div key={cell.key} className="bg-slate-100 dark:bg-zinc-900 px-3 py-2">
-                <dt className="text-[11px] text-slate-600 dark:text-zinc-500">{cell.label}</dt>
+                <dt className="text-[11px] text-fg-muted">{cell.label}</dt>
                 <dd className="text-lg font-semibold tabular-nums text-slate-900 dark:text-white">
                   {cell.value}
                 </dd>
@@ -1211,7 +1287,7 @@ export default function AuthorDetailPage() {
           </div>
           {author.aliases && author.aliases.length > 0 && (
             <div className="mt-4 text-xs">
-              <div className="text-slate-600 dark:text-zinc-500 mb-1">Also known as</div>
+              <div className="text-fg-muted mb-1">Also known as</div>
               <div className="flex flex-wrap gap-1.5">
                 {author.aliases.map(a => (
                   <span
@@ -1223,7 +1299,7 @@ export default function AuthorDetailPage() {
                     <button
                       type="button"
                       onClick={() => handleDeleteAlias(a)}
-                      className="ml-0.5 leading-none text-slate-500 hover:text-red-600 focus:text-red-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 dark:text-zinc-500 dark:hover:text-red-400 dark:focus:text-red-400 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/alias:opacity-100 [@media(hover:hover)]:focus:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100"
+                      className="ml-0.5 leading-none text-slate-500 hover:text-red-600 focus:text-red-600 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-red-500 dark:text-zinc-500 dark:hover:text-red-400 dark:focus:text-red-400 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/alias:opacity-100 [@media(hover:hover)]:focus:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100"
                       aria-label={t('authorDetail.aliases.removeLabel', { name: a.name })}
                       title={t('authorDetail.aliases.removeLabel', { name: a.name })}
                     >
@@ -1316,7 +1392,7 @@ export default function AuthorDetailPage() {
           <>
             {t('authorDetail.booksHeading', 'Books')}
             {filteredBooks.length !== books.length && (
-              <span className="ml-2 text-sm font-normal text-slate-600 dark:text-zinc-500">
+              <span className="ml-2 text-sm font-normal text-fg-muted">
                 {t('authorDetail.filteredCount', {
                   shown: filteredBooks.length,
                   total: books.length,
@@ -1346,7 +1422,7 @@ export default function AuthorDetailPage() {
             along but was never offered. */}
         {books.length > 0 && (
           <div className="flex flex-wrap items-center gap-3 mb-4">
-            <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-500">
+            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
               {t('authorDetail.filters.type', 'Type')}
               <select
                 value={typeFilter}
@@ -1359,7 +1435,7 @@ export default function AuthorDetailPage() {
               </select>
             </label>
 
-            <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-500">
+            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
               {t('authorDetail.filters.status', 'Status')}
               <select
                 value={statusFilter}
@@ -1376,7 +1452,7 @@ export default function AuthorDetailPage() {
               </select>
             </label>
 
-            <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-500">
+            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
               {t('authorDetail.filters.published', 'Published')}
               <select
                 value={publishedFilter}
@@ -1389,7 +1465,7 @@ export default function AuthorDetailPage() {
               </select>
             </label>
 
-            <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-500">
+            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
               {t('authorDetail.filters.monitored', 'Monitored')}
               <select
                 value={monitoredFilter}
@@ -1403,7 +1479,7 @@ export default function AuthorDetailPage() {
             </label>
 
             {languages.length > 1 && (
-              <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-500">
+              <label className="flex items-center gap-1.5 text-xs text-fg-muted">
                 {t('authorDetail.filters.language', 'Language')}
                 <select
                   value={activeLanguage}
@@ -1416,7 +1492,7 @@ export default function AuthorDetailPage() {
               </label>
             )}
 
-            <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-500">
+            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
               {t('authorDetail.filters.sort', 'Sort')}
               <select
                 value={sort}
@@ -1449,7 +1525,7 @@ export default function AuthorDetailPage() {
         )}
 
         {syncing && (
-          <p role="status" className="mb-3 flex items-center gap-2 text-sm text-slate-600 dark:text-zinc-400">
+          <p role="status" className="mb-3 flex items-center gap-2 text-sm text-fg-muted">
             <span aria-hidden="true" className="inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent" />
             {books.length === 0
               ? t('authorDetail.syncing', 'Fetching this author’s catalogue. Books appear here when it finishes, which can take a few minutes for a large catalogue.')
@@ -1457,16 +1533,16 @@ export default function AuthorDetailPage() {
           </p>
         )}
         {books.length === 0 ? (
-          !syncing && <p className="text-sm text-slate-600 dark:text-zinc-500">No books tracked for this author yet.</p>
+          !syncing && <p className="text-sm text-fg-muted">No books tracked for this author yet.</p>
         ) : filteredBooks.length === 0 ? (
-          <p className="text-sm text-slate-600 dark:text-zinc-500">No books match the current filters.</p>
+          <p className="text-sm text-fg-muted">No books match the current filters.</p>
         ) : groupBySeries ? (
           <div className="space-y-6">
             {seriesGroups.map(group => (
               <div key={group.key}>
                 <h4 className="text-sm font-semibold text-slate-700 dark:text-zinc-300 mb-2 flex items-center gap-2">
                   <span>{group.title}</span>
-                  <span className="text-xs font-normal text-slate-500 dark:text-zinc-500 bg-slate-200 dark:bg-zinc-800 px-2 py-0.5 rounded-full">
+                  <span className="text-xs font-normal text-fg-muted bg-slate-200 dark:bg-zinc-800 px-2 py-0.5 rounded-full">
                     {group.books.length} {group.books.length === 1 ? 'book' : 'books'}
                   </span>
                 </h4>
@@ -1515,4 +1591,16 @@ export default function AuthorDetailPage() {
       />
     </div>
   )
+}
+
+// profileSourceLabel names the source an author enricher credits (#3287).
+function profileSourceLabel(provider: string): string {
+  switch (provider) {
+    case 'wikimedia-commons':
+      return 'Wikimedia Commons'
+    case 'wikipedia':
+      return 'Wikipedia'
+    default:
+      return provider
+  }
 }

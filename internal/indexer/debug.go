@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -39,6 +40,51 @@ type SearchDebug struct {
 	// "no results", "nothing approved", ...). Empty for an interactive
 	// search, which only lists releases.
 	Outcome string `json:"outcome,omitempty"`
+
+	// Dropped holds the releases the relevance stage removed, whole, so the
+	// interactive search can offer them for a deliberate grab (#2334). It is a
+	// side field and never part of the results SearchBookWithDebug returns:
+	// auto-grab reads those, and a dropped release must never reach it.
+	//
+	// It is not serialized (json:"-"). It carries the raw download URL and GUID,
+	// credentials included, which the debug panel and GET /search/last-debug
+	// must never show; the interactive handler records them in the search
+	// result registry and redacts them for its own response. The handler also
+	// clears the field once it has used it, so the debug log does not hold the
+	// raw URLs.
+	Dropped []DroppedRelease `json:"-"`
+}
+
+// Filter stage names, as FilterDebug.Stage and DroppedRelease.Stage carry them.
+const (
+	StageUsenetJunk = "usenet-junk"
+	StageNonBook    = "non-book"
+	StageRelevance  = "relevance"
+	StageLanguage   = "language"
+)
+
+// DroppedRelease is a release a filter stage removed, kept whole with the stage
+// and the reason. Only the relevance and language stages produce releases that
+// may be offered for a grab: those are false positives that happen on real
+// books. Usenet junk and non-book content are not books, so those drops are
+// reported through FilterDebug alone.
+type DroppedRelease struct {
+	Result newznab.SearchResult
+	Stage  string
+	Reason string
+}
+
+// droppedFilterDebug summarises dropped releases for the Filter decisions
+// panel, which carries no GUID or URL.
+func droppedFilterDebug(dropped []DroppedRelease) []FilterDebug {
+	if len(dropped) == 0 {
+		return nil
+	}
+	out := make([]FilterDebug, len(dropped))
+	for i, d := range dropped {
+		out[i] = FilterDebug{Title: d.Result.Title, IndexerName: d.Result.IndexerName, Stage: d.Stage, Reason: d.Reason}
+	}
+	return out
 }
 
 // SearchQueryDebug is the effective criteria sent into the searcher.
@@ -230,7 +276,7 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 	results = dedupe(results)
 	dbg.Pipeline.AfterDedupe = len(results)
 
-	results, junkFilters := filterUsenetJunkDebug(results)
+	results, junkFilters := filterUsenetJunkDebug(results, junkScope{MediaType: c.MediaType, WantedTitle: c.Title})
 	dbg.Filters = append(dbg.Filters, junkFilters...)
 	dbg.Pipeline.AfterUsenetJunk = len(results)
 
@@ -240,14 +286,19 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 	// while the scheduler had it (#1644). Ranking stays in lockstep by
 	// construction: the quality profile rides on MatchCriteria, so the same
 	// rankResults call below reads it (#2733).
-	results = filterNonBookContent(results)
+	results, nonBook := filterNonBookContentDetailed(results)
+	dbg.Filters = append(dbg.Filters, droppedFilterDebug(nonBook)...)
 	dbg.Pipeline.AfterNonBookContent = len(results)
 
-	results, relFilters := filterRelevantDebug(results, c.Title, c.Author, c.AuthorAliases)
-	dbg.Filters = append(dbg.Filters, relFilters...)
+	results, relDropped := filterRelevantKeepDropped(results, c.Title, c.Author, c.AuthorAliases, c.context())
+	dbg.Filters = append(dbg.Filters, droppedFilterDebug(relDropped)...)
 	dbg.Pipeline.AfterRelevance = len(results)
 
 	rankResults(results, c)
+	// Most plausible first, so a cap on how many the interactive search shows
+	// keeps the best ones. Side field only: results above is untouched.
+	rankDropped(relDropped, c)
+	dbg.Dropped = relDropped
 
 	dbg.DurationMs = time.Since(dbg.StartedAt).Milliseconds()
 	return results, dbg
@@ -255,16 +306,16 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 
 // filterUsenetJunkDebug is filterUsenetJunk instrumented to record which
 // results were dropped and why.
-func filterUsenetJunkDebug(results []newznab.SearchResult) ([]newznab.SearchResult, []FilterDebug) {
+func filterUsenetJunkDebug(results []newznab.SearchResult, sc junkScope) ([]newznab.SearchResult, []FilterDebug) {
 	out := make([]newznab.SearchResult, 0, len(results))
 	var dropped []FilterDebug
 	for _, r := range results {
-		if usenetJunkRe.MatchString(r.Title) {
+		if reason := usenetJunkReason(r.Title, sc); reason != "" {
 			dropped = append(dropped, FilterDebug{
 				Title:       r.Title,
 				IndexerName: r.IndexerName,
-				Stage:       "usenet-junk",
-				Reason:      "looks like a raw per-article posting (RAR/PAR2/SFV/yEnc/[N/M])",
+				Stage:       StageUsenetJunk,
+				Reason:      reason,
 			})
 			continue
 		}
@@ -322,4 +373,25 @@ func Attempted(outcomes []IndexerDebug) int {
 		}
 	}
 	return n
+}
+
+// rankDropped orders dropped releases by the same score the kept ones are
+// ranked by, best first.
+func rankDropped(dropped []DroppedRelease, c MatchCriteria) {
+	if len(dropped) < 2 {
+		return
+	}
+	ranks := newProfileRanks(c.Profile)
+	scores := make(map[int]float64, len(dropped))
+	idx := make([]int, len(dropped))
+	for i, d := range dropped {
+		idx[i] = i
+		scores[i] = scoreResult(d.Result, c, ranks)
+	}
+	sort.SliceStable(idx, func(a, b int) bool { return scores[idx[a]] > scores[idx[b]] })
+	ordered := make([]DroppedRelease, len(dropped))
+	for i, k := range idx {
+		ordered[i] = dropped[k]
+	}
+	copy(dropped, ordered)
 }

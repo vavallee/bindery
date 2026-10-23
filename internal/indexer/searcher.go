@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/isbnutil"
@@ -102,6 +104,22 @@ type MatchCriteria struct {
 	// term keeps the flat, capped bonus it has always used rather than
 	// dividing by zero.
 	DurationSeconds int
+	// SeriesPosition is the wanted book's position in its primary series as
+	// stored ("3", "1-3", ""). The relevance filter uses it to tell a release
+	// that names the wanted book's own number from one that names a later book
+	// (#3268). Empty when the book has no series position; the filter then
+	// judges a numbered release on the release name alone.
+	SeriesPosition string
+	// SeriesTitle is the title of the wanted book's primary series. The
+	// relevance filter never reads a library title that equals, contains or is
+	// contained in it as "another title", because releases name their series
+	// (#3268). Empty when the book has no series.
+	SeriesTitle string
+	// AuthorTitles are the titles of the author's OTHER books in the library
+	// (not the wanted book). The relevance filter rejects a release that goes
+	// on to name one of them after the wanted title (#3268). Empty disables
+	// that rule only.
+	AuthorTitles []string
 }
 
 // CriteriaISBN picks the ISBN to put in MatchCriteria.ISBN for a book, given
@@ -351,9 +369,9 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 	wg.Wait()
 
 	results = dedupe(results)
-	results = filterUsenetJunk(results)
+	results = filterUsenetJunk(results, junkScope{MediaType: c.MediaType, WantedTitle: c.Title})
 	results = filterNonBookContent(results)
-	results = filterRelevant(results, c.Title, c.Author, c.AuthorAliases)
+	results, _ = filterRelevantWithContext(results, c.Title, c.Author, c.AuthorAliases, c.context())
 	rankResults(results, c)
 	return results
 }
@@ -432,7 +450,7 @@ func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, q
 	wg.Wait()
 
 	results = dedupe(results)
-	results = filterUsenetJunk(results)
+	results = filterUsenetJunk(results, junkScope{})
 	results = filterNonBookContent(results)
 	rankResults(results, MatchCriteria{Title: query})
 	return results
@@ -899,6 +917,23 @@ func filterRelevant(results []newznab.SearchResult, title, author string, aliase
 // kept for a "Volume 17" title (#2921). One implementation means a guard
 // cannot land in one path and miss the other.
 func filterRelevantDetailed(results []newznab.SearchResult, title, author string, aliases []string) ([]newznab.SearchResult, []FilterDebug) {
+	return filterRelevantWithContext(results, title, author, aliases, bookContext{})
+}
+
+// filterRelevantWithContext is filterRelevantDetailed given what the library
+// knows about the wanted book (see bookContext). A zero bookContext is
+// filterRelevantDetailed exactly.
+func filterRelevantWithContext(results []newznab.SearchResult, title, author string, aliases []string, bc bookContext) ([]newznab.SearchResult, []FilterDebug) {
+	kept, dropped := filterRelevantKeepDropped(results, title, author, aliases, bc)
+	return kept, droppedFilterDebug(dropped)
+}
+
+// filterRelevantKeepDropped is the relevance filter itself. It returns the
+// dropped releases whole (not just a FilterDebug summary) so the interactive
+// search can offer them for a deliberate grab (#2334). Every other form of the
+// filter is a projection of this one, so the kept set cannot differ between
+// the scheduler and the interactive path.
+func filterRelevantKeepDropped(results []newznab.SearchResult, title, author string, aliases []string, bc bookContext) ([]newznab.SearchResult, []DroppedRelease) {
 	// Strip edition qualifiers ("(German Edition)" etc.) and normalize
 	// smart quotes before tokenizing, so they don't become spurious keywords.
 	// Format qualifiers mid title ("(Light Novel)") go too, matching what the
@@ -982,17 +1017,73 @@ func filterRelevantDetailed(results []newznab.SearchResult, title, author string
 		normTitles[i] = NormalizeRelease(r.Title)
 	}
 
-	drop := func(r newznab.SearchResult, reason string) FilterDebug {
-		return FilterDebug{Title: r.Title, IndexerName: r.IndexerName, Stage: "relevance", Reason: reason}
+	drop := func(r newznab.SearchResult, reason string) DroppedRelease {
+		return DroppedRelease{Result: r, Stage: StageRelevance, Reason: reason}
+	}
+
+	rules := newTrailingRules(title, bc, fullIdentity, fullIdentityElided, primaryIdentity, primaryIdentityElided, seriesIdentity)
+	subtitle := newSubtitleInfo(title)
+
+	authorConflict := func(r newznab.SearchResult) bool {
+		return conflictingTitleAuthor(r.Title, title, authorTokenSets) ||
+			conflictingTitleAuthor(r.Title, primaryTitle(title), authorTokenSets) ||
+			(seriesTitle != "" && conflictingTitleAuthor(r.Title, seriesTitle, authorTokenSets))
+	}
+
+	// evalFull reads one result against the whole title: whether its keywords
+	// and identity match, whether it is approved on them, and why not when
+	// the trailing rules (#3268) reject it. The title is whole in the release
+	// but the release may go on to name another book; a release that carries
+	// the full title and is rejected there is not retried under the shorter
+	// readings, which would only match the same words again.
+	evalFull := func(i int) (keywords, ok bool, trailing string) {
+		r, n := results[i], normTitles[i]
+		identity := strings.Join(titleIdentityWords(r.Title), " ")
+		keywords = tryMatch(n, fullKws) || tryMatchElided(n, fullElided, fullKws)
+		ok = keywords &&
+			identityOK(identity, fullIdentity, fullIdentityElided) &&
+			volumeNumberAgrees(n, title)
+		if ok {
+			if trailing = rules.check(r.Title, n, fullIdentity, fullIdentityElided); trailing != "" {
+				ok = false
+			}
+		}
+		return keywords, ok, trailing
+	}
+
+	// fullTitleTypes is the set of media types for which some result in the
+	// batch carries the whole title, is approved on it, is the same book (no
+	// summary or study aid wording, nothing but release furniture after the
+	// title) and has a determinable media type. The main title reading is
+	// judged against it (see subtitleInfo.mainTitleOnly): a release that names
+	// only the main title is a sibling of one that names the book, but only a
+	// sibling of the same media type. Computed on first use, so a batch that
+	// never reaches the main title reading pays nothing.
+	var fullTitleTypes map[string]bool
+	anyFullInBatch := func(mediaType string) bool {
+		if fullTitleTypes == nil {
+			fullTitleTypes = map[string]bool{}
+			for i, r := range results {
+				if authorConflict(r) {
+					continue
+				}
+				if _, ok, _ := evalFull(i); !ok {
+					continue
+				}
+				if mt := releaseMediaType(r.Title); mt != "" &&
+					fullTitleCounts(r.Title, normTitles[i], authorTokenSets, fullIdentity, fullIdentityElided) {
+					fullTitleTypes[mt] = true
+				}
+			}
+		}
+		return fullTitleTypes[mediaType]
 	}
 
 	filtered := make([]newznab.SearchResult, 0, len(results))
-	var dropped []FilterDebug
+	var dropped []DroppedRelease
 	for i, r := range results {
 		n := normTitles[i]
-		if conflictingTitleAuthor(r.Title, title, authorTokenSets) ||
-			conflictingTitleAuthor(r.Title, primaryTitle(title), authorTokenSets) ||
-			(seriesTitle != "" && conflictingTitleAuthor(r.Title, seriesTitle, authorTokenSets)) {
+		if authorConflict(r) {
 			dropped = append(dropped, drop(r, "release names a different author for this title"))
 			continue
 		}
@@ -1001,31 +1092,45 @@ func filterRelevantDetailed(results []newznab.SearchResult, title, author string
 		identity := strings.Join(titleIdentityWords(r.Title), " ")
 
 		// allowFallback=true: each result gets phrase match first, then keyword
-		// fallback if the phrase fails. No batch-level gate.
-		fullKeywords := tryMatch(n, fullKws) || tryMatchElided(n, fullElided, fullKws)
-		fullOK := fullKeywords &&
-			identityOK(identity, fullIdentity, fullIdentityElided) &&
-			volumeNumberAgrees(n, title)
+		// fallback if the phrase fails.
+		fullKeywords, fullOK, trailing := evalFull(i)
 		primaryKeywords, primaryOK := false, false
-		if !fullOK && len(primaryKws) > 0 && !sameKws(primaryKws, fullKws) {
+		if !fullOK && trailing == "" && len(primaryKws) > 0 && !sameKws(primaryKws, fullKws) {
 			primaryKeywords = tryMatch(n, primaryKws) || tryMatchElided(n, primaryElided, primaryKws)
 			primaryOK = primaryKeywords &&
 				identityOK(identity, primaryIdentity, primaryIdentityElided) &&
 				volumeNumberAgrees(n, primaryTitle(title))
+			if primaryOK {
+				if trailing = rules.check(r.Title, n, primaryIdentity, primaryIdentityElided); trailing == "" {
+					// The release carries the main title and not the whole
+					// one; is it still this book (#3268, part 2)?
+					trailing = subtitle.mainTitleOnly(rules, r.Title, n, identity, anyFullInBatch, primaryIdentity, primaryIdentityElided)
+				}
+				if trailing != "" {
+					primaryOK = false
+				}
+			}
 		}
 		seriesKeywords, seriesOK := false, false
-		if !fullOK && !primaryOK && len(seriesKws) > 0 {
+		if !fullOK && !primaryOK && trailing == "" && len(seriesKws) > 0 {
 			seriesKeywords = tryMatch(n, seriesKws)
 			seriesOK = seriesKeywords &&
 				(len(seriesIdentity) < 2 || ContainsPhrase(identity, seriesIdentity)) &&
 				volumeNumberAgrees(n, seriesTitle)
+			if seriesOK {
+				if trailing = rules.check(r.Title, n, seriesIdentity); trailing != "" {
+					seriesOK = false
+				}
+			}
 		}
 		if fullOK || primaryOK || seriesOK {
 			filtered = append(filtered, r)
 			continue
 		}
 		reason := "title/author keywords did not match release name"
-		if fullKeywords || primaryKeywords || seriesKeywords {
+		if trailing != "" {
+			reason = trailing
+		} else if fullKeywords || primaryKeywords || seriesKeywords {
 			// The keywords are all there but the release's title is not this
 			// one: other words sit between them, as "12 Rules for Life" inside
 			// "12 More Rules for Life", or a number differs, as "Volume 16"
@@ -1293,10 +1398,10 @@ var usenetJunkRe = regexp.MustCompile(
 
 // filterUsenetJunk drops results whose titles look like raw per-article
 // postings rather than coherent releases.
-func filterUsenetJunk(results []newznab.SearchResult) []newznab.SearchResult {
+func filterUsenetJunk(results []newznab.SearchResult, sc junkScope) []newznab.SearchResult {
 	out := make([]newznab.SearchResult, 0, len(results))
 	for _, r := range results {
-		if !usenetJunkRe.MatchString(r.Title) {
+		if usenetJunkReason(r.Title, sc) == "" {
 			out = append(out, r)
 		}
 	}
@@ -1338,19 +1443,32 @@ func isNonBookCategory(cat string) bool {
 // filters on q= searches and return anything matching the title words
 // (#1591) — this is the response-side backstop.
 func filterNonBookContent(results []newznab.SearchResult) []newznab.SearchResult {
+	kept, _ := filterNonBookContentDetailed(results)
+	return kept
+}
+
+// filterNonBookContentDetailed is filterNonBookContent that also reports each
+// drop and why. It is the one implementation, so the scheduler's SearchBook and
+// the interactive SearchBookWithDebug cannot disagree about what is not a book.
+// The drops are for the Filter decisions panel only: a video release or a movie
+// category result is not a book, so it is never offered for a grab (#2334).
+func filterNonBookContentDetailed(results []newznab.SearchResult) ([]newznab.SearchResult, []DroppedRelease) {
 	out := make([]newznab.SearchResult, 0, len(results))
+	var dropped []DroppedRelease
 	for _, r := range results {
 		if videoMarkerRe.MatchString(r.Title) {
 			slog.Debug("dropping video release from book search", "title", r.Title, "indexer", r.IndexerName)
+			dropped = append(dropped, DroppedRelease{Result: r, Stage: StageNonBook, Reason: "release name carries video markers (resolution, codec or rip tag)"})
 			continue
 		}
 		if isNonBookCategory(r.Category) {
 			slog.Debug("dropping non-book category result", "title", r.Title, "category", r.Category, "indexer", r.IndexerName)
+			dropped = append(dropped, DroppedRelease{Result: r, Stage: StageNonBook, Reason: "indexer filed it under a non-book category (" + r.Category + ")"})
 			continue
 		}
 		out = append(out, r)
 	}
-	return out
+	return out, dropped
 }
 
 // detectQuality scans a result title for known quality keywords and returns
@@ -1424,6 +1542,11 @@ var releaseLanguageTags = map[string]string{
 	"livre audio": "fre",
 	"german":      "ger", "deutsch": "ger",
 	"hoerbuch": "ger", "ungekuerzt": "ger", "gekuerzt": "ger",
+	// The same two words with the umlaut stripped outright by an indexer,
+	// "Thron aus Asche und Gold 01 - King of Scars (ungekrzt)" (#3268). They
+	// are not words in any other language, and the umlaut-flex cannot reach
+	// them because there is no letter left to flex.
+	"ungekrzt": "ger", "gekrzt": "ger",
 	"spanish": "spa", "espanol": "spa", "español": "spa",
 	"dutch": "dut", "netherlands": "dut", "nederlands": "dut",
 	"luisterboek": "dut", "hoorspel": "dut",
@@ -1473,6 +1596,180 @@ func releaseLanguageCodes(norm string) []string {
 	return out
 }
 
+// sceneMarkerTokens are the words that mark the metadata suffix of a scene
+// audiobook release name ("Author-Title-AUDIOBOOK-WEB-MP3-DE-2023-GRP").
+// Everything after the last of them is release metadata, not title (#3271).
+var sceneMarkerTokens = map[string]bool{
+	"audiobook": true, "abook": true, "mp3": true, "m4b": true, "flac": true, "aac": true,
+}
+
+// sceneDiscRe matches the disc tokens scene audiobook groups put where a
+// format marker would go: "4CD", "2MP3CD", "MP3CD". They never occur as title
+// words, so they mark a scene suffix like a marker does (#3268).
+var sceneDiscRe = regexp.MustCompile(`(?i)^(\d+cd|\d*mp3cd)$`)
+
+// isSceneMarker reports whether tok starts or ends the marker part of a scene
+// name: a format or audiobook word, or a disc token.
+func isSceneMarker(tok string) bool {
+	return sceneMarkerTokens[strings.ToLower(tok)] || sceneDiscRe.MatchString(tok)
+}
+
+// releaseLanguageCodeSet is every code releaseLanguageTags can produce. A
+// scene code only counts when it normalizes into this set, so it stays inside
+// the vocabulary the profile editor offers, and a token such as "web" or a
+// group name that NormalizeLanguageCode passes through unchanged is ignored.
+var releaseLanguageCodeSet = func() map[string]bool {
+	set := make(map[string]bool, len(releaseLanguageTags))
+	for _, code := range releaseLanguageTags {
+		set[code] = true
+	}
+	return set
+}()
+
+var (
+	// sceneTokenRe splits a raw release name into the same letter and digit
+	// runs NormalizeRelease keeps as tokens.
+	sceneTokenRe = regexp.MustCompile(`[\p{L}\p{N}]+`)
+	// sceneTrailerRe matches what can follow the release group at the end of
+	// a name: a usenet part counter ("(1/12)"), quotes and spaces, or a file
+	// extension. They are stripped first so the last token is the group.
+	sceneTrailerRe = regexp.MustCompile(`(?i)(\s*[(\[]\d+/\d+[)\]]|["'\s]+|\.(nzb|torrent|nfo|par2|rar|zip|epub|mobi|azw3?|pdf|mp3|m4b|m4a|flac))$`)
+	sceneYearRe    = regexp.MustCompile(`^(19|20)\d\d$`)
+)
+
+// sceneLanguageCodes returns the language codes in the scene suffix of a raw
+// release name: tokens after the last scene marker that are a language code
+// ("DE", "POR", "NO"), read through models.NormalizeReleaseLanguageCode so
+// the country codes groups use ("SE", "DK") count too. As bare words most of
+// these are common ("de", "no", "it"), which is why #2274 left them out; they
+// are only read after a scene marker, never in the title.
+//
+// It takes the raw name, not NormalizeRelease's, because the shape matters. A
+// scene suffix is joined by separators ("-WEB-MP3-DE-2023-GRP"). One with
+// spaces in it is usually prose ("(Audiobook) read by Ola De Vries", "MP3 -
+// Hi Quality - 2010"), so there a token only counts when it is uppercase and
+// sits right before a year or the group ("-DE-2005-GRP iNT").
+func sceneLanguageCodes(title string) []string {
+	for {
+		trimmed := sceneTrailerRe.ReplaceAllString(title, "")
+		if trimmed == title {
+			break
+		}
+		title = trimmed
+	}
+	locs := sceneTokenRe.FindAllStringIndex(title, -1)
+	toks := make([]string, len(locs))
+	for i, loc := range locs {
+		toks[i] = title[loc[0]:loc[1]]
+	}
+	out := sceneLeadingCodes(title, locs, toks)
+	// The suffix starts after the last marker. A marker in first position is
+	// a leading tag ("[MP3] Author - Title"), not a suffix, so it doesn't
+	// count. The last token is the release group, and a group can be named
+	// like a language code ("-2026-TR").
+	start := -1
+	for i, tok := range toks {
+		if i > 0 && isSceneMarker(tok) {
+			start = i + 1
+		}
+	}
+	end := len(toks) - 1
+	if start < 0 || start >= end {
+		return out
+	}
+	spaced := strings.ContainsFunc(title[locs[start-1][1]:], unicode.IsSpace)
+	for i := start; i < end; i++ {
+		tok := toks[i]
+		if spaced && !spacedSceneCode(toks, i, end) {
+			continue
+		}
+		if code := models.NormalizeReleaseLanguageCode(strings.ToLower(tok)); releaseLanguageCodeSet[code] && !slices.Contains(out, code) {
+			out = append(out, code)
+		}
+	}
+	return out
+}
+
+// sceneLeadingCodes reads the other half of the scene shape (#3268): a code
+// placed BEFORE the marker, "Nick Hornby-A Long Way Down-DE-AUDIOBOOK-4CD-FLAC-
+// 2005-GRP" or "Title-3MP3CD-DE-2005-GRP" (the disc token is the marker there).
+// The bare code is as common a word as it is after a marker, so every one of
+// these has to hold, and a miss is cheaper than an English release dropped:
+//
+//   - the token is 2 or 3 ASCII capitals, and directly joined by one separator
+//     on each side, to the token before it and to a marker or disc token after;
+//   - nothing before the code is a title word in the same breath: the text
+//     before it holds a lowercase letter, so an all-caps name, where capitals
+//     say nothing ("STEPHEN_KING-IT-AUDIOBOOK-..."), is never read;
+//   - from the code to a year there is no whitespace, the year is joined to
+//     what follows, and a group follows the year, so the spaced prose of
+//     human-written names never qualifies;
+//   - "IT" and "NO" are never read here. They are English words and titles
+//     ("Stephen_King-IT-AUDIOBOOK-..."), and capitals cannot tell them apart
+//     from the codes. They still count AFTER a marker, where a title cannot be.
+func sceneLeadingCodes(title string, locs [][]int, toks []string) []string {
+	var out []string
+	for i := 1; i+1 < len(toks); i++ {
+		tok := toks[i]
+		if len(tok) < 2 || len(tok) > 3 || strings.ToUpper(tok) != tok || strings.IndexFunc(tok, func(r rune) bool { return r < 'A' || r > 'Z' }) >= 0 {
+			continue
+		}
+		if tok == "IT" || tok == "NO" || !isSceneMarker(toks[i+1]) || !sceneJoint(title[locs[i-1][1]:locs[i][0]]) || !sceneJoint(title[locs[i][1]:locs[i+1][0]]) {
+			continue
+		}
+		if !strings.ContainsFunc(title[:locs[i][0]], unicode.IsLower) {
+			continue
+		}
+		year := -1
+		for j := i + 2; j+1 < len(toks); j++ {
+			if sceneYearRe.MatchString(toks[j]) {
+				year = j
+				break
+			}
+		}
+		if year < 0 || strings.ContainsFunc(title[locs[i][0]:locs[year][1]], unicode.IsSpace) || !sceneJoint(title[locs[year][1]:locs[year+1][0]]) {
+			continue
+		}
+		if code := models.NormalizeReleaseLanguageCode(strings.ToLower(tok)); releaseLanguageCodeSet[code] && !slices.Contains(out, code) {
+			out = append(out, code)
+		}
+	}
+	return out
+}
+
+// spacedSceneCode decides whether the all-caps token at i counts as a language
+// code inside a suffix that has spaces in it (end is the group, the last
+// token). Two shapes qualify:
+//
+//   - right before a year: "-DE-2005-GRP iNT", "Audiobook - FR 2019". When
+//     that year is the last token, so no group follows it, IT, NO and HI are
+//     refused, being words ("Audiobook - IT 2017", "Hi 2010", "Dr. NO");
+//   - right before the group, with a marker or a year directly before the
+//     code: "Audiobook DE GRP", "ABOOK 2020 DK GRP". A group that is a bare
+//     number ("MP3 PT 2") is a part counter, not a group, and IT, NO and HI
+//     are refused here too ("3CD IT GRP").
+//
+// Anything else is prose ("read by Robert DE NIRO", "DE LUXE").
+func spacedSceneCode(toks []string, i, end int) bool {
+	tok := toks[i]
+	if tok != strings.ToUpper(tok) {
+		return false
+	}
+	if i+1 <= end && sceneYearRe.MatchString(toks[i+1]) {
+		return i+1 != end || (tok != "IT" && tok != "NO" && tok != "HI")
+	}
+	if i+1 != end || i == 0 || strings.Trim(toks[end], "0123456789") == "" || tok == "IT" || tok == "NO" || tok == "HI" {
+		return false
+	}
+	return isSceneMarker(toks[i-1]) || sceneYearRe.MatchString(toks[i-1])
+}
+
+// sceneJoint reports whether sep is exactly one scene separator, with no space
+// either side of it.
+func sceneJoint(sep string) bool {
+	return sep == "-" || sep == "_" || sep == "."
+}
+
 // FilterByAllowedLanguages drops results whose release name is tagged with a
 // language outside the metadata profile's allowed set. Untagged releases
 // always pass — most releases carry no language marker, and dropping them
@@ -1487,13 +1784,21 @@ func releaseLanguageCodes(norm string) []string {
 // ISO 639-2/T, so a profile written "pt-BR" accepted the book and then dropped
 // every Portuguese release of it.
 func FilterByAllowedLanguages(results []newznab.SearchResult, allowed []string) []newznab.SearchResult {
+	kept, _ := SplitByAllowedLanguages(results, allowed)
+	return kept
+}
+
+// SplitByAllowedLanguages is FilterByAllowedLanguages that also returns the
+// results it removed, in their original order, so the interactive search can
+// offer them for a deliberate grab (#2334). It is the one implementation.
+func SplitByAllowedLanguages(results []newznab.SearchResult, allowed []string) (kept, dropped []newznab.SearchResult) {
 	if len(allowed) == 0 {
-		return results
+		return results, nil
 	}
 	set := make(map[string]bool, len(allowed))
 	for _, code := range allowed {
 		if strings.ToLower(strings.TrimSpace(code)) == "any" {
-			return results
+			return results, nil
 		}
 		code = models.NormalizeLanguageCode(code)
 		if code == "" {
@@ -1506,7 +1811,7 @@ func FilterByAllowedLanguages(results []newznab.SearchResult, allowed []string) 
 	for _, r := range results {
 		norm := NormalizeRelease(r.Title)
 		ok := true
-		for _, code := range releaseLanguageCodes(norm) {
+		for _, code := range append(releaseLanguageCodes(norm), sceneLanguageCodes(r.Title)...) {
 			if !set[code] {
 				ok = false
 				break
@@ -1514,9 +1819,11 @@ func FilterByAllowedLanguages(results []newznab.SearchResult, allowed []string) 
 		}
 		if ok {
 			filtered = append(filtered, r)
+		} else {
+			dropped = append(dropped, r)
 		}
 	}
-	return filtered
+	return filtered, dropped
 }
 
 // FilterByLanguage removes results whose titles contain known foreign-language
@@ -1524,8 +1831,14 @@ func FilterByAllowedLanguages(results []newznab.SearchResult, allowed []string) 
 // This is the global search.preferredLanguage setting's filter; profile-aware
 // callers use FilterByAllowedLanguages directly.
 func FilterByLanguage(results []newznab.SearchResult, lang string) []newznab.SearchResult {
+	kept, _ := SplitByLanguage(results, lang)
+	return kept
+}
+
+// SplitByLanguage is FilterByLanguage that also returns what it removed.
+func SplitByLanguage(results []newznab.SearchResult, lang string) (kept, dropped []newznab.SearchResult) {
 	if lang != "en" {
-		return results
+		return results, nil
 	}
-	return FilterByAllowedLanguages(results, []string{"eng"})
+	return SplitByAllowedLanguages(results, []string{"eng"})
 }

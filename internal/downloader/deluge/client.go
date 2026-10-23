@@ -84,8 +84,8 @@ func New(host string, port int, password, urlBase string, useSSL bool) *Client {
 		http: &http.Client{
 			Timeout:       15 * time.Second,
 			Jar:           jar,
-			Transport:     httpsec.DirectGuardedTransport(httpsec.PolicyLANLoopback),
-			CheckRedirect: httpsec.RedirectGuard(httpsec.PolicyLANLoopback),
+			Transport:     httpsec.DirectGuardedTransport(httpsec.PolicyService),
+			CheckRedirect: httpsec.RedirectGuard(httpsec.PolicyService),
 		},
 		fetchTransport: httpsec.GuardedTransport(httpsec.DownloadFetchPolicy()),
 	}

@@ -29,12 +29,36 @@ and BnF, which are wired only when primary. Switching the primary away from eith
 therefore leaves its `nb:` or `bnf:` authors with no provider to sync from until
 they are relinked.
 
+`metadata.enrichers_disabled` takes any of the non primary enrichers out of that
+set (`openlibrary`, `hardcover`, `googlebooks`, `dnb`), and also switches off the
+two audiobook sources that are not enrichers, the `audible` catalogue and
+`audnex` (#1890, #2015). It is read by the same rebuild that handles the primary
+provider, so a save applies to the next lookup. Because the provider set is part
+of the cache keys, a smaller set never serves answers cached under a larger one;
+the two audiobook sources return before their cache is read while off.
+
+An author's photo and bio come from the author's own provider. When it has none,
+the optional *author enrichers* fill the gap on the staggered `refresh-metadata`
+job and on the two single author actions, adding an author and its Refresh
+button, never inside `GetAuthor`. Bulk refresh, Refresh all and scheduled
+discovery ask too, but only for an author whose enrichment is due: they stamp
+the profile fresh, which takes the author out of `refresh-metadata`, so leaving
+enrichment to that job postponed it by a day each time they ran (#3398).
+Between them they enrich at most 100 authors an hour, leaving the rest due for
+`refresh-metadata`. The imports send them nothing.
+Today that is
+Wikidata, found by the authority ID the author already carries (NORAF, GND, BnF
+or OpenLibrary) and only while `metadata.author_enrichment.wikidata` is on
+(#3287). An enriched value never replaces one from the provider or one a user
+chose, and carries the credit its licence asks for (see
+[third-party-data.md](third-party-data.md#wikidata-wikimedia-commons-and-wikipedia)).
+
 ## Components
 
 | Layer | Stack | Notes |
 |-------|-------|-------|
 | **HTTP router** | [chi](https://github.com/go-chi/chi) v5 | Sub-routers per resource, middleware-driven auth/CSRF/rate-limit. |
-| **Backend language** | Go 1.26 (built with `golang:1.26.9-alpine`, the toolchain pinned in `go.mod`) | Standard library HTTP server, structured logging via `slog`. |
+| **Backend language** | Go 1.26 (built with `golang:1.26.10-alpine`, the toolchain pinned in `go.mod`) | Standard library HTTP server, structured logging via `slog`. |
 | **Database** | SQLite, WAL mode | [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) — pure Go, no CGO. Single `bindery.db` file. Connection pragmas (`foreign_keys`, `busy_timeout`, `synchronous`, `temp_store`, `cache_size`) are carried in the DSN so the driver reapplies them to every connection it opens; see [Database durability](DEPLOYMENT.md#database-durability). |
 | **Schema migrations** | Embedded SQL files in `internal/db/migrations/` | Linearly-numbered, additive-only, applied at startup. |
 | **Frontend** | React 19 + TypeScript + Tailwind CSS 4 | Built with [Vite](https://vite.dev), output baked into the binary via `go:embed`. |
@@ -113,7 +137,7 @@ Registered by `internal/scheduler`. Every job runs under `SkipIfStillRunning`, s
 | `check-stalled` | 5m | Fails and re-searches downloads stuck past the stall timeout (`stall.timeout_minutes`, default 120). Stuck means either the client's own per torrent signal (qBittorrent stalledDL, a Transmission errorString, Deluge Error, an rTorrent message), which also blocklists the release, or a torrent the client accepted and never resolved the metadata for: no files, no size, no progress ([#2709](https://github.com/vavallee/bindery/issues/2709)). The second kind does **not** blocklist, because it is as much a property of the network as of the release and the blocklist has no expiry; its torrent is removed without deleting data (it has none), and its re-search skips that one release so it can pick another. It is also only applied past the timeout, because a healthy magnet looks the same while it resolves, and it is skipped entirely for a client where more than half the unfinished torrents look that way, which is a connectivity fault rather than a run of bad releases. |
 | `download-client-health` | 15m | Re-probes download client reachability and paths. |
 | `search-wanted` | `search.interval`, default 12h, read at startup | Searches indexers for wanted books and auto-grabs when enabled. |
-| `refresh-metadata` | 24h | Refreshes four profile fields on monitored authors. Creates no books. |
+| `refresh-metadata` | hourly tick | Refreshes four profile fields on a batch of monitored authors, the stalest first (`last_metadata_refresh_at` missing or older than 24 hours). Batch is `ceil(eligible / 24)`, clamped to 1..100, so each author is refreshed about once a day and a library past 2,400 authors stretches its cycle instead of growing the batch (a profile refresh is one provider call, so the clamp is four times discovery's). 3 seconds between authors. The stamp is written in the same guarded write as the refreshed profile, so a failed, rate limited or concurrently edited author stays stale and is retried. Stops on a rate limit from any provider or a held daily quota, leaving the refused author unstamped, and after 3 consecutive authors failing with the provider unavailable. An author that fails for its own reasons (not found, no provider for its id), or with a server error or timeout that a later author did not share, is passed over for 6 hours, in memory, so it cannot hold the front of the queue; authors caught by a tripped breaker are not cooled the first time, but one that is in 3 tripped passes in a row (a record the provider keeps failing on, not an outage; the count is cleared by any answer for that author) is cooled too, and a rate limit cools nobody. A refresh stamp in the future counts as never refreshed. An explicit author Refresh also stamps freshness and is never subject to this stagger. When an author enricher is on, the job also asks it for an author whose `last_enrichment_at` is missing or older than 30 days, and stamps that column only for a full answer that was saved, a miss included; adding an author and its Refresh button always ask and stamp the same way (#3287). Creates no books ([#2595](https://github.com/vavallee/bindery/issues/2595)). |
 | `author-discovery` | hourly tick, cadence from `authors.discovery.interval` (unset and `off` both disable it, which is how it ships; a stored 24h to 720h duration turns it on), read every tick | Runs the author catalogue sync for a batch of monitored authors whose `last_discovery_at` is older than the interval, never checked first. Batch is `ceil(eligible / hours in interval)`, clamped to 1..25, read with 3 spare authors so one whose sync is already running is skipped without costing the slot, with 3 seconds between authors and a 10 minute budget per author (an author over budget is stamped). Checks before every author whether Refresh all or refresh selected is running and stops if so. Stops on a rate limit from any provider (`metadata.ErrRateLimited`, the refused author unstamped), and after 3 consecutive authors failing with the provider unavailable (`metadata.IsProviderUnavailable`: rate limit, 5xx, network error, timeout); the authors of that streak are stamped to be due again in 6 hours (capped at the interval) so they cannot hold the head of the queue. Any other error is about the author, is stamped and resets the streak. Re-reads each author and skips one deleted, unmonitored or set to add no new items, before any provider call. Enriches covers only for works the author does not have, so existing coverless books get covers from a manual refresh only. Same author catalogue syncs serialise from reading the author's books to hydrating the created ones; the lock is released before indexer searches and the announcement, waiting for it ends with the context, and the AddBook single work fallback does not take it. Never grabs; new monitored books reach indexers through `search-wanted`. Publishes `bookAnnounced` ([#2236](https://github.com/vavallee/bindery/issues/2236)). |
 | `scan-library` | 6h | Reconciles files under the library roots against the catalogue. |
 | `calibre-sync` | 24h | Imports from a Calibre library, when configured. |

@@ -51,6 +51,15 @@ describe('UsersPage roles', () => {
     vi.mocked(api.setUserAutoApprove).mockResolvedValue({ ok: true })
   })
 
+  // #3240: the add-user form's labels name their fields.
+  it('names the add-user fields by their labels', async () => {
+    render(<UsersPage />)
+    await screen.findByRole('combobox', { name: 'Role for reader' })
+    expect(screen.getByLabelText('users.fieldUsername').tagName).toBe('INPUT')
+    expect(screen.getByLabelText('users.fieldPassword').tagName).toBe('INPUT')
+    expect(screen.getByLabelText('Role').tagName).toBe('SELECT')
+  })
+
   it('offers all three roles and sets requester', async () => {
     render(<UsersPage />)
     const select = await screen.findByRole('combobox', { name: 'Role for reader' })

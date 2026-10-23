@@ -97,6 +97,7 @@ Bindery distinguishes between an item it could not match locally and an item it 
 - Connection test or library listing fails: verify the saved ABS base URL, API key, and that the key can see the target book libraries.
 - Import rejects a selected library: use **List libraries** and choose book libraries. Podcast or other non-book ABS libraries are not imported.
 - Files are not attaching after import: look for `abs import: item files not attached, imported metadata only` in the log. It names the reason, the roots Bindery accepts, and your `abs.path_remap`. A remap only translates paths; the remapped path must still resolve under a Bindery-visible library root (`BINDERY_LIBRARY_DIR`, `BINDERY_AUDIOBOOK_DIR`, or a root folder).
+- Repeat imports are slow on a big library: items already matched on Hardcover, and items searched with no result in the last month, are skipped. To import only some libraries, send `libraryIds` to `POST /api/v1/abs/import`. To re-check everything, send `"full": true`. Skipped items also skip the upstream metadata re-merge and the late linking of volumes Hardcover adds to their series, and dry runs leave out the Hardcover part for them, so use `full` when you want those refreshed.
 - Too many review items: improve ABS metadata quality first, especially ASIN coverage and author/title consistency, then rerun.
 - Unexpected metadata disagreements: resolve them from the conflicts panel instead of rerunning until the same field flips back and forth.
 

@@ -15,6 +15,7 @@ import { authorProviderKey } from '../util/authorMetadata'
 import { providerDisplayName } from '../util/metadataSource'
 import { useModal } from './useModal'
 import CoverImage from './CoverImage'
+import { primaryFill } from './buttons'
 
 // What the modal reports back once something is in the library. Callers that
 // only refresh a list ignore the payload; the header search navigates to it.
@@ -201,7 +202,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
 
   const badgeClass = 'px-2 py-0.5 rounded-full bg-slate-300/70 dark:bg-zinc-700 text-[11px] font-medium text-slate-700 dark:text-zinc-300'
   const openClass = 'px-3 py-1 rounded text-xs font-medium border border-slate-400 dark:border-zinc-600 hover:bg-slate-200 dark:hover:bg-zinc-800'
-  const selectClass = 'px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded text-xs font-medium text-white flex-shrink-0'
+  const selectClass = `px-3 py-1 ${primaryFill} disabled:opacity-50 disabled:cursor-not-allowed rounded text-xs font-medium flex-shrink-0`
 
   // Keys carry the list index as well as the id: providers occasionally return
   // the same record twice, and a duplicate key makes React drop a row.
@@ -215,7 +216,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
       >
         <div className="min-w-0">
           <div className="font-medium text-sm">{author.authorName}</div>
-          <div className="text-xs text-slate-600 dark:text-zinc-500 flex flex-wrap gap-x-3">
+          <div className="text-xs text-fg-muted flex flex-wrap gap-x-3">
             {author.disambiguation && <span>{t('addToLibrary.topWork')} {author.disambiguation}</span>}
             {author.statistics?.bookCount ? <span title={t('addToLibrary.booksTooltip')}>{t('addToLibrary.books', { count: author.statistics.bookCount })}</span> : null}
             {author.ratingsCount ? <span>{t('addToLibrary.ratings', { count: author.ratingsCount })}</span> : null}
@@ -263,12 +264,12 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
         <div className="flex-1 min-w-0">
           <div className="font-medium text-sm truncate">{book.title}</div>
           {book.author?.authorName && (
-            <div className="text-xs text-slate-600 dark:text-zinc-500">{book.author.authorName}</div>
+            <div className="text-xs text-fg-muted">{book.author.authorName}</div>
           )}
           {book.releaseDate && (
-            <div className="text-xs text-slate-500 dark:text-zinc-600">{new Date(book.releaseDate).getFullYear()}</div>
+            <div className="text-xs text-fg-muted">{new Date(book.releaseDate).getFullYear()}</div>
           )}
-          <BookRating book={book} withCount className="block text-xs text-slate-500 dark:text-zinc-600" />
+          <BookRating book={book} withCount className="block text-xs text-fg-muted" />
         </div>
         {book.libraryBookId ? (
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -341,7 +342,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
                 type="button"
                 onClick={() => void search()}
                 disabled={searching || !query.trim()}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium text-white"
+                className={`px-4 py-2 ${primaryFill} disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm font-medium`}
               >
                 {searching ? t('addToLibrary.searching') : t('common.search')}
               </button>
@@ -356,7 +357,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
                   onClick={() => setFilter(value)}
                   className={`touch-target px-3 py-1 rounded-full text-xs font-medium border ${filter === value
                     ? 'bg-emerald-600 border-emerald-600 text-white'
-                    : 'border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-zinc-800/60'}`}
+                    : 'border-slate-300 dark:border-zinc-700 text-fg-muted hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-zinc-800/60'}`}
                 >
                   {label}{count !== null && ` (${count})`}
                 </button>
@@ -378,7 +379,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
                 <button
                   type="button"
                   onClick={() => setShowHidden(true)}
-                  className="w-full px-3 py-2 rounded-md border border-slate-300 dark:border-zinc-700 text-xs font-medium text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-zinc-800/60 transition-colors"
+                  className="w-full px-3 py-2 rounded-md border border-slate-300 dark:border-zinc-700 text-xs font-medium text-fg-muted hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-zinc-800/60 transition-colors"
                 >
                   {t('addToLibrary.showHiddenResults', { count: hiddenCount })}
                 </button>
@@ -396,7 +397,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
           </div>
 
           <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end gap-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">{t('common.cancel')}</button>
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white">{t('common.cancel')}</button>
           </div>
         </>}
       </div>

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from 'react'
+import { FormEvent, useEffect, useRef, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, AuthConfig, AuthStatus, BINDERY_BASE, StorageDirStatus, StorageHealth } from '../../api/client'
@@ -12,7 +12,9 @@ import { inputCls } from './formStyles'
 import RenameFilesModal from '../../components/RenameFilesModal'
 import NamingTemplateField from './NamingTemplateField'
 import SaveButton from './SaveButton'
+import DatabaseCheckSection from './DatabaseCheckSection'
 import { useSaveResult } from './useSaveResult'
+import { slateFill, primaryFill } from '../../components/buttons'
 
 // Tab identifiers used by onNavigate for soft (no-reload) cross-tab links.
 // Kept loose (string) so GeneralTab doesn't need to import SettingsPage's Tab
@@ -35,6 +37,7 @@ const DISCOVERY_INTERVAL_PRESETS = ['off', '24h', '168h', '720h']
 const AUTH_CONFIG_WAIT_MS = 2500
 
 export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
+  const fid = useId()
   const { t } = useTranslation()
   const { isAdmin } = useAuth()
   const [settings, setSettings] = useState<Record<string, string>>({})
@@ -269,7 +272,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const audiobookMode = audiobookModeSetting || importMode
   const anyExternal = importMode === 'external' || audiobookMode === 'external'
 
-  if (loading) return <div className="text-slate-600 dark:text-zinc-500">{t('common.loading')}</div>
+  if (loading) return <div className="text-fg-muted">{t('common.loading')}</div>
 
   return (
     <div className="space-y-8">
@@ -280,16 +283,16 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.theme')}</label>
-              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1">{t('settings.general.themeHint')}</p>
+              <p className="text-xs text-fg-muted mt-1">{t('settings.general.themeHint')}</p>
             </div>
             <ThemeToggle />
           </div>
           <div className="flex items-center justify-between gap-3 border-t border-slate-200 dark:border-zinc-800 pt-3 mt-3">
             <div className="min-w-0">
-              <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.language')}</label>
-              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1">{t('settings.general.languageHint')}</p>
+              <label htmlFor={`${fid}-lang`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.language')}</label>
+              <p className="text-xs text-fg-muted mt-1">{t('settings.general.languageHint')}</p>
             </div>
-            <LanguageSwitcher />
+            <LanguageSwitcher id={`${fid}-lang`} />
           </div>
         </div>
       </section>
@@ -306,8 +309,8 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.fileNaming')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
           <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Import Mode</label>
-            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+            <label className="block text-xs text-fg-muted mb-1">Import Mode</label>
+            <p className="text-xs text-fg-muted mb-2">
               {/* JSX drops the newline between a text line and a following
                   <strong> on the next line, so each sentence that ends right
                   before one needs an explicit {' '} or it renders glued
@@ -329,7 +332,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                   className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
                     importMode === m
                       ? 'bg-emerald-600 border-emerald-600 text-white'
-                      : 'border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'
+                      : 'border-slate-300 dark:border-zinc-700 text-fg-muted hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
                   {m.charAt(0).toUpperCase() + m.slice(1)}
@@ -345,16 +348,16 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               <p data-testid="import-mode-hardlink-warning" className="text-xs text-amber-600 dark:text-amber-400 mt-2">
                 {t('settings.general.importModeHardlinkWarning')}
                 {storage.hardlinkReason && (
-                  <span className="block mt-1 text-slate-600 dark:text-zinc-400">{storage.hardlinkReason}</span>
+                  <span className="block mt-1 text-fg-muted">{storage.hardlinkReason}</span>
                 )}
               </p>
             )}
           </div>
           <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
-            <label htmlFor="import-audiobook-mode" className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+            <label htmlFor="import-audiobook-mode" className="block text-xs text-fg-muted mb-1">
               {t('settings.general.audiobookImportMode')}
             </label>
-            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+            <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.audiobookImportModeHint')}
             </p>
             <select
@@ -391,23 +394,69 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                   <span className="text-xs font-medium text-slate-700 dark:text-zinc-300">
                     {t('settings.general.flattenMultiDisc', 'Flatten multi-disc audiobooks')}
                   </span>
-                  <span className="block text-xs text-slate-600 dark:text-zinc-500">
+                  <span className="block text-xs text-fg-muted">
                     {t('settings.general.flattenMultiDiscHint', 'When a completed audiobook download has multiple disc folders (Disc 1, CD 2, …), place its tracks into one flat folder named Part 001, Part 002, … so audiobook players sort them correctly. Available only in Copy or Hardlink mode; the source is never moved and torrents keep seeding. Single-disc audiobooks are unaffected.')}
                   </span>
                 </span>
               </label>
             </div>
           )}
+          <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
+            <label htmlFor="import-ebook-content-check" className="block text-xs text-fg-muted mb-1">
+              {t('settings.general.ebookContentCheck')}
+            </label>
+            <p className="text-xs text-fg-muted mb-2">
+              {t('settings.general.ebookContentCheckHint')}
+            </p>
+            <select
+              id="import-ebook-content-check"
+              data-testid="import-ebook-content-check"
+              value={contentCheckMode(settings['import.ebook.content_check'])}
+              onChange={async e => {
+                const v = e.target.value
+                setSettings(s => ({ ...s, 'import.ebook.content_check': v }))
+                await api.setSetting('import.ebook.content_check', v).catch(console.error)
+              }}
+              className={inputCls}
+            >
+              <option value="off">{t('settings.general.contentCheckOff')}</option>
+              <option value="warn">{t('settings.general.contentCheckWarn')}</option>
+              <option value="block">{t('settings.general.contentCheckBlock')}</option>
+            </select>
+          </div>
+          <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
+            <label htmlFor="import-audiobook-content-check" className="block text-xs text-fg-muted mb-1">
+              {t('settings.general.audiobookContentCheck')}
+            </label>
+            <p className="text-xs text-fg-muted mb-2">
+              {t('settings.general.audiobookContentCheckHint')}
+            </p>
+            <select
+              id="import-audiobook-content-check"
+              data-testid="import-audiobook-content-check"
+              value={contentCheckMode(settings['import.audiobook.content_check'])}
+              onChange={async e => {
+                const v = e.target.value
+                setSettings(s => ({ ...s, 'import.audiobook.content_check': v }))
+                await api.setSetting('import.audiobook.content_check', v).catch(console.error)
+              }}
+              className={inputCls}
+            >
+              <option value="off">{t('settings.general.contentCheckOff')}</option>
+              <option value="warn">{t('settings.general.contentCheckWarn')}</option>
+              <option value="block">{t('settings.general.contentCheckBlock')}</option>
+            </select>
+          </div>
           {anyExternal && (
             <div className="border-t border-slate-200 dark:border-zinc-800 pt-3 space-y-3">
               {importMode === 'external' && (
               <div>
-                <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.dropFolder', 'Drop folder')}</label>
-                <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+                <label htmlFor={`${fid}-3`} className="block text-xs text-fg-muted mb-1">{t('settings.general.dropFolder', 'Drop folder')}</label>
+                <p className="text-xs text-fg-muted mb-2">
                   {t('settings.general.dropFolderHint', 'Optional. In External mode, Bindery renames each finished download into this folder for a watch-folder tool (Calibre-Web-Automated, Storyteller) to ingest, instead of leaving it in the download dir. The source is never moved, so torrents keep seeding. Bindery still reconciles the managed copy on the next library scan. Leave empty to hand off in place.')}
                 </p>
                 <div className="flex gap-2">
-                  <input
+                  <input id={`${fid}-3`}
                     value={settings['import.drop_folder'] ?? ''}
                     onChange={e => { setSettings(s => ({ ...s, 'import.drop_folder': e.target.value })); setDropErr(null) }}
                     placeholder="/cwa-book-ingest"
@@ -419,13 +468,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                     onClick={() => dropSave(saveDropFolder)}
                   />
                 </div>
-                {dropErr && <p className="text-xs text-red-600 dark:text-red-400 mt-1">{dropErr}</p>}
+                {dropErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{dropErr}</p>}
               </div>
               )}
               {audiobookMode === 'external' && (
               <div>
-                <label htmlFor="import-audiobook-drop-folder" className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.audiobookDropFolder')}</label>
-                <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+                <label htmlFor="import-audiobook-drop-folder" className="block text-xs text-fg-muted mb-1">{t('settings.general.audiobookDropFolder')}</label>
+                <p className="text-xs text-fg-muted mb-2">
                   {t('settings.general.audiobookDropFolderHint')}
                 </p>
                 <div className="flex gap-2">
@@ -443,13 +492,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                     onClick={() => audiobookDropSave(saveAudiobookDropFolder)}
                   />
                 </div>
-                {audiobookDropErr && <p className="text-xs text-red-600 dark:text-red-400 mt-1">{audiobookDropErr}</p>}
+                {audiobookDropErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{audiobookDropErr}</p>}
               </div>
               )}
               <div className="flex gap-6 flex-wrap">
                 <div>
-                  <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.dropLayout', 'Layout')}</label>
-                  <select
+                  <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.general.dropLayout', 'Layout')}</label>
+                  <select id={`${fid}-1`}
                     value={settings['import.drop_layout'] ?? 'flat'}
                     onChange={async e => {
                       const v = e.target.value
@@ -463,8 +512,8 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.dropLinkMode', 'Placement')}</label>
-                  <select
+                  <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">{t('settings.general.dropLinkMode', 'Placement')}</label>
+                  <select id={`${fid}-2`}
                     value={settings['import.drop_link_mode'] ?? 'copy'}
                     onChange={async e => {
                       const v = e.target.value
@@ -496,7 +545,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 <span className="text-xs font-medium text-slate-700 dark:text-zinc-300">
                   {t('settings.general.writeOPFSidecar', 'Write a metadata.opf sidecar')}
                 </span>
-                <span className="block text-xs text-slate-600 dark:text-zinc-500">
+                <span className="block text-xs text-fg-muted">
                   {t('settings.general.writeOPFSidecarHint', "Write a Calibre-style metadata.opf file next to each imported book, carrying Bindery's own title, author, series, identifiers, and other catalogue metadata — regardless of what the downloaded file's own embedded tags say. Also refreshed when you run Reorganize. Never modifies the book file itself, only adds this extra file. Off by default.")}
                 </span>
               </span>
@@ -524,14 +573,14 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             saveResult={audiobookTemplateResult}
           />
           <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+            <label htmlFor={`${fid}-4`} className="block text-xs text-fg-muted mb-1">
               {t('settings.general.audiobookFileTemplate', 'Audiobook file naming (per track)')}
             </label>
-            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+            <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.audiobookFileTemplateHint', 'Leave empty to keep the download’s original file layout. Set a template to rename every audiobook track in playback order; it must include {Part}. A single-file audiobook is renamed too, as part 1, unless {Part} sits in a group with its own text, such as {Title}{ - Pt. Part:3}.{ext}, which is left out when there is only one file.')}
             </p>
             <div className="flex flex-wrap gap-2">
-              <input
+              <input id={`${fid}-4`}
                 type="text"
                 value={settings['naming.audiobook_file_template'] ?? ''}
                 onChange={e => setSettings(s => ({ ...s, 'naming.audiobook_file_template': e.target.value }))}
@@ -554,10 +603,10 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.downloads')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
           <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('settings.general.preferredLanguage')}</label>
-            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">{t('settings.general.preferredLanguageHint')}</p>
+            <label htmlFor={`${fid}-5`} className="block text-xs text-fg-muted mb-1">{t('settings.general.preferredLanguage')}</label>
+            <p className="text-xs text-fg-muted mb-2">{t('settings.general.preferredLanguageHint')}</p>
             <div className="flex flex-wrap gap-2">
-              <select
+              <select id={`${fid}-5`}
                 value={settings['search.preferredLanguage'] ?? 'en'}
                 onChange={e => setSettings(s => ({ ...s, 'search.preferredLanguage': e.target.value }))}
                 className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
@@ -571,7 +620,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 onClick={() => langSave(savePreferredLanguage)}
               />
             </div>
-            {langErr && <p className="text-xs text-red-600 dark:text-red-400 mt-1">{langErr}</p>}
+            {langErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{langErr}</p>}
           </div>
         </div>
       </section>
@@ -580,75 +629,78 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.storage')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
-          <p className="text-xs text-slate-600 dark:text-zinc-500">{t('settings.general.storageHint')}</p>
+          <p className="text-xs text-fg-muted">{t('settings.general.storageHint')}</p>
           <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+            <label htmlFor={`${fid}-6`} className="block text-xs text-fg-muted mb-1">
               {t('settings.general.downloadDir')} <code className="font-mono bg-slate-200 dark:bg-zinc-800 px-1 rounded">BINDERY_DOWNLOAD_DIR</code>
               <StorageHealthBadge status={dirStatus(storage, 'download')} loading={!storage} />
             </label>
-            <input
+            <input id={`${fid}-6`}
               readOnly
               value={storage?.downloadDir ?? ''}
               className={`${inputCls} font-mono opacity-80 cursor-default`}
             />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+            <label htmlFor={`${fid}-7`} className="block text-xs text-fg-muted mb-1">
               {t('settings.general.audiobookDownloadDir')} <code className="font-mono bg-slate-200 dark:bg-zinc-800 px-1 rounded">BINDERY_AUDIOBOOK_DOWNLOAD_DIR</code>
               {storage?.audiobookDownloadDir && <StorageHealthBadge status={dirStatus(storage, 'audiobook-download')} loading={false} />}
             </label>
-            <input
+            <input id={`${fid}-7`}
               readOnly
               value={storage?.audiobookDownloadDir || (storage?.downloadDir ?? '')}
               placeholder={storage?.downloadDir ?? ''}
               className={`${inputCls} font-mono opacity-80 cursor-default`}
             />
             {storage && !storage.audiobookDownloadDir && (
-              <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.general.audiobookDownloadDirFallback')}</p>
+              <p className="text-xs text-fg-muted mt-1">{t('settings.general.audiobookDownloadDirFallback')}</p>
             )}
           </div>
           <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+            <label htmlFor={`${fid}-8`} className="block text-xs text-fg-muted mb-1">
               {t('settings.general.libraryDir')} <code className="font-mono bg-slate-200 dark:bg-zinc-800 px-1 rounded">BINDERY_LIBRARY_DIR</code>
               <StorageHealthBadge status={dirStatus(storage, 'library')} loading={!storage} />
             </label>
-            <input
+            <input id={`${fid}-8`}
               readOnly
               value={storage?.libraryDir ?? ''}
               className={`${inputCls} font-mono opacity-80 cursor-default`}
             />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">
+            <label htmlFor={`${fid}-9`} className="block text-xs text-fg-muted mb-1">
               {t('settings.general.audiobookDir')} <code className="font-mono bg-slate-200 dark:bg-zinc-800 px-1 rounded">BINDERY_AUDIOBOOK_DIR</code>
               {storage?.audiobookDir && <StorageHealthBadge status={dirStatus(storage, 'audiobook')} loading={false} />}
             </label>
-            <input
+            <input id={`${fid}-9`}
               readOnly
               value={storage?.audiobookDir || (storage?.libraryDir ?? '')}
               placeholder={storage?.libraryDir ?? ''}
               className={`${inputCls} font-mono opacity-80 cursor-default`}
             />
             {storage && !storage.audiobookDir && (
-              <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.general.audiobookDirFallback')}</p>
+              <p className="text-xs text-fg-muted mt-1">{t('settings.general.audiobookDirFallback')}</p>
             )}
           </div>
           {storage && (
             storage.hardlinkable ? (
-              <p className="text-xs text-emerald-700 dark:text-emerald-400 border-t border-slate-200 dark:border-zinc-800 pt-3">
+              <p className="text-xs text-accent-text border-t border-slate-200 dark:border-zinc-800 pt-3">
                 {t('settings.general.storageHardlinkOk')}
               </p>
             ) : (
               <p className="text-xs text-amber-600 dark:text-amber-400 border-t border-slate-200 dark:border-zinc-800 pt-3">
                 {t('settings.general.storageHardlinkWarning')}
                 {storage.hardlinkReason && (
-                  <span className="block mt-1 text-slate-600 dark:text-zinc-400">{storage.hardlinkReason}</span>
+                  <span className="block mt-1 text-fg-muted">{storage.hardlinkReason}</span>
                 )}
               </p>
             )
           )}
         </div>
       </section>
+
+      {/* Database drift check (#3356): read only, runs only on click. Inside the isAdmin block like Storage, so a non admin never sees it. */}
+      <DatabaseCheckSection />
 
       {/* Library */}
       <section>
@@ -657,7 +709,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-slate-700 dark:text-zinc-300">{t('settings.general.scanLibrary')}</p>
-              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.scanLibraryHint')}</p>
+              <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.scanLibraryHint')}</p>
               {scanMessage && (
                 <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">{scanMessage}</p>
               )}
@@ -665,23 +717,23 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <button
               onClick={handleScan}
               disabled={scanningLibrary}
-              className="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
+              className={`px-4 py-2 ${slateFill} rounded text-sm font-medium disabled:opacity-50 flex-shrink-0`}
             >
               {scanningLibrary ? t('settings.general.scanning') : t('settings.general.scanLibraryButton')}
             </button>
           </div>
           {lastScan && (
-            <div className="mt-3 border-t border-slate-200 dark:border-zinc-800 pt-3 text-xs text-slate-600 dark:text-zinc-400">
+            <div className="mt-3 border-t border-slate-200 dark:border-zinc-800 pt-3 text-xs text-fg-muted">
               <p className="font-medium text-slate-700 dark:text-zinc-300 mb-1">{t('settings.general.lastScan')}</p>
               <div className="flex gap-4">
                 <span>{t('settings.general.filesFound')} <span className="font-mono text-slate-800 dark:text-zinc-200">{lastScan.files_found}</span></span>
-                <span>{t('settings.general.reconciled')} <span className="font-mono text-emerald-700 dark:text-emerald-400">{lastScan.reconciled}</span></span>
+                <span>{t('settings.general.reconciled')} <span className="font-mono text-accent-text">{lastScan.reconciled}</span></span>
                 <span>{t('settings.general.unmatched')} <span className="font-mono text-slate-800 dark:text-zinc-200">{lastScan.unmatched}</span></span>
                 {(lastScan.already_tracked ?? 0) > 0 && (
                   <span>{t('settings.general.alreadyTracked')} <span className="font-mono text-slate-800 dark:text-zinc-200">{lastScan.already_tracked}</span></span>
                 )}
               </div>
-              <p className="mt-1 text-slate-500 dark:text-zinc-500">
+              <p className="mt-1 text-fg-muted">
                 {new Date(lastScan.ran_at).toLocaleString()}
               </p>
               {(() => {
@@ -690,7 +742,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                   : [lastScan.library_dir, lastScan.audiobook_dir].filter((p): p is string => !!p)
                 if (paths.length === 0) return null
                 return (
-                  <p className="mt-1 text-slate-500 dark:text-zinc-500">
+                  <p className="mt-1 text-fg-muted">
                     {t('settings.general.scannedPaths')}{' '}
                     {paths.map((p, i) => (
                       <span key={i} className="font-mono text-slate-700 dark:text-zinc-300 break-all">
@@ -717,7 +769,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               {(lastScan.unmatched_units ?? 0) > 0 && (
                 <p className="mt-2 flex flex-wrap items-center gap-x-2 text-slate-700 dark:text-zinc-300">
                   <span>{t('settings.general.unmatchedUnits', { count: lastScan.unmatched_units, defaultValue: '{{count}} books need a decision.' })}</span>
-                  <a href={`${BINDERY_BASE}/import`} className="font-medium text-emerald-700 dark:text-emerald-400 hover:underline">
+                  <a href={`${BINDERY_BASE}/import`} className="font-medium text-accent-text hover:underline">
                     {t('settings.general.reviewUnmatched', { count: lastScan.unmatched_units, defaultValue: 'Review {{count}} unmatched books' })}
                   </a>
                 </p>
@@ -732,12 +784,12 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
           <div className="mt-3 border-t border-slate-200 dark:border-zinc-800 pt-3 flex items-center justify-between gap-4">
             <div>
               <p className="text-sm text-slate-700 dark:text-zinc-300">{t('settings.general.reorganizeLibrary')}</p>
-              <p className="text-xs text-slate-600 dark:text-zinc-500 mt-0.5">{t('settings.general.reorganizeLibraryHint')}</p>
+              <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.reorganizeLibraryHint')}</p>
             </div>
             <button
               type="button"
               onClick={() => setShowReorganize(true)}
-              className="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
+              className={`px-4 py-2 ${slateFill} rounded text-sm font-medium disabled:opacity-50 flex-shrink-0`}
             >
               {t('settings.general.reorganizeLibraryButton')}
             </button>
@@ -757,13 +809,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.search')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
           <div>
-            <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+            <label htmlFor={`${fid}-10`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.searchIntervalLabel')}
             </label>
-            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+            <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.searchIntervalHint')}
             </p>
-            <select
+            <select id={`${fid}-10`}
               value={settings['search.interval'] ?? '12h'}
               onChange={async e => {
                 const next = e.target.value
@@ -779,7 +831,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               <option value="72h">72 hours</option>
               <option value="168h">7 days</option>
             </select>
-            <p className="text-xs text-slate-500 dark:text-zinc-600 mt-1">
+            <p className="text-xs text-fg-muted mt-1">
               {t('settings.general.searchIntervalRestart')}
             </p>
           </div>
@@ -793,13 +845,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.hardcoverSync', 'Hardcover list sync')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
           <div>
-            <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+            <label htmlFor={`${fid}-11`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.hardcoverSyncIntervalLabel', 'Hardcover list sync interval')}
             </label>
-            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+            <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.hardcoverSyncIntervalHint', 'How often Bindery re-syncs your enabled Hardcover import lists. Lower it if you curate a Hardcover list as your main way of adding books. Use Sync now on the Import tab for an immediate run.')}
             </p>
-            <select
+            <select id={`${fid}-11`}
               data-testid="hardcover-sync-interval"
               value={hardcoverSyncInterval}
               onChange={async e => {
@@ -824,7 +876,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 <option value={hardcoverSyncInterval}>{hardcoverSyncInterval}</option>
               )}
             </select>
-            <p className="text-xs text-slate-500 dark:text-zinc-600 mt-1">
+            <p className="text-xs text-fg-muted mt-1">
               {t('settings.general.searchIntervalRestart')}
             </p>
           </div>
@@ -840,7 +892,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor="discovery-interval" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.discoveryIntervalLabel')}
             </label>
-            <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+            <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.discoveryIntervalHint')}
             </p>
             <select
@@ -869,12 +921,12 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.defaultLibraryLocation')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-3">
+          <p className="text-xs text-fg-muted mb-3">
             {t('settings.general.defaultLibraryLocationHint')}
           </p>
           <button
             onClick={() => onNavigate ? onNavigate('rootfolders') : window.location.assign('/settings?tab=rootfolders')}
-            className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline"
+            className="text-sm text-accent-text hover:underline"
           >
             {t('settings.general.defaultLibraryLocationLink')}
           </button>
@@ -884,6 +936,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       </>)}
     </div>
   )
+}
+
+// contentCheckMode is the mode the importer will use for a stored content check
+// value: off and block as stored, warn for everything else, including an unset
+// or unrecognised value, which is how the importer reads it.
+function contentCheckMode(stored: string | undefined): 'off' | 'warn' | 'block' {
+  return stored === 'off' || stored === 'block' ? stored : 'warn'
 }
 
 // dirStatus looks up the health entry for a named directory in the storage
@@ -898,7 +957,7 @@ function dirStatus(storage: StorageHealth | null, name: string): StorageDirStatu
 function StorageHealthBadge({ status, loading }: { status: StorageDirStatus | undefined; loading: boolean }) {
   const { t } = useTranslation()
   if (loading) {
-    return <span className="ml-2 text-[11px] font-normal text-slate-500 dark:text-zinc-500">{t('settings.general.storageHealthChecking')}</span>
+    return <span className="ml-2 text-[11px] font-normal text-fg-muted">{t('settings.general.storageHealthChecking')}</span>
   }
   if (!status) return null
 
@@ -924,6 +983,7 @@ function StorageHealthBadge({ status, loading }: { status: StorageDirStatus | un
 }
 
 function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
+  const fid = useId()
   const { t } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
   const { status, refresh, isAdmin } = useAuth()
@@ -1007,8 +1067,8 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
       <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-5">
         {isAdmin && (<>
         <div>
-          <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Authentication Mode</label>
-          <select
+          <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">Authentication Mode</label>
+          <select id={`${fid}-1`}
             value={cfg.mode}
             onChange={e => setMode(e.target.value as AuthStatus['mode'])}
             disabled={savingMode}
@@ -1018,8 +1078,8 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
             <option value="local-only">Local only (bypass for private IPs)</option>
             <option value="disabled">Disabled (no auth)</option>
           </select>
-          {cfg.mode === 'enabled' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Always requires login, regardless of network origin.</p>}
-          {cfg.mode === 'local-only' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Login is bypassed for requests from private / LAN IP ranges. Still requires login from the internet.</p>}
+          {cfg.mode === 'enabled' && <p className="text-xs text-fg-muted mt-1">Always requires login, regardless of network origin.</p>}
+          {cfg.mode === 'local-only' && <p className="text-xs text-fg-muted mt-1">Login is bypassed for requests from private / LAN IP ranges. Still requires login from the internet.</p>}
           {cfg.mode === 'disabled' && <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">No authentication — only safe when Bindery is behind a trusted reverse proxy that enforces access control.</p>}
           {/* Server-authored warning for the mode just chosen (currently
               local-only with no trusted proxy configured). Rendered verbatim so
@@ -1033,8 +1093,8 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
         </div>
 
         <div className="border-t border-slate-200 dark:border-zinc-800 pt-4">
-          <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">API Key</label>
-          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+          <label className="block text-xs text-fg-muted mb-1">API Key</label>
+          <p className="text-xs text-fg-muted mb-2">
             Pass as <code className="font-mono">X-Api-Key</code> header or <code className="font-mono">?apikey=</code> query parameter. Used by external integrations (Tautulli, custom scripts, etc.).
           </p>
           <div className="flex flex-wrap gap-2">
@@ -1055,15 +1115,15 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
             <ClipboardManualFallback text={apiKeyClipboard.manualText} className="mt-2" />
           )}
           {!showKey && (
-            <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-1">
+            <p className="text-[11px] text-fg-muted mt-1">
               Regenerating invalidates the current key — update all external integrations afterward.
             </p>
           )}
         </div>
 
         <div className="border-t border-slate-200 dark:border-zinc-800 pt-4">
-          <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">Session Secret</label>
-          <p className="text-xs text-slate-600 dark:text-zinc-500 mb-2">
+          <label className="block text-xs text-fg-muted mb-1">Session Secret</label>
+          <p className="text-xs text-fg-muted mb-2">
             Signs session cookies. Rotating it generates a new secret while keeping the previous one valid for a rotation window, so existing logins are not dropped immediately. Rotate twice to fully invalidate sessions signed with the old secret.
           </p>
           <button onClick={rotateSessionSecret} disabled={rotatingSecret} className="px-3 py-2 bg-amber-600 hover:bg-amber-500 rounded text-xs font-medium disabled:opacity-50">
@@ -1089,6 +1149,7 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
 }
 
 function ChangePasswordForm({ username }: { username: string }) {
+  const fid = useId()
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [confirmPw, setConfirmPw] = useState('')
@@ -1116,13 +1177,13 @@ function ChangePasswordForm({ username }: { username: string }) {
 
   return (
     <form onSubmit={submit} className="space-y-2">
-      <label className="block text-xs text-slate-600 dark:text-zinc-400">Change password for <strong>{username}</strong></label>
-      <input type="password" autoComplete="current-password" placeholder="Current password" value={current} onChange={e => setCurrent(e.target.value)} className={inputCls} />
+      <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted">Change password for <strong>{username}</strong></label>
+      <input id={`${fid}-1`} type="password" autoComplete="current-password" placeholder="Current password" value={current} onChange={e => setCurrent(e.target.value)} className={inputCls} />
       <input type="password" autoComplete="new-password" placeholder="New password" value={next} onChange={e => setNext(e.target.value)} className={inputCls} />
       <input type="password" autoComplete="new-password" placeholder="Confirm new password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} className={inputCls} />
-      {error && <div className="text-xs text-red-600 dark:text-red-400">{error}</div>}
-      {success && <div className="text-xs text-emerald-600 dark:text-emerald-400">Password updated</div>}
-      <button type="submit" disabled={submitting || !current || !next} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium disabled:opacity-50">
+      {error && <div className="text-xs text-red-700 dark:text-red-400">{error}</div>}
+      {success && <div className="text-xs text-accent-text">Password updated</div>}
+      <button type="submit" disabled={submitting || !current || !next} className={`px-3 py-2 ${primaryFill} rounded text-xs font-medium disabled:opacity-50`}>
         {submitting ? 'Updating…' : 'Change password'}
       </button>
     </form>

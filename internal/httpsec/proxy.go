@@ -296,13 +296,26 @@ func DirectGuardedTransport(policy Policy) http.RoundTripper {
 // (net/http's own limit) and re-validates each hop's URL against policy, so a
 // redirect off a control endpoint cannot be used to reach a link-local or
 // cloud-metadata address. The error names the policy refusal.
+//
+// For PolicyService a hop is checked as PolicyLANLoopback, and the follow-up
+// request is marked so its dial is too: the link-local allowance belongs to the
+// admin-typed base URL, never to a redirect a remote service answers with.
 func RedirectGuard(policy Policy) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return errors.New("stopped after 10 redirects")
 		}
-		if err := ValidateOutboundURL(req.URL.String(), policy); err != nil {
+		hop := policy
+		if policy == PolicyService {
+			hop = PolicyLANLoopback
+		}
+		if err := ValidateOutboundURL(req.URL.String(), hop); err != nil {
 			return fmt.Errorf("redirect blocked: %w", err)
+		}
+		if policy == PolicyService {
+			// The client sends this very request next, so replacing its
+			// contents carries the marker to the dial.
+			*req = *req.WithContext(context.WithValue(req.Context(), redirectHopKey{}, true))
 		}
 		return nil
 	}

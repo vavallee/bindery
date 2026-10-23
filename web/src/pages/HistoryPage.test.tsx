@@ -18,15 +18,25 @@ vi.mock('../api/client', async importOriginal => {
   }
 })
 
+const i18nOverrides = vi.hoisted(() => ({ labels: {} as Record<string, string> }))
+
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, opts?: { defaultValue?: string }) => {
+    t: (key: string, opts?: Record<string, unknown> & { defaultValue?: string }) => {
       const labels: Record<string, string> = {
         'common.loading': 'Loading...',
         'history.events.grabbed': 'Grabbed',
         'history.events.downloadFailed': 'Download Failed',
         'history.events.importFailed': 'Import Failed',
         'history.title': 'History',
+        'history.contentCheckEbook': 'The file looks like another book',
+        'history.contentCheckAudiobook': 'The files include other books',
+        'history.contentCheckEbookEntry': '"{{title}}" by {{author}}',
+        'history.contentCheckEbookTitleOnly': '"{{title}}"',
+        'history.contentCheckEbookAuthorOnly': 'by {{author}}',
+        'history.contentCheckAudiobookEntry': '{{title}} ({{count}})',
+        'history.contentCheckRetitled': 'Every file is titled "{{title}}" ({{count}} files), so it was imported as a retitled edition',
+        'history.contentCheckTruncated': 'The content check was cut short and skipped',
         'history.allEventTypes': 'All event types',
         'history.empty': 'No history events found',
         'history.emptyHint': 'Grabs, imports and failures land here as they happen.',
@@ -40,7 +50,9 @@ vi.mock('react-i18next', () => ({
         'pagination.previous': 'Previous',
         'pagination.next': 'Next',
       }
-      return labels[key] ?? opts?.defaultValue ?? key
+      const label = i18nOverrides.labels[key] ?? labels[key]
+      if (label === undefined) return opts?.defaultValue ?? key
+      return label.replace(/\{\{(\w+)\}\}/g, (_, name: string) => String(opts?.[name] ?? ''))
     },
   }),
 }))
@@ -204,6 +216,26 @@ describe('HistoryPage', () => {
     expect(within(desktopTable()).getByText('Keep Me')).toBeInTheDocument()
   })
 
+  it('keeps the row and shows the server message when blocklisting is refused', async () => {
+    const message = 'this history event has no release GUID, so there is nothing to blocklist'
+    vi.mocked(api.blocklistFromHistory).mockRejectedValue(new Error(message))
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [makeHistory({ id: 7, eventType: 'grabbed', sourceTitle: 'No Guid Release' })],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+
+    renderHistoryPage()
+
+    const targetRow = (await within(await findDesktopTable()).findByText('No Guid Release')).closest('tr')!
+    fireEvent.click(within(targetRow).getByRole('button', { name: 'Blocklist' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(message)
+    expect(api.blocklistFromHistory).toHaveBeenCalledWith(7)
+    expect(within(desktopTable()).getByText('No Guid Release')).toBeInTheDocument()
+  })
+
   it('deletes history events and removes them from local history', async () => {
     vi.mocked(api.listHistory).mockResolvedValue({
       items: [
@@ -338,5 +370,199 @@ describe('HistoryPage', () => {
     // path it has always shown.
     const legacyRow = rowFor('Legacy Release')
     expect(within(legacyRow).getByText('/library/Author/Legacy.epub')).toBeInTheDocument()
+  })
+
+  it('lists the other books a warn mode content check found in an audiobook import (#3246)', async () => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [
+        makeHistory({
+          id: 1,
+          eventType: 'bookImported',
+          sourceTitle: 'Chase Audiobook',
+          data: JSON.stringify({
+            path: '/audiobooks/Chase',
+            format: 'audiobook',
+            contentCheck: {
+              kind: 'audiobook',
+              bookTitle: 'Chase',
+              tracksRead: 19,
+              matches: 2,
+              mismatches: [
+                { title: 'Corralled', count: 9 },
+                { title: 'Coming Home to Myself', count: 8 },
+              ],
+            },
+          }),
+        }),
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+
+    renderHistoryPage()
+    const table = await findDesktopTable()
+    expect(await within(table).findByText('Chase Audiobook')).toBeInTheDocument()
+    expect(
+      within(rowFor('Chase Audiobook')).getByText(
+        'The files include other books: Corralled (9), Coming Home to Myself (8) · /audiobooks/Chase',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('renders a content check that has null, empty and odd entries without throwing', async () => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [
+        makeHistory({
+          id: 1,
+          eventType: 'bookImported',
+          sourceTitle: 'Odd Entries',
+          data: JSON.stringify({
+            path: '/library/odd.epub',
+            contentCheck: {
+              kind: 'ebook',
+              mismatches: [null, 'text', 7, {}, { title: '', author: 'Mary Trevelyan' }, { title: 'Only A Title', author: '' }],
+            },
+          }),
+        }),
+        makeHistory({
+          id: 2,
+          eventType: 'bookImported',
+          sourceTitle: 'Null Mismatches',
+          data: JSON.stringify({ path: '/library/n.epub', contentCheck: { kind: 'audiobook', mismatches: [null, { count: 3 }] } }),
+        }),
+      ],
+      total: 2,
+      limit: 100,
+      offset: 0,
+    })
+
+    renderHistoryPage()
+    const table = await findDesktopTable()
+    expect(await within(table).findByText('Odd Entries')).toBeInTheDocument()
+    // An empty title never renders as "" by X, and an empty author never as by.
+    expect(
+      within(rowFor('Odd Entries')).getByText(
+        'The file looks like another book: by Mary Trevelyan, "Only A Title" \u00b7 /library/odd.epub',
+      ),
+    ).toBeInTheDocument()
+    // Nothing usable in the list: the row falls back to its path.
+    expect(within(rowFor('Null Mismatches')).getByText('/library/n.epub')).toBeInTheDocument()
+  })
+
+  it('shows one quiet line for a retitled pass and for a check that ran out of time', async () => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [
+        makeHistory({
+          id: 1,
+          eventType: 'bookImported',
+          sourceTitle: 'Retitled Release',
+          data: JSON.stringify({
+            path: '/audiobooks/Chase',
+            contentCheck: { kind: 'audiobook', tracksRead: 40, matches: 0, mismatches: [], retitled: { title: 'Corralled', files: 40 } },
+          }),
+        }),
+        makeHistory({
+          id: 2,
+          eventType: 'bookImported',
+          sourceTitle: 'Slow Release',
+          data: JSON.stringify({ contentCheck: { kind: 'audiobook', tracksRead: 12, truncated: true } }),
+        }),
+        makeHistory({
+          id: 3,
+          eventType: 'bookImported',
+          sourceTitle: 'Odd Note',
+          data: JSON.stringify({ path: '/x', contentCheck: { kind: 'audiobook', retitled: { title: 7, files: 'many' } } }),
+        }),
+      ],
+      total: 3,
+      limit: 100,
+      offset: 0,
+    })
+
+    renderHistoryPage()
+    const table = await findDesktopTable()
+    expect(await within(table).findByText('Retitled Release')).toBeInTheDocument()
+    expect(
+      within(rowFor('Retitled Release')).getByText(
+        'Every file is titled "Corralled" (40 files), so it was imported as a retitled edition \u00b7 /audiobooks/Chase',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      within(rowFor('Slow Release')).getByText('The content check was cut short and skipped'),
+    ).toBeInTheDocument()
+    // A malformed note is ignored and the row falls back to its path.
+    expect(within(rowFor('Odd Note')).getByText('/x')).toBeInTheDocument()
+  })
+
+  it('takes the wording around a content check entry from the translation', async () => {
+    i18nOverrides.labels['history.contentCheckEbookEntry'] = '{{title}} von {{author}}'
+    try {
+      vi.mocked(api.listHistory).mockResolvedValue({
+        items: [
+          makeHistory({
+            id: 1,
+            eventType: 'bookImported',
+            sourceTitle: 'Translated Row',
+            data: JSON.stringify({
+              contentCheck: { kind: 'ebook', mismatches: [{ title: 'Moby Dick', author: 'Melville' }] },
+            }),
+          }),
+        ],
+        total: 1,
+        limit: 100,
+        offset: 0,
+      })
+      renderHistoryPage()
+      const table = await findDesktopTable()
+      expect(await within(table).findByText('Translated Row')).toBeInTheDocument()
+      expect(
+        within(rowFor('Translated Row')).getByText('The file looks like another book: Moby Dick von Melville'),
+      ).toBeInTheDocument()
+    } finally {
+      delete i18nOverrides.labels['history.contentCheckEbookEntry']
+    }
+  })
+
+  it('says what a warn mode content check found on an ebook import (#3015)', async () => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [
+        makeHistory({
+          id: 1,
+          eventType: 'bookImported',
+          sourceTitle: 'Mary Mary Release',
+          data: JSON.stringify({
+            path: '/library/James Patterson/Mary, Mary.epub',
+            format: 'ebook',
+            contentCheck: {
+              kind: 'ebook',
+              bookTitle: 'Mary, Mary',
+              bookAuthor: 'James Patterson',
+              mismatches: [{ file: 'a.epub', title: 'Mary and Mr Eliot', author: 'Mary Trevelyan' }],
+            },
+          }),
+        }),
+        makeHistory({
+          id: 2,
+          eventType: 'bookImported',
+          sourceTitle: 'Clean Release',
+          data: JSON.stringify({ path: '/library/Author/Clean.epub', format: 'ebook' }),
+        }),
+      ],
+      total: 2,
+      limit: 100,
+      offset: 0,
+    })
+
+    renderHistoryPage()
+    const table = await findDesktopTable()
+    expect(await within(table).findByText('Mary Mary Release')).toBeInTheDocument()
+    expect(
+      within(rowFor('Mary Mary Release')).getByText(
+        'The file looks like another book: "Mary and Mr Eliot" by Mary Trevelyan · /library/James Patterson/Mary, Mary.epub',
+      ),
+    ).toBeInTheDocument()
+    // An import nobody flagged reads exactly as before.
+    expect(within(rowFor('Clean Release')).getByText('/library/Author/Clean.epub')).toBeInTheDocument()
   })
 })

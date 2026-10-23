@@ -141,7 +141,7 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
       </td>
       <td className={`${cellCls} md:w-[36%]`}>
         {outcomeLine ? (
-          <p role="status" className="truncate text-xs text-emerald-700 dark:text-emerald-400" title={outcomeLine}>{outcomeLine}</p>
+          <p role="status" className="truncate text-xs text-accent-text" title={outcomeLine}>{outcomeLine}</p>
         ) : item.state === 'adopted' && item.book ? (
           <p className="truncate text-xs text-fg-muted">
             {t('adoption.row.adoptedAs', 'Adopted as')}{' '}
@@ -184,7 +184,7 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
             {t('adoption.outcome.keptBook', 'Files removed. The book stayed because it is now in use.')}
           </p>
         )}
-        {error && <p role="alert" className="mt-0.5 break-words text-xs text-red-600 dark:text-red-400">{error}</p>}
+        {error && <p role="alert" className="mt-0.5 break-words text-xs text-red-700 dark:text-red-400">{error}</p>}
       </td>
       <td className={actionCellCls}>
         <div className="flex items-center gap-1.5 md:justify-end">

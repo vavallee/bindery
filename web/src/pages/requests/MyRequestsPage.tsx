@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { LibraryRequest } from '../../api/client'
 import { mediaTypeLabel, requestStatusClass, requestStatusLabel } from './requestLabels'
+import { primaryFill } from '../../components/buttons'
 
 const PAGE_SIZE = 50
 
@@ -46,7 +47,7 @@ export default function MyRequestsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <h2 className="text-2xl font-bold">{t('requests.mine.title')}</h2>
-        <Link to="/request" className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-md text-sm font-medium text-white">
+        <Link to="/request" className={`px-4 py-2 ${primaryFill} rounded-md text-sm font-medium`}>
           {t('requests.mine.newRequest')}
         </Link>
       </div>

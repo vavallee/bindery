@@ -286,11 +286,11 @@ func (i *Importer) resolveManualAuthor(ctx context.Context, cfg ImportConfig, ru
 			return nil, false, "", metadataMergeResult{}, err
 		}
 		if models.CanReplaceAuthorIdentity(existing) {
-			existing.ForeignID = foreignID
-			existing.MetadataProvider = models.AuthorProviderFromForeignID(foreignID)
-			if err := i.authors.Update(ctx, existing); err != nil {
+			replaced, err := i.replaceAuthorIdentity(ctx, existing.ID, foreignID)
+			if err != nil {
 				return nil, false, "", metadataMergeResult{}, err
 			}
+			existing = replaced
 			matcher.addAuthor(existing)
 		}
 		if err := i.upsertProvenance(ctx, &models.ABSProvenance{
@@ -510,6 +510,14 @@ func (i *Importer) planUpstreamAuthorMerge(ctx context.Context, cfg ImportConfig
 		}
 	}
 	for _, field := range authorConflictFields {
+		// A credited photo or bio (an enricher's, #3287) on either side is
+		// not an ABS conflict: it follows the merge rule every refresh uses,
+		// so it never displaces the library's own value and its credit
+		// always travels with it.
+		if applied, ok := mergeCreditedAuthorField(author, full, field); ok {
+			changed = changed || applied
+			continue
+		}
 		fieldResult, fieldChanged, conflict, err := i.planConflictField(ctx, cfg, item, entityTypeAuthor, author.ID, field,
 			SerializeAuthorConflictValue(author, field),
 			SerializeAuthorConflictValue(full, field),
@@ -1653,4 +1661,38 @@ func (i *Importer) deleteProvenanceByLocal(ctx context.Context, entityType strin
 	}
 	count, err := i.provenance.DeleteByLocal(ctx, entityType, localID)
 	return int(count), err
+}
+
+// replaceAuthorIdentityAttempts bounds the re-reads when the author keeps
+// changing under the import; each attempt is one read and one guarded write.
+const replaceAuthorIdentityAttempts = 3
+
+// replaceAuthorIdentity points the author with a replaceable synthetic id at
+// foreignID. It re-reads the row rather than writing the author matcher's
+// copy, which is as old as the import, and writes with UpdateIfUnchanged, so
+// a bio, photo or other edit saved while the import runs is kept (#3407).
+// When the row moves between the read and the write it reads again.
+func (i *Importer) replaceAuthorIdentity(ctx context.Context, authorID int64, foreignID string) (*models.Author, error) {
+	for range replaceAuthorIdentityAttempts {
+		current, err := i.authors.GetByID(ctx, authorID)
+		if err != nil {
+			return nil, err
+		}
+		if current == nil {
+			return nil, fmt.Errorf("author %d was deleted during the import", authorID)
+		}
+		if !models.CanReplaceAuthorIdentity(current) {
+			return current, nil
+		}
+		current.ForeignID = foreignID
+		current.MetadataProvider = models.AuthorProviderFromForeignID(foreignID)
+		written, err := i.authors.UpdateIfUnchanged(ctx, current, current.UpdatedAtRaw)
+		if err != nil {
+			return nil, err
+		}
+		if written {
+			return current, nil
+		}
+	}
+	return nil, fmt.Errorf("author %d kept changing during the import", authorID)
 }

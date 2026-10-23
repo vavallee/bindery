@@ -147,6 +147,62 @@ describe('GeneralTab external import mode', () => {
   })
 })
 
+describe('GeneralTab content check', () => {
+  it('defaults the ebook content check to warn and saves a change', async () => {
+    seedSettings({})
+    render(<GeneralTab />)
+
+    const select = await screen.findByTestId('import-ebook-content-check')
+    expect(select).toHaveValue('warn')
+    expect(within(select).getAllByRole('option').map(o => o.getAttribute('value'))).toEqual(['off', 'warn', 'block'])
+
+    fireEvent.change(select, { target: { value: 'block' } })
+    await waitFor(() => expect(m.setSetting).toHaveBeenCalledWith('import.ebook.content_check', 'block'))
+    expect(select).toHaveValue('block')
+  })
+
+  it('shows a stored value', async () => {
+    seedSettings({ 'import.ebook.content_check': 'off' })
+    render(<GeneralTab />)
+    expect(await screen.findByTestId('import-ebook-content-check')).toHaveValue('off')
+  })
+
+  it('defaults the audiobook content check to warn, independently of the ebook one, and saves a change', async () => {
+    seedSettings({ 'import.ebook.content_check': 'block' })
+    render(<GeneralTab />)
+
+    const select = await screen.findByTestId('import-audiobook-content-check')
+    expect(select).toHaveValue('warn')
+    expect(screen.getByTestId('import-ebook-content-check')).toHaveValue('block')
+    expect(within(select).getAllByRole('option').map(o => o.getAttribute('value'))).toEqual(['off', 'warn', 'block'])
+
+    fireEvent.change(select, { target: { value: 'block' } })
+    await waitFor(() => expect(m.setSetting).toHaveBeenCalledWith('import.audiobook.content_check', 'block'))
+    expect(select).toHaveValue('block')
+    expect(m.setSetting).not.toHaveBeenCalledWith('import.ebook.content_check', expect.anything())
+  })
+
+  it('shows Warn, what the importer uses, when the stored value is not a known mode', async () => {
+    seedSettings({ 'import.ebook.content_check': 'reject', 'import.audiobook.content_check': 'skip' })
+    render(<GeneralTab />)
+    expect(await screen.findByTestId('import-ebook-content-check')).toHaveValue('warn')
+    expect(screen.getByTestId('import-audiobook-content-check')).toHaveValue('warn')
+  })
+
+  it('is not offered to a non admin', async () => {
+    auth.isAdmin = false
+    try {
+      seedSettings({})
+      render(<GeneralTab />)
+      await waitFor(() => expect(m.listSettings).toHaveBeenCalled())
+      expect(screen.queryByTestId('import-ebook-content-check')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('import-audiobook-content-check')).not.toBeInTheDocument()
+    } finally {
+      auth.isAdmin = true
+    }
+  })
+})
+
 describe('GeneralTab preferred language', () => {
   it('shows the save error inline', async () => {
     m.setSetting.mockRejectedValueOnce(new Error('invalid language'))

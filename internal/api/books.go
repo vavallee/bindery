@@ -875,7 +875,7 @@ func (h *BookHandler) deleteTrackedBookFile(w http.ResponseWriter, r *http.Reque
 	// sync, and the caller finds out immediately rather than from a history
 	// event nobody reads.
 	if skipped {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "file could not be removed from disk; refusing to drop the tracked row"})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "file was not removed from disk because it is outside your library folders or another book owns it, including a folder another book tracks; refusing to drop the tracked row. To stop tracking it without touching the disk, remove it without delete=true."})
 		return
 	}
 	if _, err := h.books.RemoveBookFile(r.Context(), target.Path); err != nil {

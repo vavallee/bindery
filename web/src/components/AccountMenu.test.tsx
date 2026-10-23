@@ -34,6 +34,18 @@ describe('AccountMenu', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
+  // #3237: the items showed focus only as a background change (about 1.2:1).
+  // They keep the base outline, drawn inside the item so the menu's
+  // overflow cannot clip it.
+  it('draws a focus ring inside each item', () => {
+    render(<AccountMenu username="akadmin" version="1.36.0" onSignOut={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Signed in as akadmin' }))
+    for (const item of screen.getAllByRole('menuitem')) {
+      expect(item.className).not.toContain('outline-none')
+      expect(item.className).toContain('focus-visible:-outline-offset-2')
+    }
+  })
+
   it('marks the trigger and links the newer release when an update is available', () => {
     render(<AccountMenu username="akadmin" version="1.35.0" latestVersion="v1.36.0" onSignOut={onSignOut} />)
     expect(screen.getByTestId('account-update-dot')).toBeInTheDocument()

@@ -396,6 +396,13 @@ describe('ABSTab coverage', () => {
     ]))
     mocked.approveAbsReviewItem.mockResolvedValue({})
     mocked.dismissAbsReviewItem.mockResolvedValue({})
+    // The import status arrives after the first render and its state change
+    // refetches the review list once more. Delaying it makes that late
+    // refetch land after the list has rendered, which is the ordering that
+    // used to break the count below (#3163).
+    mocked.absImportStatus.mockImplementation(
+      () => new Promise(resolve => setTimeout(() => resolve({ running: false, processed: 0 }), 50)),
+    )
     render(<ABSTab />)
 
     const headings = await screen.findAllByText(/settings\.abs\.review\.(runHeading|unknownRunHeading)/)
@@ -417,6 +424,9 @@ describe('ABSTab coverage', () => {
     expect(screen.getByText('Unknown author')).toBeInTheDocument()
     expect(screen.getByText('item-3')).toBeInTheDocument()
 
+    // Two fetches on mount plus the one the import status triggers. Waiting
+    // for all three makes the count below measure only the approve refetch.
+    await waitFor(() => expect(mocked.absReviewItems).toHaveBeenCalledTimes(3))
     const callsBefore = mocked.absReviewItems.mock.calls.length
     fireEvent.click(screen.getAllByRole('button', { name: 'Import' })[0])
     await waitFor(() => expect(mocked.approveAbsReviewItem).toHaveBeenCalledWith(2))

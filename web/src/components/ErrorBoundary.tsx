@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { primaryFill } from './buttons'
 
 type Props = {
   children: ReactNode
@@ -55,7 +56,7 @@ export default class ErrorBoundary extends Component<Props, State> {
       <div className={outerClass}>
         <div role="alert" className="max-w-xl w-full p-6 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
           <h1 className="text-lg font-bold tracking-tight">Something went wrong</h1>
-          <p className="text-sm text-slate-600 dark:text-zinc-400">
+          <p className="text-sm text-fg-muted">
             The page hit an unexpected error and couldn't render. You can try reloading or returning to the home page.
           </p>
           {error?.message && (
@@ -66,7 +67,7 @@ export default class ErrorBoundary extends Component<Props, State> {
           <div className="flex flex-wrap gap-2">
             <button
               onClick={this.handleReload}
-              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium text-white"
+              className={`px-3 py-1.5 ${primaryFill} rounded text-xs font-medium`}
             >
               Reload
             </button>

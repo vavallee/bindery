@@ -73,6 +73,20 @@ func (a *Aggregator) WithAudibleCatalogue(catalogue audibleCatalogue) *Aggregato
 	return a
 }
 
+// SetAudiobookSourcesDisabled switches the Audible catalogue and the audnex
+// lookup off or on (#1890, #2015). Neither is an enricher, so Reconfigure does
+// not cover them. Like Reconfigure it publishes a new core, so it applies to
+// the next lookup without a restart. While a source is off its lookups return
+// before the cache is read, so nothing it supplied earlier is served and
+// nothing is cached for it; turning it back on resumes from the cache as it
+// was.
+func (a *Aggregator) SetAudiobookSourcesDisabled(audibleOff, audnexOff bool) {
+	a.update(func(c *aggregatorCore) {
+		c.audibleOff = audibleOff
+		c.audnexOff = audnexOff
+	})
+}
+
 // load returns the core every part of one lookup runs on. A nil Aggregator
 // yields a nil core, whose methods behave as a nil Aggregator's always did.
 func (a *Aggregator) load() *aggregatorCore {
@@ -127,6 +141,44 @@ func (a *Aggregator) Reconfigure(primary Provider, enrichers ...Provider) error 
 		c.enrichers = list
 	})
 	return nil
+}
+
+// SetAuthorEnrichers replaces the author enrichers, asked in order. Like
+// Reconfigure it publishes a new core, so a lookup already running finishes on
+// the list it started with. Nil enrichers are dropped.
+func (a *Aggregator) SetAuthorEnrichers(enrichers ...AuthorEnricher) {
+	if a == nil {
+		return
+	}
+	list := make([]AuthorEnricher, 0, len(enrichers))
+	for _, e := range enrichers {
+		if e != nil {
+			list = append(list, e)
+		}
+	}
+	a.update(func(c *aggregatorCore) { c.authorEnrichers = list })
+}
+
+// EnrichAuthor fills author's empty photo and bio from the author enrichers
+// (#3287), and reports whether they gave a full answer. Only the author
+// profile refreshes call it; GetAuthor never enriches. author must be the
+// caller's own copy, such as the record GetAuthor returned.
+func (a *Aggregator) EnrichAuthor(ctx context.Context, author *models.Author) bool {
+	return a.load().EnrichAuthor(ctx, author)
+}
+
+// AuthorEnricherNames returns the names of the author enrichers in the order
+// they are asked.
+func (a *Aggregator) AuthorEnricherNames() []string {
+	c := a.load()
+	if c == nil {
+		return nil
+	}
+	names := make([]string, 0, len(c.authorEnrichers))
+	for _, e := range c.authorEnrichers {
+		names = append(names, e.Name())
+	}
+	return names
 }
 
 // ProviderNames returns the normalized names of the current provider set,
@@ -251,6 +303,10 @@ func (a *Aggregator) EnrichAudiobook(ctx context.Context, book *models.Book) err
 
 func (a *Aggregator) GetCanonicalBookByASIN(ctx context.Context, asin string) (*models.Book, error) {
 	return a.load().GetCanonicalBookByASIN(ctx, asin)
+}
+
+func (a *Aggregator) AudnexDisabled() bool {
+	return a.load().AudnexDisabled()
 }
 
 func (a *Aggregator) GetAuthorAudiobooks(ctx context.Context, authorName string) ([]models.Book, error) {

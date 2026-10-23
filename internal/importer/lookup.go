@@ -179,10 +179,10 @@ func lookupUnit(root, path string, books []models.Book, authorNames map[int64]st
 	layoutAuthor, layoutTitle, _ := authorTitleFromLayout(path, root)
 	var embedded EpubMetadata
 	if ep := firstEpubIn(path); ep != "" {
-		if meta, err := ReadEpubMetadata(ep); err == nil {
+		if meta, err := ReadEbookMetadata(ep); err == nil {
 			embedded = meta
 		} else {
-			slog.Debug("bulk import: epub metadata unreadable; falling back to layout/filename", "path", ep, "error", err)
+			slog.Debug("bulk import: ebook metadata unreadable; falling back to layout/filename", "path", ep, "error", err)
 		}
 	}
 
@@ -331,11 +331,12 @@ func narrowByAuthor(candidates []models.Book, author string, match func(parsed, 
 	return nil, author
 }
 
-// firstEpubIn returns an EPUB to read embedded metadata from for a unit: the
-// path itself when it is an EPUB, or the first EPUB found within a directory
-// unit (bounded walk). Returns "" when there is nothing to read.
+// firstEpubIn returns an ebook to read embedded metadata from for a unit: the
+// path itself when it is an EPUB or a Kindle file (#3016), or the first one
+// found within a directory unit (bounded walk). Returns "" when there is
+// nothing to read.
 func firstEpubIn(path string) string {
-	if IsEpubFile(path) {
+	if HasEmbeddedMetadata(path) {
 		return path
 	}
 	info, err := os.Stat(path)
@@ -353,7 +354,7 @@ func firstEpubIn(path string) string {
 		if count > limit {
 			return filepath.SkipAll
 		}
-		if !d.IsDir() && IsEpubFile(p) {
+		if !d.IsDir() && HasEmbeddedMetadata(p) {
 			found = p
 			return filepath.SkipAll
 		}
@@ -488,16 +489,16 @@ func lookupParsed(parsed ParsedFile, books []models.Book, authorNames map[int64]
 func (s *Scanner) matchBookForDownload(ctx context.Context, files []string, releaseTitle string) (*models.Book, *models.Author) {
 	// Tier 1: embedded EPUB metadata.
 	for _, f := range files {
-		if !IsEpubFile(f) {
+		if !HasEmbeddedMetadata(f) {
 			continue
 		}
-		meta, err := ReadEpubMetadata(f)
+		meta, err := ReadEbookMetadata(f)
 		if err != nil {
-			slog.Debug("epub metadata unreadable; will try filename", "file", f, "error", err)
+			slog.Debug("ebook metadata unreadable; will try filename", "file", f, "error", err)
 			continue
 		}
 		if b, a := s.matchByTitleAuthor(ctx, meta.Title, meta.Author); b != nil {
-			slog.Info("matched download via embedded EPUB metadata",
+			slog.Info("matched download via embedded ebook metadata",
 				"file", f, "title", meta.Title, "author", meta.Author, "isbn", meta.ISBN, "bookID", b.ID)
 			return b, a
 		}
@@ -699,9 +700,13 @@ func unmatchedReason(files []string) string {
 	parsed := ParseFilename(f)
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s. Parsed from filename: title=%q author=%q", base, parsed.Title, parsed.Author)
-	if IsEpubFile(f) {
-		if meta, err := ReadEpubMetadata(f); err == nil && (meta.Title != "" || meta.Author != "") {
-			fmt.Fprintf(&b, "; embedded EPUB: title=%q author=%q", meta.Title, meta.Author)
+	if HasEmbeddedMetadata(f) {
+		if meta, err := ReadEbookMetadata(f); err == nil && (meta.Title != "" || meta.Author != "") {
+			kind := "EPUB"
+			if IsKindleFile(f) {
+				kind = "Kindle file"
+			}
+			fmt.Fprintf(&b, "; embedded %s: title=%q author=%q", kind, meta.Title, meta.Author)
 			if meta.ISBN != "" {
 				fmt.Fprintf(&b, " isbn=%s", meta.ISBN)
 			}

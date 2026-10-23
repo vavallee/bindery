@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import MetadataLinksMenu from './MetadataLinksMenu'
 
 vi.mock('react-i18next', () => ({
@@ -33,6 +33,19 @@ describe('MetadataLinksMenu on touch', () => {
     tap(trigger)
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     expect(screen.getByTestId('book-links-menu')).toHaveAttribute('hidden')
+  })
+
+  // #3237: the items showed focus only as a background change (about 1.2:1).
+  // They keep the base outline, drawn inside the item so the menu's
+  // overflow cannot clip it.
+  it('draws a focus ring inside each link', () => {
+    render(<MetadataLinksMenu links={links} />)
+    tap(screen.getByRole('button', { name: 'Links' }))
+    const menu = screen.getByTestId('book-links-menu')
+    for (const link of within(menu).getAllByRole('link')) {
+      expect(link.className).not.toContain('outline-none')
+      expect(link.className).toContain('focus-visible:-outline-offset-2')
+    }
   })
 
   it('still opens on mouse hover and closes when the mouse leaves', () => {

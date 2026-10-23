@@ -2551,3 +2551,48 @@ func TestManualImportOutsideRoots_MessageWithNoRootsConfigured(t *testing.T) {
 		t.Errorf("body = %q, want the unconfigured hint", rec.Body.String())
 	}
 }
+
+// TestRemoveStaleSource_KeepsSourceUnderAnotherBooksFolder (#3336): the stale
+// source sits inside a folder another book tracks, so it is not ours to delete.
+func TestRemoveStaleSource_KeepsSourceUnderAnotherBooksFolder(t *testing.T) {
+	t.Parallel()
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	authors := db.NewAuthorRepo(database)
+	books := db.NewBookRepo(database)
+	ctx := context.Background()
+	h := NewManualImportHandler(&stubManualImportScanner{}, db.NewDownloadRepo(database), books)
+
+	target := seedBook(t, authors, books, ctx)
+	folderOwner := &models.Book{ForeignID: "B-F3336", AuthorID: target.AuthorID, Title: "Box", SortTitle: "box", Status: "wanted", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true}
+	if err := books.Create(ctx, folderOwner); err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	box := filepath.Join(tmp, "Box")
+	src := filepath.Join(box, "Vol 2", "source.m4b")
+	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("s"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, folderOwner.ID, models.MediaTypeAudiobook, box); err != nil {
+		t.Fatal(err)
+	}
+	moved := filepath.Join(tmp, "moved.m4b")
+	if err := os.WriteFile(moved, []byte("m"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, target.ID, models.MediaTypeAudiobook, moved); err != nil {
+		t.Fatal(err)
+	}
+
+	h.removeStaleSource(ctx, src, target.ID, map[string]bool{})
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("source under another book's folder was deleted: %v", err)
+	}
+}

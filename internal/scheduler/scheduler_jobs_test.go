@@ -756,6 +756,11 @@ func TestRefreshMetadata_SparseRefresh_DoesNotClobber(t *testing.T) {
 		},
 	}
 	s = &Scheduler{authors: authRepo, meta: metadata.NewAggregator(populated)}
+	// The first run stamped the author fresh, and a fresh author is skipped
+	// (#2595); age the stamp so the second run is due.
+	if err := authRepo.StampMetadataRefresh(ctx, got.ID, time.Now().Add(-48*time.Hour)); err != nil {
+		t.Fatalf("age the refresh stamp: %v", err)
+	}
 	s.refreshMetadata()
 
 	got, err = authRepo.GetByForeignID(ctx, "OL_SPARSE_A")
@@ -856,6 +861,10 @@ func TestRefreshMetadata_PreservesEditDuringProviderCall(t *testing.T) {
 	provider.edits = map[string]func(){"OL_RACE_A": func() { editA(); editB() }}
 
 	s := &Scheduler{authors: authRepo, meta: metadata.NewAggregator(provider)}
+	// Two authors make a batch of one per tick (#2595). The first tick takes
+	// A, which loses to the edit and stays stale but is now unmonitored, so
+	// the second tick takes B.
+	s.refreshMetadata()
 	s.refreshMetadata()
 
 	gotA, err := authRepo.GetByID(ctx, first.ID)

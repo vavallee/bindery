@@ -227,8 +227,10 @@ func TestABSConflictCoverage_ResolveAuthorConflictAppliesValue(t *testing.T) {
 	if reloaded.SortName != "Author, Sorted" {
 		t.Fatalf("sort name = %q, want trimmed ABS value", reloaded.SortName)
 	}
-	if reloaded.LastMetadataRefreshAt == nil {
-		t.Fatal("LastMetadataRefreshAt not stamped")
+	// Choosing a value fetches nothing from a provider, so it is not a profile
+	// refresh and must not hide the author from the staggered refresh (#2595).
+	if reloaded.LastMetadataRefreshAt != nil {
+		t.Fatalf("LastMetadataRefreshAt stamped %v, want nil", reloaded.LastMetadataRefreshAt)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/auth"
@@ -234,27 +235,44 @@ func TestHistoryBlocklist_PromotesGrab(t *testing.T) {
 	}
 }
 
-// TestHistoryBlocklist_FallsBackToTitle — some legacy events lack the guid
-// field. Falling back to the sourceTitle keeps blocklist useful rather than
-// failing silently.
-func TestHistoryBlocklist_FallsBackToTitle(t *testing.T) {
-	h, history, blocklist, ctx := historyFixture(t)
-	e := &models.HistoryEvent{
-		EventType: models.HistoryEventGrabbed, SourceTitle: "Legacy Release",
-		Data: "", // no guid
+// TestHistoryBlocklist_NoGUIDIsRefused covers events with no release GUID in
+// their data. BlocklistedSpec matches the GUID only, so an entry keyed on the
+// title could never match a real release while the caller was told it worked
+// (#3249). The handler must refuse and store nothing.
+func TestHistoryBlocklist_NoGUIDIsRefused(t *testing.T) {
+	cases := []struct {
+		name  string
+		event models.HistoryEvent
+	}{
+		{"grab with empty data", models.HistoryEvent{EventType: models.HistoryEventGrabbed, SourceTitle: "Legacy Release", Data: ""}},
+		{"grab with data but no guid", models.HistoryEvent{EventType: models.HistoryEventGrabbed, SourceTitle: "Legacy Release", Data: `{"indexer":"x"}`}},
+		{"import event", models.HistoryEvent{EventType: models.HistoryEventBookImported, SourceTitle: "Imported Book", Data: `{"path":"/books/a.epub"}`}},
 	}
-	if err := history.Create(ctx, e); err != nil {
-		t.Fatal(err)
-	}
-	req := withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/history/"+strconv.FormatInt(e.ID, 10)+"/blocklist", nil), "id", strconv.FormatInt(e.ID, 10))
-	rec := httptest.NewRecorder()
-	h.Blocklist(rec, req)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d", rec.Code)
-	}
-	entries, _ := blocklist.List(ctx)
-	if len(entries) != 1 || entries[0].GUID != "Legacy Release" {
-		t.Errorf("expected GUID fallback to title, got %+v", entries)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, history, blocklist, ctx := historyFixture(t)
+			e := tc.event
+			if err := history.Create(ctx, &e); err != nil {
+				t.Fatal(err)
+			}
+			req := withURLParam(httptest.NewRequest(http.MethodPost, "/api/v1/history/"+strconv.FormatInt(e.ID, 10)+"/blocklist", nil), "id", strconv.FormatInt(e.ID, 10))
+			rec := httptest.NewRecorder()
+			h.Blocklist(rec, req)
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+			}
+			var body map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(body["error"], "no release GUID") {
+				t.Errorf("unexpected error message %q", body["error"])
+			}
+			entries, _ := blocklist.List(ctx)
+			if len(entries) != 0 {
+				t.Errorf("expected no blocklist row, got %+v", entries)
+			}
+		})
 	}
 }
 

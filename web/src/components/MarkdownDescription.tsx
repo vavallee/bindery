@@ -58,7 +58,7 @@ function parseInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
             href={href}
             target="_blank"
             rel="noopener noreferrer nofollow"
-            className="text-emerald-600 dark:text-emerald-400 underline hover:no-underline"
+            className="text-accent-text underline hover:no-underline"
           >
             {inner}
           </a>

@@ -40,6 +40,18 @@ describe('MoreMenu', () => {
     expect(screen.getAllByRole('menuitem')).toHaveLength(3)
   })
 
+  // #3237: the items showed focus only as a background change (about 1.2:1).
+  // They keep the base outline, drawn inside the item so the menu's
+  // overflow cannot clip it.
+  it('draws a focus ring inside each item', () => {
+    setup()
+    fireEvent.click(trigger())
+    for (const item of screen.getAllByRole('menuitem')) {
+      expect(item.className).not.toContain('outline-none')
+      expect(item.className).toContain('focus-visible:-outline-offset-2')
+    }
+  })
+
   it('runs the item handler and closes on select', () => {
     const { onRename } = setup()
     fireEvent.click(trigger())

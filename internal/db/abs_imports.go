@@ -835,3 +835,25 @@ func scanABSProvenanceRows(rows *sql.Rows) (models.ABSProvenance, error) {
 	}
 	return *item, nil
 }
+
+// ListSeriesByItem returns the series membership rows recorded for one ABS item.
+func (r *ABSProvenanceRepo) ListSeriesByItem(ctx context.Context, sourceID, libraryID, itemID string) ([]models.ABSProvenance, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, source_id, library_id, entity_type, external_id, local_id, item_id, format, file_ids_json, import_run_id, keep_identity, created_at, updated_at
+		FROM abs_provenance
+		WHERE source_id = ? AND library_id = ? AND item_id = ? AND entity_type = 'series'
+		ORDER BY id`, sourceID, libraryID, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("list abs series provenance for item %s: %w", itemID, err)
+	}
+	defer rows.Close()
+	var out []models.ABSProvenance
+	for rows.Next() {
+		p, err := scanABSProvenanceRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

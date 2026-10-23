@@ -97,6 +97,13 @@ const hardcoverResult = {
 const seriesCases: Case[] = [
   ['listSeries', () => seriesApi.listSeries(), 'GET', '/series'],
   ['createSeries', () => seriesApi.createSeries({ title: 'Saga' }), 'POST', '/series', { title: 'Saga' }],
+  [
+    'createSeries from a Hardcover result',
+    () => seriesApi.createSeries({ hardcover: { foreignId: 'hc-series:1', providerId: '1', title: 'Saga', authorName: 'Brian K. Vaughan', bookCount: 3 } }),
+    'POST',
+    '/series',
+    { hardcover: { foreignId: 'hc-series:1', providerId: '1', title: 'Saga', authorName: 'Brian K. Vaughan', bookCount: 3 } },
+  ],
   ['getSeries', () => seriesApi.getSeries(2), 'GET', '/series/2'],
   ['updateSeries', () => seriesApi.updateSeries(2, { title: 'New' }), 'PUT', '/series/2', { title: 'New' }],
   ['monitorSeries', () => seriesApi.monitorSeries(2, false), 'PATCH', '/series/2', { monitored: false }],

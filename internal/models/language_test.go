@@ -368,3 +368,18 @@ func TestTwoLetterTableCoversISO6391(t *testing.T) {
 		t.Errorf("iso639TwoLetterToB has %d entries, want %d", len(iso639TwoLetterToB), len(iso6391))
 	}
 }
+
+// TestNormalizeReleaseLanguageCode pins the release-name country codes (#3271)
+// and that they stay out of NormalizeLanguageCode, where "se" is Northern Sami.
+func TestNormalizeReleaseLanguageCode(t *testing.T) {
+	for in, want := range map[string]string{
+		"SE": "swe", "dk": "dan", "DE": "ger", "por": "por", "no": "nor", "web": "web",
+	} {
+		if got := NormalizeReleaseLanguageCode(in); got != want {
+			t.Errorf("NormalizeReleaseLanguageCode(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := NormalizeLanguageCode("se"); got != "sme" {
+		t.Errorf(`NormalizeLanguageCode("se") = %q, want "sme": the release-name aliases must not leak into it`, got)
+	}
+}

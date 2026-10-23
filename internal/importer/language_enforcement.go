@@ -198,13 +198,15 @@ func (s *Scanner) checkDownloadLanguage(ctx context.Context, book *models.Book, 
 
 	anyAllowed := false
 	for _, f := range files {
-		if !IsEpubFile(f) {
+		// A Kindle file declares its language in EXTH 524 (#3016), so it is
+		// held to the profile the way an EPUB's dc:language is.
+		if !HasEmbeddedMetadata(f) {
 			continue
 		}
 		if ok, _ := s.allowedFormat(ctx, author, formatsniff.Detect(f), slotMediaType); !ok {
 			continue
 		}
-		meta, err := ReadEpubMetadata(f)
+		meta, err := ReadEbookMetadata(f)
 		if err != nil {
 			continue
 		}

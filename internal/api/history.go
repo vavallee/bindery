@@ -172,23 +172,24 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 	}
 	guid, _ := data["guid"].(string)
 
-	// Fall back to sourceTitle as a unique key if no guid stored
+	// BlocklistedSpec matches a release by GUID only, so an entry keyed on
+	// anything else (such as the title) could never match and would only tell
+	// the user a release is blocked when it is not (#3249). Refuse instead.
 	if guid == "" {
-		guid = event.SourceTitle
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "this history event has no release GUID, so there is nothing to blocklist"})
+		return
 	}
 
 	// Idempotent: blocklisting the same release twice must not create a
 	// duplicate row. Create has no unique constraint to lean on.
-	if guid != "" {
-		blocked, err := h.blocklist.IsBlocked(r.Context(), guid)
-		if err != nil {
-			writeServerError(w, r, err)
-			return
-		}
-		if blocked {
-			writeJSON(w, http.StatusOK, map[string]string{"status": "already blocklisted"})
-			return
-		}
+	blocked, err := h.blocklist.IsBlocked(r.Context(), guid)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	if blocked {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "already blocklisted"})
+		return
 	}
 
 	entry := &models.BlocklistEntry{

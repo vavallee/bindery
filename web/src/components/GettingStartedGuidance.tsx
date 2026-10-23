@@ -1,5 +1,6 @@
 import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
+import { primaryFill } from './buttons'
 
 interface Props {
   // A short, context-specific line explaining why setup is needed here, e.g.
@@ -33,14 +34,14 @@ export default function GettingStartedGuidance({ reasonKey, needsIndexer, needsC
       <h3 className="text-sm font-semibold text-slate-900 dark:text-white mb-1">
         {t('gettingStarted.title')}
       </h3>
-      <p className="text-sm text-slate-600 dark:text-zinc-400 mb-3">
+      <p className="text-sm text-fg-muted mb-3">
         {reason}
       </p>
       <div className="flex flex-wrap gap-2">
         {needsIndexer && (
           <Link
             to="/settings?tab=indexers"
-            className="inline-block px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-sm font-medium transition-colors"
+            className={`inline-block px-3 py-1.5 ${primaryFill} rounded-md text-sm font-medium transition-colors`}
           >
             {t('gettingStarted.indexers')}
           </Link>
@@ -50,7 +51,7 @@ export default function GettingStartedGuidance({ reasonKey, needsIndexer, needsC
             to="/settings?tab=clients"
             className={needsIndexer
               ? 'inline-block px-3 py-1.5 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 text-slate-900 dark:text-white rounded-md text-sm font-medium transition-colors'
-              : 'inline-block px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-sm font-medium transition-colors'}
+              : `inline-block px-3 py-1.5 ${primaryFill} rounded-md text-sm font-medium transition-colors`}
           >
             {t('gettingStarted.downloadClients')}
           </Link>

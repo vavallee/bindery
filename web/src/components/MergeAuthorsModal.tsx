@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from './useConfirmDialog'
 import { api, Author } from '../api/client'
 import { useModal } from './useModal'
+import { primaryFill } from './buttons'
 
 interface Props {
   authors: Author[]
@@ -19,6 +20,7 @@ interface Props {
 // target's book count so the user sees the "post-merge" total before
 // committing.
 export default function MergeAuthorsModal({ authors, initialTargetId, onClose, onMerged }: Props) {
+  const fid = useId()
   const { t } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
   const [targetId, setTargetId] = useState<number | ''>(initialTargetId ?? '')
@@ -90,15 +92,16 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
       >
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
           <h3 id={titleId} className="text-lg font-semibold">{t('mergeAuthorsModal.title')}</h3>
-          <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1">
+          <p className="text-xs text-fg-muted mt-1">
             {t('mergeAuthorsModal.description')}
           </p>
         </div>
 
         <div className="p-4 space-y-3">
           <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('mergeAuthorsModal.removeLabel')}</label>
+            <label htmlFor={`${fid}-remove`} className="block text-xs text-fg-muted mb-1">{t('mergeAuthorsModal.removeLabel')}</label>
             <select
+              id={`${fid}-remove`}
               value={sourceId}
               onChange={e => setSourceId(e.target.value ? Number(e.target.value) : '')}
               className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -111,8 +114,9 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
           </div>
 
           <div>
-            <label className="block text-xs text-slate-600 dark:text-zinc-400 mb-1">{t('mergeAuthorsModal.keepLabel')}</label>
+            <label htmlFor={`${fid}-keep`} className="block text-xs text-fg-muted mb-1">{t('mergeAuthorsModal.keepLabel')}</label>
             <select
+              id={`${fid}-keep`}
               value={targetId}
               onChange={e => setTargetId(e.target.value ? Number(e.target.value) : '')}
               className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -130,7 +134,7 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
                 <span className="font-medium">{source.authorName}</span> → <span className="font-medium">{target.authorName}</span>
               </div>
               <div>{sourceBookCount === null ? 'Counting books…' : `${sourceBookCount} book(s) will move to the target.`}</div>
-              <div className="text-slate-500 dark:text-zinc-500">
+              <div className="text-fg-muted">
                 Alias preserved: <span className="font-mono">{source.authorName}</span>
                 {source.foreignAuthorId ? ` (${source.foreignAuthorId})` : ''}
               </div>
@@ -147,14 +151,14 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
         <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
+            className="px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white"
           >
             {t('mergeAuthorsModal.cancel')}
           </button>
           <button
             onClick={submit}
             disabled={!canSubmit}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium text-white"
+            className={`px-4 py-2 ${primaryFill} disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium`}
           >
             {busy ? t('mergeAuthorsModal.merging') : t('mergeAuthorsModal.mergeButton')}
           </button>

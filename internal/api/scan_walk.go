@@ -125,8 +125,11 @@ func enumerateImportUnits(root string, limit int, skip func(path string, isDir b
 				emit(dir, true)
 				return
 			}
-			// Every subdir a disc folder → one multi-disc audiobook.
-			if len(subdirs) > 0 && importer.AllDiscFolders(subdirs) {
+			// Every subdir a disc folder → one multi-disc audiobook. A disc
+			// named after its book counts only from book depth down, two
+			// levels under the root, so an author folder never becomes a book
+			// (#3327).
+			if len(subdirs) > 0 && importer.AllDiscFolders(subdirs, depth >= 2) {
 				emit(dir, true)
 				return
 			}

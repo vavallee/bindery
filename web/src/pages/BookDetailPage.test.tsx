@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
-import BookDetailPage, { SearchResultsSection } from './BookDetailPage'
+import BookDetailPage, { FilteredResultsSection, SearchResultsSection } from './BookDetailPage'
 import { api, ApiError } from '../api/client'
 import type { Author, Book, BookFile, Download, HistoryEvent, Indexer, SearchResult } from '../api/client'
 import en from '../i18n/locales/en.json'
@@ -858,6 +858,151 @@ describe('BookDetailPage — search', () => {
 
     await waitFor(() => expect(api.grab).toHaveBeenCalledTimes(1))
     expect(api.grab).toHaveBeenCalledWith(expect.objectContaining({ guid, title, mediaType }))
+  })
+})
+
+// #2334: releases the relevance and language filters removed come back in a
+// separate `filtered` list, collapsed by default, and grab through the same
+// path as any other release.
+describe('FilteredResultsSection', () => {
+  const dropped = makeResult({
+    guid: 'dropped-guid',
+    title: 'Odd Name Release',
+    nzbUrl: 'https://indexer.example.com/dropped.nzb',
+    approved: false,
+    rejection: 'title/author keywords did not match release name',
+  })
+
+  it('renders nothing when no release was filtered', () => {
+    const { container } = render(
+      <FilteredResultsSection filtered={[]} grabbing={null} onGrab={noop} />,
+    )
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('is collapsed by default and expands to the releases with their reasons', () => {
+    render(<FilteredResultsSection filtered={[dropped]} grabbing={null} onGrab={noop} />)
+
+    const toggle = screen.getByRole('button', { name: /Filtered \(1\)/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Odd Name Release')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Grab' })).not.toBeInTheDocument()
+
+    fireEvent.click(toggle)
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('Odd Name Release')).toBeInTheDocument()
+    expect(screen.getByText(/title\/author keywords did not match release name/)).toBeInTheDocument()
+
+    fireEvent.click(toggle)
+    expect(screen.queryByText('Odd Name Release')).not.toBeInTheDocument()
+  })
+
+  it('says how many were left out when the server capped the list', () => {
+    render(<FilteredResultsSection filtered={[dropped]} total={150} grabbing={null} onGrab={noop} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Filtered \(150\)/ }))
+
+    expect(screen.getByText(/Showing 1 of 150/)).toBeInTheDocument()
+  })
+})
+
+describe('BookDetailPage — filtered releases', () => {
+  const droppedRelease = makeResult({
+    guid: 'dropped-guid',
+    title: 'Odd Name Release',
+    nzbUrl: 'https://indexer.example.com/dropped.nzb',
+    size: 5242880,
+    protocol: 'torrent',
+    approved: false,
+    rejection: 'title/author keywords did not match release name',
+  })
+
+  beforeEach(() => {
+    vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
+    vi.mocked(api.searchBook).mockResolvedValue({
+      results: [makeResult({ guid: 'kept-guid', title: 'Kept Release' })],
+      filtered: [droppedRelease],
+      filteredTotal: 1,
+      debug: null,
+    })
+  })
+
+  it('shows a collapsed Filtered section below the results', async () => {
+    renderBookDetailPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+
+    expect(await screen.findByText('Kept Release')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Filtered \(1\)/ })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Odd Name Release')).not.toBeInTheDocument()
+  })
+
+  it('shows no Filtered section when the server sent none', async () => {
+    vi.mocked(api.searchBook).mockResolvedValue({
+      results: [makeResult({ guid: 'kept-guid', title: 'Kept Release' })],
+      debug: null,
+    })
+    renderBookDetailPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+
+    expect(await screen.findByText('Kept Release')).toBeInTheDocument()
+    expect(screen.queryByTestId('filtered-results')).not.toBeInTheDocument()
+  })
+
+  it('offers filtered releases even when nothing else survived', async () => {
+    vi.mocked(api.searchBook).mockResolvedValue({ results: [], filtered: [droppedRelease], filteredTotal: 1, debug: null })
+    renderBookDetailPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+
+    expect(await screen.findByRole('button', { name: /Filtered \(1\)/ })).toBeInTheDocument()
+    expect(screen.getByText(/No releases matched this book, but 1 were filtered out/)).toBeInTheDocument()
+    expect(screen.queryByText(/No results on any indexer/)).not.toBeInTheDocument()
+  })
+
+  it('keeps the plain no results text when nothing was filtered either', async () => {
+    vi.mocked(api.searchBook).mockResolvedValue({ results: [], filtered: [], debug: null })
+    renderBookDetailPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+
+    expect(await screen.findByText(/No results on any indexer/)).toBeInTheDocument()
+    expect(screen.queryByText(/were filtered out/)).not.toBeInTheDocument()
+  })
+
+  it('grabs a filtered release through the existing grab call', async () => {
+    renderBookDetailPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Filtered \(1\)/ }))
+
+    const row = screen.getByText('Odd Name Release').closest('div.flex.items-center.justify-between')!
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: 'Grab' }))
+
+    await waitFor(() => expect(api.grab).toHaveBeenCalledTimes(1))
+    expect(api.grab).toHaveBeenCalledWith({
+      guid: 'dropped-guid',
+      title: 'Odd Name Release',
+      nzbUrl: 'https://indexer.example.com/dropped.nzb',
+      size: 5242880,
+      bookId: 42,
+      indexerId: 3,
+      protocol: 'torrent',
+      mediaType: 'ebook',
+    })
+  })
+
+  it('keeps the already imported confirmation for a filtered release', async () => {
+    vi.mocked(api.grab)
+      .mockRejectedValueOnce(new ApiError(409, { error: 'already imported', forceAvailable: true }, 'Conflict'))
+      .mockResolvedValueOnce(makeDownload())
+    renderBookDetailPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Filtered \(1\)/ }))
+
+    const row = screen.getByText('Odd Name Release').closest('div.flex.items-center.justify-between')!
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: 'Grab' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Grab anyway' }))
+
+    await waitFor(() => expect(api.grab).toHaveBeenCalledTimes(2))
+    expect(api.grab).toHaveBeenLastCalledWith(expect.objectContaining({ guid: 'dropped-guid', force: true }))
   })
 })
 

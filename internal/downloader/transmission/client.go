@@ -57,7 +57,7 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 		// with the dial checked so a rebound hostname cannot reach a
 		// link-local or metadata address. Redirects are pinned to the RPC
 		// target by checkRedirect below.
-		http: &http.Client{Timeout: 15 * time.Second, Transport: httpsec.DirectGuardedTransport(httpsec.PolicyLANLoopback)},
+		http: &http.Client{Timeout: 15 * time.Second, Transport: httpsec.DirectGuardedTransport(httpsec.PolicyService)},
 		// fetchHTTP pulls indexer-controlled .torrent URLs. The fetch loop
 		// already re-validates each redirect hop; the guarded transport adds a
 		// per-dial recheck so a DNS rebind between validate and connect can't

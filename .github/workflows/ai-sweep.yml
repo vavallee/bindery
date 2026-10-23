@@ -40,7 +40,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Harden the runner (block non-allowlisted egress)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           # block (#1401): this job hands ANTHROPIC_API_KEY and a write-scoped
           # token to an LLM agent that reads untrusted issue/PR text. The

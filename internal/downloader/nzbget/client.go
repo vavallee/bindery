@@ -82,8 +82,8 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 		// rebound hostname cannot reach a link-local or metadata address.
 		http: &http.Client{
 			Timeout:       15 * time.Second,
-			Transport:     httpsec.DirectGuardedTransport(httpsec.PolicyLANLoopback),
-			CheckRedirect: httpsec.RedirectGuard(httpsec.PolicyLANLoopback),
+			Transport:     httpsec.DirectGuardedTransport(httpsec.PolicyService),
+			CheckRedirect: httpsec.RedirectGuard(httpsec.PolicyService),
 		},
 		validateNZBURL: func(raw string) error {
 			return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())

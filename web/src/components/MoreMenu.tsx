@@ -218,7 +218,7 @@ export default function MoreMenu({
               title={item.title}
               tabIndex={i === activeIndex ? 0 : -1}
               onClick={() => select(item)}
-              className={`block w-full px-3 py-1.5 pointer-coarse:py-2.5 text-left text-sm disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus:bg-slate-200 dark:focus:bg-zinc-800 ${
+              className={`block w-full px-3 py-1.5 pointer-coarse:py-2.5 text-left text-sm disabled:opacity-40 disabled:cursor-not-allowed rounded focus-visible:-outline-offset-2 focus:bg-slate-200 dark:focus:bg-zinc-800 ${
                 item.danger
                   ? 'text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40'
                   : item.caution

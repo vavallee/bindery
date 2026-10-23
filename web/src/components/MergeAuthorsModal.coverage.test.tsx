@@ -69,6 +69,14 @@ describe('MergeAuthorsModal', () => {
     expect(within(target).queryByRole('option', { name: 'Ursula Le Guin' })).toBeNull()
   })
 
+  // #3240: the Remove and Keep labels name their selects.
+  it('names both selects by their labels', () => {
+    render(<MergeAuthorsModal authors={authors} onClose={vi.fn()} onMerged={vi.fn()} />)
+    const [source, target] = screen.getAllByRole('combobox')
+    expect(screen.getByLabelText('mergeAuthorsModal.removeLabel')).toBe(source)
+    expect(screen.getByLabelText('mergeAuthorsModal.keepLabel')).toBe(target)
+  })
+
   it('lists authors by last name, as the Authors page does (#2805)', () => {
     const byLastName = [
       { ...author(1, 'Andy Weir'), sortName: 'Weir, Andy' },

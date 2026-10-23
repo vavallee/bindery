@@ -63,7 +63,7 @@ func NewWithTimeout(baseURL, apiKey string, timeout time.Duration) *Client {
 		// to the same Prowlarr/Jackett hosts. Without the proxy transport, a
 		// Prowlarr reachable only through the configured egress proxy fails on
 		// the sync/test path while indexer searches succeed (#proxy-bypass).
-		http: &http.Client{Timeout: timeout, Transport: sharedGuardedTransport()},
+		http: &http.Client{Timeout: timeout, Transport: sharedGuardedTransport(), CheckRedirect: httpsec.RedirectGuard(httpsec.PolicyService)},
 	}
 }
 
@@ -92,11 +92,11 @@ func sharedGuardedTransport() http.RoundTripper {
 // the connect that actually happens. Under an outbound proxy the dial to the
 // proxy itself is exempt and a bypass-listed (direct) destination is checked.
 //
-// PolicyLANLoopback matches what the create and update handlers validate
+// PolicyService matches what the create and update handlers validate
 // against: a Prowlarr on the LAN, or on the Bindery host itself, is the normal
 // deployment.
 func guardedTransport() http.RoundTripper {
-	return httpsec.GuardedTransport(httpsec.PolicyLANLoopback)
+	return httpsec.GuardedTransport(httpsec.PolicyService)
 }
 
 // remoteIndexer is the shape of each element in GET /api/v1/indexer.

@@ -579,3 +579,38 @@ func TestLanguageEnforcement_UndeclaredFileBesideAllowedImports(t *testing.T) {
 		})
 	}
 }
+
+// TestLanguageEnforcement_KindleFile covers #3016: a Kindle file declares its
+// language in EXTH 524, so it is held to the profile the way an EPUB is. Before
+// this, a MOBI or AZW3 in a disallowed language imported unchecked.
+func TestLanguageEnforcement_KindleFile(t *testing.T) {
+	writeKindle := func(t *testing.T, f *langEnforceFixture, name, lang string) {
+		t.Helper()
+		b := buildMobi(mobiFile{encoding: 65001, exth: []exthRecord{
+			{exthTitle, []byte("Fjellvinden")}, {exthAuthor, []byte("Kari Nordmann")}, {exthLanguage, []byte(lang)},
+		}})
+		// Past the importer's 4 KiB too-small-to-be-a-book guard.
+		b = append(b, make([]byte, 8<<10)...)
+		if err := os.WriteFile(filepath.Join(f.dir, name), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("disallowed language is blocked", func(t *testing.T) {
+		f := newLangEnforceFixture(t, langEnforceOpts{allowed: "eng", bookLang: "eng"})
+		writeKindle(t, f, "Fjellvinden.azw3", "sv")
+		f.importDownload(t)
+		dl, book := f.reload(t)
+		if dl.Status != models.StateImportBlocked {
+			t.Fatalf("download status = %q, want %q: a Swedish AZW3 imported against an English only profile", dl.Status, models.StateImportBlocked)
+		}
+		if !strings.Contains(dl.ErrorMessage, "Swedish") || !f.blocked(t) || book.Status != models.BookStatusWanted {
+			t.Errorf("rejection incomplete: message %q, blocklisted %v, book %q", dl.ErrorMessage, f.blocked(t), book.Status)
+		}
+	})
+	t.Run("allowed language imports", func(t *testing.T) {
+		f := newLangEnforceFixture(t, langEnforceOpts{allowed: "eng"})
+		writeKindle(t, f, "Fjellvinden.mobi", "en-GB")
+		f.importDownload(t)
+		f.assertImported(t)
+	})
+}

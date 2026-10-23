@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { api, Book, Series } from '../api/client'
 import { useModal } from './useModal'
 import { useIsAdmin } from '../auth/AuthContext'
+import { primaryFill } from './buttons'
 
 interface Props {
   book: Book
@@ -186,7 +187,7 @@ export default function EditBookModal({ book, onClose, onSaved, onSeriesSaved, s
       >
         <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
           <h3 id={titleId} className="text-lg font-semibold">{t('bookDetail.edit.title', 'Edit metadata')}</h3>
-          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">
+          <p className="text-xs text-fg-muted mt-0.5">
             {t('bookDetail.edit.subtitle', 'Edited fields are locked so metadata refresh keeps your values.')}
           </p>
         </div>
@@ -265,7 +266,7 @@ export default function EditBookModal({ book, onClose, onSaved, onSeriesSaved, s
                 onKeyDown={e => { if (e.key === 'Enter' && canSave) void save() }} className={inputCls} autoFocus />
             </div>
           )}
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-red-700 dark:text-red-400">{error}</p>}
         </div>
 
         <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex items-center gap-2">
@@ -281,14 +282,14 @@ export default function EditBookModal({ book, onClose, onSaved, onSeriesSaved, s
             </button>
           )}
           <div className="ml-auto flex gap-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white">
               {t('common.cancel')}
             </button>
             <button
               type="button"
               onClick={save}
               disabled={!canSave}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-md text-sm font-medium"
+              className={`px-4 py-2 ${primaryFill} disabled:opacity-50 rounded-md text-sm font-medium`}
             >
               {saving ? t('common.saving') : t('common.save')}
             </button>

@@ -15,9 +15,11 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// EpubMetadata is the subset of an EPUB's embedded Dublin Core metadata the
-// importer uses to match a downloaded ebook to a catalogue book when the
-// download has no book association (e.g. a free-text Search grab). Embedded
+// EpubMetadata is the subset of an ebook's embedded metadata the importer
+// uses to match a downloaded ebook to a catalogue book when the download has
+// no book association (e.g. a free-text Search grab). An EPUB fills it from
+// its Dublin Core metadata, a Kindle file from its EXTH block (#3016, see
+// ReadKindleMetadata). Embedded
 // metadata is far more reliable than the release filename, which routinely
 // encodes author/title/series in inconsistent orders (issue #1014).
 type EpubMetadata struct {

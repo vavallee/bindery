@@ -57,6 +57,32 @@ export interface PathVisibility {
   status: 'ok' | 'warning'
   message?: string
   path?: string
+  // remotePath is the folder exactly as the client reports it, the left half
+  // of a path remap (#2031).
+  remotePath?: string
+}
+
+// RemapCandidate is one folder Bindery could map the client's folder onto,
+// with a sample path before and after. Read only: it carries no remap string.
+export interface RemapCandidate {
+  path: string
+  source: 'ebookDownloadDir' | 'audiobookDownloadDir' | 'library'
+  before: string
+  after: string
+}
+
+export interface DownloadClientTestResult {
+  message: string
+  health?: DownloadClientHealth
+  pathVisibility?: PathVisibility
+  // Present only when pathVisibility is a warning on a client type that
+  // reports a fixed completed folder (qBittorrent, NZBGet, rTorrent).
+  remapCandidates?: RemapCandidate[]
+  // Why no candidate is offered, when that is worth telling the user:
+  // samePath means Bindery's folder equals the client's, so it needs mounting;
+  // unsupportedChars means a path holds a comma or colon the remap syntax
+  // cannot carry, so the rule must be written by hand.
+  remapNote?: 'samePath' | 'unsupportedChars'
 }
 
 // Diagnose (the download client path doctor) answers with an ordered
@@ -111,7 +137,7 @@ export const downloadClientsApi = {
   updateDownloadClient: (id: number, data: DownloadClientUpdate) => request<DownloadClient>(`/downloadclient/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteDownloadClient: (id: number) => request<void>(`/downloadclient/${id}`, { method: 'DELETE' }),
   diagnoseDownloadClient: (id: number) => request<DiagnoseResult>(`/downloadclient/${id}/diagnose`, { method: 'POST' }),
-  testDownloadClient: (id: number) => request<{ message: string; health?: DownloadClientHealth; pathVisibility?: PathVisibility }>(`/downloadclient/${id}/test`, { method: 'POST' }),
+  testDownloadClient: (id: number) => request<DownloadClientTestResult>(`/downloadclient/${id}/test`, { method: 'POST' }),
   // Test an unsaved download-client config (Add/Edit form Test button). Does
   // not persist; mirrors testDownloadClient's response (minus async health).
   // Passing the saved client's id lets the backend fill in a credential the

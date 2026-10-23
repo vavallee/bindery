@@ -108,7 +108,19 @@ type Scanner struct {
 	// downloaded EPUB declaring a language the author's metadata profile does
 	// not allow is rejected and blocklisted instead of relabelling the book.
 	// Nil disables the check, exactly as an unwired format check does.
-	metadataProfiles     *db.MetadataProfileRepo
+	metadataProfiles *db.MetadataProfileRepo
+	// authorAliases backs the ebook content check (#3015): a file whose
+	// dc:creator is a pen name or house name the author is known under counts as
+	// the author. Nil leaves the check comparing the author's own name only.
+	authorAliases *db.AuthorAliasRepo
+	// onContentCheck, when non-nil, is called each time a content check
+	// actually runs, with "ebook" or "audiobook". A test seam: it proves the
+	// check runs for a polled download and never for a library scan or a
+	// manual import.
+	onContentCheck func(kind string)
+	// readTags reads one audio file's tags for the audiobook content check;
+	// nil uses ReadAudioTags. A test seam that counts and bounds the reads.
+	readTags             func(path string) (AudioTags, error)
 	libraryDir           string
 	audiobookDir         string
 	audiobookDownloadDir string
@@ -906,18 +918,32 @@ func (s *Scanner) updateDownloadStatus(ctx context.Context, id int64, status mod
 // "import failed" event in the notifier enum, so importFailed and
 // downloadFailed share the channel.
 func (s *Scanner) failImport(ctx context.Context, dl *models.Download, status models.DownloadState, reason string) {
+	s.failImportWithCheck(ctx, dl, status, reason, nil)
+}
+
+// failImportWithCheck is failImport for a download a content check refused
+// (#3015, #3246): the importFailed event and the failure webhook carry the same
+// contentCheck object a warn mode import attaches to bookImported, so a
+// consumer sees what was found, not only the message.
+func (s *Scanner) failImportWithCheck(ctx context.Context, dl *models.Download, status models.DownloadState, reason string, contentCheck map[string]any) {
 	if err := s.downloads.SetErrorWithStatus(ctx, dl.ID, status, reason); err != nil {
 		slog.Warn("failed to persist import error", "download_id", dl.ID, "status", status, "error", err)
 	}
-	s.createHistoryEvent(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, map[string]string{
+	data := map[string]any{
 		"guid":    dl.GUID,
 		"message": reason,
 		"status":  string(status),
-	})
-	s.notify(ctx, notifierEventDownloadFailed, map[string]interface{}{
+	}
+	payload := map[string]interface{}{
 		"title":   dl.Title,
 		"message": reason,
-	})
+	}
+	if contentCheck != nil {
+		data["contentCheck"] = contentCheck
+		payload["contentCheck"] = contentCheck
+	}
+	s.createHistoryEventData(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, data)
+	s.notify(ctx, notifierEventDownloadFailed, payload)
 }
 
 // blockTinyOnlyDownload blocks a download whose only ebook files are under
@@ -945,6 +971,12 @@ func (s *Scanner) recordUnmatchedImportPath(ctx context.Context, downloadID int6
 }
 
 func (s *Scanner) createHistoryEvent(ctx context.Context, eventType string, sourceTitle string, bookID *int64, data map[string]string) {
+	s.createHistoryEventData(ctx, eventType, sourceTitle, bookID, data)
+}
+
+// createHistoryEventData is createHistoryEvent for a payload with a nested
+// value, such as the contentCheck object. The data column is JSON either way.
+func (s *Scanner) createHistoryEventData(ctx context.Context, eventType string, sourceTitle string, bookID *int64, data any) {
 	if s.history == nil {
 		return
 	}
@@ -1708,6 +1740,16 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 	}
 
+	// Whether the grab named a book. Only such a download is content checked
+	// (#3015, #3246): one matched from its own metadata just below agrees with
+	// that book by construction.
+	//
+	// Known limit: the recovery below saves its match with SetBookID, and the
+	// downloads row has no field saying the book was a guess, so on a Retry
+	// import of such a download this is true and the saved book is checked as
+	// if the grab had named it. Telling the two apart needs a column.
+	grabbedForBook := dl.BookID != nil
+
 	// Recover an association for downloads grabbed without a BookID (the
 	// free-text Search page does not tie a release to a local book) before
 	// falling through to the "unmatched" failure. Prefer the file's embedded
@@ -1833,6 +1875,32 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 	}
 
+	// Post-download content check, ebook half (#3015). The file's own dc:title
+	// and dc:creator are compared with the book the download was grabbed for.
+	// In block mode a definite mismatch is refused exactly like the language
+	// check above; in warn mode (the default) the import goes ahead and the
+	// finding rides on the bookImported event and webhook (contentCheck).
+	// Skipped for a manual import, Match to book and a book matched from the
+	// file itself. See content_check.go.
+	var contentCheck map[string]any
+	if detectedFormat != models.MediaTypeAudiobook && len(bookFiles) > 0 && grabbedForBook && book != nil && !isManualImport(ctx) {
+		if res := s.checkEbookContent(ctx, book, author, bookFiles); res.flagged || res.data != nil {
+			if res.blocks() {
+				slog.Warn("import blocked: file looks like a different book",
+					"title", dl.Title, "bookID", book.ID, "book", book.Title)
+				s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
+				s.blocklistRejectedRelease(ctx, dl, res.reason)
+				s.failImportWithCheck(ctx, dl, models.StateImportBlocked, res.reason, res.data)
+				return
+			}
+			if res.flagged {
+				slog.Warn("downloaded file looks like a different book; importing it because import.ebook.content_check is warn",
+					"title", dl.Title, "bookID", book.ID, "book", book.Title)
+			}
+			contentCheck = res.data
+		}
+	}
+
 	// Audiobook path: place the entire download directory as a unit so
 	// multi-part m4b/mp3 files, cover art, and cue sheets stay together.
 	if detectedFormat == models.MediaTypeAudiobook {
@@ -1881,6 +1949,32 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				}
 			}
 			return
+		}
+		// Post-download content check, audiobook half (#3246). The tags of the
+		// download's audio files are read once and compared with the book; a
+		// download that holds other works is refused in block mode (the same
+		// path as the ebook half and the language check) and noted on the
+		// bookImported event and webhook in warn mode, the default. It runs
+		// after the idempotency guard above, so a download that was already
+		// imported is not read again, and before any destination is computed
+		// or file placed. Skipped for a manual import, Match to book and a
+		// book matched from the file's own metadata. See content_check_audio.go.
+		if grabbedForBook && !isManualImport(ctx) {
+			if res := s.checkAudiobookContent(ctx, book, author, bookFiles); res.flagged || res.data != nil {
+				if res.blocks() {
+					slog.Warn("import blocked: audio tags show other books in the download",
+						"title", dl.Title, "bookID", book.ID, "book", book.Title)
+					s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
+					s.blocklistRejectedRelease(ctx, dl, res.reason)
+					s.failImportWithCheck(ctx, dl, models.StateImportBlocked, res.reason, res.data)
+					return
+				}
+				if res.flagged {
+					slog.Warn("downloaded audiobook holds other books; importing it because import.audiobook.content_check is warn",
+						"title", dl.Title, "bookID", book.ID, "book", book.Title)
+				}
+				contentCheck = res.data
+			}
 		}
 		// effectiveAudiobookDir resolves the per-author audiobook root folder
 		// (#579), then the default audiobook root folder setting (#2166), and
@@ -2305,9 +2399,9 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			historyMeta["skippedFiles"] = strings.Join(mergeSkippedFiles, ", ")
 		}
 		s.fillCoverFromFile(ctx, book, destDir)
-		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, historyMeta)
+		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, withContentCheck(historyMeta, contentCheck))
 		s.recordFixMatchMove(ctx, book, destDir)
-		s.notify(ctx, notifierEventBookImported, importedPayload(book, dl, models.MediaTypeAudiobook, destDir, mergeSkippedFiles))
+		s.notify(ctx, notifierEventBookImported, withContentCheckPayload(importedPayload(book, dl, models.MediaTypeAudiobook, destDir, mergeSkippedFiles), contentCheck))
 		if cleanupFunc != nil {
 			if err := cleanupFunc(); err != nil {
 				slog.Warn("cleanup failed", cleanupWarnAttrs(cleanupClientType, cleanupRemoteID, err)...)
@@ -2401,8 +2495,8 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// (move mode deletes it on commit). Only when we actually intend to
 		// backfill, so we never open the zip needlessly. Under a restricted
 		// profile the first allowed declared language wins (relabelLanguage).
-		if readLanguage && detectedLang == "" && IsEpubFile(srcFile) {
-			if meta, err := ReadEpubMetadata(srcFile); err == nil && meta.Language != "" {
+		if readLanguage && detectedLang == "" && HasEmbeddedMetadata(srcFile) {
+			if meta, err := ReadEbookMetadata(srcFile); err == nil && meta.Language != "" {
 				detectedLang = langCheck.relabelLanguage(meta)
 			}
 		}
@@ -2597,9 +2691,9 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// lands here, so the download still ends up with exactly one
 		// bookImported row naming every format.
 		importData := ebookImportHistoryData(importedDestPaths)
-		s.createHistoryEvent(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, importData)
+		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, withContentCheck(importData, contentCheck))
 		s.recordFixMatchMove(ctx, book, importData["path"])
-		s.notify(ctx, notifierEventBookImported, importedPayload(book, dl, models.MediaTypeEbook, "", nil))
+		s.notify(ctx, notifierEventBookImported, withContentCheckPayload(importedPayload(book, dl, models.MediaTypeEbook, "", nil), contentCheck))
 
 		// For "move" mode bindery has no further use for the source files. The
 		// download folder may, however, be a path shared with sibling torrents
@@ -3231,10 +3325,11 @@ func cleanLayoutTitle(dir string) string {
 // "Title - Author" filename (#754): the first directory under the root is the
 // author, and the file's parent is the book folder.
 //
-// When that parent is one disc of a multi-disc audiobook ("CD1", "Disc 2") it
-// names a part rather than the book, so the folder above it names the book
-// instead (#2723), by the cd/disc rule the library scan's unmatched grouping
-// already uses (discSetNameRe, #2672): "Book 1", "Vol 1" and bare numbers are
+// When that parent is one disc of a multi-disc audiobook ("CD1", "Disc 2", or
+// the book's own title in front, "Fjellvinden Disc 1", #3327) it names a part
+// rather than the book, so the folder above it names the book instead (#2723),
+// by the cd/disc rule the library scan's unmatched grouping already uses
+// (isDiscSetName, #2672): "Book 1", "Vol 1" and bare numbers are
 // left alone, because in a library those name separate books of a series as
 // often as they name discs. The folder above counts only when a book folder
 // separates it from the author: in <root>/<Author>/<disc>/<file> the parent is
@@ -3258,7 +3353,7 @@ func bookFolderFromLayout(path string, roots ...string) (author, bookFolder stri
 			// file's parent names the book — unless it is a disc folder with a
 			// book folder above it.
 			idx := len(parts) - 2
-			if idx > 1 && discSetNameRe.MatchString(parts[idx]) {
+			if idx > 1 && isDiscSetName(parts[idx], parts[idx-1]) {
 				idx--
 			}
 			folder := filepath.Dir(path)
@@ -4296,6 +4391,22 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 						"path", path)
 					return false
 				}
+			}
+			// The winner is settled; now ask whether it is the file's book at
+			// all. A shared series name carries the score: "Harry Potter en de
+			// Relieken van de Dood" against "Harry Potter en de Orde van de
+			// Feniks" is 0.929, and the volume veto has no number to read in a
+			// Dutch catalogue title. With the file's own book excluded nothing
+			// competed and the file went to the next best title (#3388). Words
+			// each title has that the other lacks, none of them close, name two
+			// works, so the file is left unmatched. This runs on the winner and
+			// not on every candidate so the ranking above, and the near ties it
+			// leaves unmatched (#2941), are exactly what they were. A different
+			// work is not a book this file matches, so claimBlocked stays unset.
+			if titlesNameDifferentWorks(title, best.sb.book.Title) {
+				slog.Debug("library scan: title match rejected (different work)",
+					"title", best.sb.book.Title, "path", path, "fileTitle", title, "jw", best.score)
+				return false
 			}
 			return claimTitleHit(best, path, cleanPath, detectedFmt)
 		}

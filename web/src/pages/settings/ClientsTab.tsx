@@ -1,12 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, DiagnoseResult, DownloadClient, DownloadClientUpdate } from '../../api/client'
+import { api, DiagnoseResult, DownloadClient, DownloadClientUpdate, RemapCandidate } from '../../api/client'
 import { inputCls } from './formStyles'
 import Toggle from './Toggle'
 import PathRemapField from './PathRemapField'
-import { downloadClientPathRemapHelp, rtorrentScgiIgnoredFields } from './helpers'
-import { dangerLink } from '../../components/buttons'
+import { addRemapRule, downloadClientPathRemapHelp, rtorrentScgiIgnoredFields, supportsRemapAssistant } from './helpers'
+import { dangerLink, primaryFill } from '../../components/buttons'
 import ClientDiagnosePanel from './ClientDiagnosePanel'
+import RemapAssistant from './RemapAssistant'
 import { literalInputAttrs, portInputAttrs, secretInputAttrs, urlInputAttrs } from '../../util/inputAttrs'
 
 // clients is owned by SettingsPage so it can be fetched eagerly on page mount
@@ -31,7 +32,7 @@ export default function ClientsTab({ clients, setClients }: Props) {
   const { t } = useTranslation()
   const [showAddClient, setShowAddClient] = useState(false)
   const [editingClient, setEditingClient] = useState<number | null>(null)
-  const [clientTestResult, setClientTestResult] = useState<Record<number, { ok: boolean; msg: string; warn?: string }>>({})
+  const [clientTestResult, setClientTestResult] = useState<Record<number, { ok: boolean; msg: string; warn?: string; assist?: { remotePath: string; candidates: RemapCandidate[]; note?: 'samePath' | 'unsupportedChars' } }>>({})
   const [confirmDeleteClient, setConfirmDeleteClient] = useState<number | null>(null)
   // Diagnose runs only for a saved client (it takes the id, never a form).
   const [diagnosing, setDiagnosing] = useState<number | null>(null)
@@ -50,6 +51,51 @@ export default function ClientsTab({ clients, setClients }: Props) {
     }
   }
 
+  const runTest = async (c: DownloadClient) => {
+    try {
+      const result = await api.testDownloadClient(c.id)
+      if (result.health) {
+        setClients(prev => prev.map(x => x.id === c.id ? { ...x, health: result.health } : x))
+      }
+      const warn = result.pathVisibility?.status === 'warning'
+        ? (result.pathVisibility.message || t('settings.clients.pathNotVisible'))
+        : undefined
+      const remotePath = result.pathVisibility?.remotePath
+      const candidates = result.remapCandidates ?? []
+      const assist = warn && remotePath && (candidates.length > 0 || result.remapNote)
+        ? { remotePath, candidates, note: result.remapNote }
+        : undefined
+      setClientTestResult(prev => ({ ...prev, [c.id]: { ok: true, msg: t('common.connOk'), warn, assist } }))
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err.message : t('settings.clients.unknownError')
+      const warn = isLoopbackConnFailure(c.host, error) ? t('settings.clients.loopbackHint') : undefined
+      setClientTestResult(prev => ({ ...prev, [c.id]: { ok: false, msg: t('common.connFail', { error }), warn } }))
+    }
+  }
+
+  // The assistant's save is the ordinary update call, followed by a fresh Test.
+  // It sends only pathRemap: the server merges onto the stored row, so no other
+  // field or credential is touched and a stale list cannot overwrite them. The
+  // new value is built from the list's copy of the remap, so a remap edited
+  // elsewhere since this page loaded would be replaced.
+  const applyRemap = async (c: DownloadClient, remotePath: string, local: string) => {
+    const updated = await api.updateDownloadClient(c.id, { pathRemap: addRemapRule(c.pathRemap || '', remotePath, local) })
+    setClients(prev => prev.map(x => x.id === updated.id ? updated : x))
+    await runTest(updated)
+    setRefocusTest(c.id)
+  }
+
+  // The panel unmounts when the re-test passes, taking the focused Apply button
+  // with it, so hand focus to the row's Test button.
+  const [refocusTest, setRefocusTest] = useState<number | null>(null)
+  useEffect(() => {
+    if (refocusTest === null) return
+    if (!clientTestResult[refocusTest]?.assist) {
+      document.getElementById(`client-test-${refocusTest}`)?.focus()
+    }
+    setRefocusTest(null)
+  }, [refocusTest, clientTestResult])
+
   const closeDiagnosis = (id: number) => setDiagnosis(prev => {
     const next = { ...prev }
     delete next[id]
@@ -60,12 +106,12 @@ export default function ClientsTab({ clients, setClients }: Props) {
     <div>
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-lg font-semibold">{t('settings.clients.heading')}</h3>
-        <button onClick={() => setShowAddClient(true)} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-medium">
+        <button onClick={() => setShowAddClient(true)} className={`px-3 py-1.5 ${primaryFill} rounded text-xs font-medium`}>
           {t('settings.clients.addButton')}
         </button>
       </div>
       {clients.length === 0 ? (
-        <p className="text-slate-600 dark:text-zinc-500 text-sm">{t('settings.clients.empty')}</p>
+        <p className="text-fg-muted text-sm">{t('settings.clients.empty')}</p>
       ) : (
         <div className="space-y-2">
           {clients.map(c => (
@@ -81,30 +127,16 @@ export default function ClientsTab({ clients, setClients }: Props) {
                     title={c.enabled ? t('common.disable') : t('common.enable')}
                   />
                   <div className="min-w-0">
-                    <h4 className={`font-medium text-sm ${!c.enabled ? 'text-slate-600 dark:text-zinc-500' : ''}`}>{c.name}</h4>
-                    <p className="text-xs text-slate-600 dark:text-zinc-500">{c.host}:{c.port} ({c.category})</p>
+                    <h4 className={`font-medium text-sm ${!c.enabled ? 'text-fg-muted' : ''}`}>{c.name}</h4>
+                    <p className="text-xs text-fg-muted">{c.host}:{c.port} ({c.category})</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  <button onClick={() => setEditingClient(editingClient === c.id ? null : c.id)} className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white">{t('common.edit')}</button>
+                  <button onClick={() => setEditingClient(editingClient === c.id ? null : c.id)} className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white">{t('common.edit')}</button>
                   <button
-                    onClick={async () => {
-                      try {
-                        const result = await api.testDownloadClient(c.id)
-                        if (result.health) {
-                          setClients(prev => prev.map(x => x.id === c.id ? { ...x, health: result.health } : x))
-                        }
-                        const warn = result.pathVisibility?.status === 'warning'
-                          ? (result.pathVisibility.message || t('settings.clients.pathNotVisible'))
-                          : undefined
-                        setClientTestResult(prev => ({ ...prev, [c.id]: { ok: true, msg: t('common.connOk'), warn } }))
-                      } catch (err: unknown) {
-                        const error = err instanceof Error ? err.message : t('settings.clients.unknownError')
-                        const warn = isLoopbackConnFailure(c.host, error) ? t('settings.clients.loopbackHint') : undefined
-                        setClientTestResult(prev => ({ ...prev, [c.id]: { ok: false, msg: t('common.connFail', { error }), warn } }))
-                      }
-                    }}
-                    className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
+                    id={`client-test-${c.id}`}
+                    onClick={() => { void runTest(c) }}
+                    className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white"
                   >
                     {t('common.test')}
                   </button>
@@ -112,13 +144,13 @@ export default function ClientsTab({ clients, setClients }: Props) {
                     onClick={() => { void runDiagnose(c.id) }}
                     disabled={diagnosing === c.id}
                     aria-expanded={!!diagnosis[c.id]?.result}
-                    className="text-xs text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50"
+                    className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50"
                   >
                     {diagnosing === c.id ? t('settings.clients.diagnose.running') : t('settings.clients.diagnose.button')}
                   </button>
                   {confirmDeleteClient === c.id ? (
                     <span className="flex items-center gap-1.5">
-                      <span className="text-xs text-slate-500 dark:text-zinc-500">{t('common.delete')}?</span>
+                      <span className="text-xs text-fg-muted">{t('common.delete')}?</span>
                       <button
                         onClick={async () => {
                           await api.deleteDownloadClient(c.id)
@@ -127,7 +159,7 @@ export default function ClientsTab({ clients, setClients }: Props) {
                         }}
                         className={`text-xs font-medium ${dangerLink}`}
                       >{t('common.yes')}</button>
-                      <button onClick={() => setConfirmDeleteClient(null)} className="text-xs text-slate-500 dark:text-zinc-500 hover:text-slate-700 dark:hover:text-zinc-300">{t('common.no')}</button>
+                      <button onClick={() => setConfirmDeleteClient(null)} className="text-xs text-fg-muted hover:text-slate-700 dark:hover:text-zinc-300">{t('common.no')}</button>
                     </span>
                   ) : (
                     <button onClick={() => setConfirmDeleteClient(c.id)} className={`text-xs ${dangerLink}`}>
@@ -169,6 +201,17 @@ export default function ClientsTab({ clients, setClients }: Props) {
                   {clientTestResult[c.id].warn}
                 </div>
               )}
+              {clientTestResult[c.id]?.assist && supportsRemapAssistant(c.type) && (
+                <RemapAssistant
+                  key={clientTestResult[c.id].assist!.remotePath}
+                  clientId={c.id}
+                  clientType={c.type}
+                  remotePath={clientTestResult[c.id].assist!.remotePath}
+                  candidates={clientTestResult[c.id].assist!.candidates}
+                  note={clientTestResult[c.id].assist!.note}
+                  onApply={local => applyRemap(c, clientTestResult[c.id].assist!.remotePath, local)}
+                />
+              )}
               {diagnosis[c.id]?.error && (
                 <div role="alert" className="mt-1 px-3 py-1.5 rounded text-xs flex items-center gap-2 bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300">
                   <span className="inline-block w-2 h-2 rounded-full flex-shrink-0 bg-red-500" />
@@ -193,6 +236,7 @@ export default function ClientsTab({ clients, setClients }: Props) {
 }
 
 function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; onClose: () => void; onSaved: (c: DownloadClient) => void }) {
+  const fid = useId()
   const { t } = useTranslation()
   const [name, setName] = useState(client.name)
   const [type, setType] = useState(client.type || 'sabnzbd')
@@ -214,7 +258,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   const [removeOnImport, setRemoveOnImport] = useState(client.removeOnImport || false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; warn?: string } | null>(null)
-  const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
+  const labelCls = 'block text-xs text-fg-muted mb-1'
 
   const handleTypeChange = (newType: string) => {
     setType(newType)
@@ -308,12 +352,12 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
     <div className="mt-1 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-3">
       <div className="flex gap-2">
         <div className="flex-1">
-          <label className={labelCls}>Name</label>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
+          <label htmlFor={`${fid}-1`} className={labelCls}>Name</label>
+          <input id={`${fid}-1`} value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
         <div className="w-40">
-          <label className={labelCls}>Client Type</label>
-          <select value={type} onChange={e => handleTypeChange(e.target.value)} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm">
+          <label htmlFor={`${fid}-2`} className={labelCls}>Client Type</label>
+          <select id={`${fid}-2`} value={type} onChange={e => handleTypeChange(e.target.value)} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm">
             <option value="sabnzbd">SABnzbd</option>
             <option value="nzbget">NZBGet</option>
             <option value="qbittorrent">qBittorrent</option>
@@ -324,12 +368,12 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
         </div>
       </div>
       <div>
-        <label className={labelCls}>Connection</label>
+        <label htmlFor={`${fid}-7`} className={labelCls}>Connection</label>
         <div className="flex gap-2">
-          <input {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
+          <input id={`${fid}-7`} {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
           <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
+        <p className="text-xs text-fg-muted mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
       </div>
       <div className="flex items-center gap-2">
         <input
@@ -342,9 +386,9 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
         <label htmlFor={`edit-ssl-${client.id}`} className={labelCls}>Use SSL</label>
       </div>
       <div>
-        <label className={labelCls}>URL Base</label>
-        <input value={urlBase} onChange={e => setUrlBase(e.target.value)} placeholder={type === 'rtorrent' ? '/RPC2' : '/sabnzbd'} className={inputCls} />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{type === 'rtorrent'
+        <label htmlFor={`${fid}-3`} className={labelCls}>URL Base</label>
+        <input id={`${fid}-3`} value={urlBase} onChange={e => setUrlBase(e.target.value)} placeholder={type === 'rtorrent' ? '/RPC2' : '/sabnzbd'} className={inputCls} />
+        <p className="text-xs text-fg-muted mt-1">{type === 'rtorrent'
           ? t('settings.clients.rtorrentUrlBaseHelp')
           : <>Optional path prefix for reverse proxy deployments (e.g. <code className="font-mono">/sabnzbd</code>). Leave blank for direct connections.</>}</p>
         {scgiIgnored.length > 0 && (
@@ -355,8 +399,8 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
       </div>
       {hasUsername(type) && (
         <div>
-          <label className={labelCls}>Username</label>
-          <input {...literalInputAttrs} value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className={inputCls} />
+          <label htmlFor={`${fid}-4`} className={labelCls}>Username</label>
+          <input id={`${fid}-4`} {...literalInputAttrs} value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className={inputCls} />
         </div>
       )}
       <div>
@@ -372,22 +416,22 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
           type="password"
           className={inputCls}
         />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{credentialStored
+        <p className="text-xs text-fg-muted mt-1">{credentialStored
           ? t('settings.clients.credentialKeepHint')
           : t('settings.clients.credentialUnsetHint')}</p>
       </div>
       <div>
-        <label className={labelCls}>{type === 'transmission' ? 'Download Directory' : 'Category / Label'}</label>
-        <input value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? '/downloads (leave blank for default)' : 'books'} className={inputCls} />
-        {type === 'transmission' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
-        {type === 'deluge' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
-        {type === 'rtorrent' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.rtorrentCategoryHelp')}</p>}
+        <label htmlFor={`${fid}-5`} className={labelCls}>{type === 'transmission' ? 'Download Directory' : 'Category / Label'}</label>
+        <input id={`${fid}-5`} value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? '/downloads (leave blank for default)' : 'books'} className={inputCls} />
+        {type === 'transmission' && <p className="text-xs text-fg-muted mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
+        {type === 'deluge' && <p className="text-xs text-fg-muted mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
+        {type === 'rtorrent' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.rtorrentCategoryHelp')}</p>}
       </div>
       {type !== 'transmission' && (
         <div>
-          <label className={labelCls}>{t('settings.clients.audiobookCategoryLabel')}</label>
-          <input value={categoryAudiobook} onChange={e => setCategoryAudiobook(e.target.value)} placeholder={t('settings.clients.audiobookCategoryPlaceholder')} className={inputCls} />
-          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.audiobookCategoryHelp')}</p>
+          <label htmlFor={`${fid}-6`} className={labelCls}>{t('settings.clients.audiobookCategoryLabel')}</label>
+          <input id={`${fid}-6`} value={categoryAudiobook} onChange={e => setCategoryAudiobook(e.target.value)} placeholder={t('settings.clients.audiobookCategoryPlaceholder')} className={inputCls} />
+          <p className="text-xs text-fg-muted mt-1">{t('settings.clients.audiobookCategoryHelp')}</p>
         </div>
       )}
       <PathRemapField
@@ -410,10 +454,10 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
             />
             <label htmlFor={`edit-remove-on-import-${client.id}`} className={labelCls}>{t('settings.clients.removeOnImportLabel')}</label>
           </div>
-          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.removeOnImportHelp')}</p>
+          <p className="text-xs text-fg-muted mt-1">{t('settings.clients.removeOnImportHelp')}</p>
         </div>
       )}
-      {saveError && <p className="text-sm text-red-500">{saveError}</p>}
+      {saveError && <p className="text-sm text-red-700 dark:text-red-400">{saveError}</p>}
       {testResult && (
         <div role="status" className={`px-3 py-1.5 rounded text-xs flex items-center gap-2 ${testResult.ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>
           <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${testResult.ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
@@ -427,9 +471,9 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
         </div>
       )}
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
-        <button onClick={handleTest} disabled={testing || !host} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{testing ? t('common.testing') : t('common.test')}</button>
-        <button onClick={submit} disabled={saving} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50">{t('common.save')}</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-fg-muted">{t('common.cancel')}</button>
+        <button onClick={handleTest} disabled={testing || !host} className="px-3 py-1.5 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{testing ? t('common.testing') : t('common.test')}</button>
+        <button onClick={submit} disabled={saving} className={`px-3 py-1.5 ${primaryFill} rounded text-sm font-medium disabled:opacity-50`}>{t('common.save')}</button>
       </div>
     </div>
   )
@@ -444,6 +488,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
 const supportsRemoveOnImport = (t: string) => t === 'qbittorrent' || t === 'transmission'
 
 function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c: DownloadClient) => void }) {
+  const fid = useId()
   const { t } = useTranslation()
   const [name, setName] = useState('SABnzbd')
   const [type, setType] = useState<'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent'>('sabnzbd')
@@ -461,7 +506,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   const [removeOnImport, setRemoveOnImport] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; warn?: string } | null>(null)
-  const labelCls = 'block text-xs text-slate-600 dark:text-zinc-400 mb-1'
+  const labelCls = 'block text-xs text-fg-muted mb-1'
 
   const isPasswordClient = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'deluge' || t === 'rtorrent'
   // rTorrent authenticates with HTTP basic auth on the RPC endpoint, so it takes
@@ -551,12 +596,12 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
     <div className="mt-4 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-3">
       <div className="flex gap-2">
         <div className="flex-1">
-          <label className={labelCls}>Name</label>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
+          <label htmlFor={`${fid}-1`} className={labelCls}>Name</label>
+          <input id={`${fid}-1`} value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
         <div className="w-40">
-          <label className={labelCls}>Client Type</label>
-          <select value={type} onChange={e => handleTypeChange(e.target.value as 'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm">
+          <label htmlFor={`${fid}-2`} className={labelCls}>Client Type</label>
+          <select id={`${fid}-2`} value={type} onChange={e => handleTypeChange(e.target.value as 'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm">
             <option value="sabnzbd">SABnzbd</option>
             <option value="nzbget">NZBGet</option>
             <option value="qbittorrent">qBittorrent</option>
@@ -567,12 +612,12 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         </div>
       </div>
       <div>
-        <label className={labelCls}>Connection</label>
+        <label htmlFor={`${fid}-8`} className={labelCls}>Connection</label>
         <div className="flex gap-2">
-          <input {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
+          <input id={`${fid}-8`} {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
           <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
+        <p className="text-xs text-fg-muted mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
       </div>
       <div className="flex items-center gap-2">
         <input
@@ -585,9 +630,9 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         <label htmlFor="add-ssl" className={labelCls}>Use SSL</label>
       </div>
       <div>
-        <label className={labelCls}>URL Base</label>
-        <input value={urlBase} onChange={e => setUrlBase(e.target.value)} placeholder={type === 'rtorrent' ? '/RPC2' : '/sabnzbd'} className={inputCls} />
-        <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{type === 'rtorrent'
+        <label htmlFor={`${fid}-3`} className={labelCls}>URL Base</label>
+        <input id={`${fid}-3`} value={urlBase} onChange={e => setUrlBase(e.target.value)} placeholder={type === 'rtorrent' ? '/RPC2' : '/sabnzbd'} className={inputCls} />
+        <p className="text-xs text-fg-muted mt-1">{type === 'rtorrent'
           ? t('settings.clients.rtorrentUrlBaseHelp')
           : <>Optional path prefix for reverse proxy deployments (e.g. <code className="font-mono">/sabnzbd</code>). Leave blank for direct connections.</>}</p>
         {scgiIgnored.length > 0 && (
@@ -598,26 +643,26 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
       </div>
       {hasUsername(type) && (
         <div>
-          <label className={labelCls}>Username</label>
-          <input {...literalInputAttrs} value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className={inputCls} />
+          <label htmlFor={`${fid}-4`} className={labelCls}>Username</label>
+          <input id={`${fid}-4`} {...literalInputAttrs} value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className={inputCls} />
         </div>
       )}
       <div>
-        <label className={labelCls}>{isPasswordClient(type) ? 'Password' : 'API Key'}</label>
-        <input {...secretInputAttrs} value={credential} onChange={e => setCredential(e.target.value)} placeholder={isPasswordClient(type) ? 'Password' : 'API Key'} type="password" className={inputCls} />
+        <label htmlFor={`${fid}-5`} className={labelCls}>{isPasswordClient(type) ? 'Password' : 'API Key'}</label>
+        <input id={`${fid}-5`} {...secretInputAttrs} value={credential} onChange={e => setCredential(e.target.value)} placeholder={isPasswordClient(type) ? 'Password' : 'API Key'} type="password" className={inputCls} />
       </div>
       <div>
-        <label className={labelCls}>{type === 'transmission' ? 'Download Directory' : 'Category / Label'}</label>
-        <input value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? '/downloads (leave blank for default)' : 'books'} className={inputCls} />
-        {type === 'transmission' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
-        {type === 'deluge' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
-        {type === 'rtorrent' && <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.rtorrentCategoryHelp')}</p>}
+        <label htmlFor={`${fid}-6`} className={labelCls}>{type === 'transmission' ? 'Download Directory' : 'Category / Label'}</label>
+        <input id={`${fid}-6`} value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? '/downloads (leave blank for default)' : 'books'} className={inputCls} />
+        {type === 'transmission' && <p className="text-xs text-fg-muted mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
+        {type === 'deluge' && <p className="text-xs text-fg-muted mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
+        {type === 'rtorrent' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.rtorrentCategoryHelp')}</p>}
       </div>
       {type !== 'transmission' && (
         <div>
-          <label className={labelCls}>{t('settings.clients.audiobookCategoryLabel')}</label>
-          <input value={categoryAudiobook} onChange={e => setCategoryAudiobook(e.target.value)} placeholder={t('settings.clients.audiobookCategoryPlaceholder')} className={inputCls} />
-          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.audiobookCategoryHelp')}</p>
+          <label htmlFor={`${fid}-7`} className={labelCls}>{t('settings.clients.audiobookCategoryLabel')}</label>
+          <input id={`${fid}-7`} value={categoryAudiobook} onChange={e => setCategoryAudiobook(e.target.value)} placeholder={t('settings.clients.audiobookCategoryPlaceholder')} className={inputCls} />
+          <p className="text-xs text-fg-muted mt-1">{t('settings.clients.audiobookCategoryHelp')}</p>
         </div>
       )}
       <PathRemapField
@@ -640,10 +685,10 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
             />
             <label htmlFor="add-remove-on-import" className={labelCls}>{t('settings.clients.removeOnImportLabel')}</label>
           </div>
-          <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">{t('settings.clients.removeOnImportHelp')}</p>
+          <p className="text-xs text-fg-muted mt-1">{t('settings.clients.removeOnImportHelp')}</p>
         </div>
       )}
-      {saveError && <p className="text-sm text-red-500">{saveError}</p>}
+      {saveError && <p className="text-sm text-red-700 dark:text-red-400">{saveError}</p>}
       {testResult && (
         <div role="status" className={`px-3 py-1.5 rounded text-xs flex items-center gap-2 ${testResult.ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>
           <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${testResult.ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
@@ -657,9 +702,9 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         </div>
       )}
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400">{t('common.cancel')}</button>
-        <button onClick={handleTest} disabled={testing || !host} className="px-3 py-1.5 text-sm text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{testing ? t('common.testing') : t('common.test')}</button>
-        <button onClick={submit} disabled={saving} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium disabled:opacity-50">{t('common.save')}</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-fg-muted">{t('common.cancel')}</button>
+        <button onClick={handleTest} disabled={testing || !host} className="px-3 py-1.5 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50">{testing ? t('common.testing') : t('common.test')}</button>
+        <button onClick={submit} disabled={saving} className={`px-3 py-1.5 ${primaryFill} rounded text-sm font-medium disabled:opacity-50`}>{t('common.save')}</button>
       </div>
     </div>
   )

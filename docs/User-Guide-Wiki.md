@@ -386,6 +386,9 @@ set, an omnibus, a "complete series". They still appear in interactive search
 so you can see them, and if you grab one by hand the import is blocked with an
 explanation rather than run. To take a pack, point **Import → From a folder** at the
 finished download and place each book's files against the right book record.
+A release that is not named as a pack can still hold several books. The name
+check cannot see that, but the content check on the finished download can (see
+below).
 
 A release is only judged a pack on wording that single books do not use about
 themselves. `Part 1-2` is left alone, because that is how one long audiobook
@@ -420,6 +423,36 @@ book set to both formats is still held for its sibling and released with it. Aud
 (usenet) to your NZB client — which is why the client's protocol must match
 the indexer, and why the category (default `books`) must already exist in the
 client. Bindery fetches the .torrent/NZB itself and hands it over.
+
+**Pinning an indexer to a download client.** Settings → Indexers has a
+**Download client** dropdown on every indexer. Leave it on *Default* and
+nothing changes: Bindery picks the client by protocol, priority and media type
+as before. Pick a client and every grab from that indexer goes to that client,
+whether it came from the scheduled search, the search page, the Pending tab, or
+Retry download on the Queue. This is how you keep a private tracker's torrents
+on a separate qBittorrent (its own VPN, port or seeding policy) from your public
+one. The list shows only enabled clients of the indexer's protocol, and saving a
+pin to a client of the other protocol is refused.
+
+* **A pin wins over everything else.** It overrides the client's priority and
+  its media type or category routing: an audiobook from a pinned indexer goes to
+  the pinned client even if another client has an audiobook category.
+* **There is no fallback.** If the pinned client is disabled, missing or of the
+  wrong protocol, or does not answer, the grab fails with a message naming the
+  indexer (and the client too, if you are an admin), and nothing is sent to any
+  other client. A scheduled search skips that indexer's releases, still grabs
+  from your other indexers, and records the failure in History once a day per
+  book and indexer. The indexer's row in Settings shows an amber warning while
+  its pinned client is disabled, missing or the wrong protocol. Enable the
+  client or pick another one and the next grab goes through. A grab with no
+  indexer id (an API caller) is tied to its indexer by the release URL's host;
+  see the troubleshooting page for the limits.
+* **A pinned client cannot be deleted.** Deleting a download client that an
+  indexer is pinned to is refused (HTTP 409) with the indexer names. Choose
+  another client for those indexers, or set them back to *Default*, first.
+  Disabling the client is allowed.
+* **A Prowlarr sync keeps the pin.** It is local configuration like priority and
+  the seed limits.
 
 **Seeding limits.** A torrent indexer can carry its own seeding rules in
 Settings → Indexers, so a private tracker's minimum is met without changing the
@@ -464,7 +497,8 @@ webhooks. The three ways of reaching Calibre or CWA are easy to mix up; the
 **The file's language is checked at import.** The language filter at grab
 time can only read the release name, so a release that does not say its
 language gets through it. When the download arrives, Bindery reads the
-language the EPUB declares (its `dc:language`) and compares it with the
+language the ebook declares (an EPUB's `dc:language`, or the language a MOBI,
+AZW or AZW3 file records in its header) and compares it with the
 languages the book may be in: the allowed languages on the author's metadata
 profile, or, when that profile allows any language, the preferred search
 language if it is set to English. That is the same rule the release name was
@@ -508,7 +542,139 @@ profile does not allow it. Only downloads are checked: a library scan,
 adopting files already in your library, and books imported before this check
 existed are left alone. With the import mode set to **External**, Bindery
 hands the download to your other tool without opening its files, so nothing
-is checked there either. Audiobooks are not checked yet.
+is checked there either. Audiobooks are not checked for language.
+
+**The file's own title and author are checked at import (ebooks).** The release
+name can say one book while the EPUB inside is another, and without a check that
+file imports under the wrong book and the book is never searched for again. When
+a download tied to a wanted book finishes, Bindery reads the EPUB's `dc:title`
+and `dc:creator` and compares them with the book. Only a definite mismatch
+counts: the title does not match **and** the author does not match.
+
+A title matches when, after case, accents, punctuation, a leading article and
+`&` against `and` are set aside, it equals the book's title or one of its
+variants: the title with a trailing series suffix such as `, Book 11` or
+`: Alex Cross, Book 11` removed, the main title before a `: subtitle`, and the
+subtitle itself when it is at least two meaningful words and does not end in a
+generic word such as novel or adventure (so `The Final Empire` matches `Mistborn:
+The Final Empire`). It also matches when the book's title sits inside the file's
+title as whole words (`Mary, Mary` inside `Mary, Mary: Alex Cross, Book 11`), and,
+for ebooks, when a file title of two or more words sits inside the book's title.
+A few spellings are treated as equal: `Dr`, `Mr`, `Mrs` and `St` against Doctor,
+Mister, Missus and Saint, hyphens and apostrophes left out (`Hitch-Hiker's` and
+`Hitchhiker's`), and spelled numbers against digits (`Slaughterhouse Five` and
+`Slaughterhouse 5`, `Twenty Thousand Leagues` and `20,000 Leagues`). Bindery does
+not try to equate `Philosopher's Stone` with `Sorcerer's Stone` or `1984` with
+`Nineteen Eighty-Four`.
+
+An author matches when the file's `dc:creator` names the book's author or one of
+its known aliases. A pen name or house name works through the alias list, so
+"Franklin W. Dixon" counts as Leslie McFarlane once that alias is on the author.
+A creator that names nobody is read as no creator at all, so it can never
+disagree: `Unknown`, `Anonymous`, `Various`, `calibre`, `Project Gutenberg`, a
+publisher such as `Penguin Group` or `Scholastic Inc.`, or anything containing an
+`@`. A file with no title or no author never counts as a mismatch, and neither
+does a comparison across scripts: if one side has no Latin letters and the other
+does (a Russian, Japanese, Hebrew, Arabic or Chinese edition of a book the
+catalogue holds in Latin letters), that title or author cannot disagree. Two
+non-Latin texts are still compared with each other. A file whose title differs but
+whose author agrees (another book in the series) is imported, and a wanted box
+set or omnibus is not compared. If a release holds several EPUBs, it is flagged
+only when every one that could be read is a definite mismatch. A release with more
+than 20 EPUBs is not judged (a verdict on a prefix could condemn the right book),
+and the `contentCheck` note says `truncated`. The object lists at most 10
+mismatches and says how many more there were.
+
+What happens next is set by **Check ebook contents** under Settings, General,
+File Naming (`import.ebook.content_check`, admin only):
+
+- **Warn** (the default): the file imports as before, and the History row and the
+  `bookImported` webhook carry a `contentCheck` object with the file's title and
+  author and the book they were compared with. The History row shows it under
+  the title.
+- **Block**: the release is refused the way a wrong language is. Nothing is
+  placed, the Queue row is blocked with a message naming what the file says and
+  what was wanted, the release is added to the Blocklist and the book stays
+  Wanted. **Match to book** on the Queue row, or **Import, From a folder**, keeps
+  the file anyway and skips the check; **Retry import** runs it again.
+- **Off**: the check does not run and no file is opened for it.
+
+Block is opt in because a wrongly refused download costs more than a missed
+mismatch. The check only runs for downloads Bindery grabbed for a book. A library
+scan, manual import, **Match to book** and a download matched to its book from
+the file's own metadata are never checked, and only EPUB and Kindle files (MOBI,
+AZW, AZW3) are read. Bindery does not
+read the book's text and does not write anything into the file.
+
+**The files' audio tags are checked at import (audiobooks).** An audiobook
+download is imported whole under the book it was grabbed for, so a release named
+for the right book that also holds the tracks of other books (the next volume,
+or another title by the same author) used to import all of them. When the
+download finishes, Bindery reads the tags of its audio files, once, and works
+out which book each file says it belongs to: its album tag, or, only when a file
+has no album, its track title, and then only when at least two files share it,
+so unique chapter names are never taken for other books. Titles such as
+`Chapter 12`, `Track 03`, a bare number, `Prologue`, `Credits`, and promo
+material (`Excerpt from ...`, preview, sample, bonus, interview, `Also by`,
+teaser, trailer) say nothing about the book and are ignored, and so is a file
+with no usable title. An album that is a placeholder (`Unknown Album`, `Unknown`,
+`Untitled`), a publisher credit (`Audible`, `Audible Studios`, `Audiobook`,
+`Blackstone Audio` and a few others), a web address or domain name, the file's own
+artist, album artist or composer tag (a narrator filed as the album), or written
+in a script with no Latin letters when the book's title has Latin letters, is
+also no usable title.
+
+A file supports the book when its title matches the book's title the way an
+ebook's does (see above: series suffix, subtitle, a subtitle of two or more words
+that is not a generic label, `(Volume 1)` style qualifier, leading article, `&`
+against `and`, case, accents, `Dr` against `Doctor`, spelled numbers against
+digits) or contains it as whole words, so a short title like `Dune` is supported
+by `Dune Messiah`. For `Mistborn: The Final Empire` both `Mistborn: The Final
+Empire` and `The Final Empire` support the book. A file that carries another
+volume of the same series (`NYPD Red 4` for `NYPD Red 3`) does not.
+
+The download is flagged when either of these holds:
+
+- at least two files do not support the book, those files are at least 5 percent
+  of the tracks read, and either at least one file does support it or at least
+  two different other titles appear;
+- at least two files carry another volume of the book's own series, and they are
+  at least 5 percent of the tracks read.
+
+The 5 percent floor means two bonus files or two series intro files in a folder of
+sixty do not flag it. A download where every file carries one other title is not
+flagged, because that is what a translated or retitled edition looks like; the
+`contentCheck` object then carries `retitled` with the title and the number of
+files, in `warn` and in `block` mode alike, and History shows a single quiet line.
+Nothing is blocked and no message changes. A wanted box set, omnibus, anthology,
+trilogy, duology, quartet, series or saga title, `Short Stories`, `Collected ...`,
+`Complete Works` or `Complete Chronicles` style titles, `The Complete` plus two or
+three words (`The Complete Sherlock Holmes`), `X Y Collection` (`Harry Potter
+Collection`), `Treasury of Fairy Tales`, `The Best of <the author's name>` (`The Best
+of Poe` by Edgar Allan Poe), a counted set such as `Four Novels` and a numeric range
+such as `Harry Potter 1-7` is not compared. Ordinary titles that merely contain the
+words complete, collection or best of (`The Complete Maus`, `The Best of Me`, `A
+Collection of Curses`) are compared. At most 500 files are read, spread across the folder, and the whole
+check has a 30 second budget: if reading runs out of time the check fails open,
+the audiobook imports, and the `contentCheck` object says `truncated: true`.
+
+The setting is **Check audiobook contents** next to the ebook one
+(`import.audiobook.content_check`, admin only) and works the same way:
+
+- **Warn** (the default): the audiobook imports as before, and the History row
+  and the `bookImported` webhook carry a `contentCheck` object with the number
+  of tracks read, how many support the book, and the other books found with how
+  many files each (up to ten).
+- **Block**: the download is blocked with a message such as `the files contain
+  Corralled (9), Coming Home to Myself (8), but the book is "Chase" (2 of 19
+  tracks match)`, the release is blocklisted, nothing is attached and the book
+  stays Wanted. **Match to book** or manual import keeps the folder anyway and
+  skips the check, and **Retry import** runs it again.
+- **Off**: no tag is read.
+
+Like the ebook check it applies only to downloads grabbed for a book, never to
+a library scan, manual import or **Match to book**, and it does not change the
+files or their tags.
 
 If the library app downstream reads sidecar metadata, turn on **Write a
 metadata.opf sidecar** in Settings → General (off by default). Bindery then
@@ -663,6 +829,28 @@ to the records. Things worth knowing before you judge the results:
   offered as its suggestion either (#2860).
 - An exact title is attached in preference to a shorter partial one, and two
   near-tied non-exact titles are left for you to choose (#2941).
+- A file is never attached to a book that is a different work with a similar
+  title. Titles in one series share most of their words, so the similarity
+  score alone cannot tell `Harry Potter en de Relieken van de Dood` from
+  `Harry Potter en de Orde van de Feniks`. After the best title is chosen, the
+  scan sets aside the words both titles share and compares what is left. When
+  each title has words the other lacks and none of them is close (`relieken
+  dood` against `orde feniks`), the file is left unmatched for **Import → In
+  your library**, even when the book it really belongs to is excluded. A
+  book that close in title is not offered as the file's suggestion either, so
+  Confirm never points at it. Loose, low scoring guesses are still listed for
+  you to judge. A title with a subtitle added or dropped, a spelling or accent variant
+  (`Æsop` and `Aesop`), a series note in brackets, an abbreviation (`Dr.` and
+  `Doctor`, `Mr.`, `Mrs.`, `St.`, `Jr.`, `vs`) and the Philosopher's Stone and
+  Sorcerer's Stone pair are still the same work. Other alternate titles of one
+  book are not recognised and wait on the Import page. Adding a book runs the
+  same check before it decides you already own the book (#3388). This check
+  only adds rejections: it never makes a file match that did not before, and it
+  does not stop a title that contains the other, such as `Dune` and `Dune
+  Messiah`, from matching as it always did. It can also leave a genuine match
+  unmatched, for example when the file name carries a word the catalogue title
+  does not, such as the author's name, so that file waits on the Import page to
+  be confirmed.
 
 ## Adopting files already in your library
 
@@ -670,7 +858,8 @@ A library scan attaches every file it can match with confidence and leaves
 the rest for you. Those books wait on **Import → In your library**, the page
 `/import` opens on. Each row is one **book**, not one file: a 193 track
 audiobook folder is one row, a folder whose audio subfolders are all discs
-(`CD1`, `Disc 2`, `Disk 3`) is one row named after it, and `Dune.epub` beside
+(`CD1`, `Disc 2`, `Disk 3`, or the book's own title in front, as CD rips name
+them: `Fjellvinden (2002)/Fjellvinden Disc 1`) is one row named after it, and `Dune.epub` beside
 `Dune.mobi` is one row. An `Artwork` folder without audio, or a hidden or
 system folder such as `@eaDir`, does not stop a disc set from grouping.
 Folders named `1`, `2`, `Book 1` or `Part 1` stay separate rows; when they are
@@ -740,7 +929,9 @@ What adopting does to your library:
   adopted them. The author's other books are not added.
 - **Undo** removes exactly the file entries the adoption made, and only while
   each still belongs to the book it was adopted into; a file that has since
-  moved to another book stays with that book. A book or author the adoption
+  moved to another book stays with that book. If the files were adopted into a
+  book that was Skipped, undoing the adoption restores it as Skipped (including
+  when multiple adoptions were made into the same Skipped book). A book or author the adoption
   created is removed too, unless something else now depends on it (another
   file, another book by that author, excluded or not, another adopted row),
   or the book has been used since: monitored, edited, linked to a series, or
@@ -783,7 +974,8 @@ Things worth knowing:
   what it matches into the library, moving or copying the files.
 - It lists one row per **book**, the same idea as the list above. A folder of
   audio is one row, and so is a folder whose audio subfolders are all pieces of
-  one recording (`CD1`, `Disc 2`, `Disk 3`, `Part 4`, `Chapter 5`). Subfolders
+  one recording (`CD1`, `Disc 2`, `Disk 3`, `Part 4`, `Chapter 5`, or the
+  book's own title followed by a CD or disc number, `Fjellvinden Disc 1`). Subfolders
   named `Book 1`, `Vol 2` or a bare `1` are separate books, because a series
   stored that way is several books rather than one long one, so each gets its
   own row and its own match.
@@ -915,8 +1107,8 @@ like everything else on that tab that names server paths.
   failed lookup as indeterminate rather than offering the row for removal.
 - **Covers from your own files.** When no metadata provider has a cover for
   a book, Bindery uses the art embedded in the file you import (M4B, MP3,
-  FLAC, EPUB), or a `cover.jpg` / `folder.jpg` in a multi-file audiobook's
-  folder. Books already in your library pick theirs up on the next library
+  FLAC, EPUB, and the cover a MOBI, AZW or AZW3 file marks as its cover), or
+  a `cover.jpg` / `folder.jpg` in a multi-file audiobook's folder. Books already in your library pick theirs up on the next library
   scan. A provider's cover is never replaced, so this only fills blanks.
 - **Your own cover.** **Upload cover** (or **Change cover**) under a book's
   cover sets it from a JPEG, PNG, WebP or GIF image of up to 10 MB. It
@@ -987,13 +1179,19 @@ When metadata is wrong, you have three levels of fix:
    books already stored.
 
 Box sets need no setting. A work whose title plainly names a bundle ("... Box
-Set", "3 Books Set", "Carton of 10 Signed Copies") is dropped from every
-author catalogue as it is fetched, on any provider. **Skip part books** in the
-metadata profile adds the shapes that are a judgement call, and is off by
-default because each of them has real single books it would wrongly catch: a
-title ending in "Omnibus", slash-separated titles like "Title A / Title B",
-and "Books 1-3". Neither filter touches "Trilogy". A bundle already in your
-library is left alone; it just stops being offered back by the catalogue.
+Set", "3 Books Set", a title ending in "(Set)" such as "Just Beyond (Set)",
+"Carton of 10 Signed Copies") is dropped from every author catalogue as it is
+fetched, on any provider. **Skip part books** in the metadata profile adds the
+shapes that are a judgement call, and is off by default because each of them has
+real single books it would wrongly catch: a title ending in "Omnibus",
+slash-separated titles like "Title A / Title B", "Books 1-3", a parenthesised
+series range such as "Harry Potter (series) 1-3", and a count of books with no
+"set" word, either at the end of the title ("... - 10 Books") or as a retailer
+listing ("2 Daniel Silva Books!"). A real single title that ends in a count,
+such as "Top 100 Books", is caught too. A title that merely starts with a
+number, like "10 Books That Changed America", is not touched. Neither filter
+touches "Trilogy". A bundle already in your library is left alone; it just stops
+being offered back by the catalogue.
 
 A **metadata refresh** re-syncs an author's metadata from the provider:
 covers, descriptions, ratings, genres and series links on the books you
@@ -1258,6 +1456,21 @@ If your naming template uses `{SortAuthor}`, the same value names the folder on
 disk, so the letter an author files under and the folder it lives in always
 agree.
 
+## Finding a setting when you do not know its tab
+
+The search box at the top of Settings matches tab names and section headings
+(Telemetry, File Naming, API Keys and so on) in your language, and for admins also
+the key of any registered setting. Press `/` to jump to the box, type a few
+letters, then use the arrow keys and Enter, or just tap a result. Enter on its own
+takes the first one, and Escape clears the box. A tab or key result opens that
+tab; a heading result also scrolls to the section. The list closes when you click
+away, and says when more than eight things matched.
+
+It does not search individual field labels or help text, so a setting that has no
+heading of its own is found through its tab or section. Non admins are only
+offered the tabs and sections they can see: the admin sections of General, such
+as File Naming and Downloads, are left out for them.
+
 ## Settings most people never touch
 
 The curated Settings tabs hold the things nearly every install cares about. Behind
@@ -1383,6 +1596,54 @@ Check the Queue for the error. Usual causes: category mismatch, the client
 and Bindery seeing the same storage at different paths (set a **path remap**
 on the download client), or files the container can't read. **Retry import**
 after fixing. ([troubleshooting](Troubleshooting-Wiki.md))
+
+**A red "Imports have a problem right now" notice shows on the Authors page.**
+Bindery has imported at least one download before (a `bookImported` or
+`downloadFolderImported` history event), but right now it cannot. The notice is
+shown to admins only and says which area to look at:
+
+- a folder Bindery imports into is missing or not writable: each root folder, or
+  the library folder when you have no root folders (plus the audiobook folder
+  when set);
+- a download folder is missing or not readable. Only readability is required,
+  so a read only download folder used in copy mode is fine. This check is
+  skipped when a path remap is set, globally or on an enabled client, and for an
+  empty download folder (the Windows default);
+- no enabled indexer;
+- no enabled download client;
+- every enabled download client failed its last health check (unreachable, or
+  its download folder is not readable).
+
+Folders are checked without writing anything (no probe files), at most every 30
+seconds. The notice never names a folder path; the Settings page it links to
+does. Limits worth knowing:
+
+- **It needs two views.** A problem has to be seen for two minutes before the
+  notice appears. The page checks when it opens and again when you return to
+  the tab (at most once a minute), not on a timer. So the first view after a
+  restart, or the first view of a new problem, only starts the clock; the notice
+  shows on a view at least two minutes later (a reload or switching back to the
+  tab). If more than ten minutes pass between views the clock starts over, and a
+  user who stays on one page the whole time sees nothing.
+- **Client health is slow.** It is the stored result of the 15 minute periodic
+  check. A client that restarted for a moment can show red for up to about 15
+  minutes after the two minute wait, and a fix takes as long to clear. The
+  message says the client could not be reached or its download folder is not
+  readable, because the check cannot tell which.
+- **A hung mount reports nothing.** If a network mount never answers its first
+  check, there is no earlier result to fall back on, so nothing is reported
+  until it answers.
+- **One folder is enough.** A single unavailable root folder (an external drive
+  you took offline on purpose) raises the notice even though imports into your
+  other root folders still work. The message says one library or download folder
+  is not available, not that everything is blocked.
+- On Windows only the folder's existence and that it can be opened are checked,
+  not whether it is writable.
+
+Installs that never imported a download, such as ones that only scan an
+existing library or use Calibre or Audiobookshelf, are not nagged.
+(`GET /api/v1/system/setup-state` carries `blocked`, `blockedArea` and
+`blockedReason` for admins.)
 
 **My browser can reach qBittorrent but Bindery's Test fails.**
 In Docker, `localhost` inside Bindery's container is Bindery, not the client —

@@ -33,9 +33,9 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
   const accepted = result?.accepted
 
   const badgeCls: Record<ScanItem['match'], string> = {
-    confident: 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400',
+    confident: 'bg-emerald-100 dark:bg-emerald-950 text-accent-text',
     ambiguous: 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400',
-    none: 'bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400',
+    none: 'bg-slate-200 dark:bg-zinc-800 text-fg-muted',
   }
 
   return (
@@ -55,7 +55,7 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
             <span className={`text-[10px] px-1.5 py-0.5 rounded ${badgeCls[item.match]}`}>
               {t(`manualImport.group.${item.match}`, groupHeading(item.match))}
             </span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-zinc-800 text-fg-muted">
               {item.detectedFormat}
             </span>
             {item.alreadyImported && (
@@ -66,8 +66,8 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
           </div>
           {/* Full source path so the user can tell which file each row refers to;
               the basename alone is ambiguous across folders (#1435). */}
-          <div className="text-xs font-mono text-slate-500 dark:text-zinc-600 break-all sm:truncate" title={item.path}>{item.path}</div>
-          <div className="text-xs text-slate-500 dark:text-zinc-600 truncate">
+          <div className="text-xs font-mono text-fg-muted break-all sm:truncate" title={item.path}>{item.path}</div>
+          <div className="text-xs text-fg-muted truncate">
             {t('manualImport.parsed', { title: item.parsedTitle || '?', author: item.parsedAuthor || '?', defaultValue: `parsed: ${item.parsedTitle || '?'} / ${item.parsedAuthor || '?'}` })}
           </div>
 
@@ -75,12 +75,12 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
           <div className="mt-2 space-y-2">
             {chosen && !overriding && (
               <div className="flex flex-wrap items-center gap-2 text-xs">
-                <span className="text-emerald-700 dark:text-emerald-400">→ {bookLabel(chosen)}</span>
+                <span className="text-accent-text">→ {bookLabel(chosen)}</span>
                 {!accepted && (
                   <button
                     type="button"
                     onClick={() => setOverriding(true)}
-                    className="text-slate-500 dark:text-zinc-400 hover:underline"
+                    className="text-fg-muted hover:underline"
                   >
                     {t('manualImport.change', 'Change')}
                   </button>
@@ -89,7 +89,7 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
                   <button
                     type="button"
                     onClick={onApplyToSiblings}
-                    className="text-emerald-700 dark:text-emerald-400 hover:underline"
+                    className="text-accent-text hover:underline"
                   >
                     {t('manualImport.applyToTracks', { count: siblingCount, defaultValue: `Use this book for the other ${siblingCount} tracks in this folder` })}
                   </button>
@@ -100,7 +100,7 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
             {/* Ambiguous candidate picker */}
             {item.match === 'ambiguous' && !chosen && item.candidates && item.candidates.length > 0 && (
               <fieldset className="space-y-1">
-                <legend className="text-xs text-slate-500 dark:text-zinc-500">{t('manualImport.pickCandidate', 'Pick the correct book')}</legend>
+                <legend className="text-xs text-fg-muted">{t('manualImport.pickCandidate', 'Pick the correct book')}</legend>
                 {item.candidates.map(c => (
                   <label key={c.id} className="flex items-center gap-2 text-xs cursor-pointer">
                     <input
@@ -168,7 +168,7 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
       </div>
 
       {result && (
-        <p className={`mt-2 text-xs ${accepted ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+        <p className={`mt-2 text-xs ${accepted ? 'text-accent-text' : 'text-red-700 dark:text-red-400'}`}>
           {accepted
             ? t('manualImport.queued', 'Queued — importing in the background; watch the Queue for progress.')
             : t('manualImport.failed', { error: result.error || 'failed', defaultValue: `Failed: ${result.error || 'failed'}` })}

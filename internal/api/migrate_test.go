@@ -279,6 +279,29 @@ func TestMigrate_ImportReadarr_ConflictOnDoubleSubmit(t *testing.T) {
 	close(goroutineRelease)
 }
 
+// TestMigrate_ImportReadarrStatus_CatalogueFields pins the wire shape of the
+// catalogue backfill counters. They are always present (zeroed before any
+// import), so the UI can tell "none running" from an old server that omits
+// them.
+func TestMigrate_ImportReadarrStatus_CatalogueFields(t *testing.T) {
+	h := migrateFixture(t, &stubProvider{})
+
+	rec := httptest.NewRecorder()
+	h.ImportReadarrStatus(rec, httptest.NewRequest(http.MethodGet, "/api/v1/migrate/readarr/status", nil))
+	var raw map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if v, ok := raw["catalogueRunning"]; !ok || v != false {
+		t.Errorf("catalogueRunning: want false, got %v (present=%v)", v, ok)
+	}
+	for _, k := range []string{"catalogueTotal", "catalogueDone"} {
+		if v, ok := raw[k]; !ok || v != float64(0) {
+			t.Errorf("%s: want 0, got %v (present=%v)", k, v, ok)
+		}
+	}
+}
+
 // TestMigrate_ImportReadarrStatus_BeforeFirstRun checks the status endpoint
 // before any import has been kicked off returns 200 with Running=false.
 func TestMigrate_ImportReadarrStatus_BeforeFirstRun(t *testing.T) {

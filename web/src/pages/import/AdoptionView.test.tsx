@@ -387,7 +387,7 @@ describe('AdoptionView', () => {
       HttpResponse.json(new URL(request.url).searchParams.get('state') === 'ignored' ? listResponse([ignoredItem]) : listResponse([]))))
     fireEvent.click(screen.getByRole('radio', { name: /Ignored/ }))
     const table = await screen.findByRole('table', { name: /Ignored books in your library/ })
-    expect(within(table).getByRole('button', { name: 'Unignore' })).toBeInTheDocument()
+    expect(await within(table).findByRole('button', { name: 'Unignore' })).toBeInTheDocument()
   })
 
   it('shows books whose author is missing as one group with a single Add author', async () => {

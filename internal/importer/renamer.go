@@ -61,6 +61,11 @@ func isArchivePart(name string) bool {
 // that nothing has extracted. Empty when dir holds a book file, no archive,
 // or cannot be read. It stops at the first book file it finds.
 //
+// An ebook file under MinPlausibleEbookBytes does not count as a book file: a
+// notes or link .txt shipped beside the volumes would otherwise end the wait,
+// and the import would be blocked as tiny before an unpacker ran (#3232). The
+// size comes from the walk's own directory entry, so no path is statted again.
+//
 // The first volume is the one an unpacker opens: "x.rar" in the RAR 4 naming,
 // "x.part1.rar" in RAR 5. Both are the first ".rar" in walk order (".part1."
 // sorts before ".part10."); ".r00" sorts before ".rar", so a ".rar" volume
@@ -73,7 +78,11 @@ func archiveAwaitingExtraction(dir string) string {
 			return nil
 		}
 		if IsBookFile(path) {
-			return errBookFound
+			// An entry whose size cannot be read counts as a book, as before.
+			if info, infoErr := d.Info(); infoErr != nil || !TooSmallToBeABook(path, info.Size()) {
+				return errBookFound
+			}
+			return nil
 		}
 		if isArchivePart(d.Name()) {
 			if archive == "" {

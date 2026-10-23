@@ -149,13 +149,18 @@ func TestFilterRelevantSubtitle(t *testing.T) {
 		"Dune.Herbert.epub",               // surname only — post-#563 rejected
 	)
 	got := filterRelevant(results, "Dune: Messiah", "Frank Herbert", nil)
-	for _, title := range []string{
-		"Frank.Herbert.Dune.Messiah.epub",
-		"Frank.Herbert.Dune.epub",
-	} {
-		if !contains(got, title) {
-			t.Errorf("expected %q to pass subtitle filter, got %v", title, resultTitles(got))
-		}
+	if !contains(got, "Frank.Herbert.Dune.Messiah.epub") {
+		t.Errorf("expected the full title release to pass subtitle filter, got %v", resultTitles(got))
+	}
+	// #3268 part 2: the primary-only release is a sibling of the full title
+	// release in the same batch, so it is dropped there. It is still accepted
+	// when nothing in the batch carries the full title.
+	if contains(got, "Frank.Herbert.Dune.epub") {
+		t.Errorf("a primary-only release must be dropped when another result carries the full title, got %v", resultTitles(got))
+	}
+	alone := filterRelevant(toResults("Frank.Herbert.Dune.epub"), "Dune: Messiah", "Frank Herbert", nil)
+	if !contains(alone, "Frank.Herbert.Dune.epub") {
+		t.Errorf("expected the primary-only release to pass when nothing carries the full title, got %v", resultTitles(alone))
 	}
 	// Post-#563: primary-title-only with surname-only author is now rejected.
 	if contains(got, "Dune.Herbert.epub") {
@@ -663,7 +668,7 @@ func TestFilterUsenetJunk(t *testing.T) {
 		`Russell-The.Sparrow.EPUB`,
 	}
 	input := toResults(append(junk, keepers...)...)
-	out := filterUsenetJunk(input)
+	out := filterUsenetJunk(input, junkScope{})
 	if len(out) != len(keepers) {
 		t.Errorf("expected %d survivors, got %d: %v", len(keepers), len(out), resultTitles(out))
 	}
@@ -836,6 +841,80 @@ func TestReleaseLanguageMarkersDoNotFalsePositive(t *testing.T) {
 	// a future change to the name markers is a decision, not an accident.
 	if codes := releaseLanguageCodes(NormalizeRelease("Anthony Horowitz - The Danish Girl")); !slices.Contains(codes, "dan") {
 		t.Errorf("expected the pre-existing 'danish' name marker to still tag this title dan, got %v", codes)
+	}
+}
+
+// TestFilterByAllowedLanguagesSceneSuffixCodes covers #3271: scene audiobook
+// releases carry their language only as a short code in the metadata suffix
+// ("-AUDIOBOOK-POR-", "-WEB-MP3-DE-", "-WEB-SE-"), so releaseLanguageCodes found
+// nothing and an eng-only profile auto-grabbed them. The shapes are the ones
+// reported, with the author, title and group names made up.
+func TestFilterByAllowedLanguagesSceneSuffixCodes(t *testing.T) {
+	for _, tc := range []struct {
+		title string
+		code  string
+	}{
+		{"Kari_Nordmann-Fjellvinden_Unabridged-2021-AUDIOBOOK-POR-2023-GRP", "por"},
+		{"Kari_Nordmann-Die_Fjellvinden_Trilogie_2-Bergwind-Audiobook-WEB-MP3-DE-2022-GRP", "ger"},
+		{"Kari_Nordmann_-_Fjellvinden-AUDiOBOOK-WEB-SE-2022-GRP_iNT", "swe"},
+		{"Kari Nordmann-Fjellvinden-2016-AUDIOBOOK-NO-GRP", "nor"},
+		{"Kari Nordmann - Fjellvinden-AUDiOBOOK-WEB-DK-2022-GRP", "dan"},
+		{"Kari Nordmann--Fjellvinden (Abook)-4CD-DE-2010-GRP", "ger"},
+		{"Kari.Nordmann-Fjellvinden.M4B.EN.2026-grp", "eng"},
+		{"[MP3] Kari Nordmann-Fjellvinden-4CD-AUDiOBOOK-DE-2005-GRP iNT", "ger"},
+		{"Kari Nordmann-Fjellvinden-WEB-PL-ABOOK-PL-2019-GRP", "pol"},
+		{"Kari_Nordmann-Fjellvinden-WEB-AAC-DE-2023-GRP", "ger"},
+		// A trailing file extension or part counter is stripped, so the
+		// group is still the token skipped.
+		{"Kari_Nordmann-Fjellvinden-AUDIOBOOK-WEB-DE-2023-GRP.nzb", "ger"},
+		{`"Kari_Nordmann-Fjellvinden-AUDIOBOOK-WEB-DE-2023-GRP.nzb" (1/12)`, "ger"},
+	} {
+		codes := sceneLanguageCodes(tc.title)
+		if !slices.Equal(codes, []string{tc.code}) {
+			t.Errorf("%q: expected scene code [%s], got %v", tc.title, tc.code, codes)
+		}
+		kept := FilterByAllowedLanguages(toResults(tc.title), []string{"eng"})
+		if wantKept := tc.code == "eng"; (len(kept) == 1) != wantKept {
+			t.Errorf("%q: eng-only profile kept=%v, want %v", tc.title, len(kept) == 1, wantKept)
+		}
+		if kept := FilterByAllowedLanguages(toResults(tc.title), []string{tc.code}); len(kept) != 1 {
+			t.Errorf("%q: a %s-allowed profile must keep it", tc.title, tc.code)
+		}
+	}
+}
+
+// TestSceneSuffixCodesIgnoreTitleWords pins why the codes are only read after
+// a scene marker (#3271): as bare words most of them are common ("de", "no",
+// "it", "por"), and #2274 left them out for exactly that reason.
+func TestSceneSuffixCodesIgnoreTitleWords(t *testing.T) {
+	for _, title := range []string{
+		"Kari Nordmann - De Fjellvinden (Unabridged) [M4B]",
+		"Kari Nordmann - No Wind on the Fjell - Audiobook",
+		"Kari Nordmann - It Came from the Fjell",
+		"Kari Nordmann - Por la Noche",
+		"Kari Nordmann - Fjellvinden SE Edition.epub",
+		"Kari Nordmann - Fjellvinden-AUDIOBOOK-WEB-2023-GRP",
+		"Kari Nordmann - Fjellvinden-SE161-ABOOK-2023-GRP",
+		"Kari Nordmann-Fjellvinden-16BIT-WEB-FLAC-2026-TR",  // TR is the release group
+		"[MP3] Kari Nordmann - De Fjellvinden (Unabridged)", // a leading marker starts no suffix
+		"Kari Nordmann M4B - In the Forest - Audiobook",
+		// A suffix with spaces is prose, not scene metadata: a code only
+		// counts there when it is uppercase and right before a year or the
+		// group.
+		"Kari Nordmann - Fjellvinden (Audiobook) read by Ola De Vries",
+		"Kari Nordmann - Fjellvinden (Audiobook) (Narrated by Dan Hansen) 2019",
+		"Kari Nordmann - Fjellvinden Audiobook Pt 2 of 3",
+		"Kari Nordmann - Fjellvinden - MP3 - Hi Quality - 2010",
+		"Kari Nordmann - Audiobook - It - 2017 - Unabridged",
+		// The group is the last token once an extension or counter is gone.
+		"Kari_Nordmann-Fjellvinden-WEB-FLAC-2026-TR.nzb",
+		"Kari_Nordmann-Fjellvinden-WEB-FLAC-2026-TR.nzb (1/12)",
+		// Title words between two markers are not the suffix.
+		"Kari_Nordmann-AUDIOBOOK-De_Fjellvinden_No_Mer-MP3-2023-GRP",
+	} {
+		if codes := sceneLanguageCodes(title); len(codes) != 0 {
+			t.Errorf("%q must carry no scene language code, got %v", title, codes)
+		}
 	}
 }
 
