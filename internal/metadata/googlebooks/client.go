@@ -186,9 +186,10 @@ func (c *Client) volumeToBook(item volumeItem) models.Book {
 // request this client makes rather than letting the others keep spending it.
 //
 // A quota that has run out for the day is the exception. Google Books reports
-// it as a 403 or 429 whose reason is dailyLimitExceeded or quotaExceeded, and
-// retrying it only spends more requests on an answer that will not change
-// until tomorrow, so it comes back at once, marked as a rate limit.
+// it as a 403 or 429 whose reason is dailyLimitExceeded or quotaExceeded, or
+// whose message names the "Queries per day" limit under any reason. Retrying
+// it only spends more requests on an answer that will not change until
+// tomorrow, so it comes back at once, marked as a rate limit.
 //
 // Redact is set because the API key rides in the query string: a transport
 // error wraps a *url.Error whose message embeds the full URL, so it is
@@ -215,12 +216,22 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, target interface{})
 // ("rateLimitExceeded", "userRateLimitExceeded"), which is worth retrying.
 var quotaReasonRe = regexp.MustCompile(`"reason"\s*:\s*"(dailyLimitExceeded|quotaExceeded)"`)
 
-// isQuotaExhausted reports whether a 403 or 429 is the daily quota refusal.
+// quotaPerDayRe matches the human message Google gives when the daily limit is
+// the one that ran out: "... limit 'Queries per day' of service ...". Some
+// refusals of the same condition carry reason "rateLimitExceeded", the reason
+// of a per minute throttle (#3451), so the reason alone cannot tell them
+// apart. The per minute message names "Queries per minute per user" instead.
+// The apostrophes around the limit are left out of the pattern because JSON
+// may spell them \u0027.
+var quotaPerDayRe = regexp.MustCompile(`(?i)queries per day`)
+
+// isQuotaExhausted reports whether a 403 or 429 is the daily quota refusal:
+// by its reason, or by a message that names the per day limit.
 func isQuotaExhausted(code int, body []byte) bool {
 	if code != http.StatusForbidden && code != http.StatusTooManyRequests {
 		return false
 	}
-	return quotaReasonRe.Match(body)
+	return quotaReasonRe.Match(body) || quotaPerDayRe.Match(body)
 }
 
 // quotaExhaustedError marks a daily quota refusal as a rate limit whatever
