@@ -196,9 +196,9 @@ func TestDropAudiobookHonorsDirMode(t *testing.T) {
 // root.
 func TestTryImportInternalHonorsDirMode(t *testing.T) {
 	tests := []struct {
-		name          string
-		files         []string // relative paths under the download root
-		explicitFiles bool
+		name           string
+		files          []string // relative paths under the download root
+		explicitFiles  bool
 		downloadIsFile bool // the download path is the m4b itself
 	}{
 		{"per-file placement", []string{"Part 1/track01.mp3", "Part 2/track02.mp3"}, true, false},
@@ -219,7 +219,7 @@ func TestTryImportInternalHonorsDirMode(t *testing.T) {
 						explicit = append(explicit, p)
 					}
 				}
-				if tc.ownFolder {
+				if tc.downloadIsFile {
 					// A single-file download: the download path is the m4b
 					// itself, so the audiobook source is a file rather than
 					// a folder and the import takes the single-file branch.
