@@ -1760,6 +1760,46 @@ describe('AuthorDetailPage — book link nav state (#2548, book side)', () => {
     await waitFor(() => expect(capturedState).toEqual({ ids: [10, 11], index: 1, hopDepth: 1 }))
   })
 
+  // #3457: cleaning up a library meant leaving the author page to hunt for the
+  // series by name. The heading opens it on the Series page, the same state
+  // the Authors page and the header search hand over.
+  it('links a series heading to the Series page with that series open (#3457)', async () => {
+    vi.mocked(api.getAuthor).mockResolvedValue(author)
+    vi.mocked(api.listAllBooks).mockResolvedValue([
+      makeBook({ id: 10, title: 'Elantris', status: 'imported' }),
+      makeBook({ id: 11, title: 'The Final Empire', status: 'imported' }),
+    ])
+    vi.mocked(api.listAuthorSeries).mockResolvedValue([
+      { id: 7, foreignSeriesId: 'OL-MB', title: 'Mistborn', description: '', monitored: true, books: [{ seriesId: 7, bookId: 11, positionInSeries: '1' }] },
+    ])
+    localStorage.setItem('bindery.view.author-detail', 'table')
+
+    let path = ''
+    let capturedState: unknown
+    render(
+      <MemoryRouter initialEntries={['/author/42']}>
+        <LocationProbe onLocation={p => { path = p }} />
+        <StateProbe onState={s => { capturedState = s }} />
+        <Routes>
+          <Route path="/author/:id" element={<AuthorDetailPage />} />
+          <Route path="/series" element={<div>series page</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Elantris')
+    fireEvent.click(screen.getByRole('switch', { name: 'Group by series' }))
+    // Standalone is not a series, so it stays plain text.
+    const standalone = await screen.findByRole('heading', { name: /Standalone/ })
+    expect(within(standalone).queryByRole('link')).toBeNull()
+
+    fireEvent.click(within(screen.getByRole('heading', { name: /Mistborn/ })).getByRole('link', { name: 'Mistborn' }))
+
+    await screen.findByText('series page')
+    expect(path).toBe('/series')
+    expect(capturedState).toEqual({ seriesId: 7 })
+  })
+
   it('follows the seriesGroups order for the nav chain when Group by series is on', async () => {
     vi.mocked(api.getAuthor).mockResolvedValue(author)
     vi.mocked(api.listAllBooks).mockResolvedValue([

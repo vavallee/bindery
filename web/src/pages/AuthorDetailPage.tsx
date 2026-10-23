@@ -714,7 +714,7 @@ export default function AuthorDetailPage() {
   // each — matching how the series page presents membership.
   const seriesGroups = useMemo(() => {
     const byId = new Map(filteredBooks.map(b => [b.id, b]))
-    const grouped: { key: string; title: string; books: Book[] }[] = []
+    const grouped: { key: string; seriesId?: number; title: string; books: Book[] }[] = []
     const placed = new Set<number>()
     for (const series of authorSeries) {
       const entries = [...(series.books ?? [])].sort((a, b) => {
@@ -729,7 +729,7 @@ export default function AuthorDetailPage() {
         books.push(book)
         placed.add(book.id)
       }
-      if (books.length > 0) grouped.push({ key: `series-${series.id}`, title: series.title, books })
+      if (books.length > 0) grouped.push({ key: `series-${series.id}`, seriesId: series.id, title: series.title, books })
     }
     const standalone = filteredBooks.filter(b => !placed.has(b.id))
     if (standalone.length > 0) grouped.push({ key: 'standalone', title: 'Standalone', books: standalone })
@@ -1541,7 +1541,20 @@ export default function AuthorDetailPage() {
             {seriesGroups.map(group => (
               <div key={group.key}>
                 <h4 className="text-sm font-semibold text-slate-700 dark:text-zinc-300 mb-2 flex items-center gap-2">
-                  <span>{group.title}</span>
+                  {/* The Series page opens the card named in router state, as
+                      the Authors page and the header search do (#3457). */}
+                  {group.seriesId !== undefined ? (
+                    <Link
+                      to="/series"
+                      state={{ seriesId: group.seriesId }}
+                      title={t('authorDetail.openSeries', 'Open this series on the Series page')}
+                      className="hover:underline hover:text-emerald-700 dark:hover:text-emerald-400"
+                    >
+                      {group.title}
+                    </Link>
+                  ) : (
+                    <span>{group.title}</span>
+                  )}
                   <span className="text-xs font-normal text-fg-muted bg-slate-200 dark:bg-zinc-800 px-2 py-0.5 rounded-full">
                     {group.books.length} {group.books.length === 1 ? 'book' : 'books'}
                   </span>

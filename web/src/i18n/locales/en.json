@@ -498,6 +498,7 @@
     "syncingMore": "Fetching this author’s catalogue. Any new books appear here when it finishes.",
     "filteredCount": "{{shown}} of {{total}}",
     "groupBySeries": "Group by series",
+    "openSeries": "Open this series on the Series page",
     "showFlatList": "Show flat list",
     "stats": {
       "books": "Books",
