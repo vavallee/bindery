@@ -928,6 +928,9 @@ func main() {
 				HardcoverPausedUntil            string `json:"hardcoverPausedUntil,omitempty"`
 				HardcoverTokenRejected          bool   `json:"hardcoverTokenRejected,omitempty"`
 				EnhancedHardcoverDisabledReason string `json:"enhancedHardcoverDisabledReason,omitempty"`
+				// Features is optional API behaviour integrations detect
+				// before relying on it (requestsForUser: #3337).
+				Features api.SystemFeatures `json:"features"`
 			}{
 				Version:                         version,
 				Commit:                          commit,
@@ -939,6 +942,7 @@ func main() {
 				HardcoverPausedUntil:            pausedUntil,
 				HardcoverTokenRejected:          tokenRejected,
 				EnhancedHardcoverDisabledReason: hardcoverState.EnhancedHardcoverDisabledReason,
+				Features:                        api.CurrentSystemFeatures(),
 			})
 		})
 

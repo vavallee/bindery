@@ -3,8 +3,8 @@ import { request } from './core'
 export type RequestKind = 'book' | 'author'
 export type RequestStatus = 'pending' | 'approved' | 'declined'
 
-// One request as the API returns it. username and the result ids are present
-// on the admin queue only.
+// One request as the API returns it. username, the result ids and the
+// created fields are present on the admin queue only.
 export interface LibraryRequest {
   id: number
   kind: RequestKind
@@ -22,6 +22,10 @@ export interface LibraryRequest {
   username?: string
   resultBookId?: number
   resultAuthorId?: number
+  // Set when the request was made for its owner with forUser: by the API key,
+  // or by the admin named in createdBy.
+  createdVia?: 'api_key' | 'admin'
+  createdBy?: string
 }
 
 export interface LibraryRequestList {

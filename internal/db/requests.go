@@ -63,21 +63,24 @@ const RequestClaimTTL = 5 * time.Minute
 const requestColumns = `r.id, r.owner_user_id, COALESCE(u.username, ''), r.kind, r.foreign_id, r.media_type,
 	r.title, r.author_name, r.payload_json, r.status, r.decline_reason, r.decided_by,
 	r.result_book_id, r.result_author_id, r.created_at, r.updated_at, r.decided_at,
-	COALESCE(b.status, '')`
+	COALESCE(b.status, ''), r.created_via, r.created_by_user_id, COALESCE(cu.username, '')`
 
 const requestJoins = `FROM requests r
 	LEFT JOIN users u ON u.id = r.owner_user_id
-	LEFT JOIN books b ON b.id = r.result_book_id`
+	LEFT JOIN books b ON b.id = r.result_book_id
+	LEFT JOIN users cu ON cu.id = r.created_by_user_id`
 
 func scanRequest(s scanner) (*models.LibraryRequest, error) {
 	var (
 		req                                 models.LibraryRequest
 		decidedBy, resultBook, resultAuthor sql.NullInt64
+		createdBy                           sql.NullInt64
 		decidedAt                           sql.NullTime
 	)
 	if err := s.Scan(&req.ID, &req.OwnerUserID, &req.OwnerUsername, &req.Kind, &req.ForeignID, &req.MediaType,
 		&req.Title, &req.AuthorName, &req.PayloadJSON, &req.Status, &req.DeclineReason, &decidedBy,
-		&resultBook, &resultAuthor, &req.CreatedAt, &req.UpdatedAt, &decidedAt, &req.BookStatus); err != nil {
+		&resultBook, &resultAuthor, &req.CreatedAt, &req.UpdatedAt, &decidedAt, &req.BookStatus,
+		&req.CreatedVia, &createdBy, &req.CreatedByUsername); err != nil {
 		return nil, err
 	}
 	if decidedBy.Valid {
@@ -93,6 +96,9 @@ func scanRequest(s scanner) (*models.LibraryRequest, error) {
 		t := decidedAt.Time
 		req.DecidedAt = &t
 	}
+	if createdBy.Valid {
+		req.CreatedByUserID = &createdBy.Int64
+	}
 	return &req, nil
 }
 
@@ -105,7 +111,8 @@ const pendingBelowCap = `(SELECT COUNT(*) FROM requests WHERE owner_user_id = ? 
 // Create inserts a pending request. A duplicate (owner, kind, foreign id)
 // returns ErrRequestExists. With maxPending above zero, a create that would
 // give the owner more than maxPending requests awaiting a decision inserts
-// nothing and returns ErrRequestCapReached.
+// nothing and returns ErrRequestCapReached. req.CreatedVia and
+// req.CreatedByUserID record who asked on the owner's behalf, if anyone.
 func (r *RequestRepo) Create(ctx context.Context, req *models.LibraryRequest, maxPending int) error {
 	if maxPending <= 0 {
 		maxPending = int(^uint32(0) >> 1)
@@ -113,11 +120,11 @@ func (r *RequestRepo) Create(ctx context.Context, req *models.LibraryRequest, ma
 	now := time.Now().UTC()
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO requests (owner_user_id, kind, foreign_id, media_type, title, author_name,
-		                      payload_json, status, created_at, updated_at)
-		SELECT ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?
+		                      payload_json, status, created_at, updated_at, created_via, created_by_user_id)
+		SELECT ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?
 		WHERE `+pendingBelowCap,
 		req.OwnerUserID, req.Kind, req.ForeignID, req.MediaType, req.Title, req.AuthorName,
-		req.PayloadJSON, now, now, req.OwnerUserID, maxPending)
+		req.PayloadJSON, now, now, req.CreatedVia, req.CreatedByUserID, req.OwnerUserID, maxPending)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return ErrRequestExists
@@ -433,8 +440,10 @@ func (r *RequestRepo) Decline(ctx context.Context, id, adminID int64, reason str
 // Reopen puts ownerID's approved request back to pending, for when what it
 // added has since left the library and the requester asks again. It keeps
 // the row, so the (owner, kind, foreign id) uniqueness still holds. The cap
-// check is part of the same UPDATE, as in Create.
-func (r *RequestRepo) Reopen(ctx context.Context, id, ownerID int64, mediaType, payload string, maxPending int) error {
+// check is part of the same UPDATE, as in Create. createdVia and createdBy
+// replace who made the request, as Create records them: a reopen is a new
+// ask, made by whoever asked this time.
+func (r *RequestRepo) Reopen(ctx context.Context, id, ownerID int64, mediaType, payload, createdVia string, createdBy *int64, maxPending int) error {
 	if maxPending <= 0 {
 		maxPending = int(^uint32(0) >> 1)
 	}
@@ -442,9 +451,9 @@ func (r *RequestRepo) Reopen(ctx context.Context, id, ownerID int64, mediaType, 
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE requests SET status = 'pending', media_type = ?, payload_json = ?, decided_by = NULL,
 		       decided_at = NULL, result_book_id = NULL, result_author_id = NULL,
-		       decline_reason = '', created_at = ?, updated_at = ?
+		       decline_reason = '', created_at = ?, updated_at = ?, created_via = ?, created_by_user_id = ?
 		WHERE id = ? AND owner_user_id = ? AND status = 'approved' AND `+pendingBelowCap,
-		mediaType, payload, now, now, id, ownerID, ownerID, maxPending)
+		mediaType, payload, now, now, createdVia, createdBy, id, ownerID, ownerID, maxPending)
 	if err != nil {
 		return fmt.Errorf("reopen request: %w", err)
 	}

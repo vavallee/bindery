@@ -212,7 +212,7 @@ func TestRequestRepo_DeclineAndReopen(t *testing.T) {
 	if got.Status != models.RequestStatusDeclined || got.DeclineReason != "not this one" || got.DecidedAt == nil {
 		t.Fatalf("declined row = %+v", got)
 	}
-	if err := repo.Reopen(ctx, a.ID, owner.ID, "", "{}", 0); !errors.Is(err, ErrRequestNotPending) {
+	if err := repo.Reopen(ctx, a.ID, owner.ID, "", "{}", "", nil, 0); !errors.Is(err, ErrRequestNotPending) {
 		t.Fatalf("reopen of a declined request: err = %v, want refusal", err)
 	}
 
@@ -223,10 +223,10 @@ func TestRequestRepo_DeclineAndReopen(t *testing.T) {
 	if err := repo.Complete(ctx, b.ID, claimedB.ClaimToken, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Reopen(ctx, b.ID, admin.ID, "", "{}", 0); !errors.Is(err, ErrRequestNotPending) {
+	if err := repo.Reopen(ctx, b.ID, admin.ID, "", "{}", "", nil, 0); !errors.Is(err, ErrRequestNotPending) {
 		t.Fatalf("reopen by someone other than the owner: err = %v", err)
 	}
-	if err := repo.Reopen(ctx, b.ID, owner.ID, "audiobook", `{"x":1}`, 0); err != nil {
+	if err := repo.Reopen(ctx, b.ID, owner.ID, "audiobook", `{"x":1}`, "", nil, 0); err != nil {
 		t.Fatalf("owner reopen of an approved request: %v", err)
 	}
 	got, _ = repo.GetByID(ctx, b.ID)

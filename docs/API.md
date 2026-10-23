@@ -971,7 +971,7 @@ POST   /api/v1/backup                             snapshot the SQLite database (
 GET    /api/v1/backup                             list stored backups (admin)
 DELETE /api/v1/backup/{filename}                  delete one backup (admin)
 POST   /api/v1/backup/{filename}/restore          stage a backup for the next restart (admin, X-Confirm-Restore: true)
-GET    /api/v1/system/status                      version, commit, build date, newest published release, image cache size, Hardcover feature state; `hardcoverPausedUntil` while the daily quota holds, `hardcoverTokenRejected` while Hardcover has refused the saved token
+GET    /api/v1/system/status                      version, commit, build date, newest published release, image cache size, Hardcover feature state; `hardcoverPausedUntil` while the daily quota holds, `hardcoverTokenRejected` while Hardcover has refused the saved token; `features` lists optional API behaviour an integration can detect (`requestsForUser`)
 POST   /api/v1/library/scan                       start a library scan in the background (202; {"queued": true} when one is already running)
 GET    /api/v1/library/duplicate-candidates      read-only duplicate title groups across every author, paginated (#2999)
 GET    /api/v1/library/scan/status                summary of the last library scan, paths included (admin)
@@ -1685,11 +1685,37 @@ POST   /api/v1/requests/{id}/decline              decline, body {"reason": "..."
 `kind` is `book` or `author`, `foreignId` is the provider id a metadata search
 returned, and `mediaType` is `ebook`, `audiobook`, `both` or empty. Bindery
 looks the id up at the metadata provider and stores the title and author the
-provider reports. Answers:
+provider reports.
+
+An admin session or the API key may add a fourth field, `forUser`, to make
+the request on another account's behalf, for a request front end that keeps
+its own users:
+
+```json
+{"kind": "book", "foreignId": "OL27482W", "mediaType": "ebook", "forUser": 7}
+```
+
+`forUser` is a user id; `GET /api/v1/auth/users` maps a username to one. An
+integration can check for `"features": {"requestsForUser": true}` in
+`GET /api/v1/system/status` before sending it, and fall back on a Bindery that
+predates the field. The
+request is stored exactly as if that account had made it: they own it, it
+counts against their `requests.max_pending_per_user`, it shows on their My
+requests, and approving it adds the books as theirs. If that account has
+auto-approval on, the request approves itself the usual way; otherwise it
+waits in the queue. There is no option to approve on create. Any other caller
+that sends `forUser`, whatever its value, gets `403`, and for them the body
+stays the three fields above. That includes a caller that `disabled` or
+`local-only` mode admits as admin without signing in, because nobody would be
+recorded as having asked; use the API key instead. An admin who names their
+own id simply makes their own request. A value that is not a positive integer is `400`,
+an id with no account `422`. Answers:
 
 | Status | Meaning |
 |--------|---------|
 | `201` | the request, as below |
+| `403` | `forUser` sent by anyone but an admin session or the API key |
+| `400`, `422` | `forUser` is not a user id, or no account has that id |
 | `409` | already in the library, already requested by this user (pending or declined); the `error` field says which |
 | `429` | this user already has `requests.max_pending_per_user` requests waiting (default 25), or a requester made creates or searches faster than the per user allowance (burst of 20, then one every 3 seconds; `Retry-After` says when). The cap is checked in the same statement as the insert, so concurrent creates cannot pass it |
 | `502`, `404` | the provider did not answer, or has no such id |
@@ -1706,6 +1732,7 @@ A request as the API returns it:
 | `fulfilled` | approved and on disk: the book imported, or at least one of the author's books |
 | `booksTotal`, `booksImported` | an approved author request's progress |
 | `username`, `resultBookId`, `resultAuthorId` | admin queue only |
+| `createdVia`, `createdBy` | admin queue only, and only for a request made with `forUser`: `createdVia` is `api_key` or `admin`, and `createdBy` the admin's username for `admin` |
 
 `GET /api/v1/requests/library` returns `{items, total, limit, offset}` where
 each item has only `id`, `title`, `authorName`, `series`, `seriesPosition`,
