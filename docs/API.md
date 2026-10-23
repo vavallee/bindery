@@ -971,7 +971,7 @@ POST   /api/v1/backup                             snapshot the SQLite database (
 GET    /api/v1/backup                             list stored backups (admin)
 DELETE /api/v1/backup/{filename}                  delete one backup (admin)
 POST   /api/v1/backup/{filename}/restore          stage a backup for the next restart (admin, X-Confirm-Restore: true)
-GET    /api/v1/system/status                      version, commit, build date, newest published release, image cache size, Hardcover feature state; `hardcoverPausedUntil` while the daily quota holds, `hardcoverTokenRejected` while Hardcover has refused the saved token
+GET    /api/v1/system/status                      version, commit, build date, newest published release, image cache size, Hardcover feature state; `hardcoverPausedUntil` while the daily quota holds, `hardcoverTokenRejected` while Hardcover has refused the saved token; `features` lists optional API behaviour an integration can detect (`requestsForUser`)
 POST   /api/v1/library/scan                       start a library scan in the background (202; {"queued": true} when one is already running)
 GET    /api/v1/library/duplicate-candidates      read-only duplicate title groups across every author, paginated (#2999)
 GET    /api/v1/library/scan/status                summary of the last library scan, paths included (admin)
@@ -1695,7 +1695,10 @@ its own users:
 {"kind": "book", "foreignId": "OL27482W", "mediaType": "ebook", "forUser": 7}
 ```
 
-`forUser` is a user id; `GET /api/v1/auth/users` maps a username to one. The
+`forUser` is a user id; `GET /api/v1/auth/users` maps a username to one. An
+integration can check for `"features": {"requestsForUser": true}` in
+`GET /api/v1/system/status` before sending it, and fall back on a Bindery that
+predates the field. The
 request is stored exactly as if that account had made it: they own it, it
 counts against their `requests.max_pending_per_user`, it shows on their My
 requests, and approving it adds the books as theirs. If that account has
