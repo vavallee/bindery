@@ -199,9 +199,10 @@ func TestTryImportInternalHonorsDirMode(t *testing.T) {
 		name          string
 		files         []string // relative paths under the download root
 		explicitFiles bool
+		downloadIsFile bool // the download path is the m4b itself
 	}{
-		{"per-file placement", []string{"Part 1/track01.mp3", "Part 2/track02.mp3"}, true},
-		{"single-file source", []string{"audiobook.m4b"}, false},
+		{"per-file placement", []string{"Part 1/track01.mp3", "Part 2/track02.mp3"}, true, false},
+		{"single-file source", []string{"audiobook.m4b"}, false, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -217,6 +218,12 @@ func TestTryImportInternalHonorsDirMode(t *testing.T) {
 					if tc.explicitFiles {
 						explicit = append(explicit, p)
 					}
+				}
+				if tc.ownFolder {
+					// A single-file download: the download path is the m4b
+					// itself, so the audiobook source is a file rather than
+					// a folder and the import takes the single-file branch.
+					downloadPath = filepath.Join(downloadPath, tc.files[0])
 				}
 				dl := newPairDownload(t, f.downloads, f.book, models.MediaTypeAudiobook, f.ctx)
 				f.s.tryImportInternal(f.ctx, dl, downloadPath, "", "", "", nil, explicit)
