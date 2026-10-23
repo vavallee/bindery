@@ -83,6 +83,42 @@ func TestSearchBooks_DailyQuotaIsNotRetried(t *testing.T) {
 	}
 }
 
+// #3451: Google also refuses the exhausted daily quota with reason
+// rateLimitExceeded, the reason of a per minute throttle. The message is what
+// says which limit ran out, so a message naming "Queries per day" is final
+// whatever the reason says, and one naming the per minute limit is still
+// retried. The quote may arrive as \u0027, as JSON allows.
+func TestSearchBooks_DailyLimitMessageIsFinalUnderRateLimitReason(t *testing.T) {
+	const prefix = "Quota exceeded for quota metric 'Queries' and limit "
+	for _, tc := range []struct {
+		name, message string
+		wantFinal     bool
+	}{
+		{"per day", prefix + "'Queries per day' of service 'books.googleapis.com' for consumer 'project_number:123'.", true},
+		{"per day, escaped quotes", strings.ReplaceAll(prefix, "'", `\u0027`) + `\u0027Queries per day\u0027 of service`, true},
+		{"per minute", prefix + "'Queries per minute per user' of service 'books.googleapis.com' for consumer 'project_number:123'.", false},
+	} {
+		var calls atomic.Int32
+		body := `{"error":{"code":429,"message":"` + tc.message + `","errors":[{"domain":"usageLimits","reason":"rateLimitExceeded"}]}}`
+		c := &Client{http: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			if calls.Add(1) == 1 {
+				return &http.Response{StatusCode: http.StatusTooManyRequests, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+		})}}
+		_, err := c.SearchBooks(context.Background(), "dune")
+		if tc.wantFinal {
+			if !errors.Is(err, providererr.ErrRateLimited) || calls.Load() != 1 {
+				t.Errorf("%s: err = %v after %d requests, want a rate limit after 1", tc.name, err, calls.Load())
+			}
+			continue
+		}
+		if err != nil || calls.Load() != 2 {
+			t.Errorf("%s: err = %v after %d requests, want the throttle retried once", tc.name, err, calls.Load())
+		}
+	}
+}
+
 // A per minute throttle is still retried.
 func TestSearchBooks_RateLimitReasonIsRetried(t *testing.T) {
 	var calls atomic.Int32
