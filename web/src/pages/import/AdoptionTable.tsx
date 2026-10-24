@@ -151,7 +151,7 @@ export default function AdoptionTable({ list, onSearchShortcut, onAddAuthor, onI
                   <tr className="block md:table-row -mt-3 mb-3 md:m-0 rounded-b-lg md:rounded-none border md:border-0 border-t-0 border-slate-200 dark:border-zinc-800 bg-emerald-500/5">
                     <td id={editorId} colSpan={3} className="block md:table-cell px-3 pb-4 pt-1 md:px-6">
                       <AdoptionEditor item={item} showFiles={filesOpen}
-                        onAdopt={(target, preview) => list.adopt(item, target, preview)} onCancel={() => closeEditor(item)} />
+                        onAdopt={async (target, preview) => { await list.adopt(item, target, preview) }} onCancel={() => closeEditor(item)} />
                     </td>
                   </tr>
                 )}
