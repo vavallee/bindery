@@ -1904,7 +1904,7 @@
   },
   "bookStatus": {
     "wanted": "Önskad",
-    "imported": "Importerad",
+    "imported": "I biblioteket",
     "skipped": "Överhoppad",
     "notMonitored": "Obevakad",
     "wantedDescription": "Ett format saknas och Bindery söker efter det vid nästa sökrunda.",
@@ -1952,7 +1952,6 @@
     "fileHeading": "Fil",
     "mediaTypeLabel": "Medietyp",
     "mediaTypeHint": "Ändra medietyp",
-    "wantedFormatLabel": "Önskat",
     "formatNotOnDisk": "Inte nedladdat",
     "noFile": "Ingen fil på disken",
     "fileCount": "{{count}} fil(er)",
