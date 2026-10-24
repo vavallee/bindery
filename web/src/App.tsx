@@ -16,6 +16,7 @@ import SetupBanner from './components/SetupBanner'
 import VersionBadge from './components/VersionBadge'
 import WhatsNewToast from './components/WhatsNewToast'
 import { useUnmatchedCount } from './components/useUnmatchedCount'
+import { useFailedQueueCount } from './components/useFailedQueueCount'
 import { REQUESTS_CHANGED_EVENT } from './pages/requests/requestLabels'
 import { useTheme } from './theme'
 import ScrollRestoration from './components/ScrollRestoration'
@@ -137,6 +138,9 @@ function Shell() {
   const unmatched = useUnmatchedCount(isAdmin)
   const navEntries = navGroupsFor(isAdmin, isRequester)
   const pendingRequests = usePendingRequestCount(isAdmin)
+  // Every role but requester has the queue; under tenancy the server counts
+  // a user's own downloads only.
+  const failedDownloads = useFailedQueueCount(isAdmin || (signedIn && !isRequester))
   const { pathname } = useLocation()
   // The group whose tab strip belongs above the current page, if any.
   const tabGroup = activeGroup(pathname, navEntries)
@@ -159,14 +163,26 @@ function Shell() {
       {item.key === 'import' && unmatched > 0 && (
         <span
           className="ml-1.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-amber-100 px-1.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-          aria-label={t('nav.importUnmatched', { count: unmatched, defaultValue: '{{count}} books need a decision' })}
         >
-          {unmatched > 999 ? '999+' : unmatched}
+          <span aria-hidden="true">{unmatched > 999 ? '999+' : unmatched}</span>
+          <span className="sr-only">{t('nav.importUnmatched', { count: unmatched, defaultValue: '{{count}} books need a decision' })}</span>
+        </span>
+      )}
+      {/* Failed downloads ride Activity and the Queue tab, in the danger
+          vocabulary: they need a retry or a removal, and they are the most
+          urgent thing the nav can report. */}
+      {(item.key === 'queue' || item.key === 'activity') && failedDownloads > 0 && (
+        <span
+          className="ml-1.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-red-100 px-1.5 text-[11px] font-semibold text-red-800 dark:bg-red-950 dark:text-red-300"
+        >
+          <span aria-hidden="true">{failedDownloads > 999 ? '999+' : failedDownloads}</span>
+          <span className="sr-only">{t('nav.queueFailed', { count: failedDownloads, defaultValue: '{{count}} failed downloads' })}</span>
         </span>
       )}
       {(item.key === 'requests' || item.key === 'activity') && pendingRequests > 0 && (
-        <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-semibold" aria-label={t('nav.requestsPending', { count: pendingRequests })}>
-          {pendingRequests}
+        <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-semibold">
+          <span aria-hidden="true">{pendingRequests}</span>
+          <span className="sr-only">{t('nav.requestsPending', { count: pendingRequests })}</span>
         </span>
       )}
     </>
@@ -206,19 +222,9 @@ function Shell() {
 
             <div className="flex items-center gap-2 flex-shrink-0">
               {!isRequester && <LibrarySearch className="hidden lg:block w-40" />}
-              {!isRequester && <NavLink
-                to="/search"
-                className={({ isActive }) =>
-                  `hidden lg:block p-2 rounded-md transition-colors ${
-                    isActive ? 'bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white' : 'text-fg-muted hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/50 dark:hover:bg-zinc-800/50'
-                  }`
-                }
-                title={t('nav.search')}
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-                </svg>
-              </NavLink>}
+              {/* One search box. Indexer search is a row in its results
+                  ("Search indexers for …"); the magnifier icon that sat
+                  beside it had the same glyph and a different scope. */}
               {isAdmin && (
                 <NavLink
                   to="/users"
@@ -386,6 +392,9 @@ function Shell() {
                 to the canonical "/" the same way /blocklist aliases into
                 settings, so a guessed or bookmarked URL lands somewhere. */}
             <Route path="/authors" element={<Navigate to="/" replace />} />
+            {/* The Activity nav group's own address, so the group label and
+                the URL agree when someone types it. */}
+            <Route path="/activity" element={<Navigate to="/wanted" replace />} />
             <Route path="/author/:id" element={<AuthorDetailPage />} />
             <Route path="/books" element={<BooksPage />} />
             <Route path="/books/duplicates" element={<DuplicatesPage />} />

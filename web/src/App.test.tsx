@@ -64,6 +64,9 @@ vi.mock('./api/client', () => ({
     // The Import nav badge reads this once for an admin.
     unmatchedSummary: vi.fn().mockResolvedValue({ pending: 0, pendingFiles: 0, ignored: 0, adopted: 0, scan: {} }),
     pendingRequestCount: vi.fn().mockResolvedValue({ count: 3 }),
+    // The Activity failed-downloads badge reads the queue once for an admin.
+    listQueue: vi.fn().mockResolvedValue({ items: [] }),
+    failedQueueCount: vi.fn().mockResolvedValue({ failed: 0 }),
   },
 }))
 
@@ -363,12 +366,54 @@ describe('Shell: Import nav badge', () => {
     renderShell()
     const desktopNav = document.querySelector('nav.hidden.xl\\:flex') as HTMLElement
     const importLink = () => Array.from(desktopNav.querySelectorAll('a')).find(a => a.getAttribute('href') === '/import')
-    await vi.waitFor(() => expect(importLink()?.textContent).toBe('Import38'))
+    await vi.waitFor(() => expect(importLink()?.querySelector('[aria-hidden="true"]')?.textContent).toBe('38'))
+    // The number alone tells a screen reader nothing; the hidden text says what it counts.
+    expect(importLink()?.querySelector('.sr-only')?.textContent).toBe('nav.importUnmatched')
   })
 
   it('never asks for the count as a non admin', () => {
     renderShell()
     expect(api.unmatchedSummary).not.toHaveBeenCalled()
+    expect(api.failedQueueCount).not.toHaveBeenCalled()
+  })
+
+  // Failed downloads are more urgent than books waiting on a decision, and
+  // used to get no badge at all.
+  it('shows failed downloads on the Activity entry for an admin', async () => {
+    vi.mocked(api.failedQueueCount).mockResolvedValue({ failed: 2 })
+    authState.value = { status: { authenticated: true, setupRequired: false, mode: 'enabled' }, logout: logoutMock, isAdmin: true }
+    renderShell()
+    const desktopNav = document.querySelector('nav.hidden.xl\\:flex') as HTMLElement
+    const activity = () => Array.from(desktopNav.querySelectorAll('a')).find(a => a.getAttribute('href') === '/wanted')
+    await vi.waitFor(() => expect(activity()?.querySelector('[aria-hidden="true"]')?.textContent).toBe('2'))
+    expect(activity()?.querySelector('.sr-only')?.textContent).toBe('nav.queueFailed')
+    // The badge reads the count route, not the live queue.
+    expect(api.listQueue).not.toHaveBeenCalled()
+  })
+
+  // A plain user has the queue too; the server counts only their downloads.
+  it('shows failed downloads to a plain user, and never asks for a requester', async () => {
+    vi.mocked(api.failedQueueCount).mockResolvedValue({ failed: 4 })
+    authState.value = { status: { authenticated: true, setupRequired: false, mode: 'enabled', role: 'user' }, logout: logoutMock, isAdmin: false }
+    const { unmount } = renderShell()
+    const desktopNav = document.querySelector('nav.hidden.xl\\:flex') as HTMLElement
+    const activity = () => Array.from(desktopNav.querySelectorAll('a')).find(a => a.getAttribute('href') === '/wanted')
+    await vi.waitFor(() => expect(activity()?.querySelector('[aria-hidden="true"]')?.textContent).toBe('4'))
+    unmount()
+    vi.mocked(api.failedQueueCount).mockClear()
+    authState.value = { status: { authenticated: true, setupRequired: false, mode: 'enabled', role: 'requester' }, logout: logoutMock, isAdmin: false, isRequester: true }
+    renderShell()
+    expect(api.failedQueueCount).not.toHaveBeenCalled()
+  })
+
+  it('shows pending requests on the Activity entry with words for a screen reader', async () => {
+    authState.value = { status: { authenticated: true, setupRequired: false, mode: 'enabled' }, logout: logoutMock, isAdmin: true }
+    renderShell()
+    const desktopNav = document.querySelector('nav.hidden.xl\\:flex') as HTMLElement
+    const activity = () => Array.from(desktopNav.querySelectorAll('a')).find(a => a.getAttribute('href') === '/wanted')
+    // pendingRequestCount resolves 3 in the shared mock.
+    await vi.waitFor(() => expect(Array.from(activity()!.querySelectorAll('[aria-hidden="true"]')).map(e => e.textContent)).toContain('3'))
+    expect(Array.from(activity()!.querySelectorAll('.sr-only')).map(e => e.textContent)).toContain('nav.requestsPending')
   })
 })
 

@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router'
 import AuthorsPage from './AuthorsPage'
 import { api } from '../api/client'
 import type { Author, Book } from '../api/client'
-import { acceptConfirm, cancelConfirm, confirmDialog } from '../test-utils'
+import { acceptConfirm, cancelConfirm, confirmDialog, clickBulkAction } from '../test-utils'
 
 vi.mock('../api/client', async importOriginal => {
   const actual = await importOriginal<typeof import('../api/client')>()
@@ -28,10 +28,17 @@ vi.mock('../api/client', async importOriginal => {
   }
 })
 
-// Keys come back verbatim so assertions don't depend on English copy.
+// Keys come back verbatim so assertions don't depend on English copy. The
+// row selection label is the exception: it carries the name, which is how a
+// test tells two rows' boxes apart.
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string, a?: unknown, b?: Record<string, unknown>) => {
+      const opts = (typeof a === 'object' ? a : b) as Record<string, unknown> | undefined
+      if (key === 'dataTable.selectRow') return `Select ${String(opts?.name ?? '')}`
+      if (key === 'dataTable.selectPage') return 'Select all on this page'
+      return key
+    },
   }),
 }))
 
@@ -81,9 +88,14 @@ async function renderWithAuthors(items: Author[] = [weir, leguin]) {
 }
 
 function card(name: string): HTMLElement {
-  let el: HTMLElement | null = screen.getByRole('heading', { name })
-  while (el && !within(el).queryByRole('switch')) el = el.parentElement
-  return el as HTMLElement
+  return screen.getByRole('heading', { name }).closest('[data-testid="author-card"]') as HTMLElement
+}
+
+// The rare page actions (Add book, Add series, Merge, Refresh all) live in the
+// header's More menu; Add author is the one primary button.
+function pageAction(name: string): HTMLElement {
+  fireEvent.click(screen.getByRole('button', { name: 'authors.pageActions' }))
+  return screen.getByRole('menuitem', { name })
 }
 
 async function selectBoth() {
@@ -117,10 +129,10 @@ describe('AuthorsPage coverage', () => {
     it('shows loading, then the empty library prompt with refresh-all and merge disabled', async () => {
       seed([])
       renderPage()
-      expect(screen.getByText('common.loading')).toBeInTheDocument()
+      expect(screen.getByRole('status')).toHaveTextContent('common.loading')
       expect(await screen.findByText('authors.empty')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'authors.refreshAll' })).toBeDisabled()
-      expect(screen.getByRole('button', { name: 'authors.merge' })).toBeDisabled()
+      expect(pageAction('authors.refreshAll')).toBeDisabled()
+      expect(screen.getByRole('menuitem', { name: 'authors.merge' })).toBeDisabled()
       expect(document.title).toBe('Authors · Bindery')
     })
 
@@ -141,7 +153,9 @@ describe('AuthorsPage coverage', () => {
       await waitFor(() => expect(api.listAuthors).toHaveBeenCalledWith(expect.objectContaining({ monitored: false })))
       // A filter that matches nothing is "no match", not an empty library.
       expect(await screen.findByText('authors.noMatch')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /common.clearFilter/ })).toHaveTextContent('authors.filterUnmonitored')
+      expect(screen.getByRole('button', { name: /authors.filterUnmonitored.*common.clearFilter/ })).toBeInTheDocument()
+      // The no-match state offers the way back.
+      expect(screen.getByRole('button', { name: 'common.clearFilter' })).toBeInTheDocument()
     })
 
     it('sends monitored=true for the monitored-only filter and persists it', async () => {
@@ -149,7 +163,7 @@ describe('AuthorsPage coverage', () => {
       seed([])
       renderPage()
       await waitFor(() => expect(api.listAuthors).toHaveBeenCalledWith(expect.objectContaining({ monitored: true })))
-      expect(screen.getByRole('button', { name: /common.clearFilter/ })).toHaveTextContent('authors.filterMonitoredOnly')
+      expect(screen.getByRole('button', { name: /authors.filterMonitoredOnly.*common.clearFilter/ })).toBeInTheDocument()
       expect(localStorage.getItem('bindery.filter.authors.monitored')).toBe('monitored')
     })
 
@@ -168,14 +182,18 @@ describe('AuthorsPage coverage', () => {
       expect(screen.getByRole('img', { name: 'Andy Weir' })).toHaveAttribute('src', 'http://img/weir.jpg')
       expect(screen.getByText('Wrote The Martian')).toBeInTheDocument()
       expect(within(card('Ursula Le Guin')).getByText('U')).toBeInTheDocument()
-      expect(within(card('Ursula Le Guin')).getByText('authors.noDescription')).toBeInTheDocument()
+      // Missing data shows nothing, as it does in the table.
+      expect(within(card('Ursula Le Guin')).queryByText('authors.noDescription')).toBeNull()
+      // Monitored state on a browse card is a badge, not a switch.
       expect(within(card('Ursula Le Guin')).getByText('authors.unmonitored')).toBeInTheDocument()
+      expect(within(card('Ursula Le Guin')).queryByRole('switch')).toBeNull()
     })
 
     it('toggles monitoring and reloads', async () => {
       await renderWithAuthors()
       const before = vi.mocked(api.listAuthors).mock.calls.length
-      fireEvent.click(within(card('Ursula Le Guin')).getByRole('switch'))
+      fireEvent.click(within(card('Ursula Le Guin')).getByRole('button', { name: 'authors.moreActionsFor' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'authors.startMonitoring' }))
       await waitFor(() => expect(api.updateAuthor).toHaveBeenCalledWith(8, { monitored: true }))
       await waitFor(() => expect(vi.mocked(api.listAuthors).mock.calls.length).toBeGreaterThan(before))
     })
@@ -276,19 +294,20 @@ describe('AuthorsPage coverage', () => {
       await renderWithAuthors()
       const loadsBefore = vi.mocked(api.listAuthors).mock.calls.length
 
-      fireEvent.click(screen.getByRole('button', { name: 'authors.refreshAll' }))
+      fireEvent.click(pageAction('authors.refreshAll'))
       await acceptConfirm()
       await waitFor(() => expect(api.refreshAllAuthors).toHaveBeenCalled())
-      expect(screen.getByRole('button', { name: 'authors.refreshAllRunning' })).toBeDisabled()
+      expect(pageAction('authors.refreshAllRunning')).toBeDisabled()
+      fireEvent.keyDown(document, { key: 'Escape' })
 
       expect(await screen.findByText('authors.refreshAllDone', {}, { timeout: 10000 })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'authors.refreshAll' })).toBeEnabled()
+      expect(pageAction('authors.refreshAll')).toBeEnabled()
       await waitFor(() => expect(vi.mocked(api.listAuthors).mock.calls.length).toBeGreaterThan(loadsBefore))
     })
 
     it('does nothing when the confirmation is cancelled', async () => {
       await renderWithAuthors()
-      fireEvent.click(screen.getByRole('button', { name: 'authors.refreshAll' }))
+      fireEvent.click(pageAction('authors.refreshAll'))
       await cancelConfirm()
       await waitFor(() => expect(confirmDialog()).toBeNull())
       expect(api.refreshAllAuthors).not.toHaveBeenCalled()
@@ -298,17 +317,17 @@ describe('AuthorsPage coverage', () => {
       const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
       vi.mocked(api.refreshAllAuthors).mockRejectedValue(new Error('already running'))
       await renderWithAuthors()
-      fireEvent.click(screen.getByRole('button', { name: 'authors.refreshAll' }))
+      fireEvent.click(pageAction('authors.refreshAll'))
       await acceptConfirm()
       await waitFor(() => expect(alert).toHaveBeenCalledWith('already running'))
-      expect(screen.getByRole('button', { name: 'authors.refreshAll' })).toBeEnabled()
+      expect(pageAction('authors.refreshAll')).toBeEnabled()
     })
 
     it('resumes a running job found on load and shows its progress', async () => {
       vi.mocked(api.refreshAllAuthorsStatus).mockResolvedValue({ status: 'running', total: 10, done: 3, failed: 0, started_at: '' })
       await renderWithAuthors()
       expect(await screen.findByText('authors.refreshAllProgress')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'authors.refreshAllRunning' })).toBeDisabled()
+      expect(pageAction('authors.refreshAllRunning')).toBeDisabled()
     })
 
     it('reports a completed job that had failures', async () => {
@@ -327,14 +346,14 @@ describe('AuthorsPage coverage', () => {
       vi.mocked(api.refreshAllAuthorsStatus).mockRejectedValue(new Error('500'))
       await renderWithAuthors()
       expect(screen.queryByText(/authors.refreshAll(Progress|Done|Failed)/)).toBeNull()
-      expect(screen.getByRole('button', { name: 'authors.refreshAll' })).toBeEnabled()
+      expect(pageAction('authors.refreshAll')).toBeEnabled()
     })
   })
 
   describe('toolbar dialogs', () => {
     it('opens merge with every author from the server', async () => {
       await renderWithAuthors()
-      fireEvent.click(screen.getByRole('button', { name: 'authors.merge' }))
+      fireEvent.click(pageAction('authors.merge'))
       await waitFor(() => expect(api.listAllAuthors).toHaveBeenCalled())
       expect(await screen.findByRole('heading', { name: 'mergeAuthorsModal.title' })).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'mergeAuthorsModal.cancel' }))
@@ -344,7 +363,7 @@ describe('AuthorsPage coverage', () => {
     it('falls back to the loaded page when the full author list fails', async () => {
       vi.mocked(api.listAllAuthors).mockRejectedValue(new Error('offline'))
       await renderWithAuthors()
-      fireEvent.click(screen.getByRole('button', { name: 'authors.merge' }))
+      fireEvent.click(pageAction('authors.merge'))
       const heading = await screen.findByRole('heading', { name: 'mergeAuthorsModal.title' })
       const panel = heading.parentElement!.parentElement as HTMLElement
       expect(within(panel).getAllByRole('option', { name: 'Andy Weir' }).length).toBeGreaterThan(0)
@@ -360,7 +379,7 @@ describe('AuthorsPage coverage', () => {
       fireEvent.click(screen.getByRole('button', { name: 'stub-close' }))
       expect(screen.queryByRole('dialog', { name: 'add-author' })).toBeNull()
 
-      fireEvent.click(screen.getByRole('button', { name: 'addToLibrary.addBook' }))
+      fireEvent.click(pageAction('addToLibrary.addBook'))
       expect(screen.getByRole('dialog', { name: 'add-book' })).toBeInTheDocument()
     })
   })
@@ -369,8 +388,7 @@ describe('AuthorsPage coverage', () => {
     it('confirms a bulk delete, sends every selected id and clears the selection', async () => {
       await renderWithAuthors()
       await selectBoth()
-      const bar = screen.getByRole('button', { name: 'bulkActionBar.clear' }).parentElement as HTMLElement
-      fireEvent.click(within(bar).getByRole('button', { name: 'common.delete' }))
+      clickBulkAction('common.delete', 'menu')
       await acceptConfirm()
       await waitFor(() => expect(api.bulkActionAuthors).toHaveBeenCalledWith([7, 8], 'delete', undefined, false))
       await waitFor(() => expect(screen.getByTitle('Select Andy Weir')).not.toBeChecked())
@@ -379,8 +397,7 @@ describe('AuthorsPage coverage', () => {
     it('skips a bulk delete when the confirmation is cancelled', async () => {
       await renderWithAuthors()
       await selectBoth()
-      const bar = screen.getByRole('button', { name: 'bulkActionBar.clear' }).parentElement as HTMLElement
-      fireEvent.click(within(bar).getByRole('button', { name: 'common.delete' }))
+      clickBulkAction('common.delete', 'menu')
       await cancelConfirm()
       await waitFor(() => expect(confirmDialog()).toBeNull())
       expect(api.bulkActionAuthors).not.toHaveBeenCalled()
@@ -398,13 +415,13 @@ describe('AuthorsPage coverage', () => {
     })
 
     it.each([
-      ['authors.bulkSetEbook', 'ebook'],
-      ['authors.bulkSetAudiobook', 'audiobook'],
-      ['authors.bulkSetBoth', 'both'],
+      ['common.ebook', 'ebook'],
+      ['common.audiobook', 'audiobook'],
+      ['common.both', 'both'],
     ])('sets the media type with %s after confirmation', async (label, mediaType) => {
       await renderWithAuthors()
       await selectBoth()
-      fireEvent.click(screen.getByRole('button', { name: label }))
+      clickBulkAction(label)
       await acceptConfirm()
       await waitFor(() => expect(api.bulkActionAuthors).toHaveBeenCalledWith([7, 8], 'set_media_type', mediaType))
       await waitFor(() => expect(screen.getByTitle('Select Andy Weir')).not.toBeChecked())
@@ -414,13 +431,13 @@ describe('AuthorsPage coverage', () => {
       const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
       await renderWithAuthors()
       fireEvent.click(screen.getByTitle('Select Andy Weir'))
-      fireEvent.click(screen.getByRole('button', { name: 'authors.bulkSetEbook' }))
+      clickBulkAction('common.ebook')
       await cancelConfirm()
       await waitFor(() => expect(confirmDialog()).toBeNull())
       expect(api.bulkActionAuthors).not.toHaveBeenCalled()
 
       vi.mocked(api.bulkActionAuthors).mockRejectedValue(new Error('rewrite failed'))
-      fireEvent.click(screen.getByRole('button', { name: 'authors.bulkSetEbook' }))
+      clickBulkAction('common.ebook')
       await acceptConfirm()
       await waitFor(() => expect(alert).toHaveBeenCalledWith('rewrite failed'))
     })
@@ -451,7 +468,7 @@ describe('AuthorsPage coverage', () => {
     it('sends a changed new-items policy and clamps an invalid latest count', async () => {
       await renderWithAuthors()
       fireEvent.click(screen.getByTitle('Select Andy Weir'))
-      fireEvent.click(screen.getByRole('button', { name: 'authors.bulkSetMonitorMode' }))
+      clickBulkAction('authors.bulkSetMonitorMode')
       const dialog = screen.getByRole('dialog')
       fireEvent.change(within(dialog).getByLabelText('editAuthorModal.monitorMode'), { target: { value: 'latest' } })
       const count = within(dialog).getByLabelText('editAuthorModal.monitorLatestCount')
@@ -471,7 +488,7 @@ describe('AuthorsPage coverage', () => {
       vi.mocked(api.bulkSetAuthorMonitorMode).mockRejectedValue(new Error('bad mode'))
       await renderWithAuthors()
       fireEvent.click(screen.getByTitle('Select Andy Weir'))
-      fireEvent.click(screen.getByRole('button', { name: 'authors.bulkSetMonitorMode' }))
+      clickBulkAction('authors.bulkSetMonitorMode')
       const dialog = screen.getByRole('dialog')
       fireEvent.click(within(dialog).getByRole('button', { name: 'authors.bulkSetMonitorModeApply' }))
       expect(await within(dialog).findByRole('alert')).toHaveTextContent('bad mode')
@@ -484,7 +501,7 @@ describe('AuthorsPage coverage', () => {
       vi.mocked(api.bulkSetAuthorMonitorMode).mockResolvedValue({ results: { '7': { ok: false } } } as never)
       await renderWithAuthors()
       fireEvent.click(screen.getByTitle('Select Andy Weir'))
-      fireEvent.click(screen.getByRole('button', { name: 'authors.bulkSetMonitorMode' }))
+      clickBulkAction('authors.bulkSetMonitorMode')
       const dialog = screen.getByRole('dialog')
       fireEvent.click(within(dialog).getByRole('button', { name: 'authors.bulkSetMonitorModeApply' }))
       expect(await within(dialog).findByRole('alert')).toHaveTextContent('authors.bulkSetMonitorModePartial')

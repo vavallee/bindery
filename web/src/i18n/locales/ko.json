@@ -237,7 +237,6 @@
     "colTitleAuthor": "제목 및 저자",
     "colFormat": "형식",
     "colActions": "작업",
-    "noCover": "표지 없음",
     "authorUnknown": "저자 불명",
     "changeFormat": "{{title}}의 형식 변경"
   },
@@ -768,7 +767,6 @@
     "book": {
       "confirmAdd": "도서 추가",
       "coverAlt": "{{title}} 표지",
-      "noCover": "표지 없음",
       "published": "출판일",
       "language": "언어",
       "resultFormat": "메타데이터 형식",
@@ -881,7 +879,7 @@
   },
   "bookStatus": {
     "wanted": "찾는 중",
-    "imported": "가져옴",
+    "imported": "라이브러리에 있음",
     "skipped": "건너뜀",
     "notMonitored": "모니터링 안 함"
   },
@@ -930,7 +928,6 @@
     "unexclude": "제외 해제",
     "excludeHint": "이 도서를 검색 및 찾는 중 페이지에서 제외",
     "unexcludeHint": "이 도서를 검색 및 찾는 중 페이지에서 제외 해제",
-    "deleteFile": "파일 삭제",
     "deletingFile": "삭제 중…",
     "audiobookHeading": "오디오북 메타데이터",
     "asinLabel": "ASIN (Audible 식별자)",

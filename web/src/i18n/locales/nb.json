@@ -438,10 +438,7 @@
     "bulkApplyMonitoringToExistingHint": "Endrer alle bøkene til de valgte forfatterne slik at de samsvarer. La det være av hvis du bare vil endre forfatterne.",
     "booksInLibrary": "{{have}} av {{total}} i biblioteket",
     "booksInLibraryHint": "En bok telles så snart minst én av filene dens er i biblioteket ditt.",
-    "bulkSetMediaTypeConfirm": "Vil du sette medietypen for alle bøkene til de {{count}} valgte forfatterne til {{mediaType}}? Dette skriver om eksisterende bokrader og kan føre til at det vurderes på nytt om bøkene er ønsket eller mangler.",
-    "bulkSetEbook": "Sett til e-bok",
-    "bulkSetAudiobook": "Sett til lydbok",
-    "bulkSetBoth": "Sett til begge"
+    "bulkSetMediaTypeConfirm": "Vil du sette medietypen for alle bøkene til de {{count}} valgte forfatterne til {{mediaType}}? Dette skriver om eksisterende bokrader og kan føre til at det vurderes på nytt om bøkene er ønsket eller mangler."
   },
   "authorDetail": {
     "nav": {
@@ -704,7 +701,6 @@
     "colTitleAuthor": "Tittel og forfatter",
     "colFormat": "Format",
     "colActions": "Handlinger",
-    "noCover": "Uten omslag",
     "authorUnknown": "Ukjent forfatter",
     "changeFormat": "Endre format for {{title}}",
     "authorNotMonitored": "Forfatteren er ikke overvåket, så det søkes ikke automatisk etter denne boken"
@@ -881,7 +877,6 @@
     "rename": "Gi nytt navn",
     "addBook": "Legg til bok",
     "emptyTitle": "Fant ingen serier",
-    "emptyHint": "Seriene fylles ut automatisk fra bøkene til forfatterne du overvåker",
     "noBooks": "Ingen bøker i denne serien ennå",
     "missingBadge": "{{count}} mangler",
     "bookCount_one": "{{count}} bok",
@@ -1954,7 +1949,6 @@
     "book": {
       "confirmAdd": "Legg til bok",
       "coverAlt": "Omslag til {{title}}",
-      "noCover": "Uten omslag",
       "published": "Utgitt",
       "language": "Språk",
       "resultFormat": "Metadataformat",
@@ -2214,7 +2208,7 @@
   },
   "bookStatus": {
     "wanted": "Ønsket",
-    "imported": "Importert",
+    "imported": "I biblioteket",
     "skipped": "Hoppet over",
     "notMonitored": "Ikke overvåket",
     "wantedDescription": "Et format mangler, og Bindery søker etter det i neste søkerunde.",
@@ -2262,7 +2256,6 @@
     "fileHeading": "Fil",
     "mediaTypeLabel": "Medietype",
     "mediaTypeHint": "Endre medietype",
-    "wantedFormatLabel": "Ønsket",
     "formatNotOnDisk": "Ikke lastet ned",
     "noFile": "Ingen fil på disken",
     "fileCount": "{{count}} fil(er)",
@@ -2323,7 +2316,6 @@
     "unexclude": "Opphev ekskludering",
     "excludeHint": "Ekskluder denne boken fra søk og Ønsket-siden",
     "unexcludeHint": "Ta med denne boken i søk og på Ønsket-siden igjen",
-    "deleteFile": "Slett fil",
     "deleteThisFile": "Slett denne filen",
     "deleteThisFileHint": "Slett bare denne filen permanent fra disken",
     "deletingFile": "Sletter…",

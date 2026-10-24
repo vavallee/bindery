@@ -97,7 +97,9 @@
     "myRequests": "My requests",
     "requests": "Requests",
     "requestsPending": "{{count}} pending requests",
-    "toggleMenu": "Toggle menu"
+    "toggleMenu": "Toggle menu",
+    "queueFailed_one": "{{count}} failed download",
+    "queueFailed_other": "{{count}} failed downloads"
   },
   "librarySearch": {
     "label": "Search library",
@@ -108,7 +110,8 @@
     "searching": "Searching…",
     "noMatches": "Nothing in your library matches",
     "addToBindery": "Add \"{{query}}\" to Bindery",
-    "failed": "Library search failed"
+    "failed": "Library search failed",
+    "searchIndexers": "Search indexers for “{{query}}”"
   },
   "notFound": {
     "title": "Page not found",
@@ -243,7 +246,8 @@
       "alreadyImported": "This book already has its files. Adopting adds these alongside them, and nothing is replaced or deleted.",
       "conflictLabel": "Author conflict",
       "conflict": "The files say {{files}}, but the folder says {{folder}}. A book by {{folder}} is only a look alike, so none is chosen for you.",
-      "folderAuthorOnly": "Folder author only"
+      "folderAuthorOnly": "Folder author only",
+      "lowConfidence": "Low-confidence suggestions ({{count}})"
     },
     "col": {
       "book": "Book",
@@ -308,7 +312,10 @@
     "moreFor": "More actions for {{name}}",
     "match": {
       "strong": "Strong match",
-      "possible": "Possible match"
+      "possible": "Possible match",
+      "none": "No good match",
+      "weakCount_one": "See {{count}} suggestion",
+      "weakCount_other": "See {{count}} suggestions"
     },
     "short": {
       "authorMissing": "{{author}} is not in your library",
@@ -326,6 +333,22 @@
       "sentence": "Author not in your library yet",
       "show": "Show books",
       "hide": "Hide books"
+    },
+    "confirmStrong": {
+      "title": "Confirm {{count}} strong matches?",
+      "body": "Each book is adopted as its suggestion, the same as pressing Confirm on every row. Every one can be undone from its row or the Adopted list.",
+      "confirm": "Confirm all",
+      "summary": "{{count}} books on this page have a strong match.",
+      "button": "Confirm {{count}} strong matches",
+      "listLabel": "Files and the books they go to",
+      "goesTo": "goes to",
+      "stopped": "Adopted {{done}} of {{count}}, then stopped: {{name}} could not be adopted. Its row says why.",
+      "done_one": "Adopted {{count}}.",
+      "done_other": "Adopted {{count}}.",
+      "doneSkipped_one": "Adopted {{count}}. {{skipped}} changed since you confirmed and were left alone.",
+      "doneSkipped_other": "Adopted {{count}}. {{skipped}} changed since you confirmed and were left alone.",
+      "stoppedSkipped_one": "{{count}} changed since you confirmed and were left alone.",
+      "stoppedSkipped_other": "{{count}} changed since you confirmed and were left alone."
     }
   },
   "search": {
@@ -439,9 +462,15 @@
     "bulkApplyMonitoringToExisting": "Also apply to their existing books",
     "bulkApplyMonitoringToExistingHint": "Rewrites every book of the selected authors to match. Leave it off to change the authors only.",
     "bulkSetMediaTypeConfirm": "Set the media type for every book of {{count}} selected authors to {{mediaType}}? This rewrites existing book rows and may re-evaluate wanted/missing status.",
-    "bulkSetEbook": "Set ebook",
-    "bulkSetAudiobook": "Set audiobook",
-    "bulkSetBoth": "Set both"
+    "pageActions": "More author actions",
+    "countLabel_one": "{{count}} author",
+    "countLabel_other": "{{count}} authors",
+    "sortMostBooks": "Most books",
+    "sortFewestBooks": "Fewest books",
+    "sortRatingHigh": "Highest rated",
+    "sortRatingLow": "Lowest rated",
+    "sortMonitoredFirst": "Monitored first",
+    "sortUnmonitoredFirst": "Not monitored first"
   },
   "authorDetail": {
     "nav": {
@@ -536,7 +565,7 @@
       "released": "Released",
       "upcoming": "Upcoming",
       "status_wanted": "Wanted",
-      "status_imported": "Imported",
+      "status_imported": "In library",
       "status_skipped": "Skipped",
       "status_excluded": "Excluded",
       "monitored": "Monitored",
@@ -678,6 +707,12 @@
     "sortOldest": "Oldest",
     "sortAuthorAZ": "Author A–Z",
     "sortAuthorZA": "Author Z–A",
+    "sortRatingHigh": "Highest rated",
+    "sortRatingLow": "Lowest rated",
+    "sortTypeAZ": "Type A–Z",
+    "sortTypeZA": "Type Z–A",
+    "sortStatusAZ": "Status A–Z",
+    "sortStatusZA": "Status Z–A",
     "filterMonitored": "Monitored:",
     "filterAll": "All",
     "filterMonitoredOnly": "Monitored",
@@ -703,7 +738,7 @@
     "mediaBoth": "📖🎧 Both",
     "deleteConfirm": "Delete {{count}} book(s)?",
     "statusWanted": "Wanted",
-    "statusImported": "In Library",
+    "statusImported": "In library",
     "statusSkipped": "Skipped",
     "audioLabel": "🎧 Audio",
     "exclude": "Exclude",
@@ -712,7 +747,11 @@
     "showExcluded": "Show excluded",
     "sortByColumn": "Sort by {{column}}",
     "reviewDuplicates": "Review duplicates",
-    "reviewDuplicatesHint": "Find titles across the library that look like the same book; nothing changes until you exclude a row"
+    "reviewDuplicatesHint": "Find titles across the library that look like the same book; nothing changes until you exclude a row",
+    "languageUnknownBadge": "No language",
+    "languageUnknownHint": "The metadata source did not report a language for this book.",
+    "countLabel_one": "{{count}} book",
+    "countLabel_other": "{{count}} books"
   },
   "wanted": {
     "title": "Wanted",
@@ -740,10 +779,18 @@
     "colTitleAuthor": "Title & author",
     "colFormat": "Format",
     "colActions": "Actions",
-    "noCover": "No cover",
     "authorUnknown": "Author unknown",
     "changeFormat": "Change format for {{title}}",
-    "authorNotMonitored": "Author not monitored, so this is not searched automatically"
+    "authorNotMonitored": "Author not monitored, so this is not searched automatically",
+    "blocklistSelectedConfirm_one": "Blocklist {{count}} book? It is marked skipped, leaves Wanted and is not searched again.",
+    "blocklistSelectedConfirm_other": "Blocklist {{count}} books? They are marked skipped, leave Wanted and are not searched again.",
+    "searchPage_one": "Search this page ({{count}})",
+    "searchPage_other": "Search this page ({{count}})",
+    "searchPageHint": "Search indexers for every book on this page. Narrow the list with the filters first.",
+    "searchPageConfirm_one": "Search indexers for the {{count}} book on this page?",
+    "searchPageConfirm_other": "Search indexers for the {{count}} books on this page?",
+    "excludedLabel": "Excluded books",
+    "excludedHidden": "Hidden"
   },
   "history": {
     "title": "History",
@@ -779,7 +826,9 @@
     "colSize": "Size",
     "colDate": "Date",
     "blocklist": "Blocklist",
-    "delete": "Delete"
+    "delete": "Delete",
+    "loadFailed": "Could not load history",
+    "noMatch": "No {{type}} events"
   },
   "queue": {
     "title": "Queue",
@@ -843,7 +892,14 @@
     "matchBookSearch": "Search for a book",
     "matchBookSearching": "Searching…",
     "matchBookSearchBtn": "Search",
-    "matchBookCancel": "Cancel"
+    "matchBookCancel": "Cancel",
+    "statusView": "Show",
+    "viewAll": "All ({{count}})",
+    "viewActive": "Active ({{count}})",
+    "viewFailed": "Failed ({{count}})",
+    "viewFailedEmpty": "No failed downloads",
+    "viewActiveEmpty": "No downloads in progress",
+    "viewShowAll": "Show all"
   },
   "series": {
     "searchPlaceholder": "Search series…",
@@ -892,7 +948,7 @@
     "rename": "Rename",
     "addBook": "Add Book",
     "emptyTitle": "No series found",
-    "emptyHint": "Series are populated automatically from your monitored authors' books",
+    "emptyHint": "Series come from your metadata provider when it reports them for a book. If none show up, link a Hardcover series or add one by hand.",
     "noBooks": "No books in this series yet",
     "missingBadge": "{{count}} missing",
     "bookCount_one": "{{count}} book",
@@ -995,7 +1051,8 @@
       "done_one": "{{count}} split part unmonitored",
       "done_other": "{{count}} split parts unmonitored",
       "failed": "Could not unmonitor the split parts"
-    }
+    },
+    "loadFailed": "Could not load series"
   },
   "importHints": {
     "heading": "Already have files on disk?",
@@ -1763,7 +1820,9 @@
       "defaultMonitorModeHint": "Applied to newly added authors. Existing authors keep their current mode unless edited.",
       "defaultMonitorLatestCountLabel": "Latest book count",
       "audiobookFileTemplate": "Audiobook file naming (per track)",
-      "audiobookFileTemplateHint": "Leave empty to keep the download’s original file layout. Set a template to rename every audiobook track in playback order; it must include {Part}. A single-file audiobook is renamed too, as part 1, unless {Part} sits in a group with its own text, such as {Title}{ - Pt. Part:3}.{ext}, which is left out when there is only one file."
+      "audiobookFileTemplateHint": "Leave empty to keep the download’s original file layout. Set a template to rename every audiobook track in playback order; it must include {Part}. A single-file audiobook is renamed too, as part 1, unless {Part} sits in a group with its own text, such as {Title}{ - Pt. Part:3}.{ext}, which is left out when there is only one file.",
+      "themeDark": "Dark",
+      "themeLight": "Light"
     },
     "import": {
       "csvHeading": "CSV of author names",
@@ -1996,7 +2055,6 @@
     "book": {
       "confirmAdd": "Add book",
       "coverAlt": "{{title}} cover",
-      "noCover": "No cover",
       "published": "Published",
       "language": "Language",
       "resultFormat": "Metadata format",
@@ -2057,7 +2115,9 @@
   },
   "bulkActionBar": {
     "selected": "{{count}} selected",
-    "clear": "Clear"
+    "clear": "Clear",
+    "setFormat": "Set format",
+    "more": "More bulk actions"
   },
   "discover": {
     "title": "Discover",
@@ -2250,11 +2310,11 @@
   },
   "bookStatus": {
     "wanted": "Wanted",
-    "imported": "Imported",
+    "imported": "In library",
     "skipped": "Skipped",
     "notMonitored": "Not monitored",
     "wantedDescription": "A format is missing and Bindery will search for it on the next sweep.",
-    "importedDescription": "Every format this book wants is on disk.",
+    "importedDescription": "Every format this book wants is on disk. A book with only some of its formats reads Wanted, and the In library filter still lists it.",
     "skippedDescription": "Blocklisted or excluded. Bindery will not search for it and it stays off the Wanted page.",
     "notMonitoredDescription": "A format is missing, but Bindery will not search for it. Turn monitoring on to fetch it."
   },
@@ -2298,7 +2358,7 @@
     "fileHeading": "File",
     "mediaTypeLabel": "Media type",
     "mediaTypeHint": "Change media type",
-    "wantedFormatLabel": "Wanted",
+    "wantedFormatLabel": "Target format",
     "formatNotOnDisk": "Not downloaded",
     "noFile": "No file on disk",
     "fileCount": "{{count}} file(s)",
@@ -2353,13 +2413,14 @@
       "seriesNone": "No series",
       "seriesNew": "New series…",
       "fieldNewSeries": "New series name",
-      "fieldPosition": "Position"
+      "fieldPosition": "Position",
+      "genresPlaceholder": "e.g. Fantasy, Epic",
+      "languagePlaceholder": "e.g. en"
     },
     "exclude": "Exclude",
     "unexclude": "Un-exclude",
     "excludeHint": "Exclude this book from searches and the Wanted page",
     "unexcludeHint": "Un-exclude this book from searches and the Wanted page",
-    "deleteFile": "Delete file",
     "deleteThisFile": "Delete this file",
     "deleteThisFileHint": "Permanently delete only this file from disk",
     "deletingFile": "Deleting…",
@@ -2457,7 +2518,10 @@
       "pending": "Waiting for Calibre",
       "delivered": "In Calibre",
       "failed": "Calibre failed"
-    }
+    },
+    "monitoredLabel": "Monitored",
+    "genresLabel": "Genres",
+    "deleteFormatFiles": "Delete {{format}} files"
   },
   "bookRebind": {
     "title": "Re-bind metadata",
@@ -2519,5 +2583,13 @@
     "genreOverrideDone": "Updated {{count}} book(s).",
     "bio": "Bio",
     "bioHint": "A bio you write here stays as you wrote it: no refresh replaces it. Clear it to let the metadata provider fill it again."
+  },
+  "dataTable": {
+    "selectPage": "Select all on this page",
+    "selectRow": "Select {{name}}",
+    "actions": "Actions"
+  },
+  "mediaBadge": {
+    "both": "Ebook + Audiobook"
   }
 }

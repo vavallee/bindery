@@ -18,7 +18,7 @@ import { api, type Author, type Book } from '../api/client'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: string | Record<string, unknown>) => {
+    t: (key: string, options?: string | Record<string, unknown>, extra?: Record<string, unknown>) => {
       const labels: Record<string, string> = {
         'common.all': 'All',
         'books.statusWanted': 'Wanted',
@@ -30,7 +30,9 @@ vi.mock('react-i18next', () => ({
         'wanted.showExcluded': 'Show excluded',
       }
       if (labels[key]) return labels[key]
-      if (typeof options === 'string') return options
+      // Interpolate a string default the way i18next would, so a row's
+      // "Select {{name}}" box is findable by the row's name.
+      if (typeof options === 'string') return options.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(extra?.[k] ?? ''))
       return key
     },
   }),
@@ -290,6 +292,20 @@ describe('AuthorsPage list state in the URL', () => {
     ))
     expect(current().search).toBe('?q=le+guin&sort=za&page=2')
   })
+
+  // Every sort the page accepts, a column header's included, shows as the
+  // checked radio when it arrives by URL.
+  it.each([
+    'az', 'za', 'name-az', 'name-za', 'recent', 'books-asc', 'books-desc',
+    'rating-asc', 'rating-desc', 'monitored-asc', 'monitored-desc',
+  ])('checks ?sort=%s in the Sort popover', async sort => {
+    renderAt([`/?sort=${sort}`], <Route path="/" element={<AuthorsPage />} />)
+    await waitFor(() => expect(vi.mocked(api.listAuthors)).toHaveBeenLastCalledWith(expect.objectContaining({ sort })))
+    fireEvent.click(screen.getAllByRole('button', { name: /^common\.sort|^Sort/ })[0])
+    const checked = screen.getAllByRole('radio').filter(r => r.getAttribute('aria-checked') === 'true')
+    expect(checked).toHaveLength(1)
+    expect(checked[0]).toHaveAttribute('data-value', sort)
+  })
 })
 
 describe('AuthorsPage bulk selection', () => {
@@ -352,7 +368,9 @@ describe('WantedPage list state in the URL', () => {
   it('keeps the search and the excluded toggle in the URL', async () => {
     renderAt(['/wanted'], <Route path="/wanted" element={<WantedPage />} />)
     await screen.findByText('Book 1')
-    fireEvent.click(screen.getByLabelText('Show excluded'))
+    // Show excluded is a facet behind Filters now, not a loose checkbox.
+    fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Show excluded' }))
     await waitFor(() => expect(current().search).toBe('?excluded=1'))
     fireEvent.change(screen.getByPlaceholderText('Search wanted'), { target: { value: 'Book 7' } })
     await waitFor(() => expect(current()).toMatchObject({ search: '?excluded=1&q=Book+7', type: 'REPLACE' }))
@@ -360,7 +378,11 @@ describe('WantedPage list state in the URL', () => {
     await goTo('/book/7')
     await goBack()
     expect(await screen.findByPlaceholderText('Search wanted')).toHaveValue('Book 7')
-    expect(screen.getByLabelText('Show excluded')).toBeChecked()
+    // The applied facet is a chip, so it is visible without opening Filters,
+    // and the facet itself is still on inside the popover.
+    expect(screen.getByRole('button', { name: /Show excluded/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
+    expect(screen.getByRole('radio', { name: 'Show excluded' })).toBeChecked()
     expect(vi.mocked(api.listWantedPage)).toHaveBeenLastCalledWith(expect.objectContaining({ includeExcluded: true, search: 'Book 7' }))
   })
 })

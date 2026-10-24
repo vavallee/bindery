@@ -48,6 +48,15 @@ describe('adoptionHint', () => {
     expect(adoptionHint(strong, t).sentence).toBe('Strong match: The Martian by Andy Weir. Confirm it or choose another book.')
   })
 
+  // The row says "No good match" below WEAK_MATCH_SCORE and the editor folds
+  // the suggestion away; the sentence must not point at it as a match.
+  it('does not offer a suggestion below the weak score as a possible match', () => {
+    const faint = item({ parsedAuthor: 'Andy Weir', candidates: [{ book: martian, score: 0.12 }] })
+    const hint = adoptionHint(faint, t)
+    expect(hint.sentence).not.toContain('The Martian')
+    expect(hint.sentence).toBe('No book by Andy Weir has a title close to this one. Choose the book it is.')
+  })
+
   it('calls anything weaker a possible match, never a one click confirm', () => {
     // 0.82 is the "A Martyrs Tale" against "The Martian" case.
     const weak = item({ parsedAuthor: 'Andy Weir', candidates: [{ book: martian, score: 0.82 }] })

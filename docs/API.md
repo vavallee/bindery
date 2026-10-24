@@ -338,7 +338,7 @@ fingerprint and the next request rescans.
 ### Books
 
 ```
-GET    /api/v1/book?status=wanted                 filter by status (wanted, imported, skipped); `imported` is the In Library view and also lists a `wanted` book that already has at least one tracked file (of that format when `mediaType` is set), so a partly owned dual format book appears under both
+GET    /api/v1/book?status=wanted                 filter by status (wanted, imported, skipped); `imported` is the In library view and also lists a `wanted` book that already has at least one tracked file (of that format when `mediaType` is set), so a partly owned dual format book appears under both
 POST   /api/v1/book/bulk                          bulk monitor / status flip / exclude / unexclude (`"expectNoFiles": true` skips books that have files on `exclude`)
 GET    /api/v1/book/{id}                          book detail (with editions, history, formats; `importInFlight: true` while a download for it is still on its way into the library)
 PUT    /api/v1/book/{id}                          update monitor / status / metadata
@@ -724,6 +724,7 @@ GET    /api/v1/queue                              downloads with live downloader
                                                   Retry import, Match to book or Remove. Older imports are on the History page
        -> {"items":[..],"partial":true,"staleClients":[{"clientId":1,"name":"qBit","message":".."}]}
                                                   partial means a download client did not answer in time, so items is short
+GET    /api/v1/queue/failed-count                 {"failed": n}: downloads in failed, importFailed or importBlocked, read from the database only (the nav badge)
 POST   /api/v1/queue/grab                         submit a search result to the download client
                                                   a guid a recent search returned is grabbed from the server's
                                                   record (raw URL) for every caller; otherwise only the API key

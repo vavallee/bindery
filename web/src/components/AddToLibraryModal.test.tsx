@@ -48,7 +48,6 @@ vi.mock('react-i18next', () => ({
         'addToLibrary.author.providerMismatchNotice': 'This record comes from {{linked}}, not from your primary metadata provider {{primary}}.',
         'addToLibrary.book.confirmAdd': 'Add book',
         'addToLibrary.book.coverAlt': '{{title}} cover',
-        'addToLibrary.book.noCover': 'No cover',
         'addToLibrary.book.searchedIsbn': 'Searched ISBN',
         'addToLibrary.book.isbns': 'ISBNs',
         'addToLibrary.book.formatLabel': 'Format to add',
