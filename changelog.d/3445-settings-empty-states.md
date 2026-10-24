@@ -1,0 +1,2 @@
+### Fixed
+- **Failed loads no longer read as empty lists** (#3445). Series and History say when loading failed and offer Retry, and History says when a filter hides every event. Regenerate API key and Rotate session secret are outlined as destructive, the theme switch says Light or Dark, indexers synced from Prowlarr are marked, and release names on History and the book page decode HTML entities such as &amp;amp;.

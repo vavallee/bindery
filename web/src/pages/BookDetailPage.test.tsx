@@ -1217,6 +1217,17 @@ describe('BookDetailPage — history section', () => {
     expect(await screen.findByText('Book imported')).toBeInTheDocument()
     expect(screen.getByText('A.Desolation.Called.Peace')).toBeInTheDocument()
   })
+
+  it('decodes HTML entities a provider left in a release name', async () => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [makeHistory({ eventType: 'grabbed', sourceTitle: 'Pride &amp; Prejudice &#8211; Austen' })],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+    renderBookDetailPage()
+    expect(await screen.findByText('Pride & Prejudice – Austen')).toBeInTheDocument()
+  })
 })
 
 describe('BookDetailPage — danger zone', () => {
