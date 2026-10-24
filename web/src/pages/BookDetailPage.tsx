@@ -1064,7 +1064,7 @@ function BookDetailPageInner() {
               className="px-1"
             />
             {book.excluded && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
+              <span className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-800 dark:text-amber-400">
                 {t('bookDetail.excludedBadge')}
               </span>
             )}
@@ -1082,7 +1082,7 @@ function BookDetailPageInner() {
               <span className="text-fg-muted">{lang}</span>
             ) : (
               <span
-                className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-800 dark:text-amber-400"
                 title={t('bookDetail.languageUnknownHint')}
               >
                 {t('bookDetail.languageUnknown')}

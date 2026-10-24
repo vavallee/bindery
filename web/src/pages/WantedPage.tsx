@@ -422,7 +422,7 @@ export default function WantedPage() {
                     {/* actions */}
                     <div className="flex items-center justify-end gap-1.5">
                       {book.excluded && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-800 dark:text-amber-400">
                           {t('wanted.excluded')}
                         </span>
                       )}

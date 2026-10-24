@@ -170,6 +170,89 @@ describe('tokens on the backgrounds the source puts them on', () => {
   })
 })
 
+// The tokens are not the only text colours: badges and chips set an explicit
+// hue on a tint (bg-red-500/20 text-red-800), chosen per theme by hand. Every
+// class string with both a text colour and a background is measured too, in
+// each theme, with the dark: class where there is one and the shared class
+// where there is not; a translucent background is mixed over the card. The
+// palette is read from Tailwind's own theme, so any hue and shade can be
+// measured (#3084).
+const TAILWIND = new Map<string, string>([['white', '#ffffff'], ['black', '#000000']])
+
+// OKLCH to sRGB hex, as the browser converts Tailwind v4's colours, clamped to
+// the sRGB gamut.
+function oklchToHex(l: number, c: number, h: number): string {
+  const a = c * Math.cos((h * Math.PI) / 180)
+  const b = c * Math.sin((h * Math.PI) / 180)
+  const lp = (l + 0.3963377774 * a + 0.2158037573 * b) ** 3
+  const mp = (l - 0.1055613458 * a - 0.0638541728 * b) ** 3
+  const sp = (l - 0.0894841775 * a - 1.291485548 * b) ** 3
+  const linear = [
+    4.0767416621 * lp - 3.3077115913 * mp + 0.2309699292 * sp,
+    -1.2684380046 * lp + 2.6097574011 * mp - 0.3413193965 * sp,
+    -0.0041960863 * lp - 0.7034186147 * mp + 1.707614701 * sp,
+  ]
+  const encode = (x: number) => {
+    const v = Math.min(Math.max(x, 0), 1)
+    return v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055
+  }
+  return '#' + linear.map(x => Math.round(encode(x) * 255).toString(16).padStart(2, '0')).join('')
+}
+
+beforeAll(async () => {
+  const { css } = await postcss([tailwindcss()]).process('@import "tailwindcss/theme.css" theme(static);', { from: 'src/contrast.test.css' })
+  for (const [, name, l, c, h] of css.matchAll(/--color-([a-z]+-\d+):\s*oklch\(([\d.]+)% ([\d.]+) ([\d.]+)\)/g)) {
+    TAILWIND.set(name, oklchToHex(Number(l) / 100, Number(c), Number(h)))
+  }
+}, 60_000)
+
+// A text class also sets a checkbox's tick colour; that is not text.
+const NOT_TEXT = new Set(['../components/CatalogueReconciliationModal.tsx text-red-600'])
+
+const HUE_TEXT = /^(dark:)?text-([a-z]+-\d+|white|black)$/
+const HUE_BG = /^(dark:)?bg-([a-z]+-\d+|white|black)$/
+
+describe('explicit text colours on the background in the same string', () => {
+  it('reads the Tailwind palette', () => {
+    expect(TAILWIND.get('red-800')).toMatch(/^#[0-9a-f]{6}$/)
+  })
+
+  it('stay AA in both themes', () => {
+    const failures: string[] = []
+    let checked = 0
+    for (const [file, source] of Object.entries(sources)) {
+      if (/\.test\.tsx?$/.test(file)) continue
+      for (const [, str] of source.matchAll(/["'`]([^"'`]*\btext-[a-z]+-\d+[^"'`]*)["'`]/g)) {
+        const classes = str.split(/\s+/)
+        for (const theme of ['light', 'dark'] as const) {
+          // The dark: class when the string has one, else the shared class.
+          // A background's opacity (bg-red-500/20) is split off before matching.
+          const pick = (pattern: RegExp) => {
+            const matches = classes.map(c => c.split('/')[0].match(pattern)).filter((m): m is RegExpMatchArray => m !== null)
+            const own = matches.find(m => Boolean(m[1]) === (theme === 'dark'))
+            return own ?? (theme === 'dark' ? matches.find(m => !m[1]) : undefined)
+          }
+          const text = pick(HUE_TEXT)
+          const ground = pick(HUE_BG)
+          if (!text || !ground || NOT_TEXT.has(`${file} ${text[0]}`)) continue
+          const opacity = classes.find(c => c.split('/')[0] === ground[0])?.split('/')[1]
+          const fg = TAILWIND.get(text[2])
+          const base = TAILWIND.get(ground[2])
+          if (!fg || !base) continue
+          const card = theme === 'dark' ? SURFACES.darkCard : SURFACES.lightCard
+          const bg = opacity ? mix(base, card, Number(opacity) / 100) : base
+          checked++
+          const ratio = contrast(fg, bg)
+          const shown = opacity ? `${ground[0]}/${opacity}` : ground[0]
+          if (ratio < AA_NORMAL) failures.push(`${file}: ${theme} ${text[0]} on ${shown} is ${ratio.toFixed(2)}:1`)
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(100)
+    expect(failures, failures.join('\n')).toEqual([])
+  })
+})
+
 // CoverPlaceholder paints its own ground, so its text contrast is
 // theme-independent — but the tile still has to read as an object against both
 // page surfaces, which is what pins the palette to the 700 level.

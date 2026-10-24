@@ -886,7 +886,7 @@ export default function AuthorDetailPage() {
                   {fmtPublishedYear(book.releaseDate)}
                 </span>
                 {book.excluded && (
-                  <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                  <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-800 dark:text-amber-400">
                     Excluded
                   </span>
                 )}
@@ -911,7 +911,7 @@ export default function AuthorDetailPage() {
             )
           })()}
           {book.excluded && (
-            <span className="inline-block ml-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
+            <span className="inline-block ml-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-800 dark:text-amber-400">
               Excluded
             </span>
           )}
@@ -1023,7 +1023,7 @@ export default function AuthorDetailPage() {
                   <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 Audio</span>
                 )}
                 {book.excluded && (
-                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">Excluded</span>
+                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-800 dark:text-amber-400">Excluded</span>
                 )}
               </div>
               {/* No `book.releaseDate &&` guard: fmtPublishedYear already

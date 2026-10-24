@@ -11,15 +11,15 @@ const EVENT_TYPE_COLORS: Record<string, string> = {
   grabbed: 'bg-blue-500/20 text-blue-700 dark:text-blue-400',
   bookImported: 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-400',
   imported: 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-400',
-  downloadFailed: 'bg-red-500/20 text-red-700 dark:text-red-400',
-  importFailed: 'bg-red-500/20 text-red-700 dark:text-red-400',
-  deleted: 'bg-red-500/20 text-red-700 dark:text-red-400',
+  downloadFailed: 'bg-red-500/20 text-red-800 dark:text-red-400',
+  importFailed: 'bg-red-500/20 text-red-800 dark:text-red-400',
+  deleted: 'bg-red-500/20 text-red-800 dark:text-red-400',
   renamed: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
   ignored: 'bg-slate-300 dark:bg-zinc-700 text-fg-muted dark:text-zinc-300',
   bookFileRenamed: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
   // Amber rather than green: the import worked, but the file turned out not to
   // be the edition the catalogue described, which is worth a second look.
-  bookLanguageCorrected: 'bg-amber-500/20 text-amber-600 dark:text-amber-400',
+  bookLanguageCorrected: 'bg-amber-500/20 text-amber-800 dark:text-amber-400',
 }
 
 // humanizeEventType turns a camelCase event enum into a Title Case fallback

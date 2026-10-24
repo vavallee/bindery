@@ -538,7 +538,7 @@ export default function SeriesPage() {
                     </div>
                     <div className="flex-shrink-0 flex items-center gap-2">
                       {displayMissingCount > 0 && (
-                        <span className="text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">
+                        <span className="text-xs text-amber-800 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">
                           {t('series.missingBadge', { count: displayMissingCount })}
                         </span>
                       )}
@@ -574,8 +574,8 @@ export default function SeriesPage() {
                       disabled={linking === series.id}
                       className={`touch-target text-xs px-2.5 py-1 rounded font-medium border disabled:opacity-50 ${
                         series.hardcoverLink
-                          ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-                          : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                          ? 'border-sky-500/40 bg-sky-500/10 text-sky-800 dark:text-sky-300'
+                          : 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300'
                       }`}
                       title={series.hardcoverLink ? t('series.hardcover.linkedTo', { title: series.hardcoverLink.hardcoverTitle }) : t('series.hardcover.searchTitle')}
                     >
@@ -697,7 +697,7 @@ export default function SeriesPage() {
                             </span>
                           )}
                           {entry.book?.excluded && (
-                            <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                            <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-800 dark:text-amber-400">
                               {t('series.excluded')}
                             </span>
                           )}
