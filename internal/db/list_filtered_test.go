@@ -448,3 +448,56 @@ func TestAuthorRepo_ListPageFiltered_SearchMatchesAlias(t *testing.T) {
 		t.Fatalf("canonical name search: want 1 (err nil), got total=%d err=%v", total, err)
 	}
 }
+
+// A sort picked while searching leads; relevance only breaks its ties. Under
+// the default sort the best match still comes first.
+func TestBookRepo_ListPageFiltered_SortLeadsSearchRelevance(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{ForeignID: "OL-SR", Name: "Sort Author", SortName: "Author, Sort", Monitored: true}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(title, date string) {
+		d, perr := time.Parse("2006-01-02", date)
+		if perr != nil {
+			t.Fatal(perr)
+		}
+		b := &models.Book{ForeignID: "OL-S" + title, AuthorID: author.ID, Title: title, SortTitle: title, MediaType: models.MediaTypeEbook, ReleaseDate: &d}
+		if err := bookRepo.Create(ctx, b); err != nil {
+			t.Fatalf("seed %s: %v", title, err)
+		}
+	}
+	// "Dune" is the exact match and the oldest; the other two only contain it.
+	mk("Dune", "1965-08-01")
+	mk("Dune Messiah", "1969-10-15")
+	mk("Children of Dune", "1976-04-01")
+
+	titles := func(sort string) []string {
+		got, _, err := bookRepo.ListPageFiltered(ctx, BookListFilter{Search: "dune", Sort: sort}, 10, 0)
+		if err != nil {
+			t.Fatalf("sort %q: %v", sort, err)
+		}
+		out := make([]string, len(got))
+		for i, b := range got {
+			out[i] = b.Title
+		}
+		return out
+	}
+	// An unknown sort reads as title order, so it is the default too.
+	for _, sort := range []string{"", "title-az", "bogus"} {
+		if got := titles(sort); len(got) != 3 || got[0] != "Dune" {
+			t.Errorf("sort %q: %v, want the exact match first", sort, got)
+		}
+	}
+	if got := titles("date-new"); len(got) != 3 || got[0] != "Children of Dune" || got[2] != "Dune" {
+		t.Errorf("date-new while searching: %v, want newest first", got)
+	}
+}
