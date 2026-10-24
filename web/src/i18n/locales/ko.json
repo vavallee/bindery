@@ -928,7 +928,6 @@
     "unexclude": "제외 해제",
     "excludeHint": "이 도서를 검색 및 찾는 중 페이지에서 제외",
     "unexcludeHint": "이 도서를 검색 및 찾는 중 페이지에서 제외 해제",
-    "deleteFile": "파일 삭제",
     "deletingFile": "삭제 중…",
     "audiobookHeading": "오디오북 메타데이터",
     "asinLabel": "ASIN (Audible 식별자)",
