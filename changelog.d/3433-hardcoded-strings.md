@@ -1,0 +1,2 @@
+### Fixed
+- **Translatable interface** (#3411): about 490 strings that were written straight into the interface, and so stayed in English in every language, can now be translated, among them most of Settings, the queue, the author page, the rename and series dialogs and the error page. They are translated into Norwegian Bokmål; other languages show them in English until a translator picks them up. A test now fails when new interface text is added without going through translation.

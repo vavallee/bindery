@@ -4,7 +4,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, opts?: Record<string, unknown>) =>
-      opts && typeof opts === 'object' ? `${key} ${JSON.stringify(opts)}` : key,
+      typeof opts === 'string' ? opts : opts && typeof opts === 'object' ? `${key} ${JSON.stringify(opts)}` : key,
   }),
 }))
 

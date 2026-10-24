@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useRef, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
+import RichText from '../../components/RichText'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, AuthConfig, AuthStatus, BINDERY_BASE, StorageDirStatus, StorageHealth } from '../../api/client'
 import AuthSettings from '../../settings/AuthSettings'
@@ -15,6 +16,7 @@ import SaveButton from './SaveButton'
 import DatabaseCheckSection from './DatabaseCheckSection'
 import { useSaveResult } from './useSaveResult'
 import { slateFill, primaryFill } from '../../components/buttons'
+import { errorText } from '../../util/errorText'
 
 // Tab identifiers used by onNavigate for soft (no-reload) cross-tab links.
 // Kept loose (string) so GeneralTab doesn't need to import SettingsPage's Tab
@@ -39,6 +41,15 @@ const AUTH_CONFIG_WAIT_MS = 2500
 export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const fid = useId()
   const { t } = useTranslation()
+  const importModeLabel = (mode: 'auto' | 'move' | 'copy' | 'hardlink' | 'external') => {
+    switch (mode) {
+      case 'auto': return t('settings.general.importMode.auto', 'Auto')
+      case 'move': return t('settings.general.importMode.move', 'Move')
+      case 'copy': return t('settings.general.importMode.copy', 'Copy')
+      case 'hardlink': return t('settings.general.importMode.hardlink', 'Hardlink')
+      case 'external': return t('settings.general.importMode.external', 'External')
+    }
+  }
   const { isAdmin } = useAuth()
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -157,7 +168,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
     try {
       await api.setSetting('import.drop_folder', settings['import.drop_folder'] ?? '')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Save failed'
+      const msg = errorText(err, t('settings.general.saveFailed', 'Save failed'))
       setDropErr(msg)
       throw err
     } finally {
@@ -173,7 +184,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
     try {
       await api.setSetting('import.audiobook.drop_folder', settings['import.audiobook.drop_folder'] ?? '')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Save failed'
+      const msg = errorText(err, t('settings.general.saveFailed', 'Save failed'))
       setAudiobookDropErr(msg)
       throw err
     } finally {
@@ -192,7 +203,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
     try {
       await api.setSetting('search.preferredLanguage', settings['search.preferredLanguage'] ?? '')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Save failed'
+      const msg = errorText(err, t('settings.general.saveFailed', 'Save failed'))
       setLangErr(msg)
       throw err
     } finally {
@@ -236,7 +247,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const handleScan = async () => {
     scanStartedAt.current = Date.now()
     setScanningLibrary(true)
-    setScanMessage('Scanning…')
+    setScanMessage(t('settings.general.scanning', 'Scanning…'))
     setLastScan(null)
     awaitedScanId.current = undefined
     scanActive.current = false
@@ -247,7 +258,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
         setScanMessage(t('settings.general.scanQueued'))
       }
     } catch (err) {
-      setScanMessage('Scan failed: ' + (err instanceof Error ? err.message : 'Unknown error'))
+      setScanMessage(t('settings.general.scanFailed', 'Scan failed:') + ' ' + (errorText(err, t('common.unknownError', 'Unknown error'))))
       setScanningLibrary(false)
     }
   }
@@ -309,17 +320,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.fileNaming')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
           <div>
-            <label className="block text-xs text-fg-muted mb-1">Import Mode</label>
+            <label className="block text-xs text-fg-muted mb-1">{t('settings.general.importMode.label', 'Import Mode')}</label>
             <p className="text-xs text-fg-muted mb-2">
               {/* JSX drops the newline between a text line and a following
                   <strong> on the next line, so each sentence that ends right
                   before one needs an explicit {' '} or it renders glued
                   ("the library.Auto (the default)"). */}
-              How Bindery places completed downloads into the library.{' '}
-              <strong>Auto</strong> (the default) hardlinks when the download folder and library share a volume, otherwise copies — either way the source stays in place so torrent seeding keeps working.{' '}
-              <strong>Move</strong> relocates the source out of the download folder, which breaks seeding.
-              Use <strong>Hardlink</strong> or <strong>Copy</strong> to force keeping the source file intact; Hardlink requires the download folder and library to be on the same filesystem/volume.
-              Use <strong>External</strong> if another tool (Calibre, Grimmory, etc.) manages your library — Bindery grabs the download and stops; your tool processes it, then Bindery reconciles on the next library scan.
+              <RichText text={t('settings.general.importMode.hint', 'How Bindery places completed downloads into the library. <b>Auto</b> (the default) hardlinks when the download folder and library share a volume, otherwise copies — either way the source stays in place so torrent seeding keeps working. <b>Move</b> relocates the source out of the download folder, which breaks seeding. Use <b>Hardlink</b> or <b>Copy</b> to force keeping the source file intact; Hardlink requires the download folder and library to be on the same filesystem/volume. Use <b>External</b> if another tool (Calibre, Grimmory, etc.) manages your library — Bindery grabs the download and stops; your tool processes it, then Bindery reconciles on the next library scan.')} components={{ b: <strong /> }} />
             </p>
             <div className="flex gap-2 flex-wrap">
               {(['auto', 'move', 'copy', 'hardlink', 'external'] as const).map(m => (
@@ -335,7 +342,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                       : 'border-slate-300 dark:border-zinc-700 text-fg-muted hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
-                  {m.charAt(0).toUpperCase() + m.slice(1)}
+                  {importModeLabel(m)}
                 </button>
               ))}
             </div>
@@ -824,12 +831,12 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
-              <option value="6h">6 hours</option>
-              <option value="12h">12 hours (default)</option>
-              <option value="24h">24 hours</option>
-              <option value="48h">48 hours</option>
-              <option value="72h">72 hours</option>
-              <option value="168h">7 days</option>
+              <option value="6h">{t('settings.general.interval.hours', { count: 6 })}</option>
+              <option value="12h">{t('settings.general.interval.withDefault', { interval: t('settings.general.interval.hours', { count: 12 }) })}</option>
+              <option value="24h">{t('settings.general.interval.hours', { count: 24 })}</option>
+              <option value="48h">{t('settings.general.interval.hours', { count: 48 })}</option>
+              <option value="72h">{t('settings.general.interval.hours', { count: 72 })}</option>
+              <option value="168h">{t('settings.general.interval.days', { count: 7 })}</option>
             </select>
             <p className="text-xs text-fg-muted mt-1">
               {t('settings.general.searchIntervalRestart')}
@@ -861,13 +868,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
-              <option value="1h">1 hour</option>
-              <option value="3h">3 hours</option>
-              <option value="6h">6 hours</option>
-              <option value="12h">12 hours</option>
-              <option value="24h">24 hours (default)</option>
-              <option value="48h">48 hours</option>
-              <option value="168h">7 days</option>
+              <option value="1h">{t('settings.general.interval.hours', { count: 1 })}</option>
+              <option value="3h">{t('settings.general.interval.hours', { count: 3 })}</option>
+              <option value="6h">{t('settings.general.interval.hours', { count: 6 })}</option>
+              <option value="12h">{t('settings.general.interval.hours', { count: 12 })}</option>
+              <option value="24h">{t('settings.general.interval.withDefault', { interval: t('settings.general.interval.hours', { count: 24 }) })}</option>
+              <option value="48h">{t('settings.general.interval.hours', { count: 48 })}</option>
+              <option value="168h">{t('settings.general.interval.days', { count: 7 })}</option>
               {/* The server accepts anything in [1h, 168h], so a value set via
                   the API (36h, say) need not be one of the presets. Without an
                   option to match it the select renders blank, which reads as
@@ -1015,7 +1022,7 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
       setCfg(c => c ? { ...c, apiKey: r.apiKey } : c)
       setShowKey(true)
     } catch (e) {
-      alert('Regenerate failed: ' + (e instanceof Error ? e.message : 'unknown'))
+      alert(t('settings.general.auth.regenerateFailed', 'Regenerate failed:') + ' ' + (errorText(e, t('settings.general.auth.unknown', 'unknown'))))
     } finally {
       setRegenerating(false)
     }
@@ -1030,9 +1037,9 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
     setRotatingSecret(true)
     try {
       await api.authRotateSessionSecret()
-      alert('Session secret rotated. New logins sign with the new secret; existing sessions remain valid until the next rotation.')
+      alert(t('settings.general.auth.secretRotated', 'Session secret rotated. New logins sign with the new secret; existing sessions remain valid until the next rotation.'))
     } catch (e) {
-      alert('Rotate failed: ' + (e instanceof Error ? e.message : 'unknown'))
+      alert(t('settings.general.auth.rotateFailed', 'Rotate failed:') + ' ' + (errorText(e, t('settings.general.auth.unknown', 'unknown'))))
     } finally {
       setRotatingSecret(false)
     }
@@ -1047,7 +1054,7 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
       await refresh()
       loadCfg()
     } catch (e) {
-      alert('Mode change failed: ' + (e instanceof Error ? e.message : 'unknown'))
+      alert(t('settings.general.auth.modeChangeFailed', 'Mode change failed:') + ' ' + (errorText(e, t('settings.general.auth.unknown', 'unknown'))))
     } finally {
       setSavingMode(false)
     }
@@ -1063,24 +1070,24 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
   return (
     <section>
       {confirmDialog}
-      <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Security</h3>
+      <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.security', 'Security')}</h3>
       <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-5">
         {isAdmin && (<>
         <div>
-          <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">Authentication Mode</label>
+          <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.general.auth.authMode', 'Authentication Mode')}</label>
           <select id={`${fid}-1`}
             value={cfg.mode}
             onChange={e => setMode(e.target.value as AuthStatus['mode'])}
             disabled={savingMode}
             className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
           >
-            <option value="enabled">Enabled</option>
-            <option value="local-only">Local only (bypass for private IPs)</option>
-            <option value="disabled">Disabled (no auth)</option>
+            <option value="enabled">{t('settings.general.auth.modeEnabled', 'Enabled')}</option>
+            <option value="local-only">{t('settings.general.auth.modeLocalOnly', 'Local only (bypass for private IPs)')}</option>
+            <option value="disabled">{t('settings.general.auth.modeDisabled', 'Disabled (no auth)')}</option>
           </select>
-          {cfg.mode === 'enabled' && <p className="text-xs text-fg-muted mt-1">Always requires login, regardless of network origin.</p>}
-          {cfg.mode === 'local-only' && <p className="text-xs text-fg-muted mt-1">Login is bypassed for requests from private / LAN IP ranges. Still requires login from the internet.</p>}
-          {cfg.mode === 'disabled' && <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">No authentication — only safe when Bindery is behind a trusted reverse proxy that enforces access control.</p>}
+          {cfg.mode === 'enabled' && <p className="text-xs text-fg-muted mt-1">{t('settings.general.auth.modeEnabledHint', 'Always requires login, regardless of network origin.')}</p>}
+          {cfg.mode === 'local-only' && <p className="text-xs text-fg-muted mt-1">{t('settings.general.auth.modeLocalOnlyHint', 'Login is bypassed for requests from private / LAN IP ranges. Still requires login from the internet.')}</p>}
+          {cfg.mode === 'disabled' && <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">{t('settings.general.auth.modeDisabledHint', 'No authentication — only safe when Bindery is behind a trusted reverse proxy that enforces access control.')}</p>}
           {/* Server-authored warning for the mode just chosen (currently
               local-only with no trusted proxy configured). Rendered verbatim so
               the text lives in exactly one place, next to the control that
@@ -1093,22 +1100,22 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
         </div>
 
         <div className="border-t border-slate-200 dark:border-zinc-800 pt-4">
-          <label className="block text-xs text-fg-muted mb-1">API Key</label>
+          <label className="block text-xs text-fg-muted mb-1">{t('settings.general.auth.apiKey', 'API Key')}</label>
           <p className="text-xs text-fg-muted mb-2">
-            Pass as <code className="font-mono">X-Api-Key</code> header or <code className="font-mono">?apikey=</code> query parameter. Used by external integrations (Tautulli, custom scripts, etc.).
+            <RichText text={t('settings.general.auth.apiKeyHint', 'Pass as <code>X-Api-Key</code> header or <code>?apikey=</code> query parameter. Used by external integrations (Tautulli, custom scripts, etc.).')} components={{ code: <code className="font-mono" /> }} />
           </p>
           <div className="flex flex-wrap gap-2">
             <code className="flex-1 min-w-[12rem] bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm font-mono text-slate-700 dark:text-zinc-300 truncate">
               {showKey ? cfg.apiKey : '••••••••••••••••••••••••••••••••'}
             </code>
             <button onClick={() => setShowKey(s => !s)} className="px-3 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs font-medium">
-              {showKey ? 'Hide' : 'Show'}
+              {showKey ? t('settings.general.auth.hideKey', 'Hide') : t('settings.general.auth.showKey', 'Show')}
             </button>
             <button onClick={copyKey} className="px-3 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs font-medium">
               {apiKeyClipboard.status === 'copied' ? t('common.copied', 'Copied') : t('common.copy', 'Copy')}
             </button>
             <button onClick={regenerate} disabled={regenerating} className="px-3 py-2 bg-amber-600 hover:bg-amber-500 rounded text-xs font-medium disabled:opacity-50">
-              {regenerating ? '...' : 'Regenerate'}
+              {regenerating ? '...' : t('settings.general.auth.regenerate', 'Regenerate')}
             </button>
           </div>
           {apiKeyClipboard.status === 'manual' && (
@@ -1116,18 +1123,18 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
           )}
           {!showKey && (
             <p className="text-[11px] text-fg-muted mt-1">
-              Regenerating invalidates the current key — update all external integrations afterward.
+              {t('settings.general.auth.regenerateHint', 'Regenerating invalidates the current key — update all external integrations afterward.')}
             </p>
           )}
         </div>
 
         <div className="border-t border-slate-200 dark:border-zinc-800 pt-4">
-          <label className="block text-xs text-fg-muted mb-1">Session Secret</label>
+          <label className="block text-xs text-fg-muted mb-1">{t('settings.general.auth.sessionSecret', 'Session Secret')}</label>
           <p className="text-xs text-fg-muted mb-2">
-            Signs session cookies. Rotating it generates a new secret while keeping the previous one valid for a rotation window, so existing logins are not dropped immediately. Rotate twice to fully invalidate sessions signed with the old secret.
+            {t('settings.general.auth.sessionSecretHint', 'Signs session cookies. Rotating it generates a new secret while keeping the previous one valid for a rotation window, so existing logins are not dropped immediately. Rotate twice to fully invalidate sessions signed with the old secret.')}
           </p>
           <button onClick={rotateSessionSecret} disabled={rotatingSecret} className="px-3 py-2 bg-amber-600 hover:bg-amber-500 rounded text-xs font-medium disabled:opacity-50">
-            {rotatingSecret ? '...' : 'Rotate session secret'}
+            {rotatingSecret ? '...' : t('settings.general.auth.rotateSecret', 'Rotate session secret')}
           </button>
         </div>
         </>)}
@@ -1149,6 +1156,7 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
 }
 
 function ChangePasswordForm({ username }: { username: string }) {
+  const { t } = useTranslation()
   const fid = useId()
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
@@ -1161,15 +1169,15 @@ function ChangePasswordForm({ username }: { username: string }) {
     e.preventDefault()
     setError('')
     setSuccess(false)
-    if (next !== confirmPw) { setError('New passwords do not match'); return }
-    if (next.length < 8) { setError('Password must be at least 8 characters'); return }
+    if (next !== confirmPw) { setError(t('settings.general.password.mismatch', 'New passwords do not match')); return }
+    if (next.length < 8) { setError(t('settings.general.password.tooShort', 'Password must be at least 8 characters')); return }
     setSubmitting(true)
     try {
       await api.authChangePassword(current, next)
       setCurrent(''); setNext(''); setConfirmPw('')
       setSuccess(true)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Change failed')
+      setError(errorText(e, t('settings.general.password.changeFailed', 'Change failed')))
     } finally {
       setSubmitting(false)
     }
@@ -1177,14 +1185,14 @@ function ChangePasswordForm({ username }: { username: string }) {
 
   return (
     <form onSubmit={submit} className="space-y-2">
-      <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted">Change password for <strong>{username}</strong></label>
-      <input id={`${fid}-1`} type="password" autoComplete="current-password" placeholder="Current password" value={current} onChange={e => setCurrent(e.target.value)} className={inputCls} />
-      <input type="password" autoComplete="new-password" placeholder="New password" value={next} onChange={e => setNext(e.target.value)} className={inputCls} />
-      <input type="password" autoComplete="new-password" placeholder="Confirm new password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} className={inputCls} />
+      <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted"><RichText text={t('settings.general.password.heading', { username, defaultValue: 'Change password for <b>{{username}}</b>' })} components={{ b: <strong /> }} /></label>
+      <input id={`${fid}-1`} type="password" autoComplete="current-password" placeholder={t('settings.general.password.current', 'Current password')} value={current} onChange={e => setCurrent(e.target.value)} className={inputCls} />
+      <input type="password" autoComplete="new-password" placeholder={t('settings.general.password.new', 'New password')} value={next} onChange={e => setNext(e.target.value)} className={inputCls} />
+      <input type="password" autoComplete="new-password" placeholder={t('settings.general.password.confirm', 'Confirm new password')} value={confirmPw} onChange={e => setConfirmPw(e.target.value)} className={inputCls} />
       {error && <div className="text-xs text-red-700 dark:text-red-400">{error}</div>}
-      {success && <div className="text-xs text-accent-text">Password updated</div>}
+      {success && <div className="text-xs text-accent-text">{t('settings.general.password.updated', 'Password updated')}</div>}
       <button type="submit" disabled={submitting || !current || !next} className={`px-3 py-2 ${primaryFill} rounded text-xs font-medium disabled:opacity-50`}>
-        {submitting ? 'Updating…' : 'Change password'}
+        {submitting ? t('settings.general.password.updating', 'Updating…') : t('settings.general.password.change', 'Change password')}
       </button>
     </form>
   )

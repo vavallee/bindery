@@ -13,6 +13,7 @@ vi.mock('../../api/client', () => ({
 
 import { api, GrimmoryConfig, GrimmorySyncStatus } from '../../api/client'
 import GrimmoryTab from './GrimmoryTab'
+import '../../i18n'
 
 const mocked = api as unknown as Record<keyof typeof api, ReturnType<typeof vi.fn>>
 

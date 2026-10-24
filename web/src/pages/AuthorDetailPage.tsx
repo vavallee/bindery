@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { safeHref } from '../util/safeHref'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { api, ApiError, Author, AuthorAlias, Book, BookBulkAction, MediaType, Series } from '../api/client'
@@ -29,6 +30,7 @@ import AuthorSyncNotice from '../components/AuthorSyncNotice'
 import CatalogueReconciliationModal from '../components/CatalogueReconciliationModal'
 import DuplicateCandidatesModal from '../components/DuplicateCandidatesModal'
 import CoverImage from '../components/CoverImage'
+import { errorText } from '../util/errorText'
 
 type MediaFilter = '' | 'ebook' | 'audiobook'
 // 'excluded' folds in what used to be a separate "Show excluded" checkbox. It
@@ -80,10 +82,10 @@ function fmtPublishedYear(d?: string): string {
 }
 
 
-function mediaLabel(mediaType?: Book['mediaType']): string {
-  if (mediaType === 'audiobook') return '🎧 Audiobook'
-  if (mediaType === 'both') return '📖🎧 Both'
-  return '📖 Ebook'
+function mediaLabel(t: TFunction, mediaType?: Book['mediaType']): string {
+  if (mediaType === 'audiobook') return `🎧 ${t('common.audiobook', 'Audiobook')}`
+  if (mediaType === 'both') return `📖🎧 ${t('common.both', 'Both')}`
+  return `📖 ${t('common.ebook', 'Ebook')}`
 }
 
 // Previous/Next navigation (#2548), entirely client-side: AuthorsPage already
@@ -338,12 +340,12 @@ export default function AuthorDetailPage() {
         setSyncGaveUp(false)
       })
       .catch(err => {
-        setError(err instanceof Error ? err.message : 'Failed to load')
+        setError(errorText(err, t('authorDetail.loadFailed', 'Failed to load')))
         if (!cancelled) noteSyncFailure(err)
       })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [authorId, showExcluded, reloadKey])
+  }, [authorId, showExcluded, reloadKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // An author whose catalogue sync is running when the page loads, straight
   // after an add or after a Refresh poll gave up, is polled until the sync
@@ -456,7 +458,7 @@ export default function AuthorDetailPage() {
       quietReload.current = true
       setReloadKey(k => k + 1)
     } catch (e) {
-      if (session.active) setError(e instanceof Error ? e.message : 'Refresh failed')
+      if (session.active) setError(errorText(e, t('authorDetail.refreshFailed', 'Refresh failed')))
     } finally {
       setRefreshingAuthorId(current => (current === refreshedId ? null : current))
     }
@@ -468,7 +470,7 @@ export default function AuthorDetailPage() {
       await api.updateAuthor(author.id, { monitored: !author.monitored })
       setAuthor({ ...author, monitored: !author.monitored })
     } catch (e) {
-      setError(authorSaveError(e, t, 'Update failed'))
+      setError(authorSaveError(e, t, t('authorDetail.updateFailed', 'Update failed')))
     }
   }
 
@@ -490,10 +492,10 @@ export default function AuthorDetailPage() {
       }
       const item = res.results[String(author.id)]
       if (item && !item.ok) {
-        throw new Error(item.error || 'Search failed')
+        throw new Error(item.error || t('authorDetail.searchFailed', 'Search failed'))
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Search failed')
+      setError(errorText(e, t('authorDetail.searchFailed', 'Search failed')))
     } finally {
       setSearchingWanted(false)
     }
@@ -515,7 +517,7 @@ export default function AuthorDetailPage() {
       await api.deleteAuthor(author.id, withFiles.length > 0)
       navigate('/')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Delete failed')
+      setError(errorText(e, t('authorDetail.deleteFailed', 'Delete failed')))
     }
   }
 
@@ -559,7 +561,7 @@ export default function AuthorDetailPage() {
       const items = await api.listAllBooks({ authorId, includeExcluded: showExcluded })
       setBooks(items)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Reload failed')
+      setError(errorText(e, t('authorDetail.reloadFailed', 'Reload failed')))
     }
   }
 
@@ -591,7 +593,7 @@ export default function AuthorDetailPage() {
           okCount++
           succeeded.add(id)
         } else if (!firstError) {
-          firstError = r?.error || 'unknown error'
+          firstError = r?.error || t('authorDetail.unknownError', 'unknown error')
         }
       }
       if (okCount < ids.length) {
@@ -732,9 +734,9 @@ export default function AuthorDetailPage() {
       if (books.length > 0) grouped.push({ key: `series-${series.id}`, seriesId: series.id, title: series.title, books })
     }
     const standalone = filteredBooks.filter(b => !placed.has(b.id))
-    if (standalone.length > 0) grouped.push({ key: 'standalone', title: 'Standalone', books: standalone })
+    if (standalone.length > 0) grouped.push({ key: 'standalone', title: t('authorDetail.standalone', 'Standalone'), books: standalone })
     return grouped
-  }, [authorSeries, filteredBooks])
+  }, [authorSeries, filteredBooks, t])
 
   // Drop any selected IDs that are no longer in the filtered view so the
   // bulk bar count never lies about what's about to be acted on.
@@ -759,8 +761,8 @@ export default function AuthorDetailPage() {
 
   const selectAllVisible = () => setSelected(new Set(filteredBooks.map(b => b.id)))
 
-  if (loading) return <div className="text-fg-muted">Loading…</div>
-  if (!author) return <div className="text-fg-muted">Author not found</div>
+  if (loading) return <div className="text-fg-muted">{t('common.loading', 'Loading…')}</div>
+  if (!author) return <div className="text-fg-muted">{t('authorDetail.notFound', 'Author not found')}</div>
 
   const searchableWantedCount = books.filter(b => b.status === 'wanted' && b.monitored && !b.excluded).length
   // Relinking is valid for every author — the backend accepts any record and the
@@ -880,14 +882,14 @@ export default function AuthorDetailPage() {
                   )
                 })()}
                 <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 dark:bg-zinc-800 text-fg-muted">
-                  {mediaLabel(book.mediaType)}
+                  {mediaLabel(t, book.mediaType)}
                 </span>
                 <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 dark:bg-zinc-800 text-fg-muted">
                   {fmtPublishedYear(book.releaseDate)}
                 </span>
                 {book.excluded && (
                   <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
-                    Excluded
+                    {t('books.excluded', 'Excluded')}
                   </span>
                 )}
               </span>
@@ -899,7 +901,7 @@ export default function AuthorDetailPage() {
           {book.averageRating && book.averageRating > 0 ? <BookRating book={book} /> : '—'}
         </td>
         <td className="hidden sm:table-cell px-3 py-2 text-xs whitespace-nowrap align-middle">
-          {mediaLabel(book.mediaType)}
+          {mediaLabel(t, book.mediaType)}
         </td>
         <td className="hidden sm:table-cell px-3 py-2 whitespace-nowrap align-middle">
           {(() => {
@@ -912,7 +914,7 @@ export default function AuthorDetailPage() {
           })()}
           {book.excluded && (
             <span className="inline-block ml-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
-              Excluded
+              {t('books.excluded', 'Excluded')}
             </span>
           )}
         </td>
@@ -941,20 +943,20 @@ export default function AuthorDetailPage() {
               <th
                 className="w-full sm:w-[46%] text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase cursor-pointer select-none hover:text-slate-900 dark:hover:text-white"
                 onClick={() => toggleSort('title-az', 'title-za')}
-                title="Sort by title"
+                title={t('authorDetail.sortByTitle', 'Sort by title')}
               >
-                Title{sortArrow('title-az', 'title-za')}
+                {t('books.colTitle', 'Title')}{sortArrow('title-az', 'title-za')}
               </th>
               <th
                 className="hidden sm:table-cell sm:w-28 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase cursor-pointer select-none hover:text-slate-900 dark:hover:text-white whitespace-nowrap"
                 onClick={() => toggleSort('date-old', 'date-new')}
-                title="Sort by publication date"
+                title={t('authorDetail.sortByDate', 'Sort by publication date')}
               >
-                Published{sortArrow('date-old', 'date-new')}
+                {t('authorDetail.colPublished', 'Published')}{sortArrow('date-old', 'date-new')}
               </th>
               <th className="hidden md:table-cell md:w-24 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase">{t('books.colRating')}</th>
-              <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase">Type</th>
-              <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase">Status</th>
+              <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase">{t('books.colType', 'Type')}</th>
+              <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase">{t('books.colStatus', 'Status')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
@@ -1020,10 +1022,10 @@ export default function AuthorDetailPage() {
                   )
                 })()}
                 {book.mediaType === 'audiobook' && (
-                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 Audio</span>
+                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 {t('authorDetail.audioBadge', 'Audio')}</span>
                 )}
                 {book.excluded && (
-                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">Excluded</span>
+                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">{t('books.excluded', 'Excluded')}</span>
                 )}
               </div>
               {/* No `book.releaseDate &&` guard: fmtPublishedYear already
@@ -1055,14 +1057,14 @@ export default function AuthorDetailPage() {
             must fall back to navigate(-1) or Back would strand those flows
             on the Authors list instead of where they came from. */}
         {navState ? (
-          <Link to="/" className="text-fg-muted hover:text-slate-900 dark:hover:text-white">← Back</Link>
+          <Link to="/" className="text-fg-muted hover:text-slate-900 dark:hover:text-white">← {t('authorDetail.back', 'Back')}</Link>
         ) : (
           <button
             type="button"
             onClick={() => navigate(-1)}
             className="text-fg-muted hover:text-slate-900 dark:hover:text-white"
           >
-            ← Back
+            ← {t('authorDetail.back', 'Back')}
           </button>
         )}
         {navState && (prevId !== null || nextId !== null) && (
@@ -1123,7 +1125,7 @@ export default function AuthorDetailPage() {
           )}
           <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-fg-muted">
             {author.averageRating > 0 && (
-              <span>★ {author.averageRating.toFixed(2)} ({author.ratingsCount.toLocaleString()} ratings)</span>
+              <span>★ {author.averageRating.toFixed(2)} ({t('authorDetail.ratings', { n: author.ratingsCount.toLocaleString(), defaultValue: '{{n}} ratings' })})</span>
             )}
             {(() => {
               const src = metadataSourceLink(author.foreignAuthorId, 'author')
@@ -1287,13 +1289,13 @@ export default function AuthorDetailPage() {
           </div>
           {author.aliases && author.aliases.length > 0 && (
             <div className="mt-4 text-xs">
-              <div className="text-fg-muted mb-1">Also known as</div>
+              <div className="text-fg-muted mb-1">{t('authorDetail.aliasesHeading', 'Also known as')}</div>
               <div className="flex flex-wrap gap-1.5">
                 {author.aliases.map(a => (
                   <span
                     key={a.id}
                     className="group/alias inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300"
-                    title={a.sourceOlId ? `From ${a.sourceOlId}` : undefined}
+                    title={a.sourceOlId ? t('authorDetail.aliasSource', { source: a.sourceOlId, defaultValue: 'From {{source}}' }) : undefined}
                   >
                     <span>{a.name}</span>
                     <button
@@ -1533,9 +1535,9 @@ export default function AuthorDetailPage() {
           </p>
         )}
         {books.length === 0 ? (
-          !syncing && <p className="text-sm text-fg-muted">No books tracked for this author yet.</p>
+          !syncing && <p className="text-sm text-fg-muted">{t('authorDetail.noBooks', 'No books tracked for this author yet.')}</p>
         ) : filteredBooks.length === 0 ? (
-          <p className="text-sm text-fg-muted">No books match the current filters.</p>
+          <p className="text-sm text-fg-muted">{t('authorDetail.noFilterMatch', 'No books match the current filters.')}</p>
         ) : groupBySeries ? (
           <div className="space-y-6">
             {seriesGroups.map(group => (

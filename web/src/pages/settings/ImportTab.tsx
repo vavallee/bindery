@@ -5,6 +5,7 @@ import { inputCls } from './formStyles'
 import GoodreadsImportSection from './GoodreadsImportSection'
 import { secretInputAttrs } from '../../util/inputAttrs'
 import { primaryFill } from '../../components/buttons'
+import { errorText } from '../../util/errorText'
 
 // onNavigate threads SettingsPage's soft (no-reload) tab switch into the
 // "Configure … in General settings →" link so it doesn't full-page-reload.
@@ -40,7 +41,7 @@ export default function ImportTab({ onNavigate }: ImportTabProps = {}) {
         setReadarrProgress(await api.uploadMigrate<ReadarrImportProgress>(endpoint, fd))
       }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Upload failed')
+      setErr(errorText(e, t('settings.import.uploadFailed', 'Upload failed')))
     } finally {
       setUploading(null)
     }
@@ -90,11 +91,11 @@ export default function ImportTab({ onNavigate }: ImportTabProps = {}) {
       <div className="p-3 border border-slate-200 dark:border-zinc-800 rounded bg-slate-100 dark:bg-zinc-900 space-y-1">
         <div className="text-sm font-medium">{label}</div>
         <div className="text-xs text-fg-muted">
-          {r.requested ?? 0} requested · {r.added ?? 0} added · {r.skipped ?? 0} skipped (already exist) · {r.errors ?? 0} failed
+          {r.requested ?? 0} {t('settings.import.resultRequested', 'requested')} · {r.added ?? 0} {t('settings.import.resultAdded', 'added')} · {r.skipped ?? 0} {t('settings.import.resultSkipped', 'skipped (already exist)')} · {r.errors ?? 0} {t('settings.import.resultFailed', 'failed')}
         </div>
         {r.failures && Object.keys(r.failures).length > 0 && (
           <details className="text-xs">
-            <summary className="cursor-pointer text-red-700 dark:text-red-400">Show {Object.keys(r.failures).length} failures</summary>
+            <summary className="cursor-pointer text-red-700 dark:text-red-400">{t('settings.import.showFailures', { count: Object.keys(r.failures).length, defaultValue: 'Show {{count}} failures' })}</summary>
             <ul className="mt-2 space-y-0.5 font-mono">
               {Object.entries(r.failures).map(([name, reason]) => (
                 <li key={name}><span className="text-slate-800 dark:text-zinc-200">{name}</span>: <span className="text-fg-muted">{reason}</span></li>
@@ -123,7 +124,7 @@ export default function ImportTab({ onNavigate }: ImportTabProps = {}) {
             onChange={e => { const f = e.target.files?.[0]; if (f) upload('csv', f); e.currentTarget.value = '' }}
           />
         </label>
-        {csvResult && <div className="mt-4">{renderResult(csvResult, 'Authors')}</div>}
+        {csvResult && <div className="mt-4">{renderResult(csvResult, t('settings.import.resultAuthors', 'Authors'))}</div>}
       </section>
 
       <section>
@@ -149,10 +150,10 @@ export default function ImportTab({ onNavigate }: ImportTabProps = {}) {
         )}
         {readarrResult && (
           <div className="mt-4 space-y-2">
-            {renderResult(readarrResult.authors, 'Authors')}
-            {renderResult(readarrResult.indexers, 'Indexers')}
-            {renderResult(readarrResult.downloadClients, 'Download clients')}
-            {renderResult(readarrResult.blocklist, 'Blocklist')}
+            {renderResult(readarrResult.authors, t('settings.import.resultAuthors', 'Authors'))}
+            {renderResult(readarrResult.indexers, t('settings.import.resultIndexers', 'Indexers'))}
+            {renderResult(readarrResult.downloadClients, t('settings.import.resultDownloadClients', 'Download clients'))}
+            {renderResult(readarrResult.blocklist, t('settings.import.resultBlocklist', 'Blocklist'))}
           </div>
         )}
         {catalogueTotal > 0 && (
@@ -210,7 +211,7 @@ function ManualImportSection() {
       setFormat(r.detectedFormat)
       if (r.match === 'confident' && r.book) setSelectedBook(r.book)
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Lookup failed')
+      setErr(errorText(e, t('settings.import.lookupFailed', 'Lookup failed')))
     } finally {
       setLooking(false)
     }
@@ -224,7 +225,7 @@ function ManualImportSection() {
       await api.manualImport({ path: path.trim(), bookId: selectedBook.id, format: format || undefined })
       setSuccess(true)
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Import failed')
+      setErr(errorText(e, t('settings.import.importFailed', 'Import failed')))
     } finally {
       setImporting(false)
     }
@@ -270,7 +271,7 @@ function ManualImportSection() {
                   setSelectedBook(result.candidates?.find(b => b.id === id) ?? null)
                 }}
               >
-                <option value="">— select —</option>
+                <option value="">{t('settings.import.manualImportSelect', '— select —')}</option>
                 {result.candidates?.map(b => (
                   <option key={b.id} value={b.id}>{b.title} {b.author ? `(${b.author.authorName})` : ''}</option>
                 ))}
@@ -371,7 +372,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
       const all = await api.listImportLists()
       setLists(sortImportLists(all.filter(l => l.type === 'hardcover')))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load saved Hardcover lists')
+      setError(errorText(err, t('settings.import.hardcoverLoadSavedFailed', 'Failed to load saved Hardcover lists')))
     }
     try {
       const { account, lists: remote } = await api.hardcoverLists(token || undefined)
@@ -380,11 +381,11 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
     } catch (err) {
       setHcLists([])
       setHcAccount('')
-      setError(err instanceof Error ? err.message : 'Failed to load Hardcover lists')
+      setError(errorText(err, t('settings.import.hardcoverLoadFailed', 'Failed to load Hardcover lists')))
     } finally {
       setLoadingLists(false)
     }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     void loadLists('')
@@ -416,7 +417,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
       const updated = await api.updateImportList(il.id, { mediaType })
       updateLocalList(updated)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update media type')
+      setError(errorText(err, t('settings.import.updateMediaTypeFailed', 'Failed to update media type')))
     }
   }
 
@@ -431,7 +432,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
       const updated = await api.updateImportList(il.id, { monitorNew })
       updateLocalList(updated)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update download setting')
+      setError(errorText(err, t('settings.import.updateMonitorNewFailed', 'Failed to update download setting')))
     }
   }
 
@@ -442,7 +443,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
       const updated = await api.updateImportList(il.id, { ownerUserId })
       updateLocalList(updated)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update owner')
+      setError(errorText(err, t('settings.import.updateOwnerFailed', 'Failed to update owner')))
     }
   }
 
@@ -472,7 +473,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
       })
       setLists(prev => sortImportLists([...prev, created]))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update Hardcover import list')
+      setError(errorText(err, t('settings.import.hardcoverUpdateFailed', 'Failed to update Hardcover import list')))
     } finally {
       setActionSlug(null)
     }
@@ -505,7 +506,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
         setLists(sortImportLists(all.filter(l => l.type === 'hardcover')))
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Sync failed')
+      setError(errorText(e, t('settings.import.hardcoverSyncFailed', 'Sync failed')))
     }
   }
 
@@ -551,7 +552,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
       updateLocalList(updated)
       setOverrideDraft(prev => ({ ...prev, [il.id]: '' }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save token override')
+      setError(errorText(err, t('settings.import.tokenOverrideSaveFailed', 'Failed to save token override')))
     } finally {
       setActionSlug(null)
     }
@@ -564,7 +565,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
       const updated = await api.updateImportList(il.id, { clearApiKey: true })
       updateLocalList(updated)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to clear token override')
+      setError(errorText(err, t('settings.import.tokenOverrideClearFailed', 'Failed to clear token override')))
     } finally {
       setActionSlug(null)
     }
@@ -680,7 +681,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
                         : il
                           ? t('settings.import.hardcoverNeverSynced')
                           : t('settings.import.hardcoverNotSelected', 'Not selected')}
-                      {row.remote && ` · ${row.booksCount} books`}
+                      {row.remote && t('settings.import.hardcoverListBooks', { count: row.booksCount })}
                     </span>
                   </span>
                 </label>

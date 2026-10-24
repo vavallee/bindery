@@ -2,6 +2,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import RenameFilesModal from './RenameFilesModal'
 import { reorganizeApi } from '../api/reorganize'
+import '../i18n'
 
 vi.mock('../api/reorganize', () => ({
   reorganizeApi: {

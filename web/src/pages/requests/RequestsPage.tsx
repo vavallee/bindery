@@ -41,9 +41,9 @@ export default function RequestsPage() {
   useEffect(() => { void load(0) }, [load])
 
   useEffect(() => {
-    document.title = 'Requests · Bindery'
+    document.title = `${t('requests.admin.title', 'Requests')} · Bindery`
     return () => { document.title = 'Bindery' }
-  }, [])
+  }, [t])
 
   const decided = (updated: LibraryRequest) => {
     setApproving(null)

@@ -97,11 +97,11 @@ describe('ImportTab coverage', () => {
     const file = new File(['name\nFrank Herbert'], 'authors.csv', { type: 'text/csv' })
     fireEvent.change(fileInput(container, '.csv'), { target: { files: [file] } })
 
-    expect(await screen.findByText('3 requested · 1 added · 1 skipped (already exist) · 1 failed')).toBeInTheDocument()
+    expect(await screen.findByText('3 settings.import.resultRequested · 1 settings.import.resultAdded · 1 settings.import.resultSkipped · 1 settings.import.resultFailed')).toBeInTheDocument()
     expect(mocked.uploadMigrate).toHaveBeenCalledWith('csv', expect.any(FormData))
     const fd = mocked.uploadMigrate.mock.calls[0][1] as FormData
     expect((fd.get('file') as File).name).toBe('authors.csv')
-    expect(screen.getByText('Show 1 failures')).toBeInTheDocument()
+    expect(screen.getByText('settings.import.showFailures {"count":1,"defaultValue":"Show {{count}} failures"}')).toBeInTheDocument()
     expect(screen.getByText('Bad Author')).toBeInTheDocument()
   })
 
@@ -117,11 +117,11 @@ describe('ImportTab coverage', () => {
     const { container } = render(<ImportTab />)
     fireEvent.change(fileInput(container, '.db'), { target: { files: [new File(['x'], 'readarr.db')] } })
 
-    expect(await screen.findByText('Indexers')).toBeInTheDocument()
-    expect(screen.getByText('Download clients')).toBeInTheDocument()
-    expect(screen.queryByText('Blocklist')).not.toBeInTheDocument()
+    expect(await screen.findByText('settings.import.resultIndexers')).toBeInTheDocument()
+    expect(screen.getByText('settings.import.resultDownloadClients')).toBeInTheDocument()
+    expect(screen.queryByText('settings.import.resultBlocklist')).not.toBeInTheDocument()
     expect(mocked.uploadMigrate).toHaveBeenCalledWith('readarr', expect.any(FormData))
-    expect(screen.getByText('0 requested · 0 added · 0 skipped (already exist) · 0 failed')).toBeInTheDocument()
+    expect(screen.getByText('0 settings.import.resultRequested · 0 settings.import.resultAdded · 0 settings.import.resultSkipped · 0 settings.import.resultFailed')).toBeInTheDocument()
   })
 
   describe('Readarr catalogue backfill progress', () => {
@@ -204,7 +204,7 @@ describe('ImportTab coverage', () => {
       const { container } = render(<ImportTab />)
       expect(await screen.findByText(FETCHING(12, 40))).toBeInTheDocument()
       fireEvent.change(fileInput(container, '.csv'), { target: { files: [new File(['a'], 'a.csv')] } })
-      expect(await screen.findByText('1 requested · 1 added · 0 skipped (already exist) · 0 failed')).toBeInTheDocument()
+      expect(await screen.findByText('1 settings.import.resultRequested · 1 settings.import.resultAdded · 0 settings.import.resultSkipped · 0 settings.import.resultFailed')).toBeInTheDocument()
       expect(screen.getByText(FETCHING(12, 40))).toBeInTheDocument()
     })
 
@@ -214,7 +214,7 @@ describe('ImportTab coverage', () => {
       mocked.uploadMigrate.mockResolvedValue({ running: false, result: { authors: { requested: 1, added: 1 } } })
       const { container } = render(<ImportTab />)
       fireEvent.change(fileInput(container, '.db'), { target: { files: [new File(['x'], 'readarr.db')] } })
-      expect(await screen.findByText('Authors')).toBeInTheDocument()
+      expect(await screen.findByText('settings.import.resultAuthors')).toBeInTheDocument()
       await act(async () => { resolveProbe({ running: false, catalogueRunning: true, catalogueTotal: 9, catalogueDone: 1 }) })
       expect(screen.queryByTestId('readarr-catalogue-progress')).not.toBeInTheDocument()
     })
@@ -223,7 +223,7 @@ describe('ImportTab coverage', () => {
       mocked.uploadMigrate.mockResolvedValue({ running: false, result: { authors: { requested: 1, added: 1 } } })
       const { container } = render(<ImportTab />)
       fireEvent.change(fileInput(container, '.db'), { target: { files: [new File(['x'], 'readarr.db')] } })
-      expect(await screen.findByText('Authors')).toBeInTheDocument()
+      expect(await screen.findByText('settings.import.resultAuthors')).toBeInTheDocument()
       expect(screen.queryByTestId('readarr-catalogue-progress')).not.toBeInTheDocument()
     })
 
@@ -339,7 +339,7 @@ describe('ImportTab coverage', () => {
     render(<ImportTab />)
 
     const savedRow = await rowFor('Want to Read')
-    expect(within(savedRow).getByText(/12 books/)).toBeInTheDocument()
+    expect(within(savedRow).getByText(/hardcoverListBooks \{"count":12\}/)).toBeInTheDocument()
     expect(within(savedRow).getByText(/settings\.import\.hardcoverNeverSynced/)).toBeInTheDocument()
     expect(within(savedRow).getByText('settings.import.hardcoverGlobalToken')).toBeInTheDocument()
     expect(screen.queryByText('Not hardcover')).not.toBeInTheDocument()

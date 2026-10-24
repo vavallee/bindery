@@ -169,9 +169,9 @@ export default function SettingsPage() {
   }, [])
 
   useEffect(() => {
-    document.title = 'Settings · Bindery'
+    document.title = `${t('nav.settings', 'Settings')} · Bindery`
     return () => { document.title = 'Bindery' }
-  }, [])
+  }, [t])
 
   // Settings search (#3059). The tab list is the same one the sidebar and the
   // phone select show, so a non admin never gets a result for a tab they

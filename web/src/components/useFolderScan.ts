@@ -1,6 +1,8 @@
 import { useCallback, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
 import type { ScanItem } from '../api/client'
+import { errorText } from '../util/errorText'
 
 export interface UseFolderScanResult {
   path: string
@@ -24,6 +26,7 @@ export interface UseFolderScanResult {
  * book) from the fetched items via the optional onItems callback.
  */
 export function useFolderScan(onItems?: (items: ScanItem[]) => void): UseFolderScanResult {
+  const { t } = useTranslation()
   const [path, setPath] = useState('')
   const [scanning, setScanning] = useState(false)
   const [items, setItems] = useState<ScanItem[] | null>(null)
@@ -51,11 +54,11 @@ export function useFolderScan(onItems?: (items: ScanItem[]) => void): UseFolderS
       setTruncated(r.truncated)
       onItems?.(r.items)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Scan failed')
+      setError(errorText(e, t('importPage.folderScan.failed', 'Scan failed')))
     } finally {
       setScanning(false)
     }
-  }, [path, clear, onItems])
+  }, [path, clear, onItems]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const scan = useCallback(() => { void runScan(showImported) }, [runScan, showImported])
 

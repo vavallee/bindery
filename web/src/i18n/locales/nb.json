@@ -59,7 +59,8 @@
     "retrying": "Prøver igjen…",
     "bnfSourceCredit": "Data fra BnF, Licence Ouverte / Open Licence 2.0, hentet {{date}}",
     "close": "Lukk",
-    "unknownError": "Ukjent feil"
+    "unknownError": "Ukjent feil",
+    "bulkActionFailed": "Massehandlingen mislyktes"
   },
   "monitorMode": {
     "all": "Alle bøker",
@@ -97,7 +98,9 @@
     "myRequests": "Mine forespørsler",
     "requests": "Forespørsler",
     "requestsPending": "{{count}} ventende forespørsler",
-    "toggleMenu": "Vis eller skjul menyen"
+    "toggleMenu": "Vis eller skjul menyen",
+    "themeLight": "Bytt til lyst tema",
+    "themeDark": "Bytt til mørkt tema"
   },
   "librarySearch": {
     "label": "Søk i biblioteket",
@@ -160,7 +163,8 @@
     "metadataNoResults": "Ingen metadatatreff for det søket.",
     "metadataAuthorMissing": "Forfatternavn mangler i dette resultatet",
     "metadataAdd": "Legg til og bruk",
-    "metadataAdding": "Legger til…"
+    "metadataAdding": "Legger til…",
+    "importFailed": "Importen mislyktes"
   },
   "importPage": {
     "title": "Import",
@@ -169,7 +173,14 @@
     "viewLibrary": "I biblioteket ditt",
     "viewFolder": "Fra en mappe",
     "viewLibraryHint": "Filer som allerede ligger i bibliotekmappene dine, men som siste skanning ikke klarte å plassere. Ingenting flyttes; du sier selv hvilken bok hver av dem er.",
-    "viewFolderHint": "Filer hvor som helst ellers på disken. Hver av dem kobles til en bok i katalogen din og importeres til biblioteket."
+    "viewFolderHint": "Filer hvor som helst ellers på disken. Hver av dem kobles til en bok i katalogen din og importeres til biblioteket.",
+    "catalogueAdder": {
+      "searchFailed": "Metadatasøket mislyktes",
+      "addFailed": "Kunne ikke legge til boken"
+    },
+    "folderScan": {
+      "failed": "Skanningen mislyktes"
+    }
   },
   "adoption": {
     "adminOnly": "Bare en administrator kan avgjøre hva filene i biblioteket er.",
@@ -326,6 +337,12 @@
       "sentence": "Forfatteren er ikke i biblioteket ditt ennå",
       "show": "Vis bøker",
       "hide": "Skjul bøker"
+    },
+    "errors": {
+      "loadFailed": "Kunne ikke laste listen",
+      "adoptFailed": "Kunne ikke ta i bruk denne boken",
+      "ignoreFailed": "Kunne ikke ignorere denne boken",
+      "undoFailed": "Kunne ikke angre"
     }
   },
   "search": {
@@ -346,7 +363,12 @@
     },
     "forceTitle": "Hente denne utgivelsen på nytt?",
     "forceBody": "Bindery har allerede importert denne utgivelsen én gang. Hent den likevel bare hvis filene fra den importen mangler: så lenge de fortsatt finnes, hoppes den nye nedlastingen over som et duplikat. Ingenting fjernes fra nedlastingsklienten, og bokens nåværende filer blir liggende der de er.",
-    "forceConfirm": "Hent likevel"
+    "forceConfirm": "Hent likevel",
+    "pageTitle": "Søk",
+    "searchFailed": "Søket mislyktes",
+    "grabFailed": "Hentingen mislyktes",
+    "indexerLink": "indekserer",
+    "grabs": "{{n}} hentinger"
   },
   "login": {
     "title": "Logg inn",
@@ -572,7 +594,26 @@
       "removing": "Fjerner…",
       "removeFailed": "Kunne ikke fjerne bildet"
     },
-    "photoNotUploaded": "Bare et bilde du har lastet opp, kan fjernes. Last inn siden på nytt for å se det gjeldende bildet."
+    "photoNotUploaded": "Bare et bilde du har lastet opp, kan fjernes. Last inn siden på nytt for å se det gjeldende bildet.",
+    "loadFailed": "Kunne ikke laste",
+    "refreshFailed": "Oppdateringen mislyktes",
+    "updateFailed": "Endringen mislyktes",
+    "searchFailed": "Søket mislyktes",
+    "deleteFailed": "Slettingen mislyktes",
+    "reloadFailed": "Kunne ikke laste inn på nytt",
+    "unknownError": "ukjent feil",
+    "standalone": "Frittstående",
+    "notFound": "Fant ikke forfatteren",
+    "sortByTitle": "Sorter etter tittel",
+    "sortByDate": "Sorter etter utgivelsesdato",
+    "colPublished": "Utgitt",
+    "audioBadge": "Lyd",
+    "back": "Tilbake",
+    "aliasesHeading": "Også kjent som",
+    "aliasSource": "Fra {{source}}",
+    "noBooks": "Ingen bøker spores for denne forfatteren ennå.",
+    "noFilterMatch": "Ingen bøker passer til filtrene.",
+    "ratings": "{{n}} vurderinger"
   },
   "catalogueReconciliation": {
     "title": "Avstem katalogen",
@@ -676,7 +717,8 @@
     "ratingsCount_one": "{{formatted}} vurdering",
     "ratingsCount_other": "{{formatted}} vurderinger",
     "reviewDuplicates": "Gå gjennom duplikater",
-    "reviewDuplicatesHint": "Finn titler i hele biblioteket som ser ut til å være samme bok. Ingenting endres før du ekskluderer en rad"
+    "reviewDuplicatesHint": "Finn titler i hele biblioteket som ser ut til å være samme bok. Ingenting endres før du ekskluderer en rad",
+    "languageUnknown": "Metadatakilden oppga ikke språket for denne boken."
   },
   "wanted": {
     "title": "Ønsket",
@@ -707,7 +749,10 @@
     "noCover": "Uten omslag",
     "authorUnknown": "Ukjent forfatter",
     "changeFormat": "Endre format for {{title}}",
-    "authorNotMonitored": "Forfatteren er ikke overvåket, så det søkes ikke automatisk etter denne boken"
+    "authorNotMonitored": "Forfatteren er ikke overvåket, så det søkes ikke automatisk etter denne boken",
+    "updateFailed": "Endringen mislyktes",
+    "unmonitorReverted": "Kunne ikke oppdatere ønskelisten, endringen er rullet tilbake.",
+    "grabFailed": "Hentingen mislyktes"
   },
   "history": {
     "title": "Historikk",
@@ -743,7 +788,8 @@
     "contentCheckEbookAuthorOnly": "av {{author}}",
     "contentCheckAudiobookEntry": "{{title}} ({{count}})",
     "contentCheckRetitled": "Alle filene har tittelen «{{title}}» ({{count}} filer), så den ble importert som en utgave med ny tittel",
-    "contentCheckTruncated": "Innholdssjekken ble avbrutt og hoppet over"
+    "contentCheckTruncated": "Innholdssjekken ble avbrutt og hoppet over",
+    "blocklistHint": "Legg til i blokkeringslisten, slik at denne utgivelsen ikke hentes igjen"
   },
   "queue": {
     "title": "Kø",
@@ -807,7 +853,27 @@
     "matchBookSearch": "Søk etter en bok",
     "matchBookSearching": "Søker…",
     "matchBookSearchBtn": "Søk",
-    "matchBookCancel": "Avbryt"
+    "matchBookCancel": "Avbryt",
+    "retryFailed": "Nytt forsøk mislyktes",
+    "matchFailed": "Koblingen mislyktes",
+    "bulkRetryFailed": "Nye forsøk mislyktes",
+    "bulkRemoveFailed": "Fjerningen mislyktes",
+    "age": {
+      "seconds": "for {{n}} s siden",
+      "minutes": "for {{n}} min siden",
+      "hours": "for {{n}} t siden",
+      "days": "for {{n}} d siden"
+    },
+    "importRequeued": "Lagt i kø for et nytt importforsøk: skanneren tar den ved neste sjekk.",
+    "importBlockedHint": "Importen er blokkert og krever manuell inngripen (sjekk tillatelsene på biblioteksstien)",
+    "errorPrefix": {
+      "importFailed": "Importen mislyktes:",
+      "importBlocked": "Importen er blokkert:",
+      "error": "Feil:"
+    },
+    "pendingGrabbing": "Henter…",
+    "pendingGrab": "Hent nå",
+    "pendingHeading": "Ventende utgivelser ({{n}})"
   },
   "series": {
     "addFromHardcover": {
@@ -959,6 +1025,40 @@
       "done_one": "{{count}} delbind overvåkes ikke lenger",
       "done_other": "{{count}} delbind overvåkes ikke lenger",
       "failed": "Kunne ikke slutte å overvåke delbindene"
+    },
+    "addBookModal": {
+      "loadFailed": "Kunne ikke laste bøkene",
+      "selectBook": "Velg en bok",
+      "addFailed": "Kunne ikke legge til boken",
+      "title": "Legg til bok i serien",
+      "searchPlaceholder": "Søk i bøkene i biblioteket…",
+      "loading": "Laster…",
+      "noMatch": "Fant ingen bøker som passer.",
+      "position": "Plassering (valgfritt)",
+      "primarySeries": "Hovedserie",
+      "adding": "Legger til…",
+      "add": "Legg til"
+    },
+    "hardcoverLink": {
+      "searchFailed": "Søket mislyktes",
+      "linkFailed": "Kunne ikke koble til serien",
+      "unlinkFailed": "Kunne ikke fjerne koblingen",
+      "title": "Koble til en serie på Hardcover",
+      "current": "Koblet nå",
+      "view": "Vis på Hardcover ↗",
+      "auto": "Automatisk",
+      "manual": "Manuelt",
+      "remove": "Fjern koblingen",
+      "searchPlaceholder": "Søk etter serier på Hardcover",
+      "books_one": "{{count}} bok",
+      "books_other": "{{count}} bøker",
+      "readers": "{{n}} lesere",
+      "match": "{{confidence}} treff",
+      "noPage": "Ingen Hardcover-side for dette resultatet",
+      "searching": "Søker…",
+      "noResults": "Fant ingen serier på Hardcover.",
+      "saving": "Lagrer…",
+      "confirm": "Bekreft valget"
     }
   },
   "importHints": {
@@ -1029,7 +1129,188 @@
         "unknownRunHeading": "Eldre elementer · {{count}}",
         "dismissRun": "Avvis alle fra denne kjøringen",
         "dismissingRun": "Avviser…",
-        "dismissRunConfirm": "Vil du avvise {{count}} elementer til gjennomgang fra kjøring #{{runId}}? Dette kan ikke angres."
+        "dismissRunConfirm": "Vil du avvise {{count}} elementer til gjennomgang fra kjøring #{{runId}}? Dette kan ikke angres.",
+        "reason": {
+          "unmatchedAuthor": "Fant ingen sikker forfatter",
+          "ambiguousAuthor": "Flere forfattere passer",
+          "unmatchedBook": "Fant ingen sikker bok",
+          "ambiguousBook": "Flere bøker passer"
+        },
+        "heading": "Bøker uten treff",
+        "hint": "ABS-elementer med lav sikkerhet blir liggende her til du uttrykkelig importerer eller avviser dem, slik at dårlige metadata holdes utenfor hovedkatalogen.",
+        "none": "Ingen ABS-elementer venter på gjennomgang.",
+        "unknownAuthor": "Ukjent forfatter",
+        "resolvedAuthor": "Forfatter: {{name}}",
+        "resolvedBook": "Bok: {{title}}",
+        "fileMappingFound": "Filkobling funnet",
+        "searching": "Søker…",
+        "searchAuthor": "Forfatter",
+        "searchBook": "Bok",
+        "importing": "Importerer…",
+        "import": "Importer",
+        "dismiss": "Avvis"
+      },
+      "errors": {
+        "loadConflicts": "Kunne ikke laste inn berikelseskonflikter",
+        "loadReview": "Kunne ikke laste inn elementer til gjennomgang",
+        "loadLibraries": "Kunne ikke laste inn biblioteker",
+        "loadConfig": "Kunne ikke laste inn Audiobookshelf-oppsettet",
+        "save": "Kunne ikke lagre Audiobookshelf-innstillingene",
+        "test": "Tilkoblingstesten mislyktes",
+        "importStart": "Importen kunne ikke startes",
+        "rollbackPreview": "Kunne ikke forhåndsvise tilbakerullingen",
+        "rollback": "Kunne ikke rulle tilbake importkjøringen",
+        "resolveConflict": "Kunne ikke løse konflikten",
+        "relink": "Kunne ikke koble forfatteren på nytt",
+        "reviewImport": "Kunne ikke importere elementet",
+        "reviewDismiss": "Kunne ikke avvise elementet",
+        "reviewDismissRun": "Kunne ikke avvise kjøringen",
+        "authorSearch": "Forfattersøket mislyktes",
+        "resolveAuthor": "Kunne ikke angi forfatteren",
+        "bookSearch": "Boksøket mislyktes",
+        "resolveBook": "Kunne ikke angi boken"
+      },
+      "import": {
+        "saveFirst": "Lagre Audiobookshelf-innstillingene før du starter en import",
+        "heading": "Katalogimport",
+        "hint": "Importer forfattere, bøker, serier og utgaver fra de valgte ABS-bibliotekene. Delte filstier blir automatisk koblet til Binderys eierskap; når ABS og Bindery bruker ulike monteringsprefikser, legger du til en stioversettelse ovenfor. Stier som ikke er synlige, forblir bare metadata og telles for manuell oppfølging.",
+        "dryRun": "Start med en prøvekjøring",
+        "preview": "Forhåndsvis endringer",
+        "running": "Kjører…",
+        "runSelected": "Kjør valgt modus",
+        "run": "Importer biblioteker",
+        "saveFirstHint": "Lagre Audiobookshelf-innstillingene før du starter en import, slik at kjøringen bruker det lagrede kildeoppsettet.",
+        "chooseLibraryHint": "Velg minst ett bibliotek, eller bruk «Test tilkobling» eller «List biblioteker» for å hente tilgjengelige bokbiblioteker før du starter en import.",
+        "working": "Arbeider…",
+        "processed": "{{count}} behandlet",
+        "resumedAfter": "Fortsatte fra side {{page}} etter {{item}}.",
+        "resumed": "Fortsatte fra side {{page}}.",
+        "dryRunFailed": "Prøvekjøringen mislyktes: {{error}}",
+        "failed": "Importen mislyktes: {{error}}",
+        "dryRunComplete": "Prøvekjøringen er ferdig",
+        "complete": "Importen er ferdig",
+        "stats": {
+          "librariesScanned_one": "bibliotek skannet",
+          "librariesScanned_other": "biblioteker skannet",
+          "booksCreated_one": "bok opprettet",
+          "booksCreated_other": "bøker opprettet",
+          "booksLinked_one": "koblet til en eksisterende rad",
+          "booksLinked_other": "koblet til eksisterende rader",
+          "booksUpdated_one": "oppdatert",
+          "booksUpdated_other": "oppdatert",
+          "authorsCreated_one": "forfatter opprettet",
+          "authorsCreated_other": "forfattere opprettet",
+          "seriesCreated_one": "serie opprettet",
+          "seriesCreated_other": "serier opprettet",
+          "editionsAdded_one": "utgave lagt til",
+          "editionsAdded_other": "utgaver lagt til",
+          "ownedMarked_one": "format merket som eid",
+          "ownedMarked_other": "formater merket som eid",
+          "reviewQueued_one": "lagt i kø for gjennomgang",
+          "reviewQueued_other": "lagt i kø for gjennomgang",
+          "pendingManual_one": "venter på manuell oppfølging",
+          "pendingManual_other": "venter på manuell oppfølging",
+          "metadataRelinked_one": "metadata koblet på nytt",
+          "metadataRelinked_other": "metadata koblet på nytt",
+          "metadataConflicts_one": "konflikt lagt i kø for gjennomgang",
+          "metadataConflicts_other": "konflikter lagt i kø for gjennomgang"
+        }
+      },
+      "loading": "Laster inn Audiobookshelf…",
+      "runStatus": {
+        "rolledBack": "rullet tilbake",
+        "completed": "fullført",
+        "failed": "mislyktes",
+        "running": "kjører"
+      },
+      "runs": {
+        "unknownLibrary": "Ukjent bibliotek",
+        "heading": "Siste kjøringer",
+        "hint": "Bruk en prøvekjøring før en ekte import, og forhåndsvis deretter tilbakerulling av akkurat den kjøringen hvis du trenger å angre den trygt.",
+        "refresh": "Oppdater kjøringer",
+        "none": "Ingen ABS-importkjøringer er registrert ennå.",
+        "dryRun": "Prøvekjøring",
+        "live": "Ekte import",
+        "title": "Kjøring #{{id}} · {{mode}} · {{status}}",
+        "summary": "{{seen}} elementer sett, {{fetched}} detaljoppslag, {{created}} bøker opprettet, {{linked}} koblet, {{updated}} oppdatert, {{owned}} formater merket som eid, {{review}} lagt i kø for gjennomgang, {{manual}} venter på manuell oppfølging.",
+        "checkpointAfter": "Siste sjekkpunkt: side {{page}} etter {{item}}.",
+        "checkpoint": "Siste sjekkpunkt: side {{page}}."
+      },
+      "rollback": {
+        "action": {
+          "deleteAuthor": "Slett forfatteren {{name}}",
+          "deleteBook": "Slett boken {{name}}",
+          "deleteEdition": "Slett utgaven {{name}}",
+          "deleteSeries": "Slett serien {{name}}",
+          "restoreBook": "Gjenopprett bokmetadata for {{name}}",
+          "unlinkSeries": "Fjern seriekoblingen {{name}}",
+          "unlinkProvenance": "Fjern ABS-koblingen {{name}}",
+          "retain": "Behold {{entityType}} {{name}}"
+        },
+        "previewing": "Forhåndsviser…",
+        "preview": "Forhåndsvis tilbakerulling",
+        "rolledBack": "Rullet tilbake",
+        "applying": "Ruller tilbake…",
+        "apply": "Rull tilbake",
+        "previewHeading": "Forhåndsvisning av tilbakerulling",
+        "resultHeading": "Resultat av tilbakerulling",
+        "summary": "{{planned}} handlinger planlagt, {{deleted}} oppføringer slettet, {{unlinked}} ABS-koblinger fjernet, {{skipped}} beholdt, {{failed}} feil.",
+        "wouldChange": "Ville bli slettet eller endret",
+        "changed": "Slettet eller endret",
+        "noChanges": "Ingen oppføringer ville bli slettet eller endret.",
+        "wouldRetain": "Ville bli beholdt",
+        "retained": "Beholdt",
+        "noRetained": "Ingen beholdte oppføringer er rapportert."
+      },
+      "intro": "Sett opp én ABS-kilde, test innloggingen med API-nøkkelen, velg bokbiblioteker og importer deretter ABS-metadata til Bindery-katalogen.",
+      "matchingTip": "For bedre treff fra starten hjelper det å gå gjennom de valgte ABS-bibliotekene først og koble lydbøkene til Audible-kilder, slik at ASIN-er allerede finnes før importen.",
+      "disableSource": "Deaktiver Audiobookshelf-kilden",
+      "enableSource": "Aktiver Audiobookshelf-kilden",
+      "libraries": {
+        "heading": "Biblioteker",
+        "hint": "Velg hvert ABS-bokbibliotek som skal importeres fra denne kilden.",
+        "none": "Ingen biblioteker er valgt. Bruk «Test tilkobling» eller «List biblioteker» for å finne tilgjengelige bokbiblioteker."
+      },
+      "fields": {
+        "sourceLabel": "Navn på kilden",
+        "baseUrl": "Basis-URL",
+        "apiKey": "API-nøkkel",
+        "apiKeySavedPlaceholder": "Den lagrede nøkkelen er skjult. Skriv inn en ny nøkkel for å rotere den.",
+        "apiKeyPlaceholder": "Lim inn en ABS-API-nøkkel",
+        "apiKeySavedHint": "En nøkkel er allerede lagret og kan bare skrives, ikke leses. La feltet stå tomt for å beholde den lagrede nøkkelen. Bruk nøkkelen til en bruker som har tilgang til de valgte bokbibliotekene; ABS-administratorrettigheter trengs ikke.",
+        "apiKeyHint": "Bruk nøkkelen til en bruker som har tilgang til de valgte bokbibliotekene. ABS-administratorrettigheter trengs ikke, og den lagrede nøkkelen sendes aldri tilbake til nettleseren etter at du har lagret den."
+      },
+      "test": {
+        "connectedAs": "Tilkoblet som",
+        "serverVersion": "på ABS {{version}}",
+        "defaultLibrary": "standardbibliotek {{id}}"
+      },
+      "pathRemap": {
+        "label": "ABS-stiomkobling",
+        "help": "Valgfritt, og atskilt fra omkoblingene for nedlastingsklienter. Bruk den når ABS oppgir stier på delt lagring som Bindery ser under en annen montering."
+      },
+      "saveSource": "Lagre kilden",
+      "testConnection": "Test tilkobling",
+      "listLibraries": "List biblioteker",
+      "results": {
+        "books": "Bøker",
+        "authors": "Forfattere",
+        "series": "Serier",
+        "editions": "Utgaver",
+        "followUp": "Oppfølging",
+        "createdLinked": "{{created}} opprettet, {{linked}} koblet.",
+        "editionsSummary": "{{added}} lagt til, {{owned}} formater merket som eid.",
+        "followUpSummary": "{{review}} lagt i kø for gjennomgang, {{manual}} venter på manuell oppfølging, {{conflicts}} konflikter i kø."
+      },
+      "conflicts": {
+        "authorTitle": "Forfatterkonflikter",
+        "authorDescription": "Gå gjennom ABS-plassholderforfattere her først. Hvis Bindery trygt kan koble en av dem til metadata fra leverandøren, kan du gjøre det før du går gjennom bøkene.",
+        "authorEmpty": "Ingen forfatterkonflikter er registrert ennå.",
+        "authorResolved": "Løste forfattervalg",
+        "bookTitle": "Bokkonflikter",
+        "bookDescription": "Når bokmetadata fra ABS og fra leverandøren ikke stemmer overens, beholder Bindery leverandørens verdi inntil videre og lar deg bekrefte her hvilken kilde som skal gjelde.",
+        "bookEmpty": "Ingen bokkonflikter er registrert ennå.",
+        "bookResolved": "Løste bokvalg"
       }
     },
     "calibre": {
@@ -1147,6 +1428,73 @@
         "close": "Lukk",
         "closeRunningHint": "Lukk. Bøkene i køen fortsetter å sendes i bakgrunnen.",
         "closeAndKeepGoing": "Lukk og fortsett"
+      },
+      "errors": {
+        "save": "Lagringen mislyktes",
+        "importStart": "Importen kunne ikke startes"
+      },
+      "test": {
+        "pluginReachable": "✓ Programtillegget svarer",
+        "calibredbReachable": "✓ calibredb svarer",
+        "failed": "Testen mislyktes",
+        "pluginUnreachable": "✗ Fikk ikke kontakt med programtillegget",
+        "calibredbUnreachable": "✗ calibredb svarer ikke",
+        "button": "Test tilkobling"
+      },
+      "intro": "Calibre kjenner bare til bøker som er registrert i <code>metadata.db</code>; en fil som legges i bibliotekmappen, er usynlig for Calibre og for CWA. Det er tre måter å levere en bok på: registrere den i Calibre etter importen (Skriveintegrasjon nedenfor), kopiere den til en CWA-innleveringsmappe (CWA-delen nedenfor), eller la CWA eller Calibre eie biblioteket og fylle det fra en slippmappe (importmodus Ekstern, under Filnavngiving på fanen Generelt). Verken skriveintegrasjonen eller CWA-speilingen kjører i importmodusen Ekstern. <guide>Veiledningen for Calibre-integrasjon</guide> sammenligner dem.",
+      "fields": {
+        "libraryPath": "Bibliotekssti",
+        "libraryPathHint": "Mappen som inneholder <code>metadata.db</code>. Brukes av både skriveintegrasjonen og biblioteksimporten.",
+        "binaryPath": "Sti til programfilen (valgfritt)",
+        "binaryPathHint": "La stå tomt for å finne <code>calibredb</code> via PATH. Angi den når Bindery kjører i en container som har Calibre på en fast plassering.",
+        "pluginUrl": "URL til programtillegget",
+        "pluginUrlHint": "Basis-URL-en til HTTP-serveren i programtillegget Bindery Bridge, som kjører inne i Calibre.",
+        "apiKey": "API-nøkkel",
+        "apiKeyHint": "Bearer-tokenet som er satt opp i dialogen Calibre-innstillinger for programtillegget.",
+        "apiKeyPlaceholder": "API-nøkkel for programtillegget",
+        "pushRemap": "Stiomkobling for sending",
+        "pushRemapHint": "Valgfritt. Hvis Calibre-containeren monterer biblioteket under en annen sti enn Bindery, kobler du Binderys prefiks til Calibres som <code>{{pair}}</code>-par (kommaseparert), for eksempel <code>{{linux}}</code>. For Calibre på Windows kobler du til en nettverksressurs, for eksempel <code>{{windows}}</code>; en nettverksadresse er mer pålitelig enn en tilordnet stasjonsbokstav, som Calibre ikke alltid ser mens det kjører. La feltet stå tomt når begge containerne ser biblioteket under samme sti."
+      },
+      "mode": {
+        "heading": "Skriveintegrasjon",
+        "off": "Av",
+        "offDesc": "Calibre kalles ikke ved import. Filen havner bare i Bindery-biblioteket.",
+        "calibredb": "calibredb-CLI",
+        "calibredbDesc": "Kjør calibredb add --with-library etter hver import. Calibre kopierer filen inn i sitt eget bibliotek, så den finnes to ganger. Krever calibredb i Bindery-containeren eller -prosessen; det offisielle distroless-imaget har det ikke.",
+        "plugin": "Programtillegget Calibre Bridge",
+        "pluginDesc": "Gi hver import videre til programtillegget Bindery Bridge, som kjører inne i Calibre i en annen container eller på en annen vert. Med sendemetoden sendes bare stien og metadataene, så Calibre må se Bindery-biblioteket; med hentemetoden laster programtillegget ned hver bok fra Bindery selv."
+      },
+      "import": {
+        "heading": "Biblioteksimport",
+        "hint": "Les det eksisterende Calibre-biblioteket ditt og importer bøker, forfattere og utgaver til Bindery. Fungerer uavhengig av skrivemodusen ovenfor.",
+        "disable": "Deaktiver biblioteksimport",
+        "enable": "Aktiver biblioteksimport",
+        "syncOnStartup": "Synkroniser ved oppstart",
+        "syncOnStartupHint": "Importer på nytt hver gang Bindery starter. Trygt å la stå på: importen er inkrementell og gir samme resultat hver gang.",
+        "lastImport": "Siste import:",
+        "never": "Aldri importert.",
+        "running": "Importerer…",
+        "start": "Importer biblioteket",
+        "working": "Arbeider…",
+        "failed": "Importen mislyktes: {{error}}",
+        "complete": "Importen er ferdig",
+        "stats": {
+          "authorsAdded_one": "forfatter lagt til",
+          "authorsAdded_other": "forfattere lagt til",
+          "booksAdded_one": "bok lagt til",
+          "booksAdded_other": "bøker lagt til",
+          "editionsAdded_one": "utgave lagt til",
+          "editionsAdded_other": "utgaver lagt til",
+          "duplicatesMerged_one": "slått sammen",
+          "duplicatesMerged_other": "slått sammen",
+          "skipped_one": "hoppet over",
+          "skipped_other": "hoppet over"
+        }
+      },
+      "cwa": {
+        "intro": "Når dette er satt, kopieres også hver vellykkede e-bokimport til denne mappen, slik at en <cwa>CWA</cwa>-container ved siden av kan hente den inn. Bindery beholder sin egen kopi. Lydbøker speiles ikke. Speilingen er uavhengig av skriveintegrasjonen ovenfor, og den gjør ingenting i importmodusen Ekstern; bruk slippmappen på fanen Generelt for det oppsettet. La feltet stå tomt for å slå den av.",
+        "ingestPath": "Sti til innleveringsmappen",
+        "ingestPathHint": "Monter samme sti i begge containerne. Dokumentasjonen til CWA bruker <code>{{path}}</code>."
       }
     },
     "indexers": {
@@ -1211,7 +1559,8 @@
       "cooldown": "Hastighetsbegrenset. Søkene gjenopptas {{until}}: {{error}}",
       "pinnedClientDisabled": "Låst til nedlastingsklienten {{name}}, som er deaktivert. Det som hentes fra denne indeksereren, mislykkes og går ikke til en annen klient før du aktiverer den eller velger en annen.",
       "pinnedClientWrongProtocol": "Låst til nedlastingsklienten {{name}}, som har feil protokoll for denne indeksereren. Det som hentes fra denne indeksereren, mislykkes og går ikke til en annen klient før du velger en klient som passer.",
-      "pinnedClientMissing": "Låst til en nedlastingsklient som ikke finnes lenger. Det som hentes fra denne indeksereren, mislykkes til du velger en annen."
+      "pinnedClientMissing": "Låst til en nedlastingsklient som ikke finnes lenger. Det som hentes fra denne indeksereren, mislykkes til du velger en annen.",
+      "requestFailed": "Forespørselen mislyktes"
     },
     "prowlarr": {
       "heading": "Prowlarr",
@@ -1331,6 +1680,30 @@
         "apply": "Bruk denne omkoblingen",
         "applying": "Bruker…",
         "failed": "Kunne ikke lagre omkoblingen: {{error}}"
+      },
+      "saveFailed": "Kunne ikke lagre",
+      "name": "Navn",
+      "clientType": "Klienttype",
+      "connection": "Tilkobling",
+      "useSsl": "Bruk SSL",
+      "urlBase": "URL-base",
+      "username": "Brukernavn",
+      "host": "Vert",
+      "port": "Port",
+      "password": "Passord",
+      "apiKey": "API-nøkkel",
+      "hostHint": "Bare vertsnavn eller IP, uten prefikset <code>http://</code>. I Docker bruker du tjeneste- eller containernavnet (f.eks. <code>nzbget</code>), ikke <code>localhost</code>.",
+      "urlBaseHint": "Valgfritt stiprefiks når klienten ligger bak en omvendt proxy (f.eks. <code>/sabnzbd</code>). La stå tomt ved direkte tilkobling.",
+      "downloadDir": "Nedlastingsmappe",
+      "categoryLabel": "Kategori / etikett",
+      "downloadDirPlaceholder": "/downloads (la stå tomt for standard)",
+      "transmissionDirHint": "Valgfri absolutt sti som overstyrer standarden. La stå tomt for å bruke nedlastingsmappen som er satt opp i Transmission.",
+      "delugeLabelHint": "Settes via etikett-programtillegget i Deluge. La stå tomt hvis programtillegget ikke er installert.",
+      "pathRemapLabel": "Stiomkobling for nedlastingsklienten",
+      "remapHelp": {
+        "qbittorrent": "Koble stien qBittorrent rapporterer, til stien Bindery kan lese. Eksempel: hvis qBittorrent viser /downloads/books, men Bindery ser den mappen som /media/books, bruker du /downloads:/media/books. Bindery bruker også dette motsatt vei når nye torrenter sendes.",
+        "rtorrent": "Koble stien rTorrent rapporterer, til stien Bindery kan lese. Seedbokser trenger nesten alltid dette, f.eks. når rTorrent skriver til /home/user/downloads mens Bindery har montert den delingen som /media/books: bruk da /home/user/downloads:/media/books. Bindery bruker også dette motsatt vei når nedlastingsmappen for en ny torrent settes, og for å finne filene når du fjerner en nedlasting sammen med dataene.",
+        "other": "Koble stien denne klienten rapporterer, til stien Bindery kan lese: klientens sti, et kolon og så Binderys. Eksempel: hvis klienten viser /downloads/books, men Bindery ser den mappen som /media/books, bruker du /downloads:/media/books. En Windows-sti fungerer på klientsiden, for eksempel S:\\Downloads:/downloads. La stå tomt når begge allerede ser samme montering. Diagnose sjekker koblingen fra ende til ende."
       }
     },
     "notifications": {
@@ -1357,7 +1730,23 @@
         "requestCreated": "en av brukerne dine ba om at en bok eller forfatter skulle legges til"
       },
       "testSent": "Testvarsel sendt!",
-      "saveFailed": "Kunne ikke lagre varselet: {{error}}"
+      "saveFailed": "Kunne ikke lagre varselet: {{error}}",
+      "trigger": {
+        "grab": "Henting",
+        "import": "Import",
+        "failure": "Feil",
+        "upgrade": "Oppgradering",
+        "health": "Helse"
+      },
+      "headersInvalidEdit": "Hodene må være et gyldig JSON-objekt med strengverdier, eller tomme.",
+      "headersInvalid": "Hodene må være gyldig JSON eller tomme.",
+      "name": "Navn",
+      "webhookUrl": "Webhook-URL",
+      "topicLabel": "ntfy-emne (valgfritt)",
+      "topicHint": "For ntfy: angi emnet her og la URL-en peke på roten av ntfy-serveren (f.eks. https://ntfy.sh). Bindery sender da en JSON-kropp som ntfy viser direkte, i stedet for rå JSON.",
+      "headersLabel": "Egne hoder (JSON, valgfritt)",
+      "headersHint": "For ntfy-autentisering, ruting i Discord eller andre egne hoder. La stå tomt for å ikke sende noen.",
+      "triggerOn": "Utløses ved:"
     },
     "quality": {
       "heading": "Kvalitetsprofiler",
@@ -1418,7 +1807,9 @@
       "formSkipPartBooks": "Hopp over delbøker",
       "saveChanges": "Lagre endringer",
       "createProfile": "Opprett profil",
-      "saveFail": "Kunne ikke lagre profilen"
+      "saveFail": "Kunne ikke lagre profilen",
+      "languagesAny": "alle",
+      "libraryDefaults": "Standarder for biblioteket"
     },
     "rootfolders": {
       "heading": "Rotmapper",
@@ -1453,7 +1844,23 @@
       "downloadNote": "«Last ned» lagrer oppføringene som samsvarer med filtrene i tabellen, som en ren tekstfil du kan legge ved en feilrapport. Store eksporter har en øvre grense; i så fall står det i bunnteksten i filen.",
       "page": "Side {{page}}",
       "deleteBackupConfirm": "Slette sikkerhetskopien {{filename}}?",
-      "deleteBackupTitle": "Slett sikkerhetskopi"
+      "deleteBackupTitle": "Slett sikkerhetskopi",
+      "age": {
+        "justNow": "nå nettopp",
+        "soon": "om et øyeblikk",
+        "minutesAgo": "for {{n}} min siden",
+        "inMinutes": "om {{n}} min",
+        "hoursAgo": "for {{n}} t siden",
+        "inHours": "om {{n}} t",
+        "daysAgo": "for {{n}} d siden",
+        "inDays": "om {{n}} d"
+      },
+      "backupCreated": "Sikkerhetskopi opprettet:",
+      "backupFailed": "Sikkerhetskopieringen mislyktes:",
+      "deleteFailed": "Slettingen mislyktes:",
+      "viewLabel": "Vis",
+      "runtimeLevel": "Loggnivå",
+      "runtimeLevelHint": "Bestemmer hvilke loggnivåer som skrives til databasen"
     },
     "general": {
       "appearance": "Utseende",
@@ -1708,7 +2115,60 @@
       "defaultMonitorModeHint": "Brukes for forfattere som legges til. Eksisterende forfattere beholder modusen sin med mindre de redigeres.",
       "defaultMonitorLatestCountLabel": "Antall nyeste bøker",
       "audiobookFileTemplate": "Navngiving av lydbokfiler (per spor)",
-      "audiobookFileTemplateHint": "La stå tomt for å beholde filoppsettet fra nedlastingen. Angi en mal for å gi hvert lydbokspor nytt navn i avspillingsrekkefølge; den må inneholde {Part}. En lydbok med én fil får også nytt navn, som del 1, med mindre {Part} står i en gruppe med egen tekst, som {Title}{ - Pt. Part:3}.{ext}, som utelates når det bare er én fil."
+      "audiobookFileTemplateHint": "La stå tomt for å beholde filoppsettet fra nedlastingen. Angi en mal for å gi hvert lydbokspor nytt navn i avspillingsrekkefølge; den må inneholde {Part}. En lydbok med én fil får også nytt navn, som del 1, med mindre {Part} står i en gruppe med egen tekst, som {Title}{ - Pt. Part:3}.{ext}, som utelates når det bare er én fil.",
+      "saveFailed": "Lagringen mislyktes",
+      "scanFailed": "Skanningen mislyktes:",
+      "importMode": {
+        "label": "Importmodus",
+        "hint": "Hvordan Bindery legger ferdige nedlastinger inn i biblioteket. <b>Automatisk</b> (standard) lager hardlenker når nedlastingsmappen og biblioteket deler volum, og kopierer ellers. Kilden blir uansett liggende, så seeding av torrenter fortsetter. <b>Flytt</b> flytter kilden ut av nedlastingsmappen, og da stopper seedingen. Bruk <b>Hardlenke</b> eller <b>Kopier</b> for å tvinge frem at kildefilen beholdes; Hardlenke krever at nedlastingsmappen og biblioteket ligger på samme filsystem eller volum. Bruk <b>Ekstern</b> hvis et annet verktøy (Calibre, Grimmory osv.) styrer biblioteket ditt: Bindery henter nedlastingen og stopper der, verktøyet ditt behandler den, og Bindery avstemmer ved neste skanning av biblioteket.",
+        "auto": "Automatisk",
+        "move": "Flytt",
+        "copy": "Kopier",
+        "hardlink": "Hardlenke",
+        "external": "Ekstern"
+      },
+      "interval": {
+        "hours_one": "{{count}} time",
+        "hours_other": "{{count}} timer",
+        "days_one": "{{count}} dag",
+        "days_other": "{{count}} dager",
+        "withDefault": "{{interval}} (standard)"
+      },
+      "auth": {
+        "unknown": "ukjent",
+        "regenerateFailed": "Kunne ikke lage ny nøkkel:",
+        "rotateFailed": "Rotering mislyktes:",
+        "modeChangeFailed": "Kunne ikke bytte modus:",
+        "secretRotated": "Økthemmeligheten er rotert. Nye innlogginger signeres med den nye hemmeligheten; eksisterende økter er gyldige frem til neste rotering.",
+        "authMode": "Autentiseringsmodus",
+        "modeEnabled": "På",
+        "modeLocalOnly": "Bare lokalt (unntak for private IP-er)",
+        "modeDisabled": "Av (ingen autentisering)",
+        "modeEnabledHint": "Krever alltid innlogging, uansett hvilket nettverk forespørselen kommer fra.",
+        "modeLocalOnlyHint": "Innlogging hoppes over for forespørsler fra private IP-områder og LAN. Krever fortsatt innlogging fra internett.",
+        "modeDisabledHint": "Ingen autentisering. Bare trygt når Bindery står bak en klarert omvendt proxy som håndhever tilgangskontroll.",
+        "apiKey": "API-nøkkel",
+        "apiKeyHint": "Send som hodet <code>X-Api-Key</code> eller spørreparameteren <code>?apikey=</code>. Brukes av eksterne integrasjoner (Tautulli, egne skript osv.).",
+        "hideKey": "Skjul",
+        "showKey": "Vis",
+        "regenerate": "Lag ny",
+        "regenerateHint": "En ny nøkkel gjør den nåværende ugyldig. Oppdater alle eksterne integrasjoner etterpå.",
+        "sessionSecret": "Økthemmelighet",
+        "sessionSecretHint": "Signerer øktinformasjonskapsler. Rotering lager en ny hemmelighet og lar den forrige gjelde i et rotasjonsvindu, så eksisterende innlogginger ikke faller ut med en gang. Roter to ganger for å gjøre alle økter signert med den gamle hemmeligheten ugyldige.",
+        "rotateSecret": "Roter økthemmelighet"
+      },
+      "password": {
+        "mismatch": "De nye passordene er ikke like",
+        "tooShort": "Passordet må ha minst 8 tegn",
+        "changeFailed": "Kunne ikke bytte passord",
+        "heading": "Bytt passord for <b>{{username}}</b>",
+        "current": "Nåværende passord",
+        "new": "Nytt passord",
+        "confirm": "Bekreft nytt passord",
+        "updated": "Passordet er oppdatert",
+        "updating": "Oppdaterer…",
+        "change": "Bytt passord"
+      }
     },
     "import": {
       "csvHeading": "CSV med forfatternavn",
@@ -1807,7 +2267,25 @@
       "configureHardcoverToken": "Angi API-tokenet for Hardcover i innstillingene for API-nøkler →",
       "folderMovedHeading": "Importer fra en mappe",
       "folderMovedBody": "Skanning av en mappe og import av det som gir treff, finner du nå på Import-siden, ved siden av bøkene som en skanning av biblioteket ikke fant treff for.",
-      "folderMovedLink": "Åpne Import"
+      "folderMovedLink": "Åpne Import",
+      "uploadFailed": "Opplastingen mislyktes",
+      "lookupFailed": "Oppslaget mislyktes",
+      "importFailed": "Importen mislyktes",
+      "hardcoverLoadSavedFailed": "Kunne ikke laste de lagrede Hardcover-listene",
+      "hardcoverLoadFailed": "Kunne ikke laste Hardcover-listene",
+      "updateMediaTypeFailed": "Kunne ikke endre medietype",
+      "updateMonitorNewFailed": "Kunne ikke endre nedlastingsvalget",
+      "updateOwnerFailed": "Kunne ikke endre eier",
+      "hardcoverUpdateFailed": "Kunne ikke oppdatere importlisten fra Hardcover",
+      "tokenOverrideSaveFailed": "Kunne ikke lagre det overstyrte tokenet",
+      "tokenOverrideClearFailed": "Kunne ikke fjerne det overstyrte tokenet",
+      "resultAuthors": "Forfattere",
+      "resultIndexers": "Indekserere",
+      "resultDownloadClients": "Nedlastingsklienter",
+      "resultBlocklist": "Blokkeringsliste",
+      "manualImportSelect": "Velg…",
+      "hardcoverListBooks_one": " · {{count}} bok",
+      "hardcoverListBooks_other": " · {{count}} bøker"
     },
     "oidc": {
       "heading": "SSO-/OIDC-leverandører",
@@ -1885,7 +2363,51 @@
       "system": "System"
     },
     "previewBadge": "Forhåndsvisning",
-    "tabWithPreview": "{{tab}} (forhåndsvisning)"
+    "tabWithPreview": "{{tab}} (forhåndsvisning)",
+    "grimmory": {
+      "errors": {
+        "save": "Lagringen mislyktes",
+        "test": "Testen mislyktes",
+        "syncStart": "Synkroniseringen kunne ikke startes"
+      },
+      "intro": "Send importerte e-bøker til et selvdriftet <site>Grimmory</site>-bibliotek. Hver vellykkede e-bokimport lastes opp til Grimmorys innboks <b>BookDrop</b>, der Grimmorys egen metadatamatching og gjennomgang tar over. Hver fil sendes høyst én gang.",
+      "enable": "Aktiver Grimmory-integrasjonen",
+      "fields": {
+        "serverUrl": "Server-URL",
+        "username": "Brukernavn",
+        "usernamePlaceholder": "Grimmory-konto med rett til opplasting",
+        "password": "Passord",
+        "configured": "(satt opp, la stå tomt for å beholde)",
+        "passwordHint": "Bindery logger inn i Grimmory med denne påloggingen (dagens Grimmory har ingen API-tokener). Bruk en konto med rett til opplasting, gjerne en egen konto til dette.",
+        "apiToken": "API-token",
+        "optional": "(valgfritt)",
+        "apiTokenPlaceholder": "Bare hvis en fremtidig Grimmory-versjon får tokenpålogging",
+        "apiTokenHint": "Hvis dette er satt, sendes tokenet som en Bearer-legitimasjon, og innloggingen med brukernavn og passord hoppes over (<link>grimmory-tools#1487</link>)."
+      },
+      "testConnection": "Test tilkobling",
+      "push": {
+        "heading": "Send biblioteket til Grimmory",
+        "hint": "Last opp alle importerte e-bøker som ikke er sendt ennå. Filer som allerede er sendt, hoppes over, så det er trygt å kjøre på nytt.",
+        "running": "Sender…",
+        "start": "Send alt til Grimmory",
+        "enableFirst": "Aktiver og lagre integrasjonen først.",
+        "progress": "{{processed}}/{{total}} behandlet, {{pushed}} sendt, {{already}} allerede sendt, {{failed}} mislyktes",
+        "moreErrors": "…og {{count}} til",
+        "total_one": "{{count}} fil er sendt så langt.",
+        "total_other": "{{count}} filer er sendt så langt.",
+        "totalLast_one": "{{count}} fil er sendt så langt, sist {{last}}.",
+        "totalLast_other": "{{count}} filer er sendt så langt, sist {{last}}."
+      }
+    },
+    "rootFolders": {
+      "addFailed": "Kunne ikke legge til mappen"
+    },
+    "apiKeys": {
+      "hardcoverTestFailed": "Testen av Hardcover-API-et mislyktes"
+    },
+    "pathRemap": {
+      "syntaxHint": "Bruk kommaseparerte prefiksomskrivinger på formen <code>from:to</code>."
+    }
   },
   "addToLibrary": {
     "title": "Legg til i biblioteket",
@@ -2010,14 +2532,19 @@
     "merging": "Slår sammen…",
     "cancel": "Avbryt",
     "confirmBody": "Slå sammen «{{source}}» med «{{target}}»?\n\n• {{count}} bok(er) flyttes til den nye forfatteren.\n• «{{source}}» beholdes som alias for «{{target}}».\n• Dette kan ikke angres.",
-    "confirmAcknowledge": "Jeg forstår at dette ikke kan angres."
+    "confirmAcknowledge": "Jeg forstår at dette ikke kan angres.",
+    "failed": "Sammenslåingen mislyktes",
+    "counting": "Teller bøker…",
+    "willMove": "bok/bøker flyttes til målet.",
+    "aliasPreserved": "Aliaset beholdes:"
   },
   "pagination": {
     "previous": "Forrige",
     "next": "Neste",
     "pageOf": "Side {{page}} av {{total}}",
     "jumpToPage": "Gå til side",
-    "perPage": "Per side"
+    "perPage": "Per side",
+    "range": "{{start}}–{{end}} av {{total}}"
   },
   "bulkActionBar": {
     "selected": "{{count}} valgt",
@@ -2131,7 +2658,10 @@
     "countQualityProfiles": "Kvalitetsprofiler",
     "countMetadataProfiles": "Metadataprofiler",
     "countRootFolders": "Rotmapper",
-    "countImportLists": "Importlister"
+    "countImportLists": "Importlister",
+    "resetPrompt": "Nytt passord (minst 8 tegn):",
+    "resetFailed": "Mislyktes",
+    "adminRequired": "Krever administratortilgang."
   },
   "requests": {
     "kindBook": "Bok",
@@ -2351,7 +2881,10 @@
       "modeLinkOnlyHint": "Filen blir liggende der den er, med det navnet den har nå. Bare boken den hører til, endres.",
       "modeRelocate": "Flytt filen og gi den nytt navn også",
       "modeRelocateHint": "Bindery flytter filen inn i mappen til den valgte boken og gir den nytt navn etter navnemalen din.",
-      "staysAtLabel": "Filen blir liggende i"
+      "staysAtLabel": "Filen blir liggende i",
+      "searchFailed": "søket mislyktes",
+      "previewFailed": "forhåndsvisningen mislyktes",
+      "reassignFailed": "omkoblingen mislyktes"
     },
     "metadataSource": {
       "heading": "Metadatakilde",
@@ -2421,6 +2954,11 @@
       "pending": "Venter på Calibre",
       "delivered": "I Calibre",
       "failed": "Calibre feilet"
+    },
+    "results": {
+      "ebooks": "E-bøker ({{n}})",
+      "audiobooks": "Lydbøker ({{n}})",
+      "all": "Resultater ({{n}})"
     }
   },
   "bookRebind": {
@@ -2517,5 +3055,52 @@
     "genreOverrideDone": "Bøker oppdatert: {{count}}.",
     "bio": "Biografi",
     "bioHint": "En biografi du skriver her, blir stående slik du skrev den: ingen oppdatering erstatter den. Tøm feltet for å la metadatakilden fylle den inn igjen."
+  },
+  "absConflicts": {
+    "relinking": "Kobler på nytt…",
+    "relink": "Prøv å koble til kilden på nytt",
+    "upstreamSource": "kilden",
+    "needsReview": "Må gjennomgås",
+    "using": "Bruker {{source}}",
+    "empty": "Tom",
+    "upstream": "Kilde",
+    "useAbs": "Bruk ABS",
+    "useUpstream": "Bruk kilden",
+    "prefers": "Foretrekker {{source}}"
+  },
+  "errorBoundary": {
+    "title": "Noe gikk galt",
+    "body": "Siden fikk en uventet feil og kunne ikke vises. Du kan prøve å laste inn på nytt eller gå tilbake til startsiden.",
+    "reload": "Last inn på nytt",
+    "home": "Til startsiden",
+    "hideDetails": "Skjul detaljer",
+    "showDetails": "Vis detaljer"
+  },
+  "mediaBadge": {
+    "both": "E-bok + lydbok"
+  },
+  "renameFiles": {
+    "status": {
+      "move": "Flyttes",
+      "moved": "Flyttet",
+      "noop": "Allerede riktig",
+      "collision": "Målet finnes",
+      "missing": "Ikke på disk",
+      "error": "Feil",
+      "failed": "Mislyktes"
+    },
+    "previewFailed": "Forhåndsvisningen mislyktes",
+    "renameFailed": "Omdøpingen mislyktes",
+    "title": "Gi filer nytt navn",
+    "intro": "Flytt filene for <label>{{label}}</label> slik at de følger gjeldende navnemal. Filer som allerede ligger riktig, blir ikke rørt.",
+    "computing": "Beregner endringer…",
+    "none": "Ingen sporede filer å gi nytt navn.",
+    "appliedSummary": "{{moved}} flyttet, {{failed}} mislyktes",
+    "previewSummary": "{{movable}} av {{total}} flyttes",
+    "apply_one": "Gi {{count}} fil nytt navn",
+    "apply_other": "Gi {{count}} filer nytt navn",
+    "renaming": "Gir nytt navn…",
+    "from": "fra",
+    "to": "til"
   }
 }

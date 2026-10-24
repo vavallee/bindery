@@ -4,6 +4,7 @@ import { useConfirmDialog } from './useConfirmDialog'
 import { api, Author } from '../api/client'
 import { useModal } from './useModal'
 import { primaryFill } from './buttons'
+import { errorText } from '../util/errorText'
 
 interface Props {
   authors: Author[]
@@ -74,7 +75,7 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
       onMerged()
       onClose()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Merge failed')
+      setError(errorText(e, t('mergeAuthorsModal.failed', 'Merge failed')))
     } finally {
       setBusy(false)
     }
@@ -133,9 +134,9 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
               <div>
                 <span className="font-medium">{source.authorName}</span> → <span className="font-medium">{target.authorName}</span>
               </div>
-              <div>{sourceBookCount === null ? 'Counting books…' : `${sourceBookCount} book(s) will move to the target.`}</div>
+              <div>{sourceBookCount === null ? t('mergeAuthorsModal.counting', 'Counting books…') : `${sourceBookCount} ${t('mergeAuthorsModal.willMove', 'book(s) will move to the target.')}`}</div>
               <div className="text-fg-muted">
-                Alias preserved: <span className="font-mono">{source.authorName}</span>
+                {t('mergeAuthorsModal.aliasPreserved', 'Alias preserved:')} <span className="font-mono">{source.authorName}</span>
                 {source.foreignAuthorId ? ` (${source.foreignAuthorId})` : ''}
               </div>
             </div>

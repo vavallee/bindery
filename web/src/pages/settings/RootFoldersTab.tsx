@@ -4,6 +4,7 @@ import { api, RootFolder } from '../../api/client'
 import { inputCls } from './formStyles'
 import { formatBytesZero } from '../../util/format'
 import { primaryFill } from '../../components/buttons'
+import { errorText } from '../../util/errorText'
 
 const DEFAULT_ROOT_FOLDER_KEY = 'library.defaultRootFolderId'
 const DEFAULT_AUDIOBOOK_ROOT_FOLDER_KEY = 'library.defaultAudiobookRootFolderId'
@@ -159,7 +160,7 @@ export default function RootFoldersTab() {
             setRootFolders([...rootFolders, created])
             setNewFolderPath('')
           } catch (err: unknown) {
-            setFolderError(err instanceof Error ? err.message : 'Failed to add folder')
+            setFolderError(errorText(err, t('settings.rootFolders.addFailed', 'Failed to add folder')))
           }
         }}
         className="flex gap-2 items-start"

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
+import RichText from '../../components/RichText'
 import Alert from '../../components/Alert'
 import {
   api,
@@ -16,6 +17,7 @@ import { useSaveResult } from './useSaveResult'
 import { secretInputAttrs, urlInputAttrs } from '../../util/inputAttrs'
 import { useModal } from '../../components/useModal'
 import { slateFill } from '../../components/buttons'
+import { errorText } from '../../util/errorText'
 
 // The code the server puts on a calibredb mode it cannot run because there is
 // no calibredb where Bindery runs (#1940), on a Test failure and on a save.
@@ -31,7 +33,17 @@ function calibredbMissingReason(err: unknown): string | null {
   return err instanceof Error ? err.message : ''
 }
 
+// The library import summary, one phrase per count, each with its plural forms.
+const CALIBRE_IMPORT_STATS = [
+  ['authorsAdded', 'settings.calibre.import.stats.authorsAdded'],
+  ['booksAdded', 'settings.calibre.import.stats.booksAdded'],
+  ['editionsAdded', 'settings.calibre.import.stats.editionsAdded'],
+  ['duplicatesMerged', 'settings.calibre.import.stats.duplicatesMerged'],
+  ['skipped', 'settings.calibre.import.stats.skipped'],
+] as const
+
 export default function CalibreTab() {
+  const { t } = useTranslation()
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
@@ -54,13 +66,13 @@ export default function CalibreTab() {
       onSaved?.(res)
       return null
     } catch (err) {
-      return err instanceof Error ? err.message : 'Save failed'
+      return errorText(err, t('settings.calibre.errors.save', 'Save failed'))
     } finally {
       setSaving(null)
     }
   }
 
-  if (loading) return <div className="text-fg-muted">Loading…</div>
+  if (loading) return <div className="text-fg-muted">{t('common.loading', 'Loading…')}</div>
 
   return (
     <div className="space-y-8">
@@ -225,7 +237,7 @@ function CalibreSection({
       const p = await api.calibreImportStart()
       setImportProgress(p)
     } catch (err) {
-      setImportError(err instanceof Error ? err.message : 'Import failed to start')
+      setImportError(errorText(err, t('settings.calibre.errors.importStart', 'Import failed to start')))
     }
   }
 
@@ -282,7 +294,7 @@ function CalibreSection({
     const isPlugin = mode === 'plugin'
     try {
       const r = await api.testCalibre()
-      const prefix = isPlugin ? '✓ Plugin reachable' : '✓ calibredb reachable'
+      const prefix = isPlugin ? t('settings.calibre.test.pluginReachable', '✓ Plugin reachable') : t('settings.calibre.test.calibredbReachable', '✓ calibredb reachable')
       const detail = r.version || r.message
       setTestResult({
         ok: true,
@@ -300,10 +312,10 @@ function CalibreSection({
       // calibredb answered, so whatever the banner said no longer holds.
       else setCalibredbMissing(null)
     } catch (err) {
-      const reason = err instanceof Error ? err.message : 'Test failed'
+      const reason = errorText(err, t('settings.calibre.test.failed', 'Test failed'))
       const missing = calibredbMissingReason(err)
       if (missing) setCalibredbMissing(missing)
-      const prefix = isPlugin ? '✗ Could not reach plugin' : '✗ calibredb unreachable'
+      const prefix = isPlugin ? t('settings.calibre.test.pluginUnreachable', '✗ Could not reach plugin') : t('settings.calibre.test.calibredbUnreachable', '✗ calibredb unreachable')
       const body = (err as { body?: { warning?: unknown } } | null)?.body
       const warning = typeof body?.warning === 'string' && body.warning ? body.warning : undefined
       setTestResult({ ok: false, msg: `${prefix} — ${reason}`, warning })
@@ -333,21 +345,15 @@ function CalibreSection({
     <section>
       <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Calibre</h3>
       <p className="text-xs text-fg-muted mb-3">
-        Calibre only knows about books recorded in its <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">metadata.db</code>;
-        a file placed in its library folder is invisible to Calibre and to CWA. There are three ways to hand a book over:
-        register it with Calibre after import (Write integration below), copy it into a CWA ingest folder (the CWA section below),
-        or let CWA or Calibre own the library and feed it from a drop folder (Import Mode External, under File Naming on the General tab).
-        Neither the write integration nor the CWA mirror runs in External import mode.
-        The <a href="https://github.com/vavallee/bindery/blob/main/docs/Calibre-Integration-Wiki.md" target="_blank" rel="noopener noreferrer" className="text-accent-text underline">Calibre integration guide</a> compares them.
+        <RichText text={t('settings.calibre.intro', 'Calibre only knows about books recorded in its <code>metadata.db</code>; a file placed in its library folder is invisible to Calibre and to CWA. There are three ways to hand a book over: register it with Calibre after import (Write integration below), copy it into a CWA ingest folder (the CWA section below), or let CWA or Calibre own the library and feed it from a drop folder (Import Mode External, under File Naming on the General tab). Neither the write integration nor the CWA mirror runs in External import mode. The <guide>Calibre integration guide</guide> compares them.')} components={{ code: <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded" />, guide: <a href="https://github.com/vavallee/bindery/blob/main/docs/Calibre-Integration-Wiki.md" target="_blank" rel="noopener noreferrer" className="text-accent-text underline" /> }} />
       </p>
       <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
 
         {/* Shared library path — used by both write integration and library import */}
         <div>
-          <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">Library path</label>
+          <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.calibre.fields.libraryPath', 'Library path')}</label>
           <p className="text-xs text-fg-muted mb-2">
-            Directory containing <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">metadata.db</code>.
-            Used by both the write integration and library import.
+            <RichText text={t('settings.calibre.fields.libraryPathHint', 'Directory containing <code>metadata.db</code>. Used by both the write integration and library import.')} components={{ code: <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded" /> }} />
           </p>
           <div className="flex flex-wrap gap-2">
             <input id={`${fid}-1`}
@@ -368,12 +374,12 @@ function CalibreSection({
         </div>
 
         <div className="pt-1 border-t border-slate-200 dark:border-zinc-800">
-          <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-2 mt-3">Write integration</label>
+          <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-2 mt-3">{t('settings.calibre.mode.heading', 'Write integration')}</label>
           <div className="space-y-1.5">
             {([
-              { v: 'off',       label: 'Off',           desc: 'No Calibre call on import. The file lands in the Bindery library only.' },
-              { v: 'calibredb', label: 'calibredb CLI', desc: 'Run calibredb add --with-library after each import. Calibre copies the file into its own library, so it exists twice. Needs calibredb inside the Bindery container or process; the official distroless image does not ship it.' },
-              { v: 'plugin',    label: 'Calibre Bridge plugin', desc: 'Hand each import to the Bindery Bridge plugin running inside Calibre, in another container or host. With the push transport only the path and metadata are sent, so Calibre must see the Bindery library; with pull the plugin downloads each book from Bindery itself.' },
+              { v: 'off', label: t('settings.calibre.mode.off', 'Off'), desc: t('settings.calibre.mode.offDesc', 'No Calibre call on import. The file lands in the Bindery library only.') },
+              { v: 'calibredb', label: t('settings.calibre.mode.calibredb', 'calibredb CLI'), desc: t('settings.calibre.mode.calibredbDesc', 'Run calibredb add --with-library after each import. Calibre copies the file into its own library, so it exists twice. Needs calibredb inside the Bindery container or process; the official distroless image does not ship it.') },
+              { v: 'plugin', label: t('settings.calibre.mode.plugin', 'Calibre Bridge plugin'), desc: t('settings.calibre.mode.pluginDesc', 'Hand each import to the Bindery Bridge plugin running inside Calibre, in another container or host. With the push transport only the path and metadata are sent, so Calibre must see the Bindery library; with pull the plugin downloads each book from Bindery itself.') },
             ] as const).map(opt => (
               <label key={opt.v} className="flex items-start gap-2 cursor-pointer">
                 <input
@@ -409,8 +415,8 @@ function CalibreSection({
 
         {mode === 'calibredb' && (
           <div>
-            <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">Binary path (optional)</label>
-            <p className="text-xs text-fg-muted mb-2">Leave blank to resolve <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">calibredb</code> on PATH. Set explicitly when running in a container that bundles Calibre at a pinned location.</p>
+            <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">{t('settings.calibre.fields.binaryPath', 'Binary path (optional)')}</label>
+            <p className="text-xs text-fg-muted mb-2"><RichText text={t('settings.calibre.fields.binaryPathHint', 'Leave blank to resolve <code>calibredb</code> on PATH. Set explicitly when running in a container that bundles Calibre at a pinned location.')} components={{ code: <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded" /> }} /></p>
             <div className="flex flex-wrap gap-2">
               <input id={`${fid}-2`}
                 value={settings['calibre.binary_path'] ?? ''}
@@ -459,9 +465,9 @@ function CalibreSection({
 
         {mode === 'plugin' && !pulling && (
           <div>
-            <label htmlFor={`${fid}-3`} className="block text-xs text-fg-muted mb-1">Plugin URL</label>
+            <label htmlFor={`${fid}-3`} className="block text-xs text-fg-muted mb-1">{t('settings.calibre.fields.pluginUrl', 'Plugin URL')}</label>
             <p className="text-xs text-fg-muted mb-2">
-              Base URL of the Bindery Bridge plugin&rsquo;s HTTP server running inside Calibre.
+              {t('settings.calibre.fields.pluginUrlHint', 'Base URL of the Bindery Bridge plugin’s HTTP server running inside Calibre.')}
             </p>
             <div className="flex flex-wrap gap-2">
               <input id={`${fid}-3`}
@@ -485,11 +491,11 @@ function CalibreSection({
 
         {mode === 'plugin' && (
           <div>
-            <label htmlFor={`${fid}-4`} className="block text-xs text-fg-muted mb-1">API key</label>
+            <label htmlFor={`${fid}-4`} className="block text-xs text-fg-muted mb-1">{t('settings.calibre.fields.apiKey', 'API key')}</label>
             <p className="text-xs text-fg-muted mb-2">
               {pulling
                 ? t('settings.calibre.transport.apiKeyPullHelp')
-                : <>Bearer token configured in the plugin&rsquo;s Calibre Preferences dialog.</>}
+                : t('settings.calibre.fields.apiKeyHint', 'Bearer token configured in the plugin’s Calibre Preferences dialog.')}
             </p>
             <div className="flex flex-wrap gap-2">
               <input id={`${fid}-4`}
@@ -497,7 +503,7 @@ function CalibreSection({
                 type="password"
                 value={settings['calibre.plugin_api_key'] ?? ''}
                 onChange={e => setSettings(s => ({ ...s, 'calibre.plugin_api_key': e.target.value }))}
-                placeholder="plugin api key"
+                placeholder={t('settings.calibre.fields.apiKeyPlaceholder', 'plugin api key')}
                 className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
               />
               <SaveButton
@@ -514,14 +520,9 @@ function CalibreSection({
 
         {mode === 'plugin' && !pulling && (
           <div>
-            <label htmlFor={`${fid}-5`} className="block text-xs text-fg-muted mb-1">Push path remap</label>
+            <label htmlFor={`${fid}-5`} className="block text-xs text-fg-muted mb-1">{t('settings.calibre.fields.pushRemap', 'Push path remap')}</label>
             <p className="text-xs text-fg-muted mb-2">
-              Optional. If the Calibre container mounts your library at a different path than Bindery,
-              map Bindery&rsquo;s prefix to Calibre&rsquo;s as <code className="font-mono">from:to</code> pairs
-              (comma separated), e.g. <code className="font-mono">/books:/mnt/user/media/books</code>.
-              For Calibre on Windows, map to a network share, e.g. <code className="font-mono">/books:\\nas\media\books</code>;
-              a share address is more reliable than a mapped drive letter, which the running Calibre may not see.
-              Leave empty when both containers see the library at the same path.
+              <RichText text={t('settings.calibre.fields.pushRemapHint', { pair: 'from:to', linux: '/books:/mnt/user/media/books', windows: '/books:\\\\nas\\media\\books', defaultValue: 'Optional. If the Calibre container mounts your library at a different path than Bindery, map Bindery’s prefix to Calibre’s as <code>{{pair}}</code> pairs (comma separated), e.g. <code>{{linux}}</code>. For Calibre on Windows, map to a network share, e.g. <code>{{windows}}</code>; a share address is more reliable than a mapped drive letter, which the running Calibre may not see. Leave empty when both containers see the library at the same path.' })} components={{ code: <code className="font-mono" /> }} />
             </p>
             <div className="flex flex-wrap gap-2">
               <input id={`${fid}-5`}
@@ -566,7 +567,7 @@ function CalibreSection({
               disabled={testing}
               className={`px-4 py-2 ${slateFill} rounded text-sm font-medium disabled:opacity-50 flex-shrink-0`}
             >
-              {testing ? 'Testing…' : 'Test connection'}
+              {testing ? t('common.testing', 'Testing…') : t('settings.calibre.test.button', 'Test connection')}
             </button>
           </div>
         )}
@@ -606,10 +607,9 @@ function CalibreSection({
         <div className="pt-3 border-t border-slate-200 dark:border-zinc-800 space-y-3">
           <div className="flex items-center justify-between">
             <div>
-              <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">Library import</label>
+              <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.calibre.import.heading', 'Library import')}</label>
               <p className="text-xs text-fg-muted mt-0.5">
-                Read your existing Calibre library and import books, authors, and editions into Bindery.
-                Works independently of the write mode above.
+                {t('settings.calibre.import.hint', 'Read your existing Calibre library and import books, authors, and editions into Bindery. Works independently of the write mode above.')}
               </p>
             </div>
             <Toggle
@@ -619,7 +619,7 @@ function CalibreSection({
                 setSettings(s => ({ ...s, 'calibre.library_import_enabled': next }))
                 await api.setSetting('calibre.library_import_enabled', next).catch(console.error)
               }}
-              title={libraryImportEnabled ? 'Disable library import' : 'Enable library import'}
+              title={libraryImportEnabled ? t('settings.calibre.import.disable', 'Disable library import') : t('settings.calibre.import.enable', 'Enable library import')}
             />
           </div>
 
@@ -627,8 +627,8 @@ function CalibreSection({
             <>
               <div className="flex items-center justify-between">
                 <div>
-                  <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">Sync on startup</label>
-                  <p className="text-xs text-fg-muted mt-0.5">Re-import each time Bindery starts. Safe to leave on — imports are incremental and idempotent.</p>
+                  <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.calibre.import.syncOnStartup', 'Sync on startup')}</label>
+                  <p className="text-xs text-fg-muted mt-0.5">{t('settings.calibre.import.syncOnStartupHint', 'Re-import each time Bindery starts. Safe to leave on — imports are incremental and idempotent.')}</p>
                 </div>
                 <Toggle
                   checked={syncOnStartup}
@@ -637,16 +637,16 @@ function CalibreSection({
                     setSettings(s => ({ ...s, 'calibre.sync_on_startup': next }))
                     await api.setSetting('calibre.sync_on_startup', next).catch(console.error)
                   }}
-                  title={syncOnStartup ? 'Disable' : 'Enable'}
+                  title={syncOnStartup ? t('common.disable', 'Disable') : t('common.enable', 'Enable')}
                 />
               </div>
 
               <div className="flex items-center justify-between">
                 <div className="text-xs text-fg-muted">
                   {lastImportAt ? (
-                    <>Last import: <span className="text-slate-800 dark:text-zinc-200">{new Date(lastImportAt).toLocaleString()}</span></>
+                    <>{t('settings.calibre.import.lastImport', 'Last import:')} <span className="text-slate-800 dark:text-zinc-200">{new Date(lastImportAt).toLocaleString()}</span></>
                   ) : (
-                    <>Never imported.</>
+                    <>{t('settings.calibre.import.never', 'Never imported.')}</>
                   )}
                 </div>
                 <button
@@ -654,7 +654,7 @@ function CalibreSection({
                   disabled={importProgress?.running || !settings['calibre.library_path']}
                   className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
                 >
-                  {importProgress?.running ? 'Importing…' : 'Import library'}
+                  {importProgress?.running ? t('settings.calibre.import.running', 'Importing…') : t('settings.calibre.import.start', 'Import library')}
                 </button>
               </div>
 
@@ -667,7 +667,7 @@ function CalibreSection({
                   {importProgress.running && (
                     <>
                       <div className="flex justify-between text-xs text-fg-muted">
-                        <span>{importProgress.message || 'Working…'}</span>
+                        <span>{importProgress.message || t('settings.calibre.import.working', 'Working…')}</span>
                         <span>{importProgress.processed} / {importProgress.total || '?'}</span>
                       </div>
                       <div className="h-1.5 bg-slate-200 dark:bg-zinc-800 rounded overflow-hidden">
@@ -683,16 +683,20 @@ function CalibreSection({
                     </>
                   )}
                   {!importProgress.running && importProgress.error && (
-                    <p className="text-xs text-red-700 dark:text-red-400">Import failed: {importProgress.error}</p>
+                    <p className="text-xs text-red-700 dark:text-red-400">{t('settings.calibre.import.failed', { error: importProgress.error, defaultValue: 'Import failed: {{error}}' })}</p>
                   )}
                   {!importProgress.running && importProgress.stats && (
                     <p className="text-xs text-slate-700 dark:text-zinc-300">
-                      Import complete —{' '}
-                      <span className="font-medium">{importProgress.stats.authorsAdded}</span> authors added,{' '}
-                      <span className="font-medium">{importProgress.stats.booksAdded}</span> books added,{' '}
-                      <span className="font-medium">{importProgress.stats.editionsAdded}</span> editions added,{' '}
-                      <span className="font-medium">{importProgress.stats.duplicatesMerged}</span> merged,{' '}
-                      <span className="font-medium">{importProgress.stats.skipped}</span> skipped.
+                      {t('settings.calibre.import.complete', 'Import complete')} —{' '}
+                      {CALIBRE_IMPORT_STATS.map(([field, key], i) => {
+                        const count = new Map(Object.entries(importProgress.stats!)).get(field)
+                        return (
+                          <span key={field}>
+                            <span className="font-medium">{count}</span> {t(key, { count })}
+                            {i < CALIBRE_IMPORT_STATS.length - 1 ? ', ' : '.'}
+                          </span>
+                        )
+                      })}
                     </p>
                   )}
                 </div>
@@ -711,15 +715,11 @@ function CalibreSection({
       <div className="bg-slate-100 dark:bg-zinc-900 rounded-lg p-5 border border-slate-300 dark:border-zinc-800">
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Calibre-Web-Automated (CWA)</h3>
         <p className="text-xs text-fg-muted mb-4">
-          When set, every successful ebook import is also copied into this directory so a sibling{' '}
-          <a href="https://github.com/crocodilestick/Calibre-Web-Automated" target="_blank" rel="noopener noreferrer" className="text-accent-text underline">CWA</a>{' '}
-          container can ingest it. Bindery keeps its own copy. Audiobooks are not mirrored. This mirror is independent of the
-          write integration above, and it does nothing in External import mode; use the Drop folder on the General tab for that setup.
-          Leave blank to disable.
+          <RichText text={t('settings.calibre.cwa.intro', 'When set, every successful ebook import is also copied into this directory so a sibling <cwa>CWA</cwa> container can ingest it. Bindery keeps its own copy. Audiobooks are not mirrored. This mirror is independent of the write integration above, and it does nothing in External import mode; use the Drop folder on the General tab for that setup. Leave blank to disable.')} components={{ cwa: <a href="https://github.com/crocodilestick/Calibre-Web-Automated" target="_blank" rel="noopener noreferrer" className="text-accent-text underline" /> }} />
         </p>
         <div>
-          <label htmlFor={`${fid}-6`} className="block text-xs text-fg-muted mb-1">Ingest folder path</label>
-          <p className="text-xs text-fg-muted mb-2">Mount the same path into both containers. CWA's docs use <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded">/cwa-book-ingest</code>.</p>
+          <label htmlFor={`${fid}-6`} className="block text-xs text-fg-muted mb-1">{t('settings.calibre.cwa.ingestPath', 'Ingest folder path')}</label>
+          <p className="text-xs text-fg-muted mb-2"><RichText text={t('settings.calibre.cwa.ingestPathHint', { path: '/cwa-book-ingest', defaultValue: 'Mount the same path into both containers. CWA’s docs use <code>{{path}}</code>.' })} components={{ code: <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded" /> }} /></p>
           <div className="flex flex-wrap gap-2">
             <input id={`${fid}-6`}
               value={settings['cwa.ingest_path'] ?? ''}

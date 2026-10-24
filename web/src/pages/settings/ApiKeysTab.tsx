@@ -8,6 +8,7 @@ import Toggle from './Toggle'
 import { useSaveResult } from './useSaveResult'
 import { secretInputAttrs } from '../../util/inputAttrs'
 import { slateFill } from '../../components/buttons'
+import { errorText } from '../../util/errorText'
 
 export default function ApiKeysTab() {
   const fid = useId()
@@ -102,7 +103,7 @@ export default function ApiKeysTab() {
         tokenConfigured: hardcoverTokenConfigured,
         searchResults: 0,
         catalogOk: false,
-        error: err instanceof Error ? err.message : 'Hardcover API test failed',
+        error: errorText(err, t('settings.apiKeys.hardcoverTestFailed', 'Hardcover API test failed')),
       })
     }
   }

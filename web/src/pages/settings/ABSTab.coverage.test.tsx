@@ -5,9 +5,14 @@ import { acceptConfirm } from '../../test-utils'
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, opts?: unknown) =>
-      opts && typeof opts === 'object' ? `${key} ${JSON.stringify(opts)}` : key,
+      typeof opts === 'string' ? opts : opts && typeof opts === 'object' ? `${key} ${JSON.stringify(opts)}` : key,
   }),
 }))
+
+// The mock above renders t(key, { ...values }) as `key {json}`. keyed matches
+// that text for a key and its leading values, in the order the code passes them.
+const keyed = (key: string, values: Record<string, unknown>) => (content: string) =>
+  content.startsWith(`${key} ${JSON.stringify(values).slice(0, -1)}`)
 
 vi.mock('../../api/client', () => ({
   api: {
@@ -186,14 +191,14 @@ describe('ABSTab coverage', () => {
 
     expect(await screen.findByText('audible · lib-1')).toBeInTheDocument()
     expect(mocked.absLibraries).toHaveBeenCalledWith()
-    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText('common.selected {"count":1}')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Saved key is hidden. Enter a new key to rotate it.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Preview changes' })).toBeEnabled()
     expect(screen.getByText(/For better initial matching/)).toBeInTheDocument()
 
     const checkboxes = screen.getAllByRole('checkbox').filter(c => c.closest('label')?.textContent?.includes('lib-'))
     fireEvent.click(checkboxes[1])
-    expect(screen.getByText('2 selected')).toBeInTheDocument()
+    expect(screen.getByText('common.selected {"count":2}')).toBeInTheDocument()
     // Unsaved edits block the import until saved.
     expect(screen.getByText(/so the run uses the stored source configuration/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Preview changes' })).toBeDisabled()
@@ -238,12 +243,12 @@ describe('ABSTab coverage', () => {
     fireEvent.change(screen.getByPlaceholderText('Paste an ABS API key'), { target: { value: 'k' } })
     fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
 
-    expect(await screen.findByText(/on ABS 2\.17\.0 · default library lib-9/)).toBeInTheDocument()
+    expect(await screen.findByText(/"version":"2\.17\.0".*"id":"lib-9"/)).toBeInTheDocument()
     expect(screen.getByText('listener')).toBeInTheDocument()
     expect(mocked.absTest).toHaveBeenCalledWith({ baseUrl: 'http://abs:13378', apiKey: 'k' })
     await waitFor(() => expect(mocked.absLibraries).toHaveBeenCalledWith({ baseUrl: 'http://abs:13378', apiKey: 'k' }))
     expect(await screen.findByText('Main')).toBeInTheDocument()
-    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText('common.selected {"count":1}')).toBeInTheDocument()
   })
 
   it('shows connection test and library listing failures', async () => {
@@ -286,7 +291,7 @@ describe('ABSTab coverage', () => {
     expect(screen.getByText('Dune')).toBeInTheDocument()
     expect(screen.getByText('new book')).toBeInTheDocument()
     expect(screen.getByText('i-2')).toBeInTheDocument()
-    expect(screen.getByText('2 created, 1 linked.')).toBeInTheDocument()
+    expect(screen.getByText(keyed('settings.abs.results.createdLinked', { created: 2, linked: 1 }))).toBeInTheDocument()
 
     expect(screen.getByRole('button', { name: 'Run selected mode' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('checkbox', { name: 'Start with dry-run' }))
@@ -305,12 +310,12 @@ describe('ABSTab coverage', () => {
       .mockResolvedValue({ running: false, processed: 12, dryRun: false, error: 'ABS went away', finishedAt: '2026-09-01T10:05:00Z' })
     render(<ABSTab />)
     expect(await screen.findByText('Scanning page 3')).toBeInTheDocument()
-    expect(screen.getByText('12 processed')).toBeInTheDocument()
-    expect(screen.getByText('Resumed from page 3 after item-77.')).toBeInTheDocument()
+    expect(screen.getByText(keyed('settings.abs.import.processed', { count: 12 }))).toBeInTheDocument()
+    expect(screen.getByText(keyed('settings.abs.import.resumedAfter', { page: 3, item: 'item-77' }))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Running…' })).toBeDisabled()
 
     // The status poll picks up the failure.
-    expect(await screen.findByText('Import failed: ABS went away', {}, { timeout: 10000 })).toBeInTheDocument()
+    expect(await screen.findByText(keyed('settings.abs.import.failed', { error: 'ABS went away' }), {}, { timeout: 10000 })).toBeInTheDocument()
   }, 30000)
 
   it('lists runs and previews and applies a rollback', async () => {
@@ -338,12 +343,12 @@ describe('ABSTab coverage', () => {
     mocked.absImportRollback.mockResolvedValue({ runId: 5, preview: false, dryRun: false, status: 'rolled_back', stats: rollbackStats, actions: [], finishedAt: '' })
     render(<ABSTab />)
 
-    expect(await screen.findByText('Run #5 · Live import · completed')).toBeInTheDocument()
-    expect(screen.getByText('Run #4 · Dry-run · needs review')).toBeInTheDocument()
-    expect(screen.getByText('Run #3 · Live import · rolled back')).toBeInTheDocument()
-    expect(screen.getByText('Run #2 · Live import · failed')).toBeInTheDocument()
+    expect(await screen.findByText(keyed('settings.abs.runs.title', { id: 5, mode: 'Live import', status: 'completed' }))).toBeInTheDocument()
+    expect(screen.getByText(keyed('settings.abs.runs.title', { id: 4, mode: 'Dry-run', status: 'needs review' }))).toBeInTheDocument()
+    expect(screen.getByText(keyed('settings.abs.runs.title', { id: 3, mode: 'Live import', status: 'rolled back' }))).toBeInTheDocument()
+    expect(screen.getByText(keyed('settings.abs.runs.title', { id: 2, mode: 'Live import', status: 'failed' }))).toBeInTheDocument()
     expect(screen.getByText('ABS 500')).toBeInTheDocument()
-    expect(screen.getByText('Last checkpoint: page 2.')).toBeInTheDocument()
+    expect(screen.getByText(keyed('settings.abs.runs.checkpoint', { page: 2 }))).toBeInTheDocument()
     expect(screen.getAllByText(/Home ABS · Audiobooks \(lib-1\)/)).toHaveLength(2)
     expect(screen.getByText(/Home ABS · Unknown library/)).toBeInTheDocument()
     expect(screen.getByText(/lib-x$/)).toBeInTheDocument()
@@ -354,12 +359,14 @@ describe('ABSTab coverage', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Preview rollback' })[0])
     expect(await screen.findByText('Rollback preview')).toBeInTheDocument()
     expect(mocked.absImportRollbackPreview).toHaveBeenCalledWith(5)
-    for (const label of [
-      'Delete author Frank', 'Delete book b', 'Delete edition c', 'Delete series d', 'Restore book metadata e',
-      'Remove series link f', 'Remove ABS link g', 'reset owned flag h', 'Retain author i',
+    for (const [action, name] of [
+      ['deleteAuthor', 'Frank'], ['deleteBook', 'b'], ['deleteEdition', 'c'], ['deleteSeries', 'd'], ['restoreBook', 'e'],
+      ['unlinkSeries', 'f'], ['unlinkProvenance', 'g'],
     ]) {
-      expect(screen.getByText(label)).toBeInTheDocument()
+      expect(screen.getByText(keyed(`settings.abs.rollback.action.${action}`, { name }))).toBeInTheDocument()
     }
+    expect(screen.getByText('reset owned flag h')).toBeInTheDocument()
+    expect(screen.getByText(keyed('settings.abs.rollback.action.retain', { entityType: 'author', name: 'i' }))).toBeInTheDocument()
     expect(screen.getByText('created by run')).toBeInTheDocument()
     expect(screen.getByText('edition')).toBeInTheDocument()
     expect(screen.getByText('author #1')).toBeInTheDocument()
@@ -414,8 +421,8 @@ describe('ABSTab coverage', () => {
     ])
     expect(screen.getByText('ASIN B00ASIN')).toBeInTheDocument()
     expect(screen.getByText('File Mapping Found')).toHaveAttribute('title', 'found at /books/x')
-    expect(screen.getByText('Author: Ann Leckie')).toBeInTheDocument()
-    expect(screen.getByText('Book: Ancillary Justice')).toBeInTheDocument()
+    expect(screen.getByText(keyed('settings.abs.review.resolvedAuthor', { name: 'Ann Leckie' }))).toBeInTheDocument()
+    expect(screen.getByText(keyed('settings.abs.review.resolvedBook', { title: 'Ancillary Justice' }))).toBeInTheDocument()
     expect(screen.getByText('No confident author match')).toBeInTheDocument()
     expect(screen.getByText('Multiple author matches')).toBeInTheDocument()
     expect(screen.getByText('No confident book match')).toBeInTheDocument()

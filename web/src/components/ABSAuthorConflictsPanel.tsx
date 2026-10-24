@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { ABSMetadataConflict } from '../api/client'
 import { slateFill, primaryFill } from './buttons'
 
@@ -39,6 +40,7 @@ function RelinkButton({
   conflict: ABSMetadataConflict
   relinkAction?: Props['relinkAction']
 }) {
+  const { t } = useTranslation()
   if (!relinkAction || !conflict.authorRelinkEligible) {
     return null
   }
@@ -50,7 +52,7 @@ function RelinkButton({
       disabled={relinking}
       className={`px-3 py-1.5 ${primaryFill} rounded text-xs font-medium disabled:opacity-50`}
     >
-      {relinking ? 'Relinking…' : 'Attempt upstream relink'}
+      {relinking ? t('absConflicts.relinking', 'Relinking…') : t('absConflicts.relink', 'Attempt upstream relink')}
     </button>
   )
 }
@@ -70,6 +72,9 @@ export default function ABSConflictPanel({
   onResolveConflict,
   relinkAction,
 }: Props) {
+  const { t } = useTranslation()
+  // The source is shown as stored, except that "upstream" is a word.
+  const sourceLabel = (source: string) => source === 'upstream' ? t('absConflicts.upstreamSource', 'upstream') : source
   const entityConflicts = conflicts.filter(conflict => conflict.entityType === entityType)
   const unresolvedGroups = groupConflictsByEntity(entityConflicts.filter(conflict => conflict.resolutionStatus === 'unresolved'))
   const resolvedGroups = groupConflictsByEntity(entityConflicts.filter(conflict => conflict.resolutionStatus === 'resolved'))
@@ -97,7 +102,7 @@ export default function ABSConflictPanel({
           onClick={onRefresh}
           className={`px-3 py-2 ${slateFill} rounded text-sm font-medium flex-shrink-0`}
         >
-          Refresh
+          {t('common.refresh', 'Refresh')}
         </button>
       </div>
 
@@ -116,23 +121,23 @@ export default function ABSConflictPanel({
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <RelinkButton conflict={group[0]} relinkAction={relinkAction} />
-                  <span className="text-[11px] px-2 py-1 rounded bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300">Needs review</span>
+                  <span className="text-[11px] px-2 py-1 rounded bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300">{t('absConflicts.needsReview', 'Needs review')}</span>
                 </div>
               </div>
               {group.map(conflict => (
                 <div key={conflict.id} className="rounded border border-amber-200 dark:border-amber-900/60 bg-white/70 dark:bg-zinc-950/30 px-3 py-2 space-y-2 overflow-hidden">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-xs font-medium text-slate-700 dark:text-zinc-300 min-w-0">{conflict.fieldLabel}</span>
-                    <span className="text-[10px] uppercase tracking-wide text-fg-muted text-right">Using {conflict.appliedSource || 'upstream'}</span>
+                    <span className="text-[10px] uppercase tracking-wide text-fg-muted text-right">{t('absConflicts.using', { source: sourceLabel(conflict.appliedSource || 'upstream'), defaultValue: 'Using {{source}}' })}</span>
                   </div>
                   <div className="grid min-w-0 gap-2 md:grid-cols-2 text-xs">
                     <div className="min-w-0 rounded border border-slate-200 dark:border-zinc-800 px-2 py-2 bg-slate-50 dark:bg-zinc-950 overflow-hidden">
                       <div className="font-medium text-slate-700 dark:text-zinc-300 mb-1">ABS</div>
-                      <div className="text-fg-muted whitespace-pre-wrap break-all min-w-0">{conflict.absValue || 'Empty'}</div>
+                      <div className="text-fg-muted whitespace-pre-wrap break-all min-w-0">{conflict.absValue || t('absConflicts.empty', 'Empty')}</div>
                     </div>
                     <div className="min-w-0 rounded border border-slate-200 dark:border-zinc-800 px-2 py-2 bg-slate-50 dark:bg-zinc-950 overflow-hidden">
-                      <div className="font-medium text-slate-700 dark:text-zinc-300 mb-1">Upstream</div>
-                      <div className="text-fg-muted whitespace-pre-wrap break-all min-w-0">{conflict.upstreamValue || 'Empty'}</div>
+                      <div className="font-medium text-slate-700 dark:text-zinc-300 mb-1">{t('absConflicts.upstream', 'Upstream')}</div>
+                      <div className="text-fg-muted whitespace-pre-wrap break-all min-w-0">{conflict.upstreamValue || t('absConflicts.empty', 'Empty')}</div>
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -141,14 +146,14 @@ export default function ABSConflictPanel({
                       disabled={resolvingConflictId === conflict.id}
                       className={`px-3 py-1.5 ${slateFill} rounded text-xs font-medium disabled:opacity-50`}
                     >
-                      Use ABS
+                      {t('absConflicts.useAbs', 'Use ABS')}
                     </button>
                     <button
                       onClick={() => onResolveConflict(conflict.id, 'upstream')}
                       disabled={resolvingConflictId === conflict.id}
                       className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 rounded text-xs font-medium disabled:opacity-50"
                     >
-                      Use upstream
+                      {t('absConflicts.useUpstream', 'Use upstream')}
                     </button>
                   </div>
                 </div>
@@ -168,7 +173,7 @@ export default function ABSConflictPanel({
                   {group.map(conflict => (
                     <div key={conflict.id} className="flex items-center justify-between gap-3 text-xs text-fg-muted">
                       <span>{conflict.fieldLabel}</span>
-                      <span>Prefers {conflict.preferredSource || conflict.appliedSource}</span>
+                      <span>{t('absConflicts.prefers', { source: sourceLabel(conflict.preferredSource || conflict.appliedSource), defaultValue: 'Prefers {{source}}' })}</span>
                     </div>
                   ))}
                 </div>
