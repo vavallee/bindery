@@ -701,6 +701,8 @@ func matchAnchored(normResult string, re *regexp.Regexp, authorToks []string) bo
 // title -- "Outliers: The Story of Success", "Treasure - A Dirk Pitt Novel".
 // Treating those as extensions would reject the correct release for a large
 // class of one-word titles. "by" introduces the author, for the same reason.
+// An "or" that opens the book's alternate title does not extend it either
+// (see opensAlternateTitle).
 var titleExtensionConnectives = map[string]bool{
 	"of": true, "and": true, "or": true, "in": true, "on": true,
 	"at": true, "to": true, "for": true, "from": true,
@@ -768,9 +770,14 @@ func benignTrailingToken(tok string, authorToks []string) bool {
 //
 // Only a release where EVERY occurrence extends is rejected: one clean
 // occurrence of the word is enough to believe the release names the book.
-func keywordExtendsIntoLongerTitle(normResult, kw string, authorToks []string) bool {
+//
+// raw is the release name normResult was folded from. It is read only to tell
+// an alternate title ("Frankenstein; or, The Modern Prometheus") from a longer
+// title (see opensAlternateTitle).
+func keywordExtendsIntoLongerTitle(raw, normResult, kw string, authorToks []string) bool {
 	re := WordBoundaryRegex(kw)
 	toks := strings.Fields(normResult)
+	rawToks, rawOK := tokenizeRelease(raw)
 	found := false
 	for i, tok := range toks {
 		if !re.MatchString(tok) {
@@ -780,8 +787,33 @@ func keywordExtendsIntoLongerTitle(normResult, kw string, authorToks []string) b
 		if !extendsAfter(toks, i, authorToks) {
 			return false
 		}
+		if rawOK && opensAlternateTitle(rawToks, i+1) {
+			return false
+		}
 	}
 	return found
+}
+
+// opensAlternateTitle reports whether the token at index i is an "or" that
+// opens the book's alternate title rather than a longer, different title:
+// "Frankenstein; or, The Modern Prometheus", "The Hobbit, or There and Back
+// Again", "Frankenstein or The Modern Prometheus". The "or" counts when a comma
+// or semicolon sits right before it, or an article right after it. A bare
+// "or" between two words ("Truth or Dare") still extends the title.
+func opensAlternateTitle(toks []relTok, i int) bool {
+	if i >= len(toks) || toks[i].text != "or" {
+		return false
+	}
+	if strings.ContainsAny(toks[i].sep, ",;") {
+		return true
+	}
+	if i+1 < len(toks) {
+		switch toks[i+1].text {
+		case "the", "a", "an":
+			return true
+		}
+	}
+	return false
 }
 
 // extendsAfter reports whether the token at index i is followed by a
@@ -821,7 +853,7 @@ func extendsAfter(toks []string, i int, authorToks []string) bool {
 // "SeriesName 01 - Title" release that names neither the author nor a bare
 // series marker is now rejected; a wrong grab imports the wrong book, a missed
 // grab retries on another release.
-func titleMatchesResult(normResult string, titleKws []string, authorToks []string, allowKwFallback bool) bool {
+func titleMatchesResult(raw, normResult string, titleKws []string, authorToks []string, allowKwFallback bool) bool {
 	switch len(titleKws) {
 	case 0:
 		return authorMatchesRelease(normResult, authorToks)
@@ -833,7 +865,7 @@ func titleMatchesResult(normResult string, titleKws []string, authorToks []strin
 		// runs on into a longer title the release is a different book by (very
 		// often) the same author, which no amount of author checking can catch
 		// (#1731). See keywordExtendsIntoLongerTitle.
-		if keywordExtendsIntoLongerTitle(normResult, titleKws[0], authorToks) {
+		if keywordExtendsIntoLongerTitle(raw, normResult, titleKws[0], authorToks) {
 			return false
 		}
 		if len(authorToks) == 0 {
@@ -973,9 +1005,9 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 
 	authorTokenSets := latinAliasTokenSets(author, aliases)
 
-	tryMatch := func(n string, kws []string) bool {
+	tryMatch := func(raw, n string, kws []string) bool {
 		for _, toks := range authorTokenSets {
-			if titleMatchesResult(n, kws, toks, true) {
+			if titleMatchesResult(raw, n, kws, toks, true) {
 				return true
 			}
 		}
@@ -986,11 +1018,11 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 	// separated reading of the same title. Never tried first, and skipped
 	// when the two readings are identical, so every result that matches today
 	// still matches for the same reason.
-	tryMatchElided := func(n string, elided, kws []string) bool {
+	tryMatchElided := func(raw, n string, elided, kws []string) bool {
 		if len(elided) == 0 || sameKws(elided, kws) {
 			return false
 		}
-		return tryMatch(n, elided)
+		return tryMatch(raw, n, elided)
 	}
 
 	// identityOK applies the title-identity gate, accepting the elided reading
@@ -1039,7 +1071,7 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 	evalFull := func(i int) (keywords, ok bool, trailing string) {
 		r, n := results[i], normTitles[i]
 		identity := strings.Join(titleIdentityWords(r.Title), " ")
-		keywords = tryMatch(n, fullKws) || tryMatchElided(n, fullElided, fullKws)
+		keywords = tryMatch(r.Title, n, fullKws) || tryMatchElided(r.Title, n, fullElided, fullKws)
 		ok = keywords &&
 			identityOK(identity, fullIdentity, fullIdentityElided) &&
 			volumeNumberAgrees(n, title)
@@ -1096,7 +1128,7 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 		fullKeywords, fullOK, trailing := evalFull(i)
 		primaryKeywords, primaryOK := false, false
 		if !fullOK && trailing == "" && len(primaryKws) > 0 && !sameKws(primaryKws, fullKws) {
-			primaryKeywords = tryMatch(n, primaryKws) || tryMatchElided(n, primaryElided, primaryKws)
+			primaryKeywords = tryMatch(r.Title, n, primaryKws) || tryMatchElided(r.Title, n, primaryElided, primaryKws)
 			primaryOK = primaryKeywords &&
 				identityOK(identity, primaryIdentity, primaryIdentityElided) &&
 				volumeNumberAgrees(n, primaryTitle(title))
@@ -1113,7 +1145,7 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 		}
 		seriesKeywords, seriesOK := false, false
 		if !fullOK && !primaryOK && trailing == "" && len(seriesKws) > 0 {
-			seriesKeywords = tryMatch(n, seriesKws)
+			seriesKeywords = tryMatch(r.Title, n, seriesKws)
 			seriesOK = seriesKeywords &&
 				(len(seriesIdentity) < 2 || ContainsPhrase(identity, seriesIdentity)) &&
 				volumeNumberAgrees(n, seriesTitle)
