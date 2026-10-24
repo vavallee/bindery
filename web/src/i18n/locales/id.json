@@ -184,7 +184,6 @@
     "colTitleAuthor": "Judul & penulis",
     "colFormat": "Format",
     "colActions": "Tindakan",
-    "noCover": "Tanpa sampul",
     "authorUnknown": "Penulis tidak diketahui",
     "changeFormat": "Ubah format untuk {{title}}"
   },
@@ -494,7 +493,6 @@
     "book": {
       "confirmAdd": "Tambah buku",
       "coverAlt": "Sampul {{title}}",
-      "noCover": "Tanpa sampul",
       "published": "Diterbitkan",
       "language": "Bahasa",
       "resultFormat": "Format metadata",

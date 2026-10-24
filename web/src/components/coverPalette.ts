@@ -3,10 +3,14 @@
 //
 // Roughly half a typical library has no cover art. A flat grey box reads as a
 // broken image, so the placeholder paints its own deliberate surface instead:
-// a saturated ground with the title set large over it, the way an actual cover
-// would be. Because the tile supplies its own background, the text contrast is
-// self-contained and identical in light and dark themes — there is no
-// theme-dependent pairing that can drift.
+// a ground with the title (or initials) set over it, the way a plain cloth
+// binding would look. Because the tile supplies its own background, the text
+// contrast is self-contained and identical in light and dark themes.
+//
+// The grounds are dusty mid-tones rather than saturated 700-level fills. On an
+// Author page where most books lack covers, the saturated set turned the grid
+// into a wall of colour swatches that outshouted the real covers beside them.
+// Low saturation keeps each book distinguishable without competing.
 //
 // Every ground satisfies three properties, all enforced by contrast.test.ts:
 //   1. >= 4.5:1 against white text — AA for normal text, not merely the 3:1
@@ -14,12 +18,9 @@
 //   2. >= 3:1 against the light page surface (slate-50).
 //   3. >= 3:1 against the dark page surface (zinc-950).
 // (2) and (3) are WCAG 1.4.11 non-text contrast: without them the tile edge
-// dissolves into the page and the card stops reading as an object.
-//
-// That third constraint is why the palette has no deep blue, indigo or violet:
-// at the saturation needed for white text they land within 3:1 of zinc-950.
-// Tailwind 900-level grounds fail it across the board (all ~2:1), which is what
-// the previous flat `bg-zinc-800` box was doing wrong in the first place.
+// dissolves into the page and the card stops reading as an object. Meeting all
+// three pins each ground to a narrow luminance band (about 0.11 to 0.18), so
+// the hues below are HSL at 22% saturation, lightness tuned per hue into it.
 
 export interface CoverColor {
   /** Tailwind class applied to the tile. */
@@ -30,18 +31,18 @@ export interface CoverColor {
 
 // Hues are spread around the wheel so adjacent books in a grid rarely collide.
 export const COVER_COLORS: readonly CoverColor[] = [
-  { className: 'bg-red-700', bg: '#b91c1c' },
-  { className: 'bg-orange-700', bg: '#c2410c' },
-  { className: 'bg-amber-700', bg: '#b45309' },
-  { className: 'bg-yellow-700', bg: '#a16207' },
-  { className: 'bg-lime-700', bg: '#4d7c0f' },
-  { className: 'bg-green-700', bg: '#15803d' },
-  { className: 'bg-emerald-700', bg: '#047857' },
-  { className: 'bg-teal-700', bg: '#0f766e' },
-  { className: 'bg-cyan-700', bg: '#0e7490' },
-  { className: 'bg-sky-700', bg: '#0369a1' },
-  { className: 'bg-fuchsia-700', bg: '#a21caf' },
-  { className: 'bg-rose-700', bg: '#be123c' },
+  { className: 'bg-[#9c6363]', bg: '#9c6363' }, // dusty red
+  { className: 'bg-[#8c6f5a]', bg: '#8c6f5a' }, // clay
+  { className: 'bg-[#837354]', bg: '#837354' }, // sand
+  { className: 'bg-[#627c50]', bg: '#627c50' }, // moss
+  { className: 'bg-[#507c66]', bg: '#507c66' }, // sage
+  { className: 'bg-[#507c79]', bg: '#507c79' }, // teal
+  { className: 'bg-[#587889]', bg: '#587889' }, // slate blue
+  { className: 'bg-[#617498]', bg: '#617498' }, // denim
+  { className: 'bg-[#7c6aa0]', bg: '#7c6aa0' }, // lavender
+  { className: 'bg-[#986198]', bg: '#986198' }, // plum
+  { className: 'bg-[#9c637b]', bg: '#9c637b' }, // rose
+  { className: 'bg-[#64748b]', bg: '#64748b' }, // slate-500
 ] as const
 
 /** Foreground used on every ground above. */
@@ -60,4 +61,29 @@ export function coverColorFor(id: number | string): CoverColor {
     h = Math.imul(h, 0x01000193) >>> 0
   }
   return COVER_COLORS[h % COVER_COLORS.length]
+}
+
+// Up to two initials from the title's first words, skipping a leading article
+// so "The Left Hand of Darkness" reads LH rather than TL. Digits count, so
+// "1984" stays "1". Initials are whole characters (graphemes), not UTF-16
+// units, so an emoji or an astral CJK character is not cut in half. A title
+// in a script written without spaces (Chinese, Japanese) is one "word", so it
+// takes its first two characters instead: 三体 stays 三体, not 三.
+export function titleInitials(title: string): string {
+  const words = title
+    .replace(/["'“”‘’()[\]]/g, '')
+    .split(/[\s\-–—:;,.]+/)
+    .filter(Boolean)
+  const body = words.length > 1 && /^(the|a|an)$/i.test(words[0]) ? words.slice(1) : words
+  if (body.length === 1 && UNSPACED_SCRIPT.test(body[0])) return graphemes(body[0]).slice(0, 2).join('')
+  return body.slice(0, 2).map(w => (graphemes(w)[0] ?? '').toUpperCase()).join('')
+}
+
+const UNSPACED_SCRIPT = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u
+
+function graphemes(s: string): string[] {
+  if (typeof Intl !== 'undefined' && 'Segmenter' in Intl) {
+    return Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(s), x => x.segment)
+  }
+  return Array.from(s)
 }

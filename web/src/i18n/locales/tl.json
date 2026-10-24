@@ -184,7 +184,6 @@
     "colTitleAuthor": "Pamagat at may-akda",
     "colFormat": "Format",
     "colActions": "Mga aksyon",
-    "noCover": "Walang pabalat",
     "authorUnknown": "Hindi alam ang may-akda",
     "changeFormat": "Baguhin ang format para sa {{title}}"
   },
@@ -494,7 +493,6 @@
     "book": {
       "confirmAdd": "Magdagdag ng libro",
       "coverAlt": "Pabalat ng {{title}}",
-      "noCover": "Walang pabalat",
       "published": "Nai-publish",
       "language": "Wika",
       "resultFormat": "Format ng metadata",
