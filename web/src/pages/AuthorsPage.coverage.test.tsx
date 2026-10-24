@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router'
 import AuthorsPage from './AuthorsPage'
 import { api } from '../api/client'
 import type { Author, Book } from '../api/client'
-import { acceptConfirm, cancelConfirm, confirmDialog } from '../test-utils'
+import { acceptConfirm, cancelConfirm, confirmDialog, clickBulkAction } from '../test-utils'
 
 vi.mock('../api/client', async importOriginal => {
   const actual = await importOriginal<typeof import('../api/client')>()
@@ -388,8 +388,7 @@ describe('AuthorsPage coverage', () => {
     it('confirms a bulk delete, sends every selected id and clears the selection', async () => {
       await renderWithAuthors()
       await selectBoth()
-      const bar = screen.getByRole('button', { name: 'bulkActionBar.clear' }).parentElement as HTMLElement
-      fireEvent.click(within(bar).getByRole('button', { name: 'common.delete' }))
+      clickBulkAction('common.delete', 'menu')
       await acceptConfirm()
       await waitFor(() => expect(api.bulkActionAuthors).toHaveBeenCalledWith([7, 8], 'delete', undefined, false))
       await waitFor(() => expect(screen.getByTitle('Select Andy Weir')).not.toBeChecked())
@@ -398,8 +397,7 @@ describe('AuthorsPage coverage', () => {
     it('skips a bulk delete when the confirmation is cancelled', async () => {
       await renderWithAuthors()
       await selectBoth()
-      const bar = screen.getByRole('button', { name: 'bulkActionBar.clear' }).parentElement as HTMLElement
-      fireEvent.click(within(bar).getByRole('button', { name: 'common.delete' }))
+      clickBulkAction('common.delete', 'menu')
       await cancelConfirm()
       await waitFor(() => expect(confirmDialog()).toBeNull())
       expect(api.bulkActionAuthors).not.toHaveBeenCalled()
@@ -417,13 +415,13 @@ describe('AuthorsPage coverage', () => {
     })
 
     it.each([
-      ['authors.bulkSetEbook', 'ebook'],
-      ['authors.bulkSetAudiobook', 'audiobook'],
-      ['authors.bulkSetBoth', 'both'],
+      ['common.ebook', 'ebook'],
+      ['common.audiobook', 'audiobook'],
+      ['common.both', 'both'],
     ])('sets the media type with %s after confirmation', async (label, mediaType) => {
       await renderWithAuthors()
       await selectBoth()
-      fireEvent.click(screen.getByRole('button', { name: label }))
+      clickBulkAction(label)
       await acceptConfirm()
       await waitFor(() => expect(api.bulkActionAuthors).toHaveBeenCalledWith([7, 8], 'set_media_type', mediaType))
       await waitFor(() => expect(screen.getByTitle('Select Andy Weir')).not.toBeChecked())
@@ -433,13 +431,13 @@ describe('AuthorsPage coverage', () => {
       const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
       await renderWithAuthors()
       fireEvent.click(screen.getByTitle('Select Andy Weir'))
-      fireEvent.click(screen.getByRole('button', { name: 'authors.bulkSetEbook' }))
+      clickBulkAction('common.ebook')
       await cancelConfirm()
       await waitFor(() => expect(confirmDialog()).toBeNull())
       expect(api.bulkActionAuthors).not.toHaveBeenCalled()
 
       vi.mocked(api.bulkActionAuthors).mockRejectedValue(new Error('rewrite failed'))
-      fireEvent.click(screen.getByRole('button', { name: 'authors.bulkSetEbook' }))
+      clickBulkAction('common.ebook')
       await acceptConfirm()
       await waitFor(() => expect(alert).toHaveBeenCalledWith('rewrite failed'))
     })
@@ -470,7 +468,7 @@ describe('AuthorsPage coverage', () => {
     it('sends a changed new-items policy and clamps an invalid latest count', async () => {
       await renderWithAuthors()
       fireEvent.click(screen.getByTitle('Select Andy Weir'))
-      fireEvent.click(screen.getByRole('button', { name: 'authors.bulkSetMonitorMode' }))
+      clickBulkAction('authors.bulkSetMonitorMode')
       const dialog = screen.getByRole('dialog')
       fireEvent.change(within(dialog).getByLabelText('editAuthorModal.monitorMode'), { target: { value: 'latest' } })
       const count = within(dialog).getByLabelText('editAuthorModal.monitorLatestCount')
@@ -490,7 +488,7 @@ describe('AuthorsPage coverage', () => {
       vi.mocked(api.bulkSetAuthorMonitorMode).mockRejectedValue(new Error('bad mode'))
       await renderWithAuthors()
       fireEvent.click(screen.getByTitle('Select Andy Weir'))
-      fireEvent.click(screen.getByRole('button', { name: 'authors.bulkSetMonitorMode' }))
+      clickBulkAction('authors.bulkSetMonitorMode')
       const dialog = screen.getByRole('dialog')
       fireEvent.click(within(dialog).getByRole('button', { name: 'authors.bulkSetMonitorModeApply' }))
       expect(await within(dialog).findByRole('alert')).toHaveTextContent('bad mode')
@@ -503,7 +501,7 @@ describe('AuthorsPage coverage', () => {
       vi.mocked(api.bulkSetAuthorMonitorMode).mockResolvedValue({ results: { '7': { ok: false } } } as never)
       await renderWithAuthors()
       fireEvent.click(screen.getByTitle('Select Andy Weir'))
-      fireEvent.click(screen.getByRole('button', { name: 'authors.bulkSetMonitorMode' }))
+      clickBulkAction('authors.bulkSetMonitorMode')
       const dialog = screen.getByRole('dialog')
       fireEvent.click(within(dialog).getByRole('button', { name: 'authors.bulkSetMonitorModeApply' }))
       expect(await within(dialog).findByRole('alert')).toHaveTextContent('authors.bulkSetMonitorModePartial')

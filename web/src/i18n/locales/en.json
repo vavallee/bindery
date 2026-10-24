@@ -439,9 +439,6 @@
     "bulkApplyMonitoringToExisting": "Also apply to their existing books",
     "bulkApplyMonitoringToExistingHint": "Rewrites every book of the selected authors to match. Leave it off to change the authors only.",
     "bulkSetMediaTypeConfirm": "Set the media type for every book of {{count}} selected authors to {{mediaType}}? This rewrites existing book rows and may re-evaluate wanted/missing status.",
-    "bulkSetEbook": "Set ebook",
-    "bulkSetAudiobook": "Set audiobook",
-    "bulkSetBoth": "Set both",
     "pageActions": "More author actions",
     "countLabel_one": "{{count}} author",
     "countLabel_other": "{{count}} authors",
@@ -761,7 +758,9 @@
     "colActions": "Actions",
     "authorUnknown": "Author unknown",
     "changeFormat": "Change format for {{title}}",
-    "authorNotMonitored": "Author not monitored, so this is not searched automatically"
+    "authorNotMonitored": "Author not monitored, so this is not searched automatically",
+    "blocklistSelectedConfirm_one": "Blocklist {{count}} book? It is marked skipped, leaves Wanted and is not searched again.",
+    "blocklistSelectedConfirm_other": "Blocklist {{count}} books? They are marked skipped, leave Wanted and are not searched again."
   },
   "history": {
     "title": "History",
@@ -2074,7 +2073,9 @@
   },
   "bulkActionBar": {
     "selected": "{{count}} selected",
-    "clear": "Clear"
+    "clear": "Clear",
+    "setFormat": "Set format",
+    "more": "More bulk actions"
   },
   "discover": {
     "title": "Discover",
