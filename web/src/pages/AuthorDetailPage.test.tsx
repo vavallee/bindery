@@ -149,6 +149,30 @@ function mockElementOverflow(overflows: boolean): () => void {
   }
 }
 
+// The book filters are the shared FilterBar: Status is an inline segment, the
+// other facets are radio groups behind the Filters and Sort disclosures. These
+// pick a value by its data-value, opening the disclosure first when needed.
+function setFilter(group: string, value: string) {
+  const segment = screen.queryByRole('group', { name: group })
+  if (segment) {
+    fireEvent.click(segment.querySelector(`[data-value="${value}"]`)!)
+    return
+  }
+  if (!screen.queryByRole('radiogroup', { name: group })) {
+    fireEvent.click(screen.getByRole('button', { name: group === 'Sort' ? 'Sort' : /^Filters/ }))
+  }
+  fireEvent.click(screen.getByRole('radiogroup', { name: group }).querySelector(`[data-value="${value}"]`)!)
+}
+
+function filterValue(group: string): string | null {
+  const segment = screen.queryByRole('group', { name: group })
+  if (segment) return segment.querySelector('[aria-pressed="true"]')?.getAttribute('data-value') ?? null
+  if (!screen.queryByRole('radiogroup', { name: group })) {
+    fireEvent.click(screen.getByRole('button', { name: group === 'Sort' ? 'Sort' : /^Filters/ }))
+  }
+  return screen.getByRole('radiogroup', { name: group }).querySelector('[aria-checked="true"]')?.getAttribute('data-value') ?? null
+}
+
 describe('AuthorDetailPage', () => {
   it('loads the complete author catalogue via the paging fetch-all, and renders past 100 books (#1467)', async () => {
     const books = Array.from({ length: 150 }, (_, i) =>
@@ -174,7 +198,7 @@ describe('AuthorDetailPage', () => {
     renderAuthorDetailPage([makeBook({ id: 1, title: 'Visible Book', status: 'imported' })], 'table')
 
     await screen.findByText('Visible Book')
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'excluded' } })
+    setFilter('Status', 'excluded')
 
     await waitFor(() =>
       expect(api.listAllBooks).toHaveBeenCalledWith({ authorId: 42, includeExcluded: true }))
@@ -783,7 +807,7 @@ describe('AuthorDetailPage', () => {
     expect(screen.queryByRole('button', { name: 'Un-exclude' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
 
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'excluded' } })
+    setFilter('Status', 'excluded')
     await screen.findByText('Hidden One')
     fireEvent.click(within(rowForTitle('Hidden One')).getByRole('checkbox'))
     fireEvent.click(within(rowForTitle('Hidden Two')).getByRole('checkbox'))
@@ -793,6 +817,29 @@ describe('AuthorDetailPage', () => {
 
     await waitFor(() => {
       expect(api.bulkActionBooks).toHaveBeenCalledWith([201, 202], 'unexclude', undefined)
+    })
+  })
+
+  // #2267: searching the selected books, not every wanted book of the author.
+  it('bulk-searches only the selected books', async () => {
+    vi.mocked(api.bulkActionBooks).mockResolvedValue({
+      results: { '101': { ok: true } },
+    })
+    renderAuthorDetailPage(
+      [
+        makeBook({ id: 101, title: 'Find Me', status: 'wanted' }),
+        makeBook({ id: 102, title: 'Leave Me', status: 'wanted' }),
+      ],
+      'table',
+    )
+
+    await screen.findByText('Find Me')
+    fireEvent.click(within(rowForTitle('Find Me')).getByRole('checkbox'))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Search' }))
+
+    await waitFor(() => {
+      expect(api.bulkActionBooks).toHaveBeenCalledWith([101], 'search', undefined)
     })
   })
 
@@ -858,7 +905,7 @@ describe('AuthorDetailPage', () => {
     await screen.findByText('Genuinely Wanted')
 
     // Apply the Wanted status filter.
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'wanted' } })
+    setFilter('Status', 'wanted')
 
     // Monitored wanted book stays; unmonitored "wanted" and imported drop out.
     expect(screen.getByText('Genuinely Wanted')).toBeInTheDocument()
@@ -884,19 +931,19 @@ describe('AuthorDetailPage', () => {
 
     // Type: Ebook + Status: Imported must include the dual-format book whose
     // ebook is on disk — the aggregate 'wanted' used to hide it.
-    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'ebook' } })
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'imported' } })
+    setFilter('Type', 'ebook')
+    setFilter('Status', 'imported')
     expect(screen.getByText('Dual Ebook Done')).toBeInTheDocument()
     expect(screen.getByText('Plain Ebook Imported')).toBeInTheDocument()
     expect(screen.queryByText('Plain Ebook Wanted')).not.toBeInTheDocument()
 
     // And its ebook is NOT wanted anymore, so the Wanted chip must drop it.
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'wanted' } })
+    setFilter('Status', 'wanted')
     expect(screen.queryByText('Dual Ebook Done')).not.toBeInTheDocument()
     expect(screen.getByText('Plain Ebook Wanted')).toBeInTheDocument()
 
     // The reverse direction: the audiobook side of the same book IS wanted.
-    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'audiobook' } })
+    setFilter('Type', 'audiobook')
     expect(screen.getByText('Dual Ebook Done')).toBeInTheDocument()
     expect(screen.queryByText('Plain Ebook Wanted')).not.toBeInTheDocument()
   })
@@ -916,21 +963,21 @@ describe('AuthorDetailPage', () => {
     const stats = await screen.findByTestId('author-stats')
     expect(within(stats).getByText('In library').parentElement).toHaveTextContent('1')
 
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'imported' } })
+    setFilter('Status', 'imported')
     expect(screen.getByText('Partly Owned')).toBeInTheDocument()
     expect(screen.queryByText('Nothing Owned')).not.toBeInTheDocument()
 
     // Still wanted too: one format is missing.
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'wanted' } })
+    setFilter('Status', 'wanted')
     expect(screen.getByText('Partly Owned')).toBeInTheDocument()
     expect(screen.getByText('Nothing Owned')).toBeInTheDocument()
 
     // With a format chip the file has to be of that format: the ebook only
     // book is not in the audiobook library, matching the Books page.
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'imported' } })
-    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'audiobook' } })
+    setFilter('Status', 'imported')
+    setFilter('Type', 'audiobook')
     expect(screen.queryByText('Partly Owned')).not.toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'ebook' } })
+    setFilter('Type', 'ebook')
     expect(screen.getByText('Partly Owned')).toBeInTheDocument()
   })
 
@@ -945,12 +992,12 @@ describe('AuthorDetailPage', () => {
     )
     await screen.findByText('Both Formats')
 
-    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'ebook' } })
+    setFilter('Type', 'ebook')
     expect(screen.getByText('Both Formats')).toBeInTheDocument()
     expect(screen.getByText('Ebook Only')).toBeInTheDocument()
     expect(screen.queryByText('Audio Only')).not.toBeInTheDocument()
 
-    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'audiobook' } })
+    setFilter('Type', 'audiobook')
     expect(screen.getByText('Both Formats')).toBeInTheDocument()
     expect(screen.queryByText('Ebook Only')).not.toBeInTheDocument()
     expect(screen.getByText('Audio Only')).toBeInTheDocument()
@@ -979,7 +1026,7 @@ describe('AuthorDetailPage', () => {
 
     // Now narrow to just the wanted book and Select all again: selection must
     // cover only the filtered (displayed) book, not the hidden imported one.
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'wanted' } })
+    setFilter('Status', 'wanted')
     expect(screen.queryByText('Imported Book')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Select all' }))
@@ -1066,8 +1113,8 @@ describe('AuthorDetailPage — toolbar and stats', () => {
 
   it('offers every StatusFilter value, including the one the chips never exposed', async () => {
     renderAuthorDetailPage([makeBook({ id: 1, title: 'A', status: 'imported' })])
-    const select = await screen.findByLabelText('Status')
-    const values = within(select).getAllByRole('option').map(o => (o as HTMLOptionElement).value)
+    const segment = await screen.findByRole('group', { name: 'Status' })
+    const values = within(segment).getAllByRole('button').map(b => b.getAttribute('data-value'))
     // skipped has been in the StatusFilter type all along but the chip row only
     // ever offered wanted/imported. 'downloading' and 'downloaded' were offered
     // here too until #2374 removed them: no book could ever hold either value,
@@ -1084,19 +1131,20 @@ describe('AuthorDetailPage — toolbar and stats', () => {
     // heading and once inside the aria-hidden CoverPlaceholder — so query the
     // heading rather than the raw text.
     await screen.findByRole('heading', { name: 'Passed Book' })
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'skipped' } })
+    setFilter('Status', 'skipped')
     expect(screen.getByRole('heading', { name: 'Passed Book' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Shelved Book' })).toBeNull()
   })
 
   it('persists the status filter across remounts', async () => {
     const { unmount } = renderAuthorDetailPage([makeBook({ id: 1, title: 'A', status: 'imported' })])
-    await screen.findByLabelText('Status')
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'skipped' } })
+    await screen.findByRole('group', { name: 'Status' })
+    setFilter('Status', 'skipped')
     unmount()
 
     renderAuthorDetailPage([makeBook({ id: 1, title: 'A', status: 'imported' })])
-    expect(await screen.findByLabelText('Status')).toHaveValue('skipped')
+    await screen.findByRole('group', { name: 'Status' })
+    expect(filterValue('Status')).toBe('skipped')
   })
 
   // Grid headings in document order — the order the user sees.
@@ -1115,18 +1163,17 @@ describe('AuthorDetailPage — toolbar and stats', () => {
     await screen.findByRole('heading', { name: 'Beta' })
     expect(shownTitles(all)).toEqual(['Beta', 'Gamma', 'Alpha'])
 
-    const sort = screen.getByLabelText('Sort')
-    fireEvent.change(sort, { target: { value: 'title-az' } })
+    setFilter('Sort', 'title-az')
     expect(shownTitles(all)).toEqual(['Alpha', 'Beta', 'Gamma'])
-    fireEvent.change(sort, { target: { value: 'title-za' } })
+    setFilter('Sort', 'title-za')
     expect(shownTitles(all)).toEqual(['Gamma', 'Beta', 'Alpha'])
-    fireEvent.change(sort, { target: { value: 'date-new' } })
+    setFilter('Sort', 'date-new')
     expect(shownTitles(all)).toEqual(['Gamma', 'Alpha', 'Beta'])
-    fireEvent.change(sort, { target: { value: 'date-old' } })
+    setFilter('Sort', 'date-old')
     expect(shownTitles(all)).toEqual(['Beta', 'Alpha', 'Gamma'])
-    fireEvent.change(sort, { target: { value: 'added-new' } })
+    setFilter('Sort', 'added-new')
     expect(shownTitles(all)).toEqual(['Beta', 'Alpha', 'Gamma'])
-    fireEvent.change(sort, { target: { value: 'added-old' } })
+    setFilter('Sort', 'added-old')
     expect(shownTitles(all)).toEqual(['Gamma', 'Alpha', 'Beta'])
   })
 
@@ -1138,21 +1185,23 @@ describe('AuthorDetailPage — toolbar and stats', () => {
     ])
     const all = ['Undated', 'Old', 'New']
     await screen.findByRole('heading', { name: 'Undated' })
-    fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'date-old' } })
+    setFilter('Sort', 'date-old')
     expect(shownTitles(all)).toEqual(['Old', 'New', 'Undated'])
-    fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'date-new' } })
+    setFilter('Sort', 'date-new')
     expect(shownTitles(all)).toEqual(['New', 'Old', 'Undated'])
   })
 
   it('persists the sort and migrates the old Published-header setting', async () => {
     localStorage.setItem('bindery.sort.author-detail.date', 'desc')
     const { unmount } = renderAuthorDetailPage([makeBook({ id: 1, title: 'A', status: 'imported' })])
-    expect(await screen.findByLabelText('Sort')).toHaveValue('date-new')
-    fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'title-za' } })
+    await screen.findByRole('group', { name: 'Status' })
+    expect(filterValue('Sort')).toBe('date-new')
+    setFilter('Sort', 'title-za')
     unmount()
 
     renderAuthorDetailPage([makeBook({ id: 1, title: 'A', status: 'imported' })])
-    expect(await screen.findByLabelText('Sort')).toHaveValue('title-za')
+    await screen.findByRole('group', { name: 'Status' })
+    expect(filterValue('Sort')).toBe('title-za')
   })
 
   it('sorts from the Title and Published column headers in table view', async () => {
@@ -1162,11 +1211,11 @@ describe('AuthorDetailPage — toolbar and stats', () => {
     ], 'table')
     await screen.findByText('Beta')
     fireEvent.click(screen.getByRole('columnheader', { name: /Title/ }))
-    expect(screen.getByLabelText('Sort')).toHaveValue('title-az')
+    expect(filterValue('Sort')).toBe('title-az')
     fireEvent.click(screen.getByRole('columnheader', { name: /Title/ }))
-    expect(screen.getByLabelText('Sort')).toHaveValue('title-za')
+    expect(filterValue('Sort')).toBe('title-za')
     fireEvent.click(screen.getByRole('columnheader', { name: /Published/ }))
-    expect(screen.getByLabelText('Sort')).toHaveValue('date-old')
+    expect(filterValue('Sort')).toBe('date-old')
   })
 
   it('filters by monitored state', async () => {
@@ -1175,10 +1224,10 @@ describe('AuthorDetailPage — toolbar and stats', () => {
       makeBook({ id: 2, title: 'Ignored', status: 'wanted', monitored: false }),
     ])
     await screen.findByRole('heading', { name: 'Watched' })
-    fireEvent.change(screen.getByLabelText('Monitored'), { target: { value: 'unmonitored' } })
+    setFilter('Monitored', 'unmonitored')
     expect(screen.queryByRole('heading', { name: 'Watched' })).toBeNull()
     expect(screen.getByRole('heading', { name: 'Ignored' })).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Monitored'), { target: { value: 'monitored' } })
+    setFilter('Monitored', 'monitored')
     expect(screen.getByRole('heading', { name: 'Watched' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Ignored' })).toBeNull()
   })
@@ -1197,7 +1246,7 @@ describe('AuthorDetailPage — toolbar and stats', () => {
       makeBook({ id: 2, title: 'Deutsch Eins', status: 'imported', language: 'ger' }),
     ])
     await screen.findByRole('heading', { name: 'English One' })
-    fireEvent.change(screen.getByLabelText('Language'), { target: { value: 'ger' } })
+    setFilter('Language', 'ger')
     expect(screen.queryByRole('heading', { name: 'English One' })).toBeNull()
     expect(screen.getByRole('heading', { name: 'Deutsch Eins' })).toBeInTheDocument()
   })
@@ -1209,7 +1258,8 @@ describe('AuthorDetailPage — toolbar and stats', () => {
     ])
     await screen.findByRole('heading', { name: 'Two Letter' })
     // Both spellings are English, so there is nothing to choose between.
-    expect(screen.queryByLabelText('Language')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
+    expect(screen.queryByRole('radiogroup', { name: 'Language' })).toBeNull()
     unmount()
 
     renderAuthorDetailPage([
@@ -1218,12 +1268,53 @@ describe('AuthorDetailPage — toolbar and stats', () => {
       makeBook({ id: 3, title: 'Deutsch', status: 'imported', language: 'de' }),
     ])
     await screen.findByRole('heading', { name: 'Two Letter' })
-    const select = screen.getByLabelText('Language')
-    expect(within(select).getAllByRole('option').map(o => o.textContent)).toEqual(['All languages', 'English', 'German'])
-    fireEvent.change(select, { target: { value: 'eng' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
+    expect(within(screen.getByRole('radiogroup', { name: 'Language' })).getAllByRole('radio').map(o => o.textContent?.replace('✓', ''))).toEqual(['All languages', 'English', 'German'])
+    setFilter('Language', 'eng')
     expect(screen.getByRole('heading', { name: 'Two Letter' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Three Letter' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Deutsch' })).toBeNull()
+  })
+
+  it('shows a removable chip for each active filter and clears it', async () => {
+    renderAuthorDetailPage([
+      makeBook({ id: 1, title: 'English One', status: 'imported', language: 'eng', releaseDate: '2001-01-01T00:00:00Z' }),
+      makeBook({ id: 2, title: 'Deutsch Eins', status: 'imported', language: 'ger', mediaType: 'both', releaseDate: '2002-01-01T00:00:00Z' }),
+      makeBook({ id: 3, title: 'Future Book', status: 'wanted', language: 'ger', mediaType: 'both', monitored: false, releaseDate: '2999-01-01T00:00:00Z' }),
+    ])
+    await screen.findByRole('heading', { name: 'English One' })
+    setFilter('Type', 'ebook')
+    setFilter('Published', 'upcoming')
+    setFilter('Monitored', 'unmonitored')
+    setFilter('Language', 'ger')
+
+    const chipLabels = () =>
+      screen.getAllByText('Clear filter').map(x => x.closest('button')!.textContent!.replace('✕', '').replace('Clear filter', '').trim())
+    expect(chipLabels()).toEqual(['Ebook', 'Upcoming', 'Unmonitored', 'German'])
+    expect(screen.getByRole('heading', { name: 'Future Book' })).toBeInTheDocument()
+
+    for (let left = 4; left > 0; left--) {
+      fireEvent.click(screen.getAllByText('Clear filter')[0].closest('button')!)
+      if (left > 1) expect(chipLabels()).toHaveLength(left - 1)
+    }
+    expect(screen.queryByText('Clear filter')).toBeNull()
+    expect(screen.getByRole('heading', { name: 'English One' })).toBeInTheDocument()
+  })
+
+  it('selects and deselects every visible book from the table header', async () => {
+    renderAuthorDetailPage(
+      [
+        makeBook({ id: 1, title: 'Row One', status: 'wanted' }),
+        makeBook({ id: 2, title: 'Row Two', status: 'wanted' }),
+      ],
+      'table',
+    )
+    await screen.findByText('Row One')
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all on this page' }))
+    expect(screen.getByRole('checkbox', { name: 'Select Row One' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'Select Row Two' })).toBeChecked()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all on this page' }))
+    expect(screen.getByRole('checkbox', { name: 'Select Row One' })).not.toBeChecked()
   })
 
   it('keeps all four stat cells when a count is zero', async () => {
@@ -1725,7 +1816,7 @@ describe('AuthorDetailPage: manual refresh', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
     await advance(0)
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'excluded' } })
+    setFilter('Status', 'excluded')
     await advance(0)
 
     // The sync ends at 3 seconds; the poll at 4 seconds sees it and reloads.
