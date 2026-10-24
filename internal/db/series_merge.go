@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // ErrSeriesMergeInvalid reports a merge request that cannot be carried out as
@@ -308,7 +310,7 @@ func (r *SeriesRepo) applyMerge(ctx context.Context, plan *SeriesMergePlan) erro
 		WHERE book_id IN (SELECT book_id FROM series_books WHERE series_id = ?)
 		  AND (series_foreign_id = (SELECT foreign_id FROM series WHERE id = ?)
 		       OR series_foreign_id IN (SELECT foreign_id FROM series_aliases WHERE series_id = ?))`, t, t, t)
-	add("update the series", `UPDATE series SET title = ?, monitored = ? WHERE id = ?`, plan.Title, boolToInt(plan.Monitored), t)
+	add("update the series", `UPDATE series SET title = ?, search_key = ?, monitored = ? WHERE id = ?`, plan.Title, textutil.FoldForSearch(plan.Title), boolToInt(plan.Monitored), t)
 	for _, st := range steps {
 		if _, err := r.exec.ExecContext(ctx, st.query, st.args...); err != nil {
 			return fmt.Errorf("%s: %w", st.what, err)

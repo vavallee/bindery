@@ -351,16 +351,20 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 		// "muller" never found "Müller" and a decomposed query never found a
 		// composed row (#1660). Both sides now pass through FoldForSearch.
 		//
-		// Every token must appear somewhere in the title or the author, which
-		// is the "words" rule Algolia and Meilisearch both use: it lets
-		// "hobbit tolkien" find the book without the two words being adjacent,
-		// while still requiring evidence for each word the user typed. Capped
+		// Every token must appear somewhere in the title, the author or the
+		// name of a series the book is in (#3462), which is the "words" rule
+		// Algolia and Meilisearch both use: it lets "hobbit tolkien" find the
+		// book without the two words being adjacent, while still requiring
+		// evidence for each word the user typed. A series-only match ranks
+		// below every title or author match (bookSearchRank). Capped
 		// at maxSearchTokens (searchrank.go) so the statement's size is
 		// bounded by that constant, not by the input.
 		for _, tok := range searchTokens(folded) {
 			like := "%" + escapeLike(tok) + "%"
-			where += " AND (books.search_key LIKE ? ESCAPE '\\' OR COALESCE(au.search_key, '') LIKE ? ESCAPE '\\')"
-			args = append(args, like, like)
+			where += " AND (books.search_key LIKE ? ESCAPE '\\' OR COALESCE(au.search_key, '') LIKE ? ESCAPE '\\'" +
+				" OR EXISTS (SELECT 1 FROM series_books sb JOIN series s ON s.id = sb.series_id" +
+				" WHERE sb.book_id = books.id AND s.search_key LIKE ? ESCAPE '\\'))"
+			args = append(args, like, like, like)
 		}
 		searchOrder, rankArgs = bookSearchRank(folded)
 	}
