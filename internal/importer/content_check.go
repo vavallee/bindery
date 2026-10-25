@@ -254,12 +254,23 @@ func ebookTitleMatches(bookTitle, fileTitle string) bool {
 // "James Patterson and Maxine Paetro" meets "James Patterson". An empty creator,
 // or a book with no author on record, is compatible: nothing was said.
 func ebookAuthorMatches(names []string, creator string) bool {
+	agrees, _ := ebookAuthorAgreement(names, creator)
+	return agrees
+}
+
+// ebookAuthorAgreement is ebookAuthorMatches that also says whether the file
+// actually named the author: named is true only when the creator holds a real
+// person, there is a name on record in the creator's script, and one of the
+// creators matched it. A file that said nothing (no creator, a placeholder, a
+// script the author has no name in) agrees but is not named, so a rule that
+// needs positive evidence can tell the two apart.
+func ebookAuthorAgreement(names []string, creator string) (agrees, named bool) {
 	creators := splitCreators(creator)
 	if len(creators) == 0 || len(names) == 0 {
-		return true
+		return true, false
 	}
 	if creatorIsPlaceholder(creators) {
-		return true
+		return true, false
 	}
 	// A creator is compared with the names in its own script. A name in another
 	// script is no evidence either way, and an author with one Cyrillic alias
@@ -285,15 +296,15 @@ func ebookAuthorMatches(names []string, creator string) bool {
 			pool = other
 		}
 		if len(pool) == 0 {
-			return true
+			return true, false
 		}
 		for _, n := range pool {
 			if authorMatch(n, c) || authorMatch(c, n) {
-				return true
+				return true, true
 			}
 		}
 	}
-	return false
+	return false, false
 }
 
 // placeholderCreators are dc:creator values that name nobody: what a converter,
@@ -361,6 +372,62 @@ func creatorIsPlaceholder(creators []string) bool {
 // metadata never counts.
 func ebookDefiniteMismatch(bookTitle string, names []string, fileTitle, fileCreator string) bool {
 	return !ebookTitleMatches(bookTitle, fileTitle) && !ebookAuthorMatches(names, fileCreator)
+}
+
+// ebookIsAnotherBookOfTheAuthor reports whether an EPUB whose author agrees is
+// still another book: its title names a different work than the wanted one AND
+// is the title of another book the author's catalogue holds (#3461). A series
+// author's wrong grab is usually a neighbouring volume, and the author side of
+// ebookDefiniteMismatch cannot see it.
+//
+// Both halves are needed. Title difference alone would flag a translated or
+// alternate title of the wanted book ("Voyna i mir" for "War and Peace",
+// "Northern Lights" for "The Golden Compass"), which titlesNameDifferentWorks
+// cannot tell apart from a neighbouring volume. Naming a specific other book
+// the catalogue already has is the evidence that it is not an edition of this
+// one. The author must be named positively: a missing or placeholder creator
+// says nothing, as it does everywhere else in this check. authorTitles is the
+// author's catalogue, which may include the wanted book itself.
+func ebookIsAnotherBookOfTheAuthor(bookTitle string, names []string, fileTitle, fileCreator string, authorTitles []string) bool {
+	if ebookTitleMatches(bookTitle, fileTitle) || !titlesNameDifferentWorks(bookTitle, fileTitle) {
+		return false
+	}
+	if _, named := ebookAuthorAgreement(names, fileCreator); !named {
+		return false
+	}
+	for _, t := range authorTitles {
+		if strings.TrimSpace(t) == "" || bookIsCompilation(t) {
+			continue
+		}
+		// The catalogue entry must be a different work than the wanted book
+		// (another edition row of it must not vouch for the file) and the file
+		// must be that entry.
+		if ebookTitleMatches(bookTitle, t) || !titlesNameDifferentWorks(bookTitle, t) {
+			continue
+		}
+		if ebookTitleMatches(t, fileTitle) && !titlesNameDifferentWorks(t, fileTitle) {
+			return true
+		}
+	}
+	return false
+}
+
+// authorCatalogueTitles lists the titles of every book the author has,
+// including excluded ones; nil when they cannot be read.
+func (s *Scanner) authorCatalogueTitles(ctx context.Context, author *models.Author) []string {
+	if author == nil || s.books == nil {
+		return nil
+	}
+	books, err := s.books.ListByAuthorIncludingExcluded(ctx, author.ID)
+	if err != nil {
+		slog.Warn("content check: could not load the author's books", "authorID", author.ID, "error", err)
+		return nil
+	}
+	titles := make([]string, 0, len(books))
+	for _, b := range books {
+		titles = append(titles, b.Title)
+	}
+	return titles
 }
 
 // authorNamesFor returns the names the book's author is known by: the name on
@@ -459,6 +526,9 @@ func (s *Scanner) checkEbookContent(ctx context.Context, book *models.Book, auth
 		s.onContentCheck("ebook")
 	}
 	names := s.authorNamesFor(ctx, author)
+	// The author's other books, read once and only if a file needs them.
+	var catalogue []string
+	var catalogueRead bool
 
 	// A release with more EPUBs than the cap is not judged: a prefix of it could
 	// be all wrong books while the right one sits later in the list, and the
@@ -486,7 +556,15 @@ func (s *Scanner) checkEbookContent(ctx context.Context, book *models.Book, auth
 			continue
 		}
 		read++
-		if ebookDefiniteMismatch(book.Title, names, meta.Title, meta.Author) {
+		mismatch := ebookDefiniteMismatch(book.Title, names, meta.Title, meta.Author)
+		if !mismatch && !ebookTitleMatches(book.Title, meta.Title) {
+			// Title differs and the author agrees: another book by the author?
+			if !catalogueRead {
+				catalogue, catalogueRead = s.authorCatalogueTitles(ctx, author), true
+			}
+			mismatch = ebookIsAnotherBookOfTheAuthor(book.Title, names, meta.Title, meta.Author, catalogue)
+		}
+		if mismatch {
 			mismatches = append(mismatches, found{safeFileText(filepath.Base(f)), safeFileText(meta.Title), safeFileText(meta.Author)})
 		}
 	}

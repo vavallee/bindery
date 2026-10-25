@@ -555,7 +555,8 @@ name can say one book while the EPUB inside is another, and without a check that
 file imports under the wrong book and the book is never searched for again. When
 a download tied to a wanted book finishes, Bindery reads the EPUB's `dc:title`
 and `dc:creator` and compares them with the book. Only a definite mismatch
-counts: the title does not match **and** the author does not match.
+counts: the title does not match **and** the author does not match, or the
+title is another book by the same author (see below).
 
 A title matches when, after case, accents, punctuation, a leading article and
 `&` against `and` are set aside, it equals the book's title or one of its
@@ -584,8 +585,16 @@ does a comparison across scripts: if one side has no Latin letters and the other
 does (a Russian, Japanese, Hebrew, Arabic or Chinese edition of a book the
 catalogue holds in Latin letters), that title or author cannot disagree. Two
 non-Latin texts are still compared with each other. A file whose title differs but
-whose author agrees (another book in the series) is imported, and a wanted box
-set or omnibus is not compared. If a release holds several EPUBs, it is flagged
+whose author agrees is imported, with one exception: when the file's title is
+clearly a different work than the wanted book and is also the title of another
+book in that author's catalogue in Bindery (the wanted `Hawk`, a file titled
+`City of the Dead: A Maximum Ride Novel` by `James Patterson, Mindy McGinnis`,
+and `City of the Dead` among the author's books), it is a mismatch. The author
+must be named in the file for this: a missing or placeholder creator never
+triggers it. A translated or alternate title that the catalogue does not hold as
+a separate book, a subtitle, a series prefix or suffix and a numbered volume of
+the same work are not mismatches. Like every other mismatch it only refuses the
+download in `block` mode. A wanted box set or omnibus is not compared. If a release holds several EPUBs, it is flagged
 only when every one that could be read is a definite mismatch. A release with more
 than 20 EPUBs is not judged (a verdict on a prefix could condemn the right book),
 and the `contentCheck` note says `truncated`. The object lists at most 10
