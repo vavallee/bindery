@@ -96,10 +96,15 @@ type contentCheckResult struct {
 	data map[string]any
 	// reason is the message a blocked download shows.
 	reason string
+	// uncertain is true when a flagged file is only probably another book (see
+	// otherWorkLikely). It is noted like any warn finding and never blocks.
+	uncertain bool
 }
 
 // blocks reports whether the result refuses the download.
-func (r contentCheckResult) blocks() bool { return r.flagged && r.mode == contentCheckBlock }
+func (r contentCheckResult) blocks() bool {
+	return r.flagged && !r.uncertain && r.mode == contentCheckBlock
+}
 
 // maxContentCheckEpubReads bounds how many EPUBs of one release the ebook check
 // judges. A release with more is a pack; it is not read at all, because the
@@ -374,47 +379,134 @@ func ebookDefiniteMismatch(bookTitle string, names []string, fileTitle, fileCrea
 	return !ebookTitleMatches(bookTitle, fileTitle) && !ebookAuthorMatches(names, fileCreator)
 }
 
-// ebookIsAnotherBookOfTheAuthor reports whether an EPUB whose author agrees is
-// still another book: its title names a different work than the wanted one AND
-// is the title of another book the author's catalogue holds (#3461). A series
-// author's wrong grab is usually a neighbouring volume, and the author side of
-// ebookDefiniteMismatch cannot see it.
-//
-// Both halves are needed. Title difference alone would flag a translated or
-// alternate title of the wanted book ("Voyna i mir" for "War and Peace",
-// "Northern Lights" for "The Golden Compass"), which titlesNameDifferentWorks
-// cannot tell apart from a neighbouring volume. Naming a specific other book
-// the catalogue already has is the evidence that it is not an edition of this
-// one. The author must be named positively: a missing or placeholder creator
-// says nothing, as it does everywhere else in this check. authorTitles is the
-// author's catalogue, which may include the wanted book itself.
-func ebookIsAnotherBookOfTheAuthor(bookTitle string, names []string, fileTitle, fileCreator string, authorTitles []string) bool {
-	if ebookTitleMatches(bookTitle, fileTitle) || !titlesNameDifferentWorks(bookTitle, fileTitle) {
-		return false
-	}
-	if _, named := ebookAuthorAgreement(names, fileCreator); !named {
-		return false
-	}
-	for _, t := range authorTitles {
-		if strings.TrimSpace(t) == "" || bookIsCompilation(t) {
-			continue
-		}
-		// The catalogue entry must be a different work than the wanted book
-		// (another edition row of it must not vouch for the file) and the file
-		// must be that entry.
-		if ebookTitleMatches(bookTitle, t) || !titlesNameDifferentWorks(bookTitle, t) {
-			continue
-		}
-		if ebookTitleMatches(t, fileTitle) && !titlesNameDifferentWorks(t, fileTitle) {
-			return true
+// seriesSlot is one series membership with its position, "" when unknown.
+type seriesSlot struct {
+	seriesID int64
+	position string
+}
+
+// seriesPositionsDiffer reports whether a and b share a series and hold
+// different known positions in it. An unknown position never counts.
+func seriesPositionsDiffer(a, b []seriesSlot) bool {
+	for _, x := range a {
+		for _, y := range b {
+			if x.seriesID == y.seriesID && x.position != "" && y.position != "" && x.position != y.position {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-// authorCatalogueTitles lists the titles of every book the author has,
-// including excluded ones; nil when they cannot be read.
-func (s *Scanner) authorCatalogueTitles(ctx context.Context, author *models.Author) []string {
+// seriesPositionsSame reports whether a and b share a series and hold the same
+// known position in it, as two editions of one book do.
+func seriesPositionsSame(a, b []seriesSlot) bool {
+	for _, x := range a {
+		for _, y := range b {
+			if x.seriesID == y.seriesID && x.position != "" && x.position == y.position {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// catalogueBook is what the other-book rule reads about one book of the
+// author's catalogue: its titles, every id it is known by, and its series slots.
+type catalogueBook struct {
+	id            int64
+	title         string
+	originalTitle string
+	ids           []string
+	slots         []seriesSlot
+}
+
+// otherWork is how sure the content check is that a file is another book.
+type otherWork int
+
+const (
+	// otherWorkNo: the file is not shown to be another book.
+	otherWorkNo otherWork = iota
+	// otherWorkLikely: the file's title is that of another catalogue book and
+	// nothing says the two are editions of one work, but nothing says they are
+	// distinct works either. It is noted and never refuses a download.
+	otherWorkLikely
+	// otherWorkConfident: the file is the title of a book that sits at a
+	// different position in a series the wanted book is also in.
+	otherWorkConfident
+)
+
+// ebookIsAnotherBookOfTheAuthor judges an EPUB whose author agrees but whose
+// title differs (#3461). A series author's wrong grab is usually a neighbouring
+// volume, and the author side of ebookDefiniteMismatch cannot see it.
+//
+// Title difference alone is not evidence: a translated or alternate title
+// ("Voyna i mir" for "War and Peace", "The Golden Compass" for "Northern
+// Lights") reads as a different work to titlesNameDifferentWorks. So the file's
+// title must also be a different catalogue book (a row whose title the file
+// matches, that is a different work than the wanted book by title), and that row
+// must not look like another edition of the wanted book. A row is set aside as
+// an edition when it shares any id with the wanted book, one's original title is
+// the other's title, or they sit
+// at the same position of one series. Such rows are common: the catalogue
+// can hold both editions as separate rows, even excluded ones.
+//
+// What is left is otherWorkConfident when the row and the wanted book are at
+// different positions of one series, the one fact that says two titles are
+// distinct books, and otherWorkLikely otherwise. The author must be named in the
+// file: a missing or placeholder creator says nothing.
+func ebookIsAnotherBookOfTheAuthor(wanted catalogueBook, names []string, fileTitle, fileCreator string, catalogue []catalogueBook) otherWork {
+	if ebookTitleMatches(wanted.title, fileTitle) || !titlesNameDifferentWorks(wanted.title, fileTitle) {
+		return otherWorkNo
+	}
+	if _, named := ebookAuthorAgreement(names, fileCreator); !named {
+		return otherWorkNo
+	}
+	verdict := otherWorkNo
+	for _, t := range catalogue {
+		if t.id == wanted.id && wanted.id != 0 || strings.TrimSpace(t.title) == "" || bookIsCompilation(t.title) {
+			continue
+		}
+		// The row must be a different work than the wanted book by title, and
+		// the file must be that row.
+		if ebookTitleMatches(wanted.title, t.title) || !titlesNameDifferentWorks(wanted.title, t.title) {
+			continue
+		}
+		if !ebookTitleMatches(t.title, fileTitle) || titlesNameDifferentWorks(t.title, fileTitle) {
+			continue
+		}
+		if looksLikeAnEdition(wanted, t) {
+			continue
+		}
+		if seriesPositionsDiffer(wanted.slots, t.slots) {
+			return otherWorkConfident
+		}
+		verdict = otherWorkLikely
+	}
+	return verdict
+}
+
+// looksLikeAnEdition reports whether two catalogue rows may be one work.
+func looksLikeAnEdition(a, b catalogueBook) bool {
+	for _, x := range a.ids {
+		for _, y := range b.ids {
+			if x != "" && x == y {
+				return true
+			}
+		}
+	}
+	if a.originalTitle != "" && ebookTitleMatches(a.originalTitle, b.title) {
+		return true
+	}
+	if b.originalTitle != "" && ebookTitleMatches(b.originalTitle, a.title) {
+		return true
+	}
+	return seriesPositionsSame(a.slots, b.slots)
+}
+
+// authorCatalogue loads the author's books (excluded ones too) with their ids
+// and series slots; nil when they cannot be read.
+func (s *Scanner) authorCatalogue(ctx context.Context, author *models.Author) []catalogueBook {
 	if author == nil || s.books == nil {
 		return nil
 	}
@@ -423,11 +515,35 @@ func (s *Scanner) authorCatalogueTitles(ctx context.Context, author *models.Auth
 		slog.Warn("content check: could not load the author's books", "authorID", author.ID, "error", err)
 		return nil
 	}
-	titles := make([]string, 0, len(books))
-	for _, b := range books {
-		titles = append(titles, b.Title)
+	identifiers, err := s.books.ListBookIdentifiersByAuthor(ctx, author.ID)
+	if err != nil {
+		slog.Warn("content check: could not load the author's book ids", "authorID", author.ID, "error", err)
+		identifiers = nil
 	}
-	return titles
+	var memberships map[int64][]db.BookSeriesMembership
+	if s.series != nil {
+		if memberships, err = s.series.ListBookSeriesMembershipsByAuthor(ctx, author.ID); err != nil {
+			slog.Warn("content check: could not load the author's series", "authorID", author.ID, "error", err)
+			memberships = nil
+		}
+	}
+	out := make([]catalogueBook, 0, len(books))
+	for _, b := range books {
+		c := catalogueBook{id: b.ID, title: b.Title, originalTitle: b.OriginalTitle}
+		for _, id := range []string{b.ForeignID, b.HardcoverForeignID, b.ASIN} {
+			if id != "" {
+				c.ids = append(c.ids, id)
+			}
+		}
+		for _, bi := range identifiers[b.ID] {
+			c.ids = append(c.ids, bi.ForeignID)
+		}
+		for _, m := range memberships[b.ID] {
+			c.slots = append(c.slots, seriesSlot{seriesID: m.SeriesID, position: m.Position})
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // authorNamesFor returns the names the book's author is known by: the name on
@@ -527,8 +643,10 @@ func (s *Scanner) checkEbookContent(ctx context.Context, book *models.Book, auth
 	}
 	names := s.authorNamesFor(ctx, author)
 	// The author's other books, read once and only if a file needs them.
-	var catalogue []string
+	var catalogue []catalogueBook
 	var catalogueRead bool
+	var wantedEntry catalogueBook
+	uncertain := false
 
 	// A release with more EPUBs than the cap is not judged: a prefix of it could
 	// be all wrong books while the right one sits later in the list, and the
@@ -557,14 +675,27 @@ func (s *Scanner) checkEbookContent(ctx context.Context, book *models.Book, auth
 		}
 		read++
 		mismatch := ebookDefiniteMismatch(book.Title, names, meta.Title, meta.Author)
+		fileUncertain := false
 		if !mismatch && !ebookTitleMatches(book.Title, meta.Title) {
 			// Title differs and the author agrees: another book by the author?
 			if !catalogueRead {
-				catalogue, catalogueRead = s.authorCatalogueTitles(ctx, author), true
+				catalogue, catalogueRead = s.authorCatalogue(ctx, author), true
+				wantedEntry = catalogueBook{id: book.ID, title: book.Title, originalTitle: book.OriginalTitle, ids: []string{book.ForeignID}}
+				for _, c := range catalogue {
+					if c.id == book.ID {
+						wantedEntry = c
+					}
+				}
 			}
-			mismatch = ebookIsAnotherBookOfTheAuthor(book.Title, names, meta.Title, meta.Author, catalogue)
+			switch ebookIsAnotherBookOfTheAuthor(wantedEntry, names, meta.Title, meta.Author, catalogue) {
+			case otherWorkConfident:
+				mismatch = true
+			case otherWorkLikely:
+				mismatch, fileUncertain = true, true
+			}
 		}
 		if mismatch {
+			uncertain = uncertain || fileUncertain
 			mismatches = append(mismatches, found{safeFileText(filepath.Base(f)), safeFileText(meta.Title), safeFileText(meta.Author)})
 		}
 	}
@@ -591,10 +722,15 @@ func (s *Scanner) checkEbookContent(ctx context.Context, book *models.Book, auth
 	if len(mismatches) > 1 {
 		extra = fmt.Sprintf(" (and %d more file(s) like it)", len(mismatches)-1)
 	}
+	data := ebookCheckData(bookTitle, bookAuthor, listed, len(mismatches), read)
+	if uncertain {
+		data["uncertain"] = true
+	}
 	return contentCheckResult{
-		mode:    mode,
-		flagged: true,
-		data:    ebookCheckData(bookTitle, bookAuthor, listed, len(mismatches), read),
+		mode:      mode,
+		flagged:   true,
+		uncertain: uncertain,
+		data:      data,
 		reason: fmt.Sprintf("the file says it is %s%s, but the book is %q by %s. "+
 			"Not imported, and the release was blocklisted so the next search picks another. "+
 			"To keep this file anyway, use Match to book in the Queue or manual import; "+

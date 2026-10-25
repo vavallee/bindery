@@ -587,14 +587,29 @@ catalogue holds in Latin letters), that title or author cannot disagree. Two
 non-Latin texts are still compared with each other. A file whose title differs but
 whose author agrees is imported, with one exception: when the file's title is
 clearly a different work than the wanted book and is also the title of another
-book in that author's catalogue in Bindery (the wanted `Hawk`, a file titled
-`City of the Dead: A Maximum Ride Novel` by `James Patterson, Mindy McGinnis`,
-and `City of the Dead` among the author's books), it is a mismatch. The author
-must be named in the file for this: a missing or placeholder creator never
-triggers it. A translated or alternate title that the catalogue does not hold as
-a separate book, a subtitle, a series prefix or suffix and a numbered volume of
-the same work are not mismatches. Like every other mismatch it only refuses the
-download in `block` mode. A wanted box set or omnibus is not compared. If a release holds several EPUBs, it is flagged
+book in that author's catalogue in Bindery. Take the wanted `Hawk` and a file
+titled `City of the Dead: A Maximum Ride Novel` by `James Patterson, Mindy
+McGinnis`, with `City of the Dead` among the author's books. The file's creator
+must name the author, so a missing or placeholder creator never triggers this.
+
+How Bindery treats it depends on how sure it is. When the other book sits at a
+different position in a series the wanted book is also in (`Hawk` is book 1 and
+`City of the Dead` book 2), the file is a mismatch like any other, and `block`
+mode refuses it. When nothing but the titles says they are different books, the
+catalogue may simply hold two editions of one work as separate rows (a book under
+its UK and its US title), so Bindery only notes it: the `contentCheck` object
+carries `uncertain: true`, the file imports, and `block` mode does not refuse it.
+Two rows that share an id (an ASIN, a provider id), name each other as the
+original title or are at the same series position are
+treated as editions and say nothing. A translated or alternate title that the
+catalogue does not hold as a separate book, a subtitle, a series prefix or
+suffix and a numbered volume of the same work are not mismatches either.
+
+One limit: a sequel whose title extends the wanted one (`Dune Messiah` for
+`Dune`) is not detected from the title alone, because the wanted title sits
+inside it as whole words and counts as a match.
+
+A wanted box set or omnibus is not compared. If a release holds several EPUBs, it is flagged
 only when every one that could be read is a definite mismatch. A release with more
 than 20 EPUBs is not judged (a verdict on a prefix could condemn the right book),
 and the `contentCheck` note says `truncated`. The object lists at most 10
