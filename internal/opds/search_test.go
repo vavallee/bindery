@@ -141,7 +141,7 @@ func TestBuildOpenSearch(t *testing.T) {
 	if len([]rune(d.ShortName)) > 16 {
 		t.Errorf("ShortName too long: %q", d.ShortName)
 	}
-	if len(d.URLs) != 1 || d.URLs[0].Type != TypeAcquisition ||
+	if len(d.URLs) != 1 || d.URLs[0].Type != TypeAtom ||
 		d.URLs[0].Template != "http://host/opds/search?q={searchTerms}&page={startPage?}" {
 		t.Errorf("urls = %+v", d.URLs)
 	}

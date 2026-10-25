@@ -256,6 +256,11 @@ type BookListFilter struct {
 	// (false) drops them, which is what every list but the Wanted page's
 	// "show excluded" toggle wants.
 	IncludeExcluded bool
+	// DownloadableOnly restricts to books with status imported and a file path,
+	// which is what a download catalogue can serve. Unlike Status "imported" it
+	// does not admit a wanted book that owns some file, so a list and its total
+	// agree with a caller that drops anything it cannot link to.
+	DownloadableOnly bool
 }
 
 // bookSearchRank returns the ORDER BY prefix that ranks a search result set,
@@ -364,6 +369,9 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 		}
 		searchOrder, rankArgs = bookSearchRank(folded)
 	}
+	if f.DownloadableOnly {
+		where += " AND books.status = '" + models.BookStatusImported + "' AND COALESCE(books.file_path, '') <> ''"
+	}
 	switch f.Status {
 	case "":
 	case models.BookStatusImported:
@@ -447,7 +455,7 @@ func (r *BookRepo) count(ctx context.Context, query string, args []any) (int, er
 
 // SearchImported runs the same library search the Books page uses (title or
 // author, accent and case folded, every word must match) over the books the
-// caller owns that are in the library. userID 0 is unscoped; otherwise rows
+// caller owns that can be downloaded (imported, with a file; a wanted book that owns some file is excluded and not counted). userID 0 is unscoped; otherwise rows
 // with owner_user_id = userID or NULL are searched, as everywhere else. A query
 // that carries no searchable characters returns nothing rather than the whole
 // library, since this feeds a client's search box. The total is the full match
@@ -459,8 +467,9 @@ func (r *BookRepo) SearchImported(ctx context.Context, query string, userID int6
 	return r.ListPageFiltered(ctx, BookListFilter{
 		UserID: userID,
 		Search: query,
-		Status: models.BookStatusImported,
 		Sort:   "title-az",
+
+		DownloadableOnly: true,
 	}, limit, offset)
 }
 

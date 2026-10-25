@@ -643,7 +643,7 @@ func (b *Builder) BuildOpenSearch(base string) OpenSearchDescription {
 		Description:   "Search the " + b.cfg.Title + " library by title or author",
 		InputEncoding: "UTF-8",
 		URLs: []OpenSearchURL{{
-			Type:     TypeAcquisition,
+			Type:     TypeAtom,
 			Template: base + "/opds/search?q={searchTerms}&page={startPage?}",
 		}},
 	}
