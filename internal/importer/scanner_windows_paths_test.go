@@ -132,3 +132,74 @@ func TestReorganize_WindowsFoldedPathIsNoop(t *testing.T) {
 		}
 	}
 }
+
+func TestRenamer_WindowsDotOnlySegmentKeepsPlaceholder(t *testing.T) {
+	book := &models.Book{Title: "..."}
+	author := &models.Author{Name: "Jane Doe"}
+	tmpl := "{Author}/{Title}/{Author} - {Title}.{ext}"
+	got, err := NewRenamer(tmpl).WithWindowsNames(true).DestPath("/lib", author, book, "", "", "x.epub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join("/lib", "Jane Doe", "_", "Jane Doe - ....epub"); got != want {
+		t.Errorf("dest = %q, want %q", got, want)
+	}
+	posix, _ := NewRenamer(tmpl).WithWindowsNames(false).DestPath("/lib", author, book, "", "", "x.epub")
+	if want := filepath.Join("/lib", "Jane Doe", "...", "Jane Doe - ....epub"); posix != want {
+		t.Errorf("posix dest = %q, want %q", posix, want)
+	}
+}
+
+// TestReorganize_WindowsAudiobookFolderFoldedIsNoop: an audiobook folder stored
+// under legacy capitals or a trailing dot is the rendered folder on Windows, so
+// the preview is a noop and never proposes the " (2)" variant (#3468).
+func TestReorganize_WindowsAudiobookFolderFoldedIsNoop(t *testing.T) {
+	for _, tc := range []struct{ title, stored string }{
+		{"My Book", "MY BOOK (2020)"},
+	} {
+		for _, windows := range []bool{true, false} {
+			env, _, audioDir, ctx := reorgFixture(t)
+			env.s.windowsPaths = windows
+			book := env.seed(t, ctx, "Jane Doe", tc.title)
+			rendered := filepath.Join(audioDir, "Jane Doe", "My Book (2020)")
+			stored := filepath.Join(audioDir, "Jane Doe", tc.stored)
+			for _, d := range []string{rendered, stored} {
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeFileAt(t, filepath.Join(stored, "part1.mp3"))
+			if err := env.books.AddBookFile(ctx, book.ID, models.MediaTypeAudiobook, stored); err != nil {
+				t.Fatal(err)
+			}
+			moves, err := env.s.PreviewReorganizeBook(ctx, book.ID)
+			if err != nil || len(moves) != 1 {
+				t.Fatalf("preview: %v %+v", err, moves)
+			}
+			if got := moves[0].Status == ReorgStatusNoop; got != windows {
+				t.Errorf("windows=%v: status %q proposed %q", windows, moves[0].Status, moves[0].Proposed)
+			}
+		}
+	}
+}
+
+func TestAlreadyImportedPath_WindowsFold(t *testing.T) {
+	for _, windows := range []bool{true, false} {
+		env, libDir, _, ctx := reorgFixture(t)
+		env.s.windowsPaths = windows
+		book := env.seed(t, ctx, "Jane Doe", "H.R.H.")
+		dir := filepath.Join(libDir, "Jane Doe", "H.R.H")
+		stored := filepath.Join(libDir, "Jane Doe", "H.R.H.", "a.epub")
+		writeFileAt(t, filepath.Join(dir, "a.epub"))
+		if err := env.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, stored); err != nil {
+			t.Fatal(err)
+		}
+		// Linux cannot stat the stored spelling, so only the path compare is
+		// asserted by creating it as well.
+		writeFileAt(t, stored)
+		got := env.s.alreadyImportedPath(ctx, book, filepath.Join(dir, "a.epub"))
+		if got != windows {
+			t.Errorf("windows=%v: alreadyImportedPath=%v", windows, got)
+		}
+	}
+}

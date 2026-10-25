@@ -502,7 +502,14 @@ func (r *Renamer) applyWithExtra(template string, author *models.Author, book *m
 	for _, seg := range segments {
 		rendered := renderSegment(seg, values)
 		if r.windowsNames {
-			rendered = trimWindowsName(rendered)
+			if trimmed := trimWindowsName(rendered); trimmed != "" || rendered == "" {
+				rendered = trimmed
+			} else {
+				// Only dots or spaces ("..."): Windows would drop the whole
+				// name, folding the folder level away. Keep a stand in so the
+				// path stays valid and distinct from its parent.
+				rendered = "_"
+			}
 		}
 		if rendered != "" {
 			kept = append(kept, rendered)

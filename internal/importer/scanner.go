@@ -1504,9 +1504,9 @@ func (s *Scanner) alreadyImportedPath(ctx context.Context, book *models.Book, de
 		slog.Warn("idempotency check: failed to list book files", "bookID", book.ID, "error", err)
 		return false
 	}
-	cleanDest := filepath.Clean(destPath)
+	cleanDest := s.pathKey(destPath)
 	for _, f := range files {
-		if filepath.Clean(f.Path) != cleanDest {
+		if s.pathKey(f.Path) != cleanDest {
 			continue
 		}
 		if _, statErr := os.Stat(f.Path); statErr == nil {
@@ -2185,7 +2185,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 							slog.Warn("flatten: could not remove source after move-mode flatten", "src", audiobookSource, "error", rmErr)
 						}
 					}
-				} else if existingDir, merging := s.existingEbookDir(ctx, book); merging && filepath.Clean(audiobookDest) == existingDir {
+				} else if existingDir, merging := s.existingEbookDir(ctx, book); merging && s.pathKey(audiobookDest) == s.pathKey(existingDir) {
 					// Shared-folder layout (#1959): this book's ebook already
 					// occupies exactly the folder the audiobook destination
 					// resolves to, so the collision UniqueDir disambiguated
@@ -2243,7 +2243,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				// needs to own destDir: it places exactly one named file and
 				// rolls back exactly that name, so merging into a folder that
 				// already holds this book's ebook is safe.
-				if existingDir, merging := s.existingEbookDir(ctx, book); merging && filepath.Clean(audiobookDest) == existingDir {
+				if existingDir, merging := s.existingEbookDir(ctx, book); merging && s.pathKey(audiobookDest) == s.pathKey(existingDir) {
 					destDir = existingDir
 					mergedIntoExistingFolder = true
 					slog.Info("merging audiobook file into the book's existing shared folder",

@@ -901,6 +901,14 @@ A few things that look wrong but are not:
 - **The list did not change after the volume came back.** A scan that finds no
   files at all changes nothing on the list, so an unmounted library does not
   erase your decisions. Scan again once it is mounted.
+- **A folder ending in a dot, or with other capitals, shows as new on Windows.**
+  Windows drops a trailing dot or space from a folder name and keeps an
+  existing folder's capitals. Bindery now leaves those off when it names a
+  folder, and a Windows install treats paths that differ only that way as the
+  same file, so nothing needs rewriting. This applies to Bindery running
+  natively on Windows. A Linux host or Docker container reading a Windows share
+  still sees the names as different files, macOS case insensitive volumes are
+  not folded, and reserved names such as `CON` are untouched.
 - **A row you ignored is gone for good.** It is on the **Ignored** list, and
   **Unignore** brings it back.
 
