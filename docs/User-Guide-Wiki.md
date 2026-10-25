@@ -371,7 +371,9 @@ ebook list and an audiobook list, numbered from the top, and top is best.
 Tick a format to allow it and untick it to refuse it; an unticked format is
 never grabbed and never counts in the ranking, wherever it sits. Move a format up or down to change
 which one Bindery prefers. A release that carries several formats, such as
-"azw3 epub", counts as the best ticked one it carries. A list with nothing in
+"azw3 epub", counts as the best ticked one it carries. When a book ends up with
+several ebook files, the one served and offered over OPDS is chosen in a fixed
+order, EPUB, KEPUB, AZW3, MOBI, PDF and then the rest, and every file is kept. A list with nothing in
 it means the profile has no opinion on that kind: any format of that kind is
 accepted and ranked by the built in order, which is azw3, epub, mobi and azw,
 pdf, rtf, txt for ebooks, and flac, m4b, m4a, mp3 for audiobooks. That same

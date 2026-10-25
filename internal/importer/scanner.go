@@ -4789,6 +4789,20 @@ func (s *Scanner) refreshStaleRenderedPaths(ctx context.Context) {
 		}
 		stale := (c.EbookPath != "" && !db.BookFilePathResolves(c.EbookPath)) ||
 			(c.AudiobookPath != "" && !db.BookFilePathResolves(c.AudiobookPath))
+		if !stale && c.EbookPath != "" {
+			// A rendered path that still resolves can be the wrong one: books
+			// imported before the format preference (#3467) render whichever
+			// format came first. Only multi-file books reach this point, so
+			// the extra lookup is not paid by the single-file majority, and a
+			// book already rendering its preferred file is not written.
+			want, err := s.books.DerivedEbookPath(ctx, c.BookID)
+			if err != nil {
+				slog.Warn("library scan: could not derive preferred ebook path",
+					"book_id", c.BookID, "error", err)
+				continue
+			}
+			stale = want != "" && want != c.EbookPath
+		}
 		if !stale {
 			continue
 		}

@@ -1371,7 +1371,7 @@ func (r *BookRepo) derivedFormatPath(ctx context.Context, bookID int64, format s
 			first = path
 		}
 		if BookFilePathResolves(path) {
-			if live == "" || (format == models.MediaTypeEbook && EbookFormatRank(path) < EbookFormatRank(live)) {
+			if live == "" || (format == models.MediaTypeEbook && EbookFormatLess(path, live)) {
 				live = path
 			}
 			continue
@@ -1394,6 +1394,13 @@ func (r *BookRepo) derivedFormatPath(ctx context.Context, bookID int64, format s
 			"book_id", bookID, "format", format, "missing", stale, "rendering", live)
 	}
 	return live, nil
+}
+
+// DerivedEbookPath is the ebook path the book would render right now, without
+// writing it. The library scan's sweep compares it with the stored column to
+// find books still rendering a less preferred format (#3467).
+func (r *BookRepo) DerivedEbookPath(ctx context.Context, bookID int64) (string, error) {
+	return r.derivedFormatPath(ctx, bookID, models.MediaTypeEbook)
 }
 
 // RefreshBookStatus recomputes a book's aggregate status and the file paths it
