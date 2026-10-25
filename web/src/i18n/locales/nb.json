@@ -781,6 +781,7 @@
     "blocklist": "Blokker",
     "delete": "Slett",
     "blocklistFailed": "Kunne ikke blokkere denne utgivelsen.",
+    "contentCheckEbookUncertain": "Filen kan være en annen bok, men Bindery kan ikke skille den fra en annen utgave",
     "contentCheckEbook": "Filen ser ut til å være en annen bok",
     "contentCheckAudiobook": "Filene inneholder andre bøker",
     "contentCheckEbookEntry": "«{{title}}» av {{author}}",

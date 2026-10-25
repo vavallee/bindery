@@ -14,6 +14,7 @@ import (
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/notifier"
+	"github.com/vavallee/bindery/internal/seriesmatch"
 	"github.com/vavallee/bindery/internal/textutil"
 )
 
@@ -385,12 +386,23 @@ type seriesSlot struct {
 	position string
 }
 
+// knownPosition reports whether a series position is a single number. A range
+// ("1-3", an omnibus) or any other text is unknown: providers write those for
+// bundles and for bad data, and they say nothing about which book this is.
+func knownPosition(p string) bool {
+	_, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
+	return err == nil
+}
+
 // seriesPositionsDiffer reports whether a and b share a series and hold
-// different known positions in it. An unknown position never counts.
+// different known positions in it. Positions compare as numbers
+// (seriesmatch.SamePosition), so "1", "1.0" and "01" are one position, and a
+// position that is a range or not a number is unknown and never differs.
 func seriesPositionsDiffer(a, b []seriesSlot) bool {
 	for _, x := range a {
 		for _, y := range b {
-			if x.seriesID == y.seriesID && x.position != "" && y.position != "" && x.position != y.position {
+			if x.seriesID == y.seriesID && knownPosition(x.position) && knownPosition(y.position) &&
+				!seriesmatch.SamePosition(x.position, y.position) {
 				return true
 			}
 		}
@@ -399,11 +411,11 @@ func seriesPositionsDiffer(a, b []seriesSlot) bool {
 }
 
 // seriesPositionsSame reports whether a and b share a series and hold the same
-// known position in it, as two editions of one book do.
+// position in it, as two editions of one book do.
 func seriesPositionsSame(a, b []seriesSlot) bool {
 	for _, x := range a {
 		for _, y := range b {
-			if x.seriesID == y.seriesID && x.position != "" && x.position == y.position {
+			if x.seriesID == y.seriesID && seriesmatch.SamePosition(x.position, y.position) {
 				return true
 			}
 		}
@@ -646,7 +658,7 @@ func (s *Scanner) checkEbookContent(ctx context.Context, book *models.Book, auth
 	var catalogue []catalogueBook
 	var catalogueRead bool
 	var wantedEntry catalogueBook
-	uncertain := false
+	allUncertain := true
 
 	// A release with more EPUBs than the cap is not judged: a prefix of it could
 	// be all wrong books while the right one sits later in the list, and the
@@ -695,7 +707,7 @@ func (s *Scanner) checkEbookContent(ctx context.Context, book *models.Book, auth
 			}
 		}
 		if mismatch {
-			uncertain = uncertain || fileUncertain
+			allUncertain = allUncertain && fileUncertain
 			mismatches = append(mismatches, found{safeFileText(filepath.Base(f)), safeFileText(meta.Title), safeFileText(meta.Author)})
 		}
 	}
@@ -723,6 +735,7 @@ func (s *Scanner) checkEbookContent(ctx context.Context, book *models.Book, auth
 		extra = fmt.Sprintf(" (and %d more file(s) like it)", len(mismatches)-1)
 	}
 	data := ebookCheckData(bookTitle, bookAuthor, listed, len(mismatches), read)
+	uncertain := allUncertain
 	if uncertain {
 		data["uncertain"] = true
 	}

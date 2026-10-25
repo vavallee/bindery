@@ -1893,7 +1893,11 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				return
 			}
 			if res.flagged {
-				slog.Warn("downloaded file looks like a different book; importing it because import.ebook.content_check is warn",
+				why := "importing it because import.ebook.content_check is warn"
+				if res.uncertain && res.mode == contentCheckBlock {
+					why = "importing it because the finding is uncertain and only noted, even in block mode"
+				}
+				slog.Warn("downloaded file looks like a different book; "+why,
 					"title", dl.Title, "bookID", book.ID, "book", book.Title)
 			}
 			contentCheck = res.data

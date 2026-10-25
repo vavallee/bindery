@@ -66,7 +66,7 @@ function nonEmptyString(v: unknown): string {
 // around the values come from the translation.
 function contentCheckDetail(raw: unknown, t: Translate): string {
   if (!raw || typeof raw !== 'object') return ''
-  const cc = raw as { kind?: unknown; mismatches?: unknown; retitled?: unknown; truncated?: unknown }
+  const cc = raw as { kind?: unknown; uncertain?: unknown; mismatches?: unknown; retitled?: unknown; truncated?: unknown }
   if (!Array.isArray(cc.mismatches) || cc.mismatches.length === 0) return quietContentCheckNote(cc, t)
   const found = (cc.mismatches as unknown[])
     .map((m): string => {
@@ -86,7 +86,9 @@ function contentCheckDetail(raw: unknown, t: Translate): string {
     .filter(Boolean)
     .join(', ')
   if (!found) return ''
-  const label = cc.kind === 'ebook' ? t('history.contentCheckEbook') : t('history.contentCheckAudiobook')
+  const label = cc.kind === 'ebook'
+    ? t(cc.uncertain === true ? 'history.contentCheckEbookUncertain' : 'history.contentCheckEbook')
+    : t('history.contentCheckAudiobook')
   return `${label}: ${found}`
 }
 

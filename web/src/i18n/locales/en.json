@@ -793,6 +793,7 @@
   "history": {
     "title": "History",
     "blocklistFailed": "Could not blocklist this release.",
+    "contentCheckEbookUncertain": "The file may be another book, but Bindery cannot tell it from another edition",
     "contentCheckEbook": "The file looks like another book",
     "contentCheckAudiobook": "The files include other books",
     "contentCheckEbookEntry": "\"{{title}}\" by {{author}}",

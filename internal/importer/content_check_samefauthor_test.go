@@ -213,6 +213,18 @@ func TestEbookIsAnotherBookOfTheAuthor(t *testing.T) {
 		{"other book in a different series: likely only", "City of the Dead", "James Patterson", hawk, patterson,
 			[]catalogueBook{hawk, {id: 2, title: "City of the Dead", slots: []seriesSlot{{seriesID: 2, position: "2"}}}}, otherWorkLikely},
 
+		// Provider formatting and bad data must not read as a different position.
+		{"1 against 1.0", "The Golden Compass", "Philip Pullman", catalogueBook{id: 1, title: "Northern Lights", slots: slots("1")}, []string{"Philip Pullman"},
+			[]catalogueBook{{id: 2, title: "The Golden Compass", slots: slots("1.0")}}, otherWorkNo},
+		{"1 against 01", "The Golden Compass", "Philip Pullman", catalogueBook{id: 1, title: "Northern Lights", slots: slots("1")}, []string{"Philip Pullman"},
+			[]catalogueBook{{id: 2, title: "The Golden Compass", slots: slots("01")}}, otherWorkNo},
+		{"omnibus range position is unknown", "City of the Dead", "James Patterson", catalogueBook{id: 1, title: "Hawk", slots: slots("1")}, patterson,
+			[]catalogueBook{{id: 2, title: "City of the Dead", slots: slots("1-3")}}, otherWorkLikely},
+		{"non numeric position is unknown", "City of the Dead", "James Patterson", catalogueBook{id: 1, title: "Hawk", slots: slots("one")}, patterson,
+			[]catalogueBook{{id: 2, title: "City of the Dead", slots: slots("2")}}, otherWorkLikely},
+		{"decimal position still differs", "City of the Dead", "James Patterson", catalogueBook{id: 1, title: "Hawk", slots: slots("1")}, patterson,
+			[]catalogueBook{{id: 2, title: "City of the Dead", slots: slots("1.5")}}, otherWorkConfident},
+
 		// Both editions present as separate rows, both directions.
 		{"both editions, no shared id", "The Golden Compass", "Philip Pullman", plain(1, "Northern Lights"), []string{"Philip Pullman"},
 			[]catalogueBook{plain(1, "Northern Lights"), plain(2, "The Golden Compass"), plain(3, "The Subtle Knife")}, otherWorkLikely},
@@ -258,5 +270,21 @@ func TestEbookIsAnotherBookOfTheAuthor(t *testing.T) {
 		if got := ebookIsAnotherBookOfTheAuthor(r.wanted, r.names, r.fileTitle, r.fileBy, r.catalogue); got != r.want {
 			t.Errorf("%s: got %v, want %v", r.name, got, r.want)
 		}
+	}
+}
+
+// A release is uncertain only when every mismatched file is. One definite and one
+// uncertain EPUB is a definite release, and block mode refuses it.
+func TestEbookContentCheck_MixedDefiniteAndUncertainFilesStillBlock(t *testing.T) {
+	f := newContentFixture(t, "Hawk", "James Patterson")
+	f.addCatalogueBook(t, "OL-CC-B2", "City of the Dead")
+	f.setMode(t, ebookCheckKey, "block")
+	f.writeEpubTitled(t, "a.epub", hawkFileTitle, hawkFileCreator)
+	f.writeEpubTitled(t, "b.epub", "Moby Dick", "Herman Melville")
+	f.importDownload(t)
+
+	dl, _ := f.reload(t)
+	if dl.Status != models.StateImportBlocked {
+		t.Fatalf("status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImportBlocked)
 	}
 }

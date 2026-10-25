@@ -605,6 +605,14 @@ treated as editions and say nothing. A translated or alternate title that the
 catalogue does not hold as a separate book, a subtitle, a series prefix or
 suffix and a numbered volume of the same work are not mismatches either.
 
+Positions compare as numbers, so `1`, `1.0` and `01` are one position, and a
+position that is a range (`1-3`, an omnibus) or not a number counts as unknown,
+never as different. A release is only noted rather than refused when every
+mismatched file is uncertain; one definite mismatch makes the release definite.
+The residual risk is bad provider data: if a provider gives two editions of one
+book different positions in one series, Bindery reads them as two books and
+`block` mode can refuse the right file. **Match to book** keeps it.
+
 One limit: a sequel whose title extends the wanted one (`Dune Messiah` for
 `Dune`) is not detected from the title alone, because the wanted title sits
 inside it as whole words and counts as a match.
