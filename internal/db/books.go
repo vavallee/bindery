@@ -1323,7 +1323,11 @@ func BookFilePathResolves(path string) bool {
 }
 
 // derivedFormatPath picks the path a book renders for one format: the
-// lowest-id book_files row whose file still resolves on disk.
+// lowest-id book_files row whose file still resolves on disk. For ebooks a
+// book holding several formats renders the most preferred one (EbookFormatRank:
+// EPUB, KEPUB, AZW3, MOBI, PDF, the rest), lowest id breaking a tie, so the
+// result does not depend on which format happened to be imported first
+// (#3467). Nothing is deleted or demoted: every file stays in book_files.
 //
 // The plain "lowest id wins" rule this replaces is what made #2186 visible.
 // BookFileRepo.Add is INSERT OR IGNORE, so registering a file at a new
@@ -1367,8 +1371,10 @@ func (r *BookRepo) derivedFormatPath(ctx context.Context, bookID int64, format s
 			first = path
 		}
 		if BookFilePathResolves(path) {
-			live = path
-			break
+			if live == "" || (format == models.MediaTypeEbook && EbookFormatRank(path) < EbookFormatRank(live)) {
+				live = path
+			}
+			continue
 		}
 		vanished = append(vanished, path)
 	}
