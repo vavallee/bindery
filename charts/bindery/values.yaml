@@ -96,6 +96,8 @@ env:
   # etc.). Empty (default) blocks all framing. Set to a CSP frame-ancestors
   # source list: 'self' for same-origin, or a specific origin. See #1367.
   # BINDERY_FRAME_ANCESTORS: "https://organizr.example.com"
+  # Mode for the directories the importer creates: 0700, 0750 (default) or 0755.
+  # BINDERY_DIR_MODE: "0755"
 
 resources:
   requests:
