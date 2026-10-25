@@ -179,7 +179,10 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 		}
 	}
 
-	if noExtErr == nil && filepath.Clean(dest) == filepath.Clean(f.Path) {
+	// On Windows a stored "H.R.H./x.epub" and a proposed "H.R.H/x.epub", or
+	// "WASTE LANDS FLIP" and "Waste Lands Flip", are one file (#3468), so they
+	// are a noop rather than a move onto itself or a false collision.
+	if noExtErr == nil && s.pathKey(dest) == s.pathKey(f.Path) {
 		return dest, ReorgStatusNoop, ""
 	}
 	// The source must still be on disk to move it.
