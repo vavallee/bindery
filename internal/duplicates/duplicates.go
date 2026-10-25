@@ -450,12 +450,16 @@ func Scan(books []models.Book, seriesSlots map[int64][]SeriesSlot) []Group {
 		}
 	}
 
-	rulesByBook := make([]map[RuleID]struct{}, n)
-	for i := range rulesByBook {
-		rulesByBook[i] = make(map[RuleID]struct{})
-	}
 	useSubstring := n <= maxPairwiseBooks
 
+	type edge struct {
+		i, j  int
+		rules []RuleID
+	}
+	var edges []edge
+	matched := make(map[[2]int]struct{})
+	// contained[i] lists the shorter rows whose title is a segment of row i.
+	contained := make(map[int][]int)
 	for i := 0; i < n; i++ {
 		if keys[i].alnum == "" {
 			continue
@@ -472,11 +476,58 @@ func Scan(books []models.Book, seriesSlots map[int64][]SeriesSlot) []Group {
 			if len(rules) == 0 {
 				continue
 			}
-			union(i, j)
-			for _, rule := range rules {
-				addRule(rulesByBook[i], rule)
-				addRule(rulesByBook[j], rule)
+			edges = append(edges, edge{i, j, rules})
+			matched[[2]int{i, j}] = struct{}{}
+			if len(rules) == 1 && rules[0] == RuleSubstring {
+				if len(keys[i].alnum) > len(keys[j].alnum) {
+					contained[i] = append(contained[i], j)
+				} else {
+					contained[j] = append(contained[j], i)
+				}
 			}
+		}
+	}
+
+	// A bundle row ("Carrie; Christine") contains two or more rows that do not
+	// match each other. Joining them through it would put different books in
+	// one group (#3469), so its substring-only edges are dropped.
+	bundle := make(map[int]bool)
+	for i, parts := range contained {
+	pairs:
+		for a := 0; a < len(parts); a++ {
+			for b := a + 1; b < len(parts); b++ {
+				x, y := parts[a], parts[b]
+				if x > y {
+					x, y = y, x
+				}
+				if _, ok := matched[[2]int{x, y}]; !ok {
+					bundle[i] = true
+					break pairs
+				}
+			}
+		}
+	}
+
+	rulesByBook := make([]map[RuleID]struct{}, n)
+	for i := range rulesByBook {
+		rulesByBook[i] = make(map[RuleID]struct{})
+	}
+	for _, e := range edges {
+		if len(e.rules) == 1 && e.rules[0] == RuleSubstring && (bundle[e.i] || bundle[e.j]) {
+			// The bundle is the longer side; a shorter bundle never occurs
+			// because bundle membership needs two contained rows.
+			longer := e.i
+			if len(keys[e.j].alnum) > len(keys[e.i].alnum) {
+				longer = e.j
+			}
+			if bundle[longer] {
+				continue
+			}
+		}
+		union(e.i, e.j)
+		for _, rule := range e.rules {
+			addRule(rulesByBook[e.i], rule)
+			addRule(rulesByBook[e.j], rule)
 		}
 	}
 

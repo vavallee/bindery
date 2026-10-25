@@ -627,3 +627,44 @@ func TestScanScale(t *testing.T) {
 		t.Fatalf("Scan = %d groups, want 2", len(groups))
 	}
 }
+
+// TestScanBundleRowDoesNotBridgeBooks pins #3469: a bundle row whose segments
+// are two different books must not join them into one group.
+func TestScanBundleRowDoesNotBridgeBooks(t *testing.T) {
+	titles := func(g Group) []string {
+		var out []string
+		for _, m := range g.Members {
+			out = append(out, m.Title)
+		}
+		return out
+	}
+	cases := []struct {
+		name  string
+		books []string
+		want  [][]string
+	}{
+		{"carrie christine", []string{"Carrie", "Christine", "Carrie; Christine"}, nil},
+		{"chamber rainmaker bare", []string{"Chamber", "The Rainmaker", "Chamber; The Rainmaker"}, nil},
+		{"chamber rainmaker", []string{"The Chamber", "The Rainmaker", "The Chamber; The Rainmaker"}, nil},
+		{"real duplicates stay grouped",
+			[]string{"Carrie", "Carrie.", "Christine", "Christine!", "Carrie; Christine"},
+			[][]string{{"Carrie", "Carrie."}, {"Christine", "Christine!"}}},
+		{"single part bundle still pairs", []string{"Hearts in Atlantis", "Hearts in Atlantis; Misery"},
+			[][]string{{"Hearts in Atlantis", "Hearts in Atlantis; Misery"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var books []models.Book
+			for i, title := range tc.books {
+				books = append(books, models.Book{ID: int64(i + 1), Title: title})
+			}
+			var got [][]string
+			for _, g := range Scan(books, nil) {
+				got = append(got, titles(g))
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Fatalf("groups = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

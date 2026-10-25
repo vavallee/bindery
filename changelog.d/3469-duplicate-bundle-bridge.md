@@ -1,0 +1,2 @@
+### Fixed
+- **Duplicate review no longer joins two different books through a bundle row** (#3469). A row like "Carrie; Christine" used to pull "Carrie" and "Christine" into one group, which hid the one click cleanup of each book's own empty duplicates. A row that contains two titles that do not match each other is now left out of the grouping, so each book keeps its own group. Thanks to kennethp1015 for the report.
