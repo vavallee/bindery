@@ -309,3 +309,38 @@ func TestSeriesPlanMergeReadError(t *testing.T) {
 		t.Errorf("PlanMerge on a cancelled context = %+v, %v; want an error", plan, err)
 	}
 }
+
+// Merging renames the target, and the Books search reads series.search_key, so
+// the merge has to refresh that key with the title (#3462). Without it the
+// new name finds nothing and the old name keeps matching.
+func TestSeriesMergeRefreshesSearchKey(t *testing.T) {
+	f := newMergeFixture(t, 2)
+	target := f.newSeries("nb-series:1:fjellserien", "Fjellserien")
+	src := f.newSeries("nb-series:1:fjell", "Fjell")
+	f.link(target, 1, "1", true)
+	f.link(src, 2, "2", true)
+
+	if _, err := f.series.Merge(f.ctx, target, []int64{src}, "Snoserien"); err != nil {
+		t.Fatal(err)
+	}
+
+	books := NewBookRepo(f.db)
+	search := func(q string) int {
+		t.Helper()
+		_, total, err := books.ListPageFiltered(f.ctx, BookListFilter{Search: q}, 50, 0)
+		if err != nil {
+			t.Fatalf("search %q: %v", q, err)
+		}
+		return total
+	}
+	if n := search("snoserien"); n != 2 {
+		t.Errorf("search for the merged series name found %d books, want both", n)
+	}
+	if n := search("fjellserien"); n != 0 {
+		t.Errorf("search for the old series name found %d books, want none (stale search_key)", n)
+	}
+	var key string
+	if err := f.db.QueryRow(`SELECT search_key FROM series WHERE id = ?`, target).Scan(&key); err != nil || key != "snoserien" {
+		t.Errorf("series.search_key = %q, %v; want snoserien", key, err)
+	}
+}

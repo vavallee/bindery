@@ -352,7 +352,8 @@ func (r *SeriesRepo) CreateManual(ctx context.Context, title string) (*models.Se
 }
 
 func (r *SeriesRepo) UpdateTitle(ctx context.Context, id int64, title string) error {
-	_, err := r.db.ExecContext(ctx, "UPDATE series SET title=? WHERE id=?", strings.TrimSpace(title), id)
+	title = strings.TrimSpace(title)
+	_, err := r.db.ExecContext(ctx, "UPDATE series SET title=?, search_key=? WHERE id=?", title, textutil.FoldForSearch(title), id)
 	if err != nil {
 		return fmt.Errorf("update series %d title: %w", id, err)
 	}
@@ -838,8 +839,8 @@ func (r *SeriesRepo) Create(ctx context.Context, s *models.Series) error {
 	}
 	now := time.Now().UTC()
 	result, err := r.db.ExecContext(ctx,
-		"INSERT INTO series (foreign_id, title, description, created_at) VALUES (?, ?, ?, ?)",
-		s.ForeignID, s.Title, s.Description, now)
+		"INSERT INTO series (foreign_id, title, search_key, description, created_at) VALUES (?, ?, ?, ?, ?)",
+		s.ForeignID, s.Title, textutil.FoldForSearch(s.Title), s.Description, now)
 	if err != nil {
 		return fmt.Errorf("create series: %w", err)
 	}
@@ -874,11 +875,11 @@ func (r *SeriesRepo) CreateOrGet(ctx context.Context, s *models.Series) error {
 	// refresh racing a merge (#2554) cannot recreate the row the merge just
 	// removed, nor two syncs race a link into a second row.
 	result, err := r.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO series (foreign_id, title, description, created_at)
-		 SELECT ?, ?, ?, ?
+		`INSERT OR IGNORE INTO series (foreign_id, title, search_key, description, created_at)
+		 SELECT ?, ?, ?, ?, ?
 		 WHERE NOT EXISTS (SELECT 1 FROM series_aliases WHERE foreign_id = ?)
 		   AND (? = '' OR NOT EXISTS (SELECT 1 FROM series_hardcover_links WHERE hardcover_series_id IN (?, ?)))`,
-		s.ForeignID, s.Title, s.Description, now, s.ForeignID, hcID, hcID, hcBare)
+		s.ForeignID, s.Title, textutil.FoldForSearch(s.Title), s.Description, now, s.ForeignID, hcID, hcID, hcBare)
 	if err != nil {
 		return fmt.Errorf("upsert series: %w", err)
 	}

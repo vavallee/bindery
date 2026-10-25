@@ -27,8 +27,8 @@ type LibraryProjectionRow struct {
 // ListLibraryProjection returns one page of non excluded books in title
 // order, with the total for the same filter. scopeUserID follows
 // BookListFilter.UserID: 0 is the whole library, otherwise the user's own
-// books plus unowned ones. search matches the title or the author name the
-// same way the Books page does.
+// books plus unowned ones. search matches the title, the author name or the
+// name of a series the book is in, the same way the Books page does (#3462).
 func (r *RequestRepo) ListLibraryProjection(ctx context.Context, scopeUserID int64, search string, limit, offset int) ([]LibraryProjectionRow, int, error) {
 	if limit <= 0 {
 		limit = 50
@@ -40,8 +40,10 @@ func (r *RequestRepo) ListLibraryProjection(ctx context.Context, scopeUserID int
 	if folded := textutil.FoldForSearch(search); folded != "" {
 		for _, tok := range searchTokens(folded) {
 			like := "%" + escapeLike(tok) + "%"
-			where += " AND (books.search_key LIKE ? ESCAPE '\\' OR COALESCE(au.search_key, '') LIKE ? ESCAPE '\\')"
-			args = append(args, like, like)
+			where += " AND (books.search_key LIKE ? ESCAPE '\\' OR COALESCE(au.search_key, '') LIKE ? ESCAPE '\\'" +
+				" OR EXISTS (SELECT 1 FROM series_books sb JOIN series s ON s.id = sb.series_id" +
+				" WHERE sb.book_id = books.id AND s.search_key LIKE ? ESCAPE '\\'))"
+			args = append(args, like, like, like)
 		}
 	}
 	const from = " FROM books LEFT JOIN authors au ON au.id = books.author_id "
