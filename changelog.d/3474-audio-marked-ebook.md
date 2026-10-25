@@ -1,0 +1,2 @@
+### Fixed
+- **Audiobook files showing up as ebook files** (#3474) - when a library scan found an existing m4b or mp3 for a book set to "both" formats, it was recorded as an ebook file. Files are now labelled by their extension, and a one time repair on startup relabels the ones already recorded wrong. Heads up: a book whose only "ebook" was really an audiobook file may go back to wanted after the repair, and some books may leave the wanted queue now that their audiobook is counted properly. Thanks to Timothy Canipe for the report.

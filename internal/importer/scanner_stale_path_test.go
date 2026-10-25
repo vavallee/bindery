@@ -133,3 +133,53 @@ func TestRefreshStaleRenderedPaths_SurvivesAFailedLookup(t *testing.T) {
 	// Must not panic and must return: the candidate query fails outright.
 	s.refreshStaleRenderedPaths(cancelled)
 }
+
+// TestScanLibrary_RepairsBookRenderingALessPreferredFormat (#3467): a book
+// imported before the format preference renders its azw3 although a live epub
+// sits next to it. Both paths resolve, so the vanished-path check alone would
+// leave it; the sweep also compares against the preferred file.
+func TestScanLibrary_RepairsBookRenderingALessPreferredFormat(t *testing.T) {
+	s, books, authors, _, libDir, ctx := trackedPathsFixture(t)
+	author := createScanAuthor(t, ctx, authors)
+
+	dir := filepath.Join(libDir, "Jane Doe")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	azw3 := filepath.Join(dir, "Alpha Adventure.azw3")
+	epub := filepath.Join(dir, "Alpha Adventure.epub")
+	if err := os.WriteFile(azw3, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	book := createScanBook(t, ctx, books, author.ID, "ol:alpha", "Alpha Adventure",
+		models.BookStatusImported, models.MediaTypeEbook)
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, azw3); err != nil {
+		t.Fatal(err)
+	}
+	// The epub is registered while its file is not there yet, which leaves the
+	// azw3 rendered: the state an upgrade finds in an existing library.
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, epub); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(epub, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := books.GetByID(ctx, book.ID)
+	if err != nil || before == nil || before.EbookFilePath != azw3 {
+		t.Fatalf("fixture did not reproduce the old state: %+v, %v", before, err)
+	}
+
+	s.refreshStaleRenderedPaths(ctx)
+
+	after, err := books.GetByID(ctx, book.ID)
+	if err != nil || after == nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if after.EbookFilePath != epub {
+		t.Errorf("EbookFilePath after sweep = %q, want %q", after.EbookFilePath, epub)
+	}
+	if files, err := books.ListFiles(ctx, book.ID); err != nil || len(files) != 2 {
+		t.Errorf("want both rows kept, got %d, %v", len(files), err)
+	}
+}

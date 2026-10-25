@@ -56,8 +56,9 @@ Both still end by attaching a file to a catalogue record.
 The **Search library** box in the header is the other kind of search: it looks
 only at what is already in Bindery. As you type it lists matching authors
 (including pen names), books (by title or author) and series, and selecting a
-row opens it (a series row opens the Series page with that series expanded,
-without scrolling to it). The last row is always *Add "…" to Bindery*, which
+row opens it (a series row opens the Series page with that series expanded and
+scrolled into view; so does a series heading on an author page that is grouped
+by series). The last row is always *Add "…" to Bindery*, which
 opens the **Add to library** dialog with the same text already searched against
 your metadata providers, so a miss in the library turns into an add without
 retyping. Pressing Enter with nothing highlighted opens that dialog too, even
@@ -154,6 +155,9 @@ Two related labels:
   unwanted catalogue book is temporary — the next refresh recreates it.
   **Exclude** is the sticky action for every author: it hides the book, keeps
   it out of searches, and a refresh will not recreate it under a new id either.
+  To bring excluded books back, set the author page's status filter to
+  **Excluded**, tick the books and choose **Un-exclude**; a single book has the
+  same button on its own page.
 
 ### 3. Bindery never watches folders
 
@@ -367,7 +371,9 @@ ebook list and an audiobook list, numbered from the top, and top is best.
 Tick a format to allow it and untick it to refuse it; an unticked format is
 never grabbed and never counts in the ranking, wherever it sits. Move a format up or down to change
 which one Bindery prefers. A release that carries several formats, such as
-"azw3 epub", counts as the best ticked one it carries. A list with nothing in
+"azw3 epub", counts as the best ticked one it carries. When a book ends up with
+several ebook files, the one served and offered over OPDS is chosen in a fixed
+order, EPUB, KEPUB, AZW3, MOBI, PDF and then the rest, and every file is kept. A list with nothing in
 it means the profile has no opinion on that kind: any format of that kind is
 accepted and ranked by the built in order, which is azw3, epub, mobi and azw,
 pdf, rtf, txt for ebooks, and flac, m4b, m4a, mp3 for audiobooks. That same
@@ -549,7 +555,8 @@ name can say one book while the EPUB inside is another, and without a check that
 file imports under the wrong book and the book is never searched for again. When
 a download tied to a wanted book finishes, Bindery reads the EPUB's `dc:title`
 and `dc:creator` and compares them with the book. Only a definite mismatch
-counts: the title does not match **and** the author does not match.
+counts: the title does not match **and** the author does not match, or the
+title is another book by the same author (see below).
 
 A title matches when, after case, accents, punctuation, a leading article and
 `&` against `and` are set aside, it equals the book's title or one of its
@@ -578,8 +585,39 @@ does a comparison across scripts: if one side has no Latin letters and the other
 does (a Russian, Japanese, Hebrew, Arabic or Chinese edition of a book the
 catalogue holds in Latin letters), that title or author cannot disagree. Two
 non-Latin texts are still compared with each other. A file whose title differs but
-whose author agrees (another book in the series) is imported, and a wanted box
-set or omnibus is not compared. If a release holds several EPUBs, it is flagged
+whose author agrees is imported, with one exception: when the file's title is
+clearly a different work than the wanted book and is also the title of another
+book in that author's catalogue in Bindery. Take the wanted `Hawk` and a file
+titled `City of the Dead: A Maximum Ride Novel` by `James Patterson, Mindy
+McGinnis`, with `City of the Dead` among the author's books. The file's creator
+must name the author, so a missing or placeholder creator never triggers this.
+
+How Bindery treats it depends on how sure it is. When the other book sits at a
+different position in a series the wanted book is also in (`Hawk` is book 1 and
+`City of the Dead` book 2), the file is a mismatch like any other, and `block`
+mode refuses it. When nothing but the titles says they are different books, the
+catalogue may simply hold two editions of one work as separate rows (a book under
+its UK and its US title), so Bindery only notes it: the `contentCheck` object
+carries `uncertain: true`, the file imports, and `block` mode does not refuse it.
+Two rows that share an id (an ASIN, a provider id), name each other as the
+original title or are at the same series position are
+treated as editions and say nothing. A translated or alternate title that the
+catalogue does not hold as a separate book, a subtitle, a series prefix or
+suffix and a numbered volume of the same work are not mismatches either.
+
+Positions compare as numbers, so `1`, `1.0` and `01` are one position, and a
+position that is a range (`1-3`, an omnibus) or not a number counts as unknown,
+never as different. A release is only noted rather than refused when every
+mismatched file is uncertain; one definite mismatch makes the release definite.
+The residual risk is bad provider data: if a provider gives two editions of one
+book different positions in one series, Bindery reads them as two books and
+`block` mode can refuse the right file. **Match to book** keeps it.
+
+One limit: a sequel whose title extends the wanted one (`Dune Messiah` for
+`Dune`) is not detected from the title alone, because the wanted title sits
+inside it as whole words and counts as a match.
+
+A wanted box set or omnibus is not compared. If a release holds several EPUBs, it is flagged
 only when every one that could be read is a definite mismatch. A release with more
 than 20 EPUBs is not judged (a verdict on a prefix could condemn the right book),
 and the `contentCheck` note says `truncated`. The object lists at most 10

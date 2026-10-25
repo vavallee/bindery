@@ -9,6 +9,7 @@ import { parseCats, parsePriority } from './helpers'
 import Toggle from './Toggle'
 import { dangerLink, primaryFill } from '../../components/buttons'
 import { secretInputAttrs, urlInputAttrs } from '../../util/inputAttrs'
+import { errorText } from '../../util/errorText'
 
 // IndexerTestResultBanner renders a probe result with the same ok/warn/fail
 // semantics as the saved-row Test feedback (ok=true + 0 results → amber warn).
@@ -25,7 +26,7 @@ function IndexerTestResultBanner({ r }: { r: IndexerTestResult }) {
     <div role="status" className={`px-3 py-2 rounded text-xs flex items-center gap-2 ${colorCls}`}>
       <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${dotCls}`} />
       {!r.ok ? (
-        <span>{t('settings.indexers.testFail', { error: r.error ?? 'Unknown error' })}</span>
+        <span>{t('settings.indexers.testFail', { error: r.error ?? t('common.unknownError', 'Unknown error') })}</span>
       ) : warn ? (
         <span>{t('settings.indexers.testWarn', { status: r.status, categories: r.categories, latency: r.latencyMs })}{r.searchError ? ` — ${r.searchError}` : ''}</span>
       ) : (
@@ -387,7 +388,7 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                         const r = await api.testIndexer(idx.id)
                         setIndexerTestResults(prev => ({ ...prev, [idx.id]: { ...r, testing: false } }))
                       } catch (err: unknown) {
-                        setIndexerTestResults(prev => ({ ...prev, [idx.id]: { ok: false, status: 0, categories: 0, bookSearch: false, latencyMs: 0, searchResults: 0, error: err instanceof Error ? err.message : 'Request failed', testing: false } }))
+                        setIndexerTestResults(prev => ({ ...prev, [idx.id]: { ok: false, status: 0, categories: 0, bookSearch: false, latencyMs: 0, searchResults: 0, error: errorText(err, t('settings.indexers.requestFailed', 'Request failed')), testing: false } }))
                       }
                     }}
                     className="touch-target text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white disabled:opacity-50"
@@ -518,7 +519,7 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                   <div role="status" className={`mt-2 px-3 py-2 rounded text-xs flex items-center gap-2 ${colorCls}`}>
                     <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${dotCls}`} />
                     {!r.ok ? (
-                      <span>{t('settings.indexers.testFail', { error: r.error ?? 'Unknown error' })}</span>
+                      <span>{t('settings.indexers.testFail', { error: r.error ?? t('common.unknownError', 'Unknown error') })}</span>
                     ) : warn ? (
                       <span>{t('settings.indexers.testWarn', { status: r.status, categories: r.categories, latency: r.latencyMs })}{r.searchError ? ` — ${r.searchError}` : ''}</span>
                     ) : (
@@ -704,7 +705,7 @@ function EditIndexerForm({ indexer, clients, onClose, onSaved }: { indexer: Inde
         : await api.testIndexer(indexer.id)
       setTestResult(r)
     } catch (err: unknown) {
-      setTestResult({ ok: false, status: 0, categories: 0, bookSearch: false, latencyMs: 0, searchResults: 0, error: err instanceof Error ? err.message : 'Request failed' })
+      setTestResult({ ok: false, status: 0, categories: 0, bookSearch: false, latencyMs: 0, searchResults: 0, error: errorText(err, t('settings.indexers.requestFailed', 'Request failed')) })
     } finally {
       setTesting(false)
     }
@@ -793,7 +794,7 @@ function AddIndexerForm({ clients, onClose, onAdded }: { clients: DownloadClient
       const r = await api.testIndexerConfig({ name, type, url, apiKey, categories: parseCats(categories) })
       setTestResult(r)
     } catch (err: unknown) {
-      setTestResult({ ok: false, status: 0, categories: 0, bookSearch: false, latencyMs: 0, searchResults: 0, error: err instanceof Error ? err.message : 'Request failed' })
+      setTestResult({ ok: false, status: 0, categories: 0, bookSearch: false, latencyMs: 0, searchResults: 0, error: errorText(err, t('settings.indexers.requestFailed', 'Request failed')) })
     } finally {
       setTesting(false)
     }

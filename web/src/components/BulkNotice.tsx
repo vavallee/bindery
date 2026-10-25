@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 /**
  * An inline banner for something a bulk action needs to tell the user that is
  * not an exception: today, "nothing was searched because automatic grabbing is
@@ -13,6 +15,7 @@
  * auto hides it, because the message asks the user to go and change a setting.
  */
 export default function BulkNotice({ message, onDismiss }: { message: string | null; onDismiss: () => void }) {
+  const { t } = useTranslation()
   if (!message) return null
   return (
     <div
@@ -23,7 +26,7 @@ export default function BulkNotice({ message, onDismiss }: { message: string | n
       <button
         type="button"
         onClick={onDismiss}
-        aria-label="Dismiss"
+        aria-label={t('common.dismiss', 'Dismiss')}
         className="shrink-0 px-1 leading-none text-amber-700 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-100 cursor-pointer"
       >
         ×

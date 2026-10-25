@@ -1,21 +1,11 @@
 package importer
 
-import (
-	"path/filepath"
-	"strings"
-)
+import "github.com/vavallee/bindery/internal/models"
 
-// audioExtensions lists the audio container extensions that mark a file as part
-// of an audiobook. Kept in sync with the audio arm of detectDownloadFormat so
-// the two agree on what counts as audio.
-var audioExtensions = map[string]bool{
-	".mp3": true, ".m4a": true, ".m4b": true, ".aac": true,
-	".flac": true, ".ogg": true, ".opus": true,
-}
-
-// IsAudioFile reports whether path carries an audiobook audio extension.
+// IsAudioFile reports whether path carries an audiobook audio extension. The
+// set lives in models.IsAudioPath so the book_files format guard shares it.
 func IsAudioFile(path string) bool {
-	return audioExtensions[strings.ToLower(filepath.Ext(path))]
+	return models.IsAudioPath(path)
 }
 
 // IsEbookFile reports whether path is a recognised book file that is NOT audio,

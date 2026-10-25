@@ -7,6 +7,7 @@ import { inputCls } from './formStyles'
 import PathRemapField from './PathRemapField'
 import { secretInputAttrs, urlInputAttrs } from '../../util/inputAttrs'
 import { slateFill, primaryFill } from '../../components/buttons'
+import { errorText } from '../../util/errorText'
 
 const absReviewResultLimit = 10
 
@@ -38,6 +39,23 @@ export default function ABSTab() {
     </div>
   )
 }
+
+// The completion summary, one phrase per count. A key per phrase, with its
+// plural forms, keeps each phrase whole for a translator; the count stays bold.
+const IMPORT_STATS = [
+  ['librariesScanned', 'settings.abs.import.stats.librariesScanned'],
+  ['booksCreated', 'settings.abs.import.stats.booksCreated'],
+  ['booksLinked', 'settings.abs.import.stats.booksLinked'],
+  ['booksUpdated', 'settings.abs.import.stats.booksUpdated'],
+  ['authorsCreated', 'settings.abs.import.stats.authorsCreated'],
+  ['seriesCreated', 'settings.abs.import.stats.seriesCreated'],
+  ['editionsAdded', 'settings.abs.import.stats.editionsAdded'],
+  ['ownedMarked', 'settings.abs.import.stats.ownedMarked'],
+  ['reviewQueued', 'settings.abs.import.stats.reviewQueued'],
+  ['pendingManual', 'settings.abs.import.stats.pendingManual'],
+  ['metadataRelinked', 'settings.abs.import.stats.metadataRelinked'],
+  ['metadataConflicts', 'settings.abs.import.stats.metadataConflicts'],
+] as const
 
 function AudiobookshelfSection() {
   const fid = useId()
@@ -99,7 +117,7 @@ function AudiobookshelfSection() {
       const page = await api.absConflicts()
       setConflicts(page.items)
     } catch (err: unknown) {
-      setConflictError(err instanceof Error ? err.message : 'Failed to load enrichment conflicts')
+      setConflictError(errorText(err, t('settings.abs.errors.loadConflicts', 'Failed to load enrichment conflicts')))
     }
   }
 
@@ -109,7 +127,7 @@ function AudiobookshelfSection() {
       const page = await api.absReviewItems()
       setReviewItems(page.items)
     } catch (err: unknown) {
-      setReviewError(err instanceof Error ? err.message : 'Failed to load review items')
+      setReviewError(errorText(err, t('settings.abs.errors.loadReview', 'Failed to load review items')))
     }
   }
 
@@ -128,7 +146,7 @@ function AudiobookshelfSection() {
       const next = await api.absLibraries(payload)
       setLibraries(next)
     } catch (err: unknown) {
-      setLibraryError(err instanceof Error ? err.message : 'Failed to load libraries')
+      setLibraryError(errorText(err, t('settings.abs.errors.loadLibraries', 'Failed to load libraries')))
     } finally {
       setListing(false)
     }
@@ -144,13 +162,14 @@ function AudiobookshelfSection() {
             .catch(() => {})
         }
       })
-      .catch(err => setSaveError(err instanceof Error ? err.message : 'Failed to load Audiobookshelf config'))
+      .catch(err => setSaveError(errorText(err, t('settings.abs.errors.loadConfig', 'Failed to load Audiobookshelf config'))))
       .finally(() => setLoading(false))
     api.absImportStatus().then(setImportProgress).catch(() => {})
     refreshRuns().catch(() => {})
     refreshReviewItems().catch(() => {})
     refreshConflicts().catch(() => {})
-  }, [])
+    // Load once on mount. t only supplies fallback error text, which must not re-run the loads.
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!importProgress?.running) return
@@ -165,7 +184,8 @@ function AudiobookshelfSection() {
     refreshRuns().catch(() => {})
     refreshReviewItems().catch(() => {})
     refreshConflicts().catch(() => {})
-  }, [importProgress?.running, importProgress?.finishedAt])
+    // Reload when an import finishes, not when the loaders are recreated with a new t.
+  }, [importProgress?.running, importProgress?.finishedAt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const probePayload = () => ({
     baseUrl: draft.baseUrl.trim(),
@@ -191,7 +211,7 @@ function AudiobookshelfSection() {
         loadLibraries(probePayload()).catch(() => {})
       }
     } catch (err: unknown) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to save Audiobookshelf settings')
+      setSaveError(errorText(err, t('settings.abs.errors.save', 'Failed to save Audiobookshelf settings')))
     } finally {
       setSaving(false)
     }
@@ -211,7 +231,7 @@ function AudiobookshelfSection() {
         loadLibraries(probePayload()).catch(() => {})
       }
     } catch (err: unknown) {
-      setTestError(err instanceof Error ? err.message : 'Connection test failed')
+      setTestError(errorText(err, t('settings.abs.errors.test', 'Connection test failed')))
     } finally {
       setTesting(false)
     }
@@ -222,7 +242,7 @@ function AudiobookshelfSection() {
     setRollbackError(null)
     setRollbackResult(null)
     if (hasUnsavedABSConfig) {
-      setImportError('Save Audiobookshelf settings before starting an import')
+      setImportError(t('settings.abs.import.saveFirst', 'Save Audiobookshelf settings before starting an import'))
       return
     }
     try {
@@ -231,7 +251,7 @@ function AudiobookshelfSection() {
       })
       setImportProgress(next)
     } catch (err: unknown) {
-      setImportError(err instanceof Error ? err.message : 'Import failed to start')
+      setImportError(errorText(err, t('settings.abs.errors.importStart', 'Import failed to start')))
     }
   }
 
@@ -241,7 +261,7 @@ function AudiobookshelfSection() {
     try {
       setRollbackResult(await api.absImportRollbackPreview(runId))
     } catch (err: unknown) {
-      setRollbackError(err instanceof Error ? err.message : 'Failed to preview rollback')
+      setRollbackError(errorText(err, t('settings.abs.errors.rollbackPreview', 'Failed to preview rollback')))
     } finally {
       setRollbackPreviewingRunId(null)
     }
@@ -256,7 +276,7 @@ function AudiobookshelfSection() {
       setRuns(prev => prev.map(run => run.id === runId ? { ...run, status: result.status } : run))
       await refreshRuns()
     } catch (err: unknown) {
-      setRollbackError(err instanceof Error ? err.message : 'Failed to roll back import run')
+      setRollbackError(errorText(err, t('settings.abs.errors.rollback', 'Failed to roll back import run')))
     } finally {
       setRollbackApplyingRunId(null)
     }
@@ -269,7 +289,7 @@ function AudiobookshelfSection() {
       const updated = await api.resolveAbsConflict(id, source)
       setConflicts(prev => prev.map(conflict => conflict.id === id ? updated : conflict))
     } catch (err: unknown) {
-      setConflictError(err instanceof Error ? err.message : 'Failed to resolve conflict')
+      setConflictError(errorText(err, t('settings.abs.errors.resolveConflict', 'Failed to resolve conflict')))
     } finally {
       setResolvingConflictId(null)
     }
@@ -282,7 +302,7 @@ function AudiobookshelfSection() {
       await api.relinkAuthorUpstream(localId)
       await refreshConflicts()
     } catch (err: unknown) {
-      setConflictError(err instanceof Error ? err.message : 'Failed to relink author')
+      setConflictError(errorText(err, t('settings.abs.errors.relink', 'Failed to relink author')))
     } finally {
       setRelinkingAuthorId(null)
     }
@@ -295,13 +315,13 @@ function AudiobookshelfSection() {
   const reviewReasonLabel = (reason: ABSReviewItem['reviewReason']) => {
     switch (reason) {
       case 'unmatched_author':
-        return 'No confident author match'
+        return t('settings.abs.review.reason.unmatchedAuthor', 'No confident author match')
       case 'ambiguous_author':
-        return 'Multiple author matches'
+        return t('settings.abs.review.reason.ambiguousAuthor', 'Multiple author matches')
       case 'unmatched_book':
-        return 'No confident book match'
+        return t('settings.abs.review.reason.unmatchedBook', 'No confident book match')
       case 'ambiguous_book':
-        return 'Multiple book matches'
+        return t('settings.abs.review.reason.ambiguousBook', 'Multiple book matches')
       default:
         return reason
     }
@@ -316,7 +336,7 @@ function AudiobookshelfSection() {
       api.absImportStatus().then(setImportProgress).catch(() => {})
       refreshRuns().catch(() => {})
     } catch (err: unknown) {
-      setReviewError(err instanceof Error ? err.message : 'Failed to import review item')
+      setReviewError(errorText(err, t('settings.abs.errors.reviewImport', 'Failed to import review item')))
     } finally {
       setReviewActionId(null)
     }
@@ -329,7 +349,7 @@ function AudiobookshelfSection() {
       await api.dismissAbsReviewItem(id)
       await refreshReviewItems()
     } catch (err: unknown) {
-      setReviewError(err instanceof Error ? err.message : 'Failed to dismiss review item')
+      setReviewError(errorText(err, t('settings.abs.errors.reviewDismiss', 'Failed to dismiss review item')))
     } finally {
       setReviewActionId(null)
     }
@@ -346,7 +366,7 @@ function AudiobookshelfSection() {
       await api.dismissAbsReviewRun(runId)
       await refreshReviewItems()
     } catch (err: unknown) {
-      setReviewError(err instanceof Error ? err.message : 'Failed to dismiss review run')
+      setReviewError(errorText(err, t('settings.abs.errors.reviewDismissRun', 'Failed to dismiss review run')))
     } finally {
       setDismissingRunId(null)
     }
@@ -361,7 +381,7 @@ function AudiobookshelfSection() {
       const results = await api.searchAuthors(query)
       setAuthorResults(prev => ({ ...prev, [item.id]: results }))
     } catch (err: unknown) {
-      setReviewError(err instanceof Error ? err.message : 'Author search failed')
+      setReviewError(errorText(err, t('settings.abs.errors.authorSearch', 'Author search failed')))
     } finally {
       setAuthorSearchId(null)
     }
@@ -379,7 +399,7 @@ function AudiobookshelfSection() {
       await refreshReviewItems()
       setAuthorResults(prev => ({ ...prev, [item.id]: [] }))
     } catch (err: unknown) {
-      setReviewError(err instanceof Error ? err.message : 'Failed to resolve author')
+      setReviewError(errorText(err, t('settings.abs.errors.resolveAuthor', 'Failed to resolve author')))
     } finally {
       setReviewActionId(null)
     }
@@ -394,7 +414,7 @@ function AudiobookshelfSection() {
       const results = await api.searchBooks(query)
       setBookResults(prev => ({ ...prev, [item.id]: results }))
     } catch (err: unknown) {
-      setReviewError(err instanceof Error ? err.message : 'Book search failed')
+      setReviewError(errorText(err, t('settings.abs.errors.bookSearch', 'Book search failed')))
     } finally {
       setBookSearchId(null)
     }
@@ -443,14 +463,14 @@ function AudiobookshelfSection() {
       setReviewItems(prev => prev.map(current => current.id === item.id ? updated : current))
       setBookResults(prev => ({ ...prev, [item.id]: [] }))
     } catch (err: unknown) {
-      setReviewError(err instanceof Error ? err.message : 'Failed to resolve book')
+      setReviewError(errorText(err, t('settings.abs.errors.resolveBook', 'Failed to resolve book')))
     } finally {
       setReviewActionId(null)
     }
   }
 
   if (loading) {
-    return <section className="text-sm text-fg-muted">Loading Audiobookshelf…</section>
+    return <section className="text-sm text-fg-muted">{t('settings.abs.loading', 'Loading Audiobookshelf…')}</section>
   }
 
   const hasImportCredentials = Boolean(draft.apiKey.trim() || config?.apiKeyConfigured)
@@ -478,18 +498,20 @@ function AudiobookshelfSection() {
   const absRunStatusLabel = (status: string) => {
     switch (status) {
       case 'rolled_back':
-        return 'rolled back'
+        return t('settings.abs.runStatus.rolledBack', 'rolled back')
       case 'completed':
+        return t('settings.abs.runStatus.completed', 'completed')
       case 'failed':
+        return t('settings.abs.runStatus.failed', 'failed')
       case 'running':
-        return status
+        return t('settings.abs.runStatus.running', 'running')
       default:
         return status.replace(/_/g, ' ')
     }
   }
   const absRunLibraryLabel = (run: ABSImportRun) => {
     const libraryId = (run.libraryId || run.source.libraryId || '').trim()
-    if (!libraryId) return 'Unknown library'
+    if (!libraryId) return t('settings.abs.runs.unknownLibrary', 'Unknown library')
     const name = libraryNameById.get(libraryId)?.trim()
     if (name && name !== libraryId) return `${name} (${libraryId})`
     return libraryId
@@ -500,21 +522,21 @@ function AudiobookshelfSection() {
     const name = rollbackActionName(action)
     switch (action.action) {
       case 'delete_author':
-        return `Delete author ${name}`
+        return t('settings.abs.rollback.action.deleteAuthor', { name, defaultValue: 'Delete author {{name}}' })
       case 'delete_book':
-        return `Delete book ${name}`
+        return t('settings.abs.rollback.action.deleteBook', { name, defaultValue: 'Delete book {{name}}' })
       case 'delete_edition':
-        return `Delete edition ${name}`
+        return t('settings.abs.rollback.action.deleteEdition', { name, defaultValue: 'Delete edition {{name}}' })
       case 'delete_series':
-        return `Delete series ${name}`
+        return t('settings.abs.rollback.action.deleteSeries', { name, defaultValue: 'Delete series {{name}}' })
       case 'restore_book':
-        return `Restore book metadata ${name}`
+        return t('settings.abs.rollback.action.restoreBook', { name, defaultValue: 'Restore book metadata {{name}}' })
       case 'unlink_series':
-        return `Remove series link ${name}`
+        return t('settings.abs.rollback.action.unlinkSeries', { name, defaultValue: 'Remove series link {{name}}' })
       case 'unlink_provenance':
-        return `Remove ABS link ${name}`
+        return t('settings.abs.rollback.action.unlinkProvenance', { name, defaultValue: 'Remove ABS link {{name}}' })
       case 'skip':
-        return `Retain ${action.entityType} ${name}`
+        return t('settings.abs.rollback.action.retain', { entityType: action.entityType, name, defaultValue: 'Retain {{entityType}} {{name}}' })
       default:
         return `${action.action.replace(/_/g, ' ')} ${name}`
     }
@@ -533,19 +555,19 @@ function AudiobookshelfSection() {
         <div>
           <h3 className="text-base font-semibold text-slate-800 dark:text-zinc-200">Audiobookshelf</h3>
           <p className="text-xs text-fg-muted mt-1">
-            Configure one ABS source, test API-key auth, pick book libraries, then import ABS metadata into the Bindery catalog.
+            {t('settings.abs.intro', 'Configure one ABS source, test API-key auth, pick book libraries, then import ABS metadata into the Bindery catalog.')}
           </p>
           {draft.enabled && (
             <p className="text-[11px] text-sky-700 dark:text-sky-300 mt-1 max-w-xl">
-              For better initial matching, it helps to review the selected ABS libraries first and match audiobooks to Audible sources so ASINs are already present before import.
+              {t('settings.abs.matchingTip', 'For better initial matching, it helps to review the selected ABS libraries first and match audiobooks to Audible sources so ASINs are already present before import.')}
             </p>
           )}
         </div>
         <button
           onClick={() => setDraft(prev => ({ ...prev, enabled: !prev.enabled }))}
           className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${draft.enabled ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
-          title={draft.enabled ? 'Disable Audiobookshelf source' : 'Enable Audiobookshelf source'}
-          aria-label={draft.enabled ? 'Disable Audiobookshelf source' : 'Enable Audiobookshelf source'}
+          title={draft.enabled ? t('settings.abs.disableSource', 'Disable Audiobookshelf source') : t('settings.abs.enableSource', 'Enable Audiobookshelf source')}
+          aria-label={draft.enabled ? t('settings.abs.disableSource', 'Disable Audiobookshelf source') : t('settings.abs.enableSource', 'Enable Audiobookshelf source')}
         >
           <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${draft.enabled ? 'translate-x-5' : ''}`} />
         </button>
@@ -554,13 +576,13 @@ function AudiobookshelfSection() {
       <div className="mb-4 p-3 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-50 dark:bg-zinc-950">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h4 className="text-sm font-medium text-slate-800 dark:text-zinc-200">Libraries</h4>
+            <h4 className="text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.abs.libraries.heading', 'Libraries')}</h4>
             <p className="text-[11px] text-fg-muted mt-0.5">
-              Select each ABS book library to import from this source.
+              {t('settings.abs.libraries.hint', 'Select each ABS book library to import from this source.')}
             </p>
           </div>
           <span className="text-[11px] text-fg-muted whitespace-nowrap">
-            {draft.libraryIds.length} selected
+            {t('common.selected', { count: draft.libraryIds.length })}
           </span>
         </div>
         {libraryRows.length > 0 ? (
@@ -601,7 +623,7 @@ function AudiobookshelfSection() {
           </div>
         ) : (
           <p className="mt-3 text-xs text-fg-muted">
-            No libraries selected. Use Test connection or List libraries to discover accessible book libraries.
+            {t('settings.abs.libraries.none', 'No libraries selected. Use Test connection or List libraries to discover accessible book libraries.')}
           </p>
         )}
         {libraryError && <div className="mt-2 text-sm text-red-700 dark:text-red-400">{libraryError}</div>}
@@ -610,7 +632,7 @@ function AudiobookshelfSection() {
       <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
         <div className="grid gap-4 md:grid-cols-2">
           <div>
-            <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">Source label</label>
+            <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.abs.fields.sourceLabel', 'Source label')}</label>
             <input id={`${fid}-1`}
               value={draft.label}
               onChange={e => setDraft(prev => ({ ...prev, label: e.target.value }))}
@@ -619,7 +641,7 @@ function AudiobookshelfSection() {
             />
           </div>
           <div>
-            <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">Base URL</label>
+            <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">{t('settings.abs.fields.baseUrl', 'Base URL')}</label>
             <input id={`${fid}-2`}
               {...urlInputAttrs}
               value={draft.baseUrl}
@@ -631,27 +653,27 @@ function AudiobookshelfSection() {
         </div>
 
         <div>
-          <label htmlFor={`${fid}-3`} className="block text-xs text-fg-muted mb-1">API key</label>
+          <label htmlFor={`${fid}-3`} className="block text-xs text-fg-muted mb-1">{t('settings.abs.fields.apiKey', 'API key')}</label>
           <input id={`${fid}-3`}
             {...secretInputAttrs}
             value={draft.apiKey}
             onChange={e => setDraft(prev => ({ ...prev, apiKey: e.target.value }))}
             type="password"
-            placeholder={config?.apiKeyConfigured ? 'Saved key is hidden. Enter a new key to rotate it.' : 'Paste an ABS API key'}
+            placeholder={config?.apiKeyConfigured ? t('settings.abs.fields.apiKeySavedPlaceholder', 'Saved key is hidden. Enter a new key to rotate it.') : t('settings.abs.fields.apiKeyPlaceholder', 'Paste an ABS API key')}
             className={inputCls}
           />
           <p className="text-[11px] text-fg-muted mt-1">
             {config?.apiKeyConfigured
-              ? 'A key is already stored and stays write-only. Leaving this blank keeps the saved key. Use a key for a user that can access the selected book libraries; ABS admin permissions are not required.'
-              : 'Use a key for a user that can access the selected book libraries. ABS admin permissions are not required, and the saved key never comes back to the browser after you store it.'}
+              ? t('settings.abs.fields.apiKeySavedHint', 'A key is already stored and stays write-only. Leaving this blank keeps the saved key. Use a key for a user that can access the selected book libraries; ABS admin permissions are not required.')
+              : t('settings.abs.fields.apiKeyHint', 'Use a key for a user that can access the selected book libraries. ABS admin permissions are not required, and the saved key never comes back to the browser after you store it.')}
           </p>
         </div>
 
         {testResult && (
           <div className="px-3 py-2 rounded border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 text-sm text-emerald-800 dark:text-emerald-300">
-            Connected as <span className="font-medium">{testResult.username}</span>
-            {testResult.serverVersion ? ` on ABS ${testResult.serverVersion}` : ''}
-            {testResult.defaultLibraryId ? ` · default library ${testResult.defaultLibraryId}` : ''}
+            {t('settings.abs.test.connectedAs', 'Connected as')} <span className="font-medium">{testResult.username}</span>
+            {testResult.serverVersion ? ' ' + t('settings.abs.test.serverVersion', { version: testResult.serverVersion, defaultValue: 'on ABS {{version}}' }) : ''}
+            {testResult.defaultLibraryId ? ' · ' + t('settings.abs.test.defaultLibrary', { id: testResult.defaultLibraryId, defaultValue: 'default library {{id}}' }) : ''}
           </div>
         )}
         {saveError && <div className="text-sm text-red-700 dark:text-red-400">{saveError}</div>}
@@ -660,11 +682,11 @@ function AudiobookshelfSection() {
 
         <PathRemapField
           id="abs-path-remap"
-          label="ABS path remap"
+          label={t('settings.abs.pathRemap.label', 'ABS path remap')}
           value={draft.pathRemap}
           onChange={value => setDraft(prev => ({ ...prev, pathRemap: value }))}
           placeholder="/audiobookshelf:/books/audiobookshelf,/abs:/books"
-          help="Optional and separate from download-client remaps. Use when ABS reports shared-storage paths that Bindery sees under a different mount."
+          help={t('settings.abs.pathRemap.help', 'Optional and separate from download-client remaps. Use when ABS reports shared-storage paths that Bindery sees under a different mount.')}
         />
 
         <div className="flex flex-wrap gap-2">
@@ -673,30 +695,30 @@ function AudiobookshelfSection() {
             disabled={saving}
             className={`px-3 py-2 ${primaryFill} rounded text-sm font-medium disabled:opacity-50`}
           >
-            {saving ? 'Saving…' : 'Save source'}
+            {saving ? t('common.saving', 'Saving…') : t('settings.abs.saveSource', 'Save source')}
           </button>
           <button
             onClick={testConnection}
             disabled={testing}
             className={`px-3 py-2 ${slateFill} rounded text-sm font-medium disabled:opacity-50`}
           >
-            {testing ? 'Testing…' : 'Test connection'}
+            {testing ? t('common.testing', 'Testing…') : t('settings.abs.testConnection', 'Test connection')}
           </button>
           <button
             onClick={() => loadLibraries(probePayload())}
             disabled={listing}
             className={`px-3 py-2 ${slateFill} rounded text-sm font-medium disabled:opacity-50`}
           >
-            {listing ? 'Loading…' : 'List libraries'}
+            {listing ? t('common.loading', 'Loading…') : t('settings.abs.listLibraries', 'List libraries')}
           </button>
         </div>
 
         <div className="pt-3 border-t border-slate-200 dark:border-zinc-800 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div className="min-w-0">
-              <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">Catalog import</label>
+              <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.abs.import.heading', 'Catalog import')}</label>
               <p className="text-xs text-fg-muted mt-0.5">
-                Import authors, books, series, and editions from the selected ABS libraries. Shared filesystem paths are reconciled into Bindery ownership automatically; when ABS and Bindery use different mount prefixes, add a path translation above. Non-visible paths stay metadata-only and are counted for manual follow-up.
+                {t('settings.abs.import.hint', 'Import authors, books, series, and editions from the selected ABS libraries. Shared filesystem paths are reconciled into Bindery ownership automatically; when ABS and Bindery use different mount prefixes, add a path translation above. Non-visible paths stay metadata-only and are counted for manual follow-up.')}
               </p>
             </div>
             <div className="flex flex-col items-start sm:items-end gap-2 flex-shrink-0 flex-wrap">
@@ -706,24 +728,24 @@ function AudiobookshelfSection() {
                   checked={importDryRun}
                   onChange={e => setImportDryRun(e.target.checked)}
                 />
-                Start with dry-run
+                {t('settings.abs.import.dryRun', 'Start with dry-run')}
               </label>
               <div className="flex gap-2">
                 <button
                   onClick={() => startImport(true)}
                   disabled={!canStartImport}
-                  title={hasUnsavedABSConfig ? 'Save Audiobookshelf settings before starting an import' : undefined}
+                  title={hasUnsavedABSConfig ? t('settings.abs.import.saveFirst', 'Save Audiobookshelf settings before starting an import') : undefined}
                   className={`px-3 py-2 ${slateFill} rounded text-sm font-medium disabled:opacity-50`}
                 >
-                  Preview changes
+                  {t('settings.abs.import.preview', 'Preview changes')}
                 </button>
                 <button
                   onClick={() => startImport(importDryRun)}
                   disabled={!canStartImport}
-                  title={hasUnsavedABSConfig ? 'Save Audiobookshelf settings before starting an import' : undefined}
+                  title={hasUnsavedABSConfig ? t('settings.abs.import.saveFirst', 'Save Audiobookshelf settings before starting an import') : undefined}
                   className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-sm font-medium disabled:opacity-50"
                 >
-                  {importProgress?.running ? 'Running…' : importDryRun ? 'Run selected mode' : 'Import libraries'}
+                  {importProgress?.running ? t('settings.abs.import.running', 'Running…') : importDryRun ? t('settings.abs.import.runSelected', 'Run selected mode') : t('settings.abs.import.run', 'Import libraries')}
                 </button>
               </div>
             </div>
@@ -731,12 +753,12 @@ function AudiobookshelfSection() {
 
           {hasUnsavedABSConfig && (
             <p className="text-[11px] text-amber-700 dark:text-amber-300">
-              Save Audiobookshelf settings before starting an import so the run uses the stored source configuration.
+              {t('settings.abs.import.saveFirstHint', 'Save Audiobookshelf settings before starting an import so the run uses the stored source configuration.')}
             </p>
           )}
           {!hasUnsavedABSConfig && effectiveLibraryIds.length === 0 && hasImportCredentials && (
             <p className="text-[11px] text-amber-700 dark:text-amber-300">
-              Choose at least one library or use "Test connection" / "List libraries" to load accessible book libraries before starting an import.
+              {t('settings.abs.import.chooseLibraryHint', 'Choose at least one library or use "Test connection" or "List libraries" to load accessible book libraries before starting an import.')}
             </p>
           )}
 
@@ -746,40 +768,39 @@ function AudiobookshelfSection() {
             <div className="rounded border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950 px-3 py-2 space-y-2">
               {importProgress.running && (
                 <div className="flex justify-between text-xs text-fg-muted gap-3">
-                  <span>{importProgress.message || 'Working…'}</span>
-                  <span>{importProgress.processed} processed</span>
+                  <span>{importProgress.message || t('settings.abs.import.working', 'Working…')}</span>
+                  <span>{t('settings.abs.import.processed', { count: importProgress.processed, defaultValue: '{{count}} processed' })}</span>
                 </div>
               )}
               {importProgress.running && importProgress.resumedFromCheckpoint && importProgress.checkpoint && (
                 <p className="text-[11px] text-amber-700 dark:text-amber-300">
-                  Resumed from page {importProgress.checkpoint.page}{importProgress.checkpoint.lastItemId ? ` after ${importProgress.checkpoint.lastItemId}` : ''}.
+                  {importProgress.checkpoint.lastItemId
+                    ? t('settings.abs.import.resumedAfter', { page: importProgress.checkpoint.page, item: importProgress.checkpoint.lastItemId, defaultValue: 'Resumed from page {{page}} after {{item}}.' })
+                    : t('settings.abs.import.resumed', { page: importProgress.checkpoint.page, defaultValue: 'Resumed from page {{page}}.' })}
                 </p>
               )}
               {!importProgress.running && importProgress.error && (
-                <p className="text-xs text-red-700 dark:text-red-400">{importProgress.dryRun ? 'Dry-run failed' : 'Import failed'}: {importProgress.error}</p>
+                <p className="text-xs text-red-700 dark:text-red-400">{importProgress.dryRun ? t('settings.abs.import.dryRunFailed', { error: importProgress.error, defaultValue: 'Dry-run failed: {{error}}' }) : t('settings.abs.import.failed', { error: importProgress.error, defaultValue: 'Import failed: {{error}}' })}</p>
               )}
               {!importProgress.running && importProgress.stats && (
                 <p className="text-xs text-slate-700 dark:text-zinc-300">
-                  {importProgress.dryRun ? 'Dry-run complete' : 'Import complete'} —{' '}
-                  <span className="font-medium">{importProgress.stats.librariesScanned}</span> libraries scanned,{' '}
-                  <span className="font-medium">{importProgress.stats.booksCreated}</span> books created,{' '}
-                  <span className="font-medium">{importProgress.stats.booksLinked}</span> linked to existing rows,{' '}
-                  <span className="font-medium">{importProgress.stats.booksUpdated}</span> updated,{' '}
-                  <span className="font-medium">{importProgress.stats.authorsCreated}</span> authors created,{' '}
-                  <span className="font-medium">{importProgress.stats.seriesCreated}</span> series created,{' '}
-                  <span className="font-medium">{importProgress.stats.editionsAdded}</span> editions added,{' '}
-                  <span className="font-medium">{importProgress.stats.ownedMarked}</span> formats marked owned,{' '}
-                  <span className="font-medium">{importProgress.stats.reviewQueued}</span> queued for review,{' '}
-                  <span className="font-medium">{importProgress.stats.pendingManual}</span> pending manual follow-up,{' '}
-                  <span className="font-medium">{importProgress.stats.metadataRelinked}</span> metadata relinked,{' '}
-                  <span className="font-medium">{importProgress.stats.metadataConflicts}</span> conflicts queued for review.
+                  {importProgress.dryRun ? t('settings.abs.import.dryRunComplete', 'Dry-run complete') : t('settings.abs.import.complete', 'Import complete')} —{' '}
+                  {IMPORT_STATS.map(([field, key], i) => {
+                    const count = new Map(Object.entries(importProgress.stats!)).get(field)
+                    return (
+                      <span key={field}>
+                        <span className="font-medium">{count}</span> {t(key, { count })}
+                        {i < IMPORT_STATS.length - 1 ? ', ' : '.'}
+                      </span>
+                    )
+                  })}
                 </p>
               )}
               {importProgress.results && importProgress.results.length > 0 && (
                 <div className="max-h-64 space-y-3 overflow-y-auto pr-1">
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700 dark:text-zinc-300">
-                      Books
+                      {t('settings.abs.results.books', 'Books')}
                     </p>
                     <div className="mt-1 space-y-1">
                       {[...importProgress.results].reverse().map(result => (
@@ -800,37 +821,37 @@ function AudiobookshelfSection() {
                     <>
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700 dark:text-zinc-300">
-                          Authors
+                          {t('settings.abs.results.authors', 'Authors')}
                         </p>
                         <p className="mt-1 text-[11px] text-fg-muted">
-                          {importProgress.stats.authorsCreated} created, {importProgress.stats.authorsLinked} linked.
+                          {t('settings.abs.results.createdLinked', { created: importProgress.stats.authorsCreated, linked: importProgress.stats.authorsLinked, defaultValue: '{{created}} created, {{linked}} linked.' })}
                         </p>
                       </div>
 
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700 dark:text-zinc-300">
-                          Series
+                          {t('settings.abs.results.series', 'Series')}
                         </p>
                         <p className="mt-1 text-[11px] text-fg-muted">
-                          {importProgress.stats.seriesCreated} created, {importProgress.stats.seriesLinked} linked.
+                          {t('settings.abs.results.createdLinked', { created: importProgress.stats.seriesCreated, linked: importProgress.stats.seriesLinked, defaultValue: '{{created}} created, {{linked}} linked.' })}
                         </p>
                       </div>
 
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700 dark:text-zinc-300">
-                          Editions
+                          {t('settings.abs.results.editions', 'Editions')}
                         </p>
                         <p className="mt-1 text-[11px] text-fg-muted">
-                          {importProgress.stats.editionsAdded} added, {importProgress.stats.ownedMarked} formats marked owned.
+                          {t('settings.abs.results.editionsSummary', { added: importProgress.stats.editionsAdded, owned: importProgress.stats.ownedMarked, defaultValue: '{{added}} added, {{owned}} formats marked owned.' })}
                         </p>
                       </div>
 
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700 dark:text-zinc-300">
-                          Follow-up
+                          {t('settings.abs.results.followUp', 'Follow-up')}
                         </p>
                         <p className="mt-1 text-[11px] text-fg-muted">
-                          {importProgress.stats.reviewQueued} queued for review, {importProgress.stats.pendingManual} pending manual, {importProgress.stats.metadataConflicts} conflicts queued.
+                          {t('settings.abs.results.followUpSummary', { review: importProgress.stats.reviewQueued, manual: importProgress.stats.pendingManual, conflicts: importProgress.stats.metadataConflicts, defaultValue: '{{review}} queued for review, {{manual}} pending manual, {{conflicts}} conflicts queued.' })}
                         </p>
                       </div>
                     </>
@@ -843,19 +864,19 @@ function AudiobookshelfSection() {
           <div className="rounded border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950 px-3 py-3 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-medium text-slate-800 dark:text-zinc-200">Recent runs</p>
-                <p className="text-xs text-fg-muted">Use a dry-run before a live import, then preview rollback against the exact batch if you need to unwind it safely.</p>
+                <p className="text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.abs.runs.heading', 'Recent runs')}</p>
+                <p className="text-xs text-fg-muted">{t('settings.abs.runs.hint', 'Use a dry-run before a live import, then preview rollback against the exact batch if you need to unwind it safely.')}</p>
               </div>
               <button
                 onClick={() => refreshRuns().catch(() => {})}
                 className={`px-3 py-2 ${slateFill} rounded text-sm font-medium`}
               >
-                Refresh runs
+                {t('settings.abs.runs.refresh', 'Refresh runs')}
               </button>
             </div>
 
             {runs.length === 0 && (
-              <p className="text-sm text-fg-muted">No ABS import runs recorded yet.</p>
+              <p className="text-sm text-fg-muted">{t('settings.abs.runs.none', 'No ABS import runs recorded yet.')}</p>
             )}
 
             {runs.slice(0, 5).map(run => {
@@ -865,7 +886,7 @@ function AudiobookshelfSection() {
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-slate-800 dark:text-zinc-200 truncate">
-                      Run #{run.id} · {run.dryRun ? 'Dry-run' : 'Live import'} · {absRunStatusLabel(run.status)}
+                      {t('settings.abs.runs.title', { id: run.id, mode: run.dryRun ? t('settings.abs.runs.dryRun', 'Dry-run') : t('settings.abs.runs.live', 'Live import'), status: absRunStatusLabel(run.status), defaultValue: 'Run #{{id}} · {{mode}} · {{status}}' })}
                     </p>
                     <p className="text-[11px] text-fg-muted">
                       {new Date(run.startedAt).toLocaleString()} · {run.source.label || run.sourceLabel} · {absRunLibraryLabel(run)}
@@ -878,14 +899,14 @@ function AudiobookshelfSection() {
                         disabled={rolledBack || rollbackPreviewingRunId === run.id || rollbackApplyingRunId === run.id}
                         className={`px-3 py-1.5 ${slateFill} rounded text-xs font-medium disabled:opacity-50`}
                       >
-                        {rollbackPreviewingRunId === run.id ? 'Previewing…' : 'Preview rollback'}
+                        {rollbackPreviewingRunId === run.id ? t('settings.abs.rollback.previewing', 'Previewing…') : t('settings.abs.rollback.preview', 'Preview rollback')}
                       </button>
                       <button
                         onClick={() => applyRollback(run.id)}
                         disabled={rolledBack || rollbackApplyingRunId === run.id || rollbackPreviewingRunId === run.id}
                         className={`px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50 ${rolledBack ? 'bg-slate-500 text-white cursor-not-allowed' : 'bg-amber-600 hover:bg-amber-500'}`}
                       >
-                        {rolledBack ? 'Rolled back' : rollbackApplyingRunId === run.id ? 'Rolling back…' : 'Apply rollback'}
+                        {rolledBack ? t('settings.abs.rollback.rolledBack', 'Rolled back') : rollbackApplyingRunId === run.id ? t('settings.abs.rollback.applying', 'Rolling back…') : t('settings.abs.rollback.apply', 'Apply rollback')}
                       </button>
                     </div>
                   )}
@@ -893,33 +914,35 @@ function AudiobookshelfSection() {
                 <p className="text-xs text-slate-700 dark:text-zinc-300">
                   {run.summary.error ? run.summary.error : (
                     <>
-                      {run.summary.stats.itemsSeen} items seen, {run.summary.stats.itemsDetailFetched} detail fetches, {run.summary.stats.booksCreated} books created, {run.summary.stats.booksLinked} linked, {run.summary.stats.booksUpdated} updated, {run.summary.stats.ownedMarked} formats marked owned, {run.summary.stats.reviewQueued} queued for review, {run.summary.stats.pendingManual} pending manual.
+                      {t('settings.abs.runs.summary', { seen: run.summary.stats.itemsSeen, fetched: run.summary.stats.itemsDetailFetched, created: run.summary.stats.booksCreated, linked: run.summary.stats.booksLinked, updated: run.summary.stats.booksUpdated, owned: run.summary.stats.ownedMarked, review: run.summary.stats.reviewQueued, manual: run.summary.stats.pendingManual, defaultValue: '{{seen}} items seen, {{fetched}} detail fetches, {{created}} books created, {{linked}} linked, {{updated}} updated, {{owned}} formats marked owned, {{review}} queued for review, {{manual}} pending manual.' })}
                     </>
                   )}
                 </p>
                 {run.checkpoint && (
                   <p className="text-[11px] text-amber-700 dark:text-amber-300">
-                    Last checkpoint: page {run.checkpoint.page}{run.checkpoint.lastItemId ? ` after ${run.checkpoint.lastItemId}` : ''}.
+                    {run.checkpoint.lastItemId
+                      ? t('settings.abs.runs.checkpointAfter', { page: run.checkpoint.page, item: run.checkpoint.lastItemId, defaultValue: 'Last checkpoint: page {{page}} after {{item}}.' })
+                      : t('settings.abs.runs.checkpoint', { page: run.checkpoint.page, defaultValue: 'Last checkpoint: page {{page}}.' })}
                   </p>
                 )}
                 {rollbackResult?.runId === run.id && (
                   <div className="rounded border border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/20 px-3 py-3 space-y-3">
                     <div>
                       <p className="text-sm font-medium text-slate-800 dark:text-zinc-200">
-                        {rollbackResult.preview ? 'Rollback preview' : 'Rollback result'}
+                        {rollbackResult.preview ? t('settings.abs.rollback.previewHeading', 'Rollback preview') : t('settings.abs.rollback.resultHeading', 'Rollback result')}
                       </p>
                       <p className="text-xs text-slate-700 dark:text-zinc-300">
-                        {rollbackResult.stats.actionsPlanned} actions planned, {rollbackResult.stats.entitiesDeleted} entities deleted, {rollbackResult.stats.provenanceUnlinked} ABS links removed, {rollbackResult.stats.skipped} retained, {rollbackResult.stats.failed} failures.
+                        {t('settings.abs.rollback.summary', { planned: rollbackResult.stats.actionsPlanned, deleted: rollbackResult.stats.entitiesDeleted, unlinked: rollbackResult.stats.provenanceUnlinked, skipped: rollbackResult.stats.skipped, failed: rollbackResult.stats.failed, defaultValue: '{{planned}} actions planned, {{deleted}} entities deleted, {{unlinked}} ABS links removed, {{skipped}} retained, {{failed}} failures.' })}
                       </p>
                     </div>
 
                     <div className="grid gap-3 md:grid-cols-2">
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
-                          {rollbackResult.preview ? 'Would delete or change' : 'Deleted or changed'}
+                          {rollbackResult.preview ? t('settings.abs.rollback.wouldChange', 'Would delete or change') : t('settings.abs.rollback.changed', 'Deleted or changed')}
                         </p>
                         {rollbackPreviewChanges.length === 0 ? (
-                          <p className="text-[11px] text-fg-muted mt-1">No entities would be deleted or changed.</p>
+                          <p className="text-[11px] text-fg-muted mt-1">{t('settings.abs.rollback.noChanges', 'No entities would be deleted or changed.')}</p>
                         ) : (
                           <div className="mt-1 max-h-64 space-y-1 overflow-y-auto pr-1">
                             {rollbackPreviewChanges.map(action => (
@@ -934,10 +957,10 @@ function AudiobookshelfSection() {
 
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700 dark:text-zinc-300">
-                          {rollbackResult.preview ? 'Would be retained' : 'Retained'}
+                          {rollbackResult.preview ? t('settings.abs.rollback.wouldRetain', 'Would be retained') : t('settings.abs.rollback.retained', 'Retained')}
                         </p>
                         {rollbackPreviewRetained.length === 0 ? (
-                          <p className="text-[11px] text-fg-muted mt-1">No retained entities reported.</p>
+                          <p className="text-[11px] text-fg-muted mt-1">{t('settings.abs.rollback.noRetained', 'No retained entities reported.')}</p>
                         ) : (
                           <div className="mt-1 max-h-64 space-y-1 overflow-y-auto pr-1">
                             {rollbackPreviewRetained.map(action => (
@@ -961,13 +984,13 @@ function AudiobookshelfSection() {
         </div>
 
         <ABSConflictPanel
-          title="Author conflicts"
-          description="Review placeholder ABS authors here first. If Bindery can confidently relink one to upstream metadata, you can trigger that before working through book review items."
+          title={t('settings.abs.conflicts.authorTitle', 'Author conflicts')}
+          description={t('settings.abs.conflicts.authorDescription', 'Review placeholder ABS authors here first. If Bindery can confidently relink one to upstream metadata, you can trigger that before working through book review items.')}
           entityType="author"
           conflicts={conflicts}
           show={showAuthorConflicts}
-          emptyMessage="No author conflicts recorded yet."
-          resolvedHeading="Resolved author choices"
+          emptyMessage={t('settings.abs.conflicts.authorEmpty', 'No author conflicts recorded yet.')}
+          resolvedHeading={t('settings.abs.conflicts.authorResolved', 'Resolved author choices')}
           conflictError={conflictError}
           resolvingConflictId={resolvingConflictId}
           onToggle={() => setShowAuthorConflicts(prev => !prev)}
@@ -992,9 +1015,9 @@ function AudiobookshelfSection() {
                   {showReviewItems ? '▾' : '▸'}
                 </span>
                 <div>
-                  <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 cursor-pointer">No-match books</label>
+                  <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 cursor-pointer">{t('settings.abs.review.heading', 'No-match books')}</label>
                   <p className="text-xs text-fg-muted mt-0.5">
-                    Low-confidence ABS items stay here until you explicitly import or dismiss them, which keeps bad metadata out of the main catalog.
+                    {t('settings.abs.review.hint', 'Low-confidence ABS items stay here until you explicitly import or dismiss them, which keeps bad metadata out of the main catalog.')}
                   </p>
                 </div>
               </div>
@@ -1003,14 +1026,14 @@ function AudiobookshelfSection() {
               onClick={() => refreshReviewItems().catch(() => {})}
               className={`px-3 py-2 ${slateFill} rounded text-sm font-medium flex-shrink-0`}
             >
-              Refresh
+              {t('common.refresh', 'Refresh')}
             </button>
           </div>
 
           {showReviewItems && (
             <>
               {reviewItems.length === 0 && (
-                <p className="text-sm text-fg-muted">No queued ABS review items.</p>
+                <p className="text-sm text-fg-muted">{t('settings.abs.review.none', 'No queued ABS review items.')}</p>
               )}
 
               {groupedReviewItems.map(group => (
@@ -1039,12 +1062,12 @@ function AudiobookshelfSection() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-slate-800 dark:text-zinc-200 truncate">{item.title || item.itemId}</p>
-                      <p className="text-xs text-fg-muted truncate">{item.primaryAuthor || 'Unknown author'}</p>
+                      <p className="text-xs text-fg-muted truncate">{item.primaryAuthor || t('settings.abs.review.unknownAuthor', 'Unknown author')}</p>
                       {item.resolvedAuthorName && (
-                        <p className="text-[11px] text-emerald-700 dark:text-emerald-300 truncate">Author: {item.resolvedAuthorName}</p>
+                        <p className="text-[11px] text-emerald-700 dark:text-emerald-300 truncate">{t('settings.abs.review.resolvedAuthor', { name: item.resolvedAuthorName, defaultValue: 'Author: {{name}}' })}</p>
                       )}
                       {item.resolvedBookTitle && (
-                        <p className="text-[11px] text-emerald-700 dark:text-emerald-300 truncate">Book: {item.resolvedBookTitle}</p>
+                        <p className="text-[11px] text-emerald-700 dark:text-emerald-300 truncate">{t('settings.abs.review.resolvedBook', { title: item.resolvedBookTitle, defaultValue: 'Book: {{title}}' })}</p>
                       )}
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-2 flex-shrink-0">
@@ -1055,7 +1078,7 @@ function AudiobookshelfSection() {
                       )}
                       {item.fileMappingFound && (
                         <span title={item.fileMappingMessage || undefined} className="text-[11px] px-2 py-1 rounded bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300">
-                          File Mapping Found
+                          {t('settings.abs.review.fileMappingFound', 'File Mapping Found')}
                         </span>
                       )}
                       <span className="text-[11px] px-2 py-1 rounded bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300">
@@ -1077,7 +1100,7 @@ function AudiobookshelfSection() {
                           disabled={authorSearchId === item.id}
                           className={`px-3 py-2 ${slateFill} rounded text-xs font-medium disabled:opacity-50`}
                         >
-                          {authorSearchId === item.id ? 'Searching...' : 'Author'}
+                          {authorSearchId === item.id ? t('settings.abs.review.searching', 'Searching…') : t('settings.abs.review.searchAuthor', 'Author')}
                         </button>
                       </div>
                       {(authorResults[item.id] ?? []).length > 0 && (
@@ -1110,7 +1133,7 @@ function AudiobookshelfSection() {
                           disabled={bookSearchId === item.id}
                           className={`px-3 py-2 ${slateFill} rounded text-xs font-medium disabled:opacity-50`}
                         >
-                          {bookSearchId === item.id ? 'Searching...' : 'Book'}
+                          {bookSearchId === item.id ? t('settings.abs.review.searching', 'Searching…') : t('settings.abs.review.searchBook', 'Book')}
                         </button>
                       </div>
                       {(bookResults[item.id] ?? []).length > 0 && (
@@ -1137,14 +1160,14 @@ function AudiobookshelfSection() {
                       disabled={reviewActionId === item.id}
                       className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 rounded text-xs font-medium disabled:opacity-50"
                     >
-                      {reviewActionId === item.id ? 'Importing…' : 'Import'}
+                      {reviewActionId === item.id ? t('settings.abs.review.importing', 'Importing…') : t('settings.abs.review.import', 'Import')}
                     </button>
                     <button
                       onClick={() => dismissReviewItem(item.id)}
                       disabled={reviewActionId === item.id}
                       className={`px-3 py-1.5 ${slateFill} rounded text-xs font-medium disabled:opacity-50`}
                     >
-                      Dismiss
+                      {t('settings.abs.review.dismiss', 'Dismiss')}
                     </button>
                   </div>
                 </div>
@@ -1158,13 +1181,13 @@ function AudiobookshelfSection() {
         </div>
 
         <ABSConflictPanel
-          title="Book conflicts"
-          description="When ABS and upstream book metadata disagree, Bindery keeps the upstream value temporarily and lets you confirm the winning source here."
+          title={t('settings.abs.conflicts.bookTitle', 'Book conflicts')}
+          description={t('settings.abs.conflicts.bookDescription', 'When ABS and upstream book metadata disagree, Bindery keeps the upstream value temporarily and lets you confirm the winning source here.')}
           entityType="book"
           conflicts={conflicts}
           show={showBookConflicts}
-          emptyMessage="No book conflicts recorded yet."
-          resolvedHeading="Resolved book choices"
+          emptyMessage={t('settings.abs.conflicts.bookEmpty', 'No book conflicts recorded yet.')}
+          resolvedHeading={t('settings.abs.conflicts.bookResolved', 'Resolved book choices')}
           resolvingConflictId={resolvingConflictId}
           onToggle={() => setShowBookConflicts(prev => !prev)}
           onRefresh={refreshConflictsQuietly}

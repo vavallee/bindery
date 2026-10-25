@@ -109,6 +109,14 @@ export default function SeriesPage() {
       .finally(() => setLoading(false))
   }, [navSeriesId])
 
+  // Arriving with a series to open (the author page's series headings, the
+  // header search) lands on its card: the list holds every series, so the
+  // opened one can sit far below the top (#3457). Once, when the list is in.
+  useEffect(() => {
+    if (loading || !navSeriesId) return
+    document.getElementById(`series-${navSeriesId}`)?.scrollIntoView?.({ block: 'start' })
+  }, [loading, navSeriesId])
+
   useEffect(() => {
     document.title = `${t('series.title')} · Bindery`
     return () => { document.title = 'Bindery' }
@@ -513,7 +521,7 @@ export default function SeriesPage() {
             })
 
             return (
-              <div key={series.id} className="border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden">
+              <div key={series.id} id={`series-${series.id}`} className="scroll-mt-20 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden">
                 <div
                   className="p-4 cursor-pointer hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 transition-colors"
                   onClick={() => toggleExpanded(series)}

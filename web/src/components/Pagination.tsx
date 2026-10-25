@@ -52,7 +52,7 @@ export default function Pagination({
   return (
     <div className="flex flex-col items-center gap-3 mt-6 pt-4 border-t border-slate-200 dark:border-zinc-800 sm:flex-row sm:justify-between">
       <div className="text-xs text-fg-muted">
-        {start}–{end} of {totalItems}
+        {t('pagination.range', { start, end, total: totalItems, defaultValue: '{{start}}–{{end}} of {{total}}' })}
       </div>
       <div className="flex flex-wrap justify-center items-center gap-1 pointer-coarse:gap-y-5">
         <button onClick={() => onPageChange(1)} disabled={page === 1} className={btn}>«</button>

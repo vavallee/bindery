@@ -481,6 +481,14 @@ func migrate(database *sql.DB) error {
 		return fmt.Errorf("backfill language codes: %w", err)
 	}
 
+	// SetFilePath bound a library file to a book by the book's declared media
+	// type, and "both" fell back to ebook, so an .m4b or .mp3 found for such a
+	// book was stored as an ebook file (#3474). The writers now label by
+	// extension; this repairs the rows they already wrote.
+	if err := runBackfillOnce(database, backfillRevKeyBookFileFmt, bookFileFormatRev, backfillBookFileFormats); err != nil {
+		return fmt.Errorf("backfill book file formats: %w", err)
+	}
+
 	return nil
 }
 
@@ -526,7 +534,12 @@ const (
 	backfillRevKeySearchKeys   = "backfill.search_key_rev"
 	backfillRevKeyASINCase     = "backfill.asin_case_rev"
 	backfillRevKeyLanguageCode = "backfill.language_code_rev"
+	backfillRevKeyBookFileFmt  = "backfill.book_file_format_rev"
 )
+
+// bookFileFormatRev is the revision of the audio-extension rule behind
+// backfillBookFileFormats. Bump it if the set of audio extensions grows.
+const bookFileFormatRev = 1
 
 // BackfillRevisionKeys lists the settings keys that hold the normalizer
 // revision each startup backfill last ran at. The settings registry in
@@ -541,6 +554,7 @@ func BackfillRevisionKeys() []string {
 		backfillRevKeySearchKeys,
 		backfillRevKeyASINCase,
 		backfillRevKeyLanguageCode,
+		backfillRevKeyBookFileFmt,
 	}
 }
 
@@ -1497,4 +1511,68 @@ func stampBackfillRevisions(database *sql.DB) {
 	markBackfillRevision(database, backfillRevKeySearchKeys, textutil.FoldForSearchRev)
 	markBackfillRevision(database, backfillRevKeyASINCase, isbnutil.NormalizeASINRev)
 	markBackfillRevision(database, backfillRevKeyLanguageCode, models.NormalizeLanguageCodeRev)
+	markBackfillRevision(database, backfillRevKeyBookFileFmt, bookFileFormatRev)
+}
+
+// backfillBookFileFormats relabels book_files rows that hold an audio file but
+// say 'ebook' (#3474), then refreshes the status of each book it touched so the
+// stored paths and status follow the corrected inventory. It is unconditional
+// and idempotent; migrate() gates it on backfill.book_file_format_rev.
+//
+// Cost: the refresh does one os.Stat per tracked file of each touched book (see
+// derivedFormatPath). Only books with a mislabelled row are touched, normally a
+// handful, and the marker makes this a one time pass, so it runs inline rather
+// than in the background: a goroutine would compete with startup for the single
+// SQLite connection.
+func backfillBookFileFormats(database *sql.DB) error {
+	var conds []string
+	var args []any
+	for _, ext := range models.AudioExtensions() {
+		conds = append(conds, "LOWER(path) LIKE ?")
+		args = append(args, "%"+ext)
+	}
+	where := "format = 'ebook' AND (" + strings.Join(conds, " OR ") + ")"
+
+	ids, err := func() ([]int64, error) {
+		rows, err := database.Query("SELECT DISTINCT book_id FROM book_files WHERE "+where, args...)
+		if err != nil {
+			return nil, fmt.Errorf("read book_files for format backfill: %w", err)
+		}
+		defer rows.Close()
+		var out []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan book_files format backfill: %w", err)
+			}
+			out = append(out, id)
+		}
+		return out, rows.Err()
+	}()
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	res, err := database.Exec("UPDATE book_files SET format = 'audiobook' WHERE "+where, args...)
+	if err != nil {
+		return fmt.Errorf("relabel audio book_files: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	books := NewBookRepo(database)
+	for _, id := range ids {
+		before, _ := books.GetByID(context.Background(), id)
+		if err := books.refreshBookStatus(context.Background(), id); err != nil {
+			slog.Warn("book file format backfill: refresh book status", "bookID", id, "error", err)
+			continue
+		}
+		after, _ := books.GetByID(context.Background(), id)
+		if before != nil && after != nil && before.Status != after.Status {
+			slog.Info("book file format backfill changed a book's status",
+				"book_id", id, "title", after.Title, "from", before.Status, "to", after.Status)
+		}
+	}
+	slog.Info("relabelled audio files recorded as ebook files", "files", n, "books", len(ids))
+	return nil
 }

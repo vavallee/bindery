@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { primaryFill } from './buttons'
 
 type Props = {
@@ -13,6 +14,67 @@ type Props = {
   inline?: boolean
 }
 type State = { hasError: boolean; error: Error | null; errorInfo: ErrorInfo | null; showDetails: boolean }
+
+// The fallback is a function component so it can use the translation hook,
+// which a class component cannot.
+function Fallback({ error, errorInfo, showDetails, inline, onReload, onHome, onToggleDetails }: {
+  error: Error | null
+  errorInfo: ErrorInfo | null
+  showDetails: boolean
+  inline?: boolean
+  onReload: () => void
+  onHome: () => void
+  onToggleDetails: () => void
+}) {
+  const { t } = useTranslation()
+  const outerClass = inline
+    ? 'flex justify-center py-6'
+    : 'min-h-screen bg-slate-50 dark:bg-zinc-950 text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4'
+  return (
+    <div className={outerClass}>
+      <div role="alert" className="max-w-xl w-full p-6 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
+        <h1 className="text-lg font-bold tracking-tight">{t('errorBoundary.title', 'Something went wrong')}</h1>
+        <p className="text-sm text-fg-muted">
+          {t('errorBoundary.body', 'The page hit an unexpected error and couldn\'t render. You can try reloading or returning to the home page.')}
+        </p>
+        {error?.message && (
+          <pre className="text-xs font-mono p-3 rounded bg-slate-50 dark:bg-black border border-slate-200 dark:border-zinc-900 overflow-auto whitespace-pre-wrap break-words">
+            {error.message}
+          </pre>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={onReload}
+            className={`px-3 py-1.5 ${primaryFill} rounded text-xs font-medium`}
+          >
+            {t('errorBoundary.reload', 'Reload')}
+          </button>
+          <button
+            onClick={onHome}
+            className="px-3 py-1.5 bg-slate-300 dark:bg-zinc-700 hover:bg-slate-400 dark:hover:bg-zinc-600 rounded text-xs font-medium"
+          >
+            {t('errorBoundary.home', 'Go home')}
+          </button>
+          {(error?.stack || errorInfo?.componentStack) && (
+            <button
+              onClick={onToggleDetails}
+              className="px-3 py-1.5 bg-slate-300 dark:bg-zinc-700 hover:bg-slate-400 dark:hover:bg-zinc-600 rounded text-xs font-medium"
+              aria-expanded={showDetails}
+            >
+              {showDetails ? t('errorBoundary.hideDetails', 'Hide details') : t('errorBoundary.showDetails', 'Show details')}
+            </button>
+          )}
+        </div>
+        {showDetails && (
+          <pre className="text-xs font-mono p-3 rounded bg-slate-50 dark:bg-black border border-slate-200 dark:border-zinc-900 overflow-auto max-h-[40vh] whitespace-pre-wrap break-words">
+            {error?.stack}
+            {errorInfo?.componentStack}
+          </pre>
+        )}
+      </div>
+    </div>
+  )
+}
 
 export default class ErrorBoundary extends Component<Props, State> {
   state: State = { hasError: false, error: null, errorInfo: null, showDetails: false }
@@ -49,52 +111,16 @@ export default class ErrorBoundary extends Component<Props, State> {
   render() {
     if (!this.state.hasError) return this.props.children
     const { error, errorInfo, showDetails } = this.state
-    const outerClass = this.props.inline
-      ? 'flex justify-center py-6'
-      : 'min-h-screen bg-slate-50 dark:bg-zinc-950 text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4'
     return (
-      <div className={outerClass}>
-        <div role="alert" className="max-w-xl w-full p-6 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
-          <h1 className="text-lg font-bold tracking-tight">Something went wrong</h1>
-          <p className="text-sm text-fg-muted">
-            The page hit an unexpected error and couldn't render. You can try reloading or returning to the home page.
-          </p>
-          {error?.message && (
-            <pre className="text-xs font-mono p-3 rounded bg-slate-50 dark:bg-black border border-slate-200 dark:border-zinc-900 overflow-auto whitespace-pre-wrap break-words">
-              {error.message}
-            </pre>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={this.handleReload}
-              className={`px-3 py-1.5 ${primaryFill} rounded text-xs font-medium`}
-            >
-              Reload
-            </button>
-            <button
-              onClick={this.handleHome}
-              className="px-3 py-1.5 bg-slate-300 dark:bg-zinc-700 hover:bg-slate-400 dark:hover:bg-zinc-600 rounded text-xs font-medium"
-            >
-              Go home
-            </button>
-            {(error?.stack || errorInfo?.componentStack) && (
-              <button
-                onClick={this.toggleDetails}
-                className="px-3 py-1.5 bg-slate-300 dark:bg-zinc-700 hover:bg-slate-400 dark:hover:bg-zinc-600 rounded text-xs font-medium"
-                aria-expanded={showDetails}
-              >
-                {showDetails ? 'Hide details' : 'Show details'}
-              </button>
-            )}
-          </div>
-          {showDetails && (
-            <pre className="text-xs font-mono p-3 rounded bg-slate-50 dark:bg-black border border-slate-200 dark:border-zinc-900 overflow-auto max-h-[40vh] whitespace-pre-wrap break-words">
-              {error?.stack}
-              {errorInfo?.componentStack}
-            </pre>
-          )}
-        </div>
-      </div>
+      <Fallback
+        error={error}
+        errorInfo={errorInfo}
+        showDetails={showDetails}
+        inline={this.props.inline}
+        onReload={this.handleReload}
+        onHome={this.handleHome}
+        onToggleDetails={this.toggleDetails}
+      />
     )
   }
 }

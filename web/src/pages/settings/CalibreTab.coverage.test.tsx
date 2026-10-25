@@ -4,7 +4,7 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, opts?: unknown) =>
-      opts && typeof opts === 'object' ? `${key} ${JSON.stringify(opts)}` : key,
+      typeof opts === 'string' ? opts : opts && typeof opts === 'object' ? `${key} ${JSON.stringify(opts)}` : key,
   }),
 }))
 
@@ -298,7 +298,7 @@ describe('CalibreTab coverage', () => {
 
     mocked.calibreImportStatus.mockResolvedValueOnce({ running: false, processed: 0, total: 0, error: 'disk full' })
     render(<CalibreTab />)
-    expect(await screen.findByText('Import failed: disk full')).toBeInTheDocument()
+    expect(await screen.findByText('settings.calibre.import.failed {"error":"disk full","defaultValue":"Import failed: {{error}}"}')).toBeInTheDocument()
   })
 
   it('lists recent runs and applies a rollback', async () => {

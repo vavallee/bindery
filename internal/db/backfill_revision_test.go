@@ -354,6 +354,7 @@ func TestFreshDatabaseStampsBackfillsWithoutScanning(t *testing.T) {
 		{backfillRevKeySearchKeys, textutil.FoldForSearchRev},
 		{backfillRevKeyASINCase, isbnutil.NormalizeASINRev},
 		{backfillRevKeyLanguageCode, models.NormalizeLanguageCodeRev},
+		{backfillRevKeyBookFileFmt, bookFileFormatRev},
 	} {
 		got, ok := settingValue(t, database, want.key)
 		if !ok || got != strconv.Itoa(want.rev) {

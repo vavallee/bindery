@@ -399,6 +399,78 @@ func (c *Client) Search(ctx context.Context, query string, categories []int) ([]
 // "й" all decompose, so titles in those scripts do pay for it when the first
 // passes find nothing.
 func (c *Client) BookSearch(ctx context.Context, title, author string, categories []int) ([]SearchResult, error) {
+	results, _, err := c.BookSearchTraced(ctx, title, author, categories)
+	return results, err
+}
+
+// SearchTrace says what BookSearchTraced did beyond the ordinary tier cascade,
+// so SearchDebug can show it and the cost of the extra query stays measurable
+// (#3455).
+type SearchTrace struct {
+	// NumberWordQuery is the digit form of the title ("... Book 1") when the
+	// number word variant was sent, and empty when it was not. At most one
+	// extra query is ever sent for it.
+	NumberWordQuery string
+	// NumberWordResults is how many results that one query returned.
+	NumberWordResults int
+	// NumberWordError is why that one query failed (a 429, a timeout, the daily
+	// cap), empty when it succeeded or was not sent. Without it a failed
+	// variant looks like an indexer with nothing to offer.
+	NumberWordError string
+	// BudgetExhausted is true when the variant was refused by the daily query
+	// cap. The caller treats it as it treats the same refusal on any other
+	// query (flush the count, no health strike).
+	BudgetExhausted bool
+}
+
+// BookSearchTraced is BookSearch plus a SearchTrace.
+//
+// Number word variant (#3476). A title that spells a position out ("Book
+// One", "Part Two") is often named with the digit by the release ("Book 1"),
+// and indexers that require every query word to appear in the release name
+// return nothing for the spelled form on every tier. When the whole cascade
+// ends without a relevant result, ONE more query is sent: the title with those
+// words as digits (FoldNumberWords), as a title only t=search like tier 4. It
+// is sent only when the title contains such a number word, and only after the
+// cascade has already failed, so a search that was finding its book pays
+// nothing and a failing one pays a single query per indexer. Its results
+// replace the failed ones only when they pass the same relevance gate.
+func (c *Client) BookSearchTraced(ctx context.Context, title, author string, categories []int) ([]SearchResult, SearchTrace, error) {
+	var trace SearchTrace
+	results, err := c.bookSearchSpellings(ctx, title, author, categories)
+	if err != nil {
+		return nil, trace, err
+	}
+	origTitle := primaryTitleForQuery(title)
+	digitTitle := FoldNumberWords(origTitle)
+	if digitTitle == origTitle || !hasSearchableText(digitTitle) {
+		return results, trace, nil
+	}
+	if len(results) > 0 && titleHasRelevantResult(TransliterateQuery(origTitle), results) {
+		return results, trace, nil
+	}
+	digitQuery := TransliterateQuery(digitTitle)
+	slog.Debug("indexer query number word variant", "title", digitQuery)
+	trace.NumberWordQuery = digitQuery
+	extra, err := c.Search(ctx, digitQuery, categories)
+	if err != nil {
+		// The variant is an extra chance, not the search. A failure of it must
+		// not turn a "no results" into an indexer error or a health strike.
+		slog.Debug("indexer query number word variant failed", "error", err)
+		trace.NumberWordError = err.Error()
+		trace.BudgetExhausted = errors.Is(err, ErrQueryBudgetExhausted)
+		return results, trace, nil
+	}
+	trace.NumberWordResults = len(extra)
+	if len(extra) > 0 && titleHasRelevantResult(digitQuery, extra) {
+		return extra, trace, nil
+	}
+	return results, trace, nil
+}
+
+// bookSearchSpellings is the tier cascade over the transliterated, original and
+// decomposed spellings of the title; BookSearch's body before #3476.
+func (c *Client) bookSearchSpellings(ctx context.Context, title, author string, categories []int) ([]SearchResult, error) {
 	origTitle := primaryTitleForQuery(title)
 	origAuthor := norm.NFC.String(author)
 

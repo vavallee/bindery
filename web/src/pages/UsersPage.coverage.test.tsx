@@ -72,7 +72,7 @@ describe('UsersPage coverage', () => {
   it('blocks non-admins and never asks for the user list', () => {
     auth.isAdmin = false
     render(<UsersPage />)
-    expect(screen.getByText('Admin access required.')).toBeInTheDocument()
+    expect(screen.getByText('users.adminRequired')).toBeInTheDocument()
     expect(screen.queryByRole('table')).toBeNull()
     expect(api.listUsers).not.toHaveBeenCalled()
   })
@@ -87,7 +87,7 @@ describe('UsersPage coverage', () => {
     expect(await screen.findByRole('table')).toBeInTheDocument()
     expect(within(rowFor('admin')).getByText('(users.you)')).toBeInTheDocument()
     expect(within(rowFor('reader')).queryByText('(users.you)')).toBeNull()
-    expect(document.title).toBe('Users · Bindery')
+    expect(document.title).toBe('nav.users · Bindery')
   })
 
   it('shows the load error', async () => {

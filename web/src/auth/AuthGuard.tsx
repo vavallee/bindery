@@ -14,13 +14,14 @@ import { useAuth } from './AuthContext'
 // /login and /setup render outside of the guard (they're routed above it),
 // so they never get bounced by their own redirects.
 export default function AuthGuard({ children }: { children: ReactNode }) {
+  const { t } = useTranslation()
   const { status, loading, statusError, refresh } = useAuth()
   const location = useLocation()
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-fg-muted text-sm">
-        Loading…
+        {t('common.loading', 'Loading…')}
       </div>
     )
   }

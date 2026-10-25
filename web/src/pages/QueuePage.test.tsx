@@ -33,6 +33,7 @@ vi.mock('react-i18next', () => ({
     t: (key: string, options?: Record<string, unknown>) => {
       if (key === 'queue.remaining') return `${String(options?.time)} remaining`
       if (key === 'queue.selectItem') return `Select ${String(options?.title)}`
+      if (key === 'queue.pendingHeading') return `Pending Releases (${String(options?.n)})`
       const labels: Record<string, string> = {
         'common.loading': 'Loading...',
         'queue.title': 'Queue',
@@ -76,6 +77,18 @@ vi.mock('react-i18next', () => ({
         'importHints.body': 'Bindery only auto-imports downloads it grabbed itself.',
         'importHints.manualImport': 'Import them',
         'importHints.scanLibrary': 'Scan Library',
+        'queue.pendingGrab': 'Grab Now',
+        'queue.importRequeued': 'Queued for another import attempt — the scanner picks it up on its next check.',
+        'common.dismiss': 'Dismiss',
+        'queue.pendingGrabbing': 'Grabbing…',
+        'queue.importBlockedHint': 'Import blocked — manual intervention required (check library path permissions)',
+        'queue.errorPrefix.importFailed': 'Import failed:',
+        'queue.errorPrefix.importBlocked': 'Import blocked:',
+        'queue.errorPrefix.error': 'Error:',
+      }
+      if (key.startsWith('queue.age.') && typeof options?.defaultValue === 'string') {
+        const vars = new Map(Object.entries(options))
+        return options.defaultValue.replace(/\{\{(\w+)\}\}/g, (_m, k: string) => String(vars.get(k)))
       }
       return labels[key] ?? key
     },

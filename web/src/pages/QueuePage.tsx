@@ -13,6 +13,7 @@ import { btn, btnSize, primaryFill } from '../components/buttons'
 import { formatBytes } from '../util/format'
 import { downloadStatusBadge, isFailed, isMatchable, isResendable, isRetryable } from '../components/downloadStatus'
 import { ModalPanel } from '../components/useModal'
+import { errorText } from '../util/errorText'
 
 export default function QueuePage() {
   const { t } = useTranslation()
@@ -73,9 +74,9 @@ export default function QueuePage() {
   usePolling(load, 5000)
 
   useEffect(() => {
-    document.title = 'Queue · Bindery'
+    document.title = `${t('nav.queue', 'Queue')} · Bindery`
     return () => { document.title = 'Bindery' }
-  }, [])
+  }, [t])
 
   // Paginate the queue client-side so a large queue (hundreds/thousands of
   // items) doesn't render every row at once and blow up the DOM.
@@ -163,7 +164,7 @@ export default function QueuePage() {
     } catch (e) {
       setRetryImportErrors(prev => ({
         ...prev,
-        [id]: e instanceof Error ? e.message : 'Retry failed',
+        [id]: errorText(e, t('queue.retryFailed', 'Retry failed')),
       }))
     } finally {
       setRetryingImportIds(prev => {
@@ -186,7 +187,7 @@ export default function QueuePage() {
     } catch (e) {
       setRetryImportErrors(prev => ({
         ...prev,
-        [id]: e instanceof Error ? e.message : 'Retry failed',
+        [id]: errorText(e, t('queue.retryFailed', 'Retry failed')),
       }))
     } finally {
       setRetryingImportIds(prev => {
@@ -216,7 +217,7 @@ export default function QueuePage() {
     } catch (e) {
       setRetryImportErrors(prev => ({
         ...prev,
-        [id]: e instanceof Error ? e.message : 'Match failed',
+        [id]: errorText(e, t('queue.matchFailed', 'Match failed')),
       }))
     } finally {
       setRetryingImportIds(prev => {
@@ -293,7 +294,7 @@ export default function QueuePage() {
       load()
     } catch (e) {
       console.error(e)
-      setBulkResult(e instanceof Error ? e.message : 'Bulk retry failed')
+      setBulkResult(errorText(e, t('queue.bulkRetryFailed', 'Bulk retry failed')))
     } finally {
       setBulkBusy(false)
     }
@@ -329,7 +330,7 @@ export default function QueuePage() {
       load()
     } catch (e) {
       console.error(e)
-      setBulkResult(e instanceof Error ? e.message : 'Bulk remove failed')
+      setBulkResult(errorText(e, t('queue.bulkRemoveFailed', 'Bulk remove failed')))
     } finally {
       setBulkBusy(false)
     }
@@ -344,10 +345,10 @@ export default function QueuePage() {
     const diffHr = Math.floor(diffMin / 60)
     const diffDay = Math.floor(diffHr / 24)
 
-    if (diffSec < 60) return `${diffSec}s ago`
-    if (diffMin < 60) return `${diffMin}m ago`
-    if (diffHr < 24) return `${diffHr}h ago`
-    return `${diffDay}d ago`
+    if (diffSec < 60) return t('queue.age.seconds', { n: diffSec, defaultValue: '{{n}}s ago' })
+    if (diffMin < 60) return t('queue.age.minutes', { n: diffMin, defaultValue: '{{n}}m ago' })
+    if (diffHr < 24) return t('queue.age.hours', { n: diffHr, defaultValue: '{{n}}h ago' })
+    return t('queue.age.days', { n: diffDay, defaultValue: '{{n}}d ago' })
   }
 
   const getContextualTimestamp = (item: QueueItem): { label: string; absolute: string } | null => {
@@ -536,22 +537,22 @@ export default function QueuePage() {
                         until the next scanner check writes a new one. */}
                     {item.status === 'importFailed' && !item.errorMessage && (
                       <div className="mt-1 text-xs text-fg-muted bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1">
-                        Queued for another import attempt — the scanner picks it up on its next check.
+                        {t('queue.importRequeued', 'Queued for another import attempt — the scanner picks it up on its next check.')}
                       </div>
                     )}
                     {item.status === 'importBlocked' && !item.errorMessage && (
                       <div className="mt-1 text-xs text-fg-muted bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1">
-                        Import blocked — manual intervention required (check library path permissions)
+                        {t('queue.importBlockedHint', 'Import blocked — manual intervention required (check library path permissions)')}
                       </div>
                     )}
                     {item.errorMessage && (
                       <div className="mt-1 text-xs text-fg-muted bg-slate-200/60 dark:bg-zinc-800/60 rounded px-2 py-1 break-words">
                         <span className="font-medium">
                           {item.status === 'importFailed'
-                            ? 'Import failed: '
+                            ? t('queue.errorPrefix.importFailed', 'Import failed:') + ' '
                             : item.status === 'importBlocked'
-                            ? 'Import blocked: '
-                            : 'Error: '}
+                            ? t('queue.errorPrefix.importBlocked', 'Import blocked:') + ' '
+                            : t('queue.errorPrefix.error', 'Error:') + ' '}
                         </span>
                         {summarizeError(item.errorMessage)}
                         {item.errorMessage.length > ERROR_SUMMARY_LEN && (
@@ -653,7 +654,7 @@ export default function QueuePage() {
             <div>
               <h3 className="text-sm font-semibold text-fg-muted mb-2 flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
-                Pending Releases ({pending.length})
+                {t('queue.pendingHeading', { n: pending.length, defaultValue: 'Pending Releases ({{n}})' })}
               </h3>
               <div className="space-y-2">
                 {pending.map(item => (
@@ -678,13 +679,13 @@ export default function QueuePage() {
                         disabled={grabbingPending !== null}
                         className={`px-3 py-1.5 text-xs ${primaryFill} disabled:opacity-50 rounded font-medium`}
                       >
-                        {grabbingPending === item.id ? 'Grabbing…' : 'Grab Now'}
+                        {grabbingPending === item.id ? t('queue.pendingGrabbing', 'Grabbing…') : t('queue.pendingGrab', 'Grab Now')}
                       </button>
                       <button
                         onClick={() => handleDismissPending(item.id)}
                         className="px-3 py-1.5 text-xs text-fg-muted hover:text-red-400 rounded"
                       >
-                        Dismiss
+                        {t('common.dismiss', 'Dismiss')}
                       </button>
                     </div>
                   </div>

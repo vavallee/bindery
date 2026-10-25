@@ -104,6 +104,30 @@ describe('SeriesPage', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
+  // #3457: the list holds every series, so the one a link names can sit far
+  // below the top. It opens and scrolls into view, once the list is in.
+  it('opens and scrolls to the series named in router state (#3457)', async () => {
+    const scrolled: string[] = []
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function scrollIntoView(this: Element) { scrolled.push(this.id) }
+    try {
+      const mk = (id: number, title: string): Series => ({
+        id, foreignSeriesId: `s-${id}`, title, description: '', monitored: true, books: [],
+      })
+      vi.mocked(api.listSeries).mockResolvedValue([mk(1, 'Alpha'), mk(2, 'Mistborn'), mk(3, 'Zeta')])
+      vi.mocked(api.status).mockResolvedValue({ version: 'dev', commit: 'unknown', buildDate: '', enhancedHardcoverApi: true, hardcoverTokenConfigured: true })
+      render(
+        <MemoryRouter initialEntries={[{ pathname: '/series', state: { seriesId: 2 } }]}>
+          <SeriesPage />
+        </MemoryRouter>,
+      )
+      await screen.findByRole('heading', { name: 'Mistborn' })
+      await waitFor(() => expect(scrolled).toEqual(['series-2']))
+    } finally {
+      Element.prototype.scrollIntoView = original
+    }
+  })
+
   it('hides Hardcover controls when enhanced Hardcover API is disabled', async () => {
     renderSeriesPage([
       {

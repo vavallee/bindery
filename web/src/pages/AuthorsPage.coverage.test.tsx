@@ -121,7 +121,7 @@ describe('AuthorsPage coverage', () => {
       expect(await screen.findByText('authors.empty')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'authors.refreshAll' })).toBeDisabled()
       expect(screen.getByRole('button', { name: 'authors.merge' })).toBeDisabled()
-      expect(document.title).toBe('Authors · Bindery')
+      expect(document.title).toBe('nav.authors · Bindery')
     })
 
     it('debounces the search box and says nothing matched', async () => {
@@ -234,7 +234,7 @@ describe('AuthorsPage coverage', () => {
       expect(within(leguinRow).getAllByText('—')).toHaveLength(2)
       expect(within(leguinRow).getByText('U')).toBeInTheDocument()
 
-      const selectAll = screen.getByTitle('Select all on this page') as HTMLInputElement
+      const selectAll = screen.getByTitle('common.selectAllPage') as HTMLInputElement
       const weirBox = within(screen.getByText('Andy Weir').closest('tr') as HTMLElement).getByRole('checkbox')
       fireEvent.click(weirBox)
       expect(selectAll.indeterminate).toBe(true)

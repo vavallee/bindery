@@ -5,7 +5,7 @@ import type { AuthorMonitorMode, MediaType, MonitorNewItems } from './authors'
 
 export type AuthorBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'refresh' | 'set_media_type'
 export type AuthorBulkMonitorMode = Exclude<AuthorMonitorMode, 'series'>
-export type BookBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'set_media_type' | 'exclude'
+export type BookBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'set_media_type' | 'exclude' | 'unexclude'
 export type WantedBulkAction = 'search' | 'blocklist' | 'unmonitor'
 
 export interface BulkResult {

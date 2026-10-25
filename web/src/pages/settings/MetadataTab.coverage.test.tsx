@@ -177,7 +177,7 @@ describe('MetadataTab profiles', () => {
     expect(screen.getByText('settings.metadata.skipPartBooks')).toBeInTheDocument()
     // The loose profile shows "none" for zero thresholds and "any" for no languages.
     expect(screen.getAllByText('none')).toHaveLength(2)
-    expect(screen.getByText('any')).toBeInTheDocument()
+    expect(screen.getByText('settings.metadata.languagesAny')).toBeInTheDocument()
   })
 
   it('creates a profile with the chosen fields', async () => {

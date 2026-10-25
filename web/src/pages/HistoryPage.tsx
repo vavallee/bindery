@@ -66,7 +66,7 @@ function nonEmptyString(v: unknown): string {
 // around the values come from the translation.
 function contentCheckDetail(raw: unknown, t: Translate): string {
   if (!raw || typeof raw !== 'object') return ''
-  const cc = raw as { kind?: unknown; mismatches?: unknown; retitled?: unknown; truncated?: unknown }
+  const cc = raw as { kind?: unknown; uncertain?: unknown; mismatches?: unknown; retitled?: unknown; truncated?: unknown }
   if (!Array.isArray(cc.mismatches) || cc.mismatches.length === 0) return quietContentCheckNote(cc, t)
   const found = (cc.mismatches as unknown[])
     .map((m): string => {
@@ -86,7 +86,9 @@ function contentCheckDetail(raw: unknown, t: Translate): string {
     .filter(Boolean)
     .join(', ')
   if (!found) return ''
-  const label = cc.kind === 'ebook' ? t('history.contentCheckEbook') : t('history.contentCheckAudiobook')
+  const label = cc.kind === 'ebook'
+    ? t(cc.uncertain === true ? 'history.contentCheckEbookUncertain' : 'history.contentCheckEbook')
+    : t('history.contentCheckAudiobook')
   return `${label}: ${found}`
 }
 
@@ -193,9 +195,9 @@ export default function HistoryPage() {
   }, [toast])
 
   useEffect(() => {
-    document.title = 'History · Bindery'
+    document.title = `${t('nav.history', 'History')} · Bindery`
     return () => { document.title = 'Bindery' }
-  }, [])
+  }, [t])
 
   const handleFilterChange = (val: string) => {
     setTypeFilter(val)
@@ -297,9 +299,9 @@ export default function HistoryPage() {
                         </td>
                         <td className="px-4 py-3 align-top text-xs whitespace-nowrap">
                           {mt === 'audiobook' ? (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 text-[10px] font-medium">🎧 Audiobook</span>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 text-[10px] font-medium">🎧 {t('common.audiobook', 'Audiobook')}</span>
                           ) : mt === 'ebook' ? (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] font-medium">📖 Ebook</span>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] font-medium">📖 {t('common.ebook', 'Ebook')}</span>
                           ) : (
                             <span className="text-fg-muted">—</span>
                           )}
@@ -315,7 +317,7 @@ export default function HistoryPage() {
                             <button
                               onClick={() => handleBlocklist(event.id)}
                               className="text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors mr-3"
-                              title="Add to blocklist — prevents this release from being grabbed again"
+                              title={t('history.blocklistHint', 'Add to blocklist — prevents this release from being grabbed again')}
                             >
                               {t('history.blocklist')}
                             </button>

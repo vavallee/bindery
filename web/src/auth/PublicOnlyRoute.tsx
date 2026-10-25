@@ -1,5 +1,6 @@
 import { ReactNode } from 'react'
 import { Navigate } from 'react-router'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from './AuthContext'
 
 // PublicOnlyRoute is the inverse of AuthGuard: it wraps routes that should
@@ -25,12 +26,13 @@ export default function PublicOnlyRoute({
   children: ReactNode
   mode: 'login' | 'setup'
 }) {
+  const { t } = useTranslation()
   const { status, loading } = useAuth()
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-fg-muted text-sm">
-        Loading…
+        {t('common.loading', 'Loading…')}
       </div>
     )
   }

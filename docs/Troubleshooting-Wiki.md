@@ -191,6 +191,28 @@ read as "another book": `Frank Herbert - Dune (epub)` is approved for the wanted
 `Dune: Messiah` at position 2 when the series is `Dune Chronicles` and the
 library holds `Dune`.
 
+### A title says "Book One" and the release says "Book 1"
+
+A spelled out number straight after a volume word (book, volume, vol, part,
+episode, season, year, arc; one to twenty) and its digit are treated as the same
+position, in both directions. A book called `Path of the Deathless Book One`
+matches a release named `Path of the Deathless Book 1`, and the reverse.
+
+- **Search.** Indexers that need every query word in the release name return
+  nothing for `Book One` on every tier. When a whole search finds nothing
+  relevant, Bindery sends ONE more query per indexer with the digit form
+  (`Path of the Deathless Book 1`, title only). A title without such a number
+  word, and a search that already found its book, never pays for it. A book that
+  stays unfound pays that one extra query per indexer on every scheduler cycle. The query
+  shows in the debug panel's indexer row as `numberWordQuery`, with
+  `numberWordResults` for what it returned, and `numberWordError` if that query
+  failed (the search itself carries on).
+- **Relevance.** A different position still does not match: `Book One` is not
+  `Book 10`, `Book 2` or `Book Two`, and the part and set rules (`Book 1 of 2`,
+  `Part 3 of 5`, box sets) judge a `Book One` title exactly as they judge `Book 1`.
+- **Not covered.** Ordinals (`First Book`, `Book 1st`), numbers above twenty and
+  compound numbers (`Book Twenty One`), and roman numerals.
+
 ### A search result is one chapter of an audiobook
 
 Some usenet posts carry a single chapter, such as `Terry Goodkind - SOT06 Faith
@@ -879,6 +901,14 @@ A few things that look wrong but are not:
 - **The list did not change after the volume came back.** A scan that finds no
   files at all changes nothing on the list, so an unmounted library does not
   erase your decisions. Scan again once it is mounted.
+- **A folder ending in a dot, or with other capitals, shows as new on Windows.**
+  Windows drops a trailing dot or space from a folder name and keeps an
+  existing folder's capitals. Bindery now leaves those off when it names a
+  folder, and a Windows install treats paths that differ only that way as the
+  same file, so nothing needs rewriting. This applies to Bindery running
+  natively on Windows. A Linux host or Docker container reading a Windows share
+  still sees the names as different files, macOS case insensitive volumes are
+  not folded, and reserved names such as `CON` are untouched.
 - **A row you ignored is gone for good.** It is on the **Ignored** list, and
   **Unignore** brings it back.
 

@@ -1,9 +1,11 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { api, Author, Book, Series } from '../api/client'
 import { foldedIncludes } from '../util/foldForSearch'
 import { useModal } from './useModal'
 import CoverImage from './CoverImage'
 import { primaryFill } from './buttons'
+import { errorText } from '../util/errorText'
 
 interface Props {
   series: Series
@@ -12,6 +14,7 @@ interface Props {
 }
 
 export default function AddSeriesBookModal({ series, onClose, onLinked }: Props) {
+  const { t } = useTranslation()
   const [books, setBooks] = useState<Book[]>([])
   const [authors, setAuthors] = useState<Author[]>([])
   const [loading, setLoading] = useState(true)
@@ -33,13 +36,13 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
         setAuthors(authorList)
       })
       .catch(err => {
-        if (active) setError(err instanceof Error ? err.message : 'Failed to load books')
+        if (active) setError(errorText(err, t('series.addBookModal.loadFailed', 'Failed to load books')))
       })
       .finally(() => {
         if (active) setLoading(false)
       })
     return () => { active = false }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const linkedBookIds = useMemo(() => new Set((series.books ?? []).map(entry => entry.bookId)), [series.books])
 
@@ -66,7 +69,7 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     if (!selectedBook) {
-      setError('Select a book')
+      setError(t('series.addBookModal.selectBook', 'Select a book'))
       return
     }
     // A position is optional, as on the server: unnumbered series and
@@ -83,7 +86,7 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
       onLinked(updated)
       onClose()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add book')
+      setError(errorText(err, t('series.addBookModal.addFailed', 'Failed to add book')))
     } finally {
       setSaving(false)
     }
@@ -107,7 +110,7 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
             dialog role sits on the div, since a form may not take it. */}
         <form onSubmit={submit} className="flex flex-col flex-1 min-h-0">
           <div className="p-4 border-b border-slate-200 dark:border-zinc-800">
-            <h3 id={titleId} className="text-lg font-semibold">Add Book to Series</h3>
+            <h3 id={titleId} className="text-lg font-semibold">{t('series.addBookModal.title', 'Add Book to Series')}</h3>
             <p id={`${titleId}-series`} className="text-xs text-fg-muted mt-0.5 truncate">{series.title}</p>
           </div>
 
@@ -117,16 +120,16 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
               type="search"
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder="Search library books..."
+              placeholder={t('series.addBookModal.searchPlaceholder', 'Search library books…')}
               className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
               autoFocus
             />
 
             <div className="space-y-2 max-h-64 overflow-y-auto">
               {loading ? (
-                <p className="text-sm text-fg-muted text-center py-4">Loading...</p>
+                <p className="text-sm text-fg-muted text-center py-4">{t('series.addBookModal.loading', 'Loading…')}</p>
               ) : availableBooks.length === 0 ? (
-                <p className="text-sm text-fg-muted text-center py-4">No matching books found.</p>
+                <p className="text-sm text-fg-muted text-center py-4">{t('series.addBookModal.noMatch', 'No matching books found.')}</p>
               ) : (
                 availableBooks.map(book => {
                   const authorName = book.author?.authorName || authorNames.get(book.authorId) || ''
@@ -164,7 +167,7 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block text-sm">
-                <span className="block font-medium text-slate-700 dark:text-zinc-300 mb-1">Position (optional)</span>
+                <span className="block font-medium text-slate-700 dark:text-zinc-300 mb-1">{t('series.addBookModal.position', 'Position (optional)')}</span>
                 <input
                   type="text"
                   value={position}
@@ -178,7 +181,7 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
                   checked={primarySeries}
                   onChange={e => setPrimarySeries(e.target.checked)}
                 />
-                Primary series
+                {t('series.addBookModal.primarySeries', 'Primary series')}
               </label>
             </div>
 
@@ -191,14 +194,14 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
               onClick={onClose}
               className="px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white"
             >
-              Cancel
+              {t('common.cancel', 'Cancel')}
             </button>
             <button
               type="submit"
               disabled={saving || !bookId}
               className={`px-4 py-2 ${primaryFill} disabled:opacity-50 rounded-md text-sm font-medium`}
             >
-              {saving ? 'Adding...' : 'Add'}
+              {saving ? t('series.addBookModal.adding', 'Adding…') : t('series.addBookModal.add', 'Add')}
             </button>
           </div>
         </form>
