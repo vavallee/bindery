@@ -125,6 +125,12 @@ To change the format or monitoring of a book you already have (for example an
 imported ebook you now also want as an audiobook), update it through
 `PUT /api/v1/book/{id}` or the book page rather than re-adding it.
 
+The same 409 and body come back when the foreign id is new but the work is
+already there under another id and the same author, for example adding
+"Ready Player One" when "Ready Player One (Movie Tie-In)" is in the library
+(#3466). `existingBookId` is the row the request matched, which keeps its own
+foreign id.
+
 With tenancy enforced, a non admin user whose request reaches a copy of the
 same foreign id held by a different user also gets **409**, with no row in the
 body because the caller may not see it:
