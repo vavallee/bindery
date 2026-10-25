@@ -34,6 +34,37 @@ func (h *OPDSHandler) Root(w http.ResponseWriter, r *http.Request) {
 	writeOPDS(w, feed)
 }
 
+// OpenSearch serves the OpenSearch description at GET /opds/opensearch.xml.
+func (h *OPDSHandler) OpenSearch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", opds.TypeOpenSearch+";charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write([]byte(xml.Header)); err != nil {
+		slog.Warn("failed to write OpenSearch header", "error", err)
+		return
+	}
+	enc := xml.NewEncoder(w)
+	enc.Indent("", "  ")
+	if err := enc.Encode(h.builder.BuildOpenSearch(baseURL(r))); err != nil {
+		slog.Warn("failed to encode OpenSearch description", "error", err)
+	}
+}
+
+// Search serves GET /opds/search?q=...&page=N: an acquisition feed of the
+// caller's books matching q. An over-long q is a 400.
+func (h *OPDSHandler) Search(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	feed, err := h.builder.BuildSearch(r.Context(), baseURL(r), r.URL.Query().Get("q"), page, opdsCallerUserID(r.Context()))
+	if errors.Is(err, opds.ErrQueryTooLong) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "search query too long"})
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	writeOPDS(w, feed)
+}
+
 // Authors serves the paginated author navigation feed.
 func (h *OPDSHandler) Authors(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))

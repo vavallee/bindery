@@ -1280,6 +1280,8 @@ func main() {
 		r.Get("/series", opdsHandler.Series)
 		r.Get("/series/{id}", opdsHandler.OneSeries)
 		r.Get("/recent", opdsHandler.Recent)
+		r.Get("/opensearch.xml", opdsHandler.OpenSearch)
+		r.Get("/search", opdsHandler.Search)
 		r.Get("/book/{id}", opdsHandler.Book)
 		r.Get("/book/{id}/file", opdsHandler.DownloadFile)
 	})

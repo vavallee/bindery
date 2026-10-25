@@ -445,6 +445,25 @@ func (r *BookRepo) count(ctx context.Context, query string, args []any) (int, er
 	return total, nil
 }
 
+// SearchImported runs the same library search the Books page uses (title or
+// author, accent and case folded, every word must match) over the books the
+// caller owns that are in the library. userID 0 is unscoped; otherwise rows
+// with owner_user_id = userID or NULL are searched, as everywhere else. A query
+// that carries no searchable characters returns nothing rather than the whole
+// library, since this feeds a client's search box. The total is the full match
+// count for paging.
+func (r *BookRepo) SearchImported(ctx context.Context, query string, userID int64, limit, offset int) ([]models.Book, int, error) {
+	if textutil.FoldForSearch(query) == "" {
+		return nil, 0, nil
+	}
+	return r.ListPageFiltered(ctx, BookListFilter{
+		UserID: userID,
+		Search: query,
+		Status: models.BookStatusImported,
+		Sort:   "title-az",
+	}, limit, offset)
+}
+
 // ListIncludingExcluded returns all books regardless of their excluded flag.
 func (r *BookRepo) ListIncludingExcluded(ctx context.Context) ([]models.Book, error) {
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" ORDER BY books.sort_key, sort_title", nil)

@@ -39,6 +39,7 @@ const (
 	RelImage       = "http://opds-spec.org/image"
 	RelThumbnail   = "http://opds-spec.org/image/thumbnail"
 	RelSortNew     = "http://opds-spec.org/sort/new"
+	RelSearch      = "search"
 )
 
 // MIME types. The `profile=opds-catalog` bit is what OPDS clients sniff
@@ -48,6 +49,10 @@ const (
 const (
 	TypeNavigation  = "application/atom+xml;profile=opds-catalog;kind=navigation"
 	TypeAcquisition = "application/atom+xml;profile=opds-catalog;kind=acquisition"
+	// TypeAtom is the plain Atom type the inline search template link carries.
+	TypeAtom = "application/atom+xml"
+	// TypeOpenSearch is the OpenSearch description document type.
+	TypeOpenSearch = "application/opensearchdescription+xml"
 )
 
 // ContentTypeFeed is the Content-Type header value used on every OPDS

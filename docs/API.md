@@ -1748,11 +1748,15 @@ Bindery serves an OPDS 1.2 catalogue at `/opds/`:
 
 - `/opds/` — catalog root
 - `/opds/recent` — recently imported
+- `/opds/search?q=<terms>&page=N`: search the library by title or author
+- `/opds/opensearch.xml`: OpenSearch description that points readers at the search
 - `/opds/authors` and `/opds/authors/{id}` — by author
 - `/opds/series` and `/opds/series/{id}` — by series
 - `/opds/book/{id}` — book entry
 - `/opds/book/{id}/file` — download the book file
 - `/opds/images?url=<encoded>` — cover images, cached locally
+
+Search uses the same matching as the Books page: case and accent insensitive, and every word must appear in the title or the author name. Results are an acquisition feed of books you own with a file, a page at a time (`rel="next"` and `rel="previous"` links, same page size as the other feeds), and honour the same per-user scoping as the other feeds. An empty or punctuation only `q` returns an empty feed, and a `q` over 200 characters gets `400`. The root feed carries two `rel="search"` links, one to the OpenSearch description and one with the `{searchTerms}` template inline, which is what makes the search button appear in KOReader and Moon+ Reader. The search routes use the same authentication as every other OPDS route.
 
 Cover links in the feed point at `/opds/images` rather than at the metadata
 provider, so reading apps fetch every cover from your instance. It is the same
