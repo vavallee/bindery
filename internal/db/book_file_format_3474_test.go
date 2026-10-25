@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -170,6 +171,13 @@ func TestBackfillBookFileFormats_RefreshesStatusAndPaths(t *testing.T) {
 	if _, err := database.Exec(`UPDATE books SET status = 'imported'`); err != nil {
 		t.Fatal(err)
 	}
+	// Leave the both book in a stored state only the refresh can change: a
+	// wrong status and stale path columns. GetByID derives paths from
+	// book_files, so the assertions below read the raw columns.
+	if _, err := database.Exec(`UPDATE books SET status = 'wanted', ebook_file_path = '/stale/a.m4b',
+		audiobook_file_path = '' WHERE id = ?`, both.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := database.Exec("DELETE FROM settings WHERE key = ?", backfillRevKeyBookFileFmt); err != nil {
 		t.Fatal(err)
 	}
@@ -179,13 +187,15 @@ func TestBackfillBookFileFormats_RefreshesStatusAndPaths(t *testing.T) {
 	defer database.Close()
 	books = NewBookRepo(database)
 
-	gotBoth, err := books.GetByID(ctx, both.ID)
-	if err != nil || gotBoth == nil {
+	var status string
+	var rawEbook, rawAudio sql.NullString
+	if err := database.QueryRow(`SELECT status, ebook_file_path, audiobook_file_path FROM books WHERE id = ?`,
+		both.ID).Scan(&status, &rawEbook, &rawAudio); err != nil {
 		t.Fatal(err)
 	}
-	if gotBoth.Status != models.BookStatusImported || gotBoth.EbookFilePath != epub || gotBoth.AudiobookFilePath != m4b {
-		t.Errorf("both book: status %q ebook %q audio %q, want imported %q %q",
-			gotBoth.Status, gotBoth.EbookFilePath, gotBoth.AudiobookFilePath, epub, m4b)
+	if status != models.BookStatusImported || rawEbook.String != epub || rawAudio.String != m4b {
+		t.Errorf("both book stored columns: status %q ebook %q audio %q, want imported %q %q",
+			status, rawEbook.String, rawAudio.String, epub, m4b)
 	}
 	gotOnly, err := books.GetByID(ctx, only.ID)
 	if err != nil || gotOnly == nil {

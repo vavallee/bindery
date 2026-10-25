@@ -11,8 +11,12 @@ import (
 // what counts as audio.
 var audioExtensions = map[string]bool{
 	".mp3": true, ".m4a": true, ".m4b": true, ".aac": true,
-	".flac": true, ".ogg": true, ".opus": true, ".wma": true,
+	".flac": true, ".ogg": true, ".opus": true,
 }
+
+// .wma is intentionally not in the set: the scan, manual import and library
+// finder ignore it today, and listing it here would start tracking .wma files
+// as audiobook tracks, which is a separate decision from #3474.
 
 // IsAudioPath reports whether path carries an audiobook audio extension.
 func IsAudioPath(path string) bool {
