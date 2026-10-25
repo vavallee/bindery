@@ -29,7 +29,7 @@ var numberWordRe = regexp.MustCompile(
 
 // twentyCompoundRe is what follows "twenty" when it is the start of "twenty
 // one" to "twenty nine". Folding only the first word would leave "20 One".
-var twentyCompoundRe = regexp.MustCompile(`(?i)^[\s-]+(?:one|two|three|four|five|six|seven|eight|nine)\b`)
+var twentyCompoundRe = regexp.MustCompile(`(?i)^[\s._-]+(?:one|two|three|four|five|six|seven|eight|nine)\b`)
 
 // FoldNumberWords rewrites a spelled out number that follows a volume style
 // word as digits: "Path of the Deathless Book One" becomes "Path of the

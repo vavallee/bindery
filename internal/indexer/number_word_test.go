@@ -121,3 +121,20 @@ func TestSearchBookWithDebugReportsNumberWordQuery(t *testing.T) {
 		t.Errorf("a digit title sent the variant: %+v", dbg.Indexers[0])
 	}
 }
+
+// A compound number written with dots or underscores is book 21, not 20, and
+// must not be read as the position of "Hunt Book 20".
+func TestNumberWordCompoundReleaseNotKeptAsBook20(t *testing.T) {
+	for _, rel := range []string{
+		"Author - Hunt Book.Twenty.One (m4b)",
+		"Author - Hunt Book_Twenty_One (m4b)",
+		"Author - Hunt Book Twenty One (m4b)",
+		"Author - Hunt Book Twenty-One (m4b)",
+	} {
+		for _, title := range []string{"Hunt Book 20", "Hunt Book Twenty"} {
+			if kept, _ := relevanceVerdict(title, "Author", rel, bookContext{}); kept {
+				t.Errorf("%q kept for %q", rel, title)
+			}
+		}
+	}
+}

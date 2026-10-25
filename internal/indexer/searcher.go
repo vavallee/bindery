@@ -336,7 +336,10 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 			client := s.makeClient(idx.URL, idx.APIKey)
 			cats := filterCategoriesForMedia(idx.Categories, c.MediaType, idx.IncludeParentCategories)
 			qctx := newznab.WithQueryBudget(ctx, s.quotaBudget(idx))
-			hits, err := client.BookSearch(qctx, c.Title, c.Author, cats)
+			hits, trace, err := client.BookSearchTraced(qctx, c.Title, c.Author, cats)
+			if trace.BudgetExhausted {
+				s.flushQuota(ctx, idx, true)
+			}
 			if err != nil {
 				if budgetExhausted(err) {
 					s.flushQuota(ctx, idx, true)
@@ -943,6 +946,17 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 	orig := results
 	results = foldResultTitles(results)
 	title = newznab.FoldNumberWords(title)
+	// The library titles the trailing rules compare against are read the same
+	// way, or a spelled out series title would never equal the folded release.
+	// Author aliases are names, not titles, and are deliberately not folded.
+	bc.seriesTitle = newznab.FoldNumberWords(bc.seriesTitle)
+	if len(bc.otherTitles) > 0 {
+		folded := make([]string, len(bc.otherTitles))
+		for i, t := range bc.otherTitles {
+			folded[i] = newznab.FoldNumberWords(t)
+		}
+		bc.otherTitles = folded
+	}
 	// Strip edition qualifiers ("(German Edition)" etc.) and normalize
 	// smart quotes before tokenizing, so they don't become spurious keywords.
 	// Format qualifiers mid title ("(Light Novel)") go too, matching what the

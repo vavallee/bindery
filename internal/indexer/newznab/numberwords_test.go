@@ -146,3 +146,81 @@ func TestBookSearch_NumberWordVariantCost(t *testing.T) {
 		t.Errorf("number word title sent %d queries, digit title %d; want exactly one more", spelled, digits)
 	}
 }
+
+func TestFoldNumberWords_DottedAndUnderscoreCompounds(t *testing.T) {
+	for _, s := range []string{
+		"Hunt Book.Twenty.One", "Hunt Book Twenty.One", "Hunt_Book_Twenty_One",
+		"Hunt.Book.Twenty-One", "Hunt Book.Twenty_Five",
+	} {
+		if got := FoldNumberWords(s); got != s {
+			t.Errorf("FoldNumberWords(%q) = %q, want it untouched", s, got)
+		}
+	}
+	if got := FoldNumberWords("Hunt.Book.Twenty.M4B"); got != "Hunt.Book.20.M4B" {
+		t.Errorf("plain twenty not folded: %q", got)
+	}
+}
+
+// A compound written with dots must not become a bogus digit query.
+func TestBookSearch_CompoundNumberSendsNoVariant(t *testing.T) {
+	srv, queries := strictIndexer(t)
+	c := testNew(srv.URL, "k")
+	for _, title := range []string{"Hunt Book Twenty.One", "Hunt Book_Twenty_One", "Hunt Book Twenty One"} {
+		_, trace, err := c.BookSearchTraced(context.Background(), title, "Nobody", []int{3030})
+		if err != nil || trace.NumberWordQuery != "" {
+			t.Errorf("%q: trace %+v err %v", title, trace, err)
+		}
+	}
+	for _, q := range queries() {
+		if strings.Contains(q, "20") {
+			t.Errorf("bogus digit query sent: %q", q)
+		}
+	}
+}
+
+type capBudget struct{ left int }
+
+func (b *capBudget) Take() bool {
+	if b.left <= 0 {
+		return false
+	}
+	b.left--
+	return true
+}
+
+// A variant refused by the daily cap is reported, not mistaken for an empty
+// indexer, and does not fail the search.
+func TestBookSearch_NumberWordVariantBudgetExhausted(t *testing.T) {
+	srv, _ := strictIndexer(t)
+	c := testNew(srv.URL, "k")
+	ctx := WithQueryBudget(context.Background(), &capBudget{left: 3}) // the whole cascade, nothing for the variant
+	res, trace, err := c.BookSearchTraced(ctx, "Path of the Deathless Book One", "OstensibleMammal", []int{3030})
+	if err != nil || len(res) != 0 {
+		t.Fatalf("res %d err %v", len(res), err)
+	}
+	if !trace.BudgetExhausted || trace.NumberWordError == "" || trace.NumberWordQuery == "" {
+		t.Errorf("trace = %+v", trace)
+	}
+}
+
+func TestBookSearch_NumberWordVariantErrorReported(t *testing.T) {
+	var n int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		if strings.Contains(r.URL.Query().Get("q"), "Book 1") {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(emptyFeed))
+	}))
+	defer srv.Close()
+	c := testNew(srv.URL, "k")
+	res, trace, err := c.BookSearchTraced(context.Background(), "Path of the Deathless Book One", "Someone Else", []int{3030})
+	if err != nil || len(res) != 0 {
+		t.Fatalf("res %d err %v", len(res), err)
+	}
+	if trace.NumberWordError == "" {
+		t.Errorf("failure of the variant not reported: %+v", trace)
+	}
+}

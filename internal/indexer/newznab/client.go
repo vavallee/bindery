@@ -413,6 +413,14 @@ type SearchTrace struct {
 	NumberWordQuery string
 	// NumberWordResults is how many results that one query returned.
 	NumberWordResults int
+	// NumberWordError is why that one query failed (a 429, a timeout, the daily
+	// cap), empty when it succeeded or was not sent. Without it a failed
+	// variant looks like an indexer with nothing to offer.
+	NumberWordError string
+	// BudgetExhausted is true when the variant was refused by the daily query
+	// cap. The caller treats it as it treats the same refusal on any other
+	// query (flush the count, no health strike).
+	BudgetExhausted bool
 }
 
 // BookSearchTraced is BookSearch plus a SearchTrace.
@@ -449,6 +457,8 @@ func (c *Client) BookSearchTraced(ctx context.Context, title, author string, cat
 		// The variant is an extra chance, not the search. A failure of it must
 		// not turn a "no results" into an indexer error or a health strike.
 		slog.Debug("indexer query number word variant failed", "error", err)
+		trace.NumberWordError = err.Error()
+		trace.BudgetExhausted = errors.Is(err, ErrQueryBudgetExhausted)
 		return results, trace, nil
 	}
 	trace.NumberWordResults = len(extra)

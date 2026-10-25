@@ -202,9 +202,11 @@ matches a release named `Path of the Deathless Book 1`, and the reverse.
   nothing for `Book One` on every tier. When a whole search finds nothing
   relevant, Bindery sends ONE more query per indexer with the digit form
   (`Path of the Deathless Book 1`, title only). A title without such a number
-  word, and a search that already found its book, never pays for it. The query
+  word, and a search that already found its book, never pays for it. A book that
+  stays unfound pays that one extra query per indexer on every scheduler cycle. The query
   shows in the debug panel's indexer row as `numberWordQuery`, with
-  `numberWordResults` for what it returned.
+  `numberWordResults` for what it returned, and `numberWordError` if that query
+  failed (the search itself carries on).
 - **Relevance.** A different position still does not match: `Book One` is not
   `Book 10`, `Book 2` or `Book Two`, and the part and set rules (`Book 1 of 2`,
   `Part 3 of 5`, box sets) judge a `Book One` title exactly as they judge `Book 1`.
