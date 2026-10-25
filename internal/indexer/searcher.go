@@ -934,6 +934,15 @@ func filterRelevantWithContext(results []newznab.SearchResult, title, author str
 // filter is a projection of this one, so the kept set cannot differ between
 // the scheduler and the interactive path.
 func filterRelevantKeepDropped(results []newznab.SearchResult, title, author string, aliases []string, bc bookContext) ([]newznab.SearchResult, []DroppedRelease) {
+	// "Book One" and "Book 1" are the same position (#3476). Both the wanted
+	// title and every release name are read with a spelled out number after a
+	// volume word as digits, so the two spellings compare equal everywhere
+	// below while "Book 10" and "Book 2" still differ. The judgement runs on
+	// the folded copy; what is returned is always the release as the indexer
+	// named it.
+	orig := results
+	results = foldResultTitles(results)
+	title = newznab.FoldNumberWords(title)
 	// Strip edition qualifiers ("(German Edition)" etc.) and normalize
 	// smart quotes before tokenizing, so they don't become spurious keywords.
 	// Format qualifiers mid title ("(Light Novel)") go too, matching what the
@@ -1008,7 +1017,7 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 	}
 
 	if len(fullKws) == 0 && len(primaryKws) == 0 && len(authorKws) == 0 {
-		return results, nil
+		return orig, nil
 	}
 
 	// Pre-normalize all result titles once.
@@ -1020,6 +1029,9 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 	drop := func(r newznab.SearchResult, reason string) DroppedRelease {
 		return DroppedRelease{Result: r, Stage: StageRelevance, Reason: reason}
 	}
+	// originalOf returns the release as the indexer named it, for the kept and
+	// dropped lists; results holds the folded copy the judgement reads.
+	originalOf := func(i int) newznab.SearchResult { return orig[i] }
 
 	rules := newTrailingRules(title, bc, fullIdentity, fullIdentityElided, primaryIdentity, primaryIdentityElided, seriesIdentity)
 	subtitle := newSubtitleInfo(title)
@@ -1084,7 +1096,7 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 	for i, r := range results {
 		n := normTitles[i]
 		if authorConflict(r) {
-			dropped = append(dropped, drop(r, "release names a different author for this title"))
+			dropped = append(dropped, drop(originalOf(i), "release names a different author for this title"))
 			continue
 		}
 		// Only insignificant connecting words may separate title keywords.
@@ -1124,7 +1136,7 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 			}
 		}
 		if fullOK || primaryOK || seriesOK {
-			filtered = append(filtered, r)
+			filtered = append(filtered, originalOf(i))
 			continue
 		}
 		reason := "title/author keywords did not match release name"
@@ -1137,9 +1149,31 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 			// for "Volume 17".
 			reason = "title words appear, but with other words or numbers among them"
 		}
-		dropped = append(dropped, drop(r, reason))
+		dropped = append(dropped, drop(originalOf(i), reason))
 	}
 	return filtered, dropped
+}
+
+// foldResultTitles returns results with each Title run through
+// newznab.FoldNumberWords. The slice is copied only when a title changes, so the
+// common search allocates nothing.
+func foldResultTitles(results []newznab.SearchResult) []newznab.SearchResult {
+	var out []newznab.SearchResult
+	for i, r := range results {
+		folded := newznab.FoldNumberWords(r.Title)
+		if folded == r.Title {
+			continue
+		}
+		if out == nil {
+			out = make([]newznab.SearchResult, len(results))
+			copy(out, results)
+		}
+		out[i].Title = folded
+	}
+	if out == nil {
+		return results
+	}
+	return out
 }
 
 // latinAliasTokenSets builds the candidate author token sets used to anchor a

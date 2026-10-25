@@ -191,6 +191,26 @@ read as "another book": `Frank Herbert - Dune (epub)` is approved for the wanted
 `Dune: Messiah` at position 2 when the series is `Dune Chronicles` and the
 library holds `Dune`.
 
+### A title says "Book One" and the release says "Book 1"
+
+A spelled out number straight after a volume word (book, volume, vol, part,
+episode, season, year, arc; one to twenty) and its digit are treated as the same
+position, in both directions. A book called `Path of the Deathless Book One`
+matches a release named `Path of the Deathless Book 1`, and the reverse.
+
+- **Search.** Indexers that need every query word in the release name return
+  nothing for `Book One` on every tier. When a whole search finds nothing
+  relevant, Bindery sends ONE more query per indexer with the digit form
+  (`Path of the Deathless Book 1`, title only). A title without such a number
+  word, and a search that already found its book, never pays for it. The query
+  shows in the debug panel's indexer row as `numberWordQuery`, with
+  `numberWordResults` for what it returned.
+- **Relevance.** A different position still does not match: `Book One` is not
+  `Book 10`, `Book 2` or `Book Two`, and the part and set rules (`Book 1 of 2`,
+  `Part 3 of 5`, box sets) judge a `Book One` title exactly as they judge `Book 1`.
+- **Not covered.** Ordinals (`First Book`, `Book 1st`), numbers above twenty and
+  compound numbers (`Book Twenty One`), and roman numerals.
+
 ### A search result is one chapter of an audiobook
 
 Some usenet posts carry a single chapter, such as `Terry Goodkind - SOT06 Faith

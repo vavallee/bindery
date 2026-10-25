@@ -111,6 +111,12 @@ type IndexerDebug struct {
 	ResultCount int    `json:"resultCount"`
 	DurationMs  int64  `json:"durationMs"`
 	Error       string `json:"error,omitempty"`
+	// NumberWordQuery is the digit form of the title ("... Book 1") when the
+	// search sent the one extra number word query for this indexer (#3476),
+	// and NumberWordResults how many results it returned. Both are empty on
+	// the common search, so the added query cost is visible per indexer.
+	NumberWordQuery   string `json:"numberWordQuery,omitempty"`
+	NumberWordResults int    `json:"numberWordResults,omitempty"`
 }
 
 // PipelineDebug counts how results flowed through each filter stage in the
@@ -214,7 +220,8 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 			entry.Categories = cats
 
 			qctx := newznab.WithQueryBudget(ctx, s.quotaBudget(idx))
-			hits, err := client.BookSearch(qctx, c.Title, c.Author, cats)
+			hits, trace, err := client.BookSearchTraced(qctx, c.Title, c.Author, cats)
+			entry.NumberWordQuery, entry.NumberWordResults = trace.NumberWordQuery, trace.NumberWordResults
 			entry.DurationMs = time.Since(start).Milliseconds()
 			if err != nil {
 				// Running out of budget part way through the tier cascade is
