@@ -25,9 +25,9 @@ function SortIcon({ state }: { state: 'asc' | 'desc' | 'none' }) {
   )
 }
 
-// SortHeader is a clickable column header showing the active sort. BooksPage
-// and AuthorDetailPage each carry their own copy; this is the third, so it
-// lives here, and moving those two onto it is a separate change.
+// SortHeader is a clickable column header showing the active sort. Every list
+// table sorts through it (via DataTable); the per-page copies it replaced drew
+// ▲/▼ glyphs that depended on the font and disagreed on the idle state.
 //
 // Tailwind v4's Preflight gives <button> no pointer cursor, so the header sets
 // cursor-pointer itself; without it a sortable column reads as plain text.

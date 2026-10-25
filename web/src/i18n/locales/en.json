@@ -3105,5 +3105,10 @@
     "renaming": "Renaming…",
     "from": "from",
     "to": "to"
+  },
+  "dataTable": {
+    "selectPage": "Select all on this page",
+    "selectRow": "Select {{name}}",
+    "actions": "Actions"
   }
 }
