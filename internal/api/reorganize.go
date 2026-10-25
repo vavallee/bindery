@@ -47,6 +47,15 @@ type reorganizeResponse struct {
 	Summary reorganizeSummary         `json:"summary"`
 }
 
+// newReorganizeResponse builds the response body, normalising a nil moves
+// slice to an empty one so the JSON is "moves": [] rather than null (#3470).
+func newReorganizeResponse(moves []importer.ReorganizeMove) reorganizeResponse {
+	if moves == nil {
+		moves = []importer.ReorganizeMove{}
+	}
+	return reorganizeResponse{Moves: moves, Summary: summarize(moves)}
+}
+
 func summarize(moves []importer.ReorganizeMove) reorganizeSummary {
 	s := reorganizeSummary{Total: len(moves)}
 	for _, m := range moves {
@@ -103,7 +112,7 @@ func (h *ReorganizeHandler) Preview(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, reorganizeResponse{Moves: moves, Summary: summarize(moves)})
+	writeJSON(w, http.StatusOK, newReorganizeResponse(moves))
 }
 
 type applyReorganizeRequest struct {
@@ -125,7 +134,7 @@ func (h *ReorganizeHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	results := h.scanner.ApplyReorganize(r.Context(), req.FileIDs)
-	writeJSON(w, http.StatusOK, reorganizeResponse{Moves: results, Summary: summarize(results)})
+	writeJSON(w, http.StatusOK, newReorganizeResponse(results))
 }
 
 // parseReorgID reads and validates the required ?id= query parameter for the

@@ -106,3 +106,33 @@ func TestReorganizeApply(t *testing.T) {
 		t.Errorf("summary.Moved = %d, want 1", resp.Summary.Moved)
 	}
 }
+
+// A scope with no files yields a nil slice from the scanner; the API must
+// still return "moves": [] and not null (#3470).
+func TestReorganize_EmptyMovesIsArrayNotNull(t *testing.T) {
+	h := NewReorganizeHandler(&fakeReorganizeScanner{})
+	for _, q := range []string{"scope=book&id=1", "scope=author&id=1", "scope=library"} {
+		rec := httptest.NewRecorder()
+		h.Preview(rec, httptest.NewRequest(http.MethodGet, "/api/v1/reorganize/preview?"+q, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: code = %d", q, rec.Code)
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+			t.Fatal(err)
+		}
+		if string(raw["moves"]) != "[]" {
+			t.Errorf("%s: moves = %s, want []", q, raw["moves"])
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.Apply(rec, httptest.NewRequest(http.MethodPost, "/api/v1/reorganize/apply", bytes.NewBufferString(`{"fileIds":[1]}`)))
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if string(raw["moves"]) != "[]" {
+		t.Errorf("apply: moves = %s, want []", raw["moves"])
+	}
+}
