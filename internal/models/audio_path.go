@@ -11,7 +11,7 @@ import (
 // what counts as audio.
 var audioExtensions = map[string]bool{
 	".mp3": true, ".m4a": true, ".m4b": true, ".aac": true,
-	".flac": true, ".ogg": true, ".opus": true,
+	".flac": true, ".ogg": true, ".opus": true, ".wma": true,
 }
 
 // IsAudioPath reports whether path carries an audiobook audio extension.

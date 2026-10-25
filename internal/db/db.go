@@ -1518,6 +1518,12 @@ func stampBackfillRevisions(database *sql.DB) {
 // say 'ebook' (#3474), then refreshes the status of each book it touched so the
 // stored paths and status follow the corrected inventory. It is unconditional
 // and idempotent; migrate() gates it on backfill.book_file_format_rev.
+//
+// Cost: the refresh does one os.Stat per tracked file of each touched book (see
+// derivedFormatPath). Only books with a mislabelled row are touched, normally a
+// handful, and the marker makes this a one time pass, so it runs inline rather
+// than in the background: a goroutine would compete with startup for the single
+// SQLite connection.
 func backfillBookFileFormats(database *sql.DB) error {
 	var conds []string
 	var args []any
@@ -1556,8 +1562,15 @@ func backfillBookFileFormats(database *sql.DB) error {
 	n, _ := res.RowsAffected()
 	books := NewBookRepo(database)
 	for _, id := range ids {
+		before, _ := books.GetByID(context.Background(), id)
 		if err := books.refreshBookStatus(context.Background(), id); err != nil {
 			slog.Warn("book file format backfill: refresh book status", "bookID", id, "error", err)
+			continue
+		}
+		after, _ := books.GetByID(context.Background(), id)
+		if before != nil && after != nil && before.Status != after.Status {
+			slog.Info("book file format backfill changed a book's status",
+				"book_id", id, "title", after.Title, "from", before.Status, "to", after.Status)
 		}
 	}
 	slog.Info("relabelled audio files recorded as ebook files", "files", n, "books", len(ids))

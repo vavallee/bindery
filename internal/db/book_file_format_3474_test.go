@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -122,5 +123,78 @@ func TestBackfillBookFileFormats_RepairsMislabelledRows(t *testing.T) {
 	defer database.Close()
 	if got := fileFormat(t, NewBookRepo(database), book.ID, "/m/b.m4b"); got != "ebook" {
 		t.Errorf("backfill re-ran despite a current marker")
+	}
+}
+
+// TestBackfillBookFileFormats_RefreshesStatusAndPaths checks what the repair
+// does to the books themselves, not just the rows.
+func TestBackfillBookFileFormats_RefreshesStatusAndPaths(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bindery.db")
+	files := t.TempDir()
+	ctx := context.Background()
+	epub := filepath.Join(files, "a.epub")
+	m4b := filepath.Join(files, "a.m4b")
+	mp3 := filepath.Join(files, "b.mp3")
+	for _, f := range []string{epub, m4b, mp3} {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	database := openFileDB(t, path)
+	author := &models.Author{ForeignID: "OL-BF2-A", Name: "A B", SortName: "B, A"}
+	if err := NewAuthorRepo(database).Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	books := NewBookRepo(database)
+	mk := func(fid, mt string) *models.Book {
+		b := &models.Book{ForeignID: fid, AuthorID: author.ID, Title: fid, Status: models.BookStatusImported, MediaType: mt}
+		if err := books.Create(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	both := mk("both", models.MediaTypeBoth)
+	only := mk("ebook-only", models.MediaTypeEbook)
+	for _, r := range []struct {
+		id        int64
+		format, p string
+	}{
+		{both.ID, "ebook", epub}, {both.ID, "ebook", m4b}, {only.ID, "ebook", mp3},
+	} {
+		if _, err := database.Exec(`INSERT INTO book_files (book_id, format, path) VALUES (?, ?, ?)`, r.id, r.format, r.p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The rows predate the fix, so the books were stored as imported.
+	if _, err := database.Exec(`UPDATE books SET status = 'imported'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("DELETE FROM settings WHERE key = ?", backfillRevKeyBookFileFmt); err != nil {
+		t.Fatal(err)
+	}
+	database.Close()
+
+	database = openFileDB(t, path)
+	defer database.Close()
+	books = NewBookRepo(database)
+
+	gotBoth, err := books.GetByID(ctx, both.ID)
+	if err != nil || gotBoth == nil {
+		t.Fatal(err)
+	}
+	if gotBoth.Status != models.BookStatusImported || gotBoth.EbookFilePath != epub || gotBoth.AudiobookFilePath != m4b {
+		t.Errorf("both book: status %q ebook %q audio %q, want imported %q %q",
+			gotBoth.Status, gotBoth.EbookFilePath, gotBoth.AudiobookFilePath, epub, m4b)
+	}
+	gotOnly, err := books.GetByID(ctx, only.ID)
+	if err != nil || gotOnly == nil {
+		t.Fatal(err)
+	}
+	if gotOnly.EbookFilePath != "" {
+		t.Errorf("ebook-only book still has ebook path %q", gotOnly.EbookFilePath)
+	}
+	if gotOnly.Status != models.BookStatusWanted {
+		t.Errorf("ebook-only book with only an audio file: status %q, want wanted", gotOnly.Status)
 	}
 }

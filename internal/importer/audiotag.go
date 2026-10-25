@@ -13,6 +13,8 @@ import (
 )
 
 // audioTagExtensions lists audio formats whose embedded tags we try to read
+// (a subset of models.IsAudioPath on purpose: the tag library cannot read .aac
+// or .wma, so listing them would only pay the open cost for nothing).
 // during library scans. Extensions outside this set are skipped — the scan
 // falls back to filename parsing without paying the open/seek cost.
 var audioTagExtensions = map[string]bool{

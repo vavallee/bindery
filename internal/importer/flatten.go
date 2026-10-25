@@ -11,16 +11,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-)
 
-// audioFlattenExtensions lists the audio extensions that participate in
-// multi-disc audiobook flattening. It deliberately mirrors the audio set used
-// by detectDownloadFormat so the flattener and the format detector agree on
-// what counts as an audio track.
-var audioFlattenExtensions = map[string]bool{
-	".mp3": true, ".m4b": true, ".m4a": true, ".aac": true,
-	".flac": true, ".ogg": true, ".opus": true,
-}
+	"github.com/vavallee/bindery/internal/models"
+)
 
 // discDirPattern matches a directory component that names a disc, e.g.
 // "Disc 1", "Disk 02", "CD 3", "CD3", "Part 4", "Volume 2", "Vol. 3", and the
@@ -108,8 +101,7 @@ func collectFlattenTracks(srcRoot string) ([]flattenTrack, error) {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return nil
 		}
-		ext := strings.ToLower(filepath.Ext(path))
-		if !audioFlattenExtensions[ext] {
+		if !models.IsAudioPath(path) {
 			return nil
 		}
 		rel, relErr := filepath.Rel(srcRoot, path)
@@ -289,7 +281,7 @@ func carryRootSidecars(ctx context.Context, mode, srcRoot, destDir string, reser
 			continue
 		}
 		name := e.Name()
-		if audioFlattenExtensions[strings.ToLower(filepath.Ext(name))] {
+		if models.IsAudioPath(name) {
 			continue
 		}
 		if skip(name) {

@@ -2854,8 +2854,7 @@ func cleanupWarnAttrs(clientType, remoteID string, err error) []any {
 // ebook as a safe default.
 func detectDownloadFormat(files []string) string {
 	for _, f := range files {
-		switch strings.ToLower(filepath.Ext(f)) {
-		case ".mp3", ".m4b", ".m4a", ".aac", ".flac", ".ogg", ".opus":
+		if models.IsAudioPath(f) {
 			return models.MediaTypeAudiobook
 		}
 	}

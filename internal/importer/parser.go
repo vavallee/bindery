@@ -99,7 +99,10 @@ var dashNormalizer = strings.NewReplacer(
 	"−", "-", // − minus sign
 )
 
-// bookExtensions lists common ebook file extensions.
+// bookExtensions lists common ebook file extensions, plus the audio ones the
+// parser has always accepted as book files. The audio part is NOT the shared
+// models.IsAudioPath set on purpose: it leaves out .aac and .wma, and widening
+// it would make IsBookFile accept files the importer never treated as books.
 var bookExtensions = map[string]bool{
 	".epub": true, ".mobi": true, ".azw3": true, ".azw": true,
 	".pdf": true, ".djvu": true, ".cbr": true, ".cbz": true,
