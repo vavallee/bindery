@@ -254,7 +254,16 @@ var segmentSplitter = regexp.MustCompile(`[:;()\[\]{}]|\s-+\s|[\x{2013}\x{2014}]
 // "Mistborn: The Final Empire" yields mistborn and thefinalempire;
 // "Hogfather (Discworld, #20)" yields hogfather and discworld20.
 func titleSegments(title string) [][2]string {
-	parts := segmentSplitter.Split(title, -1)
+	return segmentsOf(segmentSplitter.Split(title, -1))
+}
+
+// semicolonSegments is titleSegments for the ';' separator alone: the parts of
+// a bundle row such as "Carrie; Christine" (#3469).
+func semicolonSegments(title string) [][2]string {
+	return segmentsOf(strings.Split(title, ";"))
+}
+
+func segmentsOf(parts []string) [][2]string {
 	var segs [][2]string
 	for _, part := range parts {
 		words := foldWords(part)
@@ -295,7 +304,11 @@ func substringMatch(shorter, longer bookKeys) bool {
 	if residualIsMarkerOnly(residual) {
 		return false
 	}
-	for _, seg := range longer.segments {
+	return segmentMatches(shorter, longer.segments)
+}
+
+func segmentMatches(shorter bookKeys, segs [][2]string) bool {
+	for _, seg := range segs {
 		if seg[0] == shorter.alnum || (seg[1] != "" && seg[1] == shorter.article) {
 			return true
 		}
@@ -394,6 +407,9 @@ type bookKeys struct {
 	// segments are the keys of each separator-delimited part of the title,
 	// nil for a title with one part. Only the substring rule reads them.
 	segments [][2]string
+	// semi are the parts of the title split at ';' only, nil for a title
+	// without one. The bundle check in Scan reads them.
+	semi [][2]string
 }
 
 // bookKeyFor precomputes every key form for one title. Scan calls it once per
@@ -406,6 +422,7 @@ func bookKeyFor(title string) bookKeys {
 		edition:  strings.Join(dropTrailingEditionMarkers(words), ""),
 		combined: strings.Join(dropTrailingEditionMarkers(dropArticle(title, words)), ""),
 		segments: titleSegments(title),
+		semi:     semicolonSegments(title),
 	}
 }
 
@@ -450,16 +467,17 @@ func Scan(books []models.Book, seriesSlots map[int64][]SeriesSlot) []Group {
 		}
 	}
 
+	rulesByBook := make([]map[RuleID]struct{}, n)
+	for i := range rulesByBook {
+		rulesByBook[i] = make(map[RuleID]struct{})
+	}
 	useSubstring := n <= maxPairwiseBooks
 
-	type edge struct {
-		i, j  int
-		rules []RuleID
-	}
-	var edges []edge
-	matched := make(map[[2]int]struct{})
-	// contained[i] lists the shorter rows whose title is a segment of row i.
-	contained := make(map[int][]int)
+	// Substring-only pairs where the shorter title is a ';' part of the longer
+	// are held back: if the longer row is a bundle they must not join anything
+	// (#3469). Every other pair unions at once, as before.
+	type bundleEdge struct{ shorter, longer int }
+	var held []bundleEdge
 	for i := 0; i < n; i++ {
 		if keys[i].alnum == "" {
 			continue
@@ -476,59 +494,50 @@ func Scan(books []models.Book, seriesSlots map[int64][]SeriesSlot) []Group {
 			if len(rules) == 0 {
 				continue
 			}
-			edges = append(edges, edge{i, j, rules})
-			matched[[2]int{i, j}] = struct{}{}
 			if len(rules) == 1 && rules[0] == RuleSubstring {
+				sh, lg := i, j
 				if len(keys[i].alnum) > len(keys[j].alnum) {
-					contained[i] = append(contained[i], j)
-				} else {
-					contained[j] = append(contained[j], i)
+					sh, lg = j, i
 				}
+				if segmentMatches(keys[sh], keys[lg].semi) {
+					held = append(held, bundleEdge{sh, lg})
+					continue
+				}
+			}
+			union(i, j)
+			for _, rule := range rules {
+				addRule(rulesByBook[i], rule)
+				addRule(rulesByBook[j], rule)
 			}
 		}
 	}
 
-	// A bundle row ("Carrie; Christine") contains two or more rows that do not
+	// A bundle row ("Carrie; Christine") holds two or more parts that do not
 	// match each other. Joining them through it would put different books in
-	// one group (#3469), so its substring-only edges are dropped.
+	// one group, so its held edges are dropped.
+	parts := make(map[int][]int)
+	for _, e := range held {
+		parts[e.longer] = append(parts[e.longer], e.shorter)
+	}
 	bundle := make(map[int]bool)
-	for i, parts := range contained {
+	for lg, ps := range parts {
 	pairs:
-		for a := 0; a < len(parts); a++ {
-			for b := a + 1; b < len(parts); b++ {
-				x, y := parts[a], parts[b]
-				if x > y {
-					x, y = y, x
-				}
-				if _, ok := matched[[2]int{x, y}]; !ok {
-					bundle[i] = true
+		for a := 0; a < len(ps); a++ {
+			for b := a + 1; b < len(ps); b++ {
+				if len(pairRules(keys[ps[a]], keys[ps[b]], true)) == 0 {
+					bundle[lg] = true
 					break pairs
 				}
 			}
 		}
 	}
-
-	rulesByBook := make([]map[RuleID]struct{}, n)
-	for i := range rulesByBook {
-		rulesByBook[i] = make(map[RuleID]struct{})
-	}
-	for _, e := range edges {
-		if len(e.rules) == 1 && e.rules[0] == RuleSubstring && (bundle[e.i] || bundle[e.j]) {
-			// The bundle is the longer side; a shorter bundle never occurs
-			// because bundle membership needs two contained rows.
-			longer := e.i
-			if len(keys[e.j].alnum) > len(keys[e.i].alnum) {
-				longer = e.j
-			}
-			if bundle[longer] {
-				continue
-			}
+	for _, e := range held {
+		if bundle[e.longer] {
+			continue
 		}
-		union(e.i, e.j)
-		for _, rule := range e.rules {
-			addRule(rulesByBook[e.i], rule)
-			addRule(rulesByBook[e.j], rule)
-		}
+		union(e.shorter, e.longer)
+		addRule(rulesByBook[e.shorter], RuleSubstring)
+		addRule(rulesByBook[e.longer], RuleSubstring)
 	}
 
 	byRoot := make(map[int][]int)
