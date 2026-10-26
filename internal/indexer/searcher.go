@@ -1859,7 +1859,7 @@ func SplitByAllowedLanguages(results []newznab.SearchResult, allowed []string) (
 	for _, r := range results {
 		norm := NormalizeRelease(r.Title)
 		ok := true
-		for _, code := range append(releaseLanguageCodes(norm), sceneLanguageCodes(r.Title)...) {
+		for _, code := range append(append(releaseLanguageCodes(norm), sceneLanguageCodes(r.Title)...), gluedLanguageCodes(r.Title)...) {
 			if !set[code] {
 				ok = false
 				break

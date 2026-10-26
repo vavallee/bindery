@@ -500,6 +500,13 @@ a CWA ingest folder, Grimmory's BookDrop, an Audiobookshelf library scan,
 webhooks. The three ways of reaching Calibre or CWA are easy to mix up; the
 [Calibre integration guide](Calibre-Integration-Wiki.md) tells them apart.
 
+**The release name's language is read at search time.** Bindery looks for a
+language name or a local word like "Hörbuch" as a whole word in the release
+name, and also at the edge of a name joined to another word by capital
+letters, so `Dungeon Crawler Carl_EspañolNeutro m4b` counts as Spanish. Bare
+two letter codes ("it", "de", "no") are only read in the scene suffix of a
+name, never inside a joined word, because they are ordinary words too.
+
 **The file's language is checked at import.** The language filter at grab
 time can only read the release name, so a release that does not say its
 language gets through it. When the download arrives, Bindery reads the
