@@ -259,8 +259,32 @@ func titleSegments(title string) [][2]string {
 
 // semicolonSegments is titleSegments for the ';' separator alone: the parts of
 // a bundle row such as "Carrie; Christine" (#3469).
+//
+// Each part contributes its full key and, when it has a colon subtitle, its
+// main title before the colon too, so "Mistborn: The Final Empire; The Well of
+// Ascension" lists "Mistborn" as a part (#3499). Nil unless there are two or
+// more parts.
 func semicolonSegments(title string) [][2]string {
-	return segmentsOf(strings.Split(title, ";"))
+	parts := strings.Split(title, ";")
+	if len(segmentsOf(parts)) == 0 {
+		return nil
+	}
+	var out [][2]string
+	for _, part := range parts {
+		out = append(out, wholeKeys(part)...)
+		if i := strings.Index(part, ":"); i > 0 {
+			out = append(out, wholeKeys(part[:i])...)
+		}
+	}
+	return out
+}
+
+func wholeKeys(s string) [][2]string {
+	words := foldWords(s)
+	if len(words) == 0 {
+		return nil
+	}
+	return [][2]string{{strings.Join(words, ""), strings.Join(dropLeadingArticle(words), "")}}
 }
 
 func segmentsOf(parts []string) [][2]string {
@@ -521,13 +545,13 @@ func Scan(books []models.Book, seriesSlots map[int64][]SeriesSlot) []Group {
 	}
 	bundle := make(map[int]bool)
 	for lg, ps := range parts {
-	pairs:
-		for a := 0; a < len(ps); a++ {
-			for b := a + 1; b < len(ps); b++ {
-				if len(pairRules(keys[ps[a]], keys[ps[b]], true)) == 0 {
-					bundle[lg] = true
-					break pairs
-				}
+		// Every held part that relates to the first one lands in its group
+		// anyway, so comparing against the first alone finds an unrelated
+		// pair in O(parts) rather than O(parts squared).
+		for _, p := range ps[1:] {
+			if len(pairRules(keys[ps[0]], keys[p], true)) == 0 {
+				bundle[lg] = true
+				break
 			}
 		}
 	}
