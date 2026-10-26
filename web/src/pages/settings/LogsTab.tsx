@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, LogEntry, LogQuery } from '../../api/client'
 import { formatBytesZero } from '../../util/format'
@@ -9,6 +10,7 @@ import { useSaveResult } from './useSaveResult'
 import { usePolling } from '../../components/usePolling'
 import { BELOW_SM, useMediaQuery } from '../../components/useMediaQuery'
 import { primaryFill } from '../../components/buttons'
+import { errorText } from '../../util/errorText'
 
 // <input type="datetime-local"> produces "2026-08-12T14:03" — no zone, which
 // the API's RFC3339 parse rejects, so the range was silently ignored. The
@@ -19,18 +21,18 @@ function toRFC3339(local: string): string | undefined {
   return isNaN(d.getTime()) ? undefined : d.toISOString()
 }
 
-function formatRelativeTime(iso: string): string {
-  const t = Date.parse(iso)
-  if (isNaN(t)) return ''
-  const diffSec = Math.round((Date.now() - t) / 1000)
+function formatRelativeTime(t: TFunction, iso: string): string {
+  const then = Date.parse(iso)
+  if (isNaN(then)) return ''
+  const diffSec = Math.round((Date.now() - then) / 1000)
   const abs = Math.abs(diffSec)
-  if (abs < 60) return diffSec >= 0 ? 'just now' : 'in a moment'
+  if (abs < 60) return diffSec >= 0 ? t('settings.logs.age.justNow', 'just now') : t('settings.logs.age.soon', 'in a moment')
   const mins = Math.round(diffSec / 60)
-  if (Math.abs(mins) < 60) return mins >= 0 ? `${mins}m ago` : `in ${-mins}m`
+  if (Math.abs(mins) < 60) return mins >= 0 ? t('settings.logs.age.minutesAgo', { n: mins, defaultValue: '{{n}}m ago' }) : t('settings.logs.age.inMinutes', { n: -mins, defaultValue: 'in {{n}}m' })
   const hrs = Math.round(diffSec / 3600)
-  if (Math.abs(hrs) < 24) return hrs >= 0 ? `${hrs}h ago` : `in ${-hrs}h`
+  if (Math.abs(hrs) < 24) return hrs >= 0 ? t('settings.logs.age.hoursAgo', { n: hrs, defaultValue: '{{n}}h ago' }) : t('settings.logs.age.inHours', { n: -hrs, defaultValue: 'in {{n}}h' })
   const days = Math.round(diffSec / 86400)
-  return days >= 0 ? `${days}d ago` : `in ${-days}d`
+  return days >= 0 ? t('settings.logs.age.daysAgo', { n: days, defaultValue: '{{n}}d ago' }) : t('settings.logs.age.inDays', { n: -days, defaultValue: 'in {{n}}d' })
 }
 
 export default function LogsTab() {
@@ -106,9 +108,9 @@ export default function LogsTab() {
       const result = await api.createBackup(backupLabel.trim() || undefined)
       setBackups(prev => [result, ...prev])
       setBackupLabel('')
-      alert(`Backup created: ${result.name}`)
+      alert(t('settings.logs.backupCreated', 'Backup created:') + ' ' + result.name)
     } catch (err) {
-      alert('Backup failed: ' + (err instanceof Error ? err.message : 'Unknown error'))
+      alert(t('settings.logs.backupFailed', 'Backup failed:') + ' ' + (errorText(err, t('common.unknownError', 'Unknown error'))))
     } finally {
       setCreatingBackup(false)
     }
@@ -125,7 +127,7 @@ export default function LogsTab() {
       await api.deleteBackup(filename)
       setBackups(prev => prev.filter(b => b.name !== filename))
     } catch (err) {
-      alert('Delete failed: ' + (err instanceof Error ? err.message : 'Unknown error'))
+      alert(t('settings.logs.deleteFailed', 'Delete failed:') + ' ' + (errorText(err, t('common.unknownError', 'Unknown error'))))
     } finally {
       setDeletingBackup(null)
     }
@@ -158,7 +160,7 @@ export default function LogsTab() {
         {/* Level filter pills. They wrap: five pills and the label in one
             unbreakable row pushed a phone page out to about 406px. */}
         <div className="flex flex-wrap items-center gap-1.5 text-xs" data-testid="log-level-filter">
-          <span className="text-[10px] font-medium uppercase text-fg-muted mr-1">View</span>
+          <span className="text-[10px] font-medium uppercase text-fg-muted mr-1">{t('settings.logs.viewLabel', 'View')}</span>
           {(['all', 'debug', 'info', 'warn', 'error'] as const).map(f => (
             <button
               key={f}
@@ -179,7 +181,7 @@ export default function LogsTab() {
 
         {/* Runtime log level */}
         <div className="flex items-center gap-2 text-xs">
-          <label htmlFor={`${fid}-level`} className="text-fg-muted font-medium">Runtime level</label>
+          <label htmlFor={`${fid}-level`} className="text-fg-muted font-medium">{t('settings.logs.runtimeLevel', 'Runtime level')}</label>
           <select
             id={`${fid}-level`}
             value={logLevel}
@@ -188,7 +190,7 @@ export default function LogsTab() {
               await api.setLogLevel(l).catch(console.error)
               setLogLevel(l)
             }}
-            title="Controls which log levels are written to the database"
+            title={t('settings.logs.runtimeLevelHint', 'Controls which log levels are written to the database')}
             className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-xs"
           >
             {['debug', 'info', 'warn', 'error'].map(l => (
@@ -460,7 +462,7 @@ export default function LogsTab() {
                   <li key={b.name} className="flex items-center justify-between text-xs text-fg-muted">
                     <span>
                       <span className="font-mono">{b.name}</span>
-                      <span className="ml-2 text-fg-muted">{formatBytesZero(b.size)} · {formatRelativeTime(b.modTime)}</span>
+                      <span className="ml-2 text-fg-muted">{formatBytesZero(b.size)} · {formatRelativeTime(t, b.modTime)}</span>
                     </span>
                     <button
                       onClick={() => handleDeleteBackup(b.name)}

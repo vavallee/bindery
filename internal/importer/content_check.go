@@ -14,6 +14,7 @@ import (
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/notifier"
+	"github.com/vavallee/bindery/internal/seriesmatch"
 	"github.com/vavallee/bindery/internal/textutil"
 )
 
@@ -96,10 +97,15 @@ type contentCheckResult struct {
 	data map[string]any
 	// reason is the message a blocked download shows.
 	reason string
+	// uncertain is true when a flagged file is only probably another book (see
+	// otherWorkLikely). It is noted like any warn finding and never blocks.
+	uncertain bool
 }
 
 // blocks reports whether the result refuses the download.
-func (r contentCheckResult) blocks() bool { return r.flagged && r.mode == contentCheckBlock }
+func (r contentCheckResult) blocks() bool {
+	return r.flagged && !r.uncertain && r.mode == contentCheckBlock
+}
 
 // maxContentCheckEpubReads bounds how many EPUBs of one release the ebook check
 // judges. A release with more is a pack; it is not read at all, because the
@@ -254,12 +260,23 @@ func ebookTitleMatches(bookTitle, fileTitle string) bool {
 // "James Patterson and Maxine Paetro" meets "James Patterson". An empty creator,
 // or a book with no author on record, is compatible: nothing was said.
 func ebookAuthorMatches(names []string, creator string) bool {
+	agrees, _ := ebookAuthorAgreement(names, creator)
+	return agrees
+}
+
+// ebookAuthorAgreement is ebookAuthorMatches that also says whether the file
+// actually named the author: named is true only when the creator holds a real
+// person, there is a name on record in the creator's script, and one of the
+// creators matched it. A file that said nothing (no creator, a placeholder, a
+// script the author has no name in) agrees but is not named, so a rule that
+// needs positive evidence can tell the two apart.
+func ebookAuthorAgreement(names []string, creator string) (agrees, named bool) {
 	creators := splitCreators(creator)
 	if len(creators) == 0 || len(names) == 0 {
-		return true
+		return true, false
 	}
 	if creatorIsPlaceholder(creators) {
-		return true
+		return true, false
 	}
 	// A creator is compared with the names in its own script. A name in another
 	// script is no evidence either way, and an author with one Cyrillic alias
@@ -285,15 +302,15 @@ func ebookAuthorMatches(names []string, creator string) bool {
 			pool = other
 		}
 		if len(pool) == 0 {
-			return true
+			return true, false
 		}
 		for _, n := range pool {
 			if authorMatch(n, c) || authorMatch(c, n) {
-				return true
+				return true, true
 			}
 		}
 	}
-	return false
+	return false, false
 }
 
 // placeholderCreators are dc:creator values that name nobody: what a converter,
@@ -361,6 +378,184 @@ func creatorIsPlaceholder(creators []string) bool {
 // metadata never counts.
 func ebookDefiniteMismatch(bookTitle string, names []string, fileTitle, fileCreator string) bool {
 	return !ebookTitleMatches(bookTitle, fileTitle) && !ebookAuthorMatches(names, fileCreator)
+}
+
+// seriesSlot is one series membership with its position, "" when unknown.
+type seriesSlot struct {
+	seriesID int64
+	position string
+}
+
+// knownPosition reports whether a series position is a single number. A range
+// ("1-3", an omnibus) or any other text is unknown: providers write those for
+// bundles and for bad data, and they say nothing about which book this is.
+func knownPosition(p string) bool {
+	_, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
+	return err == nil
+}
+
+// seriesPositionsDiffer reports whether a and b share a series and hold
+// different known positions in it. Positions compare as numbers
+// (seriesmatch.SamePosition), so "1", "1.0" and "01" are one position, and a
+// position that is a range or not a number is unknown and never differs.
+func seriesPositionsDiffer(a, b []seriesSlot) bool {
+	for _, x := range a {
+		for _, y := range b {
+			if x.seriesID == y.seriesID && knownPosition(x.position) && knownPosition(y.position) &&
+				!seriesmatch.SamePosition(x.position, y.position) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// seriesPositionsSame reports whether a and b share a series and hold the same
+// position in it, as two editions of one book do.
+func seriesPositionsSame(a, b []seriesSlot) bool {
+	for _, x := range a {
+		for _, y := range b {
+			if x.seriesID == y.seriesID && seriesmatch.SamePosition(x.position, y.position) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// catalogueBook is what the other-book rule reads about one book of the
+// author's catalogue: its titles, every id it is known by, and its series slots.
+type catalogueBook struct {
+	id            int64
+	title         string
+	originalTitle string
+	ids           []string
+	slots         []seriesSlot
+}
+
+// otherWork is how sure the content check is that a file is another book.
+type otherWork int
+
+const (
+	// otherWorkNo: the file is not shown to be another book.
+	otherWorkNo otherWork = iota
+	// otherWorkLikely: the file's title is that of another catalogue book and
+	// nothing says the two are editions of one work, but nothing says they are
+	// distinct works either. It is noted and never refuses a download.
+	otherWorkLikely
+	// otherWorkConfident: the file is the title of a book that sits at a
+	// different position in a series the wanted book is also in.
+	otherWorkConfident
+)
+
+// ebookIsAnotherBookOfTheAuthor judges an EPUB whose author agrees but whose
+// title differs (#3461). A series author's wrong grab is usually a neighbouring
+// volume, and the author side of ebookDefiniteMismatch cannot see it.
+//
+// Title difference alone is not evidence: a translated or alternate title
+// ("Voyna i mir" for "War and Peace", "The Golden Compass" for "Northern
+// Lights") reads as a different work to titlesNameDifferentWorks. So the file's
+// title must also be a different catalogue book (a row whose title the file
+// matches, that is a different work than the wanted book by title), and that row
+// must not look like another edition of the wanted book. A row is set aside as
+// an edition when it shares any id with the wanted book, one's original title is
+// the other's title, or they sit
+// at the same position of one series. Such rows are common: the catalogue
+// can hold both editions as separate rows, even excluded ones.
+//
+// What is left is otherWorkConfident when the row and the wanted book are at
+// different positions of one series, the one fact that says two titles are
+// distinct books, and otherWorkLikely otherwise. The author must be named in the
+// file: a missing or placeholder creator says nothing.
+func ebookIsAnotherBookOfTheAuthor(wanted catalogueBook, names []string, fileTitle, fileCreator string, catalogue []catalogueBook) otherWork {
+	if ebookTitleMatches(wanted.title, fileTitle) || !titlesNameDifferentWorks(wanted.title, fileTitle) {
+		return otherWorkNo
+	}
+	if _, named := ebookAuthorAgreement(names, fileCreator); !named {
+		return otherWorkNo
+	}
+	verdict := otherWorkNo
+	for _, t := range catalogue {
+		if t.id == wanted.id && wanted.id != 0 || strings.TrimSpace(t.title) == "" || bookIsCompilation(t.title) {
+			continue
+		}
+		// The row must be a different work than the wanted book by title, and
+		// the file must be that row.
+		if ebookTitleMatches(wanted.title, t.title) || !titlesNameDifferentWorks(wanted.title, t.title) {
+			continue
+		}
+		if !ebookTitleMatches(t.title, fileTitle) || titlesNameDifferentWorks(t.title, fileTitle) {
+			continue
+		}
+		if looksLikeAnEdition(wanted, t) {
+			continue
+		}
+		if seriesPositionsDiffer(wanted.slots, t.slots) {
+			return otherWorkConfident
+		}
+		verdict = otherWorkLikely
+	}
+	return verdict
+}
+
+// looksLikeAnEdition reports whether two catalogue rows may be one work.
+func looksLikeAnEdition(a, b catalogueBook) bool {
+	for _, x := range a.ids {
+		for _, y := range b.ids {
+			if x != "" && x == y {
+				return true
+			}
+		}
+	}
+	if a.originalTitle != "" && ebookTitleMatches(a.originalTitle, b.title) {
+		return true
+	}
+	if b.originalTitle != "" && ebookTitleMatches(b.originalTitle, a.title) {
+		return true
+	}
+	return seriesPositionsSame(a.slots, b.slots)
+}
+
+// authorCatalogue loads the author's books (excluded ones too) with their ids
+// and series slots; nil when they cannot be read.
+func (s *Scanner) authorCatalogue(ctx context.Context, author *models.Author) []catalogueBook {
+	if author == nil || s.books == nil {
+		return nil
+	}
+	books, err := s.books.ListByAuthorIncludingExcluded(ctx, author.ID)
+	if err != nil {
+		slog.Warn("content check: could not load the author's books", "authorID", author.ID, "error", err)
+		return nil
+	}
+	identifiers, err := s.books.ListBookIdentifiersByAuthor(ctx, author.ID)
+	if err != nil {
+		slog.Warn("content check: could not load the author's book ids", "authorID", author.ID, "error", err)
+		identifiers = nil
+	}
+	var memberships map[int64][]db.BookSeriesMembership
+	if s.series != nil {
+		if memberships, err = s.series.ListBookSeriesMembershipsByAuthor(ctx, author.ID); err != nil {
+			slog.Warn("content check: could not load the author's series", "authorID", author.ID, "error", err)
+			memberships = nil
+		}
+	}
+	out := make([]catalogueBook, 0, len(books))
+	for _, b := range books {
+		c := catalogueBook{id: b.ID, title: b.Title, originalTitle: b.OriginalTitle}
+		for _, id := range []string{b.ForeignID, b.HardcoverForeignID, b.ASIN} {
+			if id != "" {
+				c.ids = append(c.ids, id)
+			}
+		}
+		for _, bi := range identifiers[b.ID] {
+			c.ids = append(c.ids, bi.ForeignID)
+		}
+		for _, m := range memberships[b.ID] {
+			c.slots = append(c.slots, seriesSlot{seriesID: m.SeriesID, position: m.Position})
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // authorNamesFor returns the names the book's author is known by: the name on
@@ -459,6 +654,11 @@ func (s *Scanner) checkEbookContent(ctx context.Context, book *models.Book, auth
 		s.onContentCheck("ebook")
 	}
 	names := s.authorNamesFor(ctx, author)
+	// The author's other books, read once and only if a file needs them.
+	var catalogue []catalogueBook
+	var catalogueRead bool
+	var wantedEntry catalogueBook
+	allUncertain := true
 
 	// A release with more EPUBs than the cap is not judged: a prefix of it could
 	// be all wrong books while the right one sits later in the list, and the
@@ -486,7 +686,28 @@ func (s *Scanner) checkEbookContent(ctx context.Context, book *models.Book, auth
 			continue
 		}
 		read++
-		if ebookDefiniteMismatch(book.Title, names, meta.Title, meta.Author) {
+		mismatch := ebookDefiniteMismatch(book.Title, names, meta.Title, meta.Author)
+		fileUncertain := false
+		if !mismatch && !ebookTitleMatches(book.Title, meta.Title) {
+			// Title differs and the author agrees: another book by the author?
+			if !catalogueRead {
+				catalogue, catalogueRead = s.authorCatalogue(ctx, author), true
+				wantedEntry = catalogueBook{id: book.ID, title: book.Title, originalTitle: book.OriginalTitle, ids: []string{book.ForeignID}}
+				for _, c := range catalogue {
+					if c.id == book.ID {
+						wantedEntry = c
+					}
+				}
+			}
+			switch ebookIsAnotherBookOfTheAuthor(wantedEntry, names, meta.Title, meta.Author, catalogue) {
+			case otherWorkConfident:
+				mismatch = true
+			case otherWorkLikely:
+				mismatch, fileUncertain = true, true
+			}
+		}
+		if mismatch {
+			allUncertain = allUncertain && fileUncertain
 			mismatches = append(mismatches, found{safeFileText(filepath.Base(f)), safeFileText(meta.Title), safeFileText(meta.Author)})
 		}
 	}
@@ -513,10 +734,16 @@ func (s *Scanner) checkEbookContent(ctx context.Context, book *models.Book, auth
 	if len(mismatches) > 1 {
 		extra = fmt.Sprintf(" (and %d more file(s) like it)", len(mismatches)-1)
 	}
+	data := ebookCheckData(bookTitle, bookAuthor, listed, len(mismatches), read)
+	uncertain := allUncertain
+	if uncertain {
+		data["uncertain"] = true
+	}
 	return contentCheckResult{
-		mode:    mode,
-		flagged: true,
-		data:    ebookCheckData(bookTitle, bookAuthor, listed, len(mismatches), read),
+		mode:      mode,
+		flagged:   true,
+		uncertain: uncertain,
+		data:      data,
 		reason: fmt.Sprintf("the file says it is %s%s, but the book is %q by %s. "+
 			"Not imported, and the release was blocklisted so the next search picks another. "+
 			"To keep this file anyway, use Match to book in the Queue or manual import; "+

@@ -5,6 +5,7 @@ import { inputCls } from './formStyles'
 import Toggle from './Toggle'
 import { dangerLink, primaryFill } from '../../components/buttons'
 import { urlInputAttrs } from '../../util/inputAttrs'
+import { errorText } from '../../util/errorText'
 
 // The seven trigger chips, in the order both forms render them, paired with the
 // hint that says what actually sends the event. Wording checked against the
@@ -13,12 +14,12 @@ import { urlInputAttrs } from '../../util/inputAttrs'
 // download client health checks, New book is internal/api/author_discovery.go,
 // and Request is internal/api/requests.go. Upgrade has no sender at all today,
 // and its hint says so rather than describing behaviour Bindery does not have.
-const TRIGGER_HINTS: Array<{ key: string; label: string; labelKey?: string }> = [
-  { key: 'grab', label: 'Grab' },
-  { key: 'import', label: 'Import' },
-  { key: 'failure', label: 'Failure' },
-  { key: 'upgrade', label: 'Upgrade' },
-  { key: 'health', label: 'Health' },
+const TRIGGER_HINTS: Array<{ key: string; label: string; labelKey: string }> = [
+  { key: 'grab', label: 'Grab', labelKey: 'settings.notifications.trigger.grab' },
+  { key: 'import', label: 'Import', labelKey: 'settings.notifications.trigger.import' },
+  { key: 'failure', label: 'Failure', labelKey: 'settings.notifications.trigger.failure' },
+  { key: 'upgrade', label: 'Upgrade', labelKey: 'settings.notifications.trigger.upgrade' },
+  { key: 'health', label: 'Health', labelKey: 'settings.notifications.trigger.health' },
   { key: 'bookAnnounced', label: 'New book', labelKey: 'settings.notifications.onBookAnnouncedToggle' },
   { key: 'requestCreated', label: 'Request', labelKey: 'settings.notifications.requestToggle' },
 ]
@@ -32,7 +33,7 @@ function TriggerHints() {
     <ul className="mt-2 space-y-0.5 text-xs text-fg-muted" aria-label={t('settings.notifications.triggerHintsLabel')}>
       {TRIGGER_HINTS.map(h => (
         <li key={h.key}>
-          <span className="font-medium text-fg-muted">{h.labelKey ? t(h.labelKey) : h.label}</span>
+          <span className="font-medium text-fg-muted">{t(h.labelKey, h.label)}</span>
           {': '}
           {t(`settings.notifications.eventHints.${h.key}`)}
         </li>
@@ -105,7 +106,7 @@ export default function NotificationsTab() {
                           await api.testNotification(n.id)
                           setNotificationTestResult(prev => ({ ...prev, [n.id]: { ok: true, msg: t('settings.notifications.testSent') } }))
                         } catch (err: unknown) {
-                          setNotificationTestResult(prev => ({ ...prev, [n.id]: { ok: false, msg: t('common.connFail', { error: err instanceof Error ? err.message : 'Unknown error' }) } }))
+                          setNotificationTestResult(prev => ({ ...prev, [n.id]: { ok: false, msg: t('common.connFail', { error: errorText(err, t('common.unknownError', 'Unknown error')) }) } }))
                         }
                       }}
                       className="text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white"
@@ -188,7 +189,7 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
     setSaveError('')
     const headersJSON = normalizeHeadersJSON(headers)
     if (headersJSON === null) {
-      setSaveError('Headers must be valid JSON object with string values, or empty.')
+      setSaveError(t('settings.notifications.headersInvalidEdit', 'Headers must be valid JSON object with string values, or empty.'))
       return
     }
     setSaving(true)
@@ -196,7 +197,7 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
       const updated = await api.updateNotification(notification.id, { ...notification, name, url, topic, method, headers: headersJSON, onGrab, onImport, onFailure, onUpgrade, onHealth, onBookAnnounced, onRequestCreated })
       onSaved(updated)
     } catch (err: unknown) {
-      setSaveError(t('settings.notifications.saveFailed', { error: err instanceof Error ? err.message : 'Unknown error' }))
+      setSaveError(t('settings.notifications.saveFailed', { error: errorText(err, t('common.unknownError', 'Unknown error')) }))
     } finally {
       setSaving(false)
     }
@@ -212,21 +213,21 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
   return (
     <div className="mt-1 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-4">
       <div className="grid grid-cols-2 gap-3">
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className={inputCls} />
+        <input value={name} onChange={e => setName(e.target.value)} placeholder={t('settings.notifications.name', 'Name')} className={inputCls} />
         <select value={method} onChange={e => setMethod(e.target.value)} className={inputCls}>
           <option value="POST">POST</option>
           <option value="PUT">PUT</option>
           <option value="GET">GET</option>
         </select>
       </div>
-      <input {...urlInputAttrs} value={url} onChange={e => setUrl(e.target.value)} placeholder="Webhook URL" className={inputCls} />
+      <input {...urlInputAttrs} value={url} onChange={e => setUrl(e.target.value)} placeholder={t('settings.notifications.webhookUrl', 'Webhook URL')} className={inputCls} />
       <div>
-        <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">ntfy topic (optional)</label>
+        <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.notifications.topicLabel', 'ntfy topic (optional)')}</label>
         <input id={`${fid}-1`} value={topic} onChange={e => setTopic(e.target.value)} placeholder="my-topic" className={inputCls} />
-        <p className="text-xs text-fg-muted mt-1">For ntfy: set the topic here and point the URL at the ntfy server root (e.g. https://ntfy.sh). Bindery then posts a JSON body ntfy renders natively, instead of printing raw JSON.</p>
+        <p className="text-xs text-fg-muted mt-1">{t('settings.notifications.topicHint', 'For ntfy: set the topic here and point the URL at the ntfy server root (e.g. https://ntfy.sh). Bindery then posts a JSON body ntfy renders natively, instead of printing raw JSON.')}</p>
       </div>
       <div>
-        <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">Custom headers (JSON, optional)</label>
+        <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">{t('settings.notifications.headersLabel', 'Custom headers (JSON, optional)')}</label>
         <textarea id={`${fid}-2`}
           value={headers}
           onChange={e => setHeaders(e.target.value)}
@@ -234,16 +235,16 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
           rows={3}
           className={`${inputCls} font-mono text-xs`}
         />
-        <p className="text-xs text-fg-muted mt-1">For ntfy auth, Discord routing, or any custom header. Leave blank to send none.</p>
+        <p className="text-xs text-fg-muted mt-1">{t('settings.notifications.headersHint', 'For ntfy auth, Discord routing, or any custom header. Leave blank to send none.')}</p>
       </div>
       <div>
-        <p className="text-xs text-fg-muted mb-2">Trigger on:</p>
+        <p className="text-xs text-fg-muted mb-2">{t('settings.notifications.triggerOn', 'Trigger on:')}</p>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => setOnGrab(!onGrab)} title={triggerTitle(t, 'grab')} className={toggleCls(onGrab)}>Grab</button>
-          <button type="button" onClick={() => setOnImport(!onImport)} title={triggerTitle(t, 'import')} className={toggleCls(onImport)}>Import</button>
-          <button type="button" onClick={() => setOnFailure(!onFailure)} title={triggerTitle(t, 'failure')} className={toggleCls(onFailure)}>Failure</button>
-          <button type="button" onClick={() => setOnUpgrade(!onUpgrade)} title={triggerTitle(t, 'upgrade')} className={toggleCls(onUpgrade)}>Upgrade</button>
-          <button type="button" onClick={() => setOnHealth(!onHealth)} title={triggerTitle(t, 'health')} className={toggleCls(onHealth)}>Health</button>
+          <button type="button" onClick={() => setOnGrab(!onGrab)} title={triggerTitle(t, 'grab')} className={toggleCls(onGrab)}>{t('settings.notifications.trigger.grab', 'Grab')}</button>
+          <button type="button" onClick={() => setOnImport(!onImport)} title={triggerTitle(t, 'import')} className={toggleCls(onImport)}>{t('settings.notifications.trigger.import', 'Import')}</button>
+          <button type="button" onClick={() => setOnFailure(!onFailure)} title={triggerTitle(t, 'failure')} className={toggleCls(onFailure)}>{t('settings.notifications.trigger.failure', 'Failure')}</button>
+          <button type="button" onClick={() => setOnUpgrade(!onUpgrade)} title={triggerTitle(t, 'upgrade')} className={toggleCls(onUpgrade)}>{t('settings.notifications.trigger.upgrade', 'Upgrade')}</button>
+          <button type="button" onClick={() => setOnHealth(!onHealth)} title={triggerTitle(t, 'health')} className={toggleCls(onHealth)}>{t('settings.notifications.trigger.health', 'Health')}</button>
           <button type="button" aria-pressed={onBookAnnounced} onClick={() => setOnBookAnnounced(!onBookAnnounced)} title={triggerTitle(t, 'bookAnnounced')} className={toggleCls(onBookAnnounced)}>{t('settings.notifications.onBookAnnouncedToggle')}</button>
           <button type="button" aria-pressed={onRequestCreated} onClick={() => setOnRequestCreated(!onRequestCreated)} title={triggerTitle(t, 'requestCreated')} className={toggleCls(onRequestCreated)}>{t('settings.notifications.requestToggle')}</button>
         </div>
@@ -255,8 +256,8 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
         </div>
       )}
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm text-fg-muted">Cancel</button>
-        <button onClick={submit} disabled={saving} className={`px-3 py-1.5 ${primaryFill} disabled:opacity-60 disabled:cursor-not-allowed rounded text-sm font-medium`}>Save</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-fg-muted">{t('common.cancel', 'Cancel')}</button>
+        <button onClick={submit} disabled={saving} className={`px-3 py-1.5 ${primaryFill} disabled:opacity-60 disabled:cursor-not-allowed rounded text-sm font-medium`}>{t('common.save', 'Save')}</button>
       </div>
     </div>
   )
@@ -284,7 +285,7 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
     setSaveError('')
     const headersJSON = normalizeHeadersJSON(headers)
     if (headersJSON === null) {
-      setSaveError('Headers must be valid JSON or empty.')
+      setSaveError(t('settings.notifications.headersInvalid', 'Headers must be valid JSON or empty.'))
       return
     }
     setSaving(true)
@@ -297,7 +298,7 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
       })
       onAdded(n)
     } catch (err: unknown) {
-      setSaveError(t('settings.notifications.saveFailed', { error: err instanceof Error ? err.message : 'Unknown error' }))
+      setSaveError(t('settings.notifications.saveFailed', { error: errorText(err, t('common.unknownError', 'Unknown error')) }))
     } finally {
       setSaving(false)
     }
@@ -313,21 +314,21 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
   return (
     <div className="mt-4 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-4">
       <div className="grid grid-cols-2 gap-3">
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className={inputCls} />
+        <input value={name} onChange={e => setName(e.target.value)} placeholder={t('settings.notifications.name', 'Name')} className={inputCls} />
         <select value={method} onChange={e => setMethod(e.target.value)} className={inputCls}>
           <option value="POST">POST</option>
           <option value="PUT">PUT</option>
           <option value="GET">GET</option>
         </select>
       </div>
-      <input {...urlInputAttrs} value={url} onChange={e => setUrl(e.target.value)} placeholder="Webhook URL" className={inputCls} />
+      <input {...urlInputAttrs} value={url} onChange={e => setUrl(e.target.value)} placeholder={t('settings.notifications.webhookUrl', 'Webhook URL')} className={inputCls} />
       <div>
-        <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">ntfy topic (optional)</label>
+        <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.notifications.topicLabel', 'ntfy topic (optional)')}</label>
         <input id={`${fid}-1`} value={topic} onChange={e => setTopic(e.target.value)} placeholder="my-topic" className={inputCls} />
-        <p className="text-xs text-fg-muted mt-1">For ntfy: set the topic here and point the URL at the ntfy server root (e.g. https://ntfy.sh). Bindery then posts a JSON body ntfy renders natively, instead of printing raw JSON.</p>
+        <p className="text-xs text-fg-muted mt-1">{t('settings.notifications.topicHint', 'For ntfy: set the topic here and point the URL at the ntfy server root (e.g. https://ntfy.sh). Bindery then posts a JSON body ntfy renders natively, instead of printing raw JSON.')}</p>
       </div>
       <div>
-        <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">Custom headers (JSON, optional)</label>
+        <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">{t('settings.notifications.headersLabel', 'Custom headers (JSON, optional)')}</label>
         <textarea id={`${fid}-2`}
           value={headers}
           onChange={e => setHeaders(e.target.value)}
@@ -335,16 +336,16 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
           rows={3}
           className={`${inputCls} font-mono text-xs`}
         />
-        <p className="text-xs text-fg-muted mt-1">For ntfy auth, Discord routing, or any custom header. Leave blank to send none.</p>
+        <p className="text-xs text-fg-muted mt-1">{t('settings.notifications.headersHint', 'For ntfy auth, Discord routing, or any custom header. Leave blank to send none.')}</p>
       </div>
       <div>
-        <p className="text-xs text-fg-muted mb-2">Trigger on:</p>
+        <p className="text-xs text-fg-muted mb-2">{t('settings.notifications.triggerOn', 'Trigger on:')}</p>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => setOnGrab(!onGrab)} title={triggerTitle(t, 'grab')} className={toggleCls(onGrab)}>Grab</button>
-          <button type="button" onClick={() => setOnImport(!onImport)} title={triggerTitle(t, 'import')} className={toggleCls(onImport)}>Import</button>
-          <button type="button" onClick={() => setOnFailure(!onFailure)} title={triggerTitle(t, 'failure')} className={toggleCls(onFailure)}>Failure</button>
-          <button type="button" onClick={() => setOnUpgrade(!onUpgrade)} title={triggerTitle(t, 'upgrade')} className={toggleCls(onUpgrade)}>Upgrade</button>
-          <button type="button" onClick={() => setOnHealth(!onHealth)} title={triggerTitle(t, 'health')} className={toggleCls(onHealth)}>Health</button>
+          <button type="button" onClick={() => setOnGrab(!onGrab)} title={triggerTitle(t, 'grab')} className={toggleCls(onGrab)}>{t('settings.notifications.trigger.grab', 'Grab')}</button>
+          <button type="button" onClick={() => setOnImport(!onImport)} title={triggerTitle(t, 'import')} className={toggleCls(onImport)}>{t('settings.notifications.trigger.import', 'Import')}</button>
+          <button type="button" onClick={() => setOnFailure(!onFailure)} title={triggerTitle(t, 'failure')} className={toggleCls(onFailure)}>{t('settings.notifications.trigger.failure', 'Failure')}</button>
+          <button type="button" onClick={() => setOnUpgrade(!onUpgrade)} title={triggerTitle(t, 'upgrade')} className={toggleCls(onUpgrade)}>{t('settings.notifications.trigger.upgrade', 'Upgrade')}</button>
+          <button type="button" onClick={() => setOnHealth(!onHealth)} title={triggerTitle(t, 'health')} className={toggleCls(onHealth)}>{t('settings.notifications.trigger.health', 'Health')}</button>
           <button type="button" aria-pressed={onBookAnnounced} onClick={() => setOnBookAnnounced(!onBookAnnounced)} title={triggerTitle(t, 'bookAnnounced')} className={toggleCls(onBookAnnounced)}>{t('settings.notifications.onBookAnnouncedToggle')}</button>
           <button type="button" aria-pressed={onRequestCreated} onClick={() => setOnRequestCreated(!onRequestCreated)} title={triggerTitle(t, 'requestCreated')} className={toggleCls(onRequestCreated)}>{t('settings.notifications.requestToggle')}</button>
         </div>
@@ -356,8 +357,8 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
         </div>
       )}
       <div className="flex gap-2 justify-end">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm text-fg-muted">Cancel</button>
-        <button onClick={submit} disabled={saving} className={`px-3 py-1.5 ${primaryFill} disabled:opacity-60 disabled:cursor-not-allowed rounded text-sm font-medium`}>Save</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-fg-muted">{t('common.cancel', 'Cancel')}</button>
+        <button onClick={submit} disabled={saving} className={`px-3 py-1.5 ${primaryFill} disabled:opacity-60 disabled:cursor-not-allowed rounded text-sm font-medium`}>{t('common.save', 'Save')}</button>
       </div>
     </div>
   )

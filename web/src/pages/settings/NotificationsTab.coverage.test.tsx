@@ -4,7 +4,8 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, opts?: unknown) =>
-      opts && typeof opts === 'object' && 'error' in opts ? `${key}:${(opts as { error: string }).error}` : key,
+      typeof opts === 'string' ? opts
+      : opts && typeof opts === 'object' && 'error' in opts ? `${key}:${(opts as { error: string }).error}` : key,
   }),
 }))
 

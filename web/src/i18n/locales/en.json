@@ -59,7 +59,8 @@
     "showDetails": "Show details",
     "hideDetails": "Hide details",
     "apply": "Apply",
-    "unknownError": "Unknown error"
+    "unknownError": "Unknown error",
+    "bulkActionFailed": "Bulk action failed"
   },
   "monitorMode": {
     "all": "All books",
@@ -97,7 +98,9 @@
     "myRequests": "My requests",
     "requests": "Requests",
     "requestsPending": "{{count}} pending requests",
-    "toggleMenu": "Toggle menu"
+    "toggleMenu": "Toggle menu",
+    "themeLight": "Switch to light mode",
+    "themeDark": "Switch to dark mode"
   },
   "librarySearch": {
     "label": "Search library",
@@ -160,7 +163,8 @@
     "metadataNoResults": "No metadata results for that search.",
     "metadataAuthorMissing": "Author name missing on this result",
     "metadataAdd": "Add and use",
-    "metadataAdding": "Adding…"
+    "metadataAdding": "Adding…",
+    "importFailed": "Import failed"
   },
   "importPage": {
     "title": "Import",
@@ -169,7 +173,14 @@
     "viewLibrary": "In your library",
     "viewFolder": "From a folder",
     "viewLibraryHint": "Files already inside your library folders that the last scan could not place. Nothing moves; you say which book each one is.",
-    "viewFolderHint": "Files anywhere else on disk. Each one is matched to a book in your catalogue and imported into your library."
+    "viewFolderHint": "Files anywhere else on disk. Each one is matched to a book in your catalogue and imported into your library.",
+    "catalogueAdder": {
+      "searchFailed": "Metadata search failed",
+      "addFailed": "Could not add the book"
+    },
+    "folderScan": {
+      "failed": "Scan failed"
+    }
   },
   "adoption": {
     "adminOnly": "Only an admin can decide what the files in the library are.",
@@ -326,6 +337,12 @@
       "sentence": "Author not in your library yet",
       "show": "Show books",
       "hide": "Hide books"
+    },
+    "errors": {
+      "loadFailed": "Could not load the list",
+      "adoptFailed": "Could not adopt this book",
+      "ignoreFailed": "Could not ignore this book",
+      "undoFailed": "Could not undo"
     }
   },
   "search": {
@@ -346,7 +363,12 @@
     },
     "forceTitle": "Grab this release again?",
     "forceBody": "Bindery already imported this release once. Grab it anyway only if the files from that import are missing: while they are still there, the new download is skipped as a duplicate. Nothing is removed from your download client and the book's current files stay where they are.",
-    "forceConfirm": "Grab anyway"
+    "forceConfirm": "Grab anyway",
+    "pageTitle": "Search",
+    "searchFailed": "Search failed",
+    "grabFailed": "Grab failed",
+    "indexerLink": "indexer",
+    "grabs": "{{n}} grabs"
   },
   "login": {
     "title": "Sign in",
@@ -439,9 +461,15 @@
     "bulkApplyMonitoringToExisting": "Also apply to their existing books",
     "bulkApplyMonitoringToExistingHint": "Rewrites every book of the selected authors to match. Leave it off to change the authors only.",
     "bulkSetMediaTypeConfirm": "Set the media type for every book of {{count}} selected authors to {{mediaType}}? This rewrites existing book rows and may re-evaluate wanted/missing status.",
-    "bulkSetEbook": "Set ebook",
-    "bulkSetAudiobook": "Set audiobook",
-    "bulkSetBoth": "Set both"
+    "pageActions": "More author actions",
+    "countLabel_one": "{{count}} author",
+    "countLabel_other": "{{count}} authors",
+    "sortMostBooks": "Most books",
+    "sortFewestBooks": "Fewest books",
+    "sortRatingHigh": "Highest rated",
+    "sortRatingLow": "Lowest rated",
+    "sortMonitoredFirst": "Monitored first",
+    "sortUnmonitoredFirst": "Not monitored first"
   },
   "authorDetail": {
     "nav": {
@@ -463,6 +491,7 @@
       "monitor": "Monitor",
       "unmonitor": "Unmonitor",
       "exclude": "Exclude",
+      "unexclude": "Un-exclude",
       "delete": "Delete",
       "excludeConfirm": "Exclude {{count}} book(s)? Excluded books are hidden and blocked from re-import on the next metadata refresh.",
       "deleteConfirm": "Delete {{count}} book(s)? Files on disk are not removed.",
@@ -498,6 +527,7 @@
     "syncingMore": "Fetching this author’s catalogue. Any new books appear here when it finishes.",
     "filteredCount": "{{shown}} of {{total}}",
     "groupBySeries": "Group by series",
+    "openSeries": "Open this series on the Series page",
     "showFlatList": "Show flat list",
     "stats": {
       "books": "Books",
@@ -534,7 +564,7 @@
       "released": "Released",
       "upcoming": "Upcoming",
       "status_wanted": "Wanted",
-      "status_imported": "Imported",
+      "status_imported": "In library",
       "status_skipped": "Skipped",
       "status_excluded": "Excluded",
       "monitored": "Monitored",
@@ -572,7 +602,26 @@
       "removing": "Removing…",
       "removeFailed": "Could not remove the photo"
     },
-    "photoNotUploaded": "Only a photo you uploaded can be removed. Reload the page to see the current photo."
+    "photoNotUploaded": "Only a photo you uploaded can be removed. Reload the page to see the current photo.",
+    "loadFailed": "Failed to load",
+    "refreshFailed": "Refresh failed",
+    "updateFailed": "Update failed",
+    "searchFailed": "Search failed",
+    "deleteFailed": "Delete failed",
+    "reloadFailed": "Reload failed",
+    "unknownError": "unknown error",
+    "standalone": "Standalone",
+    "notFound": "Author not found",
+    "sortByTitle": "Sort by title",
+    "sortByDate": "Sort by publication date",
+    "colPublished": "Published",
+    "audioBadge": "Audio",
+    "back": "Back",
+    "aliasesHeading": "Also known as",
+    "aliasSource": "From {{source}}",
+    "noBooks": "No books tracked for this author yet.",
+    "noFilterMatch": "No books match the current filters.",
+    "ratings": "{{n}} ratings"
   },
   "catalogueReconciliation": {
     "title": "Reconcile catalogue",
@@ -701,7 +750,7 @@
     "mediaBoth": "📖🎧 Both",
     "deleteConfirm": "Delete {{count}} book(s)?",
     "statusWanted": "Wanted",
-    "statusImported": "In Library",
+    "statusImported": "In library",
     "statusSkipped": "Skipped",
     "audioLabel": "🎧 Audio",
     "exclude": "Exclude",
@@ -710,7 +759,17 @@
     "showExcluded": "Show excluded",
     "sortByColumn": "Sort by {{column}}",
     "reviewDuplicates": "Review duplicates",
-    "reviewDuplicatesHint": "Find titles across the library that look like the same book; nothing changes until you exclude a row"
+    "reviewDuplicatesHint": "Find titles across the library that look like the same book; nothing changes until you exclude a row",
+    "languageUnknown": "Metadata source did not report a language for this book.",
+    "sortRatingHigh": "Highest rated",
+    "sortRatingLow": "Lowest rated",
+    "sortTypeAZ": "Type A–Z",
+    "sortTypeZA": "Type Z–A",
+    "sortStatusAZ": "Status A–Z",
+    "sortStatusZA": "Status Z–A",
+    "languageUnknownBadge": "No language",
+    "countLabel_one": "{{count}} book",
+    "countLabel_other": "{{count}} books"
   },
   "wanted": {
     "title": "Wanted",
@@ -738,14 +797,19 @@
     "colTitleAuthor": "Title & author",
     "colFormat": "Format",
     "colActions": "Actions",
-    "noCover": "No cover",
     "authorUnknown": "Author unknown",
     "changeFormat": "Change format for {{title}}",
-    "authorNotMonitored": "Author not monitored, so this is not searched automatically"
+    "authorNotMonitored": "Author not monitored, so this is not searched automatically",
+    "updateFailed": "Failed to update",
+    "unmonitorReverted": "Couldn't update wanted list — reverted.",
+    "grabFailed": "Grab failed",
+    "blocklistSelectedConfirm_one": "Blocklist {{count}} book? It is marked skipped, leaves Wanted and is not searched again.",
+    "blocklistSelectedConfirm_other": "Blocklist {{count}} books? They are marked skipped, leave Wanted and are not searched again."
   },
   "history": {
     "title": "History",
     "blocklistFailed": "Could not blocklist this release.",
+    "contentCheckEbookUncertain": "The file may be another book, but Bindery cannot tell it from another edition",
     "contentCheckEbook": "The file looks like another book",
     "contentCheckAudiobook": "The files include other books",
     "contentCheckEbookEntry": "\"{{title}}\" by {{author}}",
@@ -777,7 +841,8 @@
     "colSize": "Size",
     "colDate": "Date",
     "blocklist": "Blocklist",
-    "delete": "Delete"
+    "delete": "Delete",
+    "blocklistHint": "Add to blocklist — prevents this release from being grabbed again"
   },
   "queue": {
     "title": "Queue",
@@ -841,7 +906,27 @@
     "matchBookSearch": "Search for a book",
     "matchBookSearching": "Searching…",
     "matchBookSearchBtn": "Search",
-    "matchBookCancel": "Cancel"
+    "matchBookCancel": "Cancel",
+    "retryFailed": "Retry failed",
+    "matchFailed": "Match failed",
+    "bulkRetryFailed": "Bulk retry failed",
+    "bulkRemoveFailed": "Bulk remove failed",
+    "age": {
+      "seconds": "{{n}}s ago",
+      "minutes": "{{n}}m ago",
+      "hours": "{{n}}h ago",
+      "days": "{{n}}d ago"
+    },
+    "importRequeued": "Queued for another import attempt — the scanner picks it up on its next check.",
+    "importBlockedHint": "Import blocked — manual intervention required (check library path permissions)",
+    "errorPrefix": {
+      "importFailed": "Import failed:",
+      "importBlocked": "Import blocked:",
+      "error": "Error:"
+    },
+    "pendingGrabbing": "Grabbing…",
+    "pendingGrab": "Grab Now",
+    "pendingHeading": "Pending Releases ({{n}})"
   },
   "series": {
     "searchPlaceholder": "Search series…",
@@ -874,14 +959,14 @@
       "searchLabel": "Search Hardcover for a series",
       "searchPlaceholder": "Search Hardcover for a series",
       "search": "Search",
-      "searching": "Searching...",
+      "searching": "Searching…",
       "noResults": "No Hardcover series found.",
       "searchFailed": "Hardcover search failed",
       "bookCount_one": "{{count}} book",
       "bookCount_other": "{{count}} books",
       "viewOnHardcover": "View on Hardcover ↗",
       "add": "Add",
-      "adding": "Adding...",
+      "adding": "Adding…",
       "addResult": "Add {{title}}",
       "addFailed": "Could not add the series",
       "alreadyAdded": "Already in your library"
@@ -993,6 +1078,40 @@
       "done_one": "{{count}} split part unmonitored",
       "done_other": "{{count}} split parts unmonitored",
       "failed": "Could not unmonitor the split parts"
+    },
+    "addBookModal": {
+      "loadFailed": "Failed to load books",
+      "selectBook": "Select a book",
+      "addFailed": "Failed to add book",
+      "title": "Add Book to Series",
+      "searchPlaceholder": "Search library books…",
+      "loading": "Loading…",
+      "noMatch": "No matching books found.",
+      "position": "Position (optional)",
+      "primarySeries": "Primary series",
+      "adding": "Adding…",
+      "add": "Add"
+    },
+    "hardcoverLink": {
+      "searchFailed": "Search failed",
+      "linkFailed": "Failed to link series",
+      "unlinkFailed": "Failed to remove link",
+      "title": "Link to Hardcover Series",
+      "current": "Currently linked",
+      "view": "View on Hardcover ↗",
+      "auto": "Auto",
+      "manual": "Manual",
+      "remove": "Remove Link",
+      "searchPlaceholder": "Search Hardcover series",
+      "books_one": "{{count}} book",
+      "books_other": "{{count}} books",
+      "readers": "{{n}} readers",
+      "match": "{{confidence}} match",
+      "noPage": "No Hardcover page for this result",
+      "searching": "Searching…",
+      "noResults": "No Hardcover series found.",
+      "saving": "Saving…",
+      "confirm": "Confirm Selection"
     }
   },
   "importHints": {
@@ -1082,7 +1201,188 @@
         "unknownRunHeading": "Older items · {{count}}",
         "dismissRun": "Dismiss all from this run",
         "dismissingRun": "Dismissing…",
-        "dismissRunConfirm": "Dismiss {{count}} review items from run #{{runId}}? This cannot be undone."
+        "dismissRunConfirm": "Dismiss {{count}} review items from run #{{runId}}? This cannot be undone.",
+        "reason": {
+          "unmatchedAuthor": "No confident author match",
+          "ambiguousAuthor": "Multiple author matches",
+          "unmatchedBook": "No confident book match",
+          "ambiguousBook": "Multiple book matches"
+        },
+        "heading": "No-match books",
+        "hint": "Low-confidence ABS items stay here until you explicitly import or dismiss them, which keeps bad metadata out of the main catalog.",
+        "none": "No queued ABS review items.",
+        "unknownAuthor": "Unknown author",
+        "resolvedAuthor": "Author: {{name}}",
+        "resolvedBook": "Book: {{title}}",
+        "fileMappingFound": "File Mapping Found",
+        "searching": "Searching…",
+        "searchAuthor": "Author",
+        "searchBook": "Book",
+        "importing": "Importing…",
+        "import": "Import",
+        "dismiss": "Dismiss"
+      },
+      "errors": {
+        "loadConflicts": "Failed to load enrichment conflicts",
+        "loadReview": "Failed to load review items",
+        "loadLibraries": "Failed to load libraries",
+        "loadConfig": "Failed to load Audiobookshelf config",
+        "save": "Failed to save Audiobookshelf settings",
+        "test": "Connection test failed",
+        "importStart": "Import failed to start",
+        "rollbackPreview": "Failed to preview rollback",
+        "rollback": "Failed to roll back import run",
+        "resolveConflict": "Failed to resolve conflict",
+        "relink": "Failed to relink author",
+        "reviewImport": "Failed to import review item",
+        "reviewDismiss": "Failed to dismiss review item",
+        "reviewDismissRun": "Failed to dismiss review run",
+        "authorSearch": "Author search failed",
+        "resolveAuthor": "Failed to resolve author",
+        "bookSearch": "Book search failed",
+        "resolveBook": "Failed to resolve book"
+      },
+      "import": {
+        "saveFirst": "Save Audiobookshelf settings before starting an import",
+        "heading": "Catalog import",
+        "hint": "Import authors, books, series, and editions from the selected ABS libraries. Shared filesystem paths are reconciled into Bindery ownership automatically; when ABS and Bindery use different mount prefixes, add a path translation above. Non-visible paths stay metadata-only and are counted for manual follow-up.",
+        "dryRun": "Start with dry-run",
+        "preview": "Preview changes",
+        "running": "Running…",
+        "runSelected": "Run selected mode",
+        "run": "Import libraries",
+        "saveFirstHint": "Save Audiobookshelf settings before starting an import so the run uses the stored source configuration.",
+        "chooseLibraryHint": "Choose at least one library or use \"Test connection\" or \"List libraries\" to load accessible book libraries before starting an import.",
+        "working": "Working…",
+        "processed": "{{count}} processed",
+        "resumedAfter": "Resumed from page {{page}} after {{item}}.",
+        "resumed": "Resumed from page {{page}}.",
+        "dryRunFailed": "Dry-run failed: {{error}}",
+        "failed": "Import failed: {{error}}",
+        "dryRunComplete": "Dry-run complete",
+        "complete": "Import complete",
+        "stats": {
+          "librariesScanned_one": "library scanned",
+          "librariesScanned_other": "libraries scanned",
+          "booksCreated_one": "book created",
+          "booksCreated_other": "books created",
+          "booksLinked_one": "linked to an existing row",
+          "booksLinked_other": "linked to existing rows",
+          "booksUpdated_one": "updated",
+          "booksUpdated_other": "updated",
+          "authorsCreated_one": "author created",
+          "authorsCreated_other": "authors created",
+          "seriesCreated_one": "series created",
+          "seriesCreated_other": "series created",
+          "editionsAdded_one": "edition added",
+          "editionsAdded_other": "editions added",
+          "ownedMarked_one": "format marked owned",
+          "ownedMarked_other": "formats marked owned",
+          "reviewQueued_one": "queued for review",
+          "reviewQueued_other": "queued for review",
+          "pendingManual_one": "pending manual follow-up",
+          "pendingManual_other": "pending manual follow-up",
+          "metadataRelinked_one": "metadata relinked",
+          "metadataRelinked_other": "metadata relinked",
+          "metadataConflicts_one": "conflict queued for review",
+          "metadataConflicts_other": "conflicts queued for review"
+        }
+      },
+      "loading": "Loading Audiobookshelf…",
+      "runStatus": {
+        "rolledBack": "rolled back",
+        "completed": "completed",
+        "failed": "failed",
+        "running": "running"
+      },
+      "runs": {
+        "unknownLibrary": "Unknown library",
+        "heading": "Recent runs",
+        "hint": "Use a dry-run before a live import, then preview rollback against the exact batch if you need to unwind it safely.",
+        "refresh": "Refresh runs",
+        "none": "No ABS import runs recorded yet.",
+        "dryRun": "Dry-run",
+        "live": "Live import",
+        "title": "Run #{{id}} · {{mode}} · {{status}}",
+        "summary": "{{seen}} items seen, {{fetched}} detail fetches, {{created}} books created, {{linked}} linked, {{updated}} updated, {{owned}} formats marked owned, {{review}} queued for review, {{manual}} pending manual.",
+        "checkpointAfter": "Last checkpoint: page {{page}} after {{item}}.",
+        "checkpoint": "Last checkpoint: page {{page}}."
+      },
+      "rollback": {
+        "action": {
+          "deleteAuthor": "Delete author {{name}}",
+          "deleteBook": "Delete book {{name}}",
+          "deleteEdition": "Delete edition {{name}}",
+          "deleteSeries": "Delete series {{name}}",
+          "restoreBook": "Restore book metadata {{name}}",
+          "unlinkSeries": "Remove series link {{name}}",
+          "unlinkProvenance": "Remove ABS link {{name}}",
+          "retain": "Retain {{entityType}} {{name}}"
+        },
+        "previewing": "Previewing…",
+        "preview": "Preview rollback",
+        "rolledBack": "Rolled back",
+        "applying": "Rolling back…",
+        "apply": "Apply rollback",
+        "previewHeading": "Rollback preview",
+        "resultHeading": "Rollback result",
+        "summary": "{{planned}} actions planned, {{deleted}} entities deleted, {{unlinked}} ABS links removed, {{skipped}} retained, {{failed}} failures.",
+        "wouldChange": "Would delete or change",
+        "changed": "Deleted or changed",
+        "noChanges": "No entities would be deleted or changed.",
+        "wouldRetain": "Would be retained",
+        "retained": "Retained",
+        "noRetained": "No retained entities reported."
+      },
+      "intro": "Configure one ABS source, test API-key auth, pick book libraries, then import ABS metadata into the Bindery catalog.",
+      "matchingTip": "For better initial matching, it helps to review the selected ABS libraries first and match audiobooks to Audible sources so ASINs are already present before import.",
+      "disableSource": "Disable Audiobookshelf source",
+      "enableSource": "Enable Audiobookshelf source",
+      "libraries": {
+        "heading": "Libraries",
+        "hint": "Select each ABS book library to import from this source.",
+        "none": "No libraries selected. Use Test connection or List libraries to discover accessible book libraries."
+      },
+      "fields": {
+        "sourceLabel": "Source label",
+        "baseUrl": "Base URL",
+        "apiKey": "API key",
+        "apiKeySavedPlaceholder": "Saved key is hidden. Enter a new key to rotate it.",
+        "apiKeyPlaceholder": "Paste an ABS API key",
+        "apiKeySavedHint": "A key is already stored and stays write-only. Leaving this blank keeps the saved key. Use a key for a user that can access the selected book libraries; ABS admin permissions are not required.",
+        "apiKeyHint": "Use a key for a user that can access the selected book libraries. ABS admin permissions are not required, and the saved key never comes back to the browser after you store it."
+      },
+      "test": {
+        "connectedAs": "Connected as",
+        "serverVersion": "on ABS {{version}}",
+        "defaultLibrary": "default library {{id}}"
+      },
+      "pathRemap": {
+        "label": "ABS path remap",
+        "help": "Optional and separate from download-client remaps. Use when ABS reports shared-storage paths that Bindery sees under a different mount."
+      },
+      "saveSource": "Save source",
+      "testConnection": "Test connection",
+      "listLibraries": "List libraries",
+      "results": {
+        "books": "Books",
+        "authors": "Authors",
+        "series": "Series",
+        "editions": "Editions",
+        "followUp": "Follow-up",
+        "createdLinked": "{{created}} created, {{linked}} linked.",
+        "editionsSummary": "{{added}} added, {{owned}} formats marked owned.",
+        "followUpSummary": "{{review}} queued for review, {{manual}} pending manual, {{conflicts}} conflicts queued."
+      },
+      "conflicts": {
+        "authorTitle": "Author conflicts",
+        "authorDescription": "Review placeholder ABS authors here first. If Bindery can confidently relink one to upstream metadata, you can trigger that before working through book review items.",
+        "authorEmpty": "No author conflicts recorded yet.",
+        "authorResolved": "Resolved author choices",
+        "bookTitle": "Book conflicts",
+        "bookDescription": "When ABS and upstream book metadata disagree, Bindery keeps the upstream value temporarily and lets you confirm the winning source here.",
+        "bookEmpty": "No book conflicts recorded yet.",
+        "bookResolved": "Resolved book choices"
       }
     },
     "calibre": {
@@ -1200,6 +1500,73 @@
         "close": "Close",
         "closeRunningHint": "Close. Queued books keep going out in the background.",
         "closeAndKeepGoing": "Close and keep going"
+      },
+      "errors": {
+        "save": "Save failed",
+        "importStart": "Import failed to start"
+      },
+      "test": {
+        "pluginReachable": "✓ Plugin reachable",
+        "calibredbReachable": "✓ calibredb reachable",
+        "failed": "Test failed",
+        "pluginUnreachable": "✗ Could not reach plugin",
+        "calibredbUnreachable": "✗ calibredb unreachable",
+        "button": "Test connection"
+      },
+      "intro": "Calibre only knows about books recorded in its <code>metadata.db</code>; a file placed in its library folder is invisible to Calibre and to CWA. There are three ways to hand a book over: register it with Calibre after import (Write integration below), copy it into a CWA ingest folder (the CWA section below), or let CWA or Calibre own the library and feed it from a drop folder (Import Mode External, under File Naming on the General tab). Neither the write integration nor the CWA mirror runs in External import mode. The <guide>Calibre integration guide</guide> compares them.",
+      "fields": {
+        "libraryPath": "Library path",
+        "libraryPathHint": "Directory containing <code>metadata.db</code>. Used by both the write integration and library import.",
+        "binaryPath": "Binary path (optional)",
+        "binaryPathHint": "Leave blank to resolve <code>calibredb</code> on PATH. Set explicitly when running in a container that bundles Calibre at a pinned location.",
+        "pluginUrl": "Plugin URL",
+        "pluginUrlHint": "Base URL of the Bindery Bridge plugin’s HTTP server running inside Calibre.",
+        "apiKey": "API key",
+        "apiKeyHint": "Bearer token configured in the plugin’s Calibre Preferences dialog.",
+        "apiKeyPlaceholder": "plugin api key",
+        "pushRemap": "Push path remap",
+        "pushRemapHint": "Optional. If the Calibre container mounts your library at a different path than Bindery, map Bindery’s prefix to Calibre’s as <code>{{pair}}</code> pairs (comma separated), e.g. <code>{{linux}}</code>. For Calibre on Windows, map to a network share, e.g. <code>{{windows}}</code>; a share address is more reliable than a mapped drive letter, which the running Calibre may not see. Leave empty when both containers see the library at the same path."
+      },
+      "mode": {
+        "heading": "Write integration",
+        "off": "Off",
+        "offDesc": "No Calibre call on import. The file lands in the Bindery library only.",
+        "calibredb": "calibredb CLI",
+        "calibredbDesc": "Run calibredb add --with-library after each import. Calibre copies the file into its own library, so it exists twice. Needs calibredb inside the Bindery container or process; the official distroless image does not ship it.",
+        "plugin": "Calibre Bridge plugin",
+        "pluginDesc": "Hand each import to the Bindery Bridge plugin running inside Calibre, in another container or host. With the push transport only the path and metadata are sent, so Calibre must see the Bindery library; with pull the plugin downloads each book from Bindery itself."
+      },
+      "import": {
+        "heading": "Library import",
+        "hint": "Read your existing Calibre library and import books, authors, and editions into Bindery. Works independently of the write mode above.",
+        "disable": "Disable library import",
+        "enable": "Enable library import",
+        "syncOnStartup": "Sync on startup",
+        "syncOnStartupHint": "Re-import each time Bindery starts. Safe to leave on — imports are incremental and idempotent.",
+        "lastImport": "Last import:",
+        "never": "Never imported.",
+        "running": "Importing…",
+        "start": "Import library",
+        "working": "Working…",
+        "failed": "Import failed: {{error}}",
+        "complete": "Import complete",
+        "stats": {
+          "authorsAdded_one": "author added",
+          "authorsAdded_other": "authors added",
+          "booksAdded_one": "book added",
+          "booksAdded_other": "books added",
+          "editionsAdded_one": "edition added",
+          "editionsAdded_other": "editions added",
+          "duplicatesMerged_one": "merged",
+          "duplicatesMerged_other": "merged",
+          "skipped_one": "skipped",
+          "skipped_other": "skipped"
+        }
+      },
+      "cwa": {
+        "intro": "When set, every successful ebook import is also copied into this directory so a sibling <cwa>CWA</cwa> container can ingest it. Bindery keeps its own copy. Audiobooks are not mirrored. This mirror is independent of the write integration above, and it does nothing in External import mode; use the Drop folder on the General tab for that setup. Leave blank to disable.",
+        "ingestPath": "Ingest folder path",
+        "ingestPathHint": "Mount the same path into both containers. CWA’s docs use <code>{{path}}</code>."
       }
     },
     "indexers": {
@@ -1264,7 +1631,8 @@
       "quotaReached": "Daily query limit of {{limit}} reached. This indexer is being skipped until the oldest hour of queries falls out of the window.",
       "healthAuthFail": "This indexer rejected the last search and will keep rejecting until someone fixes it: {{error}}",
       "healthFail": "Last search failed: {{error}}",
-      "cooldown": "Rate limited. Searches resume at {{until}}: {{error}}"
+      "cooldown": "Rate limited. Searches resume at {{until}}: {{error}}",
+      "requestFailed": "Request failed"
     },
     "prowlarr": {
       "heading": "Prowlarr",
@@ -1328,7 +1696,7 @@
         },
         "previewLabel": "Preview",
         "apply": "Apply this remap",
-        "applying": "Applying...",
+        "applying": "Applying…",
         "failed": "Could not save the remap: {{error}}"
       },
       "diagnose": {
@@ -1384,6 +1752,30 @@
           "hardlinks": "Hardlinks",
           "indexer_reach": "Client reaching indexers"
         }
+      },
+      "saveFailed": "Failed to save",
+      "name": "Name",
+      "clientType": "Client Type",
+      "connection": "Connection",
+      "useSsl": "Use SSL",
+      "urlBase": "URL Base",
+      "username": "Username",
+      "host": "Host",
+      "port": "Port",
+      "password": "Password",
+      "apiKey": "API Key",
+      "hostHint": "Hostname or IP only — no <code>http://</code> prefix. In Docker, use the service/container name (e.g. <code>nzbget</code>) — not <code>localhost</code>.",
+      "urlBaseHint": "Optional path prefix for reverse proxy deployments (e.g. <code>/sabnzbd</code>). Leave blank for direct connections.",
+      "downloadDir": "Download Directory",
+      "categoryLabel": "Category / Label",
+      "downloadDirPlaceholder": "/downloads (leave blank for default)",
+      "transmissionDirHint": "Optional absolute path override. Leave blank to use Transmission's configured default download directory.",
+      "delugeLabelHint": "Applied via the Deluge label plugin. Leave blank if the plugin is not installed.",
+      "pathRemapLabel": "Download client path remap",
+      "remapHelp": {
+        "qbittorrent": "Map the path qBittorrent reports to the path Bindery can read. Example: if qBittorrent shows /downloads/books but Bindery sees that folder at /media/books, use /downloads:/media/books. Bindery also uses this in reverse when sending new torrents.",
+        "rtorrent": "Map the path rTorrent reports to the path Bindery can read. Seedbox installs almost always need this — e.g. rTorrent writes to /home/user/downloads while Bindery mounts that share at /media/books, so use /home/user/downloads:/media/books. Bindery also uses this in reverse when setting a new torrent's download directory, and to locate files when you remove a download with its data.",
+        "other": "Map the path this client reports to the path Bindery can read: the client's path, a colon, then Bindery's. Example: if the client shows /downloads/books but Bindery sees that folder at /media/books, use /downloads:/media/books. A Windows path works on the client side, such as S:\\Downloads:/downloads. Leave empty when both already see the same mount. Diagnose checks the mapping end to end."
       }
     },
     "notifications": {
@@ -1410,7 +1802,23 @@
         "requestCreated": "one of your users asked for a book or an author to be added"
       },
       "testSent": "Test notification sent!",
-      "saveFailed": "Couldn't save notification: {{error}}"
+      "saveFailed": "Couldn't save notification: {{error}}",
+      "trigger": {
+        "grab": "Grab",
+        "import": "Import",
+        "failure": "Failure",
+        "upgrade": "Upgrade",
+        "health": "Health"
+      },
+      "headersInvalidEdit": "Headers must be valid JSON object with string values, or empty.",
+      "headersInvalid": "Headers must be valid JSON or empty.",
+      "name": "Name",
+      "webhookUrl": "Webhook URL",
+      "topicLabel": "ntfy topic (optional)",
+      "topicHint": "For ntfy: set the topic here and point the URL at the ntfy server root (e.g. https://ntfy.sh). Bindery then posts a JSON body ntfy renders natively, instead of printing raw JSON.",
+      "headersLabel": "Custom headers (JSON, optional)",
+      "headersHint": "For ntfy auth, Discord routing, or any custom header. Leave blank to send none.",
+      "triggerOn": "Trigger on:"
     },
     "quality": {
       "heading": "Quality Profiles",
@@ -1471,7 +1879,9 @@
       "formSkipPartBooks": "Skip part books",
       "saveChanges": "Save changes",
       "createProfile": "Create profile",
-      "saveFail": "Failed to save profile"
+      "saveFail": "Failed to save profile",
+      "languagesAny": "any",
+      "libraryDefaults": "Library Defaults"
     },
     "rootfolders": {
       "heading": "Root Folders",
@@ -1506,7 +1916,23 @@
       "downloadNote": "Download saves the entries matching the filters the table is showing as a plain-text file you can attach to a bug report. Large exports are capped; the file says so in its footer when that happens.",
       "page": "Page {{page}}",
       "deleteBackupConfirm": "Delete backup {{filename}}?",
-      "deleteBackupTitle": "Delete backup"
+      "deleteBackupTitle": "Delete backup",
+      "age": {
+        "justNow": "just now",
+        "soon": "in a moment",
+        "minutesAgo": "{{n}}m ago",
+        "inMinutes": "in {{n}}m",
+        "hoursAgo": "{{n}}h ago",
+        "inHours": "in {{n}}h",
+        "daysAgo": "{{n}}d ago",
+        "inDays": "in {{n}}d"
+      },
+      "backupCreated": "Backup created:",
+      "backupFailed": "Backup failed:",
+      "deleteFailed": "Delete failed:",
+      "viewLabel": "View",
+      "runtimeLevel": "Runtime level",
+      "runtimeLevelHint": "Controls which log levels are written to the database"
     },
     "general": {
       "hardcoverTokenRejected": "Hardcover rejected the API token, so Hardcover requests are paused. Save a working token below, or use Test connection once it is fixed on Hardcover.",
@@ -1761,7 +2187,60 @@
       "defaultMonitorModeHint": "Applied to newly added authors. Existing authors keep their current mode unless edited.",
       "defaultMonitorLatestCountLabel": "Latest book count",
       "audiobookFileTemplate": "Audiobook file naming (per track)",
-      "audiobookFileTemplateHint": "Leave empty to keep the download’s original file layout. Set a template to rename every audiobook track in playback order; it must include {Part}. A single-file audiobook is renamed too, as part 1, unless {Part} sits in a group with its own text, such as {Title}{ - Pt. Part:3}.{ext}, which is left out when there is only one file."
+      "audiobookFileTemplateHint": "Leave empty to keep the download’s original file layout. Set a template to rename every audiobook track in playback order; it must include {Part}. A single-file audiobook is renamed too, as part 1, unless {Part} sits in a group with its own text, such as {Title}{ - Pt. Part:3}.{ext}, which is left out when there is only one file.",
+      "saveFailed": "Save failed",
+      "scanFailed": "Scan failed:",
+      "importMode": {
+        "label": "Import Mode",
+        "hint": "How Bindery places completed downloads into the library. <b>Auto</b> (the default) hardlinks when the download folder and library share a volume, otherwise copies — either way the source stays in place so torrent seeding keeps working. <b>Move</b> relocates the source out of the download folder, which breaks seeding. Use <b>Hardlink</b> or <b>Copy</b> to force keeping the source file intact; Hardlink requires the download folder and library to be on the same filesystem/volume. Use <b>External</b> if another tool (Calibre, Grimmory, etc.) manages your library — Bindery grabs the download and stops; your tool processes it, then Bindery reconciles on the next library scan.",
+        "auto": "Auto",
+        "move": "Move",
+        "copy": "Copy",
+        "hardlink": "Hardlink",
+        "external": "External"
+      },
+      "interval": {
+        "hours_one": "{{count}} hour",
+        "hours_other": "{{count}} hours",
+        "days_one": "{{count}} day",
+        "days_other": "{{count}} days",
+        "withDefault": "{{interval}} (default)"
+      },
+      "auth": {
+        "unknown": "unknown",
+        "regenerateFailed": "Regenerate failed:",
+        "rotateFailed": "Rotate failed:",
+        "modeChangeFailed": "Mode change failed:",
+        "secretRotated": "Session secret rotated. New logins sign with the new secret; existing sessions remain valid until the next rotation.",
+        "authMode": "Authentication Mode",
+        "modeEnabled": "Enabled",
+        "modeLocalOnly": "Local only (bypass for private IPs)",
+        "modeDisabled": "Disabled (no auth)",
+        "modeEnabledHint": "Always requires login, regardless of network origin.",
+        "modeLocalOnlyHint": "Login is bypassed for requests from private / LAN IP ranges. Still requires login from the internet.",
+        "modeDisabledHint": "No authentication — only safe when Bindery is behind a trusted reverse proxy that enforces access control.",
+        "apiKey": "API Key",
+        "apiKeyHint": "Pass as <code>X-Api-Key</code> header or <code>?apikey=</code> query parameter. Used by external integrations (Tautulli, custom scripts, etc.).",
+        "hideKey": "Hide",
+        "showKey": "Show",
+        "regenerate": "Regenerate",
+        "regenerateHint": "Regenerating invalidates the current key — update all external integrations afterward.",
+        "sessionSecret": "Session Secret",
+        "sessionSecretHint": "Signs session cookies. Rotating it generates a new secret while keeping the previous one valid for a rotation window, so existing logins are not dropped immediately. Rotate twice to fully invalidate sessions signed with the old secret.",
+        "rotateSecret": "Rotate session secret"
+      },
+      "password": {
+        "mismatch": "New passwords do not match",
+        "tooShort": "Password must be at least 8 characters",
+        "changeFailed": "Change failed",
+        "heading": "Change password for <b>{{username}}</b>",
+        "current": "Current password",
+        "new": "New password",
+        "confirm": "Confirm new password",
+        "updated": "Password updated",
+        "updating": "Updating…",
+        "change": "Change password"
+      }
     },
     "import": {
       "csvHeading": "CSV of author names",
@@ -1860,7 +2339,25 @@
       "configureHardcoverToken": "Configure the Hardcover API token in API Keys settings →",
       "folderMovedHeading": "Import from a folder",
       "folderMovedBody": "Scanning a folder and importing what it matches is on the Import page now, beside the books a library scan could not match.",
-      "folderMovedLink": "Open Import"
+      "folderMovedLink": "Open Import",
+      "uploadFailed": "Upload failed",
+      "lookupFailed": "Lookup failed",
+      "importFailed": "Import failed",
+      "hardcoverLoadSavedFailed": "Failed to load saved Hardcover lists",
+      "hardcoverLoadFailed": "Failed to load Hardcover lists",
+      "updateMediaTypeFailed": "Failed to update media type",
+      "updateMonitorNewFailed": "Failed to update download setting",
+      "updateOwnerFailed": "Failed to update owner",
+      "hardcoverUpdateFailed": "Failed to update Hardcover import list",
+      "tokenOverrideSaveFailed": "Failed to save token override",
+      "tokenOverrideClearFailed": "Failed to clear token override",
+      "resultAuthors": "Authors",
+      "resultIndexers": "Indexers",
+      "resultDownloadClients": "Download clients",
+      "resultBlocklist": "Blocklist",
+      "manualImportSelect": "— select —",
+      "hardcoverListBooks_one": " · {{count}} book",
+      "hardcoverListBooks_other": " · {{count}} books"
     },
     "oidc": {
       "heading": "SSO / OIDC Providers",
@@ -1919,6 +2416,50 @@
       "sectionInternal": "Bindery's own bookkeeping",
       "sectionInert": "No longer used",
       "sectionUnknown": "Unrecognised keys"
+    },
+    "grimmory": {
+      "errors": {
+        "save": "Save failed",
+        "test": "Test failed",
+        "syncStart": "Sync failed to start"
+      },
+      "intro": "Push imported ebooks to a <site>Grimmory</site> self-hosted library. Every successful ebook import is uploaded to Grimmory's <b>BookDrop</b> inbox, where Grimmory's own metadata matching and review flow takes over. Files are pushed at most once.",
+      "enable": "Enable Grimmory integration",
+      "fields": {
+        "serverUrl": "Server URL",
+        "username": "Username",
+        "usernamePlaceholder": "Grimmory account with upload permission",
+        "password": "Password",
+        "configured": "(configured — leave blank to keep)",
+        "passwordHint": "Bindery signs in to Grimmory with these credentials (current Grimmory has no API tokens). Use an account with upload permission — a dedicated one is a good idea.",
+        "apiToken": "API token",
+        "optional": "(optional)",
+        "apiTokenPlaceholder": "Only if a future Grimmory release adds token auth",
+        "apiTokenHint": "If set, the token is sent as a Bearer credential and the username/password login is skipped (<link>grimmory-tools#1487</link>)."
+      },
+      "testConnection": "Test Connection",
+      "push": {
+        "heading": "Push library to Grimmory",
+        "hint": "Upload every imported ebook that hasn't been pushed yet. Already-pushed files are skipped, so re-running is safe.",
+        "running": "Pushing…",
+        "start": "Push all to Grimmory",
+        "enableFirst": "Enable and save the integration first.",
+        "progress": "{{processed}}/{{total}} processed, {{pushed}} pushed, {{already}} already pushed, {{failed}} failed",
+        "moreErrors": "…and {{count}} more",
+        "total_one": "{{count}} file pushed so far.",
+        "total_other": "{{count}} files pushed so far.",
+        "totalLast_one": "{{count}} file pushed so far, last at {{last}}.",
+        "totalLast_other": "{{count}} files pushed so far, last at {{last}}."
+      }
+    },
+    "rootFolders": {
+      "addFailed": "Failed to add folder"
+    },
+    "apiKeys": {
+      "hardcoverTestFailed": "Hardcover API test failed"
+    },
+    "pathRemap": {
+      "syntaxHint": "Use comma-separated <code>from:to</code> prefix rewrites."
     }
   },
   "addToLibrary": {
@@ -1994,7 +2535,6 @@
     "book": {
       "confirmAdd": "Add book",
       "coverAlt": "{{title}} cover",
-      "noCover": "No cover",
       "published": "Published",
       "language": "Language",
       "resultFormat": "Metadata format",
@@ -2044,18 +2584,25 @@
     "merging": "Merging…",
     "cancel": "Cancel",
     "confirmBody": "Merge \"{{source}}\" into \"{{target}}\"?\n\n• {{count}} book(s) will be reparented.\n• \"{{source}}\" will be kept as an alias of \"{{target}}\".\n• This cannot be undone.",
-    "confirmAcknowledge": "I understand this cannot be undone."
+    "confirmAcknowledge": "I understand this cannot be undone.",
+    "failed": "Merge failed",
+    "counting": "Counting books…",
+    "willMove": "book(s) will move to the target.",
+    "aliasPreserved": "Alias preserved:"
   },
   "pagination": {
     "previous": "Previous",
     "next": "Next",
     "pageOf": "Page {{page}} of {{total}}",
     "jumpToPage": "Jump to page",
-    "perPage": "Per page"
+    "perPage": "Per page",
+    "range": "{{start}}–{{end}} of {{total}}"
   },
   "bulkActionBar": {
     "selected": "{{count}} selected",
-    "clear": "Clear"
+    "clear": "Clear",
+    "setFormat": "Set format",
+    "more": "More bulk actions"
   },
   "discover": {
     "title": "Discover",
@@ -2165,7 +2712,10 @@
     "countQualityProfiles": "Quality profiles",
     "countMetadataProfiles": "Metadata profiles",
     "countRootFolders": "Root folders",
-    "countImportLists": "Import lists"
+    "countImportLists": "Import lists",
+    "resetPrompt": "New password (min 8 characters):",
+    "resetFailed": "Failed",
+    "adminRequired": "Admin access required."
   },
   "requests": {
     "kindBook": "Book",
@@ -2251,11 +2801,11 @@
   },
   "bookStatus": {
     "wanted": "Wanted",
-    "imported": "Imported",
+    "imported": "In library",
     "skipped": "Skipped",
     "notMonitored": "Not monitored",
     "wantedDescription": "A format is missing and Bindery will search for it on the next sweep.",
-    "importedDescription": "Every format this book wants is on disk.",
+    "importedDescription": "Every format this book wants is on disk. A book with only some of its formats reads Wanted, and the In library filter still lists it.",
     "skippedDescription": "Blocklisted or excluded. Bindery will not search for it and it stays off the Wanted page.",
     "notMonitoredDescription": "A format is missing, but Bindery will not search for it. Turn monitoring on to fetch it."
   },
@@ -2299,7 +2849,7 @@
     "fileHeading": "File",
     "mediaTypeLabel": "Media type",
     "mediaTypeHint": "Change media type",
-    "wantedFormatLabel": "Wanted",
+    "wantedFormatLabel": "Target format",
     "formatNotOnDisk": "Not downloaded",
     "noFile": "No file on disk",
     "fileCount": "{{count}} file(s)",
@@ -2388,7 +2938,10 @@
       "destinationUnknown": "Bindery could not work out the destination. The file will still be moved and renamed.",
       "confirmButton": "Move and reassign",
       "confirmButtonNoop": "Reassign",
-      "backButton": "Choose a different book"
+      "backButton": "Choose a different book",
+      "searchFailed": "search failed",
+      "previewFailed": "preview failed",
+      "reassignFailed": "reassign failed"
     },
     "metadataSource": {
       "heading": "Metadata source",
@@ -2458,6 +3011,11 @@
       "pending": "Waiting for Calibre",
       "delivered": "In Calibre",
       "failed": "Calibre failed"
+    },
+    "results": {
+      "ebooks": "Ebooks ({{n}})",
+      "audiobooks": "Audiobooks ({{n}})",
+      "all": "Results ({{n}})"
     }
   },
   "bookRebind": {
@@ -2520,5 +3078,57 @@
     "genreOverrideDone": "Updated {{count}} book(s).",
     "bio": "Bio",
     "bioHint": "A bio you write here stays as you wrote it: no refresh replaces it. Clear it to let the metadata provider fill it again."
+  },
+  "absConflicts": {
+    "relinking": "Relinking…",
+    "relink": "Attempt upstream relink",
+    "upstreamSource": "upstream",
+    "needsReview": "Needs review",
+    "using": "Using {{source}}",
+    "empty": "Empty",
+    "upstream": "Upstream",
+    "useAbs": "Use ABS",
+    "useUpstream": "Use upstream",
+    "prefers": "Prefers {{source}}"
+  },
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "body": "The page hit an unexpected error and couldn't render. You can try reloading or returning to the home page.",
+    "reload": "Reload",
+    "home": "Go home",
+    "hideDetails": "Hide details",
+    "showDetails": "Show details"
+  },
+  "mediaBadge": {
+    "both": "Ebook + Audiobook"
+  },
+  "renameFiles": {
+    "status": {
+      "move": "Will move",
+      "moved": "Moved",
+      "noop": "Already correct",
+      "collision": "Destination exists",
+      "missing": "Not on disk",
+      "error": "Error",
+      "failed": "Failed"
+    },
+    "previewFailed": "Preview failed",
+    "renameFailed": "Rename failed",
+    "title": "Rename files",
+    "intro": "Move the files for <label>{{label}}</label> to match the current naming template. Files already in the right place are left alone.",
+    "computing": "Computing changes…",
+    "none": "No tracked files to rename.",
+    "appliedSummary": "{{moved}} moved, {{failed}} failed",
+    "previewSummary": "{{movable}} of {{total}} will move",
+    "apply_one": "Rename {{count}} file",
+    "apply_other": "Rename {{count}} files",
+    "renaming": "Renaming…",
+    "from": "from",
+    "to": "to"
+  },
+  "dataTable": {
+    "selectPage": "Select all on this page",
+    "selectRow": "Select {{name}}",
+    "actions": "Actions"
   }
 }

@@ -55,12 +55,13 @@ describe('RecommendationCard — rendering', () => {
     expect(screen.getByText('Next in the series')).toBeInTheDocument()
   })
 
-  it('shows a placeholder book icon when no imageUrl', () => {
+  it('shows the shared cover placeholder, with initials, when no imageUrl', () => {
     render(<RecommendationCard rec={baseRec} onDismiss={vi.fn()} onAdd={vi.fn()} onExcludeAuthor={vi.fn()} />)
     expect(screen.queryByRole('img')).toBeNull()
-    // SVG placeholder should be in the cover area
-    const coverArea = document.querySelector('.aspect-\\[2\\/3\\] svg')
-    expect(coverArea).not.toBeNull()
+    // The title is printed under the cover, so the tile carries initials.
+    const tile = document.querySelector('.aspect-\\[2\\/3\\] [aria-hidden]')
+    expect(tile).not.toBeNull()
+    expect(tile).toHaveTextContent('TB')
   })
 
   it('renders an img tag when imageUrl is set', () => {

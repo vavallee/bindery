@@ -28,7 +28,7 @@ const signalDefaults: Record<DuplicateSignalKind, string> = {
 
 const statusDefaults: Record<string, [string, string]> = {
   wanted: ['books.statusWanted', 'Wanted'],
-  imported: ['books.statusImported', 'In Library'],
+  imported: ['books.statusImported', 'In library'],
   skipped: ['books.statusSkipped', 'Skipped'],
 }
 

@@ -14,6 +14,7 @@ import { useIsAdmin } from '../auth/AuthContext'
 import Switch from '../components/Switch'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import CoverImage from '../components/CoverImage'
+import CoverPlaceholder from '../components/CoverPlaceholder'
 
 // Series page filters (#2871). Each is computed from the series list the page
 // already loaded; none of them marks, monitors, searches or fills anything.
@@ -108,6 +109,14 @@ export default function SeriesPage() {
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [navSeriesId])
+
+  // Arriving with a series to open (the author page's series headings, the
+  // header search) lands on its card: the list holds every series, so the
+  // opened one can sit far below the top (#3457). Once, when the list is in.
+  useEffect(() => {
+    if (loading || !navSeriesId) return
+    document.getElementById(`series-${navSeriesId}`)?.scrollIntoView?.({ block: 'start' })
+  }, [loading, navSeriesId])
 
   useEffect(() => {
     document.title = `${t('series.title')} · Bindery`
@@ -513,7 +522,7 @@ export default function SeriesPage() {
             })
 
             return (
-              <div key={series.id} className="border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden">
+              <div key={series.id} id={`series-${series.id}`} className="scroll-mt-20 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden">
                 <div
                   className="p-4 cursor-pointer hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 transition-colors"
                   onClick={() => toggleExpanded(series)}
@@ -664,7 +673,7 @@ export default function SeriesPage() {
                           src={entry.book?.imageUrl}
                           alt={entry.book?.title}
                           className="w-8 h-10 object-cover rounded flex-shrink-0"
-                          fallback={<div className="w-8 h-10 bg-slate-200 dark:bg-zinc-800 rounded flex-shrink-0" />}
+                          fallback={<CoverPlaceholder id={entry.bookId} title={entry.book?.title ?? ''} size="xs" className="w-8 h-10 rounded flex-shrink-0" />}
                         />
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">
@@ -777,9 +786,7 @@ export default function SeriesPage() {
                                 #{book.position || '?'}
                               </span>
                               <CoverImage loading="lazy" decoding="async" src={book.imageUrl} alt={book.title} className="w-8 h-10 object-cover rounded flex-shrink-0"
-                                fallback={
-                                  <div className="w-8 h-10 bg-slate-200 dark:bg-zinc-800 rounded flex-shrink-0" />
-                                }
+                                fallback={<CoverPlaceholder id={book.localBookId ?? `hc-${book.foreignBookId}`} title={book.title} size="xs" className="w-8 h-10 rounded flex-shrink-0" />}
                               />
                               <div className="min-w-0">
                                 <p className="text-sm font-medium truncate">{book.title}</p>

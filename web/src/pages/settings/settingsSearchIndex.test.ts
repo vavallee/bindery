@@ -140,7 +140,8 @@ describe('HEADINGS', () => {
   it('finds the sources it is meant to scan', () => {
     expect(Object.keys(sources).length).toBeGreaterThan(20)
     expect(sourceKeys.size).toBeGreaterThan(20)
-    expect(sourceLiterals.size).toBeGreaterThan(5)
+    // Translated headings are keys now; the product names (Audiobookshelf, Calibre, Grimmory, CWA) stay literal.
+    expect(sourceLiterals.size).toBeGreaterThan(2)
   })
 
   it('indexes every heading the components render through t()', () => {

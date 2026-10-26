@@ -386,6 +386,10 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 	// for an admin and with tenancy off, which keep the book unowned as before.
 	ownerForUnownedAuthor := scopeID
 
+	// dedupedOnto is the existing row the direct insert below merged the
+	// request into without that row taking the requested foreign id (#3466).
+	var dedupedOnto *models.Book
+
 	// 1b. Direct insert for the requested book.
 	//
 	// Originally added (#667) for DNB synthetic IDs, whose async sync returns
@@ -476,6 +480,9 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 			// sequence), skip the adopt and create a distinct row instead.
 			if ferr == nil && match != nil && !h.directInsertSeriesConflict(ctx, match.ID, primary.SeriesRefs) {
 				h.adoptDirectInsertMatch(ctx, match, primary, req.ForeignBookID)
+				if match.ForeignID != req.ForeignBookID {
+					dedupedOnto = match
+				}
 			} else if err := h.books.Create(ctx, primary); err != nil {
 				if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
 					slog.Warn("AddBook: direct insert failed",
@@ -495,6 +502,17 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 				created := *primary
 				handleNewWantedBook(ctx, h.books, h.series, h.finder, created, author.Name)
 			}
+		}
+	}
+
+	// 1b-2. The request was deduplicated onto a row that keeps its own work id
+	// ("Ready Player One" onto "Ready Player One (Movie Tie-In)"). Nothing will
+	// ever create a row for the requested id, so polling for one only ends in a
+	// 404 "try again shortly" that no retry fixes (#3466). Answer with the row
+	// the request was merged into, the same as re-adding a known id (#1227).
+	if dedupedOnto != nil {
+		if existing, _ := h.books.GetByForeignID(ctx, req.ForeignBookID); existing == nil {
+			return addBookResult{}, &bookInLibraryError{Book: dedupedOnto}
 		}
 	}
 

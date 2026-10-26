@@ -23,13 +23,17 @@ const i18nOverrides = vi.hoisted(() => ({ labels: {} as Record<string, string> }
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, opts?: Record<string, unknown> & { defaultValue?: string }) => {
+      if (key === 'pagination.range') return `${String(opts?.start)}–${String(opts?.end)} of ${String(opts?.total)}`
       const labels: Record<string, string> = {
         'common.loading': 'Loading...',
+        'common.ebook': 'Ebook',
+        'common.audiobook': 'Audiobook',
         'history.events.grabbed': 'Grabbed',
         'history.events.downloadFailed': 'Download Failed',
         'history.events.importFailed': 'Import Failed',
         'history.title': 'History',
         'history.contentCheckEbook': 'The file looks like another book',
+        'history.contentCheckEbookUncertain': 'The file may be another book, but Bindery cannot tell it from another edition',
         'history.contentCheckAudiobook': 'The files include other books',
         'history.contentCheckEbookEntry': '"{{title}}" by {{author}}',
         'history.contentCheckEbookTitleOnly': '"{{title}}"',
@@ -406,6 +410,38 @@ describe('HistoryPage', () => {
     expect(
       within(rowFor('Chase Audiobook')).getByText(
         'The files include other books: Corralled (9), Coming Home to Myself (8) · /audiobooks/Chase',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('words an uncertain ebook content check more softly', async () => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [
+        makeHistory({
+          id: 1,
+          eventType: 'bookImported',
+          sourceTitle: 'Hawk',
+          data: JSON.stringify({
+            path: '/library/hawk.epub',
+            contentCheck: {
+              kind: 'ebook',
+              uncertain: true,
+              mismatches: [{ title: 'City of the Dead', author: 'James Patterson' }],
+            },
+          }),
+        }),
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+
+    renderHistoryPage()
+    const table = await findDesktopTable()
+    expect(await within(table).findByText('Hawk')).toBeInTheDocument()
+    expect(
+      within(rowFor('Hawk')).getByText(
+        'The file may be another book, but Bindery cannot tell it from another edition: "City of the Dead" by James Patterson · /library/hawk.epub',
       ),
     ).toBeInTheDocument()
   })

@@ -4,7 +4,8 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 // i18n: echo the key (plus interpolated options) so assertions are stable.
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: Record<string, unknown>) => {
+    t: (key: string, options?: Record<string, unknown> | string) => {
+      if (typeof options === 'string') return options
       if (!options) return key
       let out = key
       for (const [k, v] of Object.entries(options)) {

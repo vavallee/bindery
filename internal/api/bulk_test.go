@@ -821,6 +821,44 @@ func TestBooksBulk_Exclude(t *testing.T) {
 	}
 }
 
+// TestBooksBulk_Unexclude covers #3454: the Excluded view had a bulk Exclude
+// and no way back. Repeating the call leaves the book included, since the
+// action sets the flag rather than toggling it.
+func TestBooksBulk_Unexclude(t *testing.T) {
+	h, _, books, author, ctx := bulkFixture(t)
+
+	book := mustCreateBook(t, books, ctx, &models.Book{
+		ForeignID: "B_UNEXC", AuthorID: author.ID, Title: "Put Me Back",
+		SortTitle: "put me back", Status: models.BookStatusWanted,
+		Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	})
+	if err := books.SetExcluded(ctx, book.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	body := fmt.Sprintf(`{"ids":[%d],"action":"unexclude"}`, book.ID)
+	for i := 0; i < 2; i++ {
+		rec := postBulk(t, h.BooksBulk, body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("call %d: expected 200, got %d: %s", i+1, rec.Code, rec.Body.String())
+		}
+		var resp bulkResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if r := resp.Results[fmt.Sprintf("%d", book.ID)]; !r.OK {
+			t.Errorf("call %d: expected ok, got %+v", i+1, r)
+		}
+		got, err := books.GetByID(ctx, book.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Excluded {
+			t.Errorf("call %d: book.Excluded: want false after bulk unexclude", i+1)
+		}
+	}
+}
+
 func TestBooksBulk_SetMediaType_Ebook(t *testing.T) {
 	h, _, books, author, ctx := bulkFixture(t)
 

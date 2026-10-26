@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import AuthorsPage from './AuthorsPage'
 import { api } from '../api/client'
 import type { Series } from '../api/client'
+import { clickBulkAction } from '../test-utils'
 
 const { navigateMock } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
@@ -37,6 +38,8 @@ vi.mock('react-i18next', () => ({
     t: (key: string, fallback?: string | Record<string, unknown>, opts?: Record<string, unknown>) => {
       const labels: Record<string, string> = {
         'authors.booksInLibrary': `${String(opts?.have ?? '')} of ${String(opts?.total ?? '')} in library`,
+        'dataTable.selectRow': `Select ${String(opts?.name ?? '')}`,
+        'dataTable.selectPage': 'Select all on this page',
         'authors.title': 'Authors',
         'authors.merge': 'Merge',
         'authors.addAuthor': 'Add Author',
@@ -213,7 +216,9 @@ describe('AuthorsPage', () => {
       </MemoryRouter>,
     )
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Add Series' }))
+    // Add series is a rare action, so it sits in the header's More menu.
+    fireEvent.click(await screen.findByRole('button', { name: 'More author actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add Series' }))
     const dialog = await screen.findByRole('dialog', { name: 'Add Series' })
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Dune Chronicles' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add Series' }))
@@ -255,7 +260,7 @@ describe('AuthorsPage', () => {
     fireEvent.click(await screen.findByTitle('Select Andy Weir'))
 
     // The bulk bar appears; click the new "Refresh metadata" action.
-    fireEvent.click(await screen.findByRole('button', { name: 'Refresh metadata' }))
+    clickBulkAction('Refresh metadata')
 
     await waitFor(() =>
       expect(api.bulkActionAuthors).toHaveBeenCalledWith([7], 'refresh', undefined, false),
@@ -290,7 +295,7 @@ describe('AuthorsPage', () => {
     )
 
     fireEvent.click(await screen.findByTitle('Select Andy Weir'))
-    fireEvent.click(await screen.findByRole('button', { name: 'Set monitor mode' }))
+    clickBulkAction('Set monitor mode')
 
     expect(await screen.findByRole('dialog', { name: 'Set monitor mode' })).toBeInTheDocument()
     expect(screen.getByText('Selected authors: 1')).toBeInTheDocument()
@@ -326,7 +331,7 @@ describe('AuthorsPage', () => {
     )
 
     fireEvent.click(await screen.findByTitle('Select Andy Weir'))
-    fireEvent.click(await screen.findByRole('button', { name: 'Set monitor mode' }))
+    clickBulkAction('Set monitor mode')
     fireEvent.change(await screen.findByLabelText('Monitor mode'), { target: { value: 'latest' } })
     fireEvent.change(screen.getByLabelText('Latest book count'), { target: { value: '3' } })
     fireEvent.click(screen.getByRole('button', { name: 'Apply monitor mode' }))
@@ -368,7 +373,7 @@ describe('AuthorsPage', () => {
     )
 
     fireEvent.click(await screen.findByTitle('Select Andy Weir'))
-    fireEvent.click(await screen.findByRole('button', { name: 'Set monitor mode' }))
+    clickBulkAction('Set monitor mode')
     fireEvent.click(screen.getByRole('checkbox', { name: /apply monitor mode to existing books/i }))
     fireEvent.click(screen.getByRole('button', { name: 'Apply monitor mode' }))
 
@@ -409,7 +414,7 @@ describe('AuthorsPage', () => {
     )
 
     fireEvent.click(await screen.findByTitle('Select Andy Weir'))
-    fireEvent.click(await screen.findByRole('button', { name: 'Set monitor mode' }))
+    clickBulkAction('Set monitor mode')
     fireEvent.click(screen.getByRole('button', { name: 'Apply monitor mode' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('author not found')
@@ -551,11 +556,15 @@ describe('AuthorsPage — filter and sort popovers', () => {
 
   // The column headers already sort in table view. Offering a sort control as
   // well invites the two to disagree about what is active.
-  it('drops the sort control in table view, where the headers do the job', async () => {
+  // The Sort control used to vanish in table view, which read as a page
+  // without sort. The headers and the control drive the same value, so they
+  // cannot disagree.
+  it('keeps the sort control in table view too', async () => {
     localStorage.setItem('bindery.view.authors', 'table')
     await renderPage()
 
-    expect(screen.queryByRole('button', { name: /Sort/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^Sort/ }))
+    expect(screen.getByRole('radio', { name: 'Recent' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Filters/ })).toBeInTheDocument()
   })
 

@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, useNavigationType, type NavigateFunction } from 'react-router'
 import BooksPage from './BooksPage'
 import AuthorsPage from './AuthorsPage'
+import { SORT_MODES } from './authorSortModes'
 import WantedPage from './WantedPage'
 import { apiUrl, server } from '../test/msw'
 import { api, type Author, type Book } from '../api/client'
@@ -18,7 +19,7 @@ import { api, type Author, type Book } from '../api/client'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: string | Record<string, unknown>) => {
+    t: (key: string, options?: string | Record<string, unknown>, extra?: Record<string, unknown>) => {
       const labels: Record<string, string> = {
         'common.all': 'All',
         'books.statusWanted': 'Wanted',
@@ -30,7 +31,9 @@ vi.mock('react-i18next', () => ({
         'wanted.showExcluded': 'Show excluded',
       }
       if (labels[key]) return labels[key]
-      if (typeof options === 'string') return options
+      // Interpolate a string default the way i18next would, so a row's
+      // "Select {{name}}" box is findable by the row's name.
+      if (typeof options === 'string') return options.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(extra?.[k] ?? ''))
       return key
     },
   }),
@@ -289,6 +292,17 @@ describe('AuthorsPage list state in the URL', () => {
       expect.objectContaining({ offset: 50, search: 'le guin', sort: 'za' }),
     ))
     expect(current().search).toBe('?q=le+guin&sort=za&page=2')
+  })
+
+  // Every sort the page accepts, a column header's included, shows as the
+  // checked radio when it arrives by URL.
+  it.each([...SORT_MODES])('checks ?sort=%s in the Sort popover', async sort => {
+    renderAt([`/?sort=${sort}`], <Route path="/" element={<AuthorsPage />} />)
+    await waitFor(() => expect(vi.mocked(api.listAuthors)).toHaveBeenLastCalledWith(expect.objectContaining({ sort })))
+    fireEvent.click(screen.getAllByRole('button', { name: /^common\.sort|^Sort/ })[0])
+    const checked = screen.getAllByRole('radio').filter(r => r.getAttribute('aria-checked') === 'true')
+    expect(checked).toHaveLength(1)
+    expect(checked[0]).toHaveAttribute('data-value', sort)
   })
 })
 

@@ -245,13 +245,13 @@ describe('AdoptionView', () => {
     const row = within(table).getByRole('row', { name: 'The Martian' })
 
     expect(within(row).getByText('Possible match')).toBeInTheDocument()
-    expect(within(row).getByText('Imported')).toBeInTheDocument()
+    expect(within(row).getByText('In library')).toBeInTheDocument()
     expect(within(row).queryByRole('button', { name: 'Confirm' })).toBeNull()
 
     fireEvent.click(within(row).getByRole('button', { name: 'The Martian' }))
     const editor = await screen.findByRole('region', { name: 'Which book is The Martian?' })
     expect(within(editor).getByRole('radio', { name: /The Martian/ })).toBeChecked()
-    expect(within(editor).getByText('Imported')).toBeInTheDocument()
+    expect(within(editor).getByText('In library')).toBeInTheDocument()
     expect(within(editor).getByRole('note')).toHaveTextContent('This book already has its files.')
 
     fireEvent.click(within(editor).getByRole('button', { name: 'Adopt as The Martian' }))

@@ -139,7 +139,7 @@ export default function BlocklistTab() {
                       </td>
                       <td className="px-4 py-3">
                         <span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-700 dark:text-red-400">
-                          {entry.reason || 'Unknown'}
+                          {entry.reason || t('common.unknown', 'Unknown')}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-fg-muted whitespace-nowrap text-xs">
@@ -189,7 +189,7 @@ export default function BlocklistTab() {
                     )}
                     <div className="flex flex-wrap items-center gap-2 mt-2">
                       <span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-700 dark:text-red-400">
-                        {entry.reason || 'Unknown'}
+                        {entry.reason || t('common.unknown', 'Unknown')}
                       </span>
                       <span className="text-[10px] text-fg-muted">{formatBlocklistDate(entry.createdAt)}</span>
                     </div>

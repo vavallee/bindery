@@ -1668,7 +1668,7 @@ func (s *Scanner) perFileAudiobookNames(ctx context.Context, downloadPath string
 	index := make(map[string]int, len(bookFiles))
 	tracks := make([]flattenTrack, 0, len(bookFiles))
 	for i, f := range bookFiles {
-		if !audioFlattenExtensions[strings.ToLower(filepath.Ext(f))] {
+		if !models.IsAudioPath(f) {
 			continue
 		}
 		rel, err := filepath.Rel(downloadPath, f)

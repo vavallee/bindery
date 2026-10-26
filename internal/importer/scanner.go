@@ -74,6 +74,9 @@ const (
 
 // Scanner checks for completed downloads and imports them into the library.
 type Scanner struct {
+	// windowsPaths makes path comparisons fold case and trailing dots, as
+	// Windows does (#3468). Set from the host OS; tests inject it.
+	windowsPaths bool
 	// covers stores cover art read from book files; nil disables it. See
 	// WithCoverStore.
 	covers *covers.Store
@@ -214,6 +217,7 @@ func NewScanner(downloads *db.DownloadRepo, clients *db.DownloadClientRepo,
 		remapper:     ParseRemap(downloadPathRemap),
 		libraryDir:   libraryDir,
 		audiobookDir: audiobookDir,
+		windowsPaths: onWindows,
 	}
 }
 
@@ -1500,9 +1504,9 @@ func (s *Scanner) alreadyImportedPath(ctx context.Context, book *models.Book, de
 		slog.Warn("idempotency check: failed to list book files", "bookID", book.ID, "error", err)
 		return false
 	}
-	cleanDest := filepath.Clean(destPath)
+	cleanDest := s.pathKey(destPath)
 	for _, f := range files {
-		if filepath.Clean(f.Path) != cleanDest {
+		if s.pathKey(f.Path) != cleanDest {
 			continue
 		}
 		if _, statErr := os.Stat(f.Path); statErr == nil {
@@ -1893,7 +1897,11 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				return
 			}
 			if res.flagged {
-				slog.Warn("downloaded file looks like a different book; importing it because import.ebook.content_check is warn",
+				why := "importing it because import.ebook.content_check is warn"
+				if res.uncertain && res.mode == contentCheckBlock {
+					why = "importing it because the finding is uncertain and only noted, even in block mode"
+				}
+				slog.Warn("downloaded file looks like a different book; "+why,
 					"title", dl.Title, "bookID", book.ID, "book", book.Title)
 			}
 			contentCheck = res.data
@@ -2181,7 +2189,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 							slog.Warn("flatten: could not remove source after move-mode flatten", "src", audiobookSource, "error", rmErr)
 						}
 					}
-				} else if existingDir, merging := s.existingEbookDir(ctx, book); merging && filepath.Clean(audiobookDest) == existingDir {
+				} else if existingDir, merging := s.existingEbookDir(ctx, book); merging && s.pathKey(audiobookDest) == s.pathKey(existingDir) {
 					// Shared-folder layout (#1959): this book's ebook already
 					// occupies exactly the folder the audiobook destination
 					// resolves to, so the collision UniqueDir disambiguated
@@ -2239,7 +2247,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				// needs to own destDir: it places exactly one named file and
 				// rolls back exactly that name, so merging into a folder that
 				// already holds this book's ebook is safe.
-				if existingDir, merging := s.existingEbookDir(ctx, book); merging && filepath.Clean(audiobookDest) == existingDir {
+				if existingDir, merging := s.existingEbookDir(ctx, book); merging && s.pathKey(audiobookDest) == s.pathKey(existingDir) {
 					destDir = existingDir
 					mergedIntoExistingFolder = true
 					slog.Info("merging audiobook file into the book's existing shared folder",
@@ -2854,8 +2862,7 @@ func cleanupWarnAttrs(clientType, remoteID string, err error) []any {
 // ebook as a safe default.
 func detectDownloadFormat(files []string) string {
 	for _, f := range files {
-		switch strings.ToLower(filepath.Ext(f)) {
-		case ".mp3", ".m4b", ".m4a", ".aac", ".flac", ".ogg", ".opus":
+		if models.IsAudioPath(f) {
 			return models.MediaTypeAudiobook
 		}
 	}
@@ -3928,20 +3935,20 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	markAudioParent := func(cleanPath string) {
 		dir := filepath.Clean(filepath.Dir(cleanPath))
 		if !flatAudioDir(cleanPath, s.libraryDir, s.audiobookDir) {
-			trackedPaths[dir] = true
+			trackedPaths[s.pathKey(dir)] = true
 			return
 		}
-		if flatAudio[dir] == nil {
-			flatAudio[dir] = make(map[string]bool)
+		if flatAudio[s.pathKey(dir)] == nil {
+			flatAudio[s.pathKey(dir)] = make(map[string]bool)
 		}
-		flatAudio[dir][audioTrackStem(cleanPath)] = true
+		flatAudio[s.pathKey(dir)][audioTrackStem(cleanPath)] = true
 	}
 	audioParentTracked := func(cleanPath string) bool {
 		dir := filepath.Clean(filepath.Dir(cleanPath))
-		if trackedPaths[dir] {
+		if trackedPaths[s.pathKey(dir)] {
 			return true
 		}
-		stems := flatAudio[dir]
+		stems := flatAudio[s.pathKey(dir)]
 		if stems == nil {
 			return false
 		}
@@ -3953,7 +3960,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	if allPaths, err := s.books.ListAllBookFilePaths(ctx); err == nil {
 		for _, p := range allPaths {
 			cleanP := filepath.Clean(p)
-			trackedPaths[cleanP] = true
+			trackedPaths[s.pathKey(cleanP)] = true
 			if detectDownloadFormat([]string{cleanP}) == models.MediaTypeAudiobook {
 				markAudioParent(cleanP)
 			}
@@ -4285,7 +4292,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		}
 		slog.Info("library scan: reconciled book", "title", b.Title, "path", path, "jw", hit.score)
 		s.fillCoverFromFile(ctx, b, registeredPath)
-		trackedPaths[filepath.Clean(registeredPath)] = true
+		trackedPaths[s.pathKey(registeredPath)] = true
 		if detectedFmt == models.MediaTypeAudiobook {
 			// Sibling tracks of a just-reconciled audiobook folder belong to
 			// this book — count them as tracked, not unmatched.
@@ -4440,9 +4447,9 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// the whole audiobook folder, so the second disc of a disc-split
 		// audiobook is counted with its book instead of re-claiming it
 		// (#2723).
-		if trackedPaths[cleanPath] ||
+		if trackedPaths[s.pathKey(cleanPath)] ||
 			(detectedFmt == models.MediaTypeAudiobook &&
-				(audioParentTracked(cleanPath) || trackedPaths[filepath.Clean(registeredPath)])) {
+				(audioParentTracked(cleanPath) || trackedPaths[s.pathKey(registeredPath)])) {
 			alreadyTracked++
 			continue
 		}
@@ -4582,7 +4589,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				}
 				slog.Info("library scan: reconciled book via ASIN", "asin", parsed.ASIN, "title", b.Title, "path", path)
 				s.fillCoverFromFile(ctx, b, registeredPath)
-				trackedPaths[filepath.Clean(registeredPath)] = true
+				trackedPaths[s.pathKey(registeredPath)] = true
 				if detectedFmt == models.MediaTypeAudiobook {
 					markAudioParent(cleanPath)
 				}
@@ -4640,7 +4647,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 						slog.Info("library scan: reconciled book via series position",
 							"series", parsed.Series, "position", parsed.SeriesNumber, "title", book.Title, "path", path)
 						s.fillCoverFromFile(ctx, book, registeredPath)
-						trackedPaths[filepath.Clean(registeredPath)] = true
+						trackedPaths[s.pathKey(registeredPath)] = true
 						if detectedFmt == models.MediaTypeAudiobook {
 							markAudioParent(cleanPath)
 						}
@@ -4789,6 +4796,20 @@ func (s *Scanner) refreshStaleRenderedPaths(ctx context.Context) {
 		}
 		stale := (c.EbookPath != "" && !db.BookFilePathResolves(c.EbookPath)) ||
 			(c.AudiobookPath != "" && !db.BookFilePathResolves(c.AudiobookPath))
+		if !stale && c.EbookPath != "" {
+			// A rendered path that still resolves can be the wrong one: books
+			// imported before the format preference (#3467) render whichever
+			// format came first. Only multi-file books reach this point, so
+			// the extra lookup is not paid by the single-file majority, and a
+			// book already rendering its preferred file is not written.
+			want, err := s.books.DerivedEbookPath(ctx, c.BookID)
+			if err != nil {
+				slog.Warn("library scan: could not derive preferred ebook path",
+					"book_id", c.BookID, "error", err)
+				continue
+			}
+			stale = want != "" && want != c.EbookPath
+		}
 		if !stale {
 			continue
 		}

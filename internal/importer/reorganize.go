@@ -170,16 +170,19 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 	// files and are not uniquified at import, so they skip this.
 	if audiobook {
 		if isSingleFile(f.Path) {
-			if flattenedOntoFolderPath(f.Path, dest) {
+			if flattenedOntoFolderPath(f.Path, dest, s.windowsPaths) {
 				return dest, ReorgStatusError, flattenedOntoFolderMsg
 			}
 			dest = s.singleFileAudiobookDest(ctx, book, author, seriesTitle, seriesNum, dest, f.Path)
 		} else {
-			dest = uniqueDirExcluding(dest, f.Path)
+			dest = uniqueDirExcluding(dest, f.Path, s.windowsPaths)
 		}
 	}
 
-	if noExtErr == nil && filepath.Clean(dest) == filepath.Clean(f.Path) {
+	// On Windows a stored "H.R.H./x.epub" and a proposed "H.R.H/x.epub", or
+	// "WASTE LANDS FLIP" and "Waste Lands Flip", are one file (#3468), so they
+	// are a noop rather than a move onto itself or a false collision.
+	if noExtErr == nil && s.pathKey(dest) == s.pathKey(f.Path) {
 		return dest, ReorgStatusNoop, ""
 	}
 	// The source must still be on disk to move it.
@@ -291,8 +294,8 @@ func isSingleFile(path string) bool {
 // file is named the way the import names it (#2900): from the audiobook file
 // template when one is set, otherwise its own name.
 func (s *Scanner) singleFileAudiobookDest(ctx context.Context, book *models.Book, author *models.Author, seriesTitle, seriesNum, destDir, current string) string {
-	if existing, merging := s.existingEbookDir(ctx, book); !merging || filepath.Clean(destDir) != existing {
-		destDir = uniqueDirExcluding(destDir, filepath.Dir(current))
+	if existing, merging := s.existingEbookDir(ctx, book); !merging || s.pathKey(destDir) != s.pathKey(existing) {
+		destDir = uniqueDirExcluding(destDir, filepath.Dir(current), s.windowsPaths)
 	}
 	return filepath.Join(destDir, s.singleAudiobookFileName(ctx, author, book, seriesTitle, seriesNum, current))
 }
@@ -307,20 +310,20 @@ const flattenedOntoFolderMsg = "this audiobook file sits where its folder belong
 // a noop. Proposing a move from here would bury the extensionless file one
 // level down in a " (2)" folder, so it is reported instead and left for the
 // manual recovery the message describes.
-func flattenedOntoFolderPath(path, destDir string) bool {
+func flattenedOntoFolderPath(path, destDir string, windows bool) bool {
 	if IsAudioFile(path) {
 		return false
 	}
-	p, d := filepath.Clean(path), filepath.Clean(destDir)
+	p, d := pathKey(path, windows), pathKey(destDir, windows)
 	return p == d || strings.HasPrefix(p, d+" (")
 }
 
 // uniqueDirExcluding mirrors UniqueDir but treats keep as if it were absent, so
 // resolving the destination for a file already parked at a uniquified location
 // returns that same location (a noop) instead of bumping to the next suffix.
-func uniqueDirExcluding(base, keep string) string {
-	keep = filepath.Clean(keep)
-	if filepath.Clean(base) == keep {
+func uniqueDirExcluding(base, keep string, windows bool) string {
+	keep = pathKey(keep, windows)
+	if pathKey(base, windows) == keep {
 		return base
 	}
 	if _, err := os.Stat(base); os.IsNotExist(err) {
@@ -328,7 +331,7 @@ func uniqueDirExcluding(base, keep string) string {
 	}
 	for i := 2; i < 1000; i++ {
 		candidate := fmt.Sprintf("%s (%d)", base, i)
-		if filepath.Clean(candidate) == keep {
+		if pathKey(candidate, windows) == keep {
 			return candidate
 		}
 		if _, err := os.Stat(candidate); os.IsNotExist(err) {

@@ -16,6 +16,8 @@ import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
 import CoverImage from '../components/CoverImage'
 import { primaryFill } from '../components/buttons'
 import { FilteredResultsSection } from './BookDetailPage'
+import { errorText } from '../util/errorText'
+import CoverPlaceholder from '../components/CoverPlaceholder'
 
 // Shared grid template so the header row and every list row line up exactly.
 // columns: checkbox · cover · title+author · format · actions
@@ -158,7 +160,7 @@ export default function WantedPage() {
       const updated = await api.updateBook(book.id, { mediaType })
       setBooks(books.map(b => b.id === book.id ? updated : b))
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to update')
+      alert(errorText(err, t('wanted.updateFailed', 'Failed to update')))
     }
   }
 
@@ -173,7 +175,7 @@ export default function WantedPage() {
     } catch {
       setBooks(prev)
       setTotal(prevTotal)
-      showToast("Couldn't update wanted list — reverted.")
+      showToast(t('wanted.unmonitorReverted', 'Couldn\'t update wanted list — reverted.'))
     } finally {
       setUnmonitoringId(null)
     }
@@ -201,7 +203,7 @@ export default function WantedPage() {
         load()
       }, 1200)
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Grab failed')
+      alert(errorText(err, t('wanted.grabFailed', 'Grab failed')))
     } finally {
       setGrabbingGuid(null)
     }
@@ -225,9 +227,9 @@ export default function WantedPage() {
   }, [somePageSelected])
 
   useEffect(() => {
-    document.title = 'Wanted · Bindery'
+    document.title = `${t('nav.wanted', 'Wanted')} · Bindery`
     return () => { document.title = 'Bindery' }
-  }, [])
+  }, [t])
 
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => {
@@ -256,7 +258,7 @@ export default function WantedPage() {
       clearSelection()
       load()
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Bulk action failed')
+      alert(errorText(err, t('common.bulkActionFailed', 'Bulk action failed')))
     } finally {
       setBulkBusy(false)
     }
@@ -352,14 +354,7 @@ export default function WantedPage() {
 
                   {/* uniform cover slot */}
                   <CoverImage loading="lazy" decoding="async" src={book.imageUrl} alt="" className="w-8 h-11 object-cover rounded bg-slate-200 dark:bg-zinc-800"
-                    fallback={
-                      <div
-                        className="w-8 h-11 rounded bg-slate-200 dark:bg-zinc-800 grid place-items-center text-[8px] text-fg-muted text-center leading-tight"
-                        aria-hidden
-                      >
-                        {t('wanted.noCover')}
-                      </div>
-                    }
+                    fallback={<CoverPlaceholder id={book.id} title={book.title} size="xs" className="w-8 h-11 rounded" />}
                   />
 
                   {/* title + author · year */}
@@ -462,7 +457,7 @@ export default function WantedPage() {
                         <div className="min-w-0 mr-3">
                           <span className="truncate block">{r.title}</span>
                           <span className="text-fg-muted truncate block">
-                            {r.indexerName} &middot; {formatBytes(r.size)} &middot; {r.grabs} grabs
+                            {r.indexerName} &middot; {formatBytes(r.size)} &middot; {t('search.grabs', { n: r.grabs, defaultValue: '{{n}} grabs' })}
                             {safeHref(r.infoUrl) && (
                               <>
                                 {' '}&middot;{' '}
@@ -472,7 +467,7 @@ export default function WantedPage() {
                                   rel="noopener noreferrer"
                                   className="text-sky-600 dark:text-sky-400 hover:underline"
                                 >
-                                  ↗ indexer
+                                  ↗ {t('search.indexerLink', 'indexer')}
                                 </a>
                               </>
                             )}
@@ -526,7 +521,25 @@ export default function WantedPage() {
         actions={[
           { label: t('common.search'), onClick: () => runBulk('search') },
           { label: t('common.unmonitor'), onClick: () => runBulk('unmonitor') },
-          { label: t('common.blocklist'), onClick: () => runBulk('blocklist'), variant: 'danger' },
+          {
+            label: t('common.blocklist'),
+            // Blocklisting marks each book skipped and unmonitored, so it
+            // leaves Wanted and is never searched again: the confirmation
+            // names how many.
+            onClick: async () => {
+              if (!await confirm({
+                title: t('common.confirmTitle'),
+                body: t('wanted.blocklistSelectedConfirm', {
+                  count: selectedIds.size,
+                  defaultValue_one: 'Blocklist {{count}} book? It is marked skipped, leaves Wanted and is not searched again.',
+                  defaultValue: 'Blocklist {{count}} books? They are marked skipped, leave Wanted and are not searched again.',
+                }),
+                confirmLabel: t('common.blocklist'),
+              })) return
+              await runBulk('blocklist')
+            },
+            variant: 'danger',
+          },
         ]}
       />
     </div>

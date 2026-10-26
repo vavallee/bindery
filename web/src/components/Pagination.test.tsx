@@ -4,7 +4,7 @@ import Pagination from './Pagination'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string) => ({
+    t: (key: string, o?: Record<string, unknown>) => key === 'pagination.range' ? `${o?.start}–${o?.end} of ${o?.total}` : ({
       'pagination.previous': 'Previous',
       'pagination.next': 'Next',
       'pagination.jumpToPage': 'Jump to page',

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { resolveBookQuery } from '../../api/booklookup'
 import type { Book } from '../../api/client'
 import { btn, btnSize } from '../buttons'
+import { errorText } from '../../util/errorText'
 
 interface Props {
   // Prefilled from what the scan read out of the file.
@@ -56,7 +57,7 @@ export default function CatalogueAdder({ initialQuery, onChoose, hint, actionLab
       setSearched(true)
     } catch (e) {
       setResults([])
-      setError(e instanceof Error ? e.message : 'Metadata search failed')
+      setError(errorText(e, t('importPage.catalogueAdder.searchFailed', 'Metadata search failed')))
     } finally {
       setSearching(false)
     }
@@ -69,7 +70,7 @@ export default function CatalogueAdder({ initialQuery, onChoose, hint, actionLab
     try {
       await onChoose(b)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not add the book')
+      setError(errorText(e, t('importPage.catalogueAdder.addFailed', 'Could not add the book')))
     } finally {
       setAdding('')
     }

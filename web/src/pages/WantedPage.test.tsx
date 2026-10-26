@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, useLocation } from 'react-router'
 import WantedPage from './WantedPage'
 import { api } from '../api/client'
+import { coverColorFor } from '../components/coverPalette'
 import type { Author, Book, Download, SearchResult } from '../api/client'
+import { acceptConfirm, clickBulkAction } from '../test-utils'
 
 vi.mock('../api/client', async importOriginal => {
   const actual = await importOriginal<typeof import('../api/client')>()
@@ -26,6 +28,7 @@ vi.mock('react-i18next', () => ({
     t: (key: string, options?: Record<string, unknown>) => {
       if (key === 'books.countLabel') return `${String(options?.count)} books`
       if (key === 'wanted.selectBook') return `Select ${String(options?.title)}`
+      if (key === 'search.grabs') return `${String(options?.n)} grabs`
       if (key === 'wanted.changeFormat') return `Change format for ${String(options?.title)}`
       if (key === 'bookDetail.filteredHeading') return `Filtered (${String(options?.count)})`
       if (key === 'bookDetail.noResultsFiltered') return `None matched, ${String(options?.count)} filtered.`
@@ -33,6 +36,8 @@ vi.mock('react-i18next', () => ({
 
       const labels: Record<string, string> = {
         'wanted.title': 'Wanted',
+        'search.grab': 'Grab',
+        'search.grabbing': 'Grabbing…',
         'wanted.searchPlaceholder': 'Search by title or author...',
         'wanted.empty': 'No wanted books. Add an author to start tracking.',
         'importHints.heading': 'Already have files on disk?',
@@ -64,7 +69,6 @@ vi.mock('react-i18next', () => ({
         'wanted.colTitleAuthor': 'Title & author',
         'wanted.colFormat': 'Format',
         'wanted.colActions': 'Actions',
-        'wanted.noCover': 'No cover',
         'wanted.authorUnknown': 'Author unknown',
         'wanted.authorNotMonitored': 'Author not monitored, so this is not searched automatically',
         'search.autoGrabDisabled': 'No search was run. Automatic grabbing is off.',
@@ -238,8 +242,8 @@ describe('WantedPage', () => {
   })
 
   // A cover that fails to load, such as a stored cover the list returned raw
-  // before #3146, shows the No cover slot rather than a broken image.
-  it('shows the No cover slot when a cover fails to load', async () => {
+  // before #3146, shows the shared cover placeholder rather than a broken image.
+  it('shows the cover placeholder when a cover fails to load', async () => {
     vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([
       makeBook({ id: 1, title: 'Fjellvinden', imageUrl: '/api/v1/images?url=bindery-cover%3Agone.jpg' }),
     ]))
@@ -247,10 +251,13 @@ describe('WantedPage', () => {
     const { container } = renderWantedPage()
 
     await screen.findByRole('link', { name: 'Fjellvinden' })
-    expect(screen.queryByText('No cover')).toBeNull()
     fireEvent.error(container.querySelector('img')!)
     expect(container.querySelector('img')).toBeNull()
-    expect(screen.getByText('No cover')).toBeInTheDocument()
+    // The shared placeholder: the book's own palette ground, seeded by its id,
+    // where the old fallback was a fixed grey box.
+    const tile = container.querySelector('.w-8.h-11[aria-hidden]')!
+    expect(tile.className).toContain(coverColorFor(1).className.split(' ')[0])
+    expect(tile.className).not.toContain('bg-slate-200')
   })
 
   it('renders the column header row with a select-all checkbox', async () => {
@@ -578,9 +585,14 @@ describe('WantedPage', () => {
     fireEvent.click(screen.getByTitle('Select Dune'))
     fireEvent.click(screen.getByTitle('Select Hyperion'))
 
-    const bulkBar = screen.getByText('2 selected').closest('div')
-    if (!bulkBar) throw new Error('Bulk action bar was not rendered')
-    fireEvent.click(within(bulkBar).getByRole('button', { name: label }))
+    clickBulkAction(label, action === 'blocklist' ? 'menu' : undefined)
+    // Blocklisting takes each book off Wanted for good, so it asks first and
+    // says how many.
+    if (action === 'blocklist') {
+      expect(within(await screen.findByTestId('confirm-dialog')).getByText(/wanted\.blocklistSelectedConfirm|Blocklist 2 books/)).toBeInTheDocument()
+      expect(api.bulkActionWanted).not.toHaveBeenCalled()
+      await acceptConfirm()
+    }
 
     await waitFor(() => expect(api.bulkActionWanted).toHaveBeenCalledWith([1, 2], action))
     await waitFor(() => expect(api.listWantedPage).toHaveBeenCalledTimes(2))
@@ -617,9 +629,7 @@ describe('WantedPage', () => {
     fireEvent.click(screen.getByTitle('Select Dune'))
     fireEvent.click(screen.getByTitle('Select Hyperion'))
 
-    const bulkBar = screen.getByText('2 selected').closest('div')
-    if (!bulkBar) throw new Error('Bulk action bar was not rendered')
-    fireEvent.click(within(bulkBar).getByRole('button', { name: 'Search' }))
+    clickBulkAction('Search')
 
     expect(await screen.findByText('No search was run. Automatic grabbing is off.')).toBeInTheDocument()
     // The selection survives, so flipping the setting and pressing Search

@@ -85,7 +85,7 @@ describe('DiscoverPage rows and actions', () => {
     expect(screen.queryByRole('heading', { name: 'discover.rows.author_new' })).toBeNull()
     // Genre rows exist, so this is not a cold start.
     expect(screen.queryByText('discover.empty.coldStart')).toBeNull()
-    expect(document.title).toBe('Discover · Bindery')
+    expect(document.title).toBe('nav.discover · Bindery')
   })
 
   it('explains a cold start when only series or new-from-author rows exist', async () => {

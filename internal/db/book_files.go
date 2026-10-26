@@ -124,6 +124,7 @@ func (r TrackResult) Created() bool {
 // between. Nothing else happens inside it: no file I/O, no other query on
 // r.db (the pool has one connection).
 func (r *BookFileRepo) Track(ctx context.Context, bookID int64, format, path string) (TrackResult, error) {
+	format = models.BookFileFormatFor(path, format)
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TrackResult{}, fmt.Errorf("book_files track begin: %w", err)
@@ -206,6 +207,7 @@ func (r *BookFileRepo) AddIfMissing(ctx context.Context, bookID int64, format, p
 // book" action (Fix match, #1238), never for an ordinary import, which must
 // not take a file from another book (#2937). Runs in one transaction.
 func (r *BookFileRepo) MoveToBook(ctx context.Context, bookID int64, format, path string) (int64, error) {
+	format = models.BookFileFormatFor(path, format)
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("book_files move begin: %w", err)

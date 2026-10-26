@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { AdoptionItem, AdoptionSort, AdoptionState, AdoptTarget, AdoptionBookRef } from '../../api/client'
 import { useServerPagination } from '../../components/usePagination'
@@ -32,6 +33,7 @@ function message(e: unknown, fallback: string): string {
 }
 
 export function useAdoptionList() {
+  const { t } = useTranslation()
   const [state, dispatch] = useReducer(adoptionReducer, initialAdoptionState)
   const [filters, setFilters] = useState<AdoptionFilters>(defaultAdoptionFilters)
   const [debouncedSearch, setDebouncedSearch] = useState('')
@@ -70,9 +72,9 @@ export function useAdoptionList() {
       if (wantFacets) facetKey.current = key
       dispatch({ type: 'loaded', response })
     }).catch(e => {
-      if (n === request.current) dispatch({ type: 'loadFailed', error: message(e, 'Could not load the list') })
+      if (n === request.current) dispatch({ type: 'loadFailed', error: message(e, t('adoption.errors.loadFailed', 'Could not load the list')) })
     })
-  }, [filters.state, filters.reason, filters.authorFolder, filters.format, filters.sort, filters.dir, debouncedSearch, page, pageSize, reloadTick])
+  }, [filters.state, filters.reason, filters.authorFolder, filters.format, filters.sort, filters.dir, debouncedSearch, page, pageSize, reloadTick]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const reload = useCallback(() => setReloadTick(n => n + 1), [])
 
@@ -107,9 +109,9 @@ export function useAdoptionList() {
       dispatch({ type: 'adoptSucceeded', id: item.id, item: updated })
       void refreshSummary()
     } catch (e) {
-      dispatch({ type: 'requestFailed', id: item.id, error: message(e, 'Could not adopt this book'), revertTo: null })
+      dispatch({ type: 'requestFailed', id: item.id, error: message(e, t('adoption.errors.adoptFailed', 'Could not adopt this book')), revertTo: null })
     }
-  }, [refreshSummary])
+  }, [refreshSummary]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const ignore = useCallback(async (item: AdoptionItem) => {
     dispatch({ type: 'ignoreRequested', id: item.id })
@@ -118,9 +120,9 @@ export function useAdoptionList() {
       dispatch({ type: 'ignoreSucceeded', id: item.id })
       void refreshSummary()
     } catch (e) {
-      dispatch({ type: 'requestFailed', id: item.id, error: message(e, 'Could not ignore this book'), revertTo: null })
+      dispatch({ type: 'requestFailed', id: item.id, error: message(e, t('adoption.errors.ignoreFailed', 'Could not ignore this book')), revertTo: null })
     }
-  }, [refreshSummary])
+  }, [refreshSummary]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // undo reverses whatever the row's last decision was: an adoption (undo) or
   // an ignore (unignore). On the adopted and ignored lists the row then reads
@@ -134,9 +136,9 @@ export function useAdoptionList() {
       dispatch({ type: 'undoSucceeded', id: item.id, item: updated, restored: filters.state !== 'pending', keptBook: Boolean(updated.message) })
       void refreshSummary()
     } catch (e) {
-      dispatch({ type: 'requestFailed', id: item.id, error: message(e, 'Could not undo'), revertTo: prior })
+      dispatch({ type: 'requestFailed', id: item.id, error: message(e, t('adoption.errors.undoFailed', 'Could not undo')), revertTo: prior })
     }
-  }, [state.outcomes, filters.state, refreshSummary])
+  }, [state.outcomes, filters.state, refreshSummary]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const startScan = useCallback(async () => {
     try {

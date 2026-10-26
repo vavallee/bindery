@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   reorganizeApi,
   ReorganizeMove,
@@ -6,6 +7,8 @@ import {
   ReorganizeScope,
 } from '../api/reorganize'
 import { useModal } from './useModal'
+import RichText from './RichText'
+import { errorText } from '../util/errorText'
 
 interface Props {
   scope: ReorganizeScope
@@ -40,6 +43,7 @@ const statusLabel: Record<string, string> = {
 }
 
 export default function RenameFilesModal({ scope, id, label, onClose, onApplied }: Props) {
+  const { t } = useTranslation()
   const [preview, setPreview] = useState<ReorganizeResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [applying, setApplying] = useState(false)
@@ -55,7 +59,7 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
         if (!cancelled) setPreview(res)
       })
       .catch(err => {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Preview failed')
+        if (!cancelled) setError(errorText(err, t('renameFiles.previewFailed', 'Preview failed')))
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -63,7 +67,7 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
     return () => {
       cancelled = true
     }
-  }, [scope, id])
+  }, [scope, id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const movable = (preview?.moves ?? []).filter(m => m.status === 'move')
 
@@ -76,7 +80,7 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
       setApplied(res)
       if (res.summary.moved > 0) onApplied?.()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Rename failed')
+      setError(errorText(err, t('renameFiles.renameFailed', 'Rename failed')))
     } finally {
       setApplying(false)
     }
@@ -94,19 +98,20 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
         className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-lg shadow-xl p-6 w-full max-w-2xl mx-4 modal-max-h flex flex-col"
         onClick={e => e.stopPropagation()}
       >
-        <h2 id={titleId} className="text-base font-semibold mb-1 text-slate-900 dark:text-white">Rename files</h2>
+        <h2 id={titleId} className="text-base font-semibold mb-1 text-slate-900 dark:text-white">{t('renameFiles.title', 'Rename files')}</h2>
         <p className="text-xs text-fg-muted mb-4">
-          Move the files for{' '}
-          <span className="font-medium text-slate-700 dark:text-zinc-200">{label}</span> to match the
-          current naming template. Files already in the right place are left alone.
+          <RichText
+            text={t('renameFiles.intro', { label, defaultValue: 'Move the files for <label>{{label}}</label> to match the current naming template. Files already in the right place are left alone.' })}
+            components={{ label: <span className="font-medium text-slate-700 dark:text-zinc-200" /> }}
+          />
         </p>
 
         {loading ? (
-          <p className="text-sm text-fg-muted">Computing changes…</p>
+          <p className="text-sm text-fg-muted">{t('renameFiles.computing', 'Computing changes…')}</p>
         ) : error && !moves.length ? (
           <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
         ) : moves.length === 0 ? (
-          <p className="text-sm text-fg-muted">No tracked files to rename.</p>
+          <p className="text-sm text-fg-muted">{t('renameFiles.none', 'No tracked files to rename.')}</p>
         ) : (
           <div className="overflow-y-auto flex-1 -mx-2 px-2">
             <ul className="space-y-3">
@@ -124,8 +129,8 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
         <div className="mt-4 pt-4 border-t border-slate-200 dark:border-zinc-800 flex items-center gap-2">
           <span className="text-xs text-fg-muted">
             {applied
-              ? `${applied.summary.moved} moved, ${applied.summary.failed} failed`
-              : `${movable.length} of ${moves.length} will move`}
+              ? t('renameFiles.appliedSummary', { moved: applied.summary.moved, failed: applied.summary.failed, defaultValue: '{{moved}} moved, {{failed}} failed' })
+              : t('renameFiles.previewSummary', { movable: movable.length, total: moves.length, defaultValue: '{{movable}} of {{total}} will move' })}
           </span>
           <div className="ml-auto flex gap-2">
             <button
@@ -133,7 +138,7 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
               onClick={onClose}
               className="px-4 py-1.5 text-sm rounded bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700"
             >
-              {applied ? 'Close' : 'Cancel'}
+              {applied ? t('common.close', 'Close') : t('common.cancel', 'Cancel')}
             </button>
             {!applied && (
               <button
@@ -142,7 +147,7 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
                 disabled={applying || movable.length === 0}
                 className="px-4 py-1.5 text-sm rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-40 font-medium text-white"
               >
-                {applying ? 'Renaming…' : `Rename ${movable.length} file${movable.length === 1 ? '' : 's'}`}
+                {applying ? t('renameFiles.renaming', 'Renaming…') : t('renameFiles.apply', { count: movable.length })}
               </button>
             )}
           </div>
@@ -153,11 +158,12 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
 }
 
 function MoveRow({ move }: { move: ReorganizeMove }) {
+  const { t } = useTranslation()
   return (
     <li className="text-xs">
       <div className="flex items-center gap-2 mb-0.5">
         <span className={`font-medium ${statusStyles[move.status] ?? ''}`}>
-          {statusLabel[move.status] ?? move.status}
+          {t(`renameFiles.status.${move.status}`, statusLabel[move.status] ?? move.status)}
         </span>
         <span className="text-slate-400 dark:text-zinc-600">·</span>
         <span className="text-slate-600 dark:text-zinc-300 truncate">{move.bookTitle}</span>
@@ -167,12 +173,12 @@ function MoveRow({ move }: { move: ReorganizeMove }) {
       </div>
       <div className="font-mono text-fg-muted break-all">
         <div>
-          <span className="text-fg-muted">from </span>
+          <span className="text-fg-muted">{t('renameFiles.from', 'from')} </span>
           {move.current}
         </div>
         {move.status !== 'noop' && (
           <div>
-            <span className="text-fg-muted">to </span>
+            <span className="text-fg-muted">{t('renameFiles.to', 'to')} </span>
             {move.proposed}
           </div>
         )}

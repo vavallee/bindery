@@ -7,6 +7,7 @@ import { acceptConfirm, cancelConfirm } from '../../test-utils'
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, opts?: unknown) => {
+      if (typeof opts === 'string') return opts
       const count = opts && typeof opts === 'object' && 'count' in opts ? (opts as { count: number }).count : undefined
       return count === undefined ? key : `${key}:${count}`
     },

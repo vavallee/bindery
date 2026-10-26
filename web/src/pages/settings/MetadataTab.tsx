@@ -63,18 +63,30 @@ function parseDisabledSources(value: string): string[] {
   return value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
 }
 
-function formatLanguageList(csv: string): string {
-  if (!csv || csv.trim() === '' || csv.trim().toLowerCase() === 'any') return 'any'
+// languageLabel names a language in the UI language. ICU accepts the 639-2/B
+// codes above; the English label covers a browser without Intl.DisplayNames.
+function languageLabel(code: string, label: string, lng = 'en'): string {
+  try {
+    const name = new Intl.DisplayNames([lng], { type: 'language' }).of(code)
+    if (name && name !== code) return name.charAt(0).toLocaleUpperCase(lng) + name.slice(1)
+  } catch {
+    // fall through to the English label
+  }
+  return label
+}
+
+function formatLanguageList(csv: string, any: string, lng?: string): string {
+  if (!csv || csv.trim() === '' || csv.trim().toLowerCase() === 'any') return any
   return csv.split(',').map(c => {
     const code = c.trim().toLowerCase()
     const known = KNOWN_LANGUAGES.find(k => k.code === code)
-    return known ? known.label : code
+    return known ? languageLabel(known.code, known.label, lng) : code
   }).join(', ')
 }
 
 export default function MetadataTab() {
   const fid = useId()
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
   const [profiles, setProfiles] = useState<MetadataProfile[]>([])
   const [editing, setEditing] = useState<MetadataProfile | null>(null)
@@ -136,7 +148,7 @@ export default function MetadataTab() {
       {confirmDialog}
       {/* Library Defaults */}
       <section>
-        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Library Defaults</h3>
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.metadata.libraryDefaults', 'Library Defaults')}</h3>
 
         {/* Metadata provider */}
         <div className="space-y-4">
@@ -434,7 +446,7 @@ export default function MetadataTab() {
                       <div className="flex flex-wrap gap-3 mt-2 text-xs text-fg-muted">
                         <span>{t('settings.metadata.minPages')} <span className="text-slate-800 dark:text-zinc-200">{p.minPages === 0 ? 'none' : p.minPages}</span></span>
                         <span>{t('settings.metadata.minEditionCount')} <span className="text-slate-800 dark:text-zinc-200">{p.minEditionCount === 0 ? 'none' : p.minEditionCount}</span></span>
-                        <span>{t('settings.metadata.languages')} <span className="text-slate-800 dark:text-zinc-200">{formatLanguageList(p.allowedLanguages)}</span></span>
+                        <span>{t('settings.metadata.languages')} <span className="text-slate-800 dark:text-zinc-200">{formatLanguageList(p.allowedLanguages, t('settings.metadata.languagesAny', 'any'), i18n?.resolvedLanguage)}</span></span>
                       </div>
                       <div className="flex flex-wrap gap-1.5 mt-2">
                         {p.skipMissingDate && <span className="text-[10px] px-2 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{t('settings.metadata.skipMissingDate')}</span>}
@@ -472,7 +484,7 @@ export default function MetadataTab() {
 
 function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: MetadataProfile; onClose: () => void; onSaved: () => void }) {
   const fid = useId()
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [name, setName] = useState(profile?.name ?? '')
   // Round-tripped, not edited. MinPopularity is no longer enforced anywhere
   // (#2450) and has no control, but the field is still accepted over the API,
@@ -554,7 +566,7 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
                   ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-800 dark:text-emerald-300'
                   : 'bg-slate-200 dark:bg-zinc-800 border-slate-300 dark:border-zinc-700 text-fg-muted hover:border-slate-400 dark:hover:border-zinc-600'}`}
               >
-                {l.label}
+                {languageLabel(l.code, l.label, i18n?.resolvedLanguage)}
               </button>
             )
           })}

@@ -254,7 +254,16 @@ var segmentSplitter = regexp.MustCompile(`[:;()\[\]{}]|\s-+\s|[\x{2013}\x{2014}]
 // "Mistborn: The Final Empire" yields mistborn and thefinalempire;
 // "Hogfather (Discworld, #20)" yields hogfather and discworld20.
 func titleSegments(title string) [][2]string {
-	parts := segmentSplitter.Split(title, -1)
+	return segmentsOf(segmentSplitter.Split(title, -1))
+}
+
+// semicolonSegments is titleSegments for the ';' separator alone: the parts of
+// a bundle row such as "Carrie; Christine" (#3469).
+func semicolonSegments(title string) [][2]string {
+	return segmentsOf(strings.Split(title, ";"))
+}
+
+func segmentsOf(parts []string) [][2]string {
 	var segs [][2]string
 	for _, part := range parts {
 		words := foldWords(part)
@@ -295,7 +304,11 @@ func substringMatch(shorter, longer bookKeys) bool {
 	if residualIsMarkerOnly(residual) {
 		return false
 	}
-	for _, seg := range longer.segments {
+	return segmentMatches(shorter, longer.segments)
+}
+
+func segmentMatches(shorter bookKeys, segs [][2]string) bool {
+	for _, seg := range segs {
 		if seg[0] == shorter.alnum || (seg[1] != "" && seg[1] == shorter.article) {
 			return true
 		}
@@ -394,6 +407,9 @@ type bookKeys struct {
 	// segments are the keys of each separator-delimited part of the title,
 	// nil for a title with one part. Only the substring rule reads them.
 	segments [][2]string
+	// semi are the parts of the title split at ';' only, nil for a title
+	// without one. The bundle check in Scan reads them.
+	semi [][2]string
 }
 
 // bookKeyFor precomputes every key form for one title. Scan calls it once per
@@ -406,6 +422,7 @@ func bookKeyFor(title string) bookKeys {
 		edition:  strings.Join(dropTrailingEditionMarkers(words), ""),
 		combined: strings.Join(dropTrailingEditionMarkers(dropArticle(title, words)), ""),
 		segments: titleSegments(title),
+		semi:     semicolonSegments(title),
 	}
 }
 
@@ -456,6 +473,11 @@ func Scan(books []models.Book, seriesSlots map[int64][]SeriesSlot) []Group {
 	}
 	useSubstring := n <= maxPairwiseBooks
 
+	// Substring-only pairs where the shorter title is a ';' part of the longer
+	// are held back: if the longer row is a bundle they must not join anything
+	// (#3469). Every other pair unions at once, as before.
+	type bundleEdge struct{ shorter, longer int }
+	var held []bundleEdge
 	for i := 0; i < n; i++ {
 		if keys[i].alnum == "" {
 			continue
@@ -472,12 +494,50 @@ func Scan(books []models.Book, seriesSlots map[int64][]SeriesSlot) []Group {
 			if len(rules) == 0 {
 				continue
 			}
+			if len(rules) == 1 && rules[0] == RuleSubstring {
+				sh, lg := i, j
+				if len(keys[i].alnum) > len(keys[j].alnum) {
+					sh, lg = j, i
+				}
+				if segmentMatches(keys[sh], keys[lg].semi) {
+					held = append(held, bundleEdge{sh, lg})
+					continue
+				}
+			}
 			union(i, j)
 			for _, rule := range rules {
 				addRule(rulesByBook[i], rule)
 				addRule(rulesByBook[j], rule)
 			}
 		}
+	}
+
+	// A bundle row ("Carrie; Christine") holds two or more parts that do not
+	// match each other. Joining them through it would put different books in
+	// one group, so its held edges are dropped.
+	parts := make(map[int][]int)
+	for _, e := range held {
+		parts[e.longer] = append(parts[e.longer], e.shorter)
+	}
+	bundle := make(map[int]bool)
+	for lg, ps := range parts {
+	pairs:
+		for a := 0; a < len(ps); a++ {
+			for b := a + 1; b < len(ps); b++ {
+				if len(pairRules(keys[ps[a]], keys[ps[b]], true)) == 0 {
+					bundle[lg] = true
+					break pairs
+				}
+			}
+		}
+	}
+	for _, e := range held {
+		if bundle[e.longer] {
+			continue
+		}
+		union(e.shorter, e.longer)
+		addRule(rulesByBook[e.shorter], RuleSubstring)
+		addRule(rulesByBook[e.longer], RuleSubstring)
 	}
 
 	byRoot := make(map[int][]int)

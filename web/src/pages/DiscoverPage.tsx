@@ -49,9 +49,9 @@ export default function DiscoverPage() {
   }, [load, checkEnabled])
 
   useEffect(() => {
-    document.title = 'Discover · Bindery'
+    document.title = `${t('nav.discover', 'Discover')} · Bindery`
     return () => { document.title = 'Bindery' }
-  }, [])
+  }, [t])
 
   // Auto-dismiss the toast 2.5s after it appears. Lives in an effect with
   // cleanup so the timer is cleared if the page unmounts (or the toast is

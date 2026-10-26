@@ -1,14 +1,17 @@
 import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { api, DiagnoseResult, DownloadClient, DownloadClientUpdate, RemapCandidate } from '../../api/client'
 import { inputCls } from './formStyles'
 import Toggle from './Toggle'
 import PathRemapField from './PathRemapField'
+import RichText from '../../components/RichText'
 import { addRemapRule, downloadClientPathRemapHelp, rtorrentScgiIgnoredFields, supportsRemapAssistant } from './helpers'
 import { dangerLink, primaryFill } from '../../components/buttons'
 import ClientDiagnosePanel from './ClientDiagnosePanel'
 import RemapAssistant from './RemapAssistant'
 import { literalInputAttrs, portInputAttrs, secretInputAttrs, urlInputAttrs } from '../../util/inputAttrs'
+import { errorText } from '../../util/errorText'
 
 // clients is owned by SettingsPage so it can be fetched eagerly on page mount
 // (matching the pre-refactor monolith), not on tab open.
@@ -26,6 +29,21 @@ interface Props {
 function isLoopbackConnFailure(host: string, error: string): boolean {
   const loopback = host === 'localhost' || host === '127.0.0.1' || host === '::1'
   return loopback && /refused|timeout|timed out|not responding|unreachable|no route|EOF|connect/i.test(error)
+}
+
+// The English help text stays in helpers.ts and is the default here.
+function remapHelp(t: TFunction, type: string) {
+  const key = type === 'qbittorrent' ? 'settings.clients.remapHelp.qbittorrent'
+    : type === 'rtorrent' ? 'settings.clients.remapHelp.rtorrent'
+      : 'settings.clients.remapHelp.other'
+  return t(key, downloadClientPathRemapHelp(type))
+}
+
+// rtorrentScgiIgnoredFields names the fields by their English labels.
+function scgiFieldLabel(t: TFunction, field: string) {
+  if (field === 'Use SSL') return t('settings.clients.useSsl', 'Use SSL')
+  if (field === 'Username') return t('settings.clients.username', 'Username')
+  return t('settings.clients.password', 'Password')
 }
 
 export default function ClientsTab({ clients, setClients }: Props) {
@@ -324,7 +342,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
       const updated = await api.updateDownloadClient(client.id, data)
       onSaved(updated)
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to save')
+      setSaveError(errorText(err, t('settings.clients.saveFailed', 'Failed to save')))
     } finally {
       setSaving(false)
     }
@@ -352,11 +370,11 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
     <div className="mt-1 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-3">
       <div className="flex gap-2">
         <div className="flex-1">
-          <label htmlFor={`${fid}-1`} className={labelCls}>Name</label>
-          <input id={`${fid}-1`} value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
+          <label htmlFor={`${fid}-1`} className={labelCls}>{t('settings.clients.name', 'Name')}</label>
+          <input id={`${fid}-1`} value={name} onChange={e => setName(e.target.value)} placeholder={t('settings.clients.name', 'Name')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
         <div className="w-40">
-          <label htmlFor={`${fid}-2`} className={labelCls}>Client Type</label>
+          <label htmlFor={`${fid}-2`} className={labelCls}>{t('settings.clients.clientType', 'Client Type')}</label>
           <select id={`${fid}-2`} value={type} onChange={e => handleTypeChange(e.target.value)} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm">
             <option value="sabnzbd">SABnzbd</option>
             <option value="nzbget">NZBGet</option>
@@ -368,12 +386,12 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
         </div>
       </div>
       <div>
-        <label htmlFor={`${fid}-7`} className={labelCls}>Connection</label>
+        <label htmlFor={`${fid}-7`} className={labelCls}>{t('settings.clients.connection', 'Connection')}</label>
         <div className="flex gap-2">
-          <input id={`${fid}-7`} {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
-          <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
+          <input id={`${fid}-7`} {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder={t('settings.clients.host', 'Host')} className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
+          <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder={t('settings.clients.port', 'Port')} className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
-        <p className="text-xs text-fg-muted mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
+        <p className="text-xs text-fg-muted mt-1"><RichText text={t('settings.clients.hostHint', 'Hostname or IP only — no <code>http://</code> prefix. In Docker, use the service/container name (e.g. <code>nzbget</code>) — not <code>localhost</code>.')} components={{ code: <code className="font-mono" /> }} /></p>
       </div>
       <div className="flex items-center gap-2">
         <input
@@ -383,24 +401,24 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
           onChange={e => setUseSSL(e.target.checked)}
           className="rounded border-slate-300 dark:border-zinc-700"
         />
-        <label htmlFor={`edit-ssl-${client.id}`} className={labelCls}>Use SSL</label>
+        <label htmlFor={`edit-ssl-${client.id}`} className={labelCls}>{t('settings.clients.useSsl', 'Use SSL')}</label>
       </div>
       <div>
-        <label htmlFor={`${fid}-3`} className={labelCls}>URL Base</label>
+        <label htmlFor={`${fid}-3`} className={labelCls}>{t('settings.clients.urlBase', 'URL Base')}</label>
         <input id={`${fid}-3`} value={urlBase} onChange={e => setUrlBase(e.target.value)} placeholder={type === 'rtorrent' ? '/RPC2' : '/sabnzbd'} className={inputCls} />
         <p className="text-xs text-fg-muted mt-1">{type === 'rtorrent'
           ? t('settings.clients.rtorrentUrlBaseHelp')
-          : <>Optional path prefix for reverse proxy deployments (e.g. <code className="font-mono">/sabnzbd</code>). Leave blank for direct connections.</>}</p>
+          : <RichText text={t('settings.clients.urlBaseHint', 'Optional path prefix for reverse proxy deployments (e.g. <code>/sabnzbd</code>). Leave blank for direct connections.')} components={{ code: <code className="font-mono" /> }} />}</p>
         {scgiIgnored.length > 0 && (
           <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
-            {t('settings.clients.rtorrentScgiIgnoredHint', { fields: scgiIgnored.join(', ') })}
+            {t('settings.clients.rtorrentScgiIgnoredHint', { fields: scgiIgnored.map(f => scgiFieldLabel(t, f)).join(', ') })}
           </p>
         )}
       </div>
       {hasUsername(type) && (
         <div>
-          <label htmlFor={`${fid}-4`} className={labelCls}>Username</label>
-          <input id={`${fid}-4`} {...literalInputAttrs} value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className={inputCls} />
+          <label htmlFor={`${fid}-4`} className={labelCls}>{t('settings.clients.username', 'Username')}</label>
+          <input id={`${fid}-4`} {...literalInputAttrs} value={username} onChange={e => setUsername(e.target.value)} placeholder={t('settings.clients.username', 'Username')} className={inputCls} />
         </div>
       )}
       <div>
@@ -412,7 +430,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
           id={`edit-credential-${client.id}`}
           value={credential}
           onChange={e => setCredential(e.target.value)}
-          placeholder={credentialStored ? '••••••••' : (isPasswordClient(type) ? 'Password' : 'API Key')}
+          placeholder={credentialStored ? '••••••••' : (isPasswordClient(type) ? t('settings.clients.password', 'Password') : t('settings.clients.apiKey', 'API Key'))}
           type="password"
           className={inputCls}
         />
@@ -421,10 +439,10 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
           : t('settings.clients.credentialUnsetHint')}</p>
       </div>
       <div>
-        <label htmlFor={`${fid}-5`} className={labelCls}>{type === 'transmission' ? 'Download Directory' : 'Category / Label'}</label>
-        <input id={`${fid}-5`} value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? '/downloads (leave blank for default)' : 'books'} className={inputCls} />
-        {type === 'transmission' && <p className="text-xs text-fg-muted mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
-        {type === 'deluge' && <p className="text-xs text-fg-muted mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
+        <label htmlFor={`${fid}-5`} className={labelCls}>{type === 'transmission' ? t('settings.clients.downloadDir', 'Download Directory') : t('settings.clients.categoryLabel', 'Category / Label')}</label>
+        <input id={`${fid}-5`} value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? t('settings.clients.downloadDirPlaceholder', '/downloads (leave blank for default)') : 'books'} className={inputCls} />
+        {type === 'transmission' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.transmissionDirHint', 'Optional absolute path override. Leave blank to use Transmission\'s configured default download directory.')}</p>}
+        {type === 'deluge' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.delugeLabelHint', 'Applied via the Deluge label plugin. Leave blank if the plugin is not installed.')}</p>}
         {type === 'rtorrent' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.rtorrentCategoryHelp')}</p>}
       </div>
       {type !== 'transmission' && (
@@ -436,11 +454,11 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
       )}
       <PathRemapField
         id={`edit-client-path-remap-${client.id}`}
-        label="Download client path remap"
+        label={t('settings.clients.pathRemapLabel', 'Download client path remap')}
         value={pathRemap}
         onChange={setPathRemap}
         placeholder={type === 'qbittorrent' ? '/downloads:/media/books' : '/media:/books'}
-        help={downloadClientPathRemapHelp(type)}
+        help={remapHelp(t, type)}
       />
       {supportsRemoveOnImport(type) && (
         <div>
@@ -568,7 +586,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
       const c = await api.addDownloadClient(data)
       onAdded(c)
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to save')
+      setSaveError(errorText(err, t('settings.clients.saveFailed', 'Failed to save')))
     } finally {
       setSaving(false)
     }
@@ -596,11 +614,11 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
     <div className="mt-4 p-4 border border-slate-300 dark:border-zinc-700 rounded-lg bg-slate-200/50 dark:bg-zinc-800/50 space-y-3">
       <div className="flex gap-2">
         <div className="flex-1">
-          <label htmlFor={`${fid}-1`} className={labelCls}>Name</label>
-          <input id={`${fid}-1`} value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
+          <label htmlFor={`${fid}-1`} className={labelCls}>{t('settings.clients.name', 'Name')}</label>
+          <input id={`${fid}-1`} value={name} onChange={e => setName(e.target.value)} placeholder={t('settings.clients.name', 'Name')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
         <div className="w-40">
-          <label htmlFor={`${fid}-2`} className={labelCls}>Client Type</label>
+          <label htmlFor={`${fid}-2`} className={labelCls}>{t('settings.clients.clientType', 'Client Type')}</label>
           <select id={`${fid}-2`} value={type} onChange={e => handleTypeChange(e.target.value as 'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm">
             <option value="sabnzbd">SABnzbd</option>
             <option value="nzbget">NZBGet</option>
@@ -612,12 +630,12 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         </div>
       </div>
       <div>
-        <label htmlFor={`${fid}-8`} className={labelCls}>Connection</label>
+        <label htmlFor={`${fid}-8`} className={labelCls}>{t('settings.clients.connection', 'Connection')}</label>
         <div className="flex gap-2">
-          <input id={`${fid}-8`} {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder="Host" className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
-          <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
+          <input id={`${fid}-8`} {...urlInputAttrs} value={host} onChange={e => setHost(e.target.value)} placeholder={t('settings.clients.host', 'Host')} className="flex-1 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
+          <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder={t('settings.clients.port', 'Port')} className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
-        <p className="text-xs text-fg-muted mt-1">Hostname or IP only — no <code className="font-mono">http://</code> prefix. In Docker, use the service/container name (e.g. <code className="font-mono">nzbget</code>) — not <code className="font-mono">localhost</code>.</p>
+        <p className="text-xs text-fg-muted mt-1"><RichText text={t('settings.clients.hostHint', 'Hostname or IP only — no <code>http://</code> prefix. In Docker, use the service/container name (e.g. <code>nzbget</code>) — not <code>localhost</code>.')} components={{ code: <code className="font-mono" /> }} /></p>
       </div>
       <div className="flex items-center gap-2">
         <input
@@ -627,35 +645,35 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
           onChange={e => setUseSSL(e.target.checked)}
           className="rounded border-slate-300 dark:border-zinc-700"
         />
-        <label htmlFor="add-ssl" className={labelCls}>Use SSL</label>
+        <label htmlFor="add-ssl" className={labelCls}>{t('settings.clients.useSsl', 'Use SSL')}</label>
       </div>
       <div>
-        <label htmlFor={`${fid}-3`} className={labelCls}>URL Base</label>
+        <label htmlFor={`${fid}-3`} className={labelCls}>{t('settings.clients.urlBase', 'URL Base')}</label>
         <input id={`${fid}-3`} value={urlBase} onChange={e => setUrlBase(e.target.value)} placeholder={type === 'rtorrent' ? '/RPC2' : '/sabnzbd'} className={inputCls} />
         <p className="text-xs text-fg-muted mt-1">{type === 'rtorrent'
           ? t('settings.clients.rtorrentUrlBaseHelp')
-          : <>Optional path prefix for reverse proxy deployments (e.g. <code className="font-mono">/sabnzbd</code>). Leave blank for direct connections.</>}</p>
+          : <RichText text={t('settings.clients.urlBaseHint', 'Optional path prefix for reverse proxy deployments (e.g. <code>/sabnzbd</code>). Leave blank for direct connections.')} components={{ code: <code className="font-mono" /> }} />}</p>
         {scgiIgnored.length > 0 && (
           <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
-            {t('settings.clients.rtorrentScgiIgnoredHint', { fields: scgiIgnored.join(', ') })}
+            {t('settings.clients.rtorrentScgiIgnoredHint', { fields: scgiIgnored.map(f => scgiFieldLabel(t, f)).join(', ') })}
           </p>
         )}
       </div>
       {hasUsername(type) && (
         <div>
-          <label htmlFor={`${fid}-4`} className={labelCls}>Username</label>
-          <input id={`${fid}-4`} {...literalInputAttrs} value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className={inputCls} />
+          <label htmlFor={`${fid}-4`} className={labelCls}>{t('settings.clients.username', 'Username')}</label>
+          <input id={`${fid}-4`} {...literalInputAttrs} value={username} onChange={e => setUsername(e.target.value)} placeholder={t('settings.clients.username', 'Username')} className={inputCls} />
         </div>
       )}
       <div>
-        <label htmlFor={`${fid}-5`} className={labelCls}>{isPasswordClient(type) ? 'Password' : 'API Key'}</label>
-        <input id={`${fid}-5`} {...secretInputAttrs} value={credential} onChange={e => setCredential(e.target.value)} placeholder={isPasswordClient(type) ? 'Password' : 'API Key'} type="password" className={inputCls} />
+        <label htmlFor={`${fid}-5`} className={labelCls}>{isPasswordClient(type) ? t('settings.clients.password', 'Password') : t('settings.clients.apiKey', 'API Key')}</label>
+        <input id={`${fid}-5`} {...secretInputAttrs} value={credential} onChange={e => setCredential(e.target.value)} placeholder={isPasswordClient(type) ? t('settings.clients.password', 'Password') : t('settings.clients.apiKey', 'API Key')} type="password" className={inputCls} />
       </div>
       <div>
-        <label htmlFor={`${fid}-6`} className={labelCls}>{type === 'transmission' ? 'Download Directory' : 'Category / Label'}</label>
-        <input id={`${fid}-6`} value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? '/downloads (leave blank for default)' : 'books'} className={inputCls} />
-        {type === 'transmission' && <p className="text-xs text-fg-muted mt-1">Optional absolute path override. Leave blank to use Transmission's configured default download directory.</p>}
-        {type === 'deluge' && <p className="text-xs text-fg-muted mt-1">Applied via the Deluge label plugin. Leave blank if the plugin is not installed.</p>}
+        <label htmlFor={`${fid}-6`} className={labelCls}>{type === 'transmission' ? t('settings.clients.downloadDir', 'Download Directory') : t('settings.clients.categoryLabel', 'Category / Label')}</label>
+        <input id={`${fid}-6`} value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? t('settings.clients.downloadDirPlaceholder', '/downloads (leave blank for default)') : 'books'} className={inputCls} />
+        {type === 'transmission' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.transmissionDirHint', 'Optional absolute path override. Leave blank to use Transmission\'s configured default download directory.')}</p>}
+        {type === 'deluge' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.delugeLabelHint', 'Applied via the Deluge label plugin. Leave blank if the plugin is not installed.')}</p>}
         {type === 'rtorrent' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.rtorrentCategoryHelp')}</p>}
       </div>
       {type !== 'transmission' && (
@@ -667,11 +685,11 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
       )}
       <PathRemapField
         id="add-client-path-remap"
-        label="Download client path remap"
+        label={t('settings.clients.pathRemapLabel', 'Download client path remap')}
         value={pathRemap}
         onChange={setPathRemap}
         placeholder={type === 'qbittorrent' ? '/downloads:/media/books' : '/media:/books'}
-        help={downloadClientPathRemapHelp(type)}
+        help={remapHelp(t, type)}
       />
       {supportsRemoveOnImport(type) && (
         <div>

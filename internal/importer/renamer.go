@@ -180,6 +180,18 @@ const defaultAudiobookFileTemplate = "{Title} - Part {Part:3}.{ext}"
 type Renamer struct {
 	template          string
 	audiobookTemplate string
+	// windowsNames drops the trailing dots and spaces Windows would strip from
+	// a rendered file or folder name (#3468). Off elsewhere, so POSIX paths
+	// are rendered exactly as before.
+	windowsNames bool
+}
+
+// WithWindowsNames sets whether rendered path components are made safe for
+// Windows, which silently drops a trailing dot or space from a name. It
+// defaults to the host OS; tests use it to cover both flavours anywhere.
+func (r *Renamer) WithWindowsNames(on bool) *Renamer {
+	r.windowsNames = on
+	return r
 }
 
 // NewRenamer creates a renamer with the given naming template.
@@ -197,7 +209,7 @@ func NewRenamerWithAudiobook(ebookTemplate, audiobookTemplate string) *Renamer {
 	if audiobookTemplate == "" {
 		audiobookTemplate = defaultAudiobookTemplate
 	}
-	return &Renamer{template: ebookTemplate, audiobookTemplate: audiobookTemplate}
+	return &Renamer{template: ebookTemplate, audiobookTemplate: audiobookTemplate, windowsNames: onWindows}
 }
 
 // ResolveNamingTemplates reads the operator's ebook and audiobook destination
@@ -489,6 +501,16 @@ func (r *Renamer) applyWithExtra(template string, author *models.Author, book *m
 	kept := segments[:0]
 	for _, seg := range segments {
 		rendered := renderSegment(seg, values)
+		if r.windowsNames {
+			if trimmed := trimWindowsName(rendered); trimmed != "" || rendered == "" {
+				rendered = trimmed
+			} else {
+				// Only dots or spaces ("..."): Windows would drop the whole
+				// name, folding the folder level away. Keep a stand in so the
+				// path stays valid and distinct from its parent.
+				rendered = "_"
+			}
+		}
 		if rendered != "" {
 			kept = append(kept, rendered)
 		}

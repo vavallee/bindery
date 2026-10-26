@@ -162,6 +162,7 @@ function ReleaseRow({
   grabbing: string | null
   onGrab: (r: SearchResult) => void
 }) {
+  const { t } = useTranslation()
   return (
     <div className={resultRowCls(r.approved)}>
       <div className="min-w-0 mr-3">
@@ -170,7 +171,7 @@ function ReleaseRow({
           <span className="truncate text-slate-800 dark:text-zinc-200">{r.title}</span>
         </div>
         <span className="text-fg-muted truncate block">
-          {r.indexerName} · {formatBytes(r.size)} · {r.grabs} grabs
+          {r.indexerName} · {formatBytes(r.size)} · {t('search.grabs', { n: r.grabs, defaultValue: '{{n}} grabs' })}
           {safeHref(r.infoUrl) && (
             <>
               {' · '}
@@ -181,7 +182,7 @@ function ReleaseRow({
                 onClick={e => e.stopPropagation()}
                 className="text-sky-600 dark:text-sky-400 hover:underline"
               >
-                ↗ indexer
+                ↗ {t('search.indexerLink', 'indexer')}
               </a>
             </>
           )}
@@ -193,7 +194,7 @@ function ReleaseRow({
         disabled={grabbing !== null}
         className={`px-3 py-2 ${primaryFill} disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0`}
       >
-        {grabbing === r.guid ? 'Grabbing…' : 'Grab'}
+        {grabbing === r.guid ? t('search.grabbing', 'Grabbing…') : t('search.grab', 'Grab')}
       </button>
     </div>
   )
@@ -210,6 +211,7 @@ export function SearchResultsSection({
   grabbing: string | null
   onGrab: (r: SearchResult) => void
 }) {
+  const { t } = useTranslation()
   const renderRow = (r: SearchResult, fmt?: 'ebook' | 'audiobook') => (
     <ReleaseRow key={r.guid} r={r} fmt={fmt} grabbing={grabbing} onGrab={onGrab} />
   )
@@ -221,13 +223,13 @@ export function SearchResultsSection({
       <>
         {ebooks.length > 0 && (
           <section className="mb-4">
-            <h3 className="text-sm font-semibold mb-2 text-slate-800 dark:text-zinc-200">Ebooks ({ebooks.length})</h3>
+            <h3 className="text-sm font-semibold mb-2 text-slate-800 dark:text-zinc-200">{t('bookDetail.results.ebooks', { n: ebooks.length, defaultValue: 'Ebooks ({{n}})' })}</h3>
             <div className="space-y-1">{ebooks.slice(0, 20).map(r => renderRow(r, 'ebook'))}</div>
           </section>
         )}
         {audiobooks.length > 0 && (
           <section className="mb-4">
-            <h3 className="text-sm font-semibold mb-2 text-slate-800 dark:text-zinc-200">Audiobooks ({audiobooks.length})</h3>
+            <h3 className="text-sm font-semibold mb-2 text-slate-800 dark:text-zinc-200">{t('bookDetail.results.audiobooks', { n: audiobooks.length, defaultValue: 'Audiobooks ({{n}})' })}</h3>
             <div className="space-y-1">{audiobooks.slice(0, 20).map(r => renderRow(r, 'audiobook'))}</div>
           </section>
         )}
@@ -237,7 +239,7 @@ export function SearchResultsSection({
 
   return (
     <section className="mb-6">
-      <h3 className="text-sm font-semibold mb-2 text-slate-800 dark:text-zinc-200">Results ({results.length})</h3>
+      <h3 className="text-sm font-semibold mb-2 text-slate-800 dark:text-zinc-200">{t('bookDetail.results.all', { n: results.length, defaultValue: 'Results ({{n}})' })}</h3>
       <div className="space-y-1">{results.slice(0, 20).map(r => renderRow(r))}</div>
     </section>
   )

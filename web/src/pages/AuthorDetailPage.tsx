@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { safeHref } from '../util/safeHref'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { api, ApiError, Author, AuthorAlias, Book, BookBulkAction, MediaType, Series } from '../api/client'
@@ -11,7 +12,7 @@ import MergeAuthorsModal from '../components/MergeAuthorsModal'
 import EditAuthorModal from '../components/EditAuthorModal'
 import AuthorMetadataLinkModal from '../components/AuthorMetadataLinkModal'
 import RenameFilesModal from '../components/RenameFilesModal'
-import BulkActionBar from '../components/BulkActionBar'
+import BulkActionBar, { type BulkAction } from '../components/BulkActionBar'
 import { useView } from '../components/useView'
 import MarkdownDescription from '../components/MarkdownDescription'
 import { authorProviderKey, canLinkAuthorMetadata } from '../util/authorMetadata'
@@ -22,6 +23,7 @@ import { canonicalLanguage, languageName } from '../util/language'
 import { btn, btnSize } from '../components/buttons'
 import Switch from '../components/Switch'
 import CoverPlaceholder from '../components/CoverPlaceholder'
+import Checkbox from '../components/Checkbox'
 import BookRating from '../components/BookRating'
 import MoreMenu from '../components/MoreMenu'
 import Section from '../components/Section'
@@ -29,6 +31,10 @@ import AuthorSyncNotice from '../components/AuthorSyncNotice'
 import CatalogueReconciliationModal from '../components/CatalogueReconciliationModal'
 import DuplicateCandidatesModal from '../components/DuplicateCandidatesModal'
 import CoverImage from '../components/CoverImage'
+import { errorText } from '../util/errorText'
+import FilterBar from '../components/FilterBar'
+import { FilterGroup } from '../components/FilterPopover'
+import BookStatusLegend from '../components/BookStatusLegend'
 
 type MediaFilter = '' | 'ebook' | 'audiobook'
 // 'excluded' folds in what used to be a separate "Show excluded" checkbox. It
@@ -63,14 +69,10 @@ const STATUS_FILTERS: readonly StatusFilter[] = [
 // locale missing these keys still renders words rather than key names.
 const STATUS_FALLBACK: Record<Exclude<StatusFilter, ''>, string> = {
   wanted: 'Wanted',
-  imported: 'Imported',
+  imported: 'In library',
   skipped: 'Skipped',
   excluded: 'Excluded',
 }
-
-const selectCls =
-  'bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded ' +
-  'px-2 py-1 text-xs text-slate-800 dark:text-zinc-200'
 
 const TODAY = new Date().toISOString().slice(0, 10)
 
@@ -80,10 +82,10 @@ function fmtPublishedYear(d?: string): string {
 }
 
 
-function mediaLabel(mediaType?: Book['mediaType']): string {
-  if (mediaType === 'audiobook') return '🎧 Audiobook'
-  if (mediaType === 'both') return '📖🎧 Both'
-  return '📖 Ebook'
+function mediaLabel(t: TFunction, mediaType?: Book['mediaType']): string {
+  if (mediaType === 'audiobook') return `🎧 ${t('common.audiobook', 'Audiobook')}`
+  if (mediaType === 'both') return `📖🎧 ${t('common.both', 'Both')}`
+  return `📖 ${t('common.ebook', 'Ebook')}`
 }
 
 // Previous/Next navigation (#2548), entirely client-side: AuthorsPage already
@@ -187,7 +189,6 @@ export default function AuthorDetailPage() {
   // accidentally swept up by select-all.
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
-  const selectAllRef = useRef<HTMLInputElement>(null)
 
   const [view, setView] = useView('author-detail', 'grid')
 
@@ -338,12 +339,12 @@ export default function AuthorDetailPage() {
         setSyncGaveUp(false)
       })
       .catch(err => {
-        setError(err instanceof Error ? err.message : 'Failed to load')
+        setError(errorText(err, t('authorDetail.loadFailed', 'Failed to load')))
         if (!cancelled) noteSyncFailure(err)
       })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [authorId, showExcluded, reloadKey])
+  }, [authorId, showExcluded, reloadKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // An author whose catalogue sync is running when the page loads, straight
   // after an add or after a Refresh poll gave up, is polled until the sync
@@ -456,7 +457,7 @@ export default function AuthorDetailPage() {
       quietReload.current = true
       setReloadKey(k => k + 1)
     } catch (e) {
-      if (session.active) setError(e instanceof Error ? e.message : 'Refresh failed')
+      if (session.active) setError(errorText(e, t('authorDetail.refreshFailed', 'Refresh failed')))
     } finally {
       setRefreshingAuthorId(current => (current === refreshedId ? null : current))
     }
@@ -468,7 +469,7 @@ export default function AuthorDetailPage() {
       await api.updateAuthor(author.id, { monitored: !author.monitored })
       setAuthor({ ...author, monitored: !author.monitored })
     } catch (e) {
-      setError(authorSaveError(e, t, 'Update failed'))
+      setError(authorSaveError(e, t, t('authorDetail.updateFailed', 'Update failed')))
     }
   }
 
@@ -490,10 +491,10 @@ export default function AuthorDetailPage() {
       }
       const item = res.results[String(author.id)]
       if (item && !item.ok) {
-        throw new Error(item.error || 'Search failed')
+        throw new Error(item.error || t('authorDetail.searchFailed', 'Search failed'))
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Search failed')
+      setError(errorText(e, t('authorDetail.searchFailed', 'Search failed')))
     } finally {
       setSearchingWanted(false)
     }
@@ -515,7 +516,7 @@ export default function AuthorDetailPage() {
       await api.deleteAuthor(author.id, withFiles.length > 0)
       navigate('/')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Delete failed')
+      setError(errorText(e, t('authorDetail.deleteFailed', 'Delete failed')))
     }
   }
 
@@ -559,7 +560,7 @@ export default function AuthorDetailPage() {
       const items = await api.listAllBooks({ authorId, includeExcluded: showExcluded })
       setBooks(items)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Reload failed')
+      setError(errorText(e, t('authorDetail.reloadFailed', 'Reload failed')))
     }
   }
 
@@ -591,7 +592,7 @@ export default function AuthorDetailPage() {
           okCount++
           succeeded.add(id)
         } else if (!firstError) {
-          firstError = r?.error || 'unknown error'
+          firstError = r?.error || t('authorDetail.unknownError', 'unknown error')
         }
       }
       if (okCount < ids.length) {
@@ -714,7 +715,7 @@ export default function AuthorDetailPage() {
   // each — matching how the series page presents membership.
   const seriesGroups = useMemo(() => {
     const byId = new Map(filteredBooks.map(b => [b.id, b]))
-    const grouped: { key: string; title: string; books: Book[] }[] = []
+    const grouped: { key: string; seriesId?: number; title: string; books: Book[] }[] = []
     const placed = new Set<number>()
     for (const series of authorSeries) {
       const entries = [...(series.books ?? [])].sort((a, b) => {
@@ -729,12 +730,12 @@ export default function AuthorDetailPage() {
         books.push(book)
         placed.add(book.id)
       }
-      if (books.length > 0) grouped.push({ key: `series-${series.id}`, title: series.title, books })
+      if (books.length > 0) grouped.push({ key: `series-${series.id}`, seriesId: series.id, title: series.title, books })
     }
     const standalone = filteredBooks.filter(b => !placed.has(b.id))
-    if (standalone.length > 0) grouped.push({ key: 'standalone', title: 'Standalone', books: standalone })
+    if (standalone.length > 0) grouped.push({ key: 'standalone', title: t('authorDetail.standalone', 'Standalone'), books: standalone })
     return grouped
-  }, [authorSeries, filteredBooks])
+  }, [authorSeries, filteredBooks, t])
 
   // Drop any selected IDs that are no longer in the filtered view so the
   // bulk bar count never lies about what's about to be acted on.
@@ -753,14 +754,11 @@ export default function AuthorDetailPage() {
 
   const allVisibleSelected = filteredBooks.length > 0 && filteredBooks.every(b => selected.has(b.id))
   const someVisibleSelected = filteredBooks.some(b => selected.has(b.id)) && !allVisibleSelected
-  useEffect(() => {
-    if (selectAllRef.current) selectAllRef.current.indeterminate = someVisibleSelected
-  }, [someVisibleSelected])
 
   const selectAllVisible = () => setSelected(new Set(filteredBooks.map(b => b.id)))
 
-  if (loading) return <div className="text-fg-muted">Loading…</div>
-  if (!author) return <div className="text-fg-muted">Author not found</div>
+  if (loading) return <div className="text-fg-muted">{t('common.loading', 'Loading…')}</div>
+  if (!author) return <div className="text-fg-muted">{t('authorDetail.notFound', 'Author not found')}</div>
 
   const searchableWantedCount = books.filter(b => b.status === 'wanted' && b.monitored && !b.excluded).length
   // Relinking is valid for every author — the backend accepts any record and the
@@ -839,12 +837,10 @@ export default function AuthorDetailPage() {
           {/* The label fills the cell, so the whole cell toggles the box: the
               16px box alone is hard to tap. */}
           <label className="flex items-center -mx-3 -my-2 px-3 py-2 cursor-pointer pointer-coarse:min-h-11">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={selected.has(book.id)}
               onChange={() => toggleSelect(book.id)}
-              className="rounded border-slate-400 dark:border-zinc-600"
-              aria-label={`Select ${book.title}`}
+              label={`Select ${book.title}`}
             />
           </label>
         </td>
@@ -880,14 +876,14 @@ export default function AuthorDetailPage() {
                   )
                 })()}
                 <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 dark:bg-zinc-800 text-fg-muted">
-                  {mediaLabel(book.mediaType)}
+                  {mediaLabel(t, book.mediaType)}
                 </span>
                 <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 dark:bg-zinc-800 text-fg-muted">
                   {fmtPublishedYear(book.releaseDate)}
                 </span>
                 {book.excluded && (
                   <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
-                    Excluded
+                    {t('books.excluded', 'Excluded')}
                   </span>
                 )}
               </span>
@@ -899,7 +895,7 @@ export default function AuthorDetailPage() {
           {book.averageRating && book.averageRating > 0 ? <BookRating book={book} /> : '—'}
         </td>
         <td className="hidden sm:table-cell px-3 py-2 text-xs whitespace-nowrap align-middle">
-          {mediaLabel(book.mediaType)}
+          {mediaLabel(t, book.mediaType)}
         </td>
         <td className="hidden sm:table-cell px-3 py-2 whitespace-nowrap align-middle">
           {(() => {
@@ -912,7 +908,7 @@ export default function AuthorDetailPage() {
           })()}
           {book.excluded && (
             <span className="inline-block ml-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">
-              Excluded
+              {t('books.excluded', 'Excluded')}
             </span>
           )}
         </td>
@@ -927,34 +923,31 @@ export default function AuthorDetailPage() {
             <tr className="bg-slate-100 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800">
               <th className="w-10 px-3 py-2">
                 {withHeaderControls && (
-                  <input
-                    ref={selectAllRef}
-                    type="checkbox"
+                  <Checkbox
                     checked={allVisibleSelected}
-                    onChange={e => e.target.checked ? selectAllVisible() : clearSelection()}
-                    className="rounded border-slate-400 dark:border-zinc-600"
-                    title={t('common.selectAllPage')}
-                    aria-label={t('common.selectAllPage')}
+                    indeterminate={someVisibleSelected}
+                    onChange={select => (select ? selectAllVisible() : clearSelection())}
+                    label={t('common.selectAllPage')}
                   />
                 )}
               </th>
               <th
                 className="w-full sm:w-[46%] text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase cursor-pointer select-none hover:text-slate-900 dark:hover:text-white"
                 onClick={() => toggleSort('title-az', 'title-za')}
-                title="Sort by title"
+                title={t('authorDetail.sortByTitle', 'Sort by title')}
               >
-                Title{sortArrow('title-az', 'title-za')}
+                {t('books.colTitle', 'Title')}{sortArrow('title-az', 'title-za')}
               </th>
               <th
                 className="hidden sm:table-cell sm:w-28 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase cursor-pointer select-none hover:text-slate-900 dark:hover:text-white whitespace-nowrap"
                 onClick={() => toggleSort('date-old', 'date-new')}
-                title="Sort by publication date"
+                title={t('authorDetail.sortByDate', 'Sort by publication date')}
               >
-                Published{sortArrow('date-old', 'date-new')}
+                {t('authorDetail.colPublished', 'Published')}{sortArrow('date-old', 'date-new')}
               </th>
               <th className="hidden md:table-cell md:w-24 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase">{t('books.colRating')}</th>
-              <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase">Type</th>
-              <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase">Status</th>
+              <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase">{t('books.colType', 'Type')}</th>
+              <th className="hidden sm:table-cell sm:w-36 text-left px-3 py-2 text-xs font-medium text-fg-muted uppercase">{t('books.colStatus', 'Status')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-zinc-800">
@@ -979,12 +972,11 @@ export default function AuthorDetailPage() {
             className="absolute top-0 left-0 z-10 flex p-2 pointer-coarse:p-3.5 cursor-pointer"
             onClick={e => e.stopPropagation()}
           >
-            <input
-              type="checkbox"
+            <Checkbox
               checked={selected.has(book.id)}
               onChange={() => toggleSelect(book.id)}
-              className={`rounded border-slate-400 dark:border-zinc-600 ${selected.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}`}
-              aria-label={`Select ${book.title}`}
+              className={selected.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}
+              label={`Select ${book.title}`}
             />
           </label>
           <Link
@@ -996,7 +988,7 @@ export default function AuthorDetailPage() {
             <div className="aspect-[2/3] bg-slate-200 dark:bg-zinc-800 relative">
               <CoverImage loading="lazy" decoding="async" src={book.imageUrl} alt={book.title} className="w-full h-full object-cover"
                 fallback={
-                  <CoverPlaceholder id={book.id} title={book.title} size="sm" className="w-full h-full" />
+                  <CoverPlaceholder id={book.id} title={book.title} size="sm" show="initials" className="w-full h-full" />
                 }
               />
             </div>
@@ -1020,10 +1012,10 @@ export default function AuthorDetailPage() {
                   )
                 })()}
                 {book.mediaType === 'audiobook' && (
-                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 Audio</span>
+                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 {t('authorDetail.audioBadge', 'Audio')}</span>
                 )}
                 {book.excluded && (
-                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">Excluded</span>
+                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-700 dark:text-amber-400">{t('books.excluded', 'Excluded')}</span>
                 )}
               </div>
               {/* No `book.releaseDate &&` guard: fmtPublishedYear already
@@ -1043,6 +1035,20 @@ export default function AuthorDetailPage() {
   const renderBooks = (list: Book[], withHeaderControls = true) =>
     view === 'table' ? renderTable(list, withHeaderControls) : renderGrid(list)
 
+  // The Excluded view lists only excluded books, so there the one exclusion
+  // action is the way back (#3454). It leads that view's bar so the cap on
+  // inline actions does not push it behind More.
+  const exclusionAction: BulkAction = statusFilter === 'excluded'
+    ? {
+        label: t('authorDetail.bulk.unexclude', 'Un-exclude'),
+        onClick: () => runBulk('unexclude', t('authorDetail.bulk.unexclude', 'Un-exclude')),
+      }
+    : {
+        label: t('authorDetail.bulk.exclude'),
+        variant: 'caution',
+        onClick: () => runBulk('exclude', t('authorDetail.bulk.exclude'), t('authorDetail.bulk.excludeConfirm', { count: selected.size })),
+      }
+
   return (
     // One width shared with BookDetailPage — see the note there.
     <div className={`max-w-7xl ${selected.size > 0 ? 'pb-20' : ''}`}>
@@ -1055,14 +1061,14 @@ export default function AuthorDetailPage() {
             must fall back to navigate(-1) or Back would strand those flows
             on the Authors list instead of where they came from. */}
         {navState ? (
-          <Link to="/" className="text-fg-muted hover:text-slate-900 dark:hover:text-white">← Back</Link>
+          <Link to="/" className="text-fg-muted hover:text-slate-900 dark:hover:text-white">← {t('authorDetail.back', 'Back')}</Link>
         ) : (
           <button
             type="button"
             onClick={() => navigate(-1)}
             className="text-fg-muted hover:text-slate-900 dark:hover:text-white"
           >
-            ← Back
+            ← {t('authorDetail.back', 'Back')}
           </button>
         )}
         {navState && (prevId !== null || nextId !== null) && (
@@ -1123,7 +1129,7 @@ export default function AuthorDetailPage() {
           )}
           <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-fg-muted">
             {author.averageRating > 0 && (
-              <span>★ {author.averageRating.toFixed(2)} ({author.ratingsCount.toLocaleString()} ratings)</span>
+              <span>★ {author.averageRating.toFixed(2)} ({t('authorDetail.ratings', { n: author.ratingsCount.toLocaleString(), defaultValue: '{{n}} ratings' })})</span>
             )}
             {(() => {
               const src = metadataSourceLink(author.foreignAuthorId, 'author')
@@ -1287,13 +1293,13 @@ export default function AuthorDetailPage() {
           </div>
           {author.aliases && author.aliases.length > 0 && (
             <div className="mt-4 text-xs">
-              <div className="text-fg-muted mb-1">Also known as</div>
+              <div className="text-fg-muted mb-1">{t('authorDetail.aliasesHeading', 'Also known as')}</div>
               <div className="flex flex-wrap gap-1.5">
                 {author.aliases.map(a => (
                   <span
                     key={a.id}
                     className="group/alias inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300"
-                    title={a.sourceOlId ? `From ${a.sourceOlId}` : undefined}
+                    title={a.sourceOlId ? t('authorDetail.aliasSource', { source: a.sourceOlId, defaultValue: 'From {{source}}' }) : undefined}
                   >
                     <span>{a.name}</span>
                     <button
@@ -1415,100 +1421,102 @@ export default function AuthorDetailPage() {
           </>
         }
       >
-        {/* Selects on one line, replacing three labelled chip groups
-            totalling ten buttons plus an ml-auto "Select all" that wrapped to a
-            second row and read as if it belonged to the Published group. The
-            selects also expose `skipped`, which has been in StatusFilter all
-            along but was never offered. */}
+        {/* The shared filter bar. This row used to be six native selects
+            (Type, Status, Published, Monitored, Language, Sort), the densest
+            control row in the app and a third filter pattern beside Books and
+            Wanted. Status is the inline segment, as on Books; the secondary
+            facets sit behind Filters, each applied one shown as a chip. The
+            Excluded status is still a status: it widens the fetch to excluded
+            rows (#103). */}
         {books.length > 0 && (
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
-              {t('authorDetail.filters.type', 'Type')}
-              <select
-                value={typeFilter}
-                onChange={e => setTypeFilter(e.target.value as MediaFilter)}
-                className={selectCls}
-              >
-                <option value="">{t('authorDetail.filters.allTypes', 'All types')}</option>
-                <option value="ebook">📖 {t('common.ebook')}</option>
-                <option value="audiobook">🎧 {t('common.audiobook')}</option>
-              </select>
-            </label>
-
-            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
-              {t('authorDetail.filters.status', 'Status')}
-              <select
-                value={statusFilter}
-                onChange={e => setStatusFilter(e.target.value as StatusFilter)}
-                className={selectCls}
-              >
-                {STATUS_FILTERS.map(s => (
-                  <option key={s || 'all'} value={s}>
-                    {s === ''
-                      ? t('authorDetail.filters.allStatuses', 'All statuses')
-                      : t(`authorDetail.filters.status_${s}`, STATUS_FALLBACK[s])}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
-              {t('authorDetail.filters.published', 'Published')}
-              <select
-                value={publishedFilter}
-                onChange={e => setPublishedFilter(e.target.value as PublishedFilter)}
-                className={selectCls}
-              >
-                <option value="">{t('authorDetail.filters.allPublished', 'Any date')}</option>
-                <option value="released">{t('authorDetail.filters.released', 'Released')}</option>
-                <option value="upcoming">{t('authorDetail.filters.upcoming', 'Upcoming')}</option>
-              </select>
-            </label>
-
-            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
-              {t('authorDetail.filters.monitored', 'Monitored')}
-              <select
-                value={monitoredFilter}
-                onChange={e => setMonitoredFilter(e.target.value as MonitoredFilter)}
-                className={selectCls}
-              >
-                <option value="">{t('authorDetail.filters.allMonitored', 'Any')}</option>
-                <option value="monitored">{t('authorDetail.filters.monitoredOnly', 'Monitored')}</option>
-                <option value="unmonitored">{t('authorDetail.filters.unmonitoredOnly', 'Unmonitored')}</option>
-              </select>
-            </label>
-
-            {languages.length > 1 && (
-              <label className="flex items-center gap-1.5 text-xs text-fg-muted">
-                {t('authorDetail.filters.language', 'Language')}
-                <select
-                  value={activeLanguage}
-                  onChange={e => setLanguageFilter(e.target.value)}
-                  className={selectCls}
-                >
-                  <option value="">{t('authorDetail.filters.allLanguages', 'All languages')}</option>
-                  {languages.map(l => <option key={l} value={l}>{languageName(l)}</option>)}
-                </select>
-              </label>
-            )}
-
-            <label className="flex items-center gap-1.5 text-xs text-fg-muted">
-              {t('authorDetail.filters.sort', 'Sort')}
-              <select
-                value={sort}
-                onChange={e => setSort(e.target.value as SortMode)}
-                className={selectCls}
-              >
-                <option value="">{t('authorDetail.filters.sortDefault', 'Default')}</option>
-                <option value="title-az">{t('authorDetail.filters.sortTitleAZ', 'Title A–Z')}</option>
-                <option value="title-za">{t('authorDetail.filters.sortTitleZA', 'Title Z–A')}</option>
-                <option value="date-new">{t('authorDetail.filters.sortNewest', 'Published, newest')}</option>
-                <option value="date-old">{t('authorDetail.filters.sortOldest', 'Published, oldest')}</option>
-                <option value="added-new">{t('authorDetail.filters.sortAddedNew', 'Added, newest')}</option>
-                <option value="added-old">{t('authorDetail.filters.sortAddedOld', 'Added, oldest')}</option>
-              </select>
-            </label>
-
+          <FilterBar
+            status={{
+              value: statusFilter,
+              onChange: setStatusFilter,
+              label: t('authorDetail.filters.status', 'Status'),
+              options: STATUS_FILTERS.map(s => ({
+                value: s,
+                label: s === '' ? t('common.all', 'All') : t(`authorDetail.filters.status_${s}`, STATUS_FALLBACK[s]),
+              })),
+              help: <BookStatusLegend />,
+            }}
+            sort={{
+              value: sort,
+              onChange: setSort,
+              label: t('authorDetail.filters.sort', 'Sort'),
+              options: [
+                { value: '' as const, label: t('authorDetail.filters.sortDefault', 'Default') },
+                { value: 'title-az' as const, label: t('authorDetail.filters.sortTitleAZ', 'Title A–Z') },
+                { value: 'title-za' as const, label: t('authorDetail.filters.sortTitleZA', 'Title Z–A') },
+                { value: 'date-new' as const, label: t('authorDetail.filters.sortNewest', 'Published, newest') },
+                { value: 'date-old' as const, label: t('authorDetail.filters.sortOldest', 'Published, oldest') },
+                { value: 'added-new' as const, label: t('authorDetail.filters.sortAddedNew', 'Added, newest') },
+                { value: 'added-old' as const, label: t('authorDetail.filters.sortAddedOld', 'Added, oldest') },
+              ],
+            }}
+            filters={{
+              activeCount: [typeFilter, publishedFilter, monitoredFilter, activeLanguage].filter(Boolean).length,
+              content: (
+                <>
+                  <FilterGroup
+                    label={t('authorDetail.filters.type', 'Type')}
+                    value={typeFilter}
+                    onChange={setTypeFilter}
+                    options={[
+                      { value: '' as const, label: t('authorDetail.filters.allTypes', 'All types') },
+                      { value: 'ebook' as const, label: `📖 ${t('common.ebook')}`, ariaLabel: t('common.ebook') },
+                      { value: 'audiobook' as const, label: `🎧 ${t('common.audiobook')}`, ariaLabel: t('common.audiobook') },
+                    ]}
+                  />
+                  <FilterGroup
+                    label={t('authorDetail.filters.published', 'Published')}
+                    value={publishedFilter}
+                    onChange={setPublishedFilter}
+                    options={[
+                      { value: '' as const, label: t('authorDetail.filters.allPublished', 'Any date') },
+                      { value: 'released' as const, label: t('authorDetail.filters.released', 'Released') },
+                      { value: 'upcoming' as const, label: t('authorDetail.filters.upcoming', 'Upcoming') },
+                    ]}
+                  />
+                  <FilterGroup
+                    label={t('authorDetail.filters.monitored', 'Monitored')}
+                    value={monitoredFilter}
+                    onChange={setMonitoredFilter}
+                    options={[
+                      { value: '' as const, label: t('authorDetail.filters.allMonitored', 'Any') },
+                      { value: 'monitored' as const, label: t('authorDetail.filters.monitoredOnly', 'Monitored') },
+                      { value: 'unmonitored' as const, label: t('authorDetail.filters.unmonitoredOnly', 'Unmonitored') },
+                    ]}
+                  />
+                  {languages.length > 1 && (
+                    <FilterGroup
+                      label={t('authorDetail.filters.language', 'Language')}
+                      value={activeLanguage}
+                      onChange={setLanguageFilter}
+                      options={[
+                        { value: '', label: t('authorDetail.filters.allLanguages', 'All languages') },
+                        ...languages.map(l => ({ value: l, label: languageName(l) ?? l })),
+                      ]}
+                    />
+                  )}
+                </>
+              ),
+            }}
+            chips={[
+              ...(typeFilter ? [{ key: 'type', label: typeFilter === 'ebook' ? t('common.ebook') : t('common.audiobook'), onClear: () => setTypeFilter('') }] : []),
+              ...(publishedFilter ? [{
+                key: 'published',
+                label: publishedFilter === 'released' ? t('authorDetail.filters.released', 'Released') : t('authorDetail.filters.upcoming', 'Upcoming'),
+                onClear: () => setPublishedFilter(''),
+              }] : []),
+              ...(monitoredFilter ? [{
+                key: 'monitored',
+                label: monitoredFilter === 'monitored' ? t('authorDetail.filters.monitoredOnly', 'Monitored') : t('authorDetail.filters.unmonitoredOnly', 'Unmonitored'),
+                onClear: () => setMonitoredFilter(''),
+              }] : []),
+              ...(activeLanguage ? [{ key: 'language', label: languageName(activeLanguage) ?? activeLanguage, onClear: () => setLanguageFilter('') }] : []),
+            ]}
+          >
             {/* Select/deselect every currently displayed book (#1172). Operates on
                 filteredBooks, so it respects the active filters and composes
                 with the per-book checkboxes used by the bulk action bar. */}
@@ -1521,7 +1529,7 @@ export default function AuthorDetailPage() {
                 {allVisibleSelected ? t('authorDetail.bulk.deselectAll') : t('authorDetail.bulk.selectAll')}
               </button>
             )}
-          </div>
+          </FilterBar>
         )}
 
         {syncing && (
@@ -1533,15 +1541,28 @@ export default function AuthorDetailPage() {
           </p>
         )}
         {books.length === 0 ? (
-          !syncing && <p className="text-sm text-fg-muted">No books tracked for this author yet.</p>
+          !syncing && <p className="text-sm text-fg-muted">{t('authorDetail.noBooks', 'No books tracked for this author yet.')}</p>
         ) : filteredBooks.length === 0 ? (
-          <p className="text-sm text-fg-muted">No books match the current filters.</p>
+          <p className="text-sm text-fg-muted">{t('authorDetail.noFilterMatch', 'No books match the current filters.')}</p>
         ) : groupBySeries ? (
           <div className="space-y-6">
             {seriesGroups.map(group => (
               <div key={group.key}>
                 <h4 className="text-sm font-semibold text-slate-700 dark:text-zinc-300 mb-2 flex items-center gap-2">
-                  <span>{group.title}</span>
+                  {/* The Series page opens the card named in router state, as
+                      the Authors page and the header search do (#3457). */}
+                  {group.seriesId !== undefined ? (
+                    <Link
+                      to="/series"
+                      state={{ seriesId: group.seriesId }}
+                      title={t('authorDetail.openSeries', 'Open this series on the Series page')}
+                      className="hover:underline hover:text-emerald-700 dark:hover:text-emerald-400"
+                    >
+                      {group.title}
+                    </Link>
+                  ) : (
+                    <span>{group.title}</span>
+                  )}
                   <span className="text-xs font-normal text-fg-muted bg-slate-200 dark:bg-zinc-800 px-2 py-0.5 rounded-full">
                     {group.books.length} {group.books.length === 1 ? 'book' : 'books'}
                   </span>
@@ -1560,28 +1581,25 @@ export default function AuthorDetailPage() {
         onClear={clearSelection}
         busy={bulkBusy}
         actions={[
+          ...(statusFilter === 'excluded' ? [exclusionAction] : []),
           { label: t('authorDetail.bulk.monitor'), onClick: () => runBulk('monitor', t('authorDetail.bulk.monitor')) },
           { label: t('authorDetail.bulk.unmonitor'), onClick: () => runBulk('unmonitor', t('authorDetail.bulk.unmonitor')) },
+          // Search the selected books rather than all of this author's
+          // wanted ones: on a catalogue padded with editions, the header's
+          // "Search N wanted" is the wrong tool (#2267).
+          { label: t('common.search'), onClick: () => runBulk('search', t('common.search')) },
           // Media-type corrections are author-scoped work in practice — a sync
           // mistags several titles under one author — so they belong here as
           // well as on the global Books view (#2066).
           {
-            label: t('books.setEbook'),
-            onClick: () => runBulk('set_media_type', t('books.setEbook'), undefined, 'ebook'),
+            label: t('bulkActionBar.setFormat', 'Set format'),
+            choices: [
+              { label: t('common.ebook'), onClick: () => runBulk('set_media_type', t('books.setEbook'), undefined, 'ebook') },
+              { label: t('common.audiobook'), onClick: () => runBulk('set_media_type', t('books.setAudiobook'), undefined, 'audiobook') },
+              { label: t('common.both'), onClick: () => runBulk('set_media_type', t('books.setBoth'), undefined, 'both') },
+            ],
           },
-          {
-            label: t('books.setAudiobook'),
-            onClick: () => runBulk('set_media_type', t('books.setAudiobook'), undefined, 'audiobook'),
-          },
-          {
-            label: t('books.setBoth'),
-            onClick: () => runBulk('set_media_type', t('books.setBoth'), undefined, 'both'),
-          },
-          {
-            label: t('authorDetail.bulk.exclude'),
-            variant: 'caution',
-            onClick: () => runBulk('exclude', t('authorDetail.bulk.exclude'), t('authorDetail.bulk.excludeConfirm', { count: selected.size })),
-          },
+          ...(statusFilter === 'excluded' ? [] : [exclusionAction]),
           {
             label: t('authorDetail.bulk.delete'),
             variant: 'danger',

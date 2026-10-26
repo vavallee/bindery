@@ -88,7 +88,7 @@ describe('DuplicateGroupCard', () => {
 
     const ownedEvidence = screen.getByTestId('duplicate-evidence-2')
     expect(ownedEvidence).toHaveTextContent('Ebook (epub), Audiobook')
-    expect(ownedEvidence).toHaveTextContent('In Library')
+    expect(ownedEvidence).toHaveTextContent('In library')
     expect(ownedEvidence).toHaveTextContent('2015')
     expect(ownedEvidence).toHaveTextContent('en')
     expect(ownedEvidence).toHaveTextContent('ISBN 9780312577223 (+2)')

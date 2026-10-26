@@ -56,8 +56,9 @@ Both still end by attaching a file to a catalogue record.
 The **Search library** box in the header is the other kind of search: it looks
 only at what is already in Bindery. As you type it lists matching authors
 (including pen names), books (by title or author) and series, and selecting a
-row opens it (a series row opens the Series page with that series expanded,
-without scrolling to it). The last row is always *Add "…" to Bindery*, which
+row opens it (a series row opens the Series page with that series expanded and
+scrolled into view; so does a series heading on an author page that is grouped
+by series). The last row is always *Add "…" to Bindery*, which
 opens the **Add to library** dialog with the same text already searched against
 your metadata providers, so a miss in the library turns into an add without
 retyping. Pressing Enter with nothing highlighted opens that dialog too, even
@@ -141,19 +142,22 @@ default; tick it to bring every book of those authors into line in one action.
 
 Two related labels:
 
-- **In Library** = Bindery can see at least one file for the book on disk. That is
+- **In library** = Bindery can see at least one file for the book on disk. That is
   status `imported`, and also a `wanted` book of format *Both* that already has
   one of its two formats: it stays on the Wanted page while the other format is
-  missing, and it is listed under In Library as well (#3132). The Books page,
+  missing, and it is listed under In library as well (#3132). The Books page,
   an author page's In library count and the have / total number on the Authors
   list all use this one rule. With a format filter set, the book has to own
-  that format, so Audiobook plus In Library does not list a book that only has
+  that format, so Audiobook plus In library does not list a book that only has
   an ebook.
 - **Exclude vs Delete**: a metadata refresh only adds books back for an author
   you monitor and have set to take new items, so for those authors deleting an
   unwanted catalogue book is temporary — the next refresh recreates it.
   **Exclude** is the sticky action for every author: it hides the book, keeps
   it out of searches, and a refresh will not recreate it under a new id either.
+  To bring excluded books back, set the author page's status filter to
+  **Excluded**, tick the books and choose **Un-exclude**; a single book has the
+  same button on its own page.
 
 ### 3. Bindery never watches folders
 
@@ -367,7 +371,9 @@ ebook list and an audiobook list, numbered from the top, and top is best.
 Tick a format to allow it and untick it to refuse it; an unticked format is
 never grabbed and never counts in the ranking, wherever it sits. Move a format up or down to change
 which one Bindery prefers. A release that carries several formats, such as
-"azw3 epub", counts as the best ticked one it carries. A list with nothing in
+"azw3 epub", counts as the best ticked one it carries. When a book ends up with
+several ebook files, the one served and offered over OPDS is chosen in a fixed
+order, EPUB, KEPUB, AZW3, MOBI, PDF and then the rest, and every file is kept. A list with nothing in
 it means the profile has no opinion on that kind: any format of that kind is
 accepted and ranked by the built in order, which is azw3, epub, mobi and azw,
 pdf, rtf, txt for ebooks, and flac, m4b, m4a, mp3 for audiobooks. That same
@@ -478,7 +484,7 @@ Usenet clients have no seeding, so the limits do nothing there.
 
 **Import.** When the client reports the job complete, Bindery matches it to
 the book, places the file per your import mode and naming template, and marks
-the book **In Library**. Ebooks land under the author's root folder (falling
+the book **In library**. Ebooks land under the author's root folder (falling
 back to the default root folder, then `BINDERY_LIBRARY_DIR`); audiobooks have
 their own chain (the author's audiobook root folder, then the default audiobook
 root folder, then `BINDERY_AUDIOBOOK_DIR`). Both defaults are set under
@@ -549,7 +555,8 @@ name can say one book while the EPUB inside is another, and without a check that
 file imports under the wrong book and the book is never searched for again. When
 a download tied to a wanted book finishes, Bindery reads the EPUB's `dc:title`
 and `dc:creator` and compares them with the book. Only a definite mismatch
-counts: the title does not match **and** the author does not match.
+counts: the title does not match **and** the author does not match, or the
+title is another book by the same author (see below).
 
 A title matches when, after case, accents, punctuation, a leading article and
 `&` against `and` are set aside, it equals the book's title or one of its
@@ -578,8 +585,39 @@ does a comparison across scripts: if one side has no Latin letters and the other
 does (a Russian, Japanese, Hebrew, Arabic or Chinese edition of a book the
 catalogue holds in Latin letters), that title or author cannot disagree. Two
 non-Latin texts are still compared with each other. A file whose title differs but
-whose author agrees (another book in the series) is imported, and a wanted box
-set or omnibus is not compared. If a release holds several EPUBs, it is flagged
+whose author agrees is imported, with one exception: when the file's title is
+clearly a different work than the wanted book and is also the title of another
+book in that author's catalogue in Bindery. Take the wanted `Hawk` and a file
+titled `City of the Dead: A Maximum Ride Novel` by `James Patterson, Mindy
+McGinnis`, with `City of the Dead` among the author's books. The file's creator
+must name the author, so a missing or placeholder creator never triggers this.
+
+How Bindery treats it depends on how sure it is. When the other book sits at a
+different position in a series the wanted book is also in (`Hawk` is book 1 and
+`City of the Dead` book 2), the file is a mismatch like any other, and `block`
+mode refuses it. When nothing but the titles says they are different books, the
+catalogue may simply hold two editions of one work as separate rows (a book under
+its UK and its US title), so Bindery only notes it: the `contentCheck` object
+carries `uncertain: true`, the file imports, and `block` mode does not refuse it.
+Two rows that share an id (an ASIN, a provider id), name each other as the
+original title or are at the same series position are
+treated as editions and say nothing. A translated or alternate title that the
+catalogue does not hold as a separate book, a subtitle, a series prefix or
+suffix and a numbered volume of the same work are not mismatches either.
+
+Positions compare as numbers, so `1`, `1.0` and `01` are one position, and a
+position that is a range (`1-3`, an omnibus) or not a number counts as unknown,
+never as different. A release is only noted rather than refused when every
+mismatched file is uncertain; one definite mismatch makes the release definite.
+The residual risk is bad provider data: if a provider gives two editions of one
+book different positions in one series, Bindery reads them as two books and
+`block` mode can refuse the right file. **Match to book** keeps it.
+
+One limit: a sequel whose title extends the wanted one (`Dune Messiah` for
+`Dune`) is not detected from the title alone, because the wanted title sits
+inside it as whole words and counts as a match.
+
+A wanted box set or omnibus is not compared. If a release holds several EPUBs, it is flagged
 only when every one that could be read is a definite mismatch. A release with more
 than 20 EPUBs is not judged (a verdict on a prefix could condemn the right book),
 and the `contentCheck` note says `truncated`. The object lists at most 10
@@ -878,7 +916,7 @@ How to work through the list:
   selected, and adopt it from there.
 - Suggestions come from **every book by the author the scan matched**,
   whatever its status, and each shows that status. A book you skipped or one
-  that is already **Imported** is never a one click Confirm; adopting into a
+  that is already **In library** is never a one click Confirm; adopting into a
   book that already has a file adds the new file alongside it (#2879).
   Suggestions are worked out by the scan, so a book added since the last scan
   appears after the next one; until then, search for it in the editor.
@@ -1307,7 +1345,7 @@ old catalogue rows during refresh. To apply the new catalogue rules to an
 author's existing rows, open the author, choose **More → Reconcile catalogue…**,
 and review the preview. Every candidate starts selected; clear any row you do
 not want to remove before applying. Apply removes only selected metadata-only
-rows whose status is still Wanted. Imported books, excluded books, books in
+rows whose status is still Wanted. Books in the library, excluded books, books in
 another active status, and any row with `filePath`, `ebookFilePath`,
 `audiobookFilePath`, or a tracked `book_files` entry are protected. No files
 are deleted. Apply fetches the provider again and rechecks the database
@@ -1348,7 +1386,7 @@ than two of its rows are still included.
 **The evidence on each row.** Under every title the review shows what Bindery
 already knows about that row, so you can decide without opening each book:
 whether it has files (ebook, audiobook, and the format, such as epub or m4b),
-its status (Wanted, In Library, Skipped), release year, language, ISBN, ASIN,
+its status (Wanted, In library, Skipped), release year, language, ISBN, ASIN,
 and series with position. The rows are numbered, and above them the group
 lists what the rows agree or disagree on:
 
@@ -1410,7 +1448,7 @@ before.
 
 The Books column of the Authors table reads *have / total*, for example 5 / 12,
 and each card in the grid says how many of the author's books are in your library,
-by the In Library rule under rule 2 near the top of this page (#3092). An author with no books shows a dash.
+by the In library rule under rule 2 near the top of this page (#3092). An author with no books shows a dash.
 On an author's own page the book list has a **Sort** control (title, published,
 added, each both ways) and Monitored and Language filters beside Type, Status and
 Published (#3087); books with no release date sort last.

@@ -6,6 +6,7 @@ import { btn, btnSize } from '../../components/buttons'
 import { useFolderScan } from '../../components/useFolderScan'
 import FolderImportRow from './FolderImportRow'
 import { groupHeading, trackFolders, type RowState } from './folderImport'
+import { errorText } from '../../util/errorText'
 
 // FolderImportView is the Import page's "From a folder" view, the manual
 // import wizard (#1236). It scans a folder with
@@ -115,7 +116,7 @@ export default function FolderImportView() {
         return n
       })
     } catch (e) {
-      setImportError(e instanceof Error ? e.message : 'Import failed')
+      setImportError(errorText(e, t('manualImport.importFailed', 'Import failed')))
     } finally {
       setImportingPaths(prev => { const n = new Set(prev); batch.forEach(b => n.delete(b.path)); return n })
     }
