@@ -21,6 +21,9 @@ func TestGluedLanguageCodes(t *testing.T) {
 		{"Dungeon Crawler Carl AudiobookFrench", []string{"fre"}},
 		{"Carl.ITALIANOAudiolibro.m4b", []string{"ita"}},
 		{"Carl-AudiolibroItaliano", []string{"ita"}},
+		{"FrançaisAudio", []string{"fre"}},
+		{"AudioFrançais", []string{"fre"}},
+		{"PortuguêsAudio", []string{"por"}},
 		{"Carl SvenskaLjudbok", []string{"swe"}},
 		// Not glued by capitals, or not a name: no change in behaviour.
 		{"Finishing School", nil},

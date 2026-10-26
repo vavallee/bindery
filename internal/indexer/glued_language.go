@@ -62,15 +62,22 @@ func gluedLanguageCodes(title string) []string {
 		}
 		for _, p := range []string{parts[0], parts[len(parts)-1]} {
 			p = strings.ToLower(p)
-			if code, ok := gluedName[p]; ok && !slices.Contains(out, code) {
-				out = append(out, code)
-			} else if code, ok := gluedName[NormalizeRelease(p)]; ok && !slices.Contains(out, code) {
+			code, ok := gluedName[p]
+			if !ok {
+				code, ok = gluedName[accentFold.Replace(p)]
+			}
+			if ok && !slices.Contains(out, code) {
 				out = append(out, code)
 			}
 		}
 	}
 	return out
 }
+
+// accentFold strips the accents of the names above that are written with one
+// in their own language, so "Français" and "Português" find "francais" and
+// "portugues". ñ is not folded: "español" is listed as itself.
+var accentFold = strings.NewReplacer("ç", "c", "ê", "e", "é", "e", "ã", "a", "ô", "o", "í", "i", "ó", "o", "á", "a", "ú", "u")
 
 var gluedName = func() map[string]string {
 	m := make(map[string]string, len(gluedLanguageNames))

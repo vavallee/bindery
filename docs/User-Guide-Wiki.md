@@ -505,7 +505,10 @@ language name or a local word like "Hörbuch" as a whole word in the release
 name, and also at the edge of a name joined to another word by capital
 letters, so `Dungeon Crawler Carl_EspañolNeutro m4b` counts as Spanish. Bare
 two letter codes ("it", "de", "no") are only read in the scene suffix of a
-name, never inside a joined word, because they are ordinary words too.
+name, never inside a joined word, because they are ordinary words too. A
+joined name whose first or last part is a language word (for example
+`DutchOven` or `FrenchPress`) is treated like its spaced form, so an English
+only profile drops those as well.
 
 **The file's language is checked at import.** The language filter at grab
 time can only read the release name, so a release that does not say its
