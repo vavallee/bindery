@@ -423,6 +423,8 @@ If the file is what you want after all, press **Match to book** on the row and p
 
 ### A foreign language audiobook was grabbed by an English profile
 
+Bindery also checks the language tag of the audiobook files at import and refuses a release whose tagged language is not allowed, so a release whose name says nothing is caught when the files arrive. A file with no language tag is never refused. If a tag is simply wrong, use **Match to book** on the Queue row to import it anyway.
+
 Scene audiobook names carry their language only as a short code, and the search filter reads those codes. It reads a code in the suffix after a marker (`audiobook`, `abook`, `mp3`, `m4b`, `flac`, `aac`, or a disc token such as `4CD` or `2MP3CD`), as in `-AUDIOBOOK-WEB-DE-2023-GROUP`, and a capitalised two or three letter code placed just before a marker, as in `Author-Title-DE-AUDIOBOOK-4CD-FLAC-2005-GROUP`. The mangled German words `ungekrzt` and `gekrzt` count as German as well. The code never counts from the title.
 
 The rules are deliberately narrow, because an English release dropped by mistake is worse than a foreign one that slips through. "Capitalised" below means the code is all capitals.

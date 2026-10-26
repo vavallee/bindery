@@ -28,6 +28,10 @@ import (
 // verdict is a majority, so an even sample decides it as well as every file.
 const maxLanguageTagReads = 50
 
+// languageTagReader reads one file's tags for the language check. A var so a
+// test can count and record the reads.
+var languageTagReader = ReadAudioTags
+
 // checkAudiobookLanguage compares the languages the tracks of an audiobook
 // download declare with the languages its book may be in.
 //
@@ -66,15 +70,19 @@ func (s *Scanner) checkAudiobookLanguage(ctx context.Context, book *models.Book,
 			// Out of time or cancelled: an incomplete sample is not a verdict.
 			return languageCheck{allowed: lc.allowed}
 		}
-		// ReadAudioTags directly, not s.audioTags: that hook counts the content
-		// check's reads, which this check does not add to.
-		t, err := ReadAudioTags(f)
+		// Not s.audioTags: that hook counts the content check's reads, which
+		// this check does not add to.
+		t, err := languageTagReader(f)
 		if err != nil {
 			continue
 		}
 		var langs []string
 		for _, l := range strings.Split(t.Language, "/") {
-			langs = append(langs, models.NormalizeLanguageCode(l))
+			// Audio tags are sloppy ("xxx", "unk", "abc"): only a value the
+			// ISO 639 tables resolve is a vote, anything else abstains.
+			if models.IsKnownLanguage(l) {
+				langs = append(langs, models.NormalizeLanguageCode(l))
+			}
 		}
 		langs = definiteLanguages(langs)
 		switch {

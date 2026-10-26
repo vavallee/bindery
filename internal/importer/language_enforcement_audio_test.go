@@ -280,3 +280,68 @@ func TestAudiobookLanguage_EbookCheckUnchanged(t *testing.T) {
 		t.Fatalf("status = %q, want blocked", dl.Status)
 	}
 }
+
+func TestAudiobookLanguage_JunkTagsAbstain(t *testing.T) {
+	for _, tag := range []string{"XXX", "unk", "zzz", "nul", "abc", "N/A", "None", "Unknown"} {
+		t.Run(tag, func(t *testing.T) {
+			f := newAudioLangFixture(t, langEnforceOpts{allowed: "eng", bookLang: "eng"})
+			f.track(t, 1, "mp3", id3Lang(tag))
+			f.importDownload(t)
+			f.assertImported(t)
+		})
+	}
+	t.Run("eng/xxx imports", func(t *testing.T) {
+		f := newAudioLangFixture(t, langEnforceOpts{allowed: "eng", bookLang: "eng"})
+		f.track(t, 1, "mp3", id3Lang("eng/xxx"))
+		f.importDownload(t)
+		f.assertImported(t)
+	})
+	t.Run("a real disallowed code still blocks", func(t *testing.T) {
+		f := newAudioLangFixture(t, langEnforceOpts{allowed: "eng", bookLang: "eng"})
+		f.track(t, 1, "mp3", id3Lang("spa"))
+		f.importDownload(t)
+		f.assertBlockedForLanguage(t, "Spanish")
+	})
+}
+
+func TestAudiobookLanguage_ReadsAreBoundedAndSampled(t *testing.T) {
+	// 120 tracks: the first 70 Spanish, the last 50 English. Reading all would
+	// give 70 v 50 Spanish; the even sample of 50 still has Spanish ahead, and
+	// must include the first and last track.
+	var files []string
+	dir := t.TempDir()
+	const n = 120
+	for i := 0; i < n; i++ {
+		lang := "eng"
+		if i < 70 {
+			lang = "spa"
+		}
+		p := filepath.Join(dir, fmt.Sprintf("t%03d.mp3", i))
+		if err := os.WriteFile(p, id3Lang(lang), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, p)
+	}
+	var read []string
+	orig := languageTagReader
+	languageTagReader = func(p string) (AudioTags, error) {
+		read = append(read, p)
+		return orig(p)
+	}
+	t.Cleanup(func() { languageTagReader = orig })
+	f := newAudioLangFixture(t, langEnforceOpts{allowed: "eng", bookLang: "eng"})
+	author, err := f.scanner.authors.GetByID(context.Background(), f.book.AuthorID)
+	if err != nil || author == nil {
+		t.Fatalf("load author: %v", err)
+	}
+	lc := f.scanner.checkAudiobookLanguage(context.Background(), f.book, author, files)
+	if !lc.reject {
+		t.Fatal("a majority Spanish sample of a 120 track folder was not rejected")
+	}
+	if len(read) != 50 {
+		t.Fatalf("read %d tracks, want exactly 50", len(read))
+	}
+	if read[0] != files[0] || read[len(read)-1] != files[n-1] {
+		t.Errorf("sample did not span the folder: first %q last %q", read[0], read[len(read)-1])
+	}
+}
