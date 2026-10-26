@@ -1958,6 +1958,23 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			}
 			return
 		}
+		// Post-download language check, audiobook half (#3497): the same rule
+		// and outcome as the EPUB check above, read from the tracks' language
+		// tags. Only a clear majority of tracks in a disallowed language
+		// rejects; untagged files never do. A manual import is never refused.
+		if len(bookFiles) > 0 {
+			if lc := s.checkAudiobookLanguage(ctx, book, author, bookFiles); lc.reject && isManualImport(ctx) {
+				slog.Warn("manual import of audio files in a language the profile does not allow; importing them as asked",
+					"title", dl.Title, "bookID", book.ID, "languages", lc.declared)
+			} else if lc.reject {
+				slog.Warn("import blocked: audio file language is not allowed",
+					"title", dl.Title, "bookID", book.ID, "languages", lc.declared)
+				s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
+				s.blocklistRejectedRelease(ctx, dl, lc.reason)
+				s.failImport(ctx, dl, models.StateImportBlocked, lc.reason)
+				return
+			}
+		}
 		// Post-download content check, audiobook half (#3246). The tags of the
 		// download's audio files are read once and compared with the book; a
 		// download that holds other works is refused in block mode (the same

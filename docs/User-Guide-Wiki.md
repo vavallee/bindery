@@ -563,7 +563,23 @@ profile does not allow it. Only downloads are checked: a library scan,
 adopting files already in your library, and books imported before this check
 existed are left alone. With the import mode set to **External**, Bindery
 hands the download to your other tool without opening its files, so nothing
-is checked there either. Audiobooks are not checked for language.
+is checked there either.
+
+**Audiobooks are checked too, from their tags.** Audio files rarely say what
+language they are in, so this check only acts on a file that does. Bindery
+reads the language an ID3 `TLAN` frame, a `TXXX` frame described as `LANGUAGE`,
+an MP4 freeform `LANGUAGE` atom (m4b, m4a) or a Vorbis `LANGUAGE` comment
+(FLAC, Ogg, Opus) declares, and compares it with the same allowed languages as
+above, spelled any way you like (`spa`, `es`, `Spanish`, `es-MX`). A file with
+no language tag, or one that is not a specific language, says nothing and never
+causes a rejection. When the tracks disagree the majority of the tracks that
+declare a language decides, so one mistagged track does not block a release; a
+tie imports. When most of them are in a language the profile does not allow, the
+release is rejected exactly as an EPUB is: nothing is placed, the release goes
+on the Blocklist and the book stays Wanted. Manual import and **Match to book**
+are never refused. There is no separate setting for this; it follows the
+allowed languages on the metadata profile, and a profile that allows any
+language checks nothing.
 
 **The file's own title and author are checked at import (ebooks).** The release
 name can say one book while the EPUB inside is another, and without a check that
