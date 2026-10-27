@@ -2492,6 +2492,7 @@
       "autoSearchHint": "Prøv å hente boken automatisk etter at den er lagt til som ønsket.",
       "addFailed": "Kunne ikke legge til boken",
       "alreadyInLibrary": "Finnes allerede i biblioteket ditt. Endre format eller overvåking på boksiden.",
+      "formatWidenedInLibrary": "Finnes allerede i biblioteket ditt, og følges nå som både e-bok og lydbok.",
       "openExisting": "Åpne eksisterende bok"
     },
     "filter": {

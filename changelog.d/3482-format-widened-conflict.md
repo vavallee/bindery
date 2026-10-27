@@ -1,0 +1,2 @@
+### Fixed
+- **Add Book now says when it made a book both formats** (#3482). Adding the audiobook of a book you had as an ebook (or the other way round) widened your existing book to both formats, then told you only that it was already in your library. The dialog now says the book is tracked as both. The Norwegian and Swedish texts are translated, other languages show the English line until translated.

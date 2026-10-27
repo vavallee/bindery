@@ -131,6 +131,12 @@ already there under another id and the same author, for example adding
 (#3466). `existingBookId` is the row the request matched, which keeps its own
 foreign id.
 
+When that merge also changed the row's format, because the request was for the
+other format (an ebook row and an audiobook request, or the reverse), the row is
+now `both` and the body carries `"formatWidened": true` (#3482). The field is
+absent, never `false`, when the row was not changed, so the plain 409 stays as
+documented above.
+
 With tenancy enforced, a non admin user whose request reaches a copy of the
 same foreign id held by a different user also gets **409**, with no row in the
 body because the caller may not see it:

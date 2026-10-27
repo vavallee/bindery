@@ -1676,6 +1676,7 @@
       "autoSearchHint": "Försök hämta boken automatiskt efter att den lagts till som önskad.",
       "addFailed": "Kunde inte lägga till boken",
       "alreadyInLibrary": "Finns redan i ditt bibliotek. Ändra format eller bevakning på boksidan.",
+      "formatWidenedInLibrary": "Finns redan i ditt bibliotek och följs nu som både e-bok och ljudbok.",
       "openExisting": "Öppna befintlig bok"
     }
   },

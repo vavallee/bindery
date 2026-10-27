@@ -2596,6 +2596,7 @@
       "autoSearchHint": "Try to grab the book automatically after adding it to wanted.",
       "addFailed": "Failed to add book",
       "alreadyInLibrary": "Already in your library. Change its format or monitoring from the book page.",
+      "formatWidenedInLibrary": "Already in your library, and now tracked as both ebook and audiobook.",
       "openExisting": "Open existing book"
     }
   },
