@@ -40,6 +40,8 @@ export interface Book {
   // When this book's metadata was last fetched from its provider (a rebind);
   // null until then. Shown with the BnF credit (#3144).
   lastMetadataRefreshAt?: string | null
+  // Fields a rebind emptied because the new record had none (rebind response only).
+  cleared?: string[]
   genres: string[]
   // Community rating from the metadata providers; 0 when none is known.
   averageRating?: number

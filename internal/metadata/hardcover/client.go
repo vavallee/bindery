@@ -704,6 +704,9 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 			return nil, nil
 		}
 		b := c.toBook(resp.Data.Books[0])
+		// This query does not ask for genres or the language, so an empty
+		// value here says nothing about the book (#3104).
+		b.UnknownFields = append(b.UnknownFields, models.BookFieldGenres, models.BookFieldLanguage)
 		return &b, nil
 	}
 

@@ -1894,3 +1894,36 @@ func TestGetAuthorWorks_HTTP_CreditedAuthors(t *testing.T) {
 		t.Errorf("enrichment-only work credited authors: got %v", got)
 	}
 }
+
+// A failed or empty search lookup must say the date and language are unknown,
+// so Re-bind does not read the gap as "the work has none" (#3104).
+func TestGetBook_HTTP_SearchEnrichmentFailureMarksFieldsUnknown(t *testing.T) {
+	workResp := workResponse{Key: "/works/OL5W", Title: "Thin Work"}
+	cases := map[string]map[string]interface{}{
+		"search fails": {"/works/OL5W.json": jsonStr(workResp)},
+		"no docs": {
+			"/works/OL5W.json": jsonStr(workResp),
+			"/search.json":     jsonStr(searchResponse{}),
+		},
+		"other work": {
+			"/works/OL5W.json": jsonStr(workResp),
+			"/search.json":     jsonStr(searchResponse{NumFound: 1, Docs: []searchDoc{{Key: "/works/OL6W", FirstPublishYear: 1999}}}),
+		},
+	}
+	for name, paths := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := newClientWithPaths(t, paths)
+			book, err := c.GetBook(context.Background(), "OL5W")
+			if err != nil {
+				t.Fatalf("GetBook: %v", err)
+			}
+			got := map[string]bool{}
+			for _, f := range book.UnknownFields {
+				got[f] = true
+			}
+			if !got[models.BookFieldReleaseDate] || !got[models.BookFieldLanguage] {
+				t.Errorf("UnknownFields = %v, want release date and language", book.UnknownFields)
+			}
+		})
+	}
+}

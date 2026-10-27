@@ -14,13 +14,16 @@ import (
 // keeps from the old record (#3104).
 var bookFieldDecisions = map[string]string{
 	// Provider owned and cleared when the new record lacks them.
-	"ReleaseDate":   "clear",
-	"Language":      "clear",
-	"Description":   "clear",
-	"Genres":        "clear",
-	"OriginalTitle": "clear",
-	"AverageRating": "clear",
-	"RatingsCount":  "paired with AverageRating",
+	"ReleaseDate": "clear",
+	"Language":    "clear",
+	"Description": "clear",
+	"Genres":      "clear",
+	// Kept: OpenLibrary's single-book fetch never returns a rating, so
+	// clearing would erase one on every rebind to OpenLibrary.
+	"AverageRating": "keep: no rating from the OpenLibrary fetch",
+	"RatingsCount":  "keep: no rating from the OpenLibrary fetch",
+	// Kept: neither provider's single-book fetch supplies it.
+	"OriginalTitle": "keep: no provider fetch supplies it",
 
 	// Identity and bookkeeping, written by the caller itself.
 	"ID": "keep: identity", "ForeignID": "keep: identity", "AuthorID": "keep: identity",
@@ -48,7 +51,7 @@ var bookFieldDecisions = map[string]string{
 	"IsCompilation": "keep: transport", "AuthorUnmonitored": "keep: transport",
 	"Author": "keep: joined", "ImportInFlight": "keep: transport", "Identifiers": "keep: joined",
 	"SeriesRefs": "keep: relinked by the caller", "ProviderISBNs": "keep: transport",
-	"CreditedAuthorForeignIDs": "keep: transport",
+	"CreditedAuthorForeignIDs": "keep: transport", "UnknownFields": "keep: transport", "Cleared": "keep: transport",
 }
 
 func TestProviderOwnedBookFields_EveryBookFieldDecided(t *testing.T) {
@@ -68,7 +71,7 @@ func TestProviderOwnedBookFields_EveryBookFieldDecided(t *testing.T) {
 
 func TestProviderOwnedBookFields_ListMatchesDecisions(t *testing.T) {
 	want := map[string]bool{"releaseDate": true, "language": true, "description": true,
-		"genres": true, "originalTitle": true, "averageRating": true}
+		"genres": true}
 	got := map[string]bool{}
 	for _, f := range ProviderOwnedBookFields {
 		got[f.Name] = true
@@ -101,11 +104,10 @@ func TestClearProviderFieldsMissingFrom(t *testing.T) {
 	if len(cleared) != len(ProviderOwnedBookFields) {
 		t.Fatalf("cleared %v", cleared)
 	}
-	if b.ReleaseDate != nil || b.Language != "" || b.Description != "" || len(b.Genres) != 0 ||
-		b.OriginalTitle != "" || b.AverageRating != 0 || b.RatingsCount != 0 {
+	if b.ReleaseDate != nil || b.Language != "" || b.Description != "" || len(b.Genres) != 0 {
 		t.Errorf("not cleared: %+v", b)
 	}
-	if b.Title != "T" || b.ImageURL != "u" || b.Narrator != "n" {
+	if b.Title != "T" || b.ImageURL != "u" || b.Narrator != "n" || b.AverageRating != 4 || b.OriginalTitle != "o" {
 		t.Errorf("a non-listed field was cleared: %+v", b)
 	}
 
@@ -113,6 +115,12 @@ func TestClearProviderFieldsMissingFrom(t *testing.T) {
 	b.ClearProviderFieldsMissingFrom(&Book{}, []string{BookFieldReleaseDate, BookFieldDescription})
 	if b.ReleaseDate == nil || b.Description != "d" || b.Language != "" {
 		t.Errorf("lock not honoured: %+v", b)
+	}
+
+	b = full()
+	b.ClearProviderFieldsMissingFrom(&Book{UnknownFields: []string{BookFieldReleaseDate, BookFieldLanguage}}, nil)
+	if b.ReleaseDate == nil || b.Language != "eng" || b.Description != "" {
+		t.Errorf("unknown fields must be kept, the rest cleared: %+v", b)
 	}
 
 	b = full()

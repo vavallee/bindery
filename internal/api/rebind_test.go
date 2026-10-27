@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -476,9 +477,22 @@ func TestRebind_ClearsFieldsTheNewRecordLacks(t *testing.T) {
 			if got.ReleaseDate != nil {
 				t.Errorf("release date kept: %v", got.ReleaseDate)
 			}
-			if got.Language != "" || got.Description != "" || len(got.Genres) != 0 ||
-				got.OriginalTitle != "" || got.AverageRating != 0 || got.RatingsCount != 0 {
+			if got.Language != "" || got.Description != "" || len(got.Genres) != 0 {
 				t.Errorf("provider fields kept: %+v", got)
+			}
+			if got.AverageRating != 4.5 || got.OriginalTitle != "Old original" {
+				t.Errorf("rating or original title cleared: %v %q", got.AverageRating, got.OriginalTitle)
+			}
+			var body struct {
+				Cleared []string `json:"cleared"`
+			}
+			_ = json.Unmarshal(rec.Body.Bytes(), &body)
+			if len(body.Cleared) != 4 {
+				t.Errorf("response cleared = %v, want the four fields", body.Cleared)
+			}
+			ev, _ := h.history.ListByBook(ctx, book.ID)
+			if len(ev) == 0 || !strings.Contains(ev[0].Data, `"cleared"`) {
+				t.Errorf("history event lacks cleared: %+v", ev)
 			}
 			if got.ImageURL != "https://example.test/old.jpg" || got.Narrator != "Kept Narrator" {
 				t.Errorf("a non-listed field was cleared: image=%q narrator=%q", got.ImageURL, got.Narrator)
@@ -520,5 +534,30 @@ func TestRebind_NewRecordValueStillWinsOverALock(t *testing.T) {
 	got, _ := books.GetByID(ctx, book.ID)
 	if got.Description != "New description" {
 		t.Errorf("description = %q, the existing rebind semantics adopt the new value", got.Description)
+	}
+}
+
+// A record whose secondary lookup failed says so in UnknownFields; the rebind
+// must keep the old values rather than read the gap as "the record lacks it"
+// (#3104).
+func TestRebind_KeepsFieldsTheFetchCouldNotDetermine(t *testing.T) {
+	h, books, _, _, author, book, ctx := rebindFixture(t)
+	rebindFromRichRecord(t, h, books, book)
+	h.WithMetaLookup(&stubLookup{book: &models.Book{
+		Title: "Correct Book", SortTitle: "Correct Book",
+		UnknownFields: []string{models.BookFieldReleaseDate, models.BookFieldLanguage},
+		Author:        &models.Author{ForeignID: author.ForeignID, Name: author.Name},
+	}})
+	rec := httptest.NewRecorder()
+	h.Rebind(rec, rebindRequest(book.ID, map[string]any{"provider": "openlibrary", "foreign_id": "OL2W"}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, _ := books.GetByID(ctx, book.ID)
+	if got.ReleaseDate == nil || got.Language != "eng" {
+		t.Errorf("undetermined fields were erased: date=%v language=%q", got.ReleaseDate, got.Language)
+	}
+	if got.Description != "" {
+		t.Errorf("description is determined absent and should clear, got %q", got.Description)
 	}
 }
