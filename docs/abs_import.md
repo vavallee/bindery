@@ -166,6 +166,8 @@ sat on disk and attached (#2169).
 
 The importer distinguishes an *unmatched* item from an *ambiguous* one. When the local matcher finds nothing close, the item is unmatched: the book is created directly (step 4 above) and `enrichBook` performs a confidence-gated upstream lookup. Only an *ambiguous* match — a close-but-uncertain local candidate — is parked in the review queue rather than guessed. The same distinction applies to author resolution. An ISBN match that only a fallback provider returned while the primary was not answering is not relinked: the row keeps its current identity, the result carries a `book relink skipped` reason naming the provider that failed, and the next import retries. A primary that answered without the ISBN still lets the fallback's record through (#2237).
 
+Fields the user locked (see [Metadata-Editing-Wiki.md](Metadata-Editing-Wiki.md)) are left alone on update. Since the recording-field locks, that includes narrator, duration and ASIN, which the import otherwise takes from ABS. Rolling back a run leaves a locked narrator, duration or ASIN alone, even when its value is still the one the run wrote; every other field rolls back as before, locked or not, because the upstream metadata merge can still overwrite it and rollback is the way back. The importer's book writes carry the `updated_at` guard, so a lock set while a run is in progress is kept. A write the guard refuses three times is skipped by the import and retried on the next run; during a rollback it counts as failed and the book keeps its provenance link, so the run can be rolled back again.
+
 ### Series
 
 Resolution order:

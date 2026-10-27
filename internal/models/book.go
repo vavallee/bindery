@@ -76,8 +76,9 @@ type Book struct {
 	OwnerUserID int64 `json:"-"`
 
 	// LockedFields lists metadata fields the user has edited by hand
-	// (#1237, #1446) — see the BookField* constants for the canonical names.
-	// Every refresh/enrichment/merge path must check IsFieldLocked before
+	// (#1237, #1446): see the BookField* constants for the canonical names,
+	// which include the audiobook recording fields narrator, durationSeconds
+	// and asin. Every refresh/enrichment/merge path must check CanWrite before
 	// overwriting one of these. Persisted as a JSON array (migration 062).
 	LockedFields []string `json:"lockedFields"`
 
@@ -138,12 +139,18 @@ type Book struct {
 
 // Lockable book metadata fields (#1237, #1446). These are the JSON names the
 // API accepts in lockedFields and the names checked by refresh guards.
+// Narrator, durationSeconds and asin are lockable so a value set by hand
+// survives the Audiobookshelf import, Audnex enrichment and Hardcover
+// hydration.
 const (
-	BookFieldTitle       = "title"
-	BookFieldDescription = "description"
-	BookFieldGenres      = "genres"
-	BookFieldLanguage    = "language"
-	BookFieldReleaseDate = "releaseDate"
+	BookFieldTitle           = "title"
+	BookFieldDescription     = "description"
+	BookFieldGenres          = "genres"
+	BookFieldLanguage        = "language"
+	BookFieldReleaseDate     = "releaseDate"
+	BookFieldNarrator        = "narrator"
+	BookFieldDurationSeconds = "durationSeconds"
+	BookFieldASIN            = "asin"
 )
 
 // LockableBookFields is the closed set of field names accepted in
@@ -151,6 +158,7 @@ const (
 var LockableBookFields = []string{
 	BookFieldTitle, BookFieldDescription, BookFieldGenres,
 	BookFieldLanguage, BookFieldReleaseDate,
+	BookFieldNarrator, BookFieldDurationSeconds, BookFieldASIN,
 }
 
 // IsFieldLocked reports whether the named field was manually edited and must

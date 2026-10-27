@@ -46,11 +46,14 @@ func TestBookUpdate_ManualEditLocksFields(t *testing.T) {
 	id := strconv.FormatInt(b.ID, 10)
 
 	rec := putBook(t, h, id, map[string]any{
-		"title":       "Edited Title",
-		"description": "Edited description",
-		"genres":      []string{"Fantasy", " ", "Epic"},
-		"language":    "it",
-		"releaseDate": "2020-05-04",
+		"title":           "Edited Title",
+		"description":     "Edited description",
+		"genres":          []string{"Fantasy", " ", "Epic"},
+		"language":        "it",
+		"releaseDate":     "2020-05-04",
+		"narrator":        "Edited Narrator",
+		"durationSeconds": 36459,
+		"asin":            "b0d2xyz123",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -65,6 +68,9 @@ func TestBookUpdate_ManualEditLocksFields(t *testing.T) {
 	}
 	if len(got.Genres) != 2 || got.Genres[0] != "Fantasy" || got.Genres[1] != "Epic" {
 		t.Fatalf("genres = %v, want cleaned [Fantasy Epic]", got.Genres)
+	}
+	if got.Narrator != "Edited Narrator" || got.DurationSeconds != 36459 || got.ASIN != "B0D2XYZ123" {
+		t.Fatalf("recording fields not persisted or ASIN not normalized: %+v", got)
 	}
 	if got.ReleaseDate == nil || got.ReleaseDate.Format("2006-01-02") != "2020-05-04" {
 		t.Fatalf("releaseDate = %v, want 2020-05-04", got.ReleaseDate)
@@ -328,5 +334,93 @@ func TestBookUpdate_NormalizesLanguage(t *testing.T) {
 		if got.Language != tc.want {
 			t.Errorf("language %q stored as %q, want %q", tc.in, got.Language, tc.want)
 		}
+	}
+}
+
+// TestBookUpdate_RecordingFieldValidation pins the 400s for the new fields
+// and that a cleared ASIN is stored empty and locked (#2757: a clear is a
+// decision Audnex must not refill).
+func TestBookUpdate_RecordingFieldValidation(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	b := seedLockTestBook(t, books, author.ID, "LOCK-REC", "Recording")
+	id := strconv.FormatInt(b.ID, 10)
+
+	for _, body := range []map[string]any{
+		{"durationSeconds": -5},
+		{"asin": "not-an-asin"},
+		{"asin": "B0D2XYZ12"},
+		{"asin": "B0D2XYZ-12"},
+	} {
+		rec := putBook(t, h, id, body)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%v: expected 400, got %d: %s", body, rec.Code, rec.Body.String())
+		}
+	}
+
+	// A client that reads a book and PUTs it back echoes durationSeconds: 0
+	// for an unknown runtime. Zero means "not set": accepted, no change, no lock.
+	rec := putBook(t, h, id, map[string]any{"durationSeconds": 0})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("durationSeconds 0: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, _ := books.GetByID(ctx, b.ID)
+	if got.DurationSeconds != 0 || got.IsFieldLocked(models.BookFieldDurationSeconds) {
+		t.Fatalf("durationSeconds 0 must neither set nor lock: duration=%d locked=%v", got.DurationSeconds, got.LockedFields)
+	}
+
+	rec = putBook(t, h, id, map[string]any{"asin": ""})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clearing asin: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, _ = books.GetByID(ctx, b.ID)
+	if got.ASIN != "" || !got.IsFieldLocked(models.BookFieldASIN) || got.CanWrite(models.BookFieldASIN) {
+		t.Fatalf("cleared asin must be empty and locked: asin=%q locked=%v", got.ASIN, got.LockedFields)
+	}
+
+	// Narrator is trimmed like the other text fields, and a whitespace-only
+	// value is a clear: stored empty and locked, so nothing refills it.
+	rec = putBook(t, h, id, map[string]any{"narrator": "  Edited Narrator  "})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("narrator: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, _ = books.GetByID(ctx, b.ID)
+	if got.Narrator != "Edited Narrator" || !got.IsFieldLocked(models.BookFieldNarrator) {
+		t.Fatalf("narrator not trimmed or not locked: %q locked=%v", got.Narrator, got.LockedFields)
+	}
+	rec = putBook(t, h, id, map[string]any{"narrator": "   "})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clearing narrator: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, _ = books.GetByID(ctx, b.ID)
+	if got.Narrator != "" || !got.IsFieldLocked(models.BookFieldNarrator) {
+		t.Fatalf("whitespace narrator must store empty and locked: %q locked=%v", got.Narrator, got.LockedFields)
+	}
+
+	// A stored ASIN that would not pass validation today (an import stored it
+	// unvalidated) must still round-trip: a GET-then-PUT of the whole object
+	// sends it back unchanged and must not get a 400.
+	odd, _ := books.GetByID(ctx, b.ID)
+	odd.ASIN = "ODD/ASIN"
+	odd.LockedFields = nil
+	if err := books.Update(ctx, odd); err != nil {
+		t.Fatal(err)
+	}
+	rec = putBook(t, h, id, map[string]any{"asin": "odd/asin"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unchanged stored asin: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, _ = books.GetByID(ctx, b.ID)
+	if got.ASIN != "ODD/ASIN" || !got.IsFieldLocked(models.BookFieldASIN) {
+		t.Fatalf("unchanged asin must stay and lock: asin=%q locked=%v", got.ASIN, got.LockedFields)
+	}
+
+	// Unlock all (the dialog's lockedFields: []) clears the new locks too.
+	rec = putBook(t, h, id, map[string]any{"lockedFields": []string{}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unlock: expected 200, got %d", rec.Code)
+	}
+	got, _ = books.GetByID(ctx, b.ID)
+	if len(got.LockedFields) != 0 {
+		t.Fatalf("lockedFields = %v, want empty", got.LockedFields)
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
@@ -482,19 +483,22 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Title/Description/Genres/Language/ReleaseDate are the manual metadata
 	// edits (#1237, #1446). Setting one updates the value AND locks the field
 	// against metadata refresh; LockedFields, when present, replaces the lock
-	// set wholesale so a client can also unlock fields.
+	// set wholesale so a client can also unlock fields. Narrator,
+	// durationSeconds and asin follow the same rule since the recording-field
+	// locks.
 	var req struct {
-		Monitored    *bool     `json:"monitored"`
-		Status       *string   `json:"status"`
-		MediaType    *string   `json:"mediaType"`
-		ASIN         *string   `json:"asin"`
-		Narrator     *string   `json:"narrator"`
-		Title        *string   `json:"title"`
-		Description  *string   `json:"description"`
-		Genres       *[]string `json:"genres"`
-		Language     *string   `json:"language"`
-		ReleaseDate  *string   `json:"releaseDate"`
-		LockedFields *[]string `json:"lockedFields"`
+		Monitored       *bool     `json:"monitored"`
+		Status          *string   `json:"status"`
+		MediaType       *string   `json:"mediaType"`
+		ASIN            *string   `json:"asin"`
+		Narrator        *string   `json:"narrator"`
+		DurationSeconds *int      `json:"durationSeconds"`
+		Title           *string   `json:"title"`
+		Description     *string   `json:"description"`
+		Genres          *[]string `json:"genres"`
+		Language        *string   `json:"language"`
+		ReleaseDate     *string   `json:"releaseDate"`
+		LockedFields    *[]string `json:"lockedFields"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -520,11 +524,37 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Recording fields: setting one applies the value and locks the field,
+	// the same contract as the work fields below. An empty ASIN is a clear,
+	// stored and locked so enrichment does not refill it (#2757 rule).
 	if req.ASIN != nil {
-		book.ASIN = *req.ASIN
+		// Validated only when the value changes: an import may have stored an
+		// ASIN that would not pass today, and a client that reads the book and
+		// writes it back must not be refused for it.
+		asin := isbnutil.NormalizeASIN(*req.ASIN)
+		if asin != "" && asin != book.ASIN && !validASIN(asin) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "asin must be 10 letters or digits"})
+			return
+		}
+		book.ASIN = asin
+		book.LockField(models.BookFieldASIN)
 	}
 	if req.Narrator != nil {
-		book.Narrator = *req.Narrator
+		book.Narrator = strings.TrimSpace(*req.Narrator)
+		book.LockField(models.BookFieldNarrator)
+	}
+	// Zero is what GET serializes for an unknown runtime, so a client that
+	// reads a book and PUTs it back sends it; it means "not set" and neither
+	// writes nor locks. Only a negative value is an error.
+	if req.DurationSeconds != nil {
+		if *req.DurationSeconds < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "durationSeconds must be a positive integer"})
+			return
+		}
+		if *req.DurationSeconds > 0 {
+			book.DurationSeconds = *req.DurationSeconds
+			book.LockField(models.BookFieldDurationSeconds)
+		}
 	}
 
 	// Manual metadata edits (#1237, #1446): apply the value and lock the
@@ -1358,9 +1388,12 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 	// monitored, file paths, media type, ASIN, narrator, calibre_id).
 	//
 	// A rebind is an explicit "this is the wrong record, take the new one"
-	// action, so manual field locks (#1237) are cleared: the user is asking
-	// for the new provider's metadata wholesale.
-	book.LockedFields = nil
+	// action, so the work-field locks (#1237) are cleared: the user is asking
+	// for the new provider's metadata wholesale. The recording fields are not
+	// part of that record and keep their values here, so they keep their locks
+	// too; otherwise the hydration below would re-promote an ASIN the user
+	// cleared and locked.
+	book.LockedFields = recordingFieldLocks(book.LockedFields)
 	book.ForeignID = req.ForeignID
 	book.MetadataProvider = req.Provider
 	if upstream.Title != "" {
@@ -1490,6 +1523,19 @@ func (h *BookHandler) ToggleExcluded(w http.ResponseWriter, r *http.Request) {
 	writeBook(w, http.StatusOK, book)
 }
 
+// recordingFieldLocks returns the subset of locks that belong to the recording
+// rather than the work: narrator, durationSeconds and asin.
+func recordingFieldLocks(locked []string) []string {
+	var kept []string
+	for _, f := range locked {
+		switch f {
+		case models.BookFieldNarrator, models.BookFieldDurationSeconds, models.BookFieldASIN:
+			kept = append(kept, f)
+		}
+	}
+	return kept
+}
+
 // preserveBookStateForMetadataMap and bookMapAuthorMatches below are retained:
 // they are shared with tryMapAudiobookMetadataByASIN. The standalone
 // POST /book/{id}/map handler that also used them was removed as dead surface —
@@ -1512,9 +1558,16 @@ func preserveBookStateForMetadataMap(book *models.Book, target *models.Book) {
 	audiobookFilePath := book.AudiobookFilePath
 	excluded := book.Excluded
 
-	// An explicit metadata map is a wholesale identity change, so manual
-	// field locks (#1237) are cleared — the user asked for the new record.
-	book.LockedFields = nil
+	// The map runs inside every Audnex enrich, so it is not the user asking
+	// for a new record (re-bind is, and still clears). Locks and the values
+	// they protect are kept; the identity and the unlocked work fields move
+	// to the target.
+	lockedFields := append([]string(nil), book.LockedFields...)
+	lockedTitle, lockedSortTitle := book.Title, book.SortTitle
+	lockedDescription := book.Description
+	lockedReleaseDate := book.ReleaseDate
+	lockedGenres := book.Genres
+	lockedLanguage := book.Language
 	book.ForeignID = target.ForeignID
 	book.Title = target.Title
 	book.SortTitle = firstNonEmpty(target.SortTitle, target.Title)
@@ -1551,6 +1604,23 @@ func preserveBookStateForMetadataMap(book *models.Book, target *models.Book) {
 	book.EbookFilePath = ebookFilePath
 	book.AudiobookFilePath = audiobookFilePath
 	book.Excluded = excluded
+
+	book.LockedFields = lockedFields
+	if book.IsFieldLocked(models.BookFieldTitle) {
+		book.Title, book.SortTitle = lockedTitle, lockedSortTitle
+	}
+	if book.IsFieldLocked(models.BookFieldDescription) {
+		book.Description = lockedDescription
+	}
+	if book.IsFieldLocked(models.BookFieldReleaseDate) {
+		book.ReleaseDate = lockedReleaseDate
+	}
+	if book.IsFieldLocked(models.BookFieldGenres) {
+		book.Genres = lockedGenres
+	}
+	if book.IsFieldLocked(models.BookFieldLanguage) {
+		book.Language = lockedLanguage
+	}
 }
 
 func bookMapAuthorMatches(current, target *models.Author) bool {

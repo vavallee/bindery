@@ -424,3 +424,53 @@ func TestBookRepoUpdateHydratedMetadataLegacyUpdatedAtShapes(t *testing.T) {
 		})
 	}
 }
+
+// TestBookRepoFillMissingAudiobookDurationRespectsLock pins that the fill
+// tests the stored lock set, not the caller's snapshot: a user who locks an
+// empty duration while hydration is fetching keeps it empty.
+func TestBookRepoFillMissingAudiobookDurationRespectsLock(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	books := NewBookRepo(database)
+	author := mkAuthor(t, NewAuthorRepo(database), ctx, "OL-DURATION-LOCK-A")
+	book := mkBook(t, books, ctx, author.ID, "hc:duration-lock", "Duration Lock", models.BookStatusWanted)
+	book.MetadataProvider = "hardcover"
+	book.MediaType = models.MediaTypeAudiobook
+	book.ASIN = "B000AUDIO2"
+	if err := books.Update(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hydration's snapshot predates the lock.
+	fetched := *book
+	fetched.LockedFields = nil
+	fetched.DurationSeconds = 36000
+
+	locked, err := books.GetByID(ctx, book.ID)
+	if err != nil || locked == nil {
+		t.Fatalf("load book: %v", err)
+	}
+	locked.LockField(models.BookFieldDurationSeconds)
+	if err := books.Update(ctx, locked); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := books.FillMissingAudiobookDuration(ctx, &fetched)
+	if err != nil {
+		t.Fatalf("fill: %v", err)
+	}
+	if updated {
+		t.Fatal("fill wrote a duration the user locked empty")
+	}
+	stored, err := books.GetByID(ctx, book.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if stored.DurationSeconds != 0 || !stored.IsFieldLocked(models.BookFieldDurationSeconds) {
+		t.Fatalf("duration=%d locked=%v, want 0 and locked", stored.DurationSeconds, stored.LockedFields)
+	}
+}

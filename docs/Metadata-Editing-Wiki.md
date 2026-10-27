@@ -5,7 +5,8 @@ survive every automatic refresh (#1237, #1446).
 
 ## Editing a book
 
-Open a book's detail page and click **Edit**. You can change:
+Open a book's detail page and click **Edit**, or send the same fields
+through the API, to change:
 
 | Field | Notes |
 |-------|-------|
@@ -15,20 +16,42 @@ Open a book's detail page and click **Edit**. You can change:
 | Language | Language code, e.g. `en`, `it` — drives the `{Lang}` naming token |
 | Release date | `YYYY-MM-DD`, or clear it entirely |
 | Series | The author's series, with a position; admin only. See [Fixing one book's series](Hardcover-Series-Wiki.md#fixing-one-books-series) |
+| Narrator | API only; not in the edit dialog |
+| Duration | API only (`durationSeconds`, whole seconds; `0` means not set and is ignored) |
+| ASIN | The ASIN box on the book page, or the API; normalized to upper case, ten letters or digits |
 
 Every field you edit is **locked**: the scheduled metadata refresh, the
-author-works sync, and Audiobookshelf/Calibre re-imports keep your value
-instead of overwriting it. Locked fields show a 🔒 badge in the edit dialog.
+author-works sync, Audnex enrichment, Hardcover hydration and
+Audiobookshelf/Calibre re-imports keep your value instead of overwriting
+it. A lock also stops those paths *filling* the field when you cleared it
+on purpose. Locked fields show a 🔒 badge in the edit dialog for title, description,
+genres, language and release date; narrator, duration and ASIN are locked
+through the API and the ASIN box and are not shown there.
 
 ## Unlocking
 
-**Unlock all fields** in the edit dialog hands the fields back to the
-metadata pipeline. The current values stay until the next refresh replaces
-them.
+**Unlock all fields** in the edit dialog hands every field back to the
+metadata pipeline, including narrator, duration and ASIN. The current values
+stay until the next refresh replaces them. To unlock one field, send
+`lockedFields` without it through the API.
 
-Two actions clear locks on their own, deliberately: **Re-bind** and metadata
-**re-map**. Both mean "this is the wrong record, take the new one", so
-Bindery applies the new provider record wholesale.
+One action clears locks on its own, deliberately: **Re-bind**, which means
+"this is the wrong record, take the new one". It clears the locks on the
+work fields it replaces (title, description, genres, language, release date)
+and keeps the narrator, duration and ASIN locks, because it keeps those
+values. The ASIN re-map that runs inside **Enrich** used to clear every lock
+too and no longer does; it is automatic, not a choice of record.
+
+## Known gaps
+
+A few writers predate the locks and do not check them yet: the upstream
+metadata merge inside the Audiobookshelf import, which can write over a locked
+description, release date or language; a value applied from the
+Audiobookshelf conflicts page; the language a library scan detects from a
+file's tags; the language an author sync fills into an empty field; and the
+Calibre import rollback. Rolling back an Audiobookshelf import undoes what its
+merge wrote, locked or not, as long as the field still holds the value the run
+wrote.
 
 A re-bind to a different record also drops the editions the metadata provider
 listed for the old record, so their ISBNs no longer steer searches for the
@@ -66,9 +89,10 @@ Both are idempotent; re-applying with a different list simply replaces it.
 ## API
 
 `PUT /api/v1/book/{id}` accepts `title`, `description`, `genres`,
-`language`, and `releaseDate` — setting one applies the value and locks the
-field. Send `lockedFields` (an array of those names) to replace the lock set
-explicitly; an empty array unlocks everything. Bulk endpoints:
+`language`, `releaseDate`, `narrator`, `durationSeconds` and `asin`; setting
+one applies the value and locks the field. Send `lockedFields` (an array of
+those names) to replace the lock set explicitly; an empty array unlocks
+everything. Bulk endpoints:
 `PUT /api/v1/author/{id}/genres` and `PUT /api/v1/series/{id}/genres` with
 `{"genres": ["Fantasy"]}`. `DELETE /api/v1/series/{id}/genres` removes a series
 override.

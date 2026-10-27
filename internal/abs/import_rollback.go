@@ -318,7 +318,9 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 					continue
 				}
 				if restoreBookFromSnapshot(book, bookBefore, bookAfter) {
-					if err := i.books.Update(ctx, book); err != nil {
+					if err := i.books.UpdateKeepingLocks(ctx, book, func(b *models.Book) {
+						restoreBookFromSnapshot(b, bookBefore, bookAfter)
+					}); err != nil {
 						action.Action = "skip"
 						action.Reason = err.Error()
 						result.Stats.Failed++
@@ -771,6 +773,12 @@ func restoreBookFromSnapshot(book *models.Book, before, after *bookRollbackSnaps
 		return false
 	}
 	changed := false
+	// Only the recording fields are skipped when locked. Every import writer
+	// of those honors the lock, so a lock rollback meets was set after
+	// the run (a read-and-write-back PUT locks without changing the value)
+	// and the value is the user's decision. The upstream metadata merge can
+	// still overwrite a locked work field, and rollback is the way back from
+	// that, so those restore as they always did.
 	restoreString(&book.ForeignID, before.ForeignID, after.ForeignID, &changed)
 	restoreInt64(&book.AuthorID, before.AuthorID, after.AuthorID, &changed)
 	restoreString(&book.Title, before.Title, after.Title, &changed)
@@ -788,9 +796,15 @@ func restoreBookFromSnapshot(book *models.Book, before, after *bookRollbackSnaps
 	restoreInt64Ptr(&book.SelectedEditionID, before.SelectedEditionID, after.SelectedEditionID, &changed)
 	restoreLanguage(&book.Language, before.Language, after.Language, &changed)
 	restoreString(&book.MediaType, before.MediaType, after.MediaType, &changed)
-	restoreString(&book.Narrator, before.Narrator, after.Narrator, &changed)
-	restoreInt(&book.DurationSeconds, before.DurationSeconds, after.DurationSeconds, &changed)
-	restoreString(&book.ASIN, before.ASIN, after.ASIN, &changed)
+	if book.CanWrite(models.BookFieldNarrator) {
+		restoreString(&book.Narrator, before.Narrator, after.Narrator, &changed)
+	}
+	if book.CanWrite(models.BookFieldDurationSeconds) {
+		restoreInt(&book.DurationSeconds, before.DurationSeconds, after.DurationSeconds, &changed)
+	}
+	if book.CanWrite(models.BookFieldASIN) {
+		restoreString(&book.ASIN, before.ASIN, after.ASIN, &changed)
+	}
 	restoreInt64Ptr(&book.CalibreID, before.CalibreID, after.CalibreID, &changed)
 	restoreString(&book.MetadataProvider, before.MetadataProvider, after.MetadataProvider, &changed)
 	restoreTimePtr(&book.LastMetadataRefreshAt, before.LastMetadataRefreshAt, after.LastMetadataRefreshAt, &changed)

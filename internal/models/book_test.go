@@ -160,3 +160,27 @@ func TestBookCanWrite(t *testing.T) {
 		t.Error("CanWrite on a nil book = false, want true")
 	}
 }
+
+func TestLockableBookFieldsIncludeRecordingFields(t *testing.T) {
+	want := []string{
+		BookFieldTitle, BookFieldDescription, BookFieldGenres,
+		BookFieldLanguage, BookFieldReleaseDate,
+		BookFieldNarrator, BookFieldDurationSeconds, BookFieldASIN,
+	}
+	if len(LockableBookFields) != len(want) {
+		t.Fatalf("LockableBookFields = %v, want %v", LockableBookFields, want)
+	}
+	for i, f := range want {
+		if LockableBookFields[i] != f {
+			t.Fatalf("LockableBookFields[%d] = %q, want %q", i, LockableBookFields[i], f)
+		}
+	}
+	if BookFieldNarrator != "narrator" || BookFieldDurationSeconds != "durationSeconds" || BookFieldASIN != "asin" {
+		t.Fatalf("recording field names must match the Book JSON tags: %q %q %q", BookFieldNarrator, BookFieldDurationSeconds, BookFieldASIN)
+	}
+	b := &Book{}
+	b.LockField(BookFieldNarrator)
+	if b.CanWrite(BookFieldNarrator) || !b.CanWrite(BookFieldDurationSeconds) {
+		t.Fatalf("lock on narrator should block narrator only; locked=%v", b.LockedFields)
+	}
+}

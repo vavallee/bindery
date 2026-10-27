@@ -594,19 +594,7 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		if existing != nil {
 			if shouldWidenMediaType(existing.MediaType, effectiveMediaType) {
 				prevStatus, prevMonitored := existing.Status, existing.Monitored
-				existing.MediaType = models.MediaTypeBoth
-				// Widening creates a real gap on an owned book: the audiobook
-				// slot is now monitored and empty. Without this the row keeps
-				// status 'imported' and never enters the wanted set, so the
-				// format this sync just decided it wants is never searched
-				// (#1634).
-				existing.ReevaluateStatus()
-				// The ebook-pinned pass clears the audiobook ASIN. Preserve the
-				// audio identifier when the complementary pass supplies it.
-				if (effectiveMediaType == models.MediaTypeAudiobook || effectiveMediaType == models.MediaTypeBoth) && book.ASIN != "" {
-					existing.ASIN = book.ASIN
-				}
-				if err := s.books.Update(ctx, existing); err != nil {
+				if err := s.widenTrackedBook(ctx, existing, book, effectiveMediaType); err != nil {
 					slog.Warn("hardcover list sync: failed to widen tracked book media type", "title", book.Title, "error", err)
 					countStat(func(st *SyncStats) { st.Failed++ })
 					continue
@@ -749,6 +737,27 @@ func (s *ListSyncer) enrichAudiobook(ctx context.Context, book *models.Book) {
 		// (ABS, by contrast, enriches again on its next import.)
 		slog.Info("audiobook enrichment discarded after concurrent book update", "title", book.Title, "book_id", book.ID)
 	}
+}
+
+// widenTrackedBook widens existing to both formats and writes it through
+// BookRepo.UpdateKeepingLocks, so a lock the user set between the sync's read
+// and this write is kept.
+func (s *ListSyncer) widenTrackedBook(ctx context.Context, existing *models.Book, book models.Book, effectiveMediaType string) error {
+	apply := func(b *models.Book) {
+		b.MediaType = models.MediaTypeBoth
+		// Widening creates a real gap on an owned book: the audiobook slot is
+		// now monitored and empty. Without this the row keeps status
+		// 'imported' and never enters the wanted set, so the format this sync
+		// just decided it wants is never searched (#1634).
+		b.ReevaluateStatus()
+		// The ebook-pinned pass clears the audiobook ASIN. Preserve the audio
+		// identifier when the complementary pass supplies it, unless the user
+		// locked the ASIN by hand.
+		if (effectiveMediaType == models.MediaTypeAudiobook || effectiveMediaType == models.MediaTypeBoth) && book.ASIN != "" && b.CanWrite(models.BookFieldASIN) {
+			b.ASIN = book.ASIN
+		}
+	}
+	return s.books.UpdateKeepingLocks(ctx, existing, apply)
 }
 
 // shouldWidenMediaType reports whether the two list formats request opposite
