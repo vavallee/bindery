@@ -1,6 +1,10 @@
 package models
 
-import "slices"
+import (
+	"slices"
+	"strings"
+	"time"
+)
 
 // ProviderOwnedBookField describes one Book field whose value usually comes
 // from a metadata provider record, so a path that adopts a different record
@@ -95,4 +99,73 @@ func (b *Book) ClearProviderFieldsMissingFrom(src *Book, lockedBefore []string) 
 		cleared = append(cleared, f.Name)
 	}
 	return cleared
+}
+
+// AdoptRefreshedProviderFields copies release date, language and description
+// from src, the provider record an author refresh just read for the work b
+// already is, onto b. It returns the names it changed (#3105).
+//
+// Unlike a rebind, a refresh NEVER empties a field: clearing is
+// ClearProviderFieldsMissingFrom's job and only a rebind, where the user chose a
+// different record, may do it. An empty value in a catalogue record is
+// "nothing to say", never "the work has none".
+//
+// Rules, per field. Every one also requires that the field is not in
+// b.LockedFields, that src does not list it in UnknownFields, and that src has
+// a value for it:
+//
+//   - releaseDate: replaced when it differs. A catalogue date is year
+//     granular (Jan 1), so it does not replace a date in the same year, which
+//     may be a precise one from an import and says nothing new.
+//   - language: replaced when it differs.
+//   - description: filled only when b has none. Bindery has no record of what
+//     wrote a description (a provider, an Audiobookshelf or Calibre import);
+//     a typed one is locked, but an imported one is not, and replacing it on
+//     every refresh would undo the import. Fill-only is the narrowest rule that
+//     cannot destroy text.
+//
+// Genres are not handled here: the refresh already updates them from Hardcover
+// provenance, and OpenLibrary subjects are too noisy to treat as a correction.
+//
+// Nothing happens unless src comes from the provider b's own record came from.
+// A row bound to another provider, or imported, holds values that provider
+// never wrote, and a different provider's date or language is not a correction.
+func (b *Book) AdoptRefreshedProviderFields(src *Book) []string {
+	if b == nil || src == nil || b.MetadataProvider == "" ||
+		!strings.EqualFold(b.MetadataProvider, src.MetadataProvider) {
+		return nil
+	}
+	writable := func(field string) bool {
+		return !b.IsFieldLocked(field) && !slices.Contains(src.UnknownFields, field)
+	}
+	var changed []string
+	if src.ReleaseDate != nil && writable(BookFieldReleaseDate) && !sameReleaseDate(b.ReleaseDate, src.ReleaseDate) {
+		d := *src.ReleaseDate
+		b.ReleaseDate = &d
+		changed = append(changed, BookFieldReleaseDate)
+	}
+	if src.Language != "" && writable(BookFieldLanguage) && b.Language != src.Language {
+		b.Language = src.Language
+		changed = append(changed, BookFieldLanguage)
+	}
+	if strings.TrimSpace(src.Description) != "" && strings.TrimSpace(b.Description) == "" && writable(BookFieldDescription) {
+		b.Description = src.Description
+		changed = append(changed, BookFieldDescription)
+	}
+	return changed
+}
+
+// sameReleaseDate reports whether adopting incoming would tell the book
+// nothing new: the same instant, or a Jan 1 (year granular) incoming date in
+// the year the book already has.
+func sameReleaseDate(have, incoming *time.Time) bool {
+	if have == nil {
+		return false
+	}
+	if have.Equal(*incoming) {
+		return true
+	}
+	u := incoming.UTC()
+	yearOnly := u.Month() == time.January && u.Day() == 1 && u.Hour() == 0 && u.Minute() == 0 && u.Second() == 0
+	return yearOnly && have.UTC().Year() == u.Year()
 }

@@ -1285,6 +1285,8 @@ running waits for that one instead of starting another. If the refresh
 already running was a scheduled, bulk or Refresh all one, which read the
 cached copy, the page waits for it to finish and then runs its own refresh.
 
+A refresh also corrects books you already have. When the provider's record for a book has a release date or language that differs from yours, the book takes the provider's value, and a book with no description takes the provider's. It never empties a field, never touches a field you edited (those are locked), never replaces a description you already have, and never overwrites a book that came from a different provider than the one answering. A book you excluded is left alone. A release date that only gives the year does not replace a more precise date in the same year. To make a refresh stop changing a field, edit it so it locks.
+
 When a provider fails outright, Bindery keeps the copy it fetched in the last
 24 hours rather than replacing it. How well a refresh can spot a catalogue
 that came back short depends on the provider:
