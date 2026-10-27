@@ -255,6 +255,58 @@ describe('explicit text colours on the background in the same string', () => {
   })
 })
 
+// A grey text colour with no background in its string sits on the page or on a
+// card, and the scans above cannot measure it because they need a background
+// to compare against. This is the old secondary text, text-slate-400 or
+// dark:text-zinc-500 (2.5:1 and 3.7:1), which slipped through for that reason.
+// Every such string is measured against the page and the card of each theme,
+// with the dark: class where there is one and the shared class where not
+// (#3084).
+const GREY_TEXT = /^(dark:)?text-((?:slate|zinc|gray|neutral|stone)-\d+)$/
+// Strings whose surface is set somewhere else, or that are exempt from the
+// contrast rule, each with the reason.
+const GREY_EXEMPT: Array<[string, string]> = [
+  // The clear button sits on the bar's own bg-slate-800 / dark:bg-zinc-950,
+  // which is set on the wrapper, and slate-400 is 5.7:1 on it.
+  ['../components/BulkActionBar.tsx', 'text-slate-400'],
+  // A greyed-out token chip is an inactive control (WCAG 1.4.3 exempts it).
+  ['../pages/settings/NamingTemplateField.tsx', 'text-slate-400'],
+  // Empty stars and the empty-state illustration are decoration, not text.
+  ['../components/RecommendationCard.tsx', 'text-slate-300'],
+  ['../pages/DiscoverPage.tsx', 'text-slate-300'],
+]
+
+describe('grey text colours that have no background in their string', () => {
+  it('stay AA on the page and the card in both themes', () => {
+    const failures: string[] = []
+    let checked = 0
+    for (const [file, source] of Object.entries(sources)) {
+      if (/\.test\.tsx?$/.test(file)) continue
+      for (const [, str] of source.matchAll(/["'`]([^"'`]*\btext-(?:slate|zinc|gray|neutral|stone)-\d+[^"'`]*)["'`]/g)) {
+        const classes = str.split(/\s+/)
+        if (classes.some(c => /^(dark:)?bg-/.test(c))) continue
+        if (GREY_EXEMPT.some(([f, c]) => f === file && str.includes(c))) continue
+        for (const theme of ['light', 'dark'] as const) {
+          const matches = classes.map(c => c.match(GREY_TEXT)).filter((m): m is RegExpMatchArray => m !== null)
+          // A dark: text colour that is not a grey (dark:text-white) replaces
+          // the shared class in dark mode, so there is nothing grey to measure.
+          const darkOther = theme === 'dark' && classes.some(c => c.startsWith('dark:text-') && !GREY_TEXT.test(c))
+          const text = matches.find(m => Boolean(m[1]) === (theme === 'dark')) ?? (theme === 'dark' && !darkOther ? matches.find(m => !m[1]) : undefined)
+          const fg = text && TAILWIND.get(text[2])
+          if (!text || !fg) continue
+          for (const [surface, bg] of theme === 'dark' ? [['page', SURFACES.darkPage], ['card', SURFACES.darkCard]] : [['page', SURFACES.lightPage], ['card', SURFACES.lightCard]]) {
+            checked++
+            const ratio = contrast(fg, bg)
+            if (ratio < AA_NORMAL) failures.push(`${file}: ${theme} ${text[0]} on the ${surface} is ${ratio.toFixed(2)}:1 in "${str.trim().slice(0, 90)}"`)
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(100)
+    expect(failures, failures.join('\n')).toEqual([])
+  })
+})
+
 // CoverPlaceholder paints its own ground, so its text contrast is
 // theme-independent — but the tile still has to read as an object against both
 // page surfaces, which is what pins the palette to the 700 level.

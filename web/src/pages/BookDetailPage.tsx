@@ -1084,13 +1084,13 @@ function BookDetailPageInner() {
             <CalibreDeliveryChip bookId={book.id} />
             {publishedDate && (
               <>
-                <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                <span aria-hidden className="text-fg-muted">·</span>
                 <span className="text-fg-muted">
                   {t('bookDetail.publishedDate', { date: publishedDate })}
                 </span>
               </>
             )}
-            <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+            <span aria-hidden className="text-fg-muted">·</span>
             {lang ? (
               <span className="text-fg-muted">{lang}</span>
             ) : (
@@ -1103,13 +1103,13 @@ function BookDetailPageInner() {
             )}
             {book.averageRating && book.averageRating > 0 ? (
               <>
-                <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                <span aria-hidden className="text-fg-muted">·</span>
                 <BookRating book={book} withCount className="text-fg-muted" />
               </>
             ) : null}
             {book.narrator && (
               <>
-                <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                <span aria-hidden className="text-fg-muted">·</span>
                 <span className="text-fg-muted">
                   {t('bookDetail.narratedBy', { narrator: book.narrator })}
                 </span>
@@ -1117,13 +1117,13 @@ function BookDetailPageInner() {
             )}
             {book.durationSeconds ? (
               <>
-                <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                <span aria-hidden className="text-fg-muted">·</span>
                 <span className="text-fg-muted">{formatDuration(book.durationSeconds)}</span>
               </>
             ) : null}
             {series.map(s => (
               <span key={s.id} className="contents">
-                <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                <span aria-hidden className="text-fg-muted">·</span>
                 <span className="text-fg-muted">
                   {s.position
                     ? t('bookDetail.seriesPosition', {
@@ -1137,7 +1137,7 @@ function BookDetailPageInner() {
             ))}
             {sourceLinks.length > 0 && (
               <>
-                <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+                <span aria-hidden className="text-fg-muted">·</span>
                 <MetadataLinksMenu links={sourceLinks} />
               </>
             )}

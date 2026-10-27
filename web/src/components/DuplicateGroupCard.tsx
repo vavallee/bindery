@@ -126,7 +126,7 @@ export default function DuplicateGroupCard({ group, busyBooks, onToggle, onExclu
           {showAuthor && group.authorName && group.authorId ? (
             <>
               <Link to={`/author/${group.authorId}`} className="hover:underline">{group.authorName}</Link>
-              <span className="mx-1 text-slate-400 dark:text-zinc-500">·</span>
+              <span className="mx-1 text-fg-muted">·</span>
             </>
           ) : null}
           {t('duplicateCandidates.group', { count: group.books.length, defaultValue: '{{count}} row(s)' })}
@@ -196,7 +196,7 @@ export default function DuplicateGroupCard({ group, busyBooks, onToggle, onExclu
                   <span className={book.hasFiles ? 'font-medium text-accent-text' : ''}>{fileText(book)}</span>
                   {evidenceItems(book).map((item, i) => (
                     <span key={i}>
-                      <span className="mx-1 text-slate-400 dark:text-zinc-600">·</span>
+                      <span className="mx-1 text-fg-muted">·</span>
                       {item}
                     </span>
                   ))}

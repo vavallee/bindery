@@ -1314,7 +1314,7 @@ export default function AuthorDetailPage() {
                     <button
                       type="button"
                       onClick={() => handleDeleteAlias(a)}
-                      className="ml-0.5 leading-none text-slate-500 hover:text-red-600 focus:text-red-600 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-red-500 dark:text-zinc-500 dark:hover:text-red-400 dark:focus:text-red-400 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/alias:opacity-100 [@media(hover:hover)]:focus:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100"
+                      className="ml-0.5 leading-none text-fg-muted hover:text-red-600 focus:text-red-600 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-red-500 dark:hover:text-red-400 dark:focus:text-red-400 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/alias:opacity-100 [@media(hover:hover)]:focus:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100"
                       aria-label={t('authorDetail.aliases.removeLabel', { name: a.name })}
                       title={t('authorDetail.aliases.removeLabel', { name: a.name })}
                     >

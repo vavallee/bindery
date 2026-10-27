@@ -1,0 +1,2 @@
+### Fixed
+- **Last low contrast greys** (#3084) - the dot separators on the book page and the Calibre delivery panel, the duplicate and rename dialogs, the author bio hint, the collapse arrows in the Audiobookshelf settings and a few small buttons still used greys that were too faint in both themes. They now use the same readable secondary colour as the rest of the app, and a test keeps new ones from creeping back in.

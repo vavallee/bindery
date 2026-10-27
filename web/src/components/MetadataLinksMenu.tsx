@@ -84,7 +84,7 @@ export default function MetadataLinksMenu({ links }: { links: MetadataSourceLink
               className="flex items-center justify-between gap-3 px-3 py-2 text-xs text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 rounded focus-visible:-outline-offset-2 focus-visible:bg-slate-100 dark:focus-visible:bg-zinc-800"
             >
               <span>{link.label}</span>
-              <ExternalLinkIcon className="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500" />
+              <ExternalLinkIcon className="w-3.5 h-3.5 text-fg-muted" />
             </a>
           ))}
         </div>
