@@ -1069,9 +1069,10 @@ func (i *Importer) upsertManualBook(ctx context.Context, cfg ImportConfig, runID
 			if err := i.recordBookBeforeSnapshot(ctx, runID, cfg, item, item.ItemID, existing, itemOutcomeLinked, map[string]any{"matchedBy": "manual_book"}); err != nil {
 				return nil, false, false, metadataMergeResult{}, err
 			}
-			existing.AuthorID = author.ID
-			i.applyABSFormatFields(existing, item)
-			if err := i.books.Update(ctx, existing); err != nil {
+			if err := skipLostWrite(i.books.UpdateKeepingLocks(ctx, existing, func(b *models.Book) {
+				b.AuthorID = author.ID
+				i.applyABSFormatFields(b, item)
+			}), existing); err != nil {
 				return nil, false, false, metadataMergeResult{}, err
 			}
 			if err := i.upsertBookProvenance(ctx, cfg, runID, existing.ID, item); err != nil {
@@ -1145,13 +1146,15 @@ func (i *Importer) applyABSFormatFields(book *models.Book, item NormalizedLibrar
 	if mediaType := observedMediaType(item); mediaType != "" {
 		book.MediaType = mergeMediaType(book.MediaType, mediaType)
 	}
-	if narrator := joinNarrators(item.Narrators); narrator != "" {
+	// A recording field the user set by hand is locked; ABS writes only the
+	// unlocked ones.
+	if narrator := joinNarrators(item.Narrators); narrator != "" && book.CanWrite(models.BookFieldNarrator) {
 		book.Narrator = narrator
 	}
-	if item.DurationSeconds > 0 {
+	if item.DurationSeconds > 0 && book.CanWrite(models.BookFieldDurationSeconds) {
 		book.DurationSeconds = int(math.Round(item.DurationSeconds))
 	}
-	if asin := isbnutil.NormalizeASIN(item.ASIN); asin != "" {
+	if asin := isbnutil.NormalizeASIN(item.ASIN); asin != "" && book.CanWrite(models.BookFieldASIN) {
 		book.ASIN = asin
 	}
 	if lang := normalizeLanguage(item.Language); lang != "" && book.Language == "" {
@@ -1296,6 +1299,25 @@ func (i *Importer) applyBookFieldsKeepingIdentity(ctx context.Context, book *mod
 }
 
 func (i *Importer) applyBookFieldsTo(ctx context.Context, book *models.Book, authorID int64, item NormalizedLibraryItem, keepTitle bool) error {
+	return skipLostWrite(i.books.UpdateKeepingLocks(ctx, book, func(b *models.Book) {
+		i.mergeBookFields(b, authorID, item, keepTitle)
+	}), book)
+}
+
+// skipLostWrite turns a lost guarded write into a skip for the item: the
+// import carries on and the next run retries the book. Any other error is
+// returned as is.
+func skipLostWrite(err error, book *models.Book) error {
+	if errors.Is(err, db.ErrBookKeptChanging) {
+		slog.Info("abs import: book write skipped, the book kept changing during the import; the next import retries it", "bookId", book.ID, "title", book.Title)
+		return nil
+	}
+	return err
+}
+
+// mergeBookFields applies an item's fields to book in memory, honoring the
+// locks book carries. The caller writes the result.
+func (i *Importer) mergeBookFields(book *models.Book, authorID int64, item NormalizedLibraryItem, keepTitle bool) {
 	book.AuthorID = authorID
 	// Locked fields (#1237): a manual edit survives ABS re-imports.
 	if !keepTitle && !book.IsFieldLocked(models.BookFieldTitle) {
@@ -1314,13 +1336,15 @@ func (i *Importer) applyBookFieldsTo(ctx context.Context, book *models.Book, aut
 	if lang := normalizeLanguage(item.Language); lang != "" && !book.IsFieldLocked(models.BookFieldLanguage) {
 		book.Language = lang
 	}
-	if narrator := joinNarrators(item.Narrators); narrator != "" {
+	// A recording field the user set by hand is locked; ABS writes only the
+	// unlocked ones.
+	if narrator := joinNarrators(item.Narrators); narrator != "" && book.CanWrite(models.BookFieldNarrator) {
 		book.Narrator = narrator
 	}
-	if item.DurationSeconds > 0 {
+	if item.DurationSeconds > 0 && book.CanWrite(models.BookFieldDurationSeconds) {
 		book.DurationSeconds = int(math.Round(item.DurationSeconds))
 	}
-	if asin := isbnutil.NormalizeASIN(item.ASIN); asin != "" {
+	if asin := isbnutil.NormalizeASIN(item.ASIN); asin != "" && book.CanWrite(models.BookFieldASIN) {
 		book.ASIN = asin
 	}
 	// observedMediaType, not deriveMediaType — see applyABSFormatFields (#2169).
@@ -1335,7 +1359,6 @@ func (i *Importer) applyBookFieldsTo(ctx context.Context, book *models.Book, aut
 	if book.MetadataProvider == "" {
 		book.MetadataProvider = providerAudiobookshelf
 	}
-	return i.books.Update(ctx, book)
 }
 
 func (i *Importer) upsertSeries(ctx context.Context, cfg ImportConfig, runID, bookID int64, itemID string, ref NormalizedSeries, stats *ImportStats) (seriesUpsertResult, error) {

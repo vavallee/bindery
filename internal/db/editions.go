@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -41,7 +42,8 @@ func (r *EditionRepo) GetByID(ctx context.Context, id int64) (*models.Edition, e
 	row := r.exec.QueryRowContext(ctx, `
 		SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
 		       publish_date, format, num_pages, language, image_url, is_ebook,
-		       edition_info, monitored, created_at, updated_at
+		       edition_info, monitored, created_at, updated_at, COALESCE(locked_fields, '[]'),
+		       CAST(updated_at AS TEXT)
 		FROM editions WHERE id = ?`, id)
 	e, err := scanEditionFrom(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -61,7 +63,8 @@ func (r *EditionRepo) GetByForeignID(ctx context.Context, foreignID string) (*mo
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
 		       publish_date, format, num_pages, language, image_url, is_ebook,
-		       edition_info, monitored, created_at, updated_at
+		       edition_info, monitored, created_at, updated_at, COALESCE(locked_fields, '[]'),
+		       CAST(updated_at AS TEXT)
 		FROM editions WHERE foreign_id = ?`, foreignID)
 	e, err := scanEditionFrom(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -78,7 +81,8 @@ func (r *EditionRepo) ListByBook(ctx context.Context, bookID int64) ([]models.Ed
 	rows, err := r.exec.QueryContext(ctx, `
 		SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
 		       publish_date, format, num_pages, language, image_url, is_ebook,
-		       edition_info, monitored, created_at, updated_at
+		       edition_info, monitored, created_at, updated_at, COALESCE(locked_fields, '[]'),
+		       CAST(updated_at AS TEXT)
 		FROM editions WHERE book_id = ? ORDER BY id`, bookID)
 	if err != nil {
 		return nil, fmt.Errorf("list editions for book %d: %w", bookID, err)
@@ -96,6 +100,14 @@ func (r *EditionRepo) ListByBook(ctx context.Context, bookID int64) ([]models.Ed
 	return out, rows.Err()
 }
 
+// editionLockGuard is the SQL predicate that is true when the stored row has
+// the named field locked. It reads the lock set from the row inside the same
+// statement that writes, so an importer whose snapshot predates the lock
+// cannot undo it. field is one of models.LockableEditionFields, never input.
+func editionLockGuard(field string) string {
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM json_each(editions.locked_fields) WHERE value = '%s')", field)
+}
+
 // Upsert inserts the edition if its foreign_id is new, or updates the
 // format / title / isbn / publish_date fields in place if the row already
 // exists. Returns the persisted edition id.
@@ -103,7 +115,10 @@ func (r *EditionRepo) ListByBook(ctx context.Context, bookID int64) ([]models.Ed
 // The upsert is scoped to the columns the Calibre importer actually
 // derives from metadata.db. Fields outside that scope (edition_info,
 // publisher, num_pages, asin, monitored) are preserved on update so a
-// re-import never flattens metadata the user has curated in-UI.
+// re-import never flattens metadata the user has curated in-UI. A column the
+// user locked (editions.locked_fields) keeps its stored value on conflict,
+// including the two this statement would otherwise replace, isbn_13 and
+// publish_date.
 func (r *EditionRepo) Upsert(ctx context.Context, e *models.Edition) error {
 	// Canonicalised at the write so no provider's raw code survives (#3086).
 	e.Language = models.NormalizeLanguageCode(e.Language)
@@ -119,7 +134,8 @@ func (r *EditionRepo) Upsert(ctx context.Context, e *models.Edition) error {
 		monitored = 1
 	}
 
-	res, err := r.db.ExecContext(ctx, `
+	//nolint:gosec // G201: the two guards interpolate fixed column and lock names; every value is bound below.
+	query := fmt.Sprintf(`
 		INSERT INTO editions (foreign_id, book_id, title, isbn_13, isbn_10, asin,
 		                      publisher, publish_date, format, num_pages, language,
 		                      image_url, is_ebook, edition_info, monitored,
@@ -127,13 +143,15 @@ func (r *EditionRepo) Upsert(ctx context.Context, e *models.Edition) error {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(foreign_id) DO UPDATE SET
 		    title       = excluded.title,
-		    isbn_13     = COALESCE(excluded.isbn_13, editions.isbn_13),
+		    isbn_13     = CASE WHEN %s THEN editions.isbn_13 ELSE COALESCE(excluded.isbn_13, editions.isbn_13) END,
 		    format      = excluded.format,
-		    publish_date= COALESCE(excluded.publish_date, editions.publish_date),
+		    publish_date= CASE WHEN %s THEN editions.publish_date ELSE COALESCE(excluded.publish_date, editions.publish_date) END,
 		    is_ebook    = excluded.is_ebook,
 		    image_url   = COALESCE(NULLIF(excluded.image_url, ''), editions.image_url),
 		    language    = excluded.language,
 		    updated_at  = excluded.updated_at`,
+		editionLockGuard(models.EditionFieldISBN13), editionLockGuard(models.EditionFieldPublishDate))
+	res, err := r.db.ExecContext(ctx, query,
 		e.ForeignID, e.BookID, e.Title, e.ISBN13, e.ISBN10, e.ASIN,
 		e.Publisher, timeArg(e.PublishDate), e.Format, e.NumPages, e.Language,
 		e.ImageURL, isEbook, e.EditionInfo, monitored, timeValueArg(now), timeValueArg(now))
@@ -200,7 +218,13 @@ func (r *EditionRepo) UpsertMetadata(ctx context.Context, e *models.Edition, exp
 		return fmt.Sprintf("CASE WHEN TRIM(COALESCE(editions.%[1]s, ''), @whitespace) = '' THEN excluded.%[1]s ELSE editions.%[1]s END", column)
 	}
 
-	//nolint:gosec // G201: expressions contain only fixed column names; all metadata is bound below.
+	// fillUnlessLocked is fillMissingText behind the lock guard: a locked
+	// column keeps its stored value even when empty (#2757).
+	fillUnlessLocked := func(column, field string) string {
+		return fmt.Sprintf("CASE WHEN %s THEN editions.%s ELSE %s END", editionLockGuard(field), column, fillMissingText(column))
+	}
+
+	//nolint:gosec // G201: expressions contain only fixed column and lock names; all metadata is bound below.
 	query := fmt.Sprintf(`
 		INSERT INTO editions (foreign_id, book_id, title, isbn_13, isbn_10, asin,
 		                      publisher, publish_date, format, num_pages, language,
@@ -214,7 +238,7 @@ func (r *EditionRepo) UpsertMetadata(ctx context.Context, e *models.Edition, exp
 		    isbn_10     = %s,
 		    asin        = %s,
 		    publisher   = %s,
-		    publish_date= COALESCE(editions.publish_date, excluded.publish_date),
+		    publish_date= CASE WHEN %s THEN editions.publish_date ELSE COALESCE(editions.publish_date, excluded.publish_date) END,
 		    format      = %s,
 		    num_pages   = COALESCE(editions.num_pages, excluded.num_pages),
 		    language    = %s,
@@ -223,8 +247,13 @@ func (r *EditionRepo) UpsertMetadata(ctx context.Context, e *models.Edition, exp
 		    edition_info= %s,
 		    updated_at  = excluded.updated_at
 		WHERE editions.book_id = excluded.book_id`,
-		fillMissingText("title"), fillMissingText("isbn_13"), fillMissingText("isbn_10"), fillMissingText("asin"),
-		fillMissingText("publisher"), fillMissingText("format"), fillMissingText("language"), fillMissingText("image_url"), fillMissingText("edition_info"))
+		fillMissingText("title"),
+		fillUnlessLocked("isbn_13", models.EditionFieldISBN13),
+		fillUnlessLocked("isbn_10", models.EditionFieldISBN10),
+		fillUnlessLocked("asin", models.EditionFieldASIN),
+		fillUnlessLocked("publisher", models.EditionFieldPublisher),
+		editionLockGuard(models.EditionFieldPublishDate),
+		fillMissingText("format"), fillMissingText("language"), fillMissingText("image_url"), fillMissingText("edition_info"))
 	res, err := r.db.ExecContext(ctx, query,
 		e.ForeignID, e.BookID, e.Title, e.ISBN13, e.ISBN10, e.ASIN,
 		e.Publisher, timeArg(e.PublishDate), e.Format, e.NumPages, e.Language,
@@ -244,7 +273,8 @@ func (r *EditionRepo) UpsertMetadata(ctx context.Context, e *models.Edition, exp
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
 		       publish_date, format, num_pages, language, image_url, is_ebook,
-		       edition_info, monitored, created_at, updated_at
+		       edition_info, monitored, created_at, updated_at, COALESCE(locked_fields, '[]'),
+		       CAST(updated_at AS TEXT)
 		FROM editions WHERE foreign_id = ?`, e.ForeignID)
 	stored, err := scanEditionFrom(row)
 	if err != nil {
@@ -261,16 +291,22 @@ func (r *EditionRepo) UpsertMetadata(ctx context.Context, e *models.Edition, exp
 // scanEditionFrom decodes an editions row using parseFlexibleTime for the
 // three time-typed columns so legacy rows written by Go's default
 // time.String shape, or by Calibre's own pubdate writer, still Scan
-// successfully (#914 root cause).
+// successfully (#914 root cause). locked_fields is read as text and decoded;
+// a row from before migration 115 carries the column default, so the set is
+// never nil.
 func scanEditionFrom(s rowScanner) (models.Edition, error) {
 	var e models.Edition
 	var isEbook, monitored int
 	var publishDateStr, createdAtStr, updatedAtStr sql.NullString
+	var lockedFieldsStr string
+	var updatedAtRaw sql.NullString
 	if err := s.Scan(&e.ID, &e.ForeignID, &e.BookID, &e.Title, &e.ISBN13, &e.ISBN10,
 		&e.ASIN, &e.Publisher, &publishDateStr, &e.Format, &e.NumPages, &e.Language,
-		&e.ImageURL, &isEbook, &e.EditionInfo, &monitored, &createdAtStr, &updatedAtStr); err != nil {
+		&e.ImageURL, &isEbook, &e.EditionInfo, &monitored, &createdAtStr, &updatedAtStr,
+		&lockedFieldsStr, &updatedAtRaw); err != nil {
 		return e, err
 	}
+	e.UpdatedAtRaw = updatedAtRaw.String
 	if pd, perr := parseFlexibleTime(publishDateStr); perr != nil {
 		slog.Warn("unparseable edition.publish_date, leaving nil", "edition_id", e.ID, "value", publishDateStr.String, "error", perr)
 	} else {
@@ -280,6 +316,13 @@ func scanEditionFrom(s rowScanner) (models.Edition, error) {
 	e.UpdatedAt = parseFlexibleTimeValue(updatedAtStr, "editions.updated_at")
 	e.IsEbook = isEbook == 1
 	e.Monitored = monitored == 1
+	e.LockedFields = []string{}
+	if lockedFieldsStr != "" {
+		_ = json.Unmarshal([]byte(lockedFieldsStr), &e.LockedFields)
+	}
+	if e.LockedFields == nil {
+		e.LockedFields = []string{}
+	}
 	return e, nil
 }
 
@@ -310,7 +353,8 @@ func (r *EditionRepo) DeleteProviderEditionsAfterRebind(ctx context.Context, boo
 		  AND EXISTS (SELECT 1 FROM books b WHERE b.id = editions.book_id AND b.foreign_id = ? AND b.metadata_provider = ?)
 		  AND NOT EXISTS (SELECT 1 FROM books b WHERE b.id = editions.book_id AND b.selected_edition_id = editions.id)
 		  AND NOT EXISTS (SELECT 1 FROM downloads d WHERE d.edition_id = editions.id)
-		  AND NOT EXISTS (SELECT 1 FROM calibre_deliveries cd WHERE cd.edition_id = editions.id)`,
+		  AND NOT EXISTS (SELECT 1 FROM calibre_deliveries cd WHERE cd.edition_id = editions.id)
+		  AND NOT EXISTS (SELECT 1 FROM json_each(editions.locked_fields))`,
 		bookID, foreignID, provider)
 	if err != nil {
 		return 0, fmt.Errorf("delete provider editions for rebound book %d: %w", bookID, err)
@@ -338,7 +382,8 @@ func (r *EditionRepo) ListWithLocalImagePath(ctx context.Context) ([]models.Edit
 	rows, err := r.exec.QueryContext(ctx, `
 		SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
 		       publish_date, format, num_pages, language, image_url, is_ebook,
-		       edition_info, monitored, created_at, updated_at
+		       edition_info, monitored, created_at, updated_at, COALESCE(locked_fields, '[]'),
+		       CAST(updated_at AS TEXT)
 		FROM editions WHERE image_url LIKE '/%' OR image_url LIKE '_:\%' ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("list editions with local image path: %w", err)
@@ -367,4 +412,47 @@ func (r *EditionRepo) SetImageURL(ctx context.Context, id int64, imageURL string
 		return fmt.Errorf("set edition %d image_url: %w", id, err)
 	}
 	return nil
+}
+
+// UpdateFields is the save for a user edit of an edition's publication
+// fields. It writes publisher, publish date, ISBN-13, ISBN-10, ASIN and the
+// lock set from e, nothing else. bookID is the book the caller resolved the
+// edition under (the URL's book, not e.BookID), so a handler cannot be made
+// to write a row that belongs to another book. The write is also refused
+// when the row's updated_at no longer matches e.UpdatedAtRaw, so a snapshot
+// that predates a concurrent import or a second user edit cannot revert it.
+// It reports whether a row matched; the caller tells the two refusals apart
+// by re-reading.
+func (r *EditionRepo) UpdateFields(ctx context.Context, e *models.Edition, bookID int64) (bool, error) {
+	if e == nil || e.ID == 0 || bookID == 0 {
+		return false, fmt.Errorf("update edition fields: edition and book ids are required")
+	}
+	if e.UpdatedAtRaw == "" {
+		return false, fmt.Errorf("update edition %d fields: snapshot carries no updated_at", e.ID)
+	}
+	lockedJSON, err := json.Marshal(lockedOrEmpty(e.LockedFields))
+	if err != nil {
+		return false, fmt.Errorf("marshal edition locked_fields: %w", err)
+	}
+	now := time.Now().UTC()
+	res, err := r.exec.ExecContext(ctx, `
+		UPDATE editions SET publisher = ?, publish_date = ?, isbn_13 = ?, isbn_10 = ?, asin = ?,
+		                    locked_fields = ?, updated_at = ?
+		WHERE id = ? AND book_id = ? AND CAST(updated_at AS TEXT) = ?`,
+		e.Publisher, timeArg(e.PublishDate), e.ISBN13, e.ISBN10, e.ASIN,
+		string(lockedJSON), timeValueArg(now), e.ID, bookID, e.UpdatedAtRaw)
+	if err != nil {
+		return false, fmt.Errorf("update edition %d fields: %w", e.ID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("update edition %d fields: rows affected: %w", e.ID, err)
+	}
+	if n == 0 {
+		return false, nil
+	}
+	e.UpdatedAt = now
+	e.UpdatedAtRaw = timeValueText(now)
+	e.LockedFields = lockedOrEmpty(e.LockedFields)
+	return true, nil
 }

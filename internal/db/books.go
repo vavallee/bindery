@@ -813,6 +813,38 @@ func (r *BookRepo) UpdateIfUnchanged(ctx context.Context, b *models.Book, expect
 	return r.update(ctx, b, expectedUpdatedAt)
 }
 
+// ErrBookKeptChanging is returned by UpdateKeepingLocks when the row changed
+// before every write it tried; nothing was written.
+var ErrBookKeptChanging = errors.New("kept changing while it was being written, nothing was written")
+
+// UpdateKeepingLocks applies apply to b and writes it with the updated_at
+// guard, so a lock the user set between the caller's read and this write is
+// not overwritten by the caller's snapshot. When the row moved, b is
+// reloaded, apply runs again against the current locks, and the write is
+// tried again, three writes in all; after that it returns
+// ErrBookKeptChanging and the caller decides whether that is a skip or a
+// failure. A book with no updated_at, such as one created earlier in the
+// same run, is written directly.
+func (r *BookRepo) UpdateKeepingLocks(ctx context.Context, b *models.Book, apply func(*models.Book)) error {
+	apply(b)
+	if b.UpdatedAtRaw == "" {
+		return r.Update(ctx, b)
+	}
+	for attempt := 1; ; attempt++ {
+		written, err := r.UpdateIfUnchanged(ctx, b, b.UpdatedAtRaw)
+		if err != nil || written {
+			return err
+		}
+		if err := r.ReloadHydratedBook(ctx, b); err != nil {
+			return err
+		}
+		if attempt >= 3 {
+			return fmt.Errorf("book %d: %w", b.ID, ErrBookKeptChanging)
+		}
+		apply(b)
+	}
+}
+
 // update writes every column of b. A non-empty expectedUpdatedAt adds the
 // stored-text updated_at precondition.
 func (r *BookRepo) update(ctx context.Context, b *models.Book, expectedUpdatedAt string) (bool, error) {
@@ -946,6 +978,8 @@ func (r *BookRepo) ReloadHydratedBook(ctx context.Context, b *models.Book) error
 
 // FillMissingAudiobookDuration persists a duration derived from edition metadata
 // without rewriting a book that may have changed during the provider fetch.
+// The lock is tested on the stored row, so a duration the user locked empty
+// after the fetch began stays empty.
 // After either a successful write or a guarded-write miss, b is refreshed so
 // callers use the current identity, duration, and monitoring state together.
 func (r *BookRepo) FillMissingAudiobookDuration(ctx context.Context, b *models.Book) (bool, error) {
@@ -959,8 +993,10 @@ func (r *BookRepo) FillMissingAudiobookDuration(ctx context.Context, b *models.B
 	res, err := r.exec.ExecContext(ctx, `
 		UPDATE books SET duration_seconds = ?, updated_at = ?
 		WHERE id = ? AND foreign_id = ? AND metadata_provider = ? AND media_type = ?
-		  AND asin = ? AND duration_seconds <= 0`,
-		b.DurationSeconds, timeValueArg(now), b.ID, b.ForeignID, b.MetadataProvider, b.MediaType, b.ASIN)
+		  AND asin = ? AND duration_seconds <= 0
+		  AND NOT EXISTS (SELECT 1 FROM json_each(COALESCE(books.locked_fields, '[]')) WHERE value = ?)`,
+		b.DurationSeconds, timeValueArg(now), b.ID, b.ForeignID, b.MetadataProvider, b.MediaType, b.ASIN,
+		models.BookFieldDurationSeconds)
 	if err != nil {
 		return false, fmt.Errorf("fill missing audiobook duration for book %d: %w", b.ID, err)
 	}

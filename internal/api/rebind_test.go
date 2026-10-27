@@ -436,3 +436,46 @@ func TestRebind_HistoryEventWritten(t *testing.T) {
 		t.Errorf("expected a %q history event, got %v", models.HistoryEventBookRebound, events)
 	}
 }
+
+// TestRebind_KeepsRecordingFieldLocks pins that a rebind clears the work-field
+// locks (the user asked for the new record's title, description and so on)
+// but keeps narrator, duration and ASIN locks, because it keeps those values:
+// an ASIN the user cleared and locked must not be re-promoted by the hydration
+// that follows the rebind.
+func TestRebind_KeepsRecordingFieldLocks(t *testing.T) {
+	h, books, _, _, author, book, ctx := rebindFixture(t)
+	book.MediaType = models.MediaTypeAudiobook
+	book.ASIN = ""
+	book.Narrator = "My Narrator"
+	book.LockedFields = []string{models.BookFieldTitle, models.BookFieldASIN, models.BookFieldNarrator}
+	if err := books.Update(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	audioASIN := "B123456789"
+	h.WithMetaLookup(&stubLookup{book: &models.Book{
+		Title:  "Correct Book",
+		Author: &models.Author{ForeignID: author.ForeignID, Name: author.Name},
+	}})
+	h.WithEditionFetcher(func(context.Context, string) ([]models.Edition, error) {
+		return []models.Edition{{ForeignID: "hc:correct-audio-locked", Title: "Correct Book", ASIN: &audioASIN, Format: "Audiobook", Monitored: true}}, nil
+	})
+
+	rec := httptest.NewRecorder()
+	h.Rebind(rec, rebindRequest(book.ID, map[string]any{"provider": "hardcover", "foreign_id": "123"}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	updated, err := books.GetByID(ctx, book.ID)
+	if err != nil || updated == nil {
+		t.Fatal(err)
+	}
+	if updated.Title != "Correct Book" || updated.IsFieldLocked(models.BookFieldTitle) {
+		t.Fatalf("rebind must take the new title and drop its lock: title=%q locked=%v", updated.Title, updated.LockedFields)
+	}
+	if updated.ASIN != "" || !updated.IsFieldLocked(models.BookFieldASIN) {
+		t.Fatalf("cleared, locked ASIN was re-promoted or unlocked: asin=%q locked=%v", updated.ASIN, updated.LockedFields)
+	}
+	if updated.Narrator != "My Narrator" || !updated.IsFieldLocked(models.BookFieldNarrator) {
+		t.Fatalf("narrator or its lock lost: narrator=%q locked=%v", updated.Narrator, updated.LockedFields)
+	}
+}

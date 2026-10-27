@@ -485,6 +485,16 @@ func proxyAuthorImages(a *models.Author) {
 // proxyBookImages rewrites ImageURL on a book.
 func proxyBookImages(b *models.Book) {
 	b.ImageURL = ProxyImageURL(b.ImageURL)
+	// A fresh slice, not an in-place edit: proxiedBook works on a shallow
+	// copy, so the editions backing array is still the caller's.
+	if b.Editions != nil {
+		editions := make([]models.Edition, len(b.Editions))
+		for i := range b.Editions {
+			editions[i] = b.Editions[i]
+			editions[i].ImageURL = ProxyImageURL(editions[i].ImageURL)
+		}
+		b.Editions = editions
+	}
 }
 
 // writeBook answers with a book the library holds, its cover as a proxy URL.

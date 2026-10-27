@@ -2,8 +2,10 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -499,5 +501,398 @@ func TestEditionRepo_ListByBook(t *testing.T) {
 	}
 	if len(other) != 0 {
 		t.Errorf("unrelated book should have 0 editions, got %d", len(other))
+	}
+}
+
+// TestEditionRepo_UpdateFieldsWritesLocksAndRefusesOtherBook pins the user
+// edit path: UpdateFields writes the five publication columns and the lock set,
+// scopes the write to the edition's book, and a row the importer created with
+// no lock set scans as an empty set.
+func TestEditionRepo_UpdateFieldsWritesLocksAndRefusesOtherBook(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	a := &models.Author{ForeignID: "OL-UF-A", Name: "A", SortName: "A", MetadataProvider: "openlibrary", Monitored: true}
+	if err := authorRepo.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	b := &models.Book{ForeignID: "OL-UF-B", AuthorID: a.ID, Title: "Book", SortTitle: "Book", Status: "wanted", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true}
+	if err := bookRepo.Create(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	other := &models.Book{ForeignID: "OL-UF-C", AuthorID: a.ID, Title: "Other", SortTitle: "Other", Status: "wanted", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true}
+	if err := bookRepo.Create(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := NewEditionRepo(database)
+	ed := &models.Edition{ForeignID: "abs:edition:lib:item:audiobook", BookID: b.ID, Title: "Recording", Format: "AUDIOBOOK", Monitored: true}
+	if err := repo.Upsert(ctx, ed); err != nil {
+		t.Fatal(err)
+	}
+
+	// A row the importer wrote has no lock set; it must scan as empty, never nil-panic.
+	stored, err := repo.GetByID(ctx, ed.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if len(stored.LockedFields) != 0 {
+		t.Fatalf("fresh edition locked=%v, want none", stored.LockedFields)
+	}
+
+	isbn13 := "9780306406157"
+	when := time.Date(2024, 6, 18, 0, 0, 0, 0, time.UTC)
+	stored.Publisher = "Example Audio"
+	stored.PublishDate = &when
+	stored.ISBN13 = &isbn13
+	stored.LockField(models.EditionFieldPublisher)
+	stored.LockField(models.EditionFieldPublishDate)
+	stored.LockField(models.EditionFieldISBN13)
+	updated, err := repo.UpdateFields(ctx, stored, b.ID)
+	if err != nil {
+		t.Fatalf("UpdateFields: %v", err)
+	}
+	if !updated {
+		t.Fatal("UpdateFields reported no row for the edition's own book")
+	}
+
+	for _, got := range mustEditionsByEveryReader(t, repo, ctx, ed.ID, ed.ForeignID, b.ID) {
+		if got.Publisher != "Example Audio" || got.ISBN13 == nil || *got.ISBN13 != isbn13 || got.PublishDate == nil || !got.PublishDate.Equal(when) {
+			t.Fatalf("fields not persisted: %+v", got)
+		}
+		if !got.IsFieldLocked(models.EditionFieldPublisher) || !got.IsFieldLocked(models.EditionFieldPublishDate) || !got.IsFieldLocked(models.EditionFieldISBN13) || got.IsFieldLocked(models.EditionFieldASIN) {
+			t.Fatalf("lock set not persisted: %v", got.LockedFields)
+		}
+	}
+
+	// Scoped to the book the caller names, not the one on the struct: a
+	// handler that resolved the edition under the URL's book cannot write a
+	// row that belongs to another book, whatever the struct says.
+	stolen, _ := repo.GetByID(ctx, ed.ID)
+	stolen.Publisher = "Thief"
+	updated, err = repo.UpdateFields(ctx, stolen, other.ID)
+	if err != nil {
+		t.Fatalf("UpdateFields other book: %v", err)
+	}
+	if updated {
+		t.Fatal("UpdateFields matched a row under a different book_id")
+	}
+	again, _ := repo.GetByID(ctx, ed.ID)
+	if again.Publisher != "Example Audio" || again.BookID != b.ID {
+		t.Fatalf("edition changed through the wrong book: %+v", again)
+	}
+
+	// Compare-and-swap on updated_at: a snapshot older than the row loses,
+	// so a concurrent import or a second user edit is not reverted.
+	stale, _ := repo.GetByID(ctx, ed.ID)
+	fresh, _ := repo.GetByID(ctx, ed.ID)
+	fresh.Publisher = "Fresh Publisher"
+	if ok, err := repo.UpdateFields(ctx, fresh, b.ID); err != nil || !ok {
+		t.Fatalf("fresh write: ok=%v err=%v", ok, err)
+	}
+	stale.Publisher = "Stale Publisher"
+	ok, err := repo.UpdateFields(ctx, stale, b.ID)
+	if err != nil {
+		t.Fatalf("stale write: %v", err)
+	}
+	if ok {
+		t.Fatal("stale snapshot overwrote a newer row")
+	}
+	final, _ := repo.GetByID(ctx, ed.ID)
+	if final.Publisher != "Fresh Publisher" {
+		t.Fatalf("publisher = %q, want the fresh write to stand", final.Publisher)
+	}
+	if final.UpdatedAtRaw == "" || final.UpdatedAtRaw == stale.UpdatedAtRaw {
+		t.Fatalf("UpdatedAtRaw not scanned or not advanced: %q vs %q", final.UpdatedAtRaw, stale.UpdatedAtRaw)
+	}
+}
+
+// mustEditionsByEveryReader returns the same edition through the three
+// readers a handler uses (GetByID, GetByForeignID, ListByBook), so a column
+// added to one SELECT list and missed in another fails here.
+func mustEditionsByEveryReader(t *testing.T, repo *EditionRepo, ctx context.Context, id int64, foreignID string, bookID int64) []models.Edition {
+	t.Helper()
+	byID, err := repo.GetByID(ctx, id)
+	if err != nil || byID == nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	byForeign, err := repo.GetByForeignID(ctx, foreignID)
+	if err != nil || byForeign == nil {
+		t.Fatalf("GetByForeignID: %v", err)
+	}
+	list, err := repo.ListByBook(ctx, bookID)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListByBook: %v (%d rows)", err, len(list))
+	}
+	return []models.Edition{*byID, *byForeign, list[0]}
+}
+
+// seedLockedEditionBook creates an author and book for the upsert lock tests.
+func seedLockedEditionBook(t *testing.T, database *sql.DB, foreignID, provider string) *models.Book {
+	t.Helper()
+	ctx := context.Background()
+	a := &models.Author{ForeignID: foreignID + "-A", Name: "A", SortName: "A", MetadataProvider: provider, Monitored: true}
+	if err := NewAuthorRepo(database).Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	b := &models.Book{ForeignID: foreignID, AuthorID: a.ID, Title: "Book", SortTitle: "Book", Status: "wanted", Genres: []string{}, MetadataProvider: provider, Monitored: true}
+	if err := NewBookRepo(database).Create(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// TestEditionRepo_UpsertKeepsLockedColumns pins that the import upsert keeps a
+// locked isbn_13 and publish_date on conflict, writes the unlocked columns it
+// always wrote, and still inserts a brand new row.
+func TestEditionRepo_UpsertKeepsLockedColumns(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	b := seedLockedEditionBook(t, database, "abs:book:lib:lock", "audiobookshelf")
+	repo := NewEditionRepo(database)
+
+	userISBN := "9780306406157"
+	userDate := time.Date(1998, 1, 1, 0, 0, 0, 0, time.UTC)
+	ed := &models.Edition{ForeignID: "abs:edition:lib:lock:audiobook", BookID: b.ID, Title: "Recording", ISBN13: &userISBN, PublishDate: &userDate, Format: "AUDIOBOOK", Language: "eng", Monitored: true}
+	if err := repo.Upsert(ctx, ed); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	stored, _ := repo.GetByID(ctx, ed.ID)
+	stored.LockField(models.EditionFieldISBN13)
+	stored.LockField(models.EditionFieldPublishDate)
+	if _, err := repo.UpdateFields(ctx, stored, b.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	absISBN := "9790000000001"
+	absDate := time.Date(2024, 6, 18, 0, 0, 0, 0, time.UTC)
+	reimport := &models.Edition{ForeignID: ed.ForeignID, BookID: b.ID, Title: "Recording (Unabridged)", ISBN13: &absISBN, PublishDate: &absDate, Format: "AUDIOBOOK", Language: "ger", Monitored: true}
+	if err := repo.Upsert(ctx, reimport); err != nil {
+		t.Fatalf("re-import upsert: %v", err)
+	}
+	got, _ := repo.GetByID(ctx, ed.ID)
+	if got.ISBN13 == nil || *got.ISBN13 != userISBN {
+		t.Fatalf("locked isbn_13 overwritten: %v", got.ISBN13)
+	}
+	if got.PublishDate == nil || !got.PublishDate.Equal(userDate) {
+		t.Fatalf("locked publish_date overwritten: %v", got.PublishDate)
+	}
+	if got.Title != "Recording (Unabridged)" || got.Language != "ger" {
+		t.Fatalf("unlocked columns must still follow the import: %+v", got)
+	}
+	if !got.IsFieldLocked(models.EditionFieldISBN13) || !got.IsFieldLocked(models.EditionFieldPublishDate) {
+		t.Fatalf("re-import dropped the lock set: %v", got.LockedFields)
+	}
+}
+
+// TestEditionRepo_UpsertMetadataLockBlocksFill pins the #2757 rule on
+// editions: a locked, empty publisher, ASIN or publish date is a decision, not
+// a gap, so provider hydration must not fill it, while an unlocked empty
+// ISBN-10 is filled. publish_date has its own hand-written guard in the
+// statement, so it is locked here on purpose.
+func TestEditionRepo_UpsertMetadataLockBlocksFill(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	b := seedLockedEditionBook(t, database, "hc:lock-book", "hardcover")
+	repo := NewEditionRepo(database)
+
+	ok, err := repo.UpsertMetadata(ctx, &models.Edition{ForeignID: "hc:lock-ed", BookID: b.ID, Title: "Audio", Format: "Audiobook", Monitored: true}, b.ForeignID, b.MetadataProvider)
+	if err != nil || !ok {
+		t.Fatalf("first metadata upsert: ok=%v err=%v", ok, err)
+	}
+	stored, _ := repo.GetByForeignID(ctx, "hc:lock-ed")
+	stored.Publisher = ""
+	stored.LockField(models.EditionFieldPublisher)
+	stored.LockField(models.EditionFieldASIN)
+	stored.LockField(models.EditionFieldPublishDate)
+	stored.LockField(models.EditionFieldISBN13)
+	if _, err := repo.UpdateFields(ctx, stored, b.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	asin := "B000000001"
+	isbn13 := "9780306406157"
+	isbn10 := "0306406152"
+	date := time.Date(2020, 2, 2, 0, 0, 0, 0, time.UTC)
+	ok, err = repo.UpsertMetadata(ctx, &models.Edition{ForeignID: "hc:lock-ed", BookID: b.ID, Title: "Audio", Publisher: "Tor", ASIN: &asin, ISBN13: &isbn13, ISBN10: &isbn10, PublishDate: &date, Format: "Audiobook", Monitored: true}, b.ForeignID, b.MetadataProvider)
+	if err != nil || !ok {
+		t.Fatalf("second metadata upsert: ok=%v err=%v", ok, err)
+	}
+	got, _ := repo.GetByForeignID(ctx, "hc:lock-ed")
+	if got.Publisher != "" {
+		t.Fatalf("locked empty publisher was filled: %q", got.Publisher)
+	}
+	if got.ASIN != nil {
+		t.Fatalf("locked empty asin was filled: %v", *got.ASIN)
+	}
+	if got.PublishDate != nil {
+		t.Fatalf("locked empty publish_date was filled: %v", got.PublishDate)
+	}
+	if got.ISBN13 != nil {
+		t.Fatalf("locked empty isbn_13 was filled: %v", *got.ISBN13)
+	}
+	if got.ISBN10 == nil || *got.ISBN10 != isbn10 {
+		t.Fatalf("unlocked isbn_10 should be filled: %v", got.ISBN10)
+	}
+
+	// The struct UpsertMetadata hands back is the re-read row, lock set
+	// included, so a caller that goes on to CanWrite sees the real locks.
+	hydrated := &models.Edition{ForeignID: "hc:lock-ed", BookID: b.ID, Title: "Audio", Format: "Audiobook", Monitored: true}
+	if ok, err := repo.UpsertMetadata(ctx, hydrated, b.ForeignID, b.MetadataProvider); err != nil || !ok {
+		t.Fatalf("fourth metadata upsert: ok=%v err=%v", ok, err)
+	}
+	for _, f := range []string{models.EditionFieldPublisher, models.EditionFieldASIN, models.EditionFieldPublishDate, models.EditionFieldISBN13} {
+		if !hydrated.IsFieldLocked(f) {
+			t.Fatalf("UpsertMetadata's re-read dropped lock %q: %v", f, hydrated.LockedFields)
+		}
+	}
+	if hydrated.UpdatedAtRaw == "" {
+		t.Fatal("UpsertMetadata's re-read carries no UpdatedAtRaw")
+	}
+}
+
+// TestEditionRepo_UpsertMetadataLockGuardsISBNs pins the isbn_13 and isbn_10
+// guards in UpsertMetadata: a locked, empty ISBN is not filled by hydration,
+// while an unlocked empty publisher still is.
+func TestEditionRepo_UpsertMetadataLockGuardsISBNs(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	b := seedLockedEditionBook(t, database, "hc:isbn-lock-book", "hardcover")
+	repo := NewEditionRepo(database)
+
+	ok, err := repo.UpsertMetadata(ctx, &models.Edition{ForeignID: "hc:isbn-lock-ed", BookID: b.ID, Title: "Print", Format: "Hardcover", Monitored: true}, b.ForeignID, b.MetadataProvider)
+	if err != nil || !ok {
+		t.Fatalf("first metadata upsert: ok=%v err=%v", ok, err)
+	}
+	stored, _ := repo.GetByForeignID(ctx, "hc:isbn-lock-ed")
+	stored.LockField(models.EditionFieldISBN13)
+	stored.LockField(models.EditionFieldISBN10)
+	if _, err := repo.UpdateFields(ctx, stored, b.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	isbn13, isbn10 := "9780306406157", "0306406152"
+	ok, err = repo.UpsertMetadata(ctx, &models.Edition{ForeignID: "hc:isbn-lock-ed", BookID: b.ID, Title: "Print", Publisher: "Tor", ISBN13: &isbn13, ISBN10: &isbn10, Format: "Hardcover", Monitored: true}, b.ForeignID, b.MetadataProvider)
+	if err != nil || !ok {
+		t.Fatalf("second metadata upsert: ok=%v err=%v", ok, err)
+	}
+	got, _ := repo.GetByForeignID(ctx, "hc:isbn-lock-ed")
+	if got.ISBN13 != nil || got.ISBN10 != nil {
+		t.Fatalf("locked empty ISBNs were filled: isbn13=%v isbn10=%v", got.ISBN13, got.ISBN10)
+	}
+	if got.Publisher != "Tor" {
+		t.Fatalf("unlocked publisher should be filled: %q", got.Publisher)
+	}
+}
+
+// TestEditionRepo_UpdateFieldsKeepsConcurrentFill pins that a stale user
+// edit cannot undo a fill: hydration filling another column between the
+// handler's read and its write moves updated_at, so the write is refused
+// and the handler re-reads before answering 409.
+func TestEditionRepo_UpdateFieldsKeepsConcurrentFill(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	b := seedLockedEditionBook(t, database, "hc:stale-book", "hardcover")
+	repo := NewEditionRepo(database)
+
+	ok, err := repo.UpsertMetadata(ctx, &models.Edition{ForeignID: "hc:stale-ed", BookID: b.ID, Title: "Print", Format: "Hardcover", Monitored: true}, b.ForeignID, b.MetadataProvider)
+	if err != nil || !ok {
+		t.Fatalf("seed: ok=%v err=%v", ok, err)
+	}
+	stale, _ := repo.GetByForeignID(ctx, "hc:stale-ed")
+
+	isbn10 := "0306406152"
+	ok, err = repo.UpsertMetadata(ctx, &models.Edition{ForeignID: "hc:stale-ed", BookID: b.ID, Title: "Print", Publisher: "Tor", ISBN10: &isbn10, Format: "Hardcover", Monitored: true}, b.ForeignID, b.MetadataProvider)
+	if err != nil || !ok {
+		t.Fatalf("concurrent fill: ok=%v err=%v", ok, err)
+	}
+
+	isbn13 := "9780306406157"
+	stale.ISBN13 = &isbn13
+	stale.LockField(models.EditionFieldISBN13)
+	if updated, err := repo.UpdateFields(ctx, stale, b.ID); err != nil || updated {
+		t.Fatalf("stale UpdateFields: updated=%v err=%v, want refused", updated, err)
+	}
+
+	got, _ := repo.GetByForeignID(ctx, "hc:stale-ed")
+	if got.ISBN13 != nil || got.IsFieldLocked(models.EditionFieldISBN13) {
+		t.Fatalf("stale edit landed: isbn13=%v locked=%v", got.ISBN13, got.LockedFields)
+	}
+	if got.Publisher != "Tor" || got.ISBN10 == nil || *got.ISBN10 != isbn10 {
+		t.Fatalf("stale copy undid the concurrent fill: publisher=%q isbn10=%v", got.Publisher, got.ISBN10)
+	}
+
+	// A fresh read carries the new updated_at and the same edit goes through.
+	fresh, _ := repo.GetByForeignID(ctx, "hc:stale-ed")
+	fresh.ISBN13 = &isbn13
+	fresh.LockField(models.EditionFieldISBN13)
+	if updated, err := repo.UpdateFields(ctx, fresh, b.ID); err != nil || !updated {
+		t.Fatalf("fresh UpdateFields: updated=%v err=%v", updated, err)
+	}
+	got, _ = repo.GetByForeignID(ctx, "hc:stale-ed")
+	if got.ISBN13 == nil || *got.ISBN13 != isbn13 || !got.IsFieldLocked(models.EditionFieldISBN13) || got.Publisher != "Tor" {
+		t.Fatalf("fresh edit: isbn13=%v locked=%v publisher=%q", got.ISBN13, got.LockedFields, got.Publisher)
+	}
+}
+
+// TestEditionRepo_DeleteProviderEditionsAfterRebindKeepsLockedEditions pins
+// that a re-bind drops the old record's provider editions except one the user
+// edited: a lock on any column keeps the row, the way a selected edition or
+// one with a download does.
+func TestEditionRepo_DeleteProviderEditionsAfterRebindKeepsLockedEditions(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	b := seedLockedEditionBook(t, database, "hc:rebind-book", "hardcover")
+	repo := NewEditionRepo(database)
+	for _, fid := range []string{"hc:rebind-locked", "hc:rebind-plain"} {
+		if err := repo.Upsert(ctx, &models.Edition{ForeignID: fid, BookID: b.ID, Title: "Print", Format: "Hardcover", Monitored: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	locked, _ := repo.GetByForeignID(ctx, "hc:rebind-locked")
+	locked.Publisher = "Mine"
+	locked.LockField(models.EditionFieldPublisher)
+	if ok, err := repo.UpdateFields(ctx, locked, b.ID); err != nil || !ok {
+		t.Fatalf("lock: ok=%v err=%v", ok, err)
+	}
+
+	n, err := repo.DeleteProviderEditionsAfterRebind(ctx, b.ID, b.ForeignID, b.MetadataProvider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("deleted %d editions, want 1 (the unlocked one)", n)
+	}
+	if kept, _ := repo.GetByForeignID(ctx, "hc:rebind-locked"); kept == nil || kept.Publisher != "Mine" || !kept.IsFieldLocked(models.EditionFieldPublisher) {
+		t.Fatalf("locked edition lost on re-bind: %+v", kept)
+	}
+	if gone, _ := repo.GetByForeignID(ctx, "hc:rebind-plain"); gone != nil {
+		t.Fatal("unlocked provider edition survived the re-bind")
 	}
 }

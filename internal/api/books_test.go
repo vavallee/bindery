@@ -2056,3 +2056,58 @@ func TestBookDeleteFile_DeregisterToleratesTrailingSlash(t *testing.T) {
 		t.Errorf("the directory must not be touched, stat err=%v", err)
 	}
 }
+
+// TestEnrichAudiobook_MapKeepsLocks pins that the ASIN re-map that runs inside
+// every Enrich keeps the book's field locks and the values they protect. The
+// map is automatic, not a user's choice of a new record, so it has no business
+// clearing locks; re-bind, which is that choice, still does.
+func TestEnrichAudiobook_MapKeepsLocks(t *testing.T) {
+	client := &editingAudnexClient{title: "Iron Flame", author: "Rebecca Yarros"}
+	_, books, authors, _, ctx := bookFixture(t)
+	mappedDate := time.Date(2023, 11, 7, 0, 0, 0, 0, time.UTC)
+	primary := &stubProvider{
+		books:  []models.Book{{ForeignID: "OL-IRON-L", Title: "Iron Flame", Description: "Canonical description.", Genres: []string{"Fantasy"}, Language: "eng", ReleaseDate: &mappedDate, EditionCount: 42, Author: &models.Author{Name: "Rebecca Yarros"}}},
+		byISBN: &models.Book{ForeignID: "OL-IRON-L", Title: "Iron Flame", Description: "Canonical description.", Genres: []string{"Fantasy"}, Language: "eng", ReleaseDate: &mappedDate, Author: &models.Author{Name: "Rebecca Yarros"}},
+	}
+	h := NewBookHandler(books, metadata.NewAggregator(primary).WithAudnexClient(client), nil, nil).WithAuthors(authors)
+	author := &models.Author{ForeignID: "OL-RY-L", Name: "Rebecca Yarros", SortName: "Yarros, Rebecca", MetadataProvider: "openlibrary", Monitored: true}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	myDate := time.Date(1999, 1, 2, 0, 0, 0, 0, time.UTC)
+	book := &models.Book{
+		ForeignID: "abs:book:lib:iron-l", AuthorID: author.ID, Title: "Iron Flame (My Title)", SortTitle: "Iron Flame (My Title)",
+		Description: "My description.", Status: models.BookStatusWanted, MediaType: models.MediaTypeAudiobook, ASIN: "B0DBJBFHGT",
+		Narrator: "My Narrator", Genres: []string{"My Genre"}, Language: "ita", ReleaseDate: &myDate, MetadataProvider: "audiobookshelf", Monitored: true,
+		LockedFields: []string{models.BookFieldTitle, models.BookFieldDescription, models.BookFieldGenres, models.BookFieldLanguage, models.BookFieldReleaseDate, models.BookFieldNarrator},
+	}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postEnrichAudiobook(h, book.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	stored, err := books.GetByID(ctx, book.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if stored.ForeignID != "OL-IRON-L" {
+		t.Fatalf("ASIN metadata map not applied: foreignId=%q", stored.ForeignID)
+	}
+	if stored.Title != "Iron Flame (My Title)" || stored.Description != "My description." {
+		t.Fatalf("locked work fields replaced by the mapped record: title=%q description=%q", stored.Title, stored.Description)
+	}
+	if len(stored.Genres) != 1 || stored.Genres[0] != "My Genre" || stored.Language != "ita" || stored.ReleaseDate == nil || !stored.ReleaseDate.Equal(myDate) {
+		t.Fatalf("locked genres/language/releaseDate replaced: genres=%v language=%q releaseDate=%v", stored.Genres, stored.Language, stored.ReleaseDate)
+	}
+	if stored.Narrator != "My Narrator" {
+		t.Fatalf("locked narrator replaced: %q", stored.Narrator)
+	}
+	for _, f := range book.LockedFields {
+		if !stored.IsFieldLocked(f) {
+			t.Fatalf("map cleared lock %q: %v", f, stored.LockedFields)
+		}
+	}
+}

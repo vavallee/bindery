@@ -1018,6 +1018,7 @@ func main() {
 		r.Delete("/book/{id}/file", bookHandler.DeleteFile)
 		r.Put("/book/{id}/exclude", bookHandler.ToggleExcluded)
 		r.Get("/book/{id}/series-exclusions", bookHandler.SeriesExclusions)
+		r.Put("/book/{id}/edition/{editionId}", bookHandler.UpdateEdition)
 		r.Post("/book/{id}/rebind", bookHandler.Rebind)
 		r.Post("/book/{id}/enrich-audiobook", bookHandler.EnrichAudiobook)
 		registerBookCoverRoutes(r, bookHandler)
