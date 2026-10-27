@@ -3501,12 +3501,62 @@ func namesAuthorConfidently(side, layoutAuthor string) bool {
 	if confidentAuthorMatch(side, layoutAuthor) {
 		return true
 	}
-	for _, name := range splitAuthorNames(side) {
+	names := splitAuthorNames(side)
+	if len(names) < 2 {
+		return false
+	}
+	// A list counts only when every element reads as a person's name. A title
+	// that happens to start with the author ("Tom Clancy and Steve Pieczenik's
+	// Net Force", "Stephen King, A Life") is a forward file and must keep the
+	// plain reading it always had.
+	found := false
+	for _, name := range names {
+		if !looksLikePersonName(name) {
+			return false
+		}
 		if confidentAuthorMatch(name, layoutAuthor) {
-			return true
+			found = true
 		}
 	}
-	return false
+	return found
+}
+
+var authorNameParticles = map[string]bool{
+	"van": true, "von": true, "de": true, "der": true, "den": true, "la": true, "le": true,
+	"du": true, "di": true, "da": true, "del": true, "bin": true, "al": true, "ibn": true,
+}
+
+// looksLikePersonName is a cheap shape test for one element of an author list:
+// one to four words, each a capitalised name, an initial or a particle, with no
+// digits, possessive or leading article.
+func looksLikePersonName(name string) bool {
+	words := strings.Fields(name)
+	if len(words) == 0 || len(words) > 4 {
+		return false
+	}
+	switch strings.ToLower(words[0]) {
+	case "the", "a", "an":
+		return false
+	}
+	for _, w := range words {
+		lw := strings.ToLower(w)
+		if strings.HasSuffix(lw, "'s") || strings.HasSuffix(lw, "\u2019s") {
+			return false
+		}
+		if authorNameParticles[lw] {
+			continue
+		}
+		runes := []rune(w)
+		for _, r := range runes {
+			if !unicode.IsLetter(r) && r != '.' && r != '-' && r != '\'' && r != '\u2019' {
+				return false
+			}
+		}
+		if !unicode.IsUpper(runes[0]) || (len(runes) == 1) {
+			return false
+		}
+	}
+	return true
 }
 
 var authorListSepRe = regexp.MustCompile(`(?i)\s*(?:[,;&+]|\band\b)\s*`)
@@ -4365,6 +4415,10 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			catalogue, catalogueByAuthor = suggestionCatalogue(allBooks, wantedBooks)
 		}
 	}
+	// exactTitleOnly narrows the next reconcileByTitle to a book whose
+	// normalised title is the file's, for the reading that is most likely the
+	// author's name read as a title (#3494).
+	exactTitleOnly := false
 	reconcileByTitle := func(path, cleanPath, detectedFmt, title, author, layoutAuthor string) bool {
 		ensureCatalogue()
 		// normalizeTitle strips leading articles and inverts comma-suffix
@@ -4454,6 +4508,9 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			// not on every candidate so the ranking above, and the near ties it
 			// leaves unmatched (#2941), are exactly what they were. A different
 			// work is not a book this file matches, so claimBlocked stays unset.
+			if exactTitleOnly && normalizeTitle(best.sb.book.Title) != normParsed {
+				return false
+			}
 			if titlesNameDifferentWorks(title, best.sb.book.Title) {
 				slog.Debug("library scan: title match rejected (different work)",
 					"title", best.sb.book.Title, "path", path, "fileTitle", title, "jw", best.score)
@@ -4672,9 +4729,16 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		if flipTried && !matched {
 			parsed.Title = flipped.Title
 		} else if !matched && authorNamedTitle != "" {
-			// Same for a variant spelling the flip refuses to act on: no
-			// automatic match on the title side, only the other side as title.
-			parsed.Title = authorNamedTitle
+			// A variant spelling the flip refuses to act on. The title side is
+			// most likely the author's name, so it may claim a book only by
+			// naming it exactly ("Dostoevski" the book), never by fuzzy
+			// matching "Dostoevsky 8". Otherwise the other side is the title.
+			exactTitleOnly = true
+			matched = reconcileByTitle(path, cleanPath, detectedFmt, parsed.Title, parsed.Author, fallbackAuthor)
+			exactTitleOnly = false
+			if !matched {
+				parsed.Title = authorNamedTitle
+			}
 		} else if !matched && parsed.Title != "" {
 			matched = reconcileByTitle(path, cleanPath, detectedFmt, parsed.Title, parsed.Author, fallbackAuthor)
 		}

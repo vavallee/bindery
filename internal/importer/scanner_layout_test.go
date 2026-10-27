@@ -576,3 +576,34 @@ func TestScanLibrary_MultiAuthorFilenameUnmatchedEntryNamesTheRealTitle(t *testi
 		})
 	}
 }
+
+// TestScanLibrary_ForwardFilenameStartingWithTheAuthorKeepsItsMatch: a correct
+// "Title - Author" file whose title begins with a list that includes the folder
+// author must not be flipped (#3494 review). Only a side made entirely of
+// person names is an author list. An ambiguous author spelling may still claim a
+// book it names exactly.
+func TestScanLibrary_ForwardFilenameStartingWithTheAuthorKeepsItsMatch(t *testing.T) {
+	cases := []struct {
+		name, author, folder, file, book string
+	}{
+		{"and with possessive", "Tom Clancy", "", "Tom Clancy and Steve Pieczenik's Net Force - Steve Perry.epub", "Tom Clancy and Steve Pieczenik's Net Force"},
+		{"in a book folder", "Tom Clancy", "Net Force", "Tom Clancy and Steve Pieczenik's Net Force - Steve Perry.epub", "Tom Clancy and Steve Pieczenik's Net Force"},
+		{"comma title", "Stephen King", "", "Stephen King, A Life - Lisa Rogak.epub", "Stephen King, A Life"},
+		{"ambiguous spelling book named exactly", "Dostoevsky", "", "Dostoevski - Lisa Rogak.epub", "Dostoevski"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			libDir := t.TempDir()
+			s, books, authors, ctx := scannerFixture(t, libDir)
+			seeded := seedAuthorBooks(t, books, authors, ctx, c.author, c.author+" 8", c.book)
+			p := filepath.Join(libDir, c.author, c.folder, c.file)
+			writeFileAt(t, p)
+
+			s.ScanLibrary(ctx)
+
+			if got := fileOwners(t, books, ctx, seeded, p); !slices.Equal(got, []string{c.book}) {
+				t.Errorf("file went to %q, want [%s]", got, c.book)
+			}
+		})
+	}
+}
