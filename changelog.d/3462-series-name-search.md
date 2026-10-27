@@ -1,2 +1,0 @@
-### Fixed
-- **Book search finds books by series name** (#3462). Typing a series name on the Books page, such as `Inspector Ian Rutledge`, found nothing unless a book title happened to contain it, and adding it to an author search emptied the list. The search now also matches the names of the series a book is in, with title and author matches still listed first. The Requests page library search matches series names the same way. Existing series are indexed automatically on the first start after upgrading. Thanks to kennethp1015 for the report and orshih6 for the original fix.

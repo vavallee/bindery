@@ -1,2 +1,0 @@
-### Fixed
-- **A library scan no longer matches an `Author - Title` file on the author's name** (#3465). When the reversed reading of such a file in its author's folder finds no book, the scan used to take the author's name as the title and link the file to a catalogue row named after the author ("Stephen King 8"). It now goes on to the book folder's title, or leaves the file unmatched with the title side as its parsed title.

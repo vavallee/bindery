@@ -1,2 +1,0 @@
-### Fixed
-- **Duplicate review no longer joins two books through a bundle whose first part has a subtitle** (#3499). A row like "Mistborn: The Final Empire; The Well of Ascension" could still pull a bare "Mistborn" and "The Well of Ascension" into one group. Each part of a semicolon bundle is now matched by its main title before the colon as well, so the bundle is left out of duplicate groups like "Carrie; Christine" is. Thanks to kennethp1015 for the report.
