@@ -30,6 +30,13 @@ Two actions clear locks on their own, deliberately: **Re-bind** and metadata
 **re-map**. Both mean "this is the wrong record, take the new one", so
 Bindery applies the new provider record wholesale.
 
+A re-bind also empties the fields the new record does not have, so a book
+moved to a record without a release date does not keep the old one. That covers
+the release date, language, description, genres, original title and rating.
+A field you locked is never emptied, even though the re-bind drops the lock, and
+the cover, narrator, duration, ASIN, format and files are never touched. When the
+new record does have a value, it replaces yours as before.
+
 A re-bind to a different record also drops the editions the metadata provider
 listed for the old record, so their ISBNs no longer steer searches for the
 book. Editions created by the Calibre or Audiobookshelf import for your files
