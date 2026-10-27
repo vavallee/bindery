@@ -1,0 +1,2 @@
+### Fixed
+- **Library scan and multi author "Author - Title" files** (#3494): a file like `Stephen King, Peter Straub - The Talisman.epub` in the Stephen King folder is now read as author then title, so it matches The Talisman (or stays unmatched under that title) instead of being linked to a catalogue row named after the author, such as "Stephen King 8". A near miss spelling of the folder author on the left of the dash is no longer matched as a title either.
