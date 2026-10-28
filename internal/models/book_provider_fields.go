@@ -101,35 +101,31 @@ func (b *Book) ClearProviderFieldsMissingFrom(src *Book, lockedBefore []string) 
 	return cleared
 }
 
-// AdoptRefreshedProviderFields copies release date, language and description
-// from src, the provider record an author refresh just read for the work b
-// already is, onto b. It returns the names it changed (#3105).
+// AdoptRefreshedProviderFields copies the release date and, when empty, the
+// description from src, the provider record an author refresh just read for the
+// work b already is, onto b. It returns the names it changed (#3105).
+//
+// The caller decides WHICH rows may use it: only a row the record's own id
+// resolved (src.ForeignID == b.ForeignID), never one matched by title, where
+// src can be another work with the same name.
 //
 // Unlike a rebind, a refresh NEVER empties a field: clearing is
-// ClearProviderFieldsMissingFrom's job and only a rebind, where the user chose a
-// different record, may do it. An empty value in a catalogue record is
-// "nothing to say", never "the work has none".
+// ClearProviderFieldsMissingFrom's job. Every field below also needs: not in
+// b.LockedFields, not in src.UnknownFields, and a value in src.
 //
-// Rules, per field. Every one also requires that the field is not in
-// b.LockedFields, that src does not list it in UnknownFields, and that src has
-// a value for it:
-//
-//   - releaseDate: replaced when it differs. A catalogue date is year
-//     granular (Jan 1), so it does not replace a date in the same year, which
-//     may be a precise one from an import and says nothing new.
-//   - language: replaced when it differs.
+//   - releaseDate: replaced when it differs. A catalogue date is year granular
+//     (Jan 1), so it does not replace a date in the same year, which may be a
+//     precise one from an import and says nothing new. A date the merge filled
+//     in from a supplementary provider is marked unknown on src and not used.
 //   - description: filled only when b has none. Bindery has no record of what
-//     wrote a description (a provider, an Audiobookshelf or Calibre import);
-//     a typed one is locked, but an imported one is not, and replacing it on
-//     every refresh would undo the import. Fill-only is the narrowest rule that
-//     cannot destroy text.
+//     wrote a description (a typed one is locked, an import's is not), and
+//     replacing it on every refresh would undo the import.
 //
-// Genres are not handled here: the refresh already updates them from Hardcover
-// provenance, and OpenLibrary subjects are too noisy to treat as a correction.
+// Language is deliberately NOT adopted: a catalogue record's language can be a
+// guess (an edition majority, or the author's majority language). Genres are
+// not either: the refresh already updates them from Hardcover provenance.
 //
 // Nothing happens unless src comes from the provider b's own record came from.
-// A row bound to another provider, or imported, holds values that provider
-// never wrote, and a different provider's date or language is not a correction.
 func (b *Book) AdoptRefreshedProviderFields(src *Book) []string {
 	if b == nil || src == nil || b.MetadataProvider == "" ||
 		!strings.EqualFold(b.MetadataProvider, src.MetadataProvider) {
@@ -143,10 +139,6 @@ func (b *Book) AdoptRefreshedProviderFields(src *Book) []string {
 		d := *src.ReleaseDate
 		b.ReleaseDate = &d
 		changed = append(changed, BookFieldReleaseDate)
-	}
-	if src.Language != "" && writable(BookFieldLanguage) && b.Language != src.Language {
-		b.Language = src.Language
-		changed = append(changed, BookFieldLanguage)
 	}
 	if strings.TrimSpace(src.Description) != "" && strings.TrimSpace(b.Description) == "" && writable(BookFieldDescription) {
 		b.Description = src.Description

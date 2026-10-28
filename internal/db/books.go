@@ -1929,3 +1929,13 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 	}
 	return books, rows.Err()
 }
+
+// HasABSConflictFor reports whether an Audiobookshelf metadata conflict is
+// recorded for the book's field (any status). The user's choice there is a
+// per-field source preference that a provider refresh must not override (#3105).
+func (r *BookRepo) HasABSConflictFor(ctx context.Context, bookID int64, field string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM abs_metadata_conflicts
+		WHERE entity_type = 'book' AND local_id = ? AND field_name = ?`, bookID, field).Scan(&n)
+	return n > 0, err
+}

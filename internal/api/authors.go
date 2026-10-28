@@ -70,6 +70,9 @@ func isPartBookTitle(title string) bool {
 var syncEnrichmentsPerHour = 100
 
 type AuthorHandler struct {
+	// afterProviderFieldsRead is a test seam: it runs between refreshProviderFields
+	// re-reading a row and writing it, where a concurrent edit would land (#3105).
+	afterProviderFieldsRead func()
 	// syncEnrich counts the enrichments those syncs spent in the current
 	// hour; see takeSyncEnrichment.
 	syncEnrichMu     sync.Mutex
@@ -1910,22 +1913,48 @@ func (h *AuthorHandler) writeTitleMatch(ctx context.Context, existing *models.Bo
 	return false, nil
 }
 
-// refreshProviderFields lets an id-resolved book take the release date,
-// language and description the current provider record carries (#3105; the
-// per-field rules are on Book.AdoptRefreshedProviderFields). The row the sync
-// resolved is as old as the provider calls since, so it is re-read and the
-// write is guarded on that read: an edit made in between wins, and the next
-// sync makes the change again. An excluded or vanished row is left alone.
+// refreshProviderFields lets an id-resolved book take the release date and,
+// if it has none, the description the current provider record carries (#3105;
+// the per-field rules are on Book.AdoptRefreshedProviderFields).
+//
+// It acts only when the record's own id is the row's id. A row that matched
+// through a secondary id or a title may be a different work with the same name
+// (two OpenLibrary works can share a title), and adopting that work's date
+// would make the row alternate between them on every refresh.
+//
+// A field with an Audiobookshelf conflict recorded is skipped: the user's
+// per-field source choice there is not something a refresh may override. The
+// row is re-read and the write guarded on that read, so an edit made in between
+// wins and the next sync makes the change again. An excluded or vanished row is
+// left alone. A refresh that changes nothing writes nothing.
 func (h *AuthorHandler) refreshProviderFields(ctx context.Context, existing, incoming *models.Book) {
+	if existing.ForeignID != incoming.ForeignID {
+		return
+	}
+	src := *incoming
+	src.UnknownFields = slices.Clone(incoming.UnknownFields)
+	for field, conflictName := range map[string]string{
+		models.BookFieldReleaseDate: "release_date",
+		models.BookFieldDescription: "description",
+	} {
+		has, err := h.books.HasABSConflictFor(ctx, existing.ID, conflictName)
+		if err != nil || has {
+			// Unreadable counts as present: skipping is the safe answer.
+			src.UnknownFields = append(src.UnknownFields, field)
+		}
+	}
 	probe := *existing
-	if len(probe.AdoptRefreshedProviderFields(incoming)) == 0 {
+	if len(probe.AdoptRefreshedProviderFields(&src)) == 0 {
 		return
 	}
 	if !h.refreshTitleMatch(ctx, existing) {
 		return
 	}
 	expectedUpdatedAt := existing.UpdatedAtRaw
-	changed := existing.AdoptRefreshedProviderFields(incoming)
+	if h.afterProviderFieldsRead != nil {
+		h.afterProviderFieldsRead()
+	}
+	changed := existing.AdoptRefreshedProviderFields(&src)
 	if len(changed) == 0 {
 		return
 	}
@@ -2718,8 +2747,8 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 					slog.Warn("authors: update during dedup", "error", err, "book_id", existing.ID)
 				}
 			}
-			// Corrections made upstream to the date, language or description
-			// (#3105). Fills and updates only, never clears.
+			// Corrections made upstream to the release date, and a description
+			// the book lacks (#3105). Never clears.
 			h.refreshProviderFields(ctx, existing, &b)
 			// Attach whatever ids this fetch knows the book by, so the next
 			// sync from either provider resolves it exactly rather than
@@ -2760,9 +2789,6 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 			// lostGuard: an edit landed between the re-read and the write,
 			// so this work's change was not made.
 			lostGuard := false
-			// Date, language and description corrected upstream (#3105). Done
-			// on the fresh read, so every write below carries it.
-			providerChanged := existing.AdoptRefreshedProviderFields(&b)
 			switch {
 			case strings.HasPrefix(existing.ForeignID, "calibre:"):
 				// Upgrade calibre stub to real OL foreign_id.
@@ -2796,13 +2822,6 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 				// does nothing for a library this has already rewritten.
 				slog.Info("keeping the format of a book already on disk; the catalogue lists the other format but nobody asked for it",
 					"title", existing.Title, "bookId", existing.ID, "mediaType", existing.MediaType, "foreignId", b.ForeignID)
-				if len(providerChanged) > 0 {
-					if written, err := h.writeTitleMatch(ctx, existing, expectedUpdatedAt); err != nil {
-						slog.Warn("authors: update during dedup", "error", err, "book_id", existing.ID)
-					} else if !written {
-						lostGuard = true
-					}
-				}
 			case canUpgradeToBoth(existing.MediaType, b.MediaType):
 				// One Work is ebook, the other is audiobook — merge into a single
 				// dual-format row instead of creating a second book entry.
@@ -2821,13 +2840,9 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 				}
 			default:
 				// Same media type duplicate — just refresh ratings if we have better data.
-				dirty := len(providerChanged) > 0
 				if b.RatingsCount > 0 && (existing.RatingsCount == 0 || b.RatingsCount > existing.RatingsCount) {
 					existing.RatingsCount = b.RatingsCount
 					existing.AverageRating = b.AverageRating
-					dirty = true
-				}
-				if dirty {
 					if written, err := h.writeTitleMatch(ctx, existing, expectedUpdatedAt); err != nil {
 						slog.Warn("authors: update during dedup", "error", err, "book_id", existing.ID)
 					} else if !written {

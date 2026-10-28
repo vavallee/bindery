@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -17,6 +19,10 @@ type refreshFieldsFixture struct {
 	sqlExec  func(string) error
 	books    *db.BookRepo
 	run      func(models.Book)
+	runAll   func(...models.Book)
+	h        *AuthorHandler
+	author   *models.Author
+	database *sql.DB
 	existing *models.Book
 	ctx      context.Context
 }
@@ -54,8 +60,13 @@ func newRefreshFieldsFixture(t *testing.T, seed models.Book) *refreshFieldsFixtu
 	if err := bookRepo.Create(ctx, &seed); err != nil {
 		t.Fatal(err)
 	}
-	f := &refreshFieldsFixture{t: t, books: bookRepo, existing: &seed, ctx: ctx}
+	f := &refreshFieldsFixture{t: t, books: bookRepo, existing: &seed, ctx: ctx, author: author, database: database}
 	f.sqlExec = func(q string) error { _, err := database.ExecContext(ctx, q); return err }
+	f.runAll = func(works ...models.Book) {
+		stub := &stubMetaProvider{name: "openlibrary", works: works}
+		f.h = NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(stub), nil, profileRepo, &searcherSpy{})
+		f.h.RefreshAuthorBooks(author, false, "")
+	}
 	f.run = func(incoming models.Book) {
 		incoming.ForeignID = "OL3105W"
 		incoming.Title = "Fields Title"
@@ -63,9 +74,7 @@ func newRefreshFieldsFixture(t *testing.T, seed models.Book) *refreshFieldsFixtu
 		incoming.MetadataProvider = "openlibrary"
 		incoming.Status = models.BookStatusWanted
 		incoming.Genres = []string{}
-		stub := &stubMetaProvider{name: "openlibrary", works: []models.Book{incoming}}
-		h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(stub), nil, profileRepo, &searcherSpy{})
-		h.RefreshAuthorBooks(author, false, "")
+		f.runAll(incoming)
 	}
 	return f
 }
@@ -85,14 +94,11 @@ func year(y int) *time.Time {
 }
 
 func TestRefreshAuthorBooks_UpdatesProviderFieldsFromRecord(t *testing.T) {
-	f := newRefreshFieldsFixture(t, models.Book{ReleaseDate: year(1999), Language: "fre"})
-	f.run(models.Book{ReleaseDate: year(2002), Language: "eng", Description: "A fresh blurb."})
+	f := newRefreshFieldsFixture(t, models.Book{ReleaseDate: year(1999)})
+	f.run(models.Book{ReleaseDate: year(2002), Description: "A fresh blurb."})
 	got := f.stored()
 	if got.ReleaseDate == nil || got.ReleaseDate.Year() != 2002 {
 		t.Errorf("release date corrected upstream did not reach the book: %v", got.ReleaseDate)
-	}
-	if got.Language != "eng" {
-		t.Errorf("language = %q, want eng", got.Language)
 	}
 	if got.Description != "A fresh blurb." {
 		t.Errorf("empty description was not filled: %q", got.Description)
@@ -102,13 +108,13 @@ func TestRefreshAuthorBooks_UpdatesProviderFieldsFromRecord(t *testing.T) {
 func TestRefreshAuthorBooks_LockedFieldsAreNotUpdated(t *testing.T) {
 	d := time.Date(2000, 5, 6, 0, 0, 0, 0, time.UTC)
 	f := newRefreshFieldsFixture(t, models.Book{
-		ReleaseDate: &d, Language: "fre", Description: "mine",
-		LockedFields: []string{models.BookFieldReleaseDate, models.BookFieldLanguage, models.BookFieldDescription},
+		ReleaseDate: &d, Description: "",
+		LockedFields: []string{models.BookFieldReleaseDate, models.BookFieldDescription},
 	})
-	f.run(models.Book{ReleaseDate: year(2002), Language: "eng", Description: "theirs"})
+	f.run(models.Book{ReleaseDate: year(2002), Description: "theirs"})
 	got := f.stored()
-	if got.ReleaseDate == nil || !got.ReleaseDate.Equal(d) || got.Language != "fre" || got.Description != "mine" {
-		t.Errorf("locked fields changed: date=%v lang=%q desc=%q", got.ReleaseDate, got.Language, got.Description)
+	if got.ReleaseDate == nil || !got.ReleaseDate.Equal(d) || got.Description != "" {
+		t.Errorf("locked fields changed: date=%v desc=%q", got.ReleaseDate, got.Description)
 	}
 }
 
@@ -123,12 +129,20 @@ func TestRefreshAuthorBooks_NeverClearsFields(t *testing.T) {
 }
 
 func TestRefreshAuthorBooks_UnknownFieldIsNotAdopted(t *testing.T) {
-	f := newRefreshFieldsFixture(t, models.Book{ReleaseDate: year(1999), Language: "fre"})
-	f.run(models.Book{ReleaseDate: year(2002), Language: "eng",
-		UnknownFields: []string{models.BookFieldReleaseDate, models.BookFieldLanguage}})
+	f := newRefreshFieldsFixture(t, models.Book{ReleaseDate: year(1999)})
+	f.run(models.Book{ReleaseDate: year(2002), Description: "x",
+		UnknownFields: []string{models.BookFieldReleaseDate, models.BookFieldDescription}})
 	got := f.stored()
-	if got.ReleaseDate.Year() != 1999 || got.Language != "fre" {
-		t.Errorf("fields the record could not determine were adopted: date=%v lang=%q", got.ReleaseDate, got.Language)
+	if got.ReleaseDate.Year() != 1999 || got.Description != "" {
+		t.Errorf("fields the record could not determine were adopted: date=%v desc=%q", got.ReleaseDate, got.Description)
+	}
+}
+
+func TestRefreshAuthorBooks_LanguageIsNotAdopted(t *testing.T) {
+	f := newRefreshFieldsFixture(t, models.Book{Language: "fre"})
+	f.run(models.Book{Language: "eng"})
+	if got := f.stored().Language; got != "fre" {
+		t.Errorf("language was adopted from a catalogue record: %q", got)
 	}
 }
 
@@ -150,14 +164,13 @@ func TestRefreshAuthorBooks_YearOnlyDateDoesNotReplacePreciseDate(t *testing.T) 
 }
 
 func TestRefreshAuthorBooks_OtherProviderRowIsNotUpdated(t *testing.T) {
-	f := newRefreshFieldsFixture(t, models.Book{ReleaseDate: year(1999), Language: "fre"})
+	f := newRefreshFieldsFixture(t, models.Book{ReleaseDate: year(1999)})
 	if err := f.sqlExec(`UPDATE books SET metadata_provider = 'audiobookshelf'`); err != nil {
 		t.Fatal(err)
 	}
-	f.run(models.Book{ReleaseDate: year(2002), Language: "eng"})
-	got := f.stored()
-	if got.ReleaseDate.Year() != 1999 || got.Language != "fre" {
-		t.Errorf("a row from another provider was updated: date=%v lang=%q", got.ReleaseDate, got.Language)
+	f.run(models.Book{ReleaseDate: year(2002)})
+	if got := f.stored(); got.ReleaseDate.Year() != 1999 {
+		t.Errorf("a row from another provider was updated: date=%v", got.ReleaseDate)
 	}
 }
 
@@ -176,23 +189,103 @@ func TestRefreshAuthorBooks_ExcludedBookIsNotUpdated(t *testing.T) {
 	}
 }
 
-// A write that loses its guard (an edit landed between the re-read and the
-// write) must change nothing; the trigger stands in for that edit.
-func TestRefreshAuthorBooks_LostGuardKeepsTheEdit(t *testing.T) {
+// A row resolved through a secondary id (here the Hardcover one) is not the
+// record's own work, so its date is left alone.
+func TestRefreshAuthorBooks_SecondaryIdMatchIsNotUpdated(t *testing.T) {
 	f := newRefreshFieldsFixture(t, models.Book{ReleaseDate: year(1999)})
-	if err := f.sqlExec(`CREATE TRIGGER test_lose_guard BEFORE UPDATE OF release_date ON books
-		BEGIN SELECT RAISE(IGNORE); END`); err != nil {
+	if err := f.books.UpsertBookIdentifier(f.ctx, f.existing.ID, "OL-OTHER-W"); err != nil {
 		t.Fatal(err)
 	}
-	f.run(models.Book{ReleaseDate: year(2002)})
-	if got := f.stored().ReleaseDate; got.Year() != 1999 {
-		t.Errorf("a lost guard still wrote: %v", got)
+	f.runAll(models.Book{
+		ForeignID: "OL-OTHER-W", Title: "Fields Title", SortTitle: "fields title", ReleaseDate: year(2011),
+		Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary",
+	})
+	if got := f.stored(); got.ReleaseDate.Year() != 1999 {
+		t.Errorf("a row matched through another work's id took that work's date: %v", got.ReleaseDate)
 	}
-	if err := f.sqlExec(`DROP TRIGGER test_lose_guard`); err != nil {
+}
+
+// Two works with one title: the row belongs to the first, and neither the title
+// match nor the later id match may swap the other's date onto it, run after run.
+func TestRefreshAuthorBooks_SameTitleWorksLeaveTheRowStable(t *testing.T) {
+	f := newRefreshFieldsFixture(t, models.Book{ReleaseDate: year(1965)})
+	mk := func(id string, y int) models.Book {
+		return models.Book{ForeignID: id, Title: "Fields Title", SortTitle: "fields title", ReleaseDate: year(y),
+			Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"}
+	}
+	var updatedAt string
+	for i := 0; i < 4; i++ {
+		f.runAll(mk("OL3105W", 1965), mk("OL3105X", 2011))
+		got := f.stored()
+		if got.ReleaseDate.Year() != 1965 {
+			t.Fatalf("run %d: the row's date flipped to %v", i, got.ReleaseDate)
+		}
+		if i == 1 {
+			updatedAt = got.UpdatedAtRaw
+		}
+		if i > 1 && got.UpdatedAtRaw != updatedAt {
+			t.Fatalf("run %d: updated_at moved (%q to %q) although nothing changed", i, updatedAt, got.UpdatedAtRaw)
+		}
+	}
+}
+
+func TestRefreshAuthorBooks_ABSConflictFieldIsNotUpdated(t *testing.T) {
+	f := newRefreshFieldsFixture(t, models.Book{ReleaseDate: year(1999)})
+	if err := f.sqlExec(fmt.Sprintf(`INSERT INTO abs_metadata_conflicts
+		(source_id, library_id, item_id, entity_type, local_id, field_name, abs_value, upstream_value,
+		 applied_source, preferred_source, resolution_status, created_at, updated_at)
+		VALUES ('s','l','i','book',%d,'release_date','1999-01-01','2002-01-01','abs','abs','resolved',datetime('now'),datetime('now'))`, f.existing.ID)); err != nil {
 		t.Fatal(err)
 	}
-	f.run(models.Book{ReleaseDate: year(2002)})
-	if got := f.stored().ReleaseDate; got.Year() != 2002 {
-		t.Errorf("the next sync did not make the change: %v", got)
+	f.run(models.Book{ReleaseDate: year(2002), Description: "filled"})
+	got := f.stored()
+	if got.ReleaseDate.Year() != 1999 {
+		t.Errorf("a field with an ABS conflict choice was overwritten: %v", got.ReleaseDate)
+	}
+	if got.Description != "filled" {
+		t.Errorf("a field without a conflict should still be filled: %q", got.Description)
+	}
+}
+
+// An edit that lands between the re-read and the write must win. The seam makes
+// the edit; a write that ignored the guard would overwrite it.
+func TestRefreshAuthorBooks_ConcurrentEditWinsAndNextSyncRetries(t *testing.T) {
+	f := newRefreshFieldsFixture(t, models.Book{ReleaseDate: year(1999)})
+	edited := false
+	hook := func() {
+		if edited {
+			return
+		}
+		edited = true
+		cur, err := f.books.GetByID(f.ctx, f.existing.ID)
+		if err != nil || cur == nil {
+			t.Errorf("load for edit: %v", err)
+			return
+		}
+		cur.Monitored = false
+		cur.ImageURL = "/covers/user-choice.jpg"
+		if err := f.books.Update(f.ctx, cur); err != nil {
+			t.Errorf("edit: %v", err)
+		}
+	}
+	// First run, with the edit landing mid-write.
+	stub := &stubMetaProvider{name: "openlibrary", works: []models.Book{{
+		ForeignID: "OL3105W", Title: "Fields Title", SortTitle: "fields title", ReleaseDate: year(2002),
+		Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"}}}
+	h := NewAuthorHandler(db.NewAuthorRepo(f.database), nil, f.books, nil, metadata.NewAggregator(stub), nil,
+		db.NewMetadataProfileRepo(f.database), &searcherSpy{})
+	h.afterProviderFieldsRead = hook
+	h.RefreshAuthorBooks(f.author, false, "")
+	got := f.stored()
+	if got.Monitored || got.ImageURL != "/covers/user-choice.jpg" {
+		t.Fatalf("the concurrent edit was overwritten: monitored=%v image=%q", got.Monitored, got.ImageURL)
+	}
+	if got.ReleaseDate.Year() != 1999 {
+		t.Fatalf("a lost guard still wrote the date: %v", got.ReleaseDate)
+	}
+	// The next sync makes the change.
+	h.RefreshAuthorBooks(f.author, false, "")
+	if got := f.stored(); got.ReleaseDate.Year() != 2002 || got.Monitored {
+		t.Errorf("next sync: date=%v monitored=%v", got.ReleaseDate, got.Monitored)
 	}
 }

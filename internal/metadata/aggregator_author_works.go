@@ -938,8 +938,11 @@ func mergeAuthorWorkMetadata(dst *models.Book, src models.Book) {
 		dst.AverageRating = src.AverageRating
 		dst.RatingsCount = src.RatingsCount
 	}
-	if dst.ReleaseDate == nil {
+	if dst.ReleaseDate == nil && src.ReleaseDate != nil {
 		dst.ReleaseDate = src.ReleaseDate
+		// The primary provider did not say this; a refresh must not treat it
+		// as the primary's date for the work (#3105).
+		dst.UnknownFields = append(dst.UnknownFields, models.BookFieldReleaseDate)
 	}
 	// Genres: a Hardcover supplement replaces OpenLibrary's noisy "subjects"
 	// bag with its curated taxonomy. Gated to Hardcover provenance so other
