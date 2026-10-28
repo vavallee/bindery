@@ -562,7 +562,10 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	// qBittorrent has assigned at the moment it first appears.
 	//
 	// Who counts as ours, strongest evidence first:
-	//  1. the infohash of the .torrent we uploaded, when derivable;
+	//  1. the infohash of the .torrent we uploaded, when derivable. This is the
+	//     v1 SHA-1 only, so it is a preferred match and not an exclusive one: a
+	//     v2 only torrent (or a hybrid whose v1 hash the client does not
+	//     report) never shows it, and must still resolve through the tag;
 	//  2. the unique tag we sent. It is checked client side on the full list
 	//     rather than through the info endpoint's tag filter, because a client
 	//     that predates or emulates tags would ignore an unknown filter and
@@ -571,6 +574,12 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	//     tags) and the before-snapshot succeeded, a torrent absent from the
 	//     snapshot. If that leaves several candidates there is no honest way
 	//     to choose, so the call fails instead of guessing.
+	//
+	// Residual: step 3 cannot tell a client that ignores tags from one that is
+	// tag aware but slow to list the new torrent. If such a client lists
+	// exactly one stranger and nothing else within tagGrace, that stranger is
+	// adopted. Nothing in this repo says how long qBittorrent takes to list a
+	// tagged add, so the window is a named variable rather than a guess.
 	expectedHash := infoHashFromTorrentFile(torrentFile)
 	if !beforeOK && expectedHash == "" && tag == "" {
 		return "", fmt.Errorf("add torrent accepted but the torrent list could not be read before the add and nothing identifies the added torrent")
@@ -583,27 +592,26 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 			return "", fmt.Errorf("add torrent accepted but hash lookup failed: %w", err)
 		}
 		lastAfter = after
-		var newest *Torrent
+		var newest, tagged *Torrent
 		var fresh []*Torrent
 		for i := range after {
 			t := &after[i]
 			h := strings.ToLower(t.Hash)
-			if expectedHash != "" {
-				if h == expectedHash {
-					newest = t
-					break
-				}
-				continue
-			}
-			if tag != "" && hasTag(t.Tags, tag) {
+			if expectedHash != "" && h == expectedHash {
 				newest = t
 				break
+			}
+			if tagged == nil && tag != "" && hasTag(t.Tags, tag) {
+				tagged = t
 			}
 			if _, seen := beforeSet[h]; !seen && beforeOK {
 				fresh = append(fresh, t)
 			}
 		}
-		if newest == nil && expectedHash == "" && len(fresh) > 0 {
+		if newest == nil {
+			newest = tagged
+		}
+		if newest == nil && len(fresh) > 0 {
 			// With a tag in play the tag decides: the diff is only trusted
 			// once the grace period says no tag is coming, so a stranger that
 			// lists first is never adopted while ours is still arriving.

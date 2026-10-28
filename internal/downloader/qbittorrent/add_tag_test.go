@@ -278,6 +278,50 @@ func TestAddTorrent_TorrentFileUpload_ExpectedHashWins(t *testing.T) {
 	}
 }
 
+// The derived v1 hash is a preferred match, not an exclusive one. A v2 only (or
+// hybrid) torrent never shows that hash in the list, and must still resolve by
+// its tag while a stranger listed first is left alone.
+func TestAddTorrent_TorrentFileUpload_DerivedHashAbsentResolvesByTag(t *testing.T) {
+	payload := []byte("d8:announce3:foo4:infod6:lengthi1e4:name1:a12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee")
+	if infoHashFromTorrentFile(payload) == "" {
+		t.Fatal("test setup: payload has no derivable infohash")
+	}
+	f := newFakeQbit(t)
+	f.before = `[]`
+	f.after = func(tag string) string {
+		// The client reports a different (v2 truncated) hash for our torrent.
+		return fmt.Sprintf(`[{"hash":%q,"added_on":1000,"tags":""},{"hash":%q,"added_on":1000,"tags":%q}]`, strangerHash, ourHash, tag)
+	}
+	indexer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(payload) }))
+	defer indexer.Close()
+	c := newTestClient(f.srv.URL, "u", "p")
+	allowTorrentFetch(c)
+	got, err := c.AddTorrent(context.Background(), indexer.URL+"/t", "books", "")
+	if err != nil || got != ourHash {
+		t.Fatalf("AddTorrent = %q, %v; want %q", got, err, ourHash)
+	}
+	f.assertOnlyOursTouched(t)
+}
+
+// The urlencoded add (a magnet without a btih here) must carry the tags field.
+func TestAddTorrent_URLEncodedAddCarriesTag(t *testing.T) {
+	f := newFakeQbit(t)
+	f.before = `[]`
+	f.after = func(tag string) string {
+		return fmt.Sprintf(`[{"hash":%q,"added_on":1000,"tags":%q}]`, ourHash, tag)
+	}
+	c := newTestClient(f.srv.URL, "u", "p")
+	got, err := c.AddTorrent(context.Background(), "magnet:?dn=no-btih-here", "books", "")
+	if err != nil || got != ourHash {
+		t.Fatalf("AddTorrent = %q, %v; want %q", got, err, ourHash)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !strings.HasPrefix(f.addTags, "bindery-add-") {
+		t.Errorf("urlencoded add carried tags %q, want a bindery-add- marker", f.addTags)
+	}
+}
+
 // 409 duplicate keeps working and needs no list lookup.
 func TestAddTorrent_Duplicate409_StillRecoversHashFromMagnet(t *testing.T) {
 	f := newFakeQbit(t)
