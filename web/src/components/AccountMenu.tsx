@@ -159,7 +159,7 @@ export default function AccountMenu({
                 rel="noopener noreferrer"
                 onClick={() => close(false)}
                 title={updateAvailable ? t('nav.updateAvailable') : undefined}
-                className={`${itemClass} ${updateAvailable ? 'font-medium text-amber-600 dark:text-amber-400' : 'text-slate-700 dark:text-zinc-300'}`}
+                className={`${itemClass} ${updateAvailable ? 'font-medium text-amber-700 dark:text-amber-400' : 'text-slate-700 dark:text-zinc-300'}`}
               >
                 {versionLabel}
               </a>

@@ -788,7 +788,7 @@ export default function SeriesPage() {
                       <div className="px-4 pb-3 text-sm text-fg-muted">{t('series.hardcover.loadingBooks')}</div>
                     )}
                     {diffErrors[series.id] && (
-                      <div className="px-4 pb-3 text-sm text-rose-600 dark:text-rose-400">{diffErrors[series.id]}</div>
+                      <div className="px-4 pb-3 text-sm text-rose-700 dark:text-rose-400">{diffErrors[series.id]}</div>
                     )}
                     {diff && diff.missing.length > 0 && (
                       <div className="px-4 pb-4 space-y-2">

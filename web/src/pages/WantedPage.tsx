@@ -537,7 +537,7 @@ export default function WantedPage() {
                                   href={safeHref(r.infoUrl)}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-sky-600 dark:text-sky-400 hover:underline"
+                                  className="text-sky-700 dark:text-sky-400 hover:underline"
                                 >
                                   ↗ {t('search.indexerLink', 'indexer')}
                                 </a>

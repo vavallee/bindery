@@ -80,7 +80,7 @@ export default function AboutTab() {
                     href={`https://github.com/vavallee/bindery/releases/tag/v${status.latestVersion.replace(/^v/, '')}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-sm font-medium text-amber-600 dark:text-amber-400 hover:underline"
+                    className="text-sm font-medium text-amber-700 dark:text-amber-400 hover:underline"
                   >
                     {t('settings.about.updateAvailable', 'v{{version}} available', {
                       version: status.latestVersion.replace(/^v/, ''),

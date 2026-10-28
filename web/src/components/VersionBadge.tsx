@@ -27,7 +27,7 @@ export default function VersionBadge({
         target="_blank"
         rel="noopener noreferrer"
         title={t('nav.updateAvailable', 'Update available')}
-        className={`text-xs font-medium text-amber-600 dark:text-amber-400 hover:underline whitespace-nowrap ${className ?? ''}`}
+        className={`text-xs font-medium text-amber-700 dark:text-amber-400 hover:underline whitespace-nowrap ${className ?? ''}`}
       >
         {`v${version} → v${latestVersion.replace(/^v/, '')}`}
       </a>

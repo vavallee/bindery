@@ -185,7 +185,7 @@ function ProfileRow({
           </button>
         </div>
       </div>
-      {err && <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{err}</p>}
+      {err && <p className="mt-2 text-xs text-rose-700 dark:text-rose-400">{err}</p>}
     </div>
   )
 }
@@ -288,7 +288,7 @@ function QualityProfileForm({
         </div>
       </div>
 
-      {err && <p className="text-xs text-rose-600 dark:text-rose-400">{err}</p>}
+      {err && <p className="text-xs text-rose-700 dark:text-rose-400">{err}</p>}
 
       <div className="flex justify-end gap-2">
         <button

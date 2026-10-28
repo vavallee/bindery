@@ -169,6 +169,28 @@ describe('QualityTab', () => {
     expect(screen.queryByText('settings.quality.formUpgradeAllowed')).not.toBeInTheDocument()
   })
 
+  it('refuses to save a profile without a name', async () => {
+    mockList.mockResolvedValueOnce([])
+    render(<QualityTab />)
+    await waitFor(() => screen.getByText('settings.quality.newProfile'))
+    fireEvent.click(screen.getByText('settings.quality.newProfile'))
+    fireEvent.submit(screen.getByText('settings.quality.formName').closest('form')!)
+    expect(screen.getByText('settings.quality.errorName')).toBeInTheDocument()
+    expect(api.addQualityProfile).not.toHaveBeenCalled()
+  })
+
+  it('shows why a profile could not be deleted and keeps it', async () => {
+    mockList.mockResolvedValueOnce([profile()])
+    ;(api.deleteQualityProfile as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('profile is in use'))
+    render(<QualityTab />)
+    await waitFor(() => screen.getByText('Ebook Preferred'))
+    fireEvent.click(screen.getByRole('button', { name: 'common.delete' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'common.delete' }))
+    expect(await screen.findByText('profile is in use')).toBeInTheDocument()
+    expect(screen.getByText('Ebook Preferred')).toBeInTheDocument()
+  })
+
   it('offers every release format the parser recognises (#1700)', async () => {
     mockList.mockResolvedValueOnce([])
     render(<QualityTab />)

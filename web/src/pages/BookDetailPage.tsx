@@ -181,13 +181,13 @@ function ReleaseRow({
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={e => e.stopPropagation()}
-                className="text-sky-600 dark:text-sky-400 hover:underline"
+                className="text-sky-700 dark:text-sky-400 hover:underline"
               >
                 ↗ {t('search.indexerLink', 'indexer')}
               </a>
             </>
           )}
-          {r.rejection && <span className="ml-2 text-amber-600 dark:text-amber-400">· {r.rejection}</span>}
+          {r.rejection && <span className="ml-2 text-amber-700 dark:text-amber-400">· {r.rejection}</span>}
         </span>
       </div>
       <button
@@ -1522,7 +1522,7 @@ function BookDetailPageInner() {
           </div>
 
           {book.excluded && (
-            <p className="mt-2 text-xs text-amber-600 dark:text-amber-400 font-medium">
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400 font-medium">
               {t('bookDetail.excludedFromSearches')}
             </p>
           )}

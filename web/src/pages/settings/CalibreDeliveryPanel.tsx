@@ -92,7 +92,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
       text: target.lastError
         ? t('settings.calibre.deliveries.unreachableWithError', { error: target.lastError })
         : t('settings.calibre.deliveries.unreachable'),
-      tone: 'text-amber-600 dark:text-amber-400',
+      tone: 'text-amber-700 dark:text-amber-400',
     }
   } else {
     reach = { text: t('settings.calibre.deliveries.reachableUnknown'), tone: 'text-fg-muted' }
@@ -102,7 +102,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
   if (pulling) {
     reach = summary?.pull?.lastSeen
       ? { text: t('settings.calibre.deliveries.lastCheckIn', { time: when(summary.pull.lastSeen) }), tone: 'text-accent-text' }
-      : { text: t('settings.calibre.deliveries.neverCheckedIn'), tone: 'text-amber-600 dark:text-amber-400' }
+      : { text: t('settings.calibre.deliveries.neverCheckedIn'), tone: 'text-amber-700 dark:text-amber-400' }
   }
 
   const items = failed?.items ?? []

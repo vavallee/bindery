@@ -352,7 +352,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 — Docker volume mounts look like sibling paths (#1720). `auto`
                 handles the fallback correctly, so only this choice warns. */}
             {importMode === 'hardlink' && storage && !storage.hardlinkable && (
-              <p data-testid="import-mode-hardlink-warning" className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+              <p data-testid="import-mode-hardlink-warning" className="text-xs text-amber-700 dark:text-amber-400 mt-2">
                 {t('settings.general.importModeHardlinkWarning')}
                 {storage.hardlinkReason && (
                   <span className="block mt-1 text-fg-muted">{storage.hardlinkReason}</span>
@@ -695,7 +695,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 {t('settings.general.storageHardlinkOk')}
               </p>
             ) : (
-              <p className="text-xs text-amber-600 dark:text-amber-400 border-t border-slate-200 dark:border-zinc-800 pt-3">
+              <p className="text-xs text-amber-700 dark:text-amber-400 border-t border-slate-200 dark:border-zinc-800 pt-3">
                 {t('settings.general.storageHardlinkWarning')}
                 {storage.hardlinkReason && (
                   <span className="block mt-1 text-fg-muted">{storage.hardlinkReason}</span>
@@ -718,7 +718,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               <p className="text-sm text-slate-700 dark:text-zinc-300">{t('settings.general.scanLibrary')}</p>
               <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.scanLibraryHint')}</p>
               {scanMessage && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">{scanMessage}</p>
+                <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">{scanMessage}</p>
               )}
             </div>
             <button
@@ -760,11 +760,11 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 )
               })()}
               {lastScan.scan_error ? (
-                <p className="mt-2 text-amber-600 dark:text-amber-400">
+                <p className="mt-2 text-amber-700 dark:text-amber-400">
                   {lastScan.scan_error}
                 </p>
               ) : (lastScan.no_files_found ?? lastScan.files_found === 0) && (
-                <p className="mt-2 text-amber-600 dark:text-amber-400">
+                <p className="mt-2 text-amber-700 dark:text-amber-400">
                   {t('settings.general.scanNoFilesWarning', {
                     path: lastScan.library_dir || (lastScan.scanned_paths && lastScan.scanned_paths[0]) || '?',
                   })}
@@ -1087,13 +1087,13 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
           </select>
           {cfg.mode === 'enabled' && <p className="text-xs text-fg-muted mt-1">{t('settings.general.auth.modeEnabledHint', 'Always requires login, regardless of network origin.')}</p>}
           {cfg.mode === 'local-only' && <p className="text-xs text-fg-muted mt-1">{t('settings.general.auth.modeLocalOnlyHint', 'Login is bypassed for requests from private / LAN IP ranges. Still requires login from the internet.')}</p>}
-          {cfg.mode === 'disabled' && <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">{t('settings.general.auth.modeDisabledHint', 'No authentication — only safe when Bindery is behind a trusted reverse proxy that enforces access control.')}</p>}
+          {cfg.mode === 'disabled' && <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">{t('settings.general.auth.modeDisabledHint', 'No authentication — only safe when Bindery is behind a trusted reverse proxy that enforces access control.')}</p>}
           {/* Server-authored warning for the mode just chosen (currently
               local-only with no trusted proxy configured). Rendered verbatim so
               the text lives in exactly one place, next to the control that
               caused it, and stays put rather than fading like a toast. */}
           {modeWarning && (
-            <p data-testid="auth-mode-warning" role="alert" className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+            <p data-testid="auth-mode-warning" role="alert" className="text-xs text-amber-700 dark:text-amber-400 mt-1">
               {modeWarning}
             </p>
           )}

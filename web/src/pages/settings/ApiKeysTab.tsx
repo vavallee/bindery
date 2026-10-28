@@ -233,7 +233,7 @@ export default function ApiKeysTab() {
                 {t('settings.general.hardcoverApiTokenLink', 'Create or copy a Hardcover API token')}
               </a>
               {hardcoverTestResult && !hardcoverTestResult.testing && (
-                <p className={`mt-1 text-xs ${hardcoverTestResult.ok ? 'text-accent-text' : 'text-rose-600 dark:text-rose-400'}`}>
+                <p className={`mt-1 text-xs ${hardcoverTestResult.ok ? 'text-accent-text' : 'text-rose-700 dark:text-rose-400'}`}>
                   {hardcoverTestResult.ok
                     ? (hardcoverTestResult.message || t('settings.general.hardcoverTestOk', 'Hardcover API connected.'))
                     : (hardcoverTestResult.error || t('settings.general.hardcoverTestFailed', 'Hardcover API test failed.'))}

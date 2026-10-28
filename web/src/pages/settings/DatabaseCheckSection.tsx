@@ -125,7 +125,7 @@ export default function DatabaseCheckSection() {
 
         {report && report.total > 0 && (
           <div className="space-y-2">
-            <p role="status" className="text-xs text-amber-600 dark:text-amber-400">
+            <p role="status" className="text-xs text-amber-700 dark:text-amber-400">
               {t('settings.general.dbCheckFound', { count: report.total })}
             </p>
             <table className="w-full text-xs text-left">
@@ -246,14 +246,14 @@ export default function DatabaseCheckSection() {
               {t('settings.general.dbCleanupBackupAt', { path: result.backupPath })}
             </p>
             {!result.verified && (
-              <p role="alert" className="text-xs text-amber-600 dark:text-amber-400">{t('settings.general.dbCleanupNotVerified')}</p>
+              <p role="alert" className="text-xs text-amber-700 dark:text-amber-400">{t('settings.general.dbCleanupNotVerified')}</p>
             )}
             {result.verified && result.remainingTotal === 0 && (
               <p className="text-xs text-accent-text">{t('settings.general.dbCleanupRemainingNone')}</p>
             )}
             {result.verified && result.remainingTotal > 0 && (
               <>
-                <p role="status" className="text-xs text-amber-600 dark:text-amber-400">
+                <p role="status" className="text-xs text-amber-700 dark:text-amber-400">
                   {t('settings.general.dbCleanupRemaining', { count: result.remainingTotal })}
                 </p>
                 <table className="w-full text-xs text-left">

@@ -23,11 +23,11 @@ interface Props {
 }
 
 const statusStyles: Record<string, string> = {
-  move: 'text-sky-600 dark:text-sky-400',
+  move: 'text-sky-700 dark:text-sky-400',
   moved: 'text-accent-text',
   noop: 'text-fg-muted',
-  collision: 'text-amber-600 dark:text-amber-400',
-  missing: 'text-amber-600 dark:text-amber-400',
+  collision: 'text-amber-700 dark:text-amber-400',
+  missing: 'text-amber-700 dark:text-amber-400',
   error: 'text-red-700 dark:text-red-400',
   failed: 'text-red-700 dark:text-red-400',
 }
@@ -183,7 +183,7 @@ function MoveRow({ move }: { move: ReorganizeMove }) {
           </div>
         )}
         {move.message && (
-          <div className="text-amber-600 dark:text-amber-400 not-italic">{move.message}</div>
+          <div className="text-amber-700 dark:text-amber-400 not-italic">{move.message}</div>
         )}
       </div>
     </li>
