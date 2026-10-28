@@ -46,13 +46,13 @@ does ship is the failure that matters.
 | [github.com/cespare/xxhash/v2](https://github.com/cespare/xxhash/blob/v2.3.0/LICENSE.txt) | v2.3.0 | MIT | — |
 | [github.com/coreos/go-oidc/v3](https://github.com/coreos/go-oidc/blob/v3.21.0/LICENSE) | v3.21.0 | Apache-2.0 | yes |
 | [github.com/dhowden/tag](https://github.com/dhowden/tag/blob/3d75831295e8/LICENSE) | v0.0.0-20240417053706-3d75831295e8 | BSD-2-Clause | — |
-| [github.com/dustin/go-humanize](https://github.com/dustin/go-humanize/blob/v1.0.1/LICENSE) | v1.0.1 | MIT | — |
+| [github.com/dustin/go-humanize](https://github.com/dustin/go-humanize/blob/v1.1.0/LICENSE) | v1.1.0 | MIT | — |
 | [github.com/go-chi/chi/v5](https://github.com/go-chi/chi/blob/v5.5.0/LICENSE) | v5.5.0 | MIT | — |
 | [github.com/go-jose/go-jose/v4](https://github.com/go-jose/go-jose/blob/v4.1.4/LICENSE) | v4.1.4 | Apache-2.0 | — |
 | [github.com/google/uuid](https://github.com/google/uuid/blob/v1.6.0/LICENSE) | v1.6.0 | BSD-3-Clause | — |
 | [github.com/mattn/go-isatty](https://github.com/mattn/go-isatty/blob/v0.0.24/LICENSE) | v0.0.24 | MIT | — |
 | [github.com/munnerz/goautoneg](https://github.com/munnerz/goautoneg/blob/a7dc8b61c822/LICENSE) | v0.0.0-20191010083416-a7dc8b61c822 | BSD-3-Clause | — |
-| [github.com/ncruces/go-strftime](https://github.com/ncruces/go-strftime/blob/v1.0.0/LICENSE) | v1.0.0 | MIT | — |
+| [github.com/ncruces/go-strftime](https://github.com/ncruces/go-strftime/blob/v1.1.0/LICENSE) | v1.1.0 | MIT | — |
 | [github.com/prometheus/client_golang](https://github.com/prometheus/client_golang/blob/v1.25.0/LICENSE) | v1.25.0 | Apache-2.0 | yes |
 | [github.com/prometheus/client_model](https://github.com/prometheus/client_model/blob/v0.6.3/LICENSE) | v0.6.3 | Apache-2.0 | yes |
 | [github.com/prometheus/common](https://github.com/prometheus/common/blob/v0.72.0/LICENSE) | v0.72.0 | Apache-2.0 | yes |
@@ -64,10 +64,10 @@ does ship is the failure that matters.
 | [golang.org/x/sys](https://cs.opensource.google/go/x/sys/+/v0.49.0:LICENSE) | v0.49.0 | BSD-3-Clause | — |
 | [golang.org/x/text](https://cs.opensource.google/go/x/text/+/v0.43.0:LICENSE) | v0.43.0 | BSD-3-Clause | — |
 | [google.golang.org/protobuf](https://github.com/protocolbuffers/protobuf-go/blob/v1.36.12/LICENSE) | v1.36.12 | BSD-3-Clause | — |
-| [modernc.org/libc](https://gitlab.com/cznic/libc/-/blob/v1.74.4/LICENSE) | v1.77.1 | BSD-3-Clause | — |
+| [modernc.org/libc](https://gitlab.com/cznic/libc/-/blob/v1.74.4/LICENSE) | v1.79.0 | BSD-3-Clause | — |
 | [modernc.org/mathutil](https://gitlab.com/cznic/mathutil/-/blob/v1.7.1/LICENSE) | v1.7.1 | BSD-3-Clause | — |
 | [modernc.org/memory](https://gitlab.com/cznic/memory/blob/v1.12.1/LICENSE-GO) | v1.12.1 | BSD-3-Clause | — |
-| [modernc.org/sqlite](https://gitlab.com/cznic/sqlite/blob/v1.60.1/LICENSE) | v1.60.1 | BSD-3-Clause | — |
+| [modernc.org/sqlite](https://gitlab.com/cznic/sqlite/blob/v1.61.0/LICENSE) | v1.61.0 | BSD-3-Clause | — |
 
 ### Notes on specific modules
 
@@ -1097,7 +1097,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 12. BSD-3-Clause — modernc.org/libc@v1.77.1 (LICENSE)
+### 12. BSD-3-Clause — modernc.org/libc@v1.79.0 (LICENSE)
 
 ```
 Copyright (c) 2017 The Libc Authors. All rights reserved.
@@ -1129,7 +1129,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 13. BSD-3-Clause — modernc.org/libc@v1.77.1 (LICENSE-3RD-PARTY.md)
+### 13. BSD-3-Clause — modernc.org/libc@v1.79.0 (LICENSE-3RD-PARTY.md)
 
 ```
 # Third-Party Software Notices
@@ -1503,7 +1503,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 16. BSD-3-Clause — modernc.org/sqlite@v1.60.1 (LICENSE)
+### 16. BSD-3-Clause — modernc.org/sqlite@v1.61.0 (LICENSE)
 
 ```
 Copyright (c) 2017 The Sqlite Authors. All rights reserved.
@@ -1586,7 +1586,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### 19. MIT — github.com/dustin/go-humanize@v1.0.1 (LICENSE)
+### 19. MIT — github.com/dustin/go-humanize@v1.1.0 (LICENSE)
 
 ```
 Copyright (c) 2005-2008  Dustin Sallings <dustin@spy.net>
@@ -1651,7 +1651,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### 22. MIT — github.com/ncruces/go-strftime@v1.0.0 (LICENSE)
+### 22. MIT — github.com/ncruces/go-strftime@v1.1.0 (LICENSE)
 
 ```
 MIT License
