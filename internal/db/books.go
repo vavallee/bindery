@@ -256,6 +256,11 @@ type BookListFilter struct {
 	// (false) drops them, which is what every list but the Wanted page's
 	// "show excluded" toggle wants.
 	IncludeExcluded bool
+	// DownloadableOnly restricts to books with status imported and a file path,
+	// which is what a download catalogue can serve. Unlike Status "imported" it
+	// does not admit a wanted book that owns some file, so a list and its total
+	// agree with a caller that drops anything it cannot link to.
+	DownloadableOnly bool
 }
 
 // bookSearchRank returns the ORDER BY prefix that ranks a search result set,
@@ -351,18 +356,25 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 		// "muller" never found "Müller" and a decomposed query never found a
 		// composed row (#1660). Both sides now pass through FoldForSearch.
 		//
-		// Every token must appear somewhere in the title or the author, which
-		// is the "words" rule Algolia and Meilisearch both use: it lets
-		// "hobbit tolkien" find the book without the two words being adjacent,
-		// while still requiring evidence for each word the user typed. Capped
+		// Every token must appear somewhere in the title, the author or the
+		// name of a series the book is in (#3462), which is the "words" rule
+		// Algolia and Meilisearch both use: it lets "hobbit tolkien" find the
+		// book without the two words being adjacent, while still requiring
+		// evidence for each word the user typed. A series-only match ranks
+		// below every title or author match (bookSearchRank). Capped
 		// at maxSearchTokens (searchrank.go) so the statement's size is
 		// bounded by that constant, not by the input.
 		for _, tok := range searchTokens(folded) {
 			like := "%" + escapeLike(tok) + "%"
-			where += " AND (books.search_key LIKE ? ESCAPE '\\' OR COALESCE(au.search_key, '') LIKE ? ESCAPE '\\')"
-			args = append(args, like, like)
+			where += " AND (books.search_key LIKE ? ESCAPE '\\' OR COALESCE(au.search_key, '') LIKE ? ESCAPE '\\'" +
+				" OR EXISTS (SELECT 1 FROM series_books sb JOIN series s ON s.id = sb.series_id" +
+				" WHERE sb.book_id = books.id AND s.search_key LIKE ? ESCAPE '\\'))"
+			args = append(args, like, like, like)
 		}
 		searchOrder, rankArgs = bookSearchRank(folded)
+	}
+	if f.DownloadableOnly {
+		where += " AND books.status = '" + models.BookStatusImported + "' AND COALESCE(books.file_path, '') <> ''"
 	}
 	switch f.Status {
 	case "":
@@ -418,11 +430,23 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 	if err != nil {
 		return nil, 0, err
 	}
+	// With a search, relevance leads only under the default sort: none,
+	// title-az (which every list starts on), or a value bookSortOrder does
+	// not know and reads as title order. A sort the reader picked, such as
+	// Newest, leads and relevance breaks its ties: ranked first, the chosen
+	// sort only reordered books within one rank tier and looked ignored while
+	// the control still said Newest.
+	sortOrder := bookSortOrder(f.Sort)
+	orderBy := searchOrder + sortOrder
+	if searchOrder != "" && sortOrder != bookTitleOrder {
+		orderBy = sortOrder + ", " + strings.TrimSuffix(searchOrder, ", ")
+	}
 	q := bookCTE + " SELECT " + bookColumns + " FROM books " + bookJoins + " " + where +
-		" ORDER BY " + searchOrder + bookSortOrder(f.Sort) + " LIMIT ? OFFSET ?"
+		" ORDER BY " + orderBy + " LIMIT ? OFFSET ?"
 	// The rank placeholders live in ORDER BY, which the parser reaches after
 	// WHERE, so their values follow the filter's. The count query above has no
-	// ORDER BY and therefore takes args alone.
+	// ORDER BY and therefore takes args alone. Moving the rank after the sort
+	// keeps the order of the placeholders: the sort clauses bind none.
 	pageArgs := append(append(append([]any{}, args...), rankArgs...), limit, offset)
 	books, err := r.query(ctx, q, pageArgs)
 	if err != nil {
@@ -443,6 +467,26 @@ func (r *BookRepo) count(ctx context.Context, query string, args []any) (int, er
 		return 0, fmt.Errorf("count books: %w", err)
 	}
 	return total, nil
+}
+
+// SearchImported runs the same library search the Books page uses (title or
+// author, accent and case folded, every word must match) over the books the
+// caller owns that can be downloaded (imported, with a file; a wanted book that owns some file is excluded and not counted). userID 0 is unscoped; otherwise rows
+// with owner_user_id = userID or NULL are searched, as everywhere else. A query
+// that carries no searchable characters returns nothing rather than the whole
+// library, since this feeds a client's search box. The total is the full match
+// count for paging.
+func (r *BookRepo) SearchImported(ctx context.Context, query string, userID int64, limit, offset int) ([]models.Book, int, error) {
+	if textutil.FoldForSearch(query) == "" {
+		return nil, 0, nil
+	}
+	return r.ListPageFiltered(ctx, BookListFilter{
+		UserID: userID,
+		Search: query,
+		Sort:   "title-az",
+
+		DownloadableOnly: true,
+	}, limit, offset)
 }
 
 // ListIncludingExcluded returns all books regardless of their excluded flag.
@@ -1884,4 +1928,14 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 		books = append(books, b)
 	}
 	return books, rows.Err()
+}
+
+// HasABSConflictFor reports whether an Audiobookshelf metadata conflict is
+// recorded for the book's field (any status). The user's choice there is a
+// per-field source preference that a provider refresh must not override (#3105).
+func (r *BookRepo) HasABSConflictFor(ctx context.Context, bookID int64, field string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM abs_metadata_conflicts
+		WHERE entity_type = 'book' AND local_id = ? AND field_name = ?`, bookID, field).Scan(&n)
+	return n > 0, err
 }

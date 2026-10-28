@@ -4,9 +4,9 @@ import { api } from '../api/client'
 import type { BookCalibreState } from '../api/client'
 
 const tones: Record<string, string> = {
-  pending: 'bg-sky-500/20 text-sky-700 dark:text-sky-400',
+  pending: 'bg-sky-500/20 text-sky-800 dark:text-sky-400',
   delivered: 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-400',
-  failed: 'bg-red-500/20 text-red-700 dark:text-red-400',
+  failed: 'bg-red-500/20 text-red-800 dark:text-red-400',
 }
 
 // CalibreDeliveryChip shows where a book stands with Calibre (#2832):

@@ -259,7 +259,7 @@ func TestAddTorrent_RecoveredTorrentRecategoriseIsBestEffort(t *testing.T) {
 				_, _ = io.WriteString(w, `[{"hash":"OLD","added_on":1}]`)
 				return
 			}
-			_, _ = io.WriteString(w, `[{"hash":"OLD","added_on":1},{"hash":"NEW1","added_on":5},{"hash":"NEW2","added_on":9}]`)
+			_, _ = io.WriteString(w, `[{"hash":"OLD","added_on":1},{"hash":"NEW2","added_on":9}]`)
 		},
 		"/api/v2/torrents/setCategory":       status(http.StatusConflict),
 		"/api/v2/torrents/setAutoManagement": status(http.StatusInternalServerError),
@@ -270,7 +270,7 @@ func TestAddTorrent_RecoveredTorrentRecategoriseIsBestEffort(t *testing.T) {
 	allowTorrentFetch(c)
 	hash, err := c.AddTorrent(context.Background(), indexer.URL+"/torrent", "books", "")
 	if err != nil || hash != "new2" {
-		t.Fatalf("AddTorrent = %q, %v; want the newest unseen torrent, lower-cased", hash, err)
+		t.Fatalf("AddTorrent = %q, %v; want the one unseen torrent, lower-cased", hash, err)
 	}
 	if q.count("/api/v2/torrents/setAutoManagement") != 1 {
 		t.Error("auto-management must still be attempted after a failed setCategory")

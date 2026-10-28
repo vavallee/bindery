@@ -969,15 +969,15 @@ func TestIsArticle(t *testing.T) {
 
 func TestTitleMatchesSingleKeyword(t *testing.T) {
 	// Single keyword without author tokens → accept (can't do better)
-	if !titleMatchesResult("dune", []string{"dune"}, nil, false) {
+	if !titleMatchesResult("dune", "dune", []string{"dune"}, nil, nil, false) {
 		t.Error("single keyword, no author → should accept")
 	}
 	// Single keyword with non-matching surname → reject
-	if titleMatchesResult("dune novel", []string{"dune"}, []string{"herbert"}, false) {
+	if titleMatchesResult("dune novel", "dune novel", []string{"dune"}, []string{"herbert"}, nil, false) {
 		t.Error("single keyword missing surname → should reject")
 	}
 	// Single keyword with matching surname → accept
-	if !titleMatchesResult("dune herbert", []string{"dune"}, []string{"herbert"}, false) {
+	if !titleMatchesResult("dune herbert", "dune herbert", []string{"dune"}, []string{"herbert"}, nil, false) {
 		t.Error("single keyword + matching surname → should accept")
 	}
 }
@@ -2065,6 +2065,154 @@ func TestFilterRelevantSingleKeywordExtendedTitle(t *testing.T) {
 			got := filterRelevant(toResults(tc.release), title, author, nil)
 			if has := contains(got, tc.release); has != tc.want {
 				t.Errorf("filterRelevant(%q) kept=%v, want %v", tc.release, has, tc.want)
+			}
+		})
+	}
+}
+
+// TestFilterRelevantSingleKeywordAlternateTitle: a release naming the book's
+// alternate "or" title ("Frankenstein; or, The Modern Prometheus") is the same
+// book, not a longer one, so the #1731 rule must not read the "or" as running
+// the title on. A bare "or" into another word, and the other connectives,
+// still do.
+func TestFilterRelevantSingleKeywordAlternateTitle(t *testing.T) {
+	cases := []struct {
+		name                   string
+		title, author, release string
+		bc                     bookContext
+		want                   bool
+	}{
+		{
+			name:  "semicolon or comma",
+			title: "Frankenstein", author: "Mary Shelley",
+			release: "Mary Shelley - Frankenstein; or, The Modern Prometheus (epub)",
+			want:    true,
+		},
+		{
+			name:  "bare or before an article",
+			title: "Frankenstein", author: "Mary Shelley",
+			release: "Mary Shelley - Frankenstein or The Modern Prometheus (epub)",
+			want:    true,
+		},
+		{
+			name:  "scene style dots before an article",
+			title: "Frankenstein", author: "Mary Shelley",
+			release: "Mary.Shelley.-.Frankenstein.or.The.Modern.Prometheus.epub",
+			want:    true,
+		},
+		{
+			name:  "short title still kept",
+			title: "Frankenstein", author: "Mary Shelley",
+			release: "Mary Shelley - Frankenstein (epub)",
+			want:    true,
+		},
+		{
+			name:  "alternate title with another library title present",
+			title: "Frankenstein", author: "Mary Shelley",
+			release: "Mary Shelley - Frankenstein; or, The Modern Prometheus (epub)",
+			bc:      bookContext{otherTitles: []string{"The Last Man", "Mathilda"}},
+			want:    true,
+		},
+		{
+			name:  "comma or, no article",
+			title: "The Hobbit", author: "J.R.R. Tolkien",
+			release: "J.R.R. Tolkien - The Hobbit, or There and Back Again (epub)",
+			want:    true,
+		},
+		{
+			name:  "semicolon or, no article",
+			title: "Candide", author: "Voltaire",
+			release: "Voltaire - Candide; or Optimism (epub)",
+			want:    true,
+		},
+		{
+			name:  "two keyword title",
+			title: "Moby-Dick", author: "Herman Melville",
+			release: "Herman Melville - Moby-Dick; or, The Whale (epub)",
+			want:    true,
+		},
+		{
+			name:  "comma or into a library title is a different book",
+			title: "Fight", author: "Jane Doe",
+			release: "Jane Doe - Fight, or Flight (epub)",
+			bc:      bookContext{otherTitles: []string{"Fight or Flight"}},
+			want:    false,
+		},
+		{
+			name:  "comma or into a library title is kept when the library lacks it",
+			title: "Fight", author: "Jane Doe",
+			release: "Jane Doe - Fight, or Flight (epub)",
+			want:    true,
+		},
+		{
+			name:  "semicolon or the into a library title is a different book",
+			title: "Foundation", author: "Isaac Asimov",
+			release: "Isaac Asimov - Foundation; or the Empire (epub)",
+			bc:      bookContext{otherTitles: []string{"Foundation and Empire", "Foundation; or the Empire"}},
+			want:    false,
+		},
+		{
+			name:  "or the into a library title is a different book",
+			title: "Truth", author: "Jane Doe",
+			release: "Jane Doe - Truth or The Consequences (epub)",
+			bc:      bookContext{otherTitles: []string{"Truth or The Consequences"}},
+			want:    false,
+		},
+		{
+			name:  "or the into a library title is kept when the library lacks it",
+			title: "Truth", author: "Jane Doe",
+			release: "Jane Doe - Truth or The Consequences (epub)",
+			want:    true,
+		},
+		{
+			name:  "or the into a differently worded library title",
+			title: "Dune", author: "Frank Herbert",
+			release: "Frank Herbert - Dune or the Messiah (epub)",
+			bc:      bookContext{otherTitles: []string{"Dune Messiah"}},
+			want:    false,
+		},
+		{
+			name:  "series sibling that does not match the alternate title",
+			title: "Frankenstein", author: "Mary Shelley",
+			release: "Mary Shelley - Frankenstein; or, The Modern Prometheus (epub)",
+			bc:      bookContext{otherTitles: []string{"Frankenstein 2 - Bride", "Frankenstein Unbound"}},
+			want:    true,
+		},
+		{
+			// Pinned as the current outcome, not an endorsement: the series
+			// number rule reads what follows the wanted title, which here is
+			// the "or", so a number after the alternate title is not seen.
+			// Such a release is not a name any indexer is known to use.
+			name:  "alternate title followed by a sibling's number",
+			title: "Frankenstein", author: "Mary Shelley",
+			release: "Mary Shelley - Frankenstein; or, The Modern Prometheus 2 - Bride (epub)",
+			bc:      bookContext{seriesTitle: "Frankenstein", seriesPosition: "1", otherTitles: []string{"Frankenstein 2 - Bride"}},
+			want:    true,
+		},
+		{
+			name:  "bare or into another word is a longer title",
+			title: "Truth", author: "Jane Doe",
+			release: "Jane Doe - Truth or Dare (epub)",
+			want:    false,
+		},
+		{
+			name:  "comma before another connective is still a longer title",
+			title: "Treasure", author: "Clive Cussler",
+			release: "Clive Cussler - Treasure, of Khan (epub)",
+			want:    false,
+		},
+		{
+			name:  "and still runs on into a different book",
+			title: "Foundation", author: "Isaac Asimov",
+			release: "Isaac Asimov - Foundation and Empire (epub)",
+			want:    false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kept, reason := relevanceVerdict(tc.title, tc.author, tc.release, tc.bc)
+			if kept != tc.want {
+				t.Errorf("relevance(%q, %q) kept=%v (%q), want %v", tc.title, tc.release, kept, reason, tc.want)
 			}
 		})
 	}

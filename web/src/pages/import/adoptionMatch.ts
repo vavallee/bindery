@@ -12,6 +12,18 @@ export const STRONG_MATCH_SCORE = 0.92
 
 export type MatchStrength = 'strong' | 'possible'
 
+// WEAK_MATCH_SCORE is the title similarity below which a suggestion is not
+// offered as a match at all. "Staat van Orde" against "Star Wars Battlefront
+// II" scored above zero and sat in the row as a Possible match at the same
+// weight as a near miss. Below this the row says there is no good match, and
+// the editor still lists the suggestion, collapsed under its own heading:
+// never hidden, only not offered.
+export const WEAK_MATCH_SCORE = 0.6
+
+export function isWeakCandidate(candidate: AdoptionCandidate | undefined): boolean {
+  return candidate !== undefined && candidate.score < WEAK_MATCH_SCORE
+}
+
 function nameTokens(name: string): string[] {
   return name
     .normalize('NFKD')

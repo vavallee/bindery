@@ -95,6 +95,7 @@ export default function FilterBar<S extends string, O extends string>({
                     key={opt.value}
                     type="button"
                     aria-pressed={status.value === opt.value}
+                    data-value={opt.value}
                     onClick={() => status.onChange(opt.value)}
                     className={statusBtnCls(status.value === opt.value)}
                   >

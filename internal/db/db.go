@@ -1206,9 +1206,10 @@ func backfillBookSortKeys(database *sql.DB) error {
 // backfillSearchKeys populates the three columns migration 083 adds for the
 // library search box: books.search_key, authors.search_key and
 // author_aliases.search_key, each folded from the text the box used to match
-// with `LIKE ? COLLATE NOCASE` (#1660).
+// with `LIKE ? COLLATE NOCASE` (#1660). Migration 114 adds series.search_key,
+// which the Books search also matches (#3462).
 //
-// All three are folded by the SAME function the query folder uses. That is the
+// All of them are folded by the SAME function the query folder uses. That is the
 // whole point of the column: the failure this replaces was not that LIKE is
 // slow, it was that the row and the query were reduced through different
 // alphabets — SQLite's ASCII-only case fold on one side and nothing at all on
@@ -1224,6 +1225,7 @@ func backfillSearchKeys(database *sql.DB) error {
 		{"books", "title"},
 		{"authors", "name"},
 		{"author_aliases", "name"},
+		{"series", "title"},
 	} {
 		n, err := backfillFoldedSearchColumn(database, target.table, target.source)
 		if err != nil {

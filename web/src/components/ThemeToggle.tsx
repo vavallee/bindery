@@ -6,7 +6,13 @@ export default function ThemeToggle() {
   const { theme, setTheme } = useTheme()
   const isDark = theme === 'dark'
 
+  // The switch alone showed a sun and a moon with no word for which one is
+  // on; the state is written beside it.
   return (
+    <span className="inline-flex items-center gap-2">
+    <span className="text-xs text-fg-muted" aria-hidden="true">
+      {isDark ? t('settings.general.themeDark', 'Dark') : t('settings.general.themeLight', 'Light')}
+    </span>
     <button
       type="button"
       onClick={() => setTheme(isDark ? 'light' : 'dark')}
@@ -40,5 +46,6 @@ export default function ThemeToggle() {
         🌙
       </span>
     </button>
+    </span>
   )
 }

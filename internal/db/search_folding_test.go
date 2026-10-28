@@ -302,3 +302,153 @@ func TestSearchWorksAfterUpgradingAnExistingLibrary(t *testing.T) {
 		t.Errorf("after upgrade, A–Z order = %v, want Ödland first (its folded key is 'odland')", ordered)
 	}
 }
+
+// TestBookSearchMatchesSeriesName is the regression for #3462: each word had
+// to be in the title or the author, so naming the series a book belongs to
+// found nothing, and adding it to an author search emptied the result.
+func TestBookSearchMatchesSeriesName(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	ctx := context.Background()
+	authorRepo := NewAuthorRepo(database)
+	bookRepo := NewBookRepo(database)
+	seriesRepo := NewSeriesRepo(database)
+
+	todd := &models.Author{ForeignID: "OL-TODD", Name: "Charles Todd", SortName: "Todd, Charles"}
+	other := &models.Author{ForeignID: "OL-OTHER", Name: "Jane Doe", SortName: "Doe, Jane"}
+	for _, a := range []*models.Author{todd, other} {
+		if err := authorRepo.Create(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkBook := func(author *models.Author, title string) *models.Book {
+		b := &models.Book{ForeignID: "OL-B" + title, AuthorID: author.ID, Title: title, SortTitle: title, MediaType: models.MediaTypeEbook}
+		if err := bookRepo.Create(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	inSeries := mkBook(todd, "A Test of Wills")
+	mkBook(todd, "A Duty to the Dead")
+	titled := mkBook(other, "Rutledge Remembered")
+
+	series := &models.Series{ForeignID: "OL-S-RUTLEDGE", Title: "Inspector Ian Rutledge"}
+	if err := seriesRepo.CreateOrGet(ctx, series); err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, series.ID, inSeries.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		query string
+		want  []string
+	}{
+		// The title match ranks ahead of the series-only match.
+		{"Rutledge", []string{titled.Title, inSeries.Title}},
+		{"Ian Rutledge", []string{inSeries.Title}},
+		{"Charles Todd Ian Rutledge", []string{inSeries.Title}},
+		{"inspector rutledge todd", []string{inSeries.Title}},
+	}
+	for _, tc := range cases {
+		got, total, err := bookRepo.ListPageFiltered(ctx, BookListFilter{Search: tc.query}, 50, 0)
+		if err != nil {
+			t.Fatalf("search %q: %v", tc.query, err)
+		}
+		if total != len(tc.want) || len(got) != len(tc.want) {
+			t.Errorf("search %q: total %d, %d rows, want %v", tc.query, total, len(got), tc.want)
+			continue
+		}
+		for i, w := range tc.want {
+			if got[i].Title != w {
+				t.Errorf("search %q: row %d = %q, want %q", tc.query, i, got[i].Title, w)
+			}
+		}
+	}
+
+	// A rename carries the key with it.
+	if err := seriesRepo.UpdateTitle(ctx, series.ID, "Inspector Rutledge Mysteries"); err != nil {
+		t.Fatal(err)
+	}
+	if _, total, err := bookRepo.ListPageFiltered(ctx, BookListFilter{Search: "Ian Rutledge"}, 50, 0); err != nil || total != 0 {
+		t.Errorf("search after rename: total %d, err %v, want the old series name to stop matching", total, err)
+	}
+	if got, total, err := bookRepo.ListPageFiltered(ctx, BookListFilter{Search: "mysteries"}, 50, 0); err != nil || total != 1 || got[0].Title != inSeries.Title {
+		t.Errorf("search for the new series name: total %d, err %v, want %q", total, err, inSeries.Title)
+	}
+
+	// A series row from before migration 114 has an empty key until the
+	// startup backfill folds it.
+	if _, err := database.Exec("UPDATE series SET search_key = ''"); err != nil {
+		t.Fatal(err)
+	}
+	if err := backfillSearchKeys(database); err != nil {
+		t.Fatal(err)
+	}
+	var key string
+	if err := database.QueryRow("SELECT search_key FROM series WHERE id = ?", series.ID).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	if key != "inspector rutledge mysteries" {
+		t.Errorf("series.search_key after backfill = %q, want %q", key, "inspector rutledge mysteries")
+	}
+}
+
+// Migration 114 adds series.search_key and drops the backfill marker. An
+// install that already ran the search key backfill at the current revision
+// would otherwise never fold its existing series, and series name search would
+// silently find nothing for every series made before the upgrade (#3462).
+func TestMigrate114BackfillsSeriesSearchKeysOnUpgrade(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bindery.db")
+	ctx := context.Background()
+
+	database := openFileDB(t, path)
+	author := &models.Author{ForeignID: "OL-114-A", Name: "Charles Todd", SortName: "Todd, Charles"}
+	if err := NewAuthorRepo(database).Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{ForeignID: "OL-114-B", AuthorID: author.ID, Title: "A Test of Wills", SortTitle: "A Test of Wills", MediaType: models.MediaTypeEbook}
+	if err := NewBookRepo(database).Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	series := &models.Series{ForeignID: "OL-114-S", Title: "Inspector Ian Rutledge"}
+	if err := NewSeriesRepo(database).CreateOrGet(ctx, series); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewSeriesRepo(database).LinkBook(ctx, series.ID, book.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := settingValue(t, database, "backfill.search_key_rev"); !ok {
+		t.Fatal("precondition: a migrated database should have the search key backfill marker, as an upgraded install does")
+	}
+
+	// Rewind to the previous release: no series.search_key column, migration
+	// 114 not recorded, and the backfill marker present at the current revision.
+	for _, stmt := range []string{
+		"ALTER TABLE series DROP COLUMN search_key",
+		"DELETE FROM schema_migrations WHERE version = 114",
+	} {
+		if _, err := database.Exec(stmt); err != nil {
+			t.Fatalf("rewind %q: %v", stmt, err)
+		}
+	}
+	database.Close()
+
+	database = openFileDB(t, path)
+	defer database.Close()
+
+	var key string
+	if err := database.QueryRow("SELECT search_key FROM series WHERE id = ?", series.ID).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	if key != "inspector ian rutledge" {
+		t.Errorf("series.search_key after upgrading = %q, want the existing series backfilled", key)
+	}
+	got, total, err := NewBookRepo(database).ListPageFiltered(ctx, BookListFilter{Search: "ian rutledge"}, 50, 0)
+	if err != nil || total != 1 || got[0].Title != book.Title {
+		t.Errorf("series name search after upgrading: total %d, err %v, want the existing book", total, err)
+	}
+}

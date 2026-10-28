@@ -2,9 +2,13 @@ package opds
 
 import (
 	"context"
+	"encoding/xml"
+	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -26,6 +30,10 @@ type BookStore interface {
 	ListByStatus(ctx context.Context, status string) ([]models.Book, error)
 	ListByStatusAndUser(ctx context.Context, status string, userID int64) ([]models.Book, error)
 	GetByID(ctx context.Context, id int64) (*models.Book, error)
+	// SearchImported is the library search (title or author) over the
+	// caller's in-library books, one page at a time, with the total match
+	// count. userID 0 is unscoped.
+	SearchImported(ctx context.Context, query string, userID int64, limit, offset int) ([]models.Book, int, error)
 }
 
 // AuthorStore is the subset of the author repository the builder needs.
@@ -98,6 +106,7 @@ func (b *Builder) BuildRoot(base string) Feed {
 		{Rel: RelSelf, Href: base + "/opds", Type: TypeNavigation},
 		{Rel: RelStart, Href: base + "/opds", Type: TypeNavigation},
 	}
+	f.Links = append(f.Links, searchLinks(base)...)
 	f.Entries = []Entry{
 		{
 			ID:      "urn:bindery:opds:authors",
@@ -514,4 +523,128 @@ func (b *Builder) filterSeriesWithUserBooks(ctx context.Context, list []models.S
 		}
 	}
 	return kept
+}
+
+// MaxSearchQueryLen bounds a search query in characters. A reading app's
+// search box never needs more, and the library search tokenises the input.
+const MaxSearchQueryLen = 200
+
+// maxSearchPage bounds the page number so page*size cannot overflow.
+const maxSearchPage = 100000
+
+// ErrQueryTooLong is returned by BuildSearch for a query over MaxSearchQueryLen.
+var ErrQueryTooLong = errors.New("opds: search query too long")
+
+// searchLinks are the two rel=search links on the root feed: the OpenSearch
+// description document, and an inline template for clients that read the
+// template straight off the link.
+func searchLinks(base string) []Link {
+	return []Link{
+		{Rel: RelSearch, Href: base + "/opds/opensearch.xml", Type: TypeOpenSearch, Title: "Search"},
+		{Rel: RelSearch, Href: base + "/opds/search?q={searchTerms}", Type: TypeAtom, Title: "Search"},
+	}
+}
+
+// BuildSearch returns an acquisition feed of the caller's in-library books
+// matching q, paginated like the other feeds. An empty q yields an empty feed.
+// With userID != 0 only that user's books can match, the same scope as the
+// other feeds.
+func (b *Builder) BuildSearch(ctx context.Context, base, q string, page int, userID int64) (Feed, error) {
+	base = strings.TrimRight(base, "/")
+	q = strings.TrimSpace(q)
+	if utf8.RuneCountInString(q) > MaxSearchQueryLen {
+		return Feed{}, ErrQueryTooLong
+	}
+	page = min(normalizePage(page), maxSearchPage)
+
+	var (
+		books []models.Book
+		total int
+	)
+	if q != "" {
+		var err error
+		books, total, err = b.books.SearchImported(ctx, q, userID, b.cfg.PageSize, (page-1)*b.cfg.PageSize)
+		if err != nil {
+			return Feed{}, fmt.Errorf("search books: %w", err)
+		}
+		books = filterImported(books)
+	}
+
+	pageBase := base + "/opds/search?q=" + url.QueryEscape(q)
+	now := nowRFC3339()
+	f := acquisitionFeed(b.cfg.Title+" — Search", "urn:bindery:opds:search", now)
+	f.Links = append(f.Links,
+		Link{Rel: RelSelf, Href: searchPageURL(pageBase, page), Type: TypeAcquisition},
+		Link{Rel: RelStart, Href: base + "/opds", Type: TypeNavigation},
+		Link{Rel: RelUp, Href: base + "/opds", Type: TypeNavigation},
+	)
+	f.Links = append(f.Links, searchLinks(base)...)
+	if maxPage := (total + b.cfg.PageSize - 1) / b.cfg.PageSize; page < maxPage {
+		f.Links = append(f.Links, Link{Rel: RelNext, Href: searchPageURL(pageBase, page+1), Type: TypeAcquisition})
+	}
+	if total > 0 && page > 1 {
+		f.Links = append(f.Links, Link{Rel: RelPrevious, Href: searchPageURL(pageBase, page-1), Type: TypeAcquisition})
+	}
+	f.TotalResults = total
+	f.ItemsPerPage = b.cfg.PageSize
+	f.StartIndex = (page-1)*b.cfg.PageSize + 1
+
+	authors := map[int64]*models.Author{}
+	for _, bk := range books {
+		var author *models.Author
+		if bk.AuthorID > 0 {
+			var seen bool
+			if author, seen = authors[bk.AuthorID]; !seen {
+				author, _ = b.authors.GetByID(ctx, bk.AuthorID)
+				authors[bk.AuthorID] = author
+			}
+		}
+		f.Entries = append(f.Entries, b.bookEntry(base, bk, author))
+	}
+	return f, nil
+}
+
+func searchPageURL(base string, page int) string {
+	if page <= 1 {
+		return base
+	}
+	return fmt.Sprintf("%s&page=%d", base, page)
+}
+
+// OpenSearchDescription is the OpenSearch 1.1 description document served at
+// /opds/opensearch.xml. Clients such as Moon+ Reader and KOReader read the
+// Url template from it to drive their search button.
+type OpenSearchDescription struct {
+	XMLName       xml.Name        `xml:"OpenSearchDescription"`
+	Xmlns         string          `xml:"xmlns,attr"`
+	ShortName     string          `xml:"ShortName"`
+	Description   string          `xml:"Description"`
+	InputEncoding string          `xml:"InputEncoding"`
+	URLs          []OpenSearchURL `xml:"Url"`
+}
+
+// OpenSearchURL is one Url template in the description.
+type OpenSearchURL struct {
+	Type     string `xml:"type,attr"`
+	Template string `xml:"template,attr"`
+}
+
+// BuildOpenSearch returns the OpenSearch description for the catalogue.
+func (b *Builder) BuildOpenSearch(base string) OpenSearchDescription {
+	base = strings.TrimRight(base, "/")
+	// OpenSearch caps ShortName at 16 characters.
+	short := []rune(b.cfg.Title)
+	if len(short) > 16 {
+		short = short[:16]
+	}
+	return OpenSearchDescription{
+		Xmlns:         NSOpenSearch,
+		ShortName:     string(short),
+		Description:   "Search the " + b.cfg.Title + " library by title or author",
+		InputEncoding: "UTF-8",
+		URLs: []OpenSearchURL{{
+			Type:     TypeAtom,
+			Template: base + "/opds/search?q={searchTerms}&page={startPage?}",
+		}},
+	}
 }

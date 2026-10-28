@@ -359,9 +359,11 @@ func (c *Client) enrichWorkFromSearch(ctx context.Context, foreignID string, b *
 	var resp searchResponse
 	if err := c.getJSON(ctx, baseURL+"/search.json?"+q.Encode(), &resp); err != nil {
 		slog.Debug("openlibrary: work search enrichment failed", "foreignId", foreignID, "error", err)
+		markDateAndLanguageUnknown(b)
 		return
 	}
 	if len(resp.Docs) == 0 {
+		markDateAndLanguageUnknown(b)
 		return
 	}
 	doc := resp.Docs[0]
@@ -370,6 +372,7 @@ func (c *Client) enrichWorkFromSearch(ctx context.Context, foreignID string, b *
 	if strings.TrimPrefix(doc.Key, "/works/") != foreignID {
 		slog.Debug("openlibrary: work search enrichment returned a different work",
 			"want", foreignID, "got", doc.Key)
+		markDateAndLanguageUnknown(b)
 		return
 	}
 	if b.ReleaseDate == nil && doc.FirstPublishYear > 0 {
@@ -378,6 +381,18 @@ func (c *Client) enrichWorkFromSearch(ctx context.Context, foreignID string, b *
 	}
 	if b.Language == "" {
 		b.Language = pickPreferredLanguage(doc.Language)
+	}
+}
+
+// markDateAndLanguageUnknown records that the search lookup did not answer, so
+// a still-empty release date or language means "not determined", not "the work
+// has none". A rebind reads it to avoid erasing the old values (#3104).
+func markDateAndLanguageUnknown(b *models.Book) {
+	if b.ReleaseDate == nil {
+		b.UnknownFields = append(b.UnknownFields, models.BookFieldReleaseDate)
+	}
+	if b.Language == "" {
+		b.UnknownFields = append(b.UnknownFields, models.BookFieldLanguage)
 	}
 }
 

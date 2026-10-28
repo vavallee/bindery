@@ -658,6 +658,14 @@ func TestScanBundleRowDoesNotBridgeBooks(t *testing.T) {
 		{"three part bundle is not a group", []string{"Book One", "Book Two", "Book Three", "Book One; Book Two"}, nil},
 		{"identical bundle rows still group", []string{"Carrie; Christine", "Carrie; Christine"},
 			[][]string{{"Carrie; Christine", "Carrie; Christine"}}},
+		// kennethp1015's follow-up on #3469: the first part has a colon subtitle.
+		{"colon subtitle bundle with bare main title",
+			[]string{"Mistborn", "The Well of Ascension", "Mistborn: The Final Empire; The Well of Ascension"}, nil},
+		{"colon subtitle bundle, second part first",
+			[]string{"The Well of Ascension", "Mistborn", "Mistborn: The Final Empire; The Well of Ascension"}, nil},
+		{"colon subtitle bundle twin still groups",
+			[]string{"Mistborn: The Final Empire; The Well of Ascension", "Mistborn: The Final Empire; The Well of Ascension."},
+			[][]string{{"Mistborn: The Final Empire; The Well of Ascension", "Mistborn: The Final Empire; The Well of Ascension."}}},
 		{"single part bundle still pairs", []string{"Hearts in Atlantis", "Hearts in Atlantis; Misery"},
 			[][]string{{"Hearts in Atlantis", "Hearts in Atlantis; Misery"}}},
 	}

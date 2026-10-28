@@ -86,7 +86,7 @@ describe('SeriesPage', () => {
     fireEvent.change(search, { target: { value: 'missing series' } })
     expect(screen.getByRole('status')).toHaveTextContent('No series match "missing series"')
     expect(screen.queryByRole('heading', { level: 3 })).not.toBeInTheDocument()
-    expect(screen.queryByText(/Series are populated automatically/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Series come from your metadata provider/)).not.toBeInTheDocument()
 
     fireEvent.change(search, { target: { value: '' } })
     expect(screen.getByRole('heading', { name: 'The Stormlight Archive' })).toBeInTheDocument()
@@ -95,12 +95,40 @@ describe('SeriesPage', () => {
     expect(api.listSeries).toHaveBeenCalledTimes(1)
   })
 
+  it('shows placeholder rows while the series load', () => {
+    vi.mocked(api.listSeries).mockReturnValue(new Promise(() => {}))
+    render(<MemoryRouter><SeriesPage /></MemoryRouter>)
+    const status = screen.getByRole('status')
+    expect(status).toHaveTextContent('Loading…')
+    expect(status.querySelector('[aria-hidden="true"]')?.children.length).toBe(4)
+  })
+
+  // The status decides the Hardcover controls; it must not leave the list
+  // unrendered when it fails.
+  it('still lists the series when the status request fails', async () => {
+    vi.mocked(api.listSeries).mockResolvedValue([])
+    vi.mocked(api.status).mockRejectedValue(new Error('down'))
+    render(<MemoryRouter><SeriesPage /></MemoryRouter>)
+    expect(await screen.findByText('No series found')).toBeInTheDocument()
+  })
+
+  // A failed load used to render as "No series found" with a hint blaming
+  // the metadata provider.
+  it('says a failed load failed, with a retry, instead of the empty state', async () => {
+    vi.mocked(api.listSeries).mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce([])
+    render(<MemoryRouter><SeriesPage /></MemoryRouter>)
+    expect(await screen.findByText('Could not load series')).toBeInTheDocument()
+    expect(screen.queryByText('No series found')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('No series found')).toBeInTheDocument()
+  })
+
   it('keeps the empty-library guidance when there are no series to search', async () => {
     renderSeriesPage([])
 
     expect(await screen.findByText('No series found')).toBeInTheDocument()
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Stormlight' } })
-    expect(screen.getByText(/Series are populated automatically/)).toBeInTheDocument()
+    expect(screen.getByText(/Series come from your metadata provider/)).toBeInTheDocument()
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 

@@ -75,6 +75,26 @@ func (f *fakeBooks) ListByStatusAndUser(_ context.Context, status string, userID
 	}
 	return out, nil
 }
+
+// SearchImported is a plain substring match on the title over imported books,
+// scoped the way the real store is, so the builder's paging can be tested.
+func (f *fakeBooks) SearchImported(_ context.Context, q string, userID int64, limit, offset int) ([]models.Book, int, error) {
+	var hits []models.Book
+	for _, b := range f.all {
+		if b.Status != models.BookStatusImported || !strings.Contains(strings.ToLower(b.Title), strings.ToLower(q)) {
+			continue
+		}
+		if userID != 0 && b.OwnerUserID != 0 && b.OwnerUserID != userID {
+			continue
+		}
+		hits = append(hits, b)
+	}
+	total := len(hits)
+	if offset > total {
+		offset = total
+	}
+	return hits[offset:min(offset+limit, total)], total, nil
+}
 func (f *fakeBooks) GetByID(_ context.Context, id int64) (*models.Book, error) {
 	for i := range f.all {
 		if f.all[i].ID == id {

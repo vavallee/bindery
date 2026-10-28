@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/models"
@@ -127,6 +128,39 @@ func TestListWanted_LimitReturnsTheEnvelope(t *testing.T) {
 	_, capped := wantedGet(t, h, "?limit=100000")
 	if capped.Limit != bookListMaxLimit {
 		t.Errorf("limit 100000 answered limit %d, want the cap %d", capped.Limit, bookListMaxLimit)
+	}
+}
+
+// TestListWanted_PagedTakesSortAndMediaType: the Wanted page's filter bar
+// sends the Books list's own sort and mediaType parameters.
+func TestListWanted_PagedTakesSortAndMediaType(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	for _, b := range []struct {
+		title, media string
+		year         int
+	}{
+		{"Alpha", models.MediaTypeEbook, 2001},
+		{"Bravo", models.MediaTypeAudiobook, 2003},
+		{"Charlie", models.MediaTypeEbook, 2002},
+	} {
+		released := time.Date(b.year, 1, 1, 0, 0, 0, 0, time.UTC)
+		if err := books.Create(ctx, &models.Book{ForeignID: "F" + b.title, AuthorID: author.ID, Title: b.title, SortTitle: b.title,
+			Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+			MediaType: b.media, ReleaseDate: &released}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, byDate := wantedGet(t, h, "?limit=50&sort=date-new")
+	if want := []string{"Bravo", "Charlie", "Alpha"}; !slices.Equal(wantedTitles(byDate.Items), want) {
+		t.Errorf("sort=date-new = %v, want %v", wantedTitles(byDate.Items), want)
+	}
+	_, audio := wantedGet(t, h, "?limit=50&mediaType=audiobook")
+	if audio.Total != 1 || !slices.Equal(wantedTitles(audio.Items), []string{"Bravo"}) {
+		t.Errorf("mediaType=audiobook: total %d titles %v, want [Bravo]", audio.Total, wantedTitles(audio.Items))
+	}
+	_, unknown := wantedGet(t, h, "?limit=50&sort=drop-table")
+	if want := []string{"Alpha", "Bravo", "Charlie"}; !slices.Equal(wantedTitles(unknown.Items), want) {
+		t.Errorf("an unknown sort falls back to title order: %v, want %v", wantedTitles(unknown.Items), want)
 	}
 }
 

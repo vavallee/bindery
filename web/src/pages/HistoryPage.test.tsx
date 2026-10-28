@@ -43,6 +43,10 @@ vi.mock('react-i18next', () => ({
         'history.contentCheckTruncated': 'The content check was cut short and skipped',
         'history.allEventTypes': 'All event types',
         'history.empty': 'No history events found',
+        'history.loadFailed': 'Could not load history',
+        'history.noMatch': 'No {{type}} events',
+        'common.retry': 'Retry',
+        'common.clearFilter': 'Clear filter',
         'history.emptyHint': 'Grabs, imports and failures land here as they happen.',
         'history.colEvent': 'Event',
         'history.colSourceTitle': 'Source Title',
@@ -281,6 +285,43 @@ describe('HistoryPage', () => {
     expect(within(importedRow).getByRole('button', { name: 'Delete' })).toBeInTheDocument()
     expect(within(deletedRow).queryByRole('button', { name: 'Blocklist' })).not.toBeInTheDocument()
     expect(within(deletedRow).getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+  })
+
+  it('shows placeholder rows while history loads', () => {
+    vi.mocked(api.listHistory).mockReturnValue(new Promise(() => {}))
+    renderHistoryPage()
+    const status = screen.getByRole('status')
+    expect(status).toHaveTextContent('Loading...')
+    expect(status.querySelector('[aria-hidden="true"]')?.children.length).toBeGreaterThan(0)
+  })
+
+  it('says a failed load failed, with a retry, instead of an empty history', async () => {
+    vi.mocked(api.listHistory).mockRejectedValueOnce(new Error('boom'))
+    renderHistoryPage()
+    expect(await screen.findByText('Could not load history')).toBeInTheDocument()
+    expect(screen.queryByText('No history events found')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('No history events found')).toBeInTheDocument()
+  })
+
+  it('says the filter hides every event, with a way to clear it', async () => {
+    renderHistoryPage()
+    await screen.findByText('No history events found')
+    fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'downloadFailed' } })
+    expect(await screen.findByText('No Download Failed events')).toBeInTheDocument()
+    expect(screen.queryByText('No history events found')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filter' }))
+    await waitFor(() => expect(api.listHistory).toHaveBeenLastCalledWith({ eventType: undefined, limit: 100, offset: 0 }))
+  })
+
+  it('decodes HTML entities a provider left in a release title', async () => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [makeHistory({ id: 1, sourceTitle: 'Pride &amp; Prejudice &#8211; Austen' })],
+      total: 1, limit: 100, offset: 0,
+    })
+    renderHistoryPage()
+    const table = await findDesktopTable()
+    expect(await within(table).findByText('Pride & Prejudice – Austen')).toBeInTheDocument()
   })
 
   it('renders the empty history state', async () => {

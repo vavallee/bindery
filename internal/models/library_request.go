@@ -17,6 +17,13 @@ const (
 	RequestStatusDeclined  = "declined"
 )
 
+// Who made a request on its owner's behalf (migration 113). Empty means the
+// owner asked themselves.
+const (
+	RequestCreatedViaAPIKey = "api_key"
+	RequestCreatedViaAdmin  = "admin"
+)
+
 // LibraryRequest is one row of the requests table (migration 089): a
 // requester asking for a book or an author to be added.
 type LibraryRequest struct {
@@ -43,6 +50,13 @@ type LibraryRequest struct {
 	DecidedAt      *time.Time
 	// ClaimToken is set on the request Claim returns, and only there.
 	ClaimToken string
+	// CreatedVia is who made the request for its owner: "" the owner,
+	// RequestCreatedViaAPIKey or RequestCreatedViaAdmin. CreatedByUserID is
+	// the admin for RequestCreatedViaAdmin, and CreatedByUsername is joined in
+	// for the admin queue.
+	CreatedVia        string
+	CreatedByUserID   *int64
+	CreatedByUsername string
 
 	// Derived at list time, never stored. For a book request, BookStatus is
 	// the status of the book the approval created. For an author request,

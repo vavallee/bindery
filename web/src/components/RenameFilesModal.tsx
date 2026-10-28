@@ -165,7 +165,7 @@ function MoveRow({ move }: { move: ReorganizeMove }) {
         <span className={`font-medium ${statusStyles[move.status] ?? ''}`}>
           {t(`renameFiles.status.${move.status}`, statusLabel[move.status] ?? move.status)}
         </span>
-        <span className="text-slate-400 dark:text-zinc-600">·</span>
+        <span className="text-fg-muted">·</span>
         <span className="text-slate-600 dark:text-zinc-300 truncate">{move.bookTitle}</span>
         <span className="uppercase text-[10px] tracking-wide text-fg-muted">
           {move.format}

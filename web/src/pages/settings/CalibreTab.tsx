@@ -916,7 +916,7 @@ export function CalibreRollbackModal({
           <button
             onClick={closable ? onClose : undefined}
             disabled={!closable}
-            className="text-slate-500 hover:text-slate-700 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40"
+            className="text-fg-muted hover:text-slate-700 dark:hover:text-zinc-200 disabled:opacity-40"
             aria-label={t('common.close')}
             title={closable ? '' : t('settings.calibre.runs.applying')}
           >
@@ -1065,7 +1065,7 @@ export function CalibreSyncModal({
           <h3 id={titleId} className="text-base font-semibold text-slate-800 dark:text-zinc-100">{t('settings.calibre.pushAll.label')}</h3>
           <button
             onClick={onClose}
-            className="text-slate-500 hover:text-slate-700 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40"
+            className="text-fg-muted hover:text-slate-700 dark:hover:text-zinc-200 disabled:opacity-40"
             aria-label={t('settings.calibre.pushAll.close')}
             title={running ? t('settings.calibre.pushAll.closeRunningHint') : t('settings.calibre.pushAll.close')}
           >

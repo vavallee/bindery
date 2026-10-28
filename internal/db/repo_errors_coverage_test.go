@@ -445,7 +445,7 @@ func TestReposSurfaceDatabaseErrors(t *testing.T) {
 		{"RequestRepo.ListLibraryProjection", func() error { _, _, err := NewRequestRepo(closed).ListLibraryProjection(ctx, 1, "x", 1, 1); return err }},
 		{"RequestRepo.Release", func() error { return NewRequestRepo(closed).Release(ctx, 1, "x") }},
 		{"RequestRepo.RenewClaim", func() error { return NewRequestRepo(closed).RenewClaim(ctx, 1, "x") }},
-		{"RequestRepo.Reopen", func() error { return NewRequestRepo(closed).Reopen(ctx, 1, 1, "x", "x", 1) }},
+		{"RequestRepo.Reopen", func() error { return NewRequestRepo(closed).Reopen(ctx, 1, 1, "x", "x", "", nil, 1) }},
 		{"RootFolderRepo.Create", func() error { _, err := NewRootFolderRepo(closed).Create(ctx, "x"); return err }},
 		{"RootFolderRepo.Delete", func() error { return NewRootFolderRepo(closed).Delete(ctx, 1) }},
 		{"RootFolderRepo.GetByID", func() error { _, err := NewRootFolderRepo(closed).GetByID(ctx, 1); return err }},

@@ -10,12 +10,30 @@ interface MarkdownDescriptionProps {
   collapsedLines?: number
 }
 
-const referenceDefinitionRE = /^\s*\[[^\]]+\]:\s+\S+/
-const sourcesLineRE = /^\s*\(Sources?:\s*.*\)\s*$/i
+// Reference definitions, with or without the space after the colon:
+// OpenLibrary bios carry both "[1]: https://…" and "[1]:https://…". Without
+// the space only a URL counts, so prose such as "[Note]:important" stays.
+const referenceDefinitionRE = /^\s*\[[^\]]+\]:(?:\s+\S|(?:https?:\/\/|www\.))/i
+// A citation line: "(Sources: …)", or the "([Source][1])" / "(Source.)" form
+// Wikipedia-derived bios end with, which renders as a bare "(Source.)".
+//
+// No two whitespace runs may sit next to each other in these patterns
+// (`\s*\.?\s*`, `:\s*.*`): on a long run of spaces the engine tries every way
+// to split the run between them, which is quadratic. `\s*(?:\.\s*)?` and a
+// bare `.*` match the same text with one way to split it.
+const sourcesLineRE = /^\s*\(\s*(?:Sources?:.*|\[?Sources?\]?(?:\[[^\]]*\])?\s*(?:\.\s*)?)\)\s*$/i
+// The same citation trailing the last sentence of a paragraph. Mid-line it
+// has to look like a citation, a bracketed "[Source]" or a "Source." with its
+// period: a sentence that ends "followed the river to its (source)" is prose.
+// No leading \s*: unanchored, it made the engine rescan every whitespace run
+// (a line of 50,000 spaces took seconds). The space before the citation is
+// trimmed after the match instead.
+const trailingSourceRE = /\(\s*(?:\[Sources?\](?:\[[^\]]{0,20}\])?\s*(?:\.\s*)?|Sources?\s*\.\s*)\)\s*$/i
 // Inline tokens, in priority order: [text](url) inline link, [text][ref]
 // reference link (rendered as plain text — the [ref]: defs are stripped),
-// **bold**, *italic*.
-const inlineTokenRE = /\[([^\]]+)\]\(([^)\s]+)\)|\[([^\]]+)\]\[[^\]]+\]|\*\*([^*\n]+?)\*\*|\*([^*\n]+?)\*/g
+// **bold**, *italic*. Link text may not contain `[`: with it allowed, a run of
+// unclosed `[` made every one rescan to the end of the line (quadratic).
+const inlineTokenRE = /\[([^\][]+)\]\(([^)\s]+)\)|\[([^\][]+)\]\[[^\]]+\]|\*\*([^*\n]+?)\*\*|\*([^*\n]+?)\*/g
 
 function cleanMarkdownDescription(text: string): string {
   return text
@@ -23,6 +41,7 @@ function cleanMarkdownDescription(text: string): string {
     .replace(/\r/g, '\n')
     .split('\n')
     .filter(line => !referenceDefinitionRE.test(line) && !sourcesLineRE.test(line))
+    .map(line => (trailingSourceRE.test(line) ? line.replace(trailingSourceRE, '').trimEnd() : line))
     .join('\n')
     .trim()
 }

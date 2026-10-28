@@ -129,19 +129,19 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
       {summary && (
         <div data-testid="calibre-delivery-summary" className="text-xs text-slate-700 dark:text-zinc-300 flex flex-wrap gap-x-2 gap-y-1">
           <span>{t('settings.calibre.deliveries.waiting', { count: summary.pending })}</span>
-          <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+          <span aria-hidden className="text-fg-muted">·</span>
           <span>{t('settings.calibre.deliveries.delivered', { count: summary.delivered })}</span>
-          <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+          <span aria-hidden className="text-fg-muted">·</span>
           <span className={summary.failed > 0 ? 'text-red-700 dark:text-red-400' : ''}>
             {t('settings.calibre.deliveries.failed', { count: summary.failed })}
           </span>
-          <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+          <span aria-hidden className="text-fg-muted">·</span>
           <span>
             {summary.lastDeliveredAt
               ? t('settings.calibre.deliveries.lastDelivered', { time: when(summary.lastDeliveredAt) })
               : t('settings.calibre.deliveries.neverDelivered')}
           </span>
-          <span aria-hidden className="text-slate-400 dark:text-zinc-600">·</span>
+          <span aria-hidden className="text-fg-muted">·</span>
           <span data-testid="calibre-delivery-reachability" className={`break-all ${reach.tone}`}>
             {reach.text}
             {!pulling && target?.checkedAt && (

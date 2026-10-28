@@ -366,7 +366,9 @@ describe('WantedPage list state in the URL', () => {
   it('keeps the search and the excluded toggle in the URL', async () => {
     renderAt(['/wanted'], <Route path="/wanted" element={<WantedPage />} />)
     await screen.findByText('Book 1')
-    fireEvent.click(screen.getByLabelText('Show excluded'))
+    // Show excluded is a facet behind Filters now, not a loose checkbox.
+    fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Show excluded' }))
     await waitFor(() => expect(current().search).toBe('?excluded=1'))
     fireEvent.change(screen.getByPlaceholderText('Search wanted'), { target: { value: 'Book 7' } })
     await waitFor(() => expect(current()).toMatchObject({ search: '?excluded=1&q=Book+7', type: 'REPLACE' }))
@@ -374,7 +376,11 @@ describe('WantedPage list state in the URL', () => {
     await goTo('/book/7')
     await goBack()
     expect(await screen.findByPlaceholderText('Search wanted')).toHaveValue('Book 7')
-    expect(screen.getByLabelText('Show excluded')).toBeChecked()
+    // The applied facet is a chip, so it is visible without opening Filters,
+    // and the facet itself is still on inside the popover.
+    expect(screen.getByRole('button', { name: /Show excluded/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
+    expect(screen.getByRole('radio', { name: 'Show excluded' })).toBeChecked()
     expect(vi.mocked(api.listWantedPage)).toHaveBeenLastCalledWith(expect.objectContaining({ includeExcluded: true, search: 'Book 7' }))
   })
 })

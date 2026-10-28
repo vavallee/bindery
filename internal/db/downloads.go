@@ -144,14 +144,36 @@ func (r *DownloadRepo) ListByStatuses(ctx context.Context, statuses ...models.Do
 	if len(statuses) == 0 {
 		return nil, nil
 	}
+	in, args := statusIn(statuses)
+	return r.query(ctx,
+		"SELECT "+downloadSelectColumns+" FROM downloads WHERE "+in+" ORDER BY added_at DESC",
+		args...)
+}
+
+// statusIn is the "status IN (?,…)" predicate for statuses, with its
+// arguments. statuses must not be empty.
+func statusIn(statuses []models.DownloadState) (string, []any) {
 	args := make([]any, len(statuses))
 	for i, st := range statuses {
 		args[i] = st
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(statuses)), ",")
-	return r.query(ctx,
-		"SELECT "+downloadSelectColumns+" FROM downloads WHERE status IN ("+placeholders+") ORDER BY added_at DESC",
-		args...)
+	return "status IN (" + strings.TrimSuffix(strings.Repeat("?,", len(statuses)), ",") + ")", args
+}
+
+// CountByStatuses counts the downloads in any of the given states, scoped to
+// one owner when userID is non zero (strict equality, as ListActiveByUser).
+// It is the nav badge's query: one COUNT, no rows loaded.
+func (r *DownloadRepo) CountByStatuses(ctx context.Context, userID int64, statuses ...models.DownloadState) (int, error) {
+	if len(statuses) == 0 {
+		return 0, nil
+	}
+	in, args := statusIn(statuses)
+	where, args := QueryScope("WHERE "+in, userID, args...)
+	var n int
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM downloads "+where, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count downloads by status: %w", err)
+	}
+	return n, nil
 }
 
 func (r *DownloadRepo) ListByStatusAndUser(ctx context.Context, status models.DownloadState, userID int64) ([]models.Download, error) {

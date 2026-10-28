@@ -406,6 +406,12 @@ func TestWriteAddBookError_Statuses(t *testing.T) {
 			"existingBookId": existing.ID,
 			"existingBook":   existing,
 		}},
+		{"book in library, format widened", &bookInLibraryError{Book: existing, FormatWidened: true}, http.StatusConflict, map[string]any{
+			"error":          "book already in your library; change its format or monitoring from the book page",
+			"existingBookId": existing.ID,
+			"existingBook":   existing,
+			"formatWidened":  true,
+		}},
 		{"primary provider unavailable", &primaryProviderUnavailableError{Primary: "hardcover"}, http.StatusServiceUnavailable,
 			errorBody("The primary metadata provider (hardcover) did not answer, so no record from another provider was used. Please try again once it responds.")},
 		{"book lookup failed", &addBookLookupError{Err: errors.New("look up book metadata: boom")}, http.StatusBadGateway,

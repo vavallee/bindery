@@ -196,7 +196,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                   rows={4}
                   className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
                 />
-                <p className="text-xs text-slate-600 dark:text-zinc-500 mt-1">{t('editAuthorModal.bioHint', 'A bio you write here stays as you wrote it: no refresh replaces it. Clear it to let the metadata provider fill it again.')}</p>
+                <p className="text-xs text-fg-muted mt-1">{t('editAuthorModal.bioHint', 'A bio you write here stays as you wrote it: no refresh replaces it. Clear it to let the metadata provider fill it again.')}</p>
               </div>
               {qualityProfiles.length > 0 && (
                 <div className="mb-3">

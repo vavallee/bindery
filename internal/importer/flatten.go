@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/dirperm"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -208,7 +209,7 @@ func flattenAudiobookDirFiltered(ctx context.Context, mode, srcRoot, destDir str
 	if _, statErr := os.Stat(destDir); statErr == nil {
 		return fmt.Errorf("destination already exists: %s", destDir)
 	}
-	if err := os.MkdirAll(destDir, 0o750); err != nil {
+	if err := os.MkdirAll(destDir, dirperm.Library()); err != nil {
 		return fmt.Errorf("create dest dir: %w", err)
 	}
 

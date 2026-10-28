@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/dirperm"
 	"github.com/vavallee/bindery/internal/importer/formatsniff"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -452,7 +453,7 @@ func (s *Scanner) applyOne(ctx context.Context, fileID int64) ReorganizeMove {
 // (atomic commit + rollback across a same-fs rename or cross-fs copy), and
 // MoveDirCtx for an audiobook folder.
 func (s *Scanner) moveTrackedFile(ctx context.Context, file models.BookFile, dest string) error {
-	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dest), dirperm.Library()); err != nil {
 		return fmt.Errorf("create destination directory: %w", err)
 	}
 

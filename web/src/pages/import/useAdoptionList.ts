@@ -102,14 +102,18 @@ export function useAdoptionList() {
 
   const setFilter = useCallback((patch: Partial<AdoptionFilters>) => setFilters(f => ({ ...f, ...patch })), [])
 
-  const adopt = useCallback(async (item: AdoptionItem, target: AdoptTarget, preview: AdoptionBookRef | null) => {
+  // Resolves true when the server adopted the book. A failure is shown on the
+  // row; the result lets a batch stop at the first one.
+  const adopt = useCallback(async (item: AdoptionItem, target: AdoptTarget, preview: AdoptionBookRef | null): Promise<boolean> => {
     dispatch({ type: 'adoptRequested', id: item.id, preview })
     try {
       const updated = await api.adoptUnit(item.id, target)
       dispatch({ type: 'adoptSucceeded', id: item.id, item: updated })
       void refreshSummary()
+      return true
     } catch (e) {
       dispatch({ type: 'requestFailed', id: item.id, error: message(e, t('adoption.errors.adoptFailed', 'Could not adopt this book')), revertTo: null })
+      return false
     }
   }, [refreshSummary]) // eslint-disable-line react-hooks/exhaustive-deps
 

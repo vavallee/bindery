@@ -86,3 +86,57 @@ func TestMiddleware_UnreadableSessionNotElevatedByMode(t *testing.T) {
 		}
 	}
 }
+
+// TestMiddleware_AdminByAuthModeMarksOnlyTheModeGrant: the flag is set when a
+// caller holds the admin role only because the auth mode admits it, and never
+// for an admin's own session or the API key, whatever the mode (#3337).
+func TestMiddleware_AdminByAuthModeMarksOnlyTheModeGrant(t *testing.T) {
+	cookie, err := SignSession(testSecret32, 42, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name       string
+		mode       Mode
+		storedRole string // role of the session's user; "" sends no cookie
+		apiKey     bool
+		want       bool
+	}{
+		{"local-only, no session", ModeLocalOnly, "", false, true},
+		{"disabled, no session", ModeDisabled, "", false, true},
+		{"local-only, user session raised by the mode", ModeLocalOnly, RoleUser, false, true},
+		{"local-only, admin session", ModeLocalOnly, RoleAdmin, false, false},
+		{"disabled, admin session", ModeDisabled, RoleAdmin, false, false},
+		{"enabled, admin session", ModeEnabled, RoleAdmin, false, false},
+		{"local-only, API key", ModeLocalOnly, "", true, false},
+		{"disabled, API key", ModeDisabled, "", true, false},
+		{"local-only, user session with the API key", ModeLocalOnly, RoleUser, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &roleProvider{fakeProvider: &fakeProvider{mode: tc.mode, secret: testSecret32, apiKey: "the-key", operatorUserID: 1}, role: tc.storedRole}
+			var reached, byMode bool
+			var role string
+			h := Middleware(p)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached, role, byMode = true, UserRoleFromContext(r.Context()), AdminByAuthMode(r.Context())
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/author", nil)
+			req.RemoteAddr = "127.0.0.1:5555"
+			req.Host = "localhost:8787" // the login free grant only answers names the install recognises
+			if tc.storedRole != "" {
+				req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: cookie})
+			}
+			if tc.apiKey {
+				req.Header.Set("X-Api-Key", "the-key")
+			}
+			h.ServeHTTP(httptest.NewRecorder(), req)
+			if !reached || role != RoleAdmin {
+				t.Fatalf("reached %v with role %q, want the admin role", reached, role)
+			}
+			if byMode != tc.want {
+				t.Errorf("AdminByAuthMode = %v, want %v", byMode, tc.want)
+			}
+		})
+	}
+}

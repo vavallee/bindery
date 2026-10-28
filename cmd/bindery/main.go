@@ -928,6 +928,9 @@ func main() {
 				HardcoverPausedUntil            string `json:"hardcoverPausedUntil,omitempty"`
 				HardcoverTokenRejected          bool   `json:"hardcoverTokenRejected,omitempty"`
 				EnhancedHardcoverDisabledReason string `json:"enhancedHardcoverDisabledReason,omitempty"`
+				// Features is optional API behaviour integrations detect
+				// before relying on it (requestsForUser: #3337).
+				Features api.SystemFeatures `json:"features"`
 			}{
 				Version:                         version,
 				Commit:                          commit,
@@ -939,6 +942,7 @@ func main() {
 				HardcoverPausedUntil:            pausedUntil,
 				HardcoverTokenRejected:          tokenRejected,
 				EnhancedHardcoverDisabledReason: hardcoverState.EnhancedHardcoverDisabledReason,
+				Features:                        api.CurrentSystemFeatures(),
 			})
 		})
 
@@ -1039,6 +1043,7 @@ func main() {
 
 		// Queue
 		r.Get("/queue", queueHandler.List)
+		r.Get("/queue/failed-count", queueHandler.FailedCount)
 		r.Post("/queue/grab", queueHandler.Grab)
 		r.Post("/queue/{id}/retry-import", queueHandler.RetryImport)
 		// Retry the download itself: re-sends the release the row holds to the
@@ -1280,6 +1285,8 @@ func main() {
 		r.Get("/series", opdsHandler.Series)
 		r.Get("/series/{id}", opdsHandler.OneSeries)
 		r.Get("/recent", opdsHandler.Recent)
+		r.Get("/opensearch.xml", opdsHandler.OpenSearch)
+		r.Get("/search", opdsHandler.Search)
 		r.Get("/book/{id}", opdsHandler.Book)
 		r.Get("/book/{id}/file", opdsHandler.DownloadFile)
 	})
