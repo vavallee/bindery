@@ -784,6 +784,12 @@ func searchFormatKey(mediaType string) string {
 // cached for 24 hours. A WithCacheBypass context skips the cached copy and
 // replaces it with the provider's answer (#2601).
 func (a *aggregatorCore) GetAuthor(ctx context.Context, foreignID string) (*models.Author, error) {
+	// A synthetic Google Books author has no upstream record. (nil, nil) is the
+	// "nobody owns this ID" answer callers already handle: the refresh skips it
+	// and Add Book builds the author from the name it was given.
+	if IsSyntheticAuthorID(foreignID) {
+		return nil, nil
+	}
 	provider := a.providerForForeignID(foreignID)
 	if provider == nil {
 		return nil, nil

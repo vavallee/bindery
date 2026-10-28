@@ -1,0 +1,2 @@
+### Fixed
+- **A book only Google Books knows can be added again** (#3538, thanks ngoc-minh-do). Add Book used to answer "Author metadata unavailable" for a Google Books title whose author OpenLibrary has never heard of, and the "Add Author by name" it pointed to could not create the author either. Bindery now makes the author from the name on the volume and adds the book. A second book by the same author reuses that author. Adding an author from a typed name on the Authors page is still not possible for an author no provider knows.

@@ -11,6 +11,7 @@ import (
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -278,6 +279,15 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 				// The canonical lookup is OpenLibrary's, which is a fallback
 				// when another provider is primary, so the same guard applies.
 				req.ForeignAuthorID = canonical.ForeignID
+			} else if cErr == nil && canonical == nil && !outcome.PrimaryFailed && strings.HasPrefix(req.ForeignBookID, "gb:") {
+				// A Google Books title that nobody else knows (#3538). The
+				// canonical lookup ANSWERED and found no such author, so the
+				// name from the volume is all there is: key the author on it,
+				// the way DNB does with dnb:author:<slug>. A lookup that
+				// failed (cErr) or found someone it was not allowed to bind
+				// (canonical != nil) is not that, and falls through to the
+				// refusal below. An unusable name gives "" and refuses too.
+				req.ForeignAuthorID = metadata.SyntheticGoogleBooksAuthorID(req.AuthorName)
 			}
 		}
 		if req.ForeignAuthorID == "" && outcome.PrimaryFailed {

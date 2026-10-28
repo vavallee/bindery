@@ -771,6 +771,14 @@ The error tells you which side failed:
 
 **On token formats:** Hardcover issues `hc_pat_` personal access tokens alongside the older JWTs, and **both work**. Bindery sends whatever you save as `Authorization: Bearer <token>`, which is the scheme Hardcover accepts for either format, so there is nothing to configure per format. Pasting the whole header is fine too: a leading `Bearer ` or `Authorization: ` is stripped before the token is stored. Verified against the live API on 2026-08-24, a made up `hc_pat_...` value comes back as `401 invalid_token`, so a PAT that fails with 401 is a token to reissue, while a PAT that fails with 500 is an outage to wait out.
 
+## A Google Books title says "Author metadata unavailable" when I add it
+
+Google Books gives a volume an author name but no author id, so Add Book normally borrows the author from OpenLibrary (or one already in your library, matched by name). A recent self published book can be on Google Books and nowhere else, so there is no one to borrow from.
+
+When that happens Bindery now creates the author itself, with an id built from the name (`gb:author:owen-brackett`), and adds the book under it. The same name always gives the same id, and an author you already have with that name is reused first, so a second book by the same person lands on the same author. Because Google Books cannot list an author's other works, refreshing such an author brings nothing in from it and removes nothing. Add the author's other Google Books titles one at a time.
+
+You still get the "Author metadata unavailable" message when the volume is not from Google Books, when its author name has no letters or digits in it, or when the OpenLibrary lookup itself failed (in which case try again in a minute, so the real OpenLibrary author is not skipped). Adding an author from a typed name on the Authors page is not supported for authors that no provider knows.
+
 ## Why does the metadata button say "Link metadata" on some authors and "Find better metadata" on others?
 
 The button is on every author's page. Only its wording changes, and the wording tells you what Bindery thinks it is doing:

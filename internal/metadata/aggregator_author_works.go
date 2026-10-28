@@ -40,6 +40,11 @@ type AuthorWorksSnapshot struct {
 // reconciliation: stale cached data or a failed supplemental enricher is not a
 // safe basis for deleting local rows.
 func (a *aggregatorCore) GetPrimaryAuthorWorksSnapshot(ctx context.Context, authorForeignID string) (AuthorWorksSnapshot, error) {
+	if IsSyntheticAuthorID(authorForeignID) {
+		// No catalogue to read, and an empty answer must never read as "every
+		// local work was removed upstream", so it is reported as partial.
+		return AuthorWorksSnapshot{Provider: "googlebooks", Complete: false}, nil
+	}
 	provider := a.providerForForeignID(authorForeignID)
 	if provider == nil {
 		return AuthorWorksSnapshot{}, errors.New("metadata provider is not available for this author")
@@ -507,6 +512,12 @@ func appendNewAuthorWorks(base, fresh []models.Book) []models.Book {
 // primaryAuthorWorksSource resolves the provider that owns authorForeignID,
 // bound to the live configuration, and the raw works cache key for it.
 func (a *aggregatorCore) primaryAuthorWorksSource(ctx context.Context, authorForeignID string) (Provider, string, string) {
+	if IsSyntheticAuthorID(authorForeignID) {
+		// No provider owns a synthetic Google Books author, so there are no
+		// primary works. A nil provider is the empty answer every caller of
+		// this already handles, and nothing is cached under it.
+		return nil, "", ""
+	}
 	provider := a.providerForForeignID(authorForeignID)
 	if provider == nil {
 		return nil, "", ""
