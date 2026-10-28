@@ -4,22 +4,25 @@ import { api, HistoryEvent } from '../api/client'
 import BookAuthorLink from '../components/BookAuthorLink'
 import Pagination from '../components/Pagination'
 import { useServerPagination } from '../components/usePagination'
-import { dangerLink } from '../components/buttons'
+import { btn, dangerLink } from '../components/buttons'
 import { formatBytes } from '../util/format'
+import { SkeletonRows } from '../components/Skeleton'
+import EmptyState from '../components/EmptyState'
+import { decodeEntities } from '../util/decodeEntities'
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
   grabbed: 'bg-blue-500/20 text-blue-700 dark:text-blue-400',
   bookImported: 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-400',
   imported: 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-400',
-  downloadFailed: 'bg-red-500/20 text-red-700 dark:text-red-400',
-  importFailed: 'bg-red-500/20 text-red-700 dark:text-red-400',
-  deleted: 'bg-red-500/20 text-red-700 dark:text-red-400',
+  downloadFailed: 'bg-red-500/20 text-red-800 dark:text-red-400',
+  importFailed: 'bg-red-500/20 text-red-800 dark:text-red-400',
+  deleted: 'bg-red-500/20 text-red-800 dark:text-red-400',
   renamed: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
   ignored: 'bg-slate-300 dark:bg-zinc-700 text-fg-muted dark:text-zinc-300',
   bookFileRenamed: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
   // Amber rather than green: the import worked, but the file turned out not to
   // be the edition the catalogue described, which is worth a second look.
-  bookLanguageCorrected: 'bg-amber-500/20 text-amber-600 dark:text-amber-400',
+  bookLanguageCorrected: 'bg-amber-500/20 text-amber-800 dark:text-amber-400',
 }
 
 // humanizeEventType turns a camelCase event enum into a Title Case fallback
@@ -174,15 +177,19 @@ export default function HistoryPage() {
   // applied by the API and `total` drives the pager, so history older than the
   // server's default page of 100 stays reachable. Previously the response was
   // never paged past offset 0 and the client pager sliced those same 100 rows.
+  // A failed load is said as one. Rendered as the empty state it read "No
+  // history events found", which is a claim about the library.
+  const [loadError, setLoadError] = useState<string | null>(null)
   const load = useCallback(() => {
     setLoading(true)
+    setLoadError(null)
     api.listHistory({
       eventType: typeFilter || undefined,
       limit: pageSize,
       offset: (page - 1) * pageSize,
     })
       .then(({ items, total }) => { setEvents(items); setTotal(total) })
-      .catch(console.error)
+      .catch(err => setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false))
   }, [typeFilter, page, pageSize])
 
@@ -250,12 +257,22 @@ export default function HistoryPage() {
       </div>
 
       {loading ? (
-        <div className="text-fg-muted">{t('common.loading')}</div>
+        <SkeletonRows />
+      ) : loadError ? (
+        <EmptyState
+          title={t('history.loadFailed', 'Could not load history')}
+          hint={loadError}
+          action={<button type="button" onClick={load} className={btn.secondary}>{t('common.retry', 'Retry')}</button>}
+        />
+      ) : events.length === 0 && typeFilter ? (
+        // The filter hides every event, which is not an empty history.
+        <EmptyState
+          variant="no-match"
+          title={t('history.noMatch', { type: eventLabel(typeFilter), defaultValue: 'No {{type}} events' })}
+          action={<button type="button" onClick={() => handleFilterChange('')} className={btn.secondary}>{t('common.clearFilter', 'Clear filter')}</button>}
+        />
       ) : events.length === 0 ? (
-        <div className="text-center py-16 text-fg-muted">
-          <p>{t('history.empty')}</p>
-          <p className="mt-1 text-sm">{t('history.emptyHint')}</p>
-        </div>
+        <EmptyState title={t('history.empty')} hint={t('history.emptyHint')} />
       ) : (
         <>
           {/* Desktop table */}
@@ -287,8 +304,8 @@ export default function HistoryPage() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-slate-800 dark:text-zinc-200 max-w-md">
-                          <div className="truncate" title={event.sourceTitle}>
-                            {event.sourceTitle || <span className="text-fg-muted">—</span>}
+                          <div className="truncate" title={decodeEntities(event.sourceTitle)}>
+                            {decodeEntities(event.sourceTitle) || <span className="text-fg-muted">—</span>}
                           </div>
                           <BookAuthorLink book={event.book} />
                           {detail && (
@@ -365,7 +382,7 @@ export default function HistoryPage() {
                     <span className="text-[10px] text-fg-muted">{formatDate(event.createdAt)}</span>
                   </div>
                   <p className="text-sm text-slate-800 dark:text-zinc-200 [overflow-wrap:anywhere] mb-1">
-                    {event.sourceTitle || <span className="text-fg-muted">—</span>}
+                    {decodeEntities(event.sourceTitle) || <span className="text-fg-muted">—</span>}
                   </p>
                   <BookAuthorLink book={event.book} />
                   {detail && (

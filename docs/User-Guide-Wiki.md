@@ -39,8 +39,9 @@ software identify and file it. Bindery does not work that way, because books
 have no TVDB equivalent and no scene naming convention — reverse-identifying
 an arbitrary release is unreliable. The escape hatches:
 
-- **Search Indexers** (the magnifier icon in the header) — free-text search
-  across all your indexers; any result can be grabbed.
+- **Search Indexers** (`/search`) — free-text search across all your
+  indexers; any result can be grabbed. Reach it from the header search: type
+  the text and pick *Search indexers for "…"*.
 - **Import** (`/import`): **In your library** lists the books a library scan
   could not match, for you to adopt in place ([Adopting files already in your
   library](#adopting-files-already-in-your-library)). **From a folder** points
@@ -58,19 +59,23 @@ only at what is already in Bindery. As you type it lists matching authors
 (including pen names), books (by title or author) and series, and selecting a
 row opens it (a series row opens the Series page with that series expanded and
 scrolled into view; so does a series heading on an author page that is grouped
-by series). The last row is always *Add "…" to Bindery*, which
+by series). Below the matches, *Search indexers for "…"* opens
+indexer search with the same text and runs it. The last row is always *Add "…" to Bindery*, which
 opens the **Add to library** dialog with the same text already searched against
 your metadata providers, so a miss in the library turns into an add without
 retyping. Pressing Enter with nothing highlighted opens that dialog too, even
-when the list has library hits; use the arrow keys to pick a hit instead. It
-does not query indexers; that stays with the magnifier.
+when the list has library hits; use the arrow keys to pick a hit instead. The
+library search itself never queries indexers; only that one row does.
 
 **Where the pages live.** The top bar carries five entries. **Library** holds
 Authors, Books and Series; **Activity** holds Wanted, Queue and History (plus
 Requests for an admin); **Import**, **Calendar** and **Discover** are pages of
 their own. Opening a group lands on its first page and a row of tabs above the
 content switches between the rest, so every page keeps the address it always
-had. On a phone the menu lists the same pages, indented under their group.
+had (`/activity` itself goes to Wanted). For an admin, Import carries the
+number of books waiting on a decision, and Activity and its Queue tab carry
+the number of failed downloads, in red. On a phone the menu lists the same
+pages, indented under their group.
 
 ## Five rules that answer most questions
 
@@ -500,6 +505,16 @@ a CWA ingest folder, Grimmory's BookDrop, an Audiobookshelf library scan,
 webhooks. The three ways of reaching Calibre or CWA are easy to mix up; the
 [Calibre integration guide](Calibre-Integration-Wiki.md) tells them apart.
 
+**The release name's language is read at search time.** Bindery looks for a
+language name or a local word like "Hörbuch" as a whole word in the release
+name, and also at the edge of a name joined to another word by capital
+letters, so `Dungeon Crawler Carl_EspañolNeutro m4b` counts as Spanish. Bare
+two letter codes ("it", "de", "no") are only read in the scene suffix of a
+name, never inside a joined word, because they are ordinary words too. A
+joined name whose first or last part is a language word (for example
+`DutchOven` or `FrenchPress`) is treated like its spaced form, so an English
+only profile drops those as well.
+
 **The file's language is checked at import.** The language filter at grab
 time can only read the release name, so a release that does not say its
 language gets through it. When the download arrives, Bindery reads the
@@ -548,7 +563,23 @@ profile does not allow it. Only downloads are checked: a library scan,
 adopting files already in your library, and books imported before this check
 existed are left alone. With the import mode set to **External**, Bindery
 hands the download to your other tool without opening its files, so nothing
-is checked there either. Audiobooks are not checked for language.
+is checked there either.
+
+**Audiobooks are checked too, from their tags.** Audio files rarely say what
+language they are in, so this check only acts on a file that does. Bindery
+reads the language an ID3 `TLAN` frame, a `TXXX` frame described as `LANGUAGE`,
+an MP4 freeform `LANGUAGE` atom (m4b, m4a) or a Vorbis `LANGUAGE` comment
+(FLAC, Ogg, Opus) declares, and compares it with the same allowed languages as
+above, spelled any way you like (`spa`, `es`, `Spanish`, `es-MX`). A file with
+no language tag, or one that is not a specific language, says nothing and never
+causes a rejection. When the tracks disagree the majority of the tracks that
+declare a language decides, so one mistagged track does not block a release; a
+tie imports. When most of them are in a language the profile does not allow, the
+release is rejected exactly as an EPUB is: nothing is placed, the release goes
+on the Blocklist and the book stays Wanted. Manual import and **Match to book**
+are never refused. There is no separate setting for this; it follows the
+allowed languages on the metadata profile, and a profile that allows any
+language checks nothing.
 
 **The file's own title and author are checked at import (ebooks).** The release
 name can say one book while the EPUB inside is another, and without a check that

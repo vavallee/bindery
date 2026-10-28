@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -8,6 +9,12 @@ import (
 	"strings"
 	"testing"
 )
+
+// captureLogger returns an slog.Logger writing Warn-and-above into buf, for
+// tests that assert on the warnings Validate emits.
+func captureLogger(buf *bytes.Buffer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+}
 
 // discardLogger returns an slog.Logger that discards all output, suitable for
 // tests that only care about the returned error.
@@ -282,5 +289,38 @@ func TestCheckDir_NotWritableNamesProcessIdentity(t *testing.T) {
 		if !strings.Contains(h.Reason, want) {
 			t.Errorf("reason %q should contain %q", h.Reason, want)
 		}
+	}
+}
+
+// TestValidate_DirMode warns when BINDERY_DIR_MODE is set to an
+// unrecognised value, and stays quiet for valid and unset values.
+func TestValidate_DirMode(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name    string
+		value   string
+		wantMsg bool
+	}{
+		{"unset", "", false},
+		{"valid mode", "0755", false},
+		{"valid mode without leading zero", "755", false},
+		{"go-style 0o prefix", "0o755", true},
+		{"group-write mode dropped in the umask trim", "0775", true},
+		{"unlisted octal", "0774", true},
+		{"junk", "banana", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("BINDERY_DIR_MODE", tc.value)
+			var buf bytes.Buffer
+			cfg := &Config{LibraryDir: dir}
+			if err := cfg.Validate(captureLogger(&buf)); err != nil {
+				t.Fatalf("Validate returned an error: %v", err)
+			}
+			got := strings.Contains(buf.String(), "BINDERY_DIR_MODE")
+			if got != tc.wantMsg {
+				t.Fatalf("BINDERY_DIR_MODE=%q: warning present = %v, want %v (log: %q)", tc.value, got, tc.wantMsg, buf.String())
+			}
+		})
 	}
 }

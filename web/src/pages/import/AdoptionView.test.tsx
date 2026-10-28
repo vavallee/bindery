@@ -417,3 +417,158 @@ describe('AdoptionView', () => {
     expect(within(inner).queryByRole('button', { name: 'Add author' })).toBeNull()
   })
 })
+
+describe('AdoptionView confidence', () => {
+  // "Staat van Orde" was offered as a Possible match for "Star Wars
+  // Battlefront II", at the same weight as a near miss.
+  it('does not offer a suggestion below the weak-match score, and lists it collapsed in the editor', async () => {
+    const miss = item({
+      id: 70, parsedTitle: 'Staat van Orde', relPath: 'Andy Weir/Staat van Orde.epub',
+      candidates: [{ book: { ...martian, title: 'Star Wars Battlefront II' }, score: 0.31 }], topScore: 0.31,
+    })
+    serve(listResponse([miss]))
+    const table = await renderView()
+    const row = within(table).getByRole('row', { name: 'Staat van Orde' })
+    expect(within(row).queryByText('Possible match')).toBeNull()
+    expect(within(row).getByText('No good match')).toBeInTheDocument()
+
+    fireEvent.click(within(row).getByRole('button', { name: 'See 1 suggestion' }))
+    const editor = await screen.findByRole('region', { name: 'Which book is Staat van Orde?' })
+    expect(within(editor).getByText('Low-confidence suggestions (1)')).toBeInTheDocument()
+    // Never chosen for the reader.
+    expect(within(editor).getByRole('radio', { name: /Star Wars Battlefront II/ })).not.toBeChecked()
+  })
+
+  it('confirms every strong match on the page in one step, after asking', async () => {
+    const second = item({
+      id: 5, parsedTitle: 'Project Hail Mary', relPath: 'Andy Weir/Project Hail Mary.epub',
+      candidates: [{ book: { ...martian, id: 43, title: 'Project Hail Mary' }, score: 0.99 }], topScore: 0.99,
+    })
+    serve(listResponse([suggested, second, weak]))
+    const adopted: string[] = []
+    server.use(http.post(apiUrl('/library/unmatched/:id/adopt'), async ({ params, request }) => {
+      adopted.push(`${String(params.id)}:${JSON.stringify(await request.json())}`)
+      return HttpResponse.json({ ...suggested, id: Number(params.id), state: 'adopted' })
+    }))
+    await renderView()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm 2 strong matches' }))
+    const dialog = await screen.findByTestId('confirm-dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm all' }))
+    await waitFor(() => expect(adopted).toEqual(['1:{"bookId":42}', '5:{"bookId":43}']))
+    expect(await screen.findByTestId('strong-result')).toHaveTextContent('Adopted 2.')
+  })
+
+  // Each adopt moves files: the dialog says which file goes to which book.
+  it('names every file and the book it goes to in the confirmation', async () => {
+    const second = item({
+      id: 5, parsedTitle: 'Project Hail Mary', relPath: 'Andy Weir/Project Hail Mary.epub',
+      candidates: [{ book: { ...martian, id: 43, title: 'Project Hail Mary' }, score: 0.99 }], topScore: 0.99,
+    })
+    serve(listResponse([suggested, second]))
+    await renderView()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm 2 strong matches' }))
+    const dialog = await screen.findByTestId('confirm-dialog')
+    const pairs = within(within(dialog).getByRole('list', { name: 'Files and the books they go to' })).getAllByRole('listitem')
+    expect(pairs.map(li => li.textContent)).toEqual([
+      'Andy Weir/The Martian.epub → goes to The Martian · Andy Weir',
+      'Andy Weir/Project Hail Mary.epub → goes to Project Hail Mary · Andy Weir',
+    ])
+  })
+
+  it('stops at the first failed adopt and says how far it got', async () => {
+    const second = item({
+      id: 5, parsedTitle: 'Project Hail Mary', relPath: 'Andy Weir/Project Hail Mary.epub',
+      candidates: [{ book: { ...martian, id: 43, title: 'Project Hail Mary' }, score: 0.99 }], topScore: 0.99,
+    })
+    const third = item({
+      id: 6, parsedTitle: 'Artemis', relPath: 'Andy Weir/Artemis.epub',
+      candidates: [{ book: { ...martian, id: 44, title: 'Artemis' }, score: 0.99 }], topScore: 0.99,
+    })
+    serve(listResponse([suggested, second, third]))
+    const tried: string[] = []
+    server.use(http.post(apiUrl('/library/unmatched/:id/adopt'), ({ params }) => {
+      tried.push(String(params.id))
+      if (params.id === '5') return HttpResponse.json({ error: 'already adopted' }, { status: 409 })
+      return HttpResponse.json({ ...suggested, id: Number(params.id), state: 'adopted' })
+    }))
+    await renderView()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm 3 strong matches' }))
+    fireEvent.click(within(await screen.findByTestId('confirm-dialog')).getByRole('button', { name: 'Confirm all' }))
+    expect(await screen.findByTestId('strong-result')).toHaveTextContent('Adopted 1 of 3, then stopped: Project Hail Mary could not be adopted. Its row says why.')
+    // Artemis was never sent.
+    expect(tried).toEqual(['1', '5'])
+  })
+
+  // A reload while the dialog is open can change what the row is. Each case
+  // is one re-check in the batch; without it the file would be adopted.
+  it.each([
+    ['its book became settled (imported)', { candidates: [{ book: { ...martian, id: 43, title: 'Project Hail Mary', status: 'imported' }, score: 0.99 }] }],
+    ['its top suggestion is a different book', { candidates: [{ book: { ...martian, id: 44, title: 'Artemis' }, score: 0.99 }] }],
+    ['it was ignored elsewhere', { state: 'ignored' as const }],
+  ])('skips a row whose %s after a reload', async (_case, change) => {
+    const second = item({
+      id: 5, parsedTitle: 'Project Hail Mary', relPath: 'Andy Weir/Project Hail Mary.epub',
+      candidates: [{ book: { ...martian, id: 43, title: 'Project Hail Mary' }, score: 0.99 }], topScore: 0.99,
+    })
+    let reloaded = false
+    server.use(
+      http.get(apiUrl('/library/unmatched'), () => HttpResponse.json(listResponse(reloaded ? [suggested, { ...second, ...change }] : [suggested, second]))),
+      http.get(apiUrl('/library/unmatched/summary'), () => HttpResponse.json({ ...listResponse([]).summary, scan: listResponse([]).scan })),
+    )
+    const tried: string[] = []
+    server.use(http.post(apiUrl('/library/unmatched/:id/adopt'), ({ params }) => {
+      tried.push(String(params.id))
+      return HttpResponse.json({ ...suggested, id: Number(params.id), state: 'adopted' })
+    }))
+    await renderView()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm 2 strong matches' }))
+    const dialog = await screen.findByTestId('confirm-dialog')
+    // A list reload lands while the dialog is open.
+    reloaded = true
+    fireEvent.change(screen.getByPlaceholderText('Search titles, authors and folders'), { target: { value: 'a' } })
+    await waitFor(() => expect(requestedURLs().filter(u => u.includes('/library/unmatched?')).length).toBeGreaterThan(1))
+    fireEvent.change(screen.getByPlaceholderText('Search titles, authors and folders'), { target: { value: '' } })
+    await waitFor(() => expect(requestedURLs().filter(u => u.includes('/library/unmatched?')).length).toBeGreaterThan(2))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm all' }))
+    expect(await screen.findByTestId('strong-result')).toHaveTextContent('Adopted 1. 1 changed since you confirmed and were left alone.')
+    expect(tried).toEqual(['1'])
+  })
+
+  it('lets the keyboard scroll the list of files in the confirmation', async () => {
+    serve(listResponse([suggested, item({
+      id: 5, parsedTitle: 'Project Hail Mary', relPath: 'Andy Weir/Project Hail Mary.epub',
+      candidates: [{ book: { ...martian, id: 43, title: 'Project Hail Mary' }, score: 0.99 }], topScore: 0.99,
+    })]))
+    await renderView()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm 2 strong matches' }))
+    const dialog = await screen.findByTestId('confirm-dialog')
+    expect(within(dialog).getByRole('list', { name: 'Files and the books they go to' })).toHaveAttribute('tabindex', '0')
+  })
+
+  it('leaves a row alone that was decided by hand while the dialog was open', async () => {
+    const second = item({
+      id: 5, parsedTitle: 'Project Hail Mary', relPath: 'Andy Weir/Project Hail Mary.epub',
+      candidates: [{ book: { ...martian, id: 43, title: 'Project Hail Mary' }, score: 0.99 }], topScore: 0.99,
+    })
+    serve(listResponse([suggested, second]))
+    const tried: string[] = []
+    server.use(
+      http.post(apiUrl('/library/unmatched/:id/adopt'), ({ params }) => {
+        tried.push(String(params.id))
+        return HttpResponse.json({ ...suggested, id: Number(params.id), state: 'adopted' })
+      }),
+      http.post(apiUrl('/library/unmatched/:id/ignore'), ({ params }) => HttpResponse.json({ ...second, id: Number(params.id), state: 'ignored' })),
+    )
+    const table = await renderView()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm 2 strong matches' }))
+    const dialog = await screen.findByTestId('confirm-dialog')
+    // Decide the second row by hand first, then confirm the batch.
+    const row = within(table).getByRole('row', { name: 'Project Hail Mary' })
+    fireEvent.click(within(row).getByRole('button', { name: 'More actions for Project Hail Mary' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Ignore' }))
+    await within(row).findByRole('button', { name: /Undo/ })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm all' }))
+    expect(await screen.findByTestId('strong-result')).toHaveTextContent('Adopted 1. 1 changed since you confirmed and were left alone.')
+    expect(tried).toEqual(['1'])
+  })
+})

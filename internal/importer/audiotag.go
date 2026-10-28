@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/dhowden/tag"
@@ -39,6 +41,13 @@ type AudioTags struct {
 	Artist      string
 	AlbumArtist string
 	Composer    string
+	// Language holds the language values the file's tags declare, as written
+	// ("eng", "es-MX", "Spanish"), joined with "/" (a string, not a slice, so
+	// AudioTags stays comparable): an ID3 TLAN frame, a TXXX LANGUAGE frame, an
+	// MP4 freeform LANGUAGE atom or a Vorbis/FLAC/Opus LANGUAGE comment. Empty
+	// for the many files that declare none. The post-download language check
+	// reads it (language_enforcement_audio.go).
+	Language string
 }
 
 // IsAudioTagFile reports whether path has an extension we attempt to read
@@ -79,6 +88,7 @@ func readAudioTagsFrom(r io.ReadSeeker) (AudioTags, error) {
 		Artist:      strings.TrimSpace(m.artist),
 		AlbumArtist: strings.TrimSpace(m.albumArtist),
 		Composer:    strings.TrimSpace(m.composer),
+		Language:    strings.Join(pickAudioLanguages(m.raw), "/"),
 	}, nil
 }
 
@@ -265,4 +275,52 @@ func isASIN(s string) bool {
 		}
 	}
 	return true
+}
+
+// pickAudioLanguages returns the language values declared in a raw tag map.
+//
+// The keys the tag library produces: ID3v2 text frames keep their frame id
+// ("TLAN", or "TLA" in v2.2, with a "_0" style suffix for duplicates); a TXXX
+// user text frame is a *tag.Comm whose Description names it; an MP4 freeform
+// atom surfaces under its sub-atom name (iTunes writes "LANGUAGE"); a Vorbis
+// comment key is lower cased ("language"). The MP4 "\xa9lan" atom is not read
+// by the library, so a file that carries only that has no language here. A
+// value may list several languages, separated by "/", ",", ";", "|" or NUL.
+func pickAudioLanguages(raw map[string]any) []string {
+	if raw == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(raw))
+	for k := range raw {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var out []string
+	for _, k := range keys {
+		base := k
+		if i := strings.LastIndex(base, "_"); i > 0 {
+			if _, err := strconv.Atoi(base[i+1:]); err == nil {
+				base = base[:i]
+			}
+		}
+		var val string
+		switch {
+		case strings.EqualFold(base, "TLAN"), strings.EqualFold(base, "TLA"), strings.EqualFold(base, "LANGUAGE"):
+			if s, ok := raw[k].(string); ok {
+				val = s
+			}
+		case strings.EqualFold(base, "TXXX"), strings.EqualFold(base, "TXX"):
+			if c, ok := raw[k].(*tag.Comm); ok && strings.EqualFold(strings.TrimSpace(c.Description), "LANGUAGE") {
+				val = c.Text
+			}
+		}
+		for _, part := range strings.FieldsFunc(val, func(r rune) bool {
+			return r == '/' || r == ',' || r == ';' || r == '|' || r == 0
+		}) {
+			if part = strings.TrimSpace(part); part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
 }

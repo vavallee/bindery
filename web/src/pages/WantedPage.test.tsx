@@ -6,6 +6,7 @@ import WantedPage from './WantedPage'
 import { api } from '../api/client'
 import { coverColorFor } from '../components/coverPalette'
 import type { Author, Book, Download, SearchResult } from '../api/client'
+import { acceptConfirm, clickBulkAction } from '../test-utils'
 
 vi.mock('../api/client', async importOriginal => {
   const actual = await importOriginal<typeof import('../api/client')>()
@@ -584,9 +585,14 @@ describe('WantedPage', () => {
     fireEvent.click(screen.getByTitle('Select Dune'))
     fireEvent.click(screen.getByTitle('Select Hyperion'))
 
-    const bulkBar = screen.getByText('2 selected').closest('div')
-    if (!bulkBar) throw new Error('Bulk action bar was not rendered')
-    fireEvent.click(within(bulkBar).getByRole('button', { name: label }))
+    clickBulkAction(label, action === 'blocklist' ? 'menu' : undefined)
+    // Blocklisting takes each book off Wanted for good, so it asks first and
+    // says how many.
+    if (action === 'blocklist') {
+      expect(within(await screen.findByTestId('confirm-dialog')).getByText(/wanted\.blocklistSelectedConfirm|Blocklist 2 books/)).toBeInTheDocument()
+      expect(api.bulkActionWanted).not.toHaveBeenCalled()
+      await acceptConfirm()
+    }
 
     await waitFor(() => expect(api.bulkActionWanted).toHaveBeenCalledWith([1, 2], action))
     await waitFor(() => expect(api.listWantedPage).toHaveBeenCalledTimes(2))
@@ -623,9 +629,7 @@ describe('WantedPage', () => {
     fireEvent.click(screen.getByTitle('Select Dune'))
     fireEvent.click(screen.getByTitle('Select Hyperion'))
 
-    const bulkBar = screen.getByText('2 selected').closest('div')
-    if (!bulkBar) throw new Error('Bulk action bar was not rendered')
-    fireEvent.click(within(bulkBar).getByRole('button', { name: 'Search' }))
+    clickBulkAction('Search')
 
     expect(await screen.findByText('No search was run. Automatic grabbing is off.')).toBeInTheDocument()
     // The selection survives, so flipping the setting and pressing Search
@@ -716,5 +720,32 @@ describe('WantedPage author monitoring hint', () => {
     await screen.findByText('Dune')
     const hints = screen.getAllByText('Author not monitored, so this is not searched automatically')
     expect(hints).toHaveLength(1)
+  })
+})
+
+describe('WantedPage filter bar', () => {
+  it('sends sort and format to the server, and searches the page on screen after confirming', async () => {
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([makeBook({ id: 1, title: 'Dune' }), makeBook({ id: 2, title: 'Hyperion' })]))
+    renderWantedPage()
+    await screen.findByRole('link', { name: 'Dune' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'books.sortLabel' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'books.sortNewest' }))
+    await waitFor(() => expect(api.listWantedPage).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'date-new' })))
+
+    fireEvent.click(screen.getByRole('button', { name: /^common\.filters/ }))
+    fireEvent.click(screen.getByRole('radio', { name: 'common.audiobook' }))
+    await waitFor(() => expect(api.listWantedPage).toHaveBeenLastCalledWith(expect.objectContaining({ mediaType: 'audiobook', sort: 'date-new' })))
+
+    // One page-level search instead of a green Search button per row. While
+    // it runs the row buttons are off, so no book is sent twice.
+    let finish: (v: unknown) => void = () => {}
+    vi.mocked(api.bulkActionWanted).mockImplementationOnce(() => new Promise(r => { finish = r }) as never)
+    fireEvent.click(await screen.findByRole('button', { name: 'wanted.searchPage' }))
+    await acceptConfirm()
+    await waitFor(() => expect(api.bulkActionWanted).toHaveBeenCalledWith([1, 2], 'search'))
+    for (const b of screen.getAllByRole('button', { name: 'Search' })) expect(b).toBeDisabled()
+    await act(async () => { finish({ results: {} }) })
+    await waitFor(() => { for (const b of screen.getAllByRole('button', { name: 'Search' })) expect(b).toBeEnabled() })
   })
 })

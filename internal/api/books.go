@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1179,9 +1180,10 @@ func sweepMatchesFormat(name, format string) bool {
 // time, which is what the Wanted page asks for so a library with thousands of
 // wanted books is not serialised on every 5 second poll.
 //
-// `search` and `offset` apply to the paged form only. `total` counts every
-// wanted book the caller can see that matches the filters (scope,
-// includeExcluded, search), ignoring limit and offset, so a page count can be
+// `search`, `mediaType`, `sort` and `offset` apply to the paged form only.
+// `total` counts every wanted book the caller can see that matches the
+// filters (scope, includeExcluded, search, mediaType), ignoring limit and
+// offset, so a page count can be
 // drawn from it. The paged form is ordered like the bare one (sort title)
 // until a search is typed, which ranks by relevance as the Books list does.
 func (h *BookHandler) ListWanted(w http.ResponseWriter, r *http.Request) {
@@ -1223,10 +1225,16 @@ func (h *BookHandler) ListWanted(w http.ResponseWriter, r *http.Request) {
 // listWantedPage is the paged form of ListWanted.
 func (h *BookHandler) listWantedPage(w http.ResponseWriter, r *http.Request, scope int64, includeExcluded bool) {
 	limit, offset := parseLimitOffset(r, bookListDefaultLimit, bookListMaxLimit)
+	// mediaType and sort are the Books list's own parameters, read and
+	// whitelisted by ListPageFiltered the same way, so the Wanted page can
+	// filter by format and order by date or author instead of offering
+	// thousands of rows in title order only.
 	books, total, err := h.books.ListPageFiltered(r.Context(), db.BookListFilter{
 		UserID:          scope,
 		Search:          strings.TrimSpace(r.URL.Query().Get("search")),
 		Status:          models.BookStatusWanted,
+		MediaType:       r.URL.Query().Get("mediaType"),
+		Sort:            r.URL.Query().Get("sort"),
 		IncludeExcluded: includeExcluded,
 	}, limit, offset)
 	if err != nil {
@@ -1345,6 +1353,9 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 	// Snapshot old identifiers for the audit trail before mutating the book.
 	oldProvider := book.MetadataProvider
 	oldForeignID := book.ForeignID
+	// The locks decide what the clearing step below may erase, so keep them
+	// past the wholesale lock reset.
+	lockedBefore := slices.Clone(book.LockedFields)
 
 	// Update the book with the new foreign ID and refreshed metadata.
 	// Preserve fields managed by the user or the import pipeline (status,
@@ -1382,6 +1393,10 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 	if upstream.Language != "" {
 		book.Language = upstream.Language
 	}
+	// A field the new record does not have must not keep the old record's
+	// value, or the book reads as if it came from the new one (#3104). Locked
+	// fields are the user's and stay.
+	cleared := book.ClearProviderFieldsMissingFrom(upstream, lockedBefore)
 	now := time.Now().UTC()
 	book.LastMetadataRefreshAt = &now
 
@@ -1401,6 +1416,10 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "This book changed while it was being rebound. Try again.", "reason": conflictReasonChanged})
 		return
 	}
+	if len(cleared) > 0 {
+		slog.Info("rebind: cleared fields the new record does not have", "bookId", book.ID, "fields", cleared)
+	}
+	book.Cleared = cleared
 	// The previous work's provider editions describe the wrong work: their
 	// ISBN would keep steering search, and their unique ids keep them from
 	// the book they belong to (#2781). Only when the identity actually
@@ -1445,12 +1464,13 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 	// by hand and visible in the activity history.
 	if h.history != nil {
 		type rebindData struct {
-			OldProvider  string `json:"oldProvider"`
-			OldForeignID string `json:"oldForeignId"`
-			NewProvider  string `json:"newProvider"`
-			NewForeignID string `json:"newForeignId"`
+			OldProvider  string   `json:"oldProvider"`
+			OldForeignID string   `json:"oldForeignId"`
+			NewProvider  string   `json:"newProvider"`
+			NewForeignID string   `json:"newForeignId"`
+			Cleared      []string `json:"cleared,omitempty"`
 		}
-		if data, jerr := json.Marshal(rebindData{oldProvider, oldForeignID, req.Provider, req.ForeignID}); jerr == nil {
+		if data, jerr := json.Marshal(rebindData{oldProvider, oldForeignID, req.Provider, req.ForeignID, cleared}); jerr == nil {
 			bookID := book.ID
 			_ = h.history.Create(r.Context(), &models.HistoryEvent{
 				BookID:      &bookID,

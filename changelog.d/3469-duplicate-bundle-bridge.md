@@ -1,2 +1,0 @@
-### Fixed
-- **Duplicate review no longer joins two different books through a bundle row** (#3469). A row like "Carrie; Christine" used to pull "Carrie" and "Christine" into one group, which hid the one click cleanup of each book's own empty duplicates. A row with a semicolon that holds two titles that do not match each other is now treated as a bundle and does not show up in any duplicate group. That means a bundle row, even one with files, is not listed in duplicate review at all, so look for it in the author's book list. Thanks to kennethp1015 for the report.

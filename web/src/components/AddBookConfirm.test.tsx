@@ -28,6 +28,7 @@ vi.mock('react-i18next', () => ({
         'addToLibrary.book.autoSearchHint': 'Try to grab the book automatically after adding it to wanted.',
         'addToLibrary.book.addFailed': 'Failed to add book',
         'addToLibrary.book.alreadyInLibrary': 'Already in your library',
+        'addToLibrary.book.formatWidenedInLibrary': 'Already in your library, and now tracked as both ebook and audiobook.',
         'addToLibrary.book.openExisting': 'Open existing book',
         'common.viewOnSource': 'View on {{source}} ↗',
         'common.links': 'Links',
@@ -184,6 +185,18 @@ describe('AddBookConfirm', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add book' }))
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Already in your library'))
     expect(screen.getByRole('alert')).not.toHaveTextContent('change its format or monitoring')
+    expect(screen.getByRole('link', { name: 'Open existing book' })).toHaveAttribute('href', '/book/42')
+    expect(onAdded).not.toHaveBeenCalled()
+  })
+
+  it('says the book is now tracked as both formats when the 409 reports formatWidened', async () => {
+    vi.mocked(api.addBook).mockRejectedValue(Object.assign(new Error('book already in your library'), {
+      status: 409,
+      body: { error: 'book already in your library; change its format or monitoring from the book page', existingBookId: 42, formatWidened: true },
+    }))
+    const { onAdded } = renderConfirm(dune)
+    fireEvent.click(screen.getByRole('button', { name: 'Add book' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('now tracked as both'))
     expect(screen.getByRole('link', { name: 'Open existing book' })).toHaveAttribute('href', '/book/42')
     expect(onAdded).not.toHaveBeenCalled()
   })

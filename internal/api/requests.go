@@ -31,8 +31,8 @@ const SettingRequestsMaxPendingPerUser = "requests.max_pending_per_user"
 // defaultRequestsMaxPendingPerUser applies when the setting is unset.
 const defaultRequestsMaxPendingPerUser = 25
 
-// Body caps. A create carries three short fields; an approval a handful of
-// ids and flags.
+// Body caps. A create carries three short fields (four on behalf of another
+// user); an approval a handful of ids and flags.
 const (
 	requestCreateMaxBody  = 4 << 10
 	requestApproveMaxBody = 8 << 10
@@ -310,6 +310,11 @@ type requestResponse struct {
 	Username       string `json:"username,omitempty"`
 	ResultBookID   *int64 `json:"resultBookId,omitempty"`
 	ResultAuthorID *int64 `json:"resultAuthorId,omitempty"`
+	// CreatedVia is "api_key" or "admin" when the request was made on the
+	// owner's behalf with forUser, and CreatedBy the admin's username for
+	// "admin". Both are absent when the owner asked themselves.
+	CreatedVia string `json:"createdVia,omitempty"`
+	CreatedBy  string `json:"createdBy,omitempty"`
 }
 
 type requestListResponse struct {
@@ -349,6 +354,8 @@ func toRequestResponse(req models.LibraryRequest, admin bool) requestResponse {
 		out.Username = req.OwnerUsername
 		out.ResultBookID = req.ResultBookID
 		out.ResultAuthorID = req.ResultAuthorID
+		out.CreatedVia = req.CreatedVia
+		out.CreatedBy = req.CreatedByUsername
 	}
 	return out
 }
@@ -423,6 +430,15 @@ func validRequestMediaType(m string) bool {
 // Create records a request. POST /requests with exactly
 // {"kind": "book"|"author", "foreignId": "...", "mediaType": ""|"ebook"|"audiobook"|"both"}.
 //
+// An admin session or the API key may add "forUser": <user id> to make the
+// request on that account's behalf (#3337). It is then stored exactly as if
+// that account had asked: they own it, it counts against their pending cap,
+// and their auto approval setting decides whether it waits for a human. The
+// row records who actually asked. Any other caller sending forUser gets 403,
+// including one the auth mode admits as admin without a sign in, since there
+// is no person or key to record. An admin naming their own id is simply
+// asking for themselves.
+//
 // The server looks the record up at the metadata provider and stores the
 // title and author it reports; nothing else in the stored payload comes from
 // the client. 409 with a sentence when the item is already in the library or
@@ -434,14 +450,47 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "Sign in as a person to make a request.")
 		return
 	}
+	isAdmin := auth.UserRoleFromContext(ctx) == auth.RoleAdmin
 	var body struct {
 		Kind      string `json:"kind"`
 		ForeignID string `json:"foreignId"`
 		MediaType string `json:"mediaType"`
+		// ForUser is kept raw so that its presence is what counts: a
+		// non-admin sending it is refused whatever its value, null included.
+		ForUser json.RawMessage `json:"forUser"`
 	}
 	if err := decodeStrict(w, r, requestCreateMaxBody, false, &body); err != nil {
+		if isAdmin {
+			writeErr(w, http.StatusBadRequest, "A request takes only kind, foreignId, mediaType and forUser.")
+			return
+		}
 		writeErr(w, http.StatusBadRequest, "A request takes only kind, foreignId and mediaType.")
 		return
+	}
+	// createdVia and createdBy record who asked when it was not the owner.
+	createdVia, createdBy := "", (*int64)(nil)
+	forOther := len(body.ForUser) > 0
+	if forOther {
+		if !isAdmin || auth.AdminByAuthMode(ctx) {
+			writeErr(w, http.StatusForbidden, "Only an admin session or the API key can make a request for another user.")
+			return
+		}
+		target, status, msg := h.resolveForUser(ctx, body.ForUser)
+		if msg != "" {
+			writeErr(w, status, msg)
+			return
+		}
+		switch {
+		case auth.AuthedViaAPIKey(ctx):
+			createdVia = models.RequestCreatedViaAPIKey
+		case target == owner:
+			// An admin naming their own id is asking for themselves.
+			forOther = false
+		default:
+			caller := owner
+			createdVia, createdBy = models.RequestCreatedViaAdmin, &caller
+		}
+		owner = target
 	}
 	// Every create can reach the metadata provider, and a failed lookup
 	// stores nothing, so the pending cap cannot stand in for a rate limit.
@@ -473,10 +522,14 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if existing != nil {
 		switch existing.Status {
 		case models.RequestStatusPending, models.RequestStatusApproving:
-			writeErr(w, http.StatusConflict, "You have already requested this. It is waiting for an admin.")
+			writeErr(w, http.StatusConflict, requestSentence(forOther,
+				"You have already requested this. It is waiting for an admin.",
+				"This user has already requested this. It is waiting for an admin."))
 			return
 		case models.RequestStatusDeclined:
-			writeErr(w, http.StatusConflict, "You requested this before and it was declined.")
+			writeErr(w, http.StatusConflict, requestSentence(forOther,
+				"You requested this before and it was declined.",
+				"This user requested this before and it was declined."))
 			return
 		}
 		// Approved earlier. Asking again only makes sense if it has since
@@ -495,7 +548,9 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// that holds under concurrency is enforced by the insert itself.
 	limit := h.maxPendingPerUser(ctx)
 	capReached := func() {
-		writeErr(w, http.StatusTooManyRequests, fmt.Sprintf("You have %d requests waiting for a decision, which is the limit. Wait for some to be decided before asking for more.", limit))
+		writeErr(w, http.StatusTooManyRequests, fmt.Sprintf(requestSentence(forOther,
+			"You have %d requests waiting for a decision, which is the limit. Wait for some to be decided before asking for more.",
+			"This user has %d requests waiting for a decision, which is the limit. Wait for some to be decided before asking for more."), limit))
 	}
 	if pending, err := h.requests.CountPendingByOwner(ctx, owner); err != nil {
 		writeServerError(w, r, err)
@@ -510,6 +565,7 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, status, msg)
 		return
 	}
+	req.CreatedVia, req.CreatedByUserID = createdVia, createdBy
 	// The provider may answer with a canonical record whose id differs from
 	// the one asked for, and that record may be in the library already.
 	if req.resolvedID != "" && req.resolvedID != body.ForeignID {
@@ -523,13 +579,13 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if reopen {
-		if err := h.requests.Reopen(ctx, existing.ID, owner, req.MediaType, req.PayloadJSON, limit); err != nil {
+		if err := h.requests.Reopen(ctx, existing.ID, owner, req.MediaType, req.PayloadJSON, createdVia, createdBy, limit); err != nil {
 			if errors.Is(err, db.ErrRequestCapReached) {
 				capReached()
 				return
 			}
 			if errors.Is(err, db.ErrRequestNotPending) {
-				writeErr(w, http.StatusConflict, "You have already requested this.")
+				writeErr(w, http.StatusConflict, requestSentence(forOther, "You have already requested this.", "This user has already requested this."))
 				return
 			}
 			writeServerError(w, r, err)
@@ -549,13 +605,45 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, db.ErrRequestExists) {
-			writeErr(w, http.StatusConflict, "You have already requested this.")
+			writeErr(w, http.StatusConflict, requestSentence(forOther, "You have already requested this.", "This user has already requested this."))
 			return
 		}
 		writeServerError(w, r, err)
 		return
 	}
 	h.writeCreated(ctx, w, req.LibraryRequest, owner)
+}
+
+// resolveForUser turns a create's forUser value into the id of the account the
+// request is for. It takes a user id only: ids are stable across renames, and
+// GET /auth/users already maps a username to one. On a refusal it returns the
+// status and sentence to answer.
+func (h *RequestHandler) resolveForUser(ctx context.Context, raw json.RawMessage) (int64, int, string) {
+	var id int64
+	if err := json.Unmarshal(raw, &id); err != nil || id <= 0 {
+		return 0, http.StatusBadRequest, "forUser must be a user id."
+	}
+	if h.users == nil {
+		return 0, http.StatusServiceUnavailable, "User lookups are not available right now."
+	}
+	u, err := h.users.GetByID(ctx, id)
+	if err != nil {
+		slog.Error("requests: forUser lookup failed", "user_id", id, "error", err)
+		return 0, http.StatusInternalServerError, "Could not look the user up."
+	}
+	if u == nil {
+		return 0, http.StatusUnprocessableEntity, "No user with that id."
+	}
+	return u.ID, 0, ""
+}
+
+// requestSentence picks a create's answer for whoever the request is for: the
+// caller (self), or the account an admin asked on behalf of (other).
+func requestSentence(forOther bool, self, other string) string {
+	if forOther {
+		return other
+	}
+	return self
 }
 
 // writeCreated answers a create with the request as it stands. If the owner's

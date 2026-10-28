@@ -15,7 +15,7 @@ import NamingTemplateField from './NamingTemplateField'
 import SaveButton from './SaveButton'
 import DatabaseCheckSection from './DatabaseCheckSection'
 import { useSaveResult } from './useSaveResult'
-import { slateFill, primaryFill } from '../../components/buttons'
+import { btn, slateFill, primaryFill } from '../../components/buttons'
 import { errorText } from '../../util/errorText'
 
 // Tab identifiers used by onNavigate for soft (no-reload) cross-tab links.
@@ -1114,7 +1114,9 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
             <button onClick={copyKey} className="px-3 py-2 bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 rounded text-xs font-medium">
               {apiKeyClipboard.status === 'copied' ? t('common.copied', 'Copied') : t('common.copy', 'Copy')}
             </button>
-            <button onClick={regenerate} disabled={regenerating} className="px-3 py-2 bg-amber-600 hover:bg-amber-500 rounded text-xs font-medium disabled:opacity-50">
+            {/* Outline, not a filled amber button: a destructive, rarely used
+                action should not be the loudest control on the tab. */}
+            <button onClick={regenerate} disabled={regenerating} className={`${btn.danger} px-3 py-2 text-xs`}>
               {regenerating ? '...' : t('settings.general.auth.regenerate', 'Regenerate')}
             </button>
           </div>
@@ -1133,7 +1135,7 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
           <p className="text-xs text-fg-muted mb-2">
             {t('settings.general.auth.sessionSecretHint', 'Signs session cookies. Rotating it generates a new secret while keeping the previous one valid for a rotation window, so existing logins are not dropped immediately. Rotate twice to fully invalidate sessions signed with the old secret.')}
           </p>
-          <button onClick={rotateSessionSecret} disabled={rotatingSecret} className="px-3 py-2 bg-amber-600 hover:bg-amber-500 rounded text-xs font-medium disabled:opacity-50">
+          <button onClick={rotateSessionSecret} disabled={rotatingSecret} className={`${btn.danger} px-3 py-2 text-xs`}>
             {rotatingSecret ? '...' : t('settings.general.auth.rotateSecret', 'Rotate session secret')}
           </button>
         </div>

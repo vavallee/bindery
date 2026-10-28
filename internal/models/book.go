@@ -128,6 +128,17 @@ type Book struct {
 	// the near-miss in #1724 that prompted the rename from ISBNs).
 	ProviderISBNs []string `json:"-"`
 
+	// Transport-only: the provider-owned fields (ProviderOwnedBookFields names)
+	// a single-book fetch could not determine, because a secondary call failed
+	// or the record never carries the field. A path that adopts the record must
+	// not read an empty value of one of these as "the record lacks it" (#3104).
+	// Never stored.
+	UnknownFields []string `json:"-"`
+
+	// Transport-only: the fields a rebind emptied because the new record had no
+	// value for them (#3104). Set on the Rebind response only; never stored.
+	Cleared []string `json:"cleared,omitempty"`
+
 	// Transport-only: the provider author keys credited on this work (e.g.
 	// OpenLibrary author IDs from the work's authors array). Used by the
 	// author sync to tell a legitimate co-author attachment apart from a row

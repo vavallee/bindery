@@ -1,0 +1,2 @@
+### Fixed
+- **Re-bind no longer keeps values the new record does not have** (#3104) - moving a book to a record without a release date, language, description or genres now empties the old value instead of leaving it behind, and the result lists what was emptied. A field you locked is left alone, and so is one the provider could not answer for. Values an import wrote that you did not lock count as the provider's.

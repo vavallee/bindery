@@ -210,6 +210,15 @@ func isKnownLanguageCode(code string) bool {
 	return false
 }
 
+// IsKnownLanguage reports whether raw (a code in any spelling, or a language
+// name) resolves to a language in Bindery's ISO 639 tables. Unlike
+// NormalizeLanguageCode, which passes an unrecognised three letter string
+// through unchanged, this is false for it. Used where the source is sloppy,
+// such as audio tags, so junk like "xxx" or "abc" abstains rather than votes.
+func IsKnownLanguage(raw string) bool {
+	return isKnownLanguageCode(NormalizeLanguageCode(raw))
+}
+
 // NormalizeLanguageCodeRev is the revision of NormalizeLanguageCode's output.
 // Bump it whenever a change here would give an already-stored language a
 // different value; the startup backfill gated on this marker then

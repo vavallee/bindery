@@ -126,6 +126,8 @@ export const queueApi = {
   // with nothing saying why, and the natural reading of that is "my downloads
   // vanished".
   listQueue: () => request<QueueListResponse>('/queue'),
+  // The nav badge's count, from the downloads table only (no download-client call).
+  failedQueueCount: () => request<{ failed: number }>('/queue/failed-count'),
   grab: (data: GrabRequest) => request<Download>('/queue/grab', { method: 'POST', body: JSON.stringify(data) }),
   retryImport: (id: number) => request<{ ok: boolean }>(`/queue/${id}/retry-import`, { method: 'POST' }),
   // retryDownload re-sends the release a failed row already holds to the

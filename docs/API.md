@@ -131,6 +131,12 @@ already there under another id and the same author, for example adding
 (#3466). `existingBookId` is the row the request matched, which keeps its own
 foreign id.
 
+When that merge also changed the row's format, because the request was for the
+other format (an ebook row and an audiobook request, or the reverse), the row is
+now `both` and the body carries `"formatWidened": true` (#3482). The field is
+absent, never `false`, when the row was not changed, so the plain 409 stays as
+documented above.
+
 With tenancy enforced, a non admin user whose request reaches a copy of the
 same foreign id held by a different user also gets **409**, with no row in the
 body because the caller may not see it:
@@ -352,7 +358,7 @@ DELETE /api/v1/book/{id}                          remove from library
 DELETE /api/v1/book/{id}/file                     delete imported file(s) on disk (`?format=ebook|audiobook` scopes to one format; `?path=…` deregisters one tracked path WITHOUT deleting anything on disk)
 PUT    /api/v1/book/{id}/exclude                  exclude from future searches
 GET    /api/v1/book/{id}/series-exclusions        the series the book was taken out of: [{seriesForeignId, seriesId, seriesTitle, position}]; seriesId is 0 when nothing resolves the id any more
-POST   /api/v1/book/{id}/rebind                   re-link to a different metadata record
+POST   /api/v1/book/{id}/rebind                   re-link to a different metadata record; fields the new record lacks (`releaseDate`, `language`, `description`, `genres`) are emptied unless the book had them locked or the provider could not answer for them, and the book in the response carries a `cleared` array naming them (omitted when nothing was emptied)
 POST   /api/v1/book/{id}/enrich-audiobook         pull narrator/duration/cover from Audnex
 POST   /api/v1/book/{id}/cover                    set the cover from the request body (raw JPEG, PNG, WebP or GIF, max 10 MB); answers 413 over the limit and 415 for anything that is not one of those four; stored locally, replaces the current cover, and a refresh does not replace it. Answers the full book, as `GET /book/{id}` does
 POST   /api/v1/book/{id}/search                   manual indexer search
@@ -730,6 +736,7 @@ GET    /api/v1/queue                              downloads with live downloader
                                                   Retry import, Match to book or Remove. Older imports are on the History page
        -> {"items":[..],"partial":true,"staleClients":[{"clientId":1,"name":"qBit","message":".."}]}
                                                   partial means a download client did not answer in time, so items is short
+GET    /api/v1/queue/failed-count                 {"failed": n}: downloads in failed, importFailed or importBlocked, read from the database only (the nav badge)
 POST   /api/v1/queue/grab                         submit a search result to the download client
                                                   a guid a recent search returned is grabbed from the server's
                                                   record (raw URL) for every caller; otherwise only the API key
@@ -977,7 +984,7 @@ POST   /api/v1/backup                             snapshot the SQLite database (
 GET    /api/v1/backup                             list stored backups (admin)
 DELETE /api/v1/backup/{filename}                  delete one backup (admin)
 POST   /api/v1/backup/{filename}/restore          stage a backup for the next restart (admin, X-Confirm-Restore: true)
-GET    /api/v1/system/status                      version, commit, build date, newest published release, image cache size, Hardcover feature state; `hardcoverPausedUntil` while the daily quota holds, `hardcoverTokenRejected` while Hardcover has refused the saved token
+GET    /api/v1/system/status                      version, commit, build date, newest published release, image cache size, Hardcover feature state; `hardcoverPausedUntil` while the daily quota holds, `hardcoverTokenRejected` while Hardcover has refused the saved token; `features` lists optional API behaviour an integration can detect (`requestsForUser`)
 POST   /api/v1/library/scan                       start a library scan in the background (202; {"queued": true} when one is already running)
 GET    /api/v1/library/duplicate-candidates      read-only duplicate title groups across every author, paginated (#2999)
 GET    /api/v1/library/scan/status                summary of the last library scan, paths included (admin)
@@ -1691,11 +1698,37 @@ POST   /api/v1/requests/{id}/decline              decline, body {"reason": "..."
 `kind` is `book` or `author`, `foreignId` is the provider id a metadata search
 returned, and `mediaType` is `ebook`, `audiobook`, `both` or empty. Bindery
 looks the id up at the metadata provider and stores the title and author the
-provider reports. Answers:
+provider reports.
+
+An admin session or the API key may add a fourth field, `forUser`, to make
+the request on another account's behalf, for a request front end that keeps
+its own users:
+
+```json
+{"kind": "book", "foreignId": "OL27482W", "mediaType": "ebook", "forUser": 7}
+```
+
+`forUser` is a user id; `GET /api/v1/auth/users` maps a username to one. An
+integration can check for `"features": {"requestsForUser": true}` in
+`GET /api/v1/system/status` before sending it, and fall back on a Bindery that
+predates the field. The
+request is stored exactly as if that account had made it: they own it, it
+counts against their `requests.max_pending_per_user`, it shows on their My
+requests, and approving it adds the books as theirs. If that account has
+auto-approval on, the request approves itself the usual way; otherwise it
+waits in the queue. There is no option to approve on create. Any other caller
+that sends `forUser`, whatever its value, gets `403`, and for them the body
+stays the three fields above. That includes a caller that `disabled` or
+`local-only` mode admits as admin without signing in, because nobody would be
+recorded as having asked; use the API key instead. An admin who names their
+own id simply makes their own request. A value that is not a positive integer is `400`,
+an id with no account `422`. Answers:
 
 | Status | Meaning |
 |--------|---------|
 | `201` | the request, as below |
+| `403` | `forUser` sent by anyone but an admin session or the API key |
+| `400`, `422` | `forUser` is not a user id, or no account has that id |
 | `409` | already in the library, already requested by this user (pending or declined); the `error` field says which |
 | `429` | this user already has `requests.max_pending_per_user` requests waiting (default 25), or a requester made creates or searches faster than the per user allowance (burst of 20, then one every 3 seconds; `Retry-After` says when). The cap is checked in the same statement as the insert, so concurrent creates cannot pass it |
 | `502`, `404` | the provider did not answer, or has no such id |
@@ -1712,6 +1745,7 @@ A request as the API returns it:
 | `fulfilled` | approved and on disk: the book imported, or at least one of the author's books |
 | `booksTotal`, `booksImported` | an approved author request's progress |
 | `username`, `resultBookId`, `resultAuthorId` | admin queue only |
+| `createdVia`, `createdBy` | admin queue only, and only for a request made with `forUser`: `createdVia` is `api_key` or `admin`, and `createdBy` the admin's username for `admin` |
 
 `GET /api/v1/requests/library` returns `{items, total, limit, offset}` where
 each item has only `id`, `title`, `authorName`, `series`, `seriesPosition`,
@@ -1748,11 +1782,15 @@ Bindery serves an OPDS 1.2 catalogue at `/opds/`:
 
 - `/opds/` — catalog root
 - `/opds/recent` — recently imported
+- `/opds/search?q=<terms>&page=N`: search the library by title or author
+- `/opds/opensearch.xml`: OpenSearch description that points readers at the search
 - `/opds/authors` and `/opds/authors/{id}` — by author
 - `/opds/series` and `/opds/series/{id}` — by series
 - `/opds/book/{id}` — book entry
 - `/opds/book/{id}/file` — download the book file
 - `/opds/images?url=<encoded>` — cover images, cached locally
+
+Search uses the same matching as the Books page: case and accent insensitive, and every word must appear in the title or the author name. Results are an acquisition feed of books you own with a file, a page at a time (`rel="next"` and `rel="previous"` links, same page size as the other feeds), and honour the same per-user scoping as the other feeds. Search lists every imported book you own with a file, including unmonitored ones, unlike `/opds/recent`, which only shows monitored books. An empty or punctuation only `q` returns an empty feed, and a `q` over 200 characters gets `400`. The root feed carries two `rel="search"` links, one to the OpenSearch description and one with the `{searchTerms}` template inline, which is what makes the search button appear in KOReader and Moon+ Reader. The search routes use the same authentication as every other OPDS route.
 
 Cover links in the feed point at `/opds/images` rather than at the metadata
 provider, so reading apps fetch every cover from your instance. It is the same

@@ -3193,3 +3193,19 @@ func TestSearchAuthors_CarriesBookCount(t *testing.T) {
 		t.Errorf("an author without books_count must carry no statistics, got %+v", authors[1].Statistics)
 	}
 }
+
+// The single-book query does not ask for genres or language, so the record
+// must say it cannot speak for them (#3104).
+func TestGetBook_MarksGenresAndLanguageUnknown(t *testing.T) {
+	c := newMockClient(func(r *http.Request) (*http.Response, error) {
+		data := map[string]interface{}{"books": []map[string]interface{}{{"id": 99, "title": "T", "slug": "t"}}}
+		return gqlResponse(t, http.StatusOK, data), nil
+	})
+	book, err := c.GetBook(context.Background(), "hc:t")
+	if err != nil || book == nil {
+		t.Fatalf("GetBook: %v %v", book, err)
+	}
+	if !slices.Contains(book.UnknownFields, models.BookFieldGenres) || !slices.Contains(book.UnknownFields, models.BookFieldLanguage) {
+		t.Errorf("UnknownFields = %v", book.UnknownFields)
+	}
+}

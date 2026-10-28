@@ -471,3 +471,17 @@ describe('IndexersTab Prowlarr', () => {
     expect(screen.queryByPlaceholderText('settings.prowlarr.urlPlaceholder')).not.toBeInTheDocument()
   })
 })
+
+// An indexer synced from Prowlarr is managed there; the list says so.
+describe('IndexersTab Prowlarr chip', () => {
+  it('marks a synced indexer and leaves a direct one unmarked', () => {
+    render(<Harness indexers={[
+      makeIndexer({ id: 1, name: 'Synced', prowlarrInstanceId: 4 }),
+      makeIndexer({ id: 2, name: 'Direct', prowlarrInstanceId: undefined }),
+    ]} />)
+    const synced = screen.getByRole('heading', { name: 'Synced' }).parentElement!
+    const direct = screen.getByRole('heading', { name: 'Direct' }).parentElement!
+    expect(within(synced).getByText('Prowlarr')).toBeInTheDocument()
+    expect(within(direct).queryByText('Prowlarr')).toBeNull()
+  })
+})

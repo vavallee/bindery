@@ -8,7 +8,7 @@ import MoreMenu, { type MoreMenuItem } from '../../components/MoreMenu'
 import { formatBytes } from '../../util/format'
 import { adoptionHint, unitDisplayName } from './adoptionHint'
 import { StatusPill } from './AdoptionEditor'
-import { alreadySettled, inOtherFormatRoot, matchStrength, preselectable, shortHint } from './adoptionMatch'
+import { alreadySettled, inOtherFormatRoot, isWeakCandidate, matchStrength, preselectable, shortHint } from './adoptionMatch'
 import type { Outcome } from './adoptionReducer'
 import { rowCls, cellCls, actionCellCls } from './adoptionStyles'
 
@@ -43,7 +43,10 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
   const name = unitDisplayName(item)
   // With an author conflict a folder author's look alike is not offered here;
   // the row says which authors disagree instead (#2942).
-  const top = preselectable(item)
+  const candidate = preselectable(item)
+  // A suggestion below WEAK_MATCH_SCORE is not offered on the row.
+  const weak = isWeakCandidate(candidate)
+  const top = weak ? undefined : candidate
   const strength = matchStrength(item, top)
   const full = adoptionHint(item, t)
   const tooltip = [full.sentence, full.tooltip].filter(Boolean).join('\n')
@@ -92,6 +95,9 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
     if (!tooSmall) menu.push({ label: t('adoption.ignore', 'Ignore'), onSelect: onIgnore })
   }
 
+  // A menu holding only Ignore is one action behind two clicks; it is a
+  // button instead.
+  const onlyIgnore = menu.length === 1 && menu[0].onSelect === onIgnore
   let primary: React.ReactNode
   if (canUndo) {
     primary = <button type="button" onClick={onUndo} aria-keyshortcuts="u" className={`${btn.secondary} ${btnSize.sm}`}>{t('adoption.undo', 'Undo')}</button>
@@ -161,6 +167,15 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
             )}
             {alreadySettled(top.book.status) && <StatusPill status={top.book.status} monitored={top.book.monitored} />}
           </p>
+        ) : weak ? (
+          <p className="flex min-w-0 items-center gap-2 text-xs text-fg-muted">
+            <span className="shrink-0 rounded border border-dashed border-slate-300 dark:border-zinc-700 px-1.5 py-0.5 text-[10px] font-medium">
+              {t('adoption.match.none', 'No good match')}
+            </span>
+            <button type="button" onClick={() => onOpen(false)} className="truncate underline decoration-dotted underline-offset-2 hover:text-slate-700 dark:hover:text-zinc-300">
+              {t('adoption.match.weakCount', { count: item.candidates.length, defaultValue: 'See {{count}} suggestions' })}
+            </button>
+          </p>
         ) : inGroup ? (
           // The group row above already says why; repeating it per book is noise.
           <span className="sr-only">{shortHint(item, t)}</span>
@@ -189,7 +204,11 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
       <td className={actionCellCls}>
         <div className="flex items-center gap-1.5 md:justify-end">
           {primary}
-          {menu.length > 0 && (
+          {onlyIgnore ? (
+            <button type="button" onClick={onIgnore} aria-keyshortcuts="i" className={`${btn.ghost} ${btnSize.sm}`}>
+              {t('adoption.ignore', 'Ignore')}
+            </button>
+          ) : menu.length > 0 && (
             <MoreMenu items={menu} label={t('adoption.more', 'More')} ariaLabel={t('adoption.moreFor', { name, defaultValue: 'More actions for {{name}}' })}
               buttonClassName={`${btn.ghost} ${btnSize.sm}`} />
           )}

@@ -187,13 +187,9 @@ func (s *Scanner) checkDownloadLanguage(ctx context.Context, book *models.Book, 
 	if s.metadataProfiles == nil || book == nil {
 		return languageCheck{}
 	}
-	profileAllowed, source := s.importAllowedLanguages(ctx, author)
+	lc, profileAllowed, source := s.languageAllowance(ctx, book, author)
 	if len(profileAllowed) == 0 {
 		return languageCheck{}
-	}
-	lc := languageCheck{allowed: slices.Clone(profileAllowed)}
-	if book.IsFieldLocked(models.BookFieldLanguage) && book.Language != "" {
-		lc.allowed = append(lc.allowed, models.NormalizeLanguageCode(book.Language))
 	}
 
 	anyAllowed := false
@@ -243,6 +239,23 @@ func (s *Scanner) checkDownloadLanguage(ctx context.Context, book *models.Book, 
 		"To keep this file anyway, use Match to book in the Queue or manual import",
 		languageList(lc.declared), source, languageList(profileAllowed))
 	return lc
+}
+
+// languageAllowance builds the starting languageCheck for a book: the allowed
+// set (the profile's list plus a locked book language, see checkDownloadLanguage),
+// the profile's own list and the phrase naming where it came from. The check is
+// off, and the returned profile list empty, when any language is allowed.
+// Shared by the ebook and audiobook checks so both hold a file to one rule.
+func (s *Scanner) languageAllowance(ctx context.Context, book *models.Book, author *models.Author) (languageCheck, []string, string) {
+	profileAllowed, source := s.importAllowedLanguages(ctx, author)
+	if len(profileAllowed) == 0 {
+		return languageCheck{}, nil, ""
+	}
+	lc := languageCheck{allowed: slices.Clone(profileAllowed)}
+	if book.IsFieldLocked(models.BookFieldLanguage) && book.Language != "" {
+		lc.allowed = append(lc.allowed, models.NormalizeLanguageCode(book.Language))
+	}
+	return lc, profileAllowed, source
 }
 
 // languageList renders codes as "Swedish (swe), German (ger)".

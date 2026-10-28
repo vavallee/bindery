@@ -43,6 +43,8 @@ func cloneBooks(books []models.Book) []models.Book {
 		b.Identifiers = slices.Clone(b.Identifiers)
 		b.SeriesRefs = slices.Clone(b.SeriesRefs)
 		b.ProviderISBNs = slices.Clone(b.ProviderISBNs)
+		b.UnknownFields = slices.Clone(b.UnknownFields)
+		b.Cleared = slices.Clone(b.Cleared)
 		b.CreditedAuthorForeignIDs = slices.Clone(b.CreditedAuthorForeignIDs)
 		if b.Author != nil {
 			b.Author = &cloneAuthors([]models.Author{*b.Author})[0]
