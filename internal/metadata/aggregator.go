@@ -114,6 +114,31 @@ func (a *aggregatorCore) SearchAuthorsWithOutcome(ctx context.Context, query str
 // provider. Returns nil when no confident OL record (BookCount > 0) exists. Used
 // to resolve the author of a name-only result (e.g. Google Books) when adding it.
 func (a *aggregatorCore) ResolveCanonicalAuthor(ctx context.Context, name string) (*models.Author, error) {
+	author, _, err := a.ResolveCanonicalAuthorLookup(ctx, name)
+	return author, err
+}
+
+// CanonicalAuthorLookup says what a canonical author lookup actually learned,
+// which a nil author alone cannot: nil is also what an OpenLibrary that is not
+// configured returns.
+type CanonicalAuthorLookup struct {
+	// Consulted is true only when OpenLibrary was configured and its author
+	// search answered without error.
+	Consulted bool
+	// SameNameRecords counts the OpenLibrary records whose name matches the
+	// query by canonical key, whatever their work count. A record with no
+	// works is not trusted as the author, but it is still a sign OpenLibrary
+	// knows the name, so a caller deciding "nobody knows this person" must
+	// treat any of them as a reason not to.
+	SameNameRecords int
+}
+
+// ResolveCanonicalAuthorLookup is ResolveCanonicalAuthor plus what the lookup
+// established. A caller that wants to act on "OpenLibrary has no such author"
+// needs Consulted, because the same nil answer comes back when OpenLibrary is
+// not in the provider set (disabled, or never configured).
+func (a *aggregatorCore) ResolveCanonicalAuthorLookup(ctx context.Context, name string) (*models.Author, CanonicalAuthorLookup, error) {
+	var lookup CanonicalAuthorLookup
 	var ol Provider
 	for _, p := range a.providers() {
 		if p != nil && normalizedProviderName(p.Name()) == "openlibrary" {
@@ -122,17 +147,22 @@ func (a *aggregatorCore) ResolveCanonicalAuthor(ctx context.Context, name string
 		}
 	}
 	if ol == nil {
-		return nil, nil
+		return nil, lookup, nil
 	}
 	results, err := a.searchProviderAuthors(ctx, ol, name)
 	if err != nil {
-		return nil, err
+		return nil, lookup, err
 	}
+	lookup.Consulted = true
 	want := canonicalAuthorKey(name)
 	var best *models.Author
 	for i := range results {
 		r := &results[i]
-		if canonicalAuthorKey(r.Name) != want || authorBookCount(*r) <= 0 {
+		if canonicalAuthorKey(r.Name) != want {
+			continue
+		}
+		lookup.SameNameRecords++
+		if authorBookCount(*r) <= 0 {
 			continue
 		}
 		if best == nil || authorBookCount(*r) > authorBookCount(*best) {
@@ -140,12 +170,12 @@ func (a *aggregatorCore) ResolveCanonicalAuthor(ctx context.Context, name string
 		}
 	}
 	if best == nil {
-		return nil, nil
+		return nil, lookup, nil
 	}
 
 	full, err := a.GetAuthor(ctx, best.ForeignID)
 	if err != nil {
-		return nil, err
+		return nil, lookup, err
 	}
 	// Start from the search record (ratings, work count, disambiguation), then
 	// overlay GetAuthor's richer profile (bio, image). Copy into a fresh value so
@@ -173,7 +203,7 @@ func (a *aggregatorCore) ResolveCanonicalAuthor(ctx context.Context, name string
 			out.AverageRating = full.AverageRating
 		}
 	}
-	return &out, nil
+	return &out, lookup, nil
 }
 
 // searchFanOutWithFailures runs fn against the primary and every enricher in
@@ -784,6 +814,12 @@ func searchFormatKey(mediaType string) string {
 // cached for 24 hours. A WithCacheBypass context skips the cached copy and
 // replaces it with the provider's answer (#2601).
 func (a *aggregatorCore) GetAuthor(ctx context.Context, foreignID string) (*models.Author, error) {
+	// A synthetic Google Books author has no upstream record. (nil, nil) is the
+	// "nobody owns this ID" answer callers already handle: the refresh skips it
+	// and Add Book builds the author from the name it was given.
+	if IsSyntheticAuthorID(foreignID) {
+		return nil, nil
+	}
 	provider := a.providerForForeignID(foreignID)
 	if provider == nil {
 		return nil, nil
