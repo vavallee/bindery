@@ -253,6 +253,10 @@ func (a *Aggregator) ResolveCanonicalAuthor(ctx context.Context, name string) (*
 	return a.load().ResolveCanonicalAuthor(ctx, name)
 }
 
+func (a *Aggregator) ResolveCanonicalAuthorLookup(ctx context.Context, name string) (*models.Author, CanonicalAuthorLookup, error) {
+	return a.load().ResolveCanonicalAuthorLookup(ctx, name)
+}
+
 func (a *Aggregator) SearchBooks(ctx context.Context, query string) ([]models.Book, error) {
 	return a.load().SearchBooks(ctx, query)
 }

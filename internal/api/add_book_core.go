@@ -275,18 +275,20 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 			// have this book.
 			if existing := h.findLibraryAuthorByName(ctx, req.AuthorName); existing != nil {
 				req.ForeignAuthorID = existing.ForeignID
-			} else if canonical, cErr := h.meta.ResolveCanonicalAuthor(ctx, req.AuthorName); cErr == nil && canonical != nil && outcome.SafeToBind(canonical.ForeignID) {
+			} else if canonical, lookup, cErr := h.meta.ResolveCanonicalAuthorLookup(ctx, req.AuthorName); cErr == nil && canonical != nil && outcome.SafeToBind(canonical.ForeignID) {
 				// The canonical lookup is OpenLibrary's, which is a fallback
 				// when another provider is primary, so the same guard applies.
 				req.ForeignAuthorID = canonical.ForeignID
-			} else if cErr == nil && canonical == nil && !outcome.PrimaryFailed && strings.HasPrefix(req.ForeignBookID, "gb:") {
-				// A Google Books title that nobody else knows (#3538). The
-				// canonical lookup ANSWERED and found no such author, so the
-				// name from the volume is all there is: key the author on it,
-				// the way DNB does with dnb:author:<slug>. A lookup that
-				// failed (cErr) or found someone it was not allowed to bind
-				// (canonical != nil) is not that, and falls through to the
-				// refusal below. An unusable name gives "" and refuses too.
+			} else if lookup.Consulted && lookup.SameNameRecords == 0 && strings.HasPrefix(req.ForeignBookID, "gb:") {
+				// A Google Books title that nobody else knows (#3538). Only
+				// an OpenLibrary that was really asked, answered, and holds no
+				// record of this name at all (not even an empty one) counts as
+				// "nobody knows". OpenLibrary being switched off, a failed
+				// lookup, or a same name record we declined to trust all fall
+				// through to the refusal below instead of minting an author who
+				// would later duplicate the real one. An unusable name gives ""
+				// and refuses too. The ISBN walk never runs for these volumes,
+				// so outcome carries no evidence here and is not consulted.
 				req.ForeignAuthorID = metadata.SyntheticGoogleBooksAuthorID(req.AuthorName)
 			}
 		}

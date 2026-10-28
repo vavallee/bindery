@@ -18,14 +18,15 @@ import (
 
 // olAuthorSearchProvider stands in for OpenLibrary during the author name
 // lookup: it answers the search with whatever it is given (nothing, or an
-// error), the two ways the canonical lookup comes back empty handed.
+// error, or a record), the ways the canonical lookup comes back empty handed.
 type olAuthorSearchProvider struct {
 	stubMetaProvider
 	searchErr error
+	authors   []models.Author
 }
 
 func (p *olAuthorSearchProvider) SearchAuthors(_ context.Context, _ string) ([]models.Author, error) {
-	return nil, p.searchErr
+	return p.authors, p.searchErr
 }
 
 type gbAddFixture struct {
@@ -41,6 +42,13 @@ type gbAddFixture struct {
 // the #3538 shape: no ISBN, no canonical author anywhere.
 func newGBAddFixture(t *testing.T, searchErr error, volumes ...*models.Book) *gbAddFixture {
 	t.Helper()
+	return newGBAddFixtureOL(t, &olAuthorSearchProvider{stubMetaProvider: stubMetaProvider{name: "openlibrary"}, searchErr: searchErr}, volumes...)
+}
+
+// newGBAddFixtureOL is newGBAddFixture with the OpenLibrary stand in given, or
+// nil for an install where OpenLibrary is not in the provider set at all.
+func newGBAddFixtureOL(t *testing.T, ol *olAuthorSearchProvider, volumes ...*models.Book) *gbAddFixture {
+	t.Helper()
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -53,8 +61,12 @@ func newGBAddFixture(t *testing.T, searchErr error, volumes ...*models.Book) *gb
 		byID[v.ForeignID] = v
 	}
 	gb := &stubMetaProvider{name: "googlebooks", getBookByID: byID}
-	ol := &olAuthorSearchProvider{stubMetaProvider: stubMetaProvider{name: "openlibrary"}, searchErr: searchErr}
-	agg := metadata.NewAggregator(gb, ol)
+	var agg *metadata.Aggregator
+	if ol == nil {
+		agg = metadata.NewAggregator(gb)
+	} else {
+		agg = metadata.NewAggregator(gb, ol)
+	}
 
 	authors := db.NewAuthorRepo(database)
 	books := db.NewBookRepo(database)
@@ -215,5 +227,53 @@ func TestAddBook_GoogleBooksOnlyAuthorIsScopedPerUser(t *testing.T) {
 	}
 	if b, _ := f.books.GetByForeignID(ctx, "gb:BBBBBBBBBBBB"); b != nil {
 		t.Errorf("bob's refused add left a book behind: %+v", b)
+	}
+}
+
+// OpenLibrary not being in the provider set says nothing about the author, so
+// the add must keep refusing instead of minting an author OpenLibrary might
+// know (a Hardcover primary install with OpenLibrary off, for one).
+func TestAddBook_GoogleBooksOnlyRefusesWhenOpenLibraryNotConsulted(t *testing.T) {
+	f := newGBAddFixtureOL(t, nil, gbVolume("gb:S2IcEgAAQBAJ", "Pass the NMC CBT"))
+	rec := f.add(context.Background(), "gb:S2IcEgAAQBAJ", "Stephen King")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if all, _ := f.authors.List(context.Background()); len(all) != 0 {
+		t.Errorf("an author was created without asking OpenLibrary: %+v", all)
+	}
+}
+
+// An OpenLibrary record with the same name but no works is not trusted as the
+// author, and is not proof of absence either: it is probably the real person
+// under a thin record, and a synthetic author beside it would be a duplicate.
+func TestAddBook_GoogleBooksOnlyRefusesWhenOpenLibraryHasEmptySameNameRecord(t *testing.T) {
+	ol := &olAuthorSearchProvider{
+		stubMetaProvider: stubMetaProvider{name: "openlibrary"},
+		authors:          []models.Author{{ForeignID: "OL1A", Name: "Owen Brackett", Statistics: &models.AuthorStats{BookCount: 0}}},
+	}
+	f := newGBAddFixtureOL(t, ol, gbVolume("gb:S2IcEgAAQBAJ", "Pass the NMC CBT"))
+	rec := f.add(context.Background(), "gb:S2IcEgAAQBAJ", "Owen Brackett")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if all, _ := f.authors.List(context.Background()); len(all) != 0 {
+		t.Errorf("an author was created next to an OpenLibrary record: %+v", all)
+	}
+}
+
+// OpenLibrary answering with other people (fuzzy search hits) is "no match":
+// only a record carrying the same name blocks the synthetic author. A spelling
+// variant that does not normalise to the same name cannot be told apart from
+// a different person, so it is treated as a different person (documented).
+func TestAddBook_GoogleBooksOnlyIgnoresUnrelatedOpenLibraryHits(t *testing.T) {
+	ol := &olAuthorSearchProvider{
+		stubMetaProvider: stubMetaProvider{name: "openlibrary"},
+		authors:          []models.Author{{ForeignID: "OL2A", Name: "Owen Brackenridge", Statistics: &models.AuthorStats{BookCount: 40}}},
+	}
+	f := newGBAddFixtureOL(t, ol, gbVolume("gb:S2IcEgAAQBAJ", "Pass the NMC CBT"))
+	rec := f.add(context.Background(), "gb:S2IcEgAAQBAJ", "Owen Brackett")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

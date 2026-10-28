@@ -98,6 +98,56 @@ func TestAggregator_SyntheticGoogleBooksAuthorShortCircuits(t *testing.T) {
 	}
 }
 
+// ResolveCanonicalAuthorLookup must say what it learned: a nil author is the
+// answer both for "OpenLibrary has no such person" and for "OpenLibrary was
+// never asked", and only the first is evidence an author is unknown.
+func TestResolveCanonicalAuthorLookup_ReportsWhatWasConsulted(t *testing.T) {
+	ctx := context.Background()
+	stats := func(n int) *models.AuthorStats { return &models.AuthorStats{BookCount: n} }
+
+	t.Run("openlibrary not in the set", func(t *testing.T) {
+		agg := NewAggregator(&mockProvider{name: "hardcover"})
+		a, lk, err := agg.ResolveCanonicalAuthorLookup(ctx, "Stephen King")
+		if a != nil || err != nil || lk.Consulted {
+			t.Errorf("got (%v, %+v, %v), want nil author, not consulted", a, lk, err)
+		}
+	})
+	t.Run("openlibrary errors", func(t *testing.T) {
+		agg := NewAggregator(&mockProvider{name: "openlibrary", searchAuthErr: errors.New("boom")})
+		_, lk, err := agg.ResolveCanonicalAuthorLookup(ctx, "Stephen King")
+		if err == nil || lk.Consulted {
+			t.Errorf("got (%+v, %v), want an error and not consulted", lk, err)
+		}
+	})
+	t.Run("answered with no record of the name", func(t *testing.T) {
+		agg := NewAggregator(&mockProvider{name: "openlibrary", searchAuthors: []models.Author{
+			{ForeignID: "OL9A", Name: "Somebody Else", Statistics: stats(30)},
+		}})
+		a, lk, err := agg.ResolveCanonicalAuthorLookup(ctx, "Owen Brackett")
+		if a != nil || err != nil || !lk.Consulted || lk.SameNameRecords != 0 {
+			t.Errorf("got (%v, %+v, %v), want nil author, consulted, 0 same name", a, lk, err)
+		}
+	})
+	t.Run("same name record with no works", func(t *testing.T) {
+		agg := NewAggregator(&mockProvider{name: "openlibrary", searchAuthors: []models.Author{
+			{ForeignID: "OL1A", Name: "Owen Brackett", Statistics: stats(0)},
+		}})
+		a, lk, err := agg.ResolveCanonicalAuthorLookup(ctx, "Owen Brackett")
+		if a != nil || err != nil || !lk.Consulted || lk.SameNameRecords != 1 {
+			t.Errorf("got (%v, %+v, %v), want nil author, consulted, 1 same name", a, lk, err)
+		}
+	})
+	t.Run("trusted record", func(t *testing.T) {
+		agg := NewAggregator(&mockProvider{name: "openlibrary", searchAuthors: []models.Author{
+			{ForeignID: "OL1A", Name: "Owen Brackett", Statistics: stats(5)},
+		}})
+		a, lk, err := agg.ResolveCanonicalAuthorLookup(ctx, "Owen Brackett")
+		if a == nil || err != nil || a.ForeignID != "OL1A" || lk.SameNameRecords != 1 {
+			t.Errorf("got (%v, %+v, %v), want OL1A", a, lk, err)
+		}
+	})
+}
+
 // The ordinary Google Books ID keeps routing to its provider: only the
 // synthetic author prefix is special.
 func TestAggregator_GoogleBooksVolumeIDStillRoutes(t *testing.T) {
