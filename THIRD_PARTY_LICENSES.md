@@ -48,7 +48,7 @@ does ship is the failure that matters.
 | [github.com/dhowden/tag](https://github.com/dhowden/tag/blob/3d75831295e8/LICENSE) | v0.0.0-20240417053706-3d75831295e8 | BSD-2-Clause | — |
 | [github.com/dustin/go-humanize](https://github.com/dustin/go-humanize/blob/v1.1.0/LICENSE) | v1.1.0 | MIT | — |
 | [github.com/go-chi/chi/v5](https://github.com/go-chi/chi/blob/v5.5.0/LICENSE) | v5.5.0 | MIT | — |
-| [github.com/go-jose/go-jose/v4](https://github.com/go-jose/go-jose/blob/v4.1.4/LICENSE) | v4.1.4 | Apache-2.0 | — |
+| [github.com/go-jose/go-jose/v4](https://github.com/go-jose/go-jose/blob/v4.1.6/LICENSE) | v4.1.6 | Apache-2.0 | — |
 | [github.com/google/uuid](https://github.com/google/uuid/blob/v1.6.0/LICENSE) | v1.6.0 | BSD-3-Clause | — |
 | [github.com/mattn/go-isatty](https://github.com/mattn/go-isatty/blob/v0.0.24/LICENSE) | v0.0.24 | MIT | — |
 | [github.com/munnerz/goautoneg](https://github.com/munnerz/goautoneg/blob/a7dc8b61c822/LICENSE) | v0.0.0-20191010083416-a7dc8b61c822 | BSD-3-Clause | — |
@@ -372,7 +372,7 @@ Apache License
    limitations under the License.
 ```
 
-### 2. Apache-2.0 — github.com/go-jose/go-jose/v4@v4.1.4 (LICENSE)
+### 2. Apache-2.0 — github.com/go-jose/go-jose/v4@v4.1.6 (LICENSE)
 
 ```
 
@@ -579,12 +579,12 @@ Apache License
    limitations under the License.
 ```
 
-### 3. Apache-2.0 — github.com/go-jose/go-jose/v4@v4.1.4 (json/LICENSE)
+### 3. Apache-2.0 — github.com/go-jose/go-jose/v4@v4.1.6 (json/LICENSE)
 
 <details>
 <summary>Applies to 2 dependencies</summary>
 
-- github.com/go-jose/go-jose/v4@v4.1.4 (json/LICENSE)
+- github.com/go-jose/go-jose/v4@v4.1.6 (json/LICENSE)
 - github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec (LICENSE)
 
 </details>
