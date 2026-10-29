@@ -8,11 +8,11 @@ Every rendered example below was run through Bindery's own renderer, not typed b
 
 The examples use three books by Stephen King:
 
-| Book | Series | Year | Language | ASIN |
-|-|-|-|-|-|
-| The Gunslinger | The Dark Tower #1 | 1982 | eng | B0EXAMPLE1 (made up) |
-| The Stand | none | 1978 | none | none |
-| The Drawing of the Three | The Dark Tower #2 | none | none | none |
+| Book | Series | Year | Language | ASIN | Genre |
+|-|-|-|-|-|-|
+| The Gunslinger | The Dark Tower #1 | 1982 | eng | B0EXAMPLE1 (made up) | Fantasy |
+| The Stand | none | 1978 | none | none | none |
+| The Drawing of the Three | The Dark Tower #2 | none | none | none | none |
 
 The third one has its year stripped on purpose, to show what an empty `{Year}` does.
 
@@ -65,7 +65,7 @@ Tokens are case sensitive. `{author}` is not `{Author}`.
 | `{ext}` | the file extension without the dot, `epub` | always empty in the audiobook folder template |
 | `{Part}` | the track's position in playback order, `1`, `2`, `3` | only exists in the per track audiobook template |
 
-There is no `{ISBN}` token. Anything Bindery does not recognise, like `{ISBN}` or a typo such as `{Titel}`, is written into the name literally, braces and all. The settings page warns about unknown tokens.
+There is no `{ISBN}` token. Anything Bindery does not recognise, like `{ISBN}` or a typo such as `{Titel}`, is written into the name literally, braces and all. The ebook and audiobook folder fields flag unknown tokens and will not save them. That check lives in the page only: the API accepts the template, and the per track field has no check at all.
 
 A book in several series uses the one marked primary for `{Series}` and `{SeriesNumber}`.
 
@@ -138,7 +138,7 @@ Put literal text inside the braces, next to the token, and it only shows up when
   The Stand
 ```
 
-Widths work inside a group (`{SeriesNumber:3 - }` gives `001 - `). Text defaults do not.
+Widths work inside a group (`{SeriesNumber:3 - }` gives `001 - `). Text defaults do not: the colon becomes a `-` and the default text is written as literal text, so `{Title}{ - Series:Standalone}` gives `The Gunslinger - The Dark Tower-Standalone` and plain `The Stand` for the standalone.
 
 **Several tokens in one group.** The group shows when at least one of its tokens has a value. Tokens that are empty just render nothing, and the literal text stays. So `{ (Series #SeriesNumber)}` on a book with a series but no position still shows the brackets and the `#`.
 
@@ -173,7 +173,7 @@ Audiobook folder template from that thread, with `{ (Year)}` swapped in so the y
   Stephen King/The Dark Tower/(002) - The Drawing of the Three
 ```
 
-Ebook version with a language level:
+Ebook version with a language level. The thread had a literal `.ext` at the end; it has to be `.{ext}`, so that is changed here too:
 
 ```text
 {Author}/{Series}/{Lang}/{(SeriesNumber:3) - }{Title}{ (Year)}{ [ASIN]}.{ext}
@@ -183,6 +183,8 @@ Ebook version with a language level:
 ```
 
 The Stand has no series and no language, so both levels vanish and the file sits right in the author folder. The Drawing of the Three keeps its series folder and loses only the language folder.
+
+That loose file in the author folder is worth thinking about. Calibre's one book per folder add mode expects each book in a folder of its own, and when Bindery's library scan reads a file with no book folder above it, it has only the filename to match on. If either matters to you, end the template with a per book folder, like the series recipe below does.
 
 Values never add folders. A `/` inside a title or author becomes `-`, so `AC/DC: A Life` is one name, `AC-DC - A Life`.
 
@@ -288,6 +290,8 @@ With Import Mode set to External and a drop folder, **Layout** decides the names
 - **Flat** (the default) ignores your templates and puts a fixed name in the folder root: `The Gunslinger - Stephen King.epub`, or a folder `The Gunslinger - Stephen King` for an audiobook.
 - **Templated** builds your ebook and audiobook folder templates inside the drop folder.
 
+Audiobooks can have their own import mode, and with External they can use their own **Audiobook drop folder** (`import.audiobook.drop_folder`), falling back to the ebook one when that is empty. Layout applies to both formats.
+
 ## Common mistakes
 
 **Backslashes.** `{Author}\{Title}` is not two folders. On Linux and in Docker, the backslash is kept in the name and you get one folder called `Stephen King\The Gunslinger`. Use `/`.
@@ -306,7 +310,7 @@ With Import Mode set to External and a drop folder, **Layout** decides the names
 
 ## Preview and applying changes
 
-Each template field has a **Preview** line that updates as you type. It renders a fixed sample (Jane Doe, *Sample Book*, Demo Series #2, 2024), not one of your books, and the sample has every value filled in. So it shows your structure, but not what happens to a standalone or a book with no year. Use the examples on this page for that. It also does not apply the length cap or the Windows clean up.
+The ebook and audiobook folder fields have a **Preview** line that updates as you type. The per track field is a plain text box with no preview and no checks. The preview renders a fixed sample (Jane Doe, *Sample Book*, Demo Series #2, 2024), not one of your books, and the sample has every value filled in. So it shows your structure, but not what happens to a standalone or a book with no year. Use the examples on this page for that. It also does not apply the length cap or the Windows clean up. The sample's language is `en`, so a `{Lang}` level previews as `en` while your books render `eng`.
 
 Changing a template only affects new imports. To move files you already have, use **Rename files** (the reorganize tool):
 
