@@ -325,6 +325,7 @@ The full endpoint catalogue, authentication rules (API key, session cookie, loca
 | **Enhanced Hardcover series** — token setup, series linking, catalog diffs, missing-book fill | [docs/Hardcover-Series-Wiki.md](docs/Hardcover-Series-Wiki.md) |
 | **Calibre and CWA**: the three hand off topologies, what each does on disk, troubleshooting | [docs/Calibre-Integration-Wiki.md](docs/Calibre-Integration-Wiki.md) |
 | **Calibre on a Windows desktop**: plugin install, pull mode (no shared drive or firewall rule), push with a share path, the delivery queue and Push all, step by step | [docs/Calibre-Windows-Desktop-Wiki.md](docs/Calibre-Windows-Desktop-Wiki.md) |
+| **File naming**: every template token, conditional groups, empty folder levels, recipes | [docs/File-Naming-Wiki.md](docs/File-Naming-Wiki.md) |
 | **Storage & hardlinks** — single-mount layout, import modes, per-author audiobook root | [docs/Storage-And-Hardlinks-Wiki.md](docs/Storage-And-Hardlinks-Wiki.md) |
 | **Migrating from Readarr** — `readarr.db` import, Goodreads CSV import, library scan | [docs/Migrating-From-Readarr-Wiki.md](docs/Migrating-From-Readarr-Wiki.md) |
 | **Metadata editing** — manual edits, field locking, bulk genre overrides | [docs/Metadata-Editing-Wiki.md](docs/Metadata-Editing-Wiki.md) |

@@ -209,6 +209,9 @@ matches none of the books with that title and the folder name does. Loose files 
 filename alone; if those are misread, move them into author folders, or use
 Manual Import, which lets you pick the right book.
 
+Every token, the brace rules and some layouts to copy are in
+[File naming templates](File-Naming-Wiki.md).
+
 ### 5. Hardlinks need one mount
 
 The default import mode (`auto`) hardlinks a completed torrent into the
@@ -1066,7 +1069,8 @@ it leaves everything already on disk where it was. **Rename files** is the
 catch-up: it recomputes where every file Bindery tracks should live under the
 current template and moves it there. It reaches the same renamer the import
 path uses, so a reorganized library and a freshly imported one come out
-identical.
+identical. For the template syntax itself, see
+[File naming templates](File-Naming-Wiki.md).
 
 Nothing moves until you say so. The preview lists every tracked file with its
 current path, the path the template computes, and why it will or will not move:
