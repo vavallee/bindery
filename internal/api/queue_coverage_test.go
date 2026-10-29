@@ -329,7 +329,7 @@ func TestQueueRetryDownloadClientFailureIs502(t *testing.T) {
 
 	h, _, downloads, clients, _, ctx := queueFixture(t)
 	host, port := testServerHostPort(t, sab.URL)
-	if err := clients.Create(ctx, &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true}); err != nil {
+	if err := clients.Create(ctx, &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true}); err != nil {
 		t.Fatal(err)
 	}
 	dl := &models.Download{GUID: "covq-502", Title: "Refused", Status: models.StateFailed, Protocol: "usenet", NZBURL: indexerSrv.URL + "/x.nzb"}
@@ -435,7 +435,7 @@ func TestQueueGrabRecordsFailureHistory(t *testing.T) {
 	t.Cleanup(sab.Close)
 	h, database, downloads, clients, _, ctx := queueFixture(t)
 	host, port := testServerHostPort(t, sab.URL)
-	if err := clients.Create(ctx, &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true}); err != nil {
+	if err := clients.Create(ctx, &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := h.grab(ctx, grabRequest{GUID: "covq-grabfail", Title: "Some.Book.epub", NZBURL: sab.URL + "/x.nzb"})

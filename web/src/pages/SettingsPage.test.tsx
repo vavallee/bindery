@@ -147,6 +147,9 @@ function makeClient(overrides: Partial<DownloadClient> = {}): DownloadClient {
     category: 'books',
     pathRemap: '',
     enabled: true,
+    priority: 0,
+    enabledForBooks: true,
+    enabledForAudiobooks: true,
     ...overrides,
   }
 }
@@ -1888,6 +1891,9 @@ describe('SettingsPage', () => {
         enabled: true,
         useSsl: true,
         urlBase: '/sab',
+        enabledForBooks: true,
+        enabledForAudiobooks: true,
+        priority: 0,
       })
     })
     expect(await screen.findByText('SAB Books')).toBeInTheDocument()
@@ -1967,6 +1973,9 @@ describe('SettingsPage', () => {
         enabled: true,
         useSsl: false,
         urlBase: '',
+        enabledForBooks: true,
+        enabledForAudiobooks: true,
+        priority: 0,
         // qBittorrent and Transmission carry the remove-on-import toggle, off
         // by default. The other clients have no removal wired up, so the form
         // omits it.
@@ -2015,6 +2024,9 @@ describe('SettingsPage', () => {
         removeOnImport: false,
         useSsl: true,
         urlBase: '/qbittorrent',
+        enabledForBooks: true,
+        enabledForAudiobooks: true,
+        priority: 0,
       })
     })
     expect(await screen.findByText('qBit Books')).toBeInTheDocument()
@@ -2041,6 +2053,39 @@ describe('SettingsPage', () => {
         categoryAudiobook: 'audiobooks',
       }))
     })
+  })
+
+  it('defaults media-type eligibility to both, and persists opting a client out of one', async () => {
+    renderSettings()
+    await openClientsTab()
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.clients.addButton' }))
+    fireEvent.change(screen.getByPlaceholderText('Host'), { target: { value: 'sabnzbd' } })
+    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'k' } })
+    expect(screen.getByRole('checkbox', { name: 'settings.clients.enabledForBooks' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'settings.clients.enabledForAudiobooks' })).toBeChecked()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'settings.clients.enabledForAudiobooks' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => {
+      expect(api.addDownloadClient).toHaveBeenCalledWith(expect.objectContaining({
+        enabledForBooks: true,
+        enabledForAudiobooks: false,
+      }))
+    })
+  })
+
+  it('displays and sorts download clients by priority', async () => {
+    const low = makeClient({ id: 51, name: 'Low priority', priority: 5 })
+    const high = makeClient({ id: 52, name: 'High priority', priority: 1 })
+
+    renderSettings({ clients: [low, high] })
+    await openClientsTab()
+
+    const names = screen.getAllByRole('heading', { level: 4 }).map(h => h.textContent)
+    expect(names).toEqual(['High priority', 'Low priority'])
+    expect(screen.getByText(/High priority/).closest('div')?.parentElement?.textContent).toContain('settings.clients.priorityLabel: 1')
   })
 
   it('shows qBittorrent path health errors under the client', async () => {

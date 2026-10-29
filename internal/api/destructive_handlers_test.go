@@ -395,7 +395,7 @@ func TestPendingGrab_DispatchesDownloadAndClearsPending(t *testing.T) {
 	pending := db.NewPendingReleaseRepo(database)
 
 	host, port := testServerHostPort(t, srv.URL)
-	client := &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true}
+	client := &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true, EnabledForBooks: false, EnabledForAudiobooks: true}
 	if err := clients.Create(ctx, client); err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestPendingGrab_DispatchesDownloadAndClearsPending(t *testing.T) {
 	if err := authors.Create(ctx, author); err != nil {
 		t.Fatalf("create author: %v", err)
 	}
-	book := &models.Book{ForeignID: "grab-book", AuthorID: author.ID, Title: "Grab Book", SortTitle: "grab book", MediaType: models.MediaTypeEbook}
+	book := &models.Book{ForeignID: "grab-book", AuthorID: author.ID, Title: "Grab Book", SortTitle: "grab book", MediaType: models.MediaTypeBoth}
 	if err := books.Create(ctx, book); err != nil {
 		t.Fatalf("create book: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestPendingGrab_DispatchesDownloadAndClearsPending(t *testing.T) {
 	})
 	pr := &models.PendingRelease{
 		BookID:      book.ID,
-		MediaType:   models.MediaTypeEbook,
+		MediaType:   models.MediaTypeAudiobook,
 		Title:       "Pending Release Title",
 		GUID:        "pending-guid",
 		Protocol:    "usenet",

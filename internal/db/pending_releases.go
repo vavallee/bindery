@@ -72,7 +72,7 @@ func (r *PendingReleaseRepo) ListByBookAndMediaType(ctx context.Context, bookID 
 		SELECT id, book_id, media_type, title, indexer_id, guid, protocol, size, age_minutes,
 		       quality, custom_score, reason, first_seen, release_json
 		FROM pending_releases WHERE book_id = ? AND media_type = ?
-		ORDER BY first_seen DESC`, bookID, mediaType)
+		ORDER BY first_seen DESC, id DESC`, bookID, mediaType)
 	if err != nil {
 		return nil, err
 	}

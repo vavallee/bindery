@@ -91,6 +91,17 @@ export function isNoDownloadClientError(err: unknown): boolean {
   return err instanceof ApiError && err.status === 400 && err.body.code === NO_DOWNLOAD_CLIENT_CODE
 }
 
+// True when an error is the backend's "no enabled download client is
+// eligible" failure (internal/api/queue.go's noEligibleMediaTypeError) —
+// every enabled, protocol-matched client has opted out of this release's
+// media type (book/audiobook eligibility checkboxes). Distinct from
+// isNoDownloadClientError: the fix here is enabling an existing client for
+// this media type, not adding a new one.
+export function isNoEligibleClientError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : ''
+  return msg.includes('no enabled download client is eligible for')
+}
+
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   // Merge caller-supplied headers on top of the defaults so we can't lose
   // the CSRF header if a caller passes their own `headers`.

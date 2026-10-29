@@ -40,7 +40,7 @@ func packGrabFixture(t *testing.T, results []newznab.SearchResult) (*Scheduler, 
 
 	client := &models.DownloadClient{
 		Name: "qbit", Type: "qbittorrent", Host: "127.0.0.1", Port: 1,
-		Enabled: true,
+		Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true,
 	}
 	if err := clients.Create(ctx, client); err != nil {
 		t.Fatal(err)

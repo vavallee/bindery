@@ -1081,6 +1081,18 @@ func (h *IndexerHandler) SearchQuery(w http.ResponseWriter, r *http.Request) {
 	h.searchResults.remember(results)
 	// Strip every credential before returning to the client (see SearchBook).
 	for i := range results {
+		if results[i].MediaType == "" {
+			formats := indexer.ReleaseFormats(results[i].Title)
+			if len(formats) > 0 {
+				results[i].MediaType = models.MediaTypeEbook
+				for _, format := range formats {
+					if indexer.MediaTypeForFormat(format) == models.MediaTypeAudiobook {
+						results[i].MediaType = models.MediaTypeAudiobook
+						break
+					}
+				}
+			}
+		}
 		redactSearchResult(&results[i])
 	}
 	writeJSON(w, http.StatusOK, results)

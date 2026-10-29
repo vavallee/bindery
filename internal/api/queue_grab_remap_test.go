@@ -42,6 +42,7 @@ func TestQueueGrab_SavePathUsesGlobalRemap(t *testing.T) {
 	host, port := testServerHostPort(t, srv.URL)
 	if err := clients.Create(ctx, &models.DownloadClient{
 		Name: "qbit", Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p", Enabled: true,
+		EnabledForBooks: true, EnabledForAudiobooks: true,
 	}); err != nil {
 		t.Fatalf("create client: %v", err)
 	}

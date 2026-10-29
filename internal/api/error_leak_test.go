@@ -114,7 +114,7 @@ func leakyQueue(t *testing.T) (*QueueHandler, *db.DownloadRepo, string) {
 
 	h, _, downloads, clients, _, ctx := queueFixture(t)
 	host, port := testServerHostPort(t, sab.URL)
-	if err := clients.Create(ctx, &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true}); err != nil {
+	if err := clients.Create(ctx, &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true}); err != nil {
 		t.Fatal(err)
 	}
 	return h, downloads, indexerSrv.URL + "/x.nzb"

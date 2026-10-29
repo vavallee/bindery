@@ -84,6 +84,7 @@ func TestSearchAndGrabBook_DualFormatUsesEachFormatsCategory(t *testing.T) {
 	}
 	if err := clients.Create(ctx, &models.DownloadClient{
 		Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true,
+		EnabledForBooks: true, EnabledForAudiobooks: true,
 		Category: "readarr-ebook", CategoryAudiobook: "readarr-audio",
 	}); err != nil {
 		t.Fatalf("client create: %v", err)
