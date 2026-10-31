@@ -306,3 +306,67 @@ func TestBookFileRepo_PathUnderOtherBookDir_StoredTrailingSlash(t *testing.T) {
 		t.Errorf("inner stored as F/sub/: got %v, %v, want true", got, err)
 	}
 }
+
+// TestBookFileRepo_PathUnderLiveOtherBookDir (#3556): the import-side variant
+// of PathUnderOtherBookDir. A folder row left by a deleted book does not
+// cover, so it cannot block an import for good; a live book's folder still does.
+func TestBookFileRepo_PathUnderLiveOtherBookDir(t *testing.T) {
+	database, author, gone := openTestDB(t)
+	ctx := context.Background()
+	files := NewBookFileRepo(database)
+	box := secondBook(t, database, author.ID, "Box")
+	child := secondBook(t, database, author.ID, "Child")
+	if err := files.Add(ctx, box.ID, models.MediaTypeAudiobook, "/lib/A/Box"); err != nil {
+		t.Fatal(err)
+	}
+	if err := files.Add(ctx, gone.ID, models.MediaTypeAudiobook, "/lib/A/Gone"); err != nil {
+		t.Fatal(err)
+	}
+	orphanBookRows(t, database, gone.ID)
+
+	for _, c := range []struct {
+		name    string
+		path    string
+		exclude int64
+		want    bool
+	}{
+		{"live book's folder covers", "/lib/A/Box/01.epub", child.ID, true},
+		{"the folder's own book", "/lib/A/Box/01.epub", box.ID, false},
+		{"folder left by a deleted book does not cover", "/lib/A/Gone/01.epub", child.ID, false},
+		{"untracked", "/lib/B/01.epub", child.ID, false},
+	} {
+		got, err := files.PathUnderLiveOtherBookDir(ctx, c.path, c.exclude)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+
+	// A query failure is returned, not read as "not under".
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := files.PathUnderLiveOtherBookDir(ctx, "/lib/A/Box/01.epub", child.ID); err == nil || got {
+		t.Errorf("closed db: got %v, %v, want false and an error", got, err)
+	}
+}
+
+// BookRepo exposes the live-owner check to the importer.
+func TestBookRepo_PathUnderLiveOtherBookDir(t *testing.T) {
+	database, author, _ := openTestDB(t)
+	ctx := context.Background()
+	repo := NewBookRepo(database)
+	box := secondBook(t, database, author.ID, "Box")
+	child := secondBook(t, database, author.ID, "Child")
+	if err := repo.AddBookFile(ctx, box.ID, models.MediaTypeAudiobook, "/lib/A/Box"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.PathUnderLiveOtherBookDir(ctx, "/lib/A/Box/01.epub", child.ID); err != nil || !got {
+		t.Errorf("got %v, %v, want true", got, err)
+	}
+	if got, err := repo.PathUnderLiveOtherBookDir(ctx, "/lib/A/Box/01.epub", box.ID); err != nil || got {
+		t.Errorf("own folder: got %v, %v, want false", got, err)
+	}
+}

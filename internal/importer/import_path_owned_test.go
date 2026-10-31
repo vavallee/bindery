@@ -453,3 +453,61 @@ func orphanBook(t *testing.T, database *sql.DB, bookID int64) {
 		t.Fatal(err)
 	}
 }
+
+// TestImport_EbookInsideOtherBooksFolder_Blocked: another book tracks the
+// whole folder the ebook would land in (an audiobook's folder). The import is
+// blocked rather than writing into it, where a Reorganize of that folder
+// would later carry the file away from this book's row.
+func TestImport_EbookInsideOtherBooksFolder_Blocked(t *testing.T) {
+	f := newPathOwnedFixture(t, models.MediaTypeEbook)
+	ctx := context.Background()
+	dest := f.ebookDest(t)
+	folder := filepath.Dir(dest)
+	if err := os.MkdirAll(folder, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.books.AddBookFile(ctx, f.wrong.ID, models.MediaTypeAudiobook, folder); err != nil {
+		t.Fatal(err)
+	}
+
+	f.importDownload(t)
+
+	dl, book := f.reload(t)
+	if dl.Status != models.StateImportBlocked {
+		t.Fatalf("download status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImportBlocked)
+	}
+	if !strings.Contains(dl.ErrorMessage, "inside a folder tracked by another book") {
+		t.Errorf("reason = %q, want it to explain the shared folder", dl.ErrorMessage)
+	}
+	if book.Status != models.BookStatusWanted {
+		t.Errorf("book status = %q, want %q", book.Status, models.BookStatusWanted)
+	}
+	if files := f.files(t, f.right.ID); len(files) != 0 {
+		t.Errorf("right book has files %+v, want none", files)
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Errorf("ebook was written into the other book's folder (stat err = %v)", err)
+	}
+}
+
+// A folder row left by a deleted book is not a live owner: the import goes
+// ahead instead of being blocked for good.
+func TestImport_EbookInsideDeletedBooksFolder_Imports(t *testing.T) {
+	f := newPathOwnedFixture(t, models.MediaTypeEbook)
+	ctx := context.Background()
+	dest := f.ebookDest(t)
+	folder := filepath.Dir(dest)
+	if err := os.MkdirAll(folder, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.books.AddBookFile(ctx, f.wrong.ID, models.MediaTypeAudiobook, folder); err != nil {
+		t.Fatal(err)
+	}
+	orphanBook(t, f.database, f.wrong.ID)
+
+	f.importDownload(t)
+
+	if dl, _ := f.reload(t); dl.Status != models.StateImported {
+		t.Fatalf("download status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImported)
+	}
+}

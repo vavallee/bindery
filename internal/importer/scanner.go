@@ -2551,6 +2551,23 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			continue
 		}
 
+		// A destination below a folder another book tracks (an audiobook is
+		// tracked as its whole folder) is not this book's to write to: a later
+		// Reorganize of that folder would carry the file away while this book's
+		// row kept the old path. A retry lands in the same place, so block it.
+		if under, err := s.books.PathUnderLiveOtherBookDir(ctx, destPath, book.ID); err != nil {
+			slog.Error("failed to check destination ownership", "dst", destPath, "error", err)
+			lastFileErr = fmt.Errorf("check destination ownership: %w", err)
+			failed++
+			continue
+		} else if under {
+			slog.Warn("destination is inside a folder another book tracks — refusing import", "src", srcFile, "dst", destPath)
+			lastFileErr = fmt.Errorf("%s is inside a folder tracked by another book; change the naming template so the two books do not share a folder", destPath)
+			failed++
+			ownedFailed++
+			continue
+		}
+
 		mode := ebookMode
 		slog.Info("importing book", "src", srcFile, "dst", destPath, "mode", mode)
 

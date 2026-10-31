@@ -434,6 +434,18 @@ func (r *BookFileRepo) PathOwnedByLiveOtherBook(ctx context.Context, path string
 // guards deletes, where refusing to unlink is the safe answer when ownership
 // is unclear.
 func (r *BookFileRepo) PathUnderOtherBookDir(ctx context.Context, path string, excludeBookID int64) (bool, error) {
+	return r.pathUnderOtherBookDir(ctx, path, excludeBookID, false)
+}
+
+// PathUnderLiveOtherBookDir is PathUnderOtherBookDir counting only rows whose
+// book still exists. Imports use it: refusing to write is only right when a
+// live book owns the folder, and a row left by a deleted book would otherwise
+// block the import for good with nothing the user can clear.
+func (r *BookFileRepo) PathUnderLiveOtherBookDir(ctx context.Context, path string, excludeBookID int64) (bool, error) {
+	return r.pathUnderOtherBookDir(ctx, path, excludeBookID, true)
+}
+
+func (r *BookFileRepo) pathUnderOtherBookDir(ctx context.Context, path string, excludeBookID int64, liveOnly bool) (bool, error) {
 	var forms []any
 	for dir := filepath.Dir(filepath.Clean(path)); ; dir = filepath.Dir(dir) {
 		if dir == "." || dir == string(filepath.Separator) || dir == filepath.Dir(dir) {
@@ -444,8 +456,12 @@ func (r *BookFileRepo) PathUnderOtherBookDir(ctx context.Context, path string, e
 	if len(forms) == 0 {
 		return false, nil
 	}
-	query := `SELECT book_id FROM book_files
-		 WHERE book_id != ? AND path IN (?` + strings.Repeat(",?", len(forms)-1) + `) LIMIT 1`
+	from := "book_files bf"
+	if liveOnly {
+		from = "book_files bf JOIN books b ON b.id = bf.book_id"
+	}
+	query := `SELECT bf.book_id FROM ` + from + `
+		 WHERE bf.book_id != ? AND bf.path IN (?` + strings.Repeat(",?", len(forms)-1) + `) LIMIT 1`
 	var owner int64
 	err := r.db.QueryRowContext(ctx, query, append([]any{excludeBookID}, forms...)...).Scan(&owner)
 	if errors.Is(err, sql.ErrNoRows) {
