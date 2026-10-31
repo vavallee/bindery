@@ -352,3 +352,21 @@ func TestBookFileRepo_PathUnderLiveOtherBookDir(t *testing.T) {
 		t.Errorf("closed db: got %v, %v, want false and an error", got, err)
 	}
 }
+
+// BookRepo exposes the live-owner check to the importer.
+func TestBookRepo_PathUnderLiveOtherBookDir(t *testing.T) {
+	database, author, _ := openTestDB(t)
+	ctx := context.Background()
+	repo := NewBookRepo(database)
+	box := secondBook(t, database, author.ID, "Box")
+	child := secondBook(t, database, author.ID, "Child")
+	if err := repo.AddBookFile(ctx, box.ID, models.MediaTypeAudiobook, "/lib/A/Box"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.PathUnderLiveOtherBookDir(ctx, "/lib/A/Box/01.epub", child.ID); err != nil || !got {
+		t.Errorf("got %v, %v, want true", got, err)
+	}
+	if got, err := repo.PathUnderLiveOtherBookDir(ctx, "/lib/A/Box/01.epub", box.ID); err != nil || got {
+		t.Errorf("own folder: got %v, %v, want false", got, err)
+	}
+}
