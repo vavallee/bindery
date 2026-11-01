@@ -150,7 +150,7 @@ jobs:
           go-version: "1.26.10"
           cache: true
       - run: go test -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/... ./tools/...
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: coverage.out
           flags: backend
@@ -248,7 +248,7 @@ jobs:
       - run: npm run build --prefix web
       # Same suite as `npm test`, plus v8 coverage written to web/coverage/.
       - run: npm run test:coverage --prefix web
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: web/coverage/lcov.info
           flags: frontend
@@ -284,7 +284,7 @@ jobs:
       - name: Go tests
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: go test ./cmd/... ./internal/... ./tools/...
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         with:
           files: coverage.out
@@ -305,7 +305,7 @@ jobs:
       - name: Frontend tests
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: npm test --prefix web
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         with:
           files: web/coverage/lcov.info
