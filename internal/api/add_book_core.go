@@ -304,9 +304,9 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 	}
 
 	// 1. Find or create the author (unmonitored if new so we don't auto-want all books).
-	author, _ := h.authors.GetByForeignIDForUser(ctx, req.ForeignAuthorID, userID)
+	author, _ := h.authors.GetByForeignIDForUser(ctx, req.ForeignAuthorID, scopeID)
 	if author == nil {
-		author, _ = h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignAuthorID, userID)
+		author, _ = h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignAuthorID, scopeID)
 	}
 	if author == nil {
 		name := req.AuthorName
@@ -347,7 +347,7 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 				} else {
 					// Re-fetch the row by its new canonical ForeignID so subsequent
 					// steps see the upgraded record (ID preserved).
-					if upgraded, getErr := h.authors.GetByForeignIDForUser(ctx, fetched.ForeignID, userID); getErr == nil && upgraded != nil {
+					if upgraded, getErr := h.authors.GetByForeignIDForUser(ctx, fetched.ForeignID, scopeID); getErr == nil && upgraded != nil {
 						author = upgraded
 					}
 				}
@@ -368,7 +368,7 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 					return addBookResult{}, err
 				}
 				// Race: another request created it between our check and insert.
-				author, _ = h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignAuthorID, userID)
+				author, _ = h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignAuthorID, scopeID)
 				if author == nil {
 					return addBookResult{}, errAddBookAuthorExists
 				}
@@ -602,7 +602,7 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 	// user's book to monitored. Refuse instead, with no row in the body since
 	// the caller is not allowed to see it. bookCreated stays false so the
 	// orphan cleanup defer removes any author row this request created.
-	if book.OwnerUserID != 0 && userID != 0 && book.OwnerUserID != userID {
+	if book.OwnerUserID != 0 && scopeID != 0 && book.OwnerUserID != scopeID {
 		return addBookResult{}, errAddBookHeldByAnotherUser
 	}
 	// A shared row with no owner that appeared mid request (another add, a

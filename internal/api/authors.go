@@ -917,7 +917,7 @@ func (h *AuthorHandler) findAuthorByNameOrAliasExcluding(ctx context.Context, ex
 	if name == "" {
 		return nil, false, nil
 	}
-	authors, err := h.authors.ListByUser(ctx, auth.UserIDFromContext(ctx))
+	authors, err := h.authors.ListByUser(ctx, auth.ListScopeUserID(ctx))
 	if err != nil {
 		return nil, false, err
 	}
@@ -3580,7 +3580,7 @@ func (h *AuthorHandler) findLibraryAuthorByName(ctx context.Context, name string
 	if want == "" {
 		return nil
 	}
-	authors, err := h.authors.ListByUser(ctx, auth.UserIDFromContext(ctx))
+	authors, err := h.authors.ListByUser(ctx, auth.ListScopeUserID(ctx))
 	if err != nil {
 		return nil
 	}
