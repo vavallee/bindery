@@ -16,6 +16,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/decision"
@@ -237,6 +238,7 @@ type Scheduler struct {
 	// operatorUserID resolves the user the recommendation job writes under.
 	// Optional; nil falls back to the historical hardcoded admin id (#1725).
 	operatorUserID       func(context.Context) int64
+	users                UserLister      // optional; the nightly recommendation job refreshes each account
 	hcSyncer             HCListSyncer    // optional; syncs Hardcover import lists
 	telemetry            TelemetryPinger // optional; sends daily anonymous install ping
 	logs                 *db.LogRepo     // optional; enables periodic log retention trim
@@ -442,6 +444,48 @@ func (s *Scheduler) WithOperatorUserID(fn func(context.Context) int64) {
 	s.operatorUserID = fn
 }
 
+// UserLister lists the accounts the nightly recommendation job refreshes.
+// *db.UserRepo satisfies it.
+type UserLister interface {
+	List(ctx context.Context) ([]db.User, error)
+}
+
+// WithUsers registers the user list the nightly recommendation job walks, so
+// every account that can open Discover gets a fresh list, not only the
+// operator. Without it the job refreshes the operator alone.
+func (s *Scheduler) WithUsers(u UserLister) {
+	s.users = u
+}
+
+// recommendationUserIDs returns the accounts the nightly job refreshes: the
+// operator first (the same identity a manual refresh from an install-level
+// credential uses, #1725; falls back to user 1), then every admin and user
+// account. Requesters are left out because they cannot open Discover.
+func (s *Scheduler) recommendationUserIDs(ctx context.Context) []int64 {
+	op := int64(1)
+	if s.operatorUserID != nil {
+		if resolved := s.operatorUserID(ctx); resolved != 0 {
+			op = resolved
+		}
+	}
+	ids := []int64{op}
+	if s.users == nil {
+		return ids
+	}
+	users, err := s.users.List(ctx)
+	if err != nil {
+		slog.Error("recommendation job: list users failed, refreshing the operator only", "error", err)
+		return ids
+	}
+	for _, u := range users {
+		if u.ID == op || u.Role == auth.RoleRequester {
+			continue
+		}
+		ids = append(ids, u.ID)
+	}
+	return ids
+}
+
 // WithHardcoverSyncer registers a Hardcover list syncer that runs every 24
 // hours to import books from the user's Hardcover reading lists.
 func (s *Scheduler) WithHardcoverSyncer(syncer HCListSyncer) {
@@ -615,19 +659,12 @@ func (s *Scheduler) Start() {
 					return
 				}
 			}
-			// Attribute the batch to the same operator the auth layer
-			// resolves for install-authenticated requests. Hardcoding 1 here
-			// meant the nightly job and a manual refresh could write under
-			// different users, so dismissals never applied (#1725).
 			ctx := s.ctx()
-			uid := int64(1)
-			if s.operatorUserID != nil {
-				if resolved := s.operatorUserID(ctx); resolved != 0 {
-					uid = resolved
+			for _, uid := range s.recommendationUserIDs(ctx) {
+				// One account failing must not stop the others.
+				if err := s.recommender.Run(ctx, uid); err != nil {
+					slog.Error("recommendation engine failed", "userId", uid, "error", err)
 				}
-			}
-			if err := s.recommender.Run(ctx, uid); err != nil {
-				slog.Error("recommendation engine failed", "error", err)
 			}
 		}))
 	}

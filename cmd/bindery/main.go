@@ -584,6 +584,7 @@ func main() {
 	recEngine.WithUsers(userRepo)
 	slog.Info("hardcover wishlist integration enabled for recommendations when a token is configured")
 	sched.WithRecommender(recEngine)
+	sched.WithUsers(userRepo)
 
 	// Register the Hardcover list syncer (24-hour job).
 	hcSyncer := hardcoverlistsyncer.New(importListRepo, authorRepo, bookRepo).

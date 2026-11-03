@@ -352,3 +352,53 @@ func TestRefreshDownloadClientHealth_PublishesForEnabledClients(t *testing.T) {
 		t.Error("expected no health entry for the disabled client")
 	}
 }
+
+// fakeUserLister returns a fixed account list, or an error.
+type fakeUserLister struct {
+	users []db.User
+	err   error
+}
+
+func (f fakeUserLister) List(context.Context) ([]db.User, error) { return f.users, f.err }
+
+// TestStart_RecommendationsRefreshEveryAccount: the nightly job runs the
+// engine for the operator and for every other admin and user account, skips
+// requesters (they cannot open Discover), and keeps going when one run fails.
+func TestStart_RecommendationsRefreshEveryAccount(t *testing.T) {
+	f := newStartFixture(t) // operator is 7, and every engine run returns an error
+	ctx := context.Background()
+	f.s.WithUsers(fakeUserLister{users: []db.User{
+		{ID: 2, Role: "user"},
+		{ID: 3, Role: "requester"},
+		{ID: 4, Role: "user"},
+		{ID: 7, Role: "admin"},
+	}})
+	if err := f.settings.Set(ctx, "recommendations.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	f.s.Start()
+	f.s.Stop()
+	runAllJobs(t, f.s.cron)
+
+	want := []int64{7, 2, 4}
+	if len(f.rec.uids) != len(want) {
+		t.Fatalf("expected runs for %v, got %v", want, f.rec.uids)
+	}
+	for i, id := range want {
+		if f.rec.uids[i] != id {
+			t.Fatalf("expected runs for %v, got %v", want, f.rec.uids)
+		}
+	}
+}
+
+// TestRecommendationUserIDs_ListFailureFallsBackToOperator: if the user list
+// cannot be read, the job still refreshes the operator.
+func TestRecommendationUserIDs_ListFailureFallsBackToOperator(t *testing.T) {
+	s := &Scheduler{}
+	s.WithOperatorUserID(func(context.Context) int64 { return 5 })
+	s.WithUsers(fakeUserLister{err: errors.New("db closed")})
+	got := s.recommendationUserIDs(context.Background())
+	if len(got) != 1 || got[0] != 5 {
+		t.Fatalf("expected [5], got %v", got)
+	}
+}
