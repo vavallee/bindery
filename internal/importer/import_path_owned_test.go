@@ -511,3 +511,37 @@ func TestImport_EbookInsideDeletedBooksFolder_Imports(t *testing.T) {
 		t.Fatalf("download status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImported)
 	}
 }
+
+// The importing book's own audiobook folder is the parent of its ebook
+// destination (the default layout puts both formats in one folder). That
+// folder is this book's, not another book's, so the import goes ahead.
+func TestImport_EbookInsideOwnAudiobookFolder_Imports(t *testing.T) {
+	f := newPathOwnedFixture(t, models.MediaTypeEbook)
+	ctx := context.Background()
+	dest := f.ebookDest(t)
+	folder := filepath.Dir(dest)
+	if err := os.MkdirAll(folder, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.books.AddBookFile(ctx, f.right.ID, models.MediaTypeAudiobook, folder); err != nil {
+		t.Fatal(err)
+	}
+
+	f.importDownload(t)
+
+	if dl, _ := f.reload(t); dl.Status != models.StateImported {
+		t.Fatalf("download status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImported)
+	}
+	if _, err := os.Stat(dest); err != nil {
+		t.Errorf("ebook not written next to its own audiobook folder: %v", err)
+	}
+	found := false
+	for _, bf := range f.files(t, f.right.ID) {
+		if bf.Path == dest {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("right book has no file row for %s: %+v", dest, f.files(t, f.right.ID))
+	}
+}

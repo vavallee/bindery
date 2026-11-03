@@ -2568,7 +2568,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			continue
 		} else if under {
 			slog.Warn("destination is inside a folder another book tracks — refusing import", "src", srcFile, "dst", destPath)
-			lastFileErr = fmt.Errorf("%s is inside a folder tracked by another book; change the naming template so the two books do not share a folder", destPath)
+			lastFileErr = fmt.Errorf("%s is inside a folder tracked by another book; remove the duplicate book or change the naming template so the two books do not share a folder", destPath)
 			failed++
 			ownedFailed++
 			continue
