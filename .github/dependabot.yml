@@ -87,6 +87,12 @@ updates:
     commit-message:
       prefix: "chore(ci)"
       include: scope
+    # init, autobuild, analyze and upload-sarif must run the same release:
+    # bumped one at a time, CodeQL refuses a config written by a newer init.
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   - package-ecosystem: docker
     directory: /cmd/discord-stats
