@@ -63,7 +63,7 @@ jobs:
           persist-credentials: false
 
       - name: Sweep with Claude
-        uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1.0.240
+        uses: anthropics/claude-code-action@d535f5172dec02b204866b393d6b20b9b2aaf98d # v1.0.266
         env:
           GH_TOKEN: ${{ github.token }}
         with:
