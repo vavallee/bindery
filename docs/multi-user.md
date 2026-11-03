@@ -76,6 +76,8 @@ A `user` account grabs releases from the search results Bindery showed it. `POST
 
 With `BINDERY_ENFORCE_TENANCY` on, a grab's `bookId` must be a book the caller owns (otherwise 404, as for any other book route), and a release whose queue row belongs to another user answers 409 without describing that row. A grab claims another user's row only on the terms the scheduler's automatic grab uses: a failed row once it has been dead for six hours, or an imported row whose book was deleted. A claimed row is reset completely, owner and book included. Rows in `importBlocked` and live rows are never claimed this way.
 
+A release grabbed without a `bookId` (the Search page does not tie a release to a book) is matched to a book when it finishes, from the file's embedded metadata, its file name and the release title. With `BINDERY_ENFORCE_TENANCY` on and a `user` account owning the download, that match only considers the user's own books and books with no owner. If none of those matches, the download stays unmatched in the queue. A download owned by an admin, or with no owner, is matched against the whole library, as is every download with tenancy off.
+
 ## Requester
 
 A requester asks for books; an admin decides. It is the role for people who share an instance but should not grab, delete or configure anything: family, friends, a book club.

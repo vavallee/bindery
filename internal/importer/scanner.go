@@ -116,6 +116,9 @@ type Scanner struct {
 	// dc:creator is a pen name or house name the author is known under counts as
 	// the author. Nil leaves the check comparing the author's own name only.
 	authorAliases *db.AuthorAliasRepo
+	// users resolves a download owner's role for downloadMatchScope. Nil
+	// treats every owner as a non admin, which only ever narrows the match.
+	users *db.UserRepo
 	// onContentCheck, when non-nil, is called each time a content check
 	// actually runs, with "ebook" or "audiobook". A test seam: it proves the
 	// check runs for a polled download and never for a library scan or a
@@ -1760,7 +1763,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// EPUB metadata (reliable) over the release filename (which encodes
 	// author/title/series in inconsistent orders) — issue #1014.
 	if book == nil {
-		if b, a := s.matchBookForDownload(ctx, bookFiles, dl.Title); b != nil {
+		if b, a := s.matchBookForDownload(ctx, s.downloadMatchScope(ctx, dl), bookFiles, dl.Title); b != nil {
 			book = b
 			author = a
 			edition = s.resolveCalibreEdition(ctx, dl, book)
