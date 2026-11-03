@@ -581,6 +581,7 @@ func main() {
 	recEngine := recommender.New(bookRepo, authorRepo, seriesRepo, recRepo, settingsRepo)
 	recEngine.WithOLClient(olClient)
 	recEngine.WithHCClient(hcClient)
+	recEngine.WithUsers(userRepo)
 	slog.Info("hardcover wishlist integration enabled for recommendations when a token is configured")
 	sched.WithRecommender(recEngine)
 

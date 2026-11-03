@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -16,6 +17,17 @@ import (
 // authors" background job persists its progress as a JSON string. Mirrors the
 // "library.lastScan" convention so the status survives a page reload.
 const SettingAuthorBulkRefresh = "authors.bulkRefresh"
+
+// refreshStatusKey is the settings key a run's status lives under. A run
+// started by a non admin under tenancy covers only that user's authors and
+// keeps its status under a key of its own, so one user never reads another
+// user's run or the instance wide author count. scope 0 is the instance run.
+func refreshStatusKey(scope int64) string {
+	if scope == 0 {
+		return SettingAuthorBulkRefresh
+	}
+	return db.AuthorBulkRefreshUserKey(scope)
+}
 
 // authorLister is the subset of *db.AuthorRepo used to enumerate every author
 // for the bulk refresh. Narrowed to one method so tests can stub it.
@@ -48,6 +60,9 @@ type AuthorRefreshHandler struct {
 	// "running" but no goroutine exists) — RefreshAllStatus reconciles that.
 	mu      sync.Mutex
 	running bool
+	// runScope is the user the active (or next) run is limited to, 0 for
+	// every author. Set with running, under mu.
+	runScope int64
 }
 
 // NewAuthorRefreshHandler builds the handler with the author lister and the
@@ -92,6 +107,10 @@ func (h *AuthorRefreshHandler) RefreshAll(w http.ResponseWriter, r *http.Request
 		return
 	}
 	h.running = true
+	// Under tenancy a non admin refreshes only the authors they own. Shared
+	// (unowned) authors are left out: refreshing one rewrites a catalogue
+	// every user sees, which is an admin's call.
+	h.runScope = auth.ListScopeUserID(r.Context())
 	h.mu.Unlock()
 
 	// context.WithoutCancel so the goroutine isn't killed when the HTTP
@@ -109,22 +128,36 @@ func (h *AuthorRefreshHandler) Running() bool {
 	return h.running
 }
 
-// run is the background job. It enumerates every author and refreshes them
+// run is the background job. It enumerates every author (or, for a run
+// limited to one user, the authors that user owns) and refreshes them
 // sequentially (provider rate limits — never parallelise), tolerating a panic
 // in any single author's refresh. Progress is persisted to the settings table
 // after each author; the terminal state ("completed"/"failed") is always
 // written last.
 func (h *AuthorRefreshHandler) run(ctx context.Context) {
+	h.mu.Lock()
+	scope := h.runScope
+	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()
 		h.running = false
+		h.runScope = 0
 		h.mu.Unlock()
 	}()
 
 	authors, err := h.authors.List(ctx)
+	if err == nil && scope != 0 {
+		own := authors[:0:0]
+		for _, a := range authors {
+			if a.OwnerUserID == scope {
+				own = append(own, a)
+			}
+		}
+		authors = own
+	}
 	if err != nil {
 		slog.Error("refresh all authors: list failed", "error", err)
-		h.persist(ctx, authorRefreshStatus{
+		h.persist(ctx, scope, authorRefreshStatus{
 			Status:    "failed",
 			StartedAt: time.Now().UTC().Format(time.RFC3339),
 			Message:   "failed to list authors: " + err.Error(),
@@ -137,7 +170,7 @@ func (h *AuthorRefreshHandler) run(ctx context.Context) {
 		Total:     len(authors),
 		StartedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	h.persist(ctx, status)
+	h.persist(ctx, scope, status)
 
 	for i := range authors {
 		// Loop var is per-iteration in Go 1.22+, so &authors[i] is safe to
@@ -159,18 +192,18 @@ func (h *AuthorRefreshHandler) run(ctx context.Context) {
 		// huge library this is one settings UPSERT per author, which is cheap
 		// relative to a provider round-trip per author; the bottleneck is the
 		// network refresh, not the local write.
-		h.persist(ctx, status)
+		h.persist(ctx, scope, status)
 	}
 
 	status.Status = "completed"
 	status.CompletedAt = time.Now().UTC().Format(time.RFC3339)
-	h.persist(ctx, status)
+	h.persist(ctx, scope, status)
 }
 
 // persist writes the status JSON to the settings table. Failures are logged
 // but never abort the run — a missed progress write is recoverable; aborting
 // mid-refresh is not.
-func (h *AuthorRefreshHandler) persist(ctx context.Context, status authorRefreshStatus) {
+func (h *AuthorRefreshHandler) persist(ctx context.Context, scope int64, status authorRefreshStatus) {
 	if h.settings == nil {
 		return
 	}
@@ -179,7 +212,7 @@ func (h *AuthorRefreshHandler) persist(ctx context.Context, status authorRefresh
 		slog.Warn("refresh all authors: marshal status failed", "error", err)
 		return
 	}
-	if err := h.settings.Set(ctx, SettingAuthorBulkRefresh, string(b)); err != nil {
+	if err := h.settings.Set(ctx, refreshStatusKey(scope), string(b)); err != nil {
 		slog.Warn("refresh all authors: persist status failed", "error", err)
 	}
 }
@@ -192,12 +225,17 @@ func (h *AuthorRefreshHandler) persist(ctx context.Context, status authorRefresh
 // process (e.g. the server restarted mid-job), it is reported as "failed" with
 // an "interrupted by restart" message so the UI banner does not hang forever.
 // The reconciled value is written back once so subsequent reads are consistent.
+//
+// Under tenancy a non admin is served their own run's status only (see
+// refreshStatusKey), and idle when they never started one.
 func (h *AuthorRefreshHandler) RefreshAllStatus(w http.ResponseWriter, r *http.Request) {
 	if h.settings == nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "idle"})
 		return
 	}
-	setting, err := h.settings.Get(r.Context(), SettingAuthorBulkRefresh)
+	scope := auth.ListScopeUserID(r.Context())
+	key := refreshStatusKey(scope)
+	setting, err := h.settings.Get(r.Context(), key)
 	if err != nil {
 		writeServerError(w, r, err)
 		return
@@ -215,14 +253,14 @@ func (h *AuthorRefreshHandler) RefreshAllStatus(w http.ResponseWriter, r *http.R
 	var status authorRefreshStatus
 	if err := json.Unmarshal([]byte(value), &status); err == nil && status.Status == "running" {
 		h.mu.Lock()
-		running := h.running
+		running := h.running && h.runScope == scope
 		h.mu.Unlock()
 		if !running {
 			status.Status = "failed"
 			status.Message = "interrupted by restart"
 			if b, mErr := json.Marshal(status); mErr == nil {
 				value = string(b)
-				if sErr := h.settings.Set(r.Context(), SettingAuthorBulkRefresh, value); sErr != nil {
+				if sErr := h.settings.Set(r.Context(), key, value); sErr != nil {
 					slog.Warn("refresh all authors: reconcile stale running failed", "error", sErr)
 				}
 			}

@@ -95,7 +95,7 @@ func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.Down
 			if dl.Status != models.StateFailed {
 				slog.Warn("download failed", "title", dl.Title, "message", slot.FailMessage)
 				s.setDownloadError(ctx, dl.ID, slot.FailMessage)
-				s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, map[string]string{"guid": dl.GUID, "message": slot.FailMessage})
+				s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{"guid": dl.GUID, "message": slot.FailMessage})
 				// A content failure fails again on every re-send, so the
 				// #2710 cooldown alone would re-grab it each sweep (#3024).
 				if sabnzbd.IsContentFailure(slot.FailMessage) {
@@ -187,7 +187,7 @@ func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.Downl
 				msg := fmt.Sprintf("NZBGet reported status: %s", item.Status)
 				slog.Warn("download failed", "title", dl.Title, "status", item.Status)
 				s.setDownloadError(ctx, dl.ID, msg)
-				s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, map[string]string{"guid": dl.GUID, "message": msg})
+				s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{"guid": dl.GUID, "message": msg})
 				// See the SABnzbd branch. For the statuses NZBGet also uses for
 				// its own faults, the job log is read first (#3024).
 				if nzbget.IsContentFailure(item.Status) {

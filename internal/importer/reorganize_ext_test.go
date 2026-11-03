@@ -70,7 +70,7 @@ func TestReorganize_RecoversExtensionFromHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	setTemplate(t, env, ctx, "{Author}/{Title}.{ext}")
-	env.s.createHistoryEvent(ctx, models.HistoryEventBookRenamed, book.Title, &book.ID, map[string]string{
+	env.s.createHistoryEvent(ctx, models.HistoryEventBookRenamed, book.Title, &book.ID, 0, map[string]string{
 		"from": orig, "to": lost, "format": "ebook",
 	})
 
@@ -242,7 +242,7 @@ func TestReorganize_HistoryVersusContent(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			env, _, _, ctx := reorgFixture(t)
 			book, lost := trackExtensionless(t, env, ctx, "Bookx", c.content, "{Author}/{Title}.{ext}")
-			env.s.createHistoryEvent(ctx, models.HistoryEventBookRenamed, book.Title, &book.ID, map[string]string{
+			env.s.createHistoryEvent(ctx, models.HistoryEventBookRenamed, book.Title, &book.ID, 0, map[string]string{
 				"from": filepath.Join(filepath.Dir(lost), c.histFrom), "to": lost, "format": "ebook",
 			})
 			moves := previewWithin(t, env, ctx, book.ID)

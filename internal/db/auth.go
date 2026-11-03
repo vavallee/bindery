@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
@@ -384,6 +385,14 @@ var purgeOrder = []string{
 	"import_lists",
 }
 
+// AuthorBulkRefreshUserKey is the settings key holding the status of the
+// Refresh all run a user who is not an admin started under tenancy. The
+// instance run lives under "authors.bulkRefresh". Kept here so the user delete
+// path can clear it.
+func AuthorBulkRefreshUserKey(userID int64) string {
+	return "authors.bulkRefresh.user." + strconv.FormatInt(userID, 10)
+}
+
 // perUserStateTables hold rows scoped to one account that no other account can
 // act on: a recommendation is scored against one user's taste and a dismissal
 // only suppresses rows in that user's feed. Migration 015 declares these
@@ -536,6 +545,28 @@ func (r *UserRepo) Delete(ctx context.Context, id int64, plan UserDeletePlan) er
 				return fmt.Errorf("reassign %s: %w", t, err)
 			}
 		}
+	}
+
+	// History follows the library it describes: purged with it, or handed to
+	// the same account. It is not counted in UserOwnedRows because it is never
+	// a decision of its own, and its foreign key is ON DELETE SET NULL, so a
+	// row left behind would only become admin only, never block the delete.
+	if plan.Strategy == PurgeOwnedRows {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM history WHERE owner_user_id = ?", id); err != nil {
+			return fmt.Errorf("purge history: %w", err)
+		}
+	} else if _, err := tx.ExecContext(ctx,
+		"UPDATE history SET owner_user_id = ? WHERE owner_user_id = ?", plan.ReassignTo, id,
+	); err != nil {
+		return fmt.Errorf("reassign history: %w", err)
+	}
+
+	// A user's own Refresh all status (see api.refreshStatusKey) is meaningless
+	// once they are gone.
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM settings WHERE key = ?", AuthorBulkRefreshUserKey(id),
+	); err != nil {
+		return fmt.Errorf("clear refresh status: %w", err)
 	}
 
 	// Blocklist attribution is an audit trail, not ownership. Migration 050
