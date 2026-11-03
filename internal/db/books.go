@@ -1100,6 +1100,13 @@ func (r *BookRepo) PathOwnedByOtherBook(ctx context.Context, path string, exclud
 	return r.files.PathOwnedByOtherBook(ctx, path, excludeBookID)
 }
 
+// PathUnderLiveOtherBookDir is PathUnderOtherBookDir ignoring rows left by
+// deleted books. For import pre-checks, never for a delete guard. See
+// BookFileRepo.PathUnderLiveOtherBookDir.
+func (r *BookRepo) PathUnderLiveOtherBookDir(ctx context.Context, path string, excludeBookID int64) (bool, error) {
+	return r.files.PathUnderLiveOtherBookDir(ctx, path, excludeBookID)
+}
+
 // PathUnderOtherBookDir reports whether a book other than
 // excludeBookID tracks a folder that contains path. See
 // BookFileRepo.PathUnderOtherBookDir (#3336).
