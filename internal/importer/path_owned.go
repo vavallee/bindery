@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -62,7 +63,10 @@ func (fm *FixMatch) covers(path string) bool {
 // holds the file. The one exception is a Fix match of that very file, where
 // moving the row is what the user asked for: the row moves and the move is
 // recorded in history once the import completes.
-func (s *Scanner) recordImportedFile(ctx context.Context, book *models.Book, format, path string) error {
+//
+// The reason lands on dl, which its owner reads in the queue. With tenancy on,
+// a holding book another user owns is not named (see pathOwnedReason).
+func (s *Scanner) recordImportedFile(ctx context.Context, dl *models.Download, book *models.Book, format, path string) error {
 	err := s.books.AddBookFile(ctx, book.ID, format, path)
 	var owned *db.PathOwnedError
 	if !errors.As(err, &owned) {
@@ -70,7 +74,7 @@ func (s *Scanner) recordImportedFile(ctx context.Context, book *models.Book, for
 	}
 	fm := fixMatchFrom(ctx)
 	if fm == nil || !fm.covers(path) {
-		return fmt.Errorf("%w; if the file is really %q, use Fix match on that book to move it here", owned, book.Title)
+		return s.pathOwnedReason(ctx, dl, book, owned)
 	}
 	prev, err := s.books.MoveBookFile(ctx, path, book.ID, format)
 	if err != nil {
@@ -83,6 +87,39 @@ func (s *Scanner) recordImportedFile(ctx context.Context, book *models.Book, for
 	}
 	return nil
 }
+
+// pathOwnedReason is the error recordImportedFile returns when another book
+// already tracks path. It still matches *db.PathOwnedError through errors.As,
+// which is how the import decides to block rather than retry.
+//
+// The usual text names the holding book's title and id. With tenancy on, when
+// that book's owner is not the download's owner (or cannot be read), the
+// reason says only that another book in the library uses the path: the
+// download's owner cannot open that book, and its title and id are another
+// user's data.
+func (s *Scanner) pathOwnedReason(ctx context.Context, dl *models.Download, book *models.Book, owned *db.PathOwnedError) error {
+	if auth.EnforceTenancy() {
+		var dlOwner int64
+		if dl != nil {
+			dlOwner = dl.OwnerUserID
+		}
+		holder, err := s.books.GetByID(ctx, owned.OwnerBookID)
+		if err != nil || holder == nil || holder.OwnerUserID != dlOwner {
+			return &pathOwnedElsewhereError{owned: owned}
+		}
+	}
+	return fmt.Errorf("%w; if the file is really %q, use Fix match on that book to move it here", owned, book.Title)
+}
+
+// pathOwnedElsewhereError is a *db.PathOwnedError whose text leaves out the
+// book that holds the path.
+type pathOwnedElsewhereError struct{ owned *db.PathOwnedError }
+
+func (e *pathOwnedElsewhereError) Error() string {
+	return fmt.Sprintf("%s: the destination path is already used by another book in the library", e.owned.Path)
+}
+
+func (e *pathOwnedElsewhereError) Unwrap() error { return e.owned }
 
 // recordFixMatchMove writes the bookFileMoved history row for a Fix match
 // whose import completed, naming the book the file came from. dest is where
@@ -97,7 +134,7 @@ func (s *Scanner) recordFixMatchMove(ctx context.Context, book *models.Book, des
 	if len(fm.SourcePaths) > 0 {
 		source = fm.SourcePaths[0]
 	}
-	s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, map[string]string{
+	s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, book.OwnerUserID, map[string]string{
 		"path":       dest,
 		"sourcePath": source,
 		"fromBookId": strconv.FormatInt(fm.FromBookID, 10),
@@ -194,6 +231,6 @@ func (s *Scanner) RelinkFile(ctx context.Context, bookID int64, paths []string, 
 	}
 	// Written for an untracked file too, so the link never appears on a
 	// book's History without a trace of where it came from.
-	s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, data)
+	s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, book.OwnerUserID, data)
 	return res, nil
 }

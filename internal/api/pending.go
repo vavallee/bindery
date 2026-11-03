@@ -143,7 +143,7 @@ func (h *PendingHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "pending release not found"})
 		return
 	}
-	if !auth.CheckOwnership(r.Context(), owner) {
+	if !auth.CheckWriteOwnership(r.Context(), owner) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "pending release not found"})
 		return
 	}
@@ -179,7 +179,7 @@ func (h *PendingHandler) Grab(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	if !auth.CheckOwnership(r.Context(), owner) {
+	if !auth.CheckWriteOwnership(r.Context(), owner) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "pending release not found"})
 		return
 	}

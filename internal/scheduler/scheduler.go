@@ -1518,7 +1518,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	}.WithSeedLimits(s.resolveSeedLimits(ctx, best.IndexerID)))
 	if err != nil {
 		slog.Error("SearchAndGrabBook: failed to send to downloader", "client", client.Type, "client_name", client.Name, "indexer", best.IndexerName, "title", best.Title, "error", err)
-		if setErr := s.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {
+		if setErr := s.downloads.SetError(ctx, dl.ID, downloader.SendFailureMessage(err)); setErr != nil {
 			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
 		}
 		outcome = "send to downloader failed"
@@ -2053,6 +2053,7 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 			EventType:   models.HistoryEventDownloadStalled,
 			SourceTitle: dl.Title,
 			Data:        string(data),
+			OwnerUserID: dl.OwnerUserID,
 		})
 	}
 
@@ -2097,6 +2098,7 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 			EventType:   models.HistoryEventDownloadRequeued,
 			SourceTitle: dl.Title,
 			Data:        string(data),
+			OwnerUserID: dl.OwnerUserID,
 		})
 	}
 

@@ -35,7 +35,7 @@ func GenerateSeries(
 	var candidates []models.RecommendationCandidate
 
 	for seriesID, state := range profile.SeriesState {
-		full, err := series.GetByID(ctx, seriesID)
+		full, err := series.GetByIDForUser(ctx, seriesID, profile.Scope)
 		if err != nil || full == nil {
 			continue
 		}
@@ -44,7 +44,7 @@ func GenerateSeries(
 		nextPos := state.MaxPosition + 1
 		for _, sb := range full.Books {
 			pos := parsePosition(sb.PositionInSeries)
-			if !floatEqual(pos, nextPos) || sb.Book == nil {
+			if !floatEqual(pos, nextPos) || !profile.visible(sb.Book) {
 				continue
 			}
 			if profile.IsOwned(sb.Book.ForeignID, sb.Book.Title, profile.AuthorNames[sb.Book.AuthorID]) {
@@ -64,7 +64,7 @@ func GenerateSeries(
 		for _, missingPos := range state.MissingPositions {
 			for _, sb := range full.Books {
 				pos := parsePosition(sb.PositionInSeries)
-				if !floatEqual(pos, missingPos) || sb.Book == nil {
+				if !floatEqual(pos, missingPos) || !profile.visible(sb.Book) {
 					continue
 				}
 				if profile.IsOwned(sb.Book.ForeignID, sb.Book.Title, profile.AuthorNames[sb.Book.AuthorID]) {
@@ -110,7 +110,8 @@ func GenerateAuthorNew(
 
 		for i := range authorBooks {
 			b := &authorBooks[i]
-			if profile.IsOwned(b.ForeignID, b.Title, author.Name) {
+			// A shared author can carry another user's books.
+			if !profile.visible(b) || profile.IsOwned(b.ForeignID, b.Title, author.Name) {
 				continue
 			}
 			// Only recommend books with wanted or skipped status (they're in
@@ -151,13 +152,13 @@ func GenerateGenreSimilar(
 	}
 
 	for _, s := range allSeries {
-		full, err := series.GetByID(ctx, s.ID)
+		full, err := series.GetByIDForUser(ctx, s.ID, profile.Scope)
 		if err != nil || full == nil {
 			continue
 		}
 
 		for _, sb := range full.Books {
-			if sb.Book == nil || profile.IsOwned(sb.Book.ForeignID, sb.Book.Title, profile.AuthorNames[sb.Book.AuthorID]) {
+			if !profile.visible(sb.Book) || profile.IsOwned(sb.Book.ForeignID, sb.Book.Title, profile.AuthorNames[sb.Book.AuthorID]) {
 				continue
 			}
 			// Skip books already covered by series candidates.
@@ -198,13 +199,13 @@ func GenerateSerendipity(
 	}
 
 	for _, s := range allSeries {
-		full, err := series.GetByID(ctx, s.ID)
+		full, err := series.GetByIDForUser(ctx, s.ID, profile.Scope)
 		if err != nil || full == nil {
 			continue
 		}
 
 		for _, sb := range full.Books {
-			if sb.Book == nil || profile.IsOwned(sb.Book.ForeignID, sb.Book.Title, profile.AuthorNames[sb.Book.AuthorID]) {
+			if !profile.visible(sb.Book) || profile.IsOwned(sb.Book.ForeignID, sb.Book.Title, profile.AuthorNames[sb.Book.AuthorID]) {
 				continue
 			}
 

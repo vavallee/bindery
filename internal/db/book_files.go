@@ -473,6 +473,33 @@ func (r *BookFileRepo) pathUnderOtherBookDir(ctx context.Context, path string, e
 	return true, nil
 }
 
+// PathsUnderForOtherBooks returns the book_files paths below dir that belong
+// to a book other than excludeBookID, compared without regard to ASCII case.
+// A library on a case insensitive filesystem (SMB, macOS, Windows) can hold
+// rows that spell the same folder in different case, so a caller matching
+// these against walked paths should fold case too. dir itself is not
+// returned. % and _ in dir are matched literally.
+func (r *BookFileRepo) PathsUnderForOtherBooks(ctx context.Context, dir string, excludeBookID int64) ([]string, error) {
+	prefix := strings.TrimRight(filepath.Clean(dir), string(filepath.Separator)) + string(filepath.Separator)
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT path FROM book_files WHERE book_id != ? AND lower(path) LIKE lower(?) ESCAPE '\'`,
+		excludeBookID, escaped+"%")
+	if err != nil {
+		return nil, fmt.Errorf("book_files paths under %s: %w", dir, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("book_files paths under %s: %w", dir, err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // LiveOwnerOfPath returns the id of the existing book that tracks path, or 0
 // when no live book does. A row left by a deleted book does not count, for the
 // reason PathOwnedByLiveOtherBook gives.

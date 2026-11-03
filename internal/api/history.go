@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -62,9 +63,9 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 		opts.BookID, _ = strconv.ParseInt(bookIDStr, 10, 64)
 	}
 	// Per-user scoping (D3): when EnforceTenancy is on and the caller is a
-	// non-admin user, restrict to events whose book is owned by them. The
-	// JOIN-shape lives inside ListPage so paginated and filtered queries see
-	// the same scoping rule.
+	// non-admin user, restrict to the events they may see (their own, plus
+	// unowned events of a book visible to them). The rule lives inside
+	// ListPage so paginated and filtered queries see the same scoping.
 	ctx := r.Context()
 	if auth.EnforceTenancy() && auth.UserRoleFromContext(ctx) != "admin" {
 		if uid := auth.UserIDFromContext(ctx); uid != 0 {
@@ -80,7 +81,7 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 	items := make([]historyItem, len(events))
 	bookIDs := make([]int64, 0, len(events))
 	for i, e := range events {
-		e.Data = redactEventData(e.Data)
+		e.Data = historyDataForViewer(ctx, e.EventType, redactEventData(e.Data))
 		items[i] = historyItem{HistoryEvent: e}
 		if e.BookID != nil {
 			bookIDs = append(bookIDs, *e.BookID)
@@ -104,13 +105,27 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// canActOnHistoryEvent reports whether the caller may delete or blocklist a
+// history event with the given owner (HistoryRepo.GetOwnerByID). It is
+// auth.CheckOwnership except for an event with no owner: CheckOwnership passes
+// those to everyone, and a history row with no owner is typically a deleted
+// book's grab or import, whose release and paths belong to whoever had the
+// book. Under tenancy only an admin may act on one. ListScopeUserID is 0
+// exactly when the caller is unscoped (tenancy off, an admin, or no identity).
+func canActOnHistoryEvent(ctx context.Context, owner int64) bool {
+	if owner == 0 {
+		return auth.ListScopeUserID(ctx) == 0
+	}
+	return auth.CheckOwnership(ctx, owner)
+}
+
 func (h *HistoryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
 		return
 	}
-	// Per-user scoping (D3): JOIN through books to find owner before delete.
+	// Per-user scoping (D3): only the event's owner, or an admin, may delete it.
 	owner, exists, err := h.history.GetOwnerByID(r.Context(), id)
 	if err != nil {
 		writeServerError(w, r, err)
@@ -120,7 +135,7 @@ func (h *HistoryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "history event not found"})
 		return
 	}
-	if !auth.CheckOwnership(r.Context(), owner) {
+	if !canActOnHistoryEvent(r.Context(), owner) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "history event not found"})
 		return
 	}
@@ -158,7 +173,7 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	if !auth.CheckOwnership(r.Context(), owner) {
+	if !canActOnHistoryEvent(r.Context(), owner) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "history event not found"})
 		return
 	}

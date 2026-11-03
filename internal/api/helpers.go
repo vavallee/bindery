@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/vavallee/bindery/internal/auth"
+	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
@@ -91,6 +93,19 @@ func parseID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 // guard above. It returns (author, true) only when the caller may proceed; on
 // false the response has already been written.
 func (h *AuthorHandler) loadOwnedAuthor(w http.ResponseWriter, r *http.Request) (*models.Author, bool) {
+	return h.loadAuthorChecked(w, r, auth.CheckOwnership)
+}
+
+// loadWritableAuthor is loadOwnedAuthor for a route that changes the author
+// (edit, delete, merge, refresh, photo, aliases). It applies
+// auth.CheckWriteOwnership, so under tenancy a user who is not an admin gets
+// the same 404 for a shared author with no owner as for another user's: a
+// shared author can hold other users' books, and changing it changes theirs.
+func (h *AuthorHandler) loadWritableAuthor(w http.ResponseWriter, r *http.Request) (*models.Author, bool) {
+	return h.loadAuthorChecked(w, r, auth.CheckWriteOwnership)
+}
+
+func (h *AuthorHandler) loadAuthorChecked(w http.ResponseWriter, r *http.Request, allowed func(context.Context, int64) bool) (*models.Author, bool) {
 	id, ok := parseID(w, r)
 	if !ok {
 		return nil, false
@@ -100,7 +115,7 @@ func (h *AuthorHandler) loadOwnedAuthor(w http.ResponseWriter, r *http.Request) 
 		writeServerError(w, r, err)
 		return nil, false
 	}
-	if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+	if author == nil || !allowed(r.Context(), author.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return nil, false
 	}
@@ -109,6 +124,16 @@ func (h *AuthorHandler) loadOwnedAuthor(w http.ResponseWriter, r *http.Request) 
 
 // loadOwnedBook is loadOwnedAuthor for books. Same contract, same reasoning.
 func (h *BookHandler) loadOwnedBook(w http.ResponseWriter, r *http.Request) (*models.Book, bool) {
+	return h.loadBookChecked(w, r, auth.CheckOwnership)
+}
+
+// loadWritableBook is loadWritableAuthor for books: the read guard plus
+// auth.CheckWriteOwnership, for every route that changes or deletes the book.
+func (h *BookHandler) loadWritableBook(w http.ResponseWriter, r *http.Request) (*models.Book, bool) {
+	return h.loadBookChecked(w, r, auth.CheckWriteOwnership)
+}
+
+func (h *BookHandler) loadBookChecked(w http.ResponseWriter, r *http.Request, allowed func(context.Context, int64) bool) (*models.Book, bool) {
 	id, ok := parseID(w, r)
 	if !ok {
 		return nil, false
@@ -118,11 +143,32 @@ func (h *BookHandler) loadOwnedBook(w http.ResponseWriter, r *http.Request) (*mo
 		writeServerError(w, r, err)
 		return nil, false
 	}
-	if book == nil || !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
+	if book == nil || !allowed(r.Context(), book.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
 		return nil, false
 	}
 	return book, true
+}
+
+// errAuthorHoldsOthersBooks refuses a delete or merge, by a user who is not an
+// admin, of an author they may change that still has books in someone else's
+// library (or shared books with no owner). Both operations take the author's
+// books with them, so letting it through would delete or move rows the caller
+// cannot even open.
+var errAuthorHoldsOthersBooks = errors.New("this author has books that belong to another user; ask an admin")
+
+// authorHoldsOthersBooks is the check behind errAuthorHoldsOthersBooks. It
+// only applies under tenancy to a signed in user who is not an admin; for
+// everyone else it reports false and the delete or merge goes ahead as before.
+func authorHoldsOthersBooks(ctx context.Context, authors *db.AuthorRepo, authorID int64) (bool, error) {
+	if !auth.EnforceTenancy() || auth.UserRoleFromContext(ctx) == "admin" {
+		return false, nil
+	}
+	uid := auth.UserIDFromContext(ctx)
+	if uid == 0 {
+		return false, nil
+	}
+	return authors.HasBooksNotOwnedBy(ctx, authorID, uid)
 }
 
 func parseLimitOffset(r *http.Request, defaultLimit, maxLimit int) (int, int) {

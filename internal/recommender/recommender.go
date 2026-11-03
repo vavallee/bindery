@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -19,6 +20,7 @@ type Engine struct {
 	settings *db.SettingsRepo
 	olClient SubjectBooksFetcher // optional; enables genre-popular candidates
 	hcClient WishlistFetcher     // optional; enables list-cross candidates
+	users    *db.UserRepo        // resolves the target user's role under tenancy
 }
 
 // New creates a new recommendation engine.
@@ -52,6 +54,35 @@ func (e *Engine) WithHCClient(c WishlistFetcher) *Engine {
 	return e
 }
 
+// WithUsers wires in the user repository, which Run uses to tell an admin
+// from a plain user when tenancy is on. Without it, a tenancy run is always
+// limited to the target user's library, never widened.
+func (e *Engine) WithUsers(u *db.UserRepo) *Engine {
+	e.users = u
+	return e
+}
+
+// libraryScope is the profile scope for a run for userID: 0 (the whole
+// instance) with tenancy off, for an admin and for userID 0, and otherwise
+// userID, so a plain user's recommendations are built from and point at their
+// own books plus shared ones only.
+func (e *Engine) libraryScope(ctx context.Context, userID int64) (int64, error) {
+	if !auth.EnforceTenancy() || userID == 0 {
+		return 0, nil
+	}
+	if e.users == nil {
+		return userID, nil
+	}
+	u, err := e.users.GetByID(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	if u != nil && u.IsAdmin() {
+		return 0, nil
+	}
+	return userID, nil
+}
+
 // Run generates recommendations for the given user. It builds a taste profile,
 // generates candidates from multiple sources, scores and ranks them, injects
 // serendipity picks, and persists the top 100.
@@ -65,8 +96,12 @@ func (e *Engine) Run(ctx context.Context, userID int64) error {
 		}
 	}
 
-	slog.Info("recommender: building profile", "userId", userID)
-	profile, err := BuildProfile(ctx, userID, e.books, e.authors, e.series, e.recs, e.settings)
+	scope, err := e.libraryScope(ctx, userID)
+	if err != nil {
+		return err
+	}
+	slog.Info("recommender: building profile", "userId", userID, "scoped", scope != 0)
+	profile, err := BuildScopedProfile(ctx, userID, scope, e.books, e.authors, e.series, e.recs, e.settings)
 	if err != nil {
 		return err
 	}
@@ -99,7 +134,9 @@ func (e *Engine) Run(ctx context.Context, userID int64) error {
 	}
 
 	// List cross-reference: books on user's external wishlist not in library.
-	if e.hcClient != nil {
+	// The Hardcover client carries the instance's token, so the list is the
+	// admin's; it feeds only an instance wide (admin or tenancy off) run.
+	if e.hcClient != nil && profile.Scope == 0 {
 		listCross := GenerateListCross(ctx, e.hcClient, profile, 100)
 		candidates = append(candidates, listCross...)
 		slog.Info("recommender: list-cross candidates", "count", len(listCross))

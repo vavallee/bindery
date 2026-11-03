@@ -116,6 +116,9 @@ type Scanner struct {
 	// dc:creator is a pen name or house name the author is known under counts as
 	// the author. Nil leaves the check comparing the author's own name only.
 	authorAliases *db.AuthorAliasRepo
+	// users resolves a download owner's role for downloadMatchScope. Nil
+	// treats every owner as a non admin, which only ever narrows the match.
+	users *db.UserRepo
 	// onContentCheck, when non-nil, is called each time a content check
 	// actually runs, with "ebook" or "audiobook". A test seam: it proves the
 	// check runs for a polled download and never for a library scan or a
@@ -839,7 +842,7 @@ func (s *Scanner) RecoverInterruptedImports(ctx context.Context) {
 		if getErr != nil || dl == nil {
 			continue
 		}
-		s.createHistoryEvent(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, map[string]string{
+		s.createHistoryEvent(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{
 			"guid":    dl.GUID,
 			"message": "import interrupted (process restart) — re-queued for retry",
 			"status":  string(models.StateImportFailed),
@@ -879,7 +882,7 @@ func (s *Scanner) recoverWedgedCompleted(ctx context.Context) {
 		if dl.CompletedAt != nil {
 			age = time.Since(*dl.CompletedAt).Truncate(time.Minute).String()
 		}
-		s.createHistoryEvent(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, map[string]string{
+		s.createHistoryEvent(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{
 			"guid":    dl.GUID,
 			"message": "import never started (process restart before scanner tick) — re-queued for retry",
 			"status":  string(models.StateImportPending),
@@ -946,7 +949,7 @@ func (s *Scanner) failImportWithCheck(ctx context.Context, dl *models.Download, 
 		data["contentCheck"] = contentCheck
 		payload["contentCheck"] = contentCheck
 	}
-	s.createHistoryEventData(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, data)
+	s.createHistoryEventData(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, dl.OwnerUserID, data)
 	s.notify(ctx, notifierEventDownloadFailed, payload)
 }
 
@@ -974,13 +977,15 @@ func (s *Scanner) recordUnmatchedImportPath(ctx context.Context, downloadID int6
 	}
 }
 
-func (s *Scanner) createHistoryEvent(ctx context.Context, eventType string, sourceTitle string, bookID *int64, data map[string]string) {
-	s.createHistoryEventData(ctx, eventType, sourceTitle, bookID, data)
+// createHistoryEvent records a history row. owner is the download's owner (or
+// the book's), used when the book has none; see HistoryRepo.Create.
+func (s *Scanner) createHistoryEvent(ctx context.Context, eventType string, sourceTitle string, bookID *int64, owner int64, data map[string]string) {
+	s.createHistoryEventData(ctx, eventType, sourceTitle, bookID, owner, data)
 }
 
 // createHistoryEventData is createHistoryEvent for a payload with a nested
 // value, such as the contentCheck object. The data column is JSON either way.
-func (s *Scanner) createHistoryEventData(ctx context.Context, eventType string, sourceTitle string, bookID *int64, data any) {
+func (s *Scanner) createHistoryEventData(ctx context.Context, eventType string, sourceTitle string, bookID *int64, owner int64, data any) {
 	if s.history == nil {
 		return
 	}
@@ -994,6 +999,7 @@ func (s *Scanner) createHistoryEventData(ctx context.Context, eventType string, 
 		EventType:   eventType,
 		SourceTitle: sourceTitle,
 		Data:        string(dataJSON),
+		OwnerUserID: owner,
 	}); err != nil {
 		slog.Warn("failed to create history event", "event_type", eventType, "error", err)
 	}
@@ -1093,7 +1099,7 @@ func (s *Scanner) applyEmbeddedLanguage(ctx context.Context, book *models.Book, 
 	slog.Info("corrected book language from embedded EPUB metadata",
 		"bookID", book.ID, "from", previous, "to", detected)
 	bookID := book.ID
-	s.createHistoryEvent(ctx, models.HistoryEventBookLanguageCorrected, sourceTitle, &bookID, map[string]string{
+	s.createHistoryEvent(ctx, models.HistoryEventBookLanguageCorrected, sourceTitle, &bookID, book.OwnerUserID, map[string]string{
 		"from": previous,
 		"to":   detected,
 	})
@@ -1101,7 +1107,7 @@ func (s *Scanner) applyEmbeddedLanguage(ctx context.Context, book *models.Book, 
 
 func (s *Scanner) markDownloadFailed(ctx context.Context, dl *models.Download, message string) {
 	s.setDownloadError(ctx, dl.ID, message)
-	s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, map[string]string{"guid": dl.GUID, "message": message})
+	s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{"guid": dl.GUID, "message": message})
 	s.notify(ctx, notifierEventDownloadFailed, map[string]interface{}{
 		"title":   dl.Title,
 		"message": message,
@@ -1617,7 +1623,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 		s.updateDownloadStatus(ctx, dl.ID, models.StateImportExternal)
 		slog.Info("external import: download handed off, awaiting library scan", "title", dl.Title)
-		s.createHistoryEvent(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, map[string]string{"mode": "external", "status": string(models.StateImportExternal)})
+		s.createHistoryEvent(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{"mode": "external", "status": string(models.StateImportExternal)})
 		return
 	}
 
@@ -1760,7 +1766,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// EPUB metadata (reliable) over the release filename (which encodes
 	// author/title/series in inconsistent orders) — issue #1014.
 	if book == nil {
-		if b, a := s.matchBookForDownload(ctx, bookFiles, dl.Title); b != nil {
+		if b, a := s.matchBookForDownload(ctx, s.downloadMatchScope(ctx, dl), bookFiles, dl.Title); b != nil {
 			book = b
 			author = a
 			edition = s.resolveCalibreEdition(ctx, dl, book)
@@ -2344,7 +2350,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			var setErr error
 			var owned *db.PathOwnedError
 			for attempt := 0; attempt < 3; attempt++ {
-				if setErr = s.recordImportedFile(ctx, book, models.MediaTypeAudiobook, destDir); setErr == nil {
+				if setErr = s.recordImportedFile(ctx, dl, book, models.MediaTypeAudiobook, destDir); setErr == nil {
 					break
 				}
 				if ctx.Err() != nil || errors.As(setErr, &owned) {
@@ -2424,7 +2430,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			historyMeta["skippedFiles"] = strings.Join(mergeSkippedFiles, ", ")
 		}
 		s.fillCoverFromFile(ctx, book, destDir)
-		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, withContentCheck(historyMeta, contentCheck))
+		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, dl.OwnerUserID, withContentCheck(historyMeta, contentCheck))
 		s.recordFixMatchMove(ctx, book, destDir)
 		s.notify(ctx, notifierEventBookImported, withContentCheckPayload(importedPayload(book, dl, models.MediaTypeAudiobook, destDir, mergeSkippedFiles), contentCheck))
 		if cleanupFunc != nil {
@@ -2595,7 +2601,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// A destPath another book already tracks fails here (#2937), before
 		// commit, so the staged file is discarded and the file that book
 		// tracks at destPath is never replaced.
-		if err := s.recordImportedFile(ctx, book, models.MediaTypeEbook, destPath); err != nil {
+		if err := s.recordImportedFile(ctx, dl, book, models.MediaTypeEbook, destPath); err != nil {
 			slog.Error("failed to record book file — rolling back staged file", "bookID", book.ID, "staged", stagedPath, "error", err)
 			rollback()
 			failed++
@@ -2733,7 +2739,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// lands here, so the download still ends up with exactly one
 		// bookImported row naming every format.
 		importData := ebookImportHistoryData(importedDestPaths)
-		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, withContentCheck(importData, contentCheck))
+		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, dl.OwnerUserID, withContentCheck(importData, contentCheck))
 		s.recordFixMatchMove(ctx, book, importData["path"])
 		s.notify(ctx, notifierEventBookImported, withContentCheckPayload(importedPayload(book, dl, models.MediaTypeEbook, "", nil), contentCheck))
 

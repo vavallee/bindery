@@ -444,7 +444,8 @@ func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*mod
 	q := `
 		SELECT sb.series_id, sb.book_id, sb.position_in_series, sb.primary_series,
 		       b.id, b.foreign_id, b.author_id, b.title, b.sort_title, b.status,
-		       b.monitored, b.image_url, b.created_at, b.updated_at, b.excluded
+		       b.monitored, b.image_url, b.created_at, b.updated_at, b.excluded,
+		       COALESCE(b.owner_user_id, 0)
 		FROM series_books sb
 		JOIN books b ON b.id = sb.book_id
 		` + scope + `
@@ -463,6 +464,7 @@ func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*mod
 			&sb.SeriesID, &sb.BookID, &sb.PositionInSeries, &primarySeries,
 			&b.ID, &b.ForeignID, &b.AuthorID, &b.Title, &b.SortTitle, &b.Status,
 			&monitored, &b.ImageURL, &b.CreatedAt, &b.UpdatedAt, &excluded,
+			&b.OwnerUserID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan series book: %w", err)
