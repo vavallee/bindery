@@ -68,7 +68,7 @@ func (h *AuthorHandler) ApplyGenres(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Tier-1 cross-user IDOR guard (D1).
-	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+	if !auth.CheckWriteOwnership(r.Context(), author.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}

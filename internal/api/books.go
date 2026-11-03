@@ -172,7 +172,7 @@ const conflictReasonChanged = "changed"
 // handler retries once from a fresh read; Audnex answers are cached, so the
 // retry normally costs no second request. A second loss returns 409.
 func (h *BookHandler) EnrichAudiobook(w http.ResponseWriter, r *http.Request) {
-	book, ok := h.loadOwnedBook(w, r)
+	book, ok := h.loadWritableBook(w, r)
 	if !ok {
 		return
 	}
@@ -225,7 +225,7 @@ func (h *BookHandler) EnrichAudiobook(w http.ResponseWriter, r *http.Request) {
 			writeServerError(w, r, err)
 			return
 		}
-		if fresh == nil || !auth.CheckOwnership(ctx, fresh.OwnerUserID) {
+		if fresh == nil || !auth.CheckWriteOwnership(ctx, fresh.OwnerUserID) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
 			return
 		}
@@ -467,7 +467,7 @@ func (h *BookHandler) attachBookIdentifiers(ctx context.Context, book *models.Bo
 }
 
 func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
-	book, ok := h.loadOwnedBook(w, r)
+	book, ok := h.loadWritableBook(w, r)
 	if !ok {
 		return
 	}
@@ -656,7 +656,7 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// The load has to happen before any destructive work, so the ownership
 	// check runs first. The `?deleteFiles=true` branch below re-fetches when
 	// it needs the legacy file columns; the extra lookup is cheap.
-	existing, ok := h.loadOwnedBook(w, r)
+	existing, ok := h.loadWritableBook(w, r)
 	if !ok {
 		return
 	}
@@ -720,7 +720,7 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	// The load has to happen before any file enumeration or destructive work,
 	// so the ownership check runs first.
-	existing, ok := h.loadOwnedBook(w, r)
+	existing, ok := h.loadWritableBook(w, r)
 	if !ok {
 		return
 	}
@@ -1290,7 +1290,7 @@ func (h *BookHandler) markUnmonitoredAuthors(ctx context.Context, books []models
 // Returns 409 when the upstream record belongs to a different author unless
 // force=true is passed. Returns the updated book JSON on success.
 func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
-	book, ok := h.loadOwnedBook(w, r)
+	book, ok := h.loadWritableBook(w, r)
 	if !ok {
 		return
 	}
@@ -1487,7 +1487,7 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BookHandler) ToggleExcluded(w http.ResponseWriter, r *http.Request) {
-	book, ok := h.loadOwnedBook(w, r)
+	book, ok := h.loadWritableBook(w, r)
 	if !ok {
 		return
 	}

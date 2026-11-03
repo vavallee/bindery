@@ -1035,7 +1035,7 @@ func (h *AuthorHandler) recordAuthorRelinkAlias(ctx context.Context, author *mod
 }
 
 func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
-	author, ok := h.loadOwnedAuthor(w, r)
+	author, ok := h.loadWritableAuthor(w, r)
 	if !ok {
 		return
 	}
@@ -1285,7 +1285,7 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Tier-1 cross-user IDOR guard (D1).
-	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+	if !auth.CheckWriteOwnership(r.Context(), author.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
@@ -1411,11 +1411,20 @@ func (h *AuthorHandler) RelinkCandidates(w http.ResponseWriter, r *http.Request)
 func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// The load has to happen before any destructive work, so the ownership
 	// check runs first.
-	author, ok := h.loadOwnedAuthor(w, r)
+	author, ok := h.loadWritableAuthor(w, r)
 	if !ok {
 		return
 	}
 	id := author.ID
+	// The FK cascade below takes every book under the author, so a user who
+	// is not an admin may only delete an author whose books are all theirs.
+	if held, err := authorHoldsOthersBooks(r.Context(), h.authors, id); err != nil {
+		writeServerError(w, r, err)
+		return
+	} else if held {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": errAuthorHoldsOthersBooks.Error()})
+		return
+	}
 
 	// Opt-in `?deleteFiles=true` sweeps every book's on-disk path after the
 	// DB delete. We must collect the paths *before* deleting the author —
@@ -1482,7 +1491,7 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
-	author, ok := h.loadOwnedAuthor(w, r)
+	author, ok := h.loadWritableAuthor(w, r)
 	if !ok {
 		return
 	}

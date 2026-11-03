@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 // memory database, with an AuthorHandler over the given provider. The cross
 // user Add Book and Add Author tests below share it.
 type tenancyFixture struct {
+	db      *sql.DB
 	h       *AuthorHandler
 	authors *db.AuthorRepo
 	books   *db.BookRepo
@@ -53,7 +55,7 @@ func newTenancyFixture(t *testing.T, tenancy bool, provider metadata.Provider) t
 	aliasRepo := db.NewAuthorAliasRepo(database)
 	h := NewAuthorHandler(authorRepo, aliasRepo, bookRepo, nil,
 		metadata.NewAggregator(provider), nil, db.NewMetadataProfileRepo(database), nil)
-	return tenancyFixture{h: h, authors: authorRepo, books: bookRepo, aliases: aliasRepo,
+	return tenancyFixture{db: database, h: h, authors: authorRepo, books: bookRepo, aliases: aliasRepo,
 		alice: ids[0], bob: ids[1], admin: ids[2]}
 }
 
