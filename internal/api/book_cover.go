@@ -23,7 +23,7 @@ func (h *BookHandler) WithCoverStore(s *covers.Store) *BookHandler {
 // The cover replaces whatever the book had. Author refresh only fills an
 // empty cover (#1748), so it is not overwritten later.
 func (h *BookHandler) UploadCover(w http.ResponseWriter, r *http.Request) {
-	book, ok := h.loadOwnedBook(w, r)
+	book, ok := h.loadWritableBook(w, r)
 	if !ok {
 		return
 	}

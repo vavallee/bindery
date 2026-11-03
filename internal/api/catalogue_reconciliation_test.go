@@ -812,8 +812,20 @@ func TestBuildCatalogueReconciliation_UsesConservativeEditionAndIdentityEvidence
 		t.Fatal(err)
 	}
 
+	// The caller owns every row above; a user who is not an admin may only
+	// prune their own rows, so a shared row with no owner is protected like
+	// another user's.
+	caller, err := db.NewUserRepo(f.database).Create(context.Background(), "caller", "password-hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.database.Exec(`UPDATE books SET owner_user_id = ? WHERE owner_user_id IS NULL`, caller.ID); err != nil {
+		t.Fatal(err)
+	}
+	unowned := f.createBook(t, "hc:unowned", "Unowned", "hardcover", models.BookStatusWanted)
+
 	t.Setenv(auth.EnforceTenancyEnv, "true")
-	ctx := auth.WithUserRole(auth.WithUserID(context.Background(), 7), "user")
+	ctx := auth.WithUserRole(auth.WithUserID(context.Background(), caller.ID), "user")
 	got, err := f.handler.buildCatalogueReconciliation(ctx, f.author)
 	if err != nil {
 		t.Fatal(err)
@@ -837,10 +849,10 @@ func TestBuildCatalogueReconciliation_UsesConservativeEditionAndIdentityEvidence
 	assertIndeterminateRow(t, got, dnb, reconcileIndeterminateReasonEditionUnavailable)
 	assertIndeterminateRow(t, got, editionUnknown, reconcileIndeterminateReasonEditionUnavailable)
 	assertIndeterminateRow(t, got, fallbackProvider, reconcileIndeterminateReasonUnmatchedCrossProvider)
-	if got.Summary.ProtectedStatus < 2 {
-		t.Errorf("protected status = %d, want skipped and other-owner rows", got.Summary.ProtectedStatus)
+	if got.Summary.ProtectedStatus < 3 {
+		t.Errorf("protected status = %d, want skipped, other-owner and unowned rows", got.Summary.ProtectedStatus)
 	}
-	for _, protected := range []*models.Book{noID, dnb, editionUnknown, alias, titleMatch, fallbackProvider, skippedStatus, nonOwner} {
+	for _, protected := range []*models.Book{noID, dnb, editionUnknown, alias, titleMatch, fallbackProvider, skippedStatus, nonOwner, unowned} {
 		if book, err := f.books.GetByID(context.Background(), protected.ID); err != nil || book == nil {
 			t.Errorf("protected book %q missing: book=%+v err=%v", protected.Title, book, err)
 		}

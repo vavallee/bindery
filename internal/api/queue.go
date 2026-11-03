@@ -1102,7 +1102,7 @@ func (h *QueueHandler) RetryImport(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
 		return
 	}
-	if !auth.CheckOwnership(r.Context(), owner) {
+	if !auth.CheckWriteOwnership(r.Context(), owner) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
 		return
 	}
@@ -1246,7 +1246,7 @@ func (h *QueueHandler) RetryDownload(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	if target == nil || !auth.CheckOwnership(r.Context(), target.OwnerUserID) {
+	if target == nil || !auth.CheckWriteOwnership(r.Context(), target.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
 		return
 	}
@@ -1345,7 +1345,7 @@ func (h *QueueHandler) BulkRetry(w http.ResponseWriter, r *http.Request) {
 		target, ok := byID[id]
 		// Same opaque message as the single paths under tenancy: a caller must
 		// not learn that an id exists from a bulk call either.
-		if !ok || !auth.CheckOwnership(ctx, target.OwnerUserID) {
+		if !ok || !auth.CheckWriteOwnership(ctx, target.OwnerUserID) {
 			setResult(id, queueRetryResult{Error: "download not found"})
 			return
 		}
@@ -1505,7 +1505,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	// caller's to see. A claimed foreign row is fully reset and lends the grab
 	// nothing (see below).
 	now := time.Now().UTC()
-	foreignRow := existing != nil && !auth.CheckOwnership(ctx, existing.OwnerUserID)
+	foreignRow := existing != nil && !auth.CheckWriteOwnership(ctx, existing.OwnerUserID)
 	if foreignRow && !foreignRowClaimable(existing, now) {
 		return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, foreignRowGrabbedDetail)
 	}
@@ -1785,7 +1785,7 @@ func (h *QueueHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
 		return
 	}
-	if !auth.CheckOwnership(r.Context(), owner) {
+	if !auth.CheckWriteOwnership(r.Context(), owner) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
 		return
 	}
@@ -1913,7 +1913,9 @@ func (h *QueueHandler) removeQueueItem(ctx context.Context, target *models.Downl
 		book, err := h.books.GetByID(ctx, *target.BookID)
 		if err != nil {
 			slog.Warn("failed to load book for download delete", "download_id", target.ID, "book_id", *target.BookID, "error", err)
-		} else if book != nil && book.Monitored {
+		} else if book != nil && book.Monitored && auth.CheckWriteOwnership(ctx, book.OwnerUserID) {
+			// A shared book (no owner) is left alone for a user who is not an
+			// admin: removing their own download does not let them change it.
 			book.Monitored = false
 			if err := h.books.Update(ctx, book); err != nil {
 				slog.Warn("failed to update book after download delete", "download_id", target.ID, "book_id", book.ID, "error", err)
@@ -1991,7 +1993,7 @@ func (h *QueueHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 
 	concurrency.RunBounded(r.Context(), req.IDs, bulkDeleteConcurrency, func(ctx context.Context, id int64) {
 		target, ok := byID[id]
-		if !ok || !auth.CheckOwnership(ctx, target.OwnerUserID) {
+		if !ok || !auth.CheckWriteOwnership(ctx, target.OwnerUserID) {
 			setResult(id, bulkItemResult{Error: "download not found"})
 			return
 		}

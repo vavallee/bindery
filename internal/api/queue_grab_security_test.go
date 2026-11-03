@@ -522,3 +522,33 @@ func TestQueueGrab_ClaimsAnotherUsersLongDeadRow(t *testing.T) {
 		})
 	}
 }
+
+// TestQueueGrab_OwnerlessRowIsForeignToAUser: an automatic grab for a book
+// with no owner leaves a row with no owner. To a user who is not an admin it
+// is someone else's row, claimed only on the scheduler's terms: a failed row
+// inside the cooldown is refused, not reused as if it were the user's own.
+func TestQueueGrab_OwnerlessRowIsForeignToAUser(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	f := newGrabSecFixture(t)
+	row := &models.Download{
+		GUID: f.guid, Title: "Auto Release",
+		NZBURL: f.downloadURL, Status: models.StateFailed, Protocol: "usenet",
+	}
+	if err := f.downloads.Create(f.ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	f.searchAs(t, f.bob)
+	rec := f.grabAs(f.bob, auth.RoleUser, map[string]any{
+		"guid": f.guid, "title": "x", "nzbUrl": f.downloadURL, "indexerId": f.indexerID,
+	})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("bob grabbing over a fresh ownerless failed row: got %d: %s, want 409", rec.Code, rec.Body.String())
+	}
+	got, err := f.downloads.GetByID(f.ctx, row.ID)
+	if err != nil || got == nil {
+		t.Fatalf("reload row: %v", err)
+	}
+	if got.OwnerUserID != 0 || got.Status != models.StateFailed {
+		t.Errorf("ownerless row changed: owner=%d status=%s", got.OwnerUserID, got.Status)
+	}
+}

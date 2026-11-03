@@ -378,8 +378,15 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 				resp.Results[key] = bulkItemResult{Error: err.Error()}
 				continue
 			}
-			if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+			if author == nil || !auth.CheckWriteOwnership(r.Context(), author.OwnerUserID) {
 				resp.Results[key] = bulkItemResult{Error: errBulkAuthorNotOwned.Error()}
+				continue
+			}
+			if held, err := authorHoldsOthersBooks(r.Context(), h.authors, id); err != nil {
+				resp.Results[key] = bulkItemResult{Error: err.Error()}
+				continue
+			} else if held {
+				resp.Results[key] = bulkItemResult{Error: errAuthorHoldsOthersBooks.Error()}
 				continue
 			}
 			if err := h.authors.Delete(r.Context(), id); err != nil {
@@ -434,7 +441,7 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 				resp.Results[key] = bulkItemResult{Error: err.Error()}
 				continue
 			}
-			if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+			if author == nil || !auth.CheckWriteOwnership(r.Context(), author.OwnerUserID) {
 				resp.Results[key] = bulkItemResult{Error: errBulkAuthorNotOwned.Error()}
 				continue
 			}
@@ -730,7 +737,7 @@ func (h *BulkHandler) setAuthorMonitored(ctx context.Context, id int64, monitore
 	if err != nil {
 		return err
 	}
-	if author == nil || !auth.CheckOwnership(ctx, author.OwnerUserID) {
+	if author == nil || !auth.CheckWriteOwnership(ctx, author.OwnerUserID) {
 		return errBulkAuthorNotOwned
 	}
 	author.Monitored = monitored
@@ -766,7 +773,7 @@ func (h *BulkHandler) setAuthorMonitorMode(ctx context.Context, id int64, mode s
 	if err != nil {
 		return err
 	}
-	if author == nil || !auth.CheckOwnership(ctx, author.OwnerUserID) {
+	if author == nil || !auth.CheckWriteOwnership(ctx, author.OwnerUserID) {
 		return errBulkAuthorNotOwned
 	}
 
@@ -806,7 +813,7 @@ func (h *BulkHandler) deleteBook(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	if book == nil || !auth.CheckOwnership(ctx, book.OwnerUserID) {
+	if book == nil || !auth.CheckWriteOwnership(ctx, book.OwnerUserID) {
 		return errBulkBookNotOwned
 	}
 	return h.books.Delete(ctx, id)
@@ -822,7 +829,7 @@ func (h *BulkHandler) setBookMonitored(ctx context.Context, id int64, monitored 
 	if err != nil {
 		return nil, false, err
 	}
-	if book == nil || !auth.CheckOwnership(ctx, book.OwnerUserID) {
+	if book == nil || !auth.CheckWriteOwnership(ctx, book.OwnerUserID) {
 		return nil, false, errBulkBookNotOwned
 	}
 	prevStatus, prevMonitored := book.Status, book.Monitored
@@ -842,7 +849,7 @@ func (h *BulkHandler) setBookExcluded(ctx context.Context, id int64, excluded bo
 	if err != nil {
 		return err
 	}
-	if book == nil || !auth.CheckOwnership(ctx, book.OwnerUserID) {
+	if book == nil || !auth.CheckWriteOwnership(ctx, book.OwnerUserID) {
 		return errBulkBookNotOwned
 	}
 	return h.books.SetExcluded(ctx, id, excluded)
@@ -856,7 +863,7 @@ func (h *BulkHandler) excludeBookIfNoFiles(ctx context.Context, id int64) error 
 	if err != nil {
 		return err
 	}
-	if book == nil || !auth.CheckOwnership(ctx, book.OwnerUserID) {
+	if book == nil || !auth.CheckWriteOwnership(ctx, book.OwnerUserID) {
 		return errBulkBookNotOwned
 	}
 	excluded, err := h.books.ExcludeIfNoFiles(ctx, id)
@@ -874,7 +881,7 @@ func (h *BulkHandler) setBookMediaType(ctx context.Context, id int64, mediaType 
 	if err != nil {
 		return err
 	}
-	if book == nil || !auth.CheckOwnership(ctx, book.OwnerUserID) {
+	if book == nil || !auth.CheckWriteOwnership(ctx, book.OwnerUserID) {
 		return errBulkBookNotOwned
 	}
 	book.MediaType = mediaType
@@ -913,7 +920,7 @@ func (h *BulkHandler) setAuthorBooksMediaType(ctx context.Context, authorID int6
 	if err != nil {
 		return err
 	}
-	if author == nil || !auth.CheckOwnership(ctx, author.OwnerUserID) {
+	if author == nil || !auth.CheckWriteOwnership(ctx, author.OwnerUserID) {
 		return errBulkAuthorNotOwned
 	}
 	books, err := h.books.ListByAuthor(ctx, authorID)
@@ -942,7 +949,7 @@ func (h *BulkHandler) skipBook(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	if book == nil || !auth.CheckOwnership(ctx, book.OwnerUserID) {
+	if book == nil || !auth.CheckWriteOwnership(ctx, book.OwnerUserID) {
 		return errBulkBookNotOwned
 	}
 	book.Monitored = false

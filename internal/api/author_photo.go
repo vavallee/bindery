@@ -30,7 +30,7 @@ func (h *AuthorHandler) WithCoverStore(s *covers.Store) *AuthorHandler {
 // the provider has one, so the upload is marked as the user's own
 // (models.ProfileSourceUser): no refresh or enricher replaces it afterwards.
 func (h *AuthorHandler) UploadPhoto(w http.ResponseWriter, r *http.Request) {
-	author, ok := h.loadOwnedAuthor(w, r)
+	author, ok := h.loadWritableAuthor(w, r)
 	if !ok {
 		return
 	}
@@ -79,7 +79,7 @@ func (h *AuthorHandler) UploadPhoto(w http.ResponseWriter, r *http.Request) {
 // book covers, so the same bytes may back a cover too, and a replaced book
 // cover is not deleted either.
 func (h *AuthorHandler) ClearPhoto(w http.ResponseWriter, r *http.Request) {
-	author, ok := h.loadOwnedAuthor(w, r)
+	author, ok := h.loadWritableAuthor(w, r)
 	if !ok {
 		return
 	}
