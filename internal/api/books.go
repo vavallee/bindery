@@ -830,6 +830,7 @@ func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 			EventType:   models.HistoryEventBookFileDeleted,
 			SourceTitle: book.Title,
 			Data:        string(data),
+			OwnerUserID: auth.UserIDFromContext(r.Context()),
 		}); err != nil {
 			slog.Warn("failed to create deleted paths history event", "book_id", id, "error", err)
 		}
@@ -901,6 +902,7 @@ func (h *BookHandler) deleteTrackedBookFile(w http.ResponseWriter, r *http.Reque
 			_ = h.history.Create(r.Context(), &models.HistoryEvent{
 				BookID: &book.ID, EventType: models.HistoryEventBookFileDeleted,
 				SourceTitle: book.Title, Data: string(data),
+				OwnerUserID: auth.UserIDFromContext(r.Context()),
 			})
 		}
 	}
@@ -980,6 +982,7 @@ func (h *BookHandler) deregisterBookFile(w http.ResponseWriter, r *http.Request,
 			EventType:   models.HistoryEventBookFileDeleted,
 			SourceTitle: book.Title,
 			Data:        string(data),
+			OwnerUserID: auth.UserIDFromContext(r.Context()),
 		}); err != nil {
 			slog.Warn("failed to create deregistered path history event", "book_id", id, "error", err)
 		}
@@ -1477,6 +1480,7 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 				EventType:   models.HistoryEventBookRebound,
 				SourceTitle: book.Title,
 				Data:        string(data),
+				OwnerUserID: auth.UserIDFromContext(r.Context()),
 			})
 		}
 	}

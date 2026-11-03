@@ -2053,6 +2053,7 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 			EventType:   models.HistoryEventDownloadStalled,
 			SourceTitle: dl.Title,
 			Data:        string(data),
+			OwnerUserID: dl.OwnerUserID,
 		})
 	}
 
@@ -2097,6 +2098,7 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 			EventType:   models.HistoryEventDownloadRequeued,
 			SourceTitle: dl.Title,
 			Data:        string(data),
+			OwnerUserID: dl.OwnerUserID,
 		})
 	}
 

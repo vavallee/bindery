@@ -418,7 +418,7 @@ func (s *Scanner) applyOne(ctx context.Context, fileID int64) ReorganizeMove {
 	}
 	pruneEmptyParents(filepath.Dir(file.Path), s.rootsForFormat(ctx, author, file.Format))
 	bookID := book.ID
-	s.createHistoryEvent(ctx, models.HistoryEventBookRenamed, book.Title, &bookID, map[string]string{
+	s.createHistoryEvent(ctx, models.HistoryEventBookRenamed, book.Title, &bookID, book.OwnerUserID, map[string]string{
 		"from":   file.Path,
 		"to":     proposed,
 		"format": file.Format,

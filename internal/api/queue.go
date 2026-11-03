@@ -1694,7 +1694,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		if setErr := h.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {
 			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
 		}
-		h.recordHistory(ctx, models.HistoryEventDownloadFailed, req.Title, bookID, map[string]any{"guid": req.GUID, "message": err.Error()})
+		h.recordHistory(ctx, models.HistoryEventDownloadFailed, req.Title, bookID, grabOwner, map[string]any{"guid": req.GUID, "message": err.Error()})
 		if h.notif != nil {
 			h.notif.Send(ctx, notifier.EventDownloadFailed, map[string]any{"title": req.Title, "message": err.Error()})
 		}
@@ -1720,7 +1720,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	}
 	dl.Status = models.StateDownloading
 
-	h.recordHistory(ctx, models.HistoryEventGrabbed, req.Title, bookID, map[string]any{
+	h.recordHistory(ctx, models.HistoryEventGrabbed, req.Title, bookID, grabOwner, map[string]any{
 		"guid": req.GUID,
 		"size": req.Size,
 		// The resolved id, not req.IndexerID: the signNZBURL host-match
@@ -1746,8 +1746,9 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	return dl, nil
 }
 
-// recordHistory is a helper to write a history event, swallowing errors.
-func (h *QueueHandler) recordHistory(ctx context.Context, eventType, sourceTitle string, bookID *int64, data any) {
+// recordHistory is a helper to write a history event, swallowing errors. owner
+// is the download's owner, used when the book has none (HistoryRepo.Create).
+func (h *QueueHandler) recordHistory(ctx context.Context, eventType, sourceTitle string, bookID *int64, owner int64, data any) {
 	if h.history == nil {
 		return
 	}
@@ -1761,6 +1762,7 @@ func (h *QueueHandler) recordHistory(ctx context.Context, eventType, sourceTitle
 		EventType:   eventType,
 		SourceTitle: sourceTitle,
 		Data:        string(dataJSON),
+		OwnerUserID: owner,
 	}
 	if err := h.history.Create(ctx, evt); err != nil {
 		slog.Warn("failed to record history", "error", err)

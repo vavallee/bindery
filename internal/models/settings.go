@@ -93,6 +93,12 @@ type HistoryEvent struct {
 	SourceTitle string    `json:"sourceTitle"`
 	Data        string    `json:"data"`
 	CreatedAt   time.Time `json:"createdAt"`
+	// OwnerUserID is the user the event belongs to (migration 117), 0 for
+	// none. HistoryRepo.Create stamps the book's owner when the book has one
+	// and falls back to this value, so callers set it to the download's owner
+	// or the request identity. It outlives the book, which is what keeps a
+	// deleted book's history with its owner.
+	OwnerUserID int64 `json:"-"`
 }
 
 const (

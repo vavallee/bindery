@@ -97,7 +97,7 @@ func (s *Scanner) recordFixMatchMove(ctx context.Context, book *models.Book, des
 	if len(fm.SourcePaths) > 0 {
 		source = fm.SourcePaths[0]
 	}
-	s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, map[string]string{
+	s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, book.OwnerUserID, map[string]string{
 		"path":       dest,
 		"sourcePath": source,
 		"fromBookId": strconv.FormatInt(fm.FromBookID, 10),
@@ -194,6 +194,6 @@ func (s *Scanner) RelinkFile(ctx context.Context, bookID int64, paths []string, 
 	}
 	// Written for an untracked file too, so the link never appears on a
 	// book's History without a trace of where it came from.
-	s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, data)
+	s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, book.OwnerUserID, data)
 	return res, nil
 }
