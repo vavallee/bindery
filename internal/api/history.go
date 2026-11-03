@@ -81,7 +81,7 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 	items := make([]historyItem, len(events))
 	bookIDs := make([]int64, 0, len(events))
 	for i, e := range events {
-		e.Data = redactEventData(e.Data)
+		e.Data = historyDataForViewer(ctx, e.EventType, redactEventData(e.Data))
 		items[i] = historyItem{HistoryEvent: e}
 		if e.BookID != nil {
 			bookIDs = append(bookIDs, *e.BookID)

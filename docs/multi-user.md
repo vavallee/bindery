@@ -81,6 +81,14 @@ With `BINDERY_ENFORCE_TENANCY` on, a grab's `bookId` must be a book the caller o
 
 A release grabbed without a `bookId` (the Search page does not tie a release to a book) is matched to a book when it finishes, from the file's embedded metadata, its file name and the release title. With `BINDERY_ENFORCE_TENANCY` on and a `user` account owning the download, that match only considers the user's own books and books with no owner. If none of those matches, the download stays unmatched in the queue. A download owned by an admin, or with no owner, is matched against the whole library, as is every download with tenancy off.
 
+### Downloads, queue messages and shared folders
+
+An audiobook stored as a folder downloads as a zip, from the web app and over OPDS. The zip holds the folder's files except any file or subfolder another book tracks, matched without regard to ASCII case (letters outside ASCII must match exactly). Untracked files in the folder, such as cover art, cue sheets and nfo files, are included. This applies in both tenancy modes.
+
+Download client errors are admin detail, like the rest of the download client configuration. In `GET /api/v1/queue`, a `staleClients` entry gives a non admin the client's name and the message `download client unreachable`, and a row whose release the client refused or could not be reached for shows a non admin `failed to send the release to the download client` as its `errorMessage`. Admins get the client's own error in both places. A `downloadFailed` History entry and the failure notification for such a grab carry that short message, with a hint about the kind of network failure, for every account; the client's own error is in the log. Older History entries that hold a client error show the short message to non admins. This is decided by role, so it applies in both tenancy modes.
+
+With `BINDERY_ENFORCE_TENANCY` on, an import whose destination path is already tracked by a book owned by someone other than the download's owner is blocked with a message that another book in the library uses the path, without naming that book. When the same account owns both, or tenancy is off, the message names the book and points at Fix match.
+
 ## Requester
 
 A requester asks for books; an admin decides. It is the role for people who share an instance but should not grab, delete or configure anything: family, friends, a book club.

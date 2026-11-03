@@ -1107,6 +1107,13 @@ func (r *BookRepo) PathUnderOtherBookDir(ctx context.Context, path string, exclu
 	return r.files.PathUnderOtherBookDir(ctx, path, excludeBookID)
 }
 
+// PathsUnderForOtherBooks returns the book_files paths below dir that other
+// books track, matched without regard to ASCII case. See
+// BookFileRepo.PathsUnderForOtherBooks.
+func (r *BookRepo) PathsUnderForOtherBooks(ctx context.Context, dir string, excludeBookID int64) ([]string, error) {
+	return r.files.PathsUnderForOtherBooks(ctx, dir, excludeBookID)
+}
+
 // PathOwnedByLiveOtherBook is PathOwnedByOtherBook ignoring a row left by a
 // deleted book. For pre-checks of a write that takes such a row over, never
 // for a delete guard. See BookFileRepo.PathOwnedByLiveOtherBook.
