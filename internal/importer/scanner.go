@@ -2350,7 +2350,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			var setErr error
 			var owned *db.PathOwnedError
 			for attempt := 0; attempt < 3; attempt++ {
-				if setErr = s.recordImportedFile(ctx, book, models.MediaTypeAudiobook, destDir); setErr == nil {
+				if setErr = s.recordImportedFile(ctx, dl, book, models.MediaTypeAudiobook, destDir); setErr == nil {
 					break
 				}
 				if ctx.Err() != nil || errors.As(setErr, &owned) {
@@ -2584,7 +2584,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// A destPath another book already tracks fails here (#2937), before
 		// commit, so the staged file is discarded and the file that book
 		// tracks at destPath is never replaced.
-		if err := s.recordImportedFile(ctx, book, models.MediaTypeEbook, destPath); err != nil {
+		if err := s.recordImportedFile(ctx, dl, book, models.MediaTypeEbook, destPath); err != nil {
 			slog.Error("failed to record book file — rolling back staged file", "bookID", book.ID, "staged", stagedPath, "error", err)
 			rollback()
 			failed++

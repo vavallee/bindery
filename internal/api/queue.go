@@ -626,7 +626,7 @@ func (h *QueueHandler) enrichedQueueItems(ctx context.Context) ([]enrichedQueueI
 			diagnostics = append(diagnostics, queuePollDiagnostic{
 				ClientID: cid,
 				Name:     client.Name,
-				Message:  r.Err.Error(),
+				Message:  staleClientMessage(ctx, r.Err),
 			})
 		case client != nil:
 			// Per-call deadline fired or parent ctx canceled before this
@@ -685,6 +685,40 @@ func (h *QueueHandler) enrichedQueueItems(ctx context.Context) ([]enrichedQueueI
 	return items, diagnostics, nil
 }
 
+// staleClientUserMessage is what a caller who is not an admin is told about a
+// download client whose live-status poll failed.
+const staleClientUserMessage = "download client unreachable"
+
+// staleClientMessage is the staleClients message for a failed poll. The
+// client's own error names its address, and download client configuration is
+// admin only, so only an admin gets it; everyone else gets the client's name
+// (on the diagnostic) and staleClientUserMessage.
+func staleClientMessage(ctx context.Context, err error) string {
+	if isAdminCtx(ctx) {
+		return err.Error()
+	}
+	return staleClientUserMessage
+}
+
+// queueErrorMessage renders a download row's stored error message for the
+// caller. A send failure is stored with the client's own text
+// (downloader.SendFailureMessage), which names the client's address: an admin
+// gets that text, anyone else gets sendFailedMessage. A row written before the
+// marker existed is recognised by the address it carries (see
+// looksLikeClientError), and only on a row in the failed state, which is where
+// a send failure lands; an import failure's message is Bindery's own and can
+// hold a path that looks like an address. Every other message passes through.
+func queueErrorMessage(ctx context.Context, status models.DownloadState, msg string) string {
+	detail, fromClient := downloader.SendFailureDetail(msg)
+	if isAdminCtx(ctx) {
+		return detail
+	}
+	if fromClient || (status == models.StateFailed && looksLikeClientError(msg)) {
+		return sendFailedMessage
+	}
+	return msg
+}
+
 // queueListResponse wraps the queue items in an envelope so the handler
 // can surface partial-data warnings when a downloader client failed or
 // timed out during enrichment. Items remains the array clients have
@@ -708,6 +742,7 @@ func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 	bookIDs := make([]int64, 0, len(enriched))
 	for i, item := range enriched {
 		items[i] = QueueItem{Download: item.Download}
+		items[i].ErrorMessage = queueErrorMessage(r.Context(), items[i].Status, items[i].ErrorMessage)
 		// Strip the indexer apikey from the stored download URL before it
 		// reaches the client. The queue is per-user but the apikey is the shared
 		// indexer credential, so exposing it in any user's queue leaks it (same
@@ -1691,12 +1726,16 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	}.WithSeedLimits(h.resolveSeedLimits(ctx, indexerID)))
 	if err != nil {
 		slog.Error("failed to send download", "client_type", client.Type, "error", err, "title", req.Title)
-		if setErr := h.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {
+		if setErr := h.downloads.SetError(ctx, dl.ID, downloader.SendFailureMessage(err)); setErr != nil {
 			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
 		}
-		h.recordHistory(ctx, models.HistoryEventDownloadFailed, req.Title, bookID, grabOwner, map[string]any{"guid": req.GUID, "message": err.Error()})
+		// History reaches accounts other than the admin's and a webhook leaves
+		// the house, so both get fixed text; the client's own error, which
+		// names its address, stays in the log line above and on the download row.
+		failText := sendFailedMessage + nethint.ForErr(err)
+		h.recordHistory(ctx, models.HistoryEventDownloadFailed, req.Title, bookID, grabOwner, map[string]any{"guid": req.GUID, "message": failText})
 		if h.notif != nil {
-			h.notif.Send(ctx, notifier.EventDownloadFailed, map[string]any{"title": req.Title, "message": err.Error()})
+			h.notif.Send(ctx, notifier.EventDownloadFailed, map[string]any{"title": req.Title, "message": failText})
 		}
 		return nil, &sendError{cause: err, pin: pin}
 	}
