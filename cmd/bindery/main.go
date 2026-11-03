@@ -374,6 +374,9 @@ func main() {
 		cfg.DownloadPathRemap,
 	)
 	importScanner.WithNotifier(notif)
+	// A download grabbed without a book is matched only against its owner's
+	// books under tenancy, unless the owner is an admin.
+	importScanner.WithUsers(userRepo)
 	// Re-check the actual downloaded file against the author's quality profile
 	// before importing it, and blocklist a release rejected that way so the
 	// next search does not grab it again (#1782).

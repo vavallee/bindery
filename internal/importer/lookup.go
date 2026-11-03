@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/concurrency"
+	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -42,20 +44,21 @@ type LookupResult struct {
 // folder never fills or overrides the author here, because the first folder
 // under a library root is as often "ebooks" or "Fiction" as an author.
 func (s *Scanner) Lookup(ctx context.Context, path string) (LookupResult, error) {
-	return s.lookup(ctx, path, s.libraryDir, s.audiobookDir)
+	return s.lookup(ctx, 0, path, s.libraryDir, s.audiobookDir)
 }
 
 // lookup is Lookup with the layout roots made explicit. roots only anchor the
 // author folder flipByLayout compares against; with none the filename is the
-// only signal, which is what download matching wants.
-func (s *Scanner) lookup(ctx context.Context, path string, roots ...string) (LookupResult, error) {
+// only signal, which is what download matching wants. ownerScope limits the
+// candidate books as downloadMatchScope describes; 0 is the whole library.
+func (s *Scanner) lookup(ctx context.Context, ownerScope int64, path string, roots ...string) (LookupResult, error) {
 	parsed := ParseFilename(path)
 	base := LookupResult{
 		DetectedFormat: lookupDetectFormat(path),
 		ParsedTitle:    parsed.Title,
 		ParsedAuthor:   parsed.Author,
 	}
-	books, err := s.books.List(ctx)
+	books, err := s.books.ListByUser(ctx, ownerScope)
 	if err != nil {
 		return base, fmt.Errorf("lookup: list books: %w", err)
 	}
@@ -486,7 +489,12 @@ func lookupParsed(parsed ParsedFile, books []models.Book, authorNames map[int64]
 // MP3 does not have, and tier 2 reads the track filenames, which are
 // "01 - Chapter One.mp3". The failure then told the user to check the release
 // title, which was the one field nothing had looked at.
-func (s *Scanner) matchBookForDownload(ctx context.Context, files []string, releaseTitle string) (*models.Book, *models.Author) {
+//
+// ownerScope comes from downloadMatchScope. Every tier draws its candidates
+// from the same scoped book list, so a download can only bind to a book its
+// owner can see; when nothing in scope matches it stays unmatched, as it does
+// when nothing in the library matches.
+func (s *Scanner) matchBookForDownload(ctx context.Context, ownerScope int64, files []string, releaseTitle string) (*models.Book, *models.Author) {
 	// Tier 1: embedded EPUB metadata.
 	for _, f := range files {
 		if !HasEmbeddedMetadata(f) {
@@ -497,7 +505,7 @@ func (s *Scanner) matchBookForDownload(ctx context.Context, files []string, rele
 			slog.Debug("ebook metadata unreadable; will try filename", "file", f, "error", err)
 			continue
 		}
-		if b, a := s.matchByTitleAuthor(ctx, meta.Title, meta.Author); b != nil {
+		if b, a := s.matchByTitleAuthor(ctx, ownerScope, meta.Title, meta.Author); b != nil {
 			slog.Info("matched download via embedded ebook metadata",
 				"file", f, "title", meta.Title, "author", meta.Author, "isbn", meta.ISBN, "bookID", b.ID)
 			return b, a
@@ -518,7 +526,7 @@ func (s *Scanner) matchBookForDownload(ctx context.Context, files []string, rele
 		if tracks && IsAudioFile(f) {
 			continue
 		}
-		res, err := s.lookup(ctx, f)
+		res, err := s.lookup(ctx, ownerScope, f)
 		if err != nil {
 			slog.Debug("filename lookup failed", "file", f, "error", err)
 			continue
@@ -544,12 +552,46 @@ func (s *Scanner) matchBookForDownload(ctx context.Context, files []string, rele
 
 	// Tier 3: the release title. Last, so nothing that matches today changes
 	// behaviour; it only answers the case the first two cannot see.
-	if b, a := s.matchByReleaseTitle(ctx, releaseTitle); b != nil {
+	if b, a := s.matchByReleaseTitle(ctx, ownerScope, releaseTitle); b != nil {
 		slog.Info("matched download via release title",
 			"release", releaseTitle, "bookID", b.ID, "book", b.Title)
 		return b, a
 	}
 	return nil, nil
+}
+
+// WithUsers attaches the user repository downloadMatchScope reads a download
+// owner's role from.
+func (s *Scanner) WithUsers(users *db.UserRepo) *Scanner {
+	s.users = users
+	return s
+}
+
+// downloadMatchScope is the owner a download grabbed without a book may be
+// matched for, in the form BookRepo.ListByUser takes: 0 for the whole library,
+// otherwise that owner's books plus the unowned ones, which is what the owner
+// sees in the API under tenancy.
+//
+// It is the whole library when tenancy is off and when the owner is an admin.
+// A download with no owner recorded is treated as unscoped too, as it was
+// before owners were considered here. Anything else, including an owner whose
+// user row is missing or unreadable and a scanner with no user repository
+// wired, gets the owner's scope: that can only make a match less likely, never
+// hand the download someone else's book.
+func (s *Scanner) downloadMatchScope(ctx context.Context, dl *models.Download) int64 {
+	if dl == nil || dl.OwnerUserID == 0 || !auth.EnforceTenancy() {
+		return 0
+	}
+	if s.users != nil {
+		u, err := s.users.GetByID(ctx, dl.OwnerUserID)
+		if err != nil {
+			slog.Warn("import: could not read download owner; matching against their books only",
+				"downloadID", dl.ID, "owner", dl.OwnerUserID, "error", err)
+		} else if u != nil && u.IsAdmin() {
+			return 0
+		}
+	}
+	return dl.OwnerUserID
 }
 
 // matchByReleaseTitle finds the single catalogue book a release name refers to.
@@ -579,11 +621,11 @@ func (s *Scanner) matchBookForDownload(ctx context.Context, files []string, rele
 // library holding only the short one. Requiring every significant token of the
 // author's name to appear in the release name is what separates the two:
 // "Amy Tan" is in the release and the other author is not.
-func (s *Scanner) matchByReleaseTitle(ctx context.Context, releaseTitle string) (*models.Book, *models.Author) {
+func (s *Scanner) matchByReleaseTitle(ctx context.Context, ownerScope int64, releaseTitle string) (*models.Book, *models.Author) {
 	if strings.TrimSpace(releaseTitle) == "" {
 		return nil, nil
 	}
-	books, err := s.books.List(ctx)
+	books, err := s.books.ListByUser(ctx, ownerScope)
 	if err != nil {
 		return nil, nil
 	}
@@ -650,11 +692,11 @@ func releaseNamesAuthor(releaseTokens map[string]bool, name string) bool {
 // tier but takes explicit title/author (e.g. from embedded metadata) instead of
 // parsing a path. Returns (nil, nil) on zero or multiple matches — it never
 // guesses between ambiguous candidates.
-func (s *Scanner) matchByTitleAuthor(ctx context.Context, title, authorName string) (*models.Book, *models.Author) {
+func (s *Scanner) matchByTitleAuthor(ctx context.Context, ownerScope int64, title, authorName string) (*models.Book, *models.Author) {
 	if strings.TrimSpace(title) == "" {
 		return nil, nil
 	}
-	books, err := s.books.List(ctx)
+	books, err := s.books.ListByUser(ctx, ownerScope)
 	if err != nil {
 		return nil, nil
 	}
