@@ -238,6 +238,41 @@ func TestAdopt_ExistingBookRegistersInPlaceAndUndoIsExact(t *testing.T) {
 	}
 }
 
+func TestAdopt_ApplySeriesHintIsUndoneExactly(t *testing.T) {
+	f := newAdoptionFixture(t, &stubMetaProvider{name: "openlibrary"})
+	book := f.seedBook(t, "Guards! Guards!")
+	path := f.write(t, "Terry Pratchett/Discworld/Discworld #8 - Guards! Guards!/Terry Pratchett - Guards! Guards!.epub")
+	id := f.seedUnit(t, db.UnmatchedUnitScan{UnitPath: path, MemberPaths: []string{path}})
+
+	rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/adopt", id), map[string]any{
+		"bookId": book.ID, "applySeriesHint": true,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("adopt = %d %s", rec.Code, rec.Body.String())
+	}
+	var seriesID int64
+	if err := f.db.QueryRow(`SELECT series_id FROM series_books WHERE book_id = ?`, book.ID).Scan(&seriesID); err != nil {
+		t.Fatalf("series membership: %v", err)
+	}
+	var title, position string
+	if err := f.db.QueryRow(`SELECT s.title, sb.position_in_series FROM series s JOIN series_books sb ON sb.series_id = s.id WHERE s.id = ?`, seriesID).Scan(&title, &position); err != nil {
+		t.Fatal(err)
+	}
+	if title != "Discworld" || position != "8" {
+		t.Fatalf("series link = %q #%q, want Discworld #8", title, position)
+	}
+	if rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/undo", id), nil); rec.Code != http.StatusOK {
+		t.Fatalf("undo = %d %s", rec.Code, rec.Body.String())
+	}
+	var count int
+	if err := f.db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, seriesID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("manual series survived undo: %d", count)
+	}
+}
+
 // TestAdopt_CreatesUnmonitoredBookInTheAdoptedFormat: a metadata result is
 // added unmonitored with media type set to the unit's format, so nothing is
 // left Wanted to be grabbed. An audiobook folder registers as its folder.

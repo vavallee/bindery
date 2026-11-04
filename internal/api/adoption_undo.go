@@ -96,7 +96,7 @@ func (h *AdoptionHandler) Undo(w http.ResponseWriter, r *http.Request) {
 func recordOf(u *db.UnmatchedUnit) db.AdoptionRecord {
 	return db.AdoptionRecord{
 		BookID: u.BookID, PriorBookStatus: u.PriorBookStatus, CreatedBookID: u.CreatedBookID, CreatedAuthorID: u.CreatedAuthorID,
-		CreatedBookFingerprint: u.CreatedBookFingerprint, Registered: u.Registered,
+		CreatedBookFingerprint: u.CreatedBookFingerprint, Registered: u.Registered, SeriesLink: u.SeriesLink,
 	}
 }
 
@@ -121,6 +121,9 @@ func (h *AdoptionHandler) reverse(ctx context.Context, unitID int64, rec db.Adop
 		if b, err := h.books.GetByID(ctx, rec.BookID); err == nil && b != nil {
 			statusBeforeUntrack = b.Status
 		}
+	}
+	if err := h.units.ReverseAdoptionSeriesLink(ctx, rec.SeriesLink); err != nil {
+		return false, err
 	}
 	for _, f := range rec.Registered {
 		if _, err := h.untrackFile(ctx, f.Path, f.BookID); err != nil {

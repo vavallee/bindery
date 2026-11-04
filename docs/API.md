@@ -1169,10 +1169,14 @@ adopted `book` if any, `bookCreated`, `authorCreated` and the first 20
 `members` file names. No provider is called to build it.
 
 `seriesHint`, when present, is `{title, position}` read from an explicit
-series-and-position file path such as `Discworld #8 - Guards! Guards!`. It is
-evidence for the person reviewing the row only: adoption never creates or
-changes a series membership from it (#1430). A bare collection folder is not
-enough to produce a hint.
+series-and-position file path such as `Discworld #8 - Guards! Guards!`. A bare
+collection folder is not enough to produce a hint. It remains a review hint by
+default. An admin may explicitly apply it during adoption with
+`"applySeriesHint": true`; this creates a manual series with that title, or
+`"seriesId": 12` selects that exact existing series. Bindery never matches an
+existing series by title. Undo removes only the unchanged membership that this
+adoption created, and removes a newly created manual series only while it is
+still empty and unchanged (#3612).
 
 `rootFormat` is the format the row's library root holds, `ebook` or
 `audiobook`, and is present only when `BINDERY_AUDIOBOOK_DIR` is a separate
@@ -1190,16 +1194,20 @@ field is a path. The files are registered in place (an audiobook folder as its
 folder, a disc set disc folder by disc folder), nothing is moved and no search
 starts. A book added from metadata is created unmonitored with its media type
 set to the files' format. Every side effect is recorded on the row before the
-next, so an adoption interrupted by a crash is reversed at the next start.
+next, so an adoption interrupted by a crash is reversed at the next start. Set
+`"applySeriesHint": true` only when the row carries `seriesHint`; its optional
+positive `"seriesId"` chooses an existing series, otherwise Bindery creates a
+manual series from the server-derived hint. `seriesId` cannot be sent without
+`applySeriesHint`.
 Answers:
 
 | Status | Meaning |
 |---|---|
 | `200` | the updated row |
-| `400` | neither or both of `bookId` and `foreignBookId`, a format that is not the files' format, or an ebook file under 4 KiB, too small to be a book (Manual Import is the override for such a file) |
-| `404` | no such row, or the book is gone |
-| `409` | the row is not pending (the body names its `state`), or a file already belongs to a book |
-| `422` | a file is gone, is not a regular file, or resolves outside the library folders |
+| `400` | neither or both of `bookId` and `foreignBookId`, an invalid series request, a format that is not the files' format, or an ebook file under 4 KiB, too small to be a book (Manual Import is the override for such a file) |
+| `404` | no such row, the book is gone, or the selected series is gone |
+| `409` | the row is not pending (the body names its `state`), a file already belongs to a book, or the book was explicitly removed from the selected series |
+| `422` | a file is gone, is not a regular file, resolves outside the library folders, or no explicit series hint exists |
 | `502`, `503` | the metadata provider failed or the primary provider is down |
 
 `POST .../undo` removes exactly the book file entries the adoption made, each

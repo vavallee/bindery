@@ -49,6 +49,84 @@ func unitByPath(t *testing.T, database *sql.DB, repo *UnmatchedUnitRepo, path st
 	return u
 }
 
+func TestApplyAdoptionSeriesHintCreatesAndReversesExactMembership(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	book := seedAdoptionBook(t, database)
+	if _, err := repo.ReconcileScan(ctx, []UnmatchedUnitScan{scanUnit("/lib/A/Saga #2 - Two.epub")}, ReconcileScanOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	u := unitByPath(t, database, repo, "/lib/A/Saga #2 - Two.epub")
+	token, err := repo.Claim(ctx, u.ID, UnmatchedStatePending, UnmatchedStateAdopting)
+	if err != nil || token == "" {
+		t.Fatalf("claim = %q, %v", token, err)
+	}
+	if ok, err := repo.RecordAdoptionProgress(ctx, u.ID, token, AdoptionRecord{BookID: book.ID}); err != nil || !ok {
+		t.Fatalf("record adoption = %v, %v", ok, err)
+	}
+	link, err := repo.ApplyAdoptionSeriesHint(ctx, u.ID, token, book.ID, 0, "Saga", "2")
+	if err != nil {
+		t.Fatalf("apply hint: %v", err)
+	}
+	if link == nil || link.SeriesID == 0 || link.CreatedSeriesID != link.SeriesID || !link.Primary {
+		t.Fatalf("link = %+v, want created primary membership", link)
+	}
+	stored, err := repo.Get(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.SeriesLink == nil || stored.SeriesLink.SeriesID != link.SeriesID {
+		t.Fatalf("stored link = %+v, want %+v", stored.SeriesLink, link)
+	}
+	if err := repo.ReverseAdoptionSeriesLink(ctx, stored.SeriesLink); err != nil {
+		t.Fatalf("reverse hint: %v", err)
+	}
+	var memberships, series int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM series_books WHERE series_id = ?`, link.SeriesID).Scan(&memberships); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, link.SeriesID).Scan(&series); err != nil {
+		t.Fatal(err)
+	}
+	if memberships != 0 || series != 0 {
+		t.Fatalf("after reverse memberships=%d series=%d, want both zero", memberships, series)
+	}
+}
+
+func TestApplyAdoptionSeriesHintKeepsChangedMembership(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	book := seedAdoptionBook(t, database)
+	if _, err := repo.ReconcileScan(ctx, []UnmatchedUnitScan{scanUnit("/lib/A/Saga #2 - Two.epub")}, ReconcileScanOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	u := unitByPath(t, database, repo, "/lib/A/Saga #2 - Two.epub")
+	token, err := repo.Claim(ctx, u.ID, UnmatchedStatePending, UnmatchedStateAdopting)
+	if err != nil || token == "" {
+		t.Fatalf("claim = %q, %v", token, err)
+	}
+	if ok, err := repo.RecordAdoptionProgress(ctx, u.ID, token, AdoptionRecord{BookID: book.ID}); err != nil || !ok {
+		t.Fatalf("record adoption = %v, %v", ok, err)
+	}
+	link, err := repo.ApplyAdoptionSeriesHint(ctx, u.ID, token, book.ID, 0, "Saga", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`UPDATE series_books SET position_in_series = '2.5' WHERE series_id = ? AND book_id = ?`, link.SeriesID, book.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ReverseAdoptionSeriesLink(ctx, link); err != nil {
+		t.Fatal(err)
+	}
+	var position string
+	if err := database.QueryRow(`SELECT position_in_series FROM series_books WHERE series_id = ? AND book_id = ?`, link.SeriesID, book.ID).Scan(&position); err != nil {
+		t.Fatal(err)
+	}
+	if position != "2.5" {
+		t.Fatalf("position after reverse = %q, want preserved edit", position)
+	}
+}
+
 // TestReconcileScan_KeepsDecisions covers the ReconcileScan contract: a rescan
 // never moves an ignored row, a unit the scan stops seeing is removed while
 // pending and kept once decided, and the counts come back.
@@ -478,7 +556,7 @@ func TestMigrate088_OverPopulatedDatabase(t *testing.T) {
 	}
 
 	// 098 and 100 add columns to the table 088 creates, so they rerun with it.
-	for _, file := range []string{"088_unmatched_units.sql", "098_unmatched_units_prior_status.sql", "100_unmatched_units_files_author.sql"} {
+	for _, file := range []string{"088_unmatched_units.sql", "098_unmatched_units_prior_status.sql", "100_unmatched_units_files_author.sql", "118_unmatched_units_series_link.sql"} {
 		v := migrationVersionForTest(t, file)
 		if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = ?`, v); err != nil {
 			t.Fatal(err)

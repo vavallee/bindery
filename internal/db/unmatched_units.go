@@ -116,11 +116,15 @@ type UnmatchedUnit struct {
 	// not get that far.
 	CreatedBookFingerprint string
 	Registered             []RegisteredFile
-	ScanGeneration         int64
-	FirstSeenAt            time.Time
-	LastSeenAt             time.Time
-	ResolvedAt             *time.Time
-	ClaimedAt              *time.Time
+	// SeriesLink is the exact membership an adoption created from an explicit
+	// path hint. It is nil when the user did not ask to apply the hint, or the
+	// book was already in the selected series.
+	SeriesLink     *AdoptionSeriesLink
+	ScanGeneration int64
+	FirstSeenAt    time.Time
+	LastSeenAt     time.Time
+	ResolvedAt     *time.Time
+	ClaimedAt      *time.Time
 	// ClaimToken identifies the request holding an adopting or undoing row.
 	// Every write that belongs to that request is scoped to it, so a request
 	// whose claim was recovered and taken by another cannot write into it.
@@ -215,6 +219,8 @@ ON CONFLICT(unit_path) DO UPDATE SET
                                  THEN '[]' ELSE unmatched_units.registered_paths_json END,
     created_book_fingerprint = CASE WHEN unmatched_units.state = 'adopted' AND unmatched_units.resolved_at < ?
                                     THEN '' ELSE unmatched_units.created_book_fingerprint END,
+	series_link_json = CASE WHEN unmatched_units.state = 'adopted' AND unmatched_units.resolved_at < ?
+	                        THEN '' ELSE unmatched_units.series_link_json END,
     resolved_at = CASE WHEN unmatched_units.state = 'adopted' AND unmatched_units.resolved_at < ?
                        THEN NULL ELSE unmatched_units.resolved_at END`
 
@@ -338,7 +344,7 @@ func (r *UnmatchedUnitRepo) upsertChunk(ctx context.Context, chunk []UnmatchedUn
 			u.AuthorFolder, u.ParsedTitle, u.ParsedAuthor, u.FilesAuthor, u.Reason, searchKey,
 			string(members), string(candJSON), top, generation,
 			nowText, nowText, nowText,
-			startedText, startedText, startedText, startedText, startedText, startedText, startedText, startedText,
+			startedText, startedText, startedText, startedText, startedText, startedText, startedText, startedText, startedText,
 		); err != nil {
 			return fmt.Errorf("unmatched units: upsert %q: %w", u.UnitPath, err)
 		}
@@ -417,17 +423,17 @@ func (r *UnmatchedUnitRepo) Summary(ctx context.Context) (UnmatchedSummary, erro
 
 const unmatchedUnitColumns = `id, unit_path, unit_kind, format, file_count, size_bytes, root_path, rel_path,
     author_folder, parsed_title, parsed_author, files_author, reason, member_paths_json, candidates_json, top_score,
-    state, book_id, prior_book_status, created_book_id, created_author_id, registered_paths_json, created_book_fingerprint,
+    state, book_id, prior_book_status, created_book_id, created_author_id, registered_paths_json, created_book_fingerprint, series_link_json,
     scan_generation, first_seen_at, last_seen_at, resolved_at, claimed_at`
 
 func scanUnmatchedUnit(scan func(...any) error) (*UnmatchedUnit, error) {
 	var u UnmatchedUnit
-	var members, cands, registered string
+	var members, cands, registered, seriesLink string
 	var bookID, createdBook, createdAuthor sql.NullInt64
 	var first, last, resolved, claimed sql.NullString
 	if err := scan(&u.ID, &u.UnitPath, &u.UnitKind, &u.Format, &u.FileCount, &u.SizeBytes, &u.RootPath, &u.RelPath,
 		&u.AuthorFolder, &u.ParsedTitle, &u.ParsedAuthor, &u.FilesAuthor, &u.Reason, &members, &cands, &u.TopScore,
-		&u.State, &bookID, &u.PriorBookStatus, &createdBook, &createdAuthor, &registered, &u.CreatedBookFingerprint,
+		&u.State, &bookID, &u.PriorBookStatus, &createdBook, &createdAuthor, &registered, &u.CreatedBookFingerprint, &seriesLink,
 		&u.ScanGeneration, &first, &last, &resolved, &claimed); err != nil {
 		return nil, err
 	}
@@ -440,6 +446,13 @@ func scanUnmatchedUnit(scan func(...any) error) (*UnmatchedUnit, error) {
 	}
 	if err := json.Unmarshal([]byte(registered), &u.Registered); err != nil {
 		return nil, fmt.Errorf("unmatched unit %d registered paths: %w", u.ID, err)
+	}
+	if seriesLink != "" {
+		var link AdoptionSeriesLink
+		if err := json.Unmarshal([]byte(seriesLink), &link); err != nil {
+			return nil, fmt.Errorf("unmatched unit %d series link: %w", u.ID, err)
+		}
+		u.SeriesLink = &link
 	}
 	u.FirstSeenAt = parseFlexibleTimeValue(first, "unmatched_units.first_seen_at")
 	u.LastSeenAt = parseFlexibleTimeValue(last, "unmatched_units.last_seen_at")
@@ -534,7 +547,30 @@ type AdoptionRecord struct {
 	CreatedAuthorID        int64
 	CreatedBookFingerprint string
 	Registered             []RegisteredFile
+	SeriesLink             *AdoptionSeriesLink
 }
+
+// AdoptionSeriesLink identifies a membership created while applying a series
+// hint. CreatedSeries fields identify a fresh manual series that Undo may
+// remove only if it remains pristine and empty.
+type AdoptionSeriesLink struct {
+	SeriesID               int64  `json:"seriesId"`
+	BookID                 int64  `json:"bookId"`
+	Position               string `json:"position"`
+	Primary                bool   `json:"primary"`
+	CreatedSeriesID        int64  `json:"createdSeriesId,omitempty"`
+	CreatedSeriesForeignID string `json:"createdSeriesForeignId,omitempty"`
+	CreatedSeriesTitle     string `json:"createdSeriesTitle,omitempty"`
+	CreatedSeriesMonitored bool   `json:"createdSeriesMonitored"`
+}
+
+var (
+	// ErrAdoptionSeriesNotFound says an explicitly selected series disappeared.
+	ErrAdoptionSeriesNotFound = errors.New("adoption series not found")
+	// ErrAdoptionSeriesExcluded says the user previously removed this book from
+	// the selected series, which an automated adoption must not override.
+	ErrAdoptionSeriesExcluded = errors.New("book excluded from selected series")
+)
 
 func (rec AdoptionRecord) registeredJSON() (string, error) {
 	files := rec.Registered
@@ -542,6 +578,14 @@ func (rec AdoptionRecord) registeredJSON() (string, error) {
 		files = []RegisteredFile{}
 	}
 	b, err := json.Marshal(files)
+	return string(b), err
+}
+
+func (rec AdoptionRecord) seriesLinkJSON() (string, error) {
+	if rec.SeriesLink == nil {
+		return "", nil
+	}
+	b, err := json.Marshal(rec.SeriesLink)
 	return string(b), err
 }
 
@@ -559,23 +603,176 @@ func (r *UnmatchedUnitRepo) CompleteAdoption(ctx context.Context, id int64, toke
 	return r.writeAdoption(ctx, id, token, rec, true)
 }
 
+// ApplyAdoptionSeriesHint creates the exact series membership selected for an
+// adoption and persists its rollback record in one transaction. seriesID is
+// optional: zero creates a new manual series from title; a positive value
+// selects that exact existing series. It deliberately never title-matches an
+// existing series, since a matching name is not an identity.
+func (r *UnmatchedUnitRepo) ApplyAdoptionSeriesHint(ctx context.Context, id int64, token string, bookID, seriesID int64, title, position string) (*AdoptionSeriesLink, error) {
+	title, position = strings.TrimSpace(title), strings.TrimSpace(position)
+	if bookID <= 0 || title == "" || position == "" {
+		return nil, fmt.Errorf("apply adoption series hint: book, title, and position are required")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("apply adoption series hint: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var heldBook sql.NullInt64
+	err = tx.QueryRowContext(ctx, `SELECT book_id FROM unmatched_units
+		WHERE id = ? AND state = 'adopting' AND claimed_at IS ?`, id, token).Scan(&heldBook)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("apply adoption series hint: claim: %w", err)
+	}
+	if heldBook.Int64 != bookID {
+		return nil, fmt.Errorf("apply adoption series hint: claimed book changed")
+	}
+
+	link := &AdoptionSeriesLink{BookID: bookID, Position: position}
+	if seriesID > 0 {
+		var found int64
+		err = tx.QueryRowContext(ctx, `SELECT id FROM series WHERE id = ?`, seriesID).Scan(&found)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrAdoptionSeriesNotFound
+		}
+		if err != nil {
+			return nil, fmt.Errorf("apply adoption series hint: load series: %w", err)
+		}
+		link.SeriesID = found
+	} else {
+		foreignID := fmt.Sprintf(manualSeriesPrefix+"%d", time.Now().UTC().UnixNano())
+		result, err := tx.ExecContext(ctx, `INSERT INTO series (foreign_id, title, search_key, description, created_at)
+			VALUES (?, ?, ?, '', ?)`, foreignID, title, textutil.FoldForSearch(title), time.Now().UTC())
+		if err != nil {
+			return nil, fmt.Errorf("apply adoption series hint: create manual series: %w", err)
+		}
+		createdID, err := result.LastInsertId()
+		if err != nil {
+			return nil, fmt.Errorf("apply adoption series hint: manual series id: %w", err)
+		}
+		link.SeriesID, link.CreatedSeriesID = createdID, createdID
+		link.CreatedSeriesForeignID, link.CreatedSeriesTitle = foreignID, title
+		// Manual series default to unmonitored (migration 022). Recording it
+		// makes a later monitoring change an edit Undo must preserve.
+		link.CreatedSeriesMonitored = false
+	}
+
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM series_books WHERE series_id = ? AND book_id = ?)`, link.SeriesID, bookID).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("apply adoption series hint: check membership: %w", err)
+	}
+	if exists {
+		if link.CreatedSeriesID > 0 {
+			return nil, fmt.Errorf("apply adoption series hint: new manual series already contains book")
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("apply adoption series hint: commit unchanged: %w", err)
+		}
+		// A pre-existing membership belongs to the library, not this adoption;
+		// return an empty marker so the caller can still distinguish it from a
+		// lost claim without recording anything for Undo.
+		return &AdoptionSeriesLink{}, nil
+	}
+	var excluded bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(`+bookExcludedFromSeriesSQL+`)`, link.SeriesID, bookID).Scan(&excluded); err != nil {
+		return nil, fmt.Errorf("apply adoption series hint: check exclusion: %w", err)
+	}
+	if excluded {
+		return nil, ErrAdoptionSeriesExcluded
+	}
+	var hasPrimary bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM series_books WHERE book_id = ? AND primary_series = 1)`, bookID).Scan(&hasPrimary); err != nil {
+		return nil, fmt.Errorf("apply adoption series hint: check primary: %w", err)
+	}
+	link.Primary = !hasPrimary
+	primary := 0
+	if link.Primary {
+		primary = 1
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO series_books (series_id, book_id, position_in_series, primary_series) VALUES (?, ?, ?, ?)`, link.SeriesID, bookID, position, primary); err != nil {
+		return nil, fmt.Errorf("apply adoption series hint: link book: %w", err)
+	}
+	raw, err := json.Marshal(link)
+	if err != nil {
+		return nil, fmt.Errorf("apply adoption series hint: encode record: %w", err)
+	}
+	out, err := tx.ExecContext(ctx, `UPDATE unmatched_units SET series_link_json = ?, updated_at = ?
+		WHERE id = ? AND state = 'adopting' AND claimed_at IS ?`, string(raw), unitTime(time.Now()), id, token)
+	if err != nil {
+		return nil, fmt.Errorf("apply adoption series hint: record: %w", err)
+	}
+	changed, err := out.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("apply adoption series hint: record affected: %w", err)
+	}
+	if changed != 1 {
+		return nil, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("apply adoption series hint: commit: %w", err)
+	}
+	return link, nil
+}
+
+// ReverseAdoptionSeriesLink removes only the unchanged membership that an
+// adoption recorded. A manually created series is removed only while it is
+// still empty and unchanged, so later edits or use always win over cleanup.
+func (r *UnmatchedUnitRepo) ReverseAdoptionSeriesLink(ctx context.Context, link *AdoptionSeriesLink) error {
+	if link == nil || link.SeriesID == 0 || link.BookID == 0 {
+		return nil
+	}
+	primary := 0
+	if link.Primary {
+		primary = 1
+	}
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM series_books
+		WHERE series_id = ? AND book_id = ? AND position_in_series = ? AND primary_series = ?`, link.SeriesID, link.BookID, link.Position, primary); err != nil {
+		return fmt.Errorf("reverse adoption series link: remove membership: %w", err)
+	}
+	if link.CreatedSeriesID == 0 {
+		return nil
+	}
+	monitored := 0
+	if link.CreatedSeriesMonitored {
+		monitored = 1
+	}
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM series
+		WHERE id = ? AND foreign_id = ? AND title = ? AND description = '' AND monitored = ? AND genre_override IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM series_books WHERE series_id = ?)
+		  AND NOT EXISTS (SELECT 1 FROM series_aliases WHERE series_id = ?)
+		  AND NOT EXISTS (SELECT 1 FROM series_hardcover_links WHERE series_id = ?)`,
+		link.CreatedSeriesID, link.CreatedSeriesForeignID, link.CreatedSeriesTitle, monitored,
+		link.CreatedSeriesID, link.CreatedSeriesID, link.CreatedSeriesID); err != nil {
+		return fmt.Errorf("reverse adoption series link: remove manual series: %w", err)
+	}
+	return nil
+}
+
 func (r *UnmatchedUnitRepo) writeAdoption(ctx context.Context, id int64, token string, rec AdoptionRecord, complete bool) (bool, error) {
 	paths, err := rec.registeredJSON()
+	if err != nil {
+		return false, err
+	}
+	seriesLink, err := rec.seriesLinkJSON()
 	if err != nil {
 		return false, err
 	}
 	now := unitTime(time.Now())
 	query := `UPDATE unmatched_units
 		SET book_id = ?, prior_book_status = ?, created_book_id = ?, created_author_id = ?, registered_paths_json = ?,
-		    created_book_fingerprint = ?, updated_at = ?
+		    created_book_fingerprint = ?, series_link_json = ?, updated_at = ?
 		WHERE id = ? AND state = 'adopting' AND claimed_at IS ?`
-	args := []any{nullID(rec.BookID), rec.PriorBookStatus, nullID(rec.CreatedBookID), nullID(rec.CreatedAuthorID), paths, rec.CreatedBookFingerprint, now, id, token}
+	args := []any{nullID(rec.BookID), rec.PriorBookStatus, nullID(rec.CreatedBookID), nullID(rec.CreatedAuthorID), paths, rec.CreatedBookFingerprint, seriesLink, now, id, token}
 	if complete {
 		query = `UPDATE unmatched_units
 			SET state = 'adopted', book_id = ?, prior_book_status = ?, created_book_id = ?, created_author_id = ?, registered_paths_json = ?,
-			    created_book_fingerprint = ?, updated_at = ?, resolved_at = ?, claimed_at = NULL
+			    created_book_fingerprint = ?, series_link_json = ?, updated_at = ?, resolved_at = ?, claimed_at = NULL
 			WHERE id = ? AND state = 'adopting' AND claimed_at IS ?`
-		args = []any{nullID(rec.BookID), rec.PriorBookStatus, nullID(rec.CreatedBookID), nullID(rec.CreatedAuthorID), paths, rec.CreatedBookFingerprint, now, now, id, token}
+		args = []any{nullID(rec.BookID), rec.PriorBookStatus, nullID(rec.CreatedBookID), nullID(rec.CreatedAuthorID), paths, rec.CreatedBookFingerprint, seriesLink, now, now, id, token}
 	}
 	out, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -592,7 +789,7 @@ func (r *UnmatchedUnitRepo) ResetToPending(ctx context.Context, id int64, from, 
 	out, err := r.db.ExecContext(ctx, `
 		UPDATE unmatched_units
 		SET state = 'pending', book_id = NULL, prior_book_status = '', created_book_id = NULL, created_author_id = NULL,
-		    registered_paths_json = '[]', created_book_fingerprint = '', resolved_at = NULL, claimed_at = NULL,
+		    registered_paths_json = '[]', created_book_fingerprint = '', series_link_json = '', resolved_at = NULL, claimed_at = NULL,
 		    updated_at = ?
 		WHERE id = ? AND state = ? AND claimed_at IS ?`, unitTime(time.Now()), id, from, token)
 	if err != nil {

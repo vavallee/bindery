@@ -140,8 +140,8 @@ export interface AdoptionListParams {
 // What a row is adopted as: a book already in the library, or a metadata
 // result the server adds (unmonitored, in the adopted format) first.
 export type AdoptTarget =
-  | { bookId: number; format?: string }
-  | { foreignBookId: string; foreignAuthorId: string; authorName: string; format?: string }
+  | { bookId: number; format?: string; applySeriesHint?: boolean; seriesId?: number }
+  | { foreignBookId: string; foreignAuthorId: string; authorName: string; format?: string; applySeriesHint?: boolean; seriesId?: number }
 
 export const adoptionApi = {
   listUnmatched: (p: AdoptionListParams = {}) => {
