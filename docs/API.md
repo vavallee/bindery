@@ -796,8 +796,9 @@ field. New rows have `origin: "download"` with the source release `guid`, the
 local `downloadId`, and optional `indexerId` and `downloadClientId`; imports
 created from a local path have `origin: "manual"` and deliberately omit those
 release identifiers. Older rows remain unchanged. The History API returns this
-data unchanged, so integrations can retain enough context to investigate or
-blocklist a downloaded release after its queue row is trimmed.
+data subject to its standard credential redaction, so integrations can retain
+enough context to investigate or blocklist a downloaded release after its queue
+row is trimmed.
 
 #### Release URLs in responses carry no credentials
 
