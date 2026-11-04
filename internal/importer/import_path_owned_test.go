@@ -234,6 +234,43 @@ func TestImport_EbookPathOwnedByOtherBookGetsUniqueSuffix(t *testing.T) {
 	}
 }
 
+// TestImport_EbookPathSkipsUntrackedSuffix ensures collision recovery never
+// overwrites a pre-existing file merely because it has no book_files row. A
+// base path held by another book and an untracked (2) path must leave both
+// untouched and select (3) for the importing book.
+func TestImport_EbookPathSkipsUntrackedSuffix(t *testing.T) {
+	f := newPathOwnedFixture(t, models.MediaTypeEbook)
+	ctx := context.Background()
+	dest := f.ebookDest(t)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest, []byte("tracked by vol 17"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.books.AddBookFile(ctx, f.wrong.ID, models.MediaTypeEbook, dest); err != nil {
+		t.Fatal(err)
+	}
+	suffixTwo := strings.TrimSuffix(dest, ".epub") + " (2).epub"
+	if err := os.WriteFile(suffixTwo, []byte("untracked existing file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f.importDownload(t)
+
+	suffixThree := strings.TrimSuffix(dest, ".epub") + " (3).epub"
+	files := f.files(t, f.right.ID)
+	if len(files) != 1 || files[0].Path != suffixThree {
+		t.Errorf("right book files = %+v, want its own path %s", files, suffixThree)
+	}
+	if got, err := os.ReadFile(suffixTwo); err != nil || string(got) != "untracked existing file" { //nolint:gosec // test path under t.TempDir
+		t.Errorf("untracked suffix was overwritten: %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(suffixThree); err != nil || !strings.HasPrefix(string(got), "volume three") { //nolint:gosec // test path under t.TempDir
+		t.Errorf("import did not use the next free suffix: %q, %v", got, err)
+	}
+}
+
 // TestImport_AudiobookPathOwnedByOtherBook_FailsNamingOwner covers the
 // SetFormatFilePath branch the issue names: the audiobook folder Vol 3's
 // import computes is already registered to Vol 17.
