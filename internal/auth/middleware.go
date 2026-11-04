@@ -755,11 +755,13 @@ func resolveProxyIdentity(r *http.Request, p Provider) (int64, bool) {
 
 	uid, err := p.UserProvisioner().ResolveOrProvisionUser(r.Context(), username, p.ProxyAutoProvision())
 	if err != nil {
-		slog.Error("proxy auth: user provisioning failed", "username", username, "error", err)
+		// The upstream identity is supplied by a request header and may be a
+		// private username or email address. Keep it out of logs.
+		slog.Error("proxy auth: user provisioning failed", "error", err)
 		return 0, false
 	}
 	if uid == 0 {
-		slog.Warn("proxy auth: user not found and auto-provisioning disabled", "username", username)
+		slog.Warn("proxy auth: user not found and auto-provisioning disabled")
 		return 0, false
 	}
 	return uid, true
