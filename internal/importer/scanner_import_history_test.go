@@ -79,7 +79,7 @@ func TestTryImportInternal_OneHistoryEventPerDownload(t *testing.T) {
 		t.Fatalf("got %d bookImported history rows for one three format download, want 1: a multi format bundle is one import event, not one per file", len(events))
 	}
 
-	var data map[string]string
+	var data map[string]any
 	if err := json.Unmarshal([]byte(events[0].Data), &data); err != nil {
 		t.Fatalf("unmarshal history event data: %v", err)
 	}
@@ -103,11 +103,29 @@ func TestTryImportInternal_OneHistoryEventPerDownload(t *testing.T) {
 	}
 	// path stays meaningful: with several formats sharing one folder the row
 	// points at the folder, which is what the History page renders.
-	if data["path"] == "" || !strings.HasPrefix(data["path"], libDir) {
+	path, ok := data["path"].(string)
+	if !ok || path == "" || !strings.HasPrefix(path, libDir) {
 		t.Errorf("history event path = %q, want a path under the library root %q", data["path"], libDir)
 	}
-	if filepath.Ext(data["path"]) != "" {
-		t.Errorf("history event path = %q, want the shared folder rather than one of the three files", data["path"])
+	if filepath.Ext(path) != "" {
+		t.Errorf("history event path = %q, want the shared folder rather than one of the three files", path)
+	}
+	paths, ok := data["paths"].([]any)
+	if !ok || len(paths) != 3 {
+		t.Fatalf("history event paths = %#v, want the three imported files", data["paths"])
+	}
+	seenPaths := make(map[string]bool, len(paths))
+	for _, raw := range paths {
+		importedPath, ok := raw.(string)
+		if !ok {
+			t.Fatalf("history event path entry = %#v, want string", raw)
+		}
+		seenPaths[filepath.Ext(importedPath)] = true
+	}
+	for _, ext := range []string{".azw3", ".epub", ".mobi"} {
+		if !seenPaths[ext] {
+			t.Errorf("history event paths = %#v, missing %s import", paths, ext)
+		}
 	}
 }
 
@@ -115,12 +133,12 @@ func TestImportHistoryProvenanceDoesNotTreatSyntheticManualGUIDAsRelease(t *test
 	data := importHistoryProvenance(&models.Download{
 		ID:   99,
 		GUID: ManualDownloadGUIDPrefix + "import",
-	}, map[string]string{"path": "/library/book.epub"})
+	}, map[string]any{"path": "/library/book.epub"})
 	if got := data["origin"]; got != "manual" {
 		t.Errorf("origin = %q, want manual", got)
 	}
 	for _, key := range []string{"guid", "downloadId", "indexerId", "downloadClientId"} {
-		if got := data[key]; got != "" {
+		if got, exists := data[key]; exists {
 			t.Errorf("manual import data[%q] = %q, want omitted", key, got)
 		}
 	}
@@ -133,7 +151,7 @@ func TestImportHistoryProvenanceKeepsKnownSourceIDs(t *testing.T) {
 		GUID:             "release-guid",
 		IndexerID:        &indexerID,
 		DownloadClientID: &clientID,
-	}, map[string]string{"path": "/library/book.epub"})
+	}, map[string]any{"path": "/library/book.epub"})
 	for key, want := range map[string]string{
 		"origin":           "download",
 		"guid":             "release-guid",
@@ -206,11 +224,12 @@ func TestTryImportInternal_SingleFormatHistoryPathIsTheFile(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("got %d bookImported history rows, want 1", len(events))
 	}
-	var data map[string]string
+	var data map[string]any
 	if err := json.Unmarshal([]byte(events[0].Data), &data); err != nil {
 		t.Fatalf("unmarshal history event data: %v", err)
 	}
-	if filepath.Ext(data["path"]) != ".epub" {
+	path, ok := data["path"].(string)
+	if !ok || filepath.Ext(path) != ".epub" {
 		t.Errorf("history event path = %q, want the imported .epub file itself", data["path"])
 	}
 	if got := data["formats"]; got != "epub" {
@@ -293,11 +312,14 @@ func TestTryImportInternal_PartialImportWritesNoImportedRow(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("run 1: got %d bookImported rows, want 1", len(rows))
 	}
-	var first map[string]string
+	var first map[string]any
 	if err := json.Unmarshal([]byte(rows[0].Data), &first); err != nil {
 		t.Fatal(err)
 	}
-	epubPath := first["path"]
+	epubPath, ok := first["path"].(string)
+	if !ok {
+		t.Fatalf("run 1: history path = %#v, want string", first["path"])
+	}
 	mobiPath := strings.TrimSuffix(epubPath, ".epub") + ".mobi"
 
 	// Block the mobi's destination with a directory so its atomic promote
@@ -347,9 +369,9 @@ func TestTryImportInternal_PartialImportWritesNoImportedRow(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("run 3: got %d bookImported rows total, want 2 (one per completed download)", len(rows))
 	}
-	var retry map[string]string
+	var retry map[string]any
 	for _, r := range rows {
-		var d map[string]string
+		var d map[string]any
 		if err := json.Unmarshal([]byte(r.Data), &d); err != nil {
 			t.Fatal(err)
 		}
