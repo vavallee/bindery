@@ -27,7 +27,7 @@ Rules 1 and 2 also require the host name the request was sent to (the `Host` hea
 
 Otherwise the server returns `401`. Browser sessions also need a CSRF double-submit token on mutating requests (anything other than `GET`, `HEAD` and `OPTIONS`); API-key clients are exempt from CSRF.
 
-Non-browser clients (curl, scripts, mobile apps) authenticating via API key do **not** need to send an `X-Requested-With: bindery-ui` header — that header is required only for browser sessions to satisfy the CSRF gate. The auth endpoints listed above (`/auth/login`, `/auth/logout`, `/auth/setup`, `/auth/status`, `/auth/csrf`) are exempt from the `X-Requested-With` check entirely, since there is no session to protect at that stage.
+Non-browser clients (curl, scripts, mobile apps) authenticating via API key do **not** need to send an `X-Requested-With: bindery-ui` header — that header is required only for browser sessions to satisfy the CSRF gate. The auth endpoints listed above (`/auth/login`, `/auth/logout`, `/auth/setup`, `/auth/status`, `/auth/csrf`) are exempt from the `X-Requested-With` check entirely, since there is no session to protect at that stage. `POST /auth/setup` instead requires `Content-Type: application/json` (415 otherwise), which keeps a cross-site form post from creating the first admin.
 
 The API key lives in **Settings → General → Security**. Regenerating it invalidates every existing consumer.
 
@@ -1167,6 +1167,12 @@ The response is `{items, total, facets?, summary, scan}`. Each item carries
 `candidates` (`{book, score}`, a title similarity from 0 to 1), `state`, the
 adopted `book` if any, `bookCreated`, `authorCreated` and the first 20
 `members` file names. No provider is called to build it.
+
+`seriesHint`, when present, is `{title, position}` read from an explicit
+series-and-position file path such as `Discworld #8 - Guards! Guards!`. It is
+evidence for the person reviewing the row only: adoption never creates or
+changes a series membership from it (#1430). A bare collection folder is not
+enough to produce a hint.
 
 `rootFormat` is the format the row's library root holds, `ebook` or
 `audiobook`, and is present only when `BINDERY_AUDIOBOOK_DIR` is a separate

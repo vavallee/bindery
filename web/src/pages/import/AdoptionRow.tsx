@@ -144,6 +144,11 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
           </span>
           <span className="font-mono"> · {item.relPath}</span>
         </p>
+        {item.seriesHint && (
+          <p className="mt-0.5 truncate text-xs text-fg-muted">
+            {t('adoption.row.seriesHint', { series: item.seriesHint.title, position: item.seriesHint.position, defaultValue: 'Series hint: {{series}} #{{position}}' })}
+          </p>
+        )}
       </td>
       <td className={`${cellCls} md:w-[36%]`}>
         {outcomeLine ? (

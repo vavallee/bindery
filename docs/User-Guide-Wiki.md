@@ -988,6 +988,11 @@ How to work through the list:
 - Each row says in one line what the scan found. Hovering it shows the full
   explanation and the scanner's reason code, for bug reports; the editor
   shows the explanation too.
+- A **Series hint** such as `Discworld #8` appears only when the file path
+  explicitly names both a series and its position. It is a prompt to check the
+  book's series after adoption, not an automatic series change: collection and
+  box-set folders can look similar, so Bindery never creates a series link
+  from a path alone.
 - Keyboard: arrow keys move between rows, **Enter** opens one, **Esc** closes
   it, **i** ignores, **u** undoes, **/** jumps to the search.
 
