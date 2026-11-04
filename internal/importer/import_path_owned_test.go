@@ -178,12 +178,11 @@ func (f *pathOwnedFixture) assertBlockedNamingOwner(t *testing.T) {
 	}
 }
 
-// TestImport_EbookPathOwnedByOtherBook_FailsNamingOwner is the #2937 report.
-// Vol 17 already tracks the file Vol 3's download lands on. Before the fix
-// the INSERT OR IGNORE recorded nothing, the import reported success with a
-// history row naming Vol 3, and Vol 3 stayed Wanted with no file. The commit
-// rename also replaced the file Vol 17 tracks.
-func TestImport_EbookPathOwnedByOtherBook_FailsNamingOwner(t *testing.T) {
+// TestImport_EbookPathOwnedByOtherBookGetsUniqueSuffix makes the #3560
+// collision recoverable without moving the first book's file or requiring an
+// administrator to use Fix match. The first book retains its base path and
+// the second lands at the first free filename suffix.
+func TestImport_EbookPathOwnedByOtherBookGetsUniqueSuffix(t *testing.T) {
 	f := newPathOwnedFixture(t, models.MediaTypeEbook)
 	ctx := context.Background()
 	dest := f.ebookDest(t)
@@ -199,7 +198,13 @@ func TestImport_EbookPathOwnedByOtherBook_FailsNamingOwner(t *testing.T) {
 
 	f.importDownload(t)
 
-	f.assertBlockedNamingOwner(t)
+	dl, book := f.reload(t)
+	if dl.Status != models.StateImported {
+		t.Fatalf("download status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImported)
+	}
+	if book.Status != models.BookStatusImported {
+		t.Errorf("book status = %q, want %q", book.Status, models.BookStatusImported)
+	}
 	owner := f.files(t, f.wrong.ID)
 	if len(owner) != 1 || owner[0].Path != dest {
 		t.Errorf("owning book's files = %+v, want its row for %s untouched", owner, dest)
@@ -207,8 +212,19 @@ func TestImport_EbookPathOwnedByOtherBook_FailsNamingOwner(t *testing.T) {
 	if got, _ := os.ReadFile(dest); string(got) != "tracked by vol 17" { //nolint:gosec // test path under t.TempDir
 		t.Errorf("file the other book tracks was overwritten: %q", got)
 	}
-	if _, err := os.Stat(filepath.Join(f.dir, "Defiance of the Fall 3.epub")); err != nil {
-		t.Errorf("download source gone after a blocked import: %v", err)
+	suffixed := strings.TrimSuffix(dest, ".epub") + " (2).epub"
+	files := f.files(t, f.right.ID)
+	if len(files) != 1 || files[0].Path != suffixed {
+		t.Errorf("right book files = %+v, want its own path %s", files, suffixed)
+	}
+	if got, err := os.ReadFile(suffixed); err != nil || !strings.HasPrefix(string(got), "volume three") { //nolint:gosec // test path under t.TempDir
+		t.Errorf("second book was not copied to its suffix: %q, %v", got, err)
+	}
+	// Copy-mode retries retain the source. The suffix must resolve to the
+	// existing row for this book, rather than advancing to (3) or re-importing.
+	f.importDownload(t)
+	if files := f.files(t, f.right.ID); len(files) != 1 || files[0].Path != suffixed {
+		t.Errorf("retry files = %+v, want exactly the original suffix %s", files, suffixed)
 	}
 	entries, _ := os.ReadDir(filepath.Dir(dest))
 	for _, e := range entries {
@@ -291,11 +307,10 @@ func TestImport_AudiobookMoveModePathOwned_PointsAtOwner(t *testing.T) {
 	}
 }
 
-// TestImport_MultiFileOneOwned_BlockedNotRetried: an epub and a mobi where
-// only the epub's destination is held by another book. The mobi imports; the
-// download is blocked naming the owner instead of ending importFailed, which
-// would spend the retry budget on a conflict a retry cannot clear.
-func TestImport_MultiFileOneOwned_BlockedNotRetried(t *testing.T) {
+// TestImport_MultiFileOneOwnedGetsSuffix: an epub and a mobi where only the
+// epub's rendered name is held by another book. The epub gets a suffix while
+// the mobi keeps its normal path, so the whole release imports successfully.
+func TestImport_MultiFileOneOwnedGetsSuffix(t *testing.T) {
 	f := newPathOwnedFixture(t, models.MediaTypeEbook)
 	ctx := context.Background()
 	epubDest := f.ebookDest(t)
@@ -314,13 +329,13 @@ func TestImport_MultiFileOneOwned_BlockedNotRetried(t *testing.T) {
 	f.importDownload(t)
 
 	dl, _ := f.reload(t)
-	if dl.Status != models.StateImportBlocked {
-		t.Fatalf("download status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImportBlocked)
+	if dl.Status != models.StateImported {
+		t.Fatalf("download status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImported)
 	}
-	assertOwnerReason(t, dl.ErrorMessage, f.wrong)
+	epubSuffixed := strings.TrimSuffix(epubDest, ".epub") + " (2).epub"
 	files := f.files(t, f.right.ID)
-	if len(files) != 1 || files[0].Path != mobiDest {
-		t.Errorf("Vol 3 files = %+v, want only the mobi at %s", files, mobiDest)
+	if len(files) != 2 || files[0].Path != epubSuffixed || files[1].Path != mobiDest {
+		t.Errorf("Vol 3 files = %+v, want epub at %s and mobi at %s", files, epubSuffixed, mobiDest)
 	}
 	if owner := f.files(t, f.wrong.ID); len(owner) != 1 || owner[0].Path != epubDest {
 		t.Errorf("Vol 17 files = %+v, want its epub row untouched", owner)

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
@@ -109,6 +111,47 @@ func (s *Scanner) pathOwnedReason(ctx context.Context, dl *models.Download, book
 		}
 	}
 	return fmt.Errorf("%w; if the file is really %q, use Fix match on that book to move it here", owned, book.Title)
+}
+
+// uniqueEbookDestination returns an unused filename for a normal ebook import.
+//
+// Naming templates intentionally allow two distinct books to render to the
+// same path: provider duplicates, two authors with the same displayed name,
+// and editions that share a title are all legitimate library states. Unlike a
+// Fix match, which must retain its requested destination so it can move the
+// selected file, a normal import can preserve both books by adding the same
+// " (2)" suffix audiobook folders already use. Both the database and the
+// filesystem participate: an untracked file must never be replaced, and a
+// tracked file must not be claimed from its current book.
+func (s *Scanner) uniqueEbookDestination(ctx context.Context, book *models.Book, dest string) (string, error) {
+	if book == nil || fixMatchFrom(ctx) != nil {
+		return dest, nil
+	}
+	ext := filepath.Ext(dest)
+	stem := strings.TrimSuffix(dest, ext)
+	for n := 1; n < 1000; n++ {
+		candidate := dest
+		if n > 1 {
+			candidate = fmt.Sprintf("%s (%d)%s", stem, n, ext)
+		}
+		owner, err := s.books.GetByTrackedPath(ctx, candidate)
+		if err != nil {
+			return "", fmt.Errorf("look up ebook destination owner: %w", err)
+		}
+		if owner != nil && owner.ID != book.ID {
+			continue
+		}
+		if owner != nil {
+			return candidate, nil
+		}
+		if _, err := os.Lstat(candidate); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("check ebook destination %q: %w", candidate, err)
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf("no available ebook destination for %q after 999 attempts", dest)
 }
 
 // pathOwnedElsewhereError is a *db.PathOwnedError whose text leaves out the
