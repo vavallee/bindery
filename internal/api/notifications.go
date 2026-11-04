@@ -102,11 +102,19 @@ func (h *NotificationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var n models.Notification
+	// Decode over a copy of the stored row: JSON decoding only writes the keys
+	// the client sent, so an omitted field keeps what is on disk. Previously a
+	// body such as {"enabled":false} blanked the name, URL and headers and
+	// cleared every on* flag.
+	n := *existing
 	if !decodeJSON(w, r, &n) {
 		return
 	}
-	if n.URL != "" {
+	if n.Name == "" || n.URL == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and url required"})
+		return
+	}
+	if n.URL != existing.URL {
 		policy := httpsec.PolicyFromEnv(httpsec.PolicyStrict, "BINDERY_NOTIFICATIONS_ALLOW_PRIVATE")
 		if err := httpsec.ValidateOutboundURL(n.URL, policy); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": annotatePrivateNetworkError(err)})
@@ -114,6 +122,7 @@ func (h *NotificationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	n.ID = id
+	n.CreatedAt = existing.CreatedAt
 	if err := h.notifications.Update(r.Context(), &n); err != nil {
 		writeServerError(w, r, err)
 		return

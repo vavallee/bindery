@@ -976,7 +976,7 @@ cannot read folder settings.
 GET    /api/v1/notification                       list webhooks (admin)
 POST   /api/v1/notification                       create (admin)
 GET    /api/v1/notification/{id}                  fetch one (admin)
-PUT    /api/v1/notification/{id}                  update (admin)
+PUT    /api/v1/notification/{id}                  update (admin); only the fields sent change, an empty name or url is a 400
 DELETE /api/v1/notification/{id}                  remove (admin)
 POST   /api/v1/notification/{id}/test             fire a test event (admin)
 

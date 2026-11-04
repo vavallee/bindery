@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -202,5 +203,85 @@ func TestNotificationTest_Webhook(t *testing.T) {
 	}
 	if !strings.Contains(gotBody, "Bindery notification test") {
 		t.Errorf("expected test payload to be delivered, got %q", gotBody)
+	}
+}
+
+func putNotification(t *testing.T, h *NotificationHandler, id int64, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	sid := strconv.FormatInt(id, 10)
+	rec := httptest.NewRecorder()
+	h.Update(rec, withURLParam(httptest.NewRequest(http.MethodPut, "/api/v1/notification/"+sid, bytes.NewBufferString(body)), "id", sid))
+	return rec
+}
+
+func seedNotification(t *testing.T, repo *db.NotificationRepo) *models.Notification {
+	t.Helper()
+	n := &models.Notification{
+		Name: "hook", Type: "webhook", URL: "http://203.0.113.1/hook", Method: "PUT",
+		Headers: `{"X-Token":"abc"}`, Topic: "books",
+		OnGrab: true, OnImport: true, OnUpgrade: true, OnFailure: true, OnHealth: true,
+		OnBookAnnounced: true, OnRequestCreated: true, Enabled: true,
+	}
+	if err := repo.Create(context.Background(), n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestNotificationUpdate_PartialKeepsOtherFields(t *testing.T) {
+	h, repo := notificationFixture(t)
+	seed := seedNotification(t, repo)
+
+	if rec := putNotification(t, h, seed.ID, `{"enabled":false}`); rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	got, _ := repo.GetByID(context.Background(), seed.ID)
+	want := *seed
+	want.Enabled = false
+	want.CreatedAt, want.UpdatedAt = got.CreatedAt, got.UpdatedAt
+	if *got != want {
+		t.Errorf("partial update changed other fields:\n got  %+v\n want %+v", *got, want)
+	}
+}
+
+func TestNotificationUpdate_RoundTripsEveryField(t *testing.T) {
+	h, repo := notificationFixture(t)
+	seed := seedNotification(t, repo)
+
+	body := `{"name":"n2","type":"ntfy","url":"http://203.0.113.9/x","method":"POST","headers":"{\"A\":\"b\"}","topic":"t2",
+		"onGrab":false,"onImport":false,"onUpgrade":false,"onFailure":false,"onHealth":false,"onBookAnnounced":false,"onRequestCreated":false,"enabled":false}`
+	if rec := putNotification(t, h, seed.ID, body); rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	got, _ := repo.GetByID(context.Background(), seed.ID)
+	want := models.Notification{
+		ID: seed.ID, Name: "n2", Type: "ntfy", URL: "http://203.0.113.9/x", Method: "POST",
+		Headers: `{"A":"b"}`, Topic: "t2", CreatedAt: got.CreatedAt, UpdatedAt: got.UpdatedAt,
+	}
+	if *got != want {
+		t.Errorf("round trip mismatch:\n got  %+v\n want %+v", *got, want)
+	}
+}
+
+func TestNotificationUpdate_EmptyURLRejected(t *testing.T) {
+	h, repo := notificationFixture(t)
+	seed := seedNotification(t, repo)
+	for _, body := range []string{`{"url":""}`, `{"name":""}`} {
+		if rec := putNotification(t, h, seed.ID, body); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: want 400, got %d", body, rec.Code)
+		}
+	}
+	got, _ := repo.GetByID(context.Background(), seed.ID)
+	if got.URL != seed.URL || got.Name != seed.Name {
+		t.Errorf("rejected update changed the row: %+v", got)
+	}
+}
+
+func TestNotificationUpdate_ChangedURLValidated(t *testing.T) {
+	h, repo := notificationFixture(t)
+	seed := seedNotification(t, repo)
+	t.Setenv("BINDERY_NOTIFICATIONS_ALLOW_PRIVATE", "")
+	if rec := putNotification(t, h, seed.ID, `{"url":"http://10.0.0.5/hook"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("private URL: want 400, got %d", rec.Code)
 	}
 }
