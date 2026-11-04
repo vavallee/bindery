@@ -199,6 +199,53 @@ func TestApplyAdoptionSeriesHintHonorsSeriesExclusion(t *testing.T) {
 	}
 }
 
+func TestApplyAdoptionSeriesHintRefusesIncompleteHint(t *testing.T) {
+	_, repo := openUnmatchedRepo(t)
+	for _, args := range []struct {
+		bookID          int64
+		title, position string
+	}{
+		{title: "Saga", position: "2"},
+		{bookID: 1, position: "2"},
+		{bookID: 1, title: "Saga"},
+	} {
+		if _, err := repo.ApplyAdoptionSeriesHint(context.Background(), 1, "token", args.bookID, 0, args.title, args.position); err == nil {
+			t.Fatalf("ApplyAdoptionSeriesHint(%+v) succeeded, want validation error", args)
+		}
+	}
+}
+
+func TestReverseAdoptionSeriesLinkPreservesChangedManualSeries(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	book := seedAdoptionBook(t, database)
+	series, err := NewSeriesRepo(database).CreateManual(ctx, "Changed Saga")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewSeriesRepo(database).LinkBook(ctx, series.ID, book.ID, "2", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewSeriesRepo(database).SetMonitored(ctx, series.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	link := &AdoptionSeriesLink{
+		SeriesID: series.ID, BookID: book.ID, Position: "2", Primary: true,
+		CreatedSeriesID: series.ID, CreatedSeriesForeignID: series.ForeignID, CreatedSeriesTitle: series.Title,
+		CreatedSeriesMonitored: false,
+	}
+	if err := repo.ReverseAdoptionSeriesLink(ctx, link); err != nil {
+		t.Fatal(err)
+	}
+	var remaining int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, series.ID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 {
+		t.Fatalf("changed series count = %d, want preserved series", remaining)
+	}
+}
+
 // TestReconcileScan_KeepsDecisions covers the ReconcileScan contract: a rescan
 // never moves an ignored row, a unit the scan stops seeing is removed while
 // pending and kept once decided, and the counts come back.
