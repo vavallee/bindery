@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -78,6 +79,46 @@ func (f adoptionFixture) write(t *testing.T, rel string) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestSeriesHintFromUnitRequiresExplicitSeriesAndPosition(t *testing.T) {
+	tests := []struct {
+		name string
+		unit db.UnmatchedUnit
+		want *adoptionSeriesHint
+	}{
+		{name: "readarr series book folder", unit: db.UnmatchedUnit{UnitPath: "/books/Terry Pratchett/Discworld/Discworld #8 - Guards! Guards!/Terry Pratchett - Guards! Guards!.epub"}, want: &adoptionSeriesHint{Title: "Discworld", Position: "8"}},
+		{name: "folder unit reads member path", unit: db.UnmatchedUnit{UnitPath: "/audiobooks/Terry Pratchett/Discworld/Discworld #16.5 - The Last Hero", MemberPaths: []string{"/audiobooks/Terry Pratchett/Discworld/Discworld #16.5 - The Last Hero/01 - The Last Hero.m4b"}}, want: &adoptionSeriesHint{Title: "Discworld", Position: "16.5"}},
+		{name: "bare collection folder is too ambiguous", unit: db.UnmatchedUnit{UnitPath: "/books/Terry Pratchett/Discworld/Guards! Guards!/Guards! Guards!.epub"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := seriesHintFromUnit(&tt.unit); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("seriesHintFromUnit() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAdoptionListIncludesExplicitSeriesHint(t *testing.T) {
+	f := newAdoptionFixture(t, &stubMetaProvider{name: "openlibrary"})
+	path := f.write(t, "Terry Pratchett/Discworld/Discworld #8 - Guards! Guards!/Terry Pratchett - Guards! Guards!.epub")
+	f.seedUnit(t, db.UnmatchedUnitScan{UnitPath: path, MemberPaths: []string{path}, AuthorFolder: "Terry Pratchett", ParsedTitle: "Guards! Guards!"})
+	rec := httptest.NewRecorder()
+	f.router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/library/unmatched", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d %s", rec.Code, rec.Body.String())
+	}
+	var response adoptionListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(response.Items))
+	}
+	if got, want := response.Items[0].SeriesHint, (&adoptionSeriesHint{Title: "Discworld", Position: "8"}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("seriesHint = %#v, want %#v", got, want)
+	}
 }
 
 // seedUnit stores one unit the way a scan would and returns its id.

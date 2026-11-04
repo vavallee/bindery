@@ -1168,6 +1168,12 @@ The response is `{items, total, facets?, summary, scan}`. Each item carries
 adopted `book` if any, `bookCreated`, `authorCreated` and the first 20
 `members` file names. No provider is called to build it.
 
+`seriesHint`, when present, is `{title, position}` read from an explicit
+series-and-position file path such as `Discworld #8 - Guards! Guards!`. It is
+evidence for the person reviewing the row only: adoption never creates or
+changes a series membership from it (#1430). A bare collection folder is not
+enough to produce a hint.
+
 `rootFormat` is the format the row's library root holds, `ebook` or
 `audiobook`, and is present only when `BINDERY_AUDIOBOOK_DIR` is a separate
 folder from the library; with one combined root it is omitted. A row whose

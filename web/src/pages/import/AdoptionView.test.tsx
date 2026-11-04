@@ -84,6 +84,21 @@ afterEach(() => {
 })
 
 describe('AdoptionView', () => {
+  it('shows explicit series evidence as a hint without changing the adoption action', async () => {
+    const withSeries = item({
+      id: 63,
+      relPath: 'Terry Pratchett/Discworld/Discworld #8 - Guards! Guards!/Terry Pratchett - Guards! Guards!.epub',
+      parsedTitle: 'Guards! Guards!',
+      seriesHint: { title: 'Discworld', position: '8' },
+    })
+    serve(listResponse([withSeries]))
+    const table = await renderView()
+
+    const row = within(table).getByRole('row', { name: 'Guards! Guards!' })
+    expect(within(row).getByText('Series hint: Discworld #8')).toBeInTheDocument()
+    expect(within(row).getByRole('button', { name: 'Choose book' })).toBeInTheDocument()
+  })
+
   // #2944: two 1008 byte .txt files under the audiobooks root were listed as
   // ordinary ebooks with a one click Confirm into the book their folder named.
   it('labels a file too small to be a book and offers Ignore, not adoption', async () => {
