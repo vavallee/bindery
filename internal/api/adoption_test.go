@@ -273,6 +273,98 @@ func TestAdopt_ApplySeriesHintIsUndoneExactly(t *testing.T) {
 	}
 }
 
+func TestAdopt_ApplySeriesHintSelectsExactExistingSeries(t *testing.T) {
+	f := newAdoptionFixture(t, &stubMetaProvider{name: "openlibrary"})
+	book := f.seedBook(t, "Mort")
+	series, err := db.NewSeriesRepo(f.db).CreateManual(context.Background(), "Discworld")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := f.write(t, "Terry Pratchett/Discworld/Discworld #4 - Mort/Terry Pratchett - Mort.epub")
+	id := f.seedUnit(t, db.UnmatchedUnitScan{UnitPath: path, MemberPaths: []string{path}})
+
+	rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/adopt", id), map[string]any{
+		"bookId": book.ID, "applySeriesHint": true, "seriesId": series.ID,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("adopt = %d %s", rec.Code, rec.Body.String())
+	}
+	var gotSeriesID int64
+	var position string
+	if err := f.db.QueryRow(`SELECT series_id, position_in_series FROM series_books WHERE book_id = ?`, book.ID).Scan(&gotSeriesID, &position); err != nil {
+		t.Fatalf("series membership: %v", err)
+	}
+	if gotSeriesID != series.ID || position != "4" {
+		t.Fatalf("series link = %d #%q, want %d #4", gotSeriesID, position, series.ID)
+	}
+	if rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/undo", id), nil); rec.Code != http.StatusOK {
+		t.Fatalf("undo = %d %s", rec.Code, rec.Body.String())
+	}
+	var seriesCount int
+	if err := f.db.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, series.ID).Scan(&seriesCount); err != nil {
+		t.Fatal(err)
+	}
+	if seriesCount != 1 {
+		t.Fatalf("existing series count after undo = %d, want 1", seriesCount)
+	}
+}
+
+func TestAdopt_ApplySeriesHintRefusesAmbiguousOrExcludedTargets(t *testing.T) {
+	t.Run("path has no explicit hint", func(t *testing.T) {
+		f := newAdoptionFixture(t, &stubMetaProvider{name: "openlibrary"})
+		book := f.seedBook(t, "Guards! Guards!")
+		path := f.write(t, "Terry Pratchett/Discworld/Guards! Guards!/Guards! Guards!.epub")
+		id := f.seedUnit(t, db.UnmatchedUnitScan{UnitPath: path, MemberPaths: []string{path}})
+
+		rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/adopt", id), map[string]any{"bookId": book.ID, "applySeriesHint": true})
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("adopt = %d %s, want 422", rec.Code, rec.Body.String())
+		}
+		unit, err := f.units.Get(context.Background(), id)
+		if err != nil || unit.State != db.UnmatchedStatePending {
+			t.Fatalf("unit after refusal = %+v, %v; want pending", unit, err)
+		}
+	})
+
+	t.Run("book was excluded from selected series", func(t *testing.T) {
+		f := newAdoptionFixture(t, &stubMetaProvider{name: "openlibrary"})
+		book := f.seedBook(t, "Small Gods")
+		series, err := db.NewSeriesRepo(f.db).CreateManual(context.Background(), "Discworld")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.db.Exec(`INSERT INTO book_series_exclusions (book_id, series_foreign_id, position_in_series) VALUES (?, ?, '')`, book.ID, series.ForeignID); err != nil {
+			t.Fatal(err)
+		}
+		path := f.write(t, "Terry Pratchett/Discworld/Discworld #13 - Small Gods/Small Gods.epub")
+		id := f.seedUnit(t, db.UnmatchedUnitScan{UnitPath: path, MemberPaths: []string{path}})
+
+		rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/adopt", id), map[string]any{
+			"bookId": book.ID, "applySeriesHint": true, "seriesId": series.ID,
+		})
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("adopt = %d %s, want 409", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestAdopt_ApplySeriesHintRequestValidation(t *testing.T) {
+	f := newAdoptionFixture(t, &stubMetaProvider{name: "openlibrary"})
+	book := f.seedBook(t, "Pyramids")
+	path := f.write(t, "Terry Pratchett/Discworld/Discworld #7 - Pyramids/Pyramids.epub")
+	id := f.seedUnit(t, db.UnmatchedUnitScan{UnitPath: path, MemberPaths: []string{path}})
+
+	for _, body := range []map[string]any{
+		{"bookId": book.ID, "seriesId": 1},
+		{"bookId": book.ID, "applySeriesHint": true, "seriesId": -1},
+	} {
+		rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/adopt", id), body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("adopt body %#v = %d %s, want 400", body, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 // TestAdopt_CreatesUnmonitoredBookInTheAdoptedFormat: a metadata result is
 // added unmonitored with media type set to the unit's format, so nothing is
 // left Wanted to be grabbed. An audiobook folder registers as its folder.
