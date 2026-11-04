@@ -1311,7 +1311,7 @@ func (h *SeriesHandler) HardcoverDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.backfillHardcoverSlug(r.Context(), link, catalog)
-	diff := buildHardcoverDiff(r.Context(), h.books, auth.UserIDFromContext(r.Context()), series, link, catalog)
+	diff := buildHardcoverDiff(r.Context(), h.books, auth.ListScopeUserID(r.Context()), series, link, catalog)
 	writeJSON(w, http.StatusOK, diff)
 }
 

@@ -528,7 +528,7 @@ func (h *AuthorHandler) ListSeries(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []models.Series{})
 		return
 	}
-	series, err := h.series.ListByAuthor(r.Context(), id)
+	series, err := h.series.ListByAuthorAndUser(r.Context(), id, auth.ListScopeUserID(r.Context()))
 	if err != nil {
 		writeServerError(w, r, err)
 		return
@@ -1134,7 +1134,7 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// monitor selection silently reference an unrelated catalog row.
 	if req.MonitoredSeriesIDs != nil {
 		if len(*req.MonitoredSeriesIDs) > 0 {
-			ownSeries, err := h.series.ListByAuthor(r.Context(), author.ID)
+			ownSeries, err := h.series.ListByAuthorAndUser(r.Context(), author.ID, auth.ListScopeUserID(r.Context()))
 			if err != nil {
 				writeServerError(w, r, err)
 				return
@@ -1177,6 +1177,10 @@ func applyMonitorModeToExistingBooks(ctx context.Context, booksRepo *db.BookRepo
 	if err != nil {
 		return fmt.Errorf("list author books: %w", err)
 	}
+	// The caller has write access to the author, not to every book under it: a
+	// shared author can hold other accounts' books and unowned ones. Rewrite
+	// only the books this caller may write; admins and tenancy off keep all.
+	books = writableBooks(ctx, books)
 	latestKeys := latestBookMonitorKeys(books, author.MonitorLatestCount, func(b models.Book) bool {
 		return !b.Excluded
 	})

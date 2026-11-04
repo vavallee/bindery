@@ -27,8 +27,9 @@ const duplicateEvidenceChunk = 500
 // memory at once.
 //
 // ownerUserID scopes by the AUTHOR's owner, the same row the per-author
-// window checks with auth.CheckOwnership: 0 is unscoped, anything else keeps
-// authors owned by that user plus unowned ones. A book whose author row is
+// window checks with auth.CheckOwnership, and by the BOOK's owner: 0 is
+// unscoped, anything else keeps authors and books owned by that user plus
+// unowned ones. A book whose author row is
 // gone is left out, as no author window can show it either.
 //
 // The second result maps each returned author ID to its name.
@@ -36,6 +37,9 @@ func (r *BookRepo) ListForDuplicateScan(ctx context.Context, ownerUserID int64) 
 	const sel = `SELECT books.id, books.author_id, COALESCE(books.title, ''), books.excluded, COALESCE(au.name, '')
 		FROM books JOIN authors au ON au.id = books.author_id `
 	where, args := QueryScopeForIncludingNull("au.owner_user_id", "", ownerUserID)
+	// A shared author can hold other accounts' books, so the book row is
+	// scoped too: a caller only ever sees their own and unowned books.
+	where, args = QueryScopeForIncludingNull("books.owner_user_id", where, ownerUserID, args...)
 	q := sel + where + ` ORDER BY books.author_id, books.id` // #nosec G202 -- where is a fixed predicate from QueryScopeForIncludingNull; the user id stays a bound arg
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -58,7 +62,8 @@ func (r *BookRepo) ListForDuplicateScan(ctx context.Context, ownerUserID int64) 
 
 // DuplicateScanStamp is a cheap fingerprint of everything the library-wide
 // duplicate scan reads: the books (count, highest id, which are excluded,
-// which author each belongs to, title lengths, latest update), the series
+// which author each belongs to, which user owns each, title lengths, latest
+// update), the series
 // links and their positions, and the authors (count, owners, latest update).
 // The library-wide view caches its group list under this stamp, so paging
 // does not rescan the library while an exclusion, an import, a new book, a
@@ -73,7 +78,7 @@ func (r *BookRepo) DuplicateScanStamp(ctx context.Context) (string, error) {
 	var stamp string
 	err := r.db.QueryRowContext(ctx, `SELECT
 		(SELECT COUNT(*) || ':' || COALESCE(MAX(id), 0) || ':' || TOTAL(excluded * id) || ':' ||
-		        TOTAL(author_id * 7 + id) || ':' || TOTAL(LENGTH(title) * id) || ':' || COALESCE(MAX(updated_at), '')
+		        TOTAL(author_id * 7 + id) || ':' || TOTAL(COALESCE(owner_user_id, 0) * id) || ':' || TOTAL(LENGTH(title) * id) || ':' || COALESCE(MAX(updated_at), '')
 		   FROM books)
 		|| '|' ||
 		(SELECT COUNT(*) || ':' || TOTAL(series_id * 1000003 + book_id) || ':' ||
@@ -160,6 +165,7 @@ func (r *BookRepo) ListDuplicateEvidence(ctx context.Context, bookIDs []int64) (
 // scopes books (by the author's owner; 0 is unscoped), in one query.
 func (r *SeriesRepo) ListBookSeriesMembershipsForOwner(ctx context.Context, ownerUserID int64) (map[int64][]BookSeriesMembership, error) {
 	where, args := QueryScopeForIncludingNull("au.owner_user_id", "", ownerUserID)
+	where, args = QueryScopeForIncludingNull("b.owner_user_id", where, ownerUserID, args...)
 	out, err := r.scanBookSeriesMemberships(ctx, `
 		SELECT sb.book_id, sb.series_id, COALESCE(s.foreign_id, ''), COALESCE(s.title, ''),
 		       COALESCE(sb.position_in_series, ''), COALESCE(sb.primary_series, 0)

@@ -313,7 +313,7 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 		// catalogue; the slice is cheap.
 		id, _ := strconv.ParseInt(authorID, 10, 64)
 		if includeExcluded {
-			books, err = h.books.ListByAuthorIncludingExcluded(r.Context(), id)
+			books, err = h.books.ListByAuthorIncludingExcludedAndUser(r.Context(), id, auth.ListScopeUserID(r.Context()))
 		} else {
 			// Scope to the caller's library: admins / API-key / no-tenancy get
 			// 0 = unscoped (identical to ListByAuthor), non-admins are isolated
@@ -326,9 +326,9 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 		// excluded"); keep the whole-set fetch + in-memory slice. Search/sort
 		// filtering is not offered here.
 		if status != "" {
-			books, err = h.books.ListByStatusIncludingExcluded(r.Context(), status)
+			books, err = h.books.ListByStatusIncludingExcludedAndUser(r.Context(), status, auth.ListScopeUserID(r.Context()))
 		} else {
-			books, err = h.books.ListIncludingExcluded(r.Context())
+			books, err = h.books.ListIncludingExcludedAndUser(r.Context(), auth.ListScopeUserID(r.Context()))
 		}
 		books, total = pageBooks(books, limit, offset)
 	default:

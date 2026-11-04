@@ -419,6 +419,9 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 				resp.Results[key] = bulkItemResult{Error: err.Error()}
 				continue
 			}
+			// A shared author holds other accounts' books too; queue searches
+			// only for the ones this caller may act on.
+			books = writableBooks(r.Context(), books)
 			// searchRefused already returned above, so the switch is on.
 			for i := range books {
 				b := books[i]
@@ -927,6 +930,9 @@ func (h *BulkHandler) setAuthorBooksMediaType(ctx context.Context, authorID int6
 	if err != nil {
 		return fmt.Errorf("list books: %w", err)
 	}
+	// Skip books the caller may not write (other accounts' and unowned ones
+	// under tenancy) rather than failing the whole call.
+	books = writableBooks(ctx, books)
 	for i := range books {
 		if books[i].MediaType == mediaType {
 			continue
