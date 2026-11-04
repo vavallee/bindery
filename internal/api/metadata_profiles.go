@@ -97,11 +97,19 @@ func (h *MetadataProfileHandler) Update(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "metadata profile not found"})
 		return
 	}
-	var p models.MetadataProfile
+	// Decode over a copy of the stored row so an omitted field keeps its
+	// value. A zero struct reset allowedLanguages, the min and skip fields and
+	// turned unknownLanguageBehavior "fail" into "pass" on {"name":"x"}.
+	p := *existing
 	if !decodeJSON(w, r, &p) {
 		return
 	}
+	if p.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name required"})
+		return
+	}
 	p.ID = id
+	p.OwnerUserID = existing.OwnerUserID
 	if p.UnknownLanguageBehavior != models.UnknownLanguageFail {
 		p.UnknownLanguageBehavior = models.UnknownLanguagePass
 	}

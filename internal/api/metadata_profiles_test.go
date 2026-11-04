@@ -128,3 +128,66 @@ func TestMetaProfileDelete_Success(t *testing.T) {
 		t.Errorf("expected 204, got %d", rec.Code)
 	}
 }
+
+func putMetaProfile(t *testing.T, h *MetadataProfileHandler, id int64, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	sid := strconv.FormatInt(id, 10)
+	rec := httptest.NewRecorder()
+	h.Update(rec, withURLParam(httptest.NewRequest(http.MethodPut, "/api/v1/metadataprofile/"+sid, bytes.NewBufferString(body)), "id", sid))
+	return rec
+}
+
+func TestMetaProfileUpdate_PartialKeepsOtherFields(t *testing.T) {
+	h, repo, ctx := metaProfileFixture(t)
+	seed := &models.MetadataProfile{
+		Name: "Fiction", MinPopularity: 5, MinPages: 100, MinEditionCount: 3,
+		SkipMissingDate: true, SkipMissingISBN: true, SkipPartBooks: true,
+		AllowedLanguages: "eng,fre", UnknownLanguageBehavior: models.UnknownLanguageFail,
+	}
+	if err := repo.Create(ctx, seed); err != nil {
+		t.Fatal(err)
+	}
+	if rec := putMetaProfile(t, h, seed.ID, `{"name":"Renamed"}`); rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	got, _ := repo.GetByID(ctx, seed.ID)
+	want := *seed
+	want.Name = "Renamed"
+	want.CreatedAt = got.CreatedAt
+	if *got != want {
+		t.Errorf("partial update changed other fields:\n got  %+v\n want %+v", *got, want)
+	}
+}
+
+func TestMetaProfileUpdate_RoundTripsEveryField(t *testing.T) {
+	h, repo, ctx := metaProfileFixture(t)
+	seed := &models.MetadataProfile{Name: "Fiction", AllowedLanguages: "eng"}
+	if err := repo.Create(ctx, seed); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"name":"Other","minPopularity":9,"minPages":250,"minEditionCount":4,"skipMissingDate":true,
+		"skipMissingIsbn":true,"skipPartBooks":true,"allowedLanguages":"deu","unknownLanguageBehavior":"fail"}`
+	if rec := putMetaProfile(t, h, seed.ID, body); rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	got, _ := repo.GetByID(ctx, seed.ID)
+	want := models.MetadataProfile{
+		ID: seed.ID, Name: "Other", MinPopularity: 9, MinPages: 250, MinEditionCount: 4,
+		SkipMissingDate: true, SkipMissingISBN: true, SkipPartBooks: true,
+		AllowedLanguages: "deu", UnknownLanguageBehavior: models.UnknownLanguageFail, CreatedAt: got.CreatedAt,
+	}
+	if *got != want {
+		t.Errorf("round trip mismatch:\n got  %+v\n want %+v", *got, want)
+	}
+}
+
+func TestMetaProfileUpdate_EmptyNameRejected(t *testing.T) {
+	h, repo, ctx := metaProfileFixture(t)
+	seed := &models.MetadataProfile{Name: "Fiction", AllowedLanguages: "eng"}
+	if err := repo.Create(ctx, seed); err != nil {
+		t.Fatal(err)
+	}
+	if rec := putMetaProfile(t, h, seed.ID, `{"name":""}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", rec.Code)
+	}
+}
