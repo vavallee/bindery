@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
+	"github.com/vavallee/bindery/internal/auth/oidc"
 	"github.com/vavallee/bindery/internal/db"
 )
 
@@ -212,7 +214,10 @@ func writeSessionCheckUnavailable(w http.ResponseWriter, r *http.Request, err er
 	writeErr(w, http.StatusServiceUnavailable, "session check unavailable, try again")
 }
 
-// Setup creates the first admin user. Only allowed while no user exists.
+// Setup creates the first admin user. Only allowed while no user exists, and
+// only with a JSON body. When local accounts are disabled and OIDC or proxy
+// auth is configured it is refused (403) so the first SSO login owns the admin
+// role.
 //
 // Concurrent calls create exactly one account: setupMu queues them in this
 // process, and CreateFirstAdmin only inserts into an empty users table, so
@@ -220,6 +225,17 @@ func writeSessionCheckUnavailable(w http.ResponseWriter, r *http.Request, err er
 // loser gets the same 409 a call after setup gets.
 func (h *AuthHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	// Setup is exempt from the CSRF guards (there is no session yet), so the
+	// body type is what keeps a cross-site page out: a form can send text/plain
+	// without a preflight, application/json it cannot.
+	if !isJSONContentType(r.Header.Get("Content-Type")) {
+		writeErr(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return
+	}
+	if !h.localAuthEnabled && h.alternativeLoginConfigured(ctx) {
+		writeErr(w, http.StatusForbidden, "local accounts are disabled; sign in with your configured SSO provider")
+		return
+	}
 	h.setupMu.Lock()
 	defer h.setupMu.Unlock()
 	count, err := h.users.Count(ctx)
@@ -264,6 +280,32 @@ func (h *AuthHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("first-run setup complete", "username", u.Username)
 	writeOK(w, map[string]any{"ok": true})
+}
+
+// isJSONContentType reports whether a Content-Type header value names
+// application/json, ignoring parameters such as charset.
+func isJSONContentType(v string) bool {
+	mt, _, err := mime.ParseMediaType(v)
+	return err == nil && mt == "application/json"
+}
+
+// alternativeLoginConfigured reports whether another way to sign in exists
+// besides a local password: at least one OIDC provider, or proxy auth mode. A
+// fresh install with local accounts disabled and neither configured keeps
+// first-run setup open, since refusing it would leave no way in at all.
+func (h *AuthHandler) alternativeLoginConfigured(ctx context.Context) bool {
+	if h.mode(ctx) == auth.ModeProxy {
+		return true
+	}
+	if h.settings == nil {
+		return false
+	}
+	s, _ := h.settings.Get(ctx, SettingOIDCProviders)
+	if s == nil || strings.TrimSpace(s.Value) == "" {
+		return false
+	}
+	ps, err := oidc.ParseProviders(s.Value)
+	return err == nil && len(ps) > 0
 }
 
 // Login validates credentials, issues a signed session cookie on success.

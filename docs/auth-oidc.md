@@ -188,7 +188,7 @@ BINDERY_LOCAL_AUTH_ENABLED=false
 BINDERY_OIDC_AUTO_PROVISION=false
 ```
 
-Only users who already exist can log in, and only through OIDC. **Create the accounts first.** `POST /api/v1/auth/users` is refused with `403 local accounts are disabled` while `BINDERY_LOCAL_AUTH_ENABLED=false`, so the working order is: start with local auth enabled, create every account (each needs a password of at least 8 characters even though nobody will use it), then set `BINDERY_LOCAL_AUTH_ENABLED=false` and restart. Setting both variables on a fresh install leaves no way in at all. Pair this with `allowed_groups` on the provider to further restrict who can authenticate.
+Only users who already exist can log in, and only through OIDC. **Create the accounts first.** `POST /api/v1/auth/users` is refused with `403 local accounts are disabled` while `BINDERY_LOCAL_AUTH_ENABLED=false`, so the working order is: start with local auth enabled, create every account (each needs a password of at least 8 characters even though nobody will use it), then set `BINDERY_LOCAL_AUTH_ENABLED=false` and restart. Setting both variables on a fresh install leaves no way in at all. First-run setup (`POST /api/v1/auth/setup`) is refused with `403` while local auth is disabled and an OIDC provider or proxy mode is configured, so nobody can claim the admin account ahead of the first SSO login. With no provider configured it stays open. Pair this with `allowed_groups` on the provider to further restrict who can authenticate.
 
 ### `client_secret` write-only semantics
 
