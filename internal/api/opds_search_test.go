@@ -198,3 +198,22 @@ func TestOPDSSearch_ScopedToCaller(t *testing.T) {
 		t.Error("bob found alice's book by author name")
 	}
 }
+
+// A huge page number used to overflow (page-1)*size in pageBounds and panic
+// on a negative slice index in the authors and series feeds.
+func TestOPDS_HugePageIsEmptyWindow(t *testing.T) {
+	r, _, _, key := opdsFixture(t)
+	for _, path := range []string{"/opds/authors", "/opds/series", "/opds/search?q=lightning"} {
+		body := doOK(t, r, path+sep(path)+"page=9223372036854775807", key)
+		if strings.Contains(body, "<entry>") {
+			t.Errorf("%s: expected empty window:\n%s", path, body)
+		}
+	}
+}
+
+func sep(p string) string {
+	if strings.Contains(p, "?") {
+		return "&"
+	}
+	return "?"
+}

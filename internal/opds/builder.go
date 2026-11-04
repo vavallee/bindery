@@ -529,7 +529,8 @@ func (b *Builder) filterSeriesWithUserBooks(ctx context.Context, list []models.S
 // search box never needs more, and the library search tokenises the input.
 const MaxSearchQueryLen = 200
 
-// maxSearchPage bounds the page number so page*size cannot overflow.
+// maxSearchPage bounds the page number of every paged feed so page*size
+// cannot overflow.
 const maxSearchPage = 100000
 
 // ErrQueryTooLong is returned by BuildSearch for a query over MaxSearchQueryLen.
@@ -555,7 +556,7 @@ func (b *Builder) BuildSearch(ctx context.Context, base, q string, page int, use
 	if utf8.RuneCountInString(q) > MaxSearchQueryLen {
 		return Feed{}, ErrQueryTooLong
 	}
-	page = min(normalizePage(page), maxSearchPage)
+	page = normalizePage(page)
 
 	var (
 		books []models.Book

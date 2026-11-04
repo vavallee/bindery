@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/xml"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -434,12 +435,22 @@ func TestPageBounds(t *testing.T) {
 		{1, 10, 25, 0, 10},
 		{3, 10, 25, 20, 25},
 		{4, 10, 25, 25, 25}, // overrun
+		{math.MaxInt, 10, 25, 25, 25},
+		{math.MaxInt, 50, 0, 0, 0},
 	}
 	for _, c := range cases {
 		s, e := pageBounds(c.page, c.size, c.total)
 		if s != c.wantStart || e != c.wantEnd {
 			t.Errorf("pageBounds(%d,%d,%d) = (%d,%d), want (%d,%d)",
 				c.page, c.size, c.total, s, e, c.wantStart, c.wantEnd)
+		}
+	}
+}
+
+func TestNormalizePage_Clamps(t *testing.T) {
+	for in, want := range map[int]int{math.MinInt: 1, 0: 1, 1: 1, 7: 7, maxSearchPage: maxSearchPage, math.MaxInt: maxSearchPage} {
+		if got := normalizePage(in); got != want {
+			t.Errorf("normalizePage(%d) = %d, want %d", in, got, want)
 		}
 	}
 }

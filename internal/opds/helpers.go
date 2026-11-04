@@ -71,18 +71,22 @@ var nowRFC3339 = func() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }
 
-// normalizePage clamps page numbers to [1, ∞). OPDS page query params are
-// 1-based per convention.
+// normalizePage clamps page numbers to [1, maxSearchPage]. OPDS page query
+// params are 1-based per convention, and the upper bound keeps (page-1)*size
+// from overflowing in every feed.
 func normalizePage(p int) int {
 	if p < 1 {
 		return 1
 	}
-	return p
+	return min(p, maxSearchPage)
 }
 
 // pageBounds returns the (inclusive, exclusive) slice indexes for the given
 // 1-based page. When page overruns the total, returns an empty window.
 func pageBounds(page, size, total int) (start, end int) {
+	if page > maxSearchPage {
+		return total, total
+	}
 	start = (page - 1) * size
 	if start >= total {
 		return total, total
