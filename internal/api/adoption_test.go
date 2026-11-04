@@ -346,6 +346,51 @@ func TestAdopt_ApplySeriesHintRefusesAmbiguousOrExcludedTargets(t *testing.T) {
 			t.Fatalf("adopt = %d %s, want 409", rec.Code, rec.Body.String())
 		}
 	})
+
+	t.Run("selected series no longer exists", func(t *testing.T) {
+		f := newAdoptionFixture(t, &stubMetaProvider{name: "openlibrary"})
+		book := f.seedBook(t, "Soul Music")
+		path := f.write(t, "Terry Pratchett/Discworld/Discworld #16 - Soul Music/Soul Music.epub")
+		id := f.seedUnit(t, db.UnmatchedUnitScan{UnitPath: path, MemberPaths: []string{path}})
+
+		rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/adopt", id), map[string]any{
+			"bookId": book.ID, "applySeriesHint": true, "seriesId": 99999,
+		})
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("adopt = %d %s, want 404", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestAdopt_ApplySeriesHintLeavesExistingMembershipAlone(t *testing.T) {
+	f := newAdoptionFixture(t, &stubMetaProvider{name: "openlibrary"})
+	book := f.seedBook(t, "Eric")
+	series, err := db.NewSeriesRepo(f.db).CreateManual(context.Background(), "Discworld")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.NewSeriesRepo(f.db).LinkBook(context.Background(), series.ID, book.ID, "9", true); err != nil {
+		t.Fatal(err)
+	}
+	path := f.write(t, "Terry Pratchett/Discworld/Discworld #9 - Eric/Eric.epub")
+	id := f.seedUnit(t, db.UnmatchedUnitScan{UnitPath: path, MemberPaths: []string{path}})
+
+	rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/adopt", id), map[string]any{
+		"bookId": book.ID, "applySeriesHint": true, "seriesId": series.ID,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("adopt = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.post(t, fmt.Sprintf("/library/unmatched/%d/undo", id), nil); rec.Code != http.StatusOK {
+		t.Fatalf("undo = %d %s", rec.Code, rec.Body.String())
+	}
+	var count int
+	if err := f.db.QueryRow(`SELECT COUNT(*) FROM series_books WHERE series_id = ? AND book_id = ?`, series.ID, book.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("existing membership after undo = %d, want 1", count)
+	}
 }
 
 func TestAdopt_ApplySeriesHintRequestValidation(t *testing.T) {
