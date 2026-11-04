@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -91,6 +92,15 @@ func TestTryImportInternal_OneHistoryEventPerDownload(t *testing.T) {
 	if got := data["fileCount"]; got != "3" {
 		t.Errorf("history event fileCount = %q, want %q", got, "3")
 	}
+	if got := data["origin"]; got != "download" {
+		t.Errorf("history event origin = %q, want download", got)
+	}
+	if got := data["guid"]; got != dl.GUID {
+		t.Errorf("history event guid = %q, want %q", got, dl.GUID)
+	}
+	if got := data["downloadId"]; got != strconv.FormatInt(dl.ID, 10) {
+		t.Errorf("history event downloadId = %q, want %d", got, dl.ID)
+	}
 	// path stays meaningful: with several formats sharing one folder the row
 	// points at the folder, which is what the History page renders.
 	if data["path"] == "" || !strings.HasPrefix(data["path"], libDir) {
@@ -98,6 +108,42 @@ func TestTryImportInternal_OneHistoryEventPerDownload(t *testing.T) {
 	}
 	if filepath.Ext(data["path"]) != "" {
 		t.Errorf("history event path = %q, want the shared folder rather than one of the three files", data["path"])
+	}
+}
+
+func TestImportHistoryProvenanceDoesNotTreatSyntheticManualGUIDAsRelease(t *testing.T) {
+	data := importHistoryProvenance(&models.Download{
+		ID:   99,
+		GUID: ManualDownloadGUIDPrefix + "import",
+	}, map[string]string{"path": "/library/book.epub"})
+	if got := data["origin"]; got != "manual" {
+		t.Errorf("origin = %q, want manual", got)
+	}
+	for _, key := range []string{"guid", "downloadId", "indexerId", "downloadClientId"} {
+		if got := data[key]; got != "" {
+			t.Errorf("manual import data[%q] = %q, want omitted", key, got)
+		}
+	}
+}
+
+func TestImportHistoryProvenanceKeepsKnownSourceIDs(t *testing.T) {
+	indexerID, clientID := int64(17), int64(23)
+	data := importHistoryProvenance(&models.Download{
+		ID:               99,
+		GUID:             "release-guid",
+		IndexerID:        &indexerID,
+		DownloadClientID: &clientID,
+	}, map[string]string{"path": "/library/book.epub"})
+	for key, want := range map[string]string{
+		"origin":           "download",
+		"guid":             "release-guid",
+		"downloadId":       "99",
+		"indexerId":        "17",
+		"downloadClientId": "23",
+	} {
+		if got := data[key]; got != want {
+			t.Errorf("data[%q] = %q, want %q", key, got, want)
+		}
 	}
 }
 

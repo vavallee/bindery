@@ -791,6 +791,14 @@ DELETE /api/v1/blocklist/{id}                     remove an entry
 DELETE /api/v1/blocklist/bulk                     bulk remove
 ```
 
+`bookImported` History rows carry their import provenance in the JSON `data`
+field. New rows have `origin: "download"` with the source release `guid`, the
+local `downloadId`, and optional `indexerId` and `downloadClientId`; imports
+created from a local path have `origin: "manual"` and deliberately omit those
+release identifiers. Older rows remain unchanged. The History API returns this
+data unchanged, so integrations can retain enough context to investigate or
+blocklist a downloaded release after its queue row is trimmed.
+
 #### Release URLs in responses carry no credentials
 
 Search, queue, pending and grab responses strip every credential parameter

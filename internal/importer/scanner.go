@@ -1055,6 +1055,43 @@ func ebookImportHistoryData(destPaths []string) map[string]string {
 	return data
 }
 
+// importHistoryProvenance annotates the one bookImported History row with the
+// source Bindery can identify without inference. History is durable after the
+// corresponding downloads row expires, so keeping the release GUID here lets
+// an operator understand or blocklist an old import without guessing from its
+// title (#3248).
+//
+// A manual import's synthetic GUID is deliberately not recorded: it names the
+// local action, not a release. A downloaded release records its stable GUID
+// plus the local download row and the optional configured indexer/client IDs.
+// Future origins (for example library scans) must add values only where the
+// caller can know them rather than trying to reconstruct them from a path.
+func importHistoryProvenance(dl *models.Download, data map[string]string) map[string]string {
+	out := make(map[string]string, len(data)+5)
+	for key, value := range data {
+		out[key] = value
+	}
+	if dl == nil || strings.HasPrefix(dl.GUID, ManualDownloadGUIDPrefix) {
+		out["origin"] = "manual"
+		return out
+	}
+
+	out["origin"] = "download"
+	if dl.GUID != "" {
+		out["guid"] = dl.GUID
+	}
+	if dl.ID != 0 {
+		out["downloadId"] = strconv.FormatInt(dl.ID, 10)
+	}
+	if dl.IndexerID != nil {
+		out["indexerId"] = strconv.FormatInt(*dl.IndexerID, 10)
+	}
+	if dl.DownloadClientID != nil {
+		out["downloadClientId"] = strconv.FormatInt(*dl.DownloadClientID, 10)
+	}
+	return out
+}
+
 // applyEmbeddedLanguage reconciles the language recorded for a book with the
 // one embedded in the EPUB just imported for it.
 //
@@ -2425,7 +2462,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		s.pushToABS(ctx)
 		s.writeOPFSidecar(ctx, destDir, []string{audiobookRoot}, book, author, edition, seriesTitle, seriesNum)
 
-		historyMeta := map[string]string{"path": destDir, "format": models.MediaTypeAudiobook}
+		historyMeta := importHistoryProvenance(dl, map[string]string{"path": destDir, "format": models.MediaTypeAudiobook})
 		if len(mergeSkippedFiles) > 0 {
 			historyMeta["skippedFiles"] = strings.Join(mergeSkippedFiles, ", ")
 		}
@@ -2738,7 +2775,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// counts the ones already placed through the idempotency guard, and
 		// lands here, so the download still ends up with exactly one
 		// bookImported row naming every format.
-		importData := ebookImportHistoryData(importedDestPaths)
+		importData := importHistoryProvenance(dl, ebookImportHistoryData(importedDestPaths))
 		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, dl.OwnerUserID, withContentCheck(importData, contentCheck))
 		s.recordFixMatchMove(ctx, book, importData["path"])
 		s.notify(ctx, notifierEventBookImported, withContentCheckPayload(importedPayload(book, dl, models.MediaTypeEbook, "", nil), contentCheck))
