@@ -767,6 +767,8 @@ POST   /api/v1/pending/{id}/grab                  promote pending to queue immed
                                                   /queue/grab (400 "no_download_client", 502 send failure)
 
 GET    /api/v1/queue/manual-import/lookup         parse + catalogue-match one path (admin)
+GET    /api/v1/queue/manual-import/folders        list configured import roots, or contained child folders (admin)
+                                                    ?path=…; never enumerates outside configured import sources
 GET    /api/v1/queue/manual-import/scan           enumerate + match book units under a folder (admin)
 POST   /api/v1/queue/manual-import                import one path against a book (admin)
 POST   /api/v1/queue/manual-import/batch          import selected {path, bookId} pairs (admin); audio files for

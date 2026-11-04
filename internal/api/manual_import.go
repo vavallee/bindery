@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -725,6 +727,83 @@ func (h *ManualImportHandler) resolveImportFolder(ctx context.Context, rawPath s
 		return "", http.StatusBadRequest, "path must be a folder; use lookup for a single book"
 	}
 	return resolved, 0, ""
+}
+
+// ImportFolderResponse is one level of the manual-import folder browser. The
+// server returns only configured roots and directories that still resolve
+// beneath them, so selecting a directory cannot expand manual import's
+// filesystem access.
+type ImportFolderResponse struct {
+	Path        string   `json:"path,omitempty"`
+	Parent      string   `json:"parent,omitempty"`
+	Directories []string `json:"directories"`
+}
+
+// maxBrowseDirectories keeps a path with millions of entries from producing an
+// oversized response. The user can still descend into any returned directory.
+const maxBrowseDirectories = 1000
+
+// BrowseFolders handles GET /api/v1/queue/manual-import/folders?path=... .
+// With no path it returns readable configured roots. With a path it returns
+// the immediate child directories, after applying the same symlink-aware
+// containment check as Scan. This is deliberately a shallow browser: it keeps
+// response size bounded and never lets a client enumerate outside roots that
+// manual import could already read.
+func (h *ManualImportHandler) BrowseFolders(w http.ResponseWriter, r *http.Request) {
+	rawPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if rawPath == "" {
+		roots := h.roots.Configured(r.Context())
+		directories := make([]string, 0, len(roots))
+		for _, root := range roots {
+			resolved, status, _ := h.resolveImportFolder(r.Context(), root)
+			if status == 0 {
+				directories = append(directories, resolved)
+			}
+		}
+		sort.Strings(directories)
+		writeJSON(w, http.StatusOK, ImportFolderResponse{Directories: directories})
+		return
+	}
+
+	path, status, message := h.resolveImportFolder(r.Context(), rawPath)
+	if status != 0 {
+		writeJSON(w, status, map[string]string{"error": message})
+		return
+	}
+	folder, err := os.Open(path) //nolint:gosec // #nosec G304 -- path is resolved and containment-checked above; route requires admin
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": pathNotAccessible(path, err)})
+		return
+	}
+	defer func() { _ = folder.Close() }()
+	entries, err := folder.ReadDir(maxBrowseDirectories + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": pathNotAccessible(path, err)})
+		return
+	}
+
+	directories := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if len(directories) == maxBrowseDirectories {
+			break
+		}
+		candidate := filepath.Join(path, entry.Name())
+		resolved, result := h.roots.CheckContained(r.Context(), candidate)
+		if result != ContainOK {
+			continue // skips dangling and escaping symlinks without disclosing them
+		}
+		info, err := os.Stat(resolved) //nolint:gosec // #nosec G304 -- resolved by CheckContained above
+		if err == nil && info.IsDir() {
+			directories = append(directories, resolved)
+		}
+	}
+	sort.Strings(directories)
+
+	response := ImportFolderResponse{Path: path, Directories: directories}
+	if parent, result := h.roots.CheckContained(r.Context(), filepath.Dir(path)); result == ContainOK && parent != path {
+		response.Parent = parent
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // isAlreadyTracked reports whether path (a file or, when isDir, a directory

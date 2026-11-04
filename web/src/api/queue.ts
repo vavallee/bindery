@@ -53,6 +53,12 @@ export interface FolderScanResponse {
   truncated: boolean
 }
 
+export interface ImportFolderBrowseResponse {
+	path?: string
+	parent?: string
+	directories: string[]
+}
+
 export interface BatchImportItem {
   path: string
   bookId: number
@@ -179,6 +185,8 @@ export const queueApi = {
     const qs = opts?.includeImported ? '&includeImported=true' : ''
     return request<FolderScanResponse>(`/queue/manual-import/scan?path=${encodeURIComponent(path)}${qs}`)
   },
+  listImportFolders: (path?: string) =>
+    request<ImportFolderBrowseResponse>(`/queue/manual-import/folders${path ? `?path=${encodeURIComponent(path)}` : ''}`),
   batchImport: (items: BatchImportItem[]) =>
     request<BatchImportResponse>('/queue/manual-import/batch', { method: 'POST', body: JSON.stringify(items) }),
 

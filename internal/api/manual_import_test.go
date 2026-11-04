@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1162,6 +1163,92 @@ func TestManualImportImport_PathOutsideAllowedRoots(t *testing.T) {
 func scanRequest(path string) *http.Request {
 	u := "/api/v1/queue/manual-import/scan?" + url.Values{"path": {path}}.Encode()
 	return httptest.NewRequest(http.MethodGet, u, nil)
+}
+
+func browseFoldersRequest(path string) *http.Request {
+	u := "/api/v1/queue/manual-import/folders"
+	if path != "" {
+		u += "?" + url.Values{"path": {path}}.Encode()
+	}
+	return httptest.NewRequest(http.MethodGet, u, nil)
+}
+
+func TestManualImportBrowseFolders_ListsOnlyContainedDirectories(t *testing.T) {
+	t.Parallel()
+	h, _, _, _, _ := manualImportFixture(t)
+	root := resolvedTempDir(t)
+	otherRoot := resolvedTempDir(t)
+	inside := filepath.Join(root, "inside")
+	if err := os.Mkdir(inside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(root, "book.epub"))
+	outside := resolvedTempDir(t)
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	h.WithRoots(NewLibraryRoots(nil, root, otherRoot))
+
+	rec := httptest.NewRecorder()
+	h.BrowseFolders(rec, browseFoldersRequest(""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("root list status = %d; body = %s", rec.Code, rec.Body.String())
+	}
+	var roots ImportFolderResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &roots); err != nil {
+		t.Fatal(err)
+	}
+	wantRoots := []string{otherRoot, root}
+	slices.Sort(wantRoots)
+	if got, want := roots.Directories, wantRoots; !slices.Equal(got, want) {
+		t.Errorf("root directories = %v, want %v", got, want)
+	}
+
+	rec = httptest.NewRecorder()
+	h.BrowseFolders(rec, browseFoldersRequest(root))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("child list status = %d; body = %s", rec.Code, rec.Body.String())
+	}
+	var children ImportFolderResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &children); err != nil {
+		t.Fatal(err)
+	}
+	if children.Path != root || children.Parent != "" {
+		t.Errorf("response path/parent = %q/%q, want %q/empty", children.Path, children.Parent, root)
+	}
+	if got, want := children.Directories, []string{inside}; !slices.Equal(got, want) {
+		t.Errorf("child directories = %v, want %v", got, want)
+	}
+}
+
+func TestManualImportBrowseFolders_RejectsOutsideAndReportsParent(t *testing.T) {
+	t.Parallel()
+	h, _, _, _, _ := manualImportFixture(t)
+	root := resolvedTempDir(t)
+	nested := filepath.Join(root, "one", "two")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.WithRoots(NewLibraryRoots(nil, root))
+
+	rec := httptest.NewRecorder()
+	h.BrowseFolders(rec, browseFoldersRequest(nested))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("nested list status = %d; body = %s", rec.Code, rec.Body.String())
+	}
+	var response ImportFolderResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Parent != filepath.Join(root, "one") {
+		t.Errorf("parent = %q, want %q", response.Parent, filepath.Join(root, "one"))
+	}
+
+	rec = httptest.NewRecorder()
+	h.BrowseFolders(rec, browseFoldersRequest(resolvedTempDir(t)))
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("outside status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+	}
 }
 
 // resolvedTempDir returns t.TempDir() with symlinks resolved. Scan reports

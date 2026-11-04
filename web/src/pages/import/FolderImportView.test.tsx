@@ -20,6 +20,7 @@ vi.mock('react-i18next', () => ({
 vi.mock('../../api/client', () => ({
   api: {
     scanFolder: vi.fn(),
+    listImportFolders: vi.fn(),
     batchImport: vi.fn(),
     listBooks: vi.fn(),
     // Reached through resolveBookQuery / CatalogueAdder (#1719).
@@ -35,6 +36,7 @@ import type { Book, FolderScanResponse } from '../../api/client'
 import FolderImportView from './FolderImportView'
 
 const mockScan = api.scanFolder as ReturnType<typeof vi.fn>
+const mockFolders = api.listImportFolders as ReturnType<typeof vi.fn>
 const mockBatch = api.batchImport as ReturnType<typeof vi.fn>
 const mockListBooks = api.listBooks as ReturnType<typeof vi.fn>
 const mockSearchBooks = api.searchBooks as ReturnType<typeof vi.fn>
@@ -103,6 +105,24 @@ describe('FolderImportView', () => {
     // shows a library search box.
     expect(screen.getByText(/manualImport\.importSelected count=1/)).toBeInTheDocument()
     expect(screen.getByPlaceholderText('manualImport.searchPlaceholder')).toBeInTheDocument()
+  })
+
+  it('browses configured roots and uses the selected folder', async () => {
+    mockFolders
+      .mockResolvedValueOnce({ directories: ['/books', '/downloads'] })
+      .mockResolvedValueOnce({ path: '/downloads', directories: ['/downloads/unsorted'] })
+    render(<FolderImportView />)
+
+    fireEvent.click(screen.getByText('manualImport.browse'))
+    expect(await screen.findByText('/downloads')).toBeInTheDocument()
+    expect(mockFolders).toHaveBeenCalledWith(undefined)
+
+    fireEvent.click(screen.getByText('/downloads'))
+    expect(await screen.findByText('/downloads/unsorted')).toBeInTheDocument()
+    expect(mockFolders).toHaveBeenLastCalledWith('/downloads')
+
+    fireEvent.click(screen.getByText('manualImport.browseUse'))
+    expect(screen.getByPlaceholderText('manualImport.pathPlaceholder')).toHaveValue('/downloads')
   })
 
   it('enables import for an ambiguous unit once a candidate is picked', async () => {

@@ -1053,8 +1053,11 @@ Things worth knowing:
 - One scan lists up to 20,000 books from up to 50,000 unmatched files. A
   larger library says so; adopt or ignore some and scan again.
 - **From a folder** (`/import?view=folder`) is the other way in: point it at a
-  folder anywhere Bindery can read, such as your downloads, and it imports
-  what it matches into the library, moving or copying the files.
+  configured library or download folder, such as your downloads, and it imports
+  what it matches into the library, moving or copying the files. Use **Browse
+  folders** beside the path field when Bindery runs in a container: it lists
+  only those configured sources and their contained folders, using the paths
+  Bindery sees inside the container.
 - It lists one row per **book**, the same idea as the list above. A folder of
   audio is one row, and so is a folder whose audio subfolders are all pieces of
   one recording (`CD1`, `Disc 2`, `Disk 3`, `Part 4`, `Chapter 5`, or the

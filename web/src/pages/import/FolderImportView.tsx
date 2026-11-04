@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
-import type { BatchImportItem, BatchImportResult, Book, ScanItem } from '../../api/client'
+import type { BatchImportItem, BatchImportResult, Book, ImportFolderBrowseResponse, ScanItem } from '../../api/client'
 import { btn, btnSize } from '../../components/buttons'
 import { useFolderScan } from '../../components/useFolderScan'
 import FolderImportRow from './FolderImportRow'
@@ -28,6 +28,9 @@ export default function FolderImportView() {
   const [results, setResults] = useState<Record<string, BatchImportResult>>({})
   const [importingPaths, setImportingPaths] = useState<Set<string>>(() => new Set())
   const [importError, setImportError] = useState('')
+  const [folderBrowser, setFolderBrowser] = useState<ImportFolderBrowseResponse | null>(null)
+  const [browsing, setBrowsing] = useState(false)
+  const [browseError, setBrowseError] = useState('')
 
   const folderScan = useFolderScan(scanned => {
     setResults({})
@@ -39,6 +42,25 @@ export default function FolderImportView() {
     setRows(init)
   })
   const { path, setPath, scanning, items, truncated, showImported, error: scanError, toggleShowImported } = folderScan
+
+  const browse = async (folder?: string) => {
+    setBrowsing(true)
+    setBrowseError('')
+    try {
+      setFolderBrowser(await api.listImportFolders(folder))
+    } catch (e) {
+      setBrowseError(errorText(e, t('manualImport.browseFailed', 'Could not list folders')))
+    } finally {
+      setBrowsing(false)
+    }
+  }
+
+  const openBrowser = () => { void browse(path.trim() || undefined) }
+  const useFolder = () => {
+    if (!folderBrowser?.path) return
+    setPath(folderBrowser.path)
+    setFolderBrowser(null)
+  }
 
   // A scan attempt (fresh or re-triggered by the toggle) supersedes whatever
   // the last import attempt reported.
@@ -178,6 +200,15 @@ export default function FolderImportView() {
           className="flex-1 px-3 py-2 rounded-md border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm"
         />
         <button
+          type="button"
+          onClick={openBrowser}
+          disabled={browsing}
+          className={`${btn.secondary} ${btnSize.md}`}
+          aria-expanded={folderBrowser !== null}
+        >
+          {t('manualImport.browse', 'Browse folders')}
+        </button>
+        <button
           onClick={handleScan}
           disabled={scanning || !path.trim()}
           className={`${btn.primary} ${btnSize.md}`}
@@ -185,6 +216,38 @@ export default function FolderImportView() {
           {scanning ? t('manualImport.scanning', 'Scanning…') : t('manualImport.scan', 'Scan folder')}
         </button>
       </div>
+
+      {(folderBrowser || browseError) && (
+        <section className="mb-6 max-w-2xl rounded-md border border-slate-200 dark:border-zinc-800 p-3" aria-label={t('manualImport.browseTitle', 'Choose a folder')}>
+          <div className="mb-2 flex items-center gap-2">
+            <h3 className="text-sm font-semibold">{t('manualImport.browseTitle', 'Choose a folder')}</h3>
+            {folderBrowser?.parent && (
+              <button type="button" onClick={() => void browse(folderBrowser.parent)} disabled={browsing} className={`${btn.secondary} ${btnSize.sm} ml-auto`}>
+                {t('manualImport.browseUp', 'Up one folder')}
+              </button>
+            )}
+            {folderBrowser?.path && (
+              <button type="button" onClick={useFolder} className={`${btn.primary} ${btnSize.sm} ml-auto`}>
+                {t('manualImport.browseUse', 'Use this folder')}
+              </button>
+            )}
+          </div>
+          {browseError && <p className="text-sm text-red-700 dark:text-red-400">{browseError}</p>}
+          {folderBrowser && (
+            folderBrowser.directories.length === 0
+              ? <p className="text-sm text-fg-muted">{t('manualImport.browseEmpty', 'No subfolders here.')}</p>
+              : <ul className="space-y-1">
+                {folderBrowser.directories.map(folder => (
+                  <li key={folder}>
+                    <button type="button" onClick={() => void browse(folder)} disabled={browsing} className="text-left text-sm text-blue-700 hover:underline dark:text-blue-400">
+                      {folder}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+          )}
+        </section>
+      )}
 
       {scanError && (
         <p className="mb-4 text-sm text-red-700 dark:text-red-400">{scanError}</p>
