@@ -1276,6 +1276,22 @@ func validateSettingValue(key, value string) error {
 		if d > 168*time.Hour {
 			return fmt.Errorf("hardcover.sync_interval %q exceeds the maximum of 168h (7 days)", value)
 		}
+	case SettingSeriesMonitoringInterval:
+		// Same bounds and meaning as authors.discovery.interval: unset and
+		// "off" are off, a duration from 24h to 720h turns it on.
+		if value == "" || value == "off" {
+			return nil
+		}
+		d, err := time.ParseDuration(value)
+		if err != nil {
+			return fmt.Errorf("series.monitoring.interval %q is not off or a valid duration (e.g. 24h, 168h, 720h)", value)
+		}
+		if d < 24*time.Hour {
+			return fmt.Errorf("series.monitoring.interval %q is too short, the minimum is 24h", value)
+		}
+		if d > 720*time.Hour {
+			return fmt.Errorf("series.monitoring.interval %q exceeds the maximum of 720h (30 days)", value)
+		}
 	case SettingAuthorDiscoveryInterval:
 		// Empty = unset, which means off, as does "off" itself. Below a day
 		// every author would be re-checked faster than a provider's cache

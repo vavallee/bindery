@@ -777,6 +777,29 @@ describe('WantedPage author monitoring hint', () => {
   })
 })
 
+// An Upcoming book (#2523) is held out of the scheduled search until its
+// release date, so the row says so, and only for the rows it applies to.
+describe('WantedPage upcoming books', () => {
+  it('marks a held row as upcoming and leaves the others alone', async () => {
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([
+      makeBook({ id: 1, title: 'Oathbringer', searchHeldUntil: '2027-01-15T00:00:00Z' }),
+      makeBook({ id: 2, title: 'Dune' }),
+    ]))
+    renderWantedPage()
+    await screen.findByText('Oathbringer')
+    expect(screen.getAllByTestId('wanted-upcoming')).toHaveLength(1)
+  })
+
+  it('asks the server for only the upcoming books when filtered', async () => {
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([makeBook({ id: 1, title: 'Dune' })]))
+    renderWantedPage()
+    await screen.findByRole('link', { name: 'Dune' })
+    fireEvent.click(screen.getByRole('button', { name: /^common\.filters/ }))
+    fireEvent.click(screen.getByRole('radio', { name: 'wanted.upcomingOnly' }))
+    await waitFor(() => expect(api.listWantedPage).toHaveBeenLastCalledWith(expect.objectContaining({ upcoming: 'only' })))
+  })
+})
+
 describe('WantedPage filter bar', () => {
   it('sends sort and format to the server, and searches the page on screen after confirming', async () => {
     vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([makeBook({ id: 1, title: 'Dune' }), makeBook({ id: 2, title: 'Hyperion' })]))

@@ -97,6 +97,11 @@ type Book struct {
 	// every author is monitored.
 	AuthorUnmonitored bool `json:"authorUnmonitored,omitempty"`
 
+	// SearchHeldUntil is set on the Wanted list for a book that is Upcoming
+	// (#2523): the scheduled search skips it until this date. Transport only,
+	// computed from book_search_holds, so it is absent for every other book.
+	SearchHeldUntil *time.Time `json:"searchHeldUntil,omitempty"`
+
 	// EbookFilePath and AudiobookFilePath are computed views over the book_files
 	// table (first path per format), kept for API backwards compatibility.
 	// Do not write to them directly; use BookRepo.AddBookFile instead.

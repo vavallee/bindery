@@ -1254,6 +1254,7 @@ func (h *BookHandler) ListWanted(w http.ResponseWriter, r *http.Request) {
 		proxyBookImages(&books[i])
 	}
 	h.markUnmonitoredAuthors(r.Context(), books)
+	books = h.applyUpcoming(r.Context(), books, upcomingFilter(r))
 	writeJSON(w, http.StatusOK, books)
 }
 
@@ -1271,6 +1272,7 @@ func (h *BookHandler) listWantedPage(w http.ResponseWriter, r *http.Request, sco
 		MediaType:       r.URL.Query().Get("mediaType"),
 		Sort:            r.URL.Query().Get("sort"),
 		IncludeExcluded: includeExcluded,
+		Upcoming:        upcomingFilter(r),
 	}, limit, offset)
 	if err != nil {
 		writeServerError(w, r, err)
@@ -1284,7 +1286,47 @@ func (h *BookHandler) listWantedPage(w http.ResponseWriter, r *http.Request, sco
 		proxyBookImages(&books[i])
 	}
 	h.markUnmonitoredAuthors(r.Context(), books)
+	books = h.applyUpcoming(r.Context(), books, "")
 	writeJSON(w, http.StatusOK, bookListResponse{Items: books, Total: total, Limit: limit, Offset: offset})
+}
+
+// upcomingFilter reads the Wanted list's upcoming parameter: "only" lists the
+// books held until a future release date (#2523), "hide" lists the rest, and
+// anything else lists both.
+func upcomingFilter(r *http.Request) string {
+	switch v := r.URL.Query().Get("upcoming"); v {
+	case db.UpcomingOnly, db.UpcomingHide:
+		return v
+	}
+	return ""
+}
+
+// applyUpcoming marks the Wanted rows that are Upcoming with the date their
+// hold ends (#2523), and for the unpaged list applies filter, which the paged
+// list has already applied in SQL. Best effort: a failed lookup marks nothing
+// and filters nothing, the same stance as markUnmonitoredAuthors.
+func (h *BookHandler) applyUpcoming(ctx context.Context, books []models.Book, filter string) []models.Book {
+	if len(books) == 0 {
+		return books
+	}
+	holds, err := h.books.SearchHolds(ctx, time.Now())
+	if err != nil {
+		slog.Warn("wanted list: failed to load upcoming holds", "error", err)
+		return books
+	}
+	out := make([]models.Book, 0, len(books))
+	for i := range books {
+		until, held := holds[books[i].ID]
+		if held {
+			u := until
+			books[i].SearchHeldUntil = &u
+		}
+		if (filter == db.UpcomingOnly && !held) || (filter == db.UpcomingHide && held) {
+			continue
+		}
+		out = append(out, books[i])
+	}
+	return out
 }
 
 // markUnmonitoredAuthors flags the rows whose author is not monitored, so the

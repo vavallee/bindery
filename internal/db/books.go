@@ -261,7 +261,17 @@ type BookListFilter struct {
 	// does not admit a wanted book that owns some file, so a list and its total
 	// agree with a caller that drops anything it cannot link to.
 	DownloadableOnly bool
+	// Upcoming narrows by the Upcoming hold (#2523): UpcomingOnly lists only
+	// books held out of the scheduled search until a future date, and
+	// UpcomingHide lists everything else. Empty means no narrowing.
+	Upcoming string
 }
+
+// Values of BookListFilter.Upcoming.
+const (
+	UpcomingOnly = "only"
+	UpcomingHide = "hide"
+)
 
 // bookSearchRank returns the ORDER BY prefix that ranks a search result set,
 // and the values its placeholders bind. See searchrank.go for the tiers.
@@ -372,6 +382,14 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 			args = append(args, like, like, like)
 		}
 		searchOrder, rankArgs = bookSearchRank(folded)
+	}
+	switch f.Upcoming {
+	case UpcomingOnly:
+		where += " AND books.id IN (SELECT book_id FROM book_search_holds WHERE until_at > ?)"
+		args = append(args, time.Now().UTC().Format(discoveryTimeLayout))
+	case UpcomingHide:
+		where += " AND books.id NOT IN (SELECT book_id FROM book_search_holds WHERE until_at > ?)"
+		args = append(args, time.Now().UTC().Format(discoveryTimeLayout))
 	}
 	if f.DownloadableOnly {
 		where += " AND books.status = '" + models.BookStatusImported + "' AND COALESCE(books.file_path, '') <> ''"

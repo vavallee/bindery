@@ -1825,10 +1825,20 @@ func (s *Scheduler) wantedSearchQueue(ctx context.Context) []wantedSearch {
 
 	inFlight := s.inFlightFormatsByBook(ctx)
 	splitParts := s.coveredSplitEditionParts(ctx)
+	upcoming := s.upcomingHolds(ctx)
 
 	searchQueue := make([]wantedSearch, 0, len(wanted))
 	for _, book := range wanted {
 		if book.Excluded {
+			continue
+		}
+		// Upcoming (#2523): a book with a known future release date has
+		// nothing to find yet, so the scheduled sweep leaves it alone until
+		// that date. Nothing changes state on the day, the hold simply stops
+		// applying. A manual search is not affected.
+		if until, ok := upcoming[book.ID]; ok {
+			slog.Debug("skipping wanted search: the book is upcoming and not released yet",
+				"book", book.Title, "bookID", book.ID, "releases", until)
 			continue
 		}
 		// A split edition part of a book the library already has or is
@@ -1877,6 +1887,18 @@ func (s *Scheduler) wantedSearchQueue(ctx context.Context) []wantedSearch {
 		searchQueue = append(searchQueue, wantedSearch{book: book, formats: formats})
 	}
 	return searchQueue
+}
+
+// upcomingHolds maps the id of every book held out of the search until a future
+// release date (#2523) to that date. A lookup failure holds nothing, so a
+// broken query can never stop the sweep.
+func (s *Scheduler) upcomingHolds(ctx context.Context) map[int64]time.Time {
+	holds, err := s.books.SearchHolds(ctx, time.Now())
+	if err != nil {
+		slog.Warn("failed to list upcoming holds; searching every wanted book", "error", err)
+		return nil
+	}
+	return holds
 }
 
 // coveredSplitEditionParts maps the id of every book that is a split edition

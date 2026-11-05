@@ -819,6 +819,10 @@
   "wanted": {
     "title": "Wanted",
     "searchPlaceholder": "Search by title or author…",
+    "upcomingLabel": "Upcoming",
+    "upcomingOnly": "Upcoming only",
+    "upcomingHide": "Hide upcoming",
+    "upcomingNote": "Upcoming, not searched until {{date}}",
     "countLabel": "{{filtered}} of {{total}}",
     "empty": "No wanted books. Add an author to start tracking.",
     "noMatch": "No books match your search.",
@@ -1048,7 +1052,23 @@
       "remove": "Remove from shortlist",
       "on": "Shortlisted",
       "off": "Not shortlisted",
-      "hint": "Marks the series so you can find it again. Bindery does not yet check a shortlisted series for new books on its own; use Fill gaps."
+      "hint": "Marks the series so you can find it again. When series checking is turned on in Settings, Bindery also checks it for new books on its own; otherwise use Fill gaps."
+    },
+    "monitoring": {
+      "modeLabel": "What to add",
+      "modeHint": "Upcoming adds announced and newly released books and leaves older gaps to Fill gaps. All adds every book the catalogue has that you do not.",
+      "modeUpcoming": "Upcoming only",
+      "modeAll": "All missing books",
+      "neverChecked": "Not checked yet",
+      "checked_one": "Checked {{when}}, added {{count}} book",
+      "checked_other": "Checked {{when}}, added {{count}} books",
+      "status": {
+        "no_link": "Not checked: this series is not linked to Hardcover",
+        "provider_disabled": "Not checked: enhanced Hardcover support is off",
+        "failed": "Last check {{when}} failed and will be retried",
+        "timed_out": "Last check {{when}} ran out of time and will be retried",
+        "ambiguous_owner": "Not checked: the series holds books from more than one account"
+      }
     },
     "genre": {
       "set": "Set genre",
@@ -2215,6 +2235,9 @@
       "discoveryDaily": "Daily",
       "discoveryWeekly": "Weekly",
       "discoveryMonthly": "Monthly",
+      "seriesCheck": "Series checking",
+      "seriesCheckIntervalLabel": "Check monitored series for new books",
+      "seriesCheckIntervalHint": "Off until you pick an interval. Series you turned Monitored on before this existed did nothing, so picking an interval makes each of them start adding books. Each linked series is checked that often against Hardcover and, by default, only announced and newly released books are added; set what a series adds on the Series page. An announced book is listed as Upcoming and is not searched for until its release date.",
       "regenerateApiKeyConfirm": "Regenerate the API key? Existing integrations using the old key will stop working.",
       "regenerateApiKeyTitle": "Regenerate API key",
       "rotateSessionSecretConfirm": "Rotate the session signing secret? Existing logins keep working during a rotation window via the previous secret; a second rotation closes that window.",
