@@ -126,6 +126,22 @@ describe('FolderImportView', () => {
     expect(screen.getByPlaceholderText('manualImport.pathPlaceholder')).toHaveValue('/downloads')
   })
 
+  it('goes back to the root list and closes', async () => {
+    mockFolders
+      .mockResolvedValueOnce({ path: '/downloads', directories: ['/downloads/unsorted'] })
+      .mockResolvedValueOnce({ directories: ['/books', '/downloads'] })
+    render(<FolderImportView />)
+    fireEvent.click(screen.getByText('manualImport.browse'))
+    expect(await screen.findByText('unsorted')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('manualImport.browseRoots'))
+    expect(await screen.findByText('/books')).toBeInTheDocument()
+    expect(mockFolders).toHaveBeenLastCalledWith(undefined)
+
+    fireEvent.click(screen.getByText('manualImport.browseClose'))
+    expect(screen.queryByText('/books')).not.toBeInTheDocument()
+  })
+
   it('says when the folder list was cut short', async () => {
     mockFolders.mockResolvedValueOnce({ path: '/downloads', directories: ['/downloads/a'], truncated: true })
     render(<FolderImportView />)

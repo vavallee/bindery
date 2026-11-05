@@ -64,6 +64,7 @@ export default function FolderImportView() {
   }
 
   const openBrowser = () => { void browse(path.trim() || undefined) }
+  const closeBrowser = () => { setFolderBrowser(null); setBrowseError('') }
   const useFolder = () => {
     if (!folderBrowser?.path) return
     setPath(folderBrowser.path)
@@ -212,7 +213,6 @@ export default function FolderImportView() {
           onClick={openBrowser}
           disabled={browsing}
           className={`${btn.secondary} ${btnSize.md}`}
-          aria-expanded={folderBrowser !== null}
         >
           {t('manualImport.browse', 'Browse folders')}
         </button>
@@ -230,16 +230,24 @@ export default function FolderImportView() {
           <div className="mb-2 flex items-center gap-2">
             <h3 className="text-sm font-semibold">{t('manualImport.browseTitle', 'Choose a folder')}</h3>
             <div className="ml-auto flex gap-2">
+              {folderBrowser?.path && !folderBrowser.parent && (
+                <button type="button" onClick={() => void browse()} disabled={browsing} className={`${btn.secondary} ${btnSize.sm}`}>
+                  {t('manualImport.browseRoots', 'All folders')}
+                </button>
+              )}
               {folderBrowser?.parent && (
                 <button type="button" onClick={() => void browse(folderBrowser.parent)} disabled={browsing} className={`${btn.secondary} ${btnSize.sm}`}>
                   {t('manualImport.browseUp', 'Up one folder')}
                 </button>
               )}
               {folderBrowser?.path && (
-                <button type="button" onClick={useFolder} className={`${btn.primary} ${btnSize.sm}`}>
+                <button type="button" onClick={useFolder} disabled={browsing} className={`${btn.primary} ${btnSize.sm}`}>
                   {t('manualImport.browseUse', 'Use this folder')}
                 </button>
               )}
+              <button type="button" onClick={closeBrowser} className={`${btn.secondary} ${btnSize.sm}`}>
+                {t('manualImport.browseClose', 'Close')}
+              </button>
             </div>
           </div>
           {folderBrowser?.path && (
@@ -261,7 +269,7 @@ export default function FolderImportView() {
           )}
           {folderBrowser?.truncated && (
             <p className="mt-2 text-xs text-fg-muted">
-              {t('manualImport.browseTruncated', 'Showing the first {{count}} folders. Type the path to reach one that is not listed.', { count: folderBrowser.directories.length })}
+              {t('manualImport.browseTruncated', 'This folder has more subfolders than can be listed; {{count}} are shown. Type the path to reach one that is not listed.', { count: folderBrowser.directories.length })}
             </p>
           )}
         </section>

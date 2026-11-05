@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2724,5 +2725,53 @@ func TestManualImportBrowseFolders_FilesDoNotHideFoldersAndCapIsReported(t *test
 	}
 	if len(got.Directories) != maxBrowseDirectories || !got.Truncated {
 		t.Fatalf("listed %d truncated = %v, want %d and truncated", len(got.Directories), got.Truncated, maxBrowseDirectories)
+	}
+}
+
+type countingRootLister struct {
+	calls atomic.Int64
+	roots []models.RootFolder
+}
+
+func (l *countingRootLister) List(context.Context) ([]models.RootFolder, error) {
+	l.calls.Add(1)
+	return l.roots, nil
+}
+
+// Browsing an intake folder of thousands of files must not look up the root
+// folders once per file, and a symlinked subfolder is listed under its own
+// name, so two links to one folder stay two rows.
+func TestManualImportBrowseFolders_FilesCostNoRootLookupsAndLinksKeepTheirName(t *testing.T) {
+	t.Parallel()
+	h, _, _, _, _ := manualImportFixture(t)
+	root := resolvedTempDir(t)
+	for i := 0; i < 500; i++ {
+		writeTestFile(t, filepath.Join(root, fmt.Sprintf("file-%03d.epub", i)))
+	}
+	target := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"link1", "link2"} {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lister := &countingRootLister{roots: []models.RootFolder{{Path: root}}}
+	h.WithRoots(NewLibraryRoots(lister))
+
+	rec := httptest.NewRecorder()
+	h.BrowseFolders(rec, browseFoldersRequest(root))
+	var got ImportFolderResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("status %d: %v", rec.Code, err)
+	}
+	want := []string{filepath.Join(root, "a"), filepath.Join(root, "link1"), filepath.Join(root, "link2")}
+	if !slices.Equal(got.Directories, want) {
+		t.Fatalf("directories = %v, want %v", got.Directories, want)
+	}
+	// One lookup for the requested path, its parent, and one per symlink.
+	if n := lister.calls.Load(); n > 10 {
+		t.Fatalf("root folder lookups = %d for 500 files, want a handful", n)
 	}
 }

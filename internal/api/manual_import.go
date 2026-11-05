@@ -788,19 +788,30 @@ func (h *ManualImportHandler) BrowseFolders(w http.ResponseWriter, r *http.Reque
 		entries, err := folder.ReadDir(256)
 		for _, entry := range entries {
 			candidate := filepath.Join(path, entry.Name())
-			resolved, result := h.roots.CheckContained(r.Context(), candidate)
-			if result != ContainOK {
-				continue // skips dangling and escaping symlinks without disclosing them
-			}
-			info, statErr := os.Stat(resolved) //nolint:gosec // #nosec G304 -- resolved by CheckContained above
-			if statErr != nil || !info.IsDir() {
-				continue
+			switch {
+			case entry.IsDir():
+				// A plain subfolder of a folder that already resolved inside
+				// a root is inside it too; no per entry root lookup needed.
+			case entry.Type()&os.ModeSymlink != 0:
+				// A link may point anywhere, so it is checked like a typed
+				// path. It is listed under its own name, not its target, so
+				// two links to one folder stay two rows.
+				resolved, result := h.roots.CheckContained(r.Context(), candidate)
+				if result != ContainOK {
+					continue // skips dangling and escaping symlinks without disclosing them
+				}
+				info, statErr := os.Stat(resolved) //nolint:gosec // #nosec G304 -- resolved by CheckContained above
+				if statErr != nil || !info.IsDir() {
+					continue
+				}
+			default:
+				continue // files, sockets and devices are never import folders
 			}
 			if len(directories) == maxBrowseDirectories {
 				truncated = true
 				break
 			}
-			directories = append(directories, resolved)
+			directories = append(directories, candidate)
 		}
 		if errors.Is(err, io.EOF) || (err == nil && len(entries) == 0) {
 			break
