@@ -22,6 +22,14 @@ import { errorText } from '../../util/errorText'
 
 const MATCH_ORDER: ScanItem['match'][] = ['confident', 'ambiguous', 'none']
 
+// folderLabel shows the last path segment of a child folder; the full path is
+// in the button's title and in the current folder line above the list.
+function folderLabel(folder: string): string {
+  const trimmed = folder.replace(/[\\/]+$/, '')
+  const cut = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  return cut >= 0 ? trimmed.slice(cut + 1) || trimmed : trimmed
+}
+
 export default function FolderImportView() {
   const { t } = useTranslation()
   const [rows, setRows] = useState<Record<string, RowState>>({})
@@ -221,17 +229,22 @@ export default function FolderImportView() {
         <section className="mb-6 max-w-2xl rounded-md border border-slate-200 dark:border-zinc-800 p-3" aria-label={t('manualImport.browseTitle', 'Choose a folder')}>
           <div className="mb-2 flex items-center gap-2">
             <h3 className="text-sm font-semibold">{t('manualImport.browseTitle', 'Choose a folder')}</h3>
-            {folderBrowser?.parent && (
-              <button type="button" onClick={() => void browse(folderBrowser.parent)} disabled={browsing} className={`${btn.secondary} ${btnSize.sm} ml-auto`}>
-                {t('manualImport.browseUp', 'Up one folder')}
-              </button>
-            )}
-            {folderBrowser?.path && (
-              <button type="button" onClick={useFolder} className={`${btn.primary} ${btnSize.sm} ml-auto`}>
-                {t('manualImport.browseUse', 'Use this folder')}
-              </button>
-            )}
+            <div className="ml-auto flex gap-2">
+              {folderBrowser?.parent && (
+                <button type="button" onClick={() => void browse(folderBrowser.parent)} disabled={browsing} className={`${btn.secondary} ${btnSize.sm}`}>
+                  {t('manualImport.browseUp', 'Up one folder')}
+                </button>
+              )}
+              {folderBrowser?.path && (
+                <button type="button" onClick={useFolder} className={`${btn.primary} ${btnSize.sm}`}>
+                  {t('manualImport.browseUse', 'Use this folder')}
+                </button>
+              )}
+            </div>
           </div>
+          {folderBrowser?.path && (
+            <p className="mb-2 break-all font-mono text-xs text-fg-muted">{folderBrowser.path}</p>
+          )}
           {browseError && <p className="text-sm text-red-700 dark:text-red-400">{browseError}</p>}
           {folderBrowser && (
             folderBrowser.directories.length === 0
@@ -239,12 +252,17 @@ export default function FolderImportView() {
               : <ul className="space-y-1">
                 {folderBrowser.directories.map(folder => (
                   <li key={folder}>
-                    <button type="button" onClick={() => void browse(folder)} disabled={browsing} className="text-left text-sm text-blue-700 hover:underline dark:text-blue-400">
-                      {folder}
+                    <button type="button" title={folder} onClick={() => void browse(folder)} disabled={browsing} className="text-left text-sm text-blue-700 hover:underline dark:text-blue-400">
+                      {folderBrowser.path ? folderLabel(folder) : folder}
                     </button>
                   </li>
                 ))}
               </ul>
+          )}
+          {folderBrowser?.truncated && (
+            <p className="mt-2 text-xs text-fg-muted">
+              {t('manualImport.browseTruncated', 'Showing the first {{count}} folders. Type the path to reach one that is not listed.', { count: folderBrowser.directories.length })}
+            </p>
           )}
         </section>
       )}

@@ -54,9 +54,10 @@ export interface FolderScanResponse {
 }
 
 export interface ImportFolderBrowseResponse {
-	path?: string
-	parent?: string
-	directories: string[]
+  path?: string
+  parent?: string
+  directories: string[]
+  truncated?: boolean
 }
 
 export interface BatchImportItem {

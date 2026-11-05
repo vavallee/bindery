@@ -737,6 +737,10 @@ type ImportFolderResponse struct {
 	Path        string   `json:"path,omitempty"`
 	Parent      string   `json:"parent,omitempty"`
 	Directories []string `json:"directories"`
+	// Truncated is set when the folder holds more subfolders than
+	// maxBrowseDirectories; the UI says so and the path box still accepts any
+	// contained folder typed by hand.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // maxBrowseDirectories keeps a path with millions of entries from producing an
@@ -776,30 +780,39 @@ func (h *ManualImportHandler) BrowseFolders(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	defer func() { _ = folder.Close() }()
-	entries, err := folder.ReadDir(maxBrowseDirectories + 1)
-	if err != nil && !errors.Is(err, io.EOF) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": pathNotAccessible(path, err)})
-		return
-	}
-
-	directories := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if len(directories) == maxBrowseDirectories {
+	// Read in batches so files, which are skipped, never use up the budget:
+	// an intake folder can hold thousands of files beside a few subfolders.
+	directories := make([]string, 0, 64)
+	truncated := false
+	for !truncated {
+		entries, err := folder.ReadDir(256)
+		for _, entry := range entries {
+			candidate := filepath.Join(path, entry.Name())
+			resolved, result := h.roots.CheckContained(r.Context(), candidate)
+			if result != ContainOK {
+				continue // skips dangling and escaping symlinks without disclosing them
+			}
+			info, statErr := os.Stat(resolved) //nolint:gosec // #nosec G304 -- resolved by CheckContained above
+			if statErr != nil || !info.IsDir() {
+				continue
+			}
+			if len(directories) == maxBrowseDirectories {
+				truncated = true
+				break
+			}
+			directories = append(directories, resolved)
+		}
+		if errors.Is(err, io.EOF) || (err == nil && len(entries) == 0) {
 			break
 		}
-		candidate := filepath.Join(path, entry.Name())
-		resolved, result := h.roots.CheckContained(r.Context(), candidate)
-		if result != ContainOK {
-			continue // skips dangling and escaping symlinks without disclosing them
-		}
-		info, err := os.Stat(resolved) //nolint:gosec // #nosec G304 -- resolved by CheckContained above
-		if err == nil && info.IsDir() {
-			directories = append(directories, resolved)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": pathNotAccessible(path, err)})
+			return
 		}
 	}
 	sort.Strings(directories)
 
-	response := ImportFolderResponse{Path: path, Directories: directories}
+	response := ImportFolderResponse{Path: path, Directories: directories, Truncated: truncated}
 	if parent, result := h.roots.CheckContained(r.Context(), filepath.Dir(path)); result == ContainOK && parent != path {
 		response.Parent = parent
 	}

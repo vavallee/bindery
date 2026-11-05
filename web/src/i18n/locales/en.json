@@ -132,6 +132,7 @@
     "browseUp": "Up one folder",
     "browseEmpty": "No subfolders here.",
     "browseFailed": "Could not list folders",
+    "browseTruncated": "Showing the first {{count}} folders. Type the path to reach one that is not listed.",
     "scan": "Scan folder",
     "scanning": "Scanning…",
     "empty": "No book files or folders found here.",

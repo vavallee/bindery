@@ -118,11 +118,19 @@ describe('FolderImportView', () => {
     expect(mockFolders).toHaveBeenCalledWith(undefined)
 
     fireEvent.click(screen.getByText('/downloads'))
-    expect(await screen.findByText('/downloads/unsorted')).toBeInTheDocument()
+    // Children show their own name; the full path is the button's title.
+    expect(await screen.findByText('unsorted')).toHaveAttribute('title', '/downloads/unsorted')
     expect(mockFolders).toHaveBeenLastCalledWith('/downloads')
 
     fireEvent.click(screen.getByText('manualImport.browseUse'))
     expect(screen.getByPlaceholderText('manualImport.pathPlaceholder')).toHaveValue('/downloads')
+  })
+
+  it('says when the folder list was cut short', async () => {
+    mockFolders.mockResolvedValueOnce({ path: '/downloads', directories: ['/downloads/a'], truncated: true })
+    render(<FolderImportView />)
+    fireEvent.click(screen.getByText('manualImport.browse'))
+    expect(await screen.findByText('manualImport.browseTruncated')).toBeInTheDocument()
   })
 
   it('enables import for an ambiguous unit once a candidate is picked', async () => {

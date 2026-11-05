@@ -2683,3 +2683,46 @@ func TestRemoveStaleSource_KeepsSourceUnderAnotherBooksFolder(t *testing.T) {
 		t.Fatalf("source under another book's folder was deleted: %v", err)
 	}
 }
+
+// An intake folder can hold thousands of files beside its subfolders. Files
+// must not use up the listing budget, and a folder with more subfolders than
+// the cap says it was cut short instead of silently dropping the rest.
+func TestManualImportBrowseFolders_FilesDoNotHideFoldersAndCapIsReported(t *testing.T) {
+	t.Parallel()
+	h, _, _, _, _ := manualImportFixture(t)
+	root := resolvedTempDir(t)
+	for i := 0; i < maxBrowseDirectories+20; i++ {
+		writeTestFile(t, filepath.Join(root, fmt.Sprintf("file-%04d.epub", i)))
+	}
+	if err := os.Mkdir(filepath.Join(root, "zz-wanted"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.WithRoots(NewLibraryRoots(nil, root))
+
+	rec := httptest.NewRecorder()
+	h.BrowseFolders(rec, browseFoldersRequest(root))
+	var got ImportFolderResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("status %d: %v", rec.Code, err)
+	}
+	if want := []string{filepath.Join(root, "zz-wanted")}; !slices.Equal(got.Directories, want) || got.Truncated {
+		t.Fatalf("directories = %v truncated = %v, want %v and not truncated", got.Directories, got.Truncated, want)
+	}
+
+	many := resolvedTempDir(t)
+	for i := 0; i < maxBrowseDirectories+1; i++ {
+		if err := os.Mkdir(filepath.Join(many, fmt.Sprintf("d%04d", i)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.WithRoots(NewLibraryRoots(nil, many))
+	rec = httptest.NewRecorder()
+	h.BrowseFolders(rec, browseFoldersRequest(many))
+	got = ImportFolderResponse{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Directories) != maxBrowseDirectories || !got.Truncated {
+		t.Fatalf("listed %d truncated = %v, want %d and truncated", len(got.Directories), got.Truncated, maxBrowseDirectories)
+	}
+}
