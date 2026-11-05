@@ -9,6 +9,8 @@ export interface HistoryEvent {
   data: string
   createdAt: string
   book?: BookRef
+  // True on a bookImported event Reject import already acted on (#3250).
+  rejected?: boolean
 }
 
 export interface BlocklistEntry {
@@ -44,6 +46,10 @@ export interface RejectImportResult {
   blocklisted: boolean
   alreadyBlocklisted: boolean
   nothingTracked: boolean
+  // Paths a newer import of the book now holds: left alone.
+  supersededPaths: string[]
+  // Nothing was detached, so nothing was written.
+  noOp: boolean
 }
 
 export const historyApi = {

@@ -6,7 +6,12 @@ type Translate = (key: string, opts?: Record<string, unknown>) => string
 // with no release to blocklist, and a file that was already gone each get their
 // own sentence rather than a generic success.
 export function rejectSummary(r: RejectImportResult, t: Translate): string {
+  if (r.noOp) {
+    const why = r.supersededPaths.length > 0 ? t('rejectImport.doneSuperseded', { count: r.supersededPaths.length }) : t('rejectImport.doneNothingTracked')
+    return `${t('rejectImport.doneNoOp')} ${why}`
+  }
   const parts: string[] = [t('rejectImport.doneWanted')]
+  if (r.supersededPaths.length > 0) parts.push(t('rejectImport.doneSuperseded', { count: r.supersededPaths.length }))
   if (r.nothingTracked) parts.push(t('rejectImport.doneNothingTracked'))
   else if (r.deleted.length > 0) parts.push(t('rejectImport.doneDeleted', { count: r.deleted.length }))
   if (r.keptOnDisk.length > 0) parts.push(t('rejectImport.doneKept', { count: r.keptOnDisk.length }))

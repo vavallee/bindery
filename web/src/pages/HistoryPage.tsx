@@ -237,11 +237,9 @@ export default function HistoryPage() {
     setTotal(prev => Math.max(0, prev - 1))
   }
 
-  // An import already rejected on this page has nothing left to reject.
-  const rejectedImportIds = new Set(
-    events.filter(e => e.eventType === 'importRejected').map(e => parseEventData(e.data).eventId),
-  )
-  const canReject = (e: HistoryEvent) => e.eventType === 'bookImported' && e.bookId != null && !rejectedImportIds.has(e.id)
+  // The server says whether an import was already rejected, so the button
+  // does not depend on which rows happen to be on this page.
+  const canReject = (e: HistoryEvent) => e.eventType === 'bookImported' && e.bookId != null && !e.rejected
 
   const eventTypes = Array.from(new Set([...KNOWN_EVENT_TYPES, ...events.map(e => e.eventType)])).sort()
 

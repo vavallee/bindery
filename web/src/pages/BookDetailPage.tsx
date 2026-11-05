@@ -357,13 +357,6 @@ function BookDetailPageInner() {
 
   const [book, setBook] = useState<Book | null>(null)
   const [events, setEvents] = useState<HistoryEvent[]>([])
-  // Imports already rejected (#3250): an importRejected row names the event it
-  // rejected, and that event has nothing left to reject.
-  const rejectedImportIds = new Set(
-    events.filter(e => e.eventType === 'importRejected').map(e => {
-      try { return (JSON.parse(e.data) as { eventId?: number }).eventId } catch { return undefined }
-    }),
-  )
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -1748,7 +1741,7 @@ function BookDetailPageInner() {
                 <span className="ml-auto text-xs text-fg-muted whitespace-nowrap flex-shrink-0">
                   {new Date(ev.createdAt).toLocaleString()}
                 </span>
-                {ev.eventType === 'bookImported' && !rejectedImportIds.has(ev.id) && (
+                {ev.eventType === 'bookImported' && !ev.rejected && (
                   <button
                     type="button"
                     onClick={() => setRejectTarget(ev)}

@@ -55,6 +55,12 @@ func newRejectFixture(t *testing.T, mediaType string, eventData func(root string
 	if err := hist.Create(ctx, ev); err != nil {
 		t.Fatal(err)
 	}
+	// In production the file row is written before the import's event. The
+	// fixture adds files after creating the event, so date the event ahead of
+	// them to keep that order.
+	if _, err := database.Exec(`UPDATE history SET created_at = datetime('now','+1 minute') WHERE id = ?`, ev.ID); err != nil {
+		t.Fatal(err)
+	}
 	h := NewHistoryHandler(hist, db.NewBlocklistRepo(database), books).WithLibraryRoots(NewLibraryRoots(nil, root))
 	return &rejectFixture{t: t, h: h, sqlDB: database, books: books, root: root, bookID: b.ID, eventID: ev.ID}
 }
@@ -145,13 +151,19 @@ func TestRejectImport_DetachesBlocklistsAndReturnsToWanted(t *testing.T) {
 		t.Errorf("importRejected events = %d, want 1", n)
 	}
 
-	// Rejecting it again is a no-op answer, not a second blocklist row.
-	_, again := f.reject()
-	if !again.NothingTracked || !again.AlreadyBlocklisted || again.Blocklisted {
-		t.Errorf("repeat = %+v", again)
+	// Rejecting it again is refused, and writes nothing.
+	rec, _ = f.reject()
+	if rec.Code != http.StatusConflict {
+		t.Errorf("repeat reject = %d, want 409", rec.Code)
 	}
 	if n := f.count(`SELECT COUNT(*) FROM blocklist`); n != 1 {
 		t.Errorf("blocklist rows = %d, want 1", n)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM history WHERE event_type=?`, models.HistoryEventImportRejected); n != 1 {
+		t.Errorf("importRejected events = %d, want 1", n)
+	}
+	if !f.listedRejected(f.eventID) {
+		t.Errorf("History list should flag the event as rejected")
 	}
 }
 
@@ -344,5 +356,158 @@ func TestRejectImport_HistoryDataDoesNotLeakGuidCredentials(t *testing.T) {
 		if strings.Contains(body, leak) {
 			t.Errorf("History leaks %q to a non admin: %s", leak, body)
 		}
+	}
+}
+
+func (f *rejectFixture) listedRejected(id int64) bool {
+	f.t.Helper()
+	rec := httptest.NewRecorder()
+	f.h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/history", nil))
+	var page struct {
+		Items []struct {
+			ID       int64 `json:"id"`
+			Rejected bool  `json:"rejected"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		f.t.Fatal(err)
+	}
+	for _, it := range page.Items {
+		if it.ID == id {
+			return it.Rejected
+		}
+	}
+	return false
+}
+
+// A later import of the same book to the same path keeps the old book_files
+// row, so the older event must not be able to detach or delete the newer
+// file. Nothing is written for a reject that does nothing.
+func TestRejectImport_NewerImportAtSamePathSurvivesRejectingTheOlderEvent(t *testing.T) {
+	var p string
+	f := newRejectFixture(t, models.MediaTypeEbook, func(root string) map[string]any {
+		p = filepath.Join(root, "A", "Rejected", "r.epub")
+		return map[string]any{"origin": "download", "guid": "guid-old", "format": "ebook", "paths": []string{p}}
+	})
+	f.file("ebook", p)
+	// The same path is imported again, by a different release.
+	newer := &models.HistoryEvent{BookID: &f.bookID, EventType: models.HistoryEventBookImported, SourceTitle: "Newer.Release",
+		Data: `{"origin":"download","guid":"guid-new","format":"ebook","paths":["` + p + `"]}`}
+	if err := db.NewHistoryRepo(f.sqlDB).Create(context.Background(), newer); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, resp := f.reject()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+	if !resp.NoOp || len(resp.SupersededPaths) != 1 || len(resp.Deleted) != 0 || len(resp.Detached) != 0 {
+		t.Errorf("resp = %+v", resp)
+	}
+	if !exists(p) || f.count(`SELECT COUNT(*) FROM book_files WHERE book_id=? AND path=?`, f.bookID, p) != 1 {
+		t.Errorf("the newer file or its row was touched")
+	}
+	if f.count(`SELECT COUNT(*) FROM blocklist`) != 0 || f.count(`SELECT COUNT(*) FROM history WHERE event_type=?`, models.HistoryEventImportRejected) != 0 {
+		t.Errorf("a no-op reject wrote a blocklist entry or history row")
+	}
+	if f.status() != models.BookStatusImported {
+		t.Errorf("status = %q, want imported", f.status())
+	}
+}
+
+// A tracked row created after the event is a newer file even with no newer
+// import event naming it.
+func TestRejectImport_RowCreatedAfterTheEventIsLeftAlone(t *testing.T) {
+	var p string
+	f := newRejectFixture(t, models.MediaTypeEbook, func(root string) map[string]any {
+		p = filepath.Join(root, "A", "Rejected", "r.epub")
+		return map[string]any{"origin": "download", "guid": "g-late", "format": "ebook", "paths": []string{p}}
+	})
+	f.file("ebook", p)
+	if _, err := f.sqlDB.Exec(`UPDATE book_files SET created_at = datetime('now','+1 hour')`); err != nil {
+		t.Fatal(err)
+	}
+	_, resp := f.reject()
+	if !resp.NoOp || len(resp.SupersededPaths) != 1 || !exists(p) {
+		t.Errorf("resp = %+v exists=%v", resp, exists(p))
+	}
+}
+
+// A path under a folder another book tracks is detached but not deleted.
+func TestRejectImport_PathUnderAnotherBooksFolderIsKept(t *testing.T) {
+	var p, folder string
+	f := newRejectFixture(t, models.MediaTypeEbook, func(root string) map[string]any {
+		folder = filepath.Join(root, "Box")
+		p = filepath.Join(folder, "r.epub")
+		return map[string]any{"origin": "download", "guid": "g-own", "format": "ebook", "paths": []string{p}}
+	})
+	f.file("ebook", p)
+	a := &models.Author{ForeignID: "a-o", Name: "O", SortName: "O"}
+	if err := db.NewAuthorRepo(f.sqlDB).Create(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	other := &models.Book{ForeignID: "b-o", AuthorID: a.ID, Title: "Other", SortTitle: "Other", MediaType: models.MediaTypeAudiobook}
+	if err := f.books.Create(context.Background(), other); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.books.AddBookFile(context.Background(), other.ID, "audiobook", folder); err != nil {
+		t.Fatal(err)
+	}
+	_, resp := f.reject()
+	if !exists(p) || len(resp.KeptOnDisk) != 1 || len(resp.Deleted) != 0 || len(resp.Detached) != 1 {
+		t.Errorf("resp = %+v", resp)
+	}
+}
+
+// Removing the library name must not touch a hardlink to the same data.
+func TestRejectImport_HardlinkedSeedCopySurvives(t *testing.T) {
+	var p string
+	seed := filepath.Join(t.TempDir(), "seed.epub")
+	f := newRejectFixture(t, models.MediaTypeEbook, func(root string) map[string]any {
+		p = filepath.Join(root, "A", "Rejected", "r.epub")
+		return map[string]any{"origin": "download", "guid": "g-hl", "format": "ebook", "paths": []string{p}}
+	})
+	if err := os.WriteFile(seed, []byte("payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(seed, p); err != nil {
+		t.Skipf("hardlinks unsupported: %v", err)
+	}
+	if err := f.books.AddBookFile(context.Background(), f.bookID, "ebook", p); err != nil {
+		t.Fatal(err)
+	}
+	_, resp := f.reject()
+	if exists(p) || len(resp.Deleted) != 1 {
+		t.Errorf("library link should be gone: %+v", resp)
+	}
+	if b, err := os.ReadFile(seed); err != nil || string(b) != "payload" {
+		t.Errorf("seed copy damaged: %q %v", b, err)
+	}
+}
+
+// A book that also holds ebook and audiobook files: rejecting the ebook
+// import returns it to Wanted (the ebook is needed again) and keeps the
+// audiobook row.
+func TestRejectImport_EbookAndAudiobookBook(t *testing.T) {
+	var epub, dir string
+	f := newRejectFixture(t, models.MediaTypeBoth, func(root string) map[string]any {
+		epub = filepath.Join(root, "A", "Rejected", "r.epub")
+		dir = filepath.Join(root, "A", "Rejected-audio")
+		return map[string]any{"origin": "download", "guid": "g-both", "format": "ebook", "paths": []string{epub}}
+	})
+	f.file("ebook", epub)
+	f.file("audiobook", filepath.Join(dir, "01.mp3"))
+	if _, err := f.sqlDB.Exec(`UPDATE book_files SET path=? WHERE format='audiobook'`, dir); err != nil {
+		t.Fatal(err)
+	}
+	_, resp := f.reject()
+	if resp.Status != models.BookStatusWanted || f.status() != models.BookStatusWanted {
+		t.Errorf("status = %q / %q, want wanted", resp.Status, f.status())
+	}
+	if f.count(`SELECT COUNT(*) FROM book_files WHERE format='audiobook'`) != 1 || !exists(filepath.Join(dir, "01.mp3")) {
+		t.Errorf("audiobook must be untouched")
 	}
 }

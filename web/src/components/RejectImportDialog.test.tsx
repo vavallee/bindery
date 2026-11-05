@@ -31,7 +31,7 @@ const base: HistoryEvent = {
 }
 const result: RejectImportResult = {
   status: 'wanted', detached: ['/lib/a.epub'], deleted: ['/lib/a.epub'], keptOnDisk: [], alreadyGone: [],
-  releaseKnown: true, blocklisted: true, alreadyBlocklisted: false, nothingTracked: false,
+  releaseKnown: true, blocklisted: true, alreadyBlocklisted: false, nothingTracked: false, supersededPaths: [], noOp: false,
 }
 
 describe('RejectImportDialog', () => {

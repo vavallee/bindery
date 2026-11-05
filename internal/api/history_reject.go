@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -50,6 +51,12 @@ type rejectImportResponse struct {
 	// any more (removed earlier, or an import that predates the paths the
 	// event records), so no file was detached.
 	NothingTracked bool `json:"nothingTracked"`
+	// SupersededPaths are paths this import named that a newer import of the
+	// book now holds. They are neither detached nor deleted.
+	SupersededPaths []string `json:"supersededPaths"`
+	// NoOp is true when nothing was detached: no blocklist entry, history row
+	// or status change was written.
+	NoOp bool `json:"noOp"`
 }
 
 // importEventData is what an import history row carries that Reject import
@@ -146,14 +153,16 @@ func (h *HistoryHandler) RejectImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.books.RejectImport(ctx, db.RejectImportInput{
-		BookID:      book.ID,
-		Paths:       data.importedPaths(),
-		GUID:        data.GUID,
-		Title:       event.SourceTitle,
-		Scope:       models.BlocklistScopeBook,
-		Reason:      models.HistoryEventBookImported,
-		UserID:      auth.UserIDFromContext(ctx),
-		OwnerUserID: auth.UserIDFromContext(ctx),
+		BookID:         book.ID,
+		EventID:        event.ID,
+		EventCreatedAt: event.CreatedAt,
+		Paths:          data.importedPaths(),
+		GUID:           data.GUID,
+		Title:          event.SourceTitle,
+		Scope:          models.BlocklistScopeBook,
+		Reason:         models.HistoryEventBookImported,
+		UserID:         auth.UserIDFromContext(ctx),
+		OwnerUserID:    auth.UserIDFromContext(ctx),
 		HistoryData: func(res *db.RejectImportResult) string {
 			out := map[string]any{"eventId": event.ID, "detached": res.DetachedPaths, "blocklisted": res.Blocklisted || res.AlreadyBlocklisted}
 			if data.GUID != "" {
@@ -163,6 +172,10 @@ func (h *HistoryHandler) RejectImport(w http.ResponseWriter, r *http.Request) {
 			return string(b)
 		},
 	})
+	if errors.Is(err, db.ErrImportAlreadyRejected) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "this import was already rejected"})
+		return
+	}
 	if err != nil {
 		writeServerError(w, r, err)
 		return
@@ -177,7 +190,9 @@ func (h *HistoryHandler) RejectImport(w http.ResponseWriter, r *http.Request) {
 		ReleaseKnown:       data.GUID != "",
 		Blocklisted:        res.Blocklisted,
 		AlreadyBlocklisted: res.AlreadyBlocklisted,
-		NothingTracked:     len(res.DetachedPaths) == 0,
+		NothingTracked:     len(res.DetachedPaths) == 0 && len(res.SupersededPaths) == 0,
+		SupersededPaths:    orEmpty(res.SupersededPaths),
+		NoOp:               res.NoOp,
 	}
 	for _, p := range res.DetachedPaths {
 		if _, statErr := os.Lstat(p); os.IsNotExist(statErr) {
