@@ -3,7 +3,8 @@ import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, Book, SearchResult } from '../api/client'
 import { useConfirmDialog } from '../components/useConfirmDialog'
-import { grabWithForceConfirm } from '../util/forceGrab'
+import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
+import PackLabel from '../components/PackLabel'
 import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
@@ -193,6 +194,7 @@ export default function WantedPage() {
   }
 
   const grab = async (result: SearchResult, book: Book) => {
+    if (result.pack && !await confirmPackGrab(result, confirm, t)) return
     setGrabbingGuid(result.guid)
     try {
       const dl = await grabWithForceConfirm({
@@ -527,7 +529,10 @@ export default function WantedPage() {
                     {results.slice(0, 10).map(r => (
                       <div key={r.guid} className="flex items-center justify-between p-2 bg-slate-200/50 dark:bg-zinc-800/50 rounded text-xs">
                         <div className="min-w-0 mr-3">
-                          <span className="truncate block">{r.title}</span>
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <PackLabel marker={r.pack} />
+                            <span className="truncate block">{r.title}</span>
+                          </span>
                           <span className="text-fg-muted truncate block">
                             {r.indexerName} &middot; {formatBytes(r.size)} &middot; {t('search.grabs', { n: r.grabs, defaultValue: '{{n}} grabs' })}
                             {safeHref(r.infoUrl) && (

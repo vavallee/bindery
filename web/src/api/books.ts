@@ -105,6 +105,9 @@ export interface SearchResult {
   mediaType?: string // "ebook" or "audiobook"; set for dual-format book searches
   approved?: boolean
   rejection?: string
+  // The words of the release name that make it a pack of several books for
+  // the wanted one (#3247). Absent when it is not a pack, and from older servers.
+  pack?: string
 }
 
 export interface SearchQueryDebug {

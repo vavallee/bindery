@@ -404,23 +404,49 @@ const RejectionMultiBookPack = "multi-book pack"
 // land in one book's folder or the import fails. Bindery has no pack splitter,
 // so the only correct move is not to select it.
 //
-// Constructed only on the automatic path in the scheduler. Interactive search
-// deliberately does not build it, exactly as FreeleechOnlySpec is left out
-// there: a user who can see the release name and wants the pack anyway should
-// still be able to see it and grab it. The importer carries its own guard for
-// that case (#2276).
-type MultiBookPackSpec struct{}
+// The scheduler refuses what it rejects. Interactive search builds it too, but
+// only as a label (#3247): every interactive result stays grabbable, so a user
+// who can see the release name and wants the pack anyway can still grab it,
+// after a confirmation. The importer carries its own guard for that case
+// (#2276).
+//
+// SeriesTitle and AuthorTitles are the library context the search already
+// loads for the relevance filter. They enable the pack shapes that are only a
+// pack relative to the wanted book (see indexer.MultiBookPackMarkerFor); left
+// empty, the spec still applies the shapes that need no context.
+type MultiBookPackSpec struct {
+	SeriesTitle  string
+	AuthorTitles []string
+}
 
-func (MultiBookPackSpec) IsSatisfiedBy(r Release, book models.Book) (bool, string) {
-	marker := indexer.MultiBookPackMarker(r.Title)
+// Marker returns the words of r's title that make it a pack of several books
+// for book, or "" when it is not one or book is itself a bundle.
+func (s MultiBookPackSpec) Marker(r Release, book models.Book) string {
+	marker := indexer.MultiBookPackMarkerFor(r.Title, indexer.PackContext{
+		Title:        book.Title,
+		SeriesTitle:  s.SeriesTitle,
+		AuthorTitles: s.AuthorTitles,
+	})
 	if marker == "" {
-		return true, ""
+		return ""
 	}
 	// The wanted book is itself a bundle. Someone tracking "The Lord of the
 	// Rings Omnibus" or a box set edition as a single book record wants
 	// exactly the release this spec would otherwise refuse, and for them the
-	// one-destination problem does not arise: the pack IS the book.
-	if indexer.MultiBookPackMarker(book.Title) != "" {
+	// one-destination problem does not arise: the pack IS the book. Its own
+	// title is not compared with itself, only with its series and siblings.
+	if indexer.MultiBookPackMarkerFor(book.Title, indexer.PackContext{
+		SeriesTitle:  s.SeriesTitle,
+		AuthorTitles: s.AuthorTitles,
+	}) != "" {
+		return ""
+	}
+	return marker
+}
+
+func (s MultiBookPackSpec) IsSatisfiedBy(r Release, book models.Book) (bool, string) {
+	marker := s.Marker(r, book)
+	if marker == "" {
 		return true, ""
 	}
 	return false, fmt.Sprintf("%s: release is titled %q, and a download is linked to one book — Bindery cannot split a pack across book records", RejectionMultiBookPack, marker)

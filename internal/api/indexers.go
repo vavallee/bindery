@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -697,8 +698,11 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		crit.Year = book.ReleaseDate.Year()
 	}
 	// What the library knows about the wanted book, for the relevance filter
-	// (#3268). Two reads per search; the author's titles are scoped to the
-	// caller like every other book listing.
+	// (#3268). Two reads per search. The author's titles are scoped to the
+	// book's owner, as the automatic search and the importer scope them, so all
+	// three judge one book the same way (#3247). The ownership check above has
+	// already established the caller may see this book; for the owner this is
+	// the caller.
 	indexer.WarnLibraryContextMissing(&h.libraryContextWarn, "interactive search", h.series == nil, h.books == nil)
 	var seriesRead indexer.SeriesReader
 	if h.series != nil {
@@ -706,9 +710,14 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	}
 	var booksRead indexer.AuthorBooksReader
 	if h.books != nil {
-		uid := auth.UserIDFromContext(r.Context())
+		owner := book.OwnerUserID
+		if owner == 0 {
+			// An unowned book has no owner to scope by, and owner 0 would list
+			// every user's books. Fall back to the caller.
+			owner = auth.UserIDFromContext(r.Context())
+		}
 		booksRead = func(ctx context.Context, authorID int64) ([]models.Book, error) {
-			return h.books.ListByAuthorAndUser(ctx, authorID, uid)
+			return h.books.ListByAuthorAndUser(ctx, authorID, owner)
 		}
 	}
 	crit.SetLibraryContext(r.Context(), *book, seriesRead, booksRead)
@@ -845,6 +854,13 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	// Already-imported spec.
 	specs = append(specs, decision.AlreadyImportedSpec{})
 
+	// Multi-book pack label (#3247). The scheduler refuses these; here the
+	// release stays grabbable, carries the matched words in "pack" and sorts
+	// below the releases that are not packs. The importer still blocks a
+	// grabbed pack, which the UI says before the grab.
+	packSpec := decision.MultiBookPackSpec{SeriesTitle: crit.SeriesTitle, AuthorTitles: crit.AuthorTitles}
+	specs = append(specs, packSpec)
+
 	// Allowed-formats spec (#1693). Annotates only — see WithQualityProfiles.
 	// The media type decides which of the profile's two lists judges a release
 	// (#2733). For a dual-format book this is "both", which the spec ignores in
@@ -874,6 +890,7 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 			SearchResult: res,
 			Approved:     d.Approved,
 			Rejection:    d.Rejection,
+			Pack:         packSpec.Marker(releases[i], *book),
 		}
 		if !d.Approved && dbg != nil {
 			dbg.Filters = append(dbg.Filters, indexer.FilterDebug{
@@ -884,6 +901,8 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+
+	sort.SliceStable(out, func(a, b int) bool { return out[a].Pack == "" && out[b].Pack != "" })
 
 	// Filtered releases are recorded first so the main results are the newest
 	// entries and the last the registry's cap would evict. They go out
@@ -932,6 +951,10 @@ type searchDecision struct {
 	newznab.SearchResult
 	Approved  bool   `json:"approved"`
 	Rejection string `json:"rejection,omitempty"`
+	// Pack is the part of the release name that makes it a pack of several
+	// books for the wanted one (#3247), or empty. A pack is not approved, but
+	// it can still be grabbed like any other result.
+	Pack string `json:"pack,omitempty"`
 }
 
 // maxFilteredReleases bounds the "filtered" array of one interactive search,
