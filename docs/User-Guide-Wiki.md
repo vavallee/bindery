@@ -410,6 +410,19 @@ grabbed for the author. Profiles made
 before this rule existed were reversed once on upgrade, so a profile you
 never reordered now reads best first and prefers what it always did.
 
+**Audiobook narrator and edition preferences.** A quality profile can also
+prefer narrators and an edition type for audiobooks (#1358). Both are off
+unless you set them, and a profile that sets neither ranks and grabs exactly as
+before. Preferred narrators are one name per line, best first; a release ranks
+higher when its title says "read by" or "narrated by" one of them, written the
+same way. The audiobook edition setting is Prefer unabridged, which ranks
+releases that say unabridged above ones that do not say and ones that say
+abridged below, or Reject abridged, which refuses a release that says abridged.
+A release whose title does not say is never rejected, because a missing word is
+not evidence the recording is cut. Interactive search shows the edition type
+and narrator it found in a release name, and the book page shows the narrators
+and edition type of its audiobook edition when Audiobookshelf supplied them.
+
 **Multi-book packs are not auto-grabbed.** A download is linked to exactly
 one book, and the importer works out one destination folder from it, so there
 is no correct way to import a release that is several books: everything in it

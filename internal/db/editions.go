@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -41,7 +42,7 @@ func (r *EditionRepo) GetByID(ctx context.Context, id int64) (*models.Edition, e
 	row := r.exec.QueryRowContext(ctx, `
 		SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
 		       publish_date, format, num_pages, language, image_url, is_ebook,
-		       edition_info, monitored, created_at, updated_at
+		       edition_info, monitored, created_at, updated_at, narrators, edition_type
 		FROM editions WHERE id = ?`, id)
 	e, err := scanEditionFrom(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -61,7 +62,7 @@ func (r *EditionRepo) GetByForeignID(ctx context.Context, foreignID string) (*mo
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
 		       publish_date, format, num_pages, language, image_url, is_ebook,
-		       edition_info, monitored, created_at, updated_at
+		       edition_info, monitored, created_at, updated_at, narrators, edition_type
 		FROM editions WHERE foreign_id = ?`, foreignID)
 	e, err := scanEditionFrom(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -78,7 +79,7 @@ func (r *EditionRepo) ListByBook(ctx context.Context, bookID int64) ([]models.Ed
 	rows, err := r.exec.QueryContext(ctx, `
 		SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
 		       publish_date, format, num_pages, language, image_url, is_ebook,
-		       edition_info, monitored, created_at, updated_at
+		       edition_info, monitored, created_at, updated_at, narrators, edition_type
 		FROM editions WHERE book_id = ? ORDER BY id`, bookID)
 	if err != nil {
 		return nil, fmt.Errorf("list editions for book %d: %w", bookID, err)
@@ -123,9 +124,11 @@ func (r *EditionRepo) Upsert(ctx context.Context, e *models.Edition) error {
 		INSERT INTO editions (foreign_id, book_id, title, isbn_13, isbn_10, asin,
 		                      publisher, publish_date, format, num_pages, language,
 		                      image_url, is_ebook, edition_info, monitored,
-		                      created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                      created_at, updated_at, narrators, edition_type)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(foreign_id) DO UPDATE SET
+		    narrators   = CASE WHEN excluded.narrators <> '[]' THEN excluded.narrators ELSE editions.narrators END,
+		    edition_type= CASE WHEN excluded.edition_type <> '' THEN excluded.edition_type ELSE editions.edition_type END,
 		    title       = excluded.title,
 		    isbn_13     = COALESCE(excluded.isbn_13, editions.isbn_13),
 		    format      = excluded.format,
@@ -136,7 +139,8 @@ func (r *EditionRepo) Upsert(ctx context.Context, e *models.Edition) error {
 		    updated_at  = excluded.updated_at`,
 		e.ForeignID, e.BookID, e.Title, e.ISBN13, e.ISBN10, e.ASIN,
 		e.Publisher, timeArg(e.PublishDate), e.Format, e.NumPages, e.Language,
-		e.ImageURL, isEbook, e.EditionInfo, monitored, timeValueArg(now), timeValueArg(now))
+		e.ImageURL, isEbook, e.EditionInfo, monitored, timeValueArg(now), timeValueArg(now),
+		encodeNarrators(e.Narrators), models.NormalizeEditionType(e.EditionType))
 	if err != nil {
 		return fmt.Errorf("upsert edition %s: %w", e.ForeignID, err)
 	}
@@ -205,8 +209,8 @@ func (r *EditionRepo) UpsertMetadata(ctx context.Context, e *models.Edition, exp
 		INSERT INTO editions (foreign_id, book_id, title, isbn_13, isbn_10, asin,
 		                      publisher, publish_date, format, num_pages, language,
 		                      image_url, is_ebook, edition_info, monitored,
-		                      created_at, updated_at)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		                      created_at, updated_at, narrators, edition_type)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		WHERE EXISTS (SELECT 1 FROM books WHERE id = ? AND foreign_id = ? AND metadata_provider = ?)
 		ON CONFLICT(foreign_id) DO UPDATE SET
 		    title       = %s,
@@ -221,6 +225,8 @@ func (r *EditionRepo) UpsertMetadata(ctx context.Context, e *models.Edition, exp
 		    image_url   = %s,
 		    is_ebook    = CASE WHEN editions.is_ebook = 1 THEN 1 ELSE excluded.is_ebook END,
 		    edition_info= %s,
+		    narrators   = CASE WHEN editions.narrators = '[]' THEN excluded.narrators ELSE editions.narrators END,
+		    edition_type= CASE WHEN editions.edition_type = '' THEN excluded.edition_type ELSE editions.edition_type END,
 		    updated_at  = excluded.updated_at
 		WHERE editions.book_id = excluded.book_id`,
 		fillMissingText("title"), fillMissingText("isbn_13"), fillMissingText("isbn_10"), fillMissingText("asin"),
@@ -229,6 +235,7 @@ func (r *EditionRepo) UpsertMetadata(ctx context.Context, e *models.Edition, exp
 		e.ForeignID, e.BookID, e.Title, e.ISBN13, e.ISBN10, e.ASIN,
 		e.Publisher, timeArg(e.PublishDate), e.Format, e.NumPages, e.Language,
 		e.ImageURL, isEbook, e.EditionInfo, monitored, timeValueArg(now), timeValueArg(now),
+		encodeNarrators(e.Narrators), models.NormalizeEditionType(e.EditionType),
 		e.BookID, expectedForeignID, expectedProvider, sql.Named("whitespace", metadataWhitespace))
 	if err != nil {
 		return false, fmt.Errorf("upsert metadata edition %s: %w", e.ForeignID, err)
@@ -244,7 +251,7 @@ func (r *EditionRepo) UpsertMetadata(ctx context.Context, e *models.Edition, exp
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
 		       publish_date, format, num_pages, language, image_url, is_ebook,
-		       edition_info, monitored, created_at, updated_at
+		       edition_info, monitored, created_at, updated_at, narrators, edition_type
 		FROM editions WHERE foreign_id = ?`, e.ForeignID)
 	stored, err := scanEditionFrom(row)
 	if err != nil {
@@ -266,11 +273,14 @@ func scanEditionFrom(s rowScanner) (models.Edition, error) {
 	var e models.Edition
 	var isEbook, monitored int
 	var publishDateStr, createdAtStr, updatedAtStr sql.NullString
+	var narratorsJSON string
 	if err := s.Scan(&e.ID, &e.ForeignID, &e.BookID, &e.Title, &e.ISBN13, &e.ISBN10,
 		&e.ASIN, &e.Publisher, &publishDateStr, &e.Format, &e.NumPages, &e.Language,
-		&e.ImageURL, &isEbook, &e.EditionInfo, &monitored, &createdAtStr, &updatedAtStr); err != nil {
+		&e.ImageURL, &isEbook, &e.EditionInfo, &monitored, &createdAtStr, &updatedAtStr,
+		&narratorsJSON, &e.EditionType); err != nil {
 		return e, err
 	}
+	e.Narrators = decodeNarrators(narratorsJSON)
 	if pd, perr := parseFlexibleTime(publishDateStr); perr != nil {
 		slog.Warn("unparseable edition.publish_date, leaving nil", "edition_id", e.ID, "value", publishDateStr.String, "error", perr)
 	} else {
@@ -338,7 +348,7 @@ func (r *EditionRepo) ListWithLocalImagePath(ctx context.Context) ([]models.Edit
 	rows, err := r.exec.QueryContext(ctx, `
 		SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
 		       publish_date, format, num_pages, language, image_url, is_ebook,
-		       edition_info, monitored, created_at, updated_at
+		       edition_info, monitored, created_at, updated_at, narrators, edition_type
 		FROM editions WHERE image_url LIKE '/%' OR image_url LIKE '_:\%' ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("list editions with local image path: %w", err)
@@ -367,4 +377,22 @@ func (r *EditionRepo) SetImageURL(ctx context.Context, id int64, imageURL string
 		return fmt.Errorf("set edition %d image_url: %w", id, err)
 	}
 	return nil
+}
+
+// decodeNarrators reads the narrators column. A malformed value reads as
+// unknown rather than failing the whole edition row.
+func decodeNarrators(raw string) []string {
+	var out []string
+	if raw == "" || json.Unmarshal([]byte(raw), &out) != nil {
+		return []string{}
+	}
+	return models.CleanNarrators(out)
+}
+
+func encodeNarrators(names []string) string {
+	b, err := json.Marshal(models.CleanNarrators(names))
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }

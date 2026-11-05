@@ -1311,6 +1311,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	// grabbed on a later sweep.
 	if qualityProfile != nil {
 		specs = append(specs, decision.QualityAllowed{Profile: qualityProfile, MediaType: mediaType})
+		specs = append(specs, decision.EditionAllowed{Profile: qualityProfile, MediaType: mediaType, Title: crit.Title, Authors: append([]string{crit.Author}, crit.AuthorAliases...)})
 	}
 	var delayProfile *models.DelayProfile
 	if profiles := s.sweepDelayProfiles(ctx, sweep); len(profiles) > 0 {

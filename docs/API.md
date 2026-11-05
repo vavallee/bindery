@@ -553,7 +553,7 @@ PUT    /api/v1/qualityprofile/{id}                update (admin)
 DELETE /api/v1/qualityprofile/{id}                remove (admin); 409 while an author uses it
 ```
 
-A profile is `{id, name, items, cutoff, upgradeAllowed}`. `items` is an array
+A profile is `{id, name, items, cutoff, upgradeAllowed, preferredNarrators, editionPreference}`. `items` is an array
 of `{quality, allowed}` in preference order, best first (#2733). The media
 type of each entry is derived from its token on the server (`epub`, `azw3`,
 `pdf` and the other ebook containers on one side; `m4b`, `mp3`, `flac`, `m4a`,
@@ -561,7 +561,16 @@ type of each entry is derived from its token on the server (`epub`, `azw3`,
 and only the relative order inside each kind matters. The web editor writes
 the ebook entries first and the audiobook entries after them; any interleaving
 is accepted and stored as sent, and a read returns the order that was written.
-An unticked entry (`allowed: false`) never makes a release eligible and never
+`preferredNarrators` is an array of names, best first, and `editionPreference`
+is `""` (off, the default), `prefer_unabridged` or `require_unabridged`
+(#1358). Both apply to audiobook searches only. A release is matched on a
+narrator only when its title says "read by" or "narrated by" and the whole name
+matches after case and accent folding; `require_unabridged` rejects a release
+that states it is abridged and never one that does not say. An unknown
+`editionPreference` is a 400, and a PUT that leaves both fields out keeps the
+stored values. Interactive search results carry `narrators` and `editionType`
+when the title states them, and `GET /book/{id}` carries `narrators` and
+`editionType` from the audiobook edition. An unticked entry (`allowed: false`) never makes a release eligible and never
 counts in the ranking. A release is judged and ranked only on the formats of
 the media type being searched, so an audiobook carrying a PDF booklet is
 judged on its audio token for an audiobook search and on its pdf token for an

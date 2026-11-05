@@ -1612,6 +1612,15 @@ func (i *Importer) upsertEditions(ctx context.Context, cfg ImportConfig, runID, 
 			EditionInfo: "Imported from Audiobookshelf",
 			Monitored:   true,
 		}
+		if format == models.MediaTypeAudiobook {
+			// The recording's narrators and edition type (#1358). Narrators
+			// arrive as a list already. The type is read from a delimited
+			// marker in the title or subtitle ("[Unabridged]"); with
+			// no known book title a bare word is never read, so a book called
+			// "The Abridged History of Rome" stays unknown.
+			edition.Narrators = cleanStrings(item.Narrators)
+			edition.EditionType = indexer.ParseNarration(item.Title+" "+item.Subtitle, nil, nil).EditionType
+		}
 		if !cfg.DryRun {
 			if err := i.editions.Upsert(ctx, edition); err != nil {
 				return added, err

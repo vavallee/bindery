@@ -867,6 +867,7 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	// favour of the per-result media type the two legs stamped above.
 	if qualityProfile != nil {
 		specs = append(specs, decision.QualityAllowed{Profile: qualityProfile, MediaType: book.MediaType})
+		specs = append(specs, decision.EditionAllowed{Profile: qualityProfile, MediaType: book.MediaType, Title: crit.Title, Authors: append([]string{crit.Author}, crit.AuthorAliases...)})
 	}
 
 	dm := decision.New(specs...)
@@ -891,6 +892,13 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 			Approved:     d.Approved,
 			Rejection:    d.Rejection,
 			Pack:         packSpec.Marker(releases[i], *book),
+		}
+		if book.MediaType != models.MediaTypeEbook && results[i].MediaType != models.MediaTypeEbook {
+			nar := crit.ReleaseNarration(results[i].Title)
+			out[i].Narrators, out[i].EditionType = nar.Narrators, nar.EditionType
+			if len(out[i].Narrators) == 0 {
+				out[i].Narrators = nil
+			}
 		}
 		if !d.Approved && dbg != nil {
 			dbg.Filters = append(dbg.Filters, indexer.FilterDebug{
@@ -955,6 +963,10 @@ type searchDecision struct {
 	// books for the wanted one (#3247), or empty. A pack is not approved, but
 	// it can still be grabbed like any other result.
 	Pack string `json:"pack,omitempty"`
+	// Narrators and EditionType are what the release title states about the
+	// recording (#1358), empty when it does not say.
+	Narrators   []string `json:"narrators,omitempty"`
+	EditionType string   `json:"editionType,omitempty"`
 }
 
 // maxFilteredReleases bounds the "filtered" array of one interactive search,

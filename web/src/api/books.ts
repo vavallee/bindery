@@ -64,6 +64,9 @@ export interface Book {
   // (#1237, #1446): title | description | genres | language | releaseDate.
   lockedFields?: string[]
   narrator?: string
+  // Read only, from the audiobook edition (#1358). Narrator is the editable string.
+  narrators?: string[]
+  editionType?: string
   durationSeconds?: number
   asin?: string
   // Transient ISBNs reported by metadata providers during search/lookup.
@@ -108,6 +111,10 @@ export interface SearchResult {
   // The words of the release name that make it a pack of several books for
   // the wanted one (#3247). Absent when it is not a pack, and from older servers.
   pack?: string
+  // What the release title states about the recording (#1358). Absent when it
+  // does not say, and from older servers.
+  narrators?: string[]
+  editionType?: string
 }
 
 export interface SearchQueryDebug {

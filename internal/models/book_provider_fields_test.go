@@ -44,6 +44,7 @@ var bookFieldDecisions = map[string]string{
 	"Monitored": "keep: user", "Status": "keep: user", "AnyEditionOK": "keep: user",
 	"SelectedEditionID": "keep: user", "FilePath": "keep: files", "MediaType": "keep: user",
 	"Narrator": "keep: recording", "DurationSeconds": "keep: recording", "ASIN": "keep: recording",
+	"Narrators": "keep: read only detail field filled from the edition", "EditionType": "keep: read only detail field filled from the edition",
 	"CalibreID": "keep: import", "Excluded": "keep: user",
 	"EbookFilePath": "keep: files", "AudiobookFilePath": "keep: files", "BookFiles": "keep: files",
 

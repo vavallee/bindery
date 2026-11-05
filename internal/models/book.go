@@ -39,6 +39,11 @@ type Book struct {
 	Narrator          string     `json:"narrator"`
 	DurationSeconds   int        `json:"durationSeconds"`
 	ASIN              string     `json:"asin"`
+	// Narrators and EditionType are read only detail fields (#1358), filled
+	// from the audiobook edition on GET /book/{id}. Narrator stays the stored,
+	// editable string.
+	Narrators   []string `json:"narrators,omitempty"`
+	EditionType string   `json:"editionType,omitempty"`
 	// CalibreID is the book's id in the Calibre library at
 	// calibre.library_path, the library Bindery imports from (#2832). It is
 	// not the id in the push target: a delivery records that on its
