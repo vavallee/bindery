@@ -1,2 +1,0 @@
-### Added
-- **Series hints during library adoption** (#1430, #3612). When an unmatched file's path names both a series and a position, such as `Discworld/08 - Guards! Guards!`, the Import page shows that hint, and you can tick a box to put the book in that series as you adopt it. Pick an existing series or create one; an existing series with the same name is chosen for you. Nothing is ever matched by name behind your back, and Undo removes only the membership the adoption made, plus the new series if nothing else uses it.
