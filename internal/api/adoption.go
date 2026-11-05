@@ -50,6 +50,8 @@ type adoptionUnitStore interface {
 	Claim(ctx context.Context, id int64, from, to string) (string, error)
 	ReleaseClaim(ctx context.Context, id int64, from, to, token string) (bool, error)
 	RecordAdoptionProgress(ctx context.Context, id int64, token string, rec db.AdoptionRecord) (bool, error)
+	ApplyAdoptionSeriesHint(ctx context.Context, id int64, token string, bookID, seriesID int64, title, position string) (*db.AdoptionSeriesLink, error)
+	ReverseAdoptionSeriesLink(ctx context.Context, link *db.AdoptionSeriesLink) error
 	CompleteAdoption(ctx context.Context, id int64, token string, rec db.AdoptionRecord) (bool, error)
 	CompleteUndo(ctx context.Context, id int64, token string) (bool, error)
 	ResetToPending(ctx context.Context, id int64, from, token string) (bool, error)

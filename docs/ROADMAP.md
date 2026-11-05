@@ -14,7 +14,7 @@ Nothing is pinned here right now. Day to day work is driven by the [issue tracke
 
 Real candidates, not commitments, roughly in order of how much they'd change the product.
 
-- **Series from file path** ([#1430](https://github.com/vavallee/bindery/issues/1430)): the last open piece of bringing an existing library in. Adopting what a library scan could not match, the Manual Import wizard, creating a book from an unmatched file, and bulk folder import have all shipped (see **Delivered**). Importing an existing library is still the single biggest source of support threads.
+- **Series from file path** ([#1430](https://github.com/vavallee/bindery/issues/1430)): the last open piece of bringing an existing library in. Adopting what a library scan could not match, the Manual Import wizard, creating a book from an unmatched file, and bulk folder import have all shipped (see **Delivered**). Adoption can now apply an explicit, reviewed path hint as an undo-safe membership ([#3612](https://github.com/vavallee/bindery/issues/3612)); broader path and pack cases remain. Importing an existing library is still the single biggest source of support threads.
 
 - **Series discovery** ([#2523](https://github.com/vavallee/bindery/issues/2523)): a monitored series finds its own new books. Waits on telling a new work from a new edition ([#2524](https://github.com/vavallee/bindery/issues/2524)); the first piece, not listing the split edition parts of a book you own as missing, shipped in v1.42.0, and the rest of that issue is still open.
 

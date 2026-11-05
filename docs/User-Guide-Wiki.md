@@ -941,6 +941,12 @@ really one book, adopt each of them into it.
 queued, and no indexer search starts. It is the scan's own match with you
 supplying the answer, so **Undo** can take it back exactly.
 
+When the path explicitly names a series and number, the editor also offers to
+add the book to that series. This is always an opt-in choice: create a new
+manual series from the path's name or choose one already in your library.
+Bindery does not guess that two series with the same title are the same. Undo
+removes only the unchanged membership it made and keeps any later edits.
+
 How to work through the list:
 
 - **Strong match** means the title is very close and the author is the same.
