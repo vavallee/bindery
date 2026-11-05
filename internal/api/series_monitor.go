@@ -81,11 +81,12 @@ func (h *SeriesHandler) WithSeriesCheckMediaType(f func(ctx context.Context) str
 
 // seriesCheckQualifies is the add policy. All adds every missing book.
 // Upcoming adds a book only when its release date is known and either still
-// ahead or later than the previous check, so a book announced and released
-// between two checks is not lost. A missing date never qualifies for
+// ahead or later than the last check that read the whole catalogue, so a book
+// announced and released between two good checks is not lost, even when a
+// failed check fell in between. A missing date never qualifies for
 // Upcoming: with no date there is no evidence the book is new, and the cost
 // of being wrong is an unattended download of a back catalogue entry.
-func seriesCheckQualifies(mode string, date *time.Time, now time.Time, lastCheck *time.Time) bool {
+func seriesCheckQualifies(mode string, date *time.Time, now time.Time, lastOK *time.Time) bool {
 	if mode == models.SeriesMonitorAll {
 		return true
 	}
@@ -95,7 +96,7 @@ func seriesCheckQualifies(mode string, date *time.Time, now time.Time, lastCheck
 	if date.After(now) {
 		return true
 	}
-	return lastCheck != nil && date.After(*lastCheck)
+	return lastOK != nil && date.After(*lastOK)
 }
 
 // CheckSeries runs one scheduled check of series. It re-reads the series
@@ -212,7 +213,7 @@ func (h *SeriesHandler) CheckSeries(ctx context.Context, series *models.Series) 
 				"seriesId", cur.ID, "title", missing.Title, "position", missing.Position)
 			continue
 		}
-		if !seriesCheckQualifies(mon.Mode, missing.ReleaseDate, now, mon.LastCheckAt) {
+		if !seriesCheckQualifies(mon.Mode, missing.ReleaseDate, now, mon.LastOKAt) {
 			res.Held++
 			continue
 		}
@@ -252,31 +253,39 @@ func (h *SeriesHandler) CheckSeries(ctx context.Context, series *models.Series) 
 	return res, nil
 }
 
-// refreshUpcomingHolds keeps the Upcoming hold of every held book in the diff
-// equal to the catalogue's release date: moved later or earlier it follows, and
-// once the date is no longer ahead the hold is lifted. A catalogue that drops
-// the date leaves the hold alone until the date it had passes.
+// refreshUpcomingHolds keeps the Upcoming hold of every present book in the
+// diff equal to the catalogue's release date: moved later or earlier it
+// follows, and once the date is no longer ahead the hold is lifted. A wanted
+// book with a future date and no hold gets one, which repairs a book whose
+// hold was never written (a failure or timeout between creating it and
+// holding it) before the wanted sweep searches it. A catalogue that drops the
+// date leaves the hold alone until the date it had passes. Holds are
+// refreshed only while the series is monitored.
 func (h *SeriesHandler) refreshUpcomingHolds(ctx context.Context, diff seriesHardcoverDiffResponse, now time.Time) {
 	holds, err := h.books.SearchHolds(ctx, now)
-	if err != nil || len(holds) == 0 {
+	if err != nil {
 		return
 	}
 	for _, item := range diff.Present {
 		if item.LocalBookID == nil || item.ReleaseDate == nil {
 			continue
 		}
-		until, held := holds[*item.LocalBookID]
-		if !held {
-			continue
-		}
+		id := *item.LocalBookID
+		until, held := holds[id]
 		switch {
+		case !held:
+			if item.ReleaseDate.After(now) && item.LocalStatus == models.BookStatusWanted {
+				if err := h.books.SetSearchHold(ctx, id, *item.ReleaseDate); err != nil {
+					slog.Warn("series check: could not mark a book Upcoming", "bookId", id, "error", err)
+				}
+			}
 		case !item.ReleaseDate.After(now):
-			if err := h.books.ClearSearchHold(ctx, *item.LocalBookID); err != nil {
-				slog.Warn("series check: could not lift an Upcoming hold", "bookId", *item.LocalBookID, "error", err)
+			if err := h.books.ClearSearchHold(ctx, id); err != nil {
+				slog.Warn("series check: could not lift an Upcoming hold", "bookId", id, "error", err)
 			}
 		case !item.ReleaseDate.Equal(until):
-			if err := h.books.SetSearchHold(ctx, *item.LocalBookID, *item.ReleaseDate); err != nil {
-				slog.Warn("series check: could not move an Upcoming hold", "bookId", *item.LocalBookID, "error", err)
+			if err := h.books.SetSearchHold(ctx, id, *item.ReleaseDate); err != nil {
+				slog.Warn("series check: could not move an Upcoming hold", "bookId", id, "error", err)
 			}
 		}
 	}

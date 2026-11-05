@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 // tenancyMonitorFixture is the monitor fixture with the series and its owned
 // volume belonging to one account and the catalogue author's row belonging to
 // that account or to another.
-func tenancyMonitorFixture(t *testing.T, authorIsOwners bool) (*SeriesHandler, *models.Series, *db.BookRepo, int64) {
+func tenancyMonitorFixture(t *testing.T, authorIsOwners bool) (*SeriesHandler, *models.Series, *db.BookRepo, int64, *sql.DB) {
 	t.Helper()
 	auth.SetEnforceTenancyForTests(t, true)
 	database, err := db.OpenMemory()
@@ -67,13 +68,13 @@ func tenancyMonitorFixture(t *testing.T, authorIsOwners bool) (*SeriesHandler, *
 	if err := repo.SetMonitoring(ctx, series.ID, true, models.SeriesMonitorUpcoming, 0); err != nil {
 		t.Fatal(err)
 	}
-	return h, series, books, alice.ID
+	return h, series, books, alice.ID, database
 }
 
 // TestSeriesCheckAddsForTheSeriesOwner: under tenancy the new book belongs to
 // the account whose series it is.
 func TestSeriesCheckAddsForTheSeriesOwner(t *testing.T) {
-	h, series, books, alice := tenancyMonitorFixture(t, true)
+	h, series, books, alice, _ := tenancyMonitorFixture(t, true)
 	res, err := h.CheckSeries(context.Background(), series)
 	if err != nil || res.Created != 1 {
 		t.Fatalf("res = %+v, err = %v, want one book added", res, err)
@@ -88,7 +89,7 @@ func TestSeriesCheckAddsForTheSeriesOwner(t *testing.T) {
 // another account's row, so adding there would put the book in the wrong
 // library. The check adds nothing.
 func TestSeriesCheckNeverAttachesToAnotherAccountsAuthor(t *testing.T) {
-	h, series, books, _ := tenancyMonitorFixture(t, false)
+	h, series, books, _, _ := tenancyMonitorFixture(t, false)
 	res, err := h.CheckSeries(context.Background(), series)
 	if err != nil || res.Created != 0 {
 		t.Fatalf("res = %+v, err = %v, want nothing added", res, err)

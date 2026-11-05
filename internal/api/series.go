@@ -736,6 +736,10 @@ func (h *SeriesHandler) Monitor(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.series.SetMonitoring(r.Context(), id, body.Monitored, mode, scope); err != nil {
+		if errors.Is(err, db.ErrSeriesNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "series not found"})
+			return
+		}
 		writeServerError(w, r, err)
 		return
 	}

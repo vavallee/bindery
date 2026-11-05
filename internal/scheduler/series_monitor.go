@@ -167,12 +167,12 @@ func (j *seriesMonitorJob) tick(ctx context.Context) seriesTickResult {
 	if retry > interval {
 		retry = interval
 	}
-	stamp := func(s models.Series, out SeriesCheckOutcome, next time.Duration) {
+	stamp := func(s models.Series, began time.Time, out SeriesCheckOutcome, next time.Duration) {
 		status, msg := out.Status, out.Message
 		if out.Err != nil && status == "" {
 			status, msg = models.SeriesCheckFailed, "The check failed and will be retried."
 		}
-		if err := j.store.StampCheck(ctx, s.ID, j.now(), j.now().Add(next), status, msg, out.Created); err != nil {
+		if err := j.store.StampCheck(ctx, s.ID, began, j.now().Add(next), status, msg, out.Created); err != nil {
 			slog.Warn("job: series monitoring could not record the check", "series", s.Title, "error", err)
 		}
 	}
@@ -193,6 +193,7 @@ func (j *seriesMonitorJob) tick(ctx context.Context) seriesTickResult {
 			break
 		}
 		series := due[i]
+		began := j.now()
 		cctx, cancel := context.WithTimeout(ctx, seriesCheckBudget)
 		out := j.checker.CheckSeries(cctx, &series)
 		timedOut := errors.Is(cctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
@@ -219,18 +220,23 @@ func (j *seriesMonitorJob) tick(ctx context.Context) seriesTickResult {
 			res.TimedOut++
 			streak++
 			out.Status, out.Message = models.SeriesCheckTimedOut, "The check ran out of time and will be retried."
-			stamp(series, out, interval)
+			stamp(series, began, out, interval)
 		case out.Err != nil && out.Unavailable:
 			streak++
 			out.Status, out.Message = models.SeriesCheckFailed, "The metadata provider looks unavailable. Bindery will retry soon."
 			slog.Warn("job: series monitoring failed, the provider looks unavailable", "series", series.Title, "error", out.Err)
-			stamp(series, out, retry)
+			stamp(series, began, out, retry)
 		case out.Err != nil:
 			slog.Warn("job: series monitoring failed for a series", "series", series.Title, "error", out.Err)
-			stamp(series, out, interval)
+			stamp(series, began, out, interval)
+			streak = 0
+		case out.Status == models.SeriesCheckNoLink || out.Status == models.SeriesCheckDisabled || out.Status == models.SeriesCheckAmbiguous:
+			// Nothing was asked of the provider, and a link or setting is
+			// fixed in a click, so look again soon rather than in a month.
+			stamp(series, began, out, retry)
 			streak = 0
 		default:
-			stamp(series, out, interval)
+			stamp(series, began, out, interval)
 			streak = 0
 		}
 		if streak >= discoveryFailureBreaker {

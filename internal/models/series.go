@@ -52,6 +52,8 @@ type SeriesMonitoring struct {
 	Mode        string     `json:"mode"`
 	OwnerUserID int64      `json:"-"`
 	LastCheckAt *time.Time `json:"lastCheckAt,omitempty"`
+	// LastOKAt is the start of the last check that read the whole catalogue.
+	LastOKAt    *time.Time `json:"-"`
 	NextCheckAt *time.Time `json:"nextCheckAt,omitempty"`
 	LastStatus  string     `json:"lastStatus,omitempty"`
 	LastMessage string     `json:"lastMessage,omitempty"`

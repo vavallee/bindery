@@ -20,19 +20,22 @@ func (r *SeriesRepo) hydrateSeriesExtras(ctx context.Context, series []models.Se
 	return r.hydrateMonitoring(ctx, series)
 }
 
-const monitoringCols = `series_id, mode, owner_user_id, last_check_at, next_check_at, last_status, last_message, last_created`
+const monitoringCols = `series_id, mode, owner_user_id, last_check_at, last_ok_at, next_check_at, last_status, last_message, last_created`
 
 type monitoringScanner interface{ Scan(dest ...any) error }
 
 func scanMonitoring(sc monitoringScanner) (int64, *models.SeriesMonitoring, error) {
 	var id int64
 	var m models.SeriesMonitoring
-	var last, next sql.NullString
-	if err := sc.Scan(&id, &m.Mode, &m.OwnerUserID, &last, &next, &m.LastStatus, &m.LastMessage, &m.LastCreated); err != nil {
+	var last, ok, next sql.NullString
+	if err := sc.Scan(&id, &m.Mode, &m.OwnerUserID, &last, &ok, &next, &m.LastStatus, &m.LastMessage, &m.LastCreated); err != nil {
 		return 0, nil, err
 	}
 	var err error
 	if m.LastCheckAt, err = parseFlexibleTime(last); err != nil {
+		return 0, nil, err
+	}
+	if m.LastOKAt, err = parseFlexibleTime(ok); err != nil {
 		return 0, nil, err
 	}
 	if m.NextCheckAt, err = parseFlexibleTime(next); err != nil {
@@ -104,8 +107,22 @@ func (r *SeriesRepo) SetMonitoring(ctx context.Context, seriesID int64, monitore
 	if monitored {
 		val = 1
 	}
+	var was int
+	if err := tx.QueryRowContext(ctx, "SELECT monitored FROM series WHERE id=?", seriesID).Scan(&was); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrSeriesNotFound
+		}
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, "UPDATE series SET monitored=? WHERE id=?", val, seriesID); err != nil {
 		return err
+	}
+	if monitored && was == 0 {
+		// Monitored again after a gap: the old last good check says nothing
+		// about what was released meanwhile, so start from a first check.
+		if _, err := tx.ExecContext(ctx, "UPDATE series_monitoring SET last_ok_at = NULL, next_check_at = NULL WHERE series_id = ?", seriesID); err != nil {
+			return err
+		}
 	}
 	if monitored {
 		if _, err := tx.ExecContext(ctx, `
@@ -119,6 +136,9 @@ func (r *SeriesRepo) SetMonitoring(ctx context.Context, seriesID int64, monitore
 	}
 	return tx.Commit()
 }
+
+// ErrSeriesNotFound is returned by SetMonitoring for an id with no series.
+var ErrSeriesNotFound = errors.New("series not found")
 
 const monitoringEligibleWhere = `s.monitored = 1`
 
@@ -172,15 +192,20 @@ func (r *SeriesRepo) ListMonitoringDue(ctx context.Context, now time.Time, limit
 }
 
 // StampCheck records one check: when it ran, how it went, how many books it
-// added, and when the series is next due. An upsert that leaves mode and owner
+// added, and when the series is next due. Only an ok check advances last_ok_at. An upsert that leaves mode and owner
 // alone, so a user changing the mode while a check runs loses nothing.
 func (r *SeriesRepo) StampCheck(ctx context.Context, seriesID int64, when, next time.Time, status, message string, created int) error {
+	var okAt any
+	if status == models.SeriesCheckOK {
+		okAt = when.UTC().Format(discoveryTimeLayout)
+	}
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO series_monitoring (series_id, last_check_at, next_check_at, last_status, last_message, last_created)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(series_id) DO UPDATE SET last_check_at = excluded.last_check_at, next_check_at = excluded.next_check_at,
+		INSERT INTO series_monitoring (series_id, last_check_at, last_ok_at, next_check_at, last_status, last_message, last_created)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(series_id) DO UPDATE SET last_check_at = excluded.last_check_at,
+		  last_ok_at = COALESCE(excluded.last_ok_at, series_monitoring.last_ok_at), next_check_at = excluded.next_check_at,
 		  last_status = excluded.last_status, last_message = excluded.last_message, last_created = excluded.last_created`,
-		seriesID, when.UTC().Format(discoveryTimeLayout), next.UTC().Format(discoveryTimeLayout), status, message, created)
+		seriesID, when.UTC().Format(discoveryTimeLayout), okAt, next.UTC().Format(discoveryTimeLayout), status, message, created)
 	if err != nil {
 		return fmt.Errorf("stamp series check %d: %w", seriesID, err)
 	}
