@@ -1295,10 +1295,11 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	// importer computes one destination from it, so an explicit "Books 1-4"
 	// pack has no correct import — the reported case put all 117 files of a
 	// four-book release into one book's folder. Automatic selection must not
-	// pick one. Interactive search deliberately does not build this spec, so a
-	// user who wants the pack can still see and grab it; the importer blocks
-	// that before it writes anything.
-	specs = append(specs, decision.MultiBookPackSpec{})
+	// pick one. Interactive search builds this spec only as a label, so a user
+	// who wants the pack can still see and grab it; the importer blocks that
+	// before it writes anything. The library context lets it recognise the
+	// packs named after this book or its series (#3247).
+	specs = append(specs, decision.MultiBookPackSpec{SeriesTitle: crit.SeriesTitle, AuthorTitles: crit.AuthorTitles})
 	// The author's quality profile "allowed formats" list (#1693). The UI has
 	// always presented these checkboxes as a hard allow-list, but the spec that
 	// implements them was never constructed anywhere, so nothing stopped a

@@ -396,7 +396,14 @@
     "searchFailed": "Search failed",
     "grabFailed": "Grab failed",
     "indexerLink": "indexer",
-    "grabs": "{{n}} grabs"
+    "grabs": "{{n}} grabs",
+    "pack": {
+      "label": "Multi-book pack",
+      "matched": "Matched \"{{marker}}\"",
+      "confirmTitle": "Grab a multi-book pack?",
+      "confirmBody": "This release looks like several books (matched \"{{marker}}\"), and a download is linked to this one book. Bindery will not import a pack automatically: after the download finishes you will need manual import to place each book's files.",
+      "confirm": "Grab pack"
+    }
   },
   "login": {
     "title": "Sign in",

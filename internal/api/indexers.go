@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -845,6 +846,13 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	// Already-imported spec.
 	specs = append(specs, decision.AlreadyImportedSpec{})
 
+	// Multi-book pack label (#3247). The scheduler refuses these; here the
+	// release stays grabbable, carries the matched words in "pack" and sorts
+	// below the releases that are not packs. The importer still blocks a
+	// grabbed pack, which the UI says before the grab.
+	packSpec := decision.MultiBookPackSpec{SeriesTitle: crit.SeriesTitle, AuthorTitles: crit.AuthorTitles}
+	specs = append(specs, packSpec)
+
 	// Allowed-formats spec (#1693). Annotates only — see WithQualityProfiles.
 	// The media type decides which of the profile's two lists judges a release
 	// (#2733). For a dual-format book this is "both", which the spec ignores in
@@ -874,6 +882,7 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 			SearchResult: res,
 			Approved:     d.Approved,
 			Rejection:    d.Rejection,
+			Pack:         packSpec.Marker(releases[i], *book),
 		}
 		if !d.Approved && dbg != nil {
 			dbg.Filters = append(dbg.Filters, indexer.FilterDebug{
@@ -884,6 +893,8 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+
+	sort.SliceStable(out, func(a, b int) bool { return out[a].Pack == "" && out[b].Pack != "" })
 
 	// Filtered releases are recorded first so the main results are the newest
 	// entries and the last the registry's cap would evict. They go out
@@ -932,6 +943,10 @@ type searchDecision struct {
 	newznab.SearchResult
 	Approved  bool   `json:"approved"`
 	Rejection string `json:"rejection,omitempty"`
+	// Pack is the part of the release name that makes it a pack of several
+	// books for the wanted one (#3247), or empty. A pack is not approved, but
+	// it can still be grabbed like any other result.
+	Pack string `json:"pack,omitempty"`
 }
 
 // maxFilteredReleases bounds the "filtered" array of one interactive search,

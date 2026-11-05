@@ -165,3 +165,157 @@ func MultiBookPackMarker(title string) string {
 	}
 	return seriesPackMarker(title)
 }
+
+// PackContext is what the library knows about the wanted book, for the pack
+// shapes that can only be recognised against it (#3247). Every field may be
+// empty, in which case the shapes that need it simply never match.
+type PackContext struct {
+	// Title is the wanted book's title as stored.
+	Title string
+	// SeriesTitle is the title of the wanted book's primary series.
+	SeriesTitle string
+	// AuthorTitles are the titles of the author's other books in the library.
+	AuthorTitles []string
+}
+
+// MultiBookPackMarkerFor is MultiBookPackMarker plus the pack shapes that are
+// only a pack because of the book being searched for (#3247):
+//
+//   - The wanted book's core title, or its series title, followed directly by
+//     a compact range: "Dominion of Blades 1-2" for "Dominion of Blades: A
+//     LitRPG Adventure (Volume 1)". A bare range stays unmatched (see above);
+//     this one is anchored on the book's own name, so a year span or an
+//     edition year cannot produce it. The core title is the main title with
+//     its subtitle and trailing bracketed qualifiers dropped, as
+//     SplitSubtitle gives it. Both numbers are one or two digits, rising,
+//     from 1, and written without spaces around the dash, so "Title 1 -
+//     Subtitle" and "Title 2019-2020" are left alone. After the core title
+//     the numbers must not be zero padded: audiobook releases name a single
+//     book "Title 01-49" for its tracks. After a series title that differs
+//     from the core title, zero padding is accepted ("[Heart of Texas
+//     01-03]"), because a series name is not what one book's tracks are
+//     labelled with.
+//   - A list separated by semicolons in which at least two items are titles
+//     of the author's books, the wanted one included: "Three Classic
+//     Thrillers (The Firm; The Appeal; The Chamber)". The items are checked
+//     against the library rather than counted, because a semicolon also
+//     separates author names ("Nora Roberts; J. D. Robb").
+func MultiBookPackMarkerFor(title string, want PackContext) string {
+	if m := MultiBookPackMarker(title); m != "" {
+		return m
+	}
+	if m := namedRangeMarker(title, want); m != "" {
+		return m
+	}
+	return titleListMarker(title, want)
+}
+
+// coreTitle is the wanted title the named range marker anchors on: the main
+// title without its subtitle or trailing bracketed qualifiers.
+func coreTitle(title string) string {
+	main, _ := SplitSubtitle(title)
+	return main
+}
+
+var packWordRe = regexp.MustCompile(`[\pL\pN]+`)
+
+// rangeAfterRe builds the pattern of name followed directly by a compact
+// range. name's words may be separated by any punctuation in the release, so
+// a dotted scene name matches as well as a spaced one.
+func rangeAfterRe(name string) *regexp.Regexp {
+	words := packWordRe.FindAllString(dropApostrophes(name), -1)
+	if len(words) == 0 {
+		return nil
+	}
+	for i, w := range words {
+		words[i] = regexp.QuoteMeta(w)
+	}
+	return regexp.MustCompile(`(?i)(?:^|[^\pL\pN])(` + strings.Join(words, `[^\pL\pN]*`) +
+		`[\s._]+(\d{1,2})[-–—](\d{1,2}))(?:$|[^\pL\pN])`)
+}
+
+// namedRangeMarker matches the wanted book's core title or series title
+// followed directly by a range. See MultiBookPackMarkerFor.
+func namedRangeMarker(title string, want PackContext) string {
+	core := coreTitle(want.Title)
+	series := StripBracketSuffixes(strings.TrimSpace(want.SeriesTitle))
+	for _, c := range []struct {
+		name         string
+		zeroPaddedOK bool
+	}{
+		{core, false},
+		{series, titleKey(series) != titleKey(core)},
+	} {
+		if titleKey(c.name) == "" || partWordRe.MatchString(c.name) {
+			continue
+		}
+		re := rangeAfterRe(c.name)
+		if re == nil {
+			continue
+		}
+		for _, m := range re.FindAllStringSubmatch(dropApostrophes(title), -1) {
+			if !c.zeroPaddedOK && (strings.HasPrefix(m[2], "0") || strings.HasPrefix(m[3], "0")) {
+				continue
+			}
+			lo, _ := strconv.Atoi(m[2])
+			hi, _ := strconv.Atoi(m[3])
+			if lo >= 1 && lo < hi {
+				return strings.TrimSpace(m[1])
+			}
+		}
+	}
+	return ""
+}
+
+var (
+	// listChunkSepRe splits a release name into the runs a title list can sit
+	// in: brackets and spaced dashes close one, and a colon ends a series or
+	// author lead.
+	listChunkSepRe   = regexp.MustCompile(`[()\[\]{}:]|\s[-–—]\s`)
+	leadingArticleRe = regexp.MustCompile(`^(?:the|a|an) `)
+	apostropheDrop   = strings.NewReplacer("'", "", "’", "")
+)
+
+func dropApostrophes(s string) string { return apostropheDrop.Replace(s) }
+
+// titleKey folds a title for comparing a list item with a library title:
+// lower case, apostrophes dropped, words joined by single spaces, and a
+// leading article removed so "The Chamber" equals "Chamber".
+func titleKey(s string) string {
+	k := strings.Join(packWordRe.FindAllString(strings.ToLower(dropApostrophes(s)), -1), " ")
+	return leadingArticleRe.ReplaceAllString(k, "")
+}
+
+// titleListMarker matches a semicolon separated list naming two or more of the
+// author's titles. See MultiBookPackMarkerFor.
+func titleListMarker(title string, want PackContext) string {
+	if !strings.Contains(title, ";") {
+		return ""
+	}
+	known := map[string]bool{}
+	for _, t := range append([]string{want.Title}, want.AuthorTitles...) {
+		for _, k := range []string{titleKey(t), titleKey(coreTitle(t))} {
+			if k != "" {
+				known[k] = true
+			}
+		}
+	}
+	if len(known) == 0 {
+		return ""
+	}
+	for _, chunk := range listChunkSepRe.Split(title, -1) {
+		if !strings.Contains(chunk, ";") {
+			continue
+		}
+		seen := map[string]bool{}
+		for _, item := range strings.Split(chunk, ";") {
+			if k := titleKey(item); known[k] {
+				seen[k] = true
+			}
+		}
+		if len(seen) >= 2 {
+			return strings.TrimSpace(chunk)
+		}
+	}
+	return ""
+}

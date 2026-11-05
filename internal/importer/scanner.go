@@ -1876,8 +1876,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// formatHint is the override, on the same principle as the video guard: a
 	// human driving manual import has already said what these files are.
 	if formatHint == "" && book != nil {
-		if marker := indexer.MultiBookPackMarker(dl.Title); marker != "" &&
-			indexer.MultiBookPackMarker(book.Title) == "" {
+		if marker := s.packMarker(ctx, dl.Title, book); marker != "" {
 			slog.Warn("import blocked: release is a multi-book pack linked to one book",
 				"title", dl.Title, "marker", marker, "bookID", book.ID, "book", book.Title)
 			// Record the path so the queue's manual import can place the files
