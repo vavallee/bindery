@@ -1126,7 +1126,7 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 	originalOf := func(i int) newznab.SearchResult { return orig[i] }
 
 	rules := newTrailingRules(title, bc, fullIdentity, fullIdentityElided, primaryIdentity, primaryIdentityElided, seriesIdentity)
-	subtitle := newSubtitleInfo(title)
+	subtitle := newSubtitleInfo(title).withContext(authorTokenSets, bc.seriesTitle)
 
 	authorConflict := func(r newznab.SearchResult) bool {
 		return conflictingTitleAuthor(r.Title, title, authorTokenSets) ||

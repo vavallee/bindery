@@ -47,6 +47,7 @@ import (
 const (
 	reasonMainTitleOnlyFullFound = "release carries only the main title, and another result carries the full title"
 	reasonMainTitleOnlySequel    = "release carries only the main title, but this book is a later entry or the main title is another of the author's books"
+	reasonMainTitleRunsOn        = "release carries only the main title, and goes on into a different title"
 )
 
 // subtitleInfo describes the "Main: Subtitle" shape of the wanted title.
@@ -55,6 +56,13 @@ type subtitleInfo struct {
 	ident      []string // identity words of the subtitle
 	seriesLike bool     // the subtitle only numbers the book
 	n          int      // the number it names, when seriesLike
+	// known holds the release alphabet words that may follow the main title
+	// without naming a different book: the subtitle's own words and the
+	// primary series title's (see runsIntoOtherTitle).
+	known map[string]bool
+	// authorSets are the author token sets of the search, whose words are
+	// release furniture after the main title.
+	authorSets [][]string
 }
 
 func newSubtitleInfo(title string) subtitleInfo {
@@ -66,9 +74,95 @@ func newSubtitleInfo(title string) subtitleInfo {
 	if sub == "" {
 		return subtitleInfo{}
 	}
-	si := subtitleInfo{has: true, ident: titleIdentityKeywords(sub)}
+	si := subtitleInfo{has: true, ident: titleIdentityKeywords(sub), known: map[string]bool{}}
+	for _, w := range titleIdentityWords(sub) {
+		si.known[w] = true
+	}
 	si.n, si.seriesLike = seriesLikeSubtitle(sub)
 	return si
+}
+
+// withContext adds what the search knows beyond the title: the author token
+// sets and the book's primary series title, whose words may follow the main
+// title in a release of this book.
+func (si subtitleInfo) withContext(authorSets [][]string, seriesTitle string) subtitleInfo {
+	if !si.has {
+		return si
+	}
+	si.authorSets = authorSets
+	for _, w := range titleIdentityWords(seriesTitle) {
+		si.known[w] = true
+	}
+	return si
+}
+
+// languageCodes are the three letter codes releaseLanguageTags maps to
+// ("eng", "ger"), which releases also carry on their own.
+var languageCodes = func() map[string]bool {
+	m := map[string]bool{}
+	for _, code := range releaseLanguageTags {
+		m[code] = true
+	}
+	return m
+}()
+
+// runsIntoOtherTitle reports whether a release that carries only the main
+// title goes straight on into a different title (#3615): "Halo: Oblivion: A
+// Master Chief Story" for "Halo: Fireteam Noble", "Camp Half-Blood
+// Confidential" for "Camp Half-Blood: From the World of Percy Jackson: The
+// Rite of Aphrodite". Both name the same author, so no author check can tell
+// them from the book, and the main title is all the two share.
+//
+// It reads the first significant word after the main title, and only when that
+// word continues the title: it follows a colon (the release carries its own
+// subtitle) or plain spacing, dots or underscores (the title runs on). After a
+// dash, comma or bracket the word may be a series label, an author or a
+// narrator, and nothing is read. The word names a different title when it is
+// none of: a series number (digits or a roman numeral), a word of the wanted
+// subtitle or of the primary series title, an author word, a format, language
+// or edition word, or anything else benignTrailingToken accepts. A "by" ends
+// the reading, since the credit is conflictingTitleAuthor's to judge.
+func (si subtitleInfo) runsIntoOtherTitle(raw, n string, primary ...[]string) bool {
+	toks, k, ok := locateTitleEnd(raw, n, primary...)
+	if !ok {
+		return false
+	}
+	if punctBefore(toks[k]) && !strings.Contains(toks[k].sep, ":") {
+		return false
+	}
+	for _, t := range toks[k:] {
+		if t.text == "by" {
+			return false
+		}
+		if !isAllDigits(t.text) && len(newznab.SigWords(t.text)) == 0 {
+			continue
+		}
+		// A roman numeral is a series number, which the number rules below
+		// judge ("Dune III" for "Dune: Part Two").
+		if _, roman := readableRoman(t.raw); roman {
+			return false
+		}
+		return !si.furnitureAfterMainTitle(t.text)
+	}
+	return false
+}
+
+// furnitureAfterMainTitle reports whether tok, the first significant word
+// after the main title, is compatible with the release being the wanted book.
+func (si subtitleInfo) furnitureAfterMainTitle(tok string) bool {
+	if si.known[tok] || languageCodes[tok] || readMarkers[tok] ||
+		editionWords[tok] || editionForms[tok] || editionLanguages[tok] {
+		return true
+	}
+	if benignTrailingToken(tok, nil) {
+		return true
+	}
+	for _, set := range si.authorSets {
+		if benignTrailingToken(tok, set) {
+			return true
+		}
+	}
+	return false
 }
 
 // mainTitleOnly judges a release that matched through the main title alone and
@@ -82,6 +176,10 @@ func (si subtitleInfo) mainTitleOnly(tr *trailingRules, raw, n, identity string,
 	// The release names the subtitle as well, so it is not main title only.
 	if len(si.ident) > 0 && ContainsPhrase(identity, si.ident) {
 		return ""
+	}
+	// The release puts a different title where the subtitle would be.
+	if si.runsIntoOtherTitle(raw, n, primary...) {
+		return reasonMainTitleRunsOn
 	}
 	// A subtitle that only numbers the book as the first ("Part One", "I")
 	// is dropped by releases as a matter of course.
