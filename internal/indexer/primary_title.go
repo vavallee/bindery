@@ -47,7 +47,7 @@ import (
 const (
 	reasonMainTitleOnlyFullFound = "release carries only the main title, and another result carries the full title"
 	reasonMainTitleOnlySequel    = "release carries only the main title, but this book is a later entry or the main title is another of the author's books"
-	reasonMainTitleRunsOn        = "release carries only the main title, and goes on into a different title"
+	reasonMainTitleRunsOn        = "release carries only the main title, and goes on into a different title by the same author"
 )
 
 // subtitleInfo describes the "Main: Subtitle" shape of the wanted title.
@@ -107,21 +107,29 @@ var languageCodes = func() map[string]bool {
 }()
 
 // runsIntoOtherTitle reports whether a release that carries only the main
-// title goes straight on into a different title (#3615): "Halo: Oblivion: A
-// Master Chief Story" for "Halo: Fireteam Noble", "Camp Half-Blood
-// Confidential" for "Camp Half-Blood: From the World of Percy Jackson: The
-// Rite of Aphrodite". Both name the same author, so no author check can tell
-// them from the book, and the main title is all the two share.
+// title goes on into a different title by the wanted author (#3615): "Halo:
+// Oblivion: A Master Chief Story by Troy Denning" for "Halo: Fireteam Noble",
+// "Camp Half-Blood Confidential by Rick Riordan" for "Camp Half-Blood: From the
+// World of Percy Jackson: The Rite of Aphrodite". Both credit the right author,
+// so the author checks pass them, and the main title is all the two share.
 //
-// It reads the first significant word after the main title, and only when that
-// word continues the title: it follows a colon (the release carries its own
-// subtitle) or plain spacing, dots or underscores (the title runs on). After a
-// dash, comma or bracket the word may be a series label, an author or a
-// narrator, and nothing is read. The word names a different title when it is
-// none of: a series number (digits or a roman numeral), a word of the wanted
-// subtitle or of the primary series title, an author word, a format, language
-// or edition word, or anything else benignTrailingToken accepts. A "by" ends
-// the reading, since the credit is conflictingTitleAuthor's to judge.
+// It fires only on that shape: words after the main title that are not known
+// furniture, then a credit to the wanted author, either "by <author>" or a
+// dash and the author. Unknown words alone are not enough. An allow list of
+// what may follow a title ("Audible", "Libation", "Full Cast", a narrator's
+// name, a regional subtitle) can never be complete, and a release that names
+// the book plus some unlisted word is far more often the book than another
+// one. A credit to the author closing the run is what marks the words before
+// it as a title. The known limit is the same book under a subtitle the
+// library does not hold, credited the same way ("Atomic Habits Tiny Changes
+// Remarkable Results by James Clear"): no string rule can tell that from
+// another book.
+//
+// Reading starts only when the main title is followed by a colon or plain
+// spacing, dots or underscores. After a dash, comma or bracket what follows
+// may be a series label, an author or a narrator, and nothing is read. A "by"
+// that credits someone else, or a narrator or translator, ends the reading:
+// the first is conflictingTitleAuthor's to judge.
 func (si subtitleInfo) runsIntoOtherTitle(raw, n string, primary ...[]string) bool {
 	toks, k, ok := locateTitleEnd(raw, n, primary...)
 	if !ok {
@@ -130,9 +138,17 @@ func (si subtitleInfo) runsIntoOtherTitle(raw, n string, primary ...[]string) bo
 	if punctBefore(toks[k]) && !strings.Contains(toks[k].sep, ":") {
 		return false
 	}
-	for _, t := range toks[k:] {
+	foreign := false
+	for i := k; i < len(toks); i++ {
+		t := toks[i]
 		if t.text == "by" {
-			return false
+			if i > k && creditRoleWords[toks[i-1].text] {
+				return false
+			}
+			return foreign && si.creditsWantedAuthor(toks[i+1:], false)
+		}
+		if i > k && dashBefore(t) && si.creditsWantedAuthor(toks[i:], true) {
+			return foreign
 		}
 		if !isAllDigits(t.text) && len(newznab.SigWords(t.text)) == 0 {
 			continue
@@ -140,15 +156,52 @@ func (si subtitleInfo) runsIntoOtherTitle(raw, n string, primary ...[]string) bo
 		// A roman numeral is a series number, which the number rules below
 		// judge ("Dune III" for "Dune: Part Two").
 		if _, roman := readableRoman(t.raw); roman {
-			return false
+			continue
 		}
-		return !si.furnitureAfterMainTitle(t.text)
+		if !si.furnitureAfterMainTitle(t.text) {
+			foreign = true
+		}
 	}
 	return false
 }
 
-// furnitureAfterMainTitle reports whether tok, the first significant word
-// after the main title, is compatible with the release being the wanted book.
+// dashRunes are hyphen, en dash and em dash, built from code points so the
+// source carries no dash literally.
+var dashRunes = string([]rune{'-', 0x2013, 0x2014})
+
+// dashBefore reports whether a dash separates tok from the token before it.
+// A hyphen inside a word ("Half-Blood") has no space beside it and does not
+// count.
+func dashBefore(tok relTok) bool {
+	return strings.ContainsAny(tok.sep, dashRunes) && strings.ContainsAny(tok.sep, " _.")
+}
+
+// creditsWantedAuthor reports whether toks open with a credit to the wanted
+// author: the words up to the first attributionStopToken (or, when segment is
+// set, up to the next punctuation) name one of the author token sets.
+func (si subtitleInfo) creditsWantedAuthor(toks []relTok, segment bool) bool {
+	var words []string
+	for j, t := range toks {
+		if attributionStopToken(t.text) || (segment && j > 0 && punctBefore(t)) {
+			break
+		}
+		words = append(words, t.text)
+	}
+	if len(words) == 0 {
+		return false
+	}
+	credit := strings.Join(words, " ")
+	for _, set := range si.authorSets {
+		if len(set) > 0 && authorMatchesRelease(credit, set) {
+			return true
+		}
+	}
+	return false
+}
+
+// furnitureAfterMainTitle reports whether tok, a significant word after the
+// main title, is known to be compatible with the release being the wanted
+// book.
 func (si subtitleInfo) furnitureAfterMainTitle(tok string) bool {
 	if si.known[tok] || languageCodes[tok] || readMarkers[tok] ||
 		editionWords[tok] || editionForms[tok] || editionLanguages[tok] {

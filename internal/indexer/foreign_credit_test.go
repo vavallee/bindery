@@ -6,7 +6,7 @@ import "testing"
 // this file also compiles against the code before #3615.
 const (
 	reasonForeignAuthor = "release names a different author for this title"
-	reasonRunsIntoOther = "release carries only the main title, and goes on into a different title"
+	reasonRunsIntoOther = "release carries only the main title, and goes on into a different title by the same author"
 )
 
 // TestAutoGrabRejectsOtherBooksForUnreleasedTitles pins #3615 with the release
@@ -69,6 +69,48 @@ func TestAutoGrabKeepsTheBookItself(t *testing.T) {
 		{"Death by Chocolate", "Sarah Graves", "Death by Chocolate by Sarah Graves EPUB"},
 		{"The Final Empire", "Brandon Sanderson", "The Final Empire translated by Someone Else EPUB"},
 		{"The Way of Kings", "Brandon Sanderson", "The Way of Kings, Book 1 narrated by Michael Kramer"},
+
+		// A main title followed by words no allow list holds is still the book
+		// unless a credit to the author closes the run (review of #3640).
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Audible M4B"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Libation M4B"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Chapterized M4B"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project.Hail.Mary.Repack.EPUB"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Kepub"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Fixed EPUB"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Signed EPUB"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary First Edition"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Dolby Atmos"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Full Cast"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Graphic Audio M4B"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary GraphicAudio M4B"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Dramatized Adaptation M4B"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Ray Porter M4B"},
+		{"Good Omens: The Nice and Accurate Prophecies of Agnes Nutter, Witch", "Neil Gaiman", "Good Omens Terry Pratchett Neil Gaiman EPUB"},
+		{"Good Omens: The Nice and Accurate Prophecies of Agnes Nutter, Witch", "Neil Gaiman", "Good Omens Pratchett Gaiman EPUB"},
+		{"Der Schwarm: Roman", "Frank Schätzing", "Der Schwarm von Frank Schätzing"},
+		{"Der Schwarm: Roman", "Frank Schätzing", "Der Schwarm Taschenbuch"},
+		{"L'Étranger: Roman", "Albert Camus", "L'Étranger par Albert Camus EPUB"},
+		{"Atomic Habits: An Easy & Proven Way to Build Good Habits & Break Bad Ones", "James Clear", "Atomic Habits: Tiny Changes, Remarkable Results EPUB"},
+		{"1984: A Novel", "George Orwell", "1984 Nineteen Eighty Four George Orwell"},
+		{"Halo: Fireteam Noble", "Troy Denning", "Halo Unabridged Audiobook by Troy Denning M4B"},
+	}
+	// Known limit, deliberately not asserted either way: the same book under a
+	// subtitle the library does not hold, closed by a credit to the author,
+	// "Atomic Habits Tiny Changes Remarkable Results by James Clear EPUB" for
+	// the US subtitle. It has exactly the shape of "Camp Half-Blood
+	// Confidential by Rick Riordan", and no string rule tells the two apart.
+	series := bookContext{seriesTitle: "Expeditionary Force", seriesPosition: "20"}
+	for _, release := range []string{
+		"Last Ride ExForce 20 M4B",
+		"Last Ride ExFor 20 R.C. Bray M4B",
+		"Last Ride RC Bray M4B",
+	} {
+		title := "Last Ride: Expeditionary Force, Book 20"
+		got := batchVerdicts(title, "Craig Alanson", []string{release}, series)
+		if v, ok := got[release]; !ok || v != "" {
+			t.Errorf("%q for %q: verdict %q, want kept", release, title, v)
+		}
 	}
 	for _, c := range cases {
 		got := batchVerdicts(c.title, c.author, []string{c.release}, bookContext{})
