@@ -2039,7 +2039,7 @@
       "audiobookDropFolder": "Audiobook drop folder",
       "audiobookDropFolderHint": "Optional. Where External mode hands off audiobooks, for example a folder Audiobookshelf or Storyteller watches. Leave empty to use the ebook Drop folder, or to hand off in place when that is empty too. Layout and Placement below apply to both formats.",
       "importSources": "Import source folders",
-      "importSourcesHint": "Optional. One absolute folder path per line. Import, From a folder can browse and import from these in addition to your root folders. They are read only sources: no author is filed there and Bindery never scans them as a library.",
+      "importSourcesHint": "Optional. One absolute folder path per line. Import, From a folder can browse and import from these in addition to your root folders. They are not root folders: no author is filed there and Bindery never scans them as a library. Bindery never writes new files there, but in move mode an import removes the imported files from them. Mount a folder read only to make a move fail instead of delete.",
       "dropLayout": "Layout",
       "dropLayoutFlat": "Flat (file in folder root)",
       "dropLayoutTemplated": "Templated ({Author}/{Title}…)",

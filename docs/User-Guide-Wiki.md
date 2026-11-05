@@ -51,8 +51,11 @@ an arbitrary release is unreliable. The escape hatches:
   The folder browser starts at your root folders, the download directories and
   any **import source folders** an admin lists under Settings, General, Import
   (`import.source_folders`, one absolute path per line). A source folder is a
-  read only place to import from, for example an old library: it is not a root
-  folder, no author is filed there and it is never scanned as a library. The
+  place to import from, for example an old library: it is not a root folder, no
+  author is filed there and it is never scanned as a library. Bindery never
+  writes new files into it, but with the import mode set to move, imported files
+  are removed from it, and an audiobook folder is removed whole. Mount the
+  folder read only if you want a move to fail instead of delete. The
   folder must be mounted into the container, and a path outside every listed
   folder, including through a symlink or `..`, is refused. A folder with more
   than 1000 subfolders shows a notice and lists the first 1000; type the path

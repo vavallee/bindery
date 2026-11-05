@@ -257,7 +257,7 @@ var settingDescriptors = []SettingDescriptor{
 	},
 	{
 		Key: SettingImportSourceFolders, Type: SettingTypeString, Default: "",
-		Description: "Extra folders Import, From a folder may browse and import from, one absolute path per line. Each must exist inside the container. They are read only sources: never a library root, no author is filed there and no library scan walks them.",
+		Description: "Extra folders Import, From a folder may browse and import from, one absolute path per line. Each must exist inside the container. They are never a library root, no author is filed there and no library scan walks them. Bindery writes no new files there, but import.mode=move removes imported files from them; mount a folder read only to make a move fail instead of delete. At most 32 paths.",
 		State:       SettingStateActive,
 	},
 	{

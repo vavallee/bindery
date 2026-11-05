@@ -366,6 +366,9 @@ func ParseImportSourceFolders(value string) []string {
 // existing directory, and refuses the filesystem root, which would make the
 // whole container readable by manual import.
 func validateImportSourceFolders(value string) error {
+	if n := len(ParseImportSourceFolders(value)); n > maxImportSourceFolders {
+		return fmt.Errorf("%s lists %d folders; the limit is %d", SettingImportSourceFolders, n, maxImportSourceFolders)
+	}
 	for _, line := range strings.Split(value, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -417,6 +420,57 @@ type SettingsHandler struct {
 	settings   *db.SettingsRepo
 	dailyQuota *hardcover.DailyQuota
 	onChange   SettingsChangeHook
+	// protectedDirs are Bindery's own data and database folders; an import
+	// source folder may not be, contain or resolve into one (#2168).
+	protectedDirs []string
+}
+
+// WithProtectedDirs names the folders an import source folder must not cover.
+func (h *SettingsHandler) WithProtectedDirs(dirs ...string) *SettingsHandler {
+	for _, d := range dirs {
+		if strings.TrimSpace(d) != "" {
+			h.protectedDirs = append(h.protectedDirs, d)
+		}
+	}
+	return h
+}
+
+// maxImportSourceFolders caps the import.source_folders list.
+const maxImportSourceFolders = 32
+
+// pathWithin reports whether child is parent or lies beneath it.
+func pathWithin(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// validateImportSourceTargets resolves each configured path through symlinks
+// and refuses one that lands on the filesystem root, on a protected folder, or
+// above one. The lexical check in validateImportSourceFolders cannot see a
+// link such as /imports/all pointing at /.
+func (h *SettingsHandler) validateImportSourceTargets(value string) error {
+	var protected []string
+	for _, d := range h.protectedDirs {
+		if real, err := filepath.EvalSymlinks(d); err == nil {
+			protected = append(protected, real)
+		}
+		protected = append(protected, filepath.Clean(d))
+	}
+	for _, line := range ParseImportSourceFolders(value) {
+		real, err := filepath.EvalSymlinks(line)
+		if err != nil {
+			return fmt.Errorf("%s %q: %w", SettingImportSourceFolders, line, err)
+		}
+		if real == string(filepath.Separator) {
+			return fmt.Errorf("%s %q resolves to the filesystem root", SettingImportSourceFolders, line)
+		}
+		for _, p := range protected {
+			if pathWithin(real, p) || pathWithin(p, real) {
+				return fmt.Errorf("%s %q is, contains or is inside Bindery's own data folder", SettingImportSourceFolders, line)
+			}
+		}
+	}
+	return nil
 }
 
 // SettingsChangeHook runs after a setting has been stored (PUT) or removed
@@ -805,6 +859,8 @@ const calibredbSaveProbeTimeout = 10 * time.Second
 // so cross-setting rules live here where the settings repo is in hand.
 func (h *SettingsHandler) validateSettingDependencies(ctx context.Context, key, value string) error {
 	switch key {
+	case SettingImportSourceFolders:
+		return h.validateImportSourceTargets(value)
 	case SettingMetadataPrimaryProvider:
 		if value != "hardcover" {
 			return nil

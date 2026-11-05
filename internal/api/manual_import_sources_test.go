@@ -215,3 +215,45 @@ func TestImportSources_SettingValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestImportSources_SymlinkToRootOrDataDirRefused(t *testing.T) {
+	_, repo := sourcesFixture(t, resolvedTempDir(t))
+	h := NewSettingsHandler(repo)
+	data := resolvedTempDir(t)
+	h.WithProtectedDirs(data, filepath.Join(data, "db"))
+	linkDir := resolvedTempDir(t)
+	toRoot := filepath.Join(linkDir, "toroot")
+	toData := filepath.Join(linkDir, "todata")
+	if err := os.Symlink("/", toRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(data, toData); err != nil {
+		t.Fatal(err)
+	}
+	inData := filepath.Join(data, "sub")
+	if err := os.Mkdir(inData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, v := range map[string]string{"link to root": toRoot, "link to data dir": toData, "inside data dir": inData, "parent of data dir": filepath.Dir(data)} {
+		if err := h.validateImportSourceTargets(v); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if err := h.validateImportSourceTargets(resolvedTempDir(t)); err != nil {
+		t.Errorf("unrelated folder refused: %v", err)
+	}
+}
+
+func TestImportSources_ListCap(t *testing.T) {
+	dir := resolvedTempDir(t)
+	lines := make([]string, 0, 33)
+	for i := 0; i < 33; i++ {
+		lines = append(lines, dir)
+	}
+	if err := validateSettingValue(SettingImportSourceFolders, strings.Join(lines[:32], "\n")); err != nil {
+		t.Errorf("32 paths refused: %v", err)
+	}
+	if err := validateSettingValue(SettingImportSourceFolders, strings.Join(lines, "\n")); err == nil {
+		t.Error("33 paths accepted")
+	}
+}
