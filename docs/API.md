@@ -800,6 +800,7 @@ POST   /api/v1/reorganize/apply                   move the selected files {fileI
 
 GET    /api/v1/history                            grab / import / failure timeline
 POST   /api/v1/history/{id}/blocklist             add the release to the blocklist for the event's book; 422 when the event has no release GUID
+POST   /api/v1/history/{id}/reject-import         reject a bookImported event (#3250), see below
 
 GET    /api/v1/blocklist                          list blocked releases
 DELETE /api/v1/blocklist/{id}                     remove an entry
@@ -827,6 +828,30 @@ files; `path` remains the display path and may be their shared directory. Older
 rows remain unchanged. The History API returns this data subject to its standard
 credential redaction, so integrations can retain enough context to investigate
 or blocklist a downloaded release after its queue row is trimmed.
+
+`POST /api/v1/history/{id}/reject-import` is the one action for "this import
+was wrong" (#3250). It works on a `bookImported` event and, in one database
+transaction, detaches the files that import placed (only those; other files of
+the book stay), writes a `book` scoped blocklist entry for its release, and
+returns the book to Wanted unless another file still covers its format. A
+`importRejected` History row records it. After the commit, a detached file is
+deleted from disk only when it sits inside a library root and no other book
+owns it; any other file is left where it is. The response lists what happened:
+`status`, `detached`, `deleted`, `keptOnDisk`, `alreadyGone`, `releaseKnown`,
+`blocklisted`, `alreadyBlocklisted`, `nothingTracked`, `supersededPaths` and
+`noOp`. `keptOnDisk` lists detached files left on disk (outside the library
+roots, or owned by another book) and `alreadyGone` lists detached files that
+were already missing. `supersededPaths` lists files a newer import of the book
+now holds; they are left alone and not detached. When nothing could be
+detached (every file already untracked or superseded) `noOp` is true and
+nothing is written: no blocklist entry, no History row, no status change.
+Rejecting an import that was already rejected returns `409`. `GET
+/api/v1/history` items for `bookImported` events carry `rejected: true` once
+rejected, which is what the UI uses to hide the button. An import with no
+recorded release (manual, or from before the provenance above) is not refused:
+the files are detached and the book is Wanted, `releaseKnown` is false and
+nothing is blocklisted. A user can only reject imports of their own books
+(404 otherwise); a shared book needs an admin.
 
 #### Release URLs in responses carry no credentials
 

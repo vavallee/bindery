@@ -114,9 +114,13 @@ const (
 	HistoryEventBookRenamed          = "bookRenamed"
 	HistoryEventDownloadFolderImport = "downloadFolderImported"
 	HistoryEventBookFileDeleted      = "bookFileDeleted"
-	HistoryEventDownloadStalled      = "downloadStalled"
-	HistoryEventDownloadRequeued     = "downloadRequeued"
-	HistoryEventBookRebound          = "bookRebound"
+	// HistoryEventImportRejected records a Reject import action (#3250): the
+	// imported file was detached, its source release blocklisted and the book
+	// returned to Wanted.
+	HistoryEventImportRejected   = "importRejected"
+	HistoryEventDownloadStalled  = "downloadStalled"
+	HistoryEventDownloadRequeued = "downloadRequeued"
+	HistoryEventBookRebound      = "bookRebound"
 	// HistoryEventBookFileMoved records that Fix match moved a tracked file from
 	// one book to another (#2937). BookID is the book that now holds it; Data
 	// carries "path", "sourcePath", "fromBookId", "fromTitle" and "message".

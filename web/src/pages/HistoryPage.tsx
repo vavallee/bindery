@@ -9,6 +9,7 @@ import { formatBytes } from '../util/format'
 import { SkeletonRows } from '../components/Skeleton'
 import EmptyState from '../components/EmptyState'
 import { decodeEntities } from '../util/decodeEntities'
+import RejectImportDialog from '../components/RejectImportDialog'
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
   grabbed: 'bg-blue-500/20 text-blue-700 dark:text-blue-400',
@@ -23,6 +24,7 @@ const EVENT_TYPE_COLORS: Record<string, string> = {
   // Amber rather than green: the import worked, but the file turned out not to
   // be the edition the catalogue described, which is worth a second look.
   bookLanguageCorrected: 'bg-amber-500/20 text-amber-800 dark:text-amber-400',
+  importRejected: 'bg-red-500/20 text-red-800 dark:text-red-400',
 }
 
 // humanizeEventType turns a camelCase event enum into a Title Case fallback
@@ -154,6 +156,7 @@ const KNOWN_EVENT_TYPES = [
   'bookRebound',
   'bookFileMoved',
   'bookLanguageCorrected',
+  'importRejected',
 ]
 
 export default function HistoryPage() {
@@ -163,6 +166,8 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true)
   const [typeFilter, setTypeFilter] = useState('')
   const [toast, setToast] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [rejectTarget, setRejectTarget] = useState<HistoryEvent | null>(null)
 
   const { page, pageSize, paginationProps, reset } = useServerPagination(total, 100, 'history')
 
@@ -232,6 +237,10 @@ export default function HistoryPage() {
     setTotal(prev => Math.max(0, prev - 1))
   }
 
+  // The server says whether an import was already rejected, so the button
+  // does not depend on which rows happen to be on this page.
+  const canReject = (e: HistoryEvent) => e.eventType === 'bookImported' && e.bookId != null && !e.rejected
+
   const eventTypes = Array.from(new Set([...KNOWN_EVENT_TYPES, ...events.map(e => e.eventType)])).sort()
 
   return (
@@ -240,6 +249,19 @@ export default function HistoryPage() {
         <div role="alert" className="fixed bottom-safe-6 right-safe-6 z-50 px-4 py-2.5 bg-red-600 text-white rounded-lg shadow-lg text-sm font-medium animate-fade-in">
           {toast}
         </div>
+      )}
+      {notice && (
+        <div role="status" className="mb-4 px-3 py-2 bg-emerald-100 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-900 rounded text-sm text-emerald-800 dark:text-emerald-300">
+          {notice}
+        </div>
+      )}
+      {rejectTarget && (
+        <RejectImportDialog
+          event={rejectTarget}
+          onClose={() => setRejectTarget(null)}
+          onRejected={summary => { setRejectTarget(null); setNotice(summary); load() }}
+          onAlreadyRejected={message => { setRejectTarget(null); setNotice(message); load() }}
+        />
       )}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h2 className="text-2xl font-bold">{t('history.title')}</h2>
@@ -339,6 +361,15 @@ export default function HistoryPage() {
                               {t('history.blocklist')}
                             </button>
                           )}
+                          {canReject(event) && (
+                            <button
+                              onClick={() => setRejectTarget(event)}
+                              className="text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors mr-3"
+                              title={t('history.rejectImportHint')}
+                            >
+                              {t('history.rejectImport')}
+                            </button>
+                          )}
                           <button
                             onClick={() => handleDelete(event.id)}
                             className={`text-xs ${dangerLink}`}
@@ -397,6 +428,14 @@ export default function HistoryPage() {
                         className="touch-target text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors py-1"
                       >
                         {t('history.blocklist')}
+                      </button>
+                    )}
+                    {canReject(event) && (
+                      <button
+                        onClick={() => setRejectTarget(event)}
+                        className="touch-target text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors py-1"
+                      >
+                        {t('history.rejectImport')}
                       </button>
                     )}
                     <button
