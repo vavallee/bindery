@@ -230,9 +230,11 @@ func (h *PendingHandler) Grab(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Remove from pending on successful grab. A surviving entry can be
-	// re-approved and re-grabbed by the scheduler — duplicate downloads with
-	// no visible cause — so a failed delete is worth a warning.
-	if err := h.pending.DeleteByGUID(r.Context(), pr.GUID); err != nil {
+	// re-approved and re-grabbed by the scheduler, which makes duplicate
+	// downloads with no visible cause, so a failed delete is worth a warning.
+	// Only this row goes: another book holding the same release keeps its own entry
+	// (#3564), which may be another user's.
+	if err := h.pending.DeleteByID(r.Context(), pr.ID); err != nil {
 		slog.Warn("failed to remove pending release after grab", "guid", pr.GUID, "book_id", pr.BookID, "error", err)
 	}
 
