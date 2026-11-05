@@ -105,6 +105,23 @@ Some catalogs list a novel's own split edition beside it, such as "The Way of Ki
 
 The format dropdown beside **add all** sets the media type of every book the fill creates. Pick **Ebook** and the created books are ebook only, even when Hardcover lists an audiobook edition of the same work, so only one search is queued per book. Pick **Audiobook** for audio only. Pick **Both** if you want Bindery to look for both formats. Books that are already in the series keep whatever media type they were added with, so change those on the book itself.
 
+## Monitoring a series
+
+The **Shortlisted** switch on a series card is the series' Monitored flag. Until series checking is turned on it only marks the series. In `Settings -> General -> Series checking`, pick an interval (daily, weekly or monthly) and Bindery checks each monitored series that often against its Hardcover link and adds new books as wanted and monitored, the way **add all** would. It ships off: before this existed the switch did nothing, so every series you had already switched on starts adding books the moment you pick an interval.
+
+Beside the switch, **What to add** chooses the books a check adds:
+
+- **Upcoming only** (the default) adds a book only when Hardcover gives it a release date that is still ahead, or on or after the day of the previous successful check. Back catalogue gaps are left to **add all**, and a book with no release date is left alone.
+- **All missing books** adds everything the catalogue has that you do not.
+
+The first check of a series has no earlier check to compare with, so it adds only books with a future release date and backfills nothing. Books released while monitoring was off are not backfilled either: switching monitoring off and on again starts from a first check. Use **add all** for the back catalogue. A check that could not add every book it meant to is reported as partial on the card, does not count as a successful check, and is retried in a few hours, so a book it missed is picked up next time.
+
+Box sets and split edition parts are never added, the same as in a fill. A check also leaves a catalogue row alone when it cannot tell it from a book you have: it has no identifier of its own, or it sits at a position the series already holds, as a reprint or anniversary edition would. Those stay in the series diff for you to add by hand.
+
+A book added with a future release date is listed as **Upcoming** on the Wanted page (use the Upcoming filter to show only those, or hide them). The scheduled wanted search leaves it alone until that date, so it does not fail the same search every cycle. Each check reads the date again, so a date that moves is followed, and once the date arrives the book is searched like any other wanted book. Searching from the book's page works at any time. The card shows when the series was last checked and how many books it added, or why it could not be checked: no Hardcover link, enhanced Hardcover support off, or a provider failure, which is retried in a few hours.
+
+With multi-user tenancy on, a check adds books for the account that owns the series, and a series that holds books from more than one account is skipped.
+
 ## Merging Series
 
 One series can end up as several rows, when a provider names it in more than one way or a provider fix renames it. **Merge…** on the series you want to keep opens a dialog to pick the others and fold them into it:

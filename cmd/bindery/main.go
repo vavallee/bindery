@@ -782,6 +782,7 @@ func main() {
 		WithFinder(importScanner).
 		WithEditionHydration(editionRepo).
 		WithMetadataProfiles(metadataProfileRepo).
+		WithSeriesCheckMediaType(func(ctx context.Context) string { return authorHandler.ResolveDefaultMediaType(ctx) }).
 		WithLifetimeCtx(appCtx)
 	importListHandler := api.NewImportListHandler(importListRepo, settingsRepo, hcSyncer, userRepo).WithDailyQuota(dailyQuota)
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
@@ -807,6 +808,11 @@ func main() {
 	// Scheduled release discovery (#2236): an hourly tick checks a share of the
 	// monitored authors, stopped while Refresh all or refresh selected runs.
 	sched.WithAuthorDiscoverer(newAuthorDiscoverer(authorHandler.DiscoverAuthorBooks, func() bool {
+		return authorRefreshHandler.Running() || bulkHandler.RefreshRunning()
+	}))
+	// Scheduled series monitoring (#2523): off until series.monitoring.interval
+	// is set, then an hourly tick checks a share of the monitored series.
+	sched.WithSeriesChecker(newSeriesChecker(seriesHandler.CheckSeries, func() bool {
 		return authorRefreshHandler.Running() || bulkHandler.RefreshRunning()
 	}))
 	backupHandler := api.NewBackupHandler(database, cfg.DBPath, cfg.DataDir)

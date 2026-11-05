@@ -57,7 +57,7 @@ func (r *SeriesRepo) List(ctx context.Context) ([]models.Series, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := r.hydrateHardcoverLinks(ctx, series); err != nil {
+	if err := r.hydrateSeriesExtras(ctx, series); err != nil {
 		return nil, err
 	}
 	return series, nil
@@ -235,7 +235,7 @@ func (r *SeriesRepo) listWithBooksForUser(ctx context.Context, userID int64, ser
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := r.hydrateHardcoverLinks(ctx, series); err != nil {
+	if err := r.hydrateSeriesExtras(ctx, series); err != nil {
 		return nil, err
 	}
 	return series, nil
@@ -484,6 +484,11 @@ func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*mod
 		return nil, err
 	}
 	s.HardcoverLink = link
+	mon, err := r.GetMonitoring(ctx, s.ID)
+	if err != nil {
+		return nil, err
+	}
+	s.Monitoring = mon
 	return &s, nil
 }
 
@@ -1279,7 +1284,7 @@ func (r *SeriesRepo) ListByAuthorAndUser(ctx context.Context, authorID, userID i
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := r.hydrateHardcoverLinks(ctx, series); err != nil {
+	if err := r.hydrateSeriesExtras(ctx, series); err != nil {
 		return nil, err
 	}
 	return series, nil

@@ -289,6 +289,9 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   // default the other cadences fall back to.
   const discoveryInterval = settings['authors.discovery.interval'] || 'off'
   const discoveryIntervalIsCustom = !DISCOVERY_INTERVAL_PRESETS.includes(discoveryInterval)
+  // Series checking ships off too (#2523), for the same reason: it adds books.
+  const seriesCheckInterval = settings['series.monitoring.interval'] || 'off'
+  const seriesCheckIntervalIsCustom = !DISCOVERY_INTERVAL_PRESETS.includes(seriesCheckInterval)
 
   // Per format import routing (#1632). import.mode applies to both formats
   // unless import.audiobook.mode overrides it for audiobooks; empty means
@@ -958,6 +961,41 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               <option value="720h">{t('settings.general.discoveryMonthly')}</option>
               {discoveryIntervalIsCustom && (
                 <option value={discoveryInterval}>{discoveryInterval}</option>
+              )}
+            </select>
+          </div>
+        </div>
+      </section>
+
+      {/* Scheduled series checking (#2523). Off by default: before this the
+          Monitored toggle on a series did nothing, so turning this on makes
+          every series already toggled start adding books. */}
+      <section>
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.seriesCheck')}</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          <div>
+            <label htmlFor="series-check-interval" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+              {t('settings.general.seriesCheckIntervalLabel')}
+            </label>
+            <p className="text-xs text-fg-muted mb-2">
+              {t('settings.general.seriesCheckIntervalHint')}
+            </p>
+            <select
+              id="series-check-interval"
+              value={seriesCheckInterval}
+              onChange={async e => {
+                const next = e.target.value
+                setSettings(s => ({ ...s, 'series.monitoring.interval': next }))
+                await api.setSetting('series.monitoring.interval', next).catch(console.error)
+              }}
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
+            >
+              <option value="off">{t('settings.general.discoveryOff')}</option>
+              <option value="24h">{t('settings.general.discoveryDaily')}</option>
+              <option value="168h">{t('settings.general.discoveryWeekly')}</option>
+              <option value="720h">{t('settings.general.discoveryMonthly')}</option>
+              {seriesCheckIntervalIsCustom && (
+                <option value={seriesCheckInterval}>{seriesCheckInterval}</option>
               )}
             </select>
           </div>

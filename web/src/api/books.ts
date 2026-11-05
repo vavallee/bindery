@@ -80,6 +80,9 @@ export interface Book {
   // for it on its own (#2742). Only the Wanted list computes it; absent
   // everywhere else, which reads as false.
   authorUnmonitored?: boolean
+  // Set on the Wanted list for an Upcoming book (#2523): the scheduled search
+  // skips it until this date. Manual search is not affected.
+  searchHeldUntil?: string
   author?: Author
 }
 

@@ -49,7 +49,7 @@ var bookFieldDecisions = map[string]string{
 	"EbookFilePath": "keep: files", "AudiobookFilePath": "keep: files", "BookFiles": "keep: files",
 
 	// Transport only or joined, never persisted on the row.
-	"IsCompilation": "keep: transport", "AuthorUnmonitored": "keep: transport",
+	"IsCompilation": "keep: transport", "AuthorUnmonitored": "keep: transport", "SearchHeldUntil": "keep: transport",
 	"Author": "keep: joined", "ImportInFlight": "keep: transport", "Identifiers": "keep: joined",
 	"SeriesRefs": "keep: relinked by the caller", "ProviderISBNs": "keep: transport",
 	"CreditedAuthorForeignIDs": "keep: transport", "UnknownFields": "keep: transport", "Cleared": "keep: transport",

@@ -406,7 +406,9 @@ GET    /api/v1/series/{id}                        one series
 POST   /api/v1/series                             create a series (admin): {"title":"Saga"} makes a plain one; add a "hardcover" object (the fields of a `GET /series/hardcover/search` result: foreignId, providerId, slug, title, authorName, bookCount) to create it already linked, with title then optional (it defaults to the Hardcover title). Answers 201 with the series and its hardcoverLink; 409 {error, seriesId} when that Hardcover series is already in the library (nothing is created, and no Hardcover call is made); 400 for a foreignId that is not `hc-series:<digits>` or for oversized fields; 404 when enhanced Hardcover is off or Hardcover has no such series; 502 when Hardcover cannot be reached (nothing is created). No books are added
 POST   /api/v1/series/{id}/fill                   add the series' missing books as wanted (admin); answers {queued, skippedByProfile, skippedSplitParts}
 POST   /api/v1/series/{id}/split-parts/unmonitor  unmonitor the split edition parts of books already in the series, listed as splitEditionPartBookIds on the series (admin); answers {unmonitored}
-PATCH  /api/v1/series/{id}                        monitor / unmonitor (admin)
+PATCH  /api/v1/series/{id}                        monitor / unmonitor (admin): {"monitored":true,"mode":"upcoming"}; mode is "upcoming" (default, adds announced and newly
+                                                  released books) or "all" (adds every missing book). Read by the scheduled series check while
+                                                  `series.monitoring.interval` is set; each series carries `monitoring` {mode,lastCheckAt,nextCheckAt,lastStatus,lastMessage,lastCreated}
 POST   /api/v1/series/{id}/merge                  merge other series into this one: {"sourceIds":[..],"title":"optional rename","dryRun":true} previews (admin)
 POST   /api/v1/series/{id}/books                  add a book or update its position: {"bookId":1,"positionInSeries":"2","primarySeries":true}; positionInSeries is optional (admin)
 DELETE /api/v1/series/{id}/books/{bookId}         take a book out of the series, and keep it out on refresh (admin)
@@ -436,6 +438,8 @@ GET    /api/v1/wanted/missing                     list wanted-but-missing books.
                                                   `?limit=50&offset=0&search=&includeExcluded=` answers {"items":[..],"total":N,"limit":50,"offset":0}.
                                                   `total` counts every wanted book you can see that matches `search` and `includeExcluded`,
                                                   whatever the page. `limit` is capped at 500; `search` and `offset` apply only with `limit`
+                                                  `upcoming=only` lists only Upcoming books (held out of the scheduled search until a future
+                                                  release date, #2523), `upcoming=hide` lists the rest; each book carries `searchHeldUntil` while held
 POST   /api/v1/wanted/bulk                        bulk operations on wanted
 ```
 
@@ -1692,6 +1696,12 @@ Do not offer it as a control: nothing will happen.
 books by the scheduled discovery job. Unset means `off` as well, so the job
 runs only once a duration is stored, and the value is read on every hourly
 tick, so `restartRequired` is `false`.
+
+`series.monitoring.interval` has the same shape and bounds (default `off`). It
+sets how often each monitored series is checked against its Hardcover catalogue
+and its new books added. It ships off because the Monitored toggle did nothing
+before this job existed: storing an interval makes every series already toggled
+start adding books.
 
 ### Auth and users (admin)
 

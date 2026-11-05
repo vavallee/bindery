@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,6 +86,10 @@ func (s *stubSeriesProvider) GetSeriesCatalog(_ context.Context, foreignID strin
 	return s.catalogs[foreignID], nil
 }
 
+// seriesFixtureDBs maps a fixture book repo to its database, for tests that
+// need to break a table.
+var seriesFixtureDBs sync.Map
+
 func seriesFixtureWithProvider(t *testing.T, provider *stubSeriesProvider, searcher BookSearcher) (*SeriesHandler, *db.SeriesRepo, *db.AuthorRepo, *db.BookRepo) {
 	t.Helper()
 	database, err := db.OpenMemory()
@@ -95,6 +100,7 @@ func seriesFixtureWithProvider(t *testing.T, provider *stubSeriesProvider, searc
 	seriesRepo := db.NewSeriesRepo(database)
 	bookRepo := db.NewBookRepo(database)
 	authorRepo := db.NewAuthorRepo(database)
+	seriesFixtureDBs.Store(bookRepo, database)
 	if searcher == nil {
 		searcher = &mockBookSearcher{}
 	}

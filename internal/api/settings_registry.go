@@ -190,6 +190,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingSeriesMonitoringInterval, Type: SettingTypeDuration, Default: "off", Min: "24h", Max: "720h",
+		Description: "How often each monitored series is checked against its Hardcover catalogue and new books are added. Unset and \"off\" both mean no scheduled checking; store a duration to turn it on.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: "stall.timeout_minutes", Type: SettingTypeInt, Default: "120", Min: "1",
 		Description: "How long a download may sit in downloading before it is failed, blocklisted and searched for again.",
 		State:       SettingStateActive,
