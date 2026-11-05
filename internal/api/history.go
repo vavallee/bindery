@@ -187,7 +187,7 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 	}
 	guid, _ := data["guid"].(string)
 
-	// BlocklistedSpec matches a release by GUID only, so an entry keyed on
+	// BlocklistedSpec matches a release by its GUID, so an entry keyed on
 	// anything else (such as the title) could never match and would only tell
 	// the user a release is blocked when it is not (#3249). Refuse instead.
 	if guid == "" {
@@ -196,8 +196,12 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Idempotent: blocklisting the same release twice must not create a
-	// duplicate row. Create has no unique constraint to lean on.
-	blocked, err := h.blocklist.IsBlocked(r.Context(), guid)
+	// duplicate row. Create has no unique constraint to lean on. "Already"
+	// means already blocked for this event's book, the question search asks
+	// (#3563): another book's entry, possibly another user's, does not block
+	// this book, so it must neither stop this entry nor be revealed by the
+	// answer.
+	blocked, err := h.blocklist.BlocksBook(r.Context(), guid, event.BookID)
 	if err != nil {
 		writeServerError(w, r, err)
 		return
@@ -207,16 +211,20 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A person blocklisting a release from a book's history is judging it
+	// for that book, so the entry blocks it for that book only (#3563). An
+	// event whose book is gone has no book to scope to, and the repo stores
+	// it release wide, which is what every entry was before.
 	entry := &models.BlocklistEntry{
 		BookID: event.BookID,
 		GUID:   guid,
 		Title:  event.SourceTitle,
 		Reason: event.EventType,
+		Scope:  models.BlocklistScopeBook,
 	}
 	// D4b audit: this is a user-driven write (someone pressed "Blocklist" in
-	// the history UI), so tag the row with their id. The list/IsBlocked
-	// queries are global and don't read this column; it's surfaced through
-	// the API for admin views only. UserIDFromContext returns 0 for
+	// the history UI), so tag the row with their id. No query filters on
+	// this column; it's surfaced through the API for admin views only. UserIDFromContext returns 0 for
 	// unauthenticated requests, in which case fall back to the system-write
 	// path so we don't insert a fake user id.
 	if uid := auth.UserIDFromContext(r.Context()); uid != 0 {

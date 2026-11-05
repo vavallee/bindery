@@ -784,12 +784,21 @@ GET    /api/v1/reorganize/preview                 preview renaming tracked files
 POST   /api/v1/reorganize/apply                   move the selected files {fileIds:[…]} to their templated paths (admin)
 
 GET    /api/v1/history                            grab / import / failure timeline
-POST   /api/v1/history/{id}/blocklist             add the release to the blocklist; 422 when the event has no release GUID
+POST   /api/v1/history/{id}/blocklist             add the release to the blocklist for the event's book; 422 when the event has no release GUID
 
 GET    /api/v1/blocklist                          list blocked releases
 DELETE /api/v1/blocklist/{id}                     remove an entry
 DELETE /api/v1/blocklist/bulk                     bulk remove
 ```
+
+Each blocklist entry has a `scope` (#3563). `book` blocks the release for the
+entry's `bookId` only: a format, language or content rejection at import, or a
+release blocklisted from a book's History. `release` blocks it for every book:
+a release the download client failed as broken or reported stalled, a Readarr
+import, or an entry with no book. A `book` entry whose book was deleted blocks
+nothing. Automatic and interactive search both apply this rule. The History
+action answers `already blocklisted` only when an entry already blocks the
+release for that event's book.
 
 `bookImported` History rows carry their import provenance in the JSON `data`
 field. New rows have `origin: "download"` with the source release `guid`, the

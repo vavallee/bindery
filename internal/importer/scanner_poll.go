@@ -99,7 +99,7 @@ func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.Down
 				// A content failure fails again on every re-send, so the
 				// #2710 cooldown alone would re-grab it each sweep (#3024).
 				if sabnzbd.IsContentFailure(slot.FailMessage) {
-					s.blocklistRejectedRelease(ctx, dl, "downloadFailed: "+slot.FailMessage)
+					s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeRelease, "downloadFailed: "+slot.FailMessage)
 				}
 				s.notify(ctx, notifierEventDownloadFailed, map[string]interface{}{
 					"title":   dl.Title,

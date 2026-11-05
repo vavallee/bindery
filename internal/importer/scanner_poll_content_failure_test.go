@@ -109,6 +109,11 @@ func (f contentFailureFixture) assertBlocklisted(t *testing.T, ctx context.Conte
 		t.Errorf("blocklist entry = {guid %q, reason %q}, want {%q, %q}",
 			entries[0].GUID, entries[0].Reason, guid, wantReason)
 	}
+	// The client's verdict is about the release, so it blocks every book
+	// that wants it, not only the one it was grabbed for (#3563).
+	if entries[0].Scope != models.BlocklistScopeRelease {
+		t.Errorf("blocklist entry scope = %q, want %q", entries[0].Scope, models.BlocklistScopeRelease)
+	}
 	ok, _ := decision.NewBlocklistedSpec(entries).IsSatisfiedBy(decision.Release{GUID: guid}, models.Book{})
 	if ok {
 		t.Error("the next sweep's blocklist spec would still accept the release")
