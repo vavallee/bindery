@@ -298,10 +298,12 @@ func TestIsReleaseExtra(t *testing.T) {
 }
 
 // A book file the import found but did not place keeps the folder even when
-// its extension is on the extras list: .txt is also an ebook format.
+// its extension is on the extras list: .txt is also an ebook format. The file
+// here is small, so only the bookFiles list (not the size check in
+// plausibleBookFile) can keep it.
 func TestSweepUsenetJobExtras_UnplacedBookFileKeepsFolder(t *testing.T) {
 	completeDir, jobDir := usenetJob(t, map[string][]byte{
-		"book.txt": bookSized("a text edition the profile did not allow"),
+		"book.txt": []byte("a short text the import still counted as a book"),
 		"cto.nfo":  []byte("nfo"),
 	})
 	s := &Scanner{libraryDir: t.TempDir()}

@@ -61,17 +61,28 @@ func clientDownloadRootsFrom(ctx context.Context) downloadRootsFunc {
 }
 
 // usenetClientRoots asks a SABnzbd or NZBGet client where it finishes jobs:
-// with no category, and with each category Bindery sends. Every answer goes
-// through the client's PathRemap. It is only called when the sweep is about
-// to delete something, so a clean import with no extras costs no API call.
-func (s *Scanner) usenetClientRoots(client *models.DownloadClient) downloadRootsFunc {
+// with no category, with each category Bindery sends, and with the category
+// the client itself reports for this job (reportedCategory), which differs
+// from the configured ones when the job was recategorised in the client or
+// the setting changed after the grab. Every answer goes through the client's
+// PathRemap. Any lookup that fails, or a SABnzbd job whose category is not
+// known (reportedCategory empty), is an error, so the sweep refuses: the
+// folder it did not learn about may be a shared category folder. It is only
+// called when the sweep is about to delete something, so a clean import with
+// no extras costs no API call.
+func (s *Scanner) usenetClientRoots(client *models.DownloadClient, reportedCategory string) downloadRootsFunc {
 	return func(ctx context.Context) ([]string, error) {
 		if client == nil {
 			return nil, errors.New("no download client")
 		}
+		if client.Type == "sabnzbd" && strings.TrimSpace(reportedCategory) == "" {
+			// SABnzbd reports "*" for a job with no category, so an empty
+			// value means the job's category is unknown.
+			return nil, errors.New("SABnzbd reported no category for the job")
+		}
 		seen := map[string]bool{}
 		var out []string
-		for _, cat := range []string{"", client.Category, client.CategoryAudiobook} {
+		for _, cat := range []string{"", client.Category, client.CategoryAudiobook, reportedCategory} {
 			if seen[cat] {
 				continue
 			}
@@ -80,7 +91,9 @@ func (s *Scanner) usenetClientRoots(client *models.DownloadClient) downloadRoots
 			var err error
 			switch client.Type {
 			case "sabnzbd":
-				dir, _, err = downloader.SabnzbdFor(client).CompleteDir(ctx, cat)
+				// Strict: CompleteDir's quiet fallback to complete_dir is
+				// right for Diagnose and wrong here.
+				dir, err = downloader.SabnzbdFor(client).CompleteDirStrict(ctx, cat)
 			case "nzbget":
 				dir, _, err = downloader.NzbgetFor(client).GrabDestDir(ctx, cat)
 			default:
@@ -112,7 +125,9 @@ func (s *Scanner) usenetClientRoots(client *models.DownloadClient) downloadRoots
 //     folder that is or contains Bindery's download folders, a library root,
 //     a root folder, or the client's completed or category folder;
 //   - every file in the folder tree must be a regular file on the release
-//     extras list and not one of the download's book files. One other file
+//     extras list and neither one of the download's book files nor a file
+//     big enough to be a book in its own right (a .txt edition beside a
+//     single file job, which the import never walked). One other file
 //     (an unimported book, an unknown type, a symlink) and nothing is
 //     deleted; that file is logged once at INFO;
 //   - files go with os.Remove and folders with os.Remove, deepest first,
@@ -144,7 +159,7 @@ func (s *Scanner) sweepUsenetJobExtras(ctx context.Context, downloadPath string,
 		switch {
 		case d.IsDir():
 			dirs = append(dirs, path)
-		case d.Type().IsRegular() && isReleaseExtra(d.Name()) && !unplaced[filepath.Clean(path)]:
+		case d.Type().IsRegular() && isReleaseExtra(d.Name()) && !unplaced[filepath.Clean(path)] && !plausibleBookFile(path, d):
 			extras = append(extras, path)
 		default:
 			blocker = path
@@ -215,4 +230,19 @@ func (s *Scanner) jobFolderGuard(ctx context.Context, pruneRoot string) error {
 		}
 	}
 	return nil
+}
+
+// plausibleBookFile reports whether a file the sweep found could be a book:
+// a book extension and not too small to be one. bookFiles alone does not
+// cover this, because a single file job's import sees only that one file
+// while the sweep walks its whole folder.
+func plausibleBookFile(path string, d fs.DirEntry) bool {
+	if !IsBookFile(path) {
+		return false
+	}
+	info, err := d.Info()
+	if err != nil {
+		return true // cannot tell, so keep it
+	}
+	return !TooSmallToBeABook(path, info.Size())
 }

@@ -151,6 +151,41 @@ func TestCompleteDir_Errors(t *testing.T) {
 	})
 }
 
+// CompleteDirStrict errors wherever CompleteDir falls back to complete_dir,
+// because the importer deletes files on its answer (#3647).
+func TestCompleteDirStrict(t *testing.T) {
+	const miscAbs = `{"config":{"misc":{"complete_dir":"/downloads/complete"}}}`
+	t.Run("category folder resolves", func(t *testing.T) {
+		f := newFakeSAB(t, miscAbs, `{"config":{"categories":[{"name":"books","dir":"books*"}]}}`)
+		dir, err := f.client().CompleteDirStrict(context.Background(), "books")
+		if err != nil || dir != "/downloads/complete/books" {
+			t.Fatalf("CompleteDirStrict = (%q, %v)", dir, err)
+		}
+	})
+	for name, cats := range map[string]string{
+		"unknown category":       `{"status":false,"error":"keyword not found"}`,
+		"malformed reply":        `not json`,
+		"category missing reply": `{"config":{"categories":[{"name":"other","dir":"x"}]}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFakeSAB(t, miscAbs, cats)
+			if dir, err := f.client().CompleteDirStrict(context.Background(), "books"); err == nil {
+				t.Fatalf("want an error, got %q", dir)
+			}
+			// The lenient form keeps its fallback for Diagnose.
+			if dir, _, err := f.client().CompleteDir(context.Background(), "books"); err != nil || dir != "/downloads/complete" {
+				t.Fatalf("CompleteDir = (%q, %v), want the complete_dir fallback", dir, err)
+			}
+		})
+	}
+	t.Run("relative complete_dir", func(t *testing.T) {
+		f := newFakeSAB(t, `{"config":{"misc":{"complete_dir":"Downloads"}}}`, "")
+		if _, err := f.client().CompleteDirStrict(context.Background(), ""); err == nil {
+			t.Fatal("want an error for an unresolvable complete_dir")
+		}
+	})
+}
+
 // failingTransport fails every request with err, standing in for a refused
 // connection without touching the network.
 type failingTransport struct{ err error }
