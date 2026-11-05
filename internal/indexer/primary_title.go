@@ -110,10 +110,11 @@ func (si *subtitleInfo) addKnown(s string) {
 // abbreviates reports whether tok is the leading words of seq run together,
 // two or more of them, each cut to a prefix of at least two letters: "exforce"
 // and "exfor" for "expeditionary force". The abbreviation must start with the
-// first word and be at least four letters long, so a short ordinary word that
-// happens to split into word prefixes ("most", "risk") does not pass.
+// first word and be at least five letters long, so a short ordinary word that
+// happens to split into word prefixes does not pass: "risk" for "rise
+// skywalker", "most" for "morning star", "fino" for "fireteam noble".
 func abbreviates(tok string, seq []string) bool {
-	if len(tok) < 4 {
+	if len(tok) < 5 {
 		return false
 	}
 	var from func(rest string, j, parts int) bool
@@ -178,7 +179,8 @@ var languageCodes = func() map[string]bool {
 // spacing, dots or underscores. After a dash, comma or bracket what follows
 // may be a series label, an author or a narrator, and nothing is read. A "by"
 // that credits someone else, or a narrator or translator, ends the reading:
-// the first is conflictingTitleAuthor's to judge.
+// the first is conflictingTitleAuthor's to judge. So does a role word such as
+// "narrated" or "translated" before any unknown word.
 func (si subtitleInfo) runsIntoOtherTitle(raw, n string, primary ...[]string) bool {
 	toks, k, ok := locateTitleEnd(raw, n, primary...)
 	if !ok {
@@ -194,12 +196,26 @@ func (si subtitleInfo) runsIntoOtherTitle(raw, n string, primary ...[]string) bo
 			if i > k && creditRoleWords[toks[i-1].text] {
 				return false
 			}
-			return foreign && si.creditsWantedAuthor(toks[i+1:], false)
+			return foreign && si.creditsWantedAuthor(toks[i+1:], false, false)
 		}
-		if i > k && dashBefore(t) && si.creditsWantedAuthor(toks[i:], true) {
+		// A role word with nothing unknown before it ("Translated Hazel E.
+		// Barnes", "narrated Ray Porter") is followed by a contributor's name,
+		// not a title.
+		if creditRoleWords[t.text] && !foreign {
+			return false
+		}
+		if i > k && dashBefore(t) && si.creditsWantedAuthor(toks[i:], true, bareHyphen(t)) {
 			return foreign
 		}
 		if !isAllDigits(t.text) && len(newznab.SigWords(t.text)) == 0 {
+			continue
+		}
+		// A word inside a hyphenated compound ("Sci-Fi", "WEB-DL",
+		// "Holdbrook-Smith") is one unit with its neighbour, not a title word
+		// of its own, unless it is the last word before a credit
+		// ("Storm-Troy.Denning").
+		if (i > k && bareHyphen(t)) ||
+			(i+1 < len(toks) && bareHyphen(toks[i+1]) && !si.creditsWantedAuthor(toks[i+1:], true, true)) {
 			continue
 		}
 		// A roman numeral is a series number, which the number rules below
@@ -226,6 +242,10 @@ var runOnFurniture = map[string]bool{
 	"full": true, "cast": true, "classics": true, "critical": true, "norton": true,
 	"penguin": true, "oxford": true, "worlds": true, "folio": true, "text": true,
 	"ungekuerzte": true, "ungekurzte": true, "ungekrzte": true, "lesung": true,
+	"gekuerzte": true, "gekurzte": true, "gekrzte": true, "recorded": true,
+	"books": true, "brilliance": true, "macmillan": true, "junior": true,
+	"novel": true, "science": true, "fiction": true, "hugo": true, "nominee": true,
+	"hoerspiel": true, "horspiel": true, "routledge": true,
 	"thirty": true, "forty": true, "fifty": true, "sixty": true, "seventy": true,
 	"eighty": true, "ninety": true, "hundred": true, "thousand": true,
 }
@@ -236,20 +256,30 @@ var dashRunes = string([]rune{'-', 0x2013, 0x2014})
 
 // dashBefore reports whether a dash separates tok from the token before it. A
 // bare hyphen counts too, because dotted release names join their fields with
-// one ("Halo.Silent.Storm-Troy.Denning"). A hyphen inside a word ("Half-Blood")
-// is harmless here: the caller acts on a dash only when the wanted author's
-// name follows it.
+// one ("Halo.Silent.Storm-Troy.Denning"); the caller then needs the wanted
+// author's name to start right at tok (see bareHyphen).
 func dashBefore(tok relTok) bool {
 	return strings.ContainsAny(tok.sep, dashRunes)
 }
 
+// bareHyphen reports whether tok is joined to the token before it by a dash
+// with no space, dot or underscore beside it: the hyphen of "Sci-Fi" or
+// "Jean-Paul", and the field joint of "Storm-Troy.Denning". Such a hyphen only
+// opens a credit when the author's name starts right after it.
+func bareHyphen(tok relTok) bool {
+	return strings.ContainsAny(tok.sep, dashRunes) && !strings.ContainsAny(tok.sep, " \t_.")
+}
+
 // creditsWantedAuthor reports whether toks open with a credit to the wanted
 // author: the words up to the first attributionStopToken (or, when segment is
-// set, up to the next punctuation) name one of the author token sets.
-func (si subtitleInfo) creditsWantedAuthor(toks []relTok, segment bool) bool {
+// set, up to the next punctuation other than a hyphen inside a name, so
+// "Jean-Paul Sartre" is read whole) name one of the author token sets. With
+// mustStart the first word must itself be one of the author's words, so a
+// credit cannot begin inside "Sci-Fi Andy Weir" and pick the name up later.
+func (si subtitleInfo) creditsWantedAuthor(toks []relTok, segment, mustStart bool) bool {
 	var words []string
 	for j, t := range toks {
-		if attributionStopToken(t.text) || (segment && j > 0 && punctBefore(t)) {
+		if attributionStopToken(t.text) || (segment && j > 0 && punctBefore(t) && !bareHyphen(t)) {
 			break
 		}
 		words = append(words, t.text)
@@ -259,7 +289,20 @@ func (si subtitleInfo) creditsWantedAuthor(toks []relTok, segment bool) bool {
 	}
 	credit := strings.Join(words, " ")
 	for _, set := range si.authorSets {
-		if len(set) > 0 && authorMatchesRelease(credit, set) {
+		if len(set) == 0 || !authorMatchesRelease(credit, set) {
+			continue
+		}
+		if !mustStart || startsWithAuthorWord(words[0], set) {
+			return true
+		}
+	}
+	return false
+}
+
+// startsWithAuthorWord reports whether word is one of the author tokens.
+func startsWithAuthorWord(word string, set []string) bool {
+	for _, a := range set {
+		if WordBoundaryRegex(a).MatchString(word) {
 			return true
 		}
 	}

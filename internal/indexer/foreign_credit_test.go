@@ -169,3 +169,336 @@ func TestAutoGrabKeepsTheBookItself(t *testing.T) {
 		}
 	}
 }
+
+// corpusCase is one release judged against one wanted book, with the library
+// context the scheduler would supply.
+type corpusCase struct {
+	title, author, series, pos, release string
+}
+
+func corpusVerdict(c corpusCase) (string, bool) {
+	got := batchVerdicts(c.title, c.author, []string{c.release}, bookContext{seriesTitle: c.series, seriesPosition: c.pos})
+	v, ok := got[c.release]
+	return v, ok
+}
+
+// TestReviewCorpusKeeps holds every release from the four review rounds of
+// #3640 that is the wanted book and that the relevance filter keeps, so a
+// later change to the run on rule or the credit reading cannot drop one
+// silently. Releases the filter already drops for reasons outside #3615 (a
+// one word main title with no author, for example) are not listed.
+func TestReviewCorpusKeeps(t *testing.T) {
+	cases := []corpusCase{
+		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens A Brief History of Humankind EPUB"},
+		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens by Yuval Noah Harari EPUB"},
+		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens.Yuval.Noah.Harari.2015.RETAIL.EPUB"},
+		{"Atomic Habits: An Easy & Proven Way to Build Good Habits & Break Bad Ones", "James Clear", "", "", "Atomic Habits James Clear EPUB"},
+		{"Atomic Habits: An Easy & Proven Way to Build Good Habits & Break Bad Ones", "James Clear", "", "", "Atomic Habits Unabridged M4B"},
+		{"The Body: A Guide for Occupants", "Bill Bryson", "", "", "The Body Bill Bryson EPUB"},
+		{"The Body: A Guide for Occupants", "Bill Bryson", "", "", "The Body: A Guide For Occupants by Bill Bryson"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Unabridged M4B"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Retail EPUB"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary A Novel EPUB"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Read by Ray Porter M4B"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Narrated by Ray Porter M4B"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Andy Weir 2021"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Weir Andy EPUB"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Movie Tie-In Edition EPUB"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Deluxe EPUB"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Large Print"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Unabridged Audiobook"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Complete M4B"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary German EPUB"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Hörbuch"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Collectors Edition"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary US Edition"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary UK Edition"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Ebook"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Repack"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Novel EPUB"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Mobi Azw3"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary MP3 64kbps"},
+		{"Educated: A Memoir", "Tara Westover", "", "", "Educated Tara Westover EPUB"},
+		{"Outliers: The Story of Success", "Malcolm Gladwell", "", "", "Outliers Malcolm Gladwell"},
+		{"Good Omens: The Nice and Accurate Prophecies of Agnes Nutter, Witch", "Neil Gaiman", "", "", "Good Omens by Terry Pratchett and Neil Gaiman EPUB"},
+		{"Good Omens", "Neil Gaiman", "", "", "The Good Omens by Terry Pratchett & Neil Gaiman"},
+		{"The Talisman", "Peter Straub", "", "", "Talisman by Stephen King & Peter Straub"},
+		{"The Talisman", "Peter Straub", "", "", "Talisman by Stephen King and Peter Straub"},
+		{"Halo: Fireteam Noble", "Troy Denning", "Halo", "", "Halo Book 33 Troy Denning M4B"},
+		{"Halo: Fireteam Noble", "Troy Denning", "Halo", "", "Halo 33 Troy Denning M4B"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Fireteam Noble EPUB"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Denning Troy EPUB"},
+		{"Last Ride: Expeditionary Force, Book 20", "Craig Alanson", "Expeditionary Force", "", "Last Ride ExForce 20 M4B"},
+		{"Last Ride: Expeditionary Force, Book 20", "Craig Alanson", "Expeditionary Force", "", "Last Ride ExFor 20 R.C. Bray M4B"},
+		{"Last Ride: Expeditionary Force, Book 20", "Craig Alanson", "Expeditionary Force", "", "Last Ride RC Bray M4B"},
+		{"Dune: Deluxe Edition", "Frank Herbert", "Dune", "", "Dune Frank Herbert EPUB"},
+		{"Frankenstein: Or, The Modern Prometheus", "Mary Shelley", "", "", "Frankenstein Mary Wollstonecraft Shelley EPUB"},
+		{"Fahrenheit 451: A Novel", "Ray Bradbury", "", "", "Fahrenheit 451 Ray Bradbury EPUB"},
+		{"Fahrenheit 451: A Novel", "Ray Bradbury", "", "", "Fahrenheit 451 60th Anniversary Edition"},
+		{"Der Schwarm: Roman", "Frank Schätzing", "", "", "Der Schwarm Frank Schätzing EPUB"},
+		{"Der Schwarm: Roman", "Frank Schätzing", "", "", "Der Schwarm Frank Schaetzing EPUB"},
+		{"Der Schwarm: Roman", "Frank Schätzing", "", "", "Der Schwarm Hörbuch Ungekürzt"},
+		{"Der Schwarm: Roman", "Frank Schätzing", "", "", "Der Schwarm Ungekuerzt MP3"},
+		{"L'Étranger: Roman", "Albert Camus", "", "", "L'Étranger Albert Camus EPUB"},
+		{"Cien años de soledad: Novela", "Gabriel García Márquez", "", "", "Cien años de soledad Gabriel Garcia Marquez EPUB"},
+		{"Last Ride", "Craig Alanson", "", "", "The Last Ride by Craig Alanson"},
+		{"Smoke and Mirrors", "J. A. Jance", "", "", "Smoke & Mirrors by JA Jance"},
+		{"Smoke and Mirrors", "J. A. Jance", "", "", "Smoke & Mirrors by Judith A. Jance"},
+		{"Smoke and Mirrors", "J. A. Jance", "", "", "Smoke & Mirrors by Jance, J.A."},
+		{"Smoke and Mirrors", "J. A. Jance", "", "", "Smoke & Mirrors Ali Reynolds 20 by J.A. Jance"},
+		{"Smoke and Mirrors", "J. A. Jance", "", "", "Smoke & Mirrors (Ali Reynolds 20) by J A Jance"},
+		{"Wizard of Earthsea", "Ursula K. Le Guin", "", "", "A Wizard of Earthsea by Ursula K. Le Guin"},
+		{"Wizard of Earthsea", "Ursula K. Le Guin", "", "", "A Wizard of Earthsea by Ursula Le Guin"},
+		{"Wizard of Earthsea", "Ursula K. Le Guin", "", "", "A Wizard of Earthsea by Le Guin"},
+		{"Hobbit", "J.R.R. Tolkien", "", "", "The Hobbit by J.R.R. Tolkien"},
+		{"Hobbit", "J.R.R. Tolkien", "", "", "The Hobbit by JRR Tolkien"},
+		{"Hobbit", "J.R.R. Tolkien", "", "", "The Hobbit by J. R. R. Tolkien"},
+		{"Hobbit", "J.R.R. Tolkien", "", "", "The Hobbit by Tolkien"},
+		{"The Hobbit", "J.R.R. Tolkien", "", "", "Tolkien, J.R.R. - The Hobbit by Andy Serkis"},
+		{"The Hobbit", "J.R.R. Tolkien", "", "", "Middle-earth 0 - The Hobbit by J.R.R. Tolkien"},
+		{"The Hobbit", "J.R.R. Tolkien", "", "", "The Hobbit (Illustrated by Alan Lee) by J.R.R. Tolkien"},
+		{"The Hobbit", "J.R.R. Tolkien", "", "", "The Hobbit Foreword by Christopher Tolkien"},
+		{"The Hobbit", "J.R.R. Tolkien", "", "", "The Hobbit Edited by Christopher Tolkien"},
+		{"Lord of the Rings", "J.R.R. Tolkien", "", "", "The Lord of the Rings by J.R.R. Tolkien"},
+		{"Martian", "Andy Weir", "", "", "The Martian by Andy Weir Read by R.C. Bray"},
+		{"Stand by Me", "Stephen King", "", "", "The Stand by Me by Stephen King"},
+		{"The Body", "Stephen King", "", "", "Stand by Me (The Body) by Stephen King"},
+		{"Death by Black Hole", "Neil deGrasse Tyson", "", "", "Death by Black Hole by Neil deGrasse Tyson"},
+		{"Death by Black Hole", "Neil deGrasse Tyson", "", "", "Death by Black Hole by Neil Degrasse Tyson"},
+		{"Death by Black Hole: And Other Cosmic Quandaries", "Neil deGrasse Tyson", "", "", "Death by Black Hole by Neil deGrasse Tyson"},
+		{"Killing Floor", "Lee Child", "", "", "Jack Reacher 01 - Killing Floor by Lee Child"},
+		{"Killing Floor", "Lee Child", "", "", "The Killing Floor by Lee Child"},
+		{"Us", "David Nicholls", "", "", "Us by David Nicholls"},
+		{"Emma", "Jane Austen", "", "", "Emma by Jane Austen"},
+		{"Emma", "Jane Austen", "", "", "The Emma by Jane Austen"},
+		{"Dune", "Frank Herbert", "", "", "The Dune by Frank Herbert"},
+		{"Dune", "Frank Herbert", "", "", "Frank Herbert Dune by Scott Brick"},
+		{"Dune", "Frank Herbert", "", "", "Herbert, Frank - Dune by Scott Brick"},
+		{"Dune", "Frank Herbert", "", "", "Dune Chronicles 1 Dune by Frank Herbert"},
+		{"Fahrenheit 451", "Ray Bradbury", "", "", "Fahrenheit 451 by Ray Bradbury"},
+		{"1984", "George Orwell", "", "", "1984 by George Orwell"},
+		{"11/22/63", "Stephen King", "", "", "11-22-63 by Stephen King"},
+		{"Pride and Prejudice", "Jane Austen", "", "", "Pride & Prejudice by Jane Austen"},
+		{"Pride and Prejudice", "Jane Austen", "", "", "Pride & Prejudice by Austen"},
+		{"Pride and Prejudice", "Jane Austen", "", "", "Pride & Prejudice by Austen Jane"},
+		{"Pride and Prejudice", "Jane Austen", "", "", "Pride & Prejudice by Jane Austen, Annotated by David Shapard"},
+		{"Pride and Prejudice", "Jane Austen", "", "", "Jane Austen Complete Works: Pride & Prejudice by Jane Austen"},
+		{"Girl with the Dragon Tattoo", "Stieg Larsson", "", "", "The Girl with the Dragon Tattoo by Stieg Larsson, Reg Keeland (Translator)"},
+		{"Verloren", "Max Mustermann", "", "", "Der Verloren von Max Mustermann"},
+		{"Hound of the Baskervilles", "Arthur Conan Doyle", "", "", "The Hound of the Baskervilles by Sir Arthur Conan Doyle"},
+		{"Hound of the Baskervilles", "Arthur Conan Doyle", "", "", "The Hound of the Baskervilles by Doyle, Arthur Conan"},
+		{"Best American Short Stories 2020", "Curtis Sittenfeld", "", "", "The Best American Short Stories 2020 by Curtis Sittenfeld, Heidi Pitlor"},
+		{"Dangerous Women", "George R.R. Martin", "", "", "The Dangerous Women by George R. R. Martin & Gardner Dozois"},
+		{"Dangerous Women", "George R.R. Martin", "", "", "The Dangerous Women by Gardner Dozois and George R.R. Martin"},
+		{"Cuckoo's Calling", "Robert Galbraith", "", "", "The Cuckoo's Calling by Robert Galbraith (J.K. Rowling)"},
+		{"Wheel of Time", "Robert Jordan", "", "", "The Wheel of Time by Robert Jordan & Brandon Sanderson"},
+		{"The Hobbit", "J.R.R. Tolkien", "", "", "Hobbit by J.R.R. Tolkien"},
+		{"The Hobbit", "J.R.R. Tolkien", "", "", "Hobbit by Tolkien"},
+		{"The Martian", "Andy Weir", "", "", "Martian by Andy Weir"},
+		{"The Lord of the Rings", "J.R.R. Tolkien", "", "", "Lord of the Rings by Tolkien JRR"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project.Hail.Mary.2021.KEPUB-GRP"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary [Audible] M4B"},
+		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens Harari Yuval Noah AZW3"},
+		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens Yuval Noah Harari Graphic History Vol 1"},
+		{"Thinking in Systems: A Primer", "Donella Meadows", "", "", "Thinking in Systems Donella H Meadows"},
+		{"Thinking in Systems: A Primer", "Donella H. Meadows", "", "", "Thinking in Systems Meadows Donella"},
+		{"Born a Crime: Stories from a South African Childhood", "Trevor Noah", "", "", "Born a Crime Trevor Noah Audible"},
+		{"Born a Crime: Stories from a South African Childhood", "Trevor Noah", "", "", "Born.a.Crime.Trevor.Noah.Retail.Audible.M4B"},
+		{"Halo: The Fall of Reach", "Eric Nylund", "", "", "Halo First by Eric Nylund"},
+		{"Dune: Deluxe Edition", "Frank Herbert", "", "", "Dune The Graphic Novel by Frank Herbert"},
+		{"Mistborn: The Final Empire", "Brandon Sanderson", "", "", "Mistborn Graphic Novel by Brandon Sanderson"},
+		{"Catch: A Novel", "Joseph Heller", "", "", "Catch Twenty Two by Joseph Heller"},
+		{"Catch: A Novel", "Joseph Heller", "", "", "Catch Twenty-Two - Joseph Heller"},
+		{"Jack Reacher: Killing Floor", "Lee Child", "", "", "Jack Reacher Sixty One by Lee Child"},
+		{"Jack Reacher: Killing Floor", "Lee Child", "", "", "Jack Reacher Book Twenty One by Lee Child"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Thirty by Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo FireNoble by Troy Denning"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary narrated Ray Porter - Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Recorded Books - Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Brilliance Audio - Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Macmillan Audio by Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Ungekürzt - Andy Weir"},
+		{"Der Schwarm: Roman", "Frank Schätzing", "", "", "Der Schwarm Ungekürzt by Frank Schätzing"},
+		{"Der Schwarm: Roman", "Frank Schätzing", "", "", "Der Schwarm Gekürzte Lesung - Frank Schätzing"},
+		{"Der Schwarm: Roman", "Frank Schätzing", "", "", "Der Schwarm Hörspiel - Frank Schätzing"},
+		{"Last Ride: Expeditionary Force, Book 20", "Craig Alanson", "Expeditionary Force", "20", "Last Ride Ex Force 20 by Craig Alanson"},
+		{"Last Ride: Expeditionary Force, Book 20", "Craig Alanson", "Expeditionary Force", "20", "Last Ride ExForce 20 by Craig Alanson"},
+		{"Last Ride: Expeditionary Force, Book 20", "Craig Alanson", "", "", "Last Ride ExForce 20 by Craig Alanson"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project.Hail.Mary.Retail-GROUP"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project.Hail.Mary.Retail.EPUB-BitBook"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project.Hail.Mary-Andy.Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project.Hail.Mary.2021-Andy.Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project.Hail.Mary.Unabridged-Andy.Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Re-Read - Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Re-Read-Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary EN-Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Andy-Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Read-by-Ray-Porter-Andy-Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project-Hail-Mary-Andy-Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project.Hail.Mary.WEB-DL-Andy.Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project.Hail.Mary.Movie-Tie-In-Andy.Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project.Hail.Mary.Sci-Fi-Andy.Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Sci-Fi Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project.Hail.Mary.Science.Fiction-Andy.Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project.Hail.Mary.Hugo.Nominee-Andy.Weir"},
+		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being and Nothingness Jean-Paul Sartre EPUB"},
+		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being.and.Nothingness-Jean-Paul.Sartre"},
+		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being and Nothingness - Jean-Paul Sartre"},
+		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being and Nothingness Hazel Barnes Jean-Paul Sartre"},
+		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being and Nothingness Routledge Classics - Jean-Paul Sartre"},
+		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being and Nothingness Sartre Jean-Paul"},
+		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being and Nothingness Translated Hazel E. Barnes-Jean-Paul Sartre"},
+		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being and Nothingness Nausea - Sartre"},
+		{"We Were Eight Years in Power: An American Tragedy", "Ta-Nehisi Coates", "", "", "We Were Eight Years in Power Ta-Nehisi Coates"},
+		{"We Were Eight Years in Power: An American Tragedy", "Ta-Nehisi Coates", "", "", "We.Were.Eight.Years.in.Power-Ta-Nehisi.Coates"},
+		{"We Were Eight Years in Power: An American Tragedy", "Ta-Nehisi Coates", "", "", "We Were Eight Years in Power Coates Ta-Nehisi"},
+		{"We Were Eight Years in Power: An American Tragedy", "Ta-Nehisi Coates", "", "", "We Were Eight Years in Power Unabridged-Ta-Nehisi Coates"},
+		{"Some Book: A Novel", "Mary-Jo Smith", "", "", "Some Book Smith Mary-Jo"},
+		{"Some Book: A Novel", "Mary-Jo Smith", "", "", "Some Book Mary-Jo Smith EPUB"},
+		{"Some Book: A Novel", "Mary-Jo Smith", "", "", "Some.Book-Mary-Jo.Smith"},
+		{"Educated: A Memoir", "Tara Westover", "", "", "Educated Kobna Holdbrook-Smith Tara Westover"},
+		{"Educated: A Memoir", "Tara Westover", "", "", "Educated.Unabridged-Tara.Westover"},
+		{"Educated: A Memoir", "Tara Westover", "", "", "Educated Westover-Tara"},
+		{"Harry Potter: Half-Blood Prince", "J.K. Rowling", "", "", "Harry Potter Half-Blood Prince - J.K. Rowling"},
+		{"Harry Potter: Half-Blood Prince", "J.K. Rowling", "", "", "Harry.Potter.Half-Blood.Prince-J.K.Rowling"},
+		{"Harry Potter: Half-Blood Prince", "J.K. Rowling", "", "", "Harry.Potter.Half.Blood.Prince-JK.Rowling"},
+		{"Harry Potter: Half-Blood Prince", "J.K. Rowling", "", "", "Harry Potter-J.K. Rowling"},
+		{"Harry Potter: Half-Blood Prince", "J.K. Rowling", "", "", "Harry.Potter.Box-Set-J.K.Rowling"},
+		{"Spider-Man: Far From Home", "Steve Behling", "", "", "Spider-Man-Steve Behling"},
+		{"Spider-Man: Far From Home", "Steve Behling", "", "", "Spider-Man.Far.From.Home-Steve.Behling"},
+		{"Spider-Man: Far From Home", "Steve Behling", "", "", "Spider-Man Junior Novel - Steve Behling"},
+		{"Spider-Man: Far From Home", "Steve Behling", "", "", "Spider-Man.Junior.Novel-Steve.Behling"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo.Fireteam.Noble-Troy.Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo-Troy.Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo.Retail-Troy.Denning"},
+		{"Last Ride: Expeditionary Force, Book 20", "Craig Alanson", "Expeditionary Force", "20", "Last.Ride.ExForce.20-Craig.Alanson"},
+		{"Last Ride: Expeditionary Force, Book 20", "Craig Alanson", "Expeditionary Force", "20", "Last Ride ExFor 20 by Craig Alanson"},
+		{"Last Ride: Expeditionary Force, Book 20", "Craig Alanson", "Expeditionary Force", "20", "Last Ride EF 20 by Craig Alanson"},
+		{"Last Ride: Expeditionary Force, Book 20", "Craig Alanson", "Expeditionary Force", "20", "Last Ride Force 20 by Craig Alanson"},
+		{"Last Ride: Expeditionary Force, Book 20", "Craig Alanson", "Expeditionary Force", "20", "Last Ride ExpForce 20 by Craig Alanson"},
+		{"Death by Black Hole: And Other Cosmic Quandaries", "Neil deGrasse Tyson", "", "", "Death by Black Hole - Neil deGrasse Tyson EPUB"},
+		{"Death by Black Hole: And Other Cosmic Quandaries", "Neil deGrasse Tyson", "", "", "Death by Black Hole Unabridged by Neil deGrasse Tyson"},
+		{"Mistborn: The Well of Ascension", "Brandon Sanderson", "Mistborn", "2", "Mistborn Book Two by Brandon Sanderson"},
+		{"Mistborn: The Well of Ascension", "Brandon Sanderson", "Mistborn", "2", "Mistborn Book 2 by Brandon Sanderson"},
+		{"Mistborn: The Final Empire", "Brandon Sanderson", "Mistborn", "1", "Mistborn Book One by Brandon Sanderson"},
+		{"Mistborn: The Well of Ascension", "Brandon Sanderson", "", "", "Mistborn Book Two by Brandon Sanderson"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary The Graphic Novel by Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Unabridged by Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Collector's Edition - Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Collectors Edition - Andy Weir"},
+		{"Berserk: Volume 2", "Kentaro Miura", "Berserk", "2", "Berserk Volume 2 by Kentaro Miura"},
+		{"Berserk: Volume 2", "Kentaro Miura", "", "", "Berserk Volume 2 by Kentaro Miura"},
+		{"Berserk: Volume 2", "Kentaro Miura", "", "", "Berserk Vol 2 by Kentaro Miura"},
+		{"Berserk: Volume 2", "Kentaro Miura", "", "", "Berserk Vol. 02 - Kentaro Miura"},
+		{"Berserk: Volume 2", "Kentaro Miura", "", "", "Berserk Deluxe Edition Volume 2 by Kentaro Miura"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo.Oblivion.Troy.Denning.M4B"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Oblivion Troy Denning M4B"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Fireteam Noble by Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "Halo", "", "Halo Book 33 by Troy Denning"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Unabridged by Andy Weir read by Ray Porter"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project.Hail.Mary.Retail-Andy.Weir"},
+		{"Good Omens: The Nice and Accurate Prophecies of Agnes Nutter, Witch", "Neil Gaiman", "", "", "Good Omens by Terry Pratchett and Neil Gaiman"},
+		{"Good Omens: The Nice and Accurate Prophecies of Agnes Nutter, Witch", "Neil Gaiman", "", "", "Good Omens Terry Pratchett & Neil Gaiman"},
+		{"Good Omens: The Nice and Accurate Prophecies of Agnes Nutter, Witch", "Terry Pratchett", "", "", "Good Omens by Neil Gaiman and Terry Pratchett"},
+		{"Der Schwarm: Roman", "Frank Schätzing", "", "", "Der Schwarm Taschenbuch von Frank Schätzing"},
+		{"Der Schwarm: Roman", "Frank Schätzing", "", "", "Der Schwarm Hörbuch by Frank Schätzing"},
+		{"Atomic Habits: An Easy & Proven Way to Build Good Habits & Break Bad Ones", "James Clear", "", "", "Atomic Habits - Tiny Changes, Remarkable Results - James Clear"},
+		{"Last Ride: Expeditionary Force, Book 20", "Craig Alanson", "Expeditionary Force", "20", "Last Ride ExForce 20 - Craig Alanson - RC Bray"},
+		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens Illustrated Edition by Yuval Noah Harari"},
+		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens A Graphic History by Yuval Noah Harari"},
+		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens Harari - Yuval Noah Harari"},
+		{"Educated: A Memoir", "Tara Westover", "", "", "Educated Memoir by Tara Westover"},
+		{"Frankenstein: Or, The Modern Prometheus", "Mary Shelley", "", "", "Frankenstein Annotated for Scientists by Mary Shelley"},
+		{"Dune: Deluxe Edition", "Frank Herbert", "Dune", "1", "Dune 60th Anniversary Edition by Frank Herbert"},
+		{"The Body: A Guide for Occupants", "Bill Bryson", "", "", "The Body Bryson Unabridged by Bill Bryson"},
+		{"Thinking in Systems: A Primer", "Donella H. Meadows", "", "", "Thinking in Systems Meadows - Donella H. Meadows"},
+	}
+	for _, c := range cases {
+		if v, ok := corpusVerdict(c); !ok || v != "" {
+			t.Errorf("%q for %q by %s: verdict %q, want kept", c.release, c.title, c.author, v)
+		}
+	}
+}
+
+// TestReviewCorpusRejects holds every release from the review rounds of #3640
+// that is another book (a same author sequel, another title before the
+// author, an abbreviation that is really a word) and must stay dropped.
+//
+// Known limits, deliberately not asserted either way. Automatic search drops
+// these although each is, or may be, the wanted book; they stay visible and
+// grabbable in interactive search:
+//   - Atomic Habits Tiny Changes Remarkable Results by James Clear EPUB  (Atomic Habits: An Easy & Proven Way to Build Good Habits & Break Bad Ones, James Clear)
+//   - The Good Omens by Terry Pratchett  (Good Omens, Neil Gaiman)
+//   - Smoke & Mirrors by Karen Ziemba M4B  (Smoke and Mirrors, J. A. Jance)
+//   - A Wizard of Earthsea by Ursula K LeGuin  (Wizard of Earthsea, Ursula K. Le Guin)
+//   - A Wizard of Earthsea by Rob Inglis  (Wizard of Earthsea, Ursula K. Le Guin)
+//   - A Wizard of Earthsea by Kobna Holdbrook-Smith  (Wizard of Earthsea, Ursula K. Le Guin)
+//   - The Lord of the Rings by Phil Dragash  (Lord of the Rings, J.R.R. Tolkien)
+//   - The Lord of the Rings Complete by Rob Inglis  (Lord of the Rings, J.R.R. Tolkien)
+//   - Pride and Prejudice by Rosamund Pike  (Pride & Prejudice, Jane Austen)
+//   - Pride & Prejudice by Rosamund Pike  (Pride and Prejudice, Jane Austen)
+//   - Pride & Prejudice by Penguin Classics  (Pride and Prejudice, Jane Austen)
+//   - Pride & Prejudice by Wordsworth Editions  (Pride and Prejudice, Jane Austen)
+//   - The Old Man and the Sea by Donald Sutherland  (Old Man and the Sea, Ernest Hemingway)
+//   - The Girl with the Dragon Tattoo by Simon Vance  (Girl with the Dragon Tattoo, Stieg Larsson)
+//   - The Hound of the Baskervilles by A. Conan Doyle  (Hound of the Baskervilles, Arthur Conan Doyle)
+//   - The Hound of the Baskervilles by Conan Doyle  (Hound of the Baskervilles, Arthur Conan Doyle)
+//   - The Best American Short Stories 2020 by Heidi Pitlor  (Best American Short Stories 2020, Curtis Sittenfeld)
+//   - The Cuckoo's Calling by J.K. Rowling  (Cuckoo's Calling, Robert Galbraith)
+//   - The Wheel of Time by Kate Reading and Michael Kramer  (Wheel of Time, Robert Jordan)
+//   - Hound of the Baskervilles by Conan Doyle  (The Hound of the Baskervilles, Arthur Conan Doyle)
+//   - Project Hail Mary Ray Porter by Andy Weir  (Project Hail Mary: A Novel, Andy Weir)
+//   - Project Hail Mary ray porter - andy weir  (Project Hail Mary: A Novel, Andy Weir)
+//   - project.hail.mary.ray.porter-andy.weir  (Project Hail Mary: A Novel, Andy Weir)
+//   - Project Hail Mary R. C. Bray Ray Porter - Andy Weir  (Project Hail Mary: A Novel, Andy Weir)
+//   - Project Hail Mary Ray Porter, Jane Doe - Andy Weir  (Project Hail Mary: A Novel, Andy Weir)
+//   - Project Hail Mary Audiobook Unabridged Ray Porter Narrator - Andy Weir  (Project Hail Mary: A Novel, Andy Weir)
+//   - Educated julia whelan - Tara Westover  (Educated: A Memoir, Tara Westover)
+//   - Educated Penguin Random House by Tara Westover  (Educated: A Memoir, Tara Westover)
+//   - Last Ride EF20 by Craig Alanson  (Last Ride: Expeditionary Force, Book 20, Craig Alanson)
+//   - Project.Hail.Mary.Ray.Porter-Andy.Weir  (Project Hail Mary: A Novel, Andy Weir)
+//   - Educated.Julia.Whelan-Tara.Westover  (Educated: A Memoir, Tara Westover)
+//   - Project Hail Mary Ray Porter - Andy Weir  (Project Hail Mary: A Novel, Andy Weir)
+//   - Good Omens Terry Pratchett - Neil Gaiman  (Good Omens: The Nice and Accurate Prophecies of Agnes Nutter, Witch, Neil Gaiman)
+//   - Atomic Habits Tiny Changes Remarkable Results - James Clear  (Atomic Habits: An Easy & Proven Way to Build Good Habits & Break Bad Ones, James Clear)
+//   - Educated Julia Whelan - Tara Westover  (Educated: A Memoir, Tara Westover)
+//   - Dune Chronicles by Frank Herbert  (Dune: Deluxe Edition, Frank Herbert)
+func TestReviewCorpusRejects(t *testing.T) {
+	cases := []corpusCase{
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Oblivion Master Chief Story - Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Oblivion A Master Chief Story - Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo: Oblivion: A Master Chief Story - Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Oblivion - Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Silent Storm by Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Shadows of Reach - Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo: Silent Storm - Troy Denning [ENG / M4B]"},
+		{"Halo: The Fall of Reach", "Eric Nylund", "", "", "Halo First Strike by Eric Nylund"},
+		{"Camp Half-Blood: From the World of Percy Jackson: The Rite of Aphrodite", "Rick Riordan", "", "", "Camp Half-Blood Confidential - Rick Riordan"},
+		{"Camp Half-Blood: From the World of Percy Jackson: The Rite of Aphrodite", "Rick Riordan", "", "", "Camp Half-Blood Confidential Demigod Files - Rick Riordan"},
+		{"Camp Half-Blood: From the World of Percy Jackson: The Rite of Aphrodite", "Rick Riordan", "", "", "Camp Half-Blood Confidential by Rick Riordan"},
+		{"Mistborn: The Final Empire", "Brandon Sanderson", "", "", "Mistborn The Well of Ascension - Brandon Sanderson"},
+		{"Red Rising: Golden Son", "Pierce Brown", "", "", "Red Rising Dark Age - Pierce Brown"},
+		{"Red Rising: Golden Son", "Pierce Brown", "", "", "Red Rising Light Bringer - Pierce Brown"},
+		{"Jack Reacher: Killing Floor", "Lee Child", "", "", "Jack Reacher Sixty One Hours by Lee Child"},
+		{"Star Wars: The Rise of Skywalker", "Rae Carson", "", "", "Star Wars Risk by Rae Carson"},
+		{"Red Rising: Morning Star", "Pierce Brown", "", "", "Red Rising Most by Pierce Brown"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Fino by Troy Denning"},
+		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being and Nothingness Nausea - Jean-Paul Sartre"},
+		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being and Nothingness Nausea by Jean-Paul Sartre"},
+		{"We Were Eight Years in Power: An American Tragedy", "Ta-Nehisi Coates", "", "", "We Were Eight Years in Power Between the World and Me - Ta-Nehisi Coates"},
+		{"Some Book: A Novel", "Mary-Jo Smith", "", "", "Some Book Other Title - Mary-Jo Smith"},
+		{"Spider-Man: Far From Home", "Steve Behling", "", "", "Spider-Man Homecoming-Steve Behling"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Silent Storm-Troy Denning"},
+		{"Mistborn: The Final Empire", "Brandon Sanderson", "Mistborn", "1", "Mistborn Book Two by Brandon Sanderson"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo: Oblivion: A Master Chief Story by Troy Denning [ENG / M4B] [VIP]"},
+		{"Camp Half-Blood: From the World of Percy Jackson: The Rite of Aphrodite", "Rick Riordan", "", "", "Camp Half-Blood Confidential by Rick Riordan [ENG / MP3] [VIP]"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Oblivion - Troy Denning M4B"},
+		{"Dune: Deluxe Edition", "Frank Herbert", "Dune", "1", "Dune Messiah by Frank Herbert"},
+		{"Harry Potter: The Illustrated Collection", "J.K. Rowling", "", "", "Harry Potter Box Set by J.K. Rowling"},
+	}
+	for _, c := range cases {
+		if v, ok := corpusVerdict(c); !ok || v == "" {
+			t.Errorf("%q for %q by %s: kept, want dropped", c.release, c.title, c.author)
+		}
+	}
+}
