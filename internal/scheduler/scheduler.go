@@ -1386,6 +1386,13 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 					Reason:      "another book's download holds this release: " + reason,
 				})
 			}
+			// Another book has imported it: this book can never have it
+			// while that import stands, so a pending row for it would sit
+			// in Pending for good. errDropPending asks pendingApproved to
+			// remove it; on a search result it is an ordinary skip.
+			if existing.Status == models.StateImported {
+				return nil, true, errDropPending
+			}
 			return nil, true, nil
 		}
 		bestExisting = existing
@@ -1394,7 +1401,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	for i, d := range dm.Evaluate(releases, book) {
 		if d.Approved {
 			c, skip, err := accept(&results[i])
-			if err != nil {
+			if err != nil && !errors.Is(err, errDropPending) {
 				outcome = stopOutcome
 				return
 			}
@@ -1682,7 +1689,8 @@ func (s *Scheduler) checkPendingReleases(ctx context.Context, book models.Book, 
 // use, whether to skip the release, or an error that stops the sweep. A skipped
 // release stays pending, untouched, for the next sweep (a pinned client that is
 // down must not cost the user a held release), and the next approved row is
-// tried. Only a release that is taken is deleted from pending.
+// tried. Only a release that is taken is deleted from pending, and one accept
+// refuses with errDropPending, which can never be taken for this book.
 func (s *Scheduler) pendingApproved(ctx context.Context, book models.Book, mediaType string, dm *decision.DecisionMaker,
 	accept func(*newznab.SearchResult) (*models.DownloadClient, bool, error)) (*newznab.SearchResult, *models.DownloadClient, error) {
 	if s.pending == nil {
@@ -1706,6 +1714,13 @@ func (s *Scheduler) pendingApproved(ctx context.Context, book models.Book, media
 			var client *models.DownloadClient
 			if accept != nil {
 				c, skip, err := accept(&res)
+				if errors.Is(err, errDropPending) {
+					if err := s.pending.DeleteByID(ctx, pendingList[i].ID); err != nil {
+						slog.Warn("failed to drop a pending release another book has imported",
+							"pending_id", pendingList[i].ID, "book_id", book.ID, "guid", res.GUID, "error", err)
+					}
+					continue
+				}
 				if err != nil {
 					return nil, nil, err
 				}

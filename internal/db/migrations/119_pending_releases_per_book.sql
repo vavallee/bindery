@@ -10,9 +10,15 @@
 -- delay ran out. Each book now keeps its own row.
 --
 -- SQLite cannot drop a column UNIQUE constraint, so the table is rebuilt.
--- Nothing references pending_releases, so foreign keys need no special care.
--- Every existing row is unique on guid alone, so it is unique on the pair
--- too.
+-- Nothing references pending_releases. Every existing row is unique on guid
+-- alone, so it is unique on the pair too.
+--
+-- Only rows whose book still exists are copied. A pending row whose book is
+-- gone (an orphan left while foreign keys were off, the kind migration 076
+-- and the #1972 gate deal with) would fail the new table's books(id) foreign
+-- key and stop Bindery from starting. Such a row belongs to no book, so no
+-- search re-evaluates it and no grab from it can import anywhere; dropping it
+-- loses nothing.
 
 CREATE TABLE pending_releases_new (
     id           INTEGER PRIMARY KEY,
@@ -37,7 +43,8 @@ INSERT INTO pending_releases_new
      custom_score, reason, first_seen, release_json, media_type)
 SELECT id, book_id, title, indexer_id, guid, protocol, size, age_minutes, quality,
        custom_score, reason, first_seen, release_json, media_type
-FROM pending_releases;
+FROM pending_releases
+WHERE book_id IN (SELECT id FROM books);
 
 DROP TABLE pending_releases;
 ALTER TABLE pending_releases_new RENAME TO pending_releases;
@@ -75,7 +82,8 @@ INSERT INTO pending_releases_old
 SELECT id, book_id, title, indexer_id, guid, protocol, size, age_minutes, quality,
        custom_score, reason, first_seen, release_json, media_type
 FROM pending_releases
-WHERE id IN (SELECT MIN(id) FROM pending_releases GROUP BY guid);
+WHERE id IN (SELECT MIN(id) FROM pending_releases
+             WHERE book_id IN (SELECT id FROM books) GROUP BY guid);
 
 DROP TABLE pending_releases;
 ALTER TABLE pending_releases_old RENAME TO pending_releases;

@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -154,5 +155,56 @@ func TestSearchAndGrabFormat_EachBookKeepsItsOwnPendingRelease(t *testing.T) {
 	}
 	if len(forBob) != 1 || forBob[0].BookID != f.book.ID {
 		t.Errorf("bob's pending list = %+v, want his own book's row", forBob)
+	}
+}
+
+// TestSearchAndGrabFormat_PendingRowHeldByAnotherBooksImportIsDropped: a
+// pending row whose release another book has since imported can never be
+// grabbed for this book, so the sweep removes it instead of leaving it in
+// Pending for good. While the other book is still downloading it, the row
+// stays: that download may fail and free the release.
+func TestSearchAndGrabFormat_PendingRowHeldByAnotherBooksImportIsDropped(t *testing.T) {
+	for _, tc := range []struct {
+		status models.DownloadState
+		kept   int
+	}{
+		{models.StateImported, 0},
+		{models.StateDownloading, 1},
+	} {
+		t.Run(string(tc.status), func(t *testing.T) {
+			f := newRegrabFixture(t)
+			ctx := context.Background()
+			other := f.secondBook(t)
+			res := f.s.searcher.(*fixedResultsSearcher).results[0]
+			f.s.searcher = &fixedResultsSearcher{}
+			pending := db.NewPendingReleaseRepo(f.database)
+			f.s.pending = pending
+			blob, _ := json.Marshal(res)
+			if err := pending.Upsert(ctx, &models.PendingRelease{
+				BookID: f.book.ID, MediaType: models.MediaTypeEbook, Title: res.Title, GUID: res.GUID,
+				Protocol: "usenet", Reason: "usenet delay not met", ReleaseJSON: string(blob),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.downloads.Create(ctx, &models.Download{
+				GUID: res.GUID, BookID: &other.ID, OwnerUserID: f.alice, Title: res.Title,
+				NZBURL: "http://old.example/old.nzb", Status: tc.status, Protocol: "usenet",
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			f.s.searchAndGrabFormat(ctx, f.book, models.MediaTypeEbook, nil)
+
+			if n := f.adds.Load(); n != 0 {
+				t.Fatalf("a release another book holds must not be grabbed; the client got %d requests", n)
+			}
+			rows, err := pending.ListByBookAndMediaType(ctx, f.book.ID, models.MediaTypeEbook)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != tc.kept {
+				t.Errorf("pending rows = %d, want %d", len(rows), tc.kept)
+			}
+		})
 	}
 }

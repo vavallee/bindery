@@ -377,7 +377,9 @@ Pending releases are kept per book, so when two books want the same release
 (the same work under two author rows, or two accounts with their own copy) each
 book lists it as its own pending entry. When another book's download already
 holds the best approved release, the scheduled search passes it over and grabs
-the next approved one instead of giving up on the book.
+the next approved one instead of giving up on the book. A book's pending entry
+for a release another book has since imported is removed on the next search,
+since it can no longer be grabbed for that book.
 
 **Quality profiles.** Settings → Quality Profiles. Each profile holds an
 ebook list and an audiobook list, numbered from the top, and top is best.

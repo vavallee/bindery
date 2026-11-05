@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -36,21 +37,7 @@ func TestMigrate119KeysPendingReleasesPerBookAndKeepsRows(t *testing.T) {
 	first := newBook("OL-M119-1")
 	second := newBook("OL-M119-2")
 
-	// The pre-119 table: guid unique on its own.
-	for _, stmt := range []string{
-		`DROP TABLE pending_releases`,
-		`CREATE TABLE pending_releases (
-		    id INTEGER PRIMARY KEY,
-		    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-		    title TEXT NOT NULL, indexer_id INTEGER, guid TEXT NOT NULL UNIQUE,
-		    protocol TEXT NOT NULL, size INTEGER, age_minutes INTEGER, quality TEXT,
-		    custom_score INTEGER NOT NULL DEFAULT 0, reason TEXT NOT NULL,
-		    first_seen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, release_json TEXT NOT NULL,
-		    media_type TEXT NOT NULL DEFAULT 'ebook')`,
-		`CREATE INDEX idx_pending_releases_book_id ON pending_releases(book_id)`,
-	} {
-		mustExec(t, database, stmt)
-	}
+	restorePre119PendingReleases(t, database)
 	if _, err := database.ExecContext(ctx, `
 		INSERT INTO pending_releases (id, book_id, title, indexer_id, guid, protocol, size, age_minutes,
 		    quality, custom_score, reason, release_json, media_type)
@@ -94,5 +81,80 @@ func TestMigrate119KeysPendingReleasesPerBookAndKeepsRows(t *testing.T) {
 	rows, err := repo.ListByBook(ctx, second.ID)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("second book's rows = %+v, %v; want its own row", rows, err)
+	}
+}
+
+// restorePre119PendingReleases puts back the pending_releases table as 118
+// left it: guid unique on its own.
+func restorePre119PendingReleases(t *testing.T, database *sql.DB) {
+	t.Helper()
+	for _, stmt := range []string{
+		`DROP TABLE pending_releases`,
+		`CREATE TABLE pending_releases (
+		    id INTEGER PRIMARY KEY,
+		    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+		    title TEXT NOT NULL, indexer_id INTEGER, guid TEXT NOT NULL UNIQUE,
+		    protocol TEXT NOT NULL, size INTEGER, age_minutes INTEGER, quality TEXT,
+		    custom_score INTEGER NOT NULL DEFAULT 0, reason TEXT NOT NULL,
+		    first_seen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, release_json TEXT NOT NULL,
+		    media_type TEXT NOT NULL DEFAULT 'ebook')`,
+		`CREATE INDEX idx_pending_releases_book_id ON pending_releases(book_id)`,
+	} {
+		mustExec(t, database, stmt)
+	}
+}
+
+// TestMigrate119SurvivesAnOrphanedPendingRow: a pending row whose book is gone
+// exists in real databases (the orphans migration 076 and the #1972 delta gate
+// deal with). Copying it into the rebuilt table, which references books, used
+// to fail the foreign key and stop Bindery from starting. The orphan is
+// dropped, since it belongs to no book any reader can reach, and every row
+// with a book is kept.
+func TestMigrate119SurvivesAnOrphanedPendingRow(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+
+	author := mkAuthor(t, NewAuthorRepo(database), ctx, "OL-M119-ORPH")
+	kept := &models.Book{
+		ForeignID: "OL-M119-ORPH-1", AuthorID: author.ID, Title: "k", SortTitle: "k",
+		Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	}
+	if err := NewBookRepo(database).Create(ctx, kept); err != nil {
+		t.Fatal(err)
+	}
+
+	restorePre119PendingReleases(t, database)
+	mustExec(t, database, `PRAGMA foreign_keys = OFF`)
+	for _, row := range []struct {
+		id     int
+		bookID int64
+		guid   string
+	}{{51, kept.ID, "g-kept"}, {52, 987654, "g-orphan"}} {
+		if _, err := database.ExecContext(ctx, `
+			INSERT INTO pending_releases (id, book_id, title, guid, protocol, size, age_minutes, reason, release_json)
+			VALUES (?, ?, 't', ?, 'usenet', 1, 1, 'delay', '{}')`, row.id, row.bookID, row.guid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustExec(t, database, `PRAGMA foreign_keys = ON`)
+
+	v119 := migrationVersionForTest(t, "119_pending_releases_per_book.sql")
+	if _, err := database.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = ?`, v119); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(database); err != nil {
+		t.Fatalf("migration 119 must apply over an orphaned pending row: %v", err)
+	}
+
+	all, err := NewPendingReleaseRepo(database).List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].ID != 51 {
+		t.Errorf("pending rows after 119 = %+v, want only the row whose book exists", all)
 	}
 }

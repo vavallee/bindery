@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -23,6 +24,13 @@ const (
 	regrabReasonTooRecent     = "failed too recently"
 	regrabReasonImportBlocked = "import blocked, not retried automatically"
 )
+
+// errDropPending is what the automatic search's accept check returns, with
+// skip set, for a release another book has imported (#3564). On a pending row
+// it means the row can be removed: that release cannot be grabbed for this
+// book while the import stands, and the row would otherwise stay in Pending
+// for good. It never stops a search.
+var errDropPending = errors.New("release imported for another book")
 
 // heldForAnotherBook reports why the existing download row for a release
 // keeps it from this book, or "" when there is no row, the row is this
