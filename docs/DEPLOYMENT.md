@@ -317,6 +317,8 @@ env:
 
 > **Don't point a library/download dir at an unmounted path.** `BINDERY_LIBRARY_DIR` / `BINDERY_DOWNLOAD_DIR` / `BINDERY_AUDIOBOOK_DIR` must resolve *inside* a mounted volume. A dir that isn't backed by a volume writes to ephemeral container storage and is lost on restart. The chart's stock defaults (`/downloads`, `/books`) are placeholders — override them to subpaths of your real mount.
 
+> **Importing from somewhere else.** To import from a folder that is neither a library root nor a download dir (an old library, an archive disk), mount it into the container and add it under Settings, General, Import source folders (`import.source_folders`). It is read only from Bindery's point of view: not a root folder, never a destination for authors and never scanned as a library. Admin only, and the path must exist inside the container.
+
 If you genuinely can't use a single mount (the download client mounts the share at a different path than Bindery), keep them separate and use [path remapping](#path-remapping-multi-container--multi-pod-setups) below — but note imports will then **`copy`**, not hardlink.
 
 ### Shared ebook + audiobook folder (Storyteller layout)

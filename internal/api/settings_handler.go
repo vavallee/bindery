@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -338,6 +339,49 @@ func validateImportModeValue(key, value string) error {
 		}
 	}
 	return fmt.Errorf("%s %q is not one of: %s", key, value, strings.Join(importModeValues, ", "))
+}
+
+// SettingImportSourceFolders is the admin configured list of extra folders the
+// manual import may browse and read from (#2168), one absolute path per line.
+// Unlike root folders these are never a destination: no author is filed there
+// and no library scan walks them.
+const SettingImportSourceFolders = "import.source_folders"
+
+// ParseImportSourceFolders splits the stored value into trimmed, non empty,
+// cleaned absolute paths. Relative entries are dropped, so a hand edited row
+// can never widen containment to a path anchored on the working directory.
+func ParseImportSourceFolders(value string) []string {
+	var out []string
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !filepath.IsAbs(line) {
+			continue
+		}
+		out = append(out, filepath.Clean(line))
+	}
+	return out
+}
+
+// validateImportSourceFolders requires every line to be an absolute path to an
+// existing directory, and refuses the filesystem root, which would make the
+// whole container readable by manual import.
+func validateImportSourceFolders(value string) error {
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !filepath.IsAbs(line) {
+			return fmt.Errorf("%s %q must be an absolute path", SettingImportSourceFolders, line)
+		}
+		if filepath.Clean(line) == string(filepath.Separator) {
+			return fmt.Errorf("%s must not be the filesystem root", SettingImportSourceFolders)
+		}
+		if err := validateDropFolderValue(SettingImportSourceFolders, line); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // validateDropFolderValue checks one drop folder path for key. Empty is
@@ -936,6 +980,8 @@ func validateSettingValue(key, value string) error {
 		if !info.IsDir() {
 			return fmt.Errorf("cwa.ingest_path %q is not a directory", value)
 		}
+	case SettingImportSourceFolders:
+		return validateImportSourceFolders(value)
 	case SettingImportDropFolder, SettingImportAudiobookDropFolder:
 		// Empty = feature off (or, for audiobooks, use import.drop_folder).
 		// Both folders get the same check so neither can be saved pointing

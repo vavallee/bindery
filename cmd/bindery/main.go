@@ -719,7 +719,8 @@ func main() {
 	// not the library (#1373). These are trusted, configured source dirs the
 	// automated importer already reads from; the stricter `libraryRoots` (no
 	// download dirs) still gates the delete handlers.
-	importRoots := api.NewLibraryRoots(rootFolderRepo, cfg.LibraryDir, cfg.AudiobookDir, cfg.DownloadDir, cfg.AudiobookDownloadDir)
+	importRoots := api.NewLibraryRoots(rootFolderRepo, cfg.LibraryDir, cfg.AudiobookDir, cfg.DownloadDir, cfg.AudiobookDownloadDir).
+		WithImportSources(settingsRepo) // admin configured read-only import sources (#2168)
 	manualImportHandler := api.NewManualImportHandler(importScanner, downloadRepo, bookRepo).
 		WithRoots(importRoots).
 		WithExcludedDirs(manualImportExcludedDirs(cfg)...).

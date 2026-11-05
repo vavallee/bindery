@@ -256,6 +256,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingImportSourceFolders, Type: SettingTypeString, Default: "",
+		Description: "Extra folders Import, From a folder may browse and import from, one absolute path per line. Each must exist inside the container. They are read only sources: never a library root, no author is filed there and no library scan walks them.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: SettingImportDropFolder, Type: SettingTypeString, Default: "",
 		Description: "Directory an external mode import hands finished downloads to. Must exist inside the container. Empty disables the handoff.",
 		State:       SettingStateActive,
