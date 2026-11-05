@@ -139,4 +139,22 @@ describe('BlocklistTab', () => {
     expect(screen.getByRole('button', { name: 'blocklist.deleteSelected:1' })).toBeEnabled()
     err.mockRestore()
   })
+
+  it('says whether each entry blocks its own book or every book (#3563)', async () => {
+    vi.mocked(api.listBlocklist).mockResolvedValue([
+      { id: 7, guid: 'g-book', title: 'Book Scoped', reason: 'format', createdAt: '2026-01-02T10:00:00Z', bookId: 3, scope: 'book' },
+      { id: 8, guid: 'g-rel', title: 'Release Scoped', reason: 'downloadFailed: FAILURE/PAR', createdAt: '2026-01-02T10:00:00Z', bookId: 3, scope: 'release' },
+      { id: 9, guid: 'g-old', title: 'Old Server', reason: 'x', createdAt: '2026-01-02T10:00:00Z' },
+    ])
+    render(<BlocklistTab />)
+    await screen.findAllByText('Book Scoped')
+    expect(screen.getByText('blocklist.colScope')).toBeInTheDocument()
+    // Desktop table and mobile cards both render the badge.
+    const bookBadges = screen.getAllByText('blocklist.scopeBook')
+    const releaseBadges = screen.getAllByText('blocklist.scopeRelease')
+    expect(bookBadges).toHaveLength(2)
+    expect(releaseBadges).toHaveLength(2)
+    expect(bookBadges[0]).toHaveAttribute('title', 'blocklist.scopeBookHint')
+    expect(releaseBadges[0]).toHaveAttribute('title', 'blocklist.scopeReleaseHint')
+  })
 })

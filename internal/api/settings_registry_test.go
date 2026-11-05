@@ -492,6 +492,7 @@ var webSettingKeys = []string{
 	"import.drop_link_mode",
 	"import.ebook.content_check",
 	"import.mode",
+	"import.source_folders",
 	"import.write_opf_sidecar",
 	"library.defaultAudiobookRootFolderId",
 	"library.defaultRootFolderId",

@@ -128,7 +128,7 @@ func (s *Scanner) parkHeldFormat(ctx context.Context, dl *models.Download, forma
 	s.updateDownloadStatus(ctx, dl.ID, models.StateImportHeld)
 	slog.Info("drop: pair gating — holding format until its sibling arrives",
 		"title", dl.Title, "format", format, "path", downloadPath)
-	s.createHistoryEvent(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, map[string]string{
+	s.createHistoryEvent(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{
 		"mode":   "drop-hold",
 		"status": string(models.StateImportHeld),
 		"format": format,

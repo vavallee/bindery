@@ -83,12 +83,25 @@ export interface SeriesHardcoverDiff {
   missingCount: number
 }
 
+// SeriesMonitoring is the scheduled check's state for a monitored series
+// (#2523). Absent until the series has been monitored or checked once.
+export interface SeriesMonitoring {
+  mode: 'upcoming' | 'all'
+  lastCheckAt?: string
+  nextCheckAt?: string
+  // ok, no_link, provider_disabled, failed, ambiguous_owner, timed_out or partial.
+  lastStatus?: string
+  lastMessage?: string
+  lastCreated: number
+}
+
 export interface Series {
   id: number
   foreignSeriesId: string
   title: string
   description: string
   monitored: boolean
+  monitoring?: SeriesMonitoring
   // Genre override (#1709). genreOverrideSet distinguishes "no override" from
   // "override set to no genres" — the latter locks future books to an empty
   // genre list, so genreOverride being absent is not enough to tell them apart.
@@ -154,7 +167,7 @@ export const seriesApi = {
     request<Series>('/series', { method: 'POST', body: JSON.stringify(data) }),
   getSeries: (id: number) => request<Series>(`/series/${id}`),
   updateSeries: (id: number, data: { title: string }) => request<Series>(`/series/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  monitorSeries: (id: number, monitored: boolean) => request<{ monitored: boolean }>(`/series/${id}`, { method: 'PATCH', body: JSON.stringify({ monitored }) }),
+  monitorSeries: (id: number, monitored: boolean, mode?: 'upcoming' | 'all') => request<{ monitored: boolean }>(`/series/${id}`, { method: 'PATCH', body: JSON.stringify(mode ? { monitored, mode } : { monitored }) }),
   deleteSeries: (id: number) => request<void>(`/series/${id}`, { method: 'DELETE' }),
   mergeSeries: (id: number, data: { sourceIds: number[]; title?: string; dryRun?: boolean }) =>
     request<SeriesMergePlan>(`/series/${id}/merge`, { method: 'POST', body: JSON.stringify(data) }),

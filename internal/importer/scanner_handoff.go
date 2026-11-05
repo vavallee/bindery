@@ -627,7 +627,7 @@ func (s *Scanner) finishDrop(ctx context.Context, dl *models.Download, layout, l
 	s.updateDownloadStatus(ctx, dl.ID, models.StateImportExternal)
 	slog.Info("drop: handoff complete, awaiting library scan",
 		"title", dl.Title, "dst", dest, "format", format, "layout", layout, "mode", linkMode)
-	s.createHistoryEvent(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, map[string]string{
+	s.createHistoryEvent(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{
 		"mode":   "drop",
 		"status": string(models.StateImportExternal),
 		"path":   dest,

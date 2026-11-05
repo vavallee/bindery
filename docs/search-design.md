@@ -81,7 +81,7 @@ Two that did not, and what they cost:
   for one person, on a path where providers and macOS routinely disagree about
   which form to send. It now folds through alphabet 2, and `normdrift` holds it
   to the same invariance as everything else.
-- `dnb.slug` kept only `[a-z0-9]`, so a name in any non-Latin script reduced to
+- `dnb.slug` (now `textutil.AuthorSlug`, shared with the `gb:author:` ids) kept only `[a-z0-9]`, so a name in any non-Latin script reduced to
   the empty string and every Chinese, Cyrillic, Greek and Hebrew author shared
   the single ForeignID `dnb:author:`. Its output is stored, so the ASCII path is
   preserved byte-for-byte and only the empty case falls back to alphabet 4 — no

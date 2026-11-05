@@ -165,3 +165,219 @@ func MultiBookPackMarker(title string) string {
 	}
 	return seriesPackMarker(title)
 }
+
+// PackContext is what the library knows about the wanted book, for the pack
+// shapes that can only be recognised against it (#3247). Every field may be
+// empty, in which case the shapes that need it simply never match.
+type PackContext struct {
+	// Title is the wanted book's title as stored.
+	Title string
+	// SeriesTitle is the title of the wanted book's primary series.
+	SeriesTitle string
+	// AuthorTitles are the titles of the author's other books in the library.
+	AuthorTitles []string
+}
+
+// MultiBookPackMarkerFor is MultiBookPackMarker plus the pack shapes that are
+// only a pack because of the book being searched for (#3247):
+//
+//   - The wanted book's core title, or its series title, followed directly by
+//     a compact range: "Dominion of Blades 1-2" for "Dominion of Blades: A
+//     LitRPG Adventure (Volume 1)". A bare range stays unmatched (see above);
+//     this one is anchored on the book's own name, so a year span or an
+//     edition year cannot produce it. The core title is the main title with
+//     its subtitle and trailing bracketed qualifiers dropped, as
+//     SplitSubtitle gives it. Both numbers are one or two digits, rising,
+//     from 1, and written without spaces around the dash, so "Title 1 -
+//     Subtitle" and "Title 2019-2020" are left alone. After the core title
+//     the range ends at 20 at most and is never zero padded: audiobook
+//     releases name a single book "Title 01-49" or "Title 1-24" for its
+//     tracks. After a series title that differs from the core title the rules
+//     are stricter (see namedRangeMarker): a range alone in square brackets
+//     ("[Heart of Texas 01-03]") goes up to 99, anything else up to 20 with
+//     no book title after it. A
+//     part, disc, cd, chapter or track word right before the range makes it
+//     a split recording, never a pack. A format tag elsewhere in the name
+//     does not: "Mistborn 1-3 (m4b)" is a pack. The known cost is a single
+//     audiobook split in two and named like "It 1-2 (1986) mp3", which reads
+//     as a pack; interactive search shows it labelled and still grabbable.
+//   - A list separated by semicolons naming at least two of the author's
+//     books, the wanted one included: "Three Classic Thrillers (The Firm;
+//     The Appeal; The Chamber)". The items are checked against the library
+//     rather than counted, because a semicolon also separates author names
+//     ("Nora Roberts; J. D. Robb"). The wanted title, its main title and its
+//     subtitle all count as the one wanted book.
+func MultiBookPackMarkerFor(title string, want PackContext) string {
+	if m := MultiBookPackMarker(title); m != "" {
+		return m
+	}
+	if m := namedRangeMarker(title, want); m != "" {
+		return m
+	}
+	return titleListMarker(title, want)
+}
+
+// coreTitle is the wanted title the named range marker anchors on: the main
+// title without its subtitle or trailing bracketed qualifiers.
+func coreTitle(title string) string {
+	main, _ := SplitSubtitle(title)
+	return main
+}
+
+var packWordRe = regexp.MustCompile(`[\pL\pN]+`)
+
+// rangeAfterRe builds the pattern of name followed directly by a compact
+// range. name's words may be separated by any punctuation in the release, so
+// a dotted scene name matches as well as a spaced one.
+func rangeAfterRe(name string) *regexp.Regexp {
+	words := packWordRe.FindAllString(dropApostrophes(name), -1)
+	if len(words) == 0 {
+		return nil
+	}
+	for i, w := range words {
+		words[i] = regexp.QuoteMeta(w)
+	}
+	return regexp.MustCompile(`(?i)(?:^|[^\pL\pN])(` + strings.Join(words, `[^\pL\pN]*`) +
+		`[\s._]+(\d{1,2})[-–—](\d{1,2}))(?:$|[^\pL\pN])`)
+}
+
+// maxTitleRangeEnd caps the range after the core title. A pack named after one
+// of its books ("Dominion of Blades 1-2") holds a handful; a larger number
+// after a single title is a track or chapter count ("Dune 1-49 [mp3]").
+//
+// Format tags and stray words elsewhere in the name (mp3, m4b, Audiobook, a
+// "CD cover", a "bonus chapter") say nothing about the range: an audiobook
+// pack is still a pack. A range is a part, disc or track range only when that
+// word stands right before it ("Dune CD 1-12"), which this shape never matches
+// because the range must follow the name directly; a name that itself ends in
+// such a word is skipped.
+const maxTitleRangeEnd = 20
+
+// namedRangeMarker matches the wanted book's core title or series title
+// followed directly by a range. See MultiBookPackMarkerFor.
+//
+// The series reading is narrower still, because a single audiobook is often
+// named after its series with a track count ("The Dark Tower 1-24 (mp3)",
+// "Harry Potter 1-17 - Philosopher's Stone"). It is skipped when the series is
+// named like the book (the title reading already covers that name), and
+// it requires one of:
+//   - the range alone in square brackets, the indexer's tag position: up to 99,
+//     zero padded or not ("[Heart of Texas 01-03]", "[Discworld 01-41]");
+//   - otherwise, up to 20, never zero padded (zero padding is accepted in
+//     round brackets too), and with no book title after the range: past a
+//     separator only format or pack noise may follow, as for "series by".
+func namedRangeMarker(title string, want PackContext) string {
+	t := dropApostrophes(title)
+	core := coreTitle(want.Title)
+	if m := firstNamedRange(t, core, func(_, hi int, padded bool, _, _ int) bool {
+		return !padded && hi <= maxTitleRangeEnd
+	}); m != "" {
+		return m
+	}
+	series := StripBracketSuffixes(strings.TrimSpace(want.SeriesTitle))
+	if titleKey(series) == titleKey(core) {
+		return ""
+	}
+	return firstNamedRange(t, series, func(_, hi int, padded bool, start, end int) bool {
+		if enclosedBy(t, start, end, '[', ']') {
+			return true
+		}
+		if padded && !enclosedBy(t, start, end, '(', ')') {
+			return false
+		}
+		return hi <= maxTitleRangeEnd && onlyNoiseAfterSeriesBy(t[end:])
+	})
+}
+
+// firstNamedRange returns the first "name N-M" in t with 1 <= N < M that ok
+// accepts, or "". ok gets the numbers, whether either is zero padded, and the
+// byte span of the matched name and range in t.
+func firstNamedRange(t, name string, ok func(lo, hi int, padded bool, start, end int) bool) string {
+	if titleKey(name) == "" || partWordRe.MatchString(name) {
+		return ""
+	}
+	re := rangeAfterRe(name)
+	if re == nil {
+		return ""
+	}
+	for _, m := range re.FindAllStringSubmatchIndex(t, -1) {
+		a, b := t[m[4]:m[5]], t[m[6]:m[7]]
+		lo, _ := strconv.Atoi(a)
+		hi, _ := strconv.Atoi(b)
+		padded := strings.HasPrefix(a, "0") || strings.HasPrefix(b, "0")
+		if lo >= 1 && lo < hi && ok(lo, hi, padded, m[2], m[3]) {
+			return strings.TrimSpace(t[m[2]:m[3]])
+		}
+	}
+	return ""
+}
+
+// enclosedBy reports whether t[start:end] sits directly inside open and close.
+func enclosedBy(t string, start, end int, open, close byte) bool {
+	return start > 0 && end < len(t) && t[start-1] == open && t[end] == close
+}
+
+var (
+	// listChunkSepRe splits a release name into the runs a title list can sit
+	// in: brackets and spaced dashes close one, and a colon ends a series or
+	// author lead.
+	listChunkSepRe   = regexp.MustCompile(`[()\[\]{}:]|\s[-–—]\s`)
+	leadingArticleRe = regexp.MustCompile(`^(?:the|a|an) `)
+	apostropheDrop   = strings.NewReplacer("'", "", "’", "")
+)
+
+func dropApostrophes(s string) string { return apostropheDrop.Replace(s) }
+
+// titleKey folds a title for comparing a list item with a library title:
+// lower case, apostrophes dropped, words joined by single spaces, and a
+// leading article removed so "The Chamber" equals "Chamber".
+func titleKey(s string) string {
+	k := strings.Join(packWordRe.FindAllString(strings.ToLower(dropApostrophes(s)), -1), " ")
+	return leadingArticleRe.ReplaceAllString(k, "")
+}
+
+// titleListMarker matches a semicolon separated list naming two or more of the
+// author's titles. See MultiBookPackMarkerFor.
+func titleListMarker(title string, want PackContext) string {
+	if !strings.Contains(title, ";") {
+		return ""
+	}
+	// known maps a title key to the book it names. Every reading of the
+	// wanted title (whole, main title, subtitle) names the wanted book, so a
+	// list made of its own parts ("Mistborn; The Final Empire" for "Mistborn:
+	// The Final Empire") counts once, even when the library also holds a
+	// duplicate record under one of those parts.
+	const self = "\x00self"
+	known := map[string]string{}
+	for _, t := range want.AuthorTitles {
+		for _, k := range []string{titleKey(t), titleKey(coreTitle(t))} {
+			if k != "" {
+				known[k] = k
+			}
+		}
+	}
+	main, sub := SplitSubtitle(want.Title)
+	for _, k := range []string{titleKey(want.Title), titleKey(main), titleKey(sub)} {
+		if k != "" {
+			known[k] = self
+		}
+	}
+	if len(known) == 0 {
+		return ""
+	}
+	for _, chunk := range listChunkSepRe.Split(title, -1) {
+		if !strings.Contains(chunk, ";") {
+			continue
+		}
+		seen := map[string]bool{}
+		for _, item := range strings.Split(chunk, ";") {
+			if book, ok := known[titleKey(item)]; ok {
+				seen[book] = true
+			}
+		}
+		if len(seen) >= 2 {
+			return strings.TrimSpace(chunk)
+		}
+	}
+	return ""
+}

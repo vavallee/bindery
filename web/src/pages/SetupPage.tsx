@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
+import { ApiError } from '../api/core'
 import { useAuth } from '../auth/AuthContext'
 import { CardShell } from './LoginPage'
 import { literalInputAttrs } from '../util/inputAttrs'
@@ -40,7 +41,9 @@ export default function SetupPage() {
       await refresh()
       navigate('/', { replace: true })
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : t('setup.errorFailed')
+      const msg = e instanceof ApiError && e.status === 403
+        ? t('setup.errorLocalDisabled')
+        : e instanceof Error ? e.message : t('setup.errorFailed')
       setError(msg)
     } finally {
       setSubmitting(false)

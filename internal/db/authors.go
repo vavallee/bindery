@@ -902,6 +902,21 @@ func (r *AuthorRepo) update(ctx context.Context, exec dbExecutor, a *models.Auth
 	return true, nil
 }
 
+// HasBooksNotOwnedBy reports whether any book filed under authorID, excluded
+// books included, is owned by someone other than userID or by nobody. Deleting
+// an author cascades to its books and merging one reparents them, so the API
+// asks this before letting a user who is not an admin do either.
+func (r *AuthorRepo) HasBooksNotOwnedBy(ctx context.Context, authorID, userID int64) (bool, error) {
+	var n int
+	if err := r.exec.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM books
+		WHERE author_id = ? AND (owner_user_id IS NULL OR owner_user_id <> ?)`,
+		authorID, userID).Scan(&n); err != nil {
+		return false, fmt.Errorf("count books of author %d not owned by user %d: %w", authorID, userID, err)
+	}
+	return n > 0, nil
+}
+
 // Delete removes the author and its author_identifiers rows.
 //
 // The identifier rows are deleted explicitly rather than left to the

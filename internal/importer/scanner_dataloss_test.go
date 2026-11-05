@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -71,12 +73,37 @@ func dataLossFixture(t *testing.T, libraryDir, importMode string) (
 	return s, dl, dlRepo, bookRepo, ctx
 }
 
+// failCommitFor makes StagedImport's commit fail for every destination with
+// the given extension, as a plain I/O error (EIO). The rest of the import is
+// untouched. It returns a pointer to the number of commits it refused, so a
+// test can confirm the failure it relies on actually happened.
+//
+// Tests used to force this by planting a directory at the destination, but
+// the ebook collision suffix (#3560) now steers an import around anything
+// already on disk there, so the obstacle no longer causes a failure.
+//
+// It replaces a package variable, so callers must not use t.Parallel.
+func failCommitFor(t *testing.T, ext string) *int {
+	t.Helper()
+	orig := commitStagedRename
+	t.Cleanup(func() { commitStagedRename = orig })
+	refused := 0
+	commitStagedRename = func(staged, dst string) error {
+		if strings.EqualFold(filepath.Ext(dst), ext) {
+			refused++
+			return &os.LinkError{Op: "rename", Old: staged, New: dst, Err: syscall.EIO}
+		}
+		return orig(staged, dst)
+	}
+	return &refused
+}
+
 // TestTryImportInternal_PartialFailureDoesNotDeleteUnlandedSource is the
 // regression test for issue #705 finding 1.
 //
 // Scenario: a move-mode download contains two ebook files (epub + mobi). The
-// epub imports cleanly; the mobi import is forced to fail (its destination path
-// is pre-created as a directory, so the file write cannot succeed).
+// epub imports cleanly; the mobi import is forced to fail (its commit rename
+// returns an I/O error, see failCommitFor).
 //
 // Before the fix the terminal StateImported was written after the first
 // successful file, and a later failure left a terminal-imported but incomplete
@@ -84,7 +111,7 @@ func dataLossFixture(t *testing.T, libraryDir, importMode string) (
 // landed. After the fix the download must NOT be StateImported, and BOTH source
 // files must still exist on disk so the import can be retried.
 func TestTryImportInternal_PartialFailureDoesNotDeleteUnlandedSource(t *testing.T) {
-	t.Parallel()
+	// Not parallel: failCommitFor swaps a package variable.
 
 	libraryDir := t.TempDir()
 	downloadPath := t.TempDir()
@@ -99,19 +126,15 @@ func TestTryImportInternal_PartialFailureDoesNotDeleteUnlandedSource(t *testing.
 
 	s, dl, dlRepo, _, ctx := dataLossFixture(t, libraryDir, "move")
 
-	// Force the .mobi import to fail: pre-create its destination path AS A
-	// DIRECTORY. os.Rename refuses to overwrite a directory with a file, and the
-	// cross-filesystem fallback's os.Create fails the same way.
-	mobiDest, err := s.renamer.DestPath(libraryDir, &models.Author{Name: "Author A"},
-		&models.Book{Title: "Title T"}, "", "", mobiSrc)
-	if err != nil {
-		t.Fatalf("DestPath: %v", err)
-	}
-	if err := os.MkdirAll(mobiDest, 0o750); err != nil {
-		t.Fatal(err)
-	}
+	// Force the .mobi import to fail at its commit, after the staged move.
+	// Move mode has already renamed the source into staging by then, so this
+	// also relies on the rollback putting it back.
+	refused := failCommitFor(t, ".mobi")
 
 	s.tryImportInternal(ctx, dl, downloadPath, "transmission", "tor-1", "", nil, nil)
+	if *refused == 0 {
+		t.Fatal("the mobi commit was never attempted, so this test exercised nothing")
+	}
 
 	// The download must NOT be terminal-imported: one file failed.
 	got, err := dlRepo.GetByGUID(ctx, dl.GUID)

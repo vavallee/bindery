@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next'
-import { api, ApiError, type Download, type GrabRequest } from '../api/client'
+import { api, ApiError, type Download, type GrabRequest, type SearchResult } from '../api/client'
 import type { ConfirmOptions } from '../components/useConfirmDialog'
 
 /**
@@ -34,4 +34,24 @@ export async function grabWithForceConfirm(
     if (!ok) return null
     return api.grab({ ...req, force: true })
   }
+}
+
+/**
+ * Asks before grabbing a multi-book pack (#3247). A pack can be grabbed, but
+ * the importer will not place it automatically, so the user is told before the
+ * download starts. Resolves true for a release that is not a pack, without
+ * asking. Every page that grabs from an interactive search calls this, guarded
+ * by `r.pack &&` so an ordinary grab starts in the same tick as the click.
+ */
+export async function confirmPackGrab(
+  r: Pick<SearchResult, 'pack'>,
+  confirm: (options: ConfirmOptions) => Promise<boolean>,
+  t: TFunction,
+): Promise<boolean> {
+  if (!r.pack) return true
+  return confirm({
+    title: t('search.pack.confirmTitle'),
+    body: t('search.pack.confirmBody', { marker: r.pack }),
+    confirmLabel: t('search.pack.confirm'),
+  })
 }

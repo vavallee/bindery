@@ -1295,10 +1295,11 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	// importer computes one destination from it, so an explicit "Books 1-4"
 	// pack has no correct import — the reported case put all 117 files of a
 	// four-book release into one book's folder. Automatic selection must not
-	// pick one. Interactive search deliberately does not build this spec, so a
-	// user who wants the pack can still see and grab it; the importer blocks
-	// that before it writes anything.
-	specs = append(specs, decision.MultiBookPackSpec{})
+	// pick one. Interactive search builds this spec only as a label, so a user
+	// who wants the pack can still see and grab it; the importer blocks that
+	// before it writes anything. The library context lets it recognise the
+	// packs named after this book or its series (#3247).
+	specs = append(specs, decision.MultiBookPackSpec{SeriesTitle: crit.SeriesTitle, AuthorTitles: crit.AuthorTitles})
 	// The author's quality profile "allowed formats" list (#1693). The UI has
 	// always presented these checkboxes as a hard allow-list, but the spec that
 	// implements them was never constructed anywhere, so nothing stopped a
@@ -1310,6 +1311,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	// grabbed on a later sweep.
 	if qualityProfile != nil {
 		specs = append(specs, decision.QualityAllowed{Profile: qualityProfile, MediaType: mediaType})
+		specs = append(specs, decision.EditionAllowed{Profile: qualityProfile, MediaType: mediaType, Title: crit.Title, Authors: append([]string{crit.Author}, crit.AuthorAliases...)})
 	}
 	var delayProfile *models.DelayProfile
 	if profiles := s.sweepDelayProfiles(ctx, sweep); len(profiles) > 0 {
@@ -1340,12 +1342,69 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	// A pinned indexer's release is never sent to another client.
 	var bestClient *models.DownloadClient
 	skippedPinned := map[int64]bool{}
+	// bestExisting is the download row that already names the chosen
+	// release's GUID, or nil. heldOutcome names the first approved release
+	// passed over because another book's download row holds it (#3564):
+	// downloads.guid is unique, so such a release cannot be grabbed for this
+	// book while that row is live, and the next approved release is tried
+	// instead of ending the search. It becomes the outcome when nothing else
+	// is grabbed, in the shape the single release skip has always used.
+	// stopOutcome is set when accept fails.
+	var bestExisting *models.Download
+	heldOutcome := ""
+	stopOutcome := ""
+	accept := func(res *newznab.SearchResult) (*models.DownloadClient, bool, error) {
+		c, skip, err := s.checkPin(ctx, book, res, skippedPinned)
+		if err != nil {
+			slog.Error("SearchAndGrabBook: failed to resolve the indexer's pinned download client", "indexer", res.IndexerName, "error", err)
+			stopOutcome = "download client lookup failed"
+			return nil, false, err
+		}
+		if skip {
+			return nil, true, nil
+		}
+		existing, err := s.downloads.GetByGUID(ctx, res.GUID)
+		if err != nil {
+			slog.Warn("failed to check existing download", "guid", res.GUID, "error", err)
+			stopOutcome = "duplicate check failed"
+			return nil, false, err
+		}
+		if reason := heldForAnotherBook(existing, book.ID, time.Now().UTC()); reason != "" {
+			if heldOutcome == "" {
+				heldOutcome = reason + " (" + string(existing.Status) + ")"
+			}
+			slog.Info("skipping a release another book's download holds, trying the next one",
+				"book", book.Title,
+				"release", res.Title,
+				"guid", res.GUID,
+				"existing_status", string(existing.Status),
+				"existing_download_id", existing.ID,
+				"reason", reason)
+			if dbg != nil {
+				dbg.Filters = append(dbg.Filters, indexer.FilterDebug{
+					Title:       res.Title,
+					IndexerName: res.IndexerName,
+					Stage:       "decision",
+					Reason:      "another book's download holds this release: " + reason,
+				})
+			}
+			// Another book has imported it: this book can never have it
+			// while that import stands, so a pending row for it would sit
+			// in Pending for good. errDropPending asks pendingApproved to
+			// remove it; on a search result it is an ordinary skip.
+			if existing.Status == models.StateImported {
+				return nil, true, errDropPending
+			}
+			return nil, true, nil
+		}
+		bestExisting = existing
+		return c, false, nil
+	}
 	for i, d := range dm.Evaluate(releases, book) {
 		if d.Approved {
-			c, skip, err := s.checkPin(ctx, book, &results[i], skippedPinned)
-			if err != nil {
-				slog.Error("SearchAndGrabBook: failed to resolve the indexer's pinned download client", "indexer", results[i].IndexerName, "error", err)
-				outcome = "download client lookup failed"
+			c, skip, err := accept(&results[i])
+			if err != nil && !errors.Is(err, errDropPending) {
+				outcome = stopOutcome
 				return
 			}
 			if skip {
@@ -1390,18 +1449,17 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	if best == nil {
 		// Re-evaluate any existing pending releases for this book/format with the current age.
 		var pendErr error
-		best, bestClient, pendErr = s.pendingApproved(ctx, book, mediaType, dm, func(res *newznab.SearchResult) (*models.DownloadClient, bool, error) {
-			return s.checkPin(ctx, book, res, skippedPinned)
-		})
+		best, bestClient, pendErr = s.pendingApproved(ctx, book, mediaType, dm, accept)
 		if pendErr != nil {
-			slog.Error("SearchAndGrabBook: failed to resolve the indexer's pinned download client for a pending release", "error", pendErr)
-			outcome = "download client lookup failed"
+			outcome = stopOutcome
 			return
 		}
 		if best == nil {
 			switch {
 			case len(skippedPinned) > 0:
 				outcome = "pinned download client unavailable"
+			case heldOutcome != "":
+				outcome = heldOutcome
 			case rawResults == 0:
 				outcome = "no results"
 			default:
@@ -1445,12 +1503,10 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		"size", best.Size,
 	)
 
-	existing, err := s.downloads.GetByGUID(ctx, best.GUID)
-	if err != nil {
-		slog.Warn("failed to check existing download", "guid", best.GUID, "error", err)
-		outcome = "duplicate check failed"
-		return
-	}
+	// accept read the release's download row before choosing it, and passed
+	// over a release another book's live row holds (#3564). What is left
+	// here is this book's own row, or a dead row of any book.
+	existing := bestExisting
 	// Live work blocks the grab; a failed attempt does not (#2710). A failed
 	// row is reused once deadRegrabCooldown has passed since it died, and an
 	// import whose book has since been deleted is reused whatever its age
@@ -1518,7 +1574,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	}.WithSeedLimits(s.resolveSeedLimits(ctx, best.IndexerID)))
 	if err != nil {
 		slog.Error("SearchAndGrabBook: failed to send to downloader", "client", client.Type, "client_name", client.Name, "indexer", best.IndexerName, "title", best.Title, "error", err)
-		if setErr := s.downloads.SetError(ctx, dl.ID, err.Error()); setErr != nil {
+		if setErr := s.downloads.SetError(ctx, dl.ID, downloader.SendFailureMessage(err)); setErr != nil {
 			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
 		}
 		outcome = "send to downloader failed"
@@ -1635,7 +1691,8 @@ func (s *Scheduler) checkPendingReleases(ctx context.Context, book models.Book, 
 // use, whether to skip the release, or an error that stops the sweep. A skipped
 // release stays pending, untouched, for the next sweep (a pinned client that is
 // down must not cost the user a held release), and the next approved row is
-// tried. Only a release that is taken is deleted from pending.
+// tried. Only a release that is taken is deleted from pending, and one accept
+// refuses with errDropPending, which can never be taken for this book.
 func (s *Scheduler) pendingApproved(ctx context.Context, book models.Book, mediaType string, dm *decision.DecisionMaker,
 	accept func(*newznab.SearchResult) (*models.DownloadClient, bool, error)) (*newznab.SearchResult, *models.DownloadClient, error) {
 	if s.pending == nil {
@@ -1659,6 +1716,13 @@ func (s *Scheduler) pendingApproved(ctx context.Context, book models.Book, media
 			var client *models.DownloadClient
 			if accept != nil {
 				c, skip, err := accept(&res)
+				if errors.Is(err, errDropPending) {
+					if err := s.pending.DeleteByID(ctx, pendingList[i].ID); err != nil {
+						slog.Warn("failed to drop a pending release another book has imported",
+							"pending_id", pendingList[i].ID, "book_id", book.ID, "guid", res.GUID, "error", err)
+					}
+					continue
+				}
 				if err != nil {
 					return nil, nil, err
 				}
@@ -1761,10 +1825,20 @@ func (s *Scheduler) wantedSearchQueue(ctx context.Context) []wantedSearch {
 
 	inFlight := s.inFlightFormatsByBook(ctx)
 	splitParts := s.coveredSplitEditionParts(ctx)
+	upcoming := s.upcomingHolds(ctx)
 
 	searchQueue := make([]wantedSearch, 0, len(wanted))
 	for _, book := range wanted {
 		if book.Excluded {
+			continue
+		}
+		// Upcoming (#2523): a book with a known future release date has
+		// nothing to find yet, so the scheduled sweep leaves it alone until
+		// that date. Nothing changes state on the day, the hold simply stops
+		// applying. A manual search is not affected.
+		if until, ok := upcoming[book.ID]; ok {
+			slog.Debug("skipping wanted search: the book is upcoming and not released yet",
+				"book", book.Title, "bookID", book.ID, "releases", until)
 			continue
 		}
 		// A split edition part of a book the library already has or is
@@ -1813,6 +1887,18 @@ func (s *Scheduler) wantedSearchQueue(ctx context.Context) []wantedSearch {
 		searchQueue = append(searchQueue, wantedSearch{book: book, formats: formats})
 	}
 	return searchQueue
+}
+
+// upcomingHolds maps the id of every book held out of the search until a future
+// release date (#2523) to that date. A lookup failure holds nothing, so a
+// broken query can never stop the sweep.
+func (s *Scheduler) upcomingHolds(ctx context.Context) map[int64]time.Time {
+	holds, err := s.books.SearchHolds(ctx, time.Now())
+	if err != nil {
+		slog.Warn("failed to list upcoming holds; searching every wanted book", "error", err)
+		return nil
+	}
+	return holds
 }
 
 // coveredSplitEditionParts maps the id of every book that is a split edition
@@ -2053,6 +2139,7 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 			EventType:   models.HistoryEventDownloadStalled,
 			SourceTitle: dl.Title,
 			Data:        string(data),
+			OwnerUserID: dl.OwnerUserID,
 		})
 	}
 
@@ -2069,6 +2156,9 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 			Title:     dl.Title,
 			IndexerID: dl.IndexerID,
 			Reason:    reason,
+			// The client's own signal is about the torrent, not this
+			// book, so it blocks the release for every book (#3563).
+			Scope: models.BlocklistScopeRelease,
 		}
 		if err := s.blocklist.Create(ctx, entry); err != nil {
 			slog.Warn("stall: failed to add to blocklist", "guid", dl.GUID, "error", err)
@@ -2097,6 +2187,7 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 			EventType:   models.HistoryEventDownloadRequeued,
 			SourceTitle: dl.Title,
 			Data:        string(data),
+			OwnerUserID: dl.OwnerUserID,
 		})
 	}
 

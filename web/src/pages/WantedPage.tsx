@@ -3,7 +3,9 @@ import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, Book, SearchResult } from '../api/client'
 import { useConfirmDialog } from '../components/useConfirmDialog'
-import { grabWithForceConfirm } from '../util/forceGrab'
+import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
+import PackLabel from '../components/PackLabel'
+import ReleaseNarration from '../components/ReleaseNarration'
 import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
@@ -39,9 +41,11 @@ const ROW_GRID = 'grid grid-cols-[1.5rem_2rem_minmax(0,1fr)] sm:grid-cols-[1.5re
 const ROW_CONTROLS = 'col-start-2 col-span-2 flex flex-wrap items-center gap-2 sm:contents'
 
 // Query-string keys and their defaults; defaults stay out of the URL.
-const LIST_DEFAULTS = { q: '', excluded: '', media: '', sort: 'title-az' }
+const LIST_DEFAULTS = { q: '', excluded: '', media: '', sort: 'title-az', upcoming: '' }
 const SORT_MODES = ['title-az', 'title-za', 'date-new', 'date-old', 'author-az', 'author-za'] as const
 const MEDIA_FILTERS = ['', 'ebook', 'audiobook', 'both'] as const
+// Upcoming books (#2523) are held out of the scheduled search until their release date.
+const UPCOMING_FILTERS = ['', 'only', 'hide'] as const
 
 export default function WantedPage() {
   const { t } = useTranslation()
@@ -88,7 +92,8 @@ export default function WantedPage() {
   const searchQuery = list.values.q
   const sort = oneOf(list.values.sort, SORT_MODES, 'title-az')
   const mediaFilter = oneOf(list.values.media, MEDIA_FILTERS, '')
-  const queryKey = JSON.stringify([searchQuery, showExcluded, sort, mediaFilter])
+  const upcomingFilter = oneOf(list.values.upcoming, UPCOMING_FILTERS, '')
+  const queryKey = JSON.stringify([searchQuery, showExcluded, sort, mediaFilter, upcomingFilter])
   const [totalKey, setTotalKey] = useState<string | null>(null)
   const { page, pageSize, paginationProps } = useServerPagination(total, 50, 'wanted', {
     page: list.page,
@@ -111,13 +116,14 @@ export default function WantedPage() {
       mediaType: mediaFilter || undefined,
       // The server's default is title order; only send a choice.
       sort: sort === 'title-az' ? undefined : sort,
+      upcoming: upcomingFilter || undefined,
     }).then(({ items, total }) => {
       if (request !== loadRequestRef.current || !mounted.current) return
       setBooks(items)
       setTotal(total)
       setTotalKey(queryKey)
     })
-  }, [page, pageSize, searchQuery, showExcluded, sort, mediaFilter, queryKey])
+  }, [page, pageSize, searchQuery, showExcluded, sort, mediaFilter, upcomingFilter, queryKey])
 
   const load = () => {
     fetchPage().catch(console.error).finally(() => { if (mounted.current) setLoading(false) })
@@ -193,6 +199,7 @@ export default function WantedPage() {
   }
 
   const grab = async (result: SearchResult, book: Book) => {
+    if (result.pack && !await confirmPackGrab(result, confirm, t)) return
     setGrabbingGuid(result.guid)
     try {
       const dl = await grabWithForceConfirm({
@@ -344,7 +351,7 @@ export default function WantedPage() {
           ],
         }}
         filters={{
-          activeCount: [mediaFilter, showExcluded ? '1' : ''].filter(Boolean).length,
+          activeCount: [mediaFilter, upcomingFilter, showExcluded ? '1' : ''].filter(Boolean).length,
           content: (
             <>
               <FilterGroup
@@ -356,6 +363,16 @@ export default function WantedPage() {
                   { value: 'ebook' as const, label: `📖 ${t('common.ebook')}`, ariaLabel: t('common.ebook') },
                   { value: 'audiobook' as const, label: `🎧 ${t('common.audiobook')}`, ariaLabel: t('common.audiobook') },
                   { value: 'both' as const, label: `📖🎧 ${t('common.both')}`, ariaLabel: t('common.both') },
+                ]}
+              />
+              <FilterGroup
+                label={t('wanted.upcomingLabel')}
+                value={upcomingFilter}
+                onChange={next => updateList({ upcoming: next, page: null })}
+                options={[
+                  { value: '' as const, label: t('common.all') },
+                  { value: 'only' as const, label: t('wanted.upcomingOnly') },
+                  { value: 'hide' as const, label: t('wanted.upcomingHide') },
                 ]}
               />
               {/* Excluded books are hidden by default. Showing them widens the
@@ -375,6 +392,7 @@ export default function WantedPage() {
         }}
         chips={[
           ...(mediaFilter ? [{ key: 'media', label: t(`common.${mediaFilter}`), onClear: () => updateList({ media: null, page: null }) }] : []),
+          ...(upcomingFilter ? [{ key: 'upcoming', label: upcomingFilter === 'only' ? t('wanted.upcomingOnly') : t('wanted.upcomingHide'), onClear: () => updateList({ upcoming: null, page: null }) }] : []),
           ...(showExcluded ? [{ key: 'excluded', label: t('wanted.showExcluded'), onClear: () => setShowExcluded(false) }] : []),
         ]}
         summary={loading ? '' : t('books.countLabel', { count: total, defaultValue: '{{count}} books' })}
@@ -382,7 +400,7 @@ export default function WantedPage() {
 
       {loading ? (
         <SkeletonRows />
-      ) : total === 0 && !searchQuery && !mediaFilter ? (
+      ) : total === 0 && !searchQuery && !mediaFilter && !upcomingFilter ? (
         <EmptyState title={t('wanted.empty')}>
           <ImportHints />
         </EmptyState>
@@ -454,6 +472,11 @@ export default function WantedPage() {
                       )}
                       {year != null && <span> · {year}</span>}
                     </div>
+                    {book.searchHeldUntil && (
+                      <div className="truncate text-[10px] text-sky-700 dark:text-sky-400" data-testid="wanted-upcoming">
+                        {t('wanted.upcomingNote', { date: new Date(book.searchHeldUntil).toLocaleDateString() })}
+                      </div>
+                    )}
                     {book.authorUnmonitored && (
                       <div className="truncate text-[10px] text-amber-700 dark:text-amber-400">
                         {t('wanted.authorNotMonitored', 'Author not monitored, so this is not searched automatically')}
@@ -527,7 +550,11 @@ export default function WantedPage() {
                     {results.slice(0, 10).map(r => (
                       <div key={r.guid} className="flex items-center justify-between p-2 bg-slate-200/50 dark:bg-zinc-800/50 rounded text-xs">
                         <div className="min-w-0 mr-3">
-                          <span className="truncate block">{r.title}</span>
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <PackLabel marker={r.pack} />
+                            <ReleaseNarration narrators={r.narrators} editionType={r.editionType} />
+                            <span className="truncate block">{r.title}</span>
+                          </span>
                           <span className="text-fg-muted truncate block">
                             {r.indexerName} &middot; {formatBytes(r.size)} &middot; {t('search.grabs', { n: r.grabs, defaultValue: '{{n}} grabs' })}
                             {safeHref(r.infoUrl) && (

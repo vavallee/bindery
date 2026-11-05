@@ -27,7 +27,7 @@ Rules 1 and 2 also require the host name the request was sent to (the `Host` hea
 
 Otherwise the server returns `401`. Browser sessions also need a CSRF double-submit token on mutating requests (anything other than `GET`, `HEAD` and `OPTIONS`); API-key clients are exempt from CSRF.
 
-Non-browser clients (curl, scripts, mobile apps) authenticating via API key do **not** need to send an `X-Requested-With: bindery-ui` header — that header is required only for browser sessions to satisfy the CSRF gate. The auth endpoints listed above (`/auth/login`, `/auth/logout`, `/auth/setup`, `/auth/status`, `/auth/csrf`) are exempt from the `X-Requested-With` check entirely, since there is no session to protect at that stage.
+Non-browser clients (curl, scripts, mobile apps) authenticating via API key do **not** need to send an `X-Requested-With: bindery-ui` header. That header is required only for browser sessions to satisfy the CSRF gate. The auth endpoints listed above (`/auth/login`, `/auth/logout`, `/auth/setup`, `/auth/status`, `/auth/csrf`) are exempt from the `X-Requested-With` check entirely, since there is no session to protect at that stage. `POST /auth/setup` instead requires `Content-Type: application/json` (415 otherwise), which keeps a cross-site form post from creating the first admin.
 
 The API key lives in **Settings → General → Security**. Regenerating it invalidates every existing consumer.
 
@@ -406,7 +406,9 @@ GET    /api/v1/series/{id}                        one series
 POST   /api/v1/series                             create a series (admin): {"title":"Saga"} makes a plain one; add a "hardcover" object (the fields of a `GET /series/hardcover/search` result: foreignId, providerId, slug, title, authorName, bookCount) to create it already linked, with title then optional (it defaults to the Hardcover title). Answers 201 with the series and its hardcoverLink; 409 {error, seriesId} when that Hardcover series is already in the library (nothing is created, and no Hardcover call is made); 400 for a foreignId that is not `hc-series:<digits>` or for oversized fields; 404 when enhanced Hardcover is off or Hardcover has no such series; 502 when Hardcover cannot be reached (nothing is created). No books are added
 POST   /api/v1/series/{id}/fill                   add the series' missing books as wanted (admin); answers {queued, skippedByProfile, skippedSplitParts}
 POST   /api/v1/series/{id}/split-parts/unmonitor  unmonitor the split edition parts of books already in the series, listed as splitEditionPartBookIds on the series (admin); answers {unmonitored}
-PATCH  /api/v1/series/{id}                        monitor / unmonitor (admin)
+PATCH  /api/v1/series/{id}                        monitor / unmonitor (admin): {"monitored":true,"mode":"upcoming"}; mode is "upcoming" (default, adds announced and newly
+                                                  released books) or "all" (adds every missing book). Read by the scheduled series check while
+                                                  `series.monitoring.interval` is set; each series carries `monitoring` {mode,lastCheckAt,nextCheckAt,lastStatus,lastMessage,lastCreated}
 POST   /api/v1/series/{id}/merge                  merge other series into this one: {"sourceIds":[..],"title":"optional rename","dryRun":true} previews (admin)
 POST   /api/v1/series/{id}/books                  add a book or update its position: {"bookId":1,"positionInSeries":"2","primarySeries":true}; positionInSeries is optional (admin)
 DELETE /api/v1/series/{id}/books/{bookId}         take a book out of the series, and keep it out on refresh (admin)
@@ -436,6 +438,8 @@ GET    /api/v1/wanted/missing                     list wanted-but-missing books.
                                                   `?limit=50&offset=0&search=&includeExcluded=` answers {"items":[..],"total":N,"limit":50,"offset":0}.
                                                   `total` counts every wanted book you can see that matches `search` and `includeExcluded`,
                                                   whatever the page. `limit` is capped at 500; `search` and `offset` apply only with `limit`
+                                                  `upcoming=only` lists only Upcoming books (held out of the scheduled search until a future
+                                                  release date, #2523), `upcoming=hide` lists the rest; each book carries `searchHeldUntil` while held
 POST   /api/v1/wanted/bulk                        bulk operations on wanted
 ```
 
@@ -553,7 +557,7 @@ PUT    /api/v1/qualityprofile/{id}                update (admin)
 DELETE /api/v1/qualityprofile/{id}                remove (admin); 409 while an author uses it
 ```
 
-A profile is `{id, name, items, cutoff, upgradeAllowed}`. `items` is an array
+A profile is `{id, name, items, cutoff, upgradeAllowed, preferredNarrators, editionPreference}`. `items` is an array
 of `{quality, allowed}` in preference order, best first (#2733). The media
 type of each entry is derived from its token on the server (`epub`, `azw3`,
 `pdf` and the other ebook containers on one side; `m4b`, `mp3`, `flac`, `m4a`,
@@ -561,7 +565,16 @@ type of each entry is derived from its token on the server (`epub`, `azw3`,
 and only the relative order inside each kind matters. The web editor writes
 the ebook entries first and the audiobook entries after them; any interleaving
 is accepted and stored as sent, and a read returns the order that was written.
-An unticked entry (`allowed: false`) never makes a release eligible and never
+`preferredNarrators` is an array of names, best first, and `editionPreference`
+is `""` (off, the default), `prefer_unabridged` or `require_unabridged`
+(#1358). Both apply to audiobook searches only. A release is matched on a
+narrator only when its title says "read by" or "narrated by" and the whole name
+matches after case and accent folding; `require_unabridged` rejects a release
+that states it is abridged and never one that does not say. An unknown
+`editionPreference` is a 400, and a PUT that leaves both fields out keeps the
+stored values. Interactive search results carry `narrators` and `editionType`
+when the title states them, and `GET /book/{id}` carries `narrators` and
+`editionType` from the audiobook edition. An unticked entry (`allowed: false`) never makes a release eligible and never
 counts in the ranking. A release is judged and ranked only on the formats of
 the media type being searched, so an audiobook carrying a PDF booklet is
 judged on its audio token for an audiobook search and on its pdf token for an
@@ -767,6 +780,8 @@ POST   /api/v1/pending/{id}/grab                  promote pending to queue immed
                                                   /queue/grab (400 "no_download_client", 502 send failure)
 
 GET    /api/v1/queue/manual-import/lookup         parse + catalogue-match one path (admin)
+GET    /api/v1/queue/manual-import/folders        list configured import roots, or contained child folders (admin)
+                                                    ?path=…; never enumerates outside configured import sources
 GET    /api/v1/queue/manual-import/scan           enumerate + match book units under a folder (admin)
 POST   /api/v1/queue/manual-import                import one path against a book (admin)
 POST   /api/v1/queue/manual-import/batch          import selected {path, bookId} pairs (admin); audio files for
@@ -784,12 +799,34 @@ GET    /api/v1/reorganize/preview                 preview renaming tracked files
 POST   /api/v1/reorganize/apply                   move the selected files {fileIds:[…]} to their templated paths (admin)
 
 GET    /api/v1/history                            grab / import / failure timeline
-POST   /api/v1/history/{id}/blocklist             add the release to the blocklist; 422 when the event has no release GUID
+POST   /api/v1/history/{id}/blocklist             add the release to the blocklist for the event's book; 422 when the event has no release GUID
 
 GET    /api/v1/blocklist                          list blocked releases
 DELETE /api/v1/blocklist/{id}                     remove an entry
 DELETE /api/v1/blocklist/bulk                     bulk remove
 ```
+
+Each blocklist entry has a `scope` (#3563). `book` blocks the release for the
+entry's `bookId` only: a format, language or content rejection at import, or a
+grab or import blocklisted from a book's History. `release` blocks it for every
+book: a release the download client failed as broken or reported stalled, a
+failed or stalled download blocklisted from History, a Readarr import, or an
+entry with no book. A `book` entry whose book was deleted blocks nothing.
+Automatic and interactive search both apply this rule. The History action
+answers `already blocklisted` only when an entry already blocks what the new
+one would: for a grab or import, an entry for that event's book or a `release`
+entry; for a failed or stalled download, a `release` entry. The Blocklist
+settings tab shows the scope as "This book" or "All books".
+
+`bookImported` History rows carry their import provenance in the JSON `data`
+field. New rows have `origin: "download"` with the source release `guid`, the
+local `downloadId`, and optional `indexerId` and `downloadClientId`; imports
+created from a local path have `origin: "manual"` and deliberately omit those
+release identifiers. Ebook rows also carry `paths`, the exact imported library
+files; `path` remains the display path and may be their shared directory. Older
+rows remain unchanged. The History API returns this data subject to its standard
+credential redaction, so integrations can retain enough context to investigate
+or blocklist a downloaded release after its queue row is trimmed.
 
 #### Release URLs in responses carry no credentials
 
@@ -1168,6 +1205,16 @@ The response is `{items, total, facets?, summary, scan}`. Each item carries
 adopted `book` if any, `bookCreated`, `authorCreated` and the first 20
 `members` file names. No provider is called to build it.
 
+`seriesHint`, when present, is `{title, position}` read from an explicit
+series-and-position file path such as `Discworld #8 - Guards! Guards!`. A bare
+collection folder is not enough to produce a hint. It remains a review hint by
+default. An admin may explicitly apply it during adoption with
+`"applySeriesHint": true`; this creates a manual series with that title, or
+`"seriesId": 12` selects that exact existing series. Bindery never matches an
+existing series by title. Undo removes only the unchanged membership that this
+adoption created, and removes a newly created manual series only while it is
+still empty and unchanged (#3612).
+
 `rootFormat` is the format the row's library root holds, `ebook` or
 `audiobook`, and is present only when `BINDERY_AUDIOBOOK_DIR` is a separate
 folder from the library; with one combined root it is omitted. A row whose
@@ -1184,16 +1231,20 @@ field is a path. The files are registered in place (an audiobook folder as its
 folder, a disc set disc folder by disc folder), nothing is moved and no search
 starts. A book added from metadata is created unmonitored with its media type
 set to the files' format. Every side effect is recorded on the row before the
-next, so an adoption interrupted by a crash is reversed at the next start.
+next, so an adoption interrupted by a crash is reversed at the next start. Set
+`"applySeriesHint": true` only when the row carries `seriesHint`; its optional
+positive `"seriesId"` chooses an existing series, otherwise Bindery creates a
+manual series from the server-derived hint. `seriesId` cannot be sent without
+`applySeriesHint`.
 Answers:
 
 | Status | Meaning |
 |---|---|
 | `200` | the updated row |
-| `400` | neither or both of `bookId` and `foreignBookId`, a format that is not the files' format, or an ebook file under 4 KiB, too small to be a book (Manual Import is the override for such a file) |
-| `404` | no such row, or the book is gone |
-| `409` | the row is not pending (the body names its `state`), or a file already belongs to a book |
-| `422` | a file is gone, is not a regular file, or resolves outside the library folders |
+| `400` | neither or both of `bookId` and `foreignBookId`, an invalid series request, a format that is not the files' format, or an ebook file under 4 KiB, too small to be a book (Manual Import is the override for such a file) |
+| `404` | no such row, the book is gone, or the selected series is gone |
+| `409` | the row is not pending (the body names its `state`), a file already belongs to a book, or the book was explicitly removed from the selected series |
+| `422` | a file is gone, is not a regular file, resolves outside the library folders, or no explicit series hint exists |
 | `502`, `503` | the metadata provider failed or the primary provider is down |
 
 `POST .../undo` removes exactly the book file entries the adoption made, each
@@ -1645,6 +1696,12 @@ Do not offer it as a control: nothing will happen.
 books by the scheduled discovery job. Unset means `off` as well, so the job
 runs only once a duration is stored, and the value is read on every hourly
 tick, so `restartRequired` is `false`.
+
+`series.monitoring.interval` has the same shape and bounds (default `off`). It
+sets how often each monitored series is checked against its Hardcover catalogue
+and its new books added. It ships off because the Monitored toggle did nothing
+before this job existed: storing an interval makes every series already toggled
+start adding books.
 
 ### Auth and users (admin)
 

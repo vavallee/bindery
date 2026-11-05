@@ -283,6 +283,27 @@ export default function SeriesPage() {
     setSeriesList(prev => prev.map(s => s.id === series.id ? { ...s, monitored: next } : s))
   }
 
+  // What a monitored series adds (#2523). Saved at once, and the cached state
+  // follows so the select does not snap back.
+  const changeMonitorMode = async (series: Series, mode: 'upcoming' | 'all') => {
+    await api.monitorSeries(series.id, true, mode)
+    setSeriesList(prev => prev.map(s => s.id === series.id
+      ? { ...s, monitoring: { lastCreated: 0, ...s.monitoring, mode, lastCheckAt: s.monitoring?.lastCheckAt } }
+      : s))
+  }
+
+  // One line on how the last scheduled check went, or why there has not been
+  // one: never checked yet, no Hardcover link, a failure.
+  const checkStatusText = (series: Series): string => {
+    const m = series.monitoring
+    if (!m || !m.lastCheckAt) return t('series.monitoring.neverChecked')
+    const when = new Date(m.lastCheckAt).toLocaleString()
+    if (m.lastStatus && m.lastStatus !== 'ok') {
+      return t(`series.monitoring.status.${m.lastStatus}`, { when, defaultValue: m.lastMessage || t('series.monitoring.status.failed', { when }) })
+    }
+    return t('series.monitoring.checked', { when, count: m.lastCreated })
+  }
+
   const fillGaps = async (series: Series, book?: SeriesHardcoverDiffBook, mediaType?: MediaType) => {
     setFilling(series.id)
     try {
@@ -583,6 +604,21 @@ export default function SeriesPage() {
                   >
                     {series.monitored ? t('series.shortlist.on') : t('series.shortlist.off')}
                   </Switch>
+                  {series.monitored && (
+                    <>
+                      <select
+                        value={series.monitoring?.mode ?? 'upcoming'}
+                        onChange={e => void changeMonitorMode(series, e.target.value as 'upcoming' | 'all')}
+                        aria-label={t('series.monitoring.modeLabel')}
+                        title={t('series.monitoring.modeHint')}
+                        className="touch-target bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded text-xs px-1.5 py-1"
+                      >
+                        <option value="upcoming">{t('series.monitoring.modeUpcoming')}</option>
+                        <option value="all">{t('series.monitoring.modeAll')}</option>
+                      </select>
+                      <span className="text-xs text-fg-muted" data-testid="series-check-status">{checkStatusText(series)}</span>
+                    </>
+                  )}
                   {enhancedHardcoverApi && (
                     <button
                       onClick={() => openHardcoverLink(series)}

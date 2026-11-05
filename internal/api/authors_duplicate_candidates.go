@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/duplicates"
 )
@@ -44,7 +45,7 @@ func (h *AuthorHandler) DuplicateCandidates(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	books, err := h.books.ListByAuthorIncludingExcluded(r.Context(), author.ID)
+	books, err := h.books.ListByAuthorIncludingExcludedAndUser(r.Context(), author.ID, auth.ListScopeUserID(r.Context()))
 	if err != nil {
 		writeServerError(w, r, err)
 		return

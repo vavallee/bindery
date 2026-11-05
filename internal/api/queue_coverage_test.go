@@ -459,14 +459,14 @@ func TestQueueGrabRecordsFailureHistory(t *testing.T) {
 // skips the write rather than panicking.
 func TestQueueRecordHistoryWithoutRepo(t *testing.T) {
 	h := newQueueTestHandler(t)
-	h.recordHistory(context.Background(), models.HistoryEventGrabbed, "t", nil, map[string]any{"x": time.Now()})
+	h.recordHistory(context.Background(), models.HistoryEventGrabbed, "t", nil, 0, map[string]any{"x": time.Now()})
 }
 
 // TestQueueRecordHistoryUnmarshalableData: data that cannot be marshalled is
 // logged and dropped, not written as a half event.
 func TestQueueRecordHistoryUnmarshalableData(t *testing.T) {
 	h, database, _, _, _, ctx := queueFixture(t)
-	h.recordHistory(ctx, models.HistoryEventGrabbed, "covq-bad", nil, map[string]any{"ch": make(chan int)})
+	h.recordHistory(ctx, models.HistoryEventGrabbed, "covq-bad", nil, 0, map[string]any{"ch": make(chan int)})
 	events, _, err := db.NewHistoryRepo(database).ListPage(ctx, db.HistoryListOpts{Limit: 10})
 	if err != nil {
 		t.Fatal(err)

@@ -49,6 +49,354 @@ func unitByPath(t *testing.T, database *sql.DB, repo *UnmatchedUnitRepo, path st
 	return u
 }
 
+func TestApplyAdoptionSeriesHintCreatesAndReversesExactMembership(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	book := seedAdoptionBook(t, database)
+	if _, err := repo.ReconcileScan(ctx, []UnmatchedUnitScan{scanUnit("/lib/A/Saga #2 - Two.epub")}, ReconcileScanOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	u := unitByPath(t, database, repo, "/lib/A/Saga #2 - Two.epub")
+	token, err := repo.Claim(ctx, u.ID, UnmatchedStatePending, UnmatchedStateAdopting)
+	if err != nil || token == "" {
+		t.Fatalf("claim = %q, %v", token, err)
+	}
+	if ok, err := repo.RecordAdoptionProgress(ctx, u.ID, token, AdoptionRecord{BookID: book.ID}); err != nil || !ok {
+		t.Fatalf("record adoption = %v, %v", ok, err)
+	}
+	link, err := repo.ApplyAdoptionSeriesHint(ctx, u.ID, token, book.ID, 0, "Saga", "2")
+	if err != nil {
+		t.Fatalf("apply hint: %v", err)
+	}
+	if link == nil || link.SeriesID == 0 || link.CreatedSeriesID != link.SeriesID || !link.Primary {
+		t.Fatalf("link = %+v, want created primary membership", link)
+	}
+	stored, err := repo.Get(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.SeriesLink == nil || stored.SeriesLink.SeriesID != link.SeriesID {
+		t.Fatalf("stored link = %+v, want %+v", stored.SeriesLink, link)
+	}
+	if err := repo.ReverseAdoptionSeriesLink(ctx, stored.SeriesLink); err != nil {
+		t.Fatalf("reverse hint: %v", err)
+	}
+	var memberships, series int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM series_books WHERE series_id = ?`, link.SeriesID).Scan(&memberships); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, link.SeriesID).Scan(&series); err != nil {
+		t.Fatal(err)
+	}
+	if memberships != 0 || series != 0 {
+		t.Fatalf("after reverse memberships=%d series=%d, want both zero", memberships, series)
+	}
+}
+
+func TestApplyAdoptionSeriesHintKeepsChangedMembership(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	book := seedAdoptionBook(t, database)
+	if _, err := repo.ReconcileScan(ctx, []UnmatchedUnitScan{scanUnit("/lib/A/Saga #2 - Two.epub")}, ReconcileScanOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	u := unitByPath(t, database, repo, "/lib/A/Saga #2 - Two.epub")
+	token, err := repo.Claim(ctx, u.ID, UnmatchedStatePending, UnmatchedStateAdopting)
+	if err != nil || token == "" {
+		t.Fatalf("claim = %q, %v", token, err)
+	}
+	if ok, err := repo.RecordAdoptionProgress(ctx, u.ID, token, AdoptionRecord{BookID: book.ID}); err != nil || !ok {
+		t.Fatalf("record adoption = %v, %v", ok, err)
+	}
+	link, err := repo.ApplyAdoptionSeriesHint(ctx, u.ID, token, book.ID, 0, "Saga", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`UPDATE series_books SET position_in_series = '2.5' WHERE series_id = ? AND book_id = ?`, link.SeriesID, book.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ReverseAdoptionSeriesLink(ctx, link); err != nil {
+		t.Fatal(err)
+	}
+	var position string
+	if err := database.QueryRow(`SELECT position_in_series FROM series_books WHERE series_id = ? AND book_id = ?`, link.SeriesID, book.ID).Scan(&position); err != nil {
+		t.Fatal(err)
+	}
+	if position != "2.5" {
+		t.Fatalf("position after reverse = %q, want preserved edit", position)
+	}
+}
+
+func TestApplyAdoptionSeriesHintExistingAndRejectedTargets(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	book := seedAdoptionBook(t, database)
+	seriesRepo := NewSeriesRepo(database)
+	existing, err := seriesRepo.CreateManual(ctx, "Existing Saga")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ReconcileScan(ctx, []UnmatchedUnitScan{scanUnit("/lib/A/Saga #2 - Two.epub")}, ReconcileScanOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	u := unitByPath(t, database, repo, "/lib/A/Saga #2 - Two.epub")
+	token, err := repo.Claim(ctx, u.ID, UnmatchedStatePending, UnmatchedStateAdopting)
+	if err != nil || token == "" {
+		t.Fatalf("claim = %q, %v", token, err)
+	}
+	if ok, err := repo.RecordAdoptionProgress(ctx, u.ID, token, AdoptionRecord{BookID: book.ID}); err != nil || !ok {
+		t.Fatalf("record adoption = %v, %v", ok, err)
+	}
+	if _, err := repo.ApplyAdoptionSeriesHint(ctx, u.ID, token, book.ID, 99999, "Saga", "2"); !errors.Is(err, ErrAdoptionSeriesNotFound) {
+		t.Fatalf("missing series error = %v, want ErrAdoptionSeriesNotFound", err)
+	}
+	link, err := repo.ApplyAdoptionSeriesHint(ctx, u.ID, token, book.ID, existing.ID, "ignored", "2")
+	if err != nil || link == nil || link.SeriesID != existing.ID {
+		t.Fatalf("existing series link = %+v, %v", link, err)
+	}
+	if again, err := repo.ApplyAdoptionSeriesHint(ctx, u.ID, token, book.ID, existing.ID, "ignored", "2"); err != nil || again == nil || again.SeriesID != 0 {
+		t.Fatalf("existing membership = %+v, %v; want no-op marker", again, err)
+	}
+	if err := repo.ReverseAdoptionSeriesLink(ctx, link); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM series_books WHERE series_id = ? AND book_id = ?`, existing.ID, book.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("existing series membership after reverse = %d, want zero", count)
+	}
+	if missing, err := repo.ApplyAdoptionSeriesHint(ctx, u.ID, "not-the-token", book.ID, existing.ID, "Saga", "2"); err != nil || missing != nil {
+		t.Fatalf("lost claim = %+v, %v; want nil, nil", missing, err)
+	}
+}
+
+func TestApplyAdoptionSeriesHintHonorsSeriesExclusion(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	book := seedAdoptionBook(t, database)
+	series, err := NewSeriesRepo(database).CreateManual(ctx, "Excluded Saga")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO book_series_exclusions (book_id, series_foreign_id, position_in_series) VALUES (?, ?, '')`, book.ID, series.ForeignID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ReconcileScan(ctx, []UnmatchedUnitScan{scanUnit("/lib/A/Saga #2 - Two.epub")}, ReconcileScanOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	u := unitByPath(t, database, repo, "/lib/A/Saga #2 - Two.epub")
+	token, err := repo.Claim(ctx, u.ID, UnmatchedStatePending, UnmatchedStateAdopting)
+	if err != nil || token == "" {
+		t.Fatalf("claim = %q, %v", token, err)
+	}
+	if ok, err := repo.RecordAdoptionProgress(ctx, u.ID, token, AdoptionRecord{BookID: book.ID}); err != nil || !ok {
+		t.Fatalf("record adoption = %v, %v", ok, err)
+	}
+	if _, err := repo.ApplyAdoptionSeriesHint(ctx, u.ID, token, book.ID, series.ID, "Saga", "2"); !errors.Is(err, ErrAdoptionSeriesExcluded) {
+		t.Fatalf("excluded series error = %v, want ErrAdoptionSeriesExcluded", err)
+	}
+}
+
+func TestApplyAdoptionSeriesHintKeepsExistingPrimaryMembership(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	book := seedAdoptionBook(t, database)
+	seriesRepo := NewSeriesRepo(database)
+	primary, err := seriesRepo.CreateManual(ctx, "Primary Saga")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, primary.ID, book.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+	target, err := seriesRepo.CreateManual(ctx, "Other Saga")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ReconcileScan(ctx, []UnmatchedUnitScan{scanUnit("/lib/A/Saga #2 - Two.epub")}, ReconcileScanOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	u := unitByPath(t, database, repo, "/lib/A/Saga #2 - Two.epub")
+	token, err := repo.Claim(ctx, u.ID, UnmatchedStatePending, UnmatchedStateAdopting)
+	if err != nil || token == "" {
+		t.Fatalf("claim = %q, %v", token, err)
+	}
+	if ok, err := repo.RecordAdoptionProgress(ctx, u.ID, token, AdoptionRecord{BookID: book.ID}); err != nil || !ok {
+		t.Fatalf("record adoption = %v, %v", ok, err)
+	}
+	link, err := repo.ApplyAdoptionSeriesHint(ctx, u.ID, token, book.ID, target.ID, "Other Saga", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link.Primary {
+		t.Fatalf("link = %+v, want non-primary membership", link)
+	}
+	if err := repo.ReverseAdoptionSeriesLink(ctx, link); err != nil {
+		t.Fatal(err)
+	}
+	var primaryCount, targetCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM series_books WHERE series_id = ? AND book_id = ? AND primary_series = 1`, primary.ID, book.ID).Scan(&primaryCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM series_books WHERE series_id = ? AND book_id = ?`, target.ID, book.ID).Scan(&targetCount); err != nil {
+		t.Fatal(err)
+	}
+	if primaryCount != 1 || targetCount != 0 {
+		t.Fatalf("membership after reverse primary=%d target=%d, want 1 and 0", primaryCount, targetCount)
+	}
+}
+
+func TestAdoptionSeriesLinkRecordRoundTripAndReset(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	book := seedAdoptionBook(t, database)
+	if _, err := repo.ReconcileScan(ctx, []UnmatchedUnitScan{scanUnit("/lib/A/Saga #2 - Two.epub")}, ReconcileScanOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	u := unitByPath(t, database, repo, "/lib/A/Saga #2 - Two.epub")
+	token, err := repo.Claim(ctx, u.ID, UnmatchedStatePending, UnmatchedStateAdopting)
+	if err != nil || token == "" {
+		t.Fatalf("claim = %q, %v", token, err)
+	}
+	want := &AdoptionSeriesLink{SeriesID: 7, BookID: book.ID, Position: "2", Primary: true}
+	if ok, err := repo.RecordAdoptionProgress(ctx, u.ID, token, AdoptionRecord{BookID: want.BookID, SeriesLink: want}); err != nil || !ok {
+		t.Fatalf("record adoption = %v, %v", ok, err)
+	}
+	stored, err := repo.Get(ctx, u.ID)
+	if err != nil || stored.SeriesLink == nil || *stored.SeriesLink != *want {
+		t.Fatalf("stored series link = %+v, %v; want %+v", stored.SeriesLink, err, want)
+	}
+	if ok, err := repo.ResetToPending(ctx, u.ID, UnmatchedStateAdopting, token); err != nil || !ok {
+		t.Fatalf("reset = %v, %v", ok, err)
+	}
+	stored, err = repo.Get(ctx, u.ID)
+	if err != nil || stored.SeriesLink != nil {
+		t.Fatalf("link after reset = %+v, %v; want nil", stored.SeriesLink, err)
+	}
+	if err := repo.ReverseAdoptionSeriesLink(ctx, nil); err != nil {
+		t.Fatalf("reverse nil link: %v", err)
+	}
+}
+
+func TestUnmatchedUnitRejectsMalformedAdoptionSeriesLink(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	if _, err := repo.ReconcileScan(ctx, []UnmatchedUnitScan{scanUnit("/lib/A/Saga #2 - Two.epub")}, ReconcileScanOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	u := unitByPath(t, database, repo, "/lib/A/Saga #2 - Two.epub")
+	if _, err := database.Exec(`UPDATE unmatched_units SET series_link_json = '{not json' WHERE id = ?`, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Get(ctx, u.ID); err == nil || !strings.Contains(err.Error(), "series link") {
+		t.Fatalf("malformed series link error = %v, want descriptive error", err)
+	}
+}
+
+func TestApplyAdoptionSeriesHintRejectsChangedClaimedBook(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	book := seedAdoptionBook(t, database)
+	if _, err := repo.ReconcileScan(ctx, []UnmatchedUnitScan{scanUnit("/lib/A/Saga #2 - Two.epub")}, ReconcileScanOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	u := unitByPath(t, database, repo, "/lib/A/Saga #2 - Two.epub")
+	token, err := repo.Claim(ctx, u.ID, UnmatchedStatePending, UnmatchedStateAdopting)
+	if err != nil || token == "" {
+		t.Fatalf("claim = %q, %v", token, err)
+	}
+	if ok, err := repo.RecordAdoptionProgress(ctx, u.ID, token, AdoptionRecord{BookID: book.ID}); err != nil || !ok {
+		t.Fatalf("record adoption = %v, %v", ok, err)
+	}
+	if _, err := repo.ApplyAdoptionSeriesHint(ctx, u.ID, token, book.ID+1, 0, "Saga", "2"); err == nil || !strings.Contains(err.Error(), "claimed book changed") {
+		t.Fatalf("changed claimed book error = %v, want validation error", err)
+	}
+}
+
+func TestApplyAdoptionSeriesHintRefusesIncompleteHint(t *testing.T) {
+	_, repo := openUnmatchedRepo(t)
+	for _, args := range []struct {
+		bookID          int64
+		title, position string
+	}{
+		{title: "Saga", position: "2"},
+		{bookID: 1, position: "2"},
+		{bookID: 1, title: "Saga"},
+	} {
+		if _, err := repo.ApplyAdoptionSeriesHint(context.Background(), 1, "token", args.bookID, 0, args.title, args.position); err == nil {
+			t.Fatalf("ApplyAdoptionSeriesHint(%+v) succeeded, want validation error", args)
+		}
+	}
+}
+
+func TestReverseAdoptionSeriesLinkPreservesChangedManualSeries(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	book := seedAdoptionBook(t, database)
+	series, err := NewSeriesRepo(database).CreateManual(ctx, "Changed Saga")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewSeriesRepo(database).LinkBook(ctx, series.ID, book.ID, "2", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewSeriesRepo(database).SetMonitored(ctx, series.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	link := &AdoptionSeriesLink{
+		SeriesID: series.ID, BookID: book.ID, Position: "2", Primary: true,
+		CreatedSeriesID: series.ID, CreatedSeriesForeignID: series.ForeignID, CreatedSeriesTitle: series.Title,
+		CreatedSeriesMonitored: false,
+	}
+	if err := repo.ReverseAdoptionSeriesLink(ctx, link); err != nil {
+		t.Fatal(err)
+	}
+	var remaining int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, series.ID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 {
+		t.Fatalf("changed series count = %d, want preserved series", remaining)
+	}
+}
+
+// A series the user pinned to an author after adopting is in use: Undo must
+// not delete it, or the pin goes with it through ON DELETE CASCADE.
+func TestReverseAdoptionSeriesLinkPreservesAuthorPinnedSeries(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	book := seedAdoptionBook(t, database)
+	series, err := NewSeriesRepo(database).CreateManual(ctx, "Pinned Saga")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewSeriesRepo(database).LinkBook(ctx, series.ID, book.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO author_monitored_series (author_id, series_id, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)`, book.AuthorID, series.ID); err != nil {
+		t.Fatal(err)
+	}
+	link := &AdoptionSeriesLink{
+		SeriesID: series.ID, BookID: book.ID, Position: "1", Primary: true,
+		CreatedSeriesID: series.ID, CreatedSeriesForeignID: series.ForeignID, CreatedSeriesTitle: series.Title,
+	}
+	if err := repo.ReverseAdoptionSeriesLink(ctx, link); err != nil {
+		t.Fatal(err)
+	}
+	var seriesRows, pins int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, series.ID).Scan(&seriesRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM author_monitored_series WHERE series_id = ?`, series.ID).Scan(&pins); err != nil {
+		t.Fatal(err)
+	}
+	if seriesRows != 1 || pins != 1 {
+		t.Fatalf("after undo: series rows = %d, pins = %d, want both kept", seriesRows, pins)
+	}
+}
+
 // TestReconcileScan_KeepsDecisions covers the ReconcileScan contract: a rescan
 // never moves an ignored row, a unit the scan stops seeing is removed while
 // pending and kept once decided, and the counts come back.
@@ -478,7 +826,7 @@ func TestMigrate088_OverPopulatedDatabase(t *testing.T) {
 	}
 
 	// 098 and 100 add columns to the table 088 creates, so they rerun with it.
-	for _, file := range []string{"088_unmatched_units.sql", "098_unmatched_units_prior_status.sql", "100_unmatched_units_files_author.sql"} {
+	for _, file := range []string{"088_unmatched_units.sql", "098_unmatched_units_prior_status.sql", "100_unmatched_units_files_author.sql", "118_unmatched_units_series_link.sql"} {
 		v := migrationVersionForTest(t, file)
 		if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = ?`, v); err != nil {
 			t.Fatal(err)

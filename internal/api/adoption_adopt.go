@@ -27,6 +27,12 @@ type adoptRequest struct {
 	// audiobook). Kept for clients that send it; it cannot turn audio files
 	// into an ebook.
 	Format string `json:"format"`
+	// ApplySeriesHint turns the server-derived path hint into one explicit
+	// membership. SeriesID selects an existing series; zero creates a new
+	// manual one with the inferred title. A client never supplies title or
+	// position, because those are evidence the server must re-derive.
+	ApplySeriesHint bool  `json:"applySeriesHint"`
+	SeriesID        int64 `json:"seriesId"`
 }
 
 // Adopt handles POST /library/unmatched/{id}/adopt.
@@ -70,6 +76,14 @@ func (h *AdoptionHandler) Adopt(w http.ResponseWriter, r *http.Request) {
 	case "", models.MediaTypeEbook, models.MediaTypeAudiobook:
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "format must be 'ebook' or 'audiobook'"})
+		return
+	}
+	if !req.ApplySeriesHint && req.SeriesID != 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "seriesId requires applySeriesHint"})
+		return
+	}
+	if req.SeriesID < 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "seriesId must be positive"})
 		return
 	}
 
@@ -199,6 +213,28 @@ func (h *AdoptionHandler) adopt(ctx context.Context, id int64, token string, req
 	// The created rows are on record before any file is registered.
 	if err := h.progress(ctx, id, token, rec); err != nil {
 		return "", h.failAdopt(ctx, id, rec, err)
+	}
+	if req.ApplySeriesHint {
+		hint := seriesHintFromUnit(unit)
+		if hint == nil {
+			return "", h.failAdopt(ctx, id, rec, refuse(http.StatusUnprocessableEntity, "This path has no explicit series and position hint."))
+		}
+		link, err := h.units.ApplyAdoptionSeriesHint(ctx, id, token, book.ID, req.SeriesID, hint.Title, hint.Position)
+		if err != nil {
+			switch {
+			case errors.Is(err, db.ErrAdoptionSeriesNotFound):
+				err = refuse(http.StatusNotFound, "That series is no longer in your library.")
+			case errors.Is(err, db.ErrAdoptionSeriesExcluded):
+				err = refuse(http.StatusConflict, "This book was removed from that series and cannot be linked automatically.")
+			}
+			return "", h.failAdopt(ctx, id, rec, err)
+		}
+		if link == nil {
+			return "", h.failAdopt(ctx, id, rec, refuse(http.StatusConflict, "This book changed while it was being adopted. Try again."))
+		}
+		if link.SeriesID > 0 {
+			rec.SeriesLink = link
+		}
 	}
 
 	regErr := h.register(ctx, id, token, book.ID, format, paths, unit.MemberPaths, &rec)

@@ -56,6 +56,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const [saving, setSaving] = useState<string | null>(null)
   const [dropErr, setDropErr] = useState<string | null>(null)
   const [audiobookDropErr, setAudiobookDropErr] = useState<string | null>(null)
+  const [sourcesErr, setSourcesErr] = useState<string | null>(null)
   const [langErr, setLangErr] = useState<string | null>(null)
   const [scanningLibrary, setScanningLibrary] = useState(false)
   const [showReorganize, setShowReorganize] = useState(false)
@@ -95,6 +96,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const [langSaveResult, langSave] = useSaveResult()
   const [dropSaveResult, dropSave] = useSaveResult()
   const [audiobookDropSaveResult, audiobookDropSave] = useSaveResult()
+  const [sourcesSaveResult, sourcesSave] = useSaveResult()
   const [bookTemplateResult, bookTemplateSave] = useSaveResult()
   const [audiobookTemplateResult, audiobookTemplateSave] = useSaveResult()
   const [audiobookFileResult, audiobookFileSave] = useSaveResult()
@@ -192,6 +194,21 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
     }
   }
 
+  // saveImportSources surfaces the server-side check (absolute, existing
+  // directory) inline, like the drop folders (#2168).
+  const saveImportSources = async () => {
+    setSaving('import.source_folders')
+    setSourcesErr(null)
+    try {
+      await api.setSetting('import.source_folders', settings['import.source_folders'] ?? '')
+    } catch (err) {
+      setSourcesErr(errorText(err, t('settings.general.saveFailed', 'Save failed')))
+      throw err
+    } finally {
+      setSaving(null)
+    }
+  }
+
   // savePreferredLanguage mirrors saveDropFolder: it sets and clears `saving`
   // (so the disabled guard fires and "Saving…" shows) and throws on failure so
   // useSaveResult flips to 'error' AND a visible message is surfaced inline —
@@ -272,6 +289,9 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   // default the other cadences fall back to.
   const discoveryInterval = settings['authors.discovery.interval'] || 'off'
   const discoveryIntervalIsCustom = !DISCOVERY_INTERVAL_PRESETS.includes(discoveryInterval)
+  // Series checking ships off too (#2523), for the same reason: it adds books.
+  const seriesCheckInterval = settings['series.monitoring.interval'] || 'off'
+  const seriesCheckIntervalIsCustom = !DISCOVERY_INTERVAL_PRESETS.includes(seriesCheckInterval)
 
   // Per format import routing (#1632). import.mode applies to both formats
   // unless import.audiobook.mode overrides it for audiobooks; empty means
@@ -536,6 +556,29 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               </div>
             </div>
           )}
+          <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
+            <label htmlFor="import-source-folders" className="block text-xs text-fg-muted mb-1">{t('settings.general.importSources', 'Import source folders')}</label>
+            <p className="text-xs text-fg-muted mb-2">
+              {t('settings.general.importSourcesHint', 'Optional. One absolute folder path per line. Import, From a folder can browse and import from these in addition to your root folders. They are not root folders: no author is filed there and Bindery never scans them as a library. Bindery never writes new files there, but in move mode an import removes the imported files from them. Mount a folder read only to make a move fail instead of delete.')}
+            </p>
+            <div className="flex gap-2 items-start">
+              <textarea
+                id="import-source-folders"
+                data-testid="import-source-folders"
+                rows={3}
+                value={settings['import.source_folders'] ?? ''}
+                onChange={e => { setSettings(s => ({ ...s, 'import.source_folders': e.target.value })); setSourcesErr(null) }}
+                placeholder="/old-library"
+                className={inputCls + ' flex-1 font-mono'}
+              />
+              <SaveButton
+                result={sourcesSaveResult}
+                saving={saving === 'import.source_folders'}
+                onClick={() => sourcesSave(saveImportSources)}
+              />
+            </div>
+            {sourcesErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{sourcesErr}</p>}
+          </div>
           <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
             <label className="flex items-start gap-2 cursor-pointer">
               <input
@@ -918,6 +961,41 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               <option value="720h">{t('settings.general.discoveryMonthly')}</option>
               {discoveryIntervalIsCustom && (
                 <option value={discoveryInterval}>{discoveryInterval}</option>
+              )}
+            </select>
+          </div>
+        </div>
+      </section>
+
+      {/* Scheduled series checking (#2523). Off by default: before this the
+          Monitored toggle on a series did nothing, so turning this on makes
+          every series already toggled start adding books. */}
+      <section>
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.seriesCheck')}</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          <div>
+            <label htmlFor="series-check-interval" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+              {t('settings.general.seriesCheckIntervalLabel')}
+            </label>
+            <p className="text-xs text-fg-muted mb-2">
+              {t('settings.general.seriesCheckIntervalHint')}
+            </p>
+            <select
+              id="series-check-interval"
+              value={seriesCheckInterval}
+              onChange={async e => {
+                const next = e.target.value
+                setSettings(s => ({ ...s, 'series.monitoring.interval': next }))
+                await api.setSetting('series.monitoring.interval', next).catch(console.error)
+              }}
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
+            >
+              <option value="off">{t('settings.general.discoveryOff')}</option>
+              <option value="24h">{t('settings.general.discoveryDaily')}</option>
+              <option value="168h">{t('settings.general.discoveryWeekly')}</option>
+              <option value="720h">{t('settings.general.discoveryMonthly')}</option>
+              {seriesCheckIntervalIsCustom && (
+                <option value={seriesCheckInterval}>{seriesCheckInterval}</option>
               )}
             </select>
           </div>

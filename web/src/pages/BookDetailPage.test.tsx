@@ -877,6 +877,77 @@ describe('BookDetailPage — search', () => {
     await waitFor(() => expect(api.grab).toHaveBeenCalledTimes(1))
     expect(api.grab).toHaveBeenCalledWith(expect.objectContaining({ guid, title, mediaType }))
   })
+
+  // #3247: a multi-book pack is labelled with the words it matched and can
+  // still be grabbed, but only after a confirmation that says the importer
+  // will not place it.
+  describe('multi-book pack', () => {
+    const searchWithPack = () => {
+      vi.mocked(api.getBook).mockResolvedValue(makeBook())
+      vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
+      vi.mocked(api.searchBook).mockResolvedValue({
+        results: [
+          makeResult({ guid: 'single-guid', title: 'Dominion of Blades - Matt Dinniman' }),
+          makeResult({
+            guid: 'pack-guid',
+            title: 'Dominion of Blades 1-2',
+            approved: false,
+            rejection: 'multi-book pack: release is titled "Dominion of Blades 1-2"',
+            pack: 'Dominion of Blades 1-2',
+          }),
+        ],
+        debug: null,
+      })
+    }
+    const packRow = async () => {
+      renderBookDetailPage()
+      fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+      return (await screen.findByText('Dominion of Blades 1-2')).closest('.rounded') as HTMLElement
+    }
+
+    it('labels only the pack, with the matched words', async () => {
+      searchWithPack()
+      const row = await packRow()
+      const label = within(row).getByText(en.search.pack.label)
+      expect(label).toHaveAttribute('title', 'Matched "Dominion of Blades 1-2"')
+      const single = screen.getByText('Dominion of Blades - Matt Dinniman').closest('.rounded') as HTMLElement
+      expect(within(single).queryByText(en.search.pack.label)).not.toBeInTheDocument()
+    })
+
+    it('asks before grabbing a pack and grabs it on confirm', async () => {
+      searchWithPack()
+      const row = await packRow()
+      fireEvent.click(within(row).getByRole('button', { name: 'Grab' }))
+
+      const dialog = await screen.findByRole('dialog')
+      expect(within(dialog).getByText(en.search.pack.confirmTitle)).toBeInTheDocument()
+      expect(api.grab).not.toHaveBeenCalled()
+
+      fireEvent.click(within(dialog).getByRole('button', { name: en.search.pack.confirm }))
+      await waitFor(() => expect(api.grab).toHaveBeenCalledTimes(1))
+      expect(api.grab).toHaveBeenCalledWith(expect.objectContaining({ guid: 'pack-guid' }))
+    })
+
+    it('does not grab a pack when the confirmation is cancelled', async () => {
+      searchWithPack()
+      const row = await packRow()
+      fireEvent.click(within(row).getByRole('button', { name: 'Grab' }))
+
+      const dialog = await screen.findByRole('dialog')
+      fireEvent.click(within(dialog).getByRole('button', { name: /cancel/i }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(api.grab).not.toHaveBeenCalled()
+    })
+
+    it('grabs a single book without asking', async () => {
+      searchWithPack()
+      await packRow()
+      const single = screen.getByText('Dominion of Blades - Matt Dinniman').closest('.rounded') as HTMLElement
+      fireEvent.click(within(single).getByRole('button', { name: 'Grab' }))
+      await waitFor(() => expect(api.grab).toHaveBeenCalledTimes(1))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+  })
 })
 
 // #2334: releases the relevance and language filters removed come back in a

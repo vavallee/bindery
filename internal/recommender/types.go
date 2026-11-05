@@ -4,6 +4,8 @@
 // scores them, and persists the top results for the Discover page.
 package recommender
 
+import "github.com/vavallee/bindery/internal/models"
+
 // SeriesState tracks a user's progress through a series.
 type SeriesState struct {
 	SeriesID         int64
@@ -34,4 +36,15 @@ type UserProfile struct {
 	PreferredLanguage   string
 	TotalBooks          int
 	LibraryMedianYear   int
+	// Scope limits the profile and every candidate to one user's library:
+	// books and authors that user owns, plus unowned (shared) ones. 0 means
+	// the whole instance, which is what an admin, or anyone with tenancy off,
+	// gets. See Engine.libraryScope.
+	Scope int64
+}
+
+// visible reports whether a book may feed this profile or be recommended
+// from it.
+func (p *UserProfile) visible(b *models.Book) bool {
+	return b != nil && (p.Scope == 0 || b.OwnerUserID == 0 || b.OwnerUserID == p.Scope)
 }

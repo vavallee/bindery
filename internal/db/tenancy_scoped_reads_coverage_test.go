@@ -317,8 +317,9 @@ func TestTenancyScopedReads_Coverage(t *testing.T) {
 			return true
 		}
 
+		// h-orphan has neither an owner nor a book, so it is admin only.
 		evs, err := repo.ListForUser(ctx, alice)
-		if err != nil || !same(titles(evs), "h-orphan", "h-a-import", "h-a-grab") {
+		if err != nil || !same(titles(evs), "h-a-import", "h-a-grab") {
 			t.Fatalf("ListForUser(alice) = %v, %v", titles(evs), err)
 		}
 		if evs, _ := repo.ListForUser(ctx, 0); len(evs) != 4 {
@@ -336,7 +337,7 @@ func TestTenancyScopedReads_Coverage(t *testing.T) {
 			t.Fatalf("ListByBookAndUser(bob's book, 0) = %v", titles(evs))
 		}
 		evs, err = repo.ListByTypeAndUser(ctx, models.HistoryEventGrabbed, bob)
-		if err != nil || !same(titles(evs), "h-orphan", "h-b-grab") {
+		if err != nil || !same(titles(evs), "h-b-grab") {
 			t.Fatalf("ListByTypeAndUser(grabbed, bob) = %v, %v", titles(evs), err)
 		}
 		if evs, _ := repo.ListByTypeAndUser(ctx, models.HistoryEventGrabbed, 0); len(evs) != 3 {

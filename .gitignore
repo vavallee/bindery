@@ -28,6 +28,8 @@ coverage.html
 /codecov.SHA256SUM.sig
 
 # Frontend
+tools/screenshots/node_modules/
+tools/screenshots/.out/
 web/node_modules/
 web/coverage/
 web/dist/

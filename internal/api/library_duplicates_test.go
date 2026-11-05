@@ -350,3 +350,49 @@ func TestLibraryDuplicates_CachesScanUntilTheLibraryChanges(t *testing.T) {
 		t.Errorf("after the TTL: %d scans, want 4", scans())
 	}
 }
+
+// TestLibraryDuplicates_RescansWhenBookOwnerChanges pins the book owner term
+// in DuplicateScanStamp. The scan filters books by their own owner, so a book
+// changing hands changes what a user's scope holds. Deleting a user and
+// handing their library to another account rewrites books.owner_user_id
+// without touching updated_at, the book count or the authors table, so
+// without that term the receiving user keeps a cached scan that leaves out
+// the books they now own until the TTL runs out.
+func TestLibraryDuplicates_RescansWhenBookOwnerChanges(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	f := newLibDupFixture(t)
+	users := db.NewUserRepo(f.database)
+	bob, err := users.Create(f.ctx, "bob", "h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	carol, err := users.Create(f.ctx, "carol", "h2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := f.author(t, "Shared Author", 0)
+	for _, fid := range []string{"OLO1W", "OLO2W"} {
+		b := &models.Book{
+			ForeignID: fid, AuthorID: shared.ID, Title: "Dune", SortTitle: "Dune",
+			Monitored: true, Status: models.BookStatusWanted, MetadataProvider: "openlibrary",
+			MediaType: models.MediaTypeEbook, OwnerUserID: carol.ID,
+		}
+		if err := f.books.Create(f.ctx, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	clock := time.Now()
+	f.lib.now = func() time.Time { return clock }
+
+	if resp := f.list(t, "", bob.ID, auth.RoleUser); resp.Total != 0 {
+		t.Fatalf("before the handover bob sees %v, want nothing", groupAuthors(resp))
+	}
+	if err := users.Delete(f.ctx, carol.ID, db.UserDeletePlan{Strategy: db.ReassignOwnedRows, ReassignTo: &bob.ID}); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.list(t, "", bob.ID, auth.RoleUser)
+	if got := groupAuthors(resp); resp.Total != 1 || len(got) != 1 || got[0] != "Shared Author/dune" {
+		t.Fatalf("after the handover bob sees %v (total %d), want the Dune group he now owns", got, resp.Total)
+	}
+}

@@ -81,8 +81,7 @@ func TestStatus_SetupRequired(t *testing.T) {
 // issues a session cookie, and rejects subsequent setup attempts.
 func TestSetup_CreatesFirstAdmin(t *testing.T) {
 	h, users, _, ctx := newAuthFixture(t)
-	req := httptest.NewRequest(http.MethodPost, "/auth/setup",
-		jsonBody(t, setupRequest{Username: "admin", Password: "hunter2hunter2"}))
+	req := setupJSONReq(jsonBody(t, setupRequest{Username: "admin", Password: "hunter2hunter2"}))
 	rec := httptest.NewRecorder()
 	h.Setup(rec, req)
 	if rec.Code != http.StatusOK {
@@ -111,8 +110,7 @@ func TestSetup_CreatesFirstAdmin(t *testing.T) {
 
 	// Second attempt must 409 — setup is one-shot.
 	rec2 := httptest.NewRecorder()
-	h.Setup(rec2, httptest.NewRequest(http.MethodPost, "/auth/setup",
-		jsonBody(t, setupRequest{Username: "other", Password: "password1"})))
+	h.Setup(rec2, setupJSONReq(jsonBody(t, setupRequest{Username: "other", Password: "password1"})))
 	if rec2.Code != http.StatusConflict {
 		t.Errorf("expected 409 on second setup, got %d", rec2.Code)
 	}
@@ -123,8 +121,7 @@ func TestSetup_CreatesFirstAdmin(t *testing.T) {
 func TestSetup_RejectsShortPassword(t *testing.T) {
 	h, _, _, _ := newAuthFixture(t)
 	rec := httptest.NewRecorder()
-	h.Setup(rec, httptest.NewRequest(http.MethodPost, "/auth/setup",
-		jsonBody(t, setupRequest{Username: "admin", Password: "short"})))
+	h.Setup(rec, setupJSONReq(jsonBody(t, setupRequest{Username: "admin", Password: "short"})))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for short password, got %d", rec.Code)
 	}
@@ -586,7 +583,7 @@ func TestSessionSecrets_SingleSecretWhenNoPrevious(t *testing.T) {
 func TestSetup_RejectsEmptyBody(t *testing.T) {
 	h, _, _, _ := newAuthFixture(t)
 	rec := httptest.NewRecorder()
-	h.Setup(rec, httptest.NewRequest(http.MethodPost, "/auth/setup", strings.NewReader("not-json")))
+	h.Setup(rec, setupJSONReq(strings.NewReader("not-json")))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rec.Code)
 	}

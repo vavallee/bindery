@@ -318,7 +318,7 @@ func TestApplyGenresAuthorCoverage(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	env := covAuSetup(t)
 	h := NewAuthorHandler(env.authors, env.aliases, env.books, env.series, nil, nil, nil, nil)
-	book := &models.Book{ForeignID: "OL-ALICE-BOOK", AuthorID: env.aliceA.ID, Title: "Alice's Book", Status: models.BookStatusWanted, Genres: []string{"Old"}}
+	book := &models.Book{ForeignID: "OL-ALICE-BOOK", AuthorID: env.aliceA.ID, Title: "Alice's Book", Status: models.BookStatusWanted, Genres: []string{"Old"}, OwnerUserID: env.alice}
 	if err := env.books.Create(env.ctx, book); err != nil {
 		t.Fatal(err)
 	}

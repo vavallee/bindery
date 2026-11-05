@@ -24,6 +24,44 @@ type Series struct {
 	// edition parts of a whole the library already has (#3048), filled by the
 	// series API only. Fill and the wanted sweep skip them.
 	SplitEditionPartBookIDs []int64 `json:"splitEditionPartBookIds,omitempty"`
+	// Monitoring is the scheduled check's state for this series (#2523). Nil
+	// until the series has been monitored or checked at least once.
+	Monitoring *SeriesMonitoring `json:"monitoring,omitempty"`
+}
+
+// Series monitoring modes (#2523). Upcoming adds only books that are announced
+// or newly released and leaves back-catalogue gaps to an explicit Fill. All
+// adds every book the catalogue has that the library does not.
+const (
+	SeriesMonitorUpcoming = "upcoming"
+	SeriesMonitorAll      = "all"
+)
+
+// Outcomes of a series check, stored in SeriesMonitoring.LastStatus.
+const (
+	SeriesCheckOK        = "ok"
+	SeriesCheckNoLink    = "no_link"
+	SeriesCheckDisabled  = "provider_disabled"
+	SeriesCheckFailed    = "failed"
+	SeriesCheckAmbiguous = "ambiguous_owner"
+	SeriesCheckTimedOut  = "timed_out"
+	// SeriesCheckPartial is a check that read the catalogue but could not add
+	// every book it meant to. It does not advance last_ok_at, so the next check
+	// still sees what this one missed.
+	SeriesCheckPartial = "partial"
+)
+
+// SeriesMonitoring is what the scheduled series check records per series.
+type SeriesMonitoring struct {
+	Mode        string     `json:"mode"`
+	OwnerUserID int64      `json:"-"`
+	LastCheckAt *time.Time `json:"lastCheckAt,omitempty"`
+	// LastOKAt is the start of the last check that read the whole catalogue.
+	LastOKAt    *time.Time `json:"-"`
+	NextCheckAt *time.Time `json:"nextCheckAt,omitempty"`
+	LastStatus  string     `json:"lastStatus,omitempty"`
+	LastMessage string     `json:"lastMessage,omitempty"`
+	LastCreated int        `json:"lastCreated"`
 }
 
 type SeriesHardcoverLink struct {

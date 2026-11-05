@@ -582,7 +582,7 @@ func (s *Scanner) authorNamesFor(ctx context.Context, author *models.Author) []s
 // withContentCheck returns a bookImported history payload with the contentCheck
 // object added when there is one. With none it carries exactly the input, so an
 // import nobody flagged writes the same row as before.
-func withContentCheck(data map[string]string, contentCheck map[string]any) map[string]any {
+func withContentCheck(data map[string]any, contentCheck map[string]any) map[string]any {
 	out := make(map[string]any, len(data)+1)
 	for k, v := range data {
 		out[k] = v

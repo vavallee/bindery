@@ -29,6 +29,7 @@ type ownedFixture struct {
 	right     *models.Book // Vol 3, the book the file really is
 	wrong     *models.Book // Vol 17, the book the file was attached to
 	library   string
+	settings  *db.SettingsRepo
 }
 
 func newOwnedFixture(t *testing.T) *ownedFixture {
@@ -73,7 +74,7 @@ func newOwnedFixture(t *testing.T) *ownedFixture {
 	h := NewManualImportHandler(scanner, downloads, books)
 	return &ownedFixture{
 		h: h, books: books, downloads: downloads, history: history, scanner: scanner,
-		right: right, wrong: wrong, library: library,
+		right: right, wrong: wrong, library: library, settings: settings,
 	}
 }
 
@@ -152,10 +153,12 @@ func (f *ownedFixture) writeFile(t *testing.T, rel, content string) string {
 	return p
 }
 
-// TestManualImport_PathOwnedByOtherBook_FailsNamingOwner: a manual import of
-// a file onto Vol 3 whose destination Vol 17 already tracks (#2937). It used
-// to report success and leave Vol 3 Wanted with nothing recorded.
-func TestManualImport_PathOwnedByOtherBook_FailsNamingOwner(t *testing.T) {
+// TestManualImport_PathOwnedByOtherBook_ImportsBeside: a manual import of a
+// file onto Vol 3 whose destination Vol 17 already tracks. It used to report
+// success and leave Vol 3 Wanted with nothing recorded (#2937), then to block
+// for good (#3560). It now lands at the next free " (2)" name, recorded
+// against Vol 3, and Vol 17's row is untouched.
+func TestManualImport_PathOwnedByOtherBook_ImportsBeside(t *testing.T) {
 	f := newOwnedFixture(t)
 	ctx := context.Background()
 	src := f.writeFile(t, "incoming/vol3.epub", "volume three")
@@ -172,19 +175,18 @@ func TestManualImport_PathOwnedByOtherBook_FailsNamingOwner(t *testing.T) {
 	f.wait(t, "")
 
 	dl := f.onlyDownload(t)
-	if dl.Status != models.StateImportBlocked {
-		t.Fatalf("download status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImportBlocked)
+	if dl.Status != models.StateImported {
+		t.Fatalf("download status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImported)
 	}
-	for _, want := range []string{f.wrong.Title, fmt.Sprintf("%d", f.wrong.ID)} {
-		if !strings.Contains(dl.ErrorMessage, want) {
-			t.Errorf("failure %q does not name the owning book (%s)", dl.ErrorMessage, want)
-		}
+	want := strings.TrimSuffix(preview.Destination, ".epub") + " (2).epub"
+	if files := f.files(t, f.right.ID); len(files) != 1 || files[0].Path != want {
+		t.Errorf("Vol 3 files = %+v, want one row at %s", files, want)
 	}
-	if files := f.files(t, f.right.ID); len(files) != 0 {
-		t.Errorf("Vol 3 files = %+v, want none", files)
+	if got, err := os.ReadFile(want); err != nil || string(got) != "volume three" { //nolint:gosec // test path under t.TempDir
+		t.Errorf("file at %s = %q, %v; want the imported bytes", want, got, err)
 	}
-	if files := f.files(t, f.wrong.ID); len(files) != 1 {
-		t.Errorf("Vol 17 files = %+v, want its row untouched", files)
+	if files := f.files(t, f.wrong.ID); len(files) != 1 || files[0].Path != preview.Destination {
+		t.Errorf("Vol 17 files = %+v, want its row at %s untouched", files, preview.Destination)
 	}
 }
 
@@ -228,5 +230,88 @@ func TestFixMatch_MovesFileAndRecordsHistory(t *testing.T) {
 		if !strings.Contains(ev.Data, want) {
 			t.Errorf("move row data %s does not mention %q", ev.Data, want)
 		}
+	}
+}
+
+// seedSharedAudiobookFolder tracks a folder on the wrong book as its
+// audiobook, holding the wrong book's own ebook too (the shared folder
+// layout, #1959).
+func (f *ownedFixture) seedSharedAudiobookFolder(t *testing.T) (folder, audio, ebook string) {
+	t.Helper()
+	ctx := context.Background()
+	body := strings.Repeat("x", int(importer.MinPlausibleEbookBytes))
+	folder = filepath.Join(f.library, "TJF Saga", "Defiance of the Fall 17")
+	audio = f.writeFile(t, "TJF Saga/Defiance of the Fall 17/part1.m4b", body)
+	ebook = f.writeFile(t, "TJF Saga/Defiance of the Fall 17/Defiance of the Fall 17.epub", body)
+	if err := f.books.AddBookFile(ctx, f.wrong.ID, models.MediaTypeAudiobook, folder); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.books.AddBookFile(ctx, f.wrong.ID, models.MediaTypeEbook, ebook); err != nil {
+		t.Fatal(err)
+	}
+	return folder, audio, ebook
+}
+
+// TestFixMatch_AudiobookFolderHoldingOtherFile_RefusedBeforeDetach (#3556): a
+// Fix match of an audiobook folder that also holds the source book's ebook.
+// In move mode the folder would go whole and carry the ebook away from its
+// book, so it is refused. The refusal must come before the handler detaches
+// the folder's row: refusing only inside the import left the folder tracked
+// by no book at all.
+func TestFixMatch_AudiobookFolderHoldingOtherFile_RefusedBeforeDetach(t *testing.T) {
+	f := newOwnedFixture(t)
+	if err := f.settings.Set(context.Background(), "import.mode", "move"); err != nil {
+		t.Fatal(err)
+	}
+	folder, audio, ebook := f.seedSharedAudiobookFolder(t)
+
+	raw, _ := json.Marshal(map[string]any{"path": folder, "targetBookId": f.right.ID, "format": models.MediaTypeAudiobook})
+	rec := httptest.NewRecorder()
+	f.h.Reassign(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue/manual-import/reassign", bytes.NewReader(raw)))
+	if rec.Code == http.StatusAccepted {
+		f.wait(t, "")
+	}
+
+	wrongPaths := map[string]bool{}
+	for _, bf := range f.files(t, f.wrong.ID) {
+		wrongPaths[bf.Path] = true
+	}
+	if !wrongPaths[folder] || !wrongPaths[ebook] {
+		t.Fatalf("source book rows = %v, want both the folder and the ebook still tracked (response %d %s)",
+			wrongPaths, rec.Code, rec.Body.String())
+	}
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "another book tracks") {
+		t.Errorf("response = %d %s, want 409 with the reason", rec.Code, rec.Body.String())
+	}
+	if files := f.files(t, f.right.ID); len(files) != 0 {
+		t.Errorf("target got rows %+v, want none", files)
+	}
+	// A refusal creates no synthetic download: a completed one left behind
+	// would sit in the Queue and be requeued by boot recovery.
+	if all, err := f.downloads.List(context.Background()); err != nil {
+		t.Fatal(err)
+	} else if len(all) != 0 {
+		t.Errorf("refused Fix match left %d download rows (%+v), want none", len(all), all)
+	}
+	for _, p := range []string{audio, ebook} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s moved: %v", p, err)
+		}
+	}
+}
+
+// In copy mode (and hardlink) the source folder stays where it is, so
+// nothing is carried away and Fix match goes ahead as before.
+func TestFixMatch_AudiobookFolderHoldingOtherFile_CopyModeProceeds(t *testing.T) {
+	f := newOwnedFixture(t) // import.mode copy
+	_, _, ebook := f.seedSharedAudiobookFolder(t)
+	f.post(t, f.h.Reassign, "/api/v1/queue/manual-import/reassign",
+		map[string]any{"path": filepath.Join(f.library, "TJF Saga", "Defiance of the Fall 17"), "targetBookId": f.right.ID, "format": models.MediaTypeAudiobook})
+	f.wait(t, "")
+	if dl := f.onlyDownload(t); dl.Status != models.StateImported {
+		t.Fatalf("download status = %q (%s), want imported", dl.Status, dl.ErrorMessage)
+	}
+	if _, err := os.Stat(ebook); err != nil {
+		t.Errorf("source book's ebook disturbed: %v", err)
 	}
 }

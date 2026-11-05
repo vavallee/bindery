@@ -394,7 +394,6 @@ func TestReposSurfaceDatabaseErrors(t *testing.T) {
 		{"NotificationRepo.Update", func() error { return NewNotificationRepo(closed).Update(ctx, &models.Notification{}) }},
 		{"PendingReleaseRepo.DeleteByBook", func() error { return NewPendingReleaseRepo(closed).DeleteByBook(ctx, 1) }},
 		{"PendingReleaseRepo.DeleteByBookAndMediaType", func() error { return NewPendingReleaseRepo(closed).DeleteByBookAndMediaType(ctx, 1, "x") }},
-		{"PendingReleaseRepo.DeleteByGUID", func() error { return NewPendingReleaseRepo(closed).DeleteByGUID(ctx, "x") }},
 		{"PendingReleaseRepo.DeleteByID", func() error { return NewPendingReleaseRepo(closed).DeleteByID(ctx, 1) }},
 		{"PendingReleaseRepo.GetByID", func() error { _, err := NewPendingReleaseRepo(closed).GetByID(ctx, 1); return err }},
 		{"PendingReleaseRepo.GetOwnerByID", func() error { _, _, err := NewPendingReleaseRepo(closed).GetOwnerByID(ctx, 1); return err }},

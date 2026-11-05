@@ -434,6 +434,18 @@ func (r *BookFileRepo) PathOwnedByLiveOtherBook(ctx context.Context, path string
 // guards deletes, where refusing to unlink is the safe answer when ownership
 // is unclear.
 func (r *BookFileRepo) PathUnderOtherBookDir(ctx context.Context, path string, excludeBookID int64) (bool, error) {
+	return r.pathUnderOtherBookDir(ctx, path, excludeBookID, false)
+}
+
+// PathUnderLiveOtherBookDir is PathUnderOtherBookDir counting only rows whose
+// book still exists. Imports use it: refusing to write is only right when a
+// live book owns the folder, and a row left by a deleted book would otherwise
+// block the import for good with nothing the user can clear.
+func (r *BookFileRepo) PathUnderLiveOtherBookDir(ctx context.Context, path string, excludeBookID int64) (bool, error) {
+	return r.pathUnderOtherBookDir(ctx, path, excludeBookID, true)
+}
+
+func (r *BookFileRepo) pathUnderOtherBookDir(ctx context.Context, path string, excludeBookID int64, liveOnly bool) (bool, error) {
 	var forms []any
 	for dir := filepath.Dir(filepath.Clean(path)); ; dir = filepath.Dir(dir) {
 		if dir == "." || dir == string(filepath.Separator) || dir == filepath.Dir(dir) {
@@ -444,8 +456,12 @@ func (r *BookFileRepo) PathUnderOtherBookDir(ctx context.Context, path string, e
 	if len(forms) == 0 {
 		return false, nil
 	}
-	query := `SELECT book_id FROM book_files
-		 WHERE book_id != ? AND path IN (?` + strings.Repeat(",?", len(forms)-1) + `) LIMIT 1`
+	from := "book_files bf"
+	if liveOnly {
+		from = "book_files bf JOIN books b ON b.id = bf.book_id"
+	}
+	query := `SELECT bf.book_id FROM ` + from + `
+		 WHERE bf.book_id != ? AND bf.path IN (?` + strings.Repeat(",?", len(forms)-1) + `) LIMIT 1`
 	var owner int64
 	err := r.db.QueryRowContext(ctx, query, append([]any{excludeBookID}, forms...)...).Scan(&owner)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -455,6 +471,51 @@ func (r *BookFileRepo) PathUnderOtherBookDir(ctx context.Context, path string, e
 		return false, fmt.Errorf("book_files ancestor owner lookup: %w", err)
 	}
 	return true, nil
+}
+
+// PathsUnderForOtherBooks returns the book_files paths below dir that belong
+// to a book other than excludeBookID, compared without regard to ASCII case.
+// A library on a case insensitive filesystem (SMB, macOS, Windows) can hold
+// rows that spell the same folder in different case, so a caller matching
+// these against walked paths should fold case too. dir itself is not
+// returned. % and _ in dir are matched literally.
+func (r *BookFileRepo) PathsUnderForOtherBooks(ctx context.Context, dir string, excludeBookID int64) ([]string, error) {
+	return r.pathsUnderForOtherBooks(ctx, dir, excludeBookID, false)
+}
+
+// LivePathsUnderForOtherBooks is PathsUnderForOtherBooks counting only rows
+// whose book still exists. A folder move or merge uses it (#3556): a file
+// below the folder that a live book tracks must not be carried away from that
+// book's row, while a row left by a deleted book is owned by nobody and would
+// otherwise hold the folder in place for good. A delete must keep using
+// PathsUnderForOtherBooks.
+func (r *BookFileRepo) LivePathsUnderForOtherBooks(ctx context.Context, dir string, excludeBookID int64) ([]string, error) {
+	return r.pathsUnderForOtherBooks(ctx, dir, excludeBookID, true)
+}
+
+func (r *BookFileRepo) pathsUnderForOtherBooks(ctx context.Context, dir string, excludeBookID int64, liveOnly bool) ([]string, error) {
+	prefix := strings.TrimRight(filepath.Clean(dir), string(filepath.Separator)) + string(filepath.Separator)
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)
+	from := "book_files bf"
+	if liveOnly {
+		from = "book_files bf JOIN books b ON b.id = bf.book_id"
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT bf.path FROM `+from+` WHERE bf.book_id != ? AND lower(bf.path) LIKE lower(?) ESCAPE '\'`,
+		excludeBookID, escaped+"%")
+	if err != nil {
+		return nil, fmt.Errorf("book_files paths under %s: %w", dir, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("book_files paths under %s: %w", dir, err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 // LiveOwnerOfPath returns the id of the existing book that tracks path, or 0

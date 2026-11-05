@@ -1126,7 +1126,7 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 	originalOf := func(i int) newznab.SearchResult { return orig[i] }
 
 	rules := newTrailingRules(title, bc, fullIdentity, fullIdentityElided, primaryIdentity, primaryIdentityElided, seriesIdentity)
-	subtitle := newSubtitleInfo(title)
+	subtitle := newSubtitleInfo(title).withContext(authorTokenSets, bc.seriesTitle)
 
 	authorConflict := func(r newznab.SearchResult) bool {
 		return conflictingTitleAuthor(r.Title, title, authorTokenSets) ||
@@ -1425,6 +1425,16 @@ func scoreResult(r newznab.SearchResult, c MatchCriteria, ranks *profileRanks) f
 		score += 30
 	case p.Abridged:
 		score -= 50
+	}
+
+	// Narrator and edition preferences (#1358). Both are off unless the
+	// profile sets them, and then apply to audiobook searches only, so an
+	// install that set nothing ranks exactly as before.
+	if c.Profile != nil && c.MediaType == models.MediaTypeAudiobook &&
+		(c.Profile.EditionPreference != "" || len(c.Profile.PreferredNarrators) > 0) {
+		n := c.ReleaseNarration(r.Title)
+		score += EditionTypeScore(c.Profile.EditionPreference, n.EditionType)
+		score += NarratorScore(c.Profile.PreferredNarrators, n.Narrators)
 	}
 
 	if c.Year > 0 && p.Year > 0 {

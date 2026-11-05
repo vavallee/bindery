@@ -19,6 +19,7 @@ type Torrent struct {
 	ETA         int     `json:"eta"`
 	AddedOn     int64   `json:"added_on"`
 	DLSpeed     int64   `json:"dlspeed"`
+	Tags        string  `json:"tags"`
 }
 
 // normalizePath rewrites Windows-style backslashes to forward slashes so

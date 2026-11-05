@@ -21,8 +21,6 @@ import (
 	"time"
 	"unicode"
 
-	"golang.org/x/text/unicode/norm"
-
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/metadata/providerhttp"
@@ -708,68 +706,7 @@ func trimGNDID(s string) string {
 // one key. No existing ID moves, since the fallback only fires where the old
 // function produced nothing usable.
 func slug(name string) string {
-	if out := asciiSlug(name); out != "" {
-		return out
-	}
-	return nonLatinSlug(name)
-}
-
-// asciiSlug is the original reduction, preserved verbatim. See slug.
-func asciiSlug(name string) string {
-	folded := norm.NFD.String(strings.TrimSpace(name))
-	var b strings.Builder
-	b.Grow(len(folded))
-	prevDash := false
-	for _, r := range folded {
-		switch {
-		case unicode.Is(unicode.Mn, r):
-			// Combining mark from NFD decomposition — drop, keeping the base letter.
-			continue
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r + ('a' - 'A'))
-			prevDash = false
-		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
-			b.WriteRune(r)
-			prevDash = false
-		default:
-			if !prevDash && b.Len() > 0 {
-				b.WriteByte('-')
-				prevDash = true
-			}
-		}
-	}
-	out := b.String()
-	out = strings.TrimRight(out, "-")
-	return out
-}
-
-// nonLatinSlug derives an identifier for a name the ASCII reduction cannot
-// represent at all. It keeps the script rather than transliterating: a
-// romanisation would have to pick one scheme per script, and picking wrongly
-// merges two people instead of merely writing an ugly ID.
-//
-// Marks are kept as word characters because in these scripts they are part of
-// the letter — the point FoldForSlug makes at length. An empty result is still
-// possible in principle (a name of nothing but punctuation), and the caller
-// treats that the way it always has.
-func nonLatinSlug(name string) string {
-	folded := textutil.FoldForSlug(name)
-	var b strings.Builder
-	b.Grow(len(folded))
-	prevDash := false
-	for _, r := range folded {
-		switch {
-		case unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Mc, r):
-			b.WriteRune(r)
-			prevDash = false
-		default:
-			if !prevDash && b.Len() > 0 {
-				b.WriteByte('-')
-				prevDash = true
-			}
-		}
-	}
-	return strings.TrimRight(b.String(), "-")
+	return textutil.AuthorSlug(name)
 }
 
 // parseYear extracts the first 4-digit year from a MARC date string such as

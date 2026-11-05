@@ -362,8 +362,7 @@ func TestSetup_ConcurrentCreatesExactlyOneUser(t *testing.T) {
 	h, users, _, ctx := newAuthFixture(t)
 	const racers = 6
 	codes := burstCodes(racers, func(i int) *http.Request {
-		return httptest.NewRequest(http.MethodPost, "/auth/setup",
-			jsonBody(t, setupRequest{Username: "racer" + strconv.Itoa(i), Password: "long-enough-password"}))
+		return setupJSONReq(jsonBody(t, setupRequest{Username: "racer" + strconv.Itoa(i), Password: "long-enough-password"}))
 	}, http.HandlerFunc(h.Setup))
 	n, err := users.Count(ctx)
 	if err != nil {

@@ -62,8 +62,10 @@ func SetEnforceTenancyForTests(t *testing.T, on bool) {
 //     carry the admin role and are already allowed above; this covers
 //     contexts built outside the middleware, which keep their pre-gate
 //     admin-equivalent treatment;
-//   - ownerUserID == 0 means the row has no owner (pre-migration-025 data),
-//     and we also pass to avoid hiding legacy rows from their actual creator.
+//   - ownerUserID == 0 means the row has no owner (pre-migration-025 data,
+//     or a shared row), and we also pass so it stays readable. That is a
+//     read rule only: a route that changes the row uses CheckWriteOwnership,
+//     which refuses a row with no owner to a user who is not an admin.
 //
 // The argument intentionally takes an int64 not a *int64 — callers must
 // decide how a nil owner maps (typically 0). Pass 0 for "unowned".
@@ -88,6 +90,26 @@ func CheckOwnership(ctx context.Context, ownerUserID int64) bool {
 		return true
 	}
 	return uid == ownerUserID
+}
+
+// CheckWriteOwnership is CheckOwnership for changes: deleting, editing,
+// merging, refreshing or retrying a row rather than reading it. It differs in
+// one case only. With tenancy enforced, a signed in user who is not an admin
+// may read a row with no owner (a shared author, an admin's book, an
+// automatic download for one) but may not change it, because a shared row is
+// shared: an author with no owner can hold other users' books, and deleting,
+// merging or re-pointing it reaches into their libraries. Callers answer a
+// refusal exactly as they answer a row owned by someone else, so a refused
+// write says nothing a refused read would not.
+//
+// Tenancy off, admins and contexts with no identity are unchanged: they pass
+// whenever CheckOwnership passes.
+func CheckWriteOwnership(ctx context.Context, ownerUserID int64) bool {
+	if ownerUserID == 0 && EnforceTenancy() &&
+		UserRoleFromContext(ctx) != "admin" && UserIDFromContext(ctx) != 0 {
+		return false
+	}
+	return CheckOwnership(ctx, ownerUserID)
 }
 
 // ListScopeUserID returns the owner_user_id a LIST/browse query should scope
@@ -733,11 +755,13 @@ func resolveProxyIdentity(r *http.Request, p Provider) (int64, bool) {
 
 	uid, err := p.UserProvisioner().ResolveOrProvisionUser(r.Context(), username, p.ProxyAutoProvision())
 	if err != nil {
-		slog.Error("proxy auth: user provisioning failed", "username", username, "error", err)
+		// The upstream identity is supplied by a request header and may be a
+		// private username or email address. Keep it out of logs.
+		slog.Error("proxy auth: user provisioning failed", "error", err)
 		return 0, false
 	}
 	if uid == 0 {
-		slog.Warn("proxy auth: user not found and auto-provisioning disabled", "username", username)
+		slog.Warn("proxy auth: user not found and auto-provisioning disabled")
 		return 0, false
 	}
 	return uid, true

@@ -22,8 +22,9 @@ var junkGenres = map[string]bool{
 	"nonfiction":       true,
 }
 
-// BuildProfile analyses the user's library and constructs a UserProfile used
-// for scoring recommendation candidates.
+// BuildProfile analyses the whole library and constructs a UserProfile used
+// for scoring recommendation candidates. It is BuildScopedProfile with scope
+// 0, the instance wide profile an admin gets.
 func BuildProfile(
 	ctx context.Context,
 	userID int64,
@@ -33,7 +34,25 @@ func BuildProfile(
 	recs *db.RecommendationRepo,
 	settings *db.SettingsRepo,
 ) (*UserProfile, error) {
+	return BuildScopedProfile(ctx, userID, 0, books, authors, series, recs, settings)
+}
+
+// BuildScopedProfile builds the profile from the books and authors visible to
+// scope (that user's own rows plus unowned ones), or from everything when
+// scope is 0. Another user's books never count as owned, never shape the
+// genre weights and never mark a series as started.
+func BuildScopedProfile(
+	ctx context.Context,
+	userID int64,
+	scope int64,
+	books *db.BookRepo,
+	authors *db.AuthorRepo,
+	series *db.SeriesRepo,
+	recs *db.RecommendationRepo,
+	settings *db.SettingsRepo,
+) (*UserProfile, error) {
 	p := &UserProfile{
+		Scope:               scope,
 		GenreWeights:        make(map[string]float64),
 		MonitoredAuthors:    make(map[int64]bool),
 		AuthorBookCounts:    make(map[int64]int),
@@ -60,6 +79,9 @@ func BuildProfile(
 		return nil, err
 	}
 	for _, a := range allAuthors {
+		if scope != 0 && a.OwnerUserID != 0 && a.OwnerUserID != scope {
+			continue
+		}
 		p.AuthorNames[a.ID] = a.Name
 		if a.Monitored {
 			p.MonitoredAuthors[a.ID] = true
@@ -67,9 +89,15 @@ func BuildProfile(
 	}
 
 	// Load all books to build the profile.
-	allBooks, err := books.List(ctx)
+	listed, err := books.List(ctx)
 	if err != nil {
 		return nil, err
+	}
+	allBooks := listed[:0:0]
+	for i := range listed {
+		if p.visible(&listed[i]) {
+			allBooks = append(allBooks, listed[i])
+		}
 	}
 	p.TotalBooks = len(allBooks)
 	p.LibraryMedianYear = medianReleaseYear(allBooks)
@@ -121,7 +149,7 @@ func BuildProfile(
 		return nil, err
 	}
 	for _, s := range allSeries {
-		full, err := series.GetByID(ctx, s.ID)
+		full, err := series.GetByIDForUser(ctx, s.ID, scope)
 		if err != nil || full == nil || len(full.Books) < 2 {
 			continue
 		}
@@ -132,7 +160,7 @@ func BuildProfile(
 
 		for _, sb := range full.Books {
 			pos := parsePosition(sb.PositionInSeries)
-			if pos <= 0 {
+			if pos <= 0 || !p.visible(sb.Book) {
 				continue
 			}
 			allPositions[pos] = true

@@ -128,7 +128,9 @@ func (h *AuthorHandler) PreviewCatalogueReconciliation(w http.ResponseWriter, r 
 // and intersects it with the requested IDs before issuing one guarded DELETE;
 // the client never gets to turn an arbitrary book ID into a deletion.
 func (h *AuthorHandler) ApplyCatalogueReconciliation(w http.ResponseWriter, r *http.Request) {
-	author, ok := h.ownedAuthorFromRequest(w, r)
+	// Apply deletes rows, so it takes the write check: a user who is not an
+	// admin may preview a shared author's catalogue but not prune it.
+	author, ok := h.ownedAuthorFromRequestChecked(w, r, auth.CheckWriteOwnership)
 	if !ok {
 		return
 	}
@@ -179,6 +181,10 @@ func (h *AuthorHandler) ApplyCatalogueReconciliation(w http.ResponseWriter, r *h
 }
 
 func (h *AuthorHandler) ownedAuthorFromRequest(w http.ResponseWriter, r *http.Request) (*models.Author, bool) {
+	return h.ownedAuthorFromRequestChecked(w, r, auth.CheckOwnership)
+}
+
+func (h *AuthorHandler) ownedAuthorFromRequestChecked(w http.ResponseWriter, r *http.Request, allowed func(context.Context, int64) bool) (*models.Author, bool) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil || id <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
@@ -189,7 +195,7 @@ func (h *AuthorHandler) ownedAuthorFromRequest(w http.ResponseWriter, r *http.Re
 		writeServerError(w, r, err)
 		return nil, false
 	}
-	if author == nil || !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+	if author == nil || !allowed(r.Context(), author.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return nil, false
 	}
@@ -333,7 +339,10 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 		}
 	}
 
-	localBooks, err := h.books.ListByAuthorIncludingExcluded(ctx, author.ID)
+	// Scoped to the caller: the summary counts every listed row, so listing
+	// another account's books under a shared author would let a user learn
+	// how many books other libraries hold there.
+	localBooks, err := h.books.ListByAuthorIncludingExcludedAndUser(ctx, author.ID, auth.ListScopeUserID(ctx))
 	if err != nil {
 		return CatalogueReconciliation{}, fmt.Errorf("list local author catalogue: %w", err)
 	}
@@ -360,7 +369,7 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 
 	for i := range localBooks {
 		book := &localBooks[i]
-		if !auth.CheckOwnership(ctx, book.OwnerUserID) {
+		if !auth.CheckWriteOwnership(ctx, book.OwnerUserID) {
 			result.Summary.Protected++
 			result.Summary.ProtectedStatus++
 			continue

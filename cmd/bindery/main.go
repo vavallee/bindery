@@ -374,6 +374,9 @@ func main() {
 		cfg.DownloadPathRemap,
 	)
 	importScanner.WithNotifier(notif)
+	// A download grabbed without a book is matched only against its owner's
+	// books under tenancy, unless the owner is an admin.
+	importScanner.WithUsers(userRepo)
 	// Re-check the actual downloaded file against the author's quality profile
 	// before importing it, and blocklist a release rejected that way so the
 	// next search does not grab it again (#1782).
@@ -578,6 +581,7 @@ func main() {
 	recEngine := recommender.New(bookRepo, authorRepo, seriesRepo, recRepo, settingsRepo)
 	recEngine.WithOLClient(olClient)
 	recEngine.WithHCClient(hcClient)
+	recEngine.WithUsers(userRepo)
 	slog.Info("hardcover wishlist integration enabled for recommendations when a token is configured")
 	sched.WithRecommender(recEngine)
 
@@ -658,7 +662,7 @@ func main() {
 	// isn't inside a configured root. Defaults to the legacy single-root env
 	// vars so installs that never created a root_folders row still get the
 	// check.
-	libraryRoots := api.NewLibraryRoots(rootFolderRepo, cfg.LibraryDir, cfg.AudiobookDir)
+	libraryRoots := newLibraryRoots(cfg, rootFolderRepo)
 	authorHandler := api.NewAuthorHandler(authorRepo, authorAliasRepo, bookRepo, seriesRepo, metaAgg, settingsRepo, metadataProfileRepo, sched).
 		WithFinder(importScanner).
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
@@ -715,7 +719,7 @@ func main() {
 	// not the library (#1373). These are trusted, configured source dirs the
 	// automated importer already reads from; the stricter `libraryRoots` (no
 	// download dirs) still gates the delete handlers.
-	importRoots := api.NewLibraryRoots(rootFolderRepo, cfg.LibraryDir, cfg.AudiobookDir, cfg.DownloadDir, cfg.AudiobookDownloadDir)
+	importRoots := newImportRoots(cfg, rootFolderRepo, settingsRepo)
 	manualImportHandler := api.NewManualImportHandler(importScanner, downloadRepo, bookRepo).
 		WithRoots(importRoots).
 		WithExcludedDirs(manualImportExcludedDirs(cfg)...).
@@ -771,12 +775,14 @@ func main() {
 	notificationHandler := api.NewNotificationHandler(notificationRepo, notif)
 	qualityProfileHandler := api.NewQualityProfileHandler(qualityProfileRepo)
 	settingsHandler := api.NewSettingsHandler(settingsRepo).WithDailyQuota(dailyQuota).
+		WithProtectedDirs(cfg.DataDir, filepath.Dir(cfg.DBPath)).
 		WithChangeHook(metadataProvidersReconfigurer(metaProviders, metaAgg))
 	seriesHandler := api.NewSeriesHandler(seriesRepo, bookRepo, authorRepo, metaAgg, sched).
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
 		WithFinder(importScanner).
 		WithEditionHydration(editionRepo).
 		WithMetadataProfiles(metadataProfileRepo).
+		WithSeriesCheckMediaType(func(ctx context.Context) string { return authorHandler.ResolveDefaultMediaType(ctx) }).
 		WithLifetimeCtx(appCtx)
 	importListHandler := api.NewImportListHandler(importListRepo, settingsRepo, hcSyncer, userRepo).WithDailyQuota(dailyQuota)
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
@@ -802,6 +808,11 @@ func main() {
 	// Scheduled release discovery (#2236): an hourly tick checks a share of the
 	// monitored authors, stopped while Refresh all or refresh selected runs.
 	sched.WithAuthorDiscoverer(newAuthorDiscoverer(authorHandler.DiscoverAuthorBooks, func() bool {
+		return authorRefreshHandler.Running() || bulkHandler.RefreshRunning()
+	}))
+	// Scheduled series monitoring (#2523): off until series.monitoring.interval
+	// is set, then an hourly tick checks a share of the monitored series.
+	sched.WithSeriesChecker(newSeriesChecker(seriesHandler.CheckSeries, func() bool {
 		return authorRefreshHandler.Running() || bulkHandler.RefreshRunning()
 	}))
 	backupHandler := api.NewBackupHandler(database, cfg.DBPath, cfg.DataDir)
@@ -883,6 +894,8 @@ func main() {
 		proxyProvision: cfg.ProxyAutoProvision,
 		proxyCIDRs:     trustedCIDRs,
 		revocations:    sessionRevocations,
+
+		localAuthEnabled: cfg.LocalAuthEnabled,
 	}
 
 	// Keep the nightly recommendation batch and manual refreshes on one
@@ -1058,6 +1071,7 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireAdmin)
 			r.Get("/queue/manual-import/lookup", manualImportHandler.Lookup)
+			r.Get("/queue/manual-import/folders", manualImportHandler.BrowseFolders)
 			r.Get("/queue/manual-import/scan", manualImportHandler.Scan)
 			r.Post("/queue/manual-import", manualImportHandler.Import)
 			r.Post("/queue/manual-import/batch", manualImportHandler.ImportBatch)
@@ -1532,6 +1546,10 @@ type dbAuthProvider struct {
 	proxyHeader    string
 	proxyProvision bool
 	proxyCIDRs     []*net.IPNet
+	// localAuthEnabled mirrors BINDERY_LOCAL_AUTH_ENABLED. With it off and
+	// proxy mode configured, first run setup is refused, so the first proxy
+	// provisioned account has to become the admin (see promoteFirstProxyUser).
+	localAuthEnabled bool
 	// revocations is the logout denylist shared with the AuthHandler.
 	revocations *db.SessionRevocations
 }
@@ -1628,20 +1646,30 @@ func (p *dbAuthProvider) SessionRevoked(ctx context.Context, tokenHash string) (
 	return p.revocations.IsRevoked(ctx, tokenHash)
 }
 func (p *dbAuthProvider) UserProvisioner() auth.UserProvisioner {
-	return &dbUserProvisioner{users: p.users}
+	return &dbUserProvisioner{users: p.users, settings: p.settings, localAuthEnabled: p.localAuthEnabled}
 }
 
 // dbUserProvisioner implements auth.UserProvisioner using the UserRepo.
 type dbUserProvisioner struct {
-	users *db.UserRepo
+	users            *db.UserRepo
+	settings         *db.SettingsRepo
+	localAuthEnabled bool
 }
 
 func (p *dbUserProvisioner) ResolveOrProvisionUser(ctx context.Context, username string, autoProvision bool) (int64, error) {
 	if autoProvision {
-		u, err := p.users.GetOrCreateByUsername(ctx, username)
+		existing, err := p.users.GetByUsername(ctx, username)
 		if err != nil {
 			return 0, err
 		}
+		if existing != nil {
+			return existing.ID, nil
+		}
+		u, err := p.users.Create(ctx, username, "")
+		if err != nil {
+			return 0, err
+		}
+		p.promoteFirstProxyUser(ctx, u.ID)
 		return u.ID, nil
 	}
 	u, err := p.users.GetByUsername(ctx, username)
@@ -1652,6 +1680,40 @@ func (p *dbUserProvisioner) ResolveOrProvisionUser(ctx context.Context, username
 		return 0, nil
 	}
 	return u.ID, nil
+}
+
+// promoteFirstProxyUser makes a just provisioned proxy account the admin when
+// nothing else can create one: local sign in is off, so first run setup is
+// refused, no admin exists, and this is the install's first account. It mirrors the OIDC promote first rule
+// (resolveProvisionRole in internal/api/auth_oidc.go), including the one shot
+// guard, so deleting every admin later never promotes the next proxy login and
+// two simultaneous first logins promote exactly one. Any error leaves the
+// account as a plain user.
+func (p *dbUserProvisioner) promoteFirstProxyUser(ctx context.Context, userID int64) {
+	if p.localAuthEnabled || p.settings == nil {
+		return
+	}
+	admins, err := p.users.CountAdmins(ctx)
+	if err != nil || admins != 0 {
+		return
+	}
+	// Only the first account the install ever had. On an install that
+	// already has users but no admin (an older version let a proxy login
+	// beat setup), the operator's account exists already and is never
+	// re-provisioned, so promoting whoever the proxy sends next would hand
+	// admin to a stranger. Those installs recover with the API key.
+	if lowest, err := p.users.LowestID(ctx); err != nil || lowest != userID {
+		return
+	}
+	won, err := p.settings.SetIfAbsent(ctx, api.SettingProxyFirstAdminPromoted, "true")
+	if err != nil || !won {
+		return
+	}
+	if err := p.users.SetRoleUnguarded(ctx, userID, auth.RoleAdmin); err != nil {
+		slog.Error("proxy auth: could not promote the first proxy user to admin", "error", err)
+		return
+	}
+	slog.Warn("proxy auth: promoted the first proxy user to admin because local sign in is off and no admin existed")
 }
 
 // routeTemplate returns the chi route pattern for the request (e.g.

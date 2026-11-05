@@ -1,4 +1,4 @@
-.PHONY: build dev test test-race lint clean docker-build web-build web-dev help security helm-lint sbom smoke predeploy-smoke abs-contract check changelog licenses licenses-check go-version-check
+.PHONY: build dev test test-race lint clean docker-build web-build web-dev help security helm-lint sbom smoke predeploy-smoke abs-contract check changelog licenses licenses-check go-version-check screenshots
 
 # Pinned so local regeneration and the CI drift check classify licenses
 # identically — a classifier bump would otherwise look like dependency drift.
@@ -119,6 +119,14 @@ predeploy-smoke: ## Run pre-deploy smoke tests against a live instance (requires
 
 abs-contract: ## Run the pinned ABS contract suite
 	go test -count=1 -timeout=15m ./tests/abscontract/...
+
+screenshots: web-build ## Regenerate docs/screenshots from a throwaway demo instance (needs Docker)
+	cp -r web/dist/* internal/webui/dist/
+	CGO_ENABLED=0 GOOS=linux go build -o tools/screenshots/.out/bindery ./cmd/bindery
+	CGO_ENABLED=0 GOOS=linux go build -o tools/screenshots/.out/seed ./tools/screenshots
+	docker build -q -t bindery-screenshots tools/screenshots
+	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp -v "$$PWD:/work" -w /work/tools/screenshots \
+		bindery-screenshots sh -c 'npm ci --no-audit --no-fund && node capture.mjs'
 
 licenses: ## Regenerate THIRD_PARTY_LICENSES.md (needs web/node_modules)
 	@command -v go-licenses >/dev/null || go install github.com/google/go-licenses@$(GO_LICENSES_VERSION)

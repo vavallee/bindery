@@ -11,6 +11,7 @@ import (
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -274,10 +275,21 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 			// have this book.
 			if existing := h.findLibraryAuthorByName(ctx, req.AuthorName); existing != nil {
 				req.ForeignAuthorID = existing.ForeignID
-			} else if canonical, cErr := h.meta.ResolveCanonicalAuthor(ctx, req.AuthorName); cErr == nil && canonical != nil && outcome.SafeToBind(canonical.ForeignID) {
+			} else if canonical, lookup, cErr := h.meta.ResolveCanonicalAuthorLookup(ctx, req.AuthorName); cErr == nil && canonical != nil && outcome.SafeToBind(canonical.ForeignID) {
 				// The canonical lookup is OpenLibrary's, which is a fallback
 				// when another provider is primary, so the same guard applies.
 				req.ForeignAuthorID = canonical.ForeignID
+			} else if lookup.Consulted && lookup.SameNameRecords == 0 && strings.HasPrefix(req.ForeignBookID, "gb:") {
+				// A Google Books title that nobody else knows (#3538). Only
+				// an OpenLibrary that was really asked, answered, and holds no
+				// record of this name at all (not even an empty one) counts as
+				// "nobody knows". OpenLibrary being switched off, a failed
+				// lookup, or a same name record we declined to trust all fall
+				// through to the refusal below instead of minting an author who
+				// would later duplicate the real one. An unusable name gives ""
+				// and refuses too. The ISBN walk never runs for these volumes,
+				// so outcome carries no evidence here and is not consulted.
+				req.ForeignAuthorID = metadata.SyntheticGoogleBooksAuthorID(req.AuthorName)
 			}
 		}
 		if req.ForeignAuthorID == "" && outcome.PrimaryFailed {
@@ -322,6 +334,13 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 		// identity exists, collapse the two onto a single primary key so
 		// the user keeps one author with all their books attached.
 		if !strings.HasPrefix(fetched.ForeignID, "dnb:") {
+			// A shared placeholder (no owner) is upgraded for any caller: the
+			// upgrade only replaces its identity and descriptive fields
+			// (db.AuthorRepo.UpgradeSyntheticDNB), never its owner, monitoring,
+			// profiles or root folders. Leaving it would give the caller a new
+			// author under the provider id, and authors.foreign_id is unique
+			// across users, so every other user's add under that id would then
+			// fail.
 			if existing, lookupErr := h.authors.GetByDNBSyntheticName(ctx, fetched.SortName, userID); lookupErr == nil && existing != nil {
 				if err := h.authors.UpgradeSyntheticDNB(ctx, existing.ForeignID, fetched); err != nil {
 					slog.Debug("AddBook: upgrade synthetic DNB author failed", "from", existing.ForeignID, "to", fetched.ForeignID, "error", err)
@@ -484,7 +503,12 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 			// requested id, returning 404 forever. When the requested work is a
 			// distinct volume of the matched row's series (same series, different
 			// sequence), skip the adopt and create a distinct row instead.
-			if ferr == nil && match != nil && !h.directInsertSeriesConflict(ctx, match.ID, primary.SeriesRefs) {
+			//
+			// The scope above still includes rows with no owner, and the adopt
+			// writes the row, so the match must also pass the write check: a
+			// user who is not an admin never adopts a shared row, and gets a
+			// row of their own instead.
+			if ferr == nil && match != nil && auth.CheckWriteOwnership(ctx, match.OwnerUserID) && !h.directInsertSeriesConflict(ctx, match.ID, primary.SeriesRefs) {
 				widened := h.adoptDirectInsertMatch(ctx, match, primary, req.ForeignBookID)
 				if match.ForeignID != req.ForeignBookID {
 					dedupedOnto = match
@@ -580,6 +604,15 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 	// orphan cleanup defer removes any author row this request created.
 	if book.OwnerUserID != 0 && userID != 0 && book.OwnerUserID != userID {
 		return addBookResult{}, errAddBookHeldByAnotherUser
+	}
+	// A shared row with no owner that appeared mid request (another add, a
+	// sync) is visible to the caller but changeable only by an admin, and the
+	// update below would write it. Answer as step 0 does for a shared row
+	// that was already there. A row this request created never lands here
+	// for such a caller: the direct insert and the single work fallback stamp
+	// it with their id.
+	if !auth.CheckWriteOwnership(ctx, book.OwnerUserID) {
+		return addBookResult{}, &bookInLibraryError{Book: book}
 	}
 	bookCreated = true
 

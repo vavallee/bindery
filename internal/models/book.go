@@ -39,6 +39,11 @@ type Book struct {
 	Narrator          string     `json:"narrator"`
 	DurationSeconds   int        `json:"durationSeconds"`
 	ASIN              string     `json:"asin"`
+	// Narrators and EditionType are read only detail fields (#1358), filled
+	// from the audiobook edition on GET /book/{id}. Narrator stays the stored,
+	// editable string.
+	Narrators   []string `json:"narrators,omitempty"`
+	EditionType string   `json:"editionType,omitempty"`
 	// CalibreID is the book's id in the Calibre library at
 	// calibre.library_path, the library Bindery imports from (#2832). It is
 	// not the id in the push target: a delivery records that on its
@@ -91,6 +96,11 @@ type Book struct {
 	// a response that never computed it says nothing rather than claiming
 	// every author is monitored.
 	AuthorUnmonitored bool `json:"authorUnmonitored,omitempty"`
+
+	// SearchHeldUntil is set on the Wanted list for a book that is Upcoming
+	// (#2523): the scheduled search skips it until this date. Transport only,
+	// computed from book_search_holds, so it is absent for every other book.
+	SearchHeldUntil *time.Time `json:"searchHeldUntil,omitempty"`
 
 	// EbookFilePath and AudiobookFilePath are computed views over the book_files
 	// table (first path per format), kept for API backwards compatibility.

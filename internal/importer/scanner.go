@@ -116,6 +116,9 @@ type Scanner struct {
 	// dc:creator is a pen name or house name the author is known under counts as
 	// the author. Nil leaves the check comparing the author's own name only.
 	authorAliases *db.AuthorAliasRepo
+	// users resolves a download owner's role for downloadMatchScope. Nil
+	// treats every owner as a non admin, which only ever narrows the match.
+	users *db.UserRepo
 	// onContentCheck, when non-nil, is called each time a content check
 	// actually runs, with "ebook" or "audiobook". A test seam: it proves the
 	// check runs for a polled download and never for a library scan or a
@@ -482,15 +485,30 @@ func (s *Scanner) allowedFormat(ctx context.Context, author *models.Author, form
 // disallowed, or on a client status that is about the release's content, never
 // on a transient import or transport failure.
 //
-// A release already on the blocklist for the same book is not added twice: a
+// scope says whom the entry blocks (#3563). A format, language or content
+// rejection is about this book: its profile refused the file, or the file did
+// not match its metadata, so the entry is models.BlocklistScopeBook and
+// another book that wants the same release, possibly another user's under a
+// profile that allows it, can still grab it. A content failure the download
+// client reported is about the release, so it is models.BlocklistScopeRelease
+// and blocks it for every book.
+//
+// An entry that already blocks what this one would is not added twice: a
 // manual grab can send a blocklisted release again, and its second failure
-// says nothing new. A row under another book does not count, because deleting
-// that book deletes its rows.
-func (s *Scanner) blocklistRejectedRelease(ctx context.Context, dl *models.Download, reason string) {
+// says nothing new. For a book scoped entry that is an entry for this book or
+// a release scoped one. For a release scoped entry only another release scoped
+// entry counts: a book scoped entry for this or any other book blocks the
+// release for that book alone, so skipping the write would leave a broken
+// release open to every other book.
+func (s *Scanner) blocklistRejectedRelease(ctx context.Context, dl *models.Download, scope, reason string) {
 	if s.blocklist == nil || dl == nil || strings.TrimSpace(dl.GUID) == "" {
 		return
 	}
-	if blocked, err := s.blocklist.IsBlockedForBook(ctx, dl.GUID, dl.BookID); err == nil && blocked {
+	forBook := dl.BookID
+	if scope == models.BlocklistScopeRelease {
+		forBook = nil
+	}
+	if blocked, err := s.blocklist.BlocksBook(ctx, dl.GUID, forBook); err == nil && blocked {
 		return
 	}
 	entry := &models.BlocklistEntry{
@@ -499,6 +517,7 @@ func (s *Scanner) blocklistRejectedRelease(ctx context.Context, dl *models.Downl
 		Title:     dl.Title,
 		IndexerID: dl.IndexerID,
 		Reason:    reason,
+		Scope:     scope,
 	}
 	if err := s.blocklist.Create(ctx, entry); err != nil {
 		slog.Warn("could not blocklist a rejected release; it may be grabbed again",
@@ -839,7 +858,7 @@ func (s *Scanner) RecoverInterruptedImports(ctx context.Context) {
 		if getErr != nil || dl == nil {
 			continue
 		}
-		s.createHistoryEvent(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, map[string]string{
+		s.createHistoryEvent(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{
 			"guid":    dl.GUID,
 			"message": "import interrupted (process restart) — re-queued for retry",
 			"status":  string(models.StateImportFailed),
@@ -879,7 +898,7 @@ func (s *Scanner) recoverWedgedCompleted(ctx context.Context) {
 		if dl.CompletedAt != nil {
 			age = time.Since(*dl.CompletedAt).Truncate(time.Minute).String()
 		}
-		s.createHistoryEvent(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, map[string]string{
+		s.createHistoryEvent(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{
 			"guid":    dl.GUID,
 			"message": "import never started (process restart before scanner tick) — re-queued for retry",
 			"status":  string(models.StateImportPending),
@@ -946,7 +965,7 @@ func (s *Scanner) failImportWithCheck(ctx context.Context, dl *models.Download, 
 		data["contentCheck"] = contentCheck
 		payload["contentCheck"] = contentCheck
 	}
-	s.createHistoryEventData(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, data)
+	s.createHistoryEventData(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, dl.OwnerUserID, data)
 	s.notify(ctx, notifierEventDownloadFailed, payload)
 }
 
@@ -974,13 +993,15 @@ func (s *Scanner) recordUnmatchedImportPath(ctx context.Context, downloadID int6
 	}
 }
 
-func (s *Scanner) createHistoryEvent(ctx context.Context, eventType string, sourceTitle string, bookID *int64, data map[string]string) {
-	s.createHistoryEventData(ctx, eventType, sourceTitle, bookID, data)
+// createHistoryEvent records a history row. owner is the download's owner (or
+// the book's), used when the book has none; see HistoryRepo.Create.
+func (s *Scanner) createHistoryEvent(ctx context.Context, eventType string, sourceTitle string, bookID *int64, owner int64, data map[string]string) {
+	s.createHistoryEventData(ctx, eventType, sourceTitle, bookID, owner, data)
 }
 
 // createHistoryEventData is createHistoryEvent for a payload with a nested
 // value, such as the contentCheck object. The data column is JSON either way.
-func (s *Scanner) createHistoryEventData(ctx context.Context, eventType string, sourceTitle string, bookID *int64, data any) {
+func (s *Scanner) createHistoryEventData(ctx context.Context, eventType string, sourceTitle string, bookID *int64, owner int64, data any) {
 	if s.history == nil {
 		return
 	}
@@ -994,6 +1015,7 @@ func (s *Scanner) createHistoryEventData(ctx context.Context, eventType string, 
 		EventType:   eventType,
 		SourceTitle: sourceTitle,
 		Data:        string(dataJSON),
+		OwnerUserID: owner,
 	}); err != nil {
 		slog.Warn("failed to create history event", "event_type", eventType, "error", err)
 	}
@@ -1018,11 +1040,15 @@ func (s *Scanner) createHistoryEventData(ctx context.Context, eventType string, 
 //     "azw3, epub, mobi". Which formats arrived is the useful content of this
 //     event and it was the thing lost when three rows collapsed into one.
 //   - "fileCount" is the number of files behind that list.
+//   - "paths" is the exact set of library files that this event placed. It is
+//     intentionally separate from the display-oriented "path": consumers
+//     that need to act on an import must never turn a shared parent directory
+//     into a deletion target.
 //
-// Older rows have no "formats"/"fileCount"; readers must treat them as
+// Older rows have no "formats"/"fileCount"/"paths"; readers must treat them as
 // optional.
-func ebookImportHistoryData(destPaths []string) map[string]string {
-	data := map[string]string{"format": models.MediaTypeEbook}
+func ebookImportHistoryData(destPaths []string) map[string]any {
+	data := map[string]any{"format": models.MediaTypeEbook}
 	if len(destPaths) == 0 {
 		return data
 	}
@@ -1046,7 +1072,45 @@ func ebookImportHistoryData(destPaths []string) map[string]string {
 		data["formats"] = strings.Join(formats, ", ")
 	}
 	data["fileCount"] = strconv.Itoa(len(destPaths))
+	data["paths"] = append([]string(nil), destPaths...)
 	return data
+}
+
+// importHistoryProvenance annotates the one bookImported History row with the
+// source Bindery can identify without inference. History is durable after the
+// corresponding downloads row expires, so keeping the release GUID here lets
+// an operator understand or blocklist an old import without guessing from its
+// title (#3248).
+//
+// A manual import's synthetic GUID is deliberately not recorded: it names the
+// local action, not a release. A downloaded release records its stable GUID
+// plus the local download row and the optional configured indexer/client IDs.
+// Future origins (for example library scans) must add values only where the
+// caller can know them rather than trying to reconstruct them from a path.
+func importHistoryProvenance(dl *models.Download, data map[string]any) map[string]any {
+	out := make(map[string]any, len(data)+5)
+	for key, value := range data {
+		out[key] = value
+	}
+	if dl == nil || strings.HasPrefix(dl.GUID, ManualDownloadGUIDPrefix) {
+		out["origin"] = "manual"
+		return out
+	}
+
+	out["origin"] = "download"
+	if dl.GUID != "" {
+		out["guid"] = dl.GUID
+	}
+	if dl.ID != 0 {
+		out["downloadId"] = strconv.FormatInt(dl.ID, 10)
+	}
+	if dl.IndexerID != nil {
+		out["indexerId"] = strconv.FormatInt(*dl.IndexerID, 10)
+	}
+	if dl.DownloadClientID != nil {
+		out["downloadClientId"] = strconv.FormatInt(*dl.DownloadClientID, 10)
+	}
+	return out
 }
 
 // applyEmbeddedLanguage reconciles the language recorded for a book with the
@@ -1093,7 +1157,7 @@ func (s *Scanner) applyEmbeddedLanguage(ctx context.Context, book *models.Book, 
 	slog.Info("corrected book language from embedded EPUB metadata",
 		"bookID", book.ID, "from", previous, "to", detected)
 	bookID := book.ID
-	s.createHistoryEvent(ctx, models.HistoryEventBookLanguageCorrected, sourceTitle, &bookID, map[string]string{
+	s.createHistoryEvent(ctx, models.HistoryEventBookLanguageCorrected, sourceTitle, &bookID, book.OwnerUserID, map[string]string{
 		"from": previous,
 		"to":   detected,
 	})
@@ -1101,7 +1165,7 @@ func (s *Scanner) applyEmbeddedLanguage(ctx context.Context, book *models.Book, 
 
 func (s *Scanner) markDownloadFailed(ctx context.Context, dl *models.Download, message string) {
 	s.setDownloadError(ctx, dl.ID, message)
-	s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, map[string]string{"guid": dl.GUID, "message": message})
+	s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{"guid": dl.GUID, "message": message})
 	s.notify(ctx, notifierEventDownloadFailed, map[string]interface{}{
 		"title":   dl.Title,
 		"message": message,
@@ -1318,6 +1382,14 @@ func (s *Scanner) importedFormatPath(ctx context.Context, book *models.Book, for
 //
 // A row whose file is gone from disk is ignored: there is nothing to merge
 // into, so the caller should place the audiobook normally.
+//
+// A folder that also holds a file another live book tracks is not offered
+// either (#3556). Two books that render to one ebook name share a folder
+// ("Name.epub" and "Name (2).epub", #3560), and an audiobook row covers its
+// whole folder, so merging would make this book's audiobook the owner of the
+// other book's ebook and a later Reorganize of it would carry that ebook away.
+// The audiobook gets a folder of its own instead, as it would for an
+// unrelated book.
 func (s *Scanner) existingEbookDir(ctx context.Context, book *models.Book) (string, bool) {
 	if book == nil {
 		return "", false
@@ -1334,7 +1406,14 @@ func (s *Scanner) existingEbookDir(ctx context.Context, book *models.Book) (stri
 		if _, statErr := os.Stat(f.Path); statErr != nil {
 			continue
 		}
-		return filepath.Clean(filepath.Dir(f.Path)), true
+		dir := filepath.Clean(filepath.Dir(f.Path))
+		if held, err := s.folderHoldsOtherBooksFiles(ctx, dir, book.ID); err != nil || held {
+			if err != nil {
+				slog.Warn("shared-folder check: failed to look for other books' files", "dir", dir, "error", err)
+			}
+			continue
+		}
+		return dir, true
 	}
 	return "", false
 }
@@ -1617,7 +1696,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 		s.updateDownloadStatus(ctx, dl.ID, models.StateImportExternal)
 		slog.Info("external import: download handed off, awaiting library scan", "title", dl.Title)
-		s.createHistoryEvent(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, map[string]string{"mode": "external", "status": string(models.StateImportExternal)})
+		s.createHistoryEvent(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{"mode": "external", "status": string(models.StateImportExternal)})
 		return
 	}
 
@@ -1760,7 +1839,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// EPUB metadata (reliable) over the release filename (which encodes
 	// author/title/series in inconsistent orders) — issue #1014.
 	if book == nil {
-		if b, a := s.matchBookForDownload(ctx, bookFiles, dl.Title); b != nil {
+		if b, a := s.matchBookForDownload(ctx, s.downloadMatchScope(ctx, dl), bookFiles, dl.Title); b != nil {
 			book = b
 			author = a
 			edition = s.resolveCalibreEdition(ctx, dl, book)
@@ -1800,7 +1879,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			// still force this in, then blocklist so the next scan does not
 			// grab the identical release and repeat the whole cycle.
 			s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
-			s.blocklistRejectedRelease(ctx, dl, reason)
+			s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeBook, reason)
 			s.failImport(ctx, dl, models.StateImportBlocked, reason)
 			return
 		}
@@ -1828,8 +1907,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// formatHint is the override, on the same principle as the video guard: a
 	// human driving manual import has already said what these files are.
 	if formatHint == "" && book != nil {
-		if marker := indexer.MultiBookPackMarker(dl.Title); marker != "" &&
-			indexer.MultiBookPackMarker(book.Title) == "" {
+		if marker := s.packMarker(ctx, dl.Title, book); marker != "" {
 			slog.Warn("import blocked: release is a multi-book pack linked to one book",
 				"title", dl.Title, "marker", marker, "bookID", book.ID, "book", book.Title)
 			// Record the path so the queue's manual import can place the files
@@ -1873,7 +1951,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			slog.Warn("import blocked: file language is not allowed",
 				"title", dl.Title, "bookID", book.ID, "languages", langCheck.declared)
 			s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
-			s.blocklistRejectedRelease(ctx, dl, langCheck.reason)
+			s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeBook, langCheck.reason)
 			s.failImport(ctx, dl, models.StateImportBlocked, langCheck.reason)
 			return
 		}
@@ -1893,7 +1971,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				slog.Warn("import blocked: file looks like a different book",
 					"title", dl.Title, "bookID", book.ID, "book", book.Title)
 				s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
-				s.blocklistRejectedRelease(ctx, dl, res.reason)
+				s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeBook, res.reason)
 				s.failImportWithCheck(ctx, dl, models.StateImportBlocked, res.reason, res.data)
 				return
 			}
@@ -1970,7 +2048,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				slog.Warn("import blocked: audio file language is not allowed",
 					"title", dl.Title, "bookID", book.ID, "languages", lc.declared)
 				s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
-				s.blocklistRejectedRelease(ctx, dl, lc.reason)
+				s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeBook, lc.reason)
 				s.failImport(ctx, dl, models.StateImportBlocked, lc.reason)
 				return
 			}
@@ -1990,7 +2068,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					slog.Warn("import blocked: audio tags show other books in the download",
 						"title", dl.Title, "bookID", book.ID, "book", book.Title)
 					s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
-					s.blocklistRejectedRelease(ctx, dl, res.reason)
+					s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeBook, res.reason)
 					s.failImportWithCheck(ctx, dl, models.StateImportBlocked, res.reason, res.data)
 					return
 				}
@@ -2026,6 +2104,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// post-placement rollback, which must not treat a shared folder as
 		// this import's to delete.
 		var mergedIntoExistingFolder bool
+		// Whether the audiobook source was a lone file rather than a folder:
+		// a single file usenet job, whose job folder the placement below does
+		// not move and so must be cleaned up afterwards (#3647).
+		var audiobookSourceIsFile bool
 		// Choose hardlink-vs-copy (when auto) against the audiobook root the
 		// files actually land under, not s.libraryDir — they can be on
 		// different mounts and a cross-device hardlink would hard-fail (#1254).
@@ -2060,6 +2142,29 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				slog.Error("refusing audiobook import from a symlinked download folder", "path", audiobookSource, "mode", mode)
 				s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf("audiobook %s refused: %v", mode, err))
 				return
+			}
+			// A source folder that already sits in the library (a Fix match
+			// of an audiobook folder, or a manual import pointed inside the
+			// library) can hold a file another book tracks. Placing the
+			// folder whole would carry that file to this book's folder while
+			// its own row kept the old path (#3556), the same thing the
+			// Reorganize guard refuses. Only move mode carries anything off:
+			// copy and hardlink leave the source folder and everything in it
+			// in place. A download folder holds no tracked files, so this
+			// costs one empty lookup there. Fix match runs the same check
+			// (FolderRelocationRefusal) before it detaches the source row, so
+			// a refusal there never leaves the folder tracked by nobody; this
+			// one is the backstop.
+			if mode == "move" {
+				if reason, err := s.heldFolderReason(ctx, audiobookSource, book.ID, dl.OwnerUserID); err != nil {
+					slog.Error("failed to check the audiobook source for other books' files", "path", audiobookSource, "error", err)
+					s.failImport(ctx, dl, models.StateImportFailed, fmt.Sprintf("check audiobook source: %v", err))
+					return
+				} else if reason != "" {
+					slog.Warn("audiobook source folder holds a file another book tracks; refusing import", "path", audiobookSource)
+					s.failImport(ctx, dl, models.StateImportBlocked, "audiobook move refused: "+reason)
+					return
+				}
 			}
 		}
 		slog.Info("importing audiobook folder", "src", audiobookSource, "dst", destDir, "mode", mode, "perFile", usePerFile)
@@ -2255,6 +2360,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					}
 				}
 			} else {
+				audiobookSourceIsFile = true
 				// Shared-folder layout (#1959) for a source that is a single
 				// FILE rather than a folder: a lone .m4b, which is what a
 				// manual import of one audiobook file and a single-file
@@ -2344,7 +2450,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			var setErr error
 			var owned *db.PathOwnedError
 			for attempt := 0; attempt < 3; attempt++ {
-				if setErr = s.recordImportedFile(ctx, book, models.MediaTypeAudiobook, destDir); setErr == nil {
+				if setErr = s.recordImportedFile(ctx, dl, book, models.MediaTypeAudiobook, destDir); setErr == nil {
 					break
 				}
 				if ctx.Err() != nil || errors.As(setErr, &owned) {
@@ -2419,14 +2525,23 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		s.pushToABS(ctx)
 		s.writeOPFSidecar(ctx, destDir, []string{audiobookRoot}, book, author, edition, seriesTitle, seriesNum)
 
-		historyMeta := map[string]string{"path": destDir, "format": models.MediaTypeAudiobook}
+		historyMeta := importHistoryProvenance(dl, map[string]any{"path": destDir, "format": models.MediaTypeAudiobook})
 		if len(mergeSkippedFiles) > 0 {
 			historyMeta["skippedFiles"] = strings.Join(mergeSkippedFiles, ", ")
 		}
 		s.fillCoverFromFile(ctx, book, destDir)
-		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, withContentCheck(historyMeta, contentCheck))
+		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, dl.OwnerUserID, withContentCheck(historyMeta, contentCheck))
 		s.recordFixMatchMove(ctx, book, destDir)
 		s.notify(ctx, notifierEventBookImported, withContentCheckPayload(importedPayload(book, dl, models.MediaTypeAudiobook, destDir, mergeSkippedFiles), contentCheck))
+		// A folder source moved wholesale, so nothing is left of it. A lone
+		// file moved out of a usenet job folder leaves that folder behind,
+		// with whatever extras the release carried (#3647). A merge that
+		// skipped a same-named file left that file in the source, so it is
+		// left alone. The sweep prunes the emptied folder itself, behind its
+		// client folder guard, so no cleanupMovedSources here.
+		if mode == "move" && audiobookSourceIsFile && len(mergeSkippedFiles) == 0 && isUsenetClient(cleanupClientType) {
+			s.sweepUsenetJobExtras(ctx, audiobookSource, []string{audiobookSource}, bookFiles)
+		}
 		if cleanupFunc != nil {
 			if err := cleanupFunc(); err != nil {
 				slog.Warn("cleanup failed", cleanupWarnAttrs(cleanupClientType, cleanupRemoteID, err)...)
@@ -2550,6 +2665,41 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			importedDestPaths = append(importedDestPaths, destPath)
 			continue
 		}
+		destPath, destErr = s.uniqueEbookDestination(ctx, book, destPath)
+		if destErr != nil {
+			slog.Error("failed to find unused book destination", "src", srcFile, "error", destErr)
+			lastFileErr = destErr
+			failed++
+			continue
+		}
+		// A prior attempt may have selected a suffix and completed just this
+		// file before it stopped. The deterministic base-name check above
+		// cannot see that row, so repeat the idempotency guard after collision
+		// resolution rather than re-copying the existing suffixed file.
+		if s.alreadyImportedPath(ctx, book, destPath) {
+			slog.Info("book file already imported at collision-safe destination — skipping re-import",
+				"src", srcFile, "dst", destPath)
+			imported++
+			importedDestPaths = append(importedDestPaths, destPath)
+			continue
+		}
+
+		// A destination below a folder another book tracks (an audiobook is
+		// tracked as its whole folder) is not this book's to write to: a later
+		// Reorganize of that folder would carry the file away while this book's
+		// row kept the old path. A retry lands in the same place, so block it.
+		if under, err := s.books.PathUnderLiveOtherBookDir(ctx, destPath, book.ID); err != nil {
+			slog.Error("failed to check destination ownership", "dst", destPath, "error", err)
+			lastFileErr = fmt.Errorf("check destination ownership: %w", err)
+			failed++
+			continue
+		} else if under {
+			slog.Warn("destination is inside a folder another book tracks — refusing import", "src", srcFile, "dst", destPath)
+			lastFileErr = fmt.Errorf("%s is inside a folder tracked by another book; remove the duplicate book or change the naming template so the two books do not share a folder", destPath)
+			failed++
+			ownedFailed++
+			continue
+		}
 
 		mode := ebookMode
 		slog.Info("importing book", "src", srcFile, "dst", destPath, "mode", mode)
@@ -2578,7 +2728,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// A destPath another book already tracks fails here (#2937), before
 		// commit, so the staged file is discarded and the file that book
 		// tracks at destPath is never replaced.
-		if err := s.recordImportedFile(ctx, book, models.MediaTypeEbook, destPath); err != nil {
+		if err := s.recordImportedFile(ctx, dl, book, models.MediaTypeEbook, destPath); err != nil {
 			slog.Error("failed to record book file — rolling back staged file", "bookID", book.ID, "staged", stagedPath, "error", err)
 			rollback()
 			failed++
@@ -2715,9 +2865,11 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// counts the ones already placed through the idempotency guard, and
 		// lands here, so the download still ends up with exactly one
 		// bookImported row naming every format.
-		importData := ebookImportHistoryData(importedDestPaths)
-		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, withContentCheck(importData, contentCheck))
-		s.recordFixMatchMove(ctx, book, importData["path"])
+		importData := importHistoryProvenance(dl, ebookImportHistoryData(importedDestPaths))
+		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, dl.OwnerUserID, withContentCheck(importData, contentCheck))
+		if importPath, ok := importData["path"].(string); ok {
+			s.recordFixMatchMove(ctx, book, importPath)
+		}
 		s.notify(ctx, notifierEventBookImported, withContentCheckPayload(importedPayload(book, dl, models.MediaTypeEbook, "", nil), contentCheck))
 
 		// For "move" mode bindery has no further use for the source files. The
@@ -2731,6 +2883,13 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// a shared root or sibling data.
 		if configuredMode == "move" {
 			s.cleanupMovedSources(downloadPath, importedSrcFiles)
+			// A usenet job's own folder is not a shared save root and
+			// nothing seeds from it, so the release extras the book came
+			// with (.nfo, cover scans, par2) go too, under the guards in
+			// sweepUsenetJobExtras (#3647). Never for a torrent.
+			if isUsenetClient(cleanupClientType) {
+				s.sweepUsenetJobExtras(ctx, downloadPath, importedSrcFiles, bookFiles)
+			}
 		}
 		if cleanupFunc != nil {
 			if err := cleanupFunc(); err != nil {
@@ -2750,41 +2909,16 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 // already deletes the source file on a successful move, so most entries here
 // are no-ops on the file itself; the value is the empty-directory pruning.
 func (s *Scanner) cleanupMovedSources(downloadPath string, importedSrcFiles []string) {
-	cleanDownloadPath := filepath.Clean(downloadPath)
-
-	// pruneRoot is the boundary directory the cleanup is allowed to remove up to
-	// (inclusive). It is normally the download path itself. But a single-file
-	// usenet job resolves downloadPath to the *file*, not its containing folder
-	// (SABnzbd/NZBGet report the storage path of the single file) — and every
-	// guard below is "at or under downloadPath", which a file's parent is not.
-	// The result was the now-empty job folder being left behind after an
-	// otherwise-clean ebook import (cleb's report; audiobooks escaped it because
-	// they move the whole directory via MoveDirCtx). When downloadPath is a
-	// file, prune from its parent folder instead.
-	pruneRoot := cleanDownloadPath
-	if downloadPathIsFile(cleanDownloadPath, importedSrcFiles) {
-		pruneRoot = filepath.Dir(cleanDownloadPath)
-	}
-
-	// Refuse to prune if pruneRoot is empty, relative, the filesystem root, or
-	// equal to / an ancestor of a configured library root. This is a
-	// belt-and-braces guard on top of the os.Remove non-empty-dir protection.
-	if pruneRoot == "" || pruneRoot == "." ||
-		pruneRoot == string(filepath.Separator) ||
-		!filepath.IsAbs(pruneRoot) {
+	pruneRoot, refusal := s.movePruneRoot(downloadPath, importedSrcFiles)
+	switch refusal {
+	case "":
+	case pruneRefusedUnsafe:
 		slog.Warn("move cleanup: refusing to prune unsafe download path", "path", downloadPath)
 		return
-	}
-	for _, root := range []string{s.libraryDir, s.audiobookDir} {
-		if root == "" {
-			continue
-		}
-		cleanRoot := filepath.Clean(root)
-		if pruneRoot == cleanRoot || pathUnderDir(cleanRoot, pruneRoot) {
-			slog.Warn("move cleanup: download path equals or contains a library root — skipping cleanup",
-				"downloadPath", cleanDownloadPath, "pruneRoot", pruneRoot, "libraryRoot", cleanRoot)
-			return
-		}
+	default:
+		slog.Warn("move cleanup: download path equals or contains a library root, skipping cleanup",
+			"downloadPath", filepath.Clean(downloadPath), "pruneRoot", pruneRoot, "libraryRoot", refusal)
+		return
 	}
 
 	// dirsToPrune collects every directory at or below pruneRoot that may now
@@ -2837,6 +2971,50 @@ func (s *Scanner) cleanupMovedSources(downloadPath string, importedSrcFiles []st
 		}
 		slog.Debug("move cleanup: pruned empty directory", "dir", dir)
 	}
+}
+
+// pruneRefusedUnsafe is movePruneRoot's refusal for a path that is empty,
+// relative or the filesystem root. Any other non-empty refusal is the library
+// root the path equals or contains.
+const pruneRefusedUnsafe = "unsafe"
+
+// movePruneRoot returns the folder move mode cleanup may prune up to
+// (inclusive), and a non-empty refusal when it must not prune at all.
+func (s *Scanner) movePruneRoot(downloadPath string, importedSrcFiles []string) (string, string) {
+	cleanDownloadPath := filepath.Clean(downloadPath)
+
+	// pruneRoot is the boundary directory the cleanup is allowed to remove up to
+	// (inclusive). It is normally the download path itself. But a single-file
+	// usenet job resolves downloadPath to the *file*, not its containing folder
+	// (SABnzbd/NZBGet report the storage path of the single file), and every
+	// guard below is "at or under downloadPath", which a file's parent is not.
+	// The result was the now-empty job folder being left behind after an
+	// otherwise-clean ebook import (cleb's report; audiobooks escaped it because
+	// they move the whole directory via MoveDirCtx). When downloadPath is a
+	// file, prune from its parent folder instead.
+	pruneRoot := cleanDownloadPath
+	if downloadPathIsFile(cleanDownloadPath, importedSrcFiles) {
+		pruneRoot = filepath.Dir(cleanDownloadPath)
+	}
+
+	// Refuse to prune if pruneRoot is empty, relative, the filesystem root, or
+	// equal to / an ancestor of a configured library root. This is a
+	// belt-and-braces guard on top of the os.Remove non-empty-dir protection.
+	if pruneRoot == "" || pruneRoot == "." ||
+		pruneRoot == string(filepath.Separator) ||
+		!filepath.IsAbs(pruneRoot) {
+		return pruneRoot, pruneRefusedUnsafe
+	}
+	for _, root := range []string{s.libraryDir, s.audiobookDir} {
+		if root == "" {
+			continue
+		}
+		cleanRoot := filepath.Clean(root)
+		if pruneRoot == cleanRoot || pathUnderDir(cleanRoot, pruneRoot) {
+			return pruneRoot, cleanRoot
+		}
+	}
+	return pruneRoot, ""
 }
 
 // downloadPathIsFile reports whether cleanDownloadPath refers to a single file

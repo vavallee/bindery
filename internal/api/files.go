@@ -122,7 +122,7 @@ func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		h.serveFile(w, r, resolved)
+		h.serveFile(w, r, id, resolved)
 		return
 	}
 
@@ -159,7 +159,7 @@ func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.serveFile(w, r, filePath)
+	h.serveFile(w, r, id, filePath)
 }
 
 // trackedFilePath resolves requested against the book's book_files rows and
@@ -189,7 +189,9 @@ func (h *FileHandler) trackedFilePath(ctx context.Context, bookID int64, request
 // serveFile streams one resolved path: a directory as a zip bundle, a regular
 // file with its own name. Shared by the ?path= and format-chain branches so
 // both go through the same allow-list check rather than one growing a bypass.
-func (h *FileHandler) serveFile(w http.ResponseWriter, r *http.Request, filePath string) {
+// bookID is the book filePath belongs to; a zipped folder leaves out what
+// other books track inside it (see trackedByOtherBook).
+func (h *FileHandler) serveFile(w http.ResponseWriter, r *http.Request, bookID int64, filePath string) {
 	// Defence-in-depth: refuse to serve paths that aren't under a configured
 	// library root, even if a tampered DB row or importer bug set a path
 	// to something outside the library (e.g. /etc/passwd, /config/*).
@@ -209,7 +211,12 @@ func (h *FileHandler) serveFile(w http.ResponseWriter, r *http.Request, filePath
 
 	name := filepath.Base(filepath.Clean(filePath))
 	if sp.info.IsDir() {
-		streamZip(withStallDeadline(w), sp.root, sp.rel, name)
+		skip, err := h.trackedByOtherBook(r.Context(), bookID, filePath)
+		if err != nil {
+			writeServerError(w, r, err)
+			return
+		}
+		streamZip(withStallDeadline(w), sp.root, sp.rel, name, skip)
 		return
 	}
 
@@ -220,6 +227,43 @@ func (h *FileHandler) serveFile(w http.ResponseWriter, r *http.Request, filePath
 	defer func() { _ = f.Close() }()
 	w.Header().Set("Content-Disposition", contentDisposition(name))
 	http.ServeContent(withStallDeadline(w), r, name, info.ModTime(), f)
+}
+
+// trackedByOtherBook returns the filter streamZip applies to bookID's folder
+// at dir: it reports whether the entry at rel (slash separated, relative to
+// dir) is a book_files row of another book. A folder another book tracks is
+// left out whole, since its row covers everything below it.
+//
+// An audiobook folder is not a private directory. With the default layout an
+// ebook of another book, possibly another user's, can be imported inside it,
+// and a direct download of that book is refused to anyone who does not own
+// it. The zip must not hand it over either. Untracked files in the folder
+// (cover art, cue sheets, nfo files) are part of the audiobook and stay in.
+//
+// This is the delete guard's ownership test (pathGuardedByOtherBook) limited
+// to what lies inside the folder: the walk is top down and prunes a nested
+// folder another book tracks, which covers everything under it. The ancestor
+// half of that guard is not used here, because a box set's folder that
+// contains this book's folder would otherwise empty the zip.
+//
+// The rows below dir are read once, and compared to walked paths without
+// regard to case: on a case insensitive library (SMB, macOS, Windows) another
+// book's row can spell the same file in different case. On a case sensitive
+// filesystem that can only leave out more, never less. A trailing separator
+// on a stored folder row is ignored.
+func (h *FileHandler) trackedByOtherBook(ctx context.Context, bookID int64, dir string) (func(rel string, isDir bool) bool, error) {
+	rows, err := h.books.PathsUnderForOtherBooks(ctx, dir, bookID)
+	if err != nil {
+		return nil, err
+	}
+	tracked := make(map[string]struct{}, len(rows))
+	for _, p := range rows {
+		tracked[strings.ToLower(filepath.Clean(p))] = struct{}{}
+	}
+	return func(rel string, _ bool) bool {
+		_, ok := tracked[strings.ToLower(filepath.Join(dir, filepath.FromSlash(rel)))]
+		return ok
+	}, nil
 }
 
 // downloadStallTimeout is how long a file download may sit without the client
@@ -581,7 +625,9 @@ func pathContains(root, p string) bool {
 }
 
 // streamZip writes a zip archive of every regular file under dir (a path
-// inside root) to the ResponseWriter, named name.zip. Headers are set before
+// inside root) to the ResponseWriter, named name.zip. An entry skip reports
+// true for is left out, and a folder it reports true for is not entered; skip
+// sees the entry's path relative to dir with forward slashes. Headers are set before
 // the first byte is written. Content-Length is unknown (streamed), so we use
 // chunked transfer.
 //
@@ -589,7 +635,7 @@ func pathContains(root, p string) bool {
 // that is not a regular file (a symlink to a file or a directory, a device, a
 // fifo) is skipped rather than opened. Every open goes through root, so even a
 // file swapped for a link mid-walk cannot be read from outside the library.
-func streamZip(w http.ResponseWriter, root *os.Root, dir, name string) {
+func streamZip(w http.ResponseWriter, root *os.Root, dir, name string, skip func(rel string, isDir bool) bool) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", contentDisposition(name+".zip"))
 
@@ -598,8 +644,25 @@ func streamZip(w http.ResponseWriter, root *os.Root, dir, name string) {
 
 	fsys := root.FS()
 	base := filepath.ToSlash(dir)
+	// Entry names are relative to the zipped folder, with forward slashes
+	// (fs paths already are) for cross-platform extraction.
+	relOf := func(p string) string {
+		if base == "." {
+			return p
+		}
+		return strings.TrimPrefix(p, base+"/")
+	}
 	_ = fs.WalkDir(fsys, base, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if p != base && skip != nil && skip(relOf(p), true) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if skip != nil && skip(relOf(p), false) {
 			return nil
 		}
 		if !d.Type().IsRegular() {
@@ -615,12 +678,7 @@ func streamZip(w http.ResponseWriter, root *os.Root, dir, name string) {
 		if info, serr := f.Stat(); serr != nil || !info.Mode().IsRegular() {
 			return nil
 		}
-		// Entry names are relative to the zipped folder, with forward slashes
-		// (fs paths already are) for cross-platform extraction.
-		rel := p
-		if base != "." {
-			rel = strings.TrimPrefix(p, base+"/")
-		}
+		rel := relOf(p)
 		zf, zerr := zw.CreateHeader(&zip.FileHeader{Name: rel, Method: zipMethod(rel)})
 		if zerr != nil {
 			return zerr

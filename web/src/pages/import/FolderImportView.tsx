@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
-import type { BatchImportItem, BatchImportResult, Book, ScanItem } from '../../api/client'
+import type { BatchImportItem, BatchImportResult, Book, ImportFolderBrowseResponse, ScanItem } from '../../api/client'
 import { btn, btnSize } from '../../components/buttons'
 import { useFolderScan } from '../../components/useFolderScan'
 import FolderImportRow from './FolderImportRow'
@@ -22,12 +22,23 @@ import { errorText } from '../../util/errorText'
 
 const MATCH_ORDER: ScanItem['match'][] = ['confident', 'ambiguous', 'none']
 
+// folderLabel shows the last path segment of a child folder; the full path is
+// in the button's title and in the current folder line above the list.
+function folderLabel(folder: string): string {
+  const trimmed = folder.replace(/[\\/]+$/, '')
+  const cut = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  return cut >= 0 ? trimmed.slice(cut + 1) || trimmed : trimmed
+}
+
 export default function FolderImportView() {
   const { t } = useTranslation()
   const [rows, setRows] = useState<Record<string, RowState>>({})
   const [results, setResults] = useState<Record<string, BatchImportResult>>({})
   const [importingPaths, setImportingPaths] = useState<Set<string>>(() => new Set())
   const [importError, setImportError] = useState('')
+  const [folderBrowser, setFolderBrowser] = useState<ImportFolderBrowseResponse | null>(null)
+  const [browsing, setBrowsing] = useState(false)
+  const [browseError, setBrowseError] = useState('')
 
   const folderScan = useFolderScan(scanned => {
     setResults({})
@@ -39,6 +50,26 @@ export default function FolderImportView() {
     setRows(init)
   })
   const { path, setPath, scanning, items, truncated, showImported, error: scanError, toggleShowImported } = folderScan
+
+  const browse = async (folder?: string) => {
+    setBrowsing(true)
+    setBrowseError('')
+    try {
+      setFolderBrowser(await api.listImportFolders(folder))
+    } catch (e) {
+      setBrowseError(errorText(e, t('manualImport.browseFailed', 'Could not list folders')))
+    } finally {
+      setBrowsing(false)
+    }
+  }
+
+  const openBrowser = () => { void browse(path.trim() || undefined) }
+  const closeBrowser = () => { setFolderBrowser(null); setBrowseError('') }
+  const useFolder = () => {
+    if (!folderBrowser?.path) return
+    setPath(folderBrowser.path)
+    setFolderBrowser(null)
+  }
 
   // A scan attempt (fresh or re-triggered by the toggle) supersedes whatever
   // the last import attempt reported.
@@ -178,6 +209,14 @@ export default function FolderImportView() {
           className="flex-1 px-3 py-2 rounded-md border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm"
         />
         <button
+          type="button"
+          onClick={openBrowser}
+          disabled={browsing}
+          className={`${btn.secondary} ${btnSize.md}`}
+        >
+          {t('manualImport.browse', 'Browse folders')}
+        </button>
+        <button
           onClick={handleScan}
           disabled={scanning || !path.trim()}
           className={`${btn.primary} ${btnSize.md}`}
@@ -185,6 +224,56 @@ export default function FolderImportView() {
           {scanning ? t('manualImport.scanning', 'Scanning…') : t('manualImport.scan', 'Scan folder')}
         </button>
       </div>
+
+      {(folderBrowser || browseError) && (
+        <section className="mb-6 max-w-2xl rounded-md border border-slate-200 dark:border-zinc-800 p-3" aria-label={t('manualImport.browseTitle', 'Choose a folder')}>
+          <div className="mb-2 flex items-center gap-2">
+            <h3 className="text-sm font-semibold">{t('manualImport.browseTitle', 'Choose a folder')}</h3>
+            <div className="ml-auto flex gap-2">
+              {folderBrowser?.path && !folderBrowser.parent && (
+                <button type="button" onClick={() => void browse()} disabled={browsing} className={`${btn.secondary} ${btnSize.sm}`}>
+                  {t('manualImport.browseRoots', 'All folders')}
+                </button>
+              )}
+              {folderBrowser?.parent && (
+                <button type="button" onClick={() => void browse(folderBrowser.parent)} disabled={browsing} className={`${btn.secondary} ${btnSize.sm}`}>
+                  {t('manualImport.browseUp', 'Up one folder')}
+                </button>
+              )}
+              {folderBrowser?.path && (
+                <button type="button" onClick={useFolder} disabled={browsing} className={`${btn.primary} ${btnSize.sm}`}>
+                  {t('manualImport.browseUse', 'Use this folder')}
+                </button>
+              )}
+              <button type="button" onClick={closeBrowser} className={`${btn.secondary} ${btnSize.sm}`}>
+                {t('manualImport.browseClose', 'Close')}
+              </button>
+            </div>
+          </div>
+          {folderBrowser?.path && (
+            <p className="mb-2 break-all font-mono text-xs text-fg-muted">{folderBrowser.path}</p>
+          )}
+          {browseError && <p className="text-sm text-red-700 dark:text-red-400">{browseError}</p>}
+          {folderBrowser && (
+            folderBrowser.directories.length === 0
+              ? <p className="text-sm text-fg-muted">{t('manualImport.browseEmpty', 'No subfolders here.')}</p>
+              : <ul className="space-y-1">
+                {folderBrowser.directories.map(folder => (
+                  <li key={folder}>
+                    <button type="button" title={folder} onClick={() => void browse(folder)} disabled={browsing} className="text-left text-sm text-blue-700 hover:underline dark:text-blue-400">
+                      {folderBrowser.path ? folderLabel(folder) : folder}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+          )}
+          {folderBrowser?.truncated && (
+            <p className="mt-2 text-xs text-fg-muted">
+              {t('manualImport.browseTruncated', 'This folder has more subfolders than can be listed; {{count}} are shown. Type the path to reach one that is not listed.', { count: folderBrowser.directories.length })}
+            </p>
+          )}
+        </section>
+      )}
 
       {scanError && (
         <p className="mb-4 text-sm text-red-700 dark:text-red-400">{scanError}</p>

@@ -46,6 +46,24 @@ type categoryDirConfig struct {
 // SABnzbd reported a relative complete_dir, which Bindery cannot resolve
 // without knowing SABnzbd's own home folder.
 func (c *Client) CompleteDir(ctx context.Context, category string) (string, bool, error) {
+	return c.completeDir(ctx, category, false)
+}
+
+// CompleteDirStrict is CompleteDir for a caller about to delete files on the
+// strength of the answer (#3647). Where CompleteDir quietly falls back to
+// complete_dir when the category lookup fails or does not name the category,
+// which is right for a diagnostic, this returns an error instead: a category
+// folder ending in an asterisk is a folder shared by every job in it, and
+// not knowing it is there is not the same as it not being there.
+func (c *Client) CompleteDirStrict(ctx context.Context, category string) (string, error) {
+	dir, _, err := c.completeDir(ctx, category, true)
+	if err == nil && dir == "" {
+		err = fmt.Errorf("SABnzbd's complete_dir is not an absolute path")
+	}
+	return dir, err
+}
+
+func (c *Client) completeDir(ctx context.Context, category string, strict bool) (string, bool, error) {
 	var misc completeDirConfig
 	params := url.Values{"mode": {"get_config"}, "section": {"misc"}, "keyword": {"complete_dir"}}
 	if err := c.apiCall(ctx, params, &misc); err != nil {
@@ -63,12 +81,23 @@ func (c *Client) CompleteDir(ctx context.Context, category string) (string, bool
 		// A category SABnzbd does not know answers with status false. The
 		// category check reports that on its own, so here it only means the
 		// category has no folder of its own.
-		if err := c.apiCall(ctx, params, &cats); err == nil {
+		err := c.apiCall(ctx, params, &cats)
+		found := false
+		if err == nil {
 			for _, cat := range cats.Config.Categories {
 				if strings.EqualFold(cat.Name, category) {
 					catDir = cat.Dir
+					found = true
 					break
 				}
+			}
+		}
+		if strict {
+			if err != nil {
+				return "", false, fmt.Errorf("read category %q: %w", category, httpsec.RedactURLError(err))
+			}
+			if !found {
+				return "", false, fmt.Errorf("SABnzbd did not report category %q", category)
 			}
 		}
 	}

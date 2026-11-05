@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { AdoptionBookRef, AdoptionItem, AdoptTarget, Book } from '../../api/client'
+import { api, type AdoptionBookRef, type AdoptionItem, type AdoptTarget, type Book, type Series } from '../../api/client'
 import { btn, btnSize } from '../../components/buttons'
 import BookPicker from '../../components/import/BookPicker'
 import CatalogueAdder from '../../components/import/CatalogueAdder'
@@ -35,6 +35,12 @@ export function StatusPill({ status, monitored }: { status: string; monitored: b
   )
 }
 
+// foldSeriesTitle compares series names loosely for the preselection only:
+// case, punctuation and spacing differences do not count.
+function foldSeriesTitle(title: string): string {
+  return title.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+}
+
 // AdoptionEditor opens in place under its row, never as a dialog: the
 // suggestions as radio rows with their scores, a search of the library,
 // prefilled and focused, and a collapsed metadata search that asks a provider
@@ -49,9 +55,36 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
   const initial = preselectable(item)
   const [chosen, setChosen] = useState<AdoptionBookRef | null>(initial && !isWeakCandidate(initial) ? initial.book : null)
   const [searched, setSearched] = useState<AdoptionBookRef | null>(null)
+  const [applySeriesHint, setApplySeriesHint] = useState(false)
+  const [seriesTarget, setSeriesTarget] = useState('new')
+  const [series, setSeries] = useState<Series[] | null>(null)
   const name = unitDisplayName(item)
 
   useEffect(() => { searchRef.current?.focus({ preventScroll: showFiles }) }, [showFiles])
+  useEffect(() => {
+    if (!applySeriesHint || series !== null) return
+    let cancelled = false
+    api.listSeries().then(items => {
+      if (cancelled) return
+      setSeries(items)
+      // Default to the one existing series whose name matches the hint, so
+      // adopting book after book of a series does not mint a new manual
+      // series each time. The server never matches by name; this is only a
+      // preselection the reviewer can change.
+      const hint = item.seriesHint ? foldSeriesTitle(item.seriesHint.title) : ''
+      const matches = hint ? items.filter(s => foldSeriesTitle(s.title) === hint) : []
+      if (matches.length === 1) setSeriesTarget(current => (current === 'new' ? String(matches[0].id) : current))
+    }).catch(() => { if (!cancelled) setSeries([]) })
+    return () => { cancelled = true }
+  }, [applySeriesHint, series, item.seriesHint])
+  const withSeriesHint = <T extends AdoptTarget>(target: T): T => {
+    if (!applySeriesHint) return target
+    return {
+      ...target,
+      applySeriesHint: true,
+      ...(seriesTarget !== 'new' ? { seriesId: Number(seriesTarget) } : {}),
+    }
+  }
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') {
@@ -152,6 +185,26 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
           {t('adoption.editor.alreadyImported', 'This book already has its files. Adopting adds these alongside them, and nothing is replaced or deleted.')}
         </p>
       )}
+      {item.seriesHint && (
+        <div className="rounded border border-slate-200 p-3 text-sm dark:border-zinc-800">
+          <label className="flex cursor-pointer items-start gap-2">
+            <input type="checkbox" checked={applySeriesHint} onChange={e => setApplySeriesHint(e.target.checked)} />
+            <span>
+              {t('adoption.editor.applySeriesHint', { series: item.seriesHint.title, position: item.seriesHint.position, defaultValue: 'Add this book to a series from the path hint ({{series}} #{{position}}).' })}
+              <span className="mt-0.5 block text-xs text-fg-muted">{t('adoption.editor.applySeriesHintNote', 'This is optional. Undo removes only the membership created here.')}</span>
+            </span>
+          </label>
+          {applySeriesHint && (
+            <label className="mt-2 block text-xs text-fg-muted">
+              {t('adoption.editor.seriesTarget', 'Series')}
+              <select value={seriesTarget} onChange={e => setSeriesTarget(e.target.value)} className="mt-1 block w-full rounded border border-slate-300 bg-transparent px-2 py-1 text-sm dark:border-zinc-700">
+                <option value="new">{t('adoption.editor.newSeriesFromHint', { series: item.seriesHint.title, defaultValue: 'Create “{{series}}”' })}</option>
+                {series?.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
+              </select>
+            </label>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-3 md:grid-cols-2">
         <div className="space-y-2">
@@ -163,11 +216,11 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
             actionLabel={t('adoption.editor.addAndAdopt', 'Add and adopt')}
             busyLabel={t('adoption.editor.adding', 'Adding…')}
             onChoose={async b => {
-              await onAdopt({
+            await onAdopt(withSeriesHint({
                 foreignBookId: b.foreignBookId,
                 foreignAuthorId: b.author?.foreignAuthorId ?? '',
                 authorName: b.author?.authorName ?? '',
-              }, null)
+            }), null)
             }}
           />
         </div>
@@ -196,7 +249,7 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
         <button
           type="button"
           disabled={!chosen}
-          onClick={() => chosen && onAdopt({ bookId: chosen.id }, chosen)}
+        onClick={() => chosen && onAdopt(withSeriesHint({ bookId: chosen.id }), chosen)}
           className={`${btn.primary} ${btnSize.md}`}
         >
           {chosen

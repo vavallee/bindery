@@ -242,6 +242,76 @@ func TestSeriesApplyGenresPersistenceFailure(t *testing.T) {
 	}
 }
 
+// TestSeriesApplyGenresKeepsOtherColumns pins that the series genre override
+// changes only the genres and the genres lock. The series book list is a
+// partial projection, so writing it back through BookRepo.Update used to
+// blank the description, the file paths, the narrator, the ASIN, the rating
+// and every other lock on each book in the series.
+func TestSeriesApplyGenresKeepsOtherColumns(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	books := db.NewBookRepo(database)
+	authors := db.NewAuthorRepo(database)
+	seriesRepo := db.NewSeriesRepo(database)
+	ctx := context.Background()
+
+	author := &models.Author{ForeignID: "OL1A", Name: "A", SortName: "A", MetadataProvider: "openlibrary"}
+	if err := authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	b := seedLockTestBook(t, books, author.ID, "KEEP1", "Kept Book")
+	b.OriginalTitle = "Original"
+	b.Description = "A long description"
+	b.FilePath = "/books/kept.epub"
+	b.EbookFilePath = "/books/kept.epub"
+	b.Narrator = "Some Narrator"
+	b.ASIN = "B000KEEP01"
+	b.AverageRating = 4.5
+	b.RatingsCount = 12
+	b.LockField(models.BookFieldTitle)
+	b.LockField(models.BookFieldDescription)
+	if err := books.Update(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+
+	series, err := seriesRepo.CreateManual(ctx, "Keep Series")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seriesRepo.LinkBook(ctx, series.ID, b.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewSeriesHandler(seriesRepo, books, authors, nil, nil)
+	idStr := strconv.FormatInt(series.ID, 10)
+	raw, _ := json.Marshal(map[string]any{"genres": []string{"Fantasy"}})
+	rec := httptest.NewRecorder()
+	h.ApplyGenres(rec, withURLParam(httptest.NewRequest(http.MethodPut, "/api/v1/series/"+idStr+"/genres", bytes.NewReader(raw)), "id", idStr))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	got, err := books.GetByID(ctx, b.ID)
+	if err != nil || got == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if len(got.Genres) != 1 || got.Genres[0] != "Fantasy" || !got.IsFieldLocked(models.BookFieldGenres) {
+		t.Fatalf("genres not applied and locked: %v %v", got.Genres, got.LockedFields)
+	}
+	if got.OriginalTitle != "Original" || got.Description != "A long description" ||
+		got.FilePath != "/books/kept.epub" || got.EbookFilePath != "/books/kept.epub" ||
+		got.Narrator != "Some Narrator" || got.ASIN != "B000KEEP01" ||
+		got.AverageRating != 4.5 || got.RatingsCount != 12 {
+		t.Fatalf("series genre override wiped other columns: %+v", got)
+	}
+	if !got.IsFieldLocked(models.BookFieldTitle) || !got.IsFieldLocked(models.BookFieldDescription) {
+		t.Fatalf("series genre override dropped existing locks: %v", got.LockedFields)
+	}
+}
+
 // The override has to reach the client to be editable or clearable, and
 // clearing must land on "no override" rather than "override of no genres"
 // (#1709 follow-up to #1711).

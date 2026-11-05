@@ -1575,6 +1575,13 @@ var (
 // fallback without a second real filesystem. Production always uses os.Link.
 var osLink = os.Link
 
+// commitStagedRename is the rename StagedImport's commit uses to promote a
+// staged file onto its destination. It is a seam so tests can make one file's
+// promotion fail (a plain I/O failure, not an ownership conflict) without
+// planting an obstacle at the destination, which the ebook collision suffix
+// (#3560) now steers around. Production always uses os.Rename.
+var commitStagedRename = os.Rename
+
 // MoveFileCtx is like MoveFile but returns ctx.Err() if the context is
 // cancelled during the cross-filesystem copy phase.
 func MoveFileCtx(ctx context.Context, src, dst string) error {
@@ -1705,7 +1712,7 @@ func StagedImport(ctx context.Context, mode, src, dst string) (stagedPath string
 
 	committed := false
 	commit = func() error {
-		if err := os.Rename(staged, dst); err != nil {
+		if err := commitStagedRename(staged, dst); err != nil {
 			return fmt.Errorf("commit staged file: %w", err)
 		}
 		committed = true

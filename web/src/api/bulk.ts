@@ -37,12 +37,13 @@ export const bulkApi = {
   // book matching the search (and the excluded toggle), whatever the page, so a
   // page count can be drawn from it. Asking with a limit is what selects the
   // envelope; listWanted above keeps the bare array.
-  listWantedPage: (opts: { limit: number; offset: number; search?: string; includeExcluded?: boolean; mediaType?: string; sort?: string }) => {
+  listWantedPage: (opts: { limit: number; offset: number; search?: string; includeExcluded?: boolean; mediaType?: string; sort?: string; upcoming?: 'only' | 'hide' }) => {
     const q = new URLSearchParams({ limit: String(opts.limit), offset: String(opts.offset) })
     if (opts.search) q.set('search', opts.search)
     if (opts.includeExcluded) q.set('includeExcluded', 'true')
     if (opts.mediaType) q.set('mediaType', opts.mediaType)
     if (opts.sort) q.set('sort', opts.sort)
+    if (opts.upcoming) q.set('upcoming', opts.upcoming)
     return request<Page<Book>>(`/wanted/missing?${q.toString()}`)
   },
 

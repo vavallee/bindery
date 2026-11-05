@@ -156,7 +156,7 @@ metadata:
 
 ## Roles
 
-Proxy mode carries identity only. There is no header that sets a role: Bindery does not read a groups or roles header from the proxy, and an auto-provisioned user is always created as `user`. To make someone an `admin` or a [`requester`](multi-user.md#requester), let them sign in once so the account exists, then change the role on the **Users** page or with `PUT /api/v1/auth/users/{id}/role`. The role is read from the database on every request, so the change applies on their next page load.
+Proxy mode carries identity only. There is no header that sets a role: Bindery does not read a groups or roles header from the proxy, and an auto-provisioned user is created as `user`. The one exception is a fresh install with `BINDERY_LOCAL_AUTH_ENABLED=false`: first run setup is not offered there, so the very first account the proxy creates becomes the admin, once, provided no admin exists. An install that already has accounts but no admin does not promote anyone automatically; promote the right account with the API key. Deleting or demoting every admin later does not promote the next login. To make someone an `admin` or a [`requester`](multi-user.md#requester), let them sign in once so the account exists, then change the role on the **Users** page or with `PUT /api/v1/auth/users/{id}/role`. The role is read from the database on every request, so the change applies on their next page load.
 
 Mapping a proxy header to a role is deliberately not built: a header is only as trustworthy as the network path to Bindery, and a forged role header would be a forged admin.
 

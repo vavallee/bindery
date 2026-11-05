@@ -47,6 +47,7 @@ import (
 const (
 	reasonMainTitleOnlyFullFound = "release carries only the main title, and another result carries the full title"
 	reasonMainTitleOnlySequel    = "release carries only the main title, but this book is a later entry or the main title is another of the author's books"
+	reasonMainTitleRunsOn        = "release carries only the main title, and goes on into a different title by the same author"
 )
 
 // subtitleInfo describes the "Main: Subtitle" shape of the wanted title.
@@ -55,6 +56,16 @@ type subtitleInfo struct {
 	ident      []string // identity words of the subtitle
 	seriesLike bool     // the subtitle only numbers the book
 	n          int      // the number it names, when seriesLike
+	// known holds the release alphabet words that may follow the main title
+	// without naming a different book: the subtitle's own words and the
+	// primary series title's (see runsIntoOtherTitle).
+	known map[string]bool
+	// knownSeqs are the same words in title order, one slice per source, for
+	// run together abbreviations (see abbreviates).
+	knownSeqs [][]string
+	// authorSets are the author token sets of the search, whose words are
+	// release furniture after the main title.
+	authorSets [][]string
 }
 
 func newSubtitleInfo(title string) subtitleInfo {
@@ -66,9 +77,349 @@ func newSubtitleInfo(title string) subtitleInfo {
 	if sub == "" {
 		return subtitleInfo{}
 	}
-	si := subtitleInfo{has: true, ident: titleIdentityKeywords(sub)}
+	si := subtitleInfo{has: true, ident: titleIdentityKeywords(sub), known: map[string]bool{}}
+	si.addKnown(sub)
 	si.n, si.seriesLike = seriesLikeSubtitle(sub)
 	return si
+}
+
+// withContext adds what the search knows beyond the title: the author token
+// sets and the book's primary series title, whose words may follow the main
+// title in a release of this book.
+func (si subtitleInfo) withContext(authorSets [][]string, seriesTitle string) subtitleInfo {
+	if !si.has {
+		return si
+	}
+	si.authorSets = authorSets
+	si.addKnown(seriesTitle)
+	return si
+}
+
+// addKnown records the identity words of s as words that may follow the main
+// title.
+func (si *subtitleInfo) addKnown(s string) {
+	words := titleIdentityWords(s)
+	for _, w := range words {
+		si.known[w] = true
+	}
+	if len(words) > 1 {
+		si.knownSeqs = append(si.knownSeqs, words)
+	}
+}
+
+// abbreviates reports whether tok is the leading words of seq run together,
+// two or more of them, each cut to a prefix of at least two letters: "exforce"
+// and "exfor" for "expeditionary force". The abbreviation must start with the
+// first word and be at least five letters long, so a short ordinary word that
+// happens to split into word prefixes does not pass: "risk" for "rise
+// skywalker", "most" for "morning star", "fino" for "fireteam noble".
+func abbreviates(tok string, seq []string) bool {
+	if len(tok) < 5 {
+		return false
+	}
+	var from func(rest string, j, parts int) bool
+	from = func(rest string, j, parts int) bool {
+		if rest == "" {
+			return parts >= 2
+		}
+		if j >= len(seq) {
+			return false
+		}
+		w := seq[j]
+		for l := min(len(w), len(rest)); l >= 2; l-- {
+			if rest[:l] == w[:l] && from(rest[l:], j+1, parts+1) {
+				return true
+			}
+		}
+		return false
+	}
+	return from(tok, 0, 0)
+}
+
+// languageCodes are the three letter codes releaseLanguageTags maps to
+// ("eng", "ger"), which releases also carry on their own.
+var languageCodes = func() map[string]bool {
+	m := map[string]bool{}
+	for _, code := range releaseLanguageTags {
+		m[code] = true
+	}
+	return m
+}()
+
+// runsIntoOtherTitle reports whether a release that carries only the main
+// title goes on into a different title by the wanted author (#3615): "Halo:
+// Oblivion: A Master Chief Story by Troy Denning" for "Halo: Fireteam Noble",
+// "Camp Half-Blood Confidential by Rick Riordan" for "Camp Half-Blood: From the
+// World of Percy Jackson: The Rite of Aphrodite". Both credit the right author,
+// so the author checks pass them, and the main title is all the two share.
+//
+// It fires only on that shape: words after the main title that are not known
+// furniture, then a credit to the wanted author, either "by <author>" or a
+// dash and the author. Unknown words alone are not enough. An allow list of
+// what may follow a title can never be complete, and a release that names the
+// book plus some unlisted word is far more often the book than another one. A
+// credit to the author closing the run is what marks the words before it as a
+// title. The words that do not count are furnitureAfterMainTitle's: release,
+// edition and publisher furniture, numbers and number words, the wanted
+// subtitle and series words and their run together abbreviations ("ExForce"
+// for "Expeditionary Force").
+//
+// Known limits, both accepted because a same author sequel written "Main
+// Other Title - Author" is the bug this exists for, and a release dropped here
+// stays visible and grabbable in interactive search:
+//   - the same book under a subtitle the library does not hold, credited the
+//     same way ("Atomic Habits Tiny Changes Remarkable Results by James
+//     Clear"): no string rule can tell that from another book;
+//   - a narrator or co author between the main title and the credit with no
+//     role word ("Project Hail Mary Ray Porter - Andy Weir"). A name cannot be
+//     told from a title by its shape: "Halo Silent Storm - Troy Denning" is
+//     two capitalised words before the dash too.
+//
+// Reading starts only when the main title is followed by a colon or plain
+// spacing, dots or underscores. After a dash, comma or bracket what follows
+// may be a series label, an author or a narrator, and nothing is read. A "by"
+// that credits someone else ends the reading: that is conflictingTitleAuthor's
+// to judge. A role word ("narrated by", "Translated Hazel E. Barnes") skips the
+// contributor's name and reading goes on, so a title after the name still
+// counts. A role word straight before a title ("Halo Narrated Silent Storm")
+// reads that title as the name; that is a known limit.
+func (si subtitleInfo) runsIntoOtherTitle(raw, n string, primary ...[]string) bool {
+	toks, k, ok := locateTitleEnd(raw, n, primary...)
+	if !ok {
+		return false
+	}
+	if punctBefore(toks[k]) && !strings.Contains(toks[k].sep, ":") {
+		return false
+	}
+	foreign := false
+	for i := k; i < len(toks); i++ {
+		t := toks[i]
+		if t.text == "by" {
+			if i > k && contributorRole(toks[i-1].text) {
+				// "narrated by Jen Taylor": skip the name and read on.
+				i = si.skipContributor(toks, i+1) - 1
+				continue
+			}
+			return foreign && si.creditsWantedAuthor(toks[i+1:], false, false)
+		}
+		if contributorRole(t.text) {
+			if i+1 < len(toks) && toks[i+1].text == "by" {
+				continue
+			}
+			if namesWithoutBy[t.text] {
+				// "narrated Ray Porter", "Translated Hazel E. Barnes".
+				i = si.skipContributor(toks, i+1) - 1
+				continue
+			}
+		}
+		if i > k && dashBefore(t) && si.creditsWantedAuthor(toks[i:], true, bareHyphen(t)) {
+			return foreign
+		}
+		if !isAllDigits(t.text) && len(newznab.SigWords(t.text)) == 0 {
+			continue
+		}
+		// A word inside a hyphenated compound ("Sci-Fi", "WEB-DL",
+		// "Holdbrook-Smith") is one unit with its neighbour, not a title word
+		// of its own, unless it is the last word before a credit
+		// ("Storm-Troy.Denning").
+		if (i > k && bareHyphen(t)) ||
+			(i+1 < len(toks) && bareHyphen(toks[i+1]) && !si.creditsWantedAuthor(toks[i+1:], true, true)) {
+			continue
+		}
+		// A roman numeral is a series number, which the number rules below
+		// judge ("Dune III" for "Dune: Part Two").
+		if _, roman := readableRoman(t.raw); roman {
+			continue
+		}
+		if !si.furnitureAfterMainTitle(t.text) {
+			foreign = true
+		}
+	}
+	return false
+}
+
+// runOnFurniture are words that follow a title in releases of the book itself
+// and name a source, an edition, a publisher's line or a production rather
+// than another title. They matter only to runsIntoOtherTitle, which reads them
+// before a credit to the wanted author. The tens complete numberWords, so a
+// title's numerals spelled out ("1984 Nineteen Eighty Four") do not count.
+var runOnFurniture = map[string]bool{
+	"audible": true, "libation": true, "repack": true, "kepub": true,
+	"chapterized": true, "graphicaudio": true, "dramatized": true,
+	"dramatised": true, "adaptation": true, "signed": true, "first": true,
+	"full": true, "cast": true, "classics": true, "critical": true, "norton": true,
+	"penguin": true, "oxford": true, "worlds": true, "folio": true, "text": true,
+	"ungekuerzte": true, "ungekurzte": true, "ungekrzte": true, "lesung": true,
+	"gekuerzte": true, "gekurzte": true, "gekrzte": true, "recorded": true,
+	"books": true, "brilliance": true, "macmillan": true, "junior": true,
+	"novel": true, "science": true, "fiction": true, "hugo": true, "nominee": true,
+	"hoerspiel": true, "horspiel": true, "routledge": true,
+	"thirty": true, "forty": true, "fifty": true, "sixty": true, "seventy": true,
+	"eighty": true, "ninety": true, "hundred": true, "thousand": true,
+}
+
+// contributorRole reports whether tok names a contributor's role ("narrated",
+// "translated", "illustrated"), whose name follows it. The uploader phrases
+// "brought to you by" and "shared by" are credit role words for the "by"
+// reading but not here: "Halo You Are Not Alone" and "Halo Shared Destiny"
+// are titles.
+func contributorRole(tok string) bool {
+	return creditRoleWords[tok] && tok != "you" && tok != "shared"
+}
+
+// namesWithoutBy are the roles a release follows with the contributor's name
+// and no "by" ("narrated Ray Porter", "Translated Hazel E. Barnes"). Other
+// role words without a "by" are read as ordinary words: "Illustrated" there
+// describes an edition.
+var namesWithoutBy = map[string]bool{
+	"read": true, "narrated": true, "narrator": true, "performed": true,
+	"translated": true, "translation": true,
+}
+
+// maxContributorWords bounds each name skipContributor passes over, so a
+// title after the name ("Narrated by Jen Taylor Silent Storm") is still read.
+// Words of one or two letters ("R.", "Jo") do not count, so "Mary Jo Smith
+// Jones" is one name.
+const maxContributorWords = 3
+
+// skipContributor returns the index of the first token after the
+// contributors' names that start at toks[j]. It reads a list of names joined
+// by "and", "&" or a comma ("Kate Reading and Michael Kramer", "Michael
+// Kramer, Kate Reading"), each of at most maxContributorWords words, where a
+// hyphenated name counts once. The list ends at a spaced dash, a "by", a
+// bracket or other punctuation (but not the period after an initial, "Hazel
+// E. Barnes"), at a bare hyphen that opens a credit to the wanted author
+// ("Barnes-Jean-Paul Sartre"), at a function word no name carries ("Point
+// of Light"), or at a word that would make a name too long.
+func (si subtitleInfo) skipContributor(toks []relTok, j int) int {
+	start, words := j, 0
+	for ; j < len(toks); j++ {
+		t := toks[j]
+		if t.text == "by" || (dashBefore(t) && !bareHyphen(t)) {
+			return j
+		}
+		if j > start && bareHyphen(t) {
+			if si.creditsWantedAuthor(toks[j:], true, true) {
+				return j
+			}
+			continue
+		}
+		if t.text == "and" {
+			words = 0
+			continue
+		}
+		if titleFunctionWords[t.text] {
+			return j
+		}
+		if j > start && punctBefore(t) && len(toks[j-1].text) != 1 {
+			if !strings.Contains(t.sep, ",") || strings.ContainsAny(t.sep, "()[]{}") {
+				return j
+			}
+			words = 0
+		} else if j > start && strings.Contains(t.sep, "&") {
+			words = 0
+		}
+		if len(t.text) > 2 {
+			if words == maxContributorWords {
+				return j
+			}
+			words++
+		}
+	}
+	return j
+}
+
+// titleFunctionWords are the short words a title is made with and a person's
+// name is not, so meeting one ends the name skipContributor passes over.
+var titleFunctionWords = map[string]bool{
+	"of": true, "the": true, "a": true, "an": true, "in": true, "on": true,
+	"to": true, "for": true, "with": true, "from": true, "at": true,
+}
+
+// dashRunes are hyphen, en dash and em dash, built from code points so the
+// source carries no dash literally.
+var dashRunes = string([]rune{'-', 0x2013, 0x2014})
+
+// dashBefore reports whether a dash separates tok from the token before it. A
+// bare hyphen counts too, because dotted release names join their fields with
+// one ("Halo.Silent.Storm-Troy.Denning"); the caller then needs the wanted
+// author's name to start right at tok (see bareHyphen).
+func dashBefore(tok relTok) bool {
+	return strings.ContainsAny(tok.sep, dashRunes)
+}
+
+// bareHyphen reports whether tok is joined to the token before it by a dash
+// with no space, dot or underscore beside it: the hyphen of "Sci-Fi" or
+// "Jean-Paul", and the field joint of "Storm-Troy.Denning". Such a hyphen only
+// opens a credit when the author's name starts right after it.
+func bareHyphen(tok relTok) bool {
+	return strings.ContainsAny(tok.sep, dashRunes) && !strings.ContainsAny(tok.sep, " \t_.")
+}
+
+// creditsWantedAuthor reports whether toks open with a credit to the wanted
+// author: the words up to the first attributionStopToken (or, when segment is
+// set, up to the next punctuation other than a hyphen inside a name, so
+// "Jean-Paul Sartre" is read whole) name one of the author token sets. With
+// mustStart the first word must itself be one of the author's words, so a
+// credit cannot begin inside "Sci-Fi Andy Weir" and pick the name up later.
+func (si subtitleInfo) creditsWantedAuthor(toks []relTok, segment, mustStart bool) bool {
+	var words []string
+	for j, t := range toks {
+		if attributionStopToken(t.text) || (segment && j > 0 && punctBefore(t) && !bareHyphen(t)) {
+			break
+		}
+		words = append(words, t.text)
+	}
+	if len(words) == 0 {
+		return false
+	}
+	credit := strings.Join(words, " ")
+	for _, set := range si.authorSets {
+		if len(set) == 0 || !authorMatchesRelease(credit, set) {
+			continue
+		}
+		if !mustStart || startsWithAuthorWord(words[0], set) {
+			return true
+		}
+	}
+	return false
+}
+
+// startsWithAuthorWord reports whether word is one of the author tokens.
+func startsWithAuthorWord(word string, set []string) bool {
+	for _, a := range set {
+		if WordBoundaryRegex(a).MatchString(word) {
+			return true
+		}
+	}
+	return false
+}
+
+// furnitureAfterMainTitle reports whether tok, a significant word after the
+// main title, is known to be compatible with the release being the wanted
+// book.
+func (si subtitleInfo) furnitureAfterMainTitle(tok string) bool {
+	if si.known[tok] || languageCodes[tok] || readMarkers[tok] || runOnFurniture[tok] ||
+		editionWords[tok] || editionForms[tok] || editionLanguages[tok] {
+		return true
+	}
+	if _, ok := numberWords[tok]; ok {
+		return true
+	}
+	for _, seq := range si.knownSeqs {
+		if abbreviates(tok, seq) {
+			return true
+		}
+	}
+	if benignTrailingToken(tok, nil) {
+		return true
+	}
+	for _, set := range si.authorSets {
+		if benignTrailingToken(tok, set) {
+			return true
+		}
+	}
+	return false
 }
 
 // mainTitleOnly judges a release that matched through the main title alone and
@@ -82,6 +433,10 @@ func (si subtitleInfo) mainTitleOnly(tr *trailingRules, raw, n, identity string,
 	// The release names the subtitle as well, so it is not main title only.
 	if len(si.ident) > 0 && ContainsPhrase(identity, si.ident) {
 		return ""
+	}
+	// The release puts a different title where the subtitle would be.
+	if si.runsIntoOtherTitle(raw, n, primary...) {
+		return reasonMainTitleRunsOn
 	}
 	// A subtitle that only numbers the book as the first ("Part One", "I")
 	// is dropped by releases as a matter of course.

@@ -64,6 +64,9 @@ export interface Book {
   // (#1237, #1446): title | description | genres | language | releaseDate.
   lockedFields?: string[]
   narrator?: string
+  // Read only, from the audiobook edition (#1358). Narrator is the editable string.
+  narrators?: string[]
+  editionType?: string
   durationSeconds?: number
   asin?: string
   // Transient ISBNs reported by metadata providers during search/lookup.
@@ -77,6 +80,9 @@ export interface Book {
   // for it on its own (#2742). Only the Wanted list computes it; absent
   // everywhere else, which reads as false.
   authorUnmonitored?: boolean
+  // Set on the Wanted list for an Upcoming book (#2523): the scheduled search
+  // skips it until this date. Manual search is not affected.
+  searchHeldUntil?: string
   author?: Author
 }
 
@@ -105,6 +111,13 @@ export interface SearchResult {
   mediaType?: string // "ebook" or "audiobook"; set for dual-format book searches
   approved?: boolean
   rejection?: string
+  // The words of the release name that make it a pack of several books for
+  // the wanted one (#3247). Absent when it is not a pack, and from older servers.
+  pack?: string
+  // What the release title states about the recording (#1358). Absent when it
+  // does not say, and from older servers.
+  narrators?: string[]
+  editionType?: string
 }
 
 export interface SearchQueryDebug {

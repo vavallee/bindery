@@ -190,6 +190,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingSeriesMonitoringInterval, Type: SettingTypeDuration, Default: "off", Min: "24h", Max: "720h",
+		Description: "How often each monitored series is checked against its Hardcover catalogue and new books are added. Unset and \"off\" both mean no scheduled checking; store a duration to turn it on.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: "stall.timeout_minutes", Type: SettingTypeInt, Default: "120", Min: "1",
 		Description: "How long a download may sit in downloading before it is failed, blocklisted and searched for again.",
 		State:       SettingStateActive,
@@ -253,6 +258,11 @@ var settingDescriptors = []SettingDescriptor{
 		Key: SettingImportEbookContentCheck, Type: SettingTypeEnum, Default: "warn",
 		Values:      contentCheckValues,
 		Description: "Compare a downloaded EPUB's own title and author with the book it was grabbed for. warn imports it and records the mismatch on the History event and webhook, block refuses the download and blocklists the release, off skips the check. Match to book and manual import always skip it.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingImportSourceFolders, Type: SettingTypeString, Default: "",
+		Description: "Extra folders Import, From a folder may browse and import from, one absolute path per line. Each must exist inside the container. They are never a library root, no author is filed there and no library scan walks them. Bindery writes no new files there, but import.mode=move removes imported files from them; mount a folder read only to make a move fail instead of delete. At most 32 paths.",
 		State:       SettingStateActive,
 	},
 	{
@@ -582,6 +592,11 @@ var settingDescriptors = []SettingDescriptor{
 	{
 		Key: SettingOIDCFirstAdminPromoted, Type: SettingTypeBool, Default: "false",
 		Description: "One shot guard recording that an OIDC user has already been auto promoted to admin, so deleting every admin cannot trigger promotion again.",
+		State:       SettingStateInternal,
+	},
+	{
+		Key: SettingProxyFirstAdminPromoted, Type: SettingTypeBool, Default: "false",
+		Description: "One shot guard recording that the first proxy provisioned account has already been promoted to admin, so deleting every admin cannot trigger promotion again.",
 		State:       SettingStateInternal,
 	},
 

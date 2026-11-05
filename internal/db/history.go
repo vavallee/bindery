@@ -22,14 +22,35 @@ func NewHistoryRepo(db *sql.DB) *HistoryRepo {
 // historyColumns is the explicit column list for history SELECTs. It is kept
 // in the exact order query() scans into models.HistoryEvent — changing the
 // history schema means updating both this list and the Scan call in query().
-const historyColumns = "id, book_id, event_type, source_title, data, created_at"
+const historyColumns = "id, book_id, event_type, source_title, data, created_at, COALESCE(owner_user_id, 0)"
 
+// historyUserScope is the WHERE fragment that limits history to what a non
+// admin may see under tenancy. It takes the user id twice.
+//
+// A row belongs to the user stamped on it (migration 117). A row with no
+// stamped owner is shown while its book exists and is visible to the user,
+// meaning the user owns it or it is shared. A row with neither an owner nor a
+// book is shown to admins only: it is either a deleted book's history from
+// before rows carried an owner, or a bookless event nobody can be tied to, and
+// in both cases the release names and paths in it are someone's.
+const historyUserScope = `(owner_user_id = ?
+	OR (owner_user_id IS NULL
+	    AND book_id IN (SELECT id FROM books WHERE owner_user_id = ? OR owner_user_id IS NULL)))`
+
+// Create inserts e. The row's owner is the book's owner when the book has one,
+// and otherwise e.OwnerUserID (the download's owner or the request identity),
+// with 0 stored as NULL. Taking the book's owner here rather than from each
+// caller means no write path can leave a book's history unattributed.
 func (r *HistoryRepo) Create(ctx context.Context, e *models.HistoryEvent) error {
 	now := time.Now().UTC()
+	var fallbackOwner any
+	if e.OwnerUserID != 0 {
+		fallbackOwner = e.OwnerUserID
+	}
 	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO history (book_id, event_type, source_title, data, created_at)
-		VALUES (?, ?, ?, ?, ?)`,
-		e.BookID, e.EventType, e.SourceTitle, e.Data, now)
+		INSERT INTO history (book_id, event_type, source_title, data, created_at, owner_user_id)
+		VALUES (?, ?, ?, ?, ?, COALESCE((SELECT owner_user_id FROM books WHERE id = ?), ?))`,
+		e.BookID, e.EventType, e.SourceTitle, e.Data, now, e.BookID, fallbackOwner)
 	if err != nil {
 		return fmt.Errorf("create history event: %w", err)
 	}
@@ -105,10 +126,8 @@ func (r *HistoryRepo) ListByType(ctx context.Context, eventType string) ([]model
 // HistoryListOpts is the filter+page argument for ListPage. Empty fields are
 // treated as "no filter": a zero BookID, empty EventType, and zero UserID
 // return every row that survives the other filters. Limit must be positive;
-// Offset is clamped at 0 by ListPage. UserID > 0 restricts to events whose
-// book is owned by that user (NULL book_id events pass through since they
-// predate a book link and have no owner to scope to), matching ListForUser
-// semantics.
+// Offset is clamped at 0 by ListPage. UserID > 0 restricts to the events that
+// user may see, see historyUserScope.
 type HistoryListOpts struct {
 	BookID    int64
 	EventType string
@@ -146,11 +165,8 @@ func (r *HistoryRepo) ListPage(ctx context.Context, opts HistoryListOpts) ([]mod
 		args = append(args, opts.EventType)
 	}
 	if opts.UserID > 0 {
-		// Same JOIN-scoped shape as ListForUser: include NULL-book_id rows
-		// regardless (orphan grab/failure records pre-link) and otherwise
-		// restrict by books.owner_user_id.
-		clauses = append(clauses, "(book_id IS NULL OR book_id IN (SELECT id FROM books WHERE owner_user_id = ?))")
-		args = append(args, opts.UserID)
+		clauses = append(clauses, historyUserScope)
+		args = append(args, opts.UserID, opts.UserID)
 	}
 	where := ""
 	if len(clauses) > 0 {
@@ -195,19 +211,14 @@ func (r *HistoryRepo) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-// ListForUser returns history events whose associated book is owned by
-// userID. Events with NULL book_id are included regardless of user — they're
-// orphan grab/failure records from before a book was linked and have no
-// owner to scope to. When userID == 0 this falls back to List.
+// ListForUser returns the history events userID may see (historyUserScope).
+// When userID == 0 this falls back to List.
 func (r *HistoryRepo) ListForUser(ctx context.Context, userID int64) ([]models.HistoryEvent, error) {
 	if userID == 0 {
 		return r.List(ctx)
 	}
-	q := "SELECT " + historyColumns + ` FROM history
-		WHERE book_id IS NULL
-		   OR book_id IN (SELECT id FROM books WHERE owner_user_id = ?)
-		ORDER BY created_at DESC`
-	return r.query(ctx, q, userID)
+	q := "SELECT " + historyColumns + " FROM history WHERE " + historyUserScope + " ORDER BY created_at DESC"
+	return r.query(ctx, q, userID, userID)
 }
 
 // ListByBookAndUser is ListByBook filtered to the user's library — the route
@@ -217,34 +228,26 @@ func (r *HistoryRepo) ListByBookAndUser(ctx context.Context, bookID, userID int6
 	if userID == 0 {
 		return r.ListByBook(ctx, bookID)
 	}
-	q := "SELECT " + historyColumns + ` FROM history
-		WHERE book_id = ?
-		  AND book_id IN (SELECT id FROM books WHERE owner_user_id = ?)
-		ORDER BY created_at DESC`
-	return r.query(ctx, q, bookID, userID)
+	q := "SELECT " + historyColumns + " FROM history WHERE book_id = ? AND " + historyUserScope + " ORDER BY created_at DESC"
+	return r.query(ctx, q, bookID, userID, userID)
 }
 
-// ListByTypeAndUser is ListByType filtered to events whose book is owned by
-// userID. Mirrors ListForUser's treatment of NULL book_id (legacy/orphan
-// events pass through).
+// ListByTypeAndUser is ListByType filtered to the events userID may see
+// (historyUserScope).
 func (r *HistoryRepo) ListByTypeAndUser(ctx context.Context, eventType string, userID int64) ([]models.HistoryEvent, error) {
 	if userID == 0 {
 		return r.ListByType(ctx, eventType)
 	}
-	q := "SELECT " + historyColumns + ` FROM history
-		WHERE event_type = ?
-		  AND (book_id IS NULL
-		       OR book_id IN (SELECT id FROM books WHERE owner_user_id = ?))
-		ORDER BY created_at DESC`
-	return r.query(ctx, q, eventType, userID)
+	q := "SELECT " + historyColumns + " FROM history WHERE event_type = ? AND " + historyUserScope + " ORDER BY created_at DESC"
+	return r.query(ctx, q, eventType, userID, userID)
 }
 
-// GetOwnerByID resolves the owner of a history event by joining through the
-// referenced book. Returns:
-//   - (owner, true, nil) when the event exists and its book has an owner;
-//   - (0, true, nil) when the event exists but book_id is NULL or the book
-//     row has no owner (legacy/orphan event — auth.CheckOwnership passes
-//     these through);
+// GetOwnerByID resolves the owner of a history event: the owner stamped on the
+// row, or for a row with none, the current owner of its book. Returns:
+//   - (owner, true, nil) when the event exists and has an owner;
+//   - (0, true, nil) when the event exists with no owner either way. Such a
+//     row is not any user's to act on; HistoryHandler leaves it to admins
+//     under tenancy;
 //   - (0, false, nil) when the event id does not exist.
 //
 // The shape mirrors DownloadRepo.GetOwnerByID so handlers can treat all three
@@ -252,7 +255,7 @@ func (r *HistoryRepo) ListByTypeAndUser(ctx context.Context, eventType string, u
 func (r *HistoryRepo) GetOwnerByID(ctx context.Context, id int64) (int64, bool, error) {
 	var owner sql.NullInt64
 	err := r.db.QueryRowContext(ctx, `
-		SELECT b.owner_user_id
+		SELECT COALESCE(h.owner_user_id, b.owner_user_id)
 		  FROM history h
 		  LEFT JOIN books b ON b.id = h.book_id
 		 WHERE h.id = ?`, id).Scan(&owner)
@@ -276,7 +279,7 @@ func (r *HistoryRepo) query(ctx context.Context, q string, args ...interface{}) 
 	for rows.Next() {
 		var e models.HistoryEvent
 		if err := rows.Scan(
-			&e.ID, &e.BookID, &e.EventType, &e.SourceTitle, &e.Data, &e.CreatedAt,
+			&e.ID, &e.BookID, &e.EventType, &e.SourceTitle, &e.Data, &e.CreatedAt, &e.OwnerUserID,
 		); err != nil {
 			return nil, fmt.Errorf("scan history event: %w", err)
 		}
