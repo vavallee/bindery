@@ -480,10 +480,28 @@ func (r *BookFileRepo) pathUnderOtherBookDir(ctx context.Context, path string, e
 // these against walked paths should fold case too. dir itself is not
 // returned. % and _ in dir are matched literally.
 func (r *BookFileRepo) PathsUnderForOtherBooks(ctx context.Context, dir string, excludeBookID int64) ([]string, error) {
+	return r.pathsUnderForOtherBooks(ctx, dir, excludeBookID, false)
+}
+
+// LivePathsUnderForOtherBooks is PathsUnderForOtherBooks counting only rows
+// whose book still exists. A folder move or merge uses it (#3556): a file
+// below the folder that a live book tracks must not be carried away from that
+// book's row, while a row left by a deleted book is owned by nobody and would
+// otherwise hold the folder in place for good. A delete must keep using
+// PathsUnderForOtherBooks.
+func (r *BookFileRepo) LivePathsUnderForOtherBooks(ctx context.Context, dir string, excludeBookID int64) ([]string, error) {
+	return r.pathsUnderForOtherBooks(ctx, dir, excludeBookID, true)
+}
+
+func (r *BookFileRepo) pathsUnderForOtherBooks(ctx context.Context, dir string, excludeBookID int64, liveOnly bool) ([]string, error) {
 	prefix := strings.TrimRight(filepath.Clean(dir), string(filepath.Separator)) + string(filepath.Separator)
 	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)
+	from := "book_files bf"
+	if liveOnly {
+		from = "book_files bf JOIN books b ON b.id = bf.book_id"
+	}
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT path FROM book_files WHERE book_id != ? AND lower(path) LIKE lower(?) ESCAPE '\'`,
+		`SELECT bf.path FROM `+from+` WHERE bf.book_id != ? AND lower(bf.path) LIKE lower(?) ESCAPE '\'`,
 		excludeBookID, escaped+"%")
 	if err != nil {
 		return nil, fmt.Errorf("book_files paths under %s: %w", dir, err)

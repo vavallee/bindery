@@ -197,6 +197,27 @@ func (s *Scanner) uniqueEbookDestination(ctx context.Context, book *models.Book,
 	return "", fmt.Errorf("no available ebook destination for %q after 999 attempts", dest)
 }
 
+// folderHoldsOtherBooksFiles reports whether a live book other than bookID
+// tracks a path below dir (#3556). A folder is moved or claimed whole (an
+// audiobook row covers everything under it), so a folder holding such a file
+// cannot be moved or taken over without carrying that file away from its own
+// row. Rows left by deleted books do not count, so they cannot hold a folder
+// in place for good. Matching ignores ASCII case, which can only make the
+// answer more cautious.
+func (s *Scanner) folderHoldsOtherBooksFiles(ctx context.Context, dir string, bookID int64) (bool, error) {
+	paths, err := s.books.LivePathsUnderForOtherBooks(ctx, dir, bookID)
+	if err != nil {
+		return false, err
+	}
+	return len(paths) > 0, nil
+}
+
+// folderHoldsOtherBooksFilesMsg explains a refused folder move. It names
+// neither the other book nor its file: with tenancy on, that book can belong
+// to another user.
+const folderHoldsOtherBooksFilesMsg = "this folder also holds a file another book tracks, so moving it would carry that file away from its book. " +
+	"Move that file out of the folder first (or use Forget this file on the book it belongs to)"
+
 // pathOwnedElsewhereError is a *db.PathOwnedError whose text leaves out the
 // book that holds the path.
 type pathOwnedElsewhereError struct{ owned *db.PathOwnedError }

@@ -213,6 +213,16 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 	if err := checkDestNotInsideSource("move", f.Path, dest); err != nil {
 		return dest, ReorgStatusError, err.Error()
 	}
+	// A folder moves whole, so a file inside it that another book tracks would
+	// go with it while that book's row kept the old path (#3556). Leave the
+	// folder where it is and say why.
+	if !isSingleFile(f.Path) {
+		if held, err := s.folderHoldsOtherBooksFiles(ctx, f.Path, book.ID); err != nil {
+			return dest, ReorgStatusError, err.Error()
+		} else if held {
+			return dest, ReorgStatusError, folderHoldsOtherBooksFilesMsg
+		}
+	}
 	// Never overwrite: if something already occupies the proposed path it is
 	// either an untracked file or another book's file. Surface it and skip.
 	if _, err := os.Stat(dest); err == nil {

@@ -59,3 +59,47 @@ func TestPathsUnderForOtherBooks_WildcardsInFolderAreLiteral(t *testing.T) {
 		}
 	}
 }
+
+// TestLivePathsUnderForOtherBooks (#3556): the folder move variant ignores a
+// row left by a deleted book, while PathsUnderForOtherBooks (the delete guard)
+// still reports it. The folder's own book is excluded from both.
+func TestLivePathsUnderForOtherBooks(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	ctx := context.Background()
+	authors := NewAuthorRepo(database)
+	books := NewBookRepo(database)
+	a := seedAuthor(t, authors, "OL-LIVE-A", "Live Author")
+	mine := seedBook(t, books, a.ID, "OL-LIVE-MINE", "Mine")
+	live := seedBook(t, books, a.ID, "OL-LIVE-OTHER", "Other")
+	gone := seedBook(t, books, a.ID, "OL-LIVE-GONE", "Gone")
+
+	dir := filepath.Join(t.TempDir(), "Shared")
+	for _, row := range []struct {
+		id   int64
+		name string
+	}{{mine.ID, "mine.epub"}, {live.ID, "live.epub"}, {gone.ID, "gone.epub"}} {
+		if err := books.AddBookFile(ctx, row.id, models.MediaTypeEbook, filepath.Join(dir, row.name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	orphanBookRows(t, database, gone.ID)
+
+	got, err := books.LivePathsUnderForOtherBooks(ctx, dir, mine.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{filepath.Join(dir, "live.epub")}; !slices.Equal(got, want) {
+		t.Errorf("LivePathsUnderForOtherBooks = %v, want %v", got, want)
+	}
+	all, err := books.PathsUnderForOtherBooks(ctx, dir, mine.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Errorf("PathsUnderForOtherBooks = %v, want the live and the orphaned row", all)
+	}
+}

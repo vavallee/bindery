@@ -1094,6 +1094,14 @@ move is always a move, never a copy, so hardlinks survive and nothing is
 duplicated. Bindery also prunes the folder a file left behind when it empties,
 and refreshes the `metadata.opf` sidecar when you have that turned on.
 
+An audiobook folder moves as a whole, so one that also holds a file another
+book tracks (say a second copy of the same title added from another metadata
+provider, whose ebook ended up in that folder) is shown as **Error** and left
+where it is. Moving it would take the other book's file along and leave that
+book pointing at a path that no longer exists. Move that file out of the
+folder, or use Forget this file on the book it belongs to, and run Rename files
+again.
+
 The file extension comes from the file's current name. If a file has lost its
 extension (for example from a template with `{Title}{ext}` and no dot), Bindery
 takes it back from the file's rename history, or failing that from what is

@@ -1366,6 +1366,14 @@ func (s *Scanner) importedFormatPath(ctx context.Context, book *models.Book, for
 //
 // A row whose file is gone from disk is ignored: there is nothing to merge
 // into, so the caller should place the audiobook normally.
+//
+// A folder that also holds a file another live book tracks is not offered
+// either (#3556). Two books that render to one ebook name share a folder
+// ("Name.epub" and "Name (2).epub", #3560), and an audiobook row covers its
+// whole folder, so merging would make this book's audiobook the owner of the
+// other book's ebook and a later Reorganize of it would carry that ebook away.
+// The audiobook gets a folder of its own instead, as it would for an
+// unrelated book.
 func (s *Scanner) existingEbookDir(ctx context.Context, book *models.Book) (string, bool) {
 	if book == nil {
 		return "", false
@@ -1382,7 +1390,14 @@ func (s *Scanner) existingEbookDir(ctx context.Context, book *models.Book) (stri
 		if _, statErr := os.Stat(f.Path); statErr != nil {
 			continue
 		}
-		return filepath.Clean(filepath.Dir(f.Path)), true
+		dir := filepath.Clean(filepath.Dir(f.Path))
+		if held, err := s.folderHoldsOtherBooksFiles(ctx, dir, book.ID); err != nil || held {
+			if err != nil {
+				slog.Warn("shared-folder check: failed to look for other books' files", "dir", dir, "error", err)
+			}
+			continue
+		}
+		return dir, true
 	}
 	return "", false
 }
@@ -2107,6 +2122,22 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			if err := refuseSymlinkedDownloadDir(audiobookSource); err != nil {
 				slog.Error("refusing audiobook import from a symlinked download folder", "path", audiobookSource, "mode", mode)
 				s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf("audiobook %s refused: %v", mode, err))
+				return
+			}
+			// A source folder that already sits in the library (a Fix match
+			// of an audiobook folder, or a manual import pointed inside the
+			// library) can hold a file another book tracks. Placing the
+			// folder whole would carry that file to this book's folder while
+			// its own row kept the old path (#3556), the same thing the
+			// Reorganize guard refuses. A download folder holds no tracked
+			// files, so this costs one empty lookup there.
+			if held, err := s.folderHoldsOtherBooksFiles(ctx, audiobookSource, book.ID); err != nil {
+				slog.Error("failed to check the audiobook source for other books' files", "path", audiobookSource, "error", err)
+				s.failImport(ctx, dl, models.StateImportFailed, fmt.Sprintf("check audiobook source: %v", err))
+				return
+			} else if held {
+				slog.Warn("audiobook source folder holds a file another book tracks; refusing import", "path", audiobookSource)
+				s.failImport(ctx, dl, models.StateImportBlocked, "audiobook "+mode+" refused: "+folderHoldsOtherBooksFilesMsg)
 				return
 			}
 		}

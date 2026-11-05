@@ -1138,6 +1138,13 @@ func (r *BookRepo) PathsUnderForOtherBooks(ctx context.Context, dir string, excl
 	return r.files.PathsUnderForOtherBooks(ctx, dir, excludeBookID)
 }
 
+// LivePathsUnderForOtherBooks is PathsUnderForOtherBooks ignoring rows left by
+// deleted books. For guarding a folder move or merge, never a delete. See
+// BookFileRepo.LivePathsUnderForOtherBooks.
+func (r *BookRepo) LivePathsUnderForOtherBooks(ctx context.Context, dir string, excludeBookID int64) ([]string, error) {
+	return r.files.LivePathsUnderForOtherBooks(ctx, dir, excludeBookID)
+}
+
 // PathOwnedByLiveOtherBook is PathOwnedByOtherBook ignoring a row left by a
 // deleted book. For pre-checks of a write that takes such a row over, never
 // for a delete guard. See BookFileRepo.PathOwnedByLiveOtherBook.
