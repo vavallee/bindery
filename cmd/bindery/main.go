@@ -662,7 +662,7 @@ func main() {
 	// isn't inside a configured root. Defaults to the legacy single-root env
 	// vars so installs that never created a root_folders row still get the
 	// check.
-	libraryRoots := api.NewLibraryRoots(rootFolderRepo, cfg.LibraryDir, cfg.AudiobookDir)
+	libraryRoots := newLibraryRoots(cfg, rootFolderRepo)
 	authorHandler := api.NewAuthorHandler(authorRepo, authorAliasRepo, bookRepo, seriesRepo, metaAgg, settingsRepo, metadataProfileRepo, sched).
 		WithFinder(importScanner).
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).
@@ -719,7 +719,7 @@ func main() {
 	// not the library (#1373). These are trusted, configured source dirs the
 	// automated importer already reads from; the stricter `libraryRoots` (no
 	// download dirs) still gates the delete handlers.
-	importRoots := api.NewLibraryRoots(rootFolderRepo, cfg.LibraryDir, cfg.AudiobookDir, cfg.DownloadDir, cfg.AudiobookDownloadDir)
+	importRoots := newImportRoots(cfg, rootFolderRepo, settingsRepo)
 	manualImportHandler := api.NewManualImportHandler(importScanner, downloadRepo, bookRepo).
 		WithRoots(importRoots).
 		WithExcludedDirs(manualImportExcludedDirs(cfg)...).
@@ -775,6 +775,7 @@ func main() {
 	notificationHandler := api.NewNotificationHandler(notificationRepo, notif)
 	qualityProfileHandler := api.NewQualityProfileHandler(qualityProfileRepo)
 	settingsHandler := api.NewSettingsHandler(settingsRepo).WithDailyQuota(dailyQuota).
+		WithProtectedDirs(cfg.DataDir, filepath.Dir(cfg.DBPath)).
 		WithChangeHook(metadataProvidersReconfigurer(metaProviders, metaAgg))
 	seriesHandler := api.NewSeriesHandler(seriesRepo, bookRepo, authorRepo, metaAgg, sched).
 		WithHardcoverFeatureSettings(settingsRepo, cfg.EnhancedHardcoverAPI).

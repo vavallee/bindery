@@ -56,6 +56,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const [saving, setSaving] = useState<string | null>(null)
   const [dropErr, setDropErr] = useState<string | null>(null)
   const [audiobookDropErr, setAudiobookDropErr] = useState<string | null>(null)
+  const [sourcesErr, setSourcesErr] = useState<string | null>(null)
   const [langErr, setLangErr] = useState<string | null>(null)
   const [scanningLibrary, setScanningLibrary] = useState(false)
   const [showReorganize, setShowReorganize] = useState(false)
@@ -95,6 +96,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const [langSaveResult, langSave] = useSaveResult()
   const [dropSaveResult, dropSave] = useSaveResult()
   const [audiobookDropSaveResult, audiobookDropSave] = useSaveResult()
+  const [sourcesSaveResult, sourcesSave] = useSaveResult()
   const [bookTemplateResult, bookTemplateSave] = useSaveResult()
   const [audiobookTemplateResult, audiobookTemplateSave] = useSaveResult()
   const [audiobookFileResult, audiobookFileSave] = useSaveResult()
@@ -186,6 +188,21 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
     } catch (err) {
       const msg = errorText(err, t('settings.general.saveFailed', 'Save failed'))
       setAudiobookDropErr(msg)
+      throw err
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  // saveImportSources surfaces the server-side check (absolute, existing
+  // directory) inline, like the drop folders (#2168).
+  const saveImportSources = async () => {
+    setSaving('import.source_folders')
+    setSourcesErr(null)
+    try {
+      await api.setSetting('import.source_folders', settings['import.source_folders'] ?? '')
+    } catch (err) {
+      setSourcesErr(errorText(err, t('settings.general.saveFailed', 'Save failed')))
       throw err
     } finally {
       setSaving(null)
@@ -536,6 +553,29 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               </div>
             </div>
           )}
+          <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
+            <label htmlFor="import-source-folders" className="block text-xs text-fg-muted mb-1">{t('settings.general.importSources', 'Import source folders')}</label>
+            <p className="text-xs text-fg-muted mb-2">
+              {t('settings.general.importSourcesHint', 'Optional. One absolute folder path per line. Import, From a folder can browse and import from these in addition to your root folders. They are not root folders: no author is filed there and Bindery never scans them as a library. Bindery never writes new files there, but in move mode an import removes the imported files from them. Mount a folder read only to make a move fail instead of delete.')}
+            </p>
+            <div className="flex gap-2 items-start">
+              <textarea
+                id="import-source-folders"
+                data-testid="import-source-folders"
+                rows={3}
+                value={settings['import.source_folders'] ?? ''}
+                onChange={e => { setSettings(s => ({ ...s, 'import.source_folders': e.target.value })); setSourcesErr(null) }}
+                placeholder="/old-library"
+                className={inputCls + ' flex-1 font-mono'}
+              />
+              <SaveButton
+                result={sourcesSaveResult}
+                saving={saving === 'import.source_folders'}
+                onClick={() => sourcesSave(saveImportSources)}
+              />
+            </div>
+            {sourcesErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{sourcesErr}</p>}
+          </div>
           <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
             <label className="flex items-start gap-2 cursor-pointer">
               <input

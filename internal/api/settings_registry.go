@@ -256,6 +256,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingImportSourceFolders, Type: SettingTypeString, Default: "",
+		Description: "Extra folders Import, From a folder may browse and import from, one absolute path per line. Each must exist inside the container. They are never a library root, no author is filed there and no library scan walks them. Bindery writes no new files there, but import.mode=move removes imported files from them; mount a folder read only to make a move fail instead of delete. At most 32 paths.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: SettingImportDropFolder, Type: SettingTypeString, Default: "",
 		Description: "Directory an external mode import hands finished downloads to. Must exist inside the container. Empty disables the handoff.",
 		State:       SettingStateActive,

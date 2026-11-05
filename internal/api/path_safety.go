@@ -46,8 +46,26 @@ type RootLister interface {
 type LibraryRoots struct {
 	lister   RootLister
 	defaults []string
+	// sources, when set, supplies the admin configured import source folders
+	// (#2168). They widen what the manual import reads, never what the delete
+	// handlers may touch: only the importRoots instance is given one.
+	sources ImportSourceGetter
 
 	noRootsOnce sync.Once // one WARN when Contains finds zero roots
+}
+
+// ImportSourceGetter is the slice of the settings repo LibraryRoots needs to
+// read the import source folder list.
+type ImportSourceGetter interface {
+	Get(ctx context.Context, key string) (*models.Setting, error)
+}
+
+// WithImportSources makes the roots include the folders listed in the
+// import.source_folders setting, re-read on every call so a change needs no
+// restart. Returns r for chaining.
+func (r *LibraryRoots) WithImportSources(g ImportSourceGetter) *LibraryRoots {
+	r.sources = g
+	return r
 }
 
 // NewLibraryRoots builds a LibraryRoots backed by the given lister and any
@@ -95,6 +113,16 @@ func (r *LibraryRoots) resolveRoots(ctx context.Context) []string {
 		} else {
 			for _, f := range folders {
 				add(f.Path)
+			}
+		}
+	}
+	if r.sources != nil {
+		setting, err := r.sources.Get(ctx, SettingImportSourceFolders)
+		if err != nil {
+			slog.Warn("path containment: failed to read import source folders", "error", err)
+		} else if setting != nil {
+			for _, p := range ParseImportSourceFolders(setting.Value) {
+				add(p)
 			}
 		}
 	}

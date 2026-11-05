@@ -48,6 +48,18 @@ an arbitrary release is unreliable. The escape hatches:
   at a folder of files you already have and matches them to books; files already
   tracked in the library are skipped by default, and toggling **Show already
   imported** surfaces them again, e.g. to spot a corrupted file or relink one.
+  The folder browser starts at your root folders, the download directories and
+  any **import source folders** an admin lists under Settings, General, Import
+  (`import.source_folders`, one absolute path per line). A source folder is a
+  place to import from, for example an old library: it is not a root folder, no
+  author is filed there and it is never scanned as a library. Bindery never
+  writes new files into it, but with the import mode set to move, imported files
+  are removed from it, and an audiobook folder is removed whole. Mount the
+  folder read only if you want a move to fail instead of delete. The
+  folder must be mounted into the container, and a path outside every listed
+  folder, including through a symlink or `..`, is refused. A folder with more
+  than 1000 subfolders shows a notice and lists the first 1000; type the path
+  to reach the rest.
   Either way a file with no catalogue match gets a metadata search, which
   creates the book (and its author, if new) and links the file to it, so an
   unmatched file is no longer a dead end.
