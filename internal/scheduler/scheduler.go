@@ -1340,12 +1340,62 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	// A pinned indexer's release is never sent to another client.
 	var bestClient *models.DownloadClient
 	skippedPinned := map[int64]bool{}
+	// bestExisting is the download row that already names the chosen
+	// release's GUID, or nil. heldOutcome names the first approved release
+	// passed over because another book's download row holds it (#3564):
+	// downloads.guid is unique, so such a release cannot be grabbed for this
+	// book while that row is live, and the next approved release is tried
+	// instead of ending the search. It becomes the outcome when nothing else
+	// is grabbed, in the shape the single release skip has always used.
+	// stopOutcome is set when accept fails.
+	var bestExisting *models.Download
+	heldOutcome := ""
+	stopOutcome := ""
+	accept := func(res *newznab.SearchResult) (*models.DownloadClient, bool, error) {
+		c, skip, err := s.checkPin(ctx, book, res, skippedPinned)
+		if err != nil {
+			slog.Error("SearchAndGrabBook: failed to resolve the indexer's pinned download client", "indexer", res.IndexerName, "error", err)
+			stopOutcome = "download client lookup failed"
+			return nil, false, err
+		}
+		if skip {
+			return nil, true, nil
+		}
+		existing, err := s.downloads.GetByGUID(ctx, res.GUID)
+		if err != nil {
+			slog.Warn("failed to check existing download", "guid", res.GUID, "error", err)
+			stopOutcome = "duplicate check failed"
+			return nil, false, err
+		}
+		if reason := heldForAnotherBook(existing, book.ID, time.Now().UTC()); reason != "" {
+			if heldOutcome == "" {
+				heldOutcome = reason + " (" + string(existing.Status) + ")"
+			}
+			slog.Info("skipping a release another book's download holds, trying the next one",
+				"book", book.Title,
+				"release", res.Title,
+				"guid", res.GUID,
+				"existing_status", string(existing.Status),
+				"existing_download_id", existing.ID,
+				"reason", reason)
+			if dbg != nil {
+				dbg.Filters = append(dbg.Filters, indexer.FilterDebug{
+					Title:       res.Title,
+					IndexerName: res.IndexerName,
+					Stage:       "decision",
+					Reason:      "another book's download holds this release: " + reason,
+				})
+			}
+			return nil, true, nil
+		}
+		bestExisting = existing
+		return c, false, nil
+	}
 	for i, d := range dm.Evaluate(releases, book) {
 		if d.Approved {
-			c, skip, err := s.checkPin(ctx, book, &results[i], skippedPinned)
+			c, skip, err := accept(&results[i])
 			if err != nil {
-				slog.Error("SearchAndGrabBook: failed to resolve the indexer's pinned download client", "indexer", results[i].IndexerName, "error", err)
-				outcome = "download client lookup failed"
+				outcome = stopOutcome
 				return
 			}
 			if skip {
@@ -1390,18 +1440,17 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	if best == nil {
 		// Re-evaluate any existing pending releases for this book/format with the current age.
 		var pendErr error
-		best, bestClient, pendErr = s.pendingApproved(ctx, book, mediaType, dm, func(res *newznab.SearchResult) (*models.DownloadClient, bool, error) {
-			return s.checkPin(ctx, book, res, skippedPinned)
-		})
+		best, bestClient, pendErr = s.pendingApproved(ctx, book, mediaType, dm, accept)
 		if pendErr != nil {
-			slog.Error("SearchAndGrabBook: failed to resolve the indexer's pinned download client for a pending release", "error", pendErr)
-			outcome = "download client lookup failed"
+			outcome = stopOutcome
 			return
 		}
 		if best == nil {
 			switch {
 			case len(skippedPinned) > 0:
 				outcome = "pinned download client unavailable"
+			case heldOutcome != "":
+				outcome = heldOutcome
 			case rawResults == 0:
 				outcome = "no results"
 			default:
@@ -1445,12 +1494,10 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		"size", best.Size,
 	)
 
-	existing, err := s.downloads.GetByGUID(ctx, best.GUID)
-	if err != nil {
-		slog.Warn("failed to check existing download", "guid", best.GUID, "error", err)
-		outcome = "duplicate check failed"
-		return
-	}
+	// accept read the release's download row before choosing it, and passed
+	// over a release another book's live row holds (#3564). What is left
+	// here is this book's own row, or a dead row of any book.
+	existing := bestExisting
 	// Live work blocks the grab; a failed attempt does not (#2710). A failed
 	// row is reused once deadRegrabCooldown has passed since it died, and an
 	// import whose book has since been deleted is reused whatever its age

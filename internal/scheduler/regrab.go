@@ -24,6 +24,24 @@ const (
 	regrabReasonImportBlocked = "import blocked, not retried automatically"
 )
 
+// heldForAnotherBook reports why the existing download row for a release
+// keeps it from this book, or "" when there is no row, the row is this
+// book's own, or the row may be reused (blockingRegrabReason).
+//
+// A row of another book cannot be shared: downloads.guid is unique, so this
+// book cannot have the release while that row is live. The search passes the
+// release over and tries the next approved one (#3564); before, it stopped at
+// the first, and a good second release was never tried. A row with no book (a
+// free text grab) counts as another book's. This book's own row keeps the old
+// rule and stops the search, because a second grab for a book whose download
+// is in flight would be a duplicate.
+func heldForAnotherBook(existing *models.Download, bookID int64, now time.Time) string {
+	if existing == nil || (existing.BookID != nil && *existing.BookID == bookID) {
+		return ""
+	}
+	return blockingRegrabReason(existing, now)
+}
+
 // blockingRegrabReason reports why an existing download row for the release's
 // GUID stops the scheduler from grabbing that release again, or "" when the
 // row may be reused.

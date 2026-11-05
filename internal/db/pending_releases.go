@@ -19,14 +19,17 @@ func NewPendingReleaseRepo(db *sql.DB) *PendingReleaseRepo {
 	return &PendingReleaseRepo{db: db}
 }
 
-// Upsert inserts a pending release or ignores if the GUID already exists.
+// Upsert inserts a pending release for its book, or refreshes the reason and
+// age of the one that book already holds for the same GUID. The key is the
+// book and the release together (migration 119): two books that want the same
+// release each keep their own row (#3564).
 func (r *PendingReleaseRepo) Upsert(ctx context.Context, pr *models.PendingRelease) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO pending_releases
 		  (book_id, media_type, title, indexer_id, guid, protocol, size, age_minutes, quality,
 		   custom_score, reason, first_seen, release_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(guid) DO UPDATE SET
+		ON CONFLICT(guid, book_id) DO UPDATE SET
 		  reason      = excluded.reason,
 		  age_minutes = excluded.age_minutes`,
 		pr.BookID, pr.MediaType, pr.Title, pr.IndexerID, pr.GUID, pr.Protocol,
@@ -136,12 +139,6 @@ func (r *PendingReleaseRepo) GetByID(ctx context.Context, id int64) (*models.Pen
 // DeleteByID removes a pending release.
 func (r *PendingReleaseRepo) DeleteByID(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM pending_releases WHERE id = ?`, id)
-	return err
-}
-
-// DeleteByGUID removes a pending release by GUID.
-func (r *PendingReleaseRepo) DeleteByGUID(ctx context.Context, guid string) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM pending_releases WHERE guid = ?`, guid)
 	return err
 }
 
