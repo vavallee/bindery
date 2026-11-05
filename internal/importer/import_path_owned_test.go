@@ -383,22 +383,27 @@ func TestImport_MultiFileOneOwnedGetsSuffix(t *testing.T) {
 // failure is not an ownership conflict keeps the old retryable status.
 func TestImport_MultiFileOtherFailure_StaysRetryable(t *testing.T) {
 	f := newPathOwnedFixture(t, models.MediaTypeEbook)
-	epubDest := f.ebookDest(t)
+	f.ebookDest(t)
 	mobi := filepath.Join(f.dir, "Defiance of the Fall 3.mobi")
 	if err := os.WriteFile(mobi, bookSized("volume three mobi"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// A directory where the epub must land makes its commit rename fail,
-	// a plain I/O failure rather than an ownership conflict.
-	if err := os.MkdirAll(filepath.Join(epubDest, "occupied"), 0o750); err != nil {
-		t.Fatal(err)
-	}
+	// The epub's commit rename fails with a plain I/O error rather than an
+	// ownership conflict. (A directory at its destination used to do this;
+	// the #3560 collision suffix now imports beside it instead.)
+	refused := failCommitFor(t, ".epub")
 
 	f.importDownload(t)
 
+	if *refused == 0 {
+		t.Fatal("the epub commit was never attempted, so this test exercised nothing")
+	}
 	dl, _ := f.reload(t)
 	if dl.Status != models.StateImportFailed {
 		t.Fatalf("download status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImportFailed)
+	}
+	if files := f.files(t, f.right.ID); len(files) != 1 || filepath.Ext(files[0].Path) != ".mobi" {
+		t.Errorf("Vol 3 files = %+v, want only the mobi recorded (the case must be a partial import)", files)
 	}
 }
 

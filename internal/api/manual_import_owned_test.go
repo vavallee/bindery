@@ -152,10 +152,12 @@ func (f *ownedFixture) writeFile(t *testing.T, rel, content string) string {
 	return p
 }
 
-// TestManualImport_PathOwnedByOtherBook_FailsNamingOwner: a manual import of
-// a file onto Vol 3 whose destination Vol 17 already tracks (#2937). It used
-// to report success and leave Vol 3 Wanted with nothing recorded.
-func TestManualImport_PathOwnedByOtherBook_FailsNamingOwner(t *testing.T) {
+// TestManualImport_PathOwnedByOtherBook_ImportsBeside: a manual import of a
+// file onto Vol 3 whose destination Vol 17 already tracks. It used to report
+// success and leave Vol 3 Wanted with nothing recorded (#2937), then to block
+// for good (#3560). It now lands at the next free " (2)" name, recorded
+// against Vol 3, and Vol 17's row is untouched.
+func TestManualImport_PathOwnedByOtherBook_ImportsBeside(t *testing.T) {
 	f := newOwnedFixture(t)
 	ctx := context.Background()
 	src := f.writeFile(t, "incoming/vol3.epub", "volume three")
@@ -172,19 +174,18 @@ func TestManualImport_PathOwnedByOtherBook_FailsNamingOwner(t *testing.T) {
 	f.wait(t, "")
 
 	dl := f.onlyDownload(t)
-	if dl.Status != models.StateImportBlocked {
-		t.Fatalf("download status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImportBlocked)
+	if dl.Status != models.StateImported {
+		t.Fatalf("download status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImported)
 	}
-	for _, want := range []string{f.wrong.Title, fmt.Sprintf("%d", f.wrong.ID)} {
-		if !strings.Contains(dl.ErrorMessage, want) {
-			t.Errorf("failure %q does not name the owning book (%s)", dl.ErrorMessage, want)
-		}
+	want := strings.TrimSuffix(preview.Destination, ".epub") + " (2).epub"
+	if files := f.files(t, f.right.ID); len(files) != 1 || files[0].Path != want {
+		t.Errorf("Vol 3 files = %+v, want one row at %s", files, want)
 	}
-	if files := f.files(t, f.right.ID); len(files) != 0 {
-		t.Errorf("Vol 3 files = %+v, want none", files)
+	if got, err := os.ReadFile(want); err != nil || string(got) != "volume three" { //nolint:gosec // test path under t.TempDir
+		t.Errorf("file at %s = %q, %v; want the imported bytes", want, got, err)
 	}
-	if files := f.files(t, f.wrong.ID); len(files) != 1 {
-		t.Errorf("Vol 17 files = %+v, want its row untouched", files)
+	if files := f.files(t, f.wrong.ID); len(files) != 1 || files[0].Path != preview.Destination {
+		t.Errorf("Vol 17 files = %+v, want its row at %s untouched", files, preview.Destination)
 	}
 }
 

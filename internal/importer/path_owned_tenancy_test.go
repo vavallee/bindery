@@ -25,6 +25,7 @@ type twoUserImportFixture struct {
 	s         *Scanner
 	books     *db.BookRepo
 	downloads *db.DownloadRepo
+	users     *db.UserRepo
 	alice     int64
 	bob       int64
 	aliceA    *models.Author
@@ -53,6 +54,7 @@ func newTwoUserImportFixture(t *testing.T) *twoUserImportFixture {
 		database:  database,
 		books:     db.NewBookRepo(database),
 		downloads: db.NewDownloadRepo(database),
+		users:     users,
 		alice:     alice.ID,
 		bob:       bob.ID,
 	}
@@ -74,6 +76,7 @@ func newTwoUserImportFixture(t *testing.T) *twoUserImportFixture {
 	f.s.WithSettings(settings)
 	f.s.WithRootFolders(db.NewRootFolderRepo(database))
 	f.s.WithSeriesRepo(db.NewSeriesRepo(database))
+	f.s.WithUsers(users)
 	return f
 }
 
@@ -93,10 +96,22 @@ func (f *twoUserImportFixture) book(t *testing.T, author *models.Author, owner i
 
 func (f *twoUserImportFixture) importEbook(t *testing.T, b *models.Book, owner int64, guid, body string) *models.Download {
 	t.Helper()
+	return f.importEbookAs(t, b, owner, guid, body, false)
+}
+
+// importEbookAs imports one EPUB for b. With fixMatch set the import runs as
+// an admin's Fix match of that downloaded file onto b, the way the Reassign
+// handler runs it.
+func (f *twoUserImportFixture) importEbookAs(t *testing.T, b *models.Book, owner int64, guid, body string, fixMatch bool) *models.Download {
+	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "Shared Title.epub"), bookSized(body), 0o600); err != nil {
+	src := filepath.Join(dir, "Shared Title.epub")
+	if err := os.WriteFile(src, bookSized(body), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if fixMatch {
+		ctx = WithFixMatch(ctx, FixMatch{SourcePaths: []string{src}})
 	}
 	dl := &models.Download{BookID: &b.ID, GUID: guid, Title: "Jane.Doe.Shared.Title.epub", Status: models.StateCompleted, Protocol: "torrent", OwnerUserID: owner}
 	if err := f.downloads.Create(ctx, dl); err != nil {
@@ -110,10 +125,17 @@ func (f *twoUserImportFixture) importEbook(t *testing.T, b *models.Book, owner i
 	return got
 }
 
-// importSecondOntoFirst imports the first book, then the second book whose
-// destination is the same path, and returns the first book and the second
-// download. The second import is blocked either way; what changes is the
-// reason it gives.
+// importSecondOntoFirst imports the first book, then imports a file for the
+// second book, whose destination renders to the same path, and returns the
+// first book and the second download. The second import is blocked either
+// way; what changes is the reason it gives.
+//
+// A plain import no longer reaches the block: since #3560 it takes the next
+// free " (2)" name instead. A Fix match keeps its rendered destination (it is
+// the one import allowed to take a tracked path, and only the reassigned
+// file's own path), so an admin's Fix match of a downloaded file onto the
+// second book is the reachable path that still blocks and still writes this
+// reason onto the second user's download.
 func (f *twoUserImportFixture) importSecondOntoFirst(t *testing.T, firstOwner, secondOwner int64, firstAuthor, secondAuthor *models.Author) (*models.Book, *models.Download) {
 	t.Helper()
 	first := f.book(t, firstAuthor, firstOwner, "OL-ST-FIRST")
@@ -121,7 +143,7 @@ func (f *twoUserImportFixture) importSecondOntoFirst(t *testing.T, firstOwner, s
 	if dl := f.importEbook(t, first, firstOwner, "guid-first", "first bytes"); dl.Status != models.StateImported {
 		t.Fatalf("first import: %s %s", dl.Status, dl.ErrorMessage)
 	}
-	dl := f.importEbook(t, second, secondOwner, "guid-second", "second bytes")
+	dl := f.importEbookAs(t, second, secondOwner, "guid-second", "second bytes", true)
 	if dl.Status != models.StateImportBlocked {
 		t.Fatalf("second import status = %s (%s), want %s", dl.Status, dl.ErrorMessage, models.StateImportBlocked)
 	}
@@ -169,7 +191,9 @@ func TestImport_PathOwnedByOwnBookOrNoTenancy_ReasonNamesOwner(t *testing.T) {
 				secondOwner = f.alice
 			}
 			first, dl := f.importSecondOntoFirst(t, f.alice, secondOwner, f.aliceA, secondAuthor)
-			for _, want := range []string{fmt.Sprintf("id %d", first.ID), fmt.Sprintf("%q", first.Title), "Fix match"} {
+			// Both download owners are plain users, so the hint sends them to
+			// an admin rather than at an action they cannot run (#3560).
+			for _, want := range []string{fmt.Sprintf("id %d", first.ID), fmt.Sprintf("%q", first.Title), "ask an admin to use Fix match"} {
 				if !strings.Contains(dl.ErrorMessage, want) {
 					t.Errorf("reason %q does not contain %q", dl.ErrorMessage, want)
 				}
@@ -206,4 +230,87 @@ func TestPathOwnedReason_HolderUnreadableIsNotNamed(t *testing.T) {
 	check("missing holder")
 	_ = f.database.Close()
 	check("lookup error")
+}
+
+// TestPathOwnedReason_HintMatchesOwnerRole is the second half of #3560: Fix
+// match is admin only, so the block reason only tells its reader to run it
+// when that reader (the download's owner) is an admin. A plain user is told to
+// ask an admin; an owner the importer cannot resolve gets wording that is
+// true for either.
+func TestPathOwnedReason_HintMatchesOwnerRole(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, false)
+	f := newTwoUserImportFixture(t)
+	ctx := context.Background()
+	if err := f.users.SetRoleUnguarded(ctx, f.alice, auth.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	mine := f.book(t, f.bobA, f.bob, "hc:ST-MINE")
+	owned := &db.PathOwnedError{Path: "/lib/Jane Doe/x.epub", OwnerBookID: 7, OwnerTitle: "Holder"}
+
+	cases := []struct {
+		name      string
+		dl        *models.Download
+		noUsers   bool
+		want      string
+		forbidden string
+	}{
+		{"admin owner", &models.Download{OwnerUserID: f.alice}, false, "; if the file is really \"Shared Title\", use Fix match", "ask an admin"},
+		{"plain user owner", &models.Download{OwnerUserID: f.bob}, false, "ask an admin to use Fix match", ""},
+		{"no owner recorded", &models.Download{}, false, "an admin can use Fix match", "ask an admin"},
+		{"owner row missing", &models.Download{OwnerUserID: 99999}, false, "an admin can use Fix match", "ask an admin"},
+		{"no user repository", &models.Download{OwnerUserID: f.bob}, true, "an admin can use Fix match", "ask an admin"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f.s.WithUsers(f.users)
+			if tc.noUsers {
+				f.s.WithUsers(nil)
+			}
+			err := f.s.pathOwnedReason(ctx, tc.dl, mine, owned)
+			var po *db.PathOwnedError
+			if !errors.As(err, &po) {
+				t.Fatalf("reason %v does not unwrap to *db.PathOwnedError", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("reason %q does not contain %q", err.Error(), tc.want)
+			}
+			if tc.forbidden != "" && strings.Contains(err.Error(), tc.forbidden) {
+				t.Errorf("reason %q contains %q", err.Error(), tc.forbidden)
+			}
+		})
+	}
+}
+
+// TestImport_SameTitleTwoUsers_SecondImportGetsSuffix is the #3560 repro: a
+// plain user's book renders onto the path another user's book already holds.
+// The import used to block for good, pointing at an admin only action. It now
+// lands beside the first at "<name> (2).epub" and leaves the first file alone.
+func TestImport_SameTitleTwoUsers_SecondImportGetsSuffix(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	f := newTwoUserImportFixture(t)
+	ctx := context.Background()
+	first := f.book(t, f.aliceA, f.alice, "OL-ST-FIRST")
+	second := f.book(t, f.bobA, f.bob, "hc:ST-SECOND")
+	if dl := f.importEbook(t, first, f.alice, "guid-first", "first bytes"); dl.Status != models.StateImported {
+		t.Fatalf("first import: %s %s", dl.Status, dl.ErrorMessage)
+	}
+	dl := f.importEbook(t, second, f.bob, "guid-second", "second bytes")
+	if dl.Status != models.StateImported {
+		t.Fatalf("second import status = %s (%s), want %s", dl.Status, dl.ErrorMessage, models.StateImported)
+	}
+	firstFiles, err := f.books.ListFiles(ctx, first.ID)
+	if err != nil || len(firstFiles) != 1 {
+		t.Fatalf("first book files = %+v, %v", firstFiles, err)
+	}
+	secondFiles, err := f.books.ListFiles(ctx, second.ID)
+	if err != nil || len(secondFiles) != 1 {
+		t.Fatalf("second book files = %+v, %v", secondFiles, err)
+	}
+	want := strings.TrimSuffix(firstFiles[0].Path, ".epub") + " (2).epub"
+	if secondFiles[0].Path != want {
+		t.Errorf("second book path = %s, want %s", secondFiles[0].Path, want)
+	}
+	if got, _ := os.ReadFile(firstFiles[0].Path); !strings.HasPrefix(string(got), "first bytes") { //nolint:gosec // test path under t.TempDir
+		t.Errorf("first book's file was replaced: %q", got)
+	}
 }

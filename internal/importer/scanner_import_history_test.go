@@ -254,16 +254,19 @@ func TestTryImportInternal_PartialImportWritesNoImportedRow(t *testing.T) {
 	epubPath := first["path"]
 	mobiPath := strings.TrimSuffix(epubPath, ".epub") + ".mobi"
 
-	// Block the mobi's destination with a directory so its atomic promote
-	// fails while the epub is counted by the idempotency guard: one file in,
-	// one file out, which is the partial import case.
-	if err := os.MkdirAll(filepath.Join(mobiPath, "blocker"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	// Make the mobi's atomic promote fail while the epub is counted by the
+	// idempotency guard: one file in, one file out, which is the partial
+	// import case. A directory planted at the mobi's destination used to do
+	// this; the #3560 collision suffix now imports beside it instead.
+	restoreCommit := commitStagedRename
+	refused := failCommitFor(t, ".mobi")
 
 	// Run 2: partial.
 	dl2 := newDownload("guid-2764c-2")
 	s.tryImportInternal(ctx, dl2, writeFiles("book.epub", "book.mobi"), "", "", "", nil, nil)
+	if *refused == 0 {
+		t.Fatal("run 2: the mobi commit was never attempted, so the partial case was not exercised")
+	}
 
 	got2, err := dlRepo.GetByID(ctx, dl2.ID)
 	if err != nil {
@@ -292,9 +295,7 @@ func TestTryImportInternal_PartialImportWritesNoImportedRow(t *testing.T) {
 	// Run 3: the obstacle is gone, the retry completes the download. The epub
 	// is counted through the idempotency guard, so the single row names both
 	// formats rather than only the one this run placed.
-	if err := os.RemoveAll(mobiPath); err != nil {
-		t.Fatal(err)
-	}
+	commitStagedRename = restoreCommit
 	s.tryImportInternal(ctx, newDownload("guid-2764c-3"), writeFiles("book.epub", "book.mobi"), "", "", "", nil, nil)
 
 	rows = importedRows()
@@ -316,5 +317,10 @@ func TestTryImportInternal_PartialImportWritesNoImportedRow(t *testing.T) {
 	}
 	if got := retry["formats"]; got != "epub, mobi" {
 		t.Errorf("run 3: formats = %q, want %q (the file a previous attempt placed still counts)", got, "epub, mobi")
+	}
+	// The failed promote left nothing behind, so the retry lands the mobi at
+	// its own name rather than a collision suffix beside a leftover.
+	if _, err := os.Stat(mobiPath); err != nil {
+		t.Errorf("run 3: mobi not at %s: %v", mobiPath, err)
 	}
 }

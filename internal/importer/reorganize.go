@@ -167,8 +167,18 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 	// its ebook already occupies lands at "Title (Year) (2)". Reorganize must
 	// resolve to the same variant — treating this file's OWN current location as
 	// available, so an already-correctly-placed audiobook reads as a noop rather
-	// than a false collision (or an endless (N)→(N+1) churn). Ebooks are single
-	// files and are not uniquified at import, so they skip this.
+	// than a false collision (or an endless (N)→(N+1) churn).
+	//
+	// Ebooks are uniquified at import too, but per file (uniqueEbookDestination,
+	// #3560): when the rendered name is held by another book or by an untracked
+	// file, the import lands at "Name (2).epub". Such a file is already where an
+	// import would put it, so it reads as a noop rather than a permanent
+	// "destination already exists" collision against the file that holds the
+	// base name. Once the base name is free again it is proposed as a normal
+	// move back to that name.
+	if !audiobook && noExtErr == nil && s.ebookAtCollisionSuffix(ctx, book, f.Path, dest) {
+		return f.Path, ReorgStatusNoop, ""
+	}
 	if audiobook {
 		if isSingleFile(f.Path) {
 			if flattenedOntoFolderPath(f.Path, dest, s.windowsPaths) {
@@ -221,6 +231,43 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 		return dest, ReorgStatusCollision, "another book already tracks the destination path"
 	}
 	return dest, ReorgStatusMove, ""
+}
+
+// ebookAtCollisionSuffix reports whether cur is dest with the " (N)" suffix
+// (N >= 2) uniqueEbookDestination adds before the extension, in the same
+// folder, cur is a file this book tracks, and dest itself is still taken: on
+// disk, or by another book's row. That is exactly the file an import would
+// have placed at cur, so Reorganize leaves it there. Comparison goes through
+// pathKey so a Windows library matches regardless of case.
+func (s *Scanner) ebookAtCollisionSuffix(ctx context.Context, book *models.Book, cur, dest string) bool {
+	ext := filepath.Ext(cur)
+	if ext == "" || !strings.EqualFold(ext, filepath.Ext(dest)) {
+		return false
+	}
+	stem := strings.TrimSuffix(cur, ext)
+	paren := strings.LastIndex(stem, " (")
+	if paren < 0 || !strings.HasSuffix(stem, ")") {
+		return false
+	}
+	n := stem[paren+2 : len(stem)-1]
+	if n == "" || n[0] == '0' || len(n) > 3 || strings.Trim(n, "0123456789") != "" || n == "1" {
+		return false
+	}
+	if s.pathKey(stem[:paren]+ext) != s.pathKey(dest) {
+		return false
+	}
+	// Only this book's own tracked file counts. The Fix match destination
+	// preview runs through here with a file that is not yet the book's, and
+	// Fix match keeps the base name (uniqueEbookDestination skips it), so for
+	// that file the base name really is where it would go.
+	if !s.alreadyImportedPath(ctx, book, cur) {
+		return false
+	}
+	if _, err := os.Lstat(dest); err == nil {
+		return true
+	}
+	owned, err := s.books.PathOwnedByOtherBook(ctx, dest, book.ID)
+	return err == nil && owned
 }
 
 // ebookSourceName returns the name DestPath should take the extension from for

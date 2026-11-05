@@ -99,6 +99,10 @@ func (s *Scanner) recordImportedFile(ctx context.Context, dl *models.Download, b
 // reason says only that another book in the library uses the path: the
 // download's owner cannot open that book, and its title and id are another
 // user's data.
+//
+// The hint after the owner is worded for the download's owner: Fix match is
+// admin only, so a non admin is told to ask an admin rather than pointed at
+// an action they cannot take (#3560).
 func (s *Scanner) pathOwnedReason(ctx context.Context, dl *models.Download, book *models.Book, owned *db.PathOwnedError) error {
 	if auth.EnforceTenancy() {
 		var dlOwner int64
@@ -110,7 +114,46 @@ func (s *Scanner) pathOwnedReason(ctx context.Context, dl *models.Download, book
 			return &pathOwnedElsewhereError{owned: owned}
 		}
 	}
-	return fmt.Errorf("%w; if the file is really %q, use Fix match on that book to move it here", owned, book.Title)
+	switch s.downloadOwnerRole(ctx, dl) {
+	case ownerAdmin:
+		return fmt.Errorf("%w; if the file is really %q, use Fix match on that book to move it here", owned, book.Title)
+	case ownerNotAdmin:
+		// Fix match sits behind RequireAdmin (#3560): pointing a plain user
+		// at it leaves them with an action they cannot take.
+		return fmt.Errorf("%w; if the file is really %q, ask an admin to use Fix match on that book to move it here", owned, book.Title)
+	default:
+		return fmt.Errorf("%w; if the file is really %q, an admin can use Fix match on that book to move it here", owned, book.Title)
+	}
+}
+
+type ownerRole int
+
+const (
+	ownerRoleUnknown ownerRole = iota
+	ownerAdmin
+	ownerNotAdmin
+)
+
+// downloadOwnerRole reports whether the user who reads dl's block reason
+// in their queue can run Fix match, which is admin only (stored role; an auth
+// mode that elevates everyone is not visible to the importer). The reason is
+// written for the download's owner, not for whoever triggered this import
+// (an admin's Fix match can leave a reason on another user's download).
+// Unknown when there is no owner recorded, no user repository wired, or the
+// owner cannot be read; the caller then words the hint so it is true for
+// either role.
+func (s *Scanner) downloadOwnerRole(ctx context.Context, dl *models.Download) ownerRole {
+	if dl == nil || dl.OwnerUserID == 0 || s.users == nil {
+		return ownerRoleUnknown
+	}
+	u, err := s.users.GetByID(ctx, dl.OwnerUserID)
+	if err != nil || u == nil {
+		return ownerRoleUnknown
+	}
+	if u.IsAdmin() {
+		return ownerAdmin
+	}
+	return ownerNotAdmin
 }
 
 // uniqueEbookDestination returns an unused filename for a normal ebook import.
