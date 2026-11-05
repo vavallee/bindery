@@ -40,14 +40,22 @@ func TestMigrate120ScopesExistingBlocklistRows(t *testing.T) {
 		{"g-stalled", b.ID, "stalled: no peers / no download progress", models.BlocklistScopeRelease},
 		{"g-readarr", nil, "", models.BlocklistScopeRelease},
 		{"g-format", b.ID, "format mobi is not allowed. Not imported.", models.BlocklistScopeBook},
-		{"g-history", b.ID, "downloadFailed", models.BlocklistScopeBook},
+		{"g-history-failed", b.ID, "downloadFailed", models.BlocklistScopeRelease},
+		{"g-history-stalled", b.ID, "downloadStalled", models.BlocklistScopeRelease},
+		{"g-history-grab", b.ID, "grabbed", models.BlocklistScopeBook},
+		{"g-history-import", b.ID, "bookImported", models.BlocklistScopeBook},
+		// A book_id naming a book that no longer exists, left while foreign
+		// keys were off: it keeps blocking the release for everyone.
+		{"g-orphan", int64(987654), "format mobi is not allowed. Not imported.", models.BlocklistScopeRelease},
 	}
+	mustExec(t, database, `PRAGMA foreign_keys = OFF`)
 	for _, r := range rows {
 		if _, err := database.ExecContext(ctx, `INSERT INTO blocklist (book_id, guid, title, reason) VALUES (?, ?, 't', ?)`,
 			r.bookID, r.guid, r.reason); err != nil {
 			t.Fatal(err)
 		}
 	}
+	mustExec(t, database, `PRAGMA foreign_keys = ON`)
 
 	v120 := migrationVersionForTest(t, "120_blocklist_scope.sql")
 	if _, err := database.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = ?`, v120); err != nil {

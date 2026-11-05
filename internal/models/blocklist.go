@@ -25,12 +25,14 @@ type BlocklistEntry struct {
 //
 // A book scoped entry is a judgement about one book: its quality or metadata
 // profile refused the release, the file did not match the book, or a user
-// blocklisted it from that book's history. It blocks the release for that book
-// only, so one user's entry never decides what another user's book can grab.
+// blocklisted a grab or an import of it from that book's History. It blocks
+// the release for that book only, so one user's entry never decides what
+// another user's book can grab.
 //
 // A release scoped entry says the release itself is bad for everyone: the
-// download client failed it as broken or reported it stalled, or it came from
-// a Readarr blocklist. It blocks the release for every book, the way migration
+// download client failed it as broken or reported it stalled, a user
+// blocklisted a failed or stalled download from History, or it came from a
+// Readarr blocklist. It blocks the release for every book, the way migration
 // 050 kept every entry global. An entry with no book is always release scoped,
 // since there is no book to scope it to.
 const (

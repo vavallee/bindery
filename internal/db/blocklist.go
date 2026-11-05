@@ -69,23 +69,14 @@ func (r *BlocklistRepo) List(ctx context.Context) ([]models.BlocklistEntry, erro
 	return r.query(ctx, "SELECT "+blocklistColumns+" FROM blocklist ORDER BY created_at DESC")
 }
 
+// IsBlocked reports whether any entry names this GUID, whatever its scope or
+// book. It is not what search asks and nothing in Bindery decides on it:
+// since #3563 an entry blocks a release per book, which is BlocksBook. It
+// stays as the "was an entry written" check twenty odd tests across the
+// importer, scheduler and api packages assert with.
 func (r *BlocklistRepo) IsBlocked(ctx context.Context, guid string) (bool, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM blocklist WHERE guid=?", guid).Scan(&count)
-	if err != nil {
-		return false, fmt.Errorf("check blocklist: %w", err)
-	}
-	return count > 0, nil
-}
-
-// IsBlockedForBook reports whether a row for this GUID already exists under
-// this book (a nil bookID matches a row with no book). Writers use it to avoid
-// stacking duplicates; it is deliberately narrower than IsBlocked, because a
-// row filed under another book disappears with that book (DeleteByBookID) and
-// must not stand in for this one's.
-func (r *BlocklistRepo) IsBlockedForBook(ctx context.Context, guid string, bookID *int64) (bool, error) {
-	var count int
-	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM blocklist WHERE guid=? AND book_id IS ?", guid, bookID).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("check blocklist: %w", err)
 	}

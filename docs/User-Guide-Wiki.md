@@ -770,11 +770,13 @@ search picks a different one. Blocked releases are listed under
 Settings → Blocklist, where you can remove one to let it be grabbed again.
 An entry blocks the release only for the book it was filed for when it is
 about that book: the book's profile refused the format or the language, the
-file turned out to be another book, or you blocklisted it from that book's
-History. Another book that wants the same release, for example the same work
-under a second author row or in another account, can still grab it. A release
-the download client failed as broken or reported stalled, and anything
-imported from Readarr's blocklist, is blocked for every book.
+file turned out to be another book, or you blocklisted a grab or an import of
+it from that book's History. Another book that wants the same release, for
+example the same work under a second author row or in another account, can
+still grab it. A release the download client failed as broken or reported
+stalled, a failed or stalled download you blocklist from History, and
+anything imported from Readarr's blocklist, is blocked for every book. The
+Blocklist tab's "Applies to" column says which: "This book" or "All books".
 
 Bindery does not chase format upgrades on its own: the sweep only searches
 Wanted books, and once a book has a file it is no longer Wanted. If you want

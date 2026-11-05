@@ -493,15 +493,22 @@ func (s *Scanner) allowedFormat(ctx context.Context, author *models.Author, form
 // client reported is about the release, so it is models.BlocklistScopeRelease
 // and blocks it for every book.
 //
-// A release already on the blocklist for the same book is not added twice: a
+// An entry that already blocks what this one would is not added twice: a
 // manual grab can send a blocklisted release again, and its second failure
-// says nothing new. A row under another book does not count, because deleting
-// that book deletes its rows.
+// says nothing new. For a book scoped entry that is an entry for this book or
+// a release scoped one. For a release scoped entry only another release scoped
+// entry counts: a book scoped entry for this or any other book blocks the
+// release for that book alone, so skipping the write would leave a broken
+// release open to every other book.
 func (s *Scanner) blocklistRejectedRelease(ctx context.Context, dl *models.Download, scope, reason string) {
 	if s.blocklist == nil || dl == nil || strings.TrimSpace(dl.GUID) == "" {
 		return
 	}
-	if blocked, err := s.blocklist.IsBlockedForBook(ctx, dl.GUID, dl.BookID); err == nil && blocked {
+	forBook := dl.BookID
+	if scope == models.BlocklistScopeRelease {
+		forBook = nil
+	}
+	if blocked, err := s.blocklist.BlocksBook(ctx, dl.GUID, forBook); err == nil && blocked {
 		return
 	}
 	entry := &models.BlocklistEntry{

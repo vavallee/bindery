@@ -25,6 +25,10 @@ export interface BlocklistEntry {
   // semantics remain global. The admin "blocklisted by X" UI consuming
   // this field is a future task.
   createdByUserId?: number | null
+  // Which books the entry blocks (#3563): 'book' blocks the release for
+  // bookId only, 'release' blocks it for every book. Absent from a server
+  // that predates the field.
+  scope?: 'book' | 'release'
 }
 
 export const historyApi = {

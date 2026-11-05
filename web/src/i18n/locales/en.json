@@ -1176,6 +1176,11 @@
     "colTitle": "Title",
     "colReason": "Reason",
     "colDate": "Date",
+    "colScope": "Applies to",
+    "scopeBook": "This book",
+    "scopeRelease": "All books",
+    "scopeBookHint": "Blocks this release for the book it was blocklisted for. Other books can still grab it.",
+    "scopeReleaseHint": "Blocks this release for every book, because the download client reported it broken or stalled, or it came from Readarr.",
     "selectAll": "Select all",
     "deleteConfirm": "Delete {{count}} blocklist entries?"
   },
