@@ -4,6 +4,27 @@ All notable changes to Bindery are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com) and versions follow
 [Semantic Versioning](https://semver.org).
 
+## [v1.46.3] - 2026-11-05
+
+Fixes for the two advisories published on 2026-11-04, a series genre action that wiped book details, and two import improvements. If you run Bindery with `BINDERY_ENFORCE_TENANCY` on and more than one account, or with local sign in turned off, please update.
+
+### Security
+- **Shared authors no longer show other users' books** (#3625, [GHSA-q8wp-7gh7-4873](https://github.com/vavallee/bindery/security/advisories/GHSA-q8wp-7gh7-4873)). With `BINDERY_ENFORCE_TENANCY` on, a shared author can hold books from several users' libraries. For a user who is not an admin, the books list with excluded books included, the duplicate review for an author and for the whole library, an author's series list and the counts in the catalogue cleanup preview now show only that user's own books and books nobody owns. The author level actions that apply to every book under an author (monitor settings applied to existing books, the genres action, and the bulk set media type, monitor, set monitor mode and search actions) now change or search only the books that user may edit. Admins and installs with tenancy off are unchanged.
+- **Harden first run setup** (#3611, #3622, [GHSA-4fm8-578v-w736](https://github.com/vavallee/bindery/security/advisories/GHSA-4fm8-578v-w736)). The setup endpoint now expects a JSON request body, which keeps a cross site form from creating the first admin. When local sign in is off and an OIDC provider or proxy mode is configured, setup is not offered and the login page is shown instead. On a fresh install the first account that signs in through OIDC or the proxy becomes the admin, once. An install that already has accounts but no admin promotes nobody automatically; [Troubleshooting auth](docs/troubleshooting-auth.md) shows how to promote the right account with the API key.
+- **Proxy sign in no longer logs identities** (#3619). The proxy auth warnings for a failed or refused account creation no longer log the username or email from the identity header.
+
+### Added
+- **Series hints during library adoption** (#1430, #3611, #3612, #3618). When an unmatched file's path names both a series and a position, such as `Discworld/08 - Guards! Guards!`, the Import page shows that hint, and you can tick a box to put the book in that series as you adopt it. Pick an existing series or create one; an existing series with the same name is chosen for you. Nothing is ever matched by name behind your back, and Undo removes only the membership the adoption made, plus the new series if nothing else uses it. Thanks ThatDeltaGuy for the request.
+- **Import History records where each file came from** (#3248, #3626). Import rows in History now note their origin, either a download or a manual import. For downloads they keep the release guid and download id, plus the indexer and download client when Bindery knows them, and ebook import rows list the exact library paths they placed. Because import rows from a download now carry the release, the History blocklist API (`POST /api/v1/history/{id}/blocklist`) accepts them too; the History page does not show a Blocklist button for them yet. This first slice covers downloads and manual imports only; folder handoff and library scan imports do not record provenance yet. Thanks foobarbigtime for the detailed request.
+
+### Changed
+- **CI tooling updates** (#3590, #3592, #3593, #3594, #3595, #3596). Routine bumps to the actions and linters CI uses. Nothing changes in the app.
+
+### Fixed
+- **Setting a series genre no longer clears other book details** (#3625). Applying genres to a series used to blank the description, file paths, narrator, ASIN, rating and other locked fields of every book in that series. Now only the genres change.
+- **The Hardcover series comparison finds books from the whole library for admins** (#3625). It used to match missing books only against books the signed in account owned, even for admins and with tenancy off.
+- **A second book with the same file name now imports beside the first** (#3560, #3628). When two books render to the same file name, for example the same title under two authors with the same name, the second import used to stay blocked for good. It now lands next to the first as "Name (2).epub", and Reorganize treats that file as already in place. An untracked file already sitting at the destination is no longer overwritten; the import picks the next free name instead. When an import does still block on a path another book holds, the message no longer points users who are not admins at Fix match, which only admins can run; it tells them to ask an admin.
+
 ## [v1.46.2] - 2026-11-03
 
 Multi user hardening from a review of how separate libraries are kept apart, an ebook import that no longer lands in another book's folder, a guide to naming templates, and dependency updates. If you run Bindery with `BINDERY_ENFORCE_TENANCY` on and more than one account, please update.
