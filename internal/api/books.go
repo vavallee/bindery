@@ -423,6 +423,31 @@ func (h *BookHandler) prepareBookDetail(ctx context.Context, book *models.Book) 
 	h.attachBookFiles(ctx, book)
 	h.attachBookIdentifiers(ctx, book)
 	h.attachImportInFlight(ctx, book)
+	h.attachRecording(ctx, book)
+}
+
+// attachRecording fills the book's narrator list and edition type for the
+// detail view (#1358). The audiobook edition that states a narrator list or an
+// edition type supplies them; otherwise the list is the book's narrator string
+// split into names and the type stays unknown. Best effort, read only.
+func (h *BookHandler) attachRecording(ctx context.Context, book *models.Book) {
+	book.Narrators = models.SplitNarrators(book.Narrator)
+	if h.editions == nil {
+		return
+	}
+	eds, err := h.editions.ListByBook(ctx, book.ID)
+	if err != nil {
+		slog.Debug("book get: edition lookup failed", "book_id", book.ID, "error", err)
+		return
+	}
+	for _, ed := range eds {
+		if ed.IsEbook || (len(ed.Narrators) == 0 && ed.EditionType == "") {
+			continue
+		}
+		book.Narrators = models.EffectiveNarrators(ed.Narrators, book.Narrator)
+		book.EditionType = ed.EditionType
+		return
+	}
 }
 
 // attachImportInFlight marks a book whose download is still on its way into

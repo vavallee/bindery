@@ -100,7 +100,13 @@ func (h *QualityProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "quality profile not found"})
 		return
 	}
-	var p models.QualityProfile
+	// The narrator and edition preferences start from the stored values so a
+	// client that predates them and sends the whole profile back does not clear
+	// them (#1358).
+	p := models.QualityProfile{
+		PreferredNarrators: existing.PreferredNarrators,
+		EditionPreference:  existing.EditionPreference,
+	}
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
@@ -219,6 +225,19 @@ func validateQualityProfile(p *models.QualityProfile) string {
 	}
 	if allowedCount == 0 {
 		return "at least one allowed format is required"
+	}
+	if pref := strings.TrimSpace(p.EditionPreference); pref != "" && models.NormalizeEditionPreference(pref) == "" {
+		return "unknown edition preference: " + pref
+	}
+	p.EditionPreference = models.NormalizeEditionPreference(p.EditionPreference)
+	p.PreferredNarrators = models.CleanNarrators(p.PreferredNarrators)
+	if len(p.PreferredNarrators) > 50 {
+		return "at most 50 preferred narrators"
+	}
+	for _, n := range p.PreferredNarrators {
+		if len(n) > 200 {
+			return "narrator name too long"
+		}
 	}
 	return ""
 }

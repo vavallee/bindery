@@ -20,6 +20,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
 import PackLabel from '../components/PackLabel'
+import ReleaseNarration from '../components/ReleaseNarration'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../components/useClipboardCopy'
 import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
@@ -171,6 +172,7 @@ function ReleaseRow({
         <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
           {fmt && <MediaBadge type={fmt} />}
           <PackLabel marker={r.pack} />
+          <ReleaseNarration narrators={r.narrators} editionType={r.editionType} />
           <span className="truncate text-slate-800 dark:text-zinc-200">{r.title}</span>
         </div>
         <span className="text-fg-muted truncate block">
@@ -1114,8 +1116,13 @@ function BookDetailPageInner() {
               <>
                 <span aria-hidden className="text-fg-muted">·</span>
                 <span className="text-fg-muted">
-                  {t('bookDetail.narratedBy', { narrator: book.narrator })}
+                  {t('bookDetail.narratedBy', { narrator: book.narrators && book.narrators.length > 0 ? book.narrators.join(', ') : book.narrator })}
                 </span>
+                {book.editionType && (
+                  <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 text-slate-700 dark:bg-zinc-700 dark:text-zinc-200">
+                    {t(`editionType.${book.editionType}`, { defaultValue: book.editionType })}
+                  </span>
+                )}
               </>
             )}
             {book.durationSeconds ? (

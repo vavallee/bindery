@@ -74,8 +74,13 @@ type QualityProfile struct {
 	// entries for is not allowed; an empty list means no opinion on that media
 	// type. The wire shape is unchanged from before the order was read:
 	// [{quality, allowed}], nothing else.
-	Items     []QualityItem `json:"items"`
-	CreatedAt time.Time     `json:"createdAt"`
+	Items []QualityItem `json:"items"`
+	// PreferredNarrators is the audiobook narrator preference, best first, and
+	// EditionPreference one of the EditionPref constants. Both empty (the
+	// default) leave ranking exactly as it was (#1358).
+	PreferredNarrators []string  `json:"preferredNarrators"`
+	EditionPreference  string    `json:"editionPreference"`
+	CreatedAt          time.Time `json:"createdAt"`
 	// OwnerUserID is the per-user ownership column added in migration 025.
 	// See RootFolder for legacy zero-value semantics.
 	OwnerUserID int64 `json:"-"`

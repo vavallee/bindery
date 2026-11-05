@@ -9,6 +9,9 @@ export interface QualityProfile {
   // each entry's media type from its token, so ebook and audiobook entries
   // share this one array and only the order inside each kind matters (#2733).
   items: Array<{ quality: string; allowed: boolean }>
+  // Audiobook narrator and edition preferences (#1358). Both empty means off.
+  preferredNarrators?: string[]
+  editionPreference?: '' | 'prefer_unabridged' | 'require_unabridged'
 }
 
 export interface MetadataProfile {

@@ -203,6 +203,8 @@ function QualityProfileForm({
   const { t } = useTranslation()
   const [name, setName] = useState(profile?.name ?? '')
   const [lists, setLists] = useState(() => partitionItems(normalisedItems(profile?.items), EBOOK_FORMATS, AUDIOBOOK_FORMATS))
+  const [narratorsText, setNarratorsText] = useState((profile?.preferredNarrators ?? []).join('\n'))
+  const [editionPref, setEditionPref] = useState<string>(profile?.editionPreference ?? '')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -231,6 +233,8 @@ function QualityProfileForm({
       const payload: Partial<QualityProfile> = {
         name: name.trim(),
         items,
+        preferredNarrators: narratorsText.split('\n').map(n => n.trim()).filter(Boolean),
+        editionPreference: editionPref as QualityProfile['editionPreference'],
       }
       // cutoff and upgradeAllowed are no longer editable here (#2373): nothing
       // in Bindery has ever read either one. The columns and the API fields
@@ -286,6 +290,28 @@ function QualityProfileForm({
             onChange={audio => setLists(prev => ({ ...prev, audio }))}
           />
         </div>
+      </div>
+
+      <div>
+        <label htmlFor={`${fid}-2`} className={labelCls}>{t('settings.quality.editionPreference')}</label>
+        <select id={`${fid}-2`} value={editionPref} onChange={e => setEditionPref(e.target.value)} className={inputCls}>
+          <option value="">{t('settings.quality.editionPrefOff')}</option>
+          <option value="prefer_unabridged">{t('settings.quality.editionPrefPrefer')}</option>
+          <option value="require_unabridged">{t('settings.quality.editionPrefRequire')}</option>
+        </select>
+        <p className="text-[11px] text-fg-muted mt-1">{t('settings.quality.editionPreferenceHint')}</p>
+      </div>
+
+      <div>
+        <label htmlFor={`${fid}-3`} className={labelCls}>{t('settings.quality.preferredNarrators')}</label>
+        <textarea id={`${fid}-3`}
+          value={narratorsText}
+          onChange={e => setNarratorsText(e.target.value)}
+          rows={3}
+          className={inputCls}
+          placeholder={t('settings.quality.preferredNarratorsPlaceholder')}
+        />
+        <p className="text-[11px] text-fg-muted mt-1">{t('settings.quality.preferredNarratorsHint')}</p>
       </div>
 
       {err && <p className="text-xs text-rose-600 dark:text-rose-400">{err}</p>}

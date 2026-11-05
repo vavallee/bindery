@@ -1900,6 +1900,14 @@
       "formPreference": "Formats, best first",
       "formPreferenceHint": "Each list is ranked from the top: when several ticked formats are found, the highest one wins. Tick a format to allow it, untick one to refuse it. A list with nothing in it means any format of that kind is accepted, ranked by the built in order: azw3, epub, mobi and azw, pdf, rtf, txt for ebooks; flac, m4b, m4a, mp3 for audiobooks.",
       "formAddFormat": "Add format:",
+      "editionPreference": "Audiobook edition",
+      "editionPrefOff": "No preference",
+      "editionPrefPrefer": "Prefer unabridged",
+      "editionPrefRequire": "Reject abridged",
+      "editionPreferenceHint": "Applies to audiobook searches only. Prefer ranks releases that say unabridged higher and ones that say abridged lower. Reject refuses a release that says abridged. A release that does not say is never refused.",
+      "preferredNarrators": "Preferred narrators",
+      "preferredNarratorsPlaceholder": "One name per line, best first",
+      "preferredNarratorsHint": "Audiobook releases that name one of these narrators rank higher, the first name most. Only a title that says read by or narrated by is matched, and the whole name must match.",
       "saveChanges": "Save changes",
       "createProfile": "Create profile",
       "errorName": "Name is required",
@@ -2878,6 +2886,12 @@
     "importedDescription": "Every format this book wants is on disk. A book with only some of its formats reads Wanted, and the In library filter still lists it.",
     "skippedDescription": "Blocklisted or excluded. Bindery will not search for it and it stays off the Wanted page.",
     "notMonitoredDescription": "A format is missing, but Bindery will not search for it. Turn monitoring on to fetch it."
+  },
+  "editionType": {
+    "unabridged": "Unabridged",
+    "abridged": "Abridged",
+    "dramatized": "Dramatized",
+    "full_cast": "Full cast"
   },
   "bookDetail": {
     "back": "← Books",

@@ -5,6 +5,7 @@ import { api, Book, SearchResult } from '../api/client'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
 import PackLabel from '../components/PackLabel'
+import ReleaseNarration from '../components/ReleaseNarration'
 import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
@@ -531,6 +532,7 @@ export default function WantedPage() {
                         <div className="min-w-0 mr-3">
                           <span className="flex items-center gap-1.5 min-w-0">
                             <PackLabel marker={r.pack} />
+                            <ReleaseNarration narrators={r.narrators} editionType={r.editionType} />
                             <span className="truncate block">{r.title}</span>
                           </span>
                           <span className="text-fg-muted truncate block">

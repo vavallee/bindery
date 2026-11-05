@@ -31,7 +31,7 @@ func NewQualityProfileRepo(db *sql.DB) *QualityProfileRepo {
 
 func (r *QualityProfileRepo) List(ctx context.Context) ([]models.QualityProfile, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, name, upgrade_allowed, cutoff, items, created_at, COALESCE(owner_user_id, 0) FROM quality_profiles ORDER BY id")
+		"SELECT id, name, upgrade_allowed, cutoff, items, created_at, COALESCE(owner_user_id, 0), preferred_narrators, edition_preference FROM quality_profiles ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("list quality profiles: %w", err)
 	}
@@ -50,7 +50,7 @@ func (r *QualityProfileRepo) List(ctx context.Context) ([]models.QualityProfile,
 
 func (r *QualityProfileRepo) GetByID(ctx context.Context, id int64) (*models.QualityProfile, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, name, upgrade_allowed, cutoff, items, created_at, COALESCE(owner_user_id, 0) FROM quality_profiles WHERE id=?", id)
+		"SELECT id, name, upgrade_allowed, cutoff, items, created_at, COALESCE(owner_user_id, 0), preferred_narrators, edition_preference FROM quality_profiles WHERE id=?", id)
 	if err != nil {
 		return nil, fmt.Errorf("get quality profile %d: %w", id, err)
 	}
@@ -103,9 +103,10 @@ func (r *QualityProfileRepo) create(ctx context.Context, p *models.QualityProfil
 		ownerArg = ownerUserID
 	}
 	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO quality_profiles (name, upgrade_allowed, cutoff, items, owner_user_id)
-		VALUES (?, ?, ?, ?, ?)`,
-		p.Name, upgrade, p.Cutoff, itemsJSON, ownerArg)
+		INSERT INTO quality_profiles (name, upgrade_allowed, cutoff, items, owner_user_id, preferred_narrators, edition_preference)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, upgrade, p.Cutoff, itemsJSON, ownerArg,
+		encodeNarrators(p.PreferredNarrators), models.NormalizeEditionPreference(p.EditionPreference))
 	if err != nil {
 		return fmt.Errorf("create quality profile: %w", err)
 	}
@@ -131,9 +132,11 @@ func (r *QualityProfileRepo) Update(ctx context.Context, p *models.QualityProfil
 		upgrade = 1
 	}
 	res, err := r.db.ExecContext(ctx, `
-		UPDATE quality_profiles SET name=?, upgrade_allowed=?, cutoff=?, items=?
+		UPDATE quality_profiles SET name=?, upgrade_allowed=?, cutoff=?, items=?,
+		       preferred_narrators=?, edition_preference=?
 		WHERE id=?`,
-		p.Name, upgrade, p.Cutoff, itemsJSON, p.ID)
+		p.Name, upgrade, p.Cutoff, itemsJSON,
+		encodeNarrators(p.PreferredNarrators), models.NormalizeEditionPreference(p.EditionPreference), p.ID)
 	if err != nil {
 		return fmt.Errorf("update quality profile %d: %w", p.ID, err)
 	}
@@ -233,11 +236,13 @@ func marshalItems(items []models.QualityItem) (string, error) {
 func scanQualityProfile(rows *sql.Rows) (models.QualityProfile, error) {
 	var p models.QualityProfile
 	var upgradeAllowed int
-	var itemsJSON string
-	if err := rows.Scan(&p.ID, &p.Name, &upgradeAllowed, &p.Cutoff, &itemsJSON, &p.CreatedAt, &p.OwnerUserID); err != nil {
+	var itemsJSON, narratorsJSON string
+	if err := rows.Scan(&p.ID, &p.Name, &upgradeAllowed, &p.Cutoff, &itemsJSON, &p.CreatedAt, &p.OwnerUserID, &narratorsJSON, &p.EditionPreference); err != nil {
 		return p, fmt.Errorf("scan quality profile: %w", err)
 	}
 	p.UpgradeAllowed = upgradeAllowed == 1
+	p.PreferredNarrators = decodeNarrators(narratorsJSON)
+	p.EditionPreference = models.NormalizeEditionPreference(p.EditionPreference)
 	if err := json.Unmarshal([]byte(itemsJSON), &p.Items); err != nil {
 		return p, fmt.Errorf("unmarshal quality profile items: %w", err)
 	}
