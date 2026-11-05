@@ -276,16 +276,21 @@ var namesWithoutBy = map[string]bool{
 	"translated": true, "translation": true,
 }
 
-// maxContributorWords bounds the name skipContributor passes over, so a title
-// after the name ("Narrated by Jen Taylor Silent Storm") is still read.
-const maxContributorWords = 2
+// maxContributorWords bounds each name skipContributor passes over, so a
+// title after the name ("Narrated by Jen Taylor Silent Storm") is still read.
+// Words of one or two letters ("R.", "Jo") do not count, so "Mary Jo Smith
+// Jones" is one name.
+const maxContributorWords = 3
 
-// skipContributor returns the index of the first token after a contributor's
-// name that starts at toks[j]: at most maxContributorWords words, where a
-// single letter initial does not count and a hyphenated name counts once. The
-// name also ends at a spaced dash, a "by", other punctuation (but not the
-// period after an initial, "Hazel E. Barnes"), or a bare hyphen that opens a
-// credit to the wanted author ("Barnes-Jean-Paul Sartre").
+// skipContributor returns the index of the first token after the
+// contributors' names that start at toks[j]. It reads a list of names joined
+// by "and", "&" or a comma ("Kate Reading and Michael Kramer", "Michael
+// Kramer, Kate Reading"), each of at most maxContributorWords words, where a
+// hyphenated name counts once. The list ends at a spaced dash, a "by", a
+// bracket or other punctuation (but not the period after an initial, "Hazel
+// E. Barnes"), at a bare hyphen that opens a credit to the wanted author
+// ("Barnes-Jean-Paul Sartre"), at a function word no name carries ("Point
+// of Light"), or at a word that would make a name too long.
 func (si subtitleInfo) skipContributor(toks []relTok, j int) int {
 	start, words := j, 0
 	for ; j < len(toks); j++ {
@@ -299,10 +304,22 @@ func (si subtitleInfo) skipContributor(toks []relTok, j int) int {
 			}
 			continue
 		}
-		if j > start && punctBefore(t) && len(toks[j-1].text) != 1 {
+		if t.text == "and" {
+			words = 0
+			continue
+		}
+		if titleFunctionWords[t.text] {
 			return j
 		}
-		if len(t.text) > 1 {
+		if j > start && punctBefore(t) && len(toks[j-1].text) != 1 {
+			if !strings.Contains(t.sep, ",") || strings.ContainsAny(t.sep, "()[]{}") {
+				return j
+			}
+			words = 0
+		} else if j > start && strings.Contains(t.sep, "&") {
+			words = 0
+		}
+		if len(t.text) > 2 {
 			if words == maxContributorWords {
 				return j
 			}
@@ -310,6 +327,13 @@ func (si subtitleInfo) skipContributor(toks []relTok, j int) int {
 		}
 	}
 	return j
+}
+
+// titleFunctionWords are the short words a title is made with and a person's
+// name is not, so meeting one ends the name skipContributor passes over.
+var titleFunctionWords = map[string]bool{
+	"of": true, "the": true, "a": true, "an": true, "in": true, "on": true,
+	"to": true, "for": true, "with": true, "from": true, "at": true,
 }
 
 // dashRunes are hyphen, en dash and em dash, built from code points so the

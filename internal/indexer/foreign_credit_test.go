@@ -410,6 +410,16 @@ func TestReviewCorpusKeeps(t *testing.T) {
 		{"Dune: Deluxe Edition", "Frank Herbert", "Dune", "1", "Dune 60th Anniversary Edition by Frank Herbert"},
 		{"The Body: A Guide for Occupants", "Bill Bryson", "", "", "The Body Bryson Unabridged by Bill Bryson"},
 		{"Thinking in Systems: A Primer", "Donella H. Meadows", "", "", "Thinking in Systems Meadows - Donella H. Meadows"},
+		// Several narrators, or a name of three words, after a role word
+		// (sixth review of #3640).
+		{"The Way of Kings: The Stormlight Archive, Book 1", "Brandon Sanderson", "", "", "The Way of Kings narrated by Kate Reading and Michael Kramer - Brandon Sanderson"},
+		{"The Way of Kings: The Stormlight Archive, Book 1", "Brandon Sanderson", "", "", "The Way of Kings narrated by Michael Kramer, Kate Reading - Brandon Sanderson"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary narrated by Ray Porter and Jane Doe - Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary narrated by Ray Porter, Jane Doe - Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary narrated by Mary Beth Hurt - Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary narrated Mary Beth Hurt - Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary narrated by Mary Jo Smith Jones - Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary translated by Hans Peter Mueller - Andy Weir"},
 	}
 	for _, c := range cases {
 		if v, ok := corpusVerdict(c); !ok || v != "" {
@@ -464,13 +474,15 @@ func TestReviewCorpusKeeps(t *testing.T) {
 //   - Frankenstein Annotated for Scientists by Mary Shelley  (Frankenstein: Or, The Modern Prometheus, Mary Shelley)
 //
 // Known limits the other way, also not asserted: other books the filter
-// keeps. A role word straight before a title reads the title as the
-// contributor's name, the same shape as "narrated Ray Porter"; a release with
+// keeps. A role word straight before a title of up to three words reads the
+// title as the contributor's name, the same shape as "narrated Ray Porter" and
+// "narrated Mary Beth Hurt"; a release with
 // no credit after its extra words, or with the author before them, is never
 // read by the run on rule; a full title keyword match never reaches it; and a
 // "by" credit that also names the wanted author is not a conflict:
 //   - Halo Narrated Silent Storm - Troy Denning  (Halo: Fireteam Noble)
 //   - Halo Unabridged Narrated Silent Storm - Troy Denning  (Halo: Fireteam Noble)
+//   - Halo narrated Silent Storm Reborn - Troy Denning, Halo narrated Silent Storm Part One - Troy Denning  (Halo: Fireteam Noble)
 //   - Halo.Translated.Silent.Storm-Troy.Denning  (Halo: Fireteam Noble)
 //   - Halo.Oblivion.Troy.Denning.M4B, Halo Oblivion Troy Denning M4B  (Halo: Fireteam Noble)
 //   - Being and Nothingness Nausea - Sartre  (surname only credit)
@@ -496,6 +508,10 @@ func TestReviewCorpusRejects(t *testing.T) {
 		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Annotated Silent Storm by Troy Denning"},
 		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo You Are Not Alone - Troy Denning"},
 		{"Halo: The Fall of Reach", "Eric Nylund", "", "", "Halo Shared Destiny - Eric Nylund"},
+		// A function word ends the name, so a title of three words or more
+		// after a role word is still read (sixth review of #3640).
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo narrated Shadows of Reach - Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo read Point of Light - Troy Denning"},
 		// "Graphic" is not furniture: a graphic adaptation is another book.
 		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens A Graphic History by Yuval Noah Harari"},
 		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Oblivion Master Chief Story - Troy Denning"},
