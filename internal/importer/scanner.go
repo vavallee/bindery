@@ -2074,6 +2074,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// post-placement rollback, which must not treat a shared folder as
 		// this import's to delete.
 		var mergedIntoExistingFolder bool
+		// Whether the audiobook source was a lone file rather than a folder:
+		// a single file usenet job, whose job folder the placement below does
+		// not move and so must be cleaned up afterwards (#3647).
+		var audiobookSourceIsFile bool
 		// Choose hardlink-vs-copy (when auto) against the audiobook root the
 		// files actually land under, not s.libraryDir — they can be on
 		// different mounts and a cross-device hardlink would hard-fail (#1254).
@@ -2303,6 +2307,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					}
 				}
 			} else {
+				audiobookSourceIsFile = true
 				// Shared-folder layout (#1959) for a source that is a single
 				// FILE rather than a folder: a lone .m4b, which is what a
 				// manual import of one audiobook file and a single-file
@@ -2475,6 +2480,15 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, dl.OwnerUserID, withContentCheck(historyMeta, contentCheck))
 		s.recordFixMatchMove(ctx, book, destDir)
 		s.notify(ctx, notifierEventBookImported, withContentCheckPayload(importedPayload(book, dl, models.MediaTypeAudiobook, destDir, mergeSkippedFiles), contentCheck))
+		// A folder source moved wholesale, so nothing is left of it. A lone
+		// file moved out of a usenet job folder leaves that folder behind,
+		// with whatever extras the release carried (#3647). A merge that
+		// skipped a same-named file left that file in the source, so it is
+		// left alone. The sweep prunes the emptied folder itself, behind its
+		// client folder guard, so no cleanupMovedSources here.
+		if mode == "move" && audiobookSourceIsFile && len(mergeSkippedFiles) == 0 && isUsenetClient(cleanupClientType) {
+			s.sweepUsenetJobExtras(ctx, audiobookSource, []string{audiobookSource}, bookFiles)
+		}
 		if cleanupFunc != nil {
 			if err := cleanupFunc(); err != nil {
 				slog.Warn("cleanup failed", cleanupWarnAttrs(cleanupClientType, cleanupRemoteID, err)...)
@@ -2816,6 +2830,13 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// a shared root or sibling data.
 		if configuredMode == "move" {
 			s.cleanupMovedSources(downloadPath, importedSrcFiles)
+			// A usenet job's own folder is not a shared save root and
+			// nothing seeds from it, so the release extras the book came
+			// with (.nfo, cover scans, par2) go too, under the guards in
+			// sweepUsenetJobExtras (#3647). Never for a torrent.
+			if isUsenetClient(cleanupClientType) {
+				s.sweepUsenetJobExtras(ctx, downloadPath, importedSrcFiles, bookFiles)
+			}
 		}
 		if cleanupFunc != nil {
 			if err := cleanupFunc(); err != nil {
@@ -2835,41 +2856,16 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 // already deletes the source file on a successful move, so most entries here
 // are no-ops on the file itself; the value is the empty-directory pruning.
 func (s *Scanner) cleanupMovedSources(downloadPath string, importedSrcFiles []string) {
-	cleanDownloadPath := filepath.Clean(downloadPath)
-
-	// pruneRoot is the boundary directory the cleanup is allowed to remove up to
-	// (inclusive). It is normally the download path itself. But a single-file
-	// usenet job resolves downloadPath to the *file*, not its containing folder
-	// (SABnzbd/NZBGet report the storage path of the single file) — and every
-	// guard below is "at or under downloadPath", which a file's parent is not.
-	// The result was the now-empty job folder being left behind after an
-	// otherwise-clean ebook import (cleb's report; audiobooks escaped it because
-	// they move the whole directory via MoveDirCtx). When downloadPath is a
-	// file, prune from its parent folder instead.
-	pruneRoot := cleanDownloadPath
-	if downloadPathIsFile(cleanDownloadPath, importedSrcFiles) {
-		pruneRoot = filepath.Dir(cleanDownloadPath)
-	}
-
-	// Refuse to prune if pruneRoot is empty, relative, the filesystem root, or
-	// equal to / an ancestor of a configured library root. This is a
-	// belt-and-braces guard on top of the os.Remove non-empty-dir protection.
-	if pruneRoot == "" || pruneRoot == "." ||
-		pruneRoot == string(filepath.Separator) ||
-		!filepath.IsAbs(pruneRoot) {
+	pruneRoot, refusal := s.movePruneRoot(downloadPath, importedSrcFiles)
+	switch refusal {
+	case "":
+	case pruneRefusedUnsafe:
 		slog.Warn("move cleanup: refusing to prune unsafe download path", "path", downloadPath)
 		return
-	}
-	for _, root := range []string{s.libraryDir, s.audiobookDir} {
-		if root == "" {
-			continue
-		}
-		cleanRoot := filepath.Clean(root)
-		if pruneRoot == cleanRoot || pathUnderDir(cleanRoot, pruneRoot) {
-			slog.Warn("move cleanup: download path equals or contains a library root — skipping cleanup",
-				"downloadPath", cleanDownloadPath, "pruneRoot", pruneRoot, "libraryRoot", cleanRoot)
-			return
-		}
+	default:
+		slog.Warn("move cleanup: download path equals or contains a library root, skipping cleanup",
+			"downloadPath", filepath.Clean(downloadPath), "pruneRoot", pruneRoot, "libraryRoot", refusal)
+		return
 	}
 
 	// dirsToPrune collects every directory at or below pruneRoot that may now
@@ -2922,6 +2918,50 @@ func (s *Scanner) cleanupMovedSources(downloadPath string, importedSrcFiles []st
 		}
 		slog.Debug("move cleanup: pruned empty directory", "dir", dir)
 	}
+}
+
+// pruneRefusedUnsafe is movePruneRoot's refusal for a path that is empty,
+// relative or the filesystem root. Any other non-empty refusal is the library
+// root the path equals or contains.
+const pruneRefusedUnsafe = "unsafe"
+
+// movePruneRoot returns the folder move mode cleanup may prune up to
+// (inclusive), and a non-empty refusal when it must not prune at all.
+func (s *Scanner) movePruneRoot(downloadPath string, importedSrcFiles []string) (string, string) {
+	cleanDownloadPath := filepath.Clean(downloadPath)
+
+	// pruneRoot is the boundary directory the cleanup is allowed to remove up to
+	// (inclusive). It is normally the download path itself. But a single-file
+	// usenet job resolves downloadPath to the *file*, not its containing folder
+	// (SABnzbd/NZBGet report the storage path of the single file), and every
+	// guard below is "at or under downloadPath", which a file's parent is not.
+	// The result was the now-empty job folder being left behind after an
+	// otherwise-clean ebook import (cleb's report; audiobooks escaped it because
+	// they move the whole directory via MoveDirCtx). When downloadPath is a
+	// file, prune from its parent folder instead.
+	pruneRoot := cleanDownloadPath
+	if downloadPathIsFile(cleanDownloadPath, importedSrcFiles) {
+		pruneRoot = filepath.Dir(cleanDownloadPath)
+	}
+
+	// Refuse to prune if pruneRoot is empty, relative, the filesystem root, or
+	// equal to / an ancestor of a configured library root. This is a
+	// belt-and-braces guard on top of the os.Remove non-empty-dir protection.
+	if pruneRoot == "" || pruneRoot == "." ||
+		pruneRoot == string(filepath.Separator) ||
+		!filepath.IsAbs(pruneRoot) {
+		return pruneRoot, pruneRefusedUnsafe
+	}
+	for _, root := range []string{s.libraryDir, s.audiobookDir} {
+		if root == "" {
+			continue
+		}
+		cleanRoot := filepath.Clean(root)
+		if pruneRoot == cleanRoot || pathUnderDir(cleanRoot, pruneRoot) {
+			return pruneRoot, cleanRoot
+		}
+	}
+	return pruneRoot, ""
 }
 
 // downloadPathIsFile reports whether cleanDownloadPath refers to a single file
