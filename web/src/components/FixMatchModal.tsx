@@ -302,6 +302,8 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
                 </dt>
                 <dd className="font-mono break-all text-slate-700 dark:text-zinc-300">{path}</dd>
               </div>
+              {/* A refused move goes nowhere, so no destination is named. */}
+              {!previewRefused && (
               <div>
                 <dt className="text-fg-muted">
                   {t('bookDetail.fixMatch.destinationLabel', 'It will be moved to')}
@@ -323,6 +325,7 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
                   )}
                 </dd>
               </div>
+              )}
             </dl>
             )}
 

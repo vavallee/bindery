@@ -200,6 +200,9 @@ describe('FixMatchModal', () => {
 
     expect(await screen.findByText(/another book tracks/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Move and reassign' })).toBeDisabled()
+    // Nothing will move, so no destination is named.
+    expect(screen.queryByText('It will be moved to')).not.toBeInTheDocument()
+    expect(screen.queryByText(DEST)).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('radio', { name: /Correct the match only/ }))
     expect(screen.getByRole('button', { name: 'Reassign' })).not.toBeDisabled()

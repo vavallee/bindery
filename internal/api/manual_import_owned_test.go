@@ -286,6 +286,13 @@ func TestFixMatch_AudiobookFolderHoldingOtherFile_RefusedBeforeDetach(t *testing
 	if files := f.files(t, f.right.ID); len(files) != 0 {
 		t.Errorf("target got rows %+v, want none", files)
 	}
+	// A refusal creates no synthetic download: a completed one left behind
+	// would sit in the Queue and be requeued by boot recovery.
+	if all, err := f.downloads.List(context.Background()); err != nil {
+		t.Fatal(err)
+	} else if len(all) != 0 {
+		t.Errorf("refused Fix match left %d download rows (%+v), want none", len(all), all)
+	}
 	for _, p := range []string{audio, ebook} {
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("%s moved: %v", p, err)
