@@ -397,11 +397,13 @@ func TestTryImportInternal_HistoryEventIncludesFormat(t *testing.T) {
 		t.Fatal("Bug #13: no bookImported history event was created")
 	}
 
-	var data map[string]string
+	// Import rows mix string fields with the "paths" array (#3248), so
+	// decode loosely and type-check the field under test.
+	var data map[string]any
 	if err := json.Unmarshal([]byte(events[0].Data), &data); err != nil {
 		t.Fatalf("unmarshal history event data: %v", err)
 	}
-	if got := data["format"]; got != models.MediaTypeEbook {
+	if got, _ := data["format"].(string); got != models.MediaTypeEbook {
 		t.Errorf("Bug #13: history event missing format field: got %q, want %q — user cannot tell ebook vs audiobook was imported", got, models.MediaTypeEbook)
 	}
 }
