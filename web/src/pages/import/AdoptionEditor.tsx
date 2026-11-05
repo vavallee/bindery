@@ -35,16 +35,16 @@ export function StatusPill({ status, monitored }: { status: string; monitored: b
   )
 }
 
-// AdoptionEditor opens in place under its row, never as a dialog: the
-// suggestions as radio rows with their scores, a search of the library,
-// prefilled and focused, and a collapsed metadata search that asks a provider
-// only when submitted. Esc closes it and focus goes back to the row.
 // foldSeriesTitle compares series names loosely for the preselection only:
 // case, punctuation and spacing differences do not count.
 function foldSeriesTitle(title: string): string {
   return title.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
 }
 
+// AdoptionEditor opens in place under its row, never as a dialog: the
+// suggestions as radio rows with their scores, a search of the library,
+// prefilled and focused, and a collapsed metadata search that asks a provider
+// only when submitted. Esc closes it and focus goes back to the row.
 export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = false }: Props) {
   const { t } = useTranslation()
   const headingId = useId()
