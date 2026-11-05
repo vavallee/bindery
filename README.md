@@ -166,11 +166,11 @@ Being upfront saves everyone time. These are tracked, and the [roadmap](docs/ROA
 <details>
 <summary><strong>Importing and organising</strong></summary>
 
-- Completed downloads are placed in your library with your naming template. Import modes: Auto (hardlink when it can so torrents keep seeding, otherwise copy; Usenet is moved), Move, Copy, Hardlink, or External to hand off to another tool. Moves across filesystems are copied, verified and then removed.
+- Completed downloads are placed in your library with your naming template. Import modes: Auto (hardlink when it can so torrents keep seeding, otherwise copy; Usenet is moved), Move, Copy, Hardlink, or External to hand off to another tool. Moves across filesystems are copied, verified and then removed. A second book that renders to a taken file name lands beside it as `Name (2).epub` instead of overwriting anything.
 - Content checks before import: the embedded title, author and language of EPUB, Kindle and audio files are compared with the book, and a wrong book is refused, blocklisted and searched again.
 - Naming tokens including `{Author}`, `{SortAuthor}`, `{Title}`, `{Year}`, `{Series}`, `{SeriesNumber}`, `{Genre}`, `{Lang}`, `{Narrator}` and `{ASIN}`, with conditional literals and zero padding. Reorganize renames an existing library to a new template.
 - Several ebook formats of one book are kept side by side, and EPUB is served first in downloads and OPDS.
-- Library adoption: a scan matches files already on disk, and whatever it cannot match waits on the Import page with suggested matches, an Add author choice and Undo. Files are registered where they are and never moved. Series and position written in a folder path are shown as a hint.
+- Library adoption: a scan matches files already on disk, and whatever it cannot match waits on the Import page with suggested matches, an Add author choice and Undo. Files are registered where they are and never moved. When a folder path names a series and position, such as `Discworld/08 - Guards! Guards!`, you can put the book in that series as you adopt it.
 - Import from a folder for one off imports, with a metadata search to create a book when nothing in the catalogue fits.
 - Manual metadata edits with field locks that survive refresh, Fix match for a file attached to the wrong book, Re-bind to a different provider record, author aliases, and a duplicate review.
 - Optional Calibre style `metadata.opf` written next to each book.
@@ -185,6 +185,7 @@ Being upfront saves everyone time. These are tracked, and the [roadmap](docs/ROA
 - Requests: a requester account browses read only and asks for books or authors. Admins approve from a queue and the added books belong to the person who asked. Accounts can auto approve with a daily quota, pending requests are capped (25 by default), and request front ends can file on a user's behalf.
 - Webhook notifications for grabs, imports, failures, new books found, new requests and health changes, ready for Apprise, ntfy, Home Assistant, Discord or Slack.
 - Backups on demand, restore from the UI, a database integrity check, and `bindery db-check` and `bindery db-repair` for an instance that will not start.
+- History records where each import came from: the release, indexer, download client and the exact files placed.
 - A log viewer with a runtime debug switch, log download for bug reports, and an *arr compatible queue at `/api/queue` for tools like Harpoon.
 
 </details>
