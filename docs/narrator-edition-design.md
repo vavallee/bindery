@@ -77,7 +77,7 @@ unabridged with several voices, a dramatisation adapts it.
   list without any data rewrite, and an install that never touches the feature
   sees no change.
 - Writers fill the list when they know it (ABS import has the names as an array
-  already). A narrator the user locked on the book (#3216) is not overwritten.
+  already). The edition list is not covered by the narrator lock work in #3216 (#3498 and #3503, not merged when this was written), so an import can rewrite it. The book's narrator string stays the editable value and wins over the edition list when the two differ, so a user edit is never hidden. Honouring the locks on the edition list is phase 2.
 - Splitting is only used as a fallback for display and matching. It is never
   written back over a stored list.
 
