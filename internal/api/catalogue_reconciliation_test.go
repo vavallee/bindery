@@ -849,8 +849,13 @@ func TestBuildCatalogueReconciliation_UsesConservativeEditionAndIdentityEvidence
 	assertIndeterminateRow(t, got, dnb, reconcileIndeterminateReasonEditionUnavailable)
 	assertIndeterminateRow(t, got, editionUnknown, reconcileIndeterminateReasonEditionUnavailable)
 	assertIndeterminateRow(t, got, fallbackProvider, reconcileIndeterminateReasonUnmatchedCrossProvider)
-	if got.Summary.ProtectedStatus < 3 {
-		t.Errorf("protected status = %d, want skipped, other-owner and unowned rows", got.Summary.ProtectedStatus)
+	if got.Summary.ProtectedStatus < 2 {
+		t.Errorf("protected status = %d, want skipped and unowned rows", got.Summary.ProtectedStatus)
+	}
+	// Another account's book under the shared author is not counted at all:
+	// a total that includes it tells the caller it exists.
+	if want := 10; got.Summary.Total != want {
+		t.Errorf("total = %d, want %d (the caller's nine rows plus the unowned one, not the other account's)", got.Summary.Total, want)
 	}
 	for _, protected := range []*models.Book{noID, dnb, editionUnknown, alias, titleMatch, fallbackProvider, skippedStatus, nonOwner, unowned} {
 		if book, err := f.books.GetByID(context.Background(), protected.ID); err != nil || book == nil {

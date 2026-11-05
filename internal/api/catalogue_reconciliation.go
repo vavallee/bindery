@@ -339,7 +339,10 @@ func (h *AuthorHandler) buildCatalogueReconciliation(ctx context.Context, author
 		}
 	}
 
-	localBooks, err := h.books.ListByAuthorIncludingExcluded(ctx, author.ID)
+	// Scoped to the caller: the summary counts every listed row, so listing
+	// another account's books under a shared author would let a user learn
+	// how many books other libraries hold there.
+	localBooks, err := h.books.ListByAuthorIncludingExcludedAndUser(ctx, author.ID, auth.ListScopeUserID(ctx))
 	if err != nil {
 		return CatalogueReconciliation{}, fmt.Errorf("list local author catalogue: %w", err)
 	}

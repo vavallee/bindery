@@ -32,6 +32,19 @@ func cleanGenreList(genres []string) []string {
 	return cleaned
 }
 
+// writableBooks returns the books auth.CheckWriteOwnership lets the caller
+// change, in order. A fresh slice is returned; the input is left alone. With
+// tenancy off, or for an admin, every book is kept.
+func writableBooks(ctx context.Context, books []models.Book) []models.Book {
+	out := make([]models.Book, 0, len(books))
+	for i := range books {
+		if auth.CheckWriteOwnership(ctx, books[i].OwnerUserID) {
+			out = append(out, books[i])
+		}
+	}
+	return out
+}
+
 // applyGenresToBooks sets + locks the genre list on each book and persists
 // it. Returns how many rows were updated; the first persistence error aborts
 // (partial application is reported via the count so the client can retry —
@@ -81,7 +94,9 @@ func (h *AuthorHandler) ApplyGenres(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	updated, err := applyGenresToBooks(r.Context(), h.books, books, cleanGenreList(req.Genres))
+	// Only the books the caller may write: a shared author can hold other
+	// accounts' books and unowned ones.
+	updated, err := applyGenresToBooks(r.Context(), h.books, writableBooks(r.Context(), books), cleanGenreList(req.Genres))
 	if err != nil {
 		writeServerError(w, r, err)
 		return
@@ -110,17 +125,38 @@ func (h *SeriesHandler) ApplyGenres(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	books, err := h.series.ListBooksInSeries(r.Context(), series.ID)
+	members, err := h.series.ListBooksInSeries(r.Context(), series.ID)
 	if err != nil {
 		writeServerError(w, r, err)
 		return
+	}
+	// ListBooksInSeries is a partial projection, and BookRepo.Update writes
+	// every column, so the write goes through the full stored rows. Otherwise
+	// each book in the series loses its description, file paths, other locks
+	// and every column the projection leaves out.
+	ids := make([]int64, len(members))
+	for i := range members {
+		ids[i] = members[i].ID
+	}
+	full, err := h.books.GetByIDs(r.Context(), ids)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	books := make([]models.Book, 0, len(members))
+	for _, id := range ids {
+		if b, ok := full[id]; ok {
+			books = append(books, *b)
+		}
 	}
 	genres := cleanGenreList(req.Genres)
 	if err := h.series.SetGenreOverride(r.Context(), series.ID, genres); err != nil {
 		writeServerError(w, r, err)
 		return
 	}
-	updated, err := applyGenresToBooks(r.Context(), h.books, books, genres)
+	// The route is admin only, so this keeps every book today; it stays as the
+	// per book write gate in case the route is ever opened to users.
+	updated, err := applyGenresToBooks(r.Context(), h.books, writableBooks(r.Context(), books), genres)
 	if err != nil {
 		writeServerError(w, r, err)
 		return

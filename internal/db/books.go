@@ -494,6 +494,14 @@ func (r *BookRepo) ListIncludingExcluded(ctx context.Context) ([]models.Book, er
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" ORDER BY books.sort_key, sort_title", nil)
 }
 
+// ListIncludingExcludedAndUser is ListIncludingExcluded scoped to a user's own
+// + unowned books (userID 0 leaves it unscoped, for admins and single-tenant
+// deployments).
+func (r *BookRepo) ListIncludingExcludedAndUser(ctx context.Context, userID int64) ([]models.Book, error) {
+	where, args := QueryScopeForIncludingNull("books.owner_user_id", "", userID)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY books.sort_key, sort_title", args)
+}
+
 func (r *BookRepo) ListByAuthor(ctx context.Context, authorID int64) ([]models.Book, error) {
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE author_id = ? AND excluded = 0 ORDER BY release_date", []any{authorID})
 }
@@ -506,6 +514,15 @@ func (r *BookRepo) ListByAuthorAndUser(ctx context.Context, authorID, userID int
 // ListByAuthorIncludingExcluded returns all books for an author regardless of excluded flag.
 func (r *BookRepo) ListByAuthorIncludingExcluded(ctx context.Context, authorID int64) ([]models.Book, error) {
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE author_id = ? ORDER BY release_date", []any{authorID})
+}
+
+// ListByAuthorIncludingExcludedAndUser is ListByAuthorIncludingExcluded scoped
+// to a user's own + unowned books (userID 0 leaves it unscoped). Use it for any
+// read that answers an HTTP caller: a shared author can hold other accounts'
+// books.
+func (r *BookRepo) ListByAuthorIncludingExcludedAndUser(ctx context.Context, authorID, userID int64) ([]models.Book, error) {
+	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE author_id = ?", userID, authorID)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY release_date", args)
 }
 
 func (r *BookRepo) ListByStatus(ctx context.Context, status string) ([]models.Book, error) {
