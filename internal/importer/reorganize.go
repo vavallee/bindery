@@ -230,6 +230,18 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 	} else if owned {
 		return dest, ReorgStatusCollision, "another book already tracks the destination path"
 	}
+	// A destination below a folder another book tracks (an audiobook row
+	// covers its whole folder) is not this book's to move into: a later
+	// Reorganize of that folder would carry the file off while this book's
+	// row kept the old path (#3599). Import refuses the same destination
+	// (#3570), so the Fix match preview, which runs through here, now agrees
+	// with it. A row left by a deleted book owns nothing and does not count.
+	if under, err := s.books.PathUnderLiveOtherBookDir(ctx, dest, book.ID); err != nil {
+		return dest, ReorgStatusError, err.Error()
+	} else if under {
+		return dest, ReorgStatusCollision, "the destination is inside a folder another book tracks; " +
+			"remove the duplicate book or change the naming template so the two books do not share a folder"
+	}
 	return dest, ReorgStatusMove, ""
 }
 

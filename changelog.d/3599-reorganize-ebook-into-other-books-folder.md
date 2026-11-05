@@ -1,0 +1,2 @@
+### Fixed
+- **Reorganize no longer moves an ebook into another book's folder** (#3599). When a book's naming template renders its ebook inside a folder a different book tracks (that book's audiobook folder, say), Rename files now shows the file as Destination exists with the reason and leaves it where it is. Moving it there would have let a later Reorganize of that folder carry the ebook away from its book. The Fix match destination preview reports the same, matching the import, which already refuses that destination.
