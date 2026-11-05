@@ -53,6 +53,9 @@ const (
 	// auto-promoted to admin because the system had zero admins, this flag is
 	// set so deleting every admin later cannot silently re-trigger promotion.
 	SettingOIDCFirstAdminPromoted = "auth.oidc.first_admin_promoted" //nolint:gosec // setting key name, not a credential
+	// SettingProxyFirstAdminPromoted is the one shot guard for promoting the
+	// first proxy provisioned account to admin; see promoteFirstProxyUser.
+	SettingProxyFirstAdminPromoted = "auth.proxy.first_admin_promoted" //nolint:gosec // setting key name, not a credential
 )
 
 // AuthHandler owns the login / setup / password / mode endpoints.

@@ -1,2 +1,2 @@
 ### Fixed
-- **Harden first run setup** (#1463) - the setup endpoint now expects a JSON request body, and is not offered while local sign in is off and another sign in method is configured; the login page is shown instead.
+- **Harden first run setup** (#1463, #3622). The setup endpoint now expects a JSON request body, which keeps a cross site form from creating the first admin. When local sign in is off and an OIDC provider or proxy mode is configured, setup is not offered and the login page is shown instead. The first account that signs in through OIDC, or is created by the proxy, becomes the admin, once, if no admin exists yet.
