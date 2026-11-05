@@ -89,3 +89,36 @@ func TestProxyProvisioning_PromotesOnlyOnce(t *testing.T) {
 		t.Fatalf("later proxy user role = %q, want user: promotion is one shot", got)
 	}
 }
+
+// An install that already has accounts but no admin (an older version let a
+// proxy login beat first run setup) must not hand admin to the next new
+// identity the proxy sends; the operator recovers with the API key instead.
+func TestProxyProvisioning_NoPromotionOnAnInstallThatAlreadyHasUsers(t *testing.T) {
+	p, users := newProxyProvisioner(t, false)
+	ctx := context.Background()
+	operator, err := users.Create(ctx, "operator@example.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stranger, err := p.ResolveOrProvisionUser(ctx, "stranger@example.com", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roleOf(t, users, stranger); got != auth.RoleUser {
+		t.Fatalf("new proxy user on an existing install got %q, want user", got)
+	}
+	if got := roleOf(t, users, operator.ID); got != auth.RoleUser {
+		t.Fatalf("operator role changed to %q", got)
+	}
+}
+
+func TestProxyProvisioning_NoAutoProvisionLeavesUnknownUsersOut(t *testing.T) {
+	p, users := newProxyProvisioner(t, false)
+	id, err := p.ResolveOrProvisionUser(context.Background(), "alice@example.com", false)
+	if err != nil || id != 0 {
+		t.Fatalf("auto provisioning off resolved an unknown user to %d (%v), want 0", id, err)
+	}
+	if n, _ := users.Count(context.Background()); n != 0 {
+		t.Fatalf("users = %d, want none created", n)
+	}
+}

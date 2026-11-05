@@ -1676,7 +1676,7 @@ func (p *dbUserProvisioner) ResolveOrProvisionUser(ctx context.Context, username
 
 // promoteFirstProxyUser makes a just provisioned proxy account the admin when
 // nothing else can create one: local sign in is off, so first run setup is
-// refused, and no admin exists. It mirrors the OIDC promote first rule
+// refused, no admin exists, and this is the install's first account. It mirrors the OIDC promote first rule
 // (resolveProvisionRole in internal/api/auth_oidc.go), including the one shot
 // guard, so deleting every admin later never promotes the next proxy login and
 // two simultaneous first logins promote exactly one. Any error leaves the
@@ -1687,6 +1687,14 @@ func (p *dbUserProvisioner) promoteFirstProxyUser(ctx context.Context, userID in
 	}
 	admins, err := p.users.CountAdmins(ctx)
 	if err != nil || admins != 0 {
+		return
+	}
+	// Only the first account the install ever had. On an install that
+	// already has users but no admin (an older version let a proxy login
+	// beat setup), the operator's account exists already and is never
+	// re-provisioned, so promoting whoever the proxy sends next would hand
+	// admin to a stranger. Those installs recover with the API key.
+	if lowest, err := p.users.LowestID(ctx); err != nil || lowest != userID {
 		return
 	}
 	won, err := p.settings.SetIfAbsent(ctx, api.SettingProxyFirstAdminPromoted, "true")

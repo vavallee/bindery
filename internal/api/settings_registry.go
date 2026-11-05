@@ -584,6 +584,11 @@ var settingDescriptors = []SettingDescriptor{
 		Description: "One shot guard recording that an OIDC user has already been auto promoted to admin, so deleting every admin cannot trigger promotion again.",
 		State:       SettingStateInternal,
 	},
+	{
+		Key: SettingProxyFirstAdminPromoted, Type: SettingTypeBool, Default: "false",
+		Description: "One shot guard recording that the first proxy provisioned account has already been promoted to admin, so deleting every admin cannot trigger promotion again.",
+		State:       SettingStateInternal,
+	},
 
 	// Job state Bindery writes for itself.
 	{
