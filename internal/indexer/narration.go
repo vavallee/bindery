@@ -37,7 +37,11 @@ var (
 	// "X (narrator)" at the start of the title or after a separator.
 	narrTagRe = regexp.MustCompile(`(?i)(?:^|\s[-\x{2013}]\s|\|\s*)([^\-\x{2013}\|\[\(]+?)\s*[\(\[]\s*narrator\s*[\)\]]`)
 
-	narrTrailRe = regexp.MustCompile(`(?i)\s+(?:unabridged|abridged|dramati[sz]ed|full[\s\-]+cast|audiobook|m4b|mp3|flac|m4a|ogg|\d{4})\b.*$`)
+	// Credits after the narrator: "translated by X", "edited by X", and so on.
+	narrOtherRoleRe = regexp.MustCompile(`(?i)[,;]?\s*\b(?:translated|translator|edited|illustrated|introduced|written|abridged)\s+by\b.*$`)
+	// A dash that opens a new field, with or without a closing space:
+	// " - Dune", " -Unabridged-".
+	narrDashCutRe = regexp.MustCompile(`\s[-\x{2013}\x{2014}].*$`)
 )
 
 // ParseNarration reads the edition type and narrators a release title states.
@@ -47,7 +51,7 @@ var (
 func ParseNarration(title string, bookTitles []string, authors []string) Narration {
 	n := Narration{Narrators: []string{}}
 	n.EditionType = parseEditionType(title, bookTitles, authors)
-	n.Narrators = parseNarrators(title)
+	n.Narrators = parseNarrators(title, bookTitles, authors)
 	return n
 }
 
@@ -119,7 +123,10 @@ func parseEditionType(title string, bookTitles, authors []string) string {
 // "performed by" and "NAME (narrator)". A bare name anywhere else in a title is
 // never a narrator, and "by NAME" alone is the author credit. Two shapes that
 // disagree give unknown.
-func parseNarrators(title string) []string {
+func parseNarrators(title string, bookTitles, authors []string) []string {
+	// The wanted book's own title is removed first, so "Why I Read By
+	// Candlelight" is a title and not a "read by" credit.
+	title, _ = stripKnown(title, bookTitles)
 	var found [][]string
 	for _, m := range narrByRe.FindAllStringSubmatch(title, -1) {
 		credit := narrDashRe.Split(m[1], 2)[0]
@@ -128,7 +135,7 @@ func parseNarrators(title string) []string {
 		}
 	}
 	for _, m := range narrTagRe.FindAllStringSubmatch(title, -1) {
-		if names := splitReleaseNames(m[1]); len(names) > 0 {
+		if names := tagNames(m[1], authors); len(names) > 0 {
 			found = append(found, names)
 		}
 	}
@@ -156,24 +163,85 @@ func sameNames(a, b []string) bool {
 	return true
 }
 
-// splitReleaseNames turns the text after "read by" into names. Every name must
-// look like a person: two to five words, letters and name punctuation only. One
-// bad name makes the whole credit unknown.
+// narrStopWords are words that follow a narrator's name in a release title
+// (format, language, publisher, edition words) and are never part of one.
+var narrStopWords = map[string]bool{
+	"audible": true, "retail": true, "english": true, "epub": true, "pdf": true,
+	"mobi": true, "azw": true, "azw3": true, "m4b": true, "m4a": true, "mp3": true,
+	"flac": true, "ogg": true, "aac": true, "audiobook": true, "audiobooks": true,
+	"unabridged": true, "abridged": true, "dramatized": true, "dramatised": true,
+	"studios": true, "audio": true, "publishing": true, "press": true, "records": true,
+	"productions": true, "entertainment": true, "llc": true, "inc": true, "ltd": true,
+	"books": true, "kbps": true,
+}
+
+func isStopToken(w string) bool {
+	w = strings.ToLower(strings.Trim(w, ".-_()[]"))
+	if narrStopWords[w] {
+		return true
+	}
+	if len(w) == 4 && (strings.HasPrefix(w, "19") || strings.HasPrefix(w, "20")) {
+		return true
+	}
+	return strings.HasSuffix(w, "kbps")
+}
+
+// splitReleaseNames turns the text after "read by" into names. The text is cut
+// at another credit ("translated by"), at a dash field and at trailing format,
+// publisher or edition words. A name list stops at the first entry that is
+// nothing but such words ("Scott Brick, Audible Studios"). Every remaining name
+// must look like a person; one that does not makes the credit unknown, and so
+// does a credit that starts "the author", which names a role and not a person.
 func splitReleaseNames(s string) []string {
-	s = narrTrailRe.ReplaceAllString(" "+s, "")
-	s = strings.NewReplacer(" & ", ",", " and ", ",", " And ", ",", ";", ",").Replace(s)
+	s = narrOtherRoleRe.ReplaceAllString(s, "")
+	s = narrDashCutRe.ReplaceAllString(" "+s, "")
+	s = strings.NewReplacer(" & ", ",", " and ", ",", " And ", ",", " with ", ",", " With ", ",", ";", ",").Replace(s)
 	var out []string
 	for _, part := range strings.Split(s, ",") {
-		part = strings.Join(strings.Fields(part), " ")
-		if part == "" {
-			continue
+		words := strings.Fields(part)
+		for len(words) > 0 && isStopToken(words[len(words)-1]) {
+			words = words[:len(words)-1]
 		}
-		if !plausibleName(part) {
+		if len(words) == 0 {
+			break
+		}
+		if strings.EqualFold(words[0], "the") {
 			return nil
 		}
-		out = append(out, part)
+		name := strings.Join(words, " ")
+		if !plausibleName(name) {
+			return nil
+		}
+		out = append(out, name)
 	}
 	return models.CleanNarrators(out)
+}
+
+// tagNames reads the text before "(narrator)". With several fields separated by
+// a semicolon only the last one is the narrator. A list of names loses any that
+// are the book's author, because an author listed beside a narrator is the
+// author credit. A lone name is kept, as it is stated outright.
+func tagNames(s string, authors []string) []string {
+	if i := strings.LastIndex(s, ";"); i >= 0 {
+		s = s[i+1:]
+	}
+	names := splitReleaseNames(s)
+	if len(names) < 2 || len(authors) == 0 {
+		return names
+	}
+	isAuthor := map[string]bool{}
+	for _, a := range authors {
+		if k := models.FoldName(a); k != "" {
+			isAuthor[k] = true
+		}
+	}
+	kept := names[:0:0]
+	for _, n := range names {
+		if !isAuthor[models.FoldName(n)] {
+			kept = append(kept, n)
+		}
+	}
+	return kept
 }
 
 func plausibleName(s string) bool {

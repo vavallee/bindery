@@ -444,8 +444,15 @@ func (h *BookHandler) attachRecording(ctx context.Context, book *models.Book) {
 		if ed.IsEbook || (len(ed.Narrators) == 0 && ed.EditionType == "") {
 			continue
 		}
-		book.Narrators = models.EffectiveNarrators(ed.Narrators, book.Narrator)
 		book.EditionType = ed.EditionType
+		// The book's narrator string is the editable value, so a user edit
+		// wins. The edition's list is shown only while it still says what the
+		// string says (the importer writes both together, joined with ", ") or
+		// the string is empty.
+		if len(ed.Narrators) > 0 && (strings.TrimSpace(book.Narrator) == "" ||
+			strings.TrimSpace(book.Narrator) == strings.Join(ed.Narrators, ", ")) {
+			book.Narrators = ed.Narrators
+		}
 		return
 	}
 }
