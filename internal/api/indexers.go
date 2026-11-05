@@ -698,8 +698,11 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 		crit.Year = book.ReleaseDate.Year()
 	}
 	// What the library knows about the wanted book, for the relevance filter
-	// (#3268). Two reads per search; the author's titles are scoped to the
-	// caller like every other book listing.
+	// (#3268). Two reads per search. The author's titles are scoped to the
+	// book's owner, as the automatic search and the importer scope them, so all
+	// three judge one book the same way (#3247). The ownership check above has
+	// already established the caller may see this book; for the owner this is
+	// the caller.
 	indexer.WarnLibraryContextMissing(&h.libraryContextWarn, "interactive search", h.series == nil, h.books == nil)
 	var seriesRead indexer.SeriesReader
 	if h.series != nil {
@@ -707,9 +710,9 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	}
 	var booksRead indexer.AuthorBooksReader
 	if h.books != nil {
-		uid := auth.UserIDFromContext(r.Context())
+		owner := book.OwnerUserID
 		booksRead = func(ctx context.Context, authorID int64) ([]models.Book, error) {
-			return h.books.ListByAuthorAndUser(ctx, authorID, uid)
+			return h.books.ListByAuthorAndUser(ctx, authorID, owner)
 		}
 	}
 	crit.SetLibraryContext(r.Context(), *book, seriesRead, booksRead)

@@ -25,7 +25,7 @@ func TestMultiBookPackMarkerFor_ThreadPacks(t *testing.T) {
 		// The range directly after the wanted book's core title. Grabbed and
 		// imported for book 1; the folder then held books 1 and 2.
 		{"Dominion of Blades 1-2", dominionOfBlades, "Dominion of Blades 1-2"},
-		{"Dominion.of.Blades.1-2.M4B", dominionOfBlades, "Dominion.of.Blades.1-2"},
+		{"Dominion.of.Blades.1-2.EPUB", dominionOfBlades, "Dominion.of.Blades.1-2"},
 		// kennethp1015's two releases, both auto-grabbed and imported as the
 		// single wanted book.
 		{
@@ -39,6 +39,13 @@ func TestMultiBookPackMarkerFor_ThreadPacks(t *testing.T) {
 		// The same series range without the title list, and without padding.
 		{"Debbie Macomber - [Heart of Texas 01-03] (epub)", macomberCarolinesChild, "Heart of Texas 01-03"},
 		{"Debbie Macomber - Heart of Texas 1-3 (epub)", macomberCarolinesChild, "Heart of Texas 1-3"},
+		{"Dominion of Blades 1-20", dominionOfBlades, "Dominion of Blades 1-20"},
+		// The wanted book plus one other library title still counts two.
+		{
+			"Brandon Sanderson - Mistborn; The Well of Ascension (epub)",
+			PackContext{Title: "Mistborn: The Final Empire", AuthorTitles: []string{"The Final Empire", "The Well of Ascension"}},
+			"Mistborn; The Well of Ascension",
+		},
 		// The title list alone, with no series range to find first.
 		{
 			"Debbie Macomber - Lonesome Cowboy; Texas Two-Step; Caroline's Child (v5.0) (epub)",
@@ -74,6 +81,21 @@ func TestMultiBookPackMarkerFor_SingleBooks(t *testing.T) {
 		{"The Chamber; A Novel - John Grisham", grishamChamber, "one library title in a list is one book"},
 		{"The Firm; The Appeal; The Chamber", PackContext{Title: "Chamber"}, "with no other library titles there is nothing to check the items against"},
 		{"Heart of Texas Book 3 - Caroline's Child", macomberCarolinesChild, "a series position, not a range"},
+		// Track and disc counts in audio releases (review of #3642).
+		{"Frank Herbert - Dune 1-49 [mp3]", PackContext{Title: "Dune"}, "an unpadded track count after the title"},
+		{"Stephen King - It.1-24.mp3", PackContext{Title: "It"}, "a dotted track count after a short title"},
+		{"It 1-2 (1986) mp3", PackContext{Title: "It"}, "an mp3 release split in two"},
+		{"Catch-22 1-2 (audiobook)", PackContext{Title: "Catch-22"}, "an audiobook split in two"},
+		{"Dune 1-21", PackContext{Title: "Dune"}, "more than 20 after a single title is a track count"},
+		{"The Gunslinger - The Dark Tower 01-24 (mp3)", PackContext{Title: "The Gunslinger", SeriesTitle: "The Dark Tower"}, "a padded track count after the series"},
+		{"Children of Dune - Dune Chronicles 03-12", PackContext{Title: "Children of Dune", SeriesTitle: "Dune Chronicles"}, "a padded range after the series outside brackets"},
+		{"Heart of Texas 1-3 (m4b)", macomberCarolinesChild, "a series range in an audio release"},
+		// The wanted title's own parts count once (review of #3642).
+		{
+			"Brandon Sanderson - Mistborn; The Final Empire (epub)",
+			PackContext{Title: "Mistborn: The Final Empire", AuthorTitles: []string{"The Final Empire", "The Well of Ascension"}},
+			"the main title and subtitle of the wanted book, with a duplicate library record under the subtitle",
+		},
 	} {
 		if got := MultiBookPackMarkerFor(tc.release, tc.want); got != "" {
 			t.Errorf("%q matched %q but is a single book (%s)", tc.release, got, tc.why)

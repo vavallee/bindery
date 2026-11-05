@@ -18,7 +18,8 @@ import RebindModal from '../components/RebindModal'
 import RenameFilesModal from '../components/RenameFilesModal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { useConfirmDialog } from '../components/useConfirmDialog'
-import { grabWithForceConfirm } from '../util/forceGrab'
+import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
+import PackLabel from '../components/PackLabel'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../components/useClipboardCopy'
 import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
@@ -169,14 +170,7 @@ function ReleaseRow({
       <div className="min-w-0 mr-3">
         <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
           {fmt && <MediaBadge type={fmt} />}
-          {r.pack && (
-            <span
-              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
-              title={t('search.pack.matched', { marker: r.pack })}
-            >
-              {t('search.pack.label')}
-            </span>
-          )}
+          <PackLabel marker={r.pack} />
           <span className="truncate text-slate-800 dark:text-zinc-200">{r.title}</span>
         </div>
         <span className="text-fg-muted truncate block">
@@ -677,13 +671,7 @@ function BookDetailPageInner() {
 
   const grab = async (r: SearchResult) => {
     if (!book) return
-    // A pack (#3247) is grabbable, but the importer will not place it
-    // automatically, so say so before the download starts.
-    if (r.pack && !await forceConfirm({
-      title: t('search.pack.confirmTitle'),
-      body: t('search.pack.confirmBody', { marker: r.pack }),
-      confirmLabel: t('search.pack.confirm'),
-    })) return
+    if (r.pack && !await confirmPackGrab(r, forceConfirm, t)) return
     setGrabbing(r.guid)
     setError(null)
     try {

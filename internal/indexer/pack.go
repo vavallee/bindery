@@ -190,16 +190,19 @@ type PackContext struct {
 //     SplitSubtitle gives it. Both numbers are one or two digits, rising,
 //     from 1, and written without spaces around the dash, so "Title 1 -
 //     Subtitle" and "Title 2019-2020" are left alone. After the core title
-//     the numbers must not be zero padded: audiobook releases name a single
-//     book "Title 01-49" for its tracks. After a series title that differs
-//     from the core title, zero padding is accepted ("[Heart of Texas
-//     01-03]"), because a series name is not what one book's tracks are
-//     labelled with.
-//   - A list separated by semicolons in which at least two items are titles
-//     of the author's books, the wanted one included: "Three Classic
-//     Thrillers (The Firm; The Appeal; The Chamber)". The items are checked
-//     against the library rather than counted, because a semicolon also
-//     separates author names ("Nora Roberts; J. D. Robb").
+//     the range ends at 20 at most and is never zero padded: audiobook
+//     releases name a single book "Title 01-49" or "Title 1-24" for its
+//     tracks. After a series title that differs from the core title, zero
+//     padding is accepted inside brackets ("[Heart of Texas 01-03]"). A
+//     release with audio or track words (mp3, m4b, audiobook, cd, disc,
+//     track, chapter and the like) is never read for this shape, because
+//     there the range is a track or disc count.
+//   - A list separated by semicolons naming at least two of the author's
+//     books, the wanted one included: "Three Classic Thrillers (The Firm;
+//     The Appeal; The Chamber)". The items are checked against the library
+//     rather than counted, because a semicolon also separates author names
+//     ("Nora Roberts; J. D. Robb"). The wanted title, its main title and its
+//     subtitle all count as the one wanted book.
 func MultiBookPackMarkerFor(title string, want PackContext) string {
 	if m := MultiBookPackMarker(title); m != "" {
 		return m
@@ -234,17 +237,33 @@ func rangeAfterRe(name string) *regexp.Regexp {
 		`[\s._]+(\d{1,2})[-–—](\d{1,2}))(?:$|[^\pL\pN])`)
 }
 
+// audioReleaseRe finds the words of an audio release or a split recording. In
+// such a release a range after the title or series is far more often a track,
+// disc or chapter count than a run of books ("Dune 1-49 [mp3]", "The Dark
+// Tower 01-24 (mp3)"), so the named range marker is not read there at all.
+var audioReleaseRe = regexp.MustCompile(`(?i)(?:^|[^\pL\pN])(?:mp3|m4b|m4a|flac|aac|ogg|opus|audio-?books?|cds?|discs?|tracks?|chapters?)(?:$|[^\pL\pN])`)
+
+// maxTitleRangeEnd caps the range after the core title. A pack named after one
+// of its books ("Dominion of Blades 1-2") holds a handful; a larger number
+// after a single title is a track or chapter count.
+const maxTitleRangeEnd = 20
+
 // namedRangeMarker matches the wanted book's core title or series title
 // followed directly by a range. See MultiBookPackMarkerFor.
 func namedRangeMarker(title string, want PackContext) string {
+	if audioReleaseRe.MatchString(title) {
+		return ""
+	}
 	core := coreTitle(want.Title)
 	series := StripBracketSuffixes(strings.TrimSpace(want.SeriesTitle))
 	for _, c := range []struct {
-		name         string
+		name string
+		// zeroPaddedOK accepts "01-03", and only in brackets.
 		zeroPaddedOK bool
+		maxEnd       int
 	}{
-		{core, false},
-		{series, titleKey(series) != titleKey(core)},
+		{core, false, maxTitleRangeEnd},
+		{series, titleKey(series) != titleKey(core), 99},
 	} {
 		if titleKey(c.name) == "" || partWordRe.MatchString(c.name) {
 			continue
@@ -254,17 +273,26 @@ func namedRangeMarker(title string, want PackContext) string {
 			continue
 		}
 		for _, m := range re.FindAllStringSubmatch(dropApostrophes(title), -1) {
-			if !c.zeroPaddedOK && (strings.HasPrefix(m[2], "0") || strings.HasPrefix(m[3], "0")) {
-				continue
+			if strings.HasPrefix(m[2], "0") || strings.HasPrefix(m[3], "0") {
+				if !c.zeroPaddedOK || !bracketed(m[0]) {
+					continue
+				}
 			}
 			lo, _ := strconv.Atoi(m[2])
 			hi, _ := strconv.Atoi(m[3])
-			if lo >= 1 && lo < hi {
+			if lo >= 1 && lo < hi && hi <= c.maxEnd {
 				return strings.TrimSpace(m[1])
 			}
 		}
 	}
 	return ""
+}
+
+// bracketed reports whether a rangeAfterRe match, boundaries included, is
+// enclosed in brackets: "[Heart of Texas 01-03]".
+func bracketed(match string) bool {
+	return (strings.HasPrefix(match, "[") || strings.HasPrefix(match, "(")) &&
+		(strings.HasSuffix(match, "]") || strings.HasSuffix(match, ")"))
 }
 
 var (
@@ -292,12 +320,24 @@ func titleListMarker(title string, want PackContext) string {
 	if !strings.Contains(title, ";") {
 		return ""
 	}
-	known := map[string]bool{}
-	for _, t := range append([]string{want.Title}, want.AuthorTitles...) {
+	// known maps a title key to the book it names. Every reading of the
+	// wanted title (whole, main title, subtitle) names the wanted book, so a
+	// list made of its own parts ("Mistborn; The Final Empire" for "Mistborn:
+	// The Final Empire") counts once, even when the library also holds a
+	// duplicate record under one of those parts.
+	const self = "\x00self"
+	known := map[string]string{}
+	for _, t := range want.AuthorTitles {
 		for _, k := range []string{titleKey(t), titleKey(coreTitle(t))} {
 			if k != "" {
-				known[k] = true
+				known[k] = k
 			}
+		}
+	}
+	main, sub := SplitSubtitle(want.Title)
+	for _, k := range []string{titleKey(want.Title), titleKey(main), titleKey(sub)} {
+		if k != "" {
+			known[k] = self
 		}
 	}
 	if len(known) == 0 {
@@ -309,8 +349,8 @@ func titleListMarker(title string, want PackContext) string {
 		}
 		seen := map[string]bool{}
 		for _, item := range strings.Split(chunk, ";") {
-			if k := titleKey(item); known[k] {
-				seen[k] = true
+			if book, ok := known[titleKey(item)]; ok {
+				seen[book] = true
 			}
 		}
 		if len(seen) >= 2 {

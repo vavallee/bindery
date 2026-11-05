@@ -14,10 +14,10 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// Interactive search scopes the author's other titles to the signed in user: a
+// Interactive search scopes the author's other titles to the book's owner: a
 // second user's books by the same author never reach the relevance filter
-// (#3268).
-func TestSearchBook_AuthorTitlesAreScopedToTheCaller(t *testing.T) {
+// (#3268), whoever runs the search.
+func TestSearchBook_AuthorTitlesAreScopedToTheOwner(t *testing.T) {
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -51,23 +51,43 @@ func TestSearchBook_AuthorTitlesAreScopedToTheCaller(t *testing.T) {
 	mk("OL3268OM2", "Rule of Wolves", u1.ID)
 	mk("OL3268OM3", "Bobs Private Title", u2.ID)
 
-	mock := &mockIndexerSearcher{audioResults: []newznab.SearchResult{{GUID: "r1", Title: "Leigh Bardugo - King of Scars MP3"}}}
-	h := NewIndexerHandler(
-		db.NewIndexerRepo(database), bookRepo, authorRepo,
-		db.NewMetadataProfileRepo(database), mock,
-		db.NewSettingsRepo(database), db.NewBlocklistRepo(database),
-	)
-	rec := httptest.NewRecorder()
-	req := withURLParam(
-		httptest.NewRequest(http.MethodGet, "/indexer/book/1/search", nil),
-		"id", strconv.FormatInt(wanted.ID, 10),
-	)
-	req = req.WithContext(auth.WithUserID(req.Context(), u1.ID))
-	h.SearchBook(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if got := mock.criteria().AuthorTitles; !slices.Equal(got, []string{"Rule of Wolves"}) {
-		t.Errorf("AuthorTitles = %v, want only the caller's other title", got)
+	mk("OL3268OM4", "Admins Private Title", u2.ID)
+
+	// The owner searching sees only their own titles. An admin searching the
+	// owner's book gets the owner's titles too, not the admin's, so the
+	// verdict matches the automatic search and the importer, which both scope
+	// by the book's owner (#3247).
+	for _, tc := range []struct {
+		name string
+		uid  int64
+		role string
+	}{
+		{"owner", u1.ID, ""},
+		{"admin searching another user's book", u2.ID, "admin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &mockIndexerSearcher{audioResults: []newznab.SearchResult{{GUID: "r1", Title: "Leigh Bardugo - King of Scars MP3"}}}
+			h := NewIndexerHandler(
+				db.NewIndexerRepo(database), bookRepo, authorRepo,
+				db.NewMetadataProfileRepo(database), mock,
+				db.NewSettingsRepo(database), db.NewBlocklistRepo(database),
+			)
+			rec := httptest.NewRecorder()
+			req := withURLParam(
+				httptest.NewRequest(http.MethodGet, "/indexer/book/1/search", nil),
+				"id", strconv.FormatInt(wanted.ID, 10),
+			)
+			ctx := auth.WithUserID(req.Context(), tc.uid)
+			if tc.role != "" {
+				ctx = auth.WithUserRole(ctx, tc.role)
+			}
+			h.SearchBook(rec, req.WithContext(ctx))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if got := mock.criteria().AuthorTitles; !slices.Equal(got, []string{"Rule of Wolves"}) {
+				t.Errorf("AuthorTitles = %v, want only the book owner's other title", got)
+			}
+		})
 	}
 }
