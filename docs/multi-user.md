@@ -83,6 +83,8 @@ With `BINDERY_ENFORCE_TENANCY` on, a grab's `bookId` must be a book the caller o
 
 A release grabbed without a `bookId` (the Search page does not tie a release to a book) is matched to a book when it finishes, from the file's embedded metadata, its file name and the release title. With `BINDERY_ENFORCE_TENANCY` on and a `user` account owning the download, that match only considers the user's own books and books with no owner. If none of those matches, the download stays unmatched in the queue. A download owned by an admin, or with no owner, is matched against the whole library, as is every download with tenancy off.
 
+A blocklist entry filed for one book blocks that release for that book only, so a release blocklisted for one user's book (a grab or import blocklisted from its History, or a format or language its profile refused at import) does not stop another user's book from grabbing it. A release the download client failed as broken or reported stalled stays blocked for every book, since it is broken for everyone, and so does a failed or stalled download any user blocklists from their own History, as before. Blocklisting from your own History says "already blocklisted" only when an entry already blocks what yours would, so it does not reveal another user's entry for their own book.
+
 ### Downloads, queue messages and shared folders
 
 An audiobook stored as a folder downloads as a zip, from the web app and over OPDS. The zip holds the folder's files except any file or subfolder another book tracks, matched without regard to ASCII case (letters outside ASCII must match exactly). Untracked files in the folder, such as cover art, cue sheets and nfo files, are included. This applies in both tenancy modes.

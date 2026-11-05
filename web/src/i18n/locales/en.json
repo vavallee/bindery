@@ -1185,6 +1185,11 @@
     "colTitle": "Title",
     "colReason": "Reason",
     "colDate": "Date",
+    "colScope": "Applies to",
+    "scopeBook": "This book",
+    "scopeRelease": "All books",
+    "scopeBookHint": "Blocks this release for the book it was blocklisted for. Other books can still grab it.",
+    "scopeReleaseHint": "Blocks this release for every book. Entries apply to every book when the release itself is broken or stalled (reported by the download client or blocklisted from a failed or stalled History event), when they came from Readarr, or when the book they were made for no longer exists.",
     "selectAll": "Select all",
     "deleteConfirm": "Delete {{count}} blocklist entries?"
   },

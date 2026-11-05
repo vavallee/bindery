@@ -220,7 +220,7 @@ func (s *Scanner) handleNZBGetContentFailure(ctx context.Context, client *models
 		return
 	}
 	if !nzbget.NeedsLogEvidence(status) {
-		s.blocklistRejectedRelease(ctx, dl, reason)
+		s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeRelease, reason)
 		return
 	}
 
@@ -235,7 +235,7 @@ func (s *Scanner) handleNZBGetContentFailure(ctx context.Context, client *models
 	switch evidence {
 	case nzbget.EvidenceContent:
 		slog.Info("download failed: the job log shows the release is broken", "client", client.Name, "title", dl.Title, "line", detail)
-		s.blocklistRejectedRelease(ctx, dl, reason)
+		s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeRelease, reason)
 		return
 	case nzbget.EvidenceHost:
 		slog.Warn("download failed: the job log points at the download client, not blocklisting the release",
@@ -258,7 +258,7 @@ func (s *Scanner) handleNZBGetContentFailure(ctx context.Context, client *models
 	allow, tripped, distinct := s.contentBreaker.recordFailure(client.ID, dl.GUID, status)
 	switch {
 	case allow:
-		s.blocklistRejectedRelease(ctx, dl, reason)
+		s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeRelease, reason)
 	case tripped:
 		slog.Warn("download client: pausing automatic blocklisting for this failure, too many different releases failed the same way",
 			"client", client.Name, "status", status, "releases", distinct, "window", contentBreakerWindow, "title", dl.Title)

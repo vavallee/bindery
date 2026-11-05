@@ -173,23 +173,29 @@ func (s DelayProfileSpec) IsSatisfiedBy(r Release, _ models.Book) (bool, string)
 
 // --- Blocklisted ---
 
-// BlocklistedSpec rejects releases whose GUID appears in the blocklist.
+// BlocklistedSpec rejects a release that is blocklisted for the book being
+// searched (#3563). A release scoped entry blocks the release for every book;
+// a book scoped entry blocks it for its own book only, so an entry one user's
+// book earned never stops another user's book from grabbing the release. See
+// models.BlocklistScopeBook.
 type BlocklistedSpec struct {
-	GUIDs map[string]struct{}
+	entries map[string][]models.BlocklistEntry
 }
 
-// NewBlocklistedSpec builds a BlocklistedSpec from a slice of blocked GUIDs.
+// NewBlocklistedSpec builds a BlocklistedSpec from the blocklist entries.
 func NewBlocklistedSpec(entries []models.BlocklistEntry) *BlocklistedSpec {
-	m := make(map[string]struct{}, len(entries))
+	m := make(map[string][]models.BlocklistEntry, len(entries))
 	for _, e := range entries {
-		m[e.GUID] = struct{}{}
+		m[e.GUID] = append(m[e.GUID], e)
 	}
-	return &BlocklistedSpec{GUIDs: m}
+	return &BlocklistedSpec{entries: m}
 }
 
-func (s *BlocklistedSpec) IsSatisfiedBy(r Release, _ models.Book) (bool, string) {
-	if _, blocked := s.GUIDs[r.GUID]; blocked {
-		return false, "release is blocklisted"
+func (s *BlocklistedSpec) IsSatisfiedBy(r Release, book models.Book) (bool, string) {
+	for _, e := range s.entries[r.GUID] {
+		if e.BlocksBook(book.ID) {
+			return false, "release is blocklisted"
+		}
 	}
 	return true, ""
 }

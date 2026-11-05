@@ -2132,6 +2132,9 @@ func (s *Scheduler) handleStalledDownload(ctx context.Context, dl *models.Downlo
 			Title:     dl.Title,
 			IndexerID: dl.IndexerID,
 			Reason:    reason,
+			// The client's own signal is about the torrent, not this
+			// book, so it blocks the release for every book (#3563).
+			Scope: models.BlocklistScopeRelease,
 		}
 		if err := s.blocklist.Create(ctx, entry); err != nil {
 			slog.Warn("stall: failed to add to blocklist", "guid", dl.GUID, "error", err)

@@ -273,6 +273,44 @@ func TestBlocklistedSpec_Blocked(t *testing.T) {
 	}
 }
 
+// TestBlocklistedSpec_ScopesPerBook is #3563: a book scoped entry blocks the
+// release for its own book only, a release scoped entry blocks it for every
+// book, and a book scoped entry whose book was deleted blocks nothing.
+func TestBlocklistedSpec_ScopesPerBook(t *testing.T) {
+	alice, bob := int64(10), int64(20)
+	cases := []struct {
+		name    string
+		entry   models.BlocklistEntry
+		forBook int64
+		blocked bool
+	}{
+		{"book entry, own book", models.BlocklistEntry{GUID: "g", BookID: &alice, Scope: models.BlocklistScopeBook}, alice, true},
+		{"book entry, another book", models.BlocklistEntry{GUID: "g", BookID: &alice, Scope: models.BlocklistScopeBook}, bob, false},
+		{"release entry, another book", models.BlocklistEntry{GUID: "g", BookID: &alice, Scope: models.BlocklistScopeRelease}, bob, true},
+		{"book entry, book deleted", models.BlocklistEntry{GUID: "g", Scope: models.BlocklistScopeBook}, bob, false},
+		{"unscoped entry with no book", models.BlocklistEntry{GUID: "g"}, bob, true},
+		{"unscoped entry with a book", models.BlocklistEntry{GUID: "g", BookID: &alice}, bob, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := decision.NewBlocklistedSpec([]models.BlocklistEntry{tc.entry})
+			ok, _ := s.IsSatisfiedBy(release(withGUID("g")), models.Book{ID: tc.forBook})
+			if ok == tc.blocked {
+				t.Errorf("blocked = %v, want %v", !ok, tc.blocked)
+			}
+		})
+	}
+	// Two entries for one GUID: the other book's entry must not hide this
+	// book's own.
+	s := decision.NewBlocklistedSpec([]models.BlocklistEntry{
+		{GUID: "g", BookID: &alice, Scope: models.BlocklistScopeBook},
+		{GUID: "g", BookID: &bob, Scope: models.BlocklistScopeBook},
+	})
+	if ok, _ := s.IsSatisfiedBy(release(withGUID("g")), models.Book{ID: bob}); ok {
+		t.Error("bob's own entry must block bob's book")
+	}
+}
+
 func TestBlocklistedSpec_Empty(t *testing.T) {
 	s := decision.NewBlocklistedSpec(nil)
 	ok, _ := s.IsSatisfiedBy(release(), emptyBook())

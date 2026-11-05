@@ -187,7 +187,7 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 	}
 	guid, _ := data["guid"].(string)
 
-	// BlocklistedSpec matches a release by GUID only, so an entry keyed on
+	// BlocklistedSpec matches a release by its GUID, so an entry keyed on
 	// anything else (such as the title) could never match and would only tell
 	// the user a release is blocked when it is not (#3249). Refuse instead.
 	if guid == "" {
@@ -195,9 +195,29 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The event says which kind of entry this is (#3563). Blocklisting a
+	// failed or stalled download says the release itself is broken, so the
+	// entry blocks it for every book, as every entry did before. Blocklisting
+	// a grab or an import is a judgement about this book's copy, so the entry
+	// blocks it for this book only. An event whose book is gone has no book to
+	// scope to, and the repo stores it release wide.
+	scope := models.BlocklistScopeBook
+	if releaseWideHistoryEvent(event.EventType) {
+		scope = models.BlocklistScopeRelease
+	}
+
 	// Idempotent: blocklisting the same release twice must not create a
-	// duplicate row. Create has no unique constraint to lean on.
-	blocked, err := h.blocklist.IsBlocked(r.Context(), guid)
+	// duplicate row. Create has no unique constraint to lean on. "Already"
+	// means an entry already blocks what this one would, the question search
+	// asks: for a book entry, one for this book or a release entry; for a
+	// release entry, only another release entry. Another book's entry,
+	// possibly another user's, does not block this book, so it must neither
+	// stop this entry nor be revealed by the answer.
+	forBook := event.BookID
+	if scope == models.BlocklistScopeRelease {
+		forBook = nil
+	}
+	blocked, err := h.blocklist.BlocksBook(r.Context(), guid, forBook)
 	if err != nil {
 		writeServerError(w, r, err)
 		return
@@ -212,11 +232,11 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 		GUID:   guid,
 		Title:  event.SourceTitle,
 		Reason: event.EventType,
+		Scope:  scope,
 	}
 	// D4b audit: this is a user-driven write (someone pressed "Blocklist" in
-	// the history UI), so tag the row with their id. The list/IsBlocked
-	// queries are global and don't read this column; it's surfaced through
-	// the API for admin views only. UserIDFromContext returns 0 for
+	// the history UI), so tag the row with their id. No query filters on
+	// this column; it's surfaced through the API for admin views only. UserIDFromContext returns 0 for
 	// unauthenticated requests, in which case fall back to the system-write
 	// path so we don't insert a fake user id.
 	if uid := auth.UserIDFromContext(r.Context()); uid != 0 {
@@ -233,4 +253,16 @@ func (h *HistoryHandler) Blocklist(w http.ResponseWriter, r *http.Request) {
 	shown := *entry
 	shown.GUID = newznab.RedactDownloadURL(shown.GUID)
 	writeJSON(w, http.StatusCreated, shown)
+}
+
+// releaseWideHistoryEvent reports whether blocklisting a release from a
+// History event of this type says the release is broken for everyone: a
+// download that failed or stalled. Any other event, such as a grab or an
+// import, is blocklisted for its own book only (#3563).
+func releaseWideHistoryEvent(eventType string) bool {
+	switch eventType {
+	case models.HistoryEventDownloadFailed, models.HistoryEventDownloadStalled:
+		return true
+	}
+	return false
 }

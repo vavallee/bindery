@@ -485,15 +485,30 @@ func (s *Scanner) allowedFormat(ctx context.Context, author *models.Author, form
 // disallowed, or on a client status that is about the release's content, never
 // on a transient import or transport failure.
 //
-// A release already on the blocklist for the same book is not added twice: a
+// scope says whom the entry blocks (#3563). A format, language or content
+// rejection is about this book: its profile refused the file, or the file did
+// not match its metadata, so the entry is models.BlocklistScopeBook and
+// another book that wants the same release, possibly another user's under a
+// profile that allows it, can still grab it. A content failure the download
+// client reported is about the release, so it is models.BlocklistScopeRelease
+// and blocks it for every book.
+//
+// An entry that already blocks what this one would is not added twice: a
 // manual grab can send a blocklisted release again, and its second failure
-// says nothing new. A row under another book does not count, because deleting
-// that book deletes its rows.
-func (s *Scanner) blocklistRejectedRelease(ctx context.Context, dl *models.Download, reason string) {
+// says nothing new. For a book scoped entry that is an entry for this book or
+// a release scoped one. For a release scoped entry only another release scoped
+// entry counts: a book scoped entry for this or any other book blocks the
+// release for that book alone, so skipping the write would leave a broken
+// release open to every other book.
+func (s *Scanner) blocklistRejectedRelease(ctx context.Context, dl *models.Download, scope, reason string) {
 	if s.blocklist == nil || dl == nil || strings.TrimSpace(dl.GUID) == "" {
 		return
 	}
-	if blocked, err := s.blocklist.IsBlockedForBook(ctx, dl.GUID, dl.BookID); err == nil && blocked {
+	forBook := dl.BookID
+	if scope == models.BlocklistScopeRelease {
+		forBook = nil
+	}
+	if blocked, err := s.blocklist.BlocksBook(ctx, dl.GUID, forBook); err == nil && blocked {
 		return
 	}
 	entry := &models.BlocklistEntry{
@@ -502,6 +517,7 @@ func (s *Scanner) blocklistRejectedRelease(ctx context.Context, dl *models.Downl
 		Title:     dl.Title,
 		IndexerID: dl.IndexerID,
 		Reason:    reason,
+		Scope:     scope,
 	}
 	if err := s.blocklist.Create(ctx, entry); err != nil {
 		slog.Warn("could not blocklist a rejected release; it may be grabbed again",
@@ -1863,7 +1879,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			// still force this in, then blocklist so the next scan does not
 			// grab the identical release and repeat the whole cycle.
 			s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
-			s.blocklistRejectedRelease(ctx, dl, reason)
+			s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeBook, reason)
 			s.failImport(ctx, dl, models.StateImportBlocked, reason)
 			return
 		}
@@ -1936,7 +1952,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			slog.Warn("import blocked: file language is not allowed",
 				"title", dl.Title, "bookID", book.ID, "languages", langCheck.declared)
 			s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
-			s.blocklistRejectedRelease(ctx, dl, langCheck.reason)
+			s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeBook, langCheck.reason)
 			s.failImport(ctx, dl, models.StateImportBlocked, langCheck.reason)
 			return
 		}
@@ -1956,7 +1972,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				slog.Warn("import blocked: file looks like a different book",
 					"title", dl.Title, "bookID", book.ID, "book", book.Title)
 				s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
-				s.blocklistRejectedRelease(ctx, dl, res.reason)
+				s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeBook, res.reason)
 				s.failImportWithCheck(ctx, dl, models.StateImportBlocked, res.reason, res.data)
 				return
 			}
@@ -2033,7 +2049,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				slog.Warn("import blocked: audio file language is not allowed",
 					"title", dl.Title, "bookID", book.ID, "languages", lc.declared)
 				s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
-				s.blocklistRejectedRelease(ctx, dl, lc.reason)
+				s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeBook, lc.reason)
 				s.failImport(ctx, dl, models.StateImportBlocked, lc.reason)
 				return
 			}
@@ -2053,7 +2069,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					slog.Warn("import blocked: audio tags show other books in the download",
 						"title", dl.Title, "bookID", book.ID, "book", book.Title)
 					s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
-					s.blocklistRejectedRelease(ctx, dl, res.reason)
+					s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeBook, res.reason)
 					s.failImportWithCheck(ctx, dl, models.StateImportBlocked, res.reason, res.data)
 					return
 				}
