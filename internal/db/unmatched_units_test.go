@@ -362,6 +362,41 @@ func TestReverseAdoptionSeriesLinkPreservesChangedManualSeries(t *testing.T) {
 	}
 }
 
+// A series the user pinned to an author after adopting is in use: Undo must
+// not delete it, or the pin goes with it through ON DELETE CASCADE.
+func TestReverseAdoptionSeriesLinkPreservesAuthorPinnedSeries(t *testing.T) {
+	ctx := context.Background()
+	database, repo := openUnmatchedRepo(t)
+	book := seedAdoptionBook(t, database)
+	series, err := NewSeriesRepo(database).CreateManual(ctx, "Pinned Saga")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewSeriesRepo(database).LinkBook(ctx, series.ID, book.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO author_monitored_series (author_id, series_id, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)`, book.AuthorID, series.ID); err != nil {
+		t.Fatal(err)
+	}
+	link := &AdoptionSeriesLink{
+		SeriesID: series.ID, BookID: book.ID, Position: "1", Primary: true,
+		CreatedSeriesID: series.ID, CreatedSeriesForeignID: series.ForeignID, CreatedSeriesTitle: series.Title,
+	}
+	if err := repo.ReverseAdoptionSeriesLink(ctx, link); err != nil {
+		t.Fatal(err)
+	}
+	var seriesRows, pins int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM series WHERE id = ?`, series.ID).Scan(&seriesRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM author_monitored_series WHERE series_id = ?`, series.ID).Scan(&pins); err != nil {
+		t.Fatal(err)
+	}
+	if seriesRows != 1 || pins != 1 {
+		t.Fatalf("after undo: series rows = %d, pins = %d, want both kept", seriesRows, pins)
+	}
+}
+
 // TestReconcileScan_KeepsDecisions covers the ReconcileScan contract: a rescan
 // never moves an ignored row, a unit the scan stops seeing is removed while
 // pending and kept once decided, and the counts come back.

@@ -219,8 +219,8 @@ ON CONFLICT(unit_path) DO UPDATE SET
                                  THEN '[]' ELSE unmatched_units.registered_paths_json END,
     created_book_fingerprint = CASE WHEN unmatched_units.state = 'adopted' AND unmatched_units.resolved_at < ?
                                     THEN '' ELSE unmatched_units.created_book_fingerprint END,
-	series_link_json = CASE WHEN unmatched_units.state = 'adopted' AND unmatched_units.resolved_at < ?
-	                        THEN '' ELSE unmatched_units.series_link_json END,
+    series_link_json = CASE WHEN unmatched_units.state = 'adopted' AND unmatched_units.resolved_at < ?
+                            THEN '' ELSE unmatched_units.series_link_json END,
     resolved_at = CASE WHEN unmatched_units.state = 'adopted' AND unmatched_units.resolved_at < ?
                        THEN NULL ELSE unmatched_units.resolved_at END`
 
@@ -744,9 +744,10 @@ func (r *UnmatchedUnitRepo) ReverseAdoptionSeriesLink(ctx context.Context, link 
 		WHERE id = ? AND foreign_id = ? AND title = ? AND description = '' AND monitored = ? AND genre_override IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM series_books WHERE series_id = ?)
 		  AND NOT EXISTS (SELECT 1 FROM series_aliases WHERE series_id = ?)
-		  AND NOT EXISTS (SELECT 1 FROM series_hardcover_links WHERE series_id = ?)`,
+		  AND NOT EXISTS (SELECT 1 FROM series_hardcover_links WHERE series_id = ?)
+		  AND NOT EXISTS (SELECT 1 FROM author_monitored_series WHERE series_id = ?)`,
 		link.CreatedSeriesID, link.CreatedSeriesForeignID, link.CreatedSeriesTitle, monitored,
-		link.CreatedSeriesID, link.CreatedSeriesID, link.CreatedSeriesID); err != nil {
+		link.CreatedSeriesID, link.CreatedSeriesID, link.CreatedSeriesID, link.CreatedSeriesID); err != nil {
 		return fmt.Errorf("reverse adoption series link: remove manual series: %w", err)
 	}
 	return nil
