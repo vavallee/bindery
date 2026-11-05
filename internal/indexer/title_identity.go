@@ -61,10 +61,22 @@ func conflictingTitleAuthor(release, title string, authorSets [][]string) bool {
 		}
 	}
 	if attribution == "" {
+		// The two readings below find a "by" further from the title, where it
+		// is more often a narrator's credit with no role word. A release that
+		// names the wanted author before that "by" ("Pride & Prejudice (Jane
+		// Austen) by Rosamund Pike") is not read as crediting someone else.
+		// After the credit the author's name proves nothing: "by Donna Grant
+		// [for fans of Jennifer Hillier]" is still Donna Grant's book (#2863).
 		attribution = seriesLabelAttribution(normalizedRelease, normalizedTitle)
-	}
-	if attribution == "" {
-		attribution = locatedTitleAttribution(normalizedRelease, title, authorSets)
+		if attribution == "" {
+			attribution = locatedTitleAttribution(normalizedRelease, title)
+		}
+		if attribution != "" {
+			if at := strings.Index(normalizedRelease, "by "+attribution); at >= 0 &&
+				namesWantedAuthor(normalizedRelease[:at], authorSets) {
+				return false
+			}
+		}
 	}
 	if attribution == "" {
 		return false
@@ -90,6 +102,17 @@ func conflictingTitleAuthor(release, title string, authorSets [][]string) bool {
 		}
 	}
 	return knownAuthor
+}
+
+// namesWantedAuthor reports whether the release names one of the author token
+// sets anywhere.
+func namesWantedAuthor(normalizedRelease string, authorSets [][]string) bool {
+	for _, tokens := range authorSets {
+		if len(tokens) > 0 && authorMatchesRelease(normalizedRelease, tokens) {
+			return true
+		}
+	}
+	return false
 }
 
 // foldTitleTokens rewrites every volume marker spelling in a
@@ -205,10 +228,11 @@ func byCredit(toks []string, leading bool) string {
 // title. Insignificant words that end the title ("Stand by Me") are consumed
 // with it, so a "by" inside the title is not read as the credit.
 //
-// A release that names the requested author BEFORE the title ("Jim Butcher -
-// Mirror Mirror by James Marsters") is left alone: the trailing "by" there is
-// most likely a narrator credit without its role word.
-func locatedTitleAttribution(normalizedRelease, title string, authorSets [][]string) string {
+// A release that names the requested author before the "by" ("Jim Butcher -
+// Mirror Mirror by James Marsters") is not a conflict: the caller checks that
+// (namesWantedAuthor), since the "by" there is most likely a narrator credit
+// without its role word.
+func locatedTitleAttribution(normalizedRelease, title string) string {
 	ident := titleIdentityKeywords(title)
 	if len(ident) == 0 {
 		return ""
@@ -216,12 +240,6 @@ func locatedTitleAttribution(normalizedRelease, title string, authorSets [][]str
 	loc := phraseRegex(ident).FindStringIndex(normalizedRelease)
 	if loc == nil {
 		return ""
-	}
-	before := normalizedRelease[:loc[0]]
-	for _, tokens := range authorSets {
-		if len(tokens) > 0 && authorMatchesRelease(before, tokens) {
-			return ""
-		}
 	}
 	rest := strings.Fields(normalizedRelease[loc[1]:])
 	titleToks := strings.Fields(foldTitleTokens(NormalizeRelease(title)))

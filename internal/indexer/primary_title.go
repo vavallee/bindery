@@ -178,9 +178,11 @@ var languageCodes = func() map[string]bool {
 // Reading starts only when the main title is followed by a colon or plain
 // spacing, dots or underscores. After a dash, comma or bracket what follows
 // may be a series label, an author or a narrator, and nothing is read. A "by"
-// that credits someone else, or a narrator or translator, ends the reading:
-// the first is conflictingTitleAuthor's to judge. So does a role word such as
-// "narrated" or "translated" before any unknown word.
+// that credits someone else ends the reading: that is conflictingTitleAuthor's
+// to judge. A role word ("narrated by", "Translated Hazel E. Barnes") skips the
+// contributor's name and reading goes on, so a title after the name still
+// counts. A role word straight before a title ("Halo Narrated Silent Storm")
+// reads that title as the name; that is a known limit.
 func (si subtitleInfo) runsIntoOtherTitle(raw, n string, primary ...[]string) bool {
 	toks, k, ok := locateTitleEnd(raw, n, primary...)
 	if !ok {
@@ -193,16 +195,22 @@ func (si subtitleInfo) runsIntoOtherTitle(raw, n string, primary ...[]string) bo
 	for i := k; i < len(toks); i++ {
 		t := toks[i]
 		if t.text == "by" {
-			if i > k && creditRoleWords[toks[i-1].text] {
-				return false
+			if i > k && contributorRole(toks[i-1].text) {
+				// "narrated by Jen Taylor": skip the name and read on.
+				i = si.skipContributor(toks, i+1) - 1
+				continue
 			}
 			return foreign && si.creditsWantedAuthor(toks[i+1:], false, false)
 		}
-		// A role word with nothing unknown before it ("Translated Hazel E.
-		// Barnes", "narrated Ray Porter") is followed by a contributor's name,
-		// not a title.
-		if creditRoleWords[t.text] && !foreign {
-			return false
+		if contributorRole(t.text) {
+			if i+1 < len(toks) && toks[i+1].text == "by" {
+				continue
+			}
+			if namesWithoutBy[t.text] {
+				// "narrated Ray Porter", "Translated Hazel E. Barnes".
+				i = si.skipContributor(toks, i+1) - 1
+				continue
+			}
 		}
 		if i > k && dashBefore(t) && si.creditsWantedAuthor(toks[i:], true, bareHyphen(t)) {
 			return foreign
@@ -237,7 +245,7 @@ func (si subtitleInfo) runsIntoOtherTitle(raw, n string, primary ...[]string) bo
 // title's numerals spelled out ("1984 Nineteen Eighty Four") do not count.
 var runOnFurniture = map[string]bool{
 	"audible": true, "libation": true, "repack": true, "kepub": true,
-	"chapterized": true, "graphicaudio": true, "graphic": true, "dramatized": true,
+	"chapterized": true, "graphicaudio": true, "dramatized": true,
 	"dramatised": true, "adaptation": true, "signed": true, "first": true,
 	"full": true, "cast": true, "classics": true, "critical": true, "norton": true,
 	"penguin": true, "oxford": true, "worlds": true, "folio": true, "text": true,
@@ -248,6 +256,60 @@ var runOnFurniture = map[string]bool{
 	"hoerspiel": true, "horspiel": true, "routledge": true,
 	"thirty": true, "forty": true, "fifty": true, "sixty": true, "seventy": true,
 	"eighty": true, "ninety": true, "hundred": true, "thousand": true,
+}
+
+// contributorRole reports whether tok names a contributor's role ("narrated",
+// "translated", "illustrated"), whose name follows it. The uploader phrases
+// "brought to you by" and "shared by" are credit role words for the "by"
+// reading but not here: "Halo You Are Not Alone" and "Halo Shared Destiny"
+// are titles.
+func contributorRole(tok string) bool {
+	return creditRoleWords[tok] && tok != "you" && tok != "shared"
+}
+
+// namesWithoutBy are the roles a release follows with the contributor's name
+// and no "by" ("narrated Ray Porter", "Translated Hazel E. Barnes"). Other
+// role words without a "by" are read as ordinary words: "Illustrated" there
+// describes an edition.
+var namesWithoutBy = map[string]bool{
+	"read": true, "narrated": true, "narrator": true, "performed": true,
+	"translated": true, "translation": true,
+}
+
+// maxContributorWords bounds the name skipContributor passes over, so a title
+// after the name ("Narrated by Jen Taylor Silent Storm") is still read.
+const maxContributorWords = 2
+
+// skipContributor returns the index of the first token after a contributor's
+// name that starts at toks[j]: at most maxContributorWords words, where a
+// single letter initial does not count and a hyphenated name counts once. The
+// name also ends at a spaced dash, a "by", other punctuation (but not the
+// period after an initial, "Hazel E. Barnes"), or a bare hyphen that opens a
+// credit to the wanted author ("Barnes-Jean-Paul Sartre").
+func (si subtitleInfo) skipContributor(toks []relTok, j int) int {
+	start, words := j, 0
+	for ; j < len(toks); j++ {
+		t := toks[j]
+		if t.text == "by" || (dashBefore(t) && !bareHyphen(t)) {
+			return j
+		}
+		if j > start && bareHyphen(t) {
+			if si.creditsWantedAuthor(toks[j:], true, true) {
+				return j
+			}
+			continue
+		}
+		if j > start && punctBefore(t) && len(toks[j-1].text) != 1 {
+			return j
+		}
+		if len(t.text) > 1 {
+			if words == maxContributorWords {
+				return j
+			}
+			words++
+		}
+	}
+	return j
 }
 
 // dashRunes are hyphen, en dash and em dash, built from code points so the

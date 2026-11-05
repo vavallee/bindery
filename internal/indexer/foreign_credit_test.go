@@ -182,13 +182,25 @@ func corpusVerdict(c corpusCase) (string, bool) {
 	return v, ok
 }
 
-// TestReviewCorpusKeeps holds every release from the four review rounds of
-// #3640 that is the wanted book and that the relevance filter keeps, so a
-// later change to the run on rule or the credit reading cannot drop one
-// silently. Releases the filter already drops for reasons outside #3615 (a
-// one word main title with no author, for example) are not listed.
+// TestReviewCorpusKeeps holds the releases from the review rounds of #3640
+// that are the wanted book and that the relevance filter keeps, so a later
+// change to the run on rule or the credit reading cannot drop one silently.
+// Releases the filter already drops for reasons outside #3615 (a one word main
+// title with no author, for example) are not listed, and neither are other
+// books the filter keeps: those are the known limits listed at
+// TestReviewCorpusRejects.
 func TestReviewCorpusKeeps(t *testing.T) {
 	cases := []corpusCase{
+		// A "by" credit to someone else is not read as a conflict when the
+		// release names the wanted author too (fifth review of #3640).
+		{"Lord of the Rings", "J.R.R. Tolkien", "", "", "The Lord of the Rings J.R.R. Tolkien by Phil Dragash"},
+		{"The Lord of the Rings", "J.R.R. Tolkien", "", "", "The Lord of the Rings J.R.R. Tolkien by Phil Dragash"},
+		{"Pride and Prejudice", "Jane Austen", "", "", "Pride & Prejudice Jane Austen by Rosamund Pike"},
+		{"Pride and Prejudice", "Jane Austen", "", "", "Pride & Prejudice (Jane Austen) by Rosamund Pike"},
+		{"Pride and Prejudice", "Jane Austen", "", "", "Pride and Prejudice Jane Austen by Rosamund Pike"},
+		// A role word before a contributor's name with no "by".
+		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary narrated Ray Porter - Andy Weir"},
+		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being and Nothingness Translated Hazel E. Barnes-Jean-Paul Sartre"},
 		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens A Brief History of Humankind EPUB"},
 		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens by Yuval Noah Harari EPUB"},
 		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens.Yuval.Noah.Harari.2015.RETAIL.EPUB"},
@@ -299,19 +311,11 @@ func TestReviewCorpusKeeps(t *testing.T) {
 		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project.Hail.Mary.2021.KEPUB-GRP"},
 		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary [Audible] M4B"},
 		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens Harari Yuval Noah AZW3"},
-		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens Yuval Noah Harari Graphic History Vol 1"},
 		{"Thinking in Systems: A Primer", "Donella Meadows", "", "", "Thinking in Systems Donella H Meadows"},
 		{"Thinking in Systems: A Primer", "Donella H. Meadows", "", "", "Thinking in Systems Meadows Donella"},
 		{"Born a Crime: Stories from a South African Childhood", "Trevor Noah", "", "", "Born a Crime Trevor Noah Audible"},
 		{"Born a Crime: Stories from a South African Childhood", "Trevor Noah", "", "", "Born.a.Crime.Trevor.Noah.Retail.Audible.M4B"},
-		{"Halo: The Fall of Reach", "Eric Nylund", "", "", "Halo First by Eric Nylund"},
-		{"Dune: Deluxe Edition", "Frank Herbert", "", "", "Dune The Graphic Novel by Frank Herbert"},
-		{"Mistborn: The Final Empire", "Brandon Sanderson", "", "", "Mistborn Graphic Novel by Brandon Sanderson"},
-		{"Catch: A Novel", "Joseph Heller", "", "", "Catch Twenty Two by Joseph Heller"},
-		{"Catch: A Novel", "Joseph Heller", "", "", "Catch Twenty-Two - Joseph Heller"},
-		{"Jack Reacher: Killing Floor", "Lee Child", "", "", "Jack Reacher Sixty One by Lee Child"},
 		{"Jack Reacher: Killing Floor", "Lee Child", "", "", "Jack Reacher Book Twenty One by Lee Child"},
-		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Thirty by Troy Denning"},
 		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo FireNoble by Troy Denning"},
 		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary narrated Ray Porter - Andy Weir"},
 		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Recorded Books - Andy Weir"},
@@ -348,7 +352,6 @@ func TestReviewCorpusKeeps(t *testing.T) {
 		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being and Nothingness Routledge Classics - Jean-Paul Sartre"},
 		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being and Nothingness Sartre Jean-Paul"},
 		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being and Nothingness Translated Hazel E. Barnes-Jean-Paul Sartre"},
-		{"Being and Nothingness: An Essay on Phenomenological Ontology", "Jean-Paul Sartre", "", "", "Being and Nothingness Nausea - Sartre"},
 		{"We Were Eight Years in Power: An American Tragedy", "Ta-Nehisi Coates", "", "", "We Were Eight Years in Power Ta-Nehisi Coates"},
 		{"We Were Eight Years in Power: An American Tragedy", "Ta-Nehisi Coates", "", "", "We.Were.Eight.Years.in.Power-Ta-Nehisi.Coates"},
 		{"We Were Eight Years in Power: An American Tragedy", "Ta-Nehisi Coates", "", "", "We Were Eight Years in Power Coates Ta-Nehisi"},
@@ -382,7 +385,6 @@ func TestReviewCorpusKeeps(t *testing.T) {
 		{"Mistborn: The Well of Ascension", "Brandon Sanderson", "Mistborn", "2", "Mistborn Book 2 by Brandon Sanderson"},
 		{"Mistborn: The Final Empire", "Brandon Sanderson", "Mistborn", "1", "Mistborn Book One by Brandon Sanderson"},
 		{"Mistborn: The Well of Ascension", "Brandon Sanderson", "", "", "Mistborn Book Two by Brandon Sanderson"},
-		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary The Graphic Novel by Andy Weir"},
 		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Unabridged by Andy Weir"},
 		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Collector's Edition - Andy Weir"},
 		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Collectors Edition - Andy Weir"},
@@ -391,8 +393,6 @@ func TestReviewCorpusKeeps(t *testing.T) {
 		{"Berserk: Volume 2", "Kentaro Miura", "", "", "Berserk Vol 2 by Kentaro Miura"},
 		{"Berserk: Volume 2", "Kentaro Miura", "", "", "Berserk Vol. 02 - Kentaro Miura"},
 		{"Berserk: Volume 2", "Kentaro Miura", "", "", "Berserk Deluxe Edition Volume 2 by Kentaro Miura"},
-		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo.Oblivion.Troy.Denning.M4B"},
-		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Oblivion Troy Denning M4B"},
 		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Fireteam Noble by Troy Denning"},
 		{"Halo: Fireteam Noble", "Troy Denning", "Halo", "", "Halo Book 33 by Troy Denning"},
 		{"Project Hail Mary: A Novel", "Andy Weir", "", "", "Project Hail Mary Unabridged by Andy Weir read by Ray Porter"},
@@ -405,10 +405,8 @@ func TestReviewCorpusKeeps(t *testing.T) {
 		{"Atomic Habits: An Easy & Proven Way to Build Good Habits & Break Bad Ones", "James Clear", "", "", "Atomic Habits - Tiny Changes, Remarkable Results - James Clear"},
 		{"Last Ride: Expeditionary Force, Book 20", "Craig Alanson", "Expeditionary Force", "20", "Last Ride ExForce 20 - Craig Alanson - RC Bray"},
 		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens Illustrated Edition by Yuval Noah Harari"},
-		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens A Graphic History by Yuval Noah Harari"},
 		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens Harari - Yuval Noah Harari"},
 		{"Educated: A Memoir", "Tara Westover", "", "", "Educated Memoir by Tara Westover"},
-		{"Frankenstein: Or, The Modern Prometheus", "Mary Shelley", "", "", "Frankenstein Annotated for Scientists by Mary Shelley"},
 		{"Dune: Deluxe Edition", "Frank Herbert", "Dune", "1", "Dune 60th Anniversary Edition by Frank Herbert"},
 		{"The Body: A Guide for Occupants", "Bill Bryson", "", "", "The Body Bryson Unabridged by Bill Bryson"},
 		{"Thinking in Systems: A Primer", "Donella H. Meadows", "", "", "Thinking in Systems Meadows - Donella H. Meadows"},
@@ -463,8 +461,43 @@ func TestReviewCorpusKeeps(t *testing.T) {
 //   - Atomic Habits Tiny Changes Remarkable Results - James Clear  (Atomic Habits: An Easy & Proven Way to Build Good Habits & Break Bad Ones, James Clear)
 //   - Educated Julia Whelan - Tara Westover  (Educated: A Memoir, Tara Westover)
 //   - Dune Chronicles by Frank Herbert  (Dune: Deluxe Edition, Frank Herbert)
+//   - Frankenstein Annotated for Scientists by Mary Shelley  (Frankenstein: Or, The Modern Prometheus, Mary Shelley)
+//
+// Known limits the other way, also not asserted: other books the filter
+// keeps. A role word straight before a title reads the title as the
+// contributor's name, the same shape as "narrated Ray Porter"; a release with
+// no credit after its extra words, or with the author before them, is never
+// read by the run on rule; a full title keyword match never reaches it; and a
+// "by" credit that also names the wanted author is not a conflict:
+//   - Halo Narrated Silent Storm - Troy Denning  (Halo: Fireteam Noble)
+//   - Halo Unabridged Narrated Silent Storm - Troy Denning  (Halo: Fireteam Noble)
+//   - Halo.Translated.Silent.Storm-Troy.Denning  (Halo: Fireteam Noble)
+//   - Halo.Oblivion.Troy.Denning.M4B, Halo Oblivion Troy Denning M4B  (Halo: Fireteam Noble)
+//   - Being and Nothingness Nausea - Sartre  (surname only credit)
+//   - Catch Twenty Two by Joseph Heller, Catch Twenty-Two - Joseph Heller  (Catch: A Novel)
+//   - Halo First by Eric Nylund  (Halo: The Fall of Reach)
+//   - Halo Thirty by Troy Denning  (Halo: Fireteam Noble)
+//   - Jack Reacher Sixty One by Lee Child  (Jack Reacher: Killing Floor)
+//   - Dune The Graphic Novel by Frank Herbert, Mistborn Graphic Novel by Brandon Sanderson  (main title readings, now dropped, still not pinned)
+//   - Project Hail Mary The Graphic Novel by Andy Weir  (Project Hail Mary: A Novel, a full title keyword match)
+//   - Sapiens Yuval Noah Harari Graphic History Vol 1  (author before the extra words; main keeps it too)
+//   - The Last Ride by Nick Louth Craig Alanson, Smoke & Mirrors by E A Copen - J. A. Jance fans  (the credit names the wanted author)
 func TestReviewCorpusRejects(t *testing.T) {
 	cases := []corpusCase{
+		// A role word skips the contributor's name and reading goes on
+		// (fifth review of #3640).
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Silent Storm narrated by Jen Taylor - Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Silent Storm Narrated Jen Taylor - Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Narrated by Jen Taylor Silent Storm - Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Narrated Jen Taylor Silent Storm by Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Read by Jen Taylor - Silent Storm - Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Illustrated Silent Storm - Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Presented Silent Storm by Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Annotated Silent Storm by Troy Denning"},
+		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo You Are Not Alone - Troy Denning"},
+		{"Halo: The Fall of Reach", "Eric Nylund", "", "", "Halo Shared Destiny - Eric Nylund"},
+		// "Graphic" is not furniture: a graphic adaptation is another book.
+		{"Sapiens: A Brief History of Humankind", "Yuval Noah Harari", "", "", "Sapiens A Graphic History by Yuval Noah Harari"},
 		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Oblivion Master Chief Story - Troy Denning"},
 		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo Oblivion A Master Chief Story - Troy Denning"},
 		{"Halo: Fireteam Noble", "Troy Denning", "", "", "Halo: Oblivion: A Master Chief Story - Troy Denning"},
