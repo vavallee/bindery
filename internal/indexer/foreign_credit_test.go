@@ -35,6 +35,11 @@ func TestAutoGrabRejectsOtherBooksForUnreleasedTitles(t *testing.T) {
 			"Halo: Oblivion: A Master Chief Story by Troy Denning [ENG / M4B] [VIP]", reasonRunsIntoOther},
 		{"Camp Half-Blood: From the World of Percy Jackson: The Rite of Aphrodite", "Rick Riordan",
 			"Camp Half-Blood Confidential by Rick Riordan [ENG / MP3] [VIP]", reasonRunsIntoOther},
+		// The same two with the credit after a dash.
+		{"Halo: Fireteam Noble", "Troy Denning",
+			"Halo: Oblivion: A Master Chief Story - Troy Denning [ENG / M4B]", reasonRunsIntoOther},
+		{"Camp Half-Blood: From the World of Percy Jackson: The Rite of Aphrodite", "Rick Riordan",
+			"Camp Half-Blood Confidential - Rick Riordan [ENG / MP3]", reasonRunsIntoOther},
 	}
 	for _, c := range cases {
 		got := batchVerdicts(c.title, c.author, []string{c.release}, bookContext{})
@@ -94,6 +99,30 @@ func TestAutoGrabKeepsTheBookItself(t *testing.T) {
 		{"Atomic Habits: An Easy & Proven Way to Build Good Habits & Break Bad Ones", "James Clear", "Atomic Habits: Tiny Changes, Remarkable Results EPUB"},
 		{"1984: A Novel", "George Orwell", "1984 Nineteen Eighty Four George Orwell"},
 		{"Halo: Fireteam Noble", "Troy Denning", "Halo Unabridged Audiobook by Troy Denning M4B"},
+
+		// Furniture, a narrator or co author, or the numerals spelled out,
+		// between the main title and a credit to the wanted author (second
+		// review of #3640).
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Audible by Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Audible - Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Repack by Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Kepub - Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Chapterized by Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary GraphicAudio - Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Dramatized Adaptation by Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Full Cast by Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Signed First Edition by Andy Weir"},
+		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Ray Porter - Andy Weir"},
+		{"Frankenstein: Or, The Modern Prometheus", "Mary Shelley", "Frankenstein 1818 Text by Mary Shelley"},
+		{"Frankenstein: Or, The Modern Prometheus", "Mary Shelley", "Frankenstein Norton Critical Edition by Mary Shelley"},
+		{"Frankenstein: Or, The Modern Prometheus", "Mary Shelley", "Frankenstein Penguin Classics - Mary Shelley"},
+		{"Dracula: Annotated", "Bram Stoker", "Dracula Oxford Worlds Classics by Bram Stoker"},
+		{"Der Schwarm: Roman", "Frank Schätzing", "Der Schwarm Ungekürzte Lesung - Frank Schätzing"},
+		{"L'Étranger: Roman", "Albert Camus", "L'Étranger Folio - Albert Camus"},
+		{"Educated: A Memoir", "Tara Westover", "Educated Julia Whelan - Tara Westover"},
+		{"Good Omens: The Nice and Accurate Prophecies of Agnes Nutter, Witch", "Neil Gaiman", "Good Omens Terry Pratchett - Neil Gaiman"},
+		{"1984: A Novel", "George Orwell", "1984 Nineteen Eighty-Four by George Orwell"},
+		{"1984: A Novel", "George Orwell", "1984 Nineteen Eighty Four - George Orwell"},
 	}
 	// Known limit, deliberately not asserted either way: the same book under a
 	// subtitle the library does not hold, closed by a credit to the author,
@@ -105,6 +134,8 @@ func TestAutoGrabKeepsTheBookItself(t *testing.T) {
 		"Last Ride ExForce 20 M4B",
 		"Last Ride ExFor 20 R.C. Bray M4B",
 		"Last Ride RC Bray M4B",
+		"Last Ride ExForce 20 by Craig Alanson",
+		"Last Ride ExForce 20 - Craig Alanson - RC Bray",
 	} {
 		title := "Last Ride: Expeditionary Force, Book 20"
 		got := batchVerdicts(title, "Craig Alanson", []string{release}, series)

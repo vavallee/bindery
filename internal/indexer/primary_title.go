@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 )
@@ -60,6 +61,9 @@ type subtitleInfo struct {
 	// without naming a different book: the subtitle's own words and the
 	// primary series title's (see runsIntoOtherTitle).
 	known map[string]bool
+	// knownSeqs are the same words in title order, one slice per source, for
+	// run together abbreviations (see abbreviates).
+	knownSeqs [][]string
 	// authorSets are the author token sets of the search, whose words are
 	// release furniture after the main title.
 	authorSets [][]string
@@ -75,9 +79,7 @@ func newSubtitleInfo(title string) subtitleInfo {
 		return subtitleInfo{}
 	}
 	si := subtitleInfo{has: true, ident: titleIdentityKeywords(sub), known: map[string]bool{}}
-	for _, w := range titleIdentityWords(sub) {
-		si.known[w] = true
-	}
+	si.addKnown(sub)
 	si.n, si.seriesLike = seriesLikeSubtitle(sub)
 	return si
 }
@@ -90,10 +92,48 @@ func (si subtitleInfo) withContext(authorSets [][]string, seriesTitle string) su
 		return si
 	}
 	si.authorSets = authorSets
-	for _, w := range titleIdentityWords(seriesTitle) {
+	si.addKnown(seriesTitle)
+	return si
+}
+
+// addKnown records the identity words of s as words that may follow the main
+// title.
+func (si *subtitleInfo) addKnown(s string) {
+	words := titleIdentityWords(s)
+	for _, w := range words {
 		si.known[w] = true
 	}
-	return si
+	if len(words) > 1 {
+		si.knownSeqs = append(si.knownSeqs, words)
+	}
+}
+
+// abbreviates reports whether tok is two or more consecutive words of seq run
+// together, each cut to a prefix of at least two letters: "exforce" and
+// "exfor" for "expeditionary force".
+func abbreviates(tok string, seq []string) bool {
+	var from func(rest string, j, parts int) bool
+	from = func(rest string, j, parts int) bool {
+		if rest == "" {
+			return parts >= 2
+		}
+		if j >= len(seq) {
+			return false
+		}
+		w := seq[j]
+		for l := min(len(w), len(rest)); l >= 2; l-- {
+			if rest[:l] == w[:l] && from(rest[l:], j+1, parts+1) {
+				return true
+			}
+		}
+		return false
+	}
+	for start := range seq {
+		if from(tok, start, 0) {
+			return true
+		}
+	}
+	return false
 }
 
 // languageCodes are the three letter codes releaseLanguageTags maps to
@@ -116,14 +156,19 @@ var languageCodes = func() map[string]bool {
 // It fires only on that shape: words after the main title that are not known
 // furniture, then a credit to the wanted author, either "by <author>" or a
 // dash and the author. Unknown words alone are not enough. An allow list of
-// what may follow a title ("Audible", "Libation", "Full Cast", a narrator's
-// name, a regional subtitle) can never be complete, and a release that names
-// the book plus some unlisted word is far more often the book than another
-// one. A credit to the author closing the run is what marks the words before
-// it as a title. The known limit is the same book under a subtitle the
-// library does not hold, credited the same way ("Atomic Habits Tiny Changes
-// Remarkable Results by James Clear"): no string rule can tell that from
-// another book.
+// what may follow a title can never be complete, and a release that names the
+// book plus some unlisted word is far more often the book than another one. A
+// credit to the author closing the run is what marks the words before it as a
+// title. The words that do not count are furnitureAfterMainTitle's: release,
+// edition and publisher furniture, numbers and number words, the wanted
+// subtitle and series words and their run together abbreviations ("ExForce"
+// for "Expeditionary Force"). A short run of capitalised words right before
+// "- <author>" is a narrator or co author ("Ray Porter - Andy Weir", "Terry
+// Pratchett - Neil Gaiman") and does not count either.
+//
+// The known limit is the same book under a subtitle the library does not
+// hold, credited the same way ("Atomic Habits Tiny Changes Remarkable Results
+// by James Clear"): no string rule can tell that from another book.
 //
 // Reading starts only when the main title is followed by a colon or plain
 // spacing, dots or underscores. After a dash, comma or bracket what follows
@@ -138,17 +183,27 @@ func (si subtitleInfo) runsIntoOtherTitle(raw, n string, primary ...[]string) bo
 	if punctBefore(toks[k]) && !strings.Contains(toks[k].sep, ":") {
 		return false
 	}
-	foreign := false
+	// The words after the main title are read in punctuation separated
+	// segments, so a narrator's name right before "- <author>" can be told
+	// from the words before it.
+	foreignBefore, segForeign, segStart := false, false, k
 	for i := k; i < len(toks); i++ {
 		t := toks[i]
 		if t.text == "by" {
 			if i > k && creditRoleWords[toks[i-1].text] {
 				return false
 			}
-			return foreign && si.creditsWantedAuthor(toks[i+1:], false)
+			return (foreignBefore || segForeign) && si.creditsWantedAuthor(toks[i+1:], false)
 		}
 		if i > k && dashBefore(t) && si.creditsWantedAuthor(toks[i:], true) {
-			return foreign
+			if segForeign && contributorName(toks[segStart:i]) {
+				segForeign = false
+			}
+			return foreignBefore || segForeign
+		}
+		if i > k && punctBefore(t) {
+			foreignBefore = foreignBefore || segForeign
+			segForeign, segStart = false, i
 		}
 		if !isAllDigits(t.text) && len(newznab.SigWords(t.text)) == 0 {
 			continue
@@ -159,10 +214,43 @@ func (si subtitleInfo) runsIntoOtherTitle(raw, n string, primary ...[]string) bo
 			continue
 		}
 		if !si.furnitureAfterMainTitle(t.text) {
-			foreign = true
+			segForeign = true
 		}
 	}
 	return false
+}
+
+// contributorName reports whether seg, the words between the previous
+// punctuation and a "- <author>" credit, reads as a person's name: two to four
+// words, each written with a capital and none a number ("Ray Porter", "R.C.
+// Bray", "Julia Whelan").
+func contributorName(seg []relTok) bool {
+	if len(seg) < 2 || len(seg) > 4 {
+		return false
+	}
+	for _, t := range seg {
+		r := []rune(t.raw)
+		if len(r) == 0 || !unicode.IsUpper(r[0]) || isAllDigits(t.text) {
+			return false
+		}
+	}
+	return true
+}
+
+// runOnFurniture are words that follow a title in releases of the book itself
+// and name a source, an edition, a publisher's line or a production rather
+// than another title. They matter only to runsIntoOtherTitle, which reads them
+// before a credit to the wanted author. The tens complete numberWords, so a
+// title's numerals spelled out ("1984 Nineteen Eighty Four") do not count.
+var runOnFurniture = map[string]bool{
+	"audible": true, "libation": true, "repack": true, "kepub": true,
+	"chapterized": true, "graphicaudio": true, "graphic": true, "dramatized": true,
+	"dramatised": true, "adaptation": true, "signed": true, "first": true,
+	"full": true, "cast": true, "classics": true, "critical": true, "norton": true,
+	"penguin": true, "oxford": true, "worlds": true, "folio": true, "text": true,
+	"ungekuerzte": true, "ungekurzte": true, "ungekrzte": true, "lesung": true,
+	"thirty": true, "forty": true, "fifty": true, "sixty": true, "seventy": true,
+	"eighty": true, "ninety": true, "hundred": true, "thousand": true,
 }
 
 // dashRunes are hyphen, en dash and em dash, built from code points so the
@@ -203,9 +291,17 @@ func (si subtitleInfo) creditsWantedAuthor(toks []relTok, segment bool) bool {
 // main title, is known to be compatible with the release being the wanted
 // book.
 func (si subtitleInfo) furnitureAfterMainTitle(tok string) bool {
-	if si.known[tok] || languageCodes[tok] || readMarkers[tok] ||
+	if si.known[tok] || languageCodes[tok] || readMarkers[tok] || runOnFurniture[tok] ||
 		editionWords[tok] || editionForms[tok] || editionLanguages[tok] {
 		return true
+	}
+	if _, ok := numberWords[tok]; ok {
+		return true
+	}
+	for _, seq := range si.knownSeqs {
+		if abbreviates(tok, seq) {
+			return true
+		}
 	}
 	if benignTrailingToken(tok, nil) {
 		return true
