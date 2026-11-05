@@ -556,7 +556,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
           <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
             <label htmlFor="import-source-folders" className="block text-xs text-fg-muted mb-1">{t('settings.general.importSources', 'Import source folders')}</label>
             <p className="text-xs text-fg-muted mb-2">
-              {t('settings.general.importSourcesHint', 'Optional. One absolute folder path per line. Import, From a folder can browse and import from these in addition to your root folders. They are read only sources: no author is filed there and Bindery never scans them as a library.')}
+              {t('settings.general.importSourcesHint', 'Optional. One absolute folder path per line. Import, From a folder can browse and import from these in addition to your root folders. They are not root folders: no author is filed there and Bindery never scans them as a library. Bindery never writes new files there, but in move mode an import removes the imported files from them. Mount a folder read only to make a move fail instead of delete.')}
             </p>
             <div className="flex gap-2 items-start">
               <textarea
