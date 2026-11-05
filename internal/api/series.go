@@ -1601,8 +1601,9 @@ func (h *SeriesHandler) hardcoverCatalog(ctx context.Context, foreignID string) 
 // to the existing /book/:id instead of an "add" button (#1210).
 //
 // The cross-reference is ownership-scoped via GetByForeignIDForUser: userID is
-// the requesting user's id, and a match owned by a different user is never
-// surfaced (cross-tenant guard). Callers without a DB/user context (e.g. the
+// the caller's list scope (auth.ListScopeUserID), so 0 for admins and with
+// tenancy off, and otherwise the caller's id, in which case a match owned by a
+// different user is never surfaced (cross-tenant guard). Callers without a DB/user context (e.g. the
 // create-missing write path) pass a nil books repo to skip enrichment.
 func buildHardcoverDiff(ctx context.Context, books *db.BookRepo, userID int64, series *models.Series, link *models.SeriesHardcoverLink, catalog *metadata.SeriesCatalog) seriesHardcoverDiffResponse {
 	diff := seriesHardcoverDiffResponse{
