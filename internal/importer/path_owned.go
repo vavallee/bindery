@@ -212,11 +212,76 @@ func (s *Scanner) folderHoldsOtherBooksFiles(ctx context.Context, dir string, bo
 	return len(paths) > 0, nil
 }
 
-// folderHoldsOtherBooksFilesMsg explains a refused folder move. It names
-// neither the other book nor its file: with tenancy on, that book can belong
-// to another user.
+// heldFolderReason returns why dir cannot be moved whole, or "" when no live
+// book other than bookID tracks a file below it (#3556). The reason is
+// written for viewerUserID. It names the held file so the reader knows what
+// to move out, except under tenancy when every held file belongs to a book
+// another user owns: that path is another user's data, so the reason then
+// only says that such a file exists.
+func (s *Scanner) heldFolderReason(ctx context.Context, dir string, bookID, viewerUserID int64) (string, error) {
+	paths, err := s.books.LivePathsUnderForOtherBooks(ctx, dir, bookID)
+	if err != nil {
+		return "", err
+	}
+	if len(paths) == 0 {
+		return "", nil
+	}
+	named := ""
+	for _, p := range paths {
+		if !auth.EnforceTenancy() {
+			named = p
+			break
+		}
+		holder, err := s.books.GetByTrackedPath(ctx, p)
+		if err == nil && holder != nil && holder.OwnerUserID == viewerUserID {
+			named = p
+			break
+		}
+	}
+	if named == "" {
+		return folderHoldsOtherBooksFilesMsg, nil
+	}
+	return fmt.Sprintf("this folder also holds %s, which another book tracks, so moving the folder would carry that file away from its book. "+
+		"Move that file out of the folder first (or use Forget this file on the book it belongs to)", named), nil
+}
+
+// folderHoldsOtherBooksFilesMsg explains a refused folder move without naming
+// the held file: with tenancy on, the book tracking it belongs to another user.
 const folderHoldsOtherBooksFilesMsg = "this folder also holds a file another book tracks, so moving it would carry that file away from its book. " +
 	"Move that file out of the folder first (or use Forget this file on the book it belongs to)"
+
+// FolderRelocationRefusal reports why importing srcPath for bookID would carry
+// a file another book tracks away from it, or "" when it would not (#3556).
+// That happens only for an audiobook FOLDER placed in move mode: the folder is
+// moved whole, so everything in it goes. Copy and hardlink leave the source,
+// and every file in it, where it was.
+//
+// Fix match calls this before detaching the file from its current book, so a
+// refusal leaves that book's row in place rather than leaving the folder
+// tracked by nobody. The import runs the same check as a backstop. The mode
+// is resolved with the inputs tryImportInternal uses for a manual import.
+func (s *Scanner) FolderRelocationRefusal(ctx context.Context, bookID int64, srcPath, formatHint string, viewerUserID int64) (string, error) {
+	info, err := os.Stat(srcPath)
+	if err != nil || !info.IsDir() {
+		return "", nil
+	}
+	if previewFormat(ctx, srcPath, formatHint) != models.MediaTypeAudiobook {
+		return "", nil
+	}
+	book, err := s.books.GetByID(ctx, bookID)
+	if err != nil || book == nil {
+		return "", err
+	}
+	var author *models.Author
+	if a, aerr := s.authors.GetByID(ctx, book.AuthorID); aerr == nil {
+		author = a
+	}
+	configured := effectiveConfiguredMode(s.downloadImportMode(ctx, srcPath, formatHint, nil), "")
+	if s.resolveImportMode(configured, srcPath, s.effectiveAudiobookDir(ctx, author)) != "move" {
+		return "", nil
+	}
+	return s.heldFolderReason(ctx, srcPath, bookID, viewerUserID)
+}
 
 // pathOwnedElsewhereError is a *db.PathOwnedError whose text leaves out the
 // book that holds the path.

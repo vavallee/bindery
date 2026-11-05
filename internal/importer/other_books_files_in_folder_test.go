@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -57,8 +58,9 @@ func TestReorganize_FolderHoldingAnotherBooksFileIsNotMoved(t *testing.T) {
 	if moves[0].Status != ReorgStatusError || !strings.Contains(moves[0].Message, "another book tracks") {
 		t.Fatalf("preview = %+v, want an error explaining the folder holds another book's file", moves[0])
 	}
-	if strings.Contains(moves[0].Message, b.Title) || strings.Contains(moves[0].Message, ebook) {
-		t.Errorf("message %q names the other book's title or file", moves[0].Message)
+	// Tenancy is off, so the reason names the file to move out (#3556 review).
+	if !strings.Contains(moves[0].Message, ebook) {
+		t.Errorf("message %q does not name the held file %s", moves[0].Message, ebook)
 	}
 
 	results := env.s.ApplyReorganize(ctx, []int64{moves[0].FileID})
@@ -241,17 +243,104 @@ func TestImport_AudiobookSourceFolderHoldingAnotherBooksFileIsRefused(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Status != models.StateImportBlocked || !strings.Contains(got.ErrorMessage, "another book tracks") {
-				t.Fatalf("status = %q (%s), want blocked with the reason", got.Status, got.ErrorMessage)
-			}
-			if strings.Contains(got.ErrorMessage, other.Title) {
-				t.Errorf("reason %q names the other book", got.ErrorMessage)
-			}
 			if _, err := os.Stat(held); err != nil {
 				t.Errorf("other book's file moved: %v", err)
 			}
+			if mode == "copy" {
+				// Copy leaves the source folder, and the held file, in place.
+				if got.Status != models.StateImported {
+					t.Fatalf("copy: status = %q (%s), want imported", got.Status, got.ErrorMessage)
+				}
+				return
+			}
+			if got.Status != models.StateImportBlocked || !strings.Contains(got.ErrorMessage, "another book tracks") {
+				t.Fatalf("status = %q (%s), want blocked with the reason", got.Status, got.ErrorMessage)
+			}
 			if files, _ := bookRepo.ListFiles(ctx, book.ID); len(files) != 0 {
 				t.Errorf("book got rows %+v, want none", files)
+			}
+		})
+	}
+}
+
+// heldFolderReason names the held file so the reader knows what to move out,
+// unless tenancy is on and the book tracking it belongs to another user, whose
+// paths are not the reader's to see.
+func TestHeldFolderReason_NamesFileUnlessAnotherUsersUnderTenancy(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		tenancy   bool
+		sameOwner bool
+		wantNamed bool
+	}{
+		{"tenancy off", false, false, true},
+		{"tenancy on, same owner", true, true, true},
+		{"tenancy on, another user's book", true, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			auth.SetEnforceTenancyForTests(t, tc.tenancy)
+			f := newTwoUserImportFixture(t)
+			ctx := context.Background()
+			mine := f.book(t, f.aliceA, f.alice, "OL-HELD-MINE")
+			holderOwner, holderAuthor := f.bob, f.bobA
+			if tc.sameOwner {
+				holderOwner, holderAuthor = f.alice, f.aliceA
+			}
+			holder := f.book(t, holderAuthor, holderOwner, "OL-HELD-OTHER")
+			dir := filepath.Join(t.TempDir(), "Folder")
+			held := filepath.Join(dir, "Private Title.epub")
+			if err := f.books.AddBookFile(ctx, holder.ID, models.MediaTypeEbook, held); err != nil {
+				t.Fatal(err)
+			}
+
+			reason, err := f.s.heldFolderReason(ctx, dir, mine.ID, f.alice)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(reason, "another book tracks") {
+				t.Fatalf("reason = %q, want the folder refusal", reason)
+			}
+			if named := strings.Contains(reason, held); named != tc.wantNamed {
+				t.Errorf("reason %q names the file = %v, want %v", reason, named, tc.wantNamed)
+			}
+			if strings.Contains(reason, "Private Title") != tc.wantNamed {
+				t.Errorf("reason %q leaks or hides the file name unexpectedly", reason)
+			}
+		})
+	}
+}
+
+// The Fix match destination preview reports the folder refusal exactly when
+// the import would make it: in move mode, not in copy mode.
+func TestPreviewImportDestination_FolderHoldingAnotherBooksFile(t *testing.T) {
+	for _, tc := range []struct{ mode, want string }{{"move", ReorgStatusError}, {"copy", ReorgStatusMove}} {
+		t.Run(tc.mode, func(t *testing.T) {
+			s, book, _, bookRepo, settingsRepo, _, ctx := sharedFormatFixture(t, t.TempDir())
+			if err := settingsRepo.Set(ctx, "import.mode", tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			other := &models.Book{ForeignID: "OL-3556-PREV", AuthorID: book.AuthorID, Title: "Held Elsewhere",
+				Status: models.BookStatusImported, MediaType: models.MediaTypeEbook}
+			if err := bookRepo.Create(ctx, other); err != nil {
+				t.Fatal(err)
+			}
+			src := t.TempDir()
+			if err := os.WriteFile(filepath.Join(src, "book.m4b"), bookSized("m4b"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			held := filepath.Join(src, "Held Elsewhere.epub")
+			if err := os.WriteFile(held, bookSized("held"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := bookRepo.AddBookFile(ctx, other.ID, models.MediaTypeEbook, held); err != nil {
+				t.Fatal(err)
+			}
+			got, err := s.PreviewImportDestination(ctx, book.ID, src, models.MediaTypeAudiobook)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != tc.want {
+				t.Errorf("preview = %+v, want status %q", got, tc.want)
 			}
 		})
 	}

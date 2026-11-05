@@ -35,6 +35,10 @@ type manualImportScanner interface {
 	// without touching the file on disk: Fix match's correct-match-only
 	// mode (#2055).
 	RelinkFile(ctx context.Context, bookID int64, paths []string, formatHint string) (importer.RelinkResult, error)
+	// FolderRelocationRefusal reports why importing a folder against a book
+	// would carry another book's file away with it, or "" (#3556). Fix match
+	// asks before detaching the source so a refusal leaves its row intact.
+	FolderRelocationRefusal(ctx context.Context, bookID int64, srcPath, formatHint string, viewerUserID int64) (string, error)
 }
 
 // ManualImportHandler serves the manual-import lookup and trigger endpoints.
@@ -358,6 +362,18 @@ func (h *ManualImportHandler) Reassign(w http.ResponseWriter, r *http.Request) {
 	dl, path, status, msg := h.prepareImport(r.Context(), req.Path, req.TargetBookID, req.Format)
 	if dl == nil {
 		writeJSON(w, status, map[string]string{"error": msg})
+		return
+	}
+	// Refuse before detaching anything (#3556). An audiobook folder moved
+	// whole while it holds a file another book tracks would carry that file
+	// off, so the import refuses it; refusing only there, after the detach
+	// below, left the folder tracked by no book at all.
+	if reason, err := h.scanner.FolderRelocationRefusal(r.Context(), req.TargetBookID, path, req.Format, auth.UserIDFromContext(r.Context())); err != nil {
+		slog.Error("reassign: check the source folder for other books' files", "path", path, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not check the source folder"})
+		return
+	} else if reason != "" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "audiobook move refused: " + reason})
 		return
 	}
 	// Detach the stale association from the book that currently owns this path.

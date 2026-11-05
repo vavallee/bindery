@@ -184,6 +184,27 @@ describe('FixMatchModal', () => {
     expect(screen.queryByText(/This moves and renames the file on disk/)).not.toBeInTheDocument()
   })
 
+  // #3556: an error preview is a move the import refuses (an audiobook folder
+  // holding another book's file), so the move is not offered. Correct the
+  // match only stays available.
+  it('does not offer the move when the preview is an error', async () => {
+    vi.mocked(api.reassignFilePreview).mockResolvedValue({
+      source: SRC,
+      destination: DEST,
+      format: 'audiobook',
+      status: 'error',
+      message: 'this folder also holds a file another book tracks',
+    })
+    renderModal()
+    await chooseMove()
+
+    expect(await screen.findByText(/another book tracks/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Move and reassign' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('radio', { name: /Correct the match only/ }))
+    expect(screen.getByRole('button', { name: 'Reassign' })).not.toBeDisabled()
+  })
+
   it('still warns about the move when the destination cannot be computed', async () => {
     vi.mocked(api.reassignFilePreview).mockRejectedValue(new Error('book not found'))
     renderModal()

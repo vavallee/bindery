@@ -2129,16 +2129,23 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			// library) can hold a file another book tracks. Placing the
 			// folder whole would carry that file to this book's folder while
 			// its own row kept the old path (#3556), the same thing the
-			// Reorganize guard refuses. A download folder holds no tracked
-			// files, so this costs one empty lookup there.
-			if held, err := s.folderHoldsOtherBooksFiles(ctx, audiobookSource, book.ID); err != nil {
-				slog.Error("failed to check the audiobook source for other books' files", "path", audiobookSource, "error", err)
-				s.failImport(ctx, dl, models.StateImportFailed, fmt.Sprintf("check audiobook source: %v", err))
-				return
-			} else if held {
-				slog.Warn("audiobook source folder holds a file another book tracks; refusing import", "path", audiobookSource)
-				s.failImport(ctx, dl, models.StateImportBlocked, "audiobook "+mode+" refused: "+folderHoldsOtherBooksFilesMsg)
-				return
+			// Reorganize guard refuses. Only move mode carries anything off:
+			// copy and hardlink leave the source folder and everything in it
+			// in place. A download folder holds no tracked files, so this
+			// costs one empty lookup there. Fix match runs the same check
+			// (FolderRelocationRefusal) before it detaches the source row, so
+			// a refusal there never leaves the folder tracked by nobody; this
+			// one is the backstop.
+			if mode == "move" {
+				if reason, err := s.heldFolderReason(ctx, audiobookSource, book.ID, dl.OwnerUserID); err != nil {
+					slog.Error("failed to check the audiobook source for other books' files", "path", audiobookSource, "error", err)
+					s.failImport(ctx, dl, models.StateImportFailed, fmt.Sprintf("check audiobook source: %v", err))
+					return
+				} else if reason != "" {
+					slog.Warn("audiobook source folder holds a file another book tracks; refusing import", "path", audiobookSource)
+					s.failImport(ctx, dl, models.StateImportBlocked, "audiobook move refused: "+reason)
+					return
+				}
 			}
 		}
 		slog.Info("importing audiobook folder", "src", audiobookSource, "dst", destDir, "mode", mode, "perFile", usePerFile)

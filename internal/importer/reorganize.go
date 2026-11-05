@@ -126,7 +126,7 @@ func (s *Scanner) previewBook(ctx context.Context, book *models.Book) ([]Reorgan
 			Author:    authorName,
 			Current:   f.Path,
 		}
-		proposed, status, msg := s.proposedPathFor(ctx, book, author, seriesTitle, seriesNum, f)
+		proposed, status, msg := s.reorganizePathFor(ctx, book, author, seriesTitle, seriesNum, f)
 		m.Proposed = proposed
 		m.Status = status
 		m.Message = msg
@@ -213,16 +213,6 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 	if err := checkDestNotInsideSource("move", f.Path, dest); err != nil {
 		return dest, ReorgStatusError, err.Error()
 	}
-	// A folder moves whole, so a file inside it that another book tracks would
-	// go with it while that book's row kept the old path (#3556). Leave the
-	// folder where it is and say why.
-	if !isSingleFile(f.Path) {
-		if held, err := s.folderHoldsOtherBooksFiles(ctx, f.Path, book.ID); err != nil {
-			return dest, ReorgStatusError, err.Error()
-		} else if held {
-			return dest, ReorgStatusError, folderHoldsOtherBooksFilesMsg
-		}
-	}
 	// Never overwrite: if something already occupies the proposed path it is
 	// either an untracked file or another book's file. Surface it and skip.
 	if _, err := os.Stat(dest); err == nil {
@@ -241,6 +231,27 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 		return dest, ReorgStatusCollision, "another book already tracks the destination path"
 	}
 	return dest, ReorgStatusMove, ""
+}
+
+// reorganizePathFor is proposedPathFor plus the guard only a Reorganize needs.
+// Reorganize always moves, and a folder moves whole, so a file inside it that
+// another book tracks would go with it while that book's row kept the old
+// path (#3556). Such a folder is left where it is with the reason. The Fix
+// match preview runs proposedPathFor directly and applies the same guard only
+// when the import would really move the folder (FolderRelocationRefusal).
+func (s *Scanner) reorganizePathFor(ctx context.Context, book *models.Book, author *models.Author, seriesTitle, seriesNum string, f models.BookFile) (proposed, status, msg string) {
+	proposed, status, msg = s.proposedPathFor(ctx, book, author, seriesTitle, seriesNum, f)
+	if status != ReorgStatusMove || isSingleFile(f.Path) {
+		return proposed, status, msg
+	}
+	reason, err := s.heldFolderReason(ctx, f.Path, book.ID, book.OwnerUserID)
+	if err != nil {
+		return proposed, ReorgStatusError, err.Error()
+	}
+	if reason != "" {
+		return proposed, ReorgStatusError, reason
+	}
+	return proposed, status, msg
 }
 
 // ebookAtCollisionSuffix reports whether cur is dest with the " (N)" suffix
@@ -434,7 +445,7 @@ func (s *Scanner) applyOne(ctx context.Context, fileID int64) ReorganizeMove {
 	}
 	seriesTitle, seriesNum := s.primarySeriesFor(ctx, book)
 
-	proposed, status, msg := s.proposedPathFor(ctx, book, author, seriesTitle, seriesNum, file)
+	proposed, status, msg := s.reorganizePathFor(ctx, book, author, seriesTitle, seriesNum, file)
 	m := ReorganizeMove{
 		BookID: book.ID, FileID: fileID, Format: file.Format,
 		BookTitle: book.Title, Author: authorName,

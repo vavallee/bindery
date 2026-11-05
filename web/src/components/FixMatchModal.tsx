@@ -125,6 +125,9 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
   // target, so the association changes and nothing on disk does. Warning about
   // a move that will not happen would be its own kind of lie.
   const movesOnDisk = relocate && preview?.status !== 'noop'
+  // An error preview is a move the import will refuse (an audiobook folder
+  // that holds another book's file, #3556, say), so it is not offered.
+  const previewRefused = relocate && preview?.status === 'error'
 
   const { titleId, panelProps } = useModal({ onClose, canClose: !submitting })
 
@@ -353,7 +356,7 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
             <button
               type="button"
               onClick={confirmReassign}
-              disabled={submitting || (relocate && previewLoading)}
+              disabled={submitting || (relocate && previewLoading) || previewRefused}
               className="px-3 py-1.5 text-xs rounded bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
             >
               {movesOnDisk
