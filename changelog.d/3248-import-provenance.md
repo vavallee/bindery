@@ -1,0 +1,2 @@
+### Added
+- **Import History records where each file came from** (#3248). Import rows in History now note their origin, either a download or a manual import. For downloads they keep the release guid and download id, plus the indexer and download client when Bindery knows them, and ebook import rows list the exact library paths they placed. Because import rows now carry the release, Blocklist from History works on them too. This first slice covers downloads and manual imports only; folder handoff and library scan imports do not record provenance yet.
