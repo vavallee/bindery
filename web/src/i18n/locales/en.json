@@ -429,7 +429,8 @@
     "errorUsernameRequired": "Username is required",
     "errorPasswordMatch": "Passwords do not match",
     "errorPasswordLength": "Password must be at least 8 characters",
-    "errorFailed": "Setup failed"
+    "errorFailed": "Setup failed",
+    "errorLocalDisabled": "Local accounts are turned off on this server. Go to the sign in page and use your SSO provider."
   },
   "authors": {
     "title": "Authors",

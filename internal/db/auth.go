@@ -52,6 +52,15 @@ func (r *UserRepo) Count(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// LowestID returns the id of the oldest account, or 0 when there is none.
+// It identifies the very first account an install ever created, which ids
+// make stable: SQLite never hands out a lower id than one already used.
+func (r *UserRepo) LowestID(ctx context.Context) (int64, error) {
+	var id sql.NullInt64
+	err := r.db.QueryRowContext(ctx, "SELECT MIN(id) FROM users").Scan(&id)
+	return id.Int64, err
+}
+
 const userSelectCols = `id, username, password_hash, role, created_at, updated_at,
 	oidc_sub, oidc_issuer, email, display_name, session_epoch, requests_auto_approve`
 

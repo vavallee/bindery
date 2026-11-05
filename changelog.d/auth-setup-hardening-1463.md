@@ -1,2 +1,2 @@
 ### Fixed
-- **Harden first run setup** (#1463) - the setup endpoint now requires a JSON request body, and is refused when local accounts are disabled and an SSO provider is configured, so the first SSO login owns the admin role.
+- **Harden first run setup** (#1463, #3622). The setup endpoint now expects a JSON request body, which keeps a cross site form from creating the first admin. When local sign in is off and an OIDC provider or proxy mode is configured, setup is not offered and the login page is shown instead. On a fresh install the first account that signs in through OIDC or the proxy becomes the admin, once.

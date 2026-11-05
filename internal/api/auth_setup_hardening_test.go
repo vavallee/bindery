@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -103,5 +104,52 @@ func TestSetup_AllowedWithLocalAuthEnabledAndOIDCConfigured(t *testing.T) {
 	}
 	if got := setupStatus(t, h); got != http.StatusOK {
 		t.Fatalf("got %d, want 200", got)
+	}
+}
+
+// Status must report setupRequired=false exactly when Setup would be refused,
+// or the UI redirects to a setup form that can never succeed.
+func TestStatus_SetupRequiredMatchesSetupOffered(t *testing.T) {
+	oidcJSON := `[{"id":"idp","name":"IdP","issuer":"https://idp.example.com","client_id":"c","client_secret":"s","scopes":["openid"]}]`
+	cases := []struct {
+		name      string
+		localAuth bool
+		oidc      bool
+		proxy     bool
+		want      bool
+	}{
+		{"fresh, local enabled", true, false, false, true},
+		{"fresh, local enabled, oidc", true, true, false, true},
+		{"fresh, local off, oidc", false, true, false, false},
+		{"fresh, local off, proxy", false, false, true, false},
+		{"fresh, local off, no alternative", false, false, false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h, _, settings, ctx := newAuthFixture(t)
+			h.WithLocalAuthEnabled(c.localAuth)
+			if c.oidc {
+				if err := settings.Set(ctx, SettingOIDCProviders, oidcJSON); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if c.proxy {
+				if err := settings.Set(ctx, SettingAuthMode, string(auth.ModeProxy)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rec := httptest.NewRecorder()
+			h.Status(rec, httptest.NewRequest(http.MethodGet, "/auth/status", nil))
+			var resp statusResponse
+			if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+				t.Fatal(err)
+			}
+			if resp.SetupRequired != c.want {
+				t.Errorf("setupRequired=%v, want %v", resp.SetupRequired, c.want)
+			}
+			if offered := setupStatus(t, h) != http.StatusForbidden; offered != resp.SetupRequired {
+				t.Errorf("setup offered=%v but setupRequired=%v", offered, resp.SetupRequired)
+			}
+		})
 	}
 }

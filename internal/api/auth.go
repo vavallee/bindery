@@ -53,6 +53,9 @@ const (
 	// auto-promoted to admin because the system had zero admins, this flag is
 	// set so deleting every admin later cannot silently re-trigger promotion.
 	SettingOIDCFirstAdminPromoted = "auth.oidc.first_admin_promoted" //nolint:gosec // setting key name, not a credential
+	// SettingProxyFirstAdminPromoted is the one shot guard for promoting the
+	// first proxy provisioned account to admin; see promoteFirstProxyUser.
+	SettingProxyFirstAdminPromoted = "auth.proxy.first_admin_promoted" //nolint:gosec // setting key name, not a credential
 )
 
 // AuthHandler owns the login / setup / password / mode endpoints.
@@ -164,7 +167,7 @@ func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 	mode := h.mode(ctx)
 
 	resp := statusResponse{
-		SetupRequired:    count == 0,
+		SetupRequired:    count == 0 && !h.setupRefused(ctx),
 		Mode:             string(mode),
 		LocalAuthEnabled: h.localAuthEnabled,
 	}
@@ -215,9 +218,8 @@ func writeSessionCheckUnavailable(w http.ResponseWriter, r *http.Request, err er
 }
 
 // Setup creates the first admin user. Only allowed while no user exists, and
-// only with a JSON body. When local accounts are disabled and OIDC or proxy
-// auth is configured it is refused (403) so the first SSO login owns the admin
-// role.
+// only with a JSON body. It is not offered (403) while local sign in is off and
+// another sign in method is configured.
 //
 // Concurrent calls create exactly one account: setupMu queues them in this
 // process, and CreateFirstAdmin only inserts into an empty users table, so
@@ -232,7 +234,7 @@ func (h *AuthHandler) Setup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
 		return
 	}
-	if !h.localAuthEnabled && h.alternativeLoginConfigured(ctx) {
+	if h.setupRefused(ctx) {
 		writeErr(w, http.StatusForbidden, "local accounts are disabled; sign in with your configured SSO provider")
 		return
 	}
@@ -280,6 +282,14 @@ func (h *AuthHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("first-run setup complete", "username", u.Username)
 	writeOK(w, map[string]any{"ok": true})
+}
+
+// setupRefused reports whether first-run setup is not offered: local sign in
+// is off and another sign in method is configured. Status reports
+// setupRequired=false in exactly this state, so the UI goes to the login page
+// instead of a setup form that would be refused.
+func (h *AuthHandler) setupRefused(ctx context.Context) bool {
+	return !h.localAuthEnabled && h.alternativeLoginConfigured(ctx)
 }
 
 // isJSONContentType reports whether a Content-Type header value names
