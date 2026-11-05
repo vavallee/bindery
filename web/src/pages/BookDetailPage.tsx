@@ -405,6 +405,15 @@ function BookDetailPageInner() {
   const [deregisterTarget, setDeregisterTarget] = useState<FileRow | null>(null)
   // The import whose Reject import confirmation is open (#3250).
   const [rejectTarget, setRejectTarget] = useState<HistoryEvent | null>(null)
+  // Reload the book and its history so the reject button reflects server state.
+  const refreshAfterReject = async (bookId: number) => {
+    const [b, h] = await Promise.all([
+      api.getBook(bookId),
+      api.listHistory({ bookId }).then(p => p.items).catch(() => events),
+    ]).catch(() => [book, events] as const)
+    if (b) setBook(b)
+    setEvents(h)
+  }
   const pathClipboard = useClipboardCopy()
   // The row whose Copy was clicked — the hook's status is shared across rows.
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
@@ -1842,12 +1851,12 @@ function BookDetailPageInner() {
           onRejected={async summary => {
             setRejectTarget(null)
             setAutoSearchNotice(summary)
-            const [b, h] = await Promise.all([
-              api.getBook(book.id),
-              api.listHistory({ bookId: book.id }).then(p => p.items).catch(() => events),
-            ]).catch(() => [book, events] as const)
-            setBook(b)
-            setEvents(h)
+            await refreshAfterReject(book.id)
+          }}
+          onAlreadyRejected={async message => {
+            setRejectTarget(null)
+            setAutoSearchNotice(message)
+            await refreshAfterReject(book.id)
           }}
         />
       )}

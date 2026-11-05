@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -249,26 +250,27 @@ func (r *HistoryRepo) RejectedImportEventIDs(ctx context.Context, eventIDs []int
 	if len(eventIDs) == 0 {
 		return out, nil
 	}
-	want := map[int64]bool{}
-	for _, id := range eventIDs {
-		want[id] = true
+	marks := make([]string, len(eventIDs))
+	args := make([]any, 0, len(eventIDs)+1)
+	args = append(args, models.HistoryEventImportRejected)
+	for i, id := range eventIDs {
+		marks[i] = "?"
+		args = append(args, id)
 	}
-	rows, err := r.db.QueryContext(ctx, `SELECT data FROM history WHERE event_type = ?`, models.HistoryEventImportRejected)
+	//nolint:gosec // G202: the interpolated part is generated ? placeholders; every id stays a bound arg
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT DISTINCT json_extract(data, '$.eventId') FROM history
+		 WHERE event_type = ? AND json_extract(data, '$.eventId') IN (`+strings.Join(marks, ",")+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list rejected imports: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		var d struct {
-			EventID int64 `json:"eventId"`
-		}
-		if json.Unmarshal([]byte(raw), &d) == nil && want[d.EventID] {
-			out[d.EventID] = true
-		}
+		out[id] = true
 	}
 	return out, rows.Err()
 }

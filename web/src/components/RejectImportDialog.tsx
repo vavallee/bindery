@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { api, HistoryEvent, RejectImportResult } from '../api/client'
+import { api, ApiError, HistoryEvent, RejectImportResult } from '../api/client'
 import ConfirmDialog from './ConfirmDialog'
 import { rejectSummary } from '../util/rejectSummary'
 
@@ -9,6 +9,8 @@ interface Props {
   onClose: () => void
   /** Called once the reject has committed, with a sentence saying what happened. */
   onRejected: (summary: string, result: RejectImportResult) => void
+  /** Called when the server says this import was already rejected (409), with a translated sentence. */
+  onAlreadyRejected: (message: string) => void
 }
 
 function parse(data: string): { guid?: unknown; paths?: unknown; path?: unknown } {
@@ -20,7 +22,7 @@ function parse(data: string): { guid?: unknown; paths?: unknown; path?: unknown 
 // happen, including the two cases where it does less: an import that recorded
 // no release (nothing to blocklist) and a file outside the library folders
 // (detached, never deleted).
-export default function RejectImportDialog({ event, onClose, onRejected }: Props) {
+export default function RejectImportDialog({ event, onClose, onRejected, onAlreadyRejected }: Props) {
   const { t } = useTranslation()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -37,6 +39,11 @@ export default function RejectImportDialog({ event, onClose, onRejected }: Props
       const result = await api.rejectImport(event.id)
       onRejected(rejectSummary(result, t), result)
     } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        // Never show the server's English text: say it in the user's language.
+        onAlreadyRejected(t('rejectImport.alreadyRejected'))
+        return
+      }
       setError(e instanceof Error && e.message ? e.message : t('rejectImport.failed'))
       setBusy(false)
     }

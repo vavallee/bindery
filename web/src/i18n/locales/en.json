@@ -870,6 +870,7 @@
     "confirm": "Reject import",
     "confirming": "Rejecting…",
     "failed": "Could not reject this import.",
+    "alreadyRejected": "This import was already rejected, so nothing more was done.",
     "doneWanted": "Import rejected.",
     "doneNoOp": "Nothing was rejected, and nothing was blocklisted.",
     "doneSuperseded_one": "{{count}} file was replaced by a newer import, so it was left alone.",

@@ -260,6 +260,7 @@ export default function HistoryPage() {
           event={rejectTarget}
           onClose={() => setRejectTarget(null)}
           onRejected={summary => { setRejectTarget(null); setNotice(summary); load() }}
+          onAlreadyRejected={message => { setRejectTarget(null); setNotice(message); load() }}
         />
       )}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
