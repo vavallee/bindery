@@ -267,9 +267,15 @@ describe('CalibreTab coverage', () => {
       'calibre.library_path': '/calibre',
       'calibre.last_import_at': '2026-09-01T10:00:00Z',
     })
-    mocked.calibreImportStart.mockResolvedValue({ running: true, processed: 5, total: 10, message: 'Reading metadata.db' })
+    const running = { running: true, processed: 5, total: 10, message: 'Reading metadata.db' }
+    mocked.calibreImportStart.mockResolvedValue(running)
     render(<CalibreTab />)
     expect(await screen.findByText(/Last import:/)).toBeInTheDocument()
+    // From here the server reports the run in progress. Without this the
+    // status read the tab makes on mount, or its one second poll, could land
+    // after the click with the idle default and clear the progress line
+    // before the assertions below ran (a CI flake).
+    mocked.calibreImportStatus.mockResolvedValue(running)
     fireEvent.click(screen.getByRole('button', { name: 'Import library' }))
     expect(await screen.findByText('Reading metadata.db')).toBeInTheDocument()
     expect(screen.getByText('5 / 10')).toBeInTheDocument()
