@@ -40,6 +40,22 @@ func TestAutoGrabRejectsOtherBooksForUnreleasedTitles(t *testing.T) {
 			"Halo: Oblivion: A Master Chief Story - Troy Denning [ENG / M4B]", reasonRunsIntoOther},
 		{"Camp Half-Blood: From the World of Percy Jackson: The Rite of Aphrodite", "Rick Riordan",
 			"Camp Half-Blood Confidential - Rick Riordan [ENG / MP3]", reasonRunsIntoOther},
+		// "Main Other Title - Author", the commonest way a same author
+		// sequel is named (third review of #3640).
+		{"Halo: Fireteam Noble", "Troy Denning", "Halo Silent Storm - Troy Denning", reasonRunsIntoOther},
+		{"Halo: Fireteam Noble", "Troy Denning", "Halo Silent Storm - Troy Denning M4B", reasonRunsIntoOther},
+		{"Halo: Fireteam Noble", "Troy Denning", "Halo Silent Storm - Troy Denning [ENG / M4B]", reasonRunsIntoOther},
+		{"Halo: Fireteam Noble", "Troy Denning", "Halo.Silent.Storm-Troy.Denning", reasonRunsIntoOther},
+		{"Halo: Fireteam Noble", "Troy Denning", "Halo Shadows Of Reach - Troy Denning", reasonRunsIntoOther},
+		{"Halo: Fireteam Noble", "Troy Denning", "Halo Oblivion Master Chief - Troy Denning", reasonRunsIntoOther},
+		{"Halo: The Fall of Reach", "Eric Nylund", "Halo First Strike - Eric Nylund", reasonRunsIntoOther},
+		{"Halo: The Fall of Reach", "Eric Nylund", "Halo Ghosts Of Onyx - Eric Nylund", reasonRunsIntoOther},
+		{"Mistborn: The Final Empire", "Brandon Sanderson", "Mistborn Secret History - Brandon Sanderson", reasonRunsIntoOther},
+		{"Mistborn: The Final Empire", "Brandon Sanderson", "Mistborn The Hero Of Ages - Brandon Sanderson", reasonRunsIntoOther},
+		{"Red Rising: Golden Son", "Pierce Brown", "Red Rising Morning Star - Pierce Brown", reasonRunsIntoOther},
+		{"Red Rising: Golden Son", "Pierce Brown", "Red Rising Iron Gold - Pierce Brown", reasonRunsIntoOther},
+		{"Camp Half-Blood: From the World of Percy Jackson: The Rite of Aphrodite", "Rick Riordan",
+			"Camp Half-Blood Confidential Demigod Files - Rick Riordan", reasonRunsIntoOther},
 	}
 	for _, c := range cases {
 		got := batchVerdicts(c.title, c.author, []string{c.release}, bookContext{})
@@ -100,7 +116,7 @@ func TestAutoGrabKeepsTheBookItself(t *testing.T) {
 		{"1984: A Novel", "George Orwell", "1984 Nineteen Eighty Four George Orwell"},
 		{"Halo: Fireteam Noble", "Troy Denning", "Halo Unabridged Audiobook by Troy Denning M4B"},
 
-		// Furniture, a narrator or co author, or the numerals spelled out,
+		// Furniture, a series abbreviation or the numerals spelled out,
 		// between the main title and a credit to the wanted author (second
 		// review of #3640).
 		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Audible by Andy Weir"},
@@ -112,23 +128,26 @@ func TestAutoGrabKeepsTheBookItself(t *testing.T) {
 		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Dramatized Adaptation by Andy Weir"},
 		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Full Cast by Andy Weir"},
 		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Signed First Edition by Andy Weir"},
-		{"Project Hail Mary: A Novel", "Andy Weir", "Project Hail Mary Ray Porter - Andy Weir"},
 		{"Frankenstein: Or, The Modern Prometheus", "Mary Shelley", "Frankenstein 1818 Text by Mary Shelley"},
 		{"Frankenstein: Or, The Modern Prometheus", "Mary Shelley", "Frankenstein Norton Critical Edition by Mary Shelley"},
 		{"Frankenstein: Or, The Modern Prometheus", "Mary Shelley", "Frankenstein Penguin Classics - Mary Shelley"},
 		{"Dracula: Annotated", "Bram Stoker", "Dracula Oxford Worlds Classics by Bram Stoker"},
 		{"Der Schwarm: Roman", "Frank Schätzing", "Der Schwarm Ungekürzte Lesung - Frank Schätzing"},
 		{"L'Étranger: Roman", "Albert Camus", "L'Étranger Folio - Albert Camus"},
-		{"Educated: A Memoir", "Tara Westover", "Educated Julia Whelan - Tara Westover"},
-		{"Good Omens: The Nice and Accurate Prophecies of Agnes Nutter, Witch", "Neil Gaiman", "Good Omens Terry Pratchett - Neil Gaiman"},
 		{"1984: A Novel", "George Orwell", "1984 Nineteen Eighty-Four by George Orwell"},
 		{"1984: A Novel", "George Orwell", "1984 Nineteen Eighty Four - George Orwell"},
 	}
-	// Known limit, deliberately not asserted either way: the same book under a
-	// subtitle the library does not hold, closed by a credit to the author,
-	// "Atomic Habits Tiny Changes Remarkable Results by James Clear EPUB" for
-	// the US subtitle. It has exactly the shape of "Camp Half-Blood
-	// Confidential by Rick Riordan", and no string rule tells the two apart.
+	// Known limits, deliberately not asserted either way. Automatic search
+	// drops these; they stay visible and grabbable in interactive search.
+	//   - The same book under a subtitle the library does not hold, closed by
+	//     a credit to the author: "Atomic Habits Tiny Changes Remarkable
+	//     Results by James Clear EPUB" for the US subtitle. It has exactly the
+	//     shape of "Camp Half-Blood Confidential by Rick Riordan".
+	//   - A narrator or co author before "- <author>" with no role word:
+	//     "Project Hail Mary Ray Porter - Andy Weir", "Educated Julia Whelan -
+	//     Tara Westover", "Good Omens Terry Pratchett - Neil Gaiman". A name
+	//     has the same shape as "Halo Silent Storm - Troy Denning", which is
+	//     another book.
 	series := bookContext{seriesTitle: "Expeditionary Force", seriesPosition: "20"}
 	for _, release := range []string{
 		"Last Ride ExForce 20 M4B",

@@ -4,7 +4,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 )
@@ -108,10 +107,15 @@ func (si *subtitleInfo) addKnown(s string) {
 	}
 }
 
-// abbreviates reports whether tok is two or more consecutive words of seq run
-// together, each cut to a prefix of at least two letters: "exforce" and
-// "exfor" for "expeditionary force".
+// abbreviates reports whether tok is the leading words of seq run together,
+// two or more of them, each cut to a prefix of at least two letters: "exforce"
+// and "exfor" for "expeditionary force". The abbreviation must start with the
+// first word and be at least four letters long, so a short ordinary word that
+// happens to split into word prefixes ("most", "risk") does not pass.
 func abbreviates(tok string, seq []string) bool {
+	if len(tok) < 4 {
+		return false
+	}
 	var from func(rest string, j, parts int) bool
 	from = func(rest string, j, parts int) bool {
 		if rest == "" {
@@ -128,12 +132,7 @@ func abbreviates(tok string, seq []string) bool {
 		}
 		return false
 	}
-	for start := range seq {
-		if from(tok, start, 0) {
-			return true
-		}
-	}
-	return false
+	return from(tok, 0, 0)
 }
 
 // languageCodes are the three letter codes releaseLanguageTags maps to
@@ -162,13 +161,18 @@ var languageCodes = func() map[string]bool {
 // title. The words that do not count are furnitureAfterMainTitle's: release,
 // edition and publisher furniture, numbers and number words, the wanted
 // subtitle and series words and their run together abbreviations ("ExForce"
-// for "Expeditionary Force"). A short run of capitalised words right before
-// "- <author>" is a narrator or co author ("Ray Porter - Andy Weir", "Terry
-// Pratchett - Neil Gaiman") and does not count either.
+// for "Expeditionary Force").
 //
-// The known limit is the same book under a subtitle the library does not
-// hold, credited the same way ("Atomic Habits Tiny Changes Remarkable Results
-// by James Clear"): no string rule can tell that from another book.
+// Known limits, both accepted because a same author sequel written "Main
+// Other Title - Author" is the bug this exists for, and a release dropped here
+// stays visible and grabbable in interactive search:
+//   - the same book under a subtitle the library does not hold, credited the
+//     same way ("Atomic Habits Tiny Changes Remarkable Results by James
+//     Clear"): no string rule can tell that from another book;
+//   - a narrator or co author between the main title and the credit with no
+//     role word ("Project Hail Mary Ray Porter - Andy Weir"). A name cannot be
+//     told from a title by its shape: "Halo Silent Storm - Troy Denning" is
+//     two capitalised words before the dash too.
 //
 // Reading starts only when the main title is followed by a colon or plain
 // spacing, dots or underscores. After a dash, comma or bracket what follows
@@ -183,27 +187,17 @@ func (si subtitleInfo) runsIntoOtherTitle(raw, n string, primary ...[]string) bo
 	if punctBefore(toks[k]) && !strings.Contains(toks[k].sep, ":") {
 		return false
 	}
-	// The words after the main title are read in punctuation separated
-	// segments, so a narrator's name right before "- <author>" can be told
-	// from the words before it.
-	foreignBefore, segForeign, segStart := false, false, k
+	foreign := false
 	for i := k; i < len(toks); i++ {
 		t := toks[i]
 		if t.text == "by" {
 			if i > k && creditRoleWords[toks[i-1].text] {
 				return false
 			}
-			return (foreignBefore || segForeign) && si.creditsWantedAuthor(toks[i+1:], false)
+			return foreign && si.creditsWantedAuthor(toks[i+1:], false)
 		}
 		if i > k && dashBefore(t) && si.creditsWantedAuthor(toks[i:], true) {
-			if segForeign && contributorName(toks[segStart:i]) {
-				segForeign = false
-			}
-			return foreignBefore || segForeign
-		}
-		if i > k && punctBefore(t) {
-			foreignBefore = foreignBefore || segForeign
-			segForeign, segStart = false, i
+			return foreign
 		}
 		if !isAllDigits(t.text) && len(newznab.SigWords(t.text)) == 0 {
 			continue
@@ -214,27 +208,10 @@ func (si subtitleInfo) runsIntoOtherTitle(raw, n string, primary ...[]string) bo
 			continue
 		}
 		if !si.furnitureAfterMainTitle(t.text) {
-			segForeign = true
+			foreign = true
 		}
 	}
 	return false
-}
-
-// contributorName reports whether seg, the words between the previous
-// punctuation and a "- <author>" credit, reads as a person's name: two to four
-// words, each written with a capital and none a number ("Ray Porter", "R.C.
-// Bray", "Julia Whelan").
-func contributorName(seg []relTok) bool {
-	if len(seg) < 2 || len(seg) > 4 {
-		return false
-	}
-	for _, t := range seg {
-		r := []rune(t.raw)
-		if len(r) == 0 || !unicode.IsUpper(r[0]) || isAllDigits(t.text) {
-			return false
-		}
-	}
-	return true
 }
 
 // runOnFurniture are words that follow a title in releases of the book itself
@@ -257,11 +234,13 @@ var runOnFurniture = map[string]bool{
 // source carries no dash literally.
 var dashRunes = string([]rune{'-', 0x2013, 0x2014})
 
-// dashBefore reports whether a dash separates tok from the token before it.
-// A hyphen inside a word ("Half-Blood") has no space beside it and does not
-// count.
+// dashBefore reports whether a dash separates tok from the token before it. A
+// bare hyphen counts too, because dotted release names join their fields with
+// one ("Halo.Silent.Storm-Troy.Denning"). A hyphen inside a word ("Half-Blood")
+// is harmless here: the caller acts on a dash only when the wanted author's
+// name follows it.
 func dashBefore(tok relTok) bool {
-	return strings.ContainsAny(tok.sep, dashRunes) && strings.ContainsAny(tok.sep, " _.")
+	return strings.ContainsAny(tok.sep, dashRunes)
 }
 
 // creditsWantedAuthor reports whether toks open with a credit to the wanted
