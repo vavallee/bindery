@@ -45,6 +45,10 @@ const (
 	SeriesCheckFailed    = "failed"
 	SeriesCheckAmbiguous = "ambiguous_owner"
 	SeriesCheckTimedOut  = "timed_out"
+	// SeriesCheckPartial is a check that read the catalogue but could not add
+	// every book it meant to. It does not advance last_ok_at, so the next check
+	// still sees what this one missed.
+	SeriesCheckPartial = "partial"
 )
 
 // SeriesMonitoring is what the scheduled series check records per series.

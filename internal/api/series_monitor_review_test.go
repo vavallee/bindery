@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -230,4 +231,62 @@ func sep(q string) string {
 		return "?"
 	}
 	return "&"
+}
+
+// last_ok_at is the moment a check began, but catalogue dates are date only. A
+// book dated the same day, listed by Hardcover after the check began, must
+// still be added by the next ok check.
+func TestSeriesCheckKeepsASameDayRelease(t *testing.T) {
+	f := newMonitorFixture(t, models.SeriesMonitorUpcoming)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	dayX := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Add(-48 * time.Hour)
+	at8 := dayX.Add(8 * time.Hour)
+	if err := f.repo.StampCheck(ctx, f.series.ID, at8, now.Add(time.Hour), models.SeriesCheckOK, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	// At 09:00 Hardcover first lists Words of Radiance, dated day X.
+	setCatalogDate(t, f, "hc:words-of-radiance", &dayX)
+	res := f.check(t)
+	if res.Created != 2 || f.book(t, "hc:words-of-radiance") == nil {
+		t.Errorf("check = %+v, want the same day release added", res)
+	}
+	if !seriesCheckQualifies(models.SeriesMonitorUpcoming, &dayX, at8.Add(time.Hour), &at8) {
+		t.Error("a book dated the day of the last check did not qualify")
+	}
+}
+
+// A failed hold write must not leave a wanted, unheld book behind: the book is
+// created with its hold in one transaction, so with the hold table broken the
+// create fails, nothing is added, and the check is partial and does not
+// advance last_ok_at.
+func TestSeriesCheckHoldFailureLeavesNoUnheldBook(t *testing.T) {
+	f := newMonitorFixture(t, models.SeriesMonitorUpcoming)
+	ctx := context.Background()
+	if err := f.repo.StampCheck(ctx, f.series.ID, time.Now().Add(-48*time.Hour), time.Now().Add(time.Hour), models.SeriesCheckOK, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := f.repo.GetByID(ctx, f.series.ID)
+	raw, _ := seriesFixtureDBs.Load(f.books)
+	if _, err := raw.(*sql.DB).ExecContext(ctx, `DROP TABLE book_search_holds`); err != nil {
+		t.Fatal(err)
+	}
+	res, err := f.h.CheckSeries(ctx, f.series)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.book(t, "hc:oathbringer") != nil {
+		t.Error("a future dated book exists without its hold")
+	}
+	if res.Status != models.SeriesCheckPartial || res.Created != 0 {
+		t.Errorf("check = %+v, want partial with nothing created", res)
+	}
+	// The job stamps the outcome; a partial status must leave last_ok_at alone.
+	if err := f.repo.StampCheck(ctx, f.series.ID, time.Now(), time.Now().Add(time.Hour), res.Status, res.Message, res.Created); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := f.repo.GetByID(ctx, f.series.ID)
+	if after.Monitoring.LastOKAt == nil || !after.Monitoring.LastOKAt.Equal(*before.Monitoring.LastOKAt) {
+		t.Errorf("last_ok_at moved to %v after a partial check", after.Monitoring.LastOKAt)
+	}
 }

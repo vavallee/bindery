@@ -1067,6 +1067,7 @@
         "provider_disabled": "Not checked: enhanced Hardcover support is off",
         "failed": "Last check {{when}} failed and will be retried",
         "timed_out": "Last check {{when}} ran out of time and will be retried",
+        "partial": "Last check {{when}} could not add every book and will be retried",
         "ambiguous_owner": "Not checked: the series holds books from more than one account"
       }
     },

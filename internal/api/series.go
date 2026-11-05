@@ -2462,6 +2462,12 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 	if book.Genres == nil {
 		book.Genres = []string{}
 	}
+	// A scheduled series check holds a future dated book as Upcoming in the
+	// create transaction, so it is never wanted and unheld (#2523).
+	if seriesJobHoldsUpcoming(ctx) && book.ReleaseDate != nil && book.ReleaseDate.After(time.Now()) {
+		until := *book.ReleaseDate
+		book.SearchHeldUntil = &until
+	}
 	if err := h.books.Create(ctx, &book); err != nil {
 		return nil, err
 	}

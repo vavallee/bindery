@@ -230,7 +230,7 @@ func (j *seriesMonitorJob) tick(ctx context.Context) seriesTickResult {
 			slog.Warn("job: series monitoring failed for a series", "series", series.Title, "error", out.Err)
 			stamp(series, began, out, interval)
 			streak = 0
-		case out.Status == models.SeriesCheckNoLink || out.Status == models.SeriesCheckDisabled || out.Status == models.SeriesCheckAmbiguous:
+		case out.Status == models.SeriesCheckNoLink || out.Status == models.SeriesCheckDisabled || out.Status == models.SeriesCheckAmbiguous || out.Status == models.SeriesCheckPartial:
 			// Nothing was asked of the provider, and a link or setting is
 			// fixed in a click, so look again soon rather than in a month.
 			stamp(series, began, out, retry)

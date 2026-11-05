@@ -758,7 +758,22 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 		ownerArg = b.OwnerUserID
 	}
 
-	result, err := r.db.ExecContext(ctx, `
+	// A book created Upcoming (SearchHeldUntil set) gets its search hold in the
+	// same transaction as the row, so the wanted sweep can never see it
+	// unheld (#2523).
+	var ins interface {
+		ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	} = r.db
+	var holdTx *sql.Tx
+	if b.SearchHeldUntil != nil {
+		holdTx, err = r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("create book: %w", err)
+		}
+		defer func() { _ = holdTx.Rollback() }()
+		ins = holdTx
+	}
+	result, err := ins.ExecContext(ctx, `
 		INSERT INTO books (foreign_id, author_id, title, sort_title, original_title, description,
 		                   image_url, release_date, genres, average_rating, ratings_count,
 		                   monitored, status, any_edition_ok, selected_edition_id,
@@ -779,6 +794,16 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 	id, err := result.LastInsertId()
 	if err != nil {
 		return fmt.Errorf("get book id: %w", err)
+	}
+	if holdTx != nil {
+		if _, err := holdTx.ExecContext(ctx,
+			`INSERT INTO book_search_holds (book_id, until_at) VALUES (?, ?)`,
+			id, b.SearchHeldUntil.UTC().Format(discoveryTimeLayout)); err != nil {
+			return fmt.Errorf("create book: set search hold: %w", err)
+		}
+		if err := holdTx.Commit(); err != nil {
+			return fmt.Errorf("create book: %w", err)
+		}
 	}
 	b.ID = id
 	b.CreatedAt = now

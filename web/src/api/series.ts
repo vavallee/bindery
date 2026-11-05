@@ -89,7 +89,7 @@ export interface SeriesMonitoring {
   mode: 'upcoming' | 'all'
   lastCheckAt?: string
   nextCheckAt?: string
-  // ok, no_link, provider_disabled, failed, ambiguous_owner or timed_out.
+  // ok, no_link, provider_disabled, failed, ambiguous_owner, timed_out or partial.
   lastStatus?: string
   lastMessage?: string
   lastCreated: number

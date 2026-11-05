@@ -96,7 +96,26 @@ func seriesCheckQualifies(mode string, date *time.Time, now time.Time, lastOK *t
 	if date.After(now) {
 		return true
 	}
-	return lastOK != nil && date.After(*lastOK)
+	// Catalogue dates are date only (midnight) while last_ok_at is the moment
+	// the check began, so a book dated the same day as the last good check but
+	// listed by Hardcover after it began would fail a plain After. Compare
+	// against the start of that day; a book already in the library is skipped
+	// before this runs, so the wider window cannot add it twice.
+	return lastOK != nil && !date.Before(utcDayStart(*lastOK))
+}
+
+func utcDayStart(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+type seriesJobHoldKey struct{}
+
+// seriesJobHoldsUpcoming reports whether ctx is a series check, which holds a
+// future dated book it creates in the same transaction as the create.
+func seriesJobHoldsUpcoming(ctx context.Context) bool {
+	v, _ := ctx.Value(seriesJobHoldKey{}).(bool)
+	return v
 }
 
 // CheckSeries runs one scheduled check of series. It re-reads the series
@@ -185,7 +204,7 @@ func (h *SeriesHandler) CheckSeries(ctx context.Context, series *models.Series) 
 		return res, nil
 	}
 
-	ctx = withSeriesJobOwner(ctx, owner)
+	ctx = context.WithValue(withSeriesJobOwner(ctx, owner), seriesJobHoldKey{}, true)
 	now := time.Now()
 	diff := buildHardcoverDiff(ctx, nil, 0, scoped, link, catalog)
 	format := requestedFormat{mediaType: models.MediaTypeEbook}
@@ -199,6 +218,7 @@ func (h *SeriesHandler) CheckSeries(ctx context.Context, series *models.Series) 
 	h.refreshUpcomingHolds(ctx, diff, now)
 
 	collides := missingPositionCollisions(diff)
+	failed := 0
 	for _, missing := range diff.Missing {
 		if ctx.Err() != nil {
 			return res, ctx.Err()
@@ -232,6 +252,7 @@ func (h *SeriesHandler) CheckSeries(ctx context.Context, series *models.Series) 
 			}
 			slog.Warn("series check: failed to add a catalogue book; continuing",
 				"seriesId", cur.ID, "foreignBookID", missing.ForeignBookID, "error", err)
+			failed++
 			continue
 		}
 		if book == nil || book.CreatedAt.Before(callStart) {
@@ -239,13 +260,19 @@ func (h *SeriesHandler) CheckSeries(ctx context.Context, series *models.Series) 
 			continue
 		}
 		res.Created++
-		if missing.ReleaseDate != nil && missing.ReleaseDate.After(now) {
-			if err := h.books.SetSearchHold(ctx, book.ID, *missing.ReleaseDate); err != nil {
-				slog.Warn("series check: could not mark a book Upcoming", "bookId", book.ID, "error", err)
-				continue
-			}
+		// The hold was written with the book (see ensureHardcoverCatalogBook).
+		if book.SearchHeldUntil != nil {
 			res.Upcoming++
 		}
+	}
+	if failed > 0 {
+		// Not ok: last_ok_at stays where it was, so a past dated book that
+		// failed to add is still newer than it on the next check.
+		res.Status = models.SeriesCheckPartial
+		res.Message = fmt.Sprintf("%d books could not be added and will be retried.", failed)
+		slog.Warn("series check finished with failures", "seriesId", cur.ID, "series", cur.Title,
+			"created", res.Created, "failed", failed)
+		return res, nil
 	}
 	res.Status = models.SeriesCheckOK
 	slog.Info("series check finished", "seriesId", cur.ID, "series", cur.Title, "mode", mon.Mode,

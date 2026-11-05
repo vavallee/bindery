@@ -111,8 +111,10 @@ The **Shortlisted** switch on a series card is the series' Monitored flag. Until
 
 Beside the switch, **What to add** chooses the books a check adds:
 
-- **Upcoming only** (the default) adds a book only when Hardcover gives it a release date that is still ahead, or later than the previous check. Back catalogue gaps are left to **add all**, and a book with no release date is left alone.
+- **Upcoming only** (the default) adds a book only when Hardcover gives it a release date that is still ahead, or on or after the day of the previous successful check. Back catalogue gaps are left to **add all**, and a book with no release date is left alone.
 - **All missing books** adds everything the catalogue has that you do not.
+
+The first check of a series has no earlier check to compare with, so it adds only books with a future release date and backfills nothing. Books released while monitoring was off are not backfilled either: switching monitoring off and on again starts from a first check. Use **add all** for the back catalogue. A check that could not add every book it meant to is reported as partial on the card, does not count as a successful check, and is retried in a few hours, so a book it missed is picked up next time.
 
 Box sets and split edition parts are never added, the same as in a fill. A check also leaves a catalogue row alone when it cannot tell it from a book you have: it has no identifier of its own, or it sits at a position the series already holds, as a reprint or anniversary edition would. Those stay in the series diff for you to add by hand.
 
