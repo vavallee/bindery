@@ -108,10 +108,12 @@ so "The Abridged History of Rome" is not abridged. A title carrying both
 recognised the same way.
 
 Narrator from a release title, only from the explicit shapes "read by NAME",
-"narrated by NAME" and "NAME (narrator)". A name equal to one of the book's
-authors is discarded, because author-narrated books are common and a bare name in
-a release title is not evidence of a narrator role. No other position in a title
-is interpreted as a narrator. Multiple names split on `,`, `&` and `and`.
+"narrated by NAME", "performed by NAME" and "NAME (narrator)". Each name must
+look like a person (two to five words, no digits). An author name appearing in a
+title is never read as a narrator on its own, and "by NAME" alone is the author
+credit. An explicit "read by" the author does count, because author narrated
+books are common and the credit is stated. Two credits that disagree give
+unknown. Multiple names split on `,`, `&` and `and`.
 
 Narrator and edition type from metadata sources, in order of trust:
 
