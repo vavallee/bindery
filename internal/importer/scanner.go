@@ -2556,6 +2556,24 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			importedDestPaths = append(importedDestPaths, destPath)
 			continue
 		}
+		destPath, destErr = s.uniqueEbookDestination(ctx, book, destPath)
+		if destErr != nil {
+			slog.Error("failed to find unused book destination", "src", srcFile, "error", destErr)
+			lastFileErr = destErr
+			failed++
+			continue
+		}
+		// A prior attempt may have selected a suffix and completed just this
+		// file before it stopped. The deterministic base-name check above
+		// cannot see that row, so repeat the idempotency guard after collision
+		// resolution rather than re-copying the existing suffixed file.
+		if s.alreadyImportedPath(ctx, book, destPath) {
+			slog.Info("book file already imported at collision-safe destination — skipping re-import",
+				"src", srcFile, "dst", destPath)
+			imported++
+			importedDestPaths = append(importedDestPaths, destPath)
+			continue
+		}
 
 		// A destination below a folder another book tracks (an audiobook is
 		// tracked as its whole folder) is not this book's to write to: a later
