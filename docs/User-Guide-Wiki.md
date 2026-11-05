@@ -851,7 +851,11 @@ to the records. Things worth knowing before you judge the results:
   Choosing it shows the exact destination path before you confirm; the move
   then runs in the background and Bindery cannot undo it for you. Nothing
   happens until you confirm either way. History records the change as **File
-  Moved**, naming the book the file came from.
+  Moved**, naming the book the file came from. With import mode set to move,
+  an audiobook folder that also holds a file another book tracks cannot be
+  moved this way, since the other file would go with it: the preview shows the
+  reason and the move button stays off, while **Correct the match only** still
+  works (#3556).
 - **An import never takes a file another book already tracks.** If a download
   or a manual import lands on a path that a different book already has, the
   import stops with **Import Blocked** and the Queue row names that book and
@@ -1097,6 +1101,15 @@ a file that changed under you is skipped instead of moved somewhere stale. A
 move is always a move, never a copy, so hardlinks survive and nothing is
 duplicated. Bindery also prunes the folder a file left behind when it empties,
 and refreshes the `metadata.opf` sidecar when you have that turned on.
+
+An audiobook folder moves as a whole, so one that also holds a file another
+book tracks (say a second copy of the same title added from another metadata
+provider, whose ebook ended up in that folder) is shown as **Error** and left
+where it is, with the file named in the reason (unless it belongs to another
+user's book). Moving it would take the other book's file along and leave that
+book pointing at a path that no longer exists. Move that file out of the
+folder, or use Forget this file on the book it belongs to, and run Rename files
+again.
 
 The file extension comes from the file's current name. If a file has lost its
 extension (for example from a template with `{Title}{ext}` and no dot), Bindery

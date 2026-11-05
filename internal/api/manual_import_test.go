@@ -108,6 +108,12 @@ func (s *stubManualImportScanner) RelinkFile(_ context.Context, _ int64, paths [
 	return importer.RelinkResult{Path: paths[0], Format: formatHint}, nil
 }
 
+// FolderRelocationRefusal never refuses: the real check runs against the
+// importer in manual_import_owned_test.go.
+func (s *stubManualImportScanner) FolderRelocationRefusal(context.Context, int64, string, string, int64) (string, error) {
+	return "", nil
+}
+
 // manualImportFixture spins up an in-memory DB and wires a ManualImportHandler.
 func manualImportFixture(t *testing.T) (*ManualImportHandler, *stubManualImportScanner, *db.DownloadRepo, *db.BookRepo, context.Context) {
 	t.Helper()
