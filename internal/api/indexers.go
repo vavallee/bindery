@@ -711,6 +711,11 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	var booksRead indexer.AuthorBooksReader
 	if h.books != nil {
 		owner := book.OwnerUserID
+		if owner == 0 {
+			// An unowned book has no owner to scope by, and owner 0 would list
+			// every user's books. Fall back to the caller.
+			owner = auth.UserIDFromContext(r.Context())
+		}
 		booksRead = func(ctx context.Context, authorID int64) ([]models.Book, error) {
 			return h.books.ListByAuthorAndUser(ctx, authorID, owner)
 		}

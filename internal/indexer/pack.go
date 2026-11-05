@@ -194,9 +194,11 @@ type PackContext struct {
 //     releases name a single book "Title 01-49" or "Title 1-24" for its
 //     tracks. After a series title that differs from the core title, zero
 //     padding is accepted inside brackets ("[Heart of Texas 01-03]"). A
-//     release with audio or track words (mp3, m4b, audiobook, cd, disc,
-//     track, chapter and the like) is never read for this shape, because
-//     there the range is a track or disc count.
+//     part, disc, cd, chapter or track word right before the range makes it
+//     a split recording, never a pack. A format tag elsewhere in the name
+//     does not: "Mistborn 1-3 (m4b)" is a pack. The known cost is a single
+//     audiobook split in two and named like "It 1-2 (1986) mp3", which reads
+//     as a pack; interactive search shows it labelled and still grabbable.
 //   - A list separated by semicolons naming at least two of the author's
 //     books, the wanted one included: "Three Classic Thrillers (The Firm;
 //     The Appeal; The Chamber)". The items are checked against the library
@@ -237,23 +239,21 @@ func rangeAfterRe(name string) *regexp.Regexp {
 		`[\s._]+(\d{1,2})[-–—](\d{1,2}))(?:$|[^\pL\pN])`)
 }
 
-// audioReleaseRe finds the words of an audio release or a split recording. In
-// such a release a range after the title or series is far more often a track,
-// disc or chapter count than a run of books ("Dune 1-49 [mp3]", "The Dark
-// Tower 01-24 (mp3)"), so the named range marker is not read there at all.
-var audioReleaseRe = regexp.MustCompile(`(?i)(?:^|[^\pL\pN])(?:mp3|m4b|m4a|flac|aac|ogg|opus|audio-?books?|cds?|discs?|tracks?|chapters?)(?:$|[^\pL\pN])`)
-
 // maxTitleRangeEnd caps the range after the core title. A pack named after one
 // of its books ("Dominion of Blades 1-2") holds a handful; a larger number
-// after a single title is a track or chapter count.
+// after a single title is a track or chapter count ("Dune 1-49 [mp3]").
+//
+// Format tags and stray words elsewhere in the name (mp3, m4b, Audiobook, a
+// "CD cover", a "bonus chapter") say nothing about the range: an audiobook
+// pack is still a pack. A range is a part, disc or track range only when that
+// word stands right before it ("Dune CD 1-12"), which this shape never matches
+// because the range must follow the name directly; a name that itself ends in
+// such a word is skipped.
 const maxTitleRangeEnd = 20
 
 // namedRangeMarker matches the wanted book's core title or series title
 // followed directly by a range. See MultiBookPackMarkerFor.
 func namedRangeMarker(title string, want PackContext) string {
-	if audioReleaseRe.MatchString(title) {
-		return ""
-	}
 	core := coreTitle(want.Title)
 	series := StripBracketSuffixes(strings.TrimSpace(want.SeriesTitle))
 	for _, c := range []struct {

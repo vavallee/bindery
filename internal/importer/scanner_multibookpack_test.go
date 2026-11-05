@@ -141,6 +141,14 @@ func TestImport_BlocksPacksNamedAfterTheBook(t *testing.T) {
 		}
 	})
 
+	t.Run("range after the title in an audiobook release", func(t *testing.T) {
+		s, dl, downloadPath, reload := packImportFixture(t, "Dominion of Blades 1-2 [Audiobook]", "Dominion of Blades: A LitRPG Adventure (Volume 1)")
+		s.tryImportInternal(t.Context(), dl, downloadPath, "", "", "", nil, nil)
+		if got := reload(); got.Status != models.StateImportBlocked {
+			t.Fatalf("status = %q, want %q", got.Status, models.StateImportBlocked)
+		}
+	})
+
 	t.Run("semicolon list of the author's titles", func(t *testing.T) {
 		const release = "John Grisham - Three Classic Thrillers (The Firm; The Appeal; The Chamber) (v5.0) (epub)"
 		s, dl, downloadPath, reload := packImportFixture(t, release, "Chamber")

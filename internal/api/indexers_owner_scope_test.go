@@ -50,20 +50,23 @@ func TestSearchBook_AuthorTitlesAreScopedToTheOwner(t *testing.T) {
 	wanted := mk("OL3268OM1", "King of Scars", u1.ID)
 	mk("OL3268OM2", "Rule of Wolves", u1.ID)
 	mk("OL3268OM3", "Bobs Private Title", u2.ID)
+	unowned := mk("OL3268OM4", "Shadow and Bone", 0)
 
-	mk("OL3268OM4", "Admins Private Title", u2.ID)
-
-	// The owner searching sees only their own titles. An admin searching the
-	// owner's book gets the owner's titles too, not the admin's, so the
+	// The owner searching sees only their own titles. Bob, as an admin,
+	// searching Alice's book gets Alice's titles too, not his own, so the
 	// verdict matches the automatic search and the importer, which both scope
-	// by the book's owner (#3247).
+	// by the book's owner (#3247). A book with no owner falls back to the
+	// caller: owner 0 would list every user's books.
 	for _, tc := range []struct {
 		name string
+		book *models.Book
 		uid  int64
 		role string
+		want []string
 	}{
-		{"owner", u1.ID, ""},
-		{"admin searching another user's book", u2.ID, "admin"},
+		{"owner", wanted, u1.ID, "", []string{"Rule of Wolves", "Shadow and Bone"}},
+		{"admin searching another user's book", wanted, u2.ID, "admin", []string{"Rule of Wolves", "Shadow and Bone"}},
+		{"user searching an unowned book", unowned, u1.ID, "", []string{"King of Scars", "Rule of Wolves"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mock := &mockIndexerSearcher{audioResults: []newznab.SearchResult{{GUID: "r1", Title: "Leigh Bardugo - King of Scars MP3"}}}
@@ -75,7 +78,7 @@ func TestSearchBook_AuthorTitlesAreScopedToTheOwner(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := withURLParam(
 				httptest.NewRequest(http.MethodGet, "/indexer/book/1/search", nil),
-				"id", strconv.FormatInt(wanted.ID, 10),
+				"id", strconv.FormatInt(tc.book.ID, 10),
 			)
 			ctx := auth.WithUserID(req.Context(), tc.uid)
 			if tc.role != "" {
@@ -85,8 +88,10 @@ func TestSearchBook_AuthorTitlesAreScopedToTheOwner(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 			}
-			if got := mock.criteria().AuthorTitles; !slices.Equal(got, []string{"Rule of Wolves"}) {
-				t.Errorf("AuthorTitles = %v, want only the book owner's other title", got)
+			got := slices.Clone(mock.criteria().AuthorTitles)
+			slices.Sort(got)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("AuthorTitles = %v, want %v", got, tc.want)
 			}
 		})
 	}

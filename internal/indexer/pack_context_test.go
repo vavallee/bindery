@@ -40,6 +40,20 @@ func TestMultiBookPackMarkerFor_ThreadPacks(t *testing.T) {
 		{"Debbie Macomber - [Heart of Texas 01-03] (epub)", macomberCarolinesChild, "Heart of Texas 01-03"},
 		{"Debbie Macomber - Heart of Texas 1-3 (epub)", macomberCarolinesChild, "Heart of Texas 1-3"},
 		{"Dominion of Blades 1-20", dominionOfBlades, "Dominion of Blades 1-20"},
+		// A format tag or a stray track word elsewhere in the name does not
+		// make the range a track count (second review of #3642).
+		{"Dominion of Blades 1-2 [Audiobook]", dominionOfBlades, "Dominion of Blades 1-2"},
+		{"Dominion of Blades 1-2 (epub) [incl. bonus chapter]", dominionOfBlades, "Dominion of Blades 1-2"},
+		{"Dominion of Blades 1-2 (epub, CD cover)", dominionOfBlades, "Dominion of Blades 1-2"},
+		{"Dominion of Blades 1-2 [Ebooks & Audiobooks]", dominionOfBlades, "Dominion of Blades 1-2"},
+		{"Brandon Sanderson - Mistborn 1-3 (m4b)", PackContext{Title: "Mistborn: The Final Empire"}, "Mistborn 1-3"},
+		{"[Heart of Texas 01-03] mp3", macomberCarolinesChild, "Heart of Texas 01-03"},
+		{"The Track of Sand 1-2 (epub)", PackContext{Title: "The Track of Sand"}, "The Track of Sand 1-2"},
+		// Accepted false positives: a single audiobook split in two and named
+		// like a pack reads as one. Rare, and labelled, not hidden, in
+		// interactive search.
+		{"It 1-2 (1986) mp3", PackContext{Title: "It"}, "It 1-2"},
+		{"Catch-22 1-2 (audiobook)", PackContext{Title: "Catch-22"}, "Catch-22 1-2"},
 		// The wanted book plus one other library title still counts two.
 		{
 			"Brandon Sanderson - Mistborn; The Well of Ascension (epub)",
@@ -84,12 +98,19 @@ func TestMultiBookPackMarkerFor_SingleBooks(t *testing.T) {
 		// Track and disc counts in audio releases (review of #3642).
 		{"Frank Herbert - Dune 1-49 [mp3]", PackContext{Title: "Dune"}, "an unpadded track count after the title"},
 		{"Stephen King - It.1-24.mp3", PackContext{Title: "It"}, "a dotted track count after a short title"},
-		{"It 1-2 (1986) mp3", PackContext{Title: "It"}, "an mp3 release split in two"},
-		{"Catch-22 1-2 (audiobook)", PackContext{Title: "Catch-22"}, "an audiobook split in two"},
 		{"Dune 1-21", PackContext{Title: "Dune"}, "more than 20 after a single title is a track count"},
+		{"Dune CD 1-12", PackContext{Title: "Dune"}, "a cd range is one recording"},
+		{"Dune Disc 01-10", PackContext{Title: "Dune"}, "a disc range is one recording"},
 		{"The Gunslinger - The Dark Tower 01-24 (mp3)", PackContext{Title: "The Gunslinger", SeriesTitle: "The Dark Tower"}, "a padded track count after the series"},
 		{"Children of Dune - Dune Chronicles 03-12", PackContext{Title: "Children of Dune", SeriesTitle: "Dune Chronicles"}, "a padded range after the series outside brackets"},
-		{"Heart of Texas 1-3 (m4b)", macomberCarolinesChild, "a series range in an audio release"},
+		// A known gap, left undetected on purpose: the wanted title's own parts
+		// count as one book, so this list is two books only when the sibling
+		// is in the library. Here only a duplicate record of the subtitle is.
+		{
+			"Brandon Sanderson - Mistborn; The Final Empire; The Well of Ascension (epub)",
+			PackContext{Title: "Mistborn: The Final Empire", AuthorTitles: []string{"The Final Empire"}},
+			"the only library titles in the list are the wanted book's own parts",
+		},
 		// The wanted title's own parts count once (review of #3642).
 		{
 			"Brandon Sanderson - Mistborn; The Final Empire (epub)",

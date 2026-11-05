@@ -85,6 +85,7 @@ func TestAutoGrab_SkipsPacksNamedAfterTheBook(t *testing.T) {
 		siblings            []string
 	}{
 		{"range after the title", "Dominion of Blades: A LitRPG Adventure (Volume 1)", "Dominion of Blades 1-2", nil},
+		{"range after the title in an audiobook release", "Dominion of Blades: A LitRPG Adventure (Volume 1)", "Dominion of Blades 1-2 [Audiobook]", nil},
 		{
 			"semicolon list of the author's titles", "Chamber",
 			"John Grisham - Three Classic Thrillers (The Firm; The Appeal; The Chamber) (v5.0) (epub)",
