@@ -192,8 +192,10 @@ type PackContext struct {
 //     Subtitle" and "Title 2019-2020" are left alone. After the core title
 //     the range ends at 20 at most and is never zero padded: audiobook
 //     releases name a single book "Title 01-49" or "Title 1-24" for its
-//     tracks. After a series title that differs from the core title, zero
-//     padding is accepted inside brackets ("[Heart of Texas 01-03]"). A
+//     tracks. After a series title that differs from the core title the rules
+//     are stricter (see namedRangeMarker): a range alone in square brackets
+//     ("[Heart of Texas 01-03]") goes up to 99, anything else up to 20 with
+//     no book title after it. A
 //     part, disc, cd, chapter or track word right before the range makes it
 //     a split recording, never a pack. A format tag elsewhere in the name
 //     does not: "Mistborn 1-3 (m4b)" is a pack. The known cost is a single
@@ -253,46 +255,66 @@ const maxTitleRangeEnd = 20
 
 // namedRangeMarker matches the wanted book's core title or series title
 // followed directly by a range. See MultiBookPackMarkerFor.
+//
+// The series reading is narrower still, because a single audiobook is often
+// named after its series with a track count ("The Dark Tower 1-24 (mp3)",
+// "Harry Potter 1-17 - Philosopher's Stone"). It is skipped when the series is
+// named like the book (the title reading already covers that name), and
+// it requires one of:
+//   - the range alone in square brackets, the indexer's tag position: up to 99,
+//     zero padded or not ("[Heart of Texas 01-03]", "[Discworld 01-41]");
+//   - otherwise, up to 20, never zero padded (zero padding is accepted in
+//     round brackets too), and with no book title after the range: past a
+//     separator only format or pack noise may follow, as for "series by".
 func namedRangeMarker(title string, want PackContext) string {
+	t := dropApostrophes(title)
 	core := coreTitle(want.Title)
+	if m := firstNamedRange(t, core, func(_, hi int, padded bool, _, _ int) bool {
+		return !padded && hi <= maxTitleRangeEnd
+	}); m != "" {
+		return m
+	}
 	series := StripBracketSuffixes(strings.TrimSpace(want.SeriesTitle))
-	for _, c := range []struct {
-		name string
-		// zeroPaddedOK accepts "01-03", and only in brackets.
-		zeroPaddedOK bool
-		maxEnd       int
-	}{
-		{core, false, maxTitleRangeEnd},
-		{series, titleKey(series) != titleKey(core), 99},
-	} {
-		if titleKey(c.name) == "" || partWordRe.MatchString(c.name) {
-			continue
+	if titleKey(series) == titleKey(core) {
+		return ""
+	}
+	return firstNamedRange(t, series, func(_, hi int, padded bool, start, end int) bool {
+		if enclosedBy(t, start, end, '[', ']') {
+			return true
 		}
-		re := rangeAfterRe(c.name)
-		if re == nil {
-			continue
+		if padded && !enclosedBy(t, start, end, '(', ')') {
+			return false
 		}
-		for _, m := range re.FindAllStringSubmatch(dropApostrophes(title), -1) {
-			if strings.HasPrefix(m[2], "0") || strings.HasPrefix(m[3], "0") {
-				if !c.zeroPaddedOK || !bracketed(m[0]) {
-					continue
-				}
-			}
-			lo, _ := strconv.Atoi(m[2])
-			hi, _ := strconv.Atoi(m[3])
-			if lo >= 1 && lo < hi && hi <= c.maxEnd {
-				return strings.TrimSpace(m[1])
-			}
+		return hi <= maxTitleRangeEnd && onlyNoiseAfterSeriesBy(t[end:])
+	})
+}
+
+// firstNamedRange returns the first "name N-M" in t with 1 <= N < M that ok
+// accepts, or "". ok gets the numbers, whether either is zero padded, and the
+// byte span of the matched name and range in t.
+func firstNamedRange(t, name string, ok func(lo, hi int, padded bool, start, end int) bool) string {
+	if titleKey(name) == "" || partWordRe.MatchString(name) {
+		return ""
+	}
+	re := rangeAfterRe(name)
+	if re == nil {
+		return ""
+	}
+	for _, m := range re.FindAllStringSubmatchIndex(t, -1) {
+		a, b := t[m[4]:m[5]], t[m[6]:m[7]]
+		lo, _ := strconv.Atoi(a)
+		hi, _ := strconv.Atoi(b)
+		padded := strings.HasPrefix(a, "0") || strings.HasPrefix(b, "0")
+		if lo >= 1 && lo < hi && ok(lo, hi, padded, m[2], m[3]) {
+			return strings.TrimSpace(t[m[2]:m[3]])
 		}
 	}
 	return ""
 }
 
-// bracketed reports whether a rangeAfterRe match, boundaries included, is
-// enclosed in brackets: "[Heart of Texas 01-03]".
-func bracketed(match string) bool {
-	return (strings.HasPrefix(match, "[") || strings.HasPrefix(match, "(")) &&
-		(strings.HasSuffix(match, "]") || strings.HasSuffix(match, ")"))
+// enclosedBy reports whether t[start:end] sits directly inside open and close.
+func enclosedBy(t string, start, end int, open, close byte) bool {
+	return start > 0 && end < len(t) && t[start-1] == open && t[end] == close
 }
 
 var (

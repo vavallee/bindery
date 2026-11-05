@@ -49,6 +49,8 @@ func TestMultiBookPackMarkerFor_ThreadPacks(t *testing.T) {
 		{"Brandon Sanderson - Mistborn 1-3 (m4b)", PackContext{Title: "Mistborn: The Final Empire"}, "Mistborn 1-3"},
 		{"[Heart of Texas 01-03] mp3", macomberCarolinesChild, "Heart of Texas 01-03"},
 		{"The Track of Sand 1-2 (epub)", PackContext{Title: "The Track of Sand"}, "The Track of Sand 1-2"},
+		// The series reading in square brackets goes past 20.
+		{"Terry Pratchett - [Discworld 01-41] (epub)", PackContext{Title: "Guards! Guards!", SeriesTitle: "Discworld"}, "Discworld 01-41"},
 		// Accepted false positives: a single audiobook split in two and named
 		// like a pack reads as one. Rare, and labelled, not hidden, in
 		// interactive search.
@@ -103,6 +105,17 @@ func TestMultiBookPackMarkerFor_SingleBooks(t *testing.T) {
 		{"Dune Disc 01-10", PackContext{Title: "Dune"}, "a disc range is one recording"},
 		{"The Gunslinger - The Dark Tower 01-24 (mp3)", PackContext{Title: "The Gunslinger", SeriesTitle: "The Dark Tower"}, "a padded track count after the series"},
 		{"Children of Dune - Dune Chronicles 03-12", PackContext{Title: "Children of Dune", SeriesTitle: "Dune Chronicles"}, "a padded range after the series outside brackets"},
+		// Series track counts (third review of #3642).
+		{"Frank Herbert - Dune 1-49 [mp3]", PackContext{Title: "Dune", SeriesTitle: "Dune"}, "a series named like the book does not sidestep the title cap"},
+		{"Stephen King - The Gunslinger - The Dark Tower 1-24 (mp3)", PackContext{Title: "The Gunslinger", SeriesTitle: "The Dark Tower"}, "more than 20 after the series outside square brackets"},
+		{"Stephen King - The Gunslinger (The Dark Tower 1-24) mp3", PackContext{Title: "The Gunslinger", SeriesTitle: "The Dark Tower"}, "more than 20 after the series in round brackets"},
+		{
+			"Harry Potter 1-17 - Philosopher's Stone (Stephen Fry) mp3",
+			PackContext{Title: "Harry Potter and the Philosopher's Stone", SeriesTitle: "Harry Potter"},
+			"a book title after the series range names one book",
+		},
+		// Accepted: an unbracketed whole series range over 20 is no longer read.
+		{"Terry Pratchett - Discworld 1-41 (epub)", PackContext{Title: "Guards! Guards!", SeriesTitle: "Discworld"}, "over 20 after the series outside square brackets"},
 		// A known gap, left undetected on purpose: the wanted title's own parts
 		// count as one book, so this list is two books only when the sibling
 		// is in the library. Here only a duplicate record of the subtitle is.
