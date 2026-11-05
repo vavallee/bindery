@@ -770,7 +770,7 @@ func main() {
 	}
 	fileHandler := api.NewFileHandler(bookRepo, cfg.LibraryDir, cfg.AudiobookDir).
 		WithRootFolders(rootFolderRepo)
-	historyHandler := api.NewHistoryHandler(historyRepo, blocklistRepo, bookRepo)
+	historyHandler := api.NewHistoryHandler(historyRepo, blocklistRepo, bookRepo).WithLibraryRoots(libraryRoots)
 	blocklistHandler := api.NewBlocklistHandler(blocklistRepo)
 	notificationHandler := api.NewNotificationHandler(notificationRepo, notif)
 	qualityProfileHandler := api.NewQualityProfileHandler(qualityProfileRepo)
@@ -1091,6 +1091,9 @@ func main() {
 		// handler 404s unless the caller owns the history event, so a user
 		// can only add entries for their own grabs.
 		r.Post("/history/{id}/blocklist", historyHandler.Blocklist)
+		// Reject import (#3250) is gated the same way: the handler 404s
+		// unless the caller may change the event's book.
+		r.Post("/history/{id}/reject-import", historyHandler.RejectImport)
 
 		// Blocklist, admin only (see registerBlocklistRoutes).
 		registerBlocklistRoutes(r, blocklistHandler)

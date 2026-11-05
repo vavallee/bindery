@@ -18,6 +18,7 @@ type HistoryHandler struct {
 	history   *db.HistoryRepo
 	blocklist *db.BlocklistRepo
 	books     *db.BookRepo
+	roots     *LibraryRoots // optional: lets Reject import delete from disk
 }
 
 func NewHistoryHandler(history *db.HistoryRepo, blocklist *db.BlocklistRepo, books *db.BookRepo) *HistoryHandler {

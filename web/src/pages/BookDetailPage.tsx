@@ -17,6 +17,7 @@ import { bookStatusBadge } from '../components/bookStatus'
 import RebindModal from '../components/RebindModal'
 import RenameFilesModal from '../components/RenameFilesModal'
 import ConfirmDialog from '../components/ConfirmDialog'
+import RejectImportDialog from '../components/RejectImportDialog'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
 import PackLabel from '../components/PackLabel'
@@ -356,6 +357,13 @@ function BookDetailPageInner() {
 
   const [book, setBook] = useState<Book | null>(null)
   const [events, setEvents] = useState<HistoryEvent[]>([])
+  // Imports already rejected (#3250): an importRejected row names the event it
+  // rejected, and that event has nothing left to reject.
+  const rejectedImportIds = new Set(
+    events.filter(e => e.eventType === 'importRejected').map(e => {
+      try { return (JSON.parse(e.data) as { eventId?: number }).eventId } catch { return undefined }
+    }),
+  )
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -402,6 +410,8 @@ function BookDetailPageInner() {
   >(null)
   // The pending DB-only deregistration (#1692).
   const [deregisterTarget, setDeregisterTarget] = useState<FileRow | null>(null)
+  // The import whose Reject import confirmation is open (#3250).
+  const [rejectTarget, setRejectTarget] = useState<HistoryEvent | null>(null)
   const pathClipboard = useClipboardCopy()
   // The row whose Copy was clicked — the hook's status is shared across rows.
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
@@ -1738,6 +1748,16 @@ function BookDetailPageInner() {
                 <span className="ml-auto text-xs text-fg-muted whitespace-nowrap flex-shrink-0">
                   {new Date(ev.createdAt).toLocaleString()}
                 </span>
+                {ev.eventType === 'bookImported' && !rejectedImportIds.has(ev.id) && (
+                  <button
+                    type="button"
+                    onClick={() => setRejectTarget(ev)}
+                    title={t('history.rejectImportHint')}
+                    className="text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors flex-shrink-0"
+                  >
+                    {t('history.rejectImport')}
+                  </button>
+                )}
               </div>
             ))}
           </>
@@ -1819,6 +1839,23 @@ function BookDetailPageInner() {
           confirming={deletingFile}
           onConfirm={deleteFile}
           onClose={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {rejectTarget && book && (
+        <RejectImportDialog
+          event={rejectTarget}
+          onClose={() => setRejectTarget(null)}
+          onRejected={async summary => {
+            setRejectTarget(null)
+            setAutoSearchNotice(summary)
+            const [b, h] = await Promise.all([
+              api.getBook(book.id),
+              api.listHistory({ bookId: book.id }).then(p => p.items).catch(() => events),
+            ]).catch(() => [book, events] as const)
+            setBook(b)
+            setEvents(h)
+          }}
         />
       )}
 

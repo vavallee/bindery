@@ -31,6 +31,21 @@ export interface BlocklistEntry {
   scope?: 'book' | 'release'
 }
 
+// What Reject import did (#3250). Every list is a set of file paths.
+export interface RejectImportResult {
+  status: string
+  detached: string[]
+  deleted: string[]
+  keptOnDisk: string[]
+  alreadyGone: string[]
+  // False for an import with no recorded release (manual, or from before
+  // #3248): nothing could be blocklisted.
+  releaseKnown: boolean
+  blocklisted: boolean
+  alreadyBlocklisted: boolean
+  nothingTracked: boolean
+}
+
 export const historyApi = {
   // History
   listHistory: (params?: { bookId?: number; eventType?: string; limit?: number; offset?: number }) => {
@@ -44,6 +59,8 @@ export const historyApi = {
   },
   deleteHistory: (id: number) => request<void>(`/history/${id}`, { method: 'DELETE' }),
   blocklistFromHistory: (id: number) => request<BlocklistEntry>(`/history/${id}/blocklist`, { method: 'POST' }),
+
+  rejectImport: (id: number) => request<RejectImportResult>(`/history/${id}/reject-import`, { method: 'POST' }),
 
   // Blocklist
   listBlocklist: () => request<BlocklistEntry[]>('/blocklist'),

@@ -42,12 +42,18 @@ const historyUserScope = `(owner_user_id = ?
 // with 0 stored as NULL. Taking the book's owner here rather than from each
 // caller means no write path can leave a book's history unattributed.
 func (r *HistoryRepo) Create(ctx context.Context, e *models.HistoryEvent) error {
+	return insertHistoryEvent(ctx, r.db, e)
+}
+
+// insertHistoryEvent is Create over any executor, so a caller holding a
+// transaction (RejectImport) writes the event in it.
+func insertHistoryEvent(ctx context.Context, exec dbExecutor, e *models.HistoryEvent) error {
 	now := time.Now().UTC()
 	var fallbackOwner any
 	if e.OwnerUserID != 0 {
 		fallbackOwner = e.OwnerUserID
 	}
-	result, err := r.db.ExecContext(ctx, `
+	result, err := exec.ExecContext(ctx, `
 		INSERT INTO history (book_id, event_type, source_title, data, created_at, owner_user_id)
 		VALUES (?, ?, ?, ?, ?, COALESCE((SELECT owner_user_id FROM books WHERE id = ?), ?))`,
 		e.BookID, e.EventType, e.SourceTitle, e.Data, now, e.BookID, fallbackOwner)
