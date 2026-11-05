@@ -1086,7 +1086,8 @@ identical. For the template syntax itself, see
 Nothing moves until you say so. The preview lists every tracked file with its
 current path, the path the template computes, and why it will or will not move:
 **Will move**, **Already correct**, **Destination exists** (something else is
-already there, so it is skipped rather than overwritten), **Not on disk**, or
+already there, or the path is inside a folder another book tracks, so it is
+skipped rather than overwritten or mixed in with that book), **Not on disk**, or
 **Error**. Pressing the button applies only the clean moves, and it recomputes
 each destination on the server rather than trusting the list you were shown, so
 a file that changed under you is skipped instead of moved somewhere stale. A
