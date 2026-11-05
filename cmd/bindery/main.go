@@ -1064,6 +1064,7 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireAdmin)
 			r.Get("/queue/manual-import/lookup", manualImportHandler.Lookup)
+			r.Get("/queue/manual-import/folders", manualImportHandler.BrowseFolders)
 			r.Get("/queue/manual-import/scan", manualImportHandler.Scan)
 			r.Post("/queue/manual-import", manualImportHandler.Import)
 			r.Post("/queue/manual-import/batch", manualImportHandler.ImportBatch)

@@ -171,7 +171,7 @@ Being upfront saves everyone time. These are tracked, and the [roadmap](docs/ROA
 - Naming tokens including `{Author}`, `{SortAuthor}`, `{Title}`, `{Year}`, `{Series}`, `{SeriesNumber}`, `{Genre}`, `{Lang}`, `{Narrator}` and `{ASIN}`, with conditional literals and zero padding. Reorganize renames an existing library to a new template.
 - Several ebook formats of one book are kept side by side, and EPUB is served first in downloads and OPDS.
 - Library adoption: a scan matches files already on disk, and whatever it cannot match waits on the Import page with suggested matches, an Add author choice and Undo. Files are registered where they are and never moved. When a folder path names a series and position, such as `Discworld/08 - Guards! Guards!`, you can put the book in that series as you adopt it.
-- Import from a folder for one off imports, with a metadata search to create a book when nothing in the catalogue fits.
+- Import from a folder for one off imports, with a folder browser over your library and download folders, and a metadata search to create a book when nothing in the catalogue fits.
 - Manual metadata edits with field locks that survive refresh, Fix match for a file attached to the wrong book, Re-bind to a different provider record, author aliases, and a duplicate review.
 - Optional Calibre style `metadata.opf` written next to each book.
 
