@@ -56,15 +56,23 @@ type RootFolder struct {
 type QualityProfile struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
-	// UpgradeAllowed and Cutoff are kept for wire and schema compatibility
-	// only and are consulted by nothing. Their Settings controls were removed
-	// in #2373 because no code path has ever read them: there is no upgrade
-	// re-grab sweep for a cutoff to gate, so the form was promising behaviour
-	// that did not exist. The quality_profiles columns and these JSON fields
-	// stay so existing rows still load and a third-party client that sends
-	// them still works. Wiring an upgrade path is tracked separately.
-	UpgradeAllowed bool   `json:"upgradeAllowed"`
-	Cutoff         string `json:"cutoff"`
+	// UpgradeAllowed turns on the ebook upgrade sweep for books this profile
+	// governs (#2420): an imported ebook whose best file ranks below Cutoff is
+	// searched again, and a release at or above the cutoff that beats the
+	// owned file is grabbed. It is off by default. Migration 122 cleared the
+	// column on every existing row, because the column defaulted to on and
+	// nothing read it until now, so no install changes behaviour on upgrade.
+	// Audiobooks are never upgraded.
+	UpgradeAllowed bool `json:"upgradeAllowed"`
+	// Cutoff is the ebook format an upgrade aims for. A book that already
+	// holds a file at or above it is left alone. It must be a ticked ebook
+	// format in Items for an upgrade to run (indexer.EbookUpgradeEligible).
+	Cutoff string `json:"cutoff"`
+	// RemoveReplaced makes a verified upgrade delete the file it replaced.
+	// False, the default, keeps the old file next to the new one. The flag is
+	// "remove" rather than "keep" on purpose: a client that does not send the
+	// field decodes it as false, and false must be the safe answer (#1357).
+	RemoveReplaced bool `json:"removeReplaced"`
 	// Items is the profile's format list in preference order, best first
 	// within each media type. The media type of an entry is derived from its
 	// token (indexer.MediaTypeForFormat), so the one slice holds an ebook list

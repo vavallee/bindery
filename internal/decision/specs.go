@@ -451,3 +451,30 @@ func (s MultiBookPackSpec) IsSatisfiedBy(r Release, book models.Book) (bool, str
 	}
 	return false, fmt.Sprintf("%s: release is titled %q, and a download is linked to one book — Bindery cannot split a pack across book records", RejectionMultiBookPack, marker)
 }
+
+// --- EbookUpgrade ---
+
+// EbookUpgrade accepts only a release that would be a real upgrade of the
+// ebook the book already has (#2420). It is added to the specification list of
+// an upgrade search and nowhere else, so a wanted search is unchanged.
+//
+// The judgement is indexer.EbookUpgradeEligible, which fails closed: a
+// release that names no ebook format is rejected here, unlike QualityAllowed,
+// because a grab that cannot be shown to beat the owned file has no reason to
+// happen.
+type EbookUpgrade struct {
+	Profile *models.QualityProfile
+	// ExistingPaths are the book's recorded ebook files.
+	ExistingPaths []string
+}
+
+func (s EbookUpgrade) IsSatisfiedBy(r Release, _ models.Book) (bool, string) {
+	formats := r.Formats
+	if len(formats) == 0 && r.Format != "" {
+		formats = []string{r.Format}
+	}
+	if indexer.EbookUpgradeEligible(s.Profile, s.ExistingPaths, formats) {
+		return true, ""
+	}
+	return false, "not an upgrade of the ebook the book already has"
+}

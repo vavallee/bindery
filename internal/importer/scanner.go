@@ -70,6 +70,7 @@ type eventNotifier interface {
 const (
 	notifierEventGrabbed        = "grabbed"
 	notifierEventBookImported   = "bookImported"
+	notifierEventUpgrade        = "upgrade"
 	notifierEventDownloadFailed = "downloadFailed"
 )
 
@@ -87,21 +88,24 @@ type Scanner struct {
 	noFileCover sync.Map
 	// readCover reads a file's cover art; nil uses readFileCover. Tests set
 	// it to count reads.
-	readCover    func(string) []byte
-	downloads    *db.DownloadRepo
-	clients      *db.DownloadClientRepo
-	books        *db.BookRepo
-	authors      *db.AuthorRepo
-	editions     *db.EditionRepo
-	history      *db.HistoryRepo
-	rootFolders  *db.RootFolderRepo
-	series       *db.SeriesRepo
-	renamer      *Renamer
-	remapper     *Remapper
-	calibreQueue calibreDeliveryQueue
-	grimmory     grimmoryPusher
-	calibreMode  func() calibre.Mode
-	settings     *db.SettingsRepo
+	readCover   func(string) []byte
+	downloads   *db.DownloadRepo
+	clients     *db.DownloadClientRepo
+	books       *db.BookRepo
+	authors     *db.AuthorRepo
+	editions    *db.EditionRepo
+	history     *db.HistoryRepo
+	rootFolders *db.RootFolderRepo
+	// replacedRemover is the guarded delete for the file an upgrade replaced
+	// (#2420). Nil means an upgrade never deletes anything.
+	replacedRemover ReplacedFileRemover
+	series          *db.SeriesRepo
+	renamer         *Renamer
+	remapper        *Remapper
+	calibreQueue    calibreDeliveryQueue
+	grimmory        grimmoryPusher
+	calibreMode     func() calibre.Mode
+	settings        *db.SettingsRepo
 	// qualityProfiles and blocklist back the post-download format check
 	// (#1782). Both nil disables it entirely, which is what every caller that
 	// has not been wired up gets.
@@ -1965,9 +1969,22 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// Skipped for a manual import, Match to book and a book matched from the
 	// file itself. See content_check.go.
 	var contentCheck map[string]any
+	// An import that would upgrade the book's ebook (#2420) is held to a
+	// stricter check below, and may later remove the file it replaces.
+	var upgrade *ebookUpgrade
+	var upgradeVerifiedFormats []string
+	if detectedFormat != models.MediaTypeAudiobook && len(bookFiles) > 0 {
+		upgrade = s.detectEbookUpgrade(ctx, dl, book, author, bookFiles, grabbedForBook)
+	}
 	if detectedFormat != models.MediaTypeAudiobook && len(bookFiles) > 0 && grabbedForBook && book != nil && !isManualImport(ctx) {
-		if res := s.checkEbookContent(ctx, book, author, bookFiles); res.flagged || res.data != nil {
-			if res.blocks() {
+		res := s.checkEbookContent(ctx, book, author, bookFiles)
+		upgradeVerifiedFormats = fileFormats(res.verifiedFiles)
+		if res.flagged || res.data != nil {
+			// A wrong-book upgrade must never replace a good file, so for an
+			// upgrade any finding refuses the download whatever the mode, an
+			// uncertain one included. Nothing is placed yet, so the owned
+			// file is untouched.
+			if res.blocks() || (upgrade != nil && res.flagged) {
 				slog.Warn("import blocked: file looks like a different book",
 					"title", dl.Title, "bookID", book.ID, "book", book.Title)
 				s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
@@ -2866,11 +2883,26 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// lands here, so the download still ends up with exactly one
 		// bookImported row naming every format.
 		importData := importHistoryProvenance(dl, ebookImportHistoryData(importedDestPaths))
+		var replaced []string
+		if upgrade != nil {
+			replaced = s.removeReplaced(ctx, book, upgrade, importedDestPaths, upgradeVerifiedFormats)
+			importData["upgrade"] = true
+			importData["replaced"] = append([]string{}, replaced...)
+			importData["previous"] = append([]string(nil), upgrade.existing...)
+		}
 		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, dl.OwnerUserID, withContentCheck(importData, contentCheck))
 		if importPath, ok := importData["path"].(string); ok {
 			s.recordFixMatchMove(ctx, book, importPath)
 		}
-		s.notify(ctx, notifierEventBookImported, withContentCheckPayload(importedPayload(book, dl, models.MediaTypeEbook, "", nil), contentCheck))
+		if upgrade != nil {
+			// An upgrade is announced as an upgrade, not also as an import, so
+			// a notification set to both does not fire twice for one book.
+			payload := importedPayload(book, dl, upgradeFormat(importedDestPaths), "", nil)
+			payload["replacedFiles"] = len(replaced)
+			s.notify(ctx, notifierEventUpgrade, withContentCheckPayload(payload, contentCheck))
+		} else {
+			s.notify(ctx, notifierEventBookImported, withContentCheckPayload(importedPayload(book, dl, models.MediaTypeEbook, "", nil), contentCheck))
+		}
 
 		// For "move" mode bindery has no further use for the source files. The
 		// download folder may, however, be a path shared with sibling torrents

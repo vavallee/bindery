@@ -728,6 +728,7 @@ func main() {
 	reorganizeHandler := api.NewReorganizeHandler(importScanner)
 	importScanner.WithSettings(settingsRepo)
 	importScanner.WithRootFolders(rootFolderRepo)
+	importScanner.WithReplacedFileRemover(api.NewReplacedFileRemover(libraryRoots, bookRepo))
 	importScanner.WithSeriesRepo(seriesRepo)
 	importScanner.WithEditions(editionRepo)
 

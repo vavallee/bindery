@@ -810,9 +810,40 @@ stalled, a failed or stalled download you blocklist from History, and
 anything imported from Readarr's blocklist, is blocked for every book. The
 Blocklist tab's "Applies to" column says which: "This book" or "All books".
 
-Bindery does not chase format upgrades on its own: the sweep only searches
-Wanted books, and once a book has a file it is no longer Wanted. If you want
-a specific format, search from the book's page and grab it yourself.
+**Ebook format upgrades.** Off by default. A quality profile can turn on
+"Upgrade ebooks that rank below the cutoff" (Settings, Quality Profiles) and
+pick a cutoff, one of its ticked ebook formats. Each sweep then searches again,
+once, for every imported ebook whose best file ranks below the cutoff, and
+grabs a release only if it ranks at or above the cutoff and above the file the
+book has. A book that already has a file at the cutoff is left alone. Only
+ebook-only books under a profile with a cutoff and a ticked list are searched,
+and a book whose file is in a format the profile does not rank (unticked or
+absent) is not searched, because Bindery will not guess whether a replacement is
+better. Audiobooks and books that track both formats are never upgraded.
+
+What happens to the file you already have is the profile's choice. By default
+the old file is kept next to the new one, so nothing is deleted. Tick "Delete
+the old file after a verified upgrade" to remove it. The old file is removed
+only when the new file's embedded title is identical to the book's title and
+its embedded author matches by full name; otherwise it is kept. Identical means
+the same words once case, whitespace, hyphens, dashes, apostrophes and common
+sentence punctuation are ignored. Any other symbol or number makes the titles
+different, so a subtitle, a series suffix such as "Book 2" or "(Series, #2)", a
+bracketed note, "C#" against "C++" or a missing "The" all count as different.
+A bare surname, "Various" and "Unknown" never match as an author. This refuses many legitimate
+removals, which is the price of a setting that deletes files. A file that fails
+the match is still imported and simply never vouches for deleting anything. Nothing is deleted for a book
+that lives in Calibre, for a file outside your library root folders, or for one
+in a folder another book tracks. An upgrade is
+held to a stricter content check than an ordinary import: any mismatch refuses
+it, even in warn mode, the release is blocklisted for that book, and the file
+you have is never touched. With the content check set to off, or for a file with
+no readable metadata, the old file is kept whatever the profile says. A
+successful upgrade is announced as an Upgrade notification, not as an import.
+A second file of the same format is not an upgrade: an upgrade needs a format
+that ranks higher, so it never collides with the owned file, and importing a
+second file of the same format works as it always did. Profiles that existed
+before this feature had upgrades switched off once when Bindery was updated.
 
 ## Bringing in an existing library
 
@@ -1654,7 +1685,8 @@ Knowing the edges saves time:
   an output copy for a sibling tool to ingest.)
 - **Create download-client categories.** Make the category in the client
   first.
-- **Chase format upgrades** on its own.
+- **Chase audiobook format upgrades.** Ebook upgrades exist, off by default
+  (see Ebook format upgrades).
 - **Per-user root folders.** Multi-user tenancy scopes authors, books, and
   downloads per user; root folders stay a shared, admin-managed pool
   ([multi-user.md](multi-user.md)).
