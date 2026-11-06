@@ -388,10 +388,18 @@ var purgeOrder = []string{
 	"downloads",
 	"books",
 	"authors",
+	"import_lists",
+}
+
+// sharedConfigTables are instance wide config that happens to carry an
+// owner_user_id: the create handlers stamp whichever admin made the row, but
+// every account uses them (see docs/multi-user.md). A purge must not delete
+// them, since authors in other accounts reference them; it only drops the
+// departing user's stamp, so the row reads as global.
+var sharedConfigTables = []string{
 	"quality_profiles",
 	"metadata_profiles",
 	"root_folders",
-	"import_lists",
 }
 
 // AuthorBulkRefreshUserKey is the settings key holding the status of the
@@ -542,6 +550,14 @@ func (r *UserRepo) Delete(ctx context.Context, id int64, plan UserDeletePlan) er
 			q := fmt.Sprintf("DELETE FROM %s WHERE owner_user_id = ?", t)
 			if _, err := tx.ExecContext(ctx, q, id); err != nil {
 				return fmt.Errorf("purge %s: %w", t, err)
+			}
+		}
+		for _, t := range sharedConfigTables {
+			// #nosec G201 -- t comes from sharedConfigTables, a package-level
+			// literal slice; no caller-supplied value reaches this string.
+			q := fmt.Sprintf("UPDATE %s SET owner_user_id = NULL WHERE owner_user_id = ?", t)
+			if _, err := tx.ExecContext(ctx, q, id); err != nil {
+				return fmt.Errorf("release shared %s: %w", t, err)
 			}
 		}
 	} else {
