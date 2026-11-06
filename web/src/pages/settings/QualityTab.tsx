@@ -138,7 +138,7 @@ function ProfileRow({
         <div className="min-w-0">
           <h4 className="font-medium text-sm">{profile.name}</h4>
           {profile.upgradeAllowed && profile.cutoff && (
-            <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+            <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-400">
               {t(profile.removeReplaced ? 'settings.quality.upgradesBadgeRemove' : 'settings.quality.upgradesBadgeKeep', { cutoff: profile.cutoff })}
             </p>
           )}
@@ -190,7 +190,7 @@ function ProfileRow({
           </button>
         </div>
       </div>
-      {err && <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{err}</p>}
+      {err && <p className="mt-2 text-xs text-rose-700 dark:text-rose-400">{err}</p>}
     </div>
   )
 }
@@ -378,7 +378,7 @@ function QualityProfileForm({
         )}
       </div>
 
-      {err && <p className="text-xs text-rose-600 dark:text-rose-400">{err}</p>}
+      {err && <p className="text-xs text-rose-700 dark:text-rose-400">{err}</p>}
 
       <div className="flex justify-end gap-2">
         <button

@@ -176,12 +176,12 @@ export default function NamingTemplateField({
         </p>
       )}
       {validation.extNeedsDot && (
-        <p className="text-xs text-amber-600 dark:text-amber-400 mt-1.5" role="alert">
+        <p className="text-xs text-amber-700 dark:text-amber-400 mt-1.5" role="alert">
           {t('settings.general.naming.warnExtNeedsDot')}
         </p>
       )}
       {validation.unknownTokens.length > 0 && (
-        <p className="text-xs text-amber-600 dark:text-amber-400 mt-1.5" role="alert">
+        <p className="text-xs text-amber-700 dark:text-amber-400 mt-1.5" role="alert">
           {t('settings.general.naming.errorUnknownTokens', {
             tokens: validation.unknownTokens.join(', '),
           })}

@@ -557,7 +557,7 @@ function CalibreSection({
                 </p>
               )}
               {testResult?.warning && (
-                <p data-testid="calibre-test-warning" className="text-amber-600 dark:text-amber-400 mt-1">
+                <p data-testid="calibre-test-warning" className="text-amber-700 dark:text-amber-400 mt-1">
                   {testResult.warning}
                 </p>
               )}
@@ -584,7 +584,7 @@ function CalibreSection({
                   {t('settings.calibre.pushAll.description')}
                 </p>
                 {bridgeReachable === false && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">{t('settings.calibre.pushAll.bridgeUnreachable')}</p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">{t('settings.calibre.pushAll.bridgeUnreachable')}</p>
                 )}
               </div>
               <button
@@ -1102,7 +1102,7 @@ export function CalibreSyncModal({
                   <div className="text-fg-muted">{t('settings.calibre.pushAll.skipped')}</div>
                   <div
                     data-testid="calibre-sync-skipped"
-                    className="font-semibold text-amber-600 dark:text-amber-400"
+                    className="font-semibold text-amber-700 dark:text-amber-400"
                   >
                     {stats?.skipped ?? 0}
                   </div>
@@ -1157,7 +1157,7 @@ export function CalibreSyncModal({
                       {progress.skips.map((s, i) => (
                         <tr key={`skip-${s.bookId}-${i}`} className="border-t border-slate-200 dark:border-zinc-800">
                           <td className="px-2 py-1 text-slate-800 dark:text-zinc-200">{s.title || `#${s.bookId}`}</td>
-                          <td className="px-2 py-1 text-amber-600 dark:text-amber-400">{s.reason}</td>
+                          <td className="px-2 py-1 text-amber-700 dark:text-amber-400">{s.reason}</td>
                         </tr>
                       ))}
                     </tbody>

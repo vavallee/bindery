@@ -220,7 +220,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
             {author.disambiguation && <span>{t('addToLibrary.topWork')} {author.disambiguation}</span>}
             {author.statistics?.bookCount ? <span title={t('addToLibrary.booksTooltip')}>{t('addToLibrary.books', { count: author.statistics.bookCount })}</span> : null}
             {author.ratingsCount ? <span>{t('addToLibrary.ratings', { count: author.ratingsCount })}</span> : null}
-            {mismatch && <span className="text-amber-600 dark:text-amber-400">{t('addToLibrary.resultProvider', { provider: providerDisplayName(mismatch) })}</span>}
+            {mismatch && <span className="text-amber-700 dark:text-amber-400">{t('addToLibrary.resultProvider', { provider: providerDisplayName(mismatch) })}</span>}
           </div>
         </div>
         {author.libraryAuthorId ? (

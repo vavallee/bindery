@@ -168,7 +168,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
                 type="button"
                 onClick={removeLink}
                 disabled={saving}
-                className="mt-3 text-sm text-rose-600 dark:text-rose-400 hover:text-rose-500 disabled:opacity-50"
+                className="mt-3 text-sm text-rose-700 dark:text-rose-400 hover:text-rose-500 disabled:opacity-50"
               >
                 {t('series.hardcoverLink.remove', 'Remove Link')}
               </button>
@@ -185,7 +185,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
             autoFocus
           />
 
-          {error && <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>}
+          {error && <p className="text-sm text-rose-700 dark:text-rose-400">{error}</p>}
 
           <div className="space-y-2">
             {results.map(result => {
