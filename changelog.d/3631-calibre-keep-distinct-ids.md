@@ -1,0 +1,2 @@
+### Fixed
+- **Calibre import keeps books that differ by a subtitle apart** (#3631). Two Calibre books by the same author whose titles differ only by a subtitle used to collapse into one row, and one of them lost its Calibre id. A row that belongs to another book still in your Calibre library is no longer taken over, so both stay. Ids left behind by a removed or renumbered book are still rebound as before.
