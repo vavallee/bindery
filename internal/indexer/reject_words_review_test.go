@@ -35,6 +35,20 @@ func TestRejectWords_AccentsFoldBothWays(t *testing.T) {
 	}
 }
 
+// The documented limits of accent folding: umlauts follow the shared
+// transliteration, and letters without a decomposition stay as they are.
+func TestRejectWords_AccentFoldLimits(t *testing.T) {
+	if _, d := rejectRun("Mueller", "Frank Herbert - Dune Müller"); len(d) != 1 {
+		t.Error("Mueller should match Müller")
+	}
+	if _, d := rejectRun("Muller", "Frank Herbert - Dune Müller"); len(d) != 0 {
+		t.Error("Muller should not match Müller")
+	}
+	if _, d := rejectRun("Soren", "Frank Herbert - Dune Søren"); len(d) != 0 {
+		t.Error("Soren should not match Søren")
+	}
+}
+
 // A rejected word that is part of the wanted book's own title or author does
 // not empty the search.
 func TestRejectWords_OwnTitleAndAuthorExempt(t *testing.T) {

@@ -1640,20 +1640,23 @@ commas or new lines: `Graphic Audio, Full Cast, abridged`. The key is
 `search.rejectWords` and it is empty by default, which rejects nothing.
 
 - A release whose title contains any entry is left out of search. Case, accents
-  and separators are ignored, so `Graphic Audio` also catches `graphic.audio`,
+  on Latin letters and separators are ignored, so `Graphic Audio` also catches `graphic.audio`,
   `Graphic_Audio` and `GRAPHIC-AUDIO`.
 - Only whole words match, and a phrase must appear in order. `cast` rejects
   `Cast` but not `Broadcast`, and `abridged` does not reject `Unabridged`.
 - Entries are plain text, never patterns. `.*` is just the characters dot and
   star. Only commas and new lines separate entries: `abridged;dramatized` is one
   phrase, not two words.
-- Accents are folded on both sides, so `Dramatisé` and `dramatise` match each
-  other. Numbers and symbols behave as separate words: `C++` becomes `c`, and `2`
+- Accents on Latin letters are ignored on both sides, so `Dramatisé` and
+  `dramatise` match each other. That is all it promises: German umlauts follow the
+  usual spelling rules (`Müller` reads as `mueller`, so the entry `Mueller`
+  matches it and `Muller` does not), and letters such as `ø`, `ł` and `œ` stay as
+  they are, so `Søren` does not match `Soren`. Numbers and symbols behave as separate words: `C++` becomes `c`, and `2`
   does not hit `12`. A Chinese, Japanese or Korean entry matches a whole run of
   characters, not a piece of one.
-- An entry whose words all come from the wanted book's own title or author is not
-  applied to that book, so rejecting `Cast` does not empty the search for
-  *Cast Away*, while `Full Cast` still does its job.
+- An entry made only of the wanted book's own title or author words is not
+  applied to that book, so `Cast` does not drop *Cast Away*, but `Full Cast`
+  still does.
 - It applies to every search, the automatic ones and the book page's interactive
   search, for every user on the install.
 - A rejected release is not gone. It shows in the **Filtered** section of the

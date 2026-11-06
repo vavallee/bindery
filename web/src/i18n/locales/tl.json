@@ -364,7 +364,7 @@
       "preferredLanguageAny": "Kahit ano (walang filter)",
       "preferredLanguageEn": "Ingles",
       "rejectWords": "Tanggihan ang mga release ayon sa salita sa pamagat",
-      "rejectWordsHint": "Ang mga release na may alinman sa mga salita o parirala sa pamagat ay hindi isasama sa paghahanap. Paghiwalayin ang mga entry gamit ang kuwit o bagong linya. Hindi pinapansin ang laki ng titik, accent, at mga separator tulad ng tuldok o gitling, at buong salita lang ang tumutugma, kaya hindi tinatanggihan ng cast ang Broadcast. Payak na teksto, walang pattern. Makikita pa rin ang tinanggihang release sa na-filter na listahan sa pahina ng aklat, kung saan maaari mo itong kunin nang mano-mano. Ang mga salita mula sa pamagat at may-akda ng hinahanap na aklat ay hindi kailanman tinatanggihan.",
+      "rejectWordsHint": "Ang mga release na may alinman sa mga salita o parirala sa pamagat ay hindi isasama sa paghahanap. Paghiwalayin ang mga entry gamit ang kuwit o bagong linya. Hindi pinapansin ang laki ng titik, ang accent sa mga letrang Latin (tumutugma ang é sa e), at mga separator tulad ng tuldok o gitling, at buong salita lang ang tumutugma, kaya hindi tinatanggihan ng cast ang Broadcast. Payak na teksto, walang pattern. Ang entry na binubuo lang ng mga salita mula sa pamagat o may-akda ng hinahanap na aklat ay hindi ina-apply sa aklat na iyon, kaya hindi tinatanggal ng Cast ang Cast Away, pero tinatanggal pa rin ito ng Full Cast. Makikita pa rin ang tinanggihang release sa na-filter na listahan sa pahina ng aklat, kung saan maaari mo itong kunin nang mano-mano.",
       "rejectWordsPlaceholder": "Graphic Audio, Full Cast, pinaikli",
       "autoGrab": "Auto-grab",
       "autoGrabLabel": "Paganahin ang automatic grabbing",

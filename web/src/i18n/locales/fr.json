@@ -343,7 +343,7 @@
       "preferredLanguageAny": "Toutes (sans filtre)",
       "preferredLanguageEn": "Anglais",
       "rejectWords": "Rejeter les publications selon des mots du titre",
-      "rejectWordsHint": "Les publications dont le titre contient l'un de ces mots ou expressions sont écartées de la recherche. Séparez les entrées par des virgules ou des retours à la ligne. La casse, les accents et les séparateurs comme les points ou les tirets sont ignorés, et seuls les mots entiers correspondent, donc cast ne rejette pas Broadcast. Texte brut, pas de motifs. Une publication rejetée reste visible dans la liste filtrée de la page du livre, où vous pouvez la télécharger à la main. Les mots du titre et de l'auteur du livre cherché ne sont jamais rejetés.",
+      "rejectWordsHint": "Les publications dont le titre contient l'un de ces mots ou expressions sont écartées de la recherche. Séparez les entrées par des virgules ou des retours à la ligne. La casse, les accents des lettres latines (é correspond à e) et les séparateurs comme les points ou les tirets sont ignorés, et seuls les mots entiers correspondent, donc cast ne rejette pas Broadcast. Texte brut, pas de motifs. Une entrée composée uniquement de mots du titre ou de l'auteur du livre cherché ne s'applique pas à ce livre, donc Cast n'écarte pas Cast Away, mais Full Cast le fait toujours. Une publication rejetée reste visible dans la liste filtrée de la page du livre, où vous pouvez la télécharger à la main.",
       "rejectWordsPlaceholder": "Graphic Audio, Full Cast, abrégé",
       "autoGrab": "Téléchargement automatique",
       "autoGrabLabel": "Activer le téléchargement automatique",

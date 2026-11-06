@@ -2086,7 +2086,7 @@
       "preferredLanguageAny": "Any (no filter)",
       "preferredLanguageEn": "English",
       "rejectWords": "Reject releases by title words",
-      "rejectWordsHint": "Releases whose title contains any of these words or phrases are left out of search. Separate entries with commas or new lines. Case, accents and separators such as dots or dashes are ignored, and only whole words match, so cast does not reject Broadcast. Plain text, no patterns. A book's own title and author words are never rejected, and a rejected release still shows under Filtered on the book page, where you can grab it by hand.",
+      "rejectWordsHint": "Releases whose title contains any of these words or phrases are left out of search. Separate entries with commas or new lines. Case, accents on Latin letters (é matches e) and separators such as dots or dashes are ignored, and only whole words match, so cast does not reject Broadcast. Plain text, no patterns. An entry made only of the wanted book's own title or author words is not applied to that book, so Cast does not drop Cast Away but Full Cast still does. A rejected release still shows under Filtered on the book page, where you can grab it by hand.",
       "rejectWordsPlaceholder": "Graphic Audio, Full Cast, abridged",
       "autoGrab": "Auto-grab",
       "autoGrabLabel": "Enable automatic grabbing",

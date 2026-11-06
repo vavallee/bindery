@@ -343,7 +343,7 @@
       "preferredLanguageAny": "Beliebig (kein Filter)",
       "preferredLanguageEn": "Englisch",
       "rejectWords": "Veröffentlichungen nach Titelwörtern ablehnen",
-      "rejectWordsHint": "Veröffentlichungen, deren Titel eines dieser Wörter oder Ausdrücke enthält, werden aus der Suche ausgeschlossen. Einträge mit Kommas oder Zeilenumbrüchen trennen. Groß- und Kleinschreibung, Akzente und Trennzeichen wie Punkte oder Bindestriche werden ignoriert, und nur ganze Wörter passen, sodass cast nicht Broadcast ablehnt. Reiner Text, keine Muster. Eine abgelehnte Veröffentlichung steht weiterhin in der gefilterten Liste auf der Buchseite und kann dort von Hand geholt werden. Wörter aus Titel und Autor des gesuchten Buchs werden nie abgelehnt.",
+      "rejectWordsHint": "Veröffentlichungen, deren Titel eines dieser Wörter oder Ausdrücke enthält, werden aus der Suche ausgeschlossen. Einträge mit Kommas oder Zeilenumbrüchen trennen. Groß- und Kleinschreibung, Akzente auf lateinischen Buchstaben (é passt auf e) und Trennzeichen wie Punkte oder Bindestriche werden ignoriert, und nur ganze Wörter passen, sodass cast nicht Broadcast ablehnt. Reiner Text, keine Muster. Ein Eintrag, der nur aus Wörtern des Titels oder Autors des gesuchten Buchs besteht, wird auf dieses Buch nicht angewendet, sodass Cast nicht Cast Away verwirft, Full Cast aber weiterhin. Eine abgelehnte Veröffentlichung steht weiterhin in der gefilterten Liste auf der Buchseite und kann dort von Hand geholt werden.",
       "rejectWordsPlaceholder": "Graphic Audio, Full Cast, gekürzt",
       "autoGrab": "Automatisches Herunterladen",
       "autoGrabLabel": "Automatisches Herunterladen aktivieren",

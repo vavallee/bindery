@@ -1235,7 +1235,7 @@
       "preferredLanguageAny": "Alla (inget filter)",
       "preferredLanguageEn": "Engelska",
       "rejectWords": "Avvisa releaser efter ord i titeln",
-      "rejectWordsHint": "Releaser vars titel innehåller något av dessa ord eller uttryck lämnas utanför sökningen. Separera poster med komma eller radbrytning. Versaler, accenter och avgränsare som punkter eller bindestreck ignoreras, och bara hela ord matchar, så cast avvisar inte Broadcast. Ren text, inga mönster. En avvisad release visas fortfarande under Filtrerade på bokens sida, där du kan hämta den manuellt. Ord från titeln och författaren till boken du söker efter avvisas aldrig.",
+      "rejectWordsHint": "Releaser vars titel innehåller något av dessa ord eller uttryck lämnas utanför sökningen. Separera poster med komma eller radbrytning. Versaler, accenter på latinska bokstäver (é matchar e) och avgränsare som punkter eller bindestreck ignoreras, och bara hela ord matchar, så cast avvisar inte Broadcast. Ren text, inga mönster. En post som bara består av ord från titeln eller författaren till boken du söker efter tillämpas inte på den boken, så Cast avvisar inte Cast Away, men Full Cast gör det fortfarande. En avvisad release visas fortfarande under Filtrerade på bokens sida, där du kan hämta den manuellt.",
       "rejectWordsPlaceholder": "Graphic Audio, Full Cast, förkortad",
       "autoGrab": "Automatisk hämtning",
       "autoGrabLabel": "Aktivera automatisk hämtning",

@@ -1872,7 +1872,7 @@
       "preferredLanguageAny": "Alle (uten filter)",
       "preferredLanguageEn": "Engelsk",
       "rejectWords": "Avvis utgivelser etter ord i tittelen",
-      "rejectWordsHint": "Utgivelser med tittel som inneholder et av disse ordene eller uttrykkene holdes utenfor søket. Skill oppføringer med komma eller linjeskift. Store og små bokstaver, aksenter og skilletegn som punktum eller bindestrek ignoreres, og bare hele ord treffer, så cast avviser ikke Broadcast. Ren tekst, ingen mønstre. En avvist utgivelse vises fortsatt under Filtrert på bokssiden, der du kan hente den manuelt. Ord fra tittelen og forfatteren til boken du søker etter avvises aldri.",
+      "rejectWordsHint": "Utgivelser med tittel som inneholder et av disse ordene eller uttrykkene holdes utenfor søket. Skill oppføringer med komma eller linjeskift. Store og små bokstaver, aksenter på latinske bokstaver (é treffer e) og skilletegn som punktum eller bindestrek ignoreres, og bare hele ord treffer, så cast avviser ikke Broadcast. Ren tekst, ingen mønstre. En oppføring som bare består av ord fra tittelen eller forfatteren til boken du søker etter, brukes ikke på den boken, så Cast fjerner ikke Cast Away, men Full Cast gjør det fortsatt. En avvist utgivelse vises fortsatt under Filtrert på bokssiden, der du kan hente den manuelt.",
       "rejectWordsPlaceholder": "Graphic Audio, Full Cast, forkortet",
       "autoGrab": "Automatisk henting",
       "autoGrabLabel": "Aktiver automatisk henting",

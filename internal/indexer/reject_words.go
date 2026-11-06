@@ -19,8 +19,10 @@ const SettingRejectWords = "search.rejectWords"
 // rejectFold is NormalizeRelease plus accent folding, for the rejected words
 // matcher alone: the shared title matcher keeps accents. Latin letters are
 // decomposed and their combining marks dropped, so "Dramatisé" and "dramatise"
-// read alike. Marks on other scripts (kana voicing, Hangul, Indic vowel signs)
-// are kept, because there they change the letter.
+// read alike. That is all it promises. German umlauts are already transliterated
+// by NormalizeRelease (Müller reads mueller), letters such as ø, ł and œ have no
+// decomposition and stay as they are, and scripts NormalizeRelease already
+// rewrites (Devanagari) are not helped by this step.
 func rejectFold(s string) string {
 	s = NormalizeRelease(s)
 	var b strings.Builder

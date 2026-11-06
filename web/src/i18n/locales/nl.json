@@ -343,7 +343,7 @@
       "preferredLanguageAny": "Willekeurig (geen filter)",
       "preferredLanguageEn": "Engels",
       "rejectWords": "Releases weigeren op woorden in de titel",
-      "rejectWordsHint": "Releases waarvan de titel een van deze woorden of zinnen bevat, worden uit de zoekopdracht gehouden. Scheid items met komma's of regeleinden. Hoofdletters, accenten en scheidingstekens zoals punten of streepjes worden genegeerd, en alleen hele woorden komen overeen, dus cast weigert Broadcast niet. Gewone tekst, geen patronen. Een geweigerde release blijft zichtbaar in de gefilterde lijst op de boekpagina, waar je hem handmatig kunt ophalen. Woorden uit de titel en auteur van het gezochte boek worden nooit geweigerd.",
+      "rejectWordsHint": "Releases waarvan de titel een van deze woorden of zinnen bevat, worden uit de zoekopdracht gehouden. Scheid items met komma's of regeleinden. Hoofdletters, accenten op Latijnse letters (é komt overeen met e) en scheidingstekens zoals punten of streepjes worden genegeerd, en alleen hele woorden komen overeen, dus cast weigert Broadcast niet. Gewone tekst, geen patronen. Een item dat alleen uit woorden van de titel of auteur van het gezochte boek bestaat, wordt niet op dat boek toegepast, dus Cast laat Cast Away staan, maar Full Cast weigert het nog steeds. Een geweigerde release blijft zichtbaar in de gefilterde lijst op de boekpagina, waar je hem handmatig kunt ophalen.",
       "rejectWordsPlaceholder": "Graphic Audio, Full Cast, ingekort",
       "autoGrab": "Automatisch downloaden",
       "autoGrabLabel": "Automatisch downloaden inschakelen",
