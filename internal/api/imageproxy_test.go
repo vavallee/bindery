@@ -42,7 +42,7 @@ func newTestHandler(dir string, upstream *httptest.Server) *ImageProxyHandler {
 // the handler must contact upstream, write the cache files, and respond 200
 // with the correct Content-Type.
 func TestImageProxy_CacheMiss(t *testing.T) {
-	upstream := newFakeUpstream("image/jpeg", []byte("FAKEJPEG"), http.StatusOK)
+	upstream := newFakeUpstream("image/jpeg", []byte("\xff\xd8\xffFAKEJPEG"), http.StatusOK)
 	defer upstream.Close()
 
 	dir := t.TempDir()
@@ -58,7 +58,7 @@ func TestImageProxy_CacheMiss(t *testing.T) {
 	if ct := rr.Header().Get("Content-Type"); ct != "image/jpeg" {
 		t.Errorf("Content-Type = %q, want image/jpeg", ct)
 	}
-	if body := rr.Body.String(); body != "FAKEJPEG" {
+	if body := rr.Body.String(); body != "\xff\xd8\xffFAKEJPEG" {
 		t.Errorf("body = %q, want FAKEJPEG", body)
 	}
 
@@ -75,7 +75,7 @@ func TestImageProxy_CacheMiss(t *testing.T) {
 // TestImageProxy_CacheHit serves the same URL twice; the second request must
 // be served from cache (upstream server is shut down before the second call).
 func TestImageProxy_CacheHit(t *testing.T) {
-	upstream := newFakeUpstream("image/png", []byte("FAKEPNG"), http.StatusOK)
+	upstream := newFakeUpstream("image/png", []byte("\x89PNG\r\n\x1a\nFAKEPNG"), http.StatusOK)
 
 	dir := t.TempDir()
 	h := newTestHandler(dir, upstream)
@@ -218,8 +218,12 @@ func TestAllowedImageContentType(t *testing.T) {
 		"image/jpeg":                   true,
 		"image/png":                    true,
 		"image/webp":                   true,
-		"image/jpeg; charset=binary":   true,
-		"IMAGE/PNG":                    true,
+		"image/gif":                    true,
+		"image/avif":                   true,
+		"image/jpeg; charset=binary":   false,
+		"image/jpeg, text/html":        false,
+		"IMAGE/PNG":                    false,
+		"image/bmp":                    false,
 		"image/svg+xml":                false,
 		"image/svg+xml; charset=utf-8": false,
 		"image/svg":                    false,
@@ -283,7 +287,7 @@ func TestImageProxy_CacheHitMissingCT(t *testing.T) {
 	if err := os.MkdirAll(shardDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(shardDir, key), []byte("CACHEDIMG"), 0o640); err != nil {
+	if err := os.WriteFile(filepath.Join(shardDir, key), []byte("\xff\xd8\xffCACHEDIMG"), 0o640); err != nil {
 		t.Fatal(err)
 	}
 

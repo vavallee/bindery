@@ -88,7 +88,7 @@ func TestImageProxy_CacheSizeIsMemoised(t *testing.T) {
 // between full recounts, a cache write adjusts the memo by its real on-disk
 // delta, so the memoised number stays equal to what a walk would report.
 func TestImageProxy_CacheSizeTracksWrites(t *testing.T) {
-	body := []byte("FAKEJPEGBODYBYTES")
+	body := []byte("\xff\xd8\xffFAKEJPEGBODYBYTES")
 	upstream := newFakeUpstream("image/jpeg", body, http.StatusOK)
 	defer upstream.Close()
 

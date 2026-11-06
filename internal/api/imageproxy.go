@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log/slog"
@@ -112,30 +114,105 @@ func imageProxyTransport() http.RoundTripper {
 	return httpsec.GuardedTransport(httpsec.PolicyStrict)
 }
 
-// allowedImageContentType reports whether a Content-Type may be proxied back
-// to the browser. It is "any image/* except SVG".
-//
-// SVG is the exception because it is a scripting document, not a picture:
-// /api/v1/images is same-origin with the app, so a proxied SVG is served from
-// Bindery's own origin. Today the CSP's script-src 'self' and the blanket
-// nosniff header (internal/api/securityheaders.go) mean an inline script in
-// one does not execute, so this is defence in depth rather than a live hole
-// (#2355) — but the whole point is that it stops depending on a CSP nobody
-// will remember to re-check the next time it is edited.
-//
-// Nothing legitimate is lost: cover art from every metadata provider is JPEG,
-// PNG or WebP.
+// servedImageTypes is the closed set of types the proxy will ever put in a
+// Content-Type header. Cover art from every metadata provider is one of
+// these. SVG is deliberately absent: it is a scripting document, not a
+// picture, and the proxy answers from Bindery's own origin (#2355).
+var servedImageTypes = []string{"image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"}
+
+// imageResponseCSP is sent with every proxied image. A picture needs no
+// resources and no scripting context, so if one is ever opened as a document
+// it renders nothing and runs nothing.
+const imageResponseCSP = "default-src 'none'; sandbox"
+
+// allowedImageContentType reports whether ct is exactly one of the served
+// image types. It does no normalising on purpose: the only callers check a
+// value this code produced, and anything that is not already in canonical
+// form (a parameter, a list, odd casing) was not written by it.
 func allowedImageContentType(ct string) bool {
-	// Strip any parameters ("image/svg+xml; charset=utf-8") and normalise, so
-	// the refusal cannot be sidestepped with a charset or unusual casing.
-	if i := strings.IndexByte(ct, ';'); i >= 0 {
-		ct = ct[:i]
+	for _, t := range servedImageTypes {
+		if ct == t {
+			return true
+		}
 	}
-	ct = strings.ToLower(strings.TrimSpace(ct))
-	if !strings.HasPrefix(ct, "image/") {
+	return false
+}
+
+// sniffImageType returns the served image type the bytes actually are, or ""
+// when they are not one of them. The upstream Content-Type is never consulted:
+// it is text a remote host controls, whereas the bytes decide what a browser
+// does with them.
+func sniffImageType(body []byte) string {
+	head := body
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	ct := http.DetectContentType(head)
+	if allowedImageContentType(ct) {
+		return ct
+	}
+	if isAVIF(head) {
+		return "image/avif"
+	}
+	return ""
+}
+
+// isAVIF reports whether b starts with an ISO base media "ftyp" box that
+// names avif or avis as its major or a compatible brand.
+// http.DetectContentType does not know the format.
+func isAVIF(b []byte) bool {
+	if len(b) < 16 || string(b[4:8]) != "ftyp" {
 		return false
 	}
-	return ct != "image/svg+xml" && ct != "image/svg"
+	size := int(binary.BigEndian.Uint32(b[:4]))
+	if size < 16 || size > len(b) {
+		size = len(b)
+	}
+	isBrand := func(x []byte) bool { return string(x) == "avif" || string(x) == "avis" }
+	if isBrand(b[8:12]) {
+		return true
+	}
+	for i := 16; i+4 <= size; i += 4 {
+		if isBrand(b[i : i+4]) {
+			return true
+		}
+	}
+	return false
+}
+
+// setImageHeaders sets the headers every proxied image carries. ct must be a
+// sniffed type, never an upstream value.
+func setImageHeaders(w http.ResponseWriter, ct string) {
+	h := w.Header()
+	h.Set("Content-Type", ct)
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", imageResponseCSP)
+	h.Set("Cache-Control", "public, max-age=2592000")
+}
+
+// readImageFile reads a stored image, refusing anything larger than the
+// proxy would have fetched.
+func readImageFile(path string) ([]byte, time.Time, error) {
+	f, err := os.Open(path) // #nosec G304 -- path derived from sha256(url) or returned by covers.Store.Resolve
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, time.Time{}, fmt.Errorf("not a regular file")
+	}
+	body, err := io.ReadAll(io.LimitReader(f, imageMaxBytes+1))
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if len(body) > imageMaxBytes {
+		return nil, time.Time{}, fmt.Errorf("stored image too large")
+	}
+	return body, info.ModTime(), nil
 }
 
 // Serve handles GET /api/v1/images?url=<encoded-external-url>.
@@ -154,14 +231,25 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	// fallback to the fetch path: a malformed or missing reference is a 404,
 	// not a fetch of the literal string.
 	if covers.IsRef(raw) {
-		path, ct, ok := h.local.Resolve(raw)
+		path, _, ok := h.local.Resolve(raw)
 		if !ok {
 			http.Error(w, "cover not found", http.StatusNotFound)
 			return
 		}
-		w.Header().Set("Content-Type", ct)
-		w.Header().Set("Cache-Control", "public, max-age=2592000")
-		http.ServeFile(w, r, path)
+		// The store sniffed the bytes when it wrote them; judge them again
+		// here so the type sent is always the one the bytes have.
+		body, mod, err := readImageFile(path)
+		if err != nil {
+			http.Error(w, "cover not found", http.StatusNotFound)
+			return
+		}
+		ct := sniffImageType(body)
+		if ct == "" {
+			http.Error(w, "stored file is not an image", http.StatusBadGateway)
+			return
+		}
+		setImageHeaders(w, ct)
+		http.ServeContent(w, r, "", mod, bytes.NewReader(body))
 		return
 	}
 
@@ -178,23 +266,27 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	imgFile := filepath.Join(h.cacheDir, shard, key)
 	ctFile := imgFile + ".ct"
 
-	// Serve from cache if fresh.
+	// Serve from cache if fresh. An entry is trusted only after both halves
+	// check out: the stored bytes must sniff to a served type, and a sidecar,
+	// when present, must say exactly that type. Anything else (an entry
+	// written by an older release, or edited on disk) is dropped and fetched
+	// again below, which also covers the svg refusal of #2355.
 	if info, err := os.Stat(imgFile); err == nil && time.Since(info.ModTime()) < imageCacheTTL { // #nosec -- path derived from sha256(url), not user input
-		ct, _ := os.ReadFile(ctFile) //nolint:gosec // #nosec -- path derived from sha256(url), not user input
-		if len(ct) == 0 {
-			ct = []byte("image/jpeg")
+		if body, mod, rerr := readImageFile(imgFile); rerr == nil {
+			ct := sniffImageType(body)
+			if sidecar, cerr := os.ReadFile(ctFile); cerr == nil && len(sidecar) > 0 && string(sidecar) != ct { //nolint:gosec // #nosec -- path derived from sha256(url), not user input
+				ct = ""
+			}
+			if ct != "" {
+				setImageHeaders(w, ct)
+				http.ServeContent(w, r, "", mod, bytes.NewReader(body))
+				return
+			}
 		}
-		// Apply the same content-type rule the fetch path applies, so an entry
-		// cached before the svg refusal landed is not still served from disk
-		// for the rest of its 30-day TTL (#2355).
-		if !allowedImageContentType(string(ct)) {
-			http.Error(w, "upstream response is not an image", http.StatusBadGateway)
-			return
-		}
-		w.Header().Set("Content-Type", string(ct))
-		w.Header().Set("Cache-Control", "public, max-age=2592000")
-		http.ServeFile(w, r, imgFile)
-		return
+		dropped := cacheEntryBytes(imgFile, ctFile)
+		_ = os.Remove(imgFile) // #nosec G304 -- path derived from sha256(url), not user input
+		_ = os.Remove(ctFile)  // #nosec G304 -- path derived from sha256(url), not user input
+		h.addCacheBytes(-dropped)
 	}
 
 	// Fetch from upstream. Use NewRequestWithContext so the request respects
@@ -219,12 +311,6 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ct := resp.Header.Get("Content-Type")
-	if !allowedImageContentType(ct) {
-		http.Error(w, "upstream response is not an image", http.StatusBadGateway)
-		return
-	}
-
 	body, err := io.ReadAll(io.LimitReader(resp.Body, imageMaxBytes+1))
 	if err != nil {
 		http.Error(w, "read error", http.StatusBadGateway)
@@ -232,6 +318,14 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(body) > imageMaxBytes {
 		http.Error(w, "image exceeds 10 MB limit", http.StatusBadGateway)
+		return
+	}
+
+	// The upstream Content-Type is ignored. What the bytes are decides what
+	// is served and cached.
+	ct := sniffImageType(body)
+	if ct == "" {
+		http.Error(w, "upstream response is not an image", http.StatusBadGateway)
 		return
 	}
 
@@ -269,8 +363,7 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	}
 	h.addCacheBytes(cacheEntryBytes(imgFile, ctFile) - priorBytes)
 
-	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Cache-Control", "public, max-age=2592000")
+	setImageHeaders(w, ct)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
 	if _, err := w.Write(body); err != nil {
 		slog.Warn("imageproxy: write response", "error", err)
