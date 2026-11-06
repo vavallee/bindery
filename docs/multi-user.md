@@ -177,11 +177,29 @@ curl -X DELETE http://bindery:8787/api/v1/auth/users/2 \
   -H "X-Api-Key: <admin-api-key>"
 ```
 
-Deleting a user does **not** delete their library data. Authors, books, and downloads owned by that user remain in the database but become inaccessible through the normal UI. Reassign or remove the user's data before deleting:
+A user who owns nothing is deleted straight away. A user who owns library data is not: the request answers `409` with a `counts` object saying how much of each kind they own, and nothing is changed. The Users page does the same through a dialog that shows what the account owns and asks whether to keep the library (hand it to another user, or leave it with no owner so everyone sees it) or delete it too. Through the API, repeat the request with a `strategy`:
 
-1. While signed in as an admin, review the account's content from the regular **Authors** and **Books** pages — admin list views are never ownership-filtered, so every user's rows are visible there.
-2. Delete anything that should not be kept.
-3. Then delete the user.
+```bash
+# Move it to another account
+curl -X DELETE "http://bindery:8787/api/v1/auth/users/2?strategy=reassign&reassignTo=3" \
+  -H "X-Api-Key: <admin-api-key>"
+
+# Delete it
+curl -X DELETE "http://bindery:8787/api/v1/auth/users/2?strategy=purge" \
+  -H "X-Api-Key: <admin-api-key>"
+```
+
+- **`reassign`** hands every row the account owns, plus its history, to the account in `reassignTo`. Leave `reassignTo` out and the rows lose their owner, which makes them shared (with tenancy on, every user can see them and only an admin can change them). `reassignTo` must be an existing account other than the one being deleted.
+- **`purge`** deletes the downloads, books, authors, import lists and history the account owns, along with any other rows recorded against it. Deleting an author also deletes every book under it, including books that belong to other accounts or to nobody. Check the author list before you purge.
+
+Under either strategy:
+
+- The user's requests are deleted, even with `reassign`.
+- Recommendations, dismissals and the user's Refresh all status are removed.
+- Blocklist entries stay, with the record of who added them cleared. They are shown in the `counts` but do not trigger the `409`, so an account whose only data is blocklist entries is deleted at once.
+- The last admin cannot be deleted: the request is refused with `400` and `cannot delete the last admin user`. If that admin owns data and you gave no strategy, the `409` comes first.
+
+An unknown `strategy` or a `reassignTo` that is not a number answers `400`. `reassignTo` is ignored under `purge`. If the delete still finds rows pointing at the user, it answers `409` with `rows still reference this user` and nothing is deleted; that means a bug, so report it.
 
 ## Settings UI layout
 
@@ -226,7 +244,7 @@ curl -X POST http://bindery:8787/api/v1/author \
 |---------|-------|-----|
 | User B can see User A's authors or books via the API | `BINDERY_ENFORCE_TENANCY` is unset — this is the documented default behaviour, not a bug | This is expected when tenancy enforcement is off: all authenticated users share one library view. To partition library data per user, set `BINDERY_ENFORCE_TENANCY=true` and restart. (Admins can access all users' data regardless of this flag, by design.) |
 | In `local-only` mode, requests from outside the LAN are served without a login | Bindery is behind a reverse proxy or ingress and `BINDERY_TRUSTED_PROXY` is unset, so the proxy's own private address is taken as the client IP | Set `BINDERY_TRUSTED_PROXY` to the proxy's IP or CIDR so the real client IP is resolved from `X-Forwarded-For`, or switch to `enabled` mode. The startup log carries the same warning. |
-| Data remains after a user is deleted | `DELETE /auth/users/{id}` does not cascade to library data | Reassign or delete the user's authors and books before deleting the user account (see "Deleting a user" above). |
+| `DELETE /auth/users/{id}` answers 409 with a `counts` object | The user owns library data, and Bindery will not guess whether to keep or delete it | Repeat the request with `?strategy=reassign` (optionally `&reassignTo=<id>`) to move the data, or `?strategy=purge` to delete it (see "Deleting a user" above). |
 | `403 Forbidden` on an API call that worked before v1.0 | Session-cookie mutations now require `X-CSRF-Token` | Switch callers to `X-Api-Key` auth (CSRF-exempt), or add a `GET /auth/csrf` preflight to your script (see "CSRF tokens" above). |
 | Admin locked out — no admin account exists or all admins deleted | User row has `role='user'` or all admin rows were removed | Recover via direct DB update (no Bindery restart needed if you can write to the DB file): `sqlite3 /config/bindery.db "UPDATE users SET role='admin' WHERE username='<your-username>';"` — or in Kubernetes: `kubectl exec deploy/bindery -- sqlite3 /config/bindery.db "UPDATE users SET role='admin' WHERE id=1;"` |
 | OIDC user auto-provisioned as `user` but should be `admin` | `BINDERY_OIDC_ADMIN_GROUP` not set, so the IdP group is never consulted | Set `BINDERY_OIDC_ADMIN_GROUP` to the IdP group name (and `BINDERY_OIDC_GROUP_CLAIM` if your IdP emits groups under a non-default claim). To promote a single existing account without group mapping: `PUT /api/v1/auth/users/{id}/role` with `{"role": "admin"}`. |
