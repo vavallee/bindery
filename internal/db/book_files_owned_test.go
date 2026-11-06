@@ -239,6 +239,47 @@ func TestBookFileRepo_PathOwnedVariantsOnAnOrphanRow(t *testing.T) {
 	}
 }
 
+// TestBookFileRepo_EbookFileTrackedByBook (#3561): only the book's own ebook row
+// at exactly that path counts. An audiobook row does not, because a folder row's
+// tracks belong to that bundle, and neither does another book's row.
+func TestBookFileRepo_EbookFileTrackedByBook(t *testing.T) {
+	database, author, book := openTestDB(t)
+	ctx := context.Background()
+	files := NewBookFileRepo(database)
+	other := secondBook(t, database, author.ID, "Other")
+	for _, row := range []struct {
+		book   int64
+		format string
+		path   string
+	}{
+		{book.ID, models.MediaTypeEbook, "/lib/own.epub"},
+		{book.ID, models.MediaTypeAudiobook, "/lib/own-track.mp3"},
+		{other.ID, models.MediaTypeEbook, "/lib/other.epub"},
+	} {
+		if _, err := files.Track(ctx, row.book, row.format, row.path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"own ebook row", "/lib/own.epub", true},
+		{"own audiobook row", "/lib/own-track.mp3", false},
+		{"another book's ebook row", "/lib/other.epub", false},
+		{"no row", "/lib/none.epub", false},
+	} {
+		got, err := files.EbookFileTrackedByBook(ctx, c.path, book.ID)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 // TestBookFileRepo_PathUnderOtherBookDir (#3336): a folder row covers every
 // file below it at any depth, not a sibling that only shares its name prefix, a
 // row of the asking book. A folder left by a deleted book still covers: refusing

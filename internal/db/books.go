@@ -1160,6 +1160,12 @@ func (r *BookRepo) PathOwnedByOtherBook(ctx context.Context, path string, exclud
 	return r.files.PathOwnedByOtherBook(ctx, path, excludeBookID)
 }
 
+// EbookFileTrackedByBook reports whether bookID's own ebook row names exactly
+// path. See BookFileRepo.EbookFileTrackedByBook (#3561).
+func (r *BookRepo) EbookFileTrackedByBook(ctx context.Context, path string, bookID int64) (bool, error) {
+	return r.files.EbookFileTrackedByBook(ctx, path, bookID)
+}
+
 // PathUnderLiveOtherBookDir is PathUnderOtherBookDir ignoring rows left by
 // deleted books. For import pre-checks, never for a delete guard. See
 // BookFileRepo.PathUnderLiveOtherBookDir.
