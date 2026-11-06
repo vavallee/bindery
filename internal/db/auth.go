@@ -428,6 +428,13 @@ type UserOwnedRows struct {
 	// Blocklist counts rows attributing a blocklist entry to this user. It is
 	// reported for transparency but never reassigned or purged; see Delete.
 	Blocklist int `json:"blocklist"`
+	// OthersBooks and OthersBookFiles count books under this user's authors
+	// that someone else owns (or nobody does), and their files. A purge removes
+	// the authors and books.author_id is ON DELETE CASCADE, so those go too.
+	// They are reported so the admin sees the full cost of purge; they are not
+	// rows the user owns, so Total ignores them.
+	OthersBooks     int `json:"othersBooks"`
+	OthersBookFiles int `json:"othersBookFiles"`
 }
 
 // Total reports how many rows the admin has to decide about. Blocklist is
@@ -467,6 +474,23 @@ func (r *UserRepo) OwnedRows(ctx context.Context, id int64) (UserOwnedRows, erro
 		"SELECT COUNT(*) FROM blocklist WHERE created_by_user_id = ?", id,
 	).Scan(&c.Blocklist); err != nil {
 		return c, fmt.Errorf("count blocklist: %w", err)
+	}
+	// IS NOT, not !=, so a book with a NULL (shared) owner is counted too.
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM books
+		 WHERE author_id IN (SELECT id FROM authors WHERE owner_user_id = ?)
+		   AND owner_user_id IS NOT ?`, id, id,
+	).Scan(&c.OthersBooks); err != nil {
+		return c, fmt.Errorf("count other accounts' books: %w", err)
+	}
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM book_files
+		 WHERE book_id IN (
+		   SELECT id FROM books
+		   WHERE author_id IN (SELECT id FROM authors WHERE owner_user_id = ?)
+		     AND owner_user_id IS NOT ?)`, id, id,
+	).Scan(&c.OthersBookFiles); err != nil {
+		return c, fmt.Errorf("count other accounts' book files: %w", err)
 	}
 	return c, nil
 }

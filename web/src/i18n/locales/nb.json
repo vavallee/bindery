@@ -2649,6 +2649,7 @@
     "deleteGlobal": "Alle (ingen eier)",
     "deletePurge": "Slett biblioteket også",
     "deletePurgeHint": "Fjerner disse radene sammen med kontoen. Dette kan ikke angres.",
+    "deletePurgeOthers": "Sletter også {{books}} bøker og {{files}} filer som tilhører andre kontoer, fordi de ligger under denne kontoens forfattere.",
     "countAuthors": "Forfattere",
     "countBooks": "Bøker",
     "countDownloads": "Nedlastinger",

@@ -2851,6 +2851,7 @@
     "deleteGlobal": "Everyone (no owner)",
     "deletePurge": "Delete the library too",
     "deletePurgeHint": "Removes these rows along with the account. This cannot be undone.",
+    "deletePurgeOthers": "Also deletes {{books}} books and {{files}} files that belong to other accounts, because they sit under this account's authors.",
     "countAuthors": "Authors",
     "countBooks": "Books",
     "countDownloads": "Downloads",

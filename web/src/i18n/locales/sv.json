@@ -1814,6 +1814,7 @@
     "deleteGlobal": "Alla (ingen ägare)",
     "deletePurge": "Ta bort biblioteket också",
     "deletePurgeHint": "Tar bort de här raderna tillsammans med kontot. Det går inte att ångra.",
+    "deletePurgeOthers": "Tar också bort {{books}} böcker och {{files}} filer som tillhör andra konton, eftersom de ligger under det här kontots författare.",
     "countAuthors": "Författare",
     "countBooks": "Böcker",
     "countDownloads": "Nedladdningar",

@@ -42,6 +42,7 @@ export default function DeleteUserDialog({ user, counts, users, busy, onCancel, 
 
   const others = users.filter(u => u.id !== user.id)
   const nonEmpty = COUNT_ROWS.filter(r => counts[r.key] > 0)
+  const othersBooks = counts.othersBooks
 
   function confirm() {
     if (mode === 'purge') {
@@ -114,6 +115,11 @@ export default function DeleteUserDialog({ user, counts, users, busy, onCancel, 
             <span>
               <span className="font-medium">{t('users.deletePurge')}</span>
               <span className="block text-xs text-fg-muted">{t('users.deletePurgeHint')}</span>
+              {othersBooks > 0 && (
+                <span className="block text-xs text-red-600 dark:text-red-400 mt-1">
+                  {t('users.deletePurgeOthers', { books: othersBooks, files: counts.othersBookFiles })}
+                </span>
+              )}
             </span>
           </label>
         </div>
