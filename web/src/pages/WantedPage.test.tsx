@@ -436,6 +436,28 @@ describe('WantedPage', () => {
     expect(vi.mocked(api.grab).mock.calls[0][0]).toMatchObject({ guid: 'dropped', bookId: 1 })
   })
 
+  it('does not reload the list after unmount when a grab timer is pending (#3607)', async () => {
+    const book = makeBook({ id: 1, title: 'Dune' })
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([book]))
+    vi.mocked(api.searchBook).mockResolvedValue({ results: [makeResult({ guid: 'g1', title: 'Dune EPUB' })], debug: null })
+    vi.mocked(api.grab).mockResolvedValue({ id: 5 } as Download)
+
+    const view = renderWantedPage()
+    await screen.findByRole('link', { name: 'Dune' })
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    const row = (await screen.findByText('Dune EPUB')).closest('div.flex.items-center.justify-between') as HTMLElement
+
+    vi.useFakeTimers()
+    fireEvent.click(within(row).getByRole('button', { name: 'Grab' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(api.grab).toHaveBeenCalled()
+
+    const loadsBefore = vi.mocked(api.listWantedPage).mock.calls.length
+    view.unmount()
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    expect(api.listWantedPage).toHaveBeenCalledTimes(loadsBefore)
+  })
+
   it('points at the filtered section when every release was filtered (#3364)', async () => {
     vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([makeBook({ id: 1, title: 'Dune' })]))
     vi.mocked(api.searchBook).mockResolvedValue({

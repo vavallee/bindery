@@ -40,6 +40,7 @@ func (c *Client) GetUserWishlist(ctx context.Context, limit int) ([]models.Recom
 					slug
 					description
 					image { url }
+					release_date
 					release_year
 					ratings_count
 					rating
@@ -271,6 +272,7 @@ func (c *Client) GetListBooks(ctx context.Context, listID int) ([]models.Book, e
 				slug
 				description
 				image { url }
+				release_date
 				release_year
 				ratings_count
 				rating
@@ -339,6 +341,7 @@ func (c *Client) getShelfBooks(ctx context.Context, statusID int) ([]models.Book
 					slug
 					description
 					image { url }
+					release_date
 					release_year
 					ratings_count
 					rating

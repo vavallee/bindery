@@ -41,7 +41,7 @@ const book = { id: 1, title: 'A Book', authorId: 2, foreignBookId: 'OL1W', genre
 const author = { id: 2, authorName: 'An Author', foreignAuthorId: 'OL2A' } as unknown as Author
 const series = { id: 3, title: 'A Series', books: [] } as unknown as Series
 const user = { id: 4, username: 'someone' } as unknown as ManagedUser
-const counts = { authors: 1, books: 0, downloads: 0, qualityProfiles: 0, metadataProfiles: 0, rootFolders: 0, importLists: 0 } as unknown as UserOwnedRows
+const counts = { authors: 1, books: 0, downloads: 0, qualityProfiles: 0, metadataProfiles: 0, rootFolders: 0, importLists: 0, othersBooks: 0, othersBookFiles: 0 } as unknown as UserOwnedRows
 const run = { id: 7, sourceId: 'lib', libraryPath: '/calibre', status: 'completed', dryRun: false, startedAt: '2026-09-22T10:00:00Z' } as CalibreImportRun
 
 // Component file (as the source scan names it) and how to render it.

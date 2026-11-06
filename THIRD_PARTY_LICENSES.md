@@ -85,8 +85,8 @@ does ship is the failure that matters.
 | cookie-es | 3.1.1 | MIT |
 | csstype | 3.2.3 | MIT |
 | html-parse-stringify | 4.0.1 | MIT |
-| i18next | 26.5.11 | MIT |
-| i18next-browser-languagedetector | 8.2.3 | MIT |
+| i18next | 26.5.12 | MIT |
+| i18next-browser-languagedetector | 8.2.4 | MIT |
 | react | 19.3.1 | MIT |
 | react-dom | 19.3.1 | MIT |
 | react-i18next | 17.1.9 | MIT |
@@ -1877,12 +1877,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 30. MIT — npm:i18next-browser-languagedetector@8.2.3 (LICENSE)
+### 30. MIT — npm:i18next-browser-languagedetector@8.2.4 (LICENSE)
 
 <details>
 <summary>Applies to 2 dependencies</summary>
 
-- npm:i18next-browser-languagedetector@8.2.3 (LICENSE)
+- npm:i18next-browser-languagedetector@8.2.4 (LICENSE)
 - npm:react-i18next@17.1.9 (LICENSE)
 
 </details>
@@ -1911,7 +1911,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 31. MIT — npm:i18next@26.5.11 (LICENSE)
+### 31. MIT — npm:i18next@26.5.12 (LICENSE)
 
 ```
 The MIT License (MIT)

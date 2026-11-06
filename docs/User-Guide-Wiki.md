@@ -1631,6 +1631,39 @@ If your naming template uses `{SortAuthor}`, the same value names the folder on
 disk, so the letter an author files under and the folder it lives in always
 agree.
 
+## Rejecting releases by words in the title
+
+If you never want a kind of release, such as Graphic Audio or full cast
+recordings, list the words in **Settings, General, Downloads, Reject releases by
+title words** (admins only). Put one word or phrase per entry, separated by
+commas or new lines: `Graphic Audio, Full Cast, abridged`. The key is
+`search.rejectWords` and it is empty by default, which rejects nothing.
+
+- A release whose title contains any entry is left out of search. Case, accents
+  on Latin letters and separators are ignored, so `Graphic Audio` also catches `graphic.audio`,
+  `Graphic_Audio` and `GRAPHIC-AUDIO`.
+- Only whole words match, and a phrase must appear in order. `cast` rejects
+  `Cast` but not `Broadcast`, and `abridged` does not reject `Unabridged`.
+- Entries are plain text, never patterns. `.*` is just the characters dot and
+  star. Only commas and new lines separate entries: `abridged;dramatized` is one
+  phrase, not two words.
+- Accents on Latin letters are ignored on both sides, so `Dramatisé` and
+  `dramatise` match each other. That is all it promises: German umlauts follow the
+  usual spelling rules (`Müller` reads as `mueller`, so the entry `Mueller`
+  matches it and `Muller` does not), and letters such as `ø`, `ł` and `œ` stay as
+  they are, so `Søren` does not match `Soren`. Numbers and symbols behave as separate words: `C++` becomes `c`, and `2`
+  does not hit `12`. A Chinese, Japanese or Korean entry matches a whole run of
+  characters, not a piece of one.
+- An entry made only of the wanted book's own title or author words is not
+  applied to that book, so `Cast` does not drop *Cast Away*, but `Full Cast`
+  still does.
+- It applies to every search, the automatic ones and the book page's interactive
+  search, for every user on the install.
+- A rejected release is not gone. It shows in the **Filtered** section of the
+  book page with the reason `release title contains the rejected word "..."`,
+  and you can still grab it by hand. The same reason appears in the search debug
+  view.
+
 ## Finding a setting when you do not know its tab
 
 The search box at the top of Settings matches tab names and section headings

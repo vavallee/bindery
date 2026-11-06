@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -79,6 +80,18 @@ type Importer struct {
 
 	openReader func(libraryPath string) (readerIface, error)
 
+	// liveCalibreIDs is the set of calibre ids in the library being imported,
+	// collected before any book is bound. A row whose calibre_id is in it is
+	// owned by another live Calibre book (#3631). Only touched by the import
+	// goroutine.
+	liveCalibreIDs map[int64]struct{}
+
+	// listAuthors loads every author for name matching. A field so tests can
+	// count calls; production uses authors.List.
+	listAuthors func(ctx context.Context) ([]models.Author, error)
+
+	authorIdx *authorIndex
+
 	mu       sync.Mutex
 	running  bool
 	progress ImportProgress
@@ -102,11 +115,12 @@ func NewImporter(
 	settings *db.SettingsRepo,
 ) *Importer {
 	return &Importer{
-		authors:  authors,
-		aliases:  aliases,
-		books:    books,
-		editions: editions,
-		settings: settings,
+		listAuthors: authors.List,
+		authors:     authors,
+		aliases:     aliases,
+		books:       books,
+		editions:    editions,
+		settings:    settings,
 		openReader: func(lp string) (readerIface, error) {
 			r, err := OpenReader(lp)
 			if err != nil {
@@ -216,6 +230,9 @@ func (i *Importer) Run(ctx context.Context, libraryPath string) (*ImportStats, e
 
 func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 	stats := &ImportStats{}
+	// Fresh author name index for this run, loaded on the first lookup (#1469).
+	i.authorIdx = &authorIndex{}
+	defer func() { i.authorIdx = nil }()
 	var runID int64
 	// Run record: only created on a real (non-dry-run) import. A dry run
 	// today doesn't exist at the API surface, but the run field is here so
@@ -279,6 +296,21 @@ func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 		p.Total = total
 		p.Message = fmt.Sprintf("scanning %d books…", total)
 	})
+
+	// One cheap pass first so path 3 of upsertBook can tell a calibre_id that
+	// another live book owns from a stale one left by a removed or renumbered
+	// book (#3631).
+	live := make(map[int64]struct{}, total)
+	if err := reader.Books(ctx, func(cb CalibreBook) error {
+		live[cb.CalibreID] = struct{}{}
+		return ctx.Err()
+	}); err != nil {
+		failed = true
+		i.fail(err)
+		return stats
+	}
+	i.liveCalibreIDs = live
+	defer func() { i.liveCalibreIDs = nil }()
 
 	err = reader.Books(ctx, func(cb CalibreBook) error {
 		if err := ctx.Err(); err != nil {
@@ -732,6 +764,7 @@ func (i *Importer) resolveAuthor(ctx context.Context, runID int64, ca CalibreAut
 	if err := i.authors.Create(ctx, author); err != nil {
 		return nil, false, err
 	}
+	i.noteAuthorCreated(author)
 	// Provenance + creation marker so rollback can delete this author back
 	// out. No before-snapshot — author did not exist prior to this run.
 	i.upsertProvenance(ctx, runID, entityTypeAuthor, externalID, author.ID)
@@ -740,10 +773,9 @@ func (i *Importer) resolveAuthor(ctx context.Context, runID int64, ca CalibreAut
 }
 
 // findAuthorByName returns the author whose name identifies the same person as
-// name, or nil. AuthorRepo has no "list by name" helper so we scan in-memory —
-// acceptable because resolveAuthor runs once per Calibre book and List() is
-// already O(authors) per call; for a typical library the author count is a few
-// hundred.
+// name, or nil. AuthorRepo has no "list by name" helper so matching runs
+// in-memory against a per-run authorIndex, loaded with one List() per import
+// (#1469). The variant tier is still a linear pass over that slice.
 //
 // Matching is tiered: exact lowercase first (so an unambiguous byte match keeps
 // winning), then exact-via-variants from textutil, which is NFC/NFD safe and
@@ -763,40 +795,89 @@ func (i *Importer) resolveAuthor(ctx context.Context, runID int64, ca CalibreAut
 //
 // Deliberately Exact-only: fuzzy tiers belong in the interactive paths, not in
 // a bulk import that can silently merge hundreds of books under one author.
-//
-// TODO(post-v0.8.1): add an indexed lookup to AuthorRepo if library sizes
-// grow beyond a few thousand authors.
 func (i *Importer) findAuthorByName(ctx context.Context, name string) (*models.Author, error) {
-	all, err := i.authors.List(ctx)
-	if err != nil {
+	idx := i.authorIdx
+	if idx == nil {
+		// Not inside a run (or a direct caller): a throwaway index, one List.
+		idx = &authorIndex{}
+	}
+	if err := idx.load(ctx, i.listAuthors); err != nil {
 		return nil, err
 	}
-	lower := strings.ToLower(strings.TrimSpace(name))
+	return idx.find(name), nil
+}
+
+// authorIndex is the per-run view of the authors table that findAuthorByName
+// matches against, so a run loads it once instead of once per imported book
+// (#1469). It is only touched from the single import goroutine.
+type authorIndex struct {
+	loaded bool
+	all    []models.Author
+	// byName maps the lowercased, trimmed name to the first author in List
+	// order, which is what the old linear scan returned for the exact tier.
+	byName map[string]int
+}
+
+func (x *authorIndex) load(ctx context.Context, list func(context.Context) ([]models.Author, error)) error {
+	if x.loaded {
+		return nil
+	}
+	all, err := list(ctx)
+	if err != nil {
+		return err
+	}
+	x.all = all
+	x.byName = make(map[string]int, len(all))
 	for idx := range all {
-		if strings.ToLower(strings.TrimSpace(all[idx].Name)) == lower {
-			return &all[idx], nil
-		}
+		x.addName(idx)
+	}
+	x.loaded = true
+	return nil
+}
+
+func (x *authorIndex) addName(idx int) {
+	key := strings.ToLower(strings.TrimSpace(x.all[idx].Name))
+	if _, ok := x.byName[key]; !ok {
+		x.byName[key] = idx
+	}
+}
+
+func (x *authorIndex) find(name string) *models.Author {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if idx, ok := x.byName[lower]; ok {
+		return &x.all[idx]
 	}
 	// Two distinct rows can both match via variants (a library already holding
 	// both "J. R. R. Tolkien" and "Tolkien, J.R.R." as separate authors). Take
 	// the lowest ID so repeated imports converge on one row instead of
 	// alternating, and say so rather than merging silently.
 	var best *models.Author
-	for idx := range all {
-		if textutil.MatchAuthorName(name, all[idx].Name).Kind != textutil.AuthorMatchExact {
+	for idx := range x.all {
+		if textutil.MatchAuthorName(name, x.all[idx].Name).Kind != textutil.AuthorMatchExact {
 			continue
 		}
 		if best == nil {
-			best = &all[idx]
+			best = &x.all[idx]
 			continue
 		}
 		slog.Warn("calibre import: author name matches more than one existing author",
-			"name", name, "chosen", best.Name, "chosen_id", best.ID, "also", all[idx].Name, "also_id", all[idx].ID)
-		if all[idx].ID < best.ID {
-			best = &all[idx]
+			"name", name, "chosen", best.Name, "chosen_id", best.ID, "also", x.all[idx].Name, "also_id", x.all[idx].ID)
+		if x.all[idx].ID < best.ID {
+			best = &x.all[idx]
 		}
 	}
-	return best, nil
+	return best
+}
+
+// noteAuthorCreated adds an author this run just created to the index, so a
+// later book credited to the same name finds it without reloading the table.
+func (i *Importer) noteAuthorCreated(a *models.Author) {
+	x := i.authorIdx
+	if x == nil || !x.loaded {
+		return
+	}
+	x.all = append(x.all, *a)
+	x.addName(len(x.all) - 1)
 }
 
 // aliasBindsAuthor reports whether an author_aliases row is strong enough
@@ -908,9 +989,30 @@ func (i *Importer) upsertBook(ctx context.Context, runID int64, author *models.A
 	// umlaut form. Previously this matched on raw
 	// LOWER(title) SQL, which disagreed with the ABS importer's normalized
 	// match and produced duplicate rows (#940).
-	if existing, err := i.books.FindByAuthorAndDedupKey(ctx, author.ID, cb.Title); err != nil {
+	//
+	// A candidate whose calibre_id belongs to another book that is still in
+	// this library is a different Calibre entry (path 1 would have matched our
+	// id otherwise), so binding would overwrite its identity and collapse two
+	// library books into one (#3631). Those rows are skipped. A calibre_id that
+	// is no longer in the library is stale (book removed and re-added, or the
+	// library renumbered) and is rebound as before. Candidates are tried in id
+	// order so the choice does not depend on the query plan; with none left a
+	// fresh row is created below.
+	//
+	// Known residual: an unbound row with the same dedup key (for example one a
+	// metadata provider created) is still adopted, as it always was.
+	candidates, err := i.books.FindAllByAuthorAndDedupKey(ctx, author.ID, cb.Title)
+	if err != nil {
 		return nil, false, err
-	} else if existing != nil {
+	}
+	sort.Slice(candidates, func(a, b int) bool { return candidates[a].ID < candidates[b].ID })
+	for idx := range candidates {
+		existing := &candidates[idx]
+		if existing.CalibreID != nil {
+			if _, live := i.liveCalibreIDs[*existing.CalibreID]; live {
+				continue
+			}
+		}
 		i.recordBookBeforeSnapshot(ctx, runID, externalID, existing, outcomeLinked, map[string]any{"matchedBy": "title"})
 		if err := i.books.SetCalibreID(ctx, existing.ID, cb.CalibreID); err != nil {
 			return nil, false, err

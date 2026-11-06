@@ -388,10 +388,18 @@ var purgeOrder = []string{
 	"downloads",
 	"books",
 	"authors",
+	"import_lists",
+}
+
+// sharedConfigTables are instance wide config that happens to carry an
+// owner_user_id: the create handlers stamp whichever admin made the row, but
+// every account uses them (see docs/multi-user.md). A purge must not delete
+// them, since authors in other accounts reference them; it only drops the
+// departing user's stamp, so the row reads as global.
+var sharedConfigTables = []string{
 	"quality_profiles",
 	"metadata_profiles",
 	"root_folders",
-	"import_lists",
 }
 
 // AuthorBulkRefreshUserKey is the settings key holding the status of the
@@ -428,6 +436,13 @@ type UserOwnedRows struct {
 	// Blocklist counts rows attributing a blocklist entry to this user. It is
 	// reported for transparency but never reassigned or purged; see Delete.
 	Blocklist int `json:"blocklist"`
+	// OthersBooks and OthersBookFiles count books under this user's authors
+	// that someone else owns (or nobody does), and their files. A purge removes
+	// the authors and books.author_id is ON DELETE CASCADE, so those go too.
+	// They are reported so the admin sees the full cost of purge; they are not
+	// rows the user owns, so Total ignores them.
+	OthersBooks     int `json:"othersBooks"`
+	OthersBookFiles int `json:"othersBookFiles"`
 }
 
 // Total reports how many rows the admin has to decide about. Blocklist is
@@ -467,6 +482,23 @@ func (r *UserRepo) OwnedRows(ctx context.Context, id int64) (UserOwnedRows, erro
 		"SELECT COUNT(*) FROM blocklist WHERE created_by_user_id = ?", id,
 	).Scan(&c.Blocklist); err != nil {
 		return c, fmt.Errorf("count blocklist: %w", err)
+	}
+	// IS NOT, not !=, so a book with a NULL (shared) owner is counted too.
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM books
+		 WHERE author_id IN (SELECT id FROM authors WHERE owner_user_id = ?)
+		   AND owner_user_id IS NOT ?`, id, id,
+	).Scan(&c.OthersBooks); err != nil {
+		return c, fmt.Errorf("count other accounts' books: %w", err)
+	}
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM book_files
+		 WHERE book_id IN (
+		   SELECT id FROM books
+		   WHERE author_id IN (SELECT id FROM authors WHERE owner_user_id = ?)
+		     AND owner_user_id IS NOT ?)`, id, id,
+	).Scan(&c.OthersBookFiles); err != nil {
+		return c, fmt.Errorf("count other accounts' book files: %w", err)
 	}
 	return c, nil
 }
@@ -542,6 +574,14 @@ func (r *UserRepo) Delete(ctx context.Context, id int64, plan UserDeletePlan) er
 			q := fmt.Sprintf("DELETE FROM %s WHERE owner_user_id = ?", t)
 			if _, err := tx.ExecContext(ctx, q, id); err != nil {
 				return fmt.Errorf("purge %s: %w", t, err)
+			}
+		}
+		for _, t := range sharedConfigTables {
+			// #nosec G201 -- t comes from sharedConfigTables, a package-level
+			// literal slice; no caller-supplied value reaches this string.
+			q := fmt.Sprintf("UPDATE %s SET owner_user_id = NULL WHERE owner_user_id = ?", t)
+			if _, err := tx.ExecContext(ctx, q, id); err != nil {
+				return fmt.Errorf("release shared %s: %w", t, err)
 			}
 		}
 	} else {
