@@ -254,6 +254,12 @@ type Scheduler struct {
 
 	// metadataCooldown holds authors whose profile refresh failed for their
 	// own reasons, until when they are passed over (#2595). In memory only.
+	// upgradeSearched holds when each book last had an upgrade search, so a
+	// book with no better release is not searched every sweep (#2420). In
+	// memory, like metadataCooldown: a restart forgets it and costs one extra
+	// search per eligible book.
+	upgradeSearchedMu  sync.Mutex
+	upgradeSearched    map[int64]time.Time
 	metadataCooldownMu sync.Mutex
 	metadataCooldown   map[int64]time.Time
 	// metadataBreakerTrips counts, per author, the tripped passes in a row it
@@ -1313,6 +1319,15 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		specs = append(specs, decision.QualityAllowed{Profile: qualityProfile, MediaType: mediaType})
 		specs = append(specs, decision.EditionAllowed{Profile: qualityProfile, MediaType: mediaType, Title: crit.Title, Authors: append([]string{crit.Author}, crit.AuthorAliases...)})
 	}
+	// An upgrade search (#2420) takes only a release that would beat the
+	// ebook the book already has. The profile is the one the sweep resolved,
+	// which is the one this search resolved too.
+	upgrade := upgradeBaselineFrom(ctx)
+	if upgrade != nil && mediaType == models.MediaTypeEbook {
+		specs = append(specs, decision.EbookUpgrade{Profile: upgrade.profile, ExistingPaths: upgrade.paths})
+	} else {
+		upgrade = nil
+	}
 	var delayProfile *models.DelayProfile
 	if profiles := s.sweepDelayProfiles(ctx, sweep); len(profiles) > 0 {
 		delayProfile = &profiles[0]
@@ -1612,6 +1627,9 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 			"size":      best.Size,
 			"mediaType": mediaType,
 		}
+		if upgrade != nil {
+			payload["upgrade"] = true
+		}
 		// Record when this grab was decided on an incomplete pool, so "why did
 		// it pick that release" is answerable after the fact rather than being
 		// a question with no evidence either way (#1936).
@@ -1764,7 +1782,8 @@ func (s *Scheduler) searchWanted() {
 	}
 
 	searchQueue := s.wantedSearchQueue(ctx)
-	if len(searchQueue) == 0 {
+	upgradeQueue := s.upgradeSearchQueue(ctx)
+	if len(searchQueue) == 0 && len(upgradeQueue) == 0 {
 		return
 	}
 	// Load the tables that cannot change during this sweep once, rather than
@@ -1772,6 +1791,18 @@ func (s *Scheduler) searchWanted() {
 	sweep := s.newSweepContext(ctx)
 	concurrency.RunBoundedPaced(ctx, searchQueue, scheduledWantedSearchConcurrency, searchPaceInterval, func(ctx context.Context, w wantedSearch) {
 		s.searchAndGrabFormats(indexer.WithSearchOrigin(ctx, indexer.OriginScheduled), w.book, w.formats, sweep)
+	})
+	// The upgrade branch runs after the wanted one, so a missing book always
+	// gets its search before a book that already has a file is looked at
+	// again, and both share the one pacing and concurrency budget.
+	concurrency.RunBoundedPaced(ctx, upgradeQueue, scheduledWantedSearchConcurrency, searchPaceInterval, func(ctx context.Context, u upgradeSearch) {
+		ctx = withUpgradeBaseline(indexer.WithSearchOrigin(ctx, indexer.OriginScheduled), u.baseline)
+		s.searchAndGrabFormats(ctx, u.book, []string{models.MediaTypeEbook}, sweep)
+		// Stamped after the search, and not when the sweep was cancelled
+		// under it, so a search that never ran is not waited out.
+		if ctx.Err() == nil {
+			s.noteUpgradeSearched(u.book.ID, time.Now())
+		}
 	})
 }
 

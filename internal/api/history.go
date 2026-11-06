@@ -18,6 +18,7 @@ type HistoryHandler struct {
 	history   *db.HistoryRepo
 	blocklist *db.BlocklistRepo
 	books     *db.BookRepo
+	roots     *LibraryRoots // optional: lets Reject import delete from disk
 }
 
 func NewHistoryHandler(history *db.HistoryRepo, blocklist *db.BlocklistRepo, books *db.BookRepo) *HistoryHandler {
@@ -30,6 +31,9 @@ func NewHistoryHandler(history *db.HistoryRepo, blocklist *db.BlocklistRepo, boo
 type historyItem struct {
 	models.HistoryEvent
 	Book *bookRef `json:"book,omitempty"`
+	// Rejected is true on a bookImported event that Reject import already
+	// acted on (#3250), so the UI offers the action from server state.
+	Rejected bool `json:"rejected,omitempty"`
 }
 
 // historyListResponse is the paginated wrapper returned by List. Replaces the
@@ -85,6 +89,19 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 		items[i] = historyItem{HistoryEvent: e}
 		if e.BookID != nil {
 			bookIDs = append(bookIDs, *e.BookID)
+		}
+	}
+	importIDs := make([]int64, 0)
+	for _, e := range events {
+		if e.EventType == models.HistoryEventBookImported {
+			importIDs = append(importIDs, e.ID)
+		}
+	}
+	if rejected, err := h.history.RejectedImportEventIDs(ctx, importIDs); err != nil {
+		slog.Warn("history: failed to load rejected imports", "error", err)
+	} else {
+		for i := range items {
+			items[i].Rejected = rejected[items[i].ID]
 		}
 	}
 	// Best-effort enrichment: a book lookup failure still serves the page.

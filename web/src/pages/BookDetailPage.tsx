@@ -17,6 +17,7 @@ import { bookStatusBadge } from '../components/bookStatus'
 import RebindModal from '../components/RebindModal'
 import RenameFilesModal from '../components/RenameFilesModal'
 import ConfirmDialog from '../components/ConfirmDialog'
+import RejectImportDialog from '../components/RejectImportDialog'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
 import PackLabel from '../components/PackLabel'
@@ -402,6 +403,17 @@ function BookDetailPageInner() {
   >(null)
   // The pending DB-only deregistration (#1692).
   const [deregisterTarget, setDeregisterTarget] = useState<FileRow | null>(null)
+  // The import whose Reject import confirmation is open (#3250).
+  const [rejectTarget, setRejectTarget] = useState<HistoryEvent | null>(null)
+  // Reload the book and its history so the reject button reflects server state.
+  const refreshAfterReject = async (bookId: number) => {
+    const [b, h] = await Promise.all([
+      api.getBook(bookId),
+      api.listHistory({ bookId }).then(p => p.items).catch(() => events),
+    ]).catch(() => [book, events] as const)
+    if (b) setBook(b)
+    setEvents(h)
+  }
   const pathClipboard = useClipboardCopy()
   // The row whose Copy was clicked — the hook's status is shared across rows.
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
@@ -1738,6 +1750,16 @@ function BookDetailPageInner() {
                 <span className="ml-auto text-xs text-fg-muted whitespace-nowrap flex-shrink-0">
                   {new Date(ev.createdAt).toLocaleString()}
                 </span>
+                {ev.eventType === 'bookImported' && !ev.rejected && (
+                  <button
+                    type="button"
+                    onClick={() => setRejectTarget(ev)}
+                    title={t('history.rejectImportHint')}
+                    className="text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors flex-shrink-0"
+                  >
+                    {t('history.rejectImport')}
+                  </button>
+                )}
               </div>
             ))}
           </>
@@ -1819,6 +1841,23 @@ function BookDetailPageInner() {
           confirming={deletingFile}
           onConfirm={deleteFile}
           onClose={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {rejectTarget && book && (
+        <RejectImportDialog
+          event={rejectTarget}
+          onClose={() => setRejectTarget(null)}
+          onRejected={async summary => {
+            setRejectTarget(null)
+            setAutoSearchNotice(summary)
+            await refreshAfterReject(book.id)
+          }}
+          onAlreadyRejected={async message => {
+            setRejectTarget(null)
+            setAutoSearchNotice(message)
+            await refreshAfterReject(book.id)
+          }}
         />
       )}
 

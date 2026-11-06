@@ -138,22 +138,25 @@ describe('QualityTab', () => {
     render(<QualityTab />)
     await waitFor(() => screen.getByText('settings.quality.newProfile'))
     fireEvent.click(screen.getByText('settings.quality.newProfile'))
-    const boxes = screen.getAllByRole('checkbox')
+    // The upgrade switch is a checkbox too; it is off and not a format.
+    const boxes = screen.getAllByRole('checkbox').filter(b => b !== screen.getByLabelText('settings.quality.formUpgradeAllowed'))
     expect(boxes.map(b => b.getAttribute('aria-label') ?? (b as HTMLInputElement).labels?.[0]?.textContent))
       .toEqual(['azw3', 'epub', 'mobi', 'pdf'])
     expect(boxes.every(b => (b as HTMLInputElement).checked)).toBe(true)
   })
 
-  // #2373: cutoff and "upgrades allowed" were removed from the UI because
-  // nothing read either one. The row must not advertise them any more.
-  it('does not show a cutoff or an upgrades-allowed badge', async () => {
-    mockList.mockResolvedValueOnce([profile()])
+  // #2420: the upgrade controls are back, now that the sweep reads them. The
+  // row says what the profile will do, and says nothing when upgrades are off.
+  it('badges a profile that upgrades, and not one that does not', async () => {
+    mockList.mockResolvedValueOnce([
+      profile({ id: 1, name: 'Upgrades', upgradeAllowed: true, cutoff: 'epub' }),
+      profile({ id: 2, name: 'Plain', upgradeAllowed: false }),
+      profile({ id: 3, name: 'Removing', upgradeAllowed: true, cutoff: 'epub', removeReplaced: true }),
+    ])
     render(<QualityTab />)
-    await waitFor(() => {
-      expect(screen.getByText('Ebook Preferred')).toBeInTheDocument()
-    })
-    expect(screen.queryByText('settings.quality.cutoff', { exact: false })).not.toBeInTheDocument()
-    expect(screen.queryByText('settings.quality.upgradesAllowed')).not.toBeInTheDocument()
+    await waitFor(() => screen.getByText('Upgrades'))
+    expect(screen.getAllByText('settings.quality.upgradesBadgeKeep cutoff=epub')).toHaveLength(1)
+    expect(screen.getAllByText('settings.quality.upgradesBadgeRemove cutoff=epub')).toHaveLength(1)
   })
 
   it('opens the editor form when "New Profile" is clicked', async () => {
@@ -164,9 +167,11 @@ describe('QualityTab', () => {
     // Form heading-equivalent: the name label appears in the form.
     expect(screen.getByText('settings.quality.formName')).toBeInTheDocument()
     expect(screen.getByText('settings.quality.formPreference')).toBeInTheDocument()
-    // No cutoff select and no upgrade checkbox since #2373.
+    // Upgrades are off for a new profile, so the cutoff and remove controls
+    // stay hidden until the switch is on.
+    expect(screen.getByLabelText('settings.quality.formUpgradeAllowed')).not.toBeChecked()
     expect(screen.queryByText('settings.quality.formCutoff')).not.toBeInTheDocument()
-    expect(screen.queryByText('settings.quality.formUpgradeAllowed')).not.toBeInTheDocument()
+    expect(screen.queryByText('settings.quality.formRemoveReplaced')).not.toBeInTheDocument()
   })
 
   it('refuses to save a profile without a name', async () => {
@@ -220,5 +225,45 @@ describe('QualityTab', () => {
     expect(screen.queryByText('+ ogg')).not.toBeInTheDocument()
     expect(screen.getByText('ogg')).toBeInTheDocument()
     expect(screen.getByText('common.audiobook')).toBeInTheDocument()
+  })
+
+  it('saves the cutoff and the keep or remove choice (#2420)', async () => {
+    const mockAdd = api.addQualityProfile as ReturnType<typeof vi.fn>
+    mockAdd.mockResolvedValueOnce(profile())
+    mockList.mockResolvedValue([])
+    render(<QualityTab />)
+    await waitFor(() => screen.getByText('settings.quality.newProfile'))
+    fireEvent.click(screen.getByText('settings.quality.newProfile'))
+    fireEvent.change(screen.getByPlaceholderText('settings.quality.formNamePlaceholder'), { target: { value: 'Up' } })
+    fireEvent.click(screen.getByLabelText('settings.quality.formUpgradeAllowed'))
+    // The cutoff offers only ticked ebook formats and defaults to the best.
+    const select = screen.getByLabelText('settings.quality.formCutoff') as HTMLSelectElement
+    expect(Array.from(select.options).map(o => o.value)).toEqual(['azw3', 'epub', 'mobi', 'pdf'])
+    fireEvent.change(select, { target: { value: 'epub' } })
+    // Keep is the default; the box is for removing.
+    const remove = screen.getByLabelText('settings.quality.formRemoveReplaced') as HTMLInputElement
+    expect(remove.checked).toBe(false)
+    fireEvent.click(remove)
+    fireEvent.click(screen.getByRole('button', { name: 'settings.quality.createProfile' }))
+    await waitFor(() => expect(mockAdd).toHaveBeenCalled())
+    const sent = mockAdd.mock.calls[0][0] as QualityProfile
+    expect(sent.upgradeAllowed).toBe(true)
+    expect(sent.cutoff).toBe('epub')
+    expect(sent.removeReplaced).toBe(true)
+  })
+
+  it('a new profile saves with upgrades off and nothing removed', async () => {
+    const mockAdd = api.addQualityProfile as ReturnType<typeof vi.fn>
+    mockAdd.mockResolvedValueOnce(profile())
+    mockList.mockResolvedValue([])
+    render(<QualityTab />)
+    await waitFor(() => screen.getByText('settings.quality.newProfile'))
+    fireEvent.click(screen.getByText('settings.quality.newProfile'))
+    fireEvent.change(screen.getByPlaceholderText('settings.quality.formNamePlaceholder'), { target: { value: 'Plain' } })
+    fireEvent.click(screen.getByRole('button', { name: 'settings.quality.createProfile' }))
+    await waitFor(() => expect(mockAdd).toHaveBeenCalled())
+    const sent = mockAdd.mock.calls[0][0] as QualityProfile
+    expect(sent.upgradeAllowed).toBe(false)
+    expect(sent.removeReplaced).toBe(false)
   })
 })

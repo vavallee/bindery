@@ -100,6 +100,13 @@ type contentCheckResult struct {
 	// uncertain is true when a flagged file is only probably another book (see
 	// otherWorkLikely). It is noted like any warn finding and never blocks.
 	uncertain bool
+	// verifiedFiles are the files the check read and found to be the book on
+	// positive evidence: the title was present and matched, and the creator
+	// was present, named a person and matched the author. A file with no
+	// title, no creator, or an agreeing-by-silence one is not in the list,
+	// because absence of a contradiction is not proof. Only a file listed here
+	// may vouch for deleting a replaced file (#2420).
+	verifiedFiles []string
 }
 
 // blocks reports whether the result refuses the download.
@@ -252,6 +259,17 @@ func ebookTitleMatches(bookTitle, fileTitle string) bool {
 		return true
 	}
 	return contentTitleSupports(bookTitle, fileTitle, true)
+}
+
+// ebookPositivelyMatches reports whether a file's own metadata affirmatively
+// says it is the wanted book, by a standard fit for deleting a file: the title
+// equals the book's main title and series number (strictTitleEqual, equality
+// and not containment, so a sequel, box set or graphic novel is a different
+// book), and the creator is a full name that matches the author
+// (strictAuthorMatch, a bare surname does not). Unlike ebookDefiniteMismatch,
+// silence on either side is not a pass, and neither is "compatible with".
+func ebookPositivelyMatches(bookTitle string, names []string, fileTitle, fileCreator string) bool {
+	return strictTitleEqual(bookTitle, fileTitle) && strictAuthorMatch(names, fileCreator)
 }
 
 // ebookAuthorMatches reports whether an EPUB's dc:creator names one of the
@@ -677,6 +695,7 @@ func (s *Scanner) checkEbookContent(ctx context.Context, book *models.Book, auth
 	type found struct{ file, title, author string }
 	var read int
 	var mismatches []found
+	var verifiedFiles []string
 	for _, f := range epubs {
 		if ctx.Err() != nil {
 			break
@@ -706,6 +725,9 @@ func (s *Scanner) checkEbookContent(ctx context.Context, book *models.Book, auth
 				mismatch, fileUncertain = true, true
 			}
 		}
+		if !mismatch && ebookPositivelyMatches(book.Title, names, meta.Title, meta.Author) {
+			verifiedFiles = append(verifiedFiles, f)
+		}
 		if mismatch {
 			allUncertain = allUncertain && fileUncertain
 			mismatches = append(mismatches, found{safeFileText(filepath.Base(f)), safeFileText(meta.Title), safeFileText(meta.Author)})
@@ -714,7 +736,11 @@ func (s *Scanner) checkEbookContent(ctx context.Context, book *models.Book, auth
 	// A context that ended mid read means the answer is incomplete, and an
 	// incomplete answer never refuses a download (and could not write it down).
 	if ctx.Err() != nil || read == 0 || len(mismatches) < read {
-		return contentCheckResult{mode: mode}
+		res := contentCheckResult{mode: mode}
+		if ctx.Err() == nil {
+			res.verifiedFiles = verifiedFiles
+		}
+		return res
 	}
 
 	bookAuthor := ""
