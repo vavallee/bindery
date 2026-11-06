@@ -62,6 +62,7 @@ const seriesCatalogQuery = `query GetBooksBySeries($seriesId: Int!) {
 					description
 					users_count
 					image { url }
+					release_date
 					release_year
 					ratings_count
 					rating
