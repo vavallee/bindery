@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -60,8 +62,8 @@ func TestBookDelete_KeepsFilesUnderAnotherBooksTrackedFolder(t *testing.T) {
 }
 
 // TestBookDelete_RefusesFileInsideAnotherBooksTrackedFolder: deleting a book
-// whose own tracked file lies inside a folder another live book tracks must
-// leave the file, because the folder's owner covers it.
+// whose own tracked audio file lies inside a folder another live book tracks
+// must leave the file, because the folder's owner covers its tracks.
 func TestBookDelete_RefusesFileInsideAnotherBooksTrackedFolder(t *testing.T) {
 	h, books, _, author, ctx := bookFixture(t)
 	root := t.TempDir()
@@ -86,6 +88,99 @@ func TestBookDelete_RefusesFileInsideAnotherBooksTrackedFolder(t *testing.T) {
 
 	if !exists(track) {
 		t.Errorf("a file inside another live book's tracked folder must survive: %s", track)
+	}
+}
+
+// sharedFolderBooks is the #3561 layout (how #3556 gets there): book A's
+// audiobook is tracked as a folder holding part1.mp3, and book B's ebook is
+// tracked as a file inside that folder.
+func sharedFolderBooks(t *testing.T, books *db.BookRepo, authorID int64, ctx context.Context) (a, b *models.Book, track, epub string) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "Jane Doe", "Shared Title (2020)")
+	track = mustWrite(t, filepath.Join(dir, "part1.mp3"))
+	epub = mustWrite(t, filepath.Join(dir, "Shared Title - Jane Doe.epub"))
+	a = &models.Book{ForeignID: "B-A3561", AuthorID: authorID, Title: "Shared Title", SortTitle: "shared title", Status: "imported", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true}
+	b = &models.Book{ForeignID: "B-B3561", AuthorID: authorID, Title: "Shared Title", SortTitle: "shared title", Status: "imported", Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true}
+	for _, book := range []*models.Book{a, b} {
+		if err := books.Create(ctx, book); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := books.AddBookFile(ctx, a.ID, models.MediaTypeAudiobook, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := books.AddBookFile(ctx, b.ID, models.MediaTypeEbook, epub); err != nil {
+		t.Fatal(err)
+	}
+	return a, b, track, epub
+}
+
+// TestBookDelete_RemovesOwnEbookInsideAnotherBooksFolder is the #3561
+// regression: the guard protects the other book's files, not an ebook whose own
+// row is the one being deleted.
+func TestBookDelete_RemovesOwnEbookInsideAnotherBooksFolder(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	a, b, track, epub := sharedFolderBooks(t, books, author.ID, ctx)
+	// A same-named file no row names stays under the folder row's protection.
+	sibling := mustWrite(t, strings.TrimSuffix(epub, ".epub")+".m4b")
+
+	deleteBookWithFiles(t, h, b.ID)
+
+	if exists(epub) {
+		t.Errorf("the deleted book's own ebook should be removed: %s", epub)
+	}
+	if !exists(track) {
+		t.Errorf("the other book's track must survive: %s", track)
+	}
+	if !exists(sibling) {
+		t.Errorf("a file the deleted book does not track must survive under the other book's folder: %s", sibling)
+	}
+	files, err := books.ListFiles(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Format != models.MediaTypeAudiobook {
+		t.Errorf("the other book's folder row should be untouched, got %+v", files)
+	}
+}
+
+// TestSafeRemove_OwnEbookInsideAnotherBooksFolder covers both delete helpers
+// directly. Each reports the file as removed rather than skipped, which is what
+// the single file delete and the format delete tell the user (#3561).
+func TestSafeRemove_OwnEbookInsideAnotherBooksFolder(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		remove func(ctx context.Context, books *db.BookRepo, id int64, p string) (bool, error)
+	}{
+		{"format scoped", func(ctx context.Context, books *db.BookRepo, id int64, p string) (bool, error) {
+			return safeRemoveBookPath(ctx, nil, books, id, p, models.MediaTypeEbook)
+		}},
+		{"exact", func(ctx context.Context, books *db.BookRepo, id int64, p string) (bool, error) {
+			return safeRemoveBookPathExact(ctx, nil, books, id, p, models.MediaTypeEbook)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, books, _, author, ctx := bookFixture(t)
+			a, b, track, epub := sharedFolderBooks(t, books, author.ID, ctx)
+
+			// The holder of the folder cannot take B's ebook through its own id.
+			if skipped, err := tc.remove(ctx, books, a.ID, epub); err != nil || !skipped {
+				t.Errorf("removing another book's ebook = %v, %v, want skipped", skipped, err)
+			}
+			if !exists(epub) {
+				t.Fatalf("another book's ebook was removed: %s", epub)
+			}
+
+			if skipped, err := tc.remove(ctx, books, b.ID, epub); err != nil || skipped {
+				t.Errorf("removing the book's own ebook = %v, %v, want removed", skipped, err)
+			}
+			if exists(epub) {
+				t.Errorf("own ebook should be removed: %s", epub)
+			}
+			if !exists(track) {
+				t.Errorf("the other book's track must survive: %s", track)
+			}
+		})
 	}
 }
 
