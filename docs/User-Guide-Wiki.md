@@ -1645,7 +1645,15 @@ commas or new lines: `Graphic Audio, Full Cast, abridged`. The key is
 - Only whole words match, and a phrase must appear in order. `cast` rejects
   `Cast` but not `Broadcast`, and `abridged` does not reject `Unabridged`.
 - Entries are plain text, never patterns. `.*` is just the characters dot and
-  star.
+  star. Only commas and new lines separate entries: `abridged;dramatized` is one
+  phrase, not two words.
+- Accents are folded on both sides, so `Dramatisé` and `dramatise` match each
+  other. Numbers and symbols behave as separate words: `C++` becomes `c`, and `2`
+  does not hit `12`. A Chinese, Japanese or Korean entry matches a whole run of
+  characters, not a piece of one.
+- An entry whose words all come from the wanted book's own title or author is not
+  applied to that book, so rejecting `Cast` does not empty the search for
+  *Cast Away*, while `Full Cast` still does its job.
 - It applies to every search, the automatic ones and the book page's interactive
   search, for every user on the install.
 - A rejected release is not gone. It shows in the **Filtered** section of the

@@ -174,7 +174,7 @@ var settingDescriptors = []SettingDescriptor{
 
 	{
 		Key: indexer.SettingRejectWords, Type: SettingTypeString, Default: "",
-		Description: "Words and phrases, separated by commas or new lines, that reject a release whose title contains them, for example Graphic Audio, Full Cast. Matching ignores case, accents and separators (dots, dashes, underscores) and works on whole words only, so cast does not reject Broadcast. Plain text, no patterns. A rejected release shows in the Filtered section of the book page and can still be grabbed by hand. Empty rejects nothing. Applies to automatic and interactive search, without a restart.",
+		Description: "Words and phrases, separated by commas or new lines, that reject a release whose title contains them, for example Graphic Audio, Full Cast. Matching ignores case, accents and separators (dots, dashes, underscores) and works on whole words only, so cast does not reject Broadcast. Plain text, no patterns. An entry made only of words from the wanted book's own title or author is never applied to that book. A rejected release shows in the Filtered section of the book page and can still be grabbed by hand. Empty rejects nothing. Applies to automatic and interactive search, without a restart.",
 		State:       SettingStateActive,
 	},
 

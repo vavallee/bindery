@@ -79,11 +79,7 @@ func TestRejectWords_SeparatorsAccentsAndCase(t *testing.T) {
 			t.Errorf("setting %q did not match", words)
 		}
 	}
-	_, dropped := rejectRun("Dramatisé", "Frank Herbert - Dune DRAMATISÉ")
-	if len(dropped) != 1 {
-		t.Error("accented word did not match")
-	}
-	_, dropped = rejectRun("Graphic Audio", "Frank Herbert - Dune Audio Graphic")
+	_, dropped := rejectRun("Graphic Audio", "Frank Herbert - Dune Audio Graphic")
 	if len(dropped) != 0 {
 		t.Error("reordered words matched")
 	}

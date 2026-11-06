@@ -1022,7 +1022,7 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 	// are a relevance stage drop so the release is still offered for a grab by
 	// hand, and both the scheduler and the interactive search reach this.
 	if len(bc.rejectWords) > 0 {
-		rest, rejected := splitRejectedWords(results, bc.rejectWords)
+		rest, rejected := splitRejectedWords(results, bc.rejectWords, append([]string{title, author}, aliases...))
 		bc.rejectWords = nil
 		kept, dropped := filterRelevantKeepDropped(rest, title, author, aliases, bc)
 		return kept, append(rejected, dropped...)
