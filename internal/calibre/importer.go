@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,6 +79,12 @@ type Importer struct {
 	covers *covers.Store
 
 	openReader func(libraryPath string) (readerIface, error)
+
+	// liveCalibreIDs is the set of calibre ids in the library being imported,
+	// collected before any book is bound. A row whose calibre_id is in it is
+	// owned by another live Calibre book (#3631). Only touched by the import
+	// goroutine.
+	liveCalibreIDs map[int64]struct{}
 
 	mu       sync.Mutex
 	running  bool
@@ -279,6 +286,21 @@ func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 		p.Total = total
 		p.Message = fmt.Sprintf("scanning %d books…", total)
 	})
+
+	// One cheap pass first so path 3 of upsertBook can tell a calibre_id that
+	// another live book owns from a stale one left by a removed or renumbered
+	// book (#3631).
+	live := make(map[int64]struct{}, total)
+	if err := reader.Books(ctx, func(cb CalibreBook) error {
+		live[cb.CalibreID] = struct{}{}
+		return ctx.Err()
+	}); err != nil {
+		failed = true
+		i.fail(err)
+		return stats
+	}
+	i.liveCalibreIDs = live
+	defer func() { i.liveCalibreIDs = nil }()
 
 	err = reader.Books(ctx, func(cb CalibreBook) error {
 		if err := ctx.Err(); err != nil {
@@ -909,19 +931,28 @@ func (i *Importer) upsertBook(ctx context.Context, runID int64, author *models.A
 	// LOWER(title) SQL, which disagreed with the ABS importer's normalized
 	// match and produced duplicate rows (#940).
 	//
-	// A candidate that already carries a calibre_id is a different Calibre
-	// entry (path 1 would have matched our id otherwise), so binding would
-	// overwrite its identity and collapse two library books into one (#3631).
-	// Such rows are skipped; an unbound candidate for the same work is still
-	// adopted, and with none left a fresh row is created below.
+	// A candidate whose calibre_id belongs to another book that is still in
+	// this library is a different Calibre entry (path 1 would have matched our
+	// id otherwise), so binding would overwrite its identity and collapse two
+	// library books into one (#3631). Those rows are skipped. A calibre_id that
+	// is no longer in the library is stale (book removed and re-added, or the
+	// library renumbered) and is rebound as before. Candidates are tried in id
+	// order so the choice does not depend on the query plan; with none left a
+	// fresh row is created below.
+	//
+	// Known residual: an unbound row with the same dedup key (for example one a
+	// metadata provider created) is still adopted, as it always was.
 	candidates, err := i.books.FindAllByAuthorAndDedupKey(ctx, author.ID, cb.Title)
 	if err != nil {
 		return nil, false, err
 	}
+	sort.Slice(candidates, func(a, b int) bool { return candidates[a].ID < candidates[b].ID })
 	for idx := range candidates {
 		existing := &candidates[idx]
 		if existing.CalibreID != nil {
-			continue
+			if _, live := i.liveCalibreIDs[*existing.CalibreID]; live {
+				continue
+			}
 		}
 		i.recordBookBeforeSnapshot(ctx, runID, externalID, existing, outcomeLinked, map[string]any{"matchedBy": "title"})
 		if err := i.books.SetCalibreID(ctx, existing.ID, cb.CalibreID); err != nil {

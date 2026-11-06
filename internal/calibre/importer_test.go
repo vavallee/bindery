@@ -912,35 +912,125 @@ func TestImporter_SubtitleVariantsKeepDistinctCalibreIDs(t *testing.T) {
 	}
 }
 
-// A row already carrying another calibre_id is skipped, but an unbound row for
-// the same work is still adopted.
-func TestImporter_SubtitleMatchPrefersUnboundRow(t *testing.T) {
+// seedBook creates a provider-style book row, optionally bound to a calibre id.
+func seedBook(t *testing.T, bookRepo *db.BookRepo, authorID int64, foreignID, title string, calibreID int64) *models.Book {
+	t.Helper()
+	ctx := context.Background()
+	b := &models.Book{ForeignID: foreignID, AuthorID: authorID, Title: title, SortTitle: title, Status: models.BookStatusWanted, Monitored: true, AnyEditionOK: true, MetadataProvider: "openlibrary"}
+	if err := bookRepo.Create(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if calibreID != 0 {
+		if err := bookRepo.SetCalibreID(ctx, b.ID, calibreID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return b
+}
+
+// A row owned by another LIVE Calibre book is skipped, and the unbound twin is
+// adopted instead. The unbound row is created second, so an unordered "first
+// candidate" lookup would hand back the live-owned one.
+func TestImporter_SkipsLiveOwnedRowAdoptsUnboundTwin(t *testing.T) {
 	imp, fr, authorRepo, bookRepo, _, _, _ := newImporterFixture(t)
 	ctx := context.Background()
 	author := &models.Author{ForeignID: "ol:A1", Name: "Brandon Sanderson", SortName: "Sanderson, Brandon", MetadataProvider: "openlibrary", Monitored: true}
 	if err := authorRepo.Create(ctx, author); err != nil {
 		t.Fatal(err)
 	}
-	bound := &models.Book{ForeignID: "ol:B1", AuthorID: author.ID, Title: "Mistborn", SortTitle: "Mistborn", Status: models.BookStatusWanted, Monitored: true, AnyEditionOK: true, MetadataProvider: "openlibrary"}
-	unbound := &models.Book{ForeignID: "ol:B2", AuthorID: author.ID, Title: "Mistborn: The Final Empire", SortTitle: "Mistborn: The Final Empire", Status: models.BookStatusWanted, Monitored: true, AnyEditionOK: true, MetadataProvider: "openlibrary"}
-	for _, b := range []*models.Book{bound, unbound} {
-		if err := bookRepo.Create(ctx, b); err != nil {
-			t.Fatal(err)
-		}
+	owned := seedBook(t, bookRepo, author.ID, "ol:B1", "Mistborn", 1)
+	unbound := seedBook(t, bookRepo, author.ID, "ol:B2", "Mistborn", 0)
+	fr.books = []CalibreBook{
+		sampleCalibreBook(1, "Mistborn", "Brandon Sanderson"),
+		sampleCalibreBook(2, "Mistborn", "Brandon Sanderson"),
 	}
-	if err := bookRepo.SetCalibreID(ctx, bound.ID, 1); err != nil {
-		t.Fatal(err)
-	}
-	fr.books = []CalibreBook{sampleCalibreBook(2, "Mistborn: The Final Empire", "Brandon Sanderson")}
 	if _, err := imp.Run(ctx, "/lib"); err != nil {
 		t.Fatal(err)
 	}
 	b1, _ := bookRepo.GetByCalibreID(ctx, 1)
 	b2, _ := bookRepo.GetByCalibreID(ctx, 2)
-	if b1 == nil || b1.ID != bound.ID {
+	if b1 == nil || b1.ID != owned.ID {
 		t.Errorf("calibre 1 moved: %+v", b1)
 	}
 	if b2 == nil || b2.ID != unbound.ID {
-		t.Errorf("calibre 2 should adopt the unbound row: %+v", b2)
+		t.Errorf("calibre 2 should adopt the unbound row %d: %+v", unbound.ID, b2)
+	}
+}
+
+// With several unbound candidates the lowest id is adopted every time.
+func TestImporter_AdoptsLowestIDCandidate(t *testing.T) {
+	for n := 0; n < 5; n++ {
+		imp, fr, authorRepo, bookRepo, _, _, _ := newImporterFixture(t)
+		ctx := context.Background()
+		author := &models.Author{ForeignID: "ol:A1", Name: "Alice Author", SortName: "Author, Alice", MetadataProvider: "openlibrary", Monitored: true}
+		if err := authorRepo.Create(ctx, author); err != nil {
+			t.Fatal(err)
+		}
+		first := seedBook(t, bookRepo, author.ID, "ol:B1", "Book One", 0)
+		seedBook(t, bookRepo, author.ID, "ol:B2", "Book One", 0)
+		seedBook(t, bookRepo, author.ID, "ol:B3", "Book One", 0)
+		fr.books = []CalibreBook{sampleCalibreBook(5, "Book One", "Alice Author")}
+		if _, err := imp.Run(ctx, "/lib"); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := bookRepo.GetByCalibreID(ctx, 5)
+		if got == nil || got.ID != first.ID {
+			t.Fatalf("adopted %+v, want lowest id %d", got, first.ID)
+		}
+	}
+}
+
+// A book removed from Calibre and added again gets a new calibre id. The old
+// id is stale (no longer in the library), so the row is rebound, not duplicated.
+func TestImporter_RebindsRowWithStaleCalibreID(t *testing.T) {
+	imp, fr, _, bookRepo, _, _, _ := newImporterFixture(t)
+	ctx := context.Background()
+	fr.books = []CalibreBook{sampleCalibreBook(1, "Dune", "Frank Herbert")}
+	if _, err := imp.Run(ctx, "/lib"); err != nil {
+		t.Fatal(err)
+	}
+	fr.books = []CalibreBook{sampleCalibreBook(7, "Dune", "Frank Herbert")}
+	if _, err := imp.Run(ctx, "/lib"); err != nil {
+		t.Fatal(err)
+	}
+	books, _ := bookRepo.List(ctx)
+	if len(books) != 1 {
+		t.Fatalf("want 1 row after re-add, got %d", len(books))
+	}
+	if books[0].CalibreID == nil || *books[0].CalibreID != 7 {
+		t.Errorf("calibre_id = %v, want 7", books[0].CalibreID)
+	}
+}
+
+// A rebuilt library renumbers everything. Both subtitle variants keep one row
+// each, rebound to the new ids, with their files registered.
+func TestImporter_RenumberedLibraryKeepsRows(t *testing.T) {
+	imp, fr, _, bookRepo, _, _, _ := newImporterFixture(t)
+	ctx := context.Background()
+	fr.books = []CalibreBook{
+		sampleCalibreBook(1, "Mistborn", "Brandon Sanderson"),
+		sampleCalibreBook(2, "Mistborn: Secret History", "Brandon Sanderson"),
+	}
+	if _, err := imp.Run(ctx, "/lib"); err != nil {
+		t.Fatal(err)
+	}
+	fr.books = []CalibreBook{
+		sampleCalibreBook(11, "Mistborn", "Brandon Sanderson"),
+		sampleCalibreBook(12, "Mistborn: Secret History", "Brandon Sanderson"),
+	}
+	if _, err := imp.Run(ctx, "/lib"); err != nil {
+		t.Fatal(err)
+	}
+	books, _ := bookRepo.List(ctx)
+	if len(books) != 2 {
+		t.Fatalf("want 2 rows after renumber, got %d", len(books))
+	}
+	a, _ := bookRepo.GetByCalibreID(ctx, 11)
+	b, _ := bookRepo.GetByCalibreID(ctx, 12)
+	if a == nil || b == nil || a.ID == b.ID {
+		t.Fatalf("new ids should map to two distinct rows: %+v %+v", a, b)
+	}
+	if a.Title != "Mistborn" || b.Title != "Mistborn: Secret History" {
+		t.Errorf("rows crossed: %q %q", a.Title, b.Title)
 	}
 }
