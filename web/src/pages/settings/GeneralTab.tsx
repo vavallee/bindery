@@ -58,6 +58,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const [audiobookDropErr, setAudiobookDropErr] = useState<string | null>(null)
   const [sourcesErr, setSourcesErr] = useState<string | null>(null)
   const [langErr, setLangErr] = useState<string | null>(null)
+  const [rejectErr, setRejectErr] = useState<string | null>(null)
   const [scanningLibrary, setScanningLibrary] = useState(false)
   const [showReorganize, setShowReorganize] = useState(false)
   const [scanMessage, setScanMessage] = useState<string | null>(null)
@@ -94,6 +95,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   } | null>(null)
   const [storage, setStorage] = useState<StorageHealth | null>(null)
   const [langSaveResult, langSave] = useSaveResult()
+  const [rejectSaveResult, rejectSave] = useSaveResult()
   const [dropSaveResult, dropSave] = useSaveResult()
   const [audiobookDropSaveResult, audiobookDropSave] = useSaveResult()
   const [sourcesSaveResult, sourcesSave] = useSaveResult()
@@ -222,6 +224,21 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
     } catch (err) {
       const msg = errorText(err, t('settings.general.saveFailed', 'Save failed'))
       setLangErr(msg)
+      throw err
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  // saveRejectWords follows savePreferredLanguage: it sets `saving`, shows the
+  // server's message inline and throws so useSaveResult flips to 'error'.
+  const saveRejectWords = async () => {
+    setSaving('search.rejectWords')
+    setRejectErr(null)
+    try {
+      await api.setSetting('search.rejectWords', settings['search.rejectWords'] ?? '')
+    } catch (err) {
+      setRejectErr(errorText(err, t('settings.general.saveFailed', 'Save failed')))
       throw err
     } finally {
       setSaving(null)
@@ -672,6 +689,28 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             </div>
             {langErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{langErr}</p>}
           </div>
+          {isAdmin && (
+            <div>
+              <label htmlFor={`${fid}-rejectwords`} className="block text-xs text-fg-muted mb-1">{t('settings.general.rejectWords')}</label>
+              <p className="text-xs text-fg-muted mb-2">{t('settings.general.rejectWordsHint')}</p>
+              <div className="flex flex-wrap gap-2">
+                <textarea id={`${fid}-rejectwords`}
+                  rows={2}
+                  value={settings['search.rejectWords'] ?? ''}
+                  onChange={e => setSettings(s => ({ ...s, 'search.rejectWords': e.target.value }))}
+                  placeholder={t('settings.general.rejectWordsPlaceholder')}
+                  className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
+                />
+                <SaveButton
+                  result={rejectSaveResult}
+                  saving={saving === 'search.rejectWords'}
+                  onClick={() => rejectSave(saveRejectWords)}
+                  testId="search-reject-words-save"
+                />
+              </div>
+              {rejectErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{rejectErr}</p>}
+            </div>
+          )}
         </div>
       </section>
 

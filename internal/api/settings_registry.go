@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/vavallee/bindery/internal/abs"
+	"github.com/vavallee/bindery/internal/indexer"
 )
 
 // SettingType is the shape of a stored setting value. Every value in the
@@ -168,6 +169,12 @@ var settingDescriptors = []SettingDescriptor{
 	{
 		Key: "search.preferredLanguage", Type: SettingTypeString, Default: "",
 		Description: "Preferred release language, used to rank search results and to build the recommendation taste profile. Empty means no preference.",
+		State:       SettingStateActive,
+	},
+
+	{
+		Key: indexer.SettingRejectWords, Type: SettingTypeString, Default: "",
+		Description: "Words and phrases, separated by commas or new lines, that reject a release whose title contains them, for example Graphic Audio, Full Cast. Matching ignores case, accents and separators (dots, dashes, underscores) and works on whole words only, so cast does not reject Broadcast. Plain text, no patterns. A rejected release shows in the Filtered section of the book page and can still be grabbed by hand. Empty rejects nothing. Applies to automatic and interactive search, without a restart.",
 		State:       SettingStateActive,
 	},
 

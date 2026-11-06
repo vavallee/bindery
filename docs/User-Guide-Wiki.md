@@ -1631,6 +1631,28 @@ If your naming template uses `{SortAuthor}`, the same value names the folder on
 disk, so the letter an author files under and the folder it lives in always
 agree.
 
+## Rejecting releases by words in the title
+
+If you never want a kind of release, such as Graphic Audio or full cast
+recordings, list the words in **Settings, General, Downloads, Reject releases by
+title words** (admins only). Put one word or phrase per entry, separated by
+commas or new lines: `Graphic Audio, Full Cast, abridged`. The key is
+`search.rejectWords` and it is empty by default, which rejects nothing.
+
+- A release whose title contains any entry is left out of search. Case, accents
+  and separators are ignored, so `Graphic Audio` also catches `graphic.audio`,
+  `Graphic_Audio` and `GRAPHIC-AUDIO`.
+- Only whole words match, and a phrase must appear in order. `cast` rejects
+  `Cast` but not `Broadcast`, and `abridged` does not reject `Unabridged`.
+- Entries are plain text, never patterns. `.*` is just the characters dot and
+  star.
+- It applies to every search, the automatic ones and the book page's interactive
+  search, for every user on the install.
+- A rejected release is not gone. It shows in the **Filtered** section of the
+  book page with the reason `release title contains the rejected word "..."`,
+  and you can still grab it by hand. The same reason appears in the search debug
+  view.
+
 ## Finding a setting when you do not know its tab
 
 The search box at the top of Settings matches tab names and section headings

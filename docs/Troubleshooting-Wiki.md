@@ -19,6 +19,10 @@ is collapsed by default, shows the reason on each row, and has the same Grab
 button. Releases dropped as not a book (video, a movie or console category, a
 raw usenet posting) are listed in the search details panel only.
 
+Releases dropped because their title contains one of your own rejected words
+(Settings, General, Downloads, `search.rejectWords`) are listed there too, with
+the word that matched. Clear the setting to stop rejecting anything.
+
 ### A release names the next book in the series
 
 Matching also reads what comes AFTER your title. A release that has the whole

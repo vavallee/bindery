@@ -120,6 +120,9 @@ type MatchCriteria struct {
 	// on to name one of them after the wanted title (#3268). Empty disables
 	// that rule only.
 	AuthorTitles []string
+	// RejectWords are the install wide words and phrases a release title may
+	// not contain (#3416). See ParseRejectWords. Empty disables the rule.
+	RejectWords []string
 }
 
 // CriteriaISBN picks the ISBN to put in MatchCriteria.ISBN for a book, given
@@ -1015,6 +1018,15 @@ func filterRelevantWithContext(results []newznab.SearchResult, title, author str
 // filter is a projection of this one, so the kept set cannot differ between
 // the scheduler and the interactive path.
 func filterRelevantKeepDropped(results []newznab.SearchResult, title, author string, aliases []string, bc bookContext) ([]newznab.SearchResult, []DroppedRelease) {
+	// Operator rejected words come first and use their own reason (#3416). They
+	// are a relevance stage drop so the release is still offered for a grab by
+	// hand, and both the scheduler and the interactive search reach this.
+	if len(bc.rejectWords) > 0 {
+		rest, rejected := splitRejectedWords(results, bc.rejectWords)
+		bc.rejectWords = nil
+		kept, dropped := filterRelevantKeepDropped(rest, title, author, aliases, bc)
+		return kept, append(rejected, dropped...)
+	}
 	// "Book One" and "Book 1" are the same position (#3476). Both the wanted
 	// title and every release name are read with a spelled out number after a
 	// volume word as digits, so the two spellings compare equal everywhere
