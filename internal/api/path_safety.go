@@ -8,8 +8,28 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// NewReplacedFileRemover is the delete the importer uses for the file an
+// ebook upgrade replaced (#2420). It is the exact-file variant the book
+// handlers use: the path must sit inside a configured library root, and a file
+// another book tracks, or one under a folder another book tracks, is never
+// touched. It lives here because the importer cannot import this package.
+func NewReplacedFileRemover(roots *LibraryRoots, books *db.BookRepo) importer.ReplacedFileRemover {
+	return func(ctx context.Context, bookID int64, path string) (bool, error) {
+		// An ebook row names one file. A directory at that path is not what
+		// was imported, and the exact delete would treat it as a unit and
+		// remove what is inside, new file included.
+		if info, err := os.Lstat(path); err == nil && info.IsDir() {
+			slog.Warn("upgrade: refusing to remove a directory where a replaced ebook file was expected", "path", path)
+			return true, nil
+		}
+		return safeRemoveBookPathExact(ctx, roots, books, bookID, path, models.MediaTypeEbook, "reason", "upgrade_replaced")
+	}
+}
 
 // RootLister is the minimal surface LibraryRoots needs from the root-folders
 // repo. Declared here (rather than depending on *db.RootFolderRepo directly)

@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -103,12 +104,81 @@ func (pr *profileRanks) formatScore(formats []string, mediaType string) int {
 	}
 	best := 0
 	for _, f := range formats {
-		if MediaTypeForFormat(f) != mediaType {
+		format := strings.ToLower(strings.TrimSpace(f))
+		if MediaTypeForFormat(format) != mediaType {
 			continue
 		}
-		if r := pr.ranks[mediaType][strings.ToLower(f)]; r > best {
+		if r := pr.ranks[mediaType][format]; r > best {
 			best = r
 		}
 	}
 	return best
+}
+
+// EbookUpgradeEligible reports whether candidateFormats can safely replace an
+// already owned ebook according to profile. It is deliberately a pure
+// eligibility check: callers remain responsible for searching, downloading,
+// importing, and retaining the previous file.
+//
+// An upgrade requires an enabled profile, a recognised and allowed ebook
+// cutoff, at least one known existing ebook path, and a recognised allowed
+// candidate that is both above the best existing file and at or above the
+// cutoff. An existing path with an unknown or non-ebook extension fails
+// closed, because replacing a file whose quality cannot be compared is not
+// safe. Candidate releases may carry additional unknown or non-ebook tokens;
+// only their recognised ebook formats are considered.
+//
+// Stored order remains the source of ranking. In particular, audio entries
+// never influence an ebook comparison, even when both kinds share a quality
+// profile.
+func EbookUpgradeEligible(profile *models.QualityProfile, existingPaths, candidateFormats []string) bool {
+	if profile == nil || !profile.UpgradeAllowed || len(existingPaths) == 0 {
+		return false
+	}
+
+	ranks := newProfileRanks(profile)
+	if !ranks.hasOpinion(models.MediaTypeEbook) {
+		return false
+	}
+
+	cutoff := strings.ToLower(strings.TrimSpace(profile.Cutoff))
+	if MediaTypeForFormat(cutoff) != models.MediaTypeEbook {
+		return false
+	}
+	cutoffRank := ranks.formatScore([]string{cutoff}, models.MediaTypeEbook)
+	if cutoffRank == 0 {
+		// An unticked or absent cutoff must never turn an old inert profile
+		// into an unexpected automatic upgrade policy.
+		return false
+	}
+
+	existingBest := 0
+	for _, path := range existingPaths {
+		format := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(filepath.Ext(path), ".")))
+		if MediaTypeForFormat(format) != models.MediaTypeEbook {
+			return false
+		}
+		rank := ranks.formatScore([]string{format}, models.MediaTypeEbook)
+		if rank == 0 {
+			// A profile can recognise an ebook token while deliberately leaving it
+			// unticked. That is not a safe baseline for an automatic replacement.
+			return false
+		}
+		if rank > existingBest {
+			existingBest = rank
+		}
+	}
+	if existingBest >= cutoffRank {
+		return false
+	}
+
+	knownCandidates := make([]string, 0, len(candidateFormats))
+	for _, candidate := range candidateFormats {
+		format := strings.ToLower(strings.TrimSpace(candidate))
+		if MediaTypeForFormat(format) == models.MediaTypeEbook {
+			knownCandidates = append(knownCandidates, format)
+		}
+	}
+	candidateBest := ranks.formatScore(knownCandidates, models.MediaTypeEbook)
+	return candidateBest >= cutoffRank && candidateBest > existingBest
 }
