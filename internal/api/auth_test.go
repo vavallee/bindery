@@ -1032,3 +1032,23 @@ func TestChangePassword_SuccessResetsLimiter(t *testing.T) {
 		}
 	}
 }
+
+// TestLogin_RepeatedSuccessIsNeverThrottled confirms that correct sign ins
+// from one address do not use up the per address account cap.
+func TestLogin_RepeatedSuccessIsNeverThrottled(t *testing.T) {
+	h, users, _, ctx := newAuthFixture(t)
+	hash, _ := auth.HashPassword("correct-password")
+	if _, err := users.Create(ctx, "admin", hash); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 70; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/auth/login",
+			jsonBody(t, loginRequest{Username: "admin", Password: "correct-password"}))
+		req.RemoteAddr = "203.0.113.50:1234"
+		rec := httptest.NewRecorder()
+		h.Login(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("sign in %d: got %d", i, rec.Code)
+		}
+	}
+}
