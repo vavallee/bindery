@@ -2936,6 +2936,7 @@ func TestCreateAuthor_RelinksExistingABSAuthor(t *testing.T) {
 }
 
 func TestCreateAuthor_HiddenIdentifierConflictDoesNotLeakCanonicalAuthor(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -3025,6 +3026,7 @@ func TestCreateAuthor_HiddenIdentifierConflictDoesNotLeakCanonicalAuthor(t *test
 }
 
 func TestCreateAuthor_HiddenPrimaryConflictDoesNotLeakCanonicalAuthor(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -4473,6 +4475,7 @@ func TestCleanupOrphanIfNoBooks_NoopWhenBookCreated(t *testing.T) {
 }
 
 func TestAddBook_DoesNotResolveOtherUsersAlternateAuthorIdentifier(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
