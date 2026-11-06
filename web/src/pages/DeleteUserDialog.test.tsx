@@ -3,17 +3,21 @@ import { cleanup, render, screen } from '@testing-library/react'
 import DeleteUserDialog from './DeleteUserDialog'
 import type { ManagedUser, UserOwnedRows } from '../api/client'
 
-// Keys come back verbatim with the numeric vars appended, so the assertion
-// proves which counts reach the line without depending on English copy.
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string, opts?: unknown) => {
-      const vars = opts && typeof opts === 'object' ? (opts as Record<string, unknown>) : {}
-      const suffix = Object.values(vars).filter(v => typeof v === 'string' || typeof v === 'number').join(',')
-      return suffix ? `${key}:${suffix}` : key
-    },
-  }),
-}))
+// Resolves the real en.json strings with i18next's one/other plural split, so
+// the assertions read the sentence an admin sees, singular and plural.
+vi.mock('react-i18next', async () => {
+  const en = (await import('../i18n/locales/en.json')).default as { users: Record<string, string> }
+  return {
+    useTranslation: () => ({
+      t: (key: string, opts?: Record<string, unknown>) => {
+        const name = key.replace(/^users\./, '')
+        const count = opts?.count
+        const s = (typeof count === 'number' ? en.users[`${name}_${count === 1 ? 'one' : 'other'}`] : undefined) ?? en.users[name] ?? key
+        return s.replace(/\{\{(\w+)\}\}/g, (_m, v: string) => String(opts?.[v] ?? ''))
+      },
+    }),
+  }
+})
 
 const user: ManagedUser = { id: 2, username: 'reader', role: 'user', createdAt: '2026-01-01T00:00:00Z', autoApproveRequests: false }
 
@@ -40,12 +44,17 @@ describe('DeleteUserDialog other accounts books', () => {
   afterEach(cleanup)
 
   it('warns how many books and files from other accounts a purge removes', () => {
-    renderDialog({ ...base, othersBooks: 3, othersBookFiles: 7 })
-    expect(screen.getByText('users.deletePurgeOthers:3,7')).toBeInTheDocument()
+    renderDialog({ ...base, othersBooks: 2, othersBookFiles: 3 })
+    expect(screen.getByText(/Also deletes 2 books and 3 files that belong/)).toBeInTheDocument()
+  })
+
+  it('uses singular nouns for a count of one', () => {
+    renderDialog({ ...base, othersBooks: 1, othersBookFiles: 1 })
+    expect(screen.getByText(/Also deletes 1 book and 1 file that belong/)).toBeInTheDocument()
   })
 
   it('stays quiet when no other account has books under these authors', () => {
     renderDialog(base)
-    expect(screen.queryByText(/users\.deletePurgeOthers/)).toBeNull()
+    expect(screen.queryByText(/Also deletes/)).toBeNull()
   })
 })

@@ -45,7 +45,9 @@ func TestUserMgmt_Delete_ConflictCountsOtherAccountsBooks(t *testing.T) {
 	}{
 		{"INSERT INTO books (id, foreign_id, author_id, title, sort_title, owner_user_id) VALUES (10, 'OL1W', ?, 'Mine', 'Mine', ?)", []any{a.ID, victim.ID}},
 		{"INSERT INTO books (id, foreign_id, author_id, title, sort_title, owner_user_id) VALUES (11, 'OL2W', ?, 'Theirs', 'Theirs', ?)", []any{a.ID, admin.ID}},
+		{"INSERT INTO books (id, foreign_id, author_id, title, sort_title, owner_user_id) VALUES (12, 'OL3W', ?, 'Shared', 'Shared', NULL)", []any{a.ID}},
 		{"INSERT INTO book_files (book_id, format, path) VALUES (11, 'ebook', '/lib/t.epub')", nil},
+		{"INSERT INTO book_files (book_id, format, path) VALUES (12, 'ebook', '/lib/s.epub')", nil},
 	}
 	for _, s := range seed {
 		if _, err := database.Exec(s.query, s.args...); err != nil {
@@ -69,10 +71,11 @@ func TestUserMgmt_Delete_ConflictCountsOtherAccountsBooks(t *testing.T) {
 	if raw.Counts["books"] != 1 {
 		t.Errorf("books = %d, want 1 (own only)", raw.Counts["books"])
 	}
-	if raw.Counts["othersBooks"] != 1 {
-		t.Errorf("othersBooks = %d, want 1; counts %v", raw.Counts["othersBooks"], raw.Counts)
+	// One book owned by the admin plus one with no owner (NULL).
+	if raw.Counts["othersBooks"] != 2 {
+		t.Errorf("othersBooks = %d, want 2; counts %v", raw.Counts["othersBooks"], raw.Counts)
 	}
-	if raw.Counts["othersBookFiles"] != 1 {
-		t.Errorf("othersBookFiles = %d, want 1; counts %v", raw.Counts["othersBookFiles"], raw.Counts)
+	if raw.Counts["othersBookFiles"] != 2 {
+		t.Errorf("othersBookFiles = %d, want 2; counts %v", raw.Counts["othersBookFiles"], raw.Counts)
 	}
 }
