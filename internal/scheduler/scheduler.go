@@ -1263,6 +1263,13 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	if book.ReleaseDate != nil {
 		crit.Year = book.ReleaseDate.Year()
 	}
+	// Install wide rejected title words (#3416), the same list the interactive
+	// search reads. A failed read rejects nothing.
+	if s.settings != nil {
+		if rw, err := s.settings.Get(ctx, indexer.SettingRejectWords); err == nil && rw != nil {
+			crit.RejectWords = indexer.ParseRejectWords(rw.Value)
+		}
+	}
 	// What the library knows about the wanted book lets the relevance filter
 	// tell a release of this book from the next one in its series (#3268).
 	// Two reads per search, never per release; a missing repo or a failed

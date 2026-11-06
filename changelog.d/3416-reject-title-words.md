@@ -1,0 +1,2 @@
+### Added
+- **Reject releases by words in the title** (#3416). A new admin setting under General, Downloads takes a list like Graphic Audio, Full Cast, abridged. Any release whose title contains one of them is left out of automatic and interactive search, ignoring case, accents on Latin letters and dots or dashes, and matching whole words only. Rejected releases still show under Filtered on the book page, so you can grab one by hand. Empty by default.

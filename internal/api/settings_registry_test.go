@@ -504,6 +504,7 @@ var webSettingKeys = []string{
 	"recommendations.enabled",
 	"search.interval",
 	"search.preferredLanguage",
+	"search.rejectWords",
 	"telemetry.enabled",
 }
 

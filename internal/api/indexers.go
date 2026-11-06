@@ -697,6 +697,12 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 	if book.ReleaseDate != nil {
 		crit.Year = book.ReleaseDate.Year()
 	}
+	// Install wide rejected title words (#3416). A failed read rejects nothing.
+	if h.settings != nil {
+		if s, err := h.settings.Get(r.Context(), indexer.SettingRejectWords); err == nil && s != nil {
+			crit.RejectWords = indexer.ParseRejectWords(s.Value)
+		}
+	}
 	// What the library knows about the wanted book, for the relevance filter
 	// (#3268). Two reads per search. The author's titles are scoped to the
 	// book's owner, as the automatic search and the importer scope them, so all

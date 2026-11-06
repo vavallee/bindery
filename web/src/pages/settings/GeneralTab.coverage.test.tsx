@@ -422,3 +422,29 @@ describe('GeneralTab security section', () => {
     expect(screen.queryByPlaceholderText('Current password')).not.toBeInTheDocument()
   })
 })
+
+describe('GeneralTab rejected title words (#3416)', () => {
+  it('loads, saves and shows a rejected save inline', async () => {
+    seedSettings({ 'search.rejectWords': 'Graphic Audio' })
+    m.setSetting.mockRejectedValueOnce(new Error('too long'))
+    render(<GeneralTab />)
+    const box = await screen.findByLabelText('settings.general.rejectWords')
+    await waitFor(() => expect(box).toHaveValue('Graphic Audio'))
+    fireEvent.change(box, { target: { value: 'Graphic Audio, Full Cast' } })
+    fireEvent.click(screen.getByTestId('search-reject-words-save'))
+    await waitFor(() => expect(m.setSetting).toHaveBeenCalledWith('search.rejectWords', 'Graphic Audio, Full Cast'))
+    expect(await screen.findByText('too long')).toBeInTheDocument()
+  })
+
+  it('is hidden from a non admin', async () => {
+    auth.isAdmin = false
+    try {
+      seedSettings({})
+      render(<GeneralTab />)
+      await waitFor(() => expect(m.listSettings).toHaveBeenCalled())
+      expect(screen.queryByLabelText('settings.general.rejectWords')).not.toBeInTheDocument()
+    } finally {
+      auth.isAdmin = true
+    }
+  })
+})
