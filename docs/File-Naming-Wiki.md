@@ -290,6 +290,8 @@ With Import Mode set to External and a drop folder, **Layout** decides the names
 - **Flat** (the default) ignores your templates and puts a fixed name in the folder root: `The Gunslinger - Stephen King.epub`, or a folder `The Gunslinger - Stephen King` for an audiobook.
 - **Templated** builds your ebook and audiobook folder templates inside the drop folder.
 
+A new ebook only replaces an earlier drop of the same book that the external tool has not picked up yet. If the name is held by another book's file, or by a file Bindery did not place, the new one is named with a suffix instead, such as `The Gunslinger - Stephen King (2).epub`.
+
 Audiobooks can have their own import mode, and with External they can use their own **Audiobook drop folder** (`import.audiobook.drop_folder`), falling back to the ebook one when that is empty. Layout applies to both formats.
 
 ## Common mistakes

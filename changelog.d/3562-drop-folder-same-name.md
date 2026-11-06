@@ -1,0 +1,2 @@
+### Fixed
+- **A drop folder handoff no longer overwrites another book's file** (#3562). When two books rendered to the same name, the second handoff deleted the first book's file before the external tool had picked it up, and that download then waited for a library scan that would never find it. Only an earlier drop of the same book is replaced now. Anything else at that name stays, and the new file gets a ` (2)` style suffix.
