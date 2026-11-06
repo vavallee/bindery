@@ -908,9 +908,21 @@ func (i *Importer) upsertBook(ctx context.Context, runID int64, author *models.A
 	// umlaut form. Previously this matched on raw
 	// LOWER(title) SQL, which disagreed with the ABS importer's normalized
 	// match and produced duplicate rows (#940).
-	if existing, err := i.books.FindByAuthorAndDedupKey(ctx, author.ID, cb.Title); err != nil {
+	//
+	// A candidate that already carries a calibre_id is a different Calibre
+	// entry (path 1 would have matched our id otherwise), so binding would
+	// overwrite its identity and collapse two library books into one (#3631).
+	// Such rows are skipped; an unbound candidate for the same work is still
+	// adopted, and with none left a fresh row is created below.
+	candidates, err := i.books.FindAllByAuthorAndDedupKey(ctx, author.ID, cb.Title)
+	if err != nil {
 		return nil, false, err
-	} else if existing != nil {
+	}
+	for idx := range candidates {
+		existing := &candidates[idx]
+		if existing.CalibreID != nil {
+			continue
+		}
 		i.recordBookBeforeSnapshot(ctx, runID, externalID, existing, outcomeLinked, map[string]any{"matchedBy": "title"})
 		if err := i.books.SetCalibreID(ctx, existing.ID, cb.CalibreID); err != nil {
 			return nil, false, err

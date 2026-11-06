@@ -882,3 +882,65 @@ func TestImporter_RegisterBookFilesIgnoresUnusableBooks(t *testing.T) {
 	noRepo := &Importer{}
 	noRepo.registerBookFiles(context.Background(), 0, &models.Book{ID: 1}, cb)
 }
+
+// TestImporter_SubtitleVariantsKeepDistinctCalibreIDs: two Calibre books by one
+// author whose titles differ only by a subtitle are two library entries. The
+// second must not bind to the first's row and overwrite its calibre_id (#3631).
+func TestImporter_SubtitleVariantsKeepDistinctCalibreIDs(t *testing.T) {
+	imp, fr, _, bookRepo, _, _, _ := newImporterFixture(t)
+
+	fr.books = []CalibreBook{
+		sampleCalibreBook(1, "Mistborn", "Brandon Sanderson"),
+		sampleCalibreBook(2, "Mistborn: The Final Empire", "Brandon Sanderson"),
+	}
+	if _, err := imp.Run(context.Background(), "/lib"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// A second run must be stable too.
+	if _, err := imp.Run(context.Background(), "/lib"); err != nil {
+		t.Fatalf("rerun: %v", err)
+	}
+	books, _ := bookRepo.List(context.Background())
+	if len(books) != 2 {
+		t.Fatalf("want 2 rows, got %d", len(books))
+	}
+	for _, id := range []int64{1, 2} {
+		b, err := bookRepo.GetByCalibreID(context.Background(), id)
+		if err != nil || b == nil {
+			t.Fatalf("calibre id %d lost its row: %v", id, err)
+		}
+	}
+}
+
+// A row already carrying another calibre_id is skipped, but an unbound row for
+// the same work is still adopted.
+func TestImporter_SubtitleMatchPrefersUnboundRow(t *testing.T) {
+	imp, fr, authorRepo, bookRepo, _, _, _ := newImporterFixture(t)
+	ctx := context.Background()
+	author := &models.Author{ForeignID: "ol:A1", Name: "Brandon Sanderson", SortName: "Sanderson, Brandon", MetadataProvider: "openlibrary", Monitored: true}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	bound := &models.Book{ForeignID: "ol:B1", AuthorID: author.ID, Title: "Mistborn", SortTitle: "Mistborn", Status: models.BookStatusWanted, Monitored: true, AnyEditionOK: true, MetadataProvider: "openlibrary"}
+	unbound := &models.Book{ForeignID: "ol:B2", AuthorID: author.ID, Title: "Mistborn: The Final Empire", SortTitle: "Mistborn: The Final Empire", Status: models.BookStatusWanted, Monitored: true, AnyEditionOK: true, MetadataProvider: "openlibrary"}
+	for _, b := range []*models.Book{bound, unbound} {
+		if err := bookRepo.Create(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := bookRepo.SetCalibreID(ctx, bound.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	fr.books = []CalibreBook{sampleCalibreBook(2, "Mistborn: The Final Empire", "Brandon Sanderson")}
+	if _, err := imp.Run(ctx, "/lib"); err != nil {
+		t.Fatal(err)
+	}
+	b1, _ := bookRepo.GetByCalibreID(ctx, 1)
+	b2, _ := bookRepo.GetByCalibreID(ctx, 2)
+	if b1 == nil || b1.ID != bound.ID {
+		t.Errorf("calibre 1 moved: %+v", b1)
+	}
+	if b2 == nil || b2.ID != unbound.ID {
+		t.Errorf("calibre 2 should adopt the unbound row: %+v", b2)
+	}
+}
