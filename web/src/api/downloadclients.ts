@@ -14,6 +14,12 @@ export interface DownloadClient {
   password: string
   apiKeyConfigured: boolean
   passwordConfigured: boolean
+  // Optional HTTP basic auth for a qBittorrent behind a reverse proxy (#3693).
+  // proxyPassword is write-only like password; proxyPasswordConfigured says
+  // whether one is stored.
+  proxyUsername?: string
+  proxyPassword?: string
+  proxyPasswordConfigured?: boolean
   useSsl: boolean
   urlBase: string
   category: string
@@ -46,6 +52,7 @@ export interface DownloadClient {
 export type DownloadClientUpdate = Partial<DownloadClient> & {
   clearApiKey?: boolean
   clearPassword?: boolean
+  clearProxyPassword?: boolean
 }
 
 export interface DownloadClientHealth {

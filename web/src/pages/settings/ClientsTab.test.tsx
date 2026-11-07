@@ -348,3 +348,76 @@ describe('download client form mobile keyboards', () => {
     expect(credential).toHaveAttribute('data-lpignore', 'true')
   })
 })
+
+// #3693: optional HTTP basic auth for a qBittorrent behind a reverse proxy.
+describe('download client proxy basic auth', () => {
+  const qbit = (overrides: Partial<DownloadClient> = {}) =>
+    makeClient({ type: 'qbittorrent', name: 'qBit', apiKeyConfigured: false, passwordConfigured: true, ...overrides })
+
+  it('shows the proxy fields only for qBittorrent', () => {
+    renderTab([makeClient()])
+    openEditForm()
+    expect(screen.queryByText('settings.clients.proxyAuthSummary')).not.toBeInTheDocument()
+  })
+
+  it('collapses the section when no proxy login is stored', () => {
+    renderTab([qbit()])
+    openEditForm()
+    const details = screen.getByText('settings.clients.proxyAuthSummary').closest('details')
+    expect(details).not.toHaveAttribute('open')
+  })
+
+  it('opens the section and keeps a stored proxy password out of the form', () => {
+    renderTab([qbit({ proxyUsername: 'proxyuser', proxyPasswordConfigured: true })])
+    openEditForm()
+    const details = screen.getByText('settings.clients.proxyAuthSummary').closest('details')
+    expect(details).toHaveAttribute('open')
+    expect((screen.getByLabelText('settings.clients.proxyUsername') as HTMLInputElement).value).toBe('proxyuser')
+    const pass = screen.getByLabelText('settings.clients.proxyPassword') as HTMLInputElement
+    expect(pass.value).toBe('')
+    expect(pass.placeholder).toBe('••••••••')
+  })
+
+  it('omits the proxy password when left blank and sends a typed one', async () => {
+    renderTab([qbit({ proxyUsername: 'proxyuser', proxyPasswordConfigured: true })])
+    openEditForm()
+    save()
+    await waitFor(() => expect(api.updateDownloadClient).toHaveBeenCalledTimes(1))
+    const [, first] = vi.mocked(api.updateDownloadClient).mock.calls[0]
+    expect(first.proxyUsername).toBe('proxyuser')
+    expect(first).not.toHaveProperty('proxyPassword')
+    expect(first).not.toHaveProperty('clearProxyPassword')
+  })
+
+  it('sends a typed proxy password', async () => {
+    renderTab([qbit({ proxyUsername: 'proxyuser', proxyPasswordConfigured: true })])
+    openEditForm()
+    fireEvent.change(screen.getByLabelText('settings.clients.proxyPassword'), { target: { value: 'new-proxy-pass' } })
+    save()
+    await waitFor(() => expect(api.updateDownloadClient).toHaveBeenCalledTimes(1))
+    const [, payload] = vi.mocked(api.updateDownloadClient).mock.calls[0]
+    expect(payload.proxyPassword).toBe('new-proxy-pass')
+  })
+
+  it('clears the stored proxy password when the proxy username is emptied', async () => {
+    renderTab([qbit({ proxyUsername: 'proxyuser', proxyPasswordConfigured: true })])
+    openEditForm()
+    fireEvent.change(screen.getByLabelText('settings.clients.proxyUsername'), { target: { value: '' } })
+    save()
+    await waitFor(() => expect(api.updateDownloadClient).toHaveBeenCalled())
+    const [, payload] = vi.mocked(api.updateDownloadClient).mock.calls[0]
+    expect(payload.proxyUsername).toBe('')
+    expect(payload.clearProxyPassword).toBe(true)
+  })
+
+  it('includes the proxy login in the config test', async () => {
+    renderTab([qbit()])
+    openEditForm()
+    fireEvent.change(screen.getByLabelText('settings.clients.proxyUsername'), { target: { value: 'proxyuser' } })
+    fireEvent.change(screen.getByLabelText('settings.clients.proxyPassword'), { target: { value: 'pp' } })
+    const testButtons = screen.getAllByRole('button', { name: 'common.test' })
+    fireEvent.click(testButtons[testButtons.length - 1])
+    await waitFor(() => expect(api.testDownloadClientConfig).toHaveBeenCalled())
+    expect(vi.mocked(api.testDownloadClientConfig).mock.calls[0][0]).toMatchObject({ proxyUsername: 'proxyuser', proxyPassword: 'pp' })
+  })
+})

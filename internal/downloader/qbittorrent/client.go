@@ -128,6 +128,49 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 	}
 }
 
+// SetBasicAuth makes every control request (login, polling, add, delete) carry
+// an HTTP basic Authorization header, for a qBittorrent that sits behind a
+// reverse proxy demanding credentials before the request reaches it (#3693).
+// It is independent of the WebUI login form. An empty username turns it off.
+//
+// The header is added by a transport wrapper, so no request site can forget
+// it, but only for the configured host: a redirect to anywhere else goes out
+// without it. The indexer torrent fetch uses its own client and never sees it.
+func (c *Client) SetBasicAuth(username, password string) {
+	inner := c.http.Transport
+	if b, ok := inner.(*basicAuthTransport); ok {
+		inner = b.inner
+	}
+	if username == "" {
+		c.http.Transport = inner
+		return
+	}
+	host := ""
+	if u, err := url.Parse(c.baseURL); err == nil {
+		host = u.Host
+	}
+	c.http.Transport = &basicAuthTransport{inner: inner, host: host, username: username, password: password}
+}
+
+// basicAuthTransport adds an Authorization: Basic header to requests bound for
+// host.
+type basicAuthTransport struct {
+	inner    http.RoundTripper
+	host     string
+	username string
+	password string
+}
+
+func (t *basicAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Host != t.host {
+		return t.inner.RoundTrip(req)
+	}
+	// RoundTrippers must not modify the caller's request.
+	clone := req.Clone(req.Context())
+	clone.SetBasicAuth(t.username, t.password)
+	return t.inner.RoundTrip(clone)
+}
+
 // Login authenticates with qBittorrent and stores the SID cookie.
 func (c *Client) Login(ctx context.Context) error {
 	form := url.Values{

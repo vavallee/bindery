@@ -338,8 +338,10 @@ func downloadClientResponses(clients []models.DownloadClient) []models.DownloadC
 func downloadClientResponse(c models.DownloadClient) models.DownloadClient {
 	c.APIKeyConfigured = c.APIKey != ""
 	c.PasswordConfigured = c.Password != ""
+	c.ProxyPasswordConfigured = c.ProxyPassword != ""
 	c.APIKey = ""
 	c.Password = ""
+	c.ProxyPassword = ""
 	return c
 }
 
@@ -388,6 +390,13 @@ func applyDownloadClientCredentials(c, existing *models.DownloadClient, raw map[
 	if err != nil {
 		return err
 	}
+	clearProxyPassword, err := rawDownloadClientBool(raw, "clearProxyPassword")
+	if err != nil {
+		return err
+	}
+	if clearProxyPassword && rawDownloadClientNonEmptyString(raw, "proxyPassword") {
+		return errors.New("proxyPassword and clearProxyPassword cannot both be set")
+	}
 	if clearAPIKey && rawDownloadClientNonEmptyString(raw, "apiKey") {
 		return errors.New("apiKey and clearApiKey cannot both be set")
 	}
@@ -400,6 +409,12 @@ func applyDownloadClientCredentials(c, existing *models.DownloadClient, raw map[
 		c.APIKey = ""
 	case c.APIKey == "":
 		c.APIKey = existing.APIKey
+	}
+	switch {
+	case clearProxyPassword:
+		c.ProxyPassword = ""
+	case c.ProxyPassword == "":
+		c.ProxyPassword = existing.ProxyPassword
 	}
 	switch {
 	case clearPassword:
@@ -606,7 +621,7 @@ func (h *DownloadClientHandler) hydrateTestConfigCredentials(ctx context.Context
 	if c.ID <= 0 || h.clients == nil {
 		return
 	}
-	if c.APIKey != "" && c.Password != "" {
+	if c.APIKey != "" && c.Password != "" && c.ProxyPassword != "" {
 		return
 	}
 	stored, err := h.clients.GetByID(ctx, c.ID)
@@ -622,6 +637,9 @@ func (h *DownloadClientHandler) hydrateTestConfigCredentials(ctx context.Context
 	}
 	if c.Password == "" {
 		c.Password = stored.Password
+	}
+	if c.ProxyPassword == "" {
+		c.ProxyPassword = stored.ProxyPassword
 	}
 }
 

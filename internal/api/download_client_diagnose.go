@@ -281,7 +281,7 @@ func (st *diagState) redact(s string) string {
 		return s
 	}
 	s = httpsec.RedactSecrets(s)
-	for _, secret := range []string{st.client.APIKey, st.client.Password} {
+	for _, secret := range []string{st.client.APIKey, st.client.Password, st.client.ProxyPassword} {
 		if len(secret) >= 4 {
 			s = strings.ReplaceAll(s, secret, "REDACTED")
 		}

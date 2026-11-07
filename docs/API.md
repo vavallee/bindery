@@ -942,6 +942,12 @@ means "keep", moving a client between a password type and an API-key type has
 to send the clear flag for the credential it is abandoning, otherwise the old
 secret stays on the row.
 
+A qBittorrent client can also carry optional HTTP basic auth for a reverse
+proxy in front of it (#3693): `proxyUsername` and `proxyPassword`. The proxy
+password is write-only the same way, so responses blank it and report
+`proxyPasswordConfigured`, and updates accept `clearProxyPassword: true` to
+remove it. Other client types ignore these fields and do not store them.
+
 Booleans follow the same rule: omitting `enabled` or `useSsl` leaves them as
 they were, and an explicitly sent `false` still turns them off.
 

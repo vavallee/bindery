@@ -572,6 +572,14 @@ Two inputs are cleaned up rather than rejected, because neither changes where th
 
 IPv6 works in either spelling. `::1` and `[::1]` are both accepted and both reach the same address.
 
+### qBittorrent behind a proxy that asks for a login (seedboxes)
+
+Some hosted setups put a reverse proxy in front of qBittorrent that demands HTTP basic auth before a request reaches qBittorrent at all. Without it the connection test fails with `qBittorrent auth failed (HTTP 401): Unauthorized`, because that 401 comes from the proxy and not from qBittorrent (#3693).
+
+Open the qBittorrent client form, expand **Proxy login (optional)** and fill in **Proxy username** and **Proxy password**. Bindery then sends them as an `Authorization: Basic` header on every request to that client (login, status polling, add, delete and the connection test). They are separate from the qBittorrent Username and Password, which are still used for qBittorrent's own login form.
+
+The proxy password is stored like the other client passwords and is never sent back to the browser. Leave it blank when editing to keep the stored one, or empty the proxy username to remove the proxy login. The header is only sent to the host you configured, never to a redirect target on another host, and `user:pass@` in the Host field still does not work. The section only exists for qBittorrent.
+
 ### Running Bindery behind a VPN (network_mode: service:*)
 
 When Bindery shares a VPN container's network namespace (for example `network_mode: service:gluetun`), all of Bindery's outbound traffic egresses through the VPN. gluetun's killswitch firewall blocks LAN bound traffic by default, so "Test connection" to on LAN services (Audiobookshelf, Calibre, download clients) times out with `Client.Timeout exceeded while awaiting headers`, even though those same services load fine from a browser on the LAN. That contrast is the tell: the browser reaches the service directly because it is on the LAN, but Bindery is inside the VPN namespace and its LAN bound requests are dropped by the killswitch.
