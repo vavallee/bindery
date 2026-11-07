@@ -43,18 +43,18 @@ function renderDialog(counts: UserOwnedRows) {
 describe('DeleteUserDialog other accounts books', () => {
   afterEach(cleanup)
 
-  it('warns how many books and files from other accounts a purge removes', () => {
+  it('says how many books from other accounts a purge keeps', () => {
     renderDialog({ ...base, othersBooks: 2, othersBookFiles: 3 })
-    expect(screen.getByText(/Also deletes 2 books and 3 files that belong/)).toBeInTheDocument()
+    expect(screen.getByText(/Keeps 2 books that belong/)).toBeInTheDocument()
   })
 
-  it('uses singular nouns for a count of one', () => {
+  it('uses the singular for a count of one', () => {
     renderDialog({ ...base, othersBooks: 1, othersBookFiles: 1 })
-    expect(screen.getByText(/Also deletes 1 book and 1 file that belong/)).toBeInTheDocument()
+    expect(screen.getByText(/Keeps 1 book that belong/)).toBeInTheDocument()
   })
 
   it('stays quiet when no other account has books under these authors', () => {
     renderDialog(base)
-    expect(screen.queryByText(/Also deletes/)).toBeNull()
+    expect(screen.queryByText(/Keeps \d+ books? that belong/)).toBeNull()
   })
 })
