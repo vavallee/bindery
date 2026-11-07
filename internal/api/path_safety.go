@@ -8,8 +8,28 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/models"
 )
+
+// NewReplacedFileRemover is the delete the importer uses for the file an
+// ebook upgrade replaced (#2420). It is the exact-file variant the book
+// handlers use: the path must sit inside a configured library root, and a file
+// another book tracks, or one under a folder another book tracks, is never
+// touched. It lives here because the importer cannot import this package.
+func NewReplacedFileRemover(roots *LibraryRoots, books *db.BookRepo) importer.ReplacedFileRemover {
+	return func(ctx context.Context, bookID int64, path string) (bool, error) {
+		// An ebook row names one file. A directory at that path is not what
+		// was imported, and the exact delete would treat it as a unit and
+		// remove what is inside, new file included.
+		if info, err := os.Lstat(path); err == nil && info.IsDir() {
+			slog.Warn("upgrade: refusing to remove a directory where a replaced ebook file was expected", "path", path)
+			return true, nil
+		}
+		return safeRemoveBookPathExact(ctx, roots, books, bookID, path, models.MediaTypeEbook, "reason", "upgrade_replaced")
+	}
+}
 
 // RootLister is the minimal surface LibraryRoots needs from the root-folders
 // repo. Declared here (rather than depending on *db.RootFolderRepo directly)
@@ -46,8 +66,26 @@ type RootLister interface {
 type LibraryRoots struct {
 	lister   RootLister
 	defaults []string
+	// sources, when set, supplies the admin configured import source folders
+	// (#2168). They widen what the manual import reads, never what the delete
+	// handlers may touch: only the importRoots instance is given one.
+	sources ImportSourceGetter
 
 	noRootsOnce sync.Once // one WARN when Contains finds zero roots
+}
+
+// ImportSourceGetter is the slice of the settings repo LibraryRoots needs to
+// read the import source folder list.
+type ImportSourceGetter interface {
+	Get(ctx context.Context, key string) (*models.Setting, error)
+}
+
+// WithImportSources makes the roots include the folders listed in the
+// import.source_folders setting, re-read on every call so a change needs no
+// restart. Returns r for chaining.
+func (r *LibraryRoots) WithImportSources(g ImportSourceGetter) *LibraryRoots {
+	r.sources = g
+	return r
 }
 
 // NewLibraryRoots builds a LibraryRoots backed by the given lister and any
@@ -95,6 +133,16 @@ func (r *LibraryRoots) resolveRoots(ctx context.Context) []string {
 		} else {
 			for _, f := range folders {
 				add(f.Path)
+			}
+		}
+	}
+	if r.sources != nil {
+		setting, err := r.sources.Get(ctx, SettingImportSourceFolders)
+		if err != nil {
+			slog.Warn("path containment: failed to read import source folders", "error", err)
+		} else if setting != nil {
+			for _, p := range ParseImportSourceFolders(setting.Value) {
+				add(p)
 			}
 		}
 	}

@@ -52,6 +52,11 @@ type SeriesHandler struct {
 
 	editionFetcher bookhydrate.EditionFetcher
 
+	// checking holds the ids of series a scheduled check is running for, and
+	// checkMediaType resolves the media type of books it adds (#2523).
+	checking       sync.Map
+	checkMediaType func(ctx context.Context) string
+
 	// lifetimeCtx is the process-lifecycle context, cancelled on server
 	// shutdown so the Fill/series-search fan-out goroutine does not leak
 	// past Server.Shutdown. Falls back to context.Background(); see #846.
@@ -687,7 +692,10 @@ func (h *SeriesHandler) SetPrimaryBook(w http.ResponseWriter, r *http.Request) {
 	writeSeries(w, http.StatusOK, updated)
 }
 
-// Monitor toggles the monitored flag on a series.
+// Monitor toggles the monitored flag on a series and, when turning it on,
+// picks what the scheduled check adds (#2523). mode is "upcoming" (the
+// default) or "all"; with it omitted a series already monitored keeps its mode.
+// The check itself runs only while series.monitoring.interval is set.
 func (h *SeriesHandler) Monitor(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
@@ -696,14 +704,42 @@ func (h *SeriesHandler) Monitor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Monitored bool `json:"monitored"`
+		Monitored bool   `json:"monitored"`
+		Mode      string `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-
-	if err := h.series.SetMonitored(r.Context(), id, body.Monitored); err != nil {
+	mode := strings.TrimSpace(body.Mode)
+	if mode != "" && mode != models.SeriesMonitorUpcoming && mode != models.SeriesMonitorAll {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "mode must be 'upcoming' or 'all'"})
+		return
+	}
+	scope := auth.ListScopeUserID(r.Context())
+	if scope != 0 {
+		// A non-admin account monitors only a series it can see.
+		visible, err := h.series.GetByIDForUser(r.Context(), id, scope)
+		if err != nil {
+			writeServerError(w, r, err)
+			return
+		}
+		if visible == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "series not found"})
+			return
+		}
+	}
+	if mode == "" {
+		mode = models.SeriesMonitorUpcoming
+		if cur, err := h.series.GetMonitoring(r.Context(), id); err == nil && cur != nil && cur.Mode != "" {
+			mode = cur.Mode
+		}
+	}
+	if err := h.series.SetMonitoring(r.Context(), id, body.Monitored, mode, scope); err != nil {
+		if errors.Is(err, db.ErrSeriesNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "series not found"})
+			return
+		}
 		writeServerError(w, r, err)
 		return
 	}
@@ -1311,7 +1347,7 @@ func (h *SeriesHandler) HardcoverDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.backfillHardcoverSlug(r.Context(), link, catalog)
-	diff := buildHardcoverDiff(r.Context(), h.books, auth.UserIDFromContext(r.Context()), series, link, catalog)
+	diff := buildHardcoverDiff(r.Context(), h.books, auth.ListScopeUserID(r.Context()), series, link, catalog)
 	writeJSON(w, http.StatusOK, diff)
 }
 
@@ -1601,8 +1637,9 @@ func (h *SeriesHandler) hardcoverCatalog(ctx context.Context, foreignID string) 
 // to the existing /book/:id instead of an "add" button (#1210).
 //
 // The cross-reference is ownership-scoped via GetByForeignIDForUser: userID is
-// the requesting user's id, and a match owned by a different user is never
-// surfaced (cross-tenant guard). Callers without a DB/user context (e.g. the
+// the caller's list scope (auth.ListScopeUserID), so 0 for admins and with
+// tenancy off, and otherwise the caller's id, in which case a match owned by a
+// different user is never surfaced (cross-tenant guard). Callers without a DB/user context (e.g. the
 // create-missing write path) pass a nil books repo to skip enrichment.
 func buildHardcoverDiff(ctx context.Context, books *db.BookRepo, userID int64, series *models.Series, link *models.SeriesHardcoverLink, catalog *metadata.SeriesCatalog) seriesHardcoverDiffResponse {
 	diff := seriesHardcoverDiffResponse{
@@ -2216,7 +2253,7 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 	if existing, err := h.books.GetByAnyForeignID(ctx, book.ForeignID); err != nil {
 		return nil, err
 	} else if existing != nil {
-		if existing.Excluded {
+		if existing.Excluded || !seriesJobMayUse(ctx, existing.OwnerUserID) {
 			return nil, nil
 		}
 		// The book already exists, so it may already be filed under its real
@@ -2262,7 +2299,7 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 	if err != nil {
 		return nil, err
 	}
-	if skip {
+	if skip || (storedAuthor != nil && !seriesJobMayUse(ctx, storedAuthor.OwnerUserID)) {
 		return nil, nil
 	}
 	profileFiltered := func(profileAuthor *models.Author) bool {
@@ -2292,7 +2329,7 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 		// Backfilled from a series catalogue, so there is no user monitor
 		// choice to carry — take the install-wide default (#1666).
 		db.ApplyAuthorMonitorDefaults(ctx, h.settings, author)
-		if err := h.authors.Create(ctx, author); err != nil {
+		if err := h.authors.CreateForUser(ctx, author, seriesJobOwner(ctx)); err != nil {
 			return nil, err
 		}
 		storedAuthor = author
@@ -2424,6 +2461,12 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 	}
 	if book.Genres == nil {
 		book.Genres = []string{}
+	}
+	// A scheduled series check holds a future dated book as Upcoming in the
+	// create transaction, so it is never wanted and unheld (#2523).
+	if seriesJobHoldsUpcoming(ctx) && book.ReleaseDate != nil && book.ReleaseDate.After(time.Now()) {
+		until := *book.ReleaseDate
+		book.SearchHeldUntil = &until
 	}
 	if err := h.books.Create(ctx, &book); err != nil {
 		return nil, err

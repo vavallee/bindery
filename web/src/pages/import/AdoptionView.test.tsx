@@ -84,6 +84,78 @@ afterEach(() => {
 })
 
 describe('AdoptionView', () => {
+  it('shows explicit series evidence as a hint without changing the adoption action', async () => {
+    const withSeries = item({
+      id: 63,
+      relPath: 'Terry Pratchett/Discworld/Discworld #8 - Guards! Guards!/Terry Pratchett - Guards! Guards!.epub',
+      parsedTitle: 'Guards! Guards!',
+      seriesHint: { title: 'Discworld', position: '8' },
+    })
+    serve(listResponse([withSeries]))
+    const table = await renderView()
+
+    const row = within(table).getByRole('row', { name: 'Guards! Guards!' })
+    expect(within(row).getByText('Series hint: Discworld #8')).toBeInTheDocument()
+    expect(within(row).getByRole('button', { name: 'Choose book' })).toBeInTheDocument()
+  })
+
+  it('sends an opt-in series hint adoption with the selected series', async () => {
+    const withSeries = item({
+      id: 64,
+      parsedTitle: 'Guards! Guards!',
+      seriesHint: { title: 'Discworld', position: '8' },
+      candidates: [{ book: martian, score: 0.82 }],
+      topScore: 0.82,
+    })
+    serve(listResponse([withSeries]))
+    let body: unknown
+    server.use(
+      http.get(apiUrl('/series'), () => HttpResponse.json([{ id: 9, title: 'Discworld' }])),
+      http.post(apiUrl('/library/unmatched/64/adopt'), async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json({ ...withSeries, state: 'adopted', book: martian })
+      }),
+    )
+    const table = await renderView()
+    const row = within(table).getByRole('row', { name: 'Guards! Guards!' })
+    fireEvent.click(within(row).getByRole('button', { name: 'Choose book' }))
+    const editor = await screen.findByRole('region', { name: 'Which book is Guards! Guards!?' })
+    fireEvent.click(within(editor).getByRole('checkbox'))
+    const select = await within(editor).findByRole('combobox', { name: 'Series' })
+    await within(select).findByRole('option', { name: 'Discworld' })
+    fireEvent.change(select, { target: { value: '9' } })
+    fireEvent.click(within(editor).getByRole('button', { name: 'Adopt as The Martian' }))
+    await waitFor(() => expect(body).toEqual({ bookId: 42, applySeriesHint: true, seriesId: 9 }))
+  })
+
+  it('preselects the one existing series whose name matches the hint', async () => {
+    const withSeries = item({
+      id: 65,
+      parsedTitle: 'Guards! Guards!',
+      seriesHint: { title: 'discworld', position: '8' },
+      candidates: [{ book: martian, score: 0.82 }],
+      topScore: 0.82,
+    })
+    serve(listResponse([withSeries]))
+    let body: unknown
+    server.use(
+      http.get(apiUrl('/series'), () => HttpResponse.json([{ id: 3, title: 'Mortal Engines' }, { id: 9, title: 'Discworld' }])),
+      http.post(apiUrl('/library/unmatched/65/adopt'), async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json({ ...withSeries, state: 'adopted', book: martian })
+      }),
+    )
+    const table = await renderView()
+    const row = within(table).getByRole('row', { name: 'Guards! Guards!' })
+    fireEvent.click(within(row).getByRole('button', { name: 'Choose book' }))
+    const editor = await screen.findByRole('region', { name: 'Which book is Guards! Guards!?' })
+    fireEvent.click(within(editor).getByRole('checkbox'))
+    const select = await within(editor).findByRole('combobox', { name: 'Series' })
+    await waitFor(() => expect((select as HTMLSelectElement).value).toBe('9'))
+    fireEvent.click(within(editor).getByRole('button', { name: 'Adopt as The Martian' }))
+    await waitFor(() => expect(body).toEqual({ bookId: 42, applySeriesHint: true, seriesId: 9 }))
+  })
+
   // #2944: two 1008 byte .txt files under the audiobooks root were listed as
   // ordinary ebooks with a one click Confirm into the book their folder named.
   it('labels a file too small to be a book and offers Ignore, not adoption', async () => {

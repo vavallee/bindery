@@ -213,6 +213,7 @@ const authorWorksProjection = `
 		slug
 		description
 		image { url }
+		release_date
 		release_year
 		ratings_count
 		rating
@@ -654,6 +655,7 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 			slug
 			description
 			image { url }
+			release_date
 			release_year
 			ratings_count
 			rating
@@ -676,6 +678,7 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 			slug
 			description
 			image { url }
+			release_date
 			release_year
 			ratings_count
 			rating
@@ -837,6 +840,7 @@ func (c *Client) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, 
 				slug
 				description
 				image { url }
+				release_date
 				release_year
 				ratings_count
 				rating
@@ -1358,6 +1362,7 @@ type hcBook struct {
 	Slug                  string             `json:"slug"`
 	Description           string             `json:"description"`
 	Image                 *hcImage           `json:"image"`
+	ReleaseDate           string             `json:"release_date"`
 	ReleaseYear           *int               `json:"release_year"`
 	RatingsCount          int                `json:"ratings_count"`
 	Rating                float64            `json:"rating"`
@@ -2020,10 +2025,9 @@ func (c *Client) toBook(b hcBook) models.Book {
 	if b.Image != nil {
 		bk.ImageURL = b.Image.URL
 	}
-	if b.ReleaseYear != nil && *b.ReleaseYear > 0 {
-		t := time.Date(*b.ReleaseYear, 1, 1, 0, 0, 0, 0, time.UTC)
-		bk.ReleaseDate = &t
-	}
+	// Prefer Hardcover's exact release_date; the year-only 1 January value is
+	// the fallback when the date is absent or unparsable (#3621).
+	bk.ReleaseDate = parseHardcoverEditionDate(b.ReleaseDate, b.ReleaseYear)
 	if b.AudioSeconds != nil && *b.AudioSeconds > 0 {
 		bk.DurationSeconds = *b.AudioSeconds
 	}

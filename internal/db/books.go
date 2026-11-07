@@ -261,7 +261,17 @@ type BookListFilter struct {
 	// does not admit a wanted book that owns some file, so a list and its total
 	// agree with a caller that drops anything it cannot link to.
 	DownloadableOnly bool
+	// Upcoming narrows by the Upcoming hold (#2523): UpcomingOnly lists only
+	// books held out of the scheduled search until a future date, and
+	// UpcomingHide lists everything else. Empty means no narrowing.
+	Upcoming string
 }
+
+// Values of BookListFilter.Upcoming.
+const (
+	UpcomingOnly = "only"
+	UpcomingHide = "hide"
+)
 
 // bookSearchRank returns the ORDER BY prefix that ranks a search result set,
 // and the values its placeholders bind. See searchrank.go for the tiers.
@@ -372,6 +382,14 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 			args = append(args, like, like, like)
 		}
 		searchOrder, rankArgs = bookSearchRank(folded)
+	}
+	switch f.Upcoming {
+	case UpcomingOnly:
+		where += " AND books.id IN (SELECT book_id FROM book_search_holds WHERE until_at > ?)"
+		args = append(args, time.Now().UTC().Format(discoveryTimeLayout))
+	case UpcomingHide:
+		where += " AND books.id NOT IN (SELECT book_id FROM book_search_holds WHERE until_at > ?)"
+		args = append(args, time.Now().UTC().Format(discoveryTimeLayout))
 	}
 	if f.DownloadableOnly {
 		where += " AND books.status = '" + models.BookStatusImported + "' AND COALESCE(books.file_path, '') <> ''"
@@ -494,6 +512,14 @@ func (r *BookRepo) ListIncludingExcluded(ctx context.Context) ([]models.Book, er
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" ORDER BY books.sort_key, sort_title", nil)
 }
 
+// ListIncludingExcludedAndUser is ListIncludingExcluded scoped to a user's own
+// + unowned books (userID 0 leaves it unscoped, for admins and single-tenant
+// deployments).
+func (r *BookRepo) ListIncludingExcludedAndUser(ctx context.Context, userID int64) ([]models.Book, error) {
+	where, args := QueryScopeForIncludingNull("books.owner_user_id", "", userID)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY books.sort_key, sort_title", args)
+}
+
 func (r *BookRepo) ListByAuthor(ctx context.Context, authorID int64) ([]models.Book, error) {
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE author_id = ? AND excluded = 0 ORDER BY release_date", []any{authorID})
 }
@@ -506,6 +532,15 @@ func (r *BookRepo) ListByAuthorAndUser(ctx context.Context, authorID, userID int
 // ListByAuthorIncludingExcluded returns all books for an author regardless of excluded flag.
 func (r *BookRepo) ListByAuthorIncludingExcluded(ctx context.Context, authorID int64) ([]models.Book, error) {
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE author_id = ? ORDER BY release_date", []any{authorID})
+}
+
+// ListByAuthorIncludingExcludedAndUser is ListByAuthorIncludingExcluded scoped
+// to a user's own + unowned books (userID 0 leaves it unscoped). Use it for any
+// read that answers an HTTP caller: a shared author can hold other accounts'
+// books.
+func (r *BookRepo) ListByAuthorIncludingExcludedAndUser(ctx context.Context, authorID, userID int64) ([]models.Book, error) {
+	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE author_id = ?", userID, authorID)
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY release_date", args)
 }
 
 func (r *BookRepo) ListByStatus(ctx context.Context, status string) ([]models.Book, error) {
@@ -723,7 +758,22 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 		ownerArg = b.OwnerUserID
 	}
 
-	result, err := r.db.ExecContext(ctx, `
+	// A book created Upcoming (SearchHeldUntil set) gets its search hold in the
+	// same transaction as the row, so the wanted sweep can never see it
+	// unheld (#2523).
+	var ins interface {
+		ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	} = r.db
+	var holdTx *sql.Tx
+	if b.SearchHeldUntil != nil {
+		holdTx, err = r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("create book: %w", err)
+		}
+		defer func() { _ = holdTx.Rollback() }()
+		ins = holdTx
+	}
+	result, err := ins.ExecContext(ctx, `
 		INSERT INTO books (foreign_id, author_id, title, sort_title, original_title, description,
 		                   image_url, release_date, genres, average_rating, ratings_count,
 		                   monitored, status, any_edition_ok, selected_edition_id,
@@ -744,6 +794,16 @@ func (r *BookRepo) Create(ctx context.Context, b *models.Book) error {
 	id, err := result.LastInsertId()
 	if err != nil {
 		return fmt.Errorf("get book id: %w", err)
+	}
+	if holdTx != nil {
+		if _, err := holdTx.ExecContext(ctx,
+			`INSERT INTO book_search_holds (book_id, until_at) VALUES (?, ?)`,
+			id, b.SearchHeldUntil.UTC().Format(discoveryTimeLayout)); err != nil {
+			return fmt.Errorf("create book: set search hold: %w", err)
+		}
+		if err := holdTx.Commit(); err != nil {
+			return fmt.Errorf("create book: %w", err)
+		}
 	}
 	b.ID = id
 	b.CreatedAt = now
@@ -1100,11 +1160,32 @@ func (r *BookRepo) PathOwnedByOtherBook(ctx context.Context, path string, exclud
 	return r.files.PathOwnedByOtherBook(ctx, path, excludeBookID)
 }
 
+// PathUnderLiveOtherBookDir is PathUnderOtherBookDir ignoring rows left by
+// deleted books. For import pre-checks, never for a delete guard. See
+// BookFileRepo.PathUnderLiveOtherBookDir.
+func (r *BookRepo) PathUnderLiveOtherBookDir(ctx context.Context, path string, excludeBookID int64) (bool, error) {
+	return r.files.PathUnderLiveOtherBookDir(ctx, path, excludeBookID)
+}
+
 // PathUnderOtherBookDir reports whether a book other than
 // excludeBookID tracks a folder that contains path. See
 // BookFileRepo.PathUnderOtherBookDir (#3336).
 func (r *BookRepo) PathUnderOtherBookDir(ctx context.Context, path string, excludeBookID int64) (bool, error) {
 	return r.files.PathUnderOtherBookDir(ctx, path, excludeBookID)
+}
+
+// PathsUnderForOtherBooks returns the book_files paths below dir that other
+// books track, matched without regard to ASCII case. See
+// BookFileRepo.PathsUnderForOtherBooks.
+func (r *BookRepo) PathsUnderForOtherBooks(ctx context.Context, dir string, excludeBookID int64) ([]string, error) {
+	return r.files.PathsUnderForOtherBooks(ctx, dir, excludeBookID)
+}
+
+// LivePathsUnderForOtherBooks is PathsUnderForOtherBooks ignoring rows left by
+// deleted books. For guarding a folder move or merge, never a delete. See
+// BookFileRepo.LivePathsUnderForOtherBooks.
+func (r *BookRepo) LivePathsUnderForOtherBooks(ctx context.Context, dir string, excludeBookID int64) ([]string, error) {
+	return r.files.LivePathsUnderForOtherBooks(ctx, dir, excludeBookID)
 }
 
 // PathOwnedByLiveOtherBook is PathOwnedByOtherBook ignoring a row left by a
@@ -1928,4 +2009,14 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 		books = append(books, b)
 	}
 	return books, rows.Err()
+}
+
+// HasABSConflictFor reports whether an Audiobookshelf metadata conflict is
+// recorded for the book's field (any status). The user's choice there is a
+// per-field source preference that a provider refresh must not override (#3105).
+func (r *BookRepo) HasABSConflictFor(ctx context.Context, bookID int64, field string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM abs_metadata_conflicts
+		WHERE entity_type = 'book' AND local_id = ? AND field_name = ?`, bookID, field).Scan(&n)
+	return n > 0, err
 }

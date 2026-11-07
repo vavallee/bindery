@@ -70,9 +70,51 @@ func packGrabFixture(t *testing.T, results []newznab.SearchResult) (*Scheduler, 
 		downloads: downloads,
 		clients:   clients,
 		authors:   authors,
+		books:     books,
 		pending:   db.NewPendingReleaseRepo(database),
 	}
 	return s, downloads, *book, ctx
+}
+
+// TestAutoGrab_SkipsPacksNamedAfterTheBook is the wiring test for #3247: the
+// automatic path hands the spec the author's other titles, so a semicolon
+// list of them is refused, and a range after the wanted title is refused.
+func TestAutoGrab_SkipsPacksNamedAfterTheBook(t *testing.T) {
+	for _, tc := range []struct {
+		name, book, release string
+		siblings            []string
+	}{
+		{"range after the title", "Dominion of Blades: A LitRPG Adventure (Volume 1)", "Dominion of Blades 1-2", nil},
+		{"range after the title in an audiobook release", "Dominion of Blades: A LitRPG Adventure (Volume 1)", "Dominion of Blades 1-2 [Audiobook]", nil},
+		{
+			"semicolon list of the author's titles", "Chamber",
+			"John Grisham - Three Classic Thrillers (The Firm; The Appeal; The Chamber) (v5.0) (epub)",
+			[]string{"The Firm", "The Appeal"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pack := newznab.SearchResult{GUID: "guid-pack", Title: tc.release, Protocol: "torrent", NZBURL: "magnet:?xt=pack"}
+			s, downloads, book, ctx := packGrabFixture(t, []newznab.SearchResult{pack})
+			book.Title = tc.book
+			if err := s.books.Update(ctx, &book); err != nil {
+				t.Fatal(err)
+			}
+			for i, title := range tc.siblings {
+				sib := &models.Book{ForeignID: "OL-pack-sib-" + title, AuthorID: book.AuthorID, Title: title, MediaType: models.MediaTypeEbook}
+				if err := s.books.Create(ctx, sib); err != nil {
+					t.Fatalf("sibling %d: %v", i, err)
+				}
+			}
+
+			s.searchAndGrabFormat(ctx, book, models.MediaTypeEbook, nil)
+
+			if dl, err := downloads.GetByGUID(ctx, "guid-pack"); err != nil {
+				t.Fatal(err)
+			} else if dl != nil {
+				t.Fatalf("the pack %q was grabbed for the single book %q", tc.release, tc.book)
+			}
+		})
+	}
 }
 
 func packRelease() newznab.SearchResult {

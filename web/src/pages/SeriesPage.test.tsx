@@ -212,7 +212,37 @@ describe('SeriesPage', () => {
     // Scoped to the switch: the Shortlisted filter button (#2871) carries the
     // same word.
     expect(within(toggle).getByText('Shortlisted')).toBeInTheDocument()
-    expect(toggle).toHaveAttribute('title', expect.stringContaining('does not yet check'))
+    expect(toggle).toHaveAttribute('title', expect.stringContaining('series checking'))
+  })
+
+  it('shows how the last scheduled check went and saves what a monitored series adds (#2523)', async () => {
+    vi.mocked(api.monitorSeries).mockResolvedValue({ monitored: true })
+    renderSeriesPage([{
+      id: 14,
+      foreignSeriesId: 'series-14',
+      title: 'Stormlight',
+      description: '',
+      monitored: true,
+      monitoring: { mode: 'upcoming', lastCheckAt: '2026-11-05T09:00:00Z', lastStatus: 'ok', lastCreated: 2 },
+      books: [],
+    }, {
+      id: 15,
+      foreignSeriesId: 'series-15',
+      title: 'Unlinked Saga',
+      description: '',
+      monitored: true,
+      monitoring: { mode: 'upcoming', lastCheckAt: '2026-11-05T09:00:00Z', lastStatus: 'no_link', lastCreated: 0 },
+      books: [],
+    }])
+
+    await screen.findByRole('heading', { name: 'Stormlight' })
+    const statuses = screen.getAllByTestId('series-check-status')
+    expect(statuses[0]).toHaveTextContent(/added 2 books/)
+    expect(statuses[1]).toHaveTextContent('not linked to Hardcover')
+
+    const selects = screen.getAllByRole('combobox', { name: 'What to add' })
+    fireEvent.change(selects[0], { target: { value: 'all' } })
+    await waitFor(() => expect(api.monitorSeries).toHaveBeenCalledWith(14, true, 'all'))
   })
 
   it('offers a genre override before a series has books', async () => {

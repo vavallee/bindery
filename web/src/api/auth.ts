@@ -66,6 +66,10 @@ export type UserOwnedRows = {
   rootFolders: number
   importLists: number
   blocklist: number
+  // Books under this user's authors that another account (or nobody) owns, and
+  // their files. Purging deletes them with the authors.
+  othersBooks: number
+  othersBookFiles: number
 }
 
 // UserDeletePlan says what happens to a deleted user's rows. `reassign` with no

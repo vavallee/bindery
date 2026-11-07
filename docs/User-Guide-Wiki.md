@@ -48,6 +48,18 @@ an arbitrary release is unreliable. The escape hatches:
   at a folder of files you already have and matches them to books; files already
   tracked in the library are skipped by default, and toggling **Show already
   imported** surfaces them again, e.g. to spot a corrupted file or relink one.
+  The folder browser starts at your root folders, the download directories and
+  any **import source folders** an admin lists under Settings, General, Import
+  (`import.source_folders`, one absolute path per line). A source folder is a
+  place to import from, for example an old library: it is not a root folder, no
+  author is filed there and it is never scanned as a library. Bindery never
+  writes new files into it, but with the import mode set to move, imported files
+  are removed from it, and an audiobook folder is removed whole. Mount the
+  folder read only if you want a move to fail instead of delete. The
+  folder must be mounted into the container, and a path outside every listed
+  folder, including through a symlink or `..`, is refused. A folder with more
+  than 1000 subfolders shows a notice and lists the first 1000; type the path
+  to reach the rest.
   Either way a file with no catalogue match gets a metadata search, which
   creates the book (and its author, if new) and links the file to it, so an
   unmatched file is no longer a dead end.
@@ -208,6 +220,9 @@ from the folder when the filename has none, or when the filename's author
 matches none of the books with that title and the folder name does. Loose files with no author folder still use the
 filename alone; if those are misread, move them into author folders, or use
 Manual Import, which lets you pick the right book.
+
+Every token, the brace rules and some layouts to copy are in
+[File naming templates](File-Naming-Wiki.md).
 
 ### 5. Hardlinks need one mount
 
@@ -370,6 +385,13 @@ found the one nearest the top of its list wins, on the scheduled sweep and on
 the book page alike.
 On indexers marked *freeleech only*, non-freeleech releases are not discarded
 — they are parked as **pending** for manual approval.
+Pending releases are kept per book, so when two books want the same release
+(the same work under two author rows, or two accounts with their own copy) each
+book lists it as its own pending entry. When another book's download already
+holds the best approved release, the scheduled search passes it over and grabs
+the next approved one instead of giving up on the book. A book's pending entry
+for a release another book has since imported is removed on the next search,
+since it can no longer be grabbed for that book.
 
 **Quality profiles.** Settings → Quality Profiles. Each profile holds an
 ebook list and an audiobook list, numbered from the top, and top is best.
@@ -387,6 +409,19 @@ all. A list with entries but nothing ticked means nothing of that kind is
 grabbed for the author. Profiles made
 before this rule existed were reversed once on upgrade, so a profile you
 never reordered now reads best first and prefers what it always did.
+
+**Audiobook narrator and edition preferences.** A quality profile can also
+prefer narrators and an edition type for audiobooks (#1358). Both are off
+unless you set them, and a profile that sets neither ranks and grabs exactly as
+before. Preferred narrators are one name per line, best first; a release ranks
+higher when its title says "read by" or "narrated by" one of them, written the
+same way. The audiobook edition setting is Prefer unabridged, which ranks
+releases that say unabridged above ones that do not say and ones that say
+abridged below, or Reject abridged, which refuses a release that says abridged.
+A release whose title does not say is never rejected, because a missing word is
+not evidence the recording is cut. Interactive search shows the edition type
+and narrator it found in a release name, and the book page shows the narrators
+and edition type of its audiobook edition when Audiobookshelf supplied them.
 
 **Multi-book packs are not auto-grabbed.** A download is linked to exactly
 one book, and the importer works out one destination folder from it, so there
@@ -765,10 +800,50 @@ broken (missing articles, a failed repair or unpack, a corrupt archive) is
 blocklisted for you, with the client's verdict as the reason, so the next
 search picks a different one. Blocked releases are listed under
 Settings → Blocklist, where you can remove one to let it be grabbed again.
+An entry blocks the release only for the book it was filed for when it is
+about that book: the book's profile refused the format or the language, the
+file turned out to be another book, or you blocklisted a grab or an import of
+it from that book's History. Another book that wants the same release, for
+example the same work under a second author row or in another account, can
+still grab it. A release the download client failed as broken or reported
+stalled, a failed or stalled download you blocklist from History, and
+anything imported from Readarr's blocklist, is blocked for every book. The
+Blocklist tab's "Applies to" column says which: "This book" or "All books".
 
-Bindery does not chase format upgrades on its own: the sweep only searches
-Wanted books, and once a book has a file it is no longer Wanted. If you want
-a specific format, search from the book's page and grab it yourself.
+**Ebook format upgrades.** Off by default. A quality profile can turn on
+"Upgrade ebooks that rank below the cutoff" (Settings, Quality Profiles) and
+pick a cutoff, one of its ticked ebook formats. Each sweep then searches again,
+once, for every imported ebook whose best file ranks below the cutoff, and
+grabs a release only if it ranks at or above the cutoff and above the file the
+book has. A book that already has a file at the cutoff is left alone. Only
+ebook-only books under a profile with a cutoff and a ticked list are searched,
+and a book whose file is in a format the profile does not rank (unticked or
+absent) is not searched, because Bindery will not guess whether a replacement is
+better. Audiobooks and books that track both formats are never upgraded.
+
+What happens to the file you already have is the profile's choice. By default
+the old file is kept next to the new one, so nothing is deleted. Tick "Delete
+the old file after a verified upgrade" to remove it. The old file is removed
+only when the new file's embedded title is identical to the book's title and
+its embedded author matches by full name; otherwise it is kept. Identical means
+the same words once case, whitespace, hyphens, dashes, apostrophes and common
+sentence punctuation are ignored. Any other symbol or number makes the titles
+different, so a subtitle, a series suffix such as "Book 2" or "(Series, #2)", a
+bracketed note, "C#" against "C++" or a missing "The" all count as different.
+A bare surname, "Various" and "Unknown" never match as an author. This refuses many legitimate
+removals, which is the price of a setting that deletes files. A file that fails
+the match is still imported and simply never vouches for deleting anything. Nothing is deleted for a book
+that lives in Calibre, for a file outside your library root folders, or for one
+in a folder another book tracks. An upgrade is
+held to a stricter content check than an ordinary import: any mismatch refuses
+it, even in warn mode, the release is blocklisted for that book, and the file
+you have is never touched. With the content check set to off, or for a file with
+no readable metadata, the old file is kept whatever the profile says. A
+successful upgrade is announced as an Upgrade notification, not as an import.
+A second file of the same format is not an upgrade: an upgrade needs a format
+that ranks higher, so it never collides with the owned file, and importing a
+second file of the same format works as it always did. Profiles that existed
+before this feature had upgrades switched off once when Bindery was updated.
 
 ## Bringing in an existing library
 
@@ -848,7 +923,11 @@ to the records. Things worth knowing before you judge the results:
   Choosing it shows the exact destination path before you confirm; the move
   then runs in the background and Bindery cannot undo it for you. Nothing
   happens until you confirm either way. History records the change as **File
-  Moved**, naming the book the file came from.
+  Moved**, naming the book the file came from. With import mode set to move,
+  an audiobook folder that also holds a file another book tracks cannot be
+  moved this way, since the other file would go with it: the preview shows the
+  reason and the move button stays off, while **Correct the match only** still
+  works (#3556).
 - **An import never takes a file another book already tracks.** If a download
   or a manual import lands on a path that a different book already has, the
   import stops with **Import Blocked** and the Queue row names that book and
@@ -938,6 +1017,12 @@ really one book, adopt each of them into it.
 queued, and no indexer search starts. It is the scan's own match with you
 supplying the answer, so **Undo** can take it back exactly.
 
+When the path explicitly names a series and number, the editor also offers to
+add the book to that series. This is always an opt-in choice: create a new
+manual series from the path's name or choose one already in your library.
+Bindery does not guess that two series with the same title are the same. Undo
+removes only the unchanged membership it made and keeps any later edits.
+
 How to work through the list:
 
 - **Strong match** means the title is very close and the author is the same.
@@ -985,6 +1070,11 @@ How to work through the list:
 - Each row says in one line what the scan found. Hovering it shows the full
   explanation and the scanner's reason code, for bug reports; the editor
   shows the explanation too.
+- A **Series hint** such as `Discworld #8` appears only when the file path
+  explicitly names both a series and its position. It is a prompt to check the
+  book's series after adoption, not an automatic series change: collection and
+  box-set folders can look similar, so Bindery never creates a series link
+  from a path alone.
 - Keyboard: arrow keys move between rows, **Enter** opens one, **Esc** closes
   it, **i** ignores, **u** undoes, **/** jumps to the search.
 
@@ -1039,8 +1129,11 @@ Things worth knowing:
 - One scan lists up to 20,000 books from up to 50,000 unmatched files. A
   larger library says so; adopt or ignore some and scan again.
 - **From a folder** (`/import?view=folder`) is the other way in: point it at a
-  folder anywhere Bindery can read, such as your downloads, and it imports
-  what it matches into the library, moving or copying the files.
+  configured library or download folder, such as your downloads, and it imports
+  what it matches into the library, moving or copying the files. Use **Browse
+  folders** beside the path field when Bindery runs in a container: it lists
+  only those configured sources and their contained folders, using the paths
+  Bindery sees inside the container.
 - It lists one row per **book**, the same idea as the list above. A folder of
   audio is one row, and so is a folder whose audio subfolders are all pieces of
   one recording (`CD1`, `Disc 2`, `Disk 3`, `Part 4`, `Chapter 5`, or the
@@ -1066,18 +1159,29 @@ it leaves everything already on disk where it was. **Rename files** is the
 catch-up: it recomputes where every file Bindery tracks should live under the
 current template and moves it there. It reaches the same renamer the import
 path uses, so a reorganized library and a freshly imported one come out
-identical.
+identical. For the template syntax itself, see
+[File naming templates](File-Naming-Wiki.md).
 
 Nothing moves until you say so. The preview lists every tracked file with its
 current path, the path the template computes, and why it will or will not move:
 **Will move**, **Already correct**, **Destination exists** (something else is
-already there, so it is skipped rather than overwritten), **Not on disk**, or
+already there, or the path is inside a folder another book tracks, so it is
+skipped rather than overwritten or mixed in with that book), **Not on disk**, or
 **Error**. Pressing the button applies only the clean moves, and it recomputes
 each destination on the server rather than trusting the list you were shown, so
 a file that changed under you is skipped instead of moved somewhere stale. A
 move is always a move, never a copy, so hardlinks survive and nothing is
 duplicated. Bindery also prunes the folder a file left behind when it empties,
 and refreshes the `metadata.opf` sidecar when you have that turned on.
+
+An audiobook folder moves as a whole, so one that also holds a file another
+book tracks (say a second copy of the same title added from another metadata
+provider, whose ebook ended up in that folder) is shown as **Error** and left
+where it is, with the file named in the reason (unless it belongs to another
+user's book). Moving it would take the other book's file along and leave that
+book pointing at a path that no longer exists. Move that file out of the
+folder, or use Forget this file on the book it belongs to, and run Rename files
+again.
 
 The file extension comes from the file's current name. If a file has lost its
 extension (for example from a template with `{Title}{ext}` and no dot), Bindery
@@ -1284,6 +1388,8 @@ a large catalogue can take a few minutes. Clicking Refresh again while a refresh
 running waits for that one instead of starting another. If the refresh
 already running was a scheduled, bulk or Refresh all one, which read the
 cached copy, the page waits for it to finish and then runs its own refresh.
+
+A refresh also corrects the release date of books you already have. When the provider's record for a book carries a different release date than yours, the book takes the provider's, and a book with no description takes the provider's. The release year feeds the `{Year}` naming token and the year used when searching, so a corrected date can change the folder or file name the next time that book is imported or reorganised. It never empties a field and never touches a field you edited (those are locked). It never replaces a description you already have, and a provider date that only gives the year does not replace a more precise date in the same year. It also leaves alone a field you settled on the Audiobookshelf conflicts page, a date the primary provider did not supply itself (one filled in from a secondary provider), and books you excluded. The book must come from the same provider that answers: a book from another provider, for example an OpenLibrary book while Hardcover is the primary, is skipped, and so is a book that was matched by title or by another work's id rather than by its own id. Language, genres and titles are not updated by a refresh. To make a refresh stop changing a date, edit it so it locks.
 
 When a provider fails outright, Bindery keeps the copy it fetched in the last
 24 hours rather than replacing it. How well a refresh can spot a catalogue
@@ -1525,6 +1631,39 @@ If your naming template uses `{SortAuthor}`, the same value names the folder on
 disk, so the letter an author files under and the folder it lives in always
 agree.
 
+## Rejecting releases by words in the title
+
+If you never want a kind of release, such as Graphic Audio or full cast
+recordings, list the words in **Settings, General, Downloads, Reject releases by
+title words** (admins only). Put one word or phrase per entry, separated by
+commas or new lines: `Graphic Audio, Full Cast, abridged`. The key is
+`search.rejectWords` and it is empty by default, which rejects nothing.
+
+- A release whose title contains any entry is left out of search. Case, accents
+  on Latin letters and separators are ignored, so `Graphic Audio` also catches `graphic.audio`,
+  `Graphic_Audio` and `GRAPHIC-AUDIO`.
+- Only whole words match, and a phrase must appear in order. `cast` rejects
+  `Cast` but not `Broadcast`, and `abridged` does not reject `Unabridged`.
+- Entries are plain text, never patterns. `.*` is just the characters dot and
+  star. Only commas and new lines separate entries: `abridged;dramatized` is one
+  phrase, not two words.
+- Accents on Latin letters are ignored on both sides, so `Dramatisé` and
+  `dramatise` match each other. That is all it promises: German umlauts follow the
+  usual spelling rules (`Müller` reads as `mueller`, so the entry `Mueller`
+  matches it and `Muller` does not), and letters such as `ø`, `ł` and `œ` stay as
+  they are, so `Søren` does not match `Soren`. Numbers and symbols behave as separate words: `C++` becomes `c`, and `2`
+  does not hit `12`. A Chinese, Japanese or Korean entry matches a whole run of
+  characters, not a piece of one.
+- An entry made only of the wanted book's own title or author words is not
+  applied to that book, so `Cast` does not drop *Cast Away*, but `Full Cast`
+  still does.
+- It applies to every search, the automatic ones and the book page's interactive
+  search, for every user on the install.
+- A rejected release is not gone. It shows in the **Filtered** section of the
+  book page with the reason `release title contains the rejected word "..."`,
+  and you can still grab it by hand. The same reason appears in the search debug
+  view.
+
 ## Finding a setting when you do not know its tab
 
 The search box at the top of Settings matches tab names and section headings
@@ -1579,7 +1718,8 @@ Knowing the edges saves time:
   an output copy for a sibling tool to ingest.)
 - **Create download-client categories.** Make the category in the client
   first.
-- **Chase format upgrades** on its own.
+- **Chase audiobook format upgrades.** Ebook upgrades exist, off by default
+  (see Ebook format upgrades).
 - **Per-user root folders.** Multi-user tenancy scopes authors, books, and
   downloads per user; root folders stay a shared, admin-managed pool
   ([multi-user.md](multi-user.md)).

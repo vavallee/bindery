@@ -40,7 +40,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Harden the runner (block non-allowlisted egress)
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           # block (#1401): this job hands ANTHROPIC_API_KEY and a write-scoped
           # token to an LLM agent that reads untrusted issue/PR text. The
@@ -63,7 +63,7 @@ jobs:
           persist-credentials: false
 
       - name: Sweep with Claude
-        uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1.0.240
+        uses: anthropics/claude-code-action@d535f5172dec02b204866b393d6b20b9b2aaf98d # v1.0.266
         env:
           GH_TOKEN: ${{ github.token }}
         with:

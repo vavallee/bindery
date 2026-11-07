@@ -59,7 +59,7 @@ func TestMatchBookForDownload_MatchesOnReleaseTitle(t *testing.T) {
 	})
 
 	files := []string{"/dl/01 - Chapter One.mp3", "/dl/02 - Chapter Two.mp3"}
-	book, author := s.matchBookForDownload(context.Background(), files,
+	book, author := s.matchBookForDownload(context.Background(), 0, files,
 		"The Kitchen God's Wife by Amy Tan [ENG / MP3]")
 
 	if book == nil {
@@ -84,7 +84,7 @@ func TestMatchBookForDownload_ReleaseTitleNeedsTheAuthorToAgree(t *testing.T) {
 		seedBook(t, ctx, books, authors, "Marilynne Robinson", "Wife")
 	})
 
-	book, _ := s.matchBookForDownload(context.Background(), nil,
+	book, _ := s.matchBookForDownload(context.Background(), 0, nil,
 		"The Kitchen God's Wife by Amy Tan [ENG / MP3]")
 
 	if book != nil {
@@ -113,7 +113,7 @@ func TestMatchBookForDownload_ReleaseTitleDeclinesAmbiguity(t *testing.T) {
 		}
 	})
 
-	book, _ := s.matchBookForDownload(context.Background(), nil,
+	book, _ := s.matchBookForDownload(context.Background(), 0, nil,
 		"The Kitchen God's Wife by Amy Tan [ENG / MP3]")
 
 	if book != nil {
@@ -128,10 +128,10 @@ func TestMatchBookForDownload_EmptyReleaseTitleMatchesNothing(t *testing.T) {
 		seedBook(t, ctx, books, authors, "Amy Tan", "The Kitchen God's Wife")
 	})
 
-	if book, _ := s.matchBookForDownload(context.Background(), nil, ""); book != nil {
+	if book, _ := s.matchBookForDownload(context.Background(), 0, nil, ""); book != nil {
 		t.Errorf("empty release name matched %q", book.Title)
 	}
-	if book, _ := s.matchBookForDownload(context.Background(), nil, "   "); book != nil {
+	if book, _ := s.matchBookForDownload(context.Background(), 0, nil, "   "); book != nil {
 		t.Errorf("blank release name matched %q", book.Title)
 	}
 }

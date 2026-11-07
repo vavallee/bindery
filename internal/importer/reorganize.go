@@ -126,7 +126,7 @@ func (s *Scanner) previewBook(ctx context.Context, book *models.Book) ([]Reorgan
 			Author:    authorName,
 			Current:   f.Path,
 		}
-		proposed, status, msg := s.proposedPathFor(ctx, book, author, seriesTitle, seriesNum, f)
+		proposed, status, msg := s.reorganizePathFor(ctx, book, author, seriesTitle, seriesNum, f)
 		m.Proposed = proposed
 		m.Status = status
 		m.Message = msg
@@ -167,8 +167,18 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 	// its ebook already occupies lands at "Title (Year) (2)". Reorganize must
 	// resolve to the same variant — treating this file's OWN current location as
 	// available, so an already-correctly-placed audiobook reads as a noop rather
-	// than a false collision (or an endless (N)→(N+1) churn). Ebooks are single
-	// files and are not uniquified at import, so they skip this.
+	// than a false collision (or an endless (N)→(N+1) churn).
+	//
+	// Ebooks are uniquified at import too, but per file (uniqueEbookDestination,
+	// #3560): when the rendered name is held by another book or by an untracked
+	// file, the import lands at "Name (2).epub". Such a file is already where an
+	// import would put it, so it reads as a noop rather than a permanent
+	// "destination already exists" collision against the file that holds the
+	// base name. Once the base name is free again it is proposed as a normal
+	// move back to that name.
+	if !audiobook && noExtErr == nil && s.ebookAtCollisionSuffix(ctx, book, f.Path, dest) {
+		return f.Path, ReorgStatusNoop, ""
+	}
 	if audiobook {
 		if isSingleFile(f.Path) {
 			if flattenedOntoFolderPath(f.Path, dest, s.windowsPaths) {
@@ -220,7 +230,77 @@ func (s *Scanner) proposedPathFor(ctx context.Context, book *models.Book, author
 	} else if owned {
 		return dest, ReorgStatusCollision, "another book already tracks the destination path"
 	}
+	// A destination below a folder another book tracks (an audiobook row
+	// covers its whole folder) is not this book's to move into: a later
+	// Reorganize of that folder would carry the file off while this book's
+	// row kept the old path (#3599). Import refuses the same destination
+	// (#3570), so the Fix match preview, which runs through here, now agrees
+	// with it. A row left by a deleted book owns nothing and does not count.
+	if under, err := s.books.PathUnderLiveOtherBookDir(ctx, dest, book.ID); err != nil {
+		return dest, ReorgStatusError, err.Error()
+	} else if under {
+		return dest, ReorgStatusCollision, "the destination is inside a folder another book tracks; " +
+			"remove the duplicate book or change the naming template so the two books do not share a folder"
+	}
 	return dest, ReorgStatusMove, ""
+}
+
+// reorganizePathFor is proposedPathFor plus the guard only a Reorganize needs.
+// Reorganize always moves, and a folder moves whole, so a file inside it that
+// another book tracks would go with it while that book's row kept the old
+// path (#3556). Such a folder is left where it is with the reason. The Fix
+// match preview runs proposedPathFor directly and applies the same guard only
+// when the import would really move the folder (FolderRelocationRefusal).
+func (s *Scanner) reorganizePathFor(ctx context.Context, book *models.Book, author *models.Author, seriesTitle, seriesNum string, f models.BookFile) (proposed, status, msg string) {
+	proposed, status, msg = s.proposedPathFor(ctx, book, author, seriesTitle, seriesNum, f)
+	if status != ReorgStatusMove || isSingleFile(f.Path) {
+		return proposed, status, msg
+	}
+	reason, err := s.heldFolderReason(ctx, f.Path, book.ID, book.OwnerUserID)
+	if err != nil {
+		return proposed, ReorgStatusError, err.Error()
+	}
+	if reason != "" {
+		return proposed, ReorgStatusError, reason
+	}
+	return proposed, status, msg
+}
+
+// ebookAtCollisionSuffix reports whether cur is dest with the " (N)" suffix
+// (N >= 2) uniqueEbookDestination adds before the extension, in the same
+// folder, cur is a file this book tracks, and dest itself is still taken: on
+// disk, or by another book's row. That is exactly the file an import would
+// have placed at cur, so Reorganize leaves it there. Comparison goes through
+// pathKey so a Windows library matches regardless of case.
+func (s *Scanner) ebookAtCollisionSuffix(ctx context.Context, book *models.Book, cur, dest string) bool {
+	ext := filepath.Ext(cur)
+	if ext == "" || !strings.EqualFold(ext, filepath.Ext(dest)) {
+		return false
+	}
+	stem := strings.TrimSuffix(cur, ext)
+	paren := strings.LastIndex(stem, " (")
+	if paren < 0 || !strings.HasSuffix(stem, ")") {
+		return false
+	}
+	n := stem[paren+2 : len(stem)-1]
+	if n == "" || n[0] == '0' || len(n) > 3 || strings.Trim(n, "0123456789") != "" || n == "1" {
+		return false
+	}
+	if s.pathKey(stem[:paren]+ext) != s.pathKey(dest) {
+		return false
+	}
+	// Only this book's own tracked file counts. The Fix match destination
+	// preview runs through here with a file that is not yet the book's, and
+	// Fix match keeps the base name (uniqueEbookDestination skips it), so for
+	// that file the base name really is where it would go.
+	if !s.alreadyImportedPath(ctx, book, cur) {
+		return false
+	}
+	if _, err := os.Lstat(dest); err == nil {
+		return true
+	}
+	owned, err := s.books.PathOwnedByOtherBook(ctx, dest, book.ID)
+	return err == nil && owned
 }
 
 // ebookSourceName returns the name DestPath should take the extension from for
@@ -377,7 +457,7 @@ func (s *Scanner) applyOne(ctx context.Context, fileID int64) ReorganizeMove {
 	}
 	seriesTitle, seriesNum := s.primarySeriesFor(ctx, book)
 
-	proposed, status, msg := s.proposedPathFor(ctx, book, author, seriesTitle, seriesNum, file)
+	proposed, status, msg := s.reorganizePathFor(ctx, book, author, seriesTitle, seriesNum, file)
 	m := ReorganizeMove{
 		BookID: book.ID, FileID: fileID, Format: file.Format,
 		BookTitle: book.Title, Author: authorName,
@@ -418,7 +498,7 @@ func (s *Scanner) applyOne(ctx context.Context, fileID int64) ReorganizeMove {
 	}
 	pruneEmptyParents(filepath.Dir(file.Path), s.rootsForFormat(ctx, author, file.Format))
 	bookID := book.ID
-	s.createHistoryEvent(ctx, models.HistoryEventBookRenamed, book.Title, &bookID, map[string]string{
+	s.createHistoryEvent(ctx, models.HistoryEventBookRenamed, book.Title, &bookID, book.OwnerUserID, map[string]string{
 		"from":   file.Path,
 		"to":     proposed,
 		"format": file.Format,

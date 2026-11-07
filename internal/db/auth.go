@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
@@ -49,6 +50,15 @@ func (r *UserRepo) Count(ctx context.Context) (int, error) {
 	var n int
 	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&n)
 	return n, err
+}
+
+// LowestID returns the id of the oldest account, or 0 when there is none.
+// It identifies the very first account an install ever created, which ids
+// make stable: SQLite never hands out a lower id than one already used.
+func (r *UserRepo) LowestID(ctx context.Context) (int64, error) {
+	var id sql.NullInt64
+	err := r.db.QueryRowContext(ctx, "SELECT MIN(id) FROM users").Scan(&id)
+	return id.Int64, err
 }
 
 const userSelectCols = `id, username, password_hash, role, created_at, updated_at,
@@ -378,10 +388,26 @@ var purgeOrder = []string{
 	"downloads",
 	"books",
 	"authors",
+	"import_lists",
+}
+
+// sharedConfigTables are instance wide config that happens to carry an
+// owner_user_id: the create handlers stamp whichever admin made the row, but
+// every account uses them (see docs/multi-user.md). A purge must not delete
+// them, since authors in other accounts reference them; it only drops the
+// departing user's stamp, so the row reads as global.
+var sharedConfigTables = []string{
 	"quality_profiles",
 	"metadata_profiles",
 	"root_folders",
-	"import_lists",
+}
+
+// AuthorBulkRefreshUserKey is the settings key holding the status of the
+// Refresh all run a user who is not an admin started under tenancy. The
+// instance run lives under "authors.bulkRefresh". Kept here so the user delete
+// path can clear it.
+func AuthorBulkRefreshUserKey(userID int64) string {
+	return "authors.bulkRefresh.user." + strconv.FormatInt(userID, 10)
 }
 
 // perUserStateTables hold rows scoped to one account that no other account can
@@ -410,6 +436,13 @@ type UserOwnedRows struct {
 	// Blocklist counts rows attributing a blocklist entry to this user. It is
 	// reported for transparency but never reassigned or purged; see Delete.
 	Blocklist int `json:"blocklist"`
+	// OthersBooks and OthersBookFiles count books under this user's authors
+	// that someone else owns (or nobody does), and their files. A purge removes
+	// the authors and books.author_id is ON DELETE CASCADE, so those go too.
+	// They are reported so the admin sees the full cost of purge; they are not
+	// rows the user owns, so Total ignores them.
+	OthersBooks     int `json:"othersBooks"`
+	OthersBookFiles int `json:"othersBookFiles"`
 }
 
 // Total reports how many rows the admin has to decide about. Blocklist is
@@ -449,6 +482,23 @@ func (r *UserRepo) OwnedRows(ctx context.Context, id int64) (UserOwnedRows, erro
 		"SELECT COUNT(*) FROM blocklist WHERE created_by_user_id = ?", id,
 	).Scan(&c.Blocklist); err != nil {
 		return c, fmt.Errorf("count blocklist: %w", err)
+	}
+	// IS NOT, not !=, so a book with a NULL (shared) owner is counted too.
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM books
+		 WHERE author_id IN (SELECT id FROM authors WHERE owner_user_id = ?)
+		   AND owner_user_id IS NOT ?`, id, id,
+	).Scan(&c.OthersBooks); err != nil {
+		return c, fmt.Errorf("count other accounts' books: %w", err)
+	}
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM book_files
+		 WHERE book_id IN (
+		   SELECT id FROM books
+		   WHERE author_id IN (SELECT id FROM authors WHERE owner_user_id = ?)
+		     AND owner_user_id IS NOT ?)`, id, id,
+	).Scan(&c.OthersBookFiles); err != nil {
+		return c, fmt.Errorf("count other accounts' book files: %w", err)
 	}
 	return c, nil
 }
@@ -526,6 +576,14 @@ func (r *UserRepo) Delete(ctx context.Context, id int64, plan UserDeletePlan) er
 				return fmt.Errorf("purge %s: %w", t, err)
 			}
 		}
+		for _, t := range sharedConfigTables {
+			// #nosec G201 -- t comes from sharedConfigTables, a package-level
+			// literal slice; no caller-supplied value reaches this string.
+			q := fmt.Sprintf("UPDATE %s SET owner_user_id = NULL WHERE owner_user_id = ?", t)
+			if _, err := tx.ExecContext(ctx, q, id); err != nil {
+				return fmt.Errorf("release shared %s: %w", t, err)
+			}
+		}
 	} else {
 		// A nil ReassignTo binds as NULL, which is this schema's "global".
 		for _, t := range ownerTables {
@@ -536,6 +594,28 @@ func (r *UserRepo) Delete(ctx context.Context, id int64, plan UserDeletePlan) er
 				return fmt.Errorf("reassign %s: %w", t, err)
 			}
 		}
+	}
+
+	// History follows the library it describes: purged with it, or handed to
+	// the same account. It is not counted in UserOwnedRows because it is never
+	// a decision of its own, and its foreign key is ON DELETE SET NULL, so a
+	// row left behind would only become admin only, never block the delete.
+	if plan.Strategy == PurgeOwnedRows {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM history WHERE owner_user_id = ?", id); err != nil {
+			return fmt.Errorf("purge history: %w", err)
+		}
+	} else if _, err := tx.ExecContext(ctx,
+		"UPDATE history SET owner_user_id = ? WHERE owner_user_id = ?", plan.ReassignTo, id,
+	); err != nil {
+		return fmt.Errorf("reassign history: %w", err)
+	}
+
+	// A user's own Refresh all status (see api.refreshStatusKey) is meaningless
+	// once they are gone.
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM settings WHERE key = ?", AuthorBulkRefreshUserKey(id),
+	); err != nil {
+		return fmt.Errorf("clear refresh status: %w", err)
 	}
 
 	// Blocklist attribution is an audit trail, not ownership. Migration 050

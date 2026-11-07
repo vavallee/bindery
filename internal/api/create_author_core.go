@@ -158,11 +158,13 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 		return createAuthorResult{}, &createAuthorOptionError{Err: err}
 	}
 
-	// Check if already exists — use user-scoped lookup so this agrees with the
-	// author list, which filters by owner_user_id. A global GetByForeignID
-	// would block re-creation of authors orphaned under a different user ID.
-	userID := auth.UserIDFromContext(ctx)
-	existing, _ := h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignID, userID)
+	// Check if already exists. Scope the lookup like the author list
+	// (auth.ListScopeUserID: every author with tenancy off or for an admin, the
+	// caller's own plus unowned ones otherwise), so a conflict is only reported
+	// for an author the caller can see. A global GetByForeignID would block
+	// re-creation of authors orphaned under a different user ID.
+	scopeID := auth.ListScopeUserID(ctx)
+	existing, _ := h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignID, scopeID)
 	if existing != nil {
 		return createAuthorResult{}, &authorConflictError{Canonical: existing, Message: "author already exists"}
 	}
@@ -172,7 +174,7 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 		return createAuthorResult{}, &createAuthorLookupError{Err: err}
 	}
 	if author.ForeignID != "" {
-		if existing, _ := h.authors.GetByAnyForeignIDForUser(ctx, author.ForeignID, userID); existing != nil {
+		if existing, _ := h.authors.GetByAnyForeignIDForUser(ctx, author.ForeignID, scopeID); existing != nil {
 			return createAuthorResult{}, &authorConflictError{Canonical: existing, Message: "author already exists"}
 		}
 	}
@@ -181,7 +183,12 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 	} else if ambiguous {
 		return createAuthorResult{}, &authorConflictError{Message: "author name resolves ambiguously — merge manually"}
 	} else if canonical != nil {
-		if canRelinkAuthorToUpstream(canonical) {
+		// The relink rewrites the matched row in place (foreign id, name,
+		// monitoring, profiles, root folders) and then syncs its catalogue. A
+		// shared author with no owner is readable by every user but changeable
+		// only by an admin, so a user who is not one gets the confirm merge
+		// conflict below instead, naming the author they matched.
+		if canRelinkAuthorToUpstream(canonical) && auth.CheckWriteOwnership(ctx, canonical.OwnerUserID) {
 			if err := h.relinkExistingAuthorToUpstream(ctx, canonical, author, req.Name, req.Monitored, monitorMode, monitorLatestCount, monitorNewItems, req.QualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID); err != nil {
 				if isAuthorIdentityConflict(err) {
 					return createAuthorResult{}, &authorConflictError{Message: "upstream author already exists locally"}
@@ -215,10 +222,10 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 	if err := h.authors.CreateForUser(ctx, author, auth.UserIDFromContext(ctx)); err != nil {
 		slog.Error("create author failed", "foreign_id", req.ForeignID, "error", err)
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") || errors.Is(err, db.ErrAuthorIdentifierConflict) {
-			if existing, _ := h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignID, userID); existing != nil {
+			if existing, _ := h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignID, scopeID); existing != nil {
 				return createAuthorResult{}, &authorConflictError{Canonical: existing, Message: "author already exists"}
 			}
-			if existing, _ := h.authors.GetByAnyForeignIDForUser(ctx, author.ForeignID, userID); existing != nil {
+			if existing, _ := h.authors.GetByAnyForeignIDForUser(ctx, author.ForeignID, scopeID); existing != nil {
 				return createAuthorResult{}, &authorConflictError{Canonical: existing, Message: "author already exists"}
 			}
 			return createAuthorResult{}, &authorConflictError{Message: "author already exists"}

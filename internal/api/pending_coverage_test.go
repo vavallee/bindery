@@ -280,3 +280,40 @@ func TestPendingGrabWithNoEnabledClientIs400WithCode(t *testing.T) {
 		t.Fatalf("pending row was removed after a refused grab: %+v", left)
 	}
 }
+
+// TestPendingGrabLeavesAnotherBooksRowForTheSameRelease is #3564: pending
+// releases are kept per book, so a second book can hold the same release.
+// A force grab removes the grabbed row only. It used to delete by GUID, which
+// with per book rows would wipe the other book's entry, and under tenancy that
+// book may be another user's.
+func TestPendingGrabLeavesAnotherBooksRowForTheSameRelease(t *testing.T) {
+	f := covQNewPendingGrab(t, models.MediaTypeEbook)
+	ctx := context.Background()
+	authors := db.NewAuthorRepo(f.database)
+	a := &models.Author{ForeignID: "covq-pa2", Name: "Pending Author Two", SortName: "Two, Pending Author"}
+	if err := authors.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	other := &models.Book{ForeignID: "covq-pb2", AuthorID: a.ID, Title: "Pending Book", SortTitle: "pending book", MediaType: models.MediaTypeEbook}
+	if err := db.NewBookRepo(f.database).Create(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pending.Upsert(ctx, &models.PendingRelease{
+		BookID: other.ID, MediaType: models.MediaTypeEbook, Title: "Pending.Book.2020", GUID: "covq-pending-guid",
+		Protocol: "usenet", Reason: "delay", ReleaseJSON: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := f.grab(t, covQPendingReq(f.prID))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	left, err := f.pending.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 1 || left[0].BookID != other.ID {
+		t.Fatalf("pending rows after the grab = %+v, want only the other book's row", left)
+	}
+}

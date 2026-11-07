@@ -122,6 +122,17 @@ There is **no per-protocol download folder setting**, and you do not need one. E
 
 Point them at subfolders of a common root — for example `/data/downloads/torrents` and `/data/downloads/usenet` — set `BINDERY_DOWNLOAD_DIR` to that root, and Bindery reads each completed download from the path the client reports. Bindery accepts completed downloads anywhere at or under `BINDERY_DOWNLOAD_DIR`, so there is no need to consolidate them into one folder.
 
+### What is left of a Usenet job after import
+
+A SABnzbd or NZBGet download in Auto, Hardlink or Move mode is imported by moving its files (nothing seeds from a finished Usenet job), and Bindery then removes the job's history entry in the client. Once every book file in the job has landed in the library, Bindery also deletes the job's own folder, together with the release extras it came with: `.nfo`, `.diz`, `.sfv`, `.srr`, `.srs`, `.url`, `.txt`, `.jpg`, `.jpeg`, `.png`, `.gif`, `.nzb`, `.par2`, `.opf`, `.md5`, `.sha1`, `.log`, plus `Thumbs.db`, `.DS_Store` and `desktop.ini`. It stays careful about it:
+
+- The folder is kept whole if it holds anything else: a book file that was not imported, a file of any other type, or a symlink. A `.txt` big enough to be a book counts as a book here, not as an extra. The log says once, at INFO, which file kept it.
+- Nothing is removed after a partial or failed import.
+- It only ever works inside the job's own folder. It refuses a folder that is or contains `BINDERY_DOWNLOAD_DIR`, `BINDERY_AUDIOBOOK_DOWNLOAD_DIR`, a library or root folder, or one of the client's completed folders: the one for no category, the ones for the ebook and audiobook categories set on the client in Bindery, and the one for the category the client reports for this job (which differs when the job was recategorised in the client). That matters for a SABnzbd category ending in `*`, which puts jobs straight into the category folder. Bindery asks the client for each of those folders, and if any lookup fails (an NZB only SABnzbd API key, a relative `complete_dir`, a category SABnzbd does not know, or the client simply not answering) it leaves the job folder in place.
+- Folders the client builds some other way are not known to Bindery. If a SABnzbd sorter files single file jobs into a folder shared between jobs (one per author, say), the release extras of other jobs in that folder can be removed with it. Books are never removed this way, because any book file keeps the folder.
+- Torrent downloads are never touched this way, in any mode, because the client may still be seeding them.
+- Copy mode keeps the job's files where they are, as before.
+
 ## RAR-packed torrent releases
 
 Some releases, scene audiobooks especially, are packed as a RAR set: `Title.part1.rar`, `Title.part2.rar`… or `Title.rar`, `Title.r00`, `Title.r01`…. Bindery does not unpack archives. For Usenet that is never a problem, since SABnzbd and NZBGet unpack a job before they report it complete. For torrents, run an unpacker next to Bindery.

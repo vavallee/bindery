@@ -12,7 +12,7 @@ import (
 // blocklistColumns is the canonical column list shared between the writer and
 // the reader paths. Keep it aligned with the Scan order in query() and with
 // the INSERT shape in create().
-const blocklistColumns = "id, book_id, guid, title, indexer_id, reason, created_at, created_by_user_id"
+const blocklistColumns = "id, book_id, guid, title, indexer_id, reason, created_at, created_by_user_id, scope"
 
 type BlocklistRepo struct {
 	db *sql.DB
@@ -33,20 +33,31 @@ func (r *BlocklistRepo) Create(ctx context.Context, e *models.BlocklistEntry) er
 }
 
 // CreateByUser inserts a blocklist row tagged with the supplied user id. The
-// row is otherwise identical to one written by Create: the BlocklistedSpec
-// decision matcher and IsBlocked / List queries are global on purpose, so
-// the audit column is metadata only. See migration 049 for the rationale.
+// row is otherwise identical to one written by Create: the audit column is
+// metadata only, and the entry's Scope decides which books it blocks.
 func (r *BlocklistRepo) CreateByUser(ctx context.Context, e *models.BlocklistEntry, userID int64) error {
 	uid := userID
 	return r.create(ctx, e, &uid)
 }
 
 func (r *BlocklistRepo) create(ctx context.Context, e *models.BlocklistEntry, userID *int64) error {
+	return insertBlocklistEntry(ctx, r.db, e, userID)
+}
+
+// insertBlocklistEntry is create over any executor, so a caller holding a
+// transaction (RejectImport) writes the entry in it.
+func insertBlocklistEntry(ctx context.Context, exec dbExecutor, e *models.BlocklistEntry, userID *int64) error {
 	now := time.Now().UTC()
-	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO blocklist (book_id, guid, title, indexer_id, reason, created_at, created_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.BookID, e.GUID, e.Title, e.IndexerID, e.Reason, now, userID)
+	// A new entry for no book is release scoped whatever it asked for: a
+	// book scope with no book would block nothing (#3563).
+	if e.BookID == nil {
+		e.Scope = models.BlocklistScopeRelease
+	}
+	e.Scope = e.EffectiveScope()
+	result, err := exec.ExecContext(ctx, `
+		INSERT INTO blocklist (book_id, guid, title, indexer_id, reason, created_at, created_by_user_id, scope)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.BookID, e.GUID, e.Title, e.IndexerID, e.Reason, now, userID, e.Scope)
 	if err != nil {
 		return fmt.Errorf("create blocklist entry: %w", err)
 	}
@@ -64,6 +75,11 @@ func (r *BlocklistRepo) List(ctx context.Context) ([]models.BlocklistEntry, erro
 	return r.query(ctx, "SELECT "+blocklistColumns+" FROM blocklist ORDER BY created_at DESC")
 }
 
+// IsBlocked reports whether any entry names this GUID, whatever its scope or
+// book. It is not what search asks and nothing in Bindery decides on it:
+// since #3563 an entry blocks a release per book, which is BlocksBook. It
+// stays as the "was an entry written" check twenty odd tests across the
+// importer, scheduler and api packages assert with.
 func (r *BlocklistRepo) IsBlocked(ctx context.Context, guid string) (bool, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM blocklist WHERE guid=?", guid).Scan(&count)
@@ -73,14 +89,22 @@ func (r *BlocklistRepo) IsBlocked(ctx context.Context, guid string) (bool, error
 	return count > 0, nil
 }
 
-// IsBlockedForBook reports whether a row for this GUID already exists under
-// this book (a nil bookID matches a row with no book). Writers use it to avoid
-// stacking duplicates; it is deliberately narrower than IsBlocked, because a
-// row filed under another book disappears with that book (DeleteByBookID) and
-// must not stand in for this one's.
-func (r *BlocklistRepo) IsBlockedForBook(ctx context.Context, guid string, bookID *int64) (bool, error) {
+// BlocksBook reports whether an entry already blocks this GUID for this book:
+// a release scoped entry, or one scoped to bookID. A nil bookID asks about
+// release scoped entries only, since an entry written for no book is release
+// scoped. It is the question search asks (models.BlocklistEntry.BlocksBook),
+// so a writer that checks it before adding an entry never reports a release as
+// blocked for a book that search would still grab it for.
+func (r *BlocklistRepo) BlocksBook(ctx context.Context, guid string, bookID *int64) (bool, error) {
+	return blocklistBlocksBook(ctx, r.db, guid, bookID)
+}
+
+func blocklistBlocksBook(ctx context.Context, exec dbExecutor, guid string, bookID *int64) (bool, error) {
 	var count int
-	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM blocklist WHERE guid=? AND book_id IS ?", guid, bookID).Scan(&count)
+	err := exec.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM blocklist
+		WHERE guid = ? AND (scope = ? OR (? IS NOT NULL AND book_id = ?))`,
+		guid, models.BlocklistScopeRelease, bookID, bookID).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("check blocklist: %w", err)
 	}
@@ -108,7 +132,7 @@ func (r *BlocklistRepo) query(ctx context.Context, q string, args ...interface{}
 	for rows.Next() {
 		var e models.BlocklistEntry
 		if err := rows.Scan(
-			&e.ID, &e.BookID, &e.GUID, &e.Title, &e.IndexerID, &e.Reason, &e.CreatedAt, &e.CreatedByUserID,
+			&e.ID, &e.BookID, &e.GUID, &e.Title, &e.IndexerID, &e.Reason, &e.CreatedAt, &e.CreatedByUserID, &e.Scope,
 		); err != nil {
 			return nil, fmt.Errorf("scan blocklist entry: %w", err)
 		}

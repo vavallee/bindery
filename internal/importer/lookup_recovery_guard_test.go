@@ -28,7 +28,7 @@ func TestMatchBookForDownload_TrackNamesDoNotOutvoteTheReleaseTitle(t *testing.T
 		}
 	}
 
-	book, _ := s.matchBookForDownload(context.Background(), files, "Kari Nordmann - Fjellvinden")
+	book, _ := s.matchBookForDownload(context.Background(), 0, files, "Kari Nordmann - Fjellvinden")
 
 	if book == nil || book.Title != "Fjellvinden" {
 		t.Fatalf("matched %v, want Fjellvinden from the release title", book)
@@ -63,12 +63,12 @@ func TestMatchBookForDownload_LooseFilenameMatchNeedsCorroboration(t *testing.T)
 	// with the catalogue title but is not it, and names no author.
 	files := []string{"/dl/Havgapet Fjellvinden.epub"}
 
-	if book, _ := s.matchBookForDownload(context.Background(), files, "Kari Nordmann - Noe annet"); book != nil {
+	if book, _ := s.matchBookForDownload(context.Background(), 0, files, "Kari Nordmann - Noe annet"); book != nil {
 		t.Fatalf("bound the download to %q on an uncorroborated filename match", book.Title)
 	}
 	// Corroborated by the author, the same loose title binds.
 	files = []string{"/dl/Havgapet Fjellvinden - Ola Nordmann.epub"}
-	if book, _ := s.matchBookForDownload(context.Background(), files, ""); book == nil {
+	if book, _ := s.matchBookForDownload(context.Background(), 0, files, ""); book == nil {
 		t.Fatal("a filename match the author corroborates was not used")
 	}
 }
@@ -81,11 +81,11 @@ func TestMatchBookForDownload_SkipsTrackNamesButNotALoneAudioFile(t *testing.T) 
 		seedBook(t, ctx, books, authors, "Kari Nordmann", "Fjellvinden")
 	})
 	tracks := []string{"/dl/Fjellvinden/Intro.mp3", "/dl/Fjellvinden/Kapittel 1.mp3"}
-	if book, _ := s.matchBookForDownload(context.Background(), tracks, "Kari Nordmann - Fjellvinden"); book == nil || book.Title != "Fjellvinden" {
+	if book, _ := s.matchBookForDownload(context.Background(), 0, tracks, "Kari Nordmann - Fjellvinden"); book == nil || book.Title != "Fjellvinden" {
 		t.Fatalf("matched %v, want Fjellvinden from the release title, not a track named Intro", book)
 	}
 	lone := []string{"/dl/Fjellvinden - Kari Nordmann.m4b"}
-	if book, _ := s.matchBookForDownload(context.Background(), lone, ""); book == nil || book.Title != "Fjellvinden" {
+	if book, _ := s.matchBookForDownload(context.Background(), 0, lone, ""); book == nil || book.Title != "Fjellvinden" {
 		t.Fatalf("matched %v, want Fjellvinden from the single audio file's name", book)
 	}
 }

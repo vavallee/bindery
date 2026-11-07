@@ -41,6 +41,11 @@ export interface AdoptionAuthorConflict {
   folder: string
 }
 
+export interface AdoptionSeriesHint {
+  title: string
+  position: string
+}
+
 export interface AdoptionItem {
   id: number
   kind: 'file' | 'folder'
@@ -53,6 +58,7 @@ export interface AdoptionItem {
   parsedTitle: string
   parsedAuthor: string
   reason: AdoptionReason | ''
+  seriesHint?: AdoptionSeriesHint
   authorConflict?: AdoptionAuthorConflict
   // The format the row's library root holds, set only when the ebook and
   // audiobook roots are separate folders. A row whose format differs sits in
@@ -134,8 +140,8 @@ export interface AdoptionListParams {
 // What a row is adopted as: a book already in the library, or a metadata
 // result the server adds (unmonitored, in the adopted format) first.
 export type AdoptTarget =
-  | { bookId: number; format?: string }
-  | { foreignBookId: string; foreignAuthorId: string; authorName: string; format?: string }
+  | { bookId: number; format?: string; applySeriesHint?: boolean; seriesId?: number }
+  | { foreignBookId: string; foreignAuthorId: string; authorName: string; format?: string; applySeriesHint?: boolean; seriesId?: number }
 
 export const adoptionApi = {
   listUnmatched: (p: AdoptionListParams = {}) => {

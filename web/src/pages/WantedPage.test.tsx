@@ -436,6 +436,28 @@ describe('WantedPage', () => {
     expect(vi.mocked(api.grab).mock.calls[0][0]).toMatchObject({ guid: 'dropped', bookId: 1 })
   })
 
+  it('does not reload the list after unmount when a grab timer is pending (#3607)', async () => {
+    const book = makeBook({ id: 1, title: 'Dune' })
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([book]))
+    vi.mocked(api.searchBook).mockResolvedValue({ results: [makeResult({ guid: 'g1', title: 'Dune EPUB' })], debug: null })
+    vi.mocked(api.grab).mockResolvedValue({ id: 5 } as Download)
+
+    const view = renderWantedPage()
+    await screen.findByRole('link', { name: 'Dune' })
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    const row = (await screen.findByText('Dune EPUB')).closest('div.flex.items-center.justify-between') as HTMLElement
+
+    vi.useFakeTimers()
+    fireEvent.click(within(row).getByRole('button', { name: 'Grab' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(api.grab).toHaveBeenCalled()
+
+    const loadsBefore = vi.mocked(api.listWantedPage).mock.calls.length
+    view.unmount()
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    expect(api.listWantedPage).toHaveBeenCalledTimes(loadsBefore)
+  })
+
   it('points at the filtered section when every release was filtered (#3364)', async () => {
     vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([makeBook({ id: 1, title: 'Dune' })]))
     vi.mocked(api.searchBook).mockResolvedValue({
@@ -464,6 +486,60 @@ describe('WantedPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Search' }))
     await screen.findByText('Kept')
     expect(screen.queryByRole('button', { name: /Filtered/ })).not.toBeInTheDocument()
+  })
+
+  // #3247: a pack grabbed from Wanted is labelled and confirmed exactly as on
+  // the book page, because the importer will not place it.
+  describe('multi-book pack', () => {
+    const searchWithPack = async () => {
+      vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([makeBook({ id: 1, title: 'Dominion of Blades' })]))
+      vi.mocked(api.searchBook).mockResolvedValue({
+        results: [
+          makeResult({ guid: 'single', title: 'Dominion of Blades - Matt Dinniman' }),
+          makeResult({ guid: 'pack', title: 'Dominion of Blades 1-2', approved: false, pack: 'Dominion of Blades 1-2' }),
+        ],
+        debug: null,
+      })
+      renderWantedPage()
+      await screen.findByRole('link', { name: 'Dominion of Blades' })
+      fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+      const packRow = (await screen.findByText('Dominion of Blades 1-2')).closest('div.flex.items-center.justify-between') as HTMLElement
+      const singleRow = screen.getByText('Dominion of Blades - Matt Dinniman').closest('div.flex.items-center.justify-between') as HTMLElement
+      return { packRow, singleRow }
+    }
+
+    it('labels only the pack', async () => {
+      const { packRow, singleRow } = await searchWithPack()
+      expect(within(packRow).getByText('search.pack.label')).toBeInTheDocument()
+      expect(within(singleRow).queryByText('search.pack.label')).not.toBeInTheDocument()
+    })
+
+    it('asks before grabbing a pack and grabs it on confirm', async () => {
+      const { packRow } = await searchWithPack()
+      fireEvent.click(within(packRow).getByRole('button', { name: 'Grab' }))
+      const dialog = await screen.findByRole('dialog')
+      expect(within(dialog).getByText('search.pack.confirmTitle')).toBeInTheDocument()
+      expect(api.grab).not.toHaveBeenCalled()
+      fireEvent.click(within(dialog).getByRole('button', { name: 'search.pack.confirm' }))
+      await waitFor(() => expect(api.grab).toHaveBeenCalledTimes(1))
+      expect(vi.mocked(api.grab).mock.calls[0][0]).toMatchObject({ guid: 'pack', bookId: 1 })
+    })
+
+    it('does not grab a pack when the confirmation is cancelled', async () => {
+      const { packRow } = await searchWithPack()
+      fireEvent.click(within(packRow).getByRole('button', { name: 'Grab' }))
+      const dialog = await screen.findByRole('dialog')
+      fireEvent.click(within(dialog).getByRole('button', { name: /cancel/i }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(api.grab).not.toHaveBeenCalled()
+    })
+
+    it('grabs a single book without asking', async () => {
+      const { singleRow } = await searchWithPack()
+      fireEvent.click(within(singleRow).getByRole('button', { name: 'Grab' }))
+      await waitFor(() => expect(api.grab).toHaveBeenCalledTimes(1))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
   })
 
   it('grabs a result, shows transient states, and refreshes wanted books', async () => {
@@ -720,6 +796,29 @@ describe('WantedPage author monitoring hint', () => {
     await screen.findByText('Dune')
     const hints = screen.getAllByText('Author not monitored, so this is not searched automatically')
     expect(hints).toHaveLength(1)
+  })
+})
+
+// An Upcoming book (#2523) is held out of the scheduled search until its
+// release date, so the row says so, and only for the rows it applies to.
+describe('WantedPage upcoming books', () => {
+  it('marks a held row as upcoming and leaves the others alone', async () => {
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([
+      makeBook({ id: 1, title: 'Oathbringer', searchHeldUntil: '2027-01-15T00:00:00Z' }),
+      makeBook({ id: 2, title: 'Dune' }),
+    ]))
+    renderWantedPage()
+    await screen.findByText('Oathbringer')
+    expect(screen.getAllByTestId('wanted-upcoming')).toHaveLength(1)
+  })
+
+  it('asks the server for only the upcoming books when filtered', async () => {
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([makeBook({ id: 1, title: 'Dune' })]))
+    renderWantedPage()
+    await screen.findByRole('link', { name: 'Dune' })
+    fireEvent.click(screen.getByRole('button', { name: /^common\.filters/ }))
+    fireEvent.click(screen.getByRole('radio', { name: 'wanted.upcomingOnly' }))
+    await waitFor(() => expect(api.listWantedPage).toHaveBeenLastCalledWith(expect.objectContaining({ upcoming: 'only' })))
   })
 })
 

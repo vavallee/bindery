@@ -60,3 +60,53 @@ func TestMultiBookPackSpec_FoundationSearch(t *testing.T) {
 		t.Errorf("a pack was refused for a book that is a bundle: %s", reason)
 	}
 }
+
+// TestMultiBookPackSpec_LibraryContext is #3247: the packs only recognisable
+// against the wanted book, from the issue thread.
+func TestMultiBookPackSpec_LibraryContext(t *testing.T) {
+	macomber := MultiBookPackSpec{SeriesTitle: "Heart of Texas", AuthorTitles: []string{"Lonesome Cowboy", "Texas Two-Step"}}
+	for _, tc := range []struct {
+		spec    MultiBookPackSpec
+		release string
+		book    string
+		marker  string
+	}{
+		{MultiBookPackSpec{}, "Dominion of Blades 1-2", "Dominion of Blades: A LitRPG Adventure (Volume 1)", "Dominion of Blades 1-2"},
+		{
+			MultiBookPackSpec{AuthorTitles: []string{"The Firm", "The Appeal"}},
+			"John Grisham - Three Classic Thrillers (The Firm; The Appeal; The Chamber) (v5.0) (epub)", "Chamber",
+			"The Firm; The Appeal; The Chamber",
+		},
+		{
+			macomber,
+			"Debbie Macomber - [Heart of Texas 01-03] - Lonesome Cowboy; Texas Two-Step; Caroline's Child (v5.0) (epub)", "Caroline's Child",
+			"Heart of Texas 01-03",
+		},
+	} {
+		ok, reason := tc.spec.IsSatisfiedBy(Release{Title: tc.release}, models.Book{Title: tc.book})
+		if ok {
+			t.Errorf("%q was accepted for %q", tc.release, tc.book)
+			continue
+		}
+		if !strings.HasPrefix(reason, RejectionMultiBookPack) || !strings.Contains(reason, tc.marker) {
+			t.Errorf("reason %q should carry the pack prefix and quote %q", reason, tc.marker)
+		}
+	}
+
+	// A single book release from the same series passes.
+	if ok, reason := macomber.IsSatisfiedBy(
+		Release{Title: "Debbie Macomber - Heart of Texas Book 3 - Caroline's Child (epub)"},
+		models.Book{Title: "Caroline's Child"},
+	); !ok {
+		t.Errorf("single book release refused: %s", reason)
+	}
+
+	// The wanted book is itself the series pack: the exemption reads the
+	// book's title against the same context.
+	if ok, reason := macomber.IsSatisfiedBy(
+		Release{Title: "Debbie Macomber - [Heart of Texas 01-03] (epub)"},
+		models.Book{Title: "Heart of Texas 1-3"},
+	); !ok {
+		t.Errorf("pack rejected for a book that is itself the series pack: %s", reason)
+	}
+}

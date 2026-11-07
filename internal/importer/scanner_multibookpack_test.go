@@ -124,3 +124,59 @@ func TestImport_PackAllowedWithExplicitFormatHint(t *testing.T) {
 		t.Fatalf("explicit manual import was blocked: %s", got.ErrorMessage)
 	}
 }
+
+// TestImport_BlocksPacksNamedAfterTheBook is the importer half of #3247: the
+// packs only recognisable against the wanted book are blocked too, so one
+// grabbed by hand from interactive search is not placed in one book's folder.
+func TestImport_BlocksPacksNamedAfterTheBook(t *testing.T) {
+	t.Run("range after the title", func(t *testing.T) {
+		s, dl, downloadPath, reload := packImportFixture(t, "Dominion of Blades 1-2", "Dominion of Blades: A LitRPG Adventure (Volume 1)")
+		s.tryImportInternal(t.Context(), dl, downloadPath, "", "", "", nil, nil)
+		got := reload()
+		if got.Status != models.StateImportBlocked {
+			t.Fatalf("status = %q, want %q", got.Status, models.StateImportBlocked)
+		}
+		if !strings.Contains(got.ErrorMessage, "Dominion of Blades 1-2") {
+			t.Errorf("message %q does not quote the words it judged", got.ErrorMessage)
+		}
+	})
+
+	t.Run("range after the title in an audiobook release", func(t *testing.T) {
+		s, dl, downloadPath, reload := packImportFixture(t, "Dominion of Blades 1-2 [Audiobook]", "Dominion of Blades: A LitRPG Adventure (Volume 1)")
+		s.tryImportInternal(t.Context(), dl, downloadPath, "", "", "", nil, nil)
+		if got := reload(); got.Status != models.StateImportBlocked {
+			t.Fatalf("status = %q, want %q", got.Status, models.StateImportBlocked)
+		}
+	})
+
+	t.Run("semicolon list of the author's titles", func(t *testing.T) {
+		const release = "John Grisham - Three Classic Thrillers (The Firm; The Appeal; The Chamber) (v5.0) (epub)"
+		s, dl, downloadPath, reload := packImportFixture(t, release, "Chamber")
+		book, err := s.books.GetByID(t.Context(), *dl.BookID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, title := range []string{"The Firm", "The Appeal"} {
+			sib := &models.Book{Title: title, ForeignID: "OL3247S" + string(rune('A'+i)), AuthorID: book.AuthorID, MediaType: models.MediaTypeEbook}
+			if err := s.books.Create(t.Context(), sib); err != nil {
+				t.Fatal(err)
+			}
+		}
+		s.tryImportInternal(t.Context(), dl, downloadPath, "", "", "", nil, nil)
+		got := reload()
+		if got.Status != models.StateImportBlocked {
+			t.Fatalf("status = %q, want %q", got.Status, models.StateImportBlocked)
+		}
+		if !strings.Contains(got.ErrorMessage, "The Firm; The Appeal; The Chamber") {
+			t.Errorf("message %q does not quote the words it judged", got.ErrorMessage)
+		}
+	})
+
+	t.Run("a series position is not a pack", func(t *testing.T) {
+		s, dl, downloadPath, reload := packImportFixture(t, "Dominion of Blades 1 - A LitRPG Adventure", "Dominion of Blades: A LitRPG Adventure (Volume 1)")
+		s.tryImportInternal(t.Context(), dl, downloadPath, "", "", "", nil, nil)
+		if got := reload(); got.Status == models.StateImportBlocked {
+			t.Fatalf("a single-book release was blocked: %s", got.ErrorMessage)
+		}
+	})
+}

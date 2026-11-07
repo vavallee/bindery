@@ -20,6 +20,7 @@ vi.mock('react-i18next', () => ({
 vi.mock('../../api/client', () => ({
   api: {
     scanFolder: vi.fn(),
+    listImportFolders: vi.fn(),
     batchImport: vi.fn(),
     listBooks: vi.fn(),
     // Reached through resolveBookQuery / CatalogueAdder (#1719).
@@ -35,6 +36,7 @@ import type { Book, FolderScanResponse } from '../../api/client'
 import FolderImportView from './FolderImportView'
 
 const mockScan = api.scanFolder as ReturnType<typeof vi.fn>
+const mockFolders = api.listImportFolders as ReturnType<typeof vi.fn>
 const mockBatch = api.batchImport as ReturnType<typeof vi.fn>
 const mockListBooks = api.listBooks as ReturnType<typeof vi.fn>
 const mockSearchBooks = api.searchBooks as ReturnType<typeof vi.fn>
@@ -103,6 +105,48 @@ describe('FolderImportView', () => {
     // shows a library search box.
     expect(screen.getByText(/manualImport\.importSelected count=1/)).toBeInTheDocument()
     expect(screen.getByPlaceholderText('manualImport.searchPlaceholder')).toBeInTheDocument()
+  })
+
+  it('browses configured roots and uses the selected folder', async () => {
+    mockFolders
+      .mockResolvedValueOnce({ directories: ['/books', '/downloads'] })
+      .mockResolvedValueOnce({ path: '/downloads', directories: ['/downloads/unsorted'] })
+    render(<FolderImportView />)
+
+    fireEvent.click(screen.getByText('manualImport.browse'))
+    expect(await screen.findByText('/downloads')).toBeInTheDocument()
+    expect(mockFolders).toHaveBeenCalledWith(undefined)
+
+    fireEvent.click(screen.getByText('/downloads'))
+    // Children show their own name; the full path is the button's title.
+    expect(await screen.findByText('unsorted')).toHaveAttribute('title', '/downloads/unsorted')
+    expect(mockFolders).toHaveBeenLastCalledWith('/downloads')
+
+    fireEvent.click(screen.getByText('manualImport.browseUse'))
+    expect(screen.getByPlaceholderText('manualImport.pathPlaceholder')).toHaveValue('/downloads')
+  })
+
+  it('goes back to the root list and closes', async () => {
+    mockFolders
+      .mockResolvedValueOnce({ path: '/downloads', directories: ['/downloads/unsorted'] })
+      .mockResolvedValueOnce({ directories: ['/books', '/downloads'] })
+    render(<FolderImportView />)
+    fireEvent.click(screen.getByText('manualImport.browse'))
+    expect(await screen.findByText('unsorted')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('manualImport.browseRoots'))
+    expect(await screen.findByText('/books')).toBeInTheDocument()
+    expect(mockFolders).toHaveBeenLastCalledWith(undefined)
+
+    fireEvent.click(screen.getByText('manualImport.browseClose'))
+    expect(screen.queryByText('/books')).not.toBeInTheDocument()
+  })
+
+  it('says when the folder list was cut short', async () => {
+    mockFolders.mockResolvedValueOnce({ path: '/downloads', directories: ['/downloads/a'], truncated: true })
+    render(<FolderImportView />)
+    fireEvent.click(screen.getByText('manualImport.browse'))
+    expect(await screen.findByText('manualImport.browseTruncated')).toBeInTheDocument()
   })
 
   it('enables import for an ambiguous unit once a candidate is picked', async () => {

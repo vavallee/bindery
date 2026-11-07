@@ -81,7 +81,7 @@ func (h *AuthorAliasHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Tier-1 cross-user IDOR guard (D1).
-	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+	if !auth.CheckWriteOwnership(r.Context(), author.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
@@ -132,20 +132,31 @@ func (h *AuthorAliasHandler) Merge(w http.ResponseWriter, r *http.Request) {
 
 	// Validate both exist up-front so the UI gets a 404 instead of a 500.
 	// The transaction inside Merge re-reads them under lock anyway, so this
-	// is only a preflight. Both rows must also pass the Tier-1 cross-user
-	// ownership check (D1) so a non-owner cannot merge an unrelated author
-	// (source) into one of their own, or absorb their author into someone
-	// else's row (target).
+	// is only a preflight. Both rows must also pass the write ownership
+	// check, so a non-owner cannot merge an unrelated author (source) into one
+	// of their own, or absorb their author into someone else's row (target).
+	// It is the write check, not the read one: a shared author with no owner
+	// is readable by every user but changeable only by an admin.
 	for _, id := range []int64{req.SourceID, targetID} {
 		a, err := h.authors.GetByID(r.Context(), id)
 		if err != nil {
 			writeServerError(w, r, err)
 			return
 		}
-		if a == nil || !auth.CheckOwnership(r.Context(), a.OwnerUserID) {
+		if a == nil || !auth.CheckWriteOwnership(r.Context(), a.OwnerUserID) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found: " + strconv.FormatInt(id, 10)})
 			return
 		}
+	}
+	// The merge reparents every book under the source and then deletes it, so
+	// a user who is not an admin may only merge a source whose books are all
+	// theirs.
+	if held, err := authorHoldsOthersBooks(r.Context(), h.authors, req.SourceID); err != nil {
+		writeServerError(w, r, err)
+		return
+	} else if held {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": errAuthorHoldsOthersBooks.Error()})
+		return
 	}
 
 	overwrite := true

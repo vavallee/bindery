@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -62,7 +65,10 @@ func (fm *FixMatch) covers(path string) bool {
 // holds the file. The one exception is a Fix match of that very file, where
 // moving the row is what the user asked for: the row moves and the move is
 // recorded in history once the import completes.
-func (s *Scanner) recordImportedFile(ctx context.Context, book *models.Book, format, path string) error {
+//
+// The reason lands on dl, which its owner reads in the queue. With tenancy on,
+// a holding book another user owns is not named (see pathOwnedReason).
+func (s *Scanner) recordImportedFile(ctx context.Context, dl *models.Download, book *models.Book, format, path string) error {
 	err := s.books.AddBookFile(ctx, book.ID, format, path)
 	var owned *db.PathOwnedError
 	if !errors.As(err, &owned) {
@@ -70,7 +76,7 @@ func (s *Scanner) recordImportedFile(ctx context.Context, book *models.Book, for
 	}
 	fm := fixMatchFrom(ctx)
 	if fm == nil || !fm.covers(path) {
-		return fmt.Errorf("%w; if the file is really %q, use Fix match on that book to move it here", owned, book.Title)
+		return s.pathOwnedReason(ctx, dl, book, owned)
 	}
 	prev, err := s.books.MoveBookFile(ctx, path, book.ID, format)
 	if err != nil {
@@ -83,6 +89,209 @@ func (s *Scanner) recordImportedFile(ctx context.Context, book *models.Book, for
 	}
 	return nil
 }
+
+// pathOwnedReason is the error recordImportedFile returns when another book
+// already tracks path. It still matches *db.PathOwnedError through errors.As,
+// which is how the import decides to block rather than retry.
+//
+// The usual text names the holding book's title and id. With tenancy on, when
+// that book's owner is not the download's owner (or cannot be read), the
+// reason says only that another book in the library uses the path: the
+// download's owner cannot open that book, and its title and id are another
+// user's data.
+//
+// The hint after the owner is worded for the download's owner: Fix match is
+// admin only, so a non admin is told to ask an admin rather than pointed at
+// an action they cannot take (#3560).
+func (s *Scanner) pathOwnedReason(ctx context.Context, dl *models.Download, book *models.Book, owned *db.PathOwnedError) error {
+	if auth.EnforceTenancy() {
+		var dlOwner int64
+		if dl != nil {
+			dlOwner = dl.OwnerUserID
+		}
+		holder, err := s.books.GetByID(ctx, owned.OwnerBookID)
+		if err != nil || holder == nil || holder.OwnerUserID != dlOwner {
+			return &pathOwnedElsewhereError{owned: owned}
+		}
+	}
+	switch s.downloadOwnerRole(ctx, dl) {
+	case ownerAdmin:
+		return fmt.Errorf("%w; if the file is really %q, use Fix match on that book to move it here", owned, book.Title)
+	case ownerNotAdmin:
+		// Fix match sits behind RequireAdmin (#3560): pointing a plain user
+		// at it leaves them with an action they cannot take.
+		return fmt.Errorf("%w; if the file is really %q, ask an admin to use Fix match on that book to move it here", owned, book.Title)
+	default:
+		return fmt.Errorf("%w; if the file is really %q, an admin can use Fix match on that book to move it here", owned, book.Title)
+	}
+}
+
+type ownerRole int
+
+const (
+	ownerRoleUnknown ownerRole = iota
+	ownerAdmin
+	ownerNotAdmin
+)
+
+// downloadOwnerRole reports whether the user who reads dl's block reason
+// in their queue can run Fix match, which is admin only (stored role; an auth
+// mode that elevates everyone is not visible to the importer). The reason is
+// written for the download's owner, not for whoever triggered this import
+// (an admin's Fix match can leave a reason on another user's download).
+// Unknown when there is no owner recorded, no user repository wired, or the
+// owner cannot be read; the caller then words the hint so it is true for
+// either role.
+func (s *Scanner) downloadOwnerRole(ctx context.Context, dl *models.Download) ownerRole {
+	if dl == nil || dl.OwnerUserID == 0 || s.users == nil {
+		return ownerRoleUnknown
+	}
+	u, err := s.users.GetByID(ctx, dl.OwnerUserID)
+	if err != nil || u == nil {
+		return ownerRoleUnknown
+	}
+	if u.IsAdmin() {
+		return ownerAdmin
+	}
+	return ownerNotAdmin
+}
+
+// uniqueEbookDestination returns an unused filename for a normal ebook import.
+//
+// Naming templates intentionally allow two distinct books to render to the
+// same path: provider duplicates, two authors with the same displayed name,
+// and editions that share a title are all legitimate library states. Unlike a
+// Fix match, which must retain its requested destination so it can move the
+// selected file, a normal import can preserve both books by adding the same
+// " (2)" suffix audiobook folders already use. Both the database and the
+// filesystem participate: an untracked file must never be replaced, and a
+// tracked file must not be claimed from its current book.
+func (s *Scanner) uniqueEbookDestination(ctx context.Context, book *models.Book, dest string) (string, error) {
+	if book == nil || fixMatchFrom(ctx) != nil {
+		return dest, nil
+	}
+	ext := filepath.Ext(dest)
+	stem := strings.TrimSuffix(dest, ext)
+	for n := 1; n < 1000; n++ {
+		candidate := dest
+		if n > 1 {
+			candidate = fmt.Sprintf("%s (%d)%s", stem, n, ext)
+		}
+		owner, err := s.books.GetByTrackedPath(ctx, candidate)
+		if err != nil {
+			return "", fmt.Errorf("look up ebook destination owner: %w", err)
+		}
+		if owner != nil && owner.ID != book.ID {
+			continue
+		}
+		if owner != nil {
+			return candidate, nil
+		}
+		if _, err := os.Lstat(candidate); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("check ebook destination %q: %w", candidate, err)
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf("no available ebook destination for %q after 999 attempts", dest)
+}
+
+// folderHoldsOtherBooksFiles reports whether a live book other than bookID
+// tracks a path below dir (#3556). A folder is moved or claimed whole (an
+// audiobook row covers everything under it), so a folder holding such a file
+// cannot be moved or taken over without carrying that file away from its own
+// row. Rows left by deleted books do not count, so they cannot hold a folder
+// in place for good. Matching ignores ASCII case, which can only make the
+// answer more cautious.
+func (s *Scanner) folderHoldsOtherBooksFiles(ctx context.Context, dir string, bookID int64) (bool, error) {
+	paths, err := s.books.LivePathsUnderForOtherBooks(ctx, dir, bookID)
+	if err != nil {
+		return false, err
+	}
+	return len(paths) > 0, nil
+}
+
+// heldFolderReason returns why dir cannot be moved whole, or "" when no live
+// book other than bookID tracks a file below it (#3556). The reason is
+// written for viewerUserID. It names the held file so the reader knows what
+// to move out, except under tenancy when every held file belongs to a book
+// another user owns: that path is another user's data, so the reason then
+// only says that such a file exists.
+func (s *Scanner) heldFolderReason(ctx context.Context, dir string, bookID, viewerUserID int64) (string, error) {
+	paths, err := s.books.LivePathsUnderForOtherBooks(ctx, dir, bookID)
+	if err != nil {
+		return "", err
+	}
+	if len(paths) == 0 {
+		return "", nil
+	}
+	named := ""
+	for _, p := range paths {
+		if !auth.EnforceTenancy() {
+			named = p
+			break
+		}
+		holder, err := s.books.GetByTrackedPath(ctx, p)
+		if err == nil && holder != nil && holder.OwnerUserID == viewerUserID {
+			named = p
+			break
+		}
+	}
+	if named == "" {
+		return folderHoldsOtherBooksFilesMsg, nil
+	}
+	return fmt.Sprintf("this folder also holds %s, which another book tracks, so moving the folder would carry that file away from its book. "+
+		"Move that file out of the folder first (or use Forget this file on the book it belongs to)", named), nil
+}
+
+// folderHoldsOtherBooksFilesMsg explains a refused folder move without naming
+// the held file: with tenancy on, the book tracking it belongs to another user.
+const folderHoldsOtherBooksFilesMsg = "this folder also holds a file another book tracks, so moving it would carry that file away from its book. " +
+	"Move that file out of the folder first (or use Forget this file on the book it belongs to)"
+
+// FolderRelocationRefusal reports why importing srcPath for bookID would carry
+// a file another book tracks away from it, or "" when it would not (#3556).
+// That happens only for an audiobook FOLDER placed in move mode: the folder is
+// moved whole, so everything in it goes. Copy and hardlink leave the source,
+// and every file in it, where it was.
+//
+// Fix match calls this before detaching the file from its current book, so a
+// refusal leaves that book's row in place rather than leaving the folder
+// tracked by nobody. The import runs the same check as a backstop. The mode
+// is resolved with the inputs tryImportInternal uses for a manual import.
+func (s *Scanner) FolderRelocationRefusal(ctx context.Context, bookID int64, srcPath, formatHint string, viewerUserID int64) (string, error) {
+	info, err := os.Stat(srcPath)
+	if err != nil || !info.IsDir() {
+		return "", nil
+	}
+	if previewFormat(ctx, srcPath, formatHint) != models.MediaTypeAudiobook {
+		return "", nil
+	}
+	book, err := s.books.GetByID(ctx, bookID)
+	if err != nil || book == nil {
+		return "", err
+	}
+	var author *models.Author
+	if a, aerr := s.authors.GetByID(ctx, book.AuthorID); aerr == nil {
+		author = a
+	}
+	configured := effectiveConfiguredMode(s.downloadImportMode(ctx, srcPath, formatHint, nil), "")
+	if s.resolveImportMode(configured, srcPath, s.effectiveAudiobookDir(ctx, author)) != "move" {
+		return "", nil
+	}
+	return s.heldFolderReason(ctx, srcPath, bookID, viewerUserID)
+}
+
+// pathOwnedElsewhereError is a *db.PathOwnedError whose text leaves out the
+// book that holds the path.
+type pathOwnedElsewhereError struct{ owned *db.PathOwnedError }
+
+func (e *pathOwnedElsewhereError) Error() string {
+	return fmt.Sprintf("%s: the destination path is already used by another book in the library", e.owned.Path)
+}
+
+func (e *pathOwnedElsewhereError) Unwrap() error { return e.owned }
 
 // recordFixMatchMove writes the bookFileMoved history row for a Fix match
 // whose import completed, naming the book the file came from. dest is where
@@ -97,7 +306,7 @@ func (s *Scanner) recordFixMatchMove(ctx context.Context, book *models.Book, des
 	if len(fm.SourcePaths) > 0 {
 		source = fm.SourcePaths[0]
 	}
-	s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, map[string]string{
+	s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, book.OwnerUserID, map[string]string{
 		"path":       dest,
 		"sourcePath": source,
 		"fromBookId": strconv.FormatInt(fm.FromBookID, 10),
@@ -194,6 +403,6 @@ func (s *Scanner) RelinkFile(ctx context.Context, bookID int64, paths []string, 
 	}
 	// Written for an untracked file too, so the link never appears on a
 	// book's History without a trace of where it came from.
-	s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, data)
+	s.createHistoryEvent(ctx, models.HistoryEventBookFileMoved, book.Title, &book.ID, book.OwnerUserID, data)
 	return res, nil
 }

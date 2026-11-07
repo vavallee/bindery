@@ -1016,3 +1016,28 @@ func TestAggregator_GetAuthorWorksUnenriched_SkipsPerWorkCoverEnrichment(t *test
 		t.Fatalf("cached works = %d, want 3", len(cached))
 	}
 }
+
+// A release date the merge takes from a supplementary provider is not the
+// primary's date for the work, so it is marked unknown and an author refresh
+// does not write it onto an existing book (#3105).
+func TestMergeAuthorWorkMetadata_SupplementDateIsMarkedUnknown(t *testing.T) {
+	d := time.Date(2002, 1, 1, 0, 0, 0, 0, time.UTC)
+	dst := models.Book{MetadataProvider: "openlibrary"}
+	mergeAuthorWorkMetadata(&dst, models.Book{MetadataProvider: "hardcover", ReleaseDate: &d})
+	if dst.ReleaseDate == nil || !slices.Contains(dst.UnknownFields, models.BookFieldReleaseDate) {
+		t.Errorf("filled date not marked: date=%v unknown=%v", dst.ReleaseDate, dst.UnknownFields)
+	}
+
+	own := time.Date(1999, 1, 1, 0, 0, 0, 0, time.UTC)
+	dst2 := models.Book{MetadataProvider: "openlibrary", ReleaseDate: &own}
+	mergeAuthorWorkMetadata(&dst2, models.Book{MetadataProvider: "hardcover", ReleaseDate: &d})
+	if len(dst2.UnknownFields) != 0 || dst2.ReleaseDate.Year() != 1999 {
+		t.Errorf("the primary's own date must stay unmarked: %v %v", dst2.ReleaseDate, dst2.UnknownFields)
+	}
+
+	dst3 := models.Book{MetadataProvider: "openlibrary"}
+	mergeAuthorWorkMetadata(&dst3, models.Book{MetadataProvider: "hardcover"})
+	if len(dst3.UnknownFields) != 0 {
+		t.Errorf("nothing was filled, nothing to mark: %v", dst3.UnknownFields)
+	}
+}

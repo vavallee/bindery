@@ -377,10 +377,13 @@ func importReadarrBlocklist(ctx context.Context, src *sql.DB, repo *db.Blocklist
 		res.Requested++
 
 		// We don't have a GUID, so use the release title as the key.
+		// Readarr's entries carry no book, so they block the release
+		// for every book.
 		entry := &models.BlocklistEntry{
 			GUID:   t,
 			Title:  t,
 			Reason: message.String,
+			Scope:  models.BlocklistScopeRelease,
 		}
 		if err := repo.Create(ctx, entry); err != nil {
 			res.fail(t, err.Error())

@@ -20,6 +20,11 @@ Every field you edit is **locked**: the scheduled metadata refresh, the
 author-works sync, and Audiobookshelf/Calibre re-imports keep your value
 instead of overwriting it. Locked fields show a 🔒 badge in the edit dialog.
 
+A field you have not edited is not protected: refreshing an author updates
+the release date of its existing books when the provider's record differs, and
+fills a description the book lacks. Language is not updated. See
+[Refresh metadata](User-Guide-Wiki.md).
+
 ## Unlocking
 
 **Unlock all fields** in the edit dialog hands the fields back to the

@@ -56,15 +56,23 @@ type RootFolder struct {
 type QualityProfile struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
-	// UpgradeAllowed and Cutoff are kept for wire and schema compatibility
-	// only and are consulted by nothing. Their Settings controls were removed
-	// in #2373 because no code path has ever read them: there is no upgrade
-	// re-grab sweep for a cutoff to gate, so the form was promising behaviour
-	// that did not exist. The quality_profiles columns and these JSON fields
-	// stay so existing rows still load and a third-party client that sends
-	// them still works. Wiring an upgrade path is tracked separately.
-	UpgradeAllowed bool   `json:"upgradeAllowed"`
-	Cutoff         string `json:"cutoff"`
+	// UpgradeAllowed turns on the ebook upgrade sweep for books this profile
+	// governs (#2420): an imported ebook whose best file ranks below Cutoff is
+	// searched again, and a release at or above the cutoff that beats the
+	// owned file is grabbed. It is off by default. Migration 122 cleared the
+	// column on every existing row, because the column defaulted to on and
+	// nothing read it until now, so no install changes behaviour on upgrade.
+	// Audiobooks are never upgraded.
+	UpgradeAllowed bool `json:"upgradeAllowed"`
+	// Cutoff is the ebook format an upgrade aims for. A book that already
+	// holds a file at or above it is left alone. It must be a ticked ebook
+	// format in Items for an upgrade to run (indexer.EbookUpgradeEligible).
+	Cutoff string `json:"cutoff"`
+	// RemoveReplaced makes a verified upgrade delete the file it replaced.
+	// False, the default, keeps the old file next to the new one. The flag is
+	// "remove" rather than "keep" on purpose: a client that does not send the
+	// field decodes it as false, and false must be the safe answer (#1357).
+	RemoveReplaced bool `json:"removeReplaced"`
 	// Items is the profile's format list in preference order, best first
 	// within each media type. The media type of an entry is derived from its
 	// token (indexer.MediaTypeForFormat), so the one slice holds an ebook list
@@ -74,8 +82,13 @@ type QualityProfile struct {
 	// entries for is not allowed; an empty list means no opinion on that media
 	// type. The wire shape is unchanged from before the order was read:
 	// [{quality, allowed}], nothing else.
-	Items     []QualityItem `json:"items"`
-	CreatedAt time.Time     `json:"createdAt"`
+	Items []QualityItem `json:"items"`
+	// PreferredNarrators is the audiobook narrator preference, best first, and
+	// EditionPreference one of the EditionPref constants. Both empty (the
+	// default) leave ranking exactly as it was (#1358).
+	PreferredNarrators []string  `json:"preferredNarrators"`
+	EditionPreference  string    `json:"editionPreference"`
+	CreatedAt          time.Time `json:"createdAt"`
 	// OwnerUserID is the per-user ownership column added in migration 025.
 	// See RootFolder for legacy zero-value semantics.
 	OwnerUserID int64 `json:"-"`
@@ -93,6 +106,12 @@ type HistoryEvent struct {
 	SourceTitle string    `json:"sourceTitle"`
 	Data        string    `json:"data"`
 	CreatedAt   time.Time `json:"createdAt"`
+	// OwnerUserID is the user the event belongs to (migration 117), 0 for
+	// none. HistoryRepo.Create stamps the book's owner when the book has one
+	// and falls back to this value, so callers set it to the download's owner
+	// or the request identity. It outlives the book, which is what keeps a
+	// deleted book's history with its owner.
+	OwnerUserID int64 `json:"-"`
 }
 
 const (
@@ -103,9 +122,13 @@ const (
 	HistoryEventBookRenamed          = "bookRenamed"
 	HistoryEventDownloadFolderImport = "downloadFolderImported"
 	HistoryEventBookFileDeleted      = "bookFileDeleted"
-	HistoryEventDownloadStalled      = "downloadStalled"
-	HistoryEventDownloadRequeued     = "downloadRequeued"
-	HistoryEventBookRebound          = "bookRebound"
+	// HistoryEventImportRejected records a Reject import action (#3250): the
+	// imported file was detached, its source release blocklisted and the book
+	// returned to Wanted.
+	HistoryEventImportRejected   = "importRejected"
+	HistoryEventDownloadStalled  = "downloadStalled"
+	HistoryEventDownloadRequeued = "downloadRequeued"
+	HistoryEventBookRebound      = "bookRebound"
 	// HistoryEventBookFileMoved records that Fix match moved a tracked file from
 	// one book to another (#2937). BookID is the book that now holds it; Data
 	// carries "path", "sourcePath", "fromBookId", "fromTitle" and "message".

@@ -93,9 +93,11 @@ func TestPendingReleaseRepo_Coverage(t *testing.T) {
 	all, err := repo.List(ctx)
 	assertGUIDs("List", all, err, "g-3", "g-2", "g-1")
 
-	// Upsert on an existing guid refreshes reason and age only.
+	// Upsert on a guid the same book already holds refreshes reason and age
+	// only. Another book's upsert of that guid is its own row (#3564), see
+	// TestPendingReleaseUpsertKeepsEachBooksRow.
 	if err := repo.Upsert(ctx, &models.PendingRelease{
-		BookID: bobBook.ID, MediaType: "audiobook", Title: "changed", GUID: "g-1",
+		BookID: aliceBook.ID, MediaType: "audiobook", Title: "changed", GUID: "g-1",
 		Protocol: "usenet", AgeMinutes: 99, Reason: "score", ReleaseJSON: "{}",
 	}); err != nil {
 		t.Fatal(err)
@@ -157,11 +159,11 @@ func TestPendingReleaseRepo_Coverage(t *testing.T) {
 	}
 	all, err = repo.List(ctx)
 	assertGUIDs("after DeleteByBookAndMediaType", all, err, "g-3", "g-1")
-	if err := repo.DeleteByGUID(ctx, "g-3"); err != nil {
+	if err := repo.DeleteByID(ctx, all[0].ID); err != nil {
 		t.Fatal(err)
 	}
 	all, err = repo.List(ctx)
-	assertGUIDs("after DeleteByGUID", all, err, "g-1")
+	assertGUIDs("after DeleteByID", all, err, "g-1")
 	add(aliceBook.ID, "audiobook", "g-4", "delay", nil, "")
 	add(bobBook.ID, "ebook", "g-5", "delay", nil, "")
 	if err := repo.DeleteByBook(ctx, aliceBook.ID); err != nil {
@@ -182,4 +184,80 @@ func TestPendingReleaseRepo_Coverage(t *testing.T) {
 	}
 	all, err = repo.List(ctx)
 	assertGUIDs("after book delete", all, err)
+}
+
+// TestPendingReleaseUpsertKeepsEachBooksRow is #3564: a release held back for
+// one book must also be held for a second book that wants it. With guid unique
+// on its own the second upsert folded into the first book's row, so the second
+// book never listed the release and never grabbed it when the delay ran out.
+func TestPendingReleaseUpsertKeepsEachBooksRow(t *testing.T) {
+	t.Parallel()
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	ctx := context.Background()
+
+	alice := seedUser(t, ctx, database, "pr-row-alice")
+	bob := seedUser(t, ctx, database, "pr-row-bob")
+	authors := NewAuthorRepo(database)
+	books := NewBookRepo(database)
+	author := mkAuthor(t, authors, ctx, "OL-PR-ROW-A")
+	newBook := func(fid string, owner int64) *models.Book {
+		t.Helper()
+		b := &models.Book{
+			ForeignID: fid, AuthorID: author.ID, Title: "Same Work", SortTitle: "Same Work",
+			Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary",
+			Monitored: true, OwnerUserID: owner,
+		}
+		if err := books.Create(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	aliceBook := newBook("OL-PR-ROW-1", alice)
+	bobBook := newBook("OL-PR-ROW-2", bob)
+
+	repo := NewPendingReleaseRepo(database)
+	for _, b := range []*models.Book{aliceBook, bobBook} {
+		if err := repo.Upsert(ctx, &models.PendingRelease{
+			BookID: b.ID, MediaType: "ebook", Title: "Same Work epub", GUID: "shared-guid",
+			Protocol: "usenet", AgeMinutes: 5, Reason: "usenet delay not met", ReleaseJSON: "{}",
+		}); err != nil {
+			t.Fatalf("Upsert for book %d: %v", b.ID, err)
+		}
+	}
+
+	for _, b := range []*models.Book{aliceBook, bobBook} {
+		rows, err := repo.ListByBookAndMediaType(ctx, b.ID, "ebook")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || rows[0].GUID != "shared-guid" {
+			t.Errorf("book %d pending rows = %+v, want its own shared-guid row", b.ID, rows)
+		}
+	}
+	forBob, err := repo.ListForUser(ctx, bob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(forBob) != 1 || forBob[0].BookID != bobBook.ID {
+		t.Errorf("bob's pending list = %+v, want his own row", forBob)
+	}
+
+	// The same book upserting again still refreshes its one row.
+	if err := repo.Upsert(ctx, &models.PendingRelease{
+		BookID: bobBook.ID, MediaType: "ebook", Title: "x", GUID: "shared-guid",
+		Protocol: "usenet", AgeMinutes: 50, Reason: "again", ReleaseJSON: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := repo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("rows after a repeat upsert = %d, want 2", len(all))
+	}
 }

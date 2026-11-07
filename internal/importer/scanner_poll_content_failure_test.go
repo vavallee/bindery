@@ -109,6 +109,11 @@ func (f contentFailureFixture) assertBlocklisted(t *testing.T, ctx context.Conte
 		t.Errorf("blocklist entry = {guid %q, reason %q}, want {%q, %q}",
 			entries[0].GUID, entries[0].Reason, guid, wantReason)
 	}
+	// The client's verdict is about the release, so it blocks every book
+	// that wants it, not only the one it was grabbed for (#3563).
+	if entries[0].Scope != models.BlocklistScopeRelease {
+		t.Errorf("blocklist entry scope = %q, want %q", entries[0].Scope, models.BlocklistScopeRelease)
+	}
 	ok, _ := decision.NewBlocklistedSpec(entries).IsSatisfiedBy(decision.Release{GUID: guid}, models.Book{})
 	if ok {
 		t.Error("the next sweep's blocklist spec would still accept the release")
@@ -191,7 +196,7 @@ func TestCheckNZBGetDownloads_ContentFailureDedupe(t *testing.T) {
 
 	f := newContentFailureFixture(t)
 	bookID := f.addBook(t, ctx, "dedupe")
-	if err := f.blocklist.Create(ctx, &models.BlocklistEntry{BookID: &bookID, GUID: "guid-dupe", Title: "Broken Book", Reason: "downloadFailed: FAILURE/PAR"}); err != nil {
+	if err := f.blocklist.Create(ctx, &models.BlocklistEntry{BookID: &bookID, GUID: "guid-dupe", Title: "Broken Book", Reason: "downloadFailed: FAILURE/PAR", Scope: models.BlocklistScopeRelease}); err != nil {
 		t.Fatal(err)
 	}
 	client := nzbgetClient(t, ctx, f.clients, srv.URL)
@@ -232,6 +237,43 @@ func TestCheckNZBGetDownloads_ContentFailureOtherBookRow(t *testing.T) {
 	got := f.entries(t, ctx)
 	if len(got) != 1 || got[0].BookID == nil || *got[0].BookID != bookB {
 		t.Fatalf("blocklist after deleting book A's rows = %+v, want one row for book B", got)
+	}
+}
+
+// TestCheckNZBGetDownloads_ContentFailureOverABookScopedRow is #3563 review
+// item 1. The release is already on the blocklist for this book, scoped to the
+// book (its profile refused the format, or someone blocklisted it from its
+// History). When the client then fails the release as broken, that book entry
+// must not count as a duplicate: it blocks this book only, and skipping the
+// release scoped entry would leave the broken release open to every other
+// book.
+func TestCheckNZBGetDownloads_ContentFailureOverABookScopedRow(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(nzbgetHandler(t, []nzbget.HistoryItem{{
+		NZBID: 80, NZBName: "Broken Book", Status: "FAILURE/PAR",
+	}}, nil))
+	defer srv.Close()
+
+	f := newContentFailureFixture(t)
+	bookA := f.addBook(t, ctx, "scoped-a")
+	bookB := f.addBook(t, ctx, "scoped-b")
+	if err := f.blocklist.Create(ctx, &models.BlocklistEntry{
+		BookID: &bookA, GUID: "guid-scoped", Title: "Broken Book",
+		Reason: "format mobi is not allowed", Scope: models.BlocklistScopeBook,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	client := nzbgetClient(t, ctx, f.clients, srv.URL)
+	f.addDownload(t, ctx, client, "guid-scoped", "80", &bookA)
+
+	f.scanner.checkNZBGetDownloads(ctx, client)
+
+	got := f.entries(t, ctx)
+	if len(got) != 2 {
+		t.Fatalf("blocklist = %+v, want the book entry and a new release entry", got)
+	}
+	if ok, _ := decision.NewBlocklistedSpec(got).IsSatisfiedBy(decision.Release{GUID: "guid-scoped"}, models.Book{ID: bookB}); ok {
+		t.Error("the broken release is still open to another book")
 	}
 }
 

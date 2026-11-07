@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -340,6 +341,52 @@ func validateImportModeValue(key, value string) error {
 	return fmt.Errorf("%s %q is not one of: %s", key, value, strings.Join(importModeValues, ", "))
 }
 
+// SettingImportSourceFolders is the admin configured list of extra folders the
+// manual import may browse and read from (#2168), one absolute path per line.
+// Unlike root folders these are never a destination: no author is filed there
+// and no library scan walks them.
+const SettingImportSourceFolders = "import.source_folders"
+
+// ParseImportSourceFolders splits the stored value into trimmed, non empty,
+// cleaned absolute paths. Relative entries are dropped, so a hand edited row
+// can never widen containment to a path anchored on the working directory.
+func ParseImportSourceFolders(value string) []string {
+	var out []string
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !filepath.IsAbs(line) {
+			continue
+		}
+		out = append(out, filepath.Clean(line))
+	}
+	return out
+}
+
+// validateImportSourceFolders requires every line to be an absolute path to an
+// existing directory, and refuses the filesystem root, which would make the
+// whole container readable by manual import.
+func validateImportSourceFolders(value string) error {
+	if n := len(ParseImportSourceFolders(value)); n > maxImportSourceFolders {
+		return fmt.Errorf("%s lists %d folders; the limit is %d", SettingImportSourceFolders, n, maxImportSourceFolders)
+	}
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !filepath.IsAbs(line) {
+			return fmt.Errorf("%s %q must be an absolute path", SettingImportSourceFolders, line)
+		}
+		if filepath.Clean(line) == string(filepath.Separator) {
+			return fmt.Errorf("%s must not be the filesystem root", SettingImportSourceFolders)
+		}
+		if err := validateDropFolderValue(SettingImportSourceFolders, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // validateDropFolderValue checks one drop folder path for key. Empty is
 // accepted (feature off, or for the audiobook folder, use import.drop_folder);
 // a non-empty value must resolve to an existing directory so a typo fails
@@ -373,6 +420,57 @@ type SettingsHandler struct {
 	settings   *db.SettingsRepo
 	dailyQuota *hardcover.DailyQuota
 	onChange   SettingsChangeHook
+	// protectedDirs are Bindery's own data and database folders; an import
+	// source folder may not be, contain or resolve into one (#2168).
+	protectedDirs []string
+}
+
+// WithProtectedDirs names the folders an import source folder must not cover.
+func (h *SettingsHandler) WithProtectedDirs(dirs ...string) *SettingsHandler {
+	for _, d := range dirs {
+		if strings.TrimSpace(d) != "" {
+			h.protectedDirs = append(h.protectedDirs, d)
+		}
+	}
+	return h
+}
+
+// maxImportSourceFolders caps the import.source_folders list.
+const maxImportSourceFolders = 32
+
+// pathWithin reports whether child is parent or lies beneath it.
+func pathWithin(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// validateImportSourceTargets resolves each configured path through symlinks
+// and refuses one that lands on the filesystem root, on a protected folder, or
+// above one. The lexical check in validateImportSourceFolders cannot see a
+// link such as /imports/all pointing at /.
+func (h *SettingsHandler) validateImportSourceTargets(value string) error {
+	var protected []string
+	for _, d := range h.protectedDirs {
+		if real, err := filepath.EvalSymlinks(d); err == nil {
+			protected = append(protected, real)
+		}
+		protected = append(protected, filepath.Clean(d))
+	}
+	for _, line := range ParseImportSourceFolders(value) {
+		real, err := filepath.EvalSymlinks(line)
+		if err != nil {
+			return fmt.Errorf("%s %q: %w", SettingImportSourceFolders, line, err)
+		}
+		if real == string(filepath.Separator) {
+			return fmt.Errorf("%s %q resolves to the filesystem root", SettingImportSourceFolders, line)
+		}
+		for _, p := range protected {
+			if pathWithin(real, p) || pathWithin(p, real) {
+				return fmt.Errorf("%s %q is, contains or is inside Bindery's own data folder", SettingImportSourceFolders, line)
+			}
+		}
+	}
+	return nil
 }
 
 // SettingsChangeHook runs after a setting has been stored (PUT) or removed
@@ -761,6 +859,8 @@ const calibredbSaveProbeTimeout = 10 * time.Second
 // so cross-setting rules live here where the settings repo is in hand.
 func (h *SettingsHandler) validateSettingDependencies(ctx context.Context, key, value string) error {
 	switch key {
+	case SettingImportSourceFolders:
+		return h.validateImportSourceTargets(value)
 	case SettingMetadataPrimaryProvider:
 		if value != "hardcover" {
 			return nil
@@ -936,6 +1036,8 @@ func validateSettingValue(key, value string) error {
 		if !info.IsDir() {
 			return fmt.Errorf("cwa.ingest_path %q is not a directory", value)
 		}
+	case SettingImportSourceFolders:
+		return validateImportSourceFolders(value)
 	case SettingImportDropFolder, SettingImportAudiobookDropFolder:
 		// Empty = feature off (or, for audiobooks, use import.drop_folder).
 		// Both folders get the same check so neither can be saved pointing
@@ -1173,6 +1275,22 @@ func validateSettingValue(key, value string) error {
 		}
 		if d > 168*time.Hour {
 			return fmt.Errorf("hardcover.sync_interval %q exceeds the maximum of 168h (7 days)", value)
+		}
+	case SettingSeriesMonitoringInterval:
+		// Same bounds and meaning as authors.discovery.interval: unset and
+		// "off" are off, a duration from 24h to 720h turns it on.
+		if value == "" || value == "off" {
+			return nil
+		}
+		d, err := time.ParseDuration(value)
+		if err != nil {
+			return fmt.Errorf("series.monitoring.interval %q is not off or a valid duration (e.g. 24h, 168h, 720h)", value)
+		}
+		if d < 24*time.Hour {
+			return fmt.Errorf("series.monitoring.interval %q is too short, the minimum is 24h", value)
+		}
+		if d > 720*time.Hour {
+			return fmt.Errorf("series.monitoring.interval %q exceeds the maximum of 720h (30 days)", value)
 		}
 	case SettingAuthorDiscoveryInterval:
 		// Empty = unset, which means off, as does "off" itself. Below a day

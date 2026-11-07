@@ -732,8 +732,11 @@ describe('SettingsPage', () => {
     })
 
     const downloads = sectionForHeading('settings.general.downloads')
-    fireEvent.change(downloads.getByRole('combobox'), { target: { value: 'any' } })
-    fireEvent.click(downloads.getByRole('button', { name: 'common.save' }))
+    // The Downloads section holds more than one Save button now (#3416), so
+    // take the one that sits in the language selector's own row.
+    const langSelect = downloads.getByRole('combobox')
+    fireEvent.change(langSelect, { target: { value: 'any' } })
+    fireEvent.click(within(langSelect.parentElement!).getByRole('button', { name: 'common.save' }))
     await waitFor(() => {
     expect(api.setSetting).toHaveBeenCalledWith('search.preferredLanguage', 'any')
     })

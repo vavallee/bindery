@@ -71,6 +71,16 @@ func (s *Scanner) PreviewImportDestination(ctx context.Context, bookID int64, sr
 		Format: format,
 		Path:   srcPath,
 	})
+	// An audiobook folder the import would move whole while it holds a file
+	// another book tracks is refused by the import (#3556). Say so here, so
+	// Fix match does not offer a move it will not make.
+	if status == ReorgStatusMove {
+		if reason, err := s.FolderRelocationRefusal(ctx, bookID, srcPath, formatHint, book.OwnerUserID); err != nil {
+			status, msg = ReorgStatusError, err.Error()
+		} else if reason != "" {
+			status, msg = ReorgStatusError, reason
+		}
+	}
 	return DestinationPreview{
 		Source:      srcPath,
 		Destination: proposed,

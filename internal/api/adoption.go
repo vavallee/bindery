@@ -50,6 +50,8 @@ type adoptionUnitStore interface {
 	Claim(ctx context.Context, id int64, from, to string) (string, error)
 	ReleaseClaim(ctx context.Context, id int64, from, to, token string) (bool, error)
 	RecordAdoptionProgress(ctx context.Context, id int64, token string, rec db.AdoptionRecord) (bool, error)
+	ApplyAdoptionSeriesHint(ctx context.Context, id int64, token string, bookID, seriesID int64, title, position string) (*db.AdoptionSeriesLink, error)
+	ReverseAdoptionSeriesLink(ctx context.Context, link *db.AdoptionSeriesLink) error
 	CompleteAdoption(ctx context.Context, id int64, token string, rec db.AdoptionRecord) (bool, error)
 	CompleteUndo(ctx context.Context, id int64, token string) (bool, error)
 	ResetToPending(ctx context.Context, id int64, from, token string) (bool, error)
@@ -112,6 +114,19 @@ type adoptionAuthorConflict struct {
 	Folder string `json:"folder"`
 }
 
+// adoptionSeriesHint is path evidence the scanner could read, not a series
+// membership. Adoption deliberately leaves the choice to the user: an old
+// library can contain a box-set or collection folder that looks like a series
+// path, and silently creating a link from it would be difficult to undo.
+//
+// Position is required. A bare parent folder name is too ambiguous to offer as
+// a useful hint (for example, Author/Collection/Book), whereas the parser's
+// explicit "Series #2 - Title" and "[Series 2]" forms are safe to show.
+type adoptionSeriesHint struct {
+	Title    string `json:"title"`
+	Position string `json:"position"`
+}
+
 // adoptionItem is one row as the web sees it.
 type adoptionItem struct {
 	ID           int64  `json:"id"`
@@ -125,6 +140,10 @@ type adoptionItem struct {
 	ParsedTitle  string `json:"parsedTitle"`
 	ParsedAuthor string `json:"parsedAuthor"`
 	Reason       string `json:"reason"`
+	// SeriesHint is explicit series-and-position evidence extracted from the
+	// unit path. It is a preview only; no series relationship is inferred or
+	// written during adoption (#1430).
+	SeriesHint *adoptionSeriesHint `json:"seriesHint,omitempty"`
 	// AuthorConflict is set when the parsed author (what the files' tags or
 	// names say) is not the author folder's.
 	AuthorConflict *adoptionAuthorConflict `json:"authorConflict,omitempty"`
@@ -275,6 +294,7 @@ func toAdoptionItem(u *db.UnmatchedUnit, refs map[int64]db.UnmatchedBookRef) ado
 		BookCreated: u.CreatedBookID > 0, AuthorCreated: u.CreatedAuthorID > 0,
 		Members: memberNames(u), FirstSeenAt: u.FirstSeenAt, ResolvedAt: u.ResolvedAt,
 	}
+	it.SeriesHint = seriesHintFromUnit(u)
 	// The scan decides a conflict with every author tag in hand and records
 	// it; deriving it here from the parsed author would flag a narrator in
 	// the Artist tag as another author (#2942).
@@ -293,6 +313,26 @@ func toAdoptionItem(u *db.UnmatchedUnit, refs map[int64]db.UnmatchedBookRef) ado
 		it.Book = &ref
 	}
 	return it
+}
+
+// seriesHintFromUnit returns the first explicit series-and-position pair the
+// filename parser finds. Folder units are tried through their member files as
+// well: their own path is the book directory, while the Readarr-style marker
+// is often that directory's name as seen from a file below it.
+func seriesHintFromUnit(u *db.UnmatchedUnit) *adoptionSeriesHint {
+	paths := make([]string, 0, len(u.MemberPaths)+1)
+	if u.UnitPath != "" {
+		paths = append(paths, u.UnitPath)
+	}
+	paths = append(paths, u.MemberPaths...)
+	for _, path := range paths {
+		parsed := importer.ParseFilename(path)
+		title, position := strings.TrimSpace(parsed.Series), strings.TrimSpace(parsed.SeriesNumber)
+		if title != "" && position != "" {
+			return &adoptionSeriesHint{Title: title, Position: position}
+		}
+	}
+	return nil
 }
 
 // memberNames lists up to maxAdoptionMembersShown member files, relative to

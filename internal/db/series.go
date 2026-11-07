@@ -57,7 +57,7 @@ func (r *SeriesRepo) List(ctx context.Context) ([]models.Series, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := r.hydrateHardcoverLinks(ctx, series); err != nil {
+	if err := r.hydrateSeriesExtras(ctx, series); err != nil {
 		return nil, err
 	}
 	return series, nil
@@ -235,7 +235,7 @@ func (r *SeriesRepo) listWithBooksForUser(ctx context.Context, userID int64, ser
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := r.hydrateHardcoverLinks(ctx, series); err != nil {
+	if err := r.hydrateSeriesExtras(ctx, series); err != nil {
 		return nil, err
 	}
 	return series, nil
@@ -444,7 +444,8 @@ func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*mod
 	q := `
 		SELECT sb.series_id, sb.book_id, sb.position_in_series, sb.primary_series,
 		       b.id, b.foreign_id, b.author_id, b.title, b.sort_title, b.status,
-		       b.monitored, b.image_url, b.created_at, b.updated_at, b.excluded
+		       b.monitored, b.image_url, b.created_at, b.updated_at, b.excluded,
+		       COALESCE(b.owner_user_id, 0)
 		FROM series_books sb
 		JOIN books b ON b.id = sb.book_id
 		` + scope + `
@@ -463,6 +464,7 @@ func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*mod
 			&sb.SeriesID, &sb.BookID, &sb.PositionInSeries, &primarySeries,
 			&b.ID, &b.ForeignID, &b.AuthorID, &b.Title, &b.SortTitle, &b.Status,
 			&monitored, &b.ImageURL, &b.CreatedAt, &b.UpdatedAt, &excluded,
+			&b.OwnerUserID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan series book: %w", err)
@@ -482,6 +484,11 @@ func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*mod
 		return nil, err
 	}
 	s.HardcoverLink = link
+	mon, err := r.GetMonitoring(ctx, s.ID)
+	if err != nil {
+		return nil, err
+	}
+	s.Monitoring = mon
 	return &s, nil
 }
 
@@ -1180,6 +1187,16 @@ func (r *SeriesRepo) UnlinkBook(ctx context.Context, seriesID, bookID int64) err
 // API endpoint that backs it. Returns an empty slice (not nil) when the
 // author has no series-linked books.
 func (r *SeriesRepo) ListByAuthor(ctx context.Context, authorID int64) ([]models.Series, error) {
+	return r.ListByAuthorAndUser(ctx, authorID, 0)
+}
+
+// ListByAuthorAndUser is ListByAuthor limited to the books a user can see
+// (their own plus unowned ones; userID 0 leaves it unscoped, for admins and
+// single-tenant deployments). A series that is linked to the author only
+// through other accounts' books is left out entirely. Use it for any read that
+// answers an HTTP caller, since a shared author can hold other accounts'
+// books.
+func (r *SeriesRepo) ListByAuthorAndUser(ctx context.Context, authorID, userID int64) ([]models.Series, error) {
 	// One row per (series, author-book) membership so we can populate each
 	// series' .Books. The author scope stays in the WHERE clause, so only this
 	// author's books appear under each series — matching the frontend join,
@@ -1188,6 +1205,7 @@ func (r *SeriesRepo) ListByAuthor(ctx context.Context, authorID int64) ([]models
 	// Because we now select per-book columns we can no longer SELECT DISTINCT
 	// on series-only columns; we dedup series via a byID map (mirroring
 	// ListWithBooks) and append each book to its series.
+	scope, scopeArgs := QueryScopeForIncludingNull("b.owner_user_id", "WHERE b.author_id = ?", userID, authorID)
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT s.id, s.foreign_id, s.title, s.description, s.monitored, s.genre_override, s.created_at,
 		       sb.series_id, sb.book_id, sb.position_in_series, sb.primary_series,
@@ -1196,8 +1214,8 @@ func (r *SeriesRepo) ListByAuthor(ctx context.Context, authorID int64) ([]models
 		FROM series s
 		JOIN series_books sb ON sb.series_id = s.id
 		JOIN books b ON b.id = sb.book_id
-		WHERE b.author_id = ?
-		ORDER BY s.title, CAST(NULLIF(sb.position_in_series, '') AS REAL), sb.position_in_series, b.sort_title`, authorID)
+		`+scope+`
+		ORDER BY s.title, CAST(NULLIF(sb.position_in_series, '') AS REAL), sb.position_in_series, b.sort_title`, scopeArgs...) // #nosec G202 -- scope is a fixed predicate from QueryScopeForIncludingNull; ids stay bound args
 	if err != nil {
 		return nil, fmt.Errorf("list series by author %d: %w", authorID, err)
 	}
@@ -1266,7 +1284,7 @@ func (r *SeriesRepo) ListByAuthor(ctx context.Context, authorID int64) ([]models
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := r.hydrateHardcoverLinks(ctx, series); err != nil {
+	if err := r.hydrateSeriesExtras(ctx, series); err != nil {
 		return nil, err
 	}
 	return series, nil

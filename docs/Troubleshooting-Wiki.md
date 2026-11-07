@@ -19,6 +19,10 @@ is collapsed by default, shows the reason on each row, and has the same Grab
 button. Releases dropped as not a book (video, a movie or console category, a
 raw usenet posting) are listed in the search details panel only.
 
+Releases dropped because their title contains one of your own rejected words
+(Settings, General, Downloads, `search.rejectWords`) are listed there too, with
+the word that matched. Clear the setting to stop rejecting anything.
+
 ### A release names the next book in the series
 
 Matching also reads what comes AFTER your title. A release that has the whole
@@ -770,6 +774,24 @@ The error tells you which side failed:
 | `GraphQL: ...` | Hardcover answered normally but rejected the query | A Bindery bug. Please file an issue with the message |
 
 **On token formats:** Hardcover issues `hc_pat_` personal access tokens alongside the older JWTs, and **both work**. Bindery sends whatever you save as `Authorization: Bearer <token>`, which is the scheme Hardcover accepts for either format, so there is nothing to configure per format. Pasting the whole header is fine too: a leading `Bearer ` or `Authorization: ` is stripped before the token is stored. Verified against the live API on 2026-08-24, a made up `hc_pat_...` value comes back as `401 invalid_token`, so a PAT that fails with 401 is a token to reissue, while a PAT that fails with 500 is an outage to wait out.
+
+## A Google Books title says "Author metadata unavailable" when I add it
+
+Google Books gives a volume an author name but no author id, so Add Book normally borrows the author from OpenLibrary, or from an author already in your library with that name. A recent self published book can be on Google Books and nowhere else, so there is no one to borrow from.
+
+When that happens Bindery creates the author itself, with an id built from the name (`gb:author:owen-brackett`), and adds the book under it. This only happens when OpenLibrary was really asked and has no record of that name at all. The rules, plainly:
+
+- **OpenLibrary has to be in use.** If OpenLibrary is switched off (it is a toggleable enricher, and it is skipped when it is not part of your provider set), Bindery cannot tell that nobody knows the author, so you still get the message. Turn OpenLibrary on and try again.
+- **A failed OpenLibrary lookup still refuses.** Try again once it answers.
+- **An OpenLibrary record with the same name blocks it, even one with no books.** That is probably the real person under a thin record, and a second author beside it would be a duplicate. Add the author from the Authors page by that OpenLibrary record instead.
+- **A different spelling is not detected.** If OpenLibrary knows the author as "J. R. Smith" and Google Books says "James Smith", Bindery sees two people and makes a new author. Merge them by hand afterwards.
+- The volume must be from Google Books, and the name needs at least one letter or digit.
+- The same name always gives the same id, and an author already in your library with that name is reused first. Two different people with exactly the same name share one author. Under multiple users the author belongs to whoever added it first, and a second user adding the same one gets "author already exists", as with any shared author.
+- If the same person later turns up on OpenLibrary you will have two authors, because Bindery does not upgrade a `gb:author:` row in place the way it does for German National Library ones. Merge them by hand.
+
+Google Books cannot list an author's other works, so it never adds or removes books for such an author. Refreshing one still asks the name based sources (Hardcover when it is on, and Audible for audiobooks), which can add books matched by name. Add the author's other Google Books titles one at a time.
+
+Adding an author from a typed name on the Authors page is not supported for authors that no provider knows.
 
 ## Why does the metadata button say "Link metadata" on some authors and "Find better metadata" on others?
 

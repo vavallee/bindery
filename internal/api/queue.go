@@ -637,7 +637,7 @@ func (h *QueueHandler) enrichedQueueItems(ctx context.Context) ([]enrichedQueueI
 			diagnostics = append(diagnostics, queuePollDiagnostic{
 				ClientID: cid,
 				Name:     client.Name,
-				Message:  r.Err.Error(),
+				Message:  staleClientMessage(ctx, r.Err),
 			})
 		case client != nil:
 			// Per-call deadline fired or parent ctx canceled before this
@@ -696,6 +696,40 @@ func (h *QueueHandler) enrichedQueueItems(ctx context.Context) ([]enrichedQueueI
 	return items, diagnostics, nil
 }
 
+// staleClientUserMessage is what a caller who is not an admin is told about a
+// download client whose live-status poll failed.
+const staleClientUserMessage = "download client unreachable"
+
+// staleClientMessage is the staleClients message for a failed poll. The
+// client's own error names its address, and download client configuration is
+// admin only, so only an admin gets it; everyone else gets the client's name
+// (on the diagnostic) and staleClientUserMessage.
+func staleClientMessage(ctx context.Context, err error) string {
+	if isAdminCtx(ctx) {
+		return err.Error()
+	}
+	return staleClientUserMessage
+}
+
+// queueErrorMessage renders a download row's stored error message for the
+// caller. A send failure is stored with the client's own text
+// (downloader.SendFailureMessage), which names the client's address: an admin
+// gets that text, anyone else gets sendFailedMessage. A row written before the
+// marker existed is recognised by the address it carries (see
+// looksLikeClientError), and only on a row in the failed state, which is where
+// a send failure lands; an import failure's message is Bindery's own and can
+// hold a path that looks like an address. Every other message passes through.
+func queueErrorMessage(ctx context.Context, status models.DownloadState, msg string) string {
+	detail, fromClient := downloader.SendFailureDetail(msg)
+	if isAdminCtx(ctx) {
+		return detail
+	}
+	if fromClient || (status == models.StateFailed && looksLikeClientError(msg)) {
+		return sendFailedMessage
+	}
+	return msg
+}
+
 // queueListResponse wraps the queue items in an envelope so the handler
 // can surface partial-data warnings when a downloader client failed or
 // timed out during enrichment. Items remains the array clients have
@@ -719,6 +753,7 @@ func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 	bookIDs := make([]int64, 0, len(enriched))
 	for i, item := range enriched {
 		items[i] = QueueItem{Download: item.Download}
+		items[i].ErrorMessage = queueErrorMessage(r.Context(), items[i].Status, items[i].ErrorMessage)
 		// Strip the indexer apikey from the stored download URL before it
 		// reaches the client. The queue is per-user but the apikey is the shared
 		// indexer credential, so exposing it in any user's queue leaks it (same
@@ -1113,7 +1148,7 @@ func (h *QueueHandler) RetryImport(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
 		return
 	}
-	if !auth.CheckOwnership(r.Context(), owner) {
+	if !auth.CheckWriteOwnership(r.Context(), owner) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
 		return
 	}
@@ -1257,7 +1292,7 @@ func (h *QueueHandler) RetryDownload(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	if target == nil || !auth.CheckOwnership(r.Context(), target.OwnerUserID) {
+	if target == nil || !auth.CheckWriteOwnership(r.Context(), target.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
 		return
 	}
@@ -1356,7 +1391,7 @@ func (h *QueueHandler) BulkRetry(w http.ResponseWriter, r *http.Request) {
 		target, ok := byID[id]
 		// Same opaque message as the single paths under tenancy: a caller must
 		// not learn that an id exists from a bulk call either.
-		if !ok || !auth.CheckOwnership(ctx, target.OwnerUserID) {
+		if !ok || !auth.CheckWriteOwnership(ctx, target.OwnerUserID) {
 			setResult(id, queueRetryResult{Error: "download not found"})
 			return
 		}
@@ -1429,7 +1464,7 @@ func noEligibleMediaTypeError(mediaType string) error {
 	if mediaType == models.MediaTypeAudiobook {
 		label = "audiobooks"
 	}
-	return fmt.Errorf("no enabled download client is eligible for %s — enable a download client for %s in Settings", label, label)
+	return fmt.Errorf("no enabled download client is eligible for %s: enable a download client for %s in Settings", label, label)
 }
 
 // clientForGrab picks the client for a grab. An indexer pinned to a download
@@ -1550,7 +1585,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	// caller's to see. A claimed foreign row is fully reset and lends the grab
 	// nothing (see below).
 	now := time.Now().UTC()
-	foreignRow := existing != nil && !auth.CheckOwnership(ctx, existing.OwnerUserID)
+	foreignRow := existing != nil && !auth.CheckWriteOwnership(ctx, existing.OwnerUserID)
 	if foreignRow && !foreignRowClaimable(existing, now) {
 		return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, foreignRowGrabbedDetail)
 	}
@@ -1733,14 +1768,17 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		GlobalRemap:          h.downloadPathRemap,
 	}.WithSeedLimits(h.resolveSeedLimits(ctx, indexerID)))
 	if err != nil {
-		slog.Error("failed to send download to eligible client", "client", client.Name, "error", err, "title", req.Title)
-		wrapped := fmt.Errorf("failed to send to eligible download client %s: %w", client.Name, err)
-		if setErr := h.downloads.SetError(ctx, dl.ID, wrapped.Error()); setErr != nil {
+		slog.Error("failed to send download", "client", client.Name, "error", err, "title", req.Title)
+		if setErr := h.downloads.SetError(ctx, dl.ID, downloader.SendFailureMessage(err)); setErr != nil {
 			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
 		}
-		h.recordHistory(ctx, models.HistoryEventDownloadFailed, req.Title, bookID, map[string]any{"guid": req.GUID, "message": wrapped.Error()})
+		// History reaches accounts other than the admin's and a webhook leaves
+		// the house, so both get fixed text; the client's own error, which
+		// names its address, stays in the log line above and on the download row.
+		failText := sendFailedMessage + nethint.ForErr(err)
+		h.recordHistory(ctx, models.HistoryEventDownloadFailed, req.Title, bookID, grabOwner, map[string]any{"guid": req.GUID, "message": failText})
 		if h.notif != nil {
-			h.notif.Send(ctx, notifier.EventDownloadFailed, map[string]any{"title": req.Title, "message": wrapped.Error()})
+			h.notif.Send(ctx, notifier.EventDownloadFailed, map[string]any{"title": req.Title, "message": failText})
 		}
 		return nil, &sendError{cause: err, pin: pin}
 	}
@@ -1763,7 +1801,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	}
 	dl.Status = models.StateDownloading
 
-	h.recordHistory(ctx, models.HistoryEventGrabbed, req.Title, bookID, map[string]any{
+	h.recordHistory(ctx, models.HistoryEventGrabbed, req.Title, bookID, grabOwner, map[string]any{
 		"guid": req.GUID,
 		"size": req.Size,
 		// The resolved id, not req.IndexerID: the signNZBURL host-match
@@ -1789,8 +1827,9 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	return dl, nil
 }
 
-// recordHistory is a helper to write a history event, swallowing errors.
-func (h *QueueHandler) recordHistory(ctx context.Context, eventType, sourceTitle string, bookID *int64, data any) {
+// recordHistory is a helper to write a history event, swallowing errors. owner
+// is the download's owner, used when the book has none (HistoryRepo.Create).
+func (h *QueueHandler) recordHistory(ctx context.Context, eventType, sourceTitle string, bookID *int64, owner int64, data any) {
 	if h.history == nil {
 		return
 	}
@@ -1804,6 +1843,7 @@ func (h *QueueHandler) recordHistory(ctx context.Context, eventType, sourceTitle
 		EventType:   eventType,
 		SourceTitle: sourceTitle,
 		Data:        string(dataJSON),
+		OwnerUserID: owner,
 	}
 	if err := h.history.Create(ctx, evt); err != nil {
 		slog.Warn("failed to record history", "error", err)
@@ -1828,7 +1868,7 @@ func (h *QueueHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
 		return
 	}
-	if !auth.CheckOwnership(r.Context(), owner) {
+	if !auth.CheckWriteOwnership(r.Context(), owner) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "download not found"})
 		return
 	}
@@ -1956,7 +1996,9 @@ func (h *QueueHandler) removeQueueItem(ctx context.Context, target *models.Downl
 		book, err := h.books.GetByID(ctx, *target.BookID)
 		if err != nil {
 			slog.Warn("failed to load book for download delete", "download_id", target.ID, "book_id", *target.BookID, "error", err)
-		} else if book != nil && book.Monitored {
+		} else if book != nil && book.Monitored && auth.CheckWriteOwnership(ctx, book.OwnerUserID) {
+			// A shared book (no owner) is left alone for a user who is not an
+			// admin: removing their own download does not let them change it.
 			book.Monitored = false
 			if err := h.books.Update(ctx, book); err != nil {
 				slog.Warn("failed to update book after download delete", "download_id", target.ID, "book_id", book.ID, "error", err)
@@ -2034,7 +2076,7 @@ func (h *QueueHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 
 	concurrency.RunBounded(r.Context(), req.IDs, bulkDeleteConcurrency, func(ctx context.Context, id int64) {
 		target, ok := byID[id]
-		if !ok || !auth.CheckOwnership(ctx, target.OwnerUserID) {
+		if !ok || !auth.CheckWriteOwnership(ctx, target.OwnerUserID) {
 			setResult(id, bulkItemResult{Error: "download not found"})
 			return
 		}

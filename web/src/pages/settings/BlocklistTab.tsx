@@ -13,6 +13,22 @@ function formatBlocklistDate(s: string) {
   })
 }
 
+// ScopeBadge says which books an entry blocks (#3563). Nothing is shown for
+// an entry from a server that does not report a scope.
+function ScopeBadge({ scope }: { scope?: BlocklistEntry['scope'] }) {
+  const { t } = useTranslation()
+  if (scope !== 'book' && scope !== 'release') return null
+  const release = scope === 'release'
+  return (
+    <span
+      className="text-xs px-2 py-0.5 rounded bg-slate-200 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200 whitespace-nowrap"
+      title={release ? t('blocklist.scopeReleaseHint') : t('blocklist.scopeBookHint')}
+    >
+      {release ? t('blocklist.scopeRelease') : t('blocklist.scopeBook')}
+    </span>
+  )
+}
+
 export default function BlocklistTab() {
   const { t } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
@@ -117,6 +133,7 @@ export default function BlocklistTab() {
                     </th>
                     <th className="text-left px-4 py-3 text-xs font-medium text-fg-muted uppercase tracking-wider">{t('blocklist.colTitle')}</th>
                     <th className="text-left px-4 py-3 text-xs font-medium text-fg-muted uppercase tracking-wider">{t('blocklist.colReason')}</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-fg-muted uppercase tracking-wider">{t('blocklist.colScope')}</th>
                     <th className="text-left px-4 py-3 text-xs font-medium text-fg-muted uppercase tracking-wider">{t('blocklist.colDate')}</th>
                     <th className="px-4 py-3" />
                   </tr>
@@ -141,6 +158,9 @@ export default function BlocklistTab() {
                         <span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-800 dark:text-red-400">
                           {entry.reason || t('common.unknown', 'Unknown')}
                         </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <ScopeBadge scope={entry.scope} />
                       </td>
                       <td className="px-4 py-3 text-fg-muted whitespace-nowrap text-xs">
                         {formatBlocklistDate(entry.createdAt)}
@@ -191,6 +211,7 @@ export default function BlocklistTab() {
                       <span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-800 dark:text-red-400">
                         {entry.reason || t('common.unknown', 'Unknown')}
                       </span>
+                      <ScopeBadge scope={entry.scope} />
                       <span className="text-[10px] text-fg-muted">{formatBlocklistDate(entry.createdAt)}</span>
                     </div>
                   </div>

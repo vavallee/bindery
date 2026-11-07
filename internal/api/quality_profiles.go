@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -100,7 +101,19 @@ func (h *QualityProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "quality profile not found"})
 		return
 	}
-	var p models.QualityProfile
+	// The narrator and edition preferences start from the stored values so a
+	// client that predates them and sends the whole profile back does not clear
+	// them (#1358). The upgrade settings are seeded the same way (#2420): a
+	// client that omits upgradeAllowed, cutoff or removeReplaced keeps what the
+	// profile has, so an old client cannot silently switch upgrades or file
+	// removal off or, worse, on. A field the client sends wins.
+	p := models.QualityProfile{
+		PreferredNarrators: existing.PreferredNarrators,
+		EditionPreference:  existing.EditionPreference,
+		UpgradeAllowed:     existing.UpgradeAllowed,
+		Cutoff:             existing.Cutoff,
+		RemoveReplaced:     existing.RemoveReplaced,
+	}
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
@@ -175,7 +188,7 @@ func formatInUseMessage(count int, names []string) string {
 //   - at least one allowed format
 //   - no duplicate format names in the preference order
 //
-// Cutoff is deliberately not validated. It was mandatory and had to name an
+// Cutoff is validated only when upgrades are on (#2420). It was mandatory and had to name an
 // allowed format until #2373, when the control was removed from Settings
 // because nothing in Bindery ever read the value. Keeping the old rules would
 // have made a stored profile unsavable the moment its cutoff format was
@@ -202,6 +215,7 @@ func validateQualityProfile(p *models.QualityProfile) string {
 	}
 	seen := make(map[string]struct{}, len(p.Items))
 	var allowedCount int
+	var cutoffAllowed bool
 	p.Cutoff = strings.ToLower(strings.TrimSpace(p.Cutoff))
 	for i, it := range p.Items {
 		q := strings.ToLower(strings.TrimSpace(it.Quality))
@@ -215,10 +229,32 @@ func validateQualityProfile(p *models.QualityProfile) string {
 		p.Items[i].Quality = q
 		if it.Allowed {
 			allowedCount++
+			if q == p.Cutoff && indexer.MediaTypeForFormat(q) == models.MediaTypeEbook {
+				cutoffAllowed = true
+			}
 		}
 	}
 	if allowedCount == 0 {
 		return "at least one allowed format is required"
+	}
+	if pref := strings.TrimSpace(p.EditionPreference); pref != "" && models.NormalizeEditionPreference(pref) == "" {
+		return "unknown edition preference: " + pref
+	}
+	p.EditionPreference = models.NormalizeEditionPreference(p.EditionPreference)
+	p.PreferredNarrators = models.CleanNarrators(p.PreferredNarrators)
+	if len(p.PreferredNarrators) > 50 {
+		return "at most 50 preferred narrators"
+	}
+	for _, n := range p.PreferredNarrators {
+		if len(n) > 200 {
+			return "narrator name too long"
+		}
+	}
+	// Upgrades are the one thing that reads the cutoff (#2420), so it is only
+	// held to a standard when they are on. A profile with upgrades off keeps
+	// saving whatever cutoff it carries, as it did after #2373.
+	if p.UpgradeAllowed && !cutoffAllowed {
+		return "upgrades need a cutoff that is one of the allowed ebook formats"
 	}
 	return ""
 }

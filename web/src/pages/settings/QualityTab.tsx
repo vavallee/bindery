@@ -137,6 +137,11 @@ function ProfileRow({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h4 className="font-medium text-sm">{profile.name}</h4>
+          {profile.upgradeAllowed && profile.cutoff && (
+            <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+              {t(profile.removeReplaced ? 'settings.quality.upgradesBadgeRemove' : 'settings.quality.upgradesBadgeKeep', { cutoff: profile.cutoff })}
+            </p>
+          )}
           {profile.items && profile.items.length > 0 && (
             <div className="mt-2 space-y-1.5">
               {(['ebook', 'audio'] as const).map(kind => {
@@ -203,8 +208,18 @@ function QualityProfileForm({
   const { t } = useTranslation()
   const [name, setName] = useState(profile?.name ?? '')
   const [lists, setLists] = useState(() => partitionItems(normalisedItems(profile?.items), EBOOK_FORMATS, AUDIOBOOK_FORMATS))
+  const [narratorsText, setNarratorsText] = useState((profile?.preferredNarrators ?? []).join('\n'))
+  const [editionPref, setEditionPref] = useState<string>(profile?.editionPreference ?? '')
+  const [upgradeAllowed, setUpgradeAllowed] = useState(profile?.upgradeAllowed ?? false)
+  const [cutoff, setCutoff] = useState(profile?.cutoff ?? '')
+  const [removeReplaced, setRemoveReplaced] = useState(profile?.removeReplaced ?? false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+
+  // The cutoff must be a ticked ebook format. When it is not, the select shows
+  // the best ticked one, which is also what is saved.
+  const cutoffOptions = lists.ebook.filter(i => i.allowed).map(i => i.quality)
+  const effectiveCutoff = cutoffOptions.includes(cutoff) ? cutoff : (cutoffOptions[0] ?? '')
 
   // Ebook entries first, then audiobook, then anything a third party client
   // stored that neither list knows. The server derives each entry's media
@@ -226,19 +241,25 @@ function QualityProfileForm({
       setErr(t('settings.quality.errorNoAllowed'))
       return
     }
+    if (upgradeAllowed && !effectiveCutoff) {
+      setErr(t('settings.quality.errorCutoffRequired'))
+      return
+    }
     setSaving(true)
     try {
+      // The cutoff and the upgrade switch are read by the ebook upgrade sweep
+      // (#2420). With upgrades off the stored cutoff is sent back untouched,
+      // so a value another client wrote is not blanked.
       const payload: Partial<QualityProfile> = {
         name: name.trim(),
         items,
+        preferredNarrators: narratorsText.split('\n').map(n => n.trim()).filter(Boolean),
+        editionPreference: editionPref as QualityProfile['editionPreference'],
+        upgradeAllowed,
+        cutoff: upgradeAllowed ? effectiveCutoff : (profile?.cutoff ?? effectiveCutoff),
+        removeReplaced,
       }
-      // cutoff and upgradeAllowed are no longer editable here (#2373): nothing
-      // in Bindery has ever read either one. The columns and the API fields
-      // stay, so an edit round-trips whatever the profile already held rather
-      // than blanking a value some other client may still be writing.
       if (profile) {
-        payload.cutoff = profile.cutoff
-        payload.upgradeAllowed = profile.upgradeAllowed
         await api.updateQualityProfile(profile.id, payload)
       } else {
         await api.addQualityProfile(payload)
@@ -286,6 +307,75 @@ function QualityProfileForm({
             onChange={audio => setLists(prev => ({ ...prev, audio }))}
           />
         </div>
+      </div>
+
+      <div>
+        <label htmlFor={`${fid}-2`} className={labelCls}>{t('settings.quality.editionPreference')}</label>
+        <select id={`${fid}-2`} value={editionPref} onChange={e => setEditionPref(e.target.value)} className={inputCls}>
+          <option value="">{t('settings.quality.editionPrefOff')}</option>
+          <option value="prefer_unabridged">{t('settings.quality.editionPrefPrefer')}</option>
+          <option value="require_unabridged">{t('settings.quality.editionPrefRequire')}</option>
+        </select>
+        <p className="text-[11px] text-fg-muted mt-1">{t('settings.quality.editionPreferenceHint')}</p>
+      </div>
+
+      <div>
+        <label htmlFor={`${fid}-3`} className={labelCls}>{t('settings.quality.preferredNarrators')}</label>
+        <textarea id={`${fid}-3`}
+          value={narratorsText}
+          onChange={e => setNarratorsText(e.target.value)}
+          rows={3}
+          className={inputCls}
+          placeholder={t('settings.quality.preferredNarratorsPlaceholder')}
+        />
+        <p className="text-[11px] text-fg-muted mt-1">{t('settings.quality.preferredNarratorsHint')}</p>
+      </div>
+
+      <div className="space-y-2">
+        <label className="flex items-center gap-2 cursor-pointer text-xs">
+          <input
+            type="checkbox"
+            checked={upgradeAllowed}
+            onChange={e => setUpgradeAllowed(e.target.checked)}
+            className="rounded border-slate-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+          />
+          <span>{t('settings.quality.formUpgradeAllowed')}</span>
+        </label>
+        <p className="text-[11px] text-fg-muted">{t('settings.quality.formUpgradeHint')}</p>
+        {upgradeAllowed && (
+          <div className="space-y-3 pl-6">
+            <div>
+              <label htmlFor={`${fid}-cutoff`} className={labelCls}>{t('settings.quality.formCutoff')}</label>
+              <select
+                id={`${fid}-cutoff`}
+                value={effectiveCutoff}
+                onChange={e => setCutoff(e.target.value)}
+                className={inputCls}
+                disabled={cutoffOptions.length === 0}
+              >
+                {cutoffOptions.length === 0 && (
+                  <option value="">{t('settings.quality.formCutoffNoOptions')}</option>
+                )}
+                {cutoffOptions.map(q => (
+                  <option key={q} value={q}>{q}</option>
+                ))}
+              </select>
+              <p className="text-[11px] text-fg-muted mt-1">{t('settings.quality.formCutoffHint')}</p>
+            </div>
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer text-xs">
+                <input
+                  type="checkbox"
+                  checked={removeReplaced}
+                  onChange={e => setRemoveReplaced(e.target.checked)}
+                  className="rounded border-slate-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+                />
+                <span>{t('settings.quality.formRemoveReplaced')}</span>
+              </label>
+              <p className="text-[11px] text-fg-muted mt-1">{t('settings.quality.formRemoveReplacedHint')}</p>
+            </div>
+          </div>
+        )}
       </div>
 
       {err && <p className="text-xs text-rose-600 dark:text-rose-400">{err}</p>}

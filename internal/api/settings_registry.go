@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/vavallee/bindery/internal/abs"
+	"github.com/vavallee/bindery/internal/indexer"
 )
 
 // SettingType is the shape of a stored setting value. Every value in the
@@ -171,6 +172,12 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 
+	{
+		Key: indexer.SettingRejectWords, Type: SettingTypeString, Default: "",
+		Description: "Words and phrases, separated by commas or new lines, that reject a release whose title contains them, for example Graphic Audio, Full Cast. Matching ignores case, accents on Latin letters (é matches e) and separators (dots, dashes, underscores) and works on whole words only, so cast does not reject Broadcast. Plain text, no patterns. An entry made only of the wanted book's own title or author words is not applied to that book, so Cast does not drop Cast Away but Full Cast still does. A rejected release shows in the Filtered section of the book page and can still be grabbed by hand. Empty rejects nothing. Applies to automatic and interactive search, without a restart.",
+		State:       SettingStateActive,
+	},
+
 	// Scheduler cadences and job tuning.
 	{
 		Key: SettingSearchInterval, Type: SettingTypeDuration, Default: "12h", Min: "1h", Max: "168h",
@@ -187,6 +194,11 @@ var settingDescriptors = []SettingDescriptor{
 	{
 		Key: SettingAuthorDiscoveryInterval, Type: SettingTypeDuration, Default: "off", Min: "24h", Max: "720h",
 		Description: "How often each monitored author's catalogue is checked for new books. Unset and \"off\" both mean no scheduled discovery; store a duration to turn it on.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingSeriesMonitoringInterval, Type: SettingTypeDuration, Default: "off", Min: "24h", Max: "720h",
+		Description: "How often each monitored series is checked against its Hardcover catalogue and new books are added. Unset and \"off\" both mean no scheduled checking; store a duration to turn it on.",
 		State:       SettingStateActive,
 	},
 	{
@@ -253,6 +265,11 @@ var settingDescriptors = []SettingDescriptor{
 		Key: SettingImportEbookContentCheck, Type: SettingTypeEnum, Default: "warn",
 		Values:      contentCheckValues,
 		Description: "Compare a downloaded EPUB's own title and author with the book it was grabbed for. warn imports it and records the mismatch on the History event and webhook, block refuses the download and blocklists the release, off skips the check. Match to book and manual import always skip it.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingImportSourceFolders, Type: SettingTypeString, Default: "",
+		Description: "Extra folders Import, From a folder may browse and import from, one absolute path per line. Each must exist inside the container. They are never a library root, no author is filed there and no library scan walks them. Bindery writes no new files there, but import.mode=move removes imported files from them; mount a folder read only to make a move fail instead of delete. At most 32 paths.",
 		State:       SettingStateActive,
 	},
 	{
@@ -582,6 +599,11 @@ var settingDescriptors = []SettingDescriptor{
 	{
 		Key: SettingOIDCFirstAdminPromoted, Type: SettingTypeBool, Default: "false",
 		Description: "One shot guard recording that an OIDC user has already been auto promoted to admin, so deleting every admin cannot trigger promotion again.",
+		State:       SettingStateInternal,
+	},
+	{
+		Key: SettingProxyFirstAdminPromoted, Type: SettingTypeBool, Default: "false",
+		Description: "One shot guard recording that the first proxy provisioned account has already been promoted to admin, so deleting every admin cannot trigger promotion again.",
 		State:       SettingStateInternal,
 	},
 

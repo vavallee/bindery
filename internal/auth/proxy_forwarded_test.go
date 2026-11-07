@@ -2,11 +2,19 @@ package auth
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
 )
+
+type failingProxyProvisioner struct{}
+
+func (failingProxyProvisioner) ResolveOrProvisionUser(context.Context, string, bool) (int64, error) {
+	return 0, errors.New("database unavailable")
+}
 
 // Regression tests for #3096. trustedProxyMiddleware stores the TCP peer with
 // WithRealPeer and then lets TrustedRealIP rewrite r.RemoteAddr to the client
@@ -89,5 +97,51 @@ func TestProxyAuthRejectionLogsPeerAndClientSeparately(t *testing.T) {
 	}
 	if !strings.Contains(out, "client=203.0.113.9") {
 		t.Errorf("warning should report the forwarded client as client: %s", out)
+	}
+}
+
+func TestProxyAuthProvisioningLogsDoNotExposeUsername(t *testing.T) {
+	const username = "sensitive-user@example.invalid"
+
+	tests := []struct {
+		name        string
+		provisioner UserProvisioner
+		message     string
+	}{
+		{
+			name:        "provisioning failure",
+			provisioner: failingProxyProvisioner{},
+			message:     "proxy auth: user provisioning failed",
+		},
+		{
+			name:        "unknown user",
+			provisioner: &staticProvisioner{},
+			message:     "proxy auth: user not found and auto-provisioning disabled",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
+			p := proxyProvider("172.17.0.0/16", false, 42)
+			p.provisioner = tt.provisioner
+			req := forwardedProxyRequest("/api/v1/author", "172.17.0.1:40000", "203.0.113.9:40000")
+			req.Header.Set("X-Forwarded-User", username)
+
+			if _, ok := resolveProxyIdentity(req, p); ok {
+				t.Fatal("identity unexpectedly resolved")
+			}
+			out := buf.String()
+			if !strings.Contains(out, tt.message) {
+				t.Fatalf("expected provisioning log %q, got: %s", tt.message, out)
+			}
+			if strings.Contains(out, username) {
+				t.Fatalf("proxy identity leaked to log: %s", out)
+			}
+		})
 	}
 }

@@ -120,6 +120,9 @@ type MatchCriteria struct {
 	// on to name one of them after the wanted title (#3268). Empty disables
 	// that rule only.
 	AuthorTitles []string
+	// RejectWords are the install wide words and phrases a release title may
+	// not contain (#3416). See ParseRejectWords. Empty disables the rule.
+	RejectWords []string
 }
 
 // CriteriaISBN picks the ISBN to put in MatchCriteria.ISBN for a book, given
@@ -1015,6 +1018,15 @@ func filterRelevantWithContext(results []newznab.SearchResult, title, author str
 // filter is a projection of this one, so the kept set cannot differ between
 // the scheduler and the interactive path.
 func filterRelevantKeepDropped(results []newznab.SearchResult, title, author string, aliases []string, bc bookContext) ([]newznab.SearchResult, []DroppedRelease) {
+	// Operator rejected words come first and use their own reason (#3416). They
+	// are a relevance stage drop so the release is still offered for a grab by
+	// hand, and both the scheduler and the interactive search reach this.
+	if len(bc.rejectWords) > 0 {
+		rest, rejected := splitRejectedWords(results, bc.rejectWords, append([]string{title, author}, aliases...))
+		bc.rejectWords = nil
+		kept, dropped := filterRelevantKeepDropped(rest, title, author, aliases, bc)
+		return kept, append(rejected, dropped...)
+	}
 	// "Book One" and "Book 1" are the same position (#3476). Both the wanted
 	// title and every release name are read with a spelled out number after a
 	// volume word as digits, so the two spellings compare equal everywhere
@@ -1126,7 +1138,7 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 	originalOf := func(i int) newznab.SearchResult { return orig[i] }
 
 	rules := newTrailingRules(title, bc, fullIdentity, fullIdentityElided, primaryIdentity, primaryIdentityElided, seriesIdentity)
-	subtitle := newSubtitleInfo(title)
+	subtitle := newSubtitleInfo(title).withContext(authorTokenSets, bc.seriesTitle)
 
 	authorConflict := func(r newznab.SearchResult) bool {
 		return conflictingTitleAuthor(r.Title, title, authorTokenSets) ||
@@ -1425,6 +1437,16 @@ func scoreResult(r newznab.SearchResult, c MatchCriteria, ranks *profileRanks) f
 		score += 30
 	case p.Abridged:
 		score -= 50
+	}
+
+	// Narrator and edition preferences (#1358). Both are off unless the
+	// profile sets them, and then apply to audiobook searches only, so an
+	// install that set nothing ranks exactly as before.
+	if c.Profile != nil && c.MediaType == models.MediaTypeAudiobook &&
+		(c.Profile.EditionPreference != "" || len(c.Profile.PreferredNarrators) > 0) {
+		n := c.ReleaseNarration(r.Title)
+		score += EditionTypeScore(c.Profile.EditionPreference, n.EditionType)
+		score += NarratorScore(c.Profile.PreferredNarrators, n.Narrators)
 	}
 
 	if c.Year > 0 && p.Year > 0 {

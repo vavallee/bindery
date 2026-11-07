@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/indexer/newznab"
@@ -60,7 +61,22 @@ func conflictingTitleAuthor(release, title string, authorSets [][]string) bool {
 		}
 	}
 	if attribution == "" {
+		// The two readings below find a "by" further from the title, where it
+		// is more often a narrator's credit with no role word. A release that
+		// names the wanted author before that "by" ("Pride & Prejudice (Jane
+		// Austen) by Rosamund Pike") is not read as crediting someone else.
+		// After the credit the author's name proves nothing: "by Donna Grant
+		// [for fans of Jennifer Hillier]" is still Donna Grant's book (#2863).
 		attribution = seriesLabelAttribution(normalizedRelease, normalizedTitle)
+		if attribution == "" {
+			attribution = locatedTitleAttribution(normalizedRelease, title)
+		}
+		if attribution != "" {
+			if at := strings.Index(normalizedRelease, "by "+attribution); at >= 0 &&
+				namesWantedAuthor(normalizedRelease[:at], authorSets) {
+				return false
+			}
+		}
 	}
 	if attribution == "" {
 		return false
@@ -86,6 +102,17 @@ func conflictingTitleAuthor(release, title string, authorSets [][]string) bool {
 		}
 	}
 	return knownAuthor
+}
+
+// namesWantedAuthor reports whether the release names one of the author token
+// sets anywhere.
+func namesWantedAuthor(normalizedRelease string, authorSets [][]string) bool {
+	for _, tokens := range authorSets {
+		if len(tokens) > 0 && authorMatchesRelease(normalizedRelease, tokens) {
+			return true
+		}
+	}
+	return false
 }
 
 // foldTitleTokens rewrites every volume marker spelling in a
@@ -129,6 +156,8 @@ var creditRoleWords = map[string]bool{
 	"foreword": true, "introduction": true, "afterword": true, "introduced": true,
 	"uploaded": true, "posted": true, "ripped": true, "encoded": true,
 	"scanned": true, "shared": true, "you": true, // "brought to you by"
+	"edited": true, "compiled": true, "adapted": true, "annotated": true,
+	"published": true, "produced": true, "presented": true, "told": true,
 }
 
 // seriesLabelAttribution reads "<title>, <series> <index> by <author>" (#2863),
@@ -156,12 +185,21 @@ func seriesLabelAttribution(normalizedRelease, normalizedTitle string) string {
 	if !ok {
 		return ""
 	}
-	toks := strings.Fields(rest)
+	return byCredit(strings.Fields(rest), false)
+}
+
+// byCredit reads the first "by" credit in toks, the release words that follow
+// the requested title. The attribution is the words after that "by", up to the
+// first attributionStopToken. It returns "" when there is no "by", when more
+// than maxSeriesLabelTokens words sit before it, when the "by" credits a
+// narrator, translator or uploader (creditRoleWords), or when the "by" opens
+// toks and leading is false.
+func byCredit(toks []string, leading bool) string {
 	for i, tok := range toks {
 		if tok != "by" {
 			continue
 		}
-		if i == 0 || i > maxSeriesLabelTokens || creditRoleWords[toks[i-1]] {
+		if (i == 0 && !leading) || i > maxSeriesLabelTokens || (i > 0 && creditRoleWords[toks[i-1]]) {
 			return ""
 		}
 		var attribution []string
@@ -174,6 +212,47 @@ func seriesLabelAttribution(normalizedRelease, normalizedTitle string) string {
 		return strings.Join(attribution, " ")
 	}
 	return ""
+}
+
+// locatedTitleAttribution reads a "by" credit after the requested title when
+// the release does not START with that title (#3615). The two readings above
+// need the release to open with the title, word for word, so a credit was
+// never read from "The Last Ride by Nick Louth" for "Last Ride" (a leading
+// article), "Smoke & Mirrors by E A Copen" for "Smoke and Mirrors" (the
+// ampersand), or "The Mirror in the Mirror: A Labyrinth by Michael Ende" for
+// "Mirror Mirror" (stop words between the title words). Each was then accepted
+// on its title words alone, although it names another author outright.
+//
+// The title is found with the same phrase match the keyword and identity
+// checks use, so this reads a credit exactly where those checks found the
+// title. Insignificant words that end the title ("Stand by Me") are consumed
+// with it, so a "by" inside the title is not read as the credit.
+//
+// A release that names the requested author before the "by" ("Jim Butcher -
+// Mirror Mirror by James Marsters") is not a conflict: the caller checks that
+// (namesWantedAuthor), since the "by" there is most likely a narrator credit
+// without its role word.
+func locatedTitleAttribution(normalizedRelease, title string) string {
+	ident := titleIdentityKeywords(title)
+	if len(ident) == 0 {
+		return ""
+	}
+	loc := phraseRegex(ident).FindStringIndex(normalizedRelease)
+	if loc == nil {
+		return ""
+	}
+	rest := strings.Fields(normalizedRelease[loc[1]:])
+	titleToks := strings.Fields(foldTitleTokens(NormalizeRelease(title)))
+	last := -1
+	for i, tok := range titleToks {
+		if isAllDigits(tok) || len(newznab.SigWords(tok)) != 0 {
+			last = i
+		}
+	}
+	if tail := titleToks[last+1:]; len(tail) > 0 && len(rest) >= len(tail) && slices.Equal(rest[:len(tail)], tail) {
+		rest = rest[len(tail):]
+	}
+	return byCredit(rest, true)
 }
 
 // attributionStopToken reports whether tok ends a "by <author>" attribution:

@@ -17,8 +17,11 @@ import { bookStatusBadge } from '../components/bookStatus'
 import RebindModal from '../components/RebindModal'
 import RenameFilesModal from '../components/RenameFilesModal'
 import ConfirmDialog from '../components/ConfirmDialog'
+import RejectImportDialog from '../components/RejectImportDialog'
 import { useConfirmDialog } from '../components/useConfirmDialog'
-import { grabWithForceConfirm } from '../util/forceGrab'
+import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
+import PackLabel from '../components/PackLabel'
+import ReleaseNarration from '../components/ReleaseNarration'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../components/useClipboardCopy'
 import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
@@ -169,6 +172,8 @@ function ReleaseRow({
       <div className="min-w-0 mr-3">
         <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
           {fmt && <MediaBadge type={fmt} />}
+          <PackLabel marker={r.pack} />
+          <ReleaseNarration narrators={r.narrators} editionType={r.editionType} />
           <span className="truncate text-slate-800 dark:text-zinc-200">{r.title}</span>
         </div>
         <span className="text-fg-muted truncate block">
@@ -398,6 +403,17 @@ function BookDetailPageInner() {
   >(null)
   // The pending DB-only deregistration (#1692).
   const [deregisterTarget, setDeregisterTarget] = useState<FileRow | null>(null)
+  // The import whose Reject import confirmation is open (#3250).
+  const [rejectTarget, setRejectTarget] = useState<HistoryEvent | null>(null)
+  // Reload the book and its history so the reject button reflects server state.
+  const refreshAfterReject = async (bookId: number) => {
+    const [b, h] = await Promise.all([
+      api.getBook(bookId),
+      api.listHistory({ bookId }).then(p => p.items).catch(() => events),
+    ]).catch(() => [book, events] as const)
+    if (b) setBook(b)
+    setEvents(h)
+  }
   const pathClipboard = useClipboardCopy()
   // The row whose Copy was clicked — the hook's status is shared across rows.
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
@@ -669,6 +685,7 @@ function BookDetailPageInner() {
 
   const grab = async (r: SearchResult) => {
     if (!book) return
+    if (r.pack && !await confirmPackGrab(r, forceConfirm, t)) return
     setGrabbing(r.guid)
     setError(null)
     try {
@@ -1111,8 +1128,13 @@ function BookDetailPageInner() {
               <>
                 <span aria-hidden className="text-fg-muted">·</span>
                 <span className="text-fg-muted">
-                  {t('bookDetail.narratedBy', { narrator: book.narrator })}
+                  {t('bookDetail.narratedBy', { narrator: book.narrators && book.narrators.length > 0 ? book.narrators.join(', ') : book.narrator })}
                 </span>
+                {book.editionType && (
+                  <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 text-slate-700 dark:bg-zinc-700 dark:text-zinc-200">
+                    {t(`editionType.${book.editionType}`, { defaultValue: book.editionType })}
+                  </span>
+                )}
               </>
             )}
             {book.durationSeconds ? (
@@ -1728,6 +1750,16 @@ function BookDetailPageInner() {
                 <span className="ml-auto text-xs text-fg-muted whitespace-nowrap flex-shrink-0">
                   {new Date(ev.createdAt).toLocaleString()}
                 </span>
+                {ev.eventType === 'bookImported' && !ev.rejected && (
+                  <button
+                    type="button"
+                    onClick={() => setRejectTarget(ev)}
+                    title={t('history.rejectImportHint')}
+                    className="text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors flex-shrink-0"
+                  >
+                    {t('history.rejectImport')}
+                  </button>
+                )}
               </div>
             ))}
           </>
@@ -1809,6 +1841,23 @@ function BookDetailPageInner() {
           confirming={deletingFile}
           onConfirm={deleteFile}
           onClose={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {rejectTarget && book && (
+        <RejectImportDialog
+          event={rejectTarget}
+          onClose={() => setRejectTarget(null)}
+          onRejected={async summary => {
+            setRejectTarget(null)
+            setAutoSearchNotice(summary)
+            await refreshAfterReject(book.id)
+          }}
+          onAlreadyRejected={async message => {
+            setRejectTarget(null)
+            setAutoSearchNotice(message)
+            await refreshAfterReject(book.id)
+          }}
         />
       )}
 

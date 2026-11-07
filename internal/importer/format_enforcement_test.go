@@ -201,6 +201,16 @@ func TestImport_RejectedReleaseIsBlocklisted(t *testing.T) {
 	if !blocked {
 		t.Fatal("the rejected release was not blocklisted, so the next search will grab it again")
 	}
+	// The format was refused by this book's profile, so the entry blocks
+	// this book only; another book whose profile allows the format can
+	// still grab the release (#3563).
+	entries, err := f.blocklist.List(ctx)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("blocklist = %+v, %v; want one entry", entries, err)
+	}
+	if entries[0].Scope != models.BlocklistScopeBook || entries[0].BookID == nil {
+		t.Errorf("entry = %+v, want scoped to its book", entries[0])
+	}
 }
 
 // TestImport_AllowedFormatStillImports is the guard against the filter becoming

@@ -172,7 +172,7 @@ const conflictReasonChanged = "changed"
 // handler retries once from a fresh read; Audnex answers are cached, so the
 // retry normally costs no second request. A second loss returns 409.
 func (h *BookHandler) EnrichAudiobook(w http.ResponseWriter, r *http.Request) {
-	book, ok := h.loadOwnedBook(w, r)
+	book, ok := h.loadWritableBook(w, r)
 	if !ok {
 		return
 	}
@@ -225,7 +225,7 @@ func (h *BookHandler) EnrichAudiobook(w http.ResponseWriter, r *http.Request) {
 			writeServerError(w, r, err)
 			return
 		}
-		if fresh == nil || !auth.CheckOwnership(ctx, fresh.OwnerUserID) {
+		if fresh == nil || !auth.CheckWriteOwnership(ctx, fresh.OwnerUserID) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
 			return
 		}
@@ -313,7 +313,7 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 		// catalogue; the slice is cheap.
 		id, _ := strconv.ParseInt(authorID, 10, 64)
 		if includeExcluded {
-			books, err = h.books.ListByAuthorIncludingExcluded(r.Context(), id)
+			books, err = h.books.ListByAuthorIncludingExcludedAndUser(r.Context(), id, auth.ListScopeUserID(r.Context()))
 		} else {
 			// Scope to the caller's library: admins / API-key / no-tenancy get
 			// 0 = unscoped (identical to ListByAuthor), non-admins are isolated
@@ -326,9 +326,9 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 		// excluded"); keep the whole-set fetch + in-memory slice. Search/sort
 		// filtering is not offered here.
 		if status != "" {
-			books, err = h.books.ListByStatusIncludingExcluded(r.Context(), status)
+			books, err = h.books.ListByStatusIncludingExcludedAndUser(r.Context(), status, auth.ListScopeUserID(r.Context()))
 		} else {
-			books, err = h.books.ListIncludingExcluded(r.Context())
+			books, err = h.books.ListIncludingExcludedAndUser(r.Context(), auth.ListScopeUserID(r.Context()))
 		}
 		books, total = pageBooks(books, limit, offset)
 	default:
@@ -423,6 +423,38 @@ func (h *BookHandler) prepareBookDetail(ctx context.Context, book *models.Book) 
 	h.attachBookFiles(ctx, book)
 	h.attachBookIdentifiers(ctx, book)
 	h.attachImportInFlight(ctx, book)
+	h.attachRecording(ctx, book)
+}
+
+// attachRecording fills the book's narrator list and edition type for the
+// detail view (#1358). The audiobook edition that states a narrator list or an
+// edition type supplies them; otherwise the list is the book's narrator string
+// split into names and the type stays unknown. Best effort, read only.
+func (h *BookHandler) attachRecording(ctx context.Context, book *models.Book) {
+	book.Narrators = models.SplitNarrators(book.Narrator)
+	if h.editions == nil {
+		return
+	}
+	eds, err := h.editions.ListByBook(ctx, book.ID)
+	if err != nil {
+		slog.Debug("book get: edition lookup failed", "book_id", book.ID, "error", err)
+		return
+	}
+	for _, ed := range eds {
+		if ed.IsEbook || (len(ed.Narrators) == 0 && ed.EditionType == "") {
+			continue
+		}
+		book.EditionType = ed.EditionType
+		// The book's narrator string is the editable value, so a user edit
+		// wins. The edition's list is shown only while it still says what the
+		// string says (the importer writes both together, joined with ", ") or
+		// the string is empty.
+		if len(ed.Narrators) > 0 && (strings.TrimSpace(book.Narrator) == "" ||
+			strings.TrimSpace(book.Narrator) == strings.Join(ed.Narrators, ", ")) {
+			book.Narrators = ed.Narrators
+		}
+		return
+	}
 }
 
 // attachImportInFlight marks a book whose download is still on its way into
@@ -467,7 +499,7 @@ func (h *BookHandler) attachBookIdentifiers(ctx context.Context, book *models.Bo
 }
 
 func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
-	book, ok := h.loadOwnedBook(w, r)
+	book, ok := h.loadWritableBook(w, r)
 	if !ok {
 		return
 	}
@@ -656,7 +688,7 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// The load has to happen before any destructive work, so the ownership
 	// check runs first. The `?deleteFiles=true` branch below re-fetches when
 	// it needs the legacy file columns; the extra lookup is cheap.
-	existing, ok := h.loadOwnedBook(w, r)
+	existing, ok := h.loadWritableBook(w, r)
 	if !ok {
 		return
 	}
@@ -720,7 +752,7 @@ func (h *BookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	// The load has to happen before any file enumeration or destructive work,
 	// so the ownership check runs first.
-	existing, ok := h.loadOwnedBook(w, r)
+	existing, ok := h.loadWritableBook(w, r)
 	if !ok {
 		return
 	}
@@ -830,6 +862,7 @@ func (h *BookHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 			EventType:   models.HistoryEventBookFileDeleted,
 			SourceTitle: book.Title,
 			Data:        string(data),
+			OwnerUserID: auth.UserIDFromContext(r.Context()),
 		}); err != nil {
 			slog.Warn("failed to create deleted paths history event", "book_id", id, "error", err)
 		}
@@ -901,6 +934,7 @@ func (h *BookHandler) deleteTrackedBookFile(w http.ResponseWriter, r *http.Reque
 			_ = h.history.Create(r.Context(), &models.HistoryEvent{
 				BookID: &book.ID, EventType: models.HistoryEventBookFileDeleted,
 				SourceTitle: book.Title, Data: string(data),
+				OwnerUserID: auth.UserIDFromContext(r.Context()),
 			})
 		}
 	}
@@ -980,6 +1014,7 @@ func (h *BookHandler) deregisterBookFile(w http.ResponseWriter, r *http.Request,
 			EventType:   models.HistoryEventBookFileDeleted,
 			SourceTitle: book.Title,
 			Data:        string(data),
+			OwnerUserID: auth.UserIDFromContext(r.Context()),
 		}); err != nil {
 			slog.Warn("failed to create deregistered path history event", "book_id", id, "error", err)
 		}
@@ -1219,6 +1254,7 @@ func (h *BookHandler) ListWanted(w http.ResponseWriter, r *http.Request) {
 		proxyBookImages(&books[i])
 	}
 	h.markUnmonitoredAuthors(r.Context(), books)
+	books = h.applyUpcoming(r.Context(), books, upcomingFilter(r))
 	writeJSON(w, http.StatusOK, books)
 }
 
@@ -1236,6 +1272,7 @@ func (h *BookHandler) listWantedPage(w http.ResponseWriter, r *http.Request, sco
 		MediaType:       r.URL.Query().Get("mediaType"),
 		Sort:            r.URL.Query().Get("sort"),
 		IncludeExcluded: includeExcluded,
+		Upcoming:        upcomingFilter(r),
 	}, limit, offset)
 	if err != nil {
 		writeServerError(w, r, err)
@@ -1249,7 +1286,47 @@ func (h *BookHandler) listWantedPage(w http.ResponseWriter, r *http.Request, sco
 		proxyBookImages(&books[i])
 	}
 	h.markUnmonitoredAuthors(r.Context(), books)
+	books = h.applyUpcoming(r.Context(), books, "")
 	writeJSON(w, http.StatusOK, bookListResponse{Items: books, Total: total, Limit: limit, Offset: offset})
+}
+
+// upcomingFilter reads the Wanted list's upcoming parameter: "only" lists the
+// books held until a future release date (#2523), "hide" lists the rest, and
+// anything else lists both.
+func upcomingFilter(r *http.Request) string {
+	switch v := r.URL.Query().Get("upcoming"); v {
+	case db.UpcomingOnly, db.UpcomingHide:
+		return v
+	}
+	return ""
+}
+
+// applyUpcoming marks the Wanted rows that are Upcoming with the date their
+// hold ends (#2523), and for the unpaged list applies filter, which the paged
+// list has already applied in SQL. Best effort: a failed lookup marks nothing
+// and filters nothing, the same stance as markUnmonitoredAuthors.
+func (h *BookHandler) applyUpcoming(ctx context.Context, books []models.Book, filter string) []models.Book {
+	if len(books) == 0 {
+		return books
+	}
+	holds, err := h.books.SearchHolds(ctx, time.Now())
+	if err != nil {
+		slog.Warn("wanted list: failed to load upcoming holds", "error", err)
+		return books
+	}
+	out := make([]models.Book, 0, len(books))
+	for i := range books {
+		until, held := holds[books[i].ID]
+		if held {
+			u := until
+			books[i].SearchHeldUntil = &u
+		}
+		if (filter == db.UpcomingOnly && !held) || (filter == db.UpcomingHide && held) {
+			continue
+		}
+		out = append(out, books[i])
+	}
+	return out
 }
 
 // markUnmonitoredAuthors flags the rows whose author is not monitored, so the
@@ -1290,7 +1367,7 @@ func (h *BookHandler) markUnmonitoredAuthors(ctx context.Context, books []models
 // Returns 409 when the upstream record belongs to a different author unless
 // force=true is passed. Returns the updated book JSON on success.
 func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
-	book, ok := h.loadOwnedBook(w, r)
+	book, ok := h.loadWritableBook(w, r)
 	if !ok {
 		return
 	}
@@ -1477,6 +1554,7 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 				EventType:   models.HistoryEventBookRebound,
 				SourceTitle: book.Title,
 				Data:        string(data),
+				OwnerUserID: auth.UserIDFromContext(r.Context()),
 			})
 		}
 	}
@@ -1487,7 +1565,7 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BookHandler) ToggleExcluded(w http.ResponseWriter, r *http.Request) {
-	book, ok := h.loadOwnedBook(w, r)
+	book, ok := h.loadWritableBook(w, r)
 	if !ok {
 		return
 	}

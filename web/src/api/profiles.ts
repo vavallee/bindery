@@ -5,10 +5,16 @@ export interface QualityProfile {
   name: string
   upgradeAllowed: boolean
   cutoff: string
+  // Keep the file an upgrade replaced (false, the default) or delete it once
+  // the new one is verified (#1357). Absent on an older server.
+  removeReplaced?: boolean
   // Preference order, best first within each media type. The server derives
   // each entry's media type from its token, so ebook and audiobook entries
   // share this one array and only the order inside each kind matters (#2733).
   items: Array<{ quality: string; allowed: boolean }>
+  // Audiobook narrator and edition preferences (#1358). Both empty means off.
+  preferredNarrators?: string[]
+  editionPreference?: '' | 'prefer_unabridged' | 'require_unabridged'
 }
 
 export interface MetadataProfile {

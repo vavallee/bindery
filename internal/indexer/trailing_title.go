@@ -91,11 +91,13 @@ type bookContext struct {
 	seriesTitle string
 	// otherTitles are the titles of the author's other books in the library.
 	otherTitles []string
+	// rejectWords are the operator's rejected words and phrases (#3416).
+	rejectWords []string
 }
 
 // context is the book context carried by the search criteria.
 func (c MatchCriteria) context() bookContext {
-	return bookContext{seriesPosition: c.SeriesPosition, seriesTitle: c.SeriesTitle, otherTitles: c.AuthorTitles}
+	return bookContext{seriesPosition: c.SeriesPosition, seriesTitle: c.SeriesTitle, otherTitles: c.AuthorTitles, rejectWords: c.RejectWords}
 }
 
 // SeriesReader reads a book's primary series: its title and the book's

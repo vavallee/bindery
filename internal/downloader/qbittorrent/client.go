@@ -5,6 +5,8 @@ package qbittorrent
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,6 +56,12 @@ func (e *AuthError) Error() string {
 // hashPollTimeout is the maximum time to wait for a newly-added torrent's hash
 // to appear in the unfiltered torrent list.
 var hashPollTimeout = 30 * time.Second
+
+// tagGrace is how long AddTorrent waits for its marker tag to show up before it
+// concludes the client ignores tags and falls back to diffing the list.
+// qBittorrent applies the tag with the add, so a tag-aware client shows it on
+// the first poll or two.
+var tagGrace = 2 * time.Second
 
 // maxTorrentFileBytes caps the torrent payload Bindery will fetch before
 // uploading it to qBittorrent.
@@ -349,10 +357,31 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	// (#418). The before/after hash-set diff already uniquely identifies the
 	// new torrent, so the category filter is omitted from both polling calls.
 	beforeSet := map[string]struct{}{}
-	if before, err := c.GetTorrents(ctx, ""); err == nil {
+	beforeOK := false
+	if before, err := c.GetTorrents(ctx, ""); err != nil {
+		// Without a snapshot every torrent in the client would look new, so the
+		// diff below is switched off. The tag and the infohash derived from
+		// the payload do not need a snapshot.
+		slog.Warn("add torrent: could not snapshot the torrent list before the add", "error", err)
+	} else {
+		beforeOK = true
 		for _, t := range before {
 			beforeSet[strings.ToLower(t.Hash)] = struct{}{}
 		}
+	}
+
+	// Tag this add with a unique marker so the torrent is recognised by what it
+	// carries rather than by when it appeared. addMu only serialises AddTorrent
+	// calls inside this process; cross-seed runs, RSS/watch folders, manual
+	// adds and a second Bindery instance all write to the same client and are
+	// invisible to it, and AddedOn has one second resolution, so "the newest
+	// new torrent" can be somebody else's (#3536). qBittorrent applies the tag
+	// together with the add and no other writer can carry ours.
+	// A magnet with a btih already yields its hash without any lookup, so it
+	// is not tagged.
+	tag := ""
+	if infoHashFromMagnet(magnetOrURL) == "" {
+		tag = newAddTag()
 	}
 
 	if err := c.ensureLoggedIn(ctx); err != nil {
@@ -377,6 +406,7 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 			submitted = fetched.magnetURL
 			form := url.Values{"urls": {fetched.magnetURL}}
 			setAddTorrentFields(form, category, savePath)
+			setAddTag(form, tag)
 			req, err = http.NewRequestWithContext(ctx, http.MethodPost,
 				c.baseURL+"/api/v2/torrents/add",
 				strings.NewReader(form.Encode()))
@@ -398,6 +428,11 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 			if err := writeAddTorrentFields(mw, category, savePath); err != nil {
 				return "", err
 			}
+			if tag != "" {
+				if err := mw.WriteField("tags", tag); err != nil {
+					return "", fmt.Errorf("write torrent tags: %w", err)
+				}
+			}
 			if err := mw.Close(); err != nil {
 				return "", fmt.Errorf("close multipart: %w", err)
 			}
@@ -412,6 +447,7 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	} else {
 		form := url.Values{"urls": {magnetOrURL}}
 		setAddTorrentFields(form, category, savePath)
+		setAddTag(form, tag)
 		var err error
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost,
 			c.baseURL+"/api/v2/torrents/add",
@@ -421,6 +457,13 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
+
+	// The tag is only a marker for this call. Drop it from the client on every
+	// way out, best effort, so Bindery does not leave tags behind.
+	if tag != "" {
+		defer c.deleteTag(ctx, tag)
+	}
+	addedAt := time.Now()
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -517,6 +560,30 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	// take a few seconds for remote URLs (e.g. Prowlarr Torznab redirects).
 	// We poll unfiltered so we find the torrent regardless of which category
 	// qBittorrent has assigned at the moment it first appears.
+	//
+	// Who counts as ours, strongest evidence first:
+	//  1. the infohash of the .torrent we uploaded, when derivable. This is the
+	//     v1 SHA-1 only, so it is a preferred match and not an exclusive one: a
+	//     v2 only torrent (or a hybrid whose v1 hash the client does not
+	//     report) never shows it, and must still resolve through the tag;
+	//  2. the unique tag we sent. It is checked client side on the full list
+	//     rather than through the info endpoint's tag filter, because a client
+	//     that predates or emulates tags would ignore an unknown filter and
+	//     return everything;
+	//  3. only when no tag shows up within tagGrace (a client that ignores
+	//     tags) and the before-snapshot succeeded, a torrent absent from the
+	//     snapshot. If that leaves several candidates there is no honest way
+	//     to choose, so the call fails instead of guessing.
+	//
+	// Residual: step 3 cannot tell a client that ignores tags from one that is
+	// tag aware but slow to list the new torrent. If such a client lists
+	// exactly one stranger and nothing else within tagGrace, that stranger is
+	// adopted. Nothing in this repo says how long qBittorrent takes to list a
+	// tagged add, so the window is a named variable rather than a guess.
+	expectedHash := infoHashFromTorrentFile(torrentFile)
+	if !beforeOK && expectedHash == "" && tag == "" {
+		return "", fmt.Errorf("add torrent accepted but the torrent list could not be read before the add and nothing identifies the added torrent")
+	}
 	deadline := time.Now().Add(hashPollTimeout)
 	var lastAfter []Torrent
 	for {
@@ -525,15 +592,36 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 			return "", fmt.Errorf("add torrent accepted but hash lookup failed: %w", err)
 		}
 		lastAfter = after
-		var newest *Torrent
+		var newest, tagged *Torrent
+		var fresh []*Torrent
 		for i := range after {
 			t := &after[i]
 			h := strings.ToLower(t.Hash)
-			if _, seen := beforeSet[h]; seen {
-				continue
-			}
-			if newest == nil || t.AddedOn > newest.AddedOn {
+			if expectedHash != "" && h == expectedHash {
 				newest = t
+				break
+			}
+			if tagged == nil && tag != "" && hasTag(t.Tags, tag) {
+				tagged = t
+			}
+			if _, seen := beforeSet[h]; !seen && beforeOK {
+				fresh = append(fresh, t)
+			}
+		}
+		if newest == nil {
+			newest = tagged
+		}
+		if newest == nil && len(fresh) > 0 {
+			// With a tag in play the tag decides: the diff is only trusted
+			// once the grace period says no tag is coming, so a stranger that
+			// lists first is never adopted while ours is still arriving.
+			if tag == "" || time.Since(addedAt) >= tagGrace || time.Now().After(deadline) {
+				if len(fresh) != 1 {
+					slog.Warn("add torrent: several new torrents appeared and none can be tied to this add, refusing to pick one",
+						"category", category, "candidates", len(fresh))
+					return "", fmt.Errorf("add torrent accepted but %d new torrents appeared and none can be tied to this add", len(fresh))
+				}
+				newest = fresh[0]
 			}
 		}
 		if newest != nil {
@@ -574,10 +662,60 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	}
 	slog.Error("add torrent hash lookup timed out",
 		"category", category,
+		"expected_hash", expectedHash,
 		"before_hashes", beforeKeys,
 		"after_hashes", afterKeys,
 	)
 	return "", fmt.Errorf("add torrent accepted but hash could not be determined")
+}
+
+// newAddTag returns a unique marker tag for one AddTorrent call.
+func newAddTag() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("bindery-add-%d", time.Now().UnixNano())
+	}
+	return "bindery-add-" + hex.EncodeToString(b[:])
+}
+
+func setAddTag(form url.Values, tag string) {
+	if tag != "" {
+		form.Set("tags", tag)
+	}
+}
+
+// hasTag reports whether the comma separated tags field of a torrent holds tag.
+func hasTag(tags, tag string) bool {
+	for _, t := range strings.Split(tags, ",") {
+		if strings.TrimSpace(t) == tag {
+			return true
+		}
+	}
+	return false
+}
+
+// deleteTag removes a marker tag from the client and from every torrent that
+// carries it. Best effort: a failure only leaves a harmless tag behind.
+func (c *Client) deleteTag(ctx context.Context, tag string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := c.ensureLoggedIn(ctx); err != nil {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/api/v2/torrents/deleteTags",
+		strings.NewReader(url.Values{"tags": {tag}}.Encode()))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		slog.Debug("add torrent: could not delete the marker tag", "tag", tag, "error", err)
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	_ = resp.Body.Close()
 }
 
 type fetchedTorrentContent struct {

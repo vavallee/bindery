@@ -31,7 +31,7 @@ func NewQualityProfileRepo(db *sql.DB) *QualityProfileRepo {
 
 func (r *QualityProfileRepo) List(ctx context.Context) ([]models.QualityProfile, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, name, upgrade_allowed, cutoff, items, created_at, COALESCE(owner_user_id, 0) FROM quality_profiles ORDER BY id")
+		"SELECT id, name, upgrade_allowed, cutoff, items, created_at, COALESCE(owner_user_id, 0), preferred_narrators, edition_preference, remove_replaced FROM quality_profiles ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("list quality profiles: %w", err)
 	}
@@ -50,7 +50,7 @@ func (r *QualityProfileRepo) List(ctx context.Context) ([]models.QualityProfile,
 
 func (r *QualityProfileRepo) GetByID(ctx context.Context, id int64) (*models.QualityProfile, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, name, upgrade_allowed, cutoff, items, created_at, COALESCE(owner_user_id, 0) FROM quality_profiles WHERE id=?", id)
+		"SELECT id, name, upgrade_allowed, cutoff, items, created_at, COALESCE(owner_user_id, 0), preferred_narrators, edition_preference, remove_replaced FROM quality_profiles WHERE id=?", id)
 	if err != nil {
 		return nil, fmt.Errorf("get quality profile %d: %w", id, err)
 	}
@@ -98,14 +98,19 @@ func (r *QualityProfileRepo) create(ctx context.Context, p *models.QualityProfil
 	if p.UpgradeAllowed {
 		upgrade = 1
 	}
+	removeReplaced := 0
+	if p.RemoveReplaced {
+		removeReplaced = 1
+	}
 	var ownerArg any
 	if ownerUserID != 0 {
 		ownerArg = ownerUserID
 	}
 	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO quality_profiles (name, upgrade_allowed, cutoff, items, owner_user_id)
-		VALUES (?, ?, ?, ?, ?)`,
-		p.Name, upgrade, p.Cutoff, itemsJSON, ownerArg)
+		INSERT INTO quality_profiles (name, upgrade_allowed, cutoff, items, owner_user_id, preferred_narrators, edition_preference, remove_replaced)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, upgrade, p.Cutoff, itemsJSON, ownerArg,
+		encodeNarrators(p.PreferredNarrators), models.NormalizeEditionPreference(p.EditionPreference), removeReplaced)
 	if err != nil {
 		return fmt.Errorf("create quality profile: %w", err)
 	}
@@ -130,10 +135,16 @@ func (r *QualityProfileRepo) Update(ctx context.Context, p *models.QualityProfil
 	if p.UpgradeAllowed {
 		upgrade = 1
 	}
+	removeReplaced := 0
+	if p.RemoveReplaced {
+		removeReplaced = 1
+	}
 	res, err := r.db.ExecContext(ctx, `
-		UPDATE quality_profiles SET name=?, upgrade_allowed=?, cutoff=?, items=?
+		UPDATE quality_profiles SET name=?, upgrade_allowed=?, cutoff=?, items=?,
+		       preferred_narrators=?, edition_preference=?, remove_replaced=?
 		WHERE id=?`,
-		p.Name, upgrade, p.Cutoff, itemsJSON, p.ID)
+		p.Name, upgrade, p.Cutoff, itemsJSON,
+		encodeNarrators(p.PreferredNarrators), models.NormalizeEditionPreference(p.EditionPreference), removeReplaced, p.ID)
 	if err != nil {
 		return fmt.Errorf("update quality profile %d: %w", p.ID, err)
 	}
@@ -170,6 +181,18 @@ func (r *QualityProfileRepo) Delete(ctx context.Context, id int64) error {
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// AnyUpgradeAllowed reports whether any profile has ebook upgrades switched on.
+// It is one cheap query, so the upgrade sweep can stop before it reads a
+// library's worth of books on an install that never opted in (#2420).
+func (r *QualityProfileRepo) AnyUpgradeAllowed(ctx context.Context) (bool, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM quality_profiles WHERE upgrade_allowed = 1)").Scan(&n); err != nil {
+		return false, fmt.Errorf("check upgrade profiles: %w", err)
+	}
+	return n == 1, nil
 }
 
 // CountAuthorsUsing returns the number of authors currently assigned this
@@ -232,12 +255,15 @@ func marshalItems(items []models.QualityItem) (string, error) {
 
 func scanQualityProfile(rows *sql.Rows) (models.QualityProfile, error) {
 	var p models.QualityProfile
-	var upgradeAllowed int
-	var itemsJSON string
-	if err := rows.Scan(&p.ID, &p.Name, &upgradeAllowed, &p.Cutoff, &itemsJSON, &p.CreatedAt, &p.OwnerUserID); err != nil {
+	var upgradeAllowed, removeReplaced int
+	var itemsJSON, narratorsJSON string
+	if err := rows.Scan(&p.ID, &p.Name, &upgradeAllowed, &p.Cutoff, &itemsJSON, &p.CreatedAt, &p.OwnerUserID, &narratorsJSON, &p.EditionPreference, &removeReplaced); err != nil {
 		return p, fmt.Errorf("scan quality profile: %w", err)
 	}
 	p.UpgradeAllowed = upgradeAllowed == 1
+	p.RemoveReplaced = removeReplaced == 1
+	p.PreferredNarrators = decodeNarrators(narratorsJSON)
+	p.EditionPreference = models.NormalizeEditionPreference(p.EditionPreference)
 	if err := json.Unmarshal([]byte(itemsJSON), &p.Items); err != nil {
 		return p, fmt.Errorf("unmarshal quality profile items: %w", err)
 	}

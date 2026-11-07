@@ -70,6 +70,9 @@ func isPartBookTitle(title string) bool {
 var syncEnrichmentsPerHour = 100
 
 type AuthorHandler struct {
+	// afterProviderFieldsRead is a test seam: it runs between refreshProviderFields
+	// re-reading a row and writing it, where a concurrent edit would land (#3105).
+	afterProviderFieldsRead func()
 	// syncEnrich counts the enrichments those syncs spent in the current
 	// hour; see takeSyncEnrichment.
 	syncEnrichMu     sync.Mutex
@@ -525,7 +528,7 @@ func (h *AuthorHandler) ListSeries(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []models.Series{})
 		return
 	}
-	series, err := h.series.ListByAuthor(r.Context(), id)
+	series, err := h.series.ListByAuthorAndUser(r.Context(), id, auth.ListScopeUserID(r.Context()))
 	if err != nil {
 		writeServerError(w, r, err)
 		return
@@ -914,7 +917,7 @@ func (h *AuthorHandler) findAuthorByNameOrAliasExcluding(ctx context.Context, ex
 	if name == "" {
 		return nil, false, nil
 	}
-	authors, err := h.authors.ListByUser(ctx, auth.UserIDFromContext(ctx))
+	authors, err := h.authors.ListByUser(ctx, auth.ListScopeUserID(ctx))
 	if err != nil {
 		return nil, false, err
 	}
@@ -1032,7 +1035,7 @@ func (h *AuthorHandler) recordAuthorRelinkAlias(ctx context.Context, author *mod
 }
 
 func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
-	author, ok := h.loadOwnedAuthor(w, r)
+	author, ok := h.loadWritableAuthor(w, r)
 	if !ok {
 		return
 	}
@@ -1131,7 +1134,7 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// monitor selection silently reference an unrelated catalog row.
 	if req.MonitoredSeriesIDs != nil {
 		if len(*req.MonitoredSeriesIDs) > 0 {
-			ownSeries, err := h.series.ListByAuthor(r.Context(), author.ID)
+			ownSeries, err := h.series.ListByAuthorAndUser(r.Context(), author.ID, auth.ListScopeUserID(r.Context()))
 			if err != nil {
 				writeServerError(w, r, err)
 				return
@@ -1174,6 +1177,10 @@ func applyMonitorModeToExistingBooks(ctx context.Context, booksRepo *db.BookRepo
 	if err != nil {
 		return fmt.Errorf("list author books: %w", err)
 	}
+	// The caller has write access to the author, not to every book under it: a
+	// shared author can hold other accounts' books and unowned ones. Rewrite
+	// only the books this caller may write; admins and tenancy off keep all.
+	books = writableBooks(ctx, books)
 	latestKeys := latestBookMonitorKeys(books, author.MonitorLatestCount, func(b models.Book) bool {
 		return !b.Excluded
 	})
@@ -1282,7 +1289,7 @@ func (h *AuthorHandler) RelinkUpstream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Tier-1 cross-user IDOR guard (D1).
-	if !auth.CheckOwnership(r.Context(), author.OwnerUserID) {
+	if !auth.CheckWriteOwnership(r.Context(), author.OwnerUserID) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "author not found"})
 		return
 	}
@@ -1408,11 +1415,20 @@ func (h *AuthorHandler) RelinkCandidates(w http.ResponseWriter, r *http.Request)
 func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// The load has to happen before any destructive work, so the ownership
 	// check runs first.
-	author, ok := h.loadOwnedAuthor(w, r)
+	author, ok := h.loadWritableAuthor(w, r)
 	if !ok {
 		return
 	}
 	id := author.ID
+	// The FK cascade below takes every book under the author, so a user who
+	// is not an admin may only delete an author whose books are all theirs.
+	if held, err := authorHoldsOthersBooks(r.Context(), h.authors, id); err != nil {
+		writeServerError(w, r, err)
+		return
+	} else if held {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": errAuthorHoldsOthersBooks.Error()})
+		return
+	}
 
 	// Opt-in `?deleteFiles=true` sweeps every book's on-disk path after the
 	// DB delete. We must collect the paths *before* deleting the author —
@@ -1479,7 +1495,7 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthorHandler) Refresh(w http.ResponseWriter, r *http.Request) {
-	author, ok := h.loadOwnedAuthor(w, r)
+	author, ok := h.loadWritableAuthor(w, r)
 	if !ok {
 		return
 	}
@@ -1908,6 +1924,58 @@ func (h *AuthorHandler) writeTitleMatch(ctx context.Context, existing *models.Bo
 		slog.Warn("catalogue sync: could not re-read a book after a concurrent edit", "book_id", existing.ID, "error", err)
 	}
 	return false, nil
+}
+
+// refreshProviderFields lets an id-resolved book take the release date and,
+// if it has none, the description the current provider record carries (#3105;
+// the per-field rules are on Book.AdoptRefreshedProviderFields).
+//
+// It acts only when the record's own id is the row's id. A row that matched
+// through a secondary id or a title may be a different work with the same name
+// (two OpenLibrary works can share a title), and adopting that work's date
+// would make the row alternate between them on every refresh.
+//
+// A field with an Audiobookshelf conflict recorded is skipped: the user's
+// per-field source choice there is not something a refresh may override. The
+// row is re-read and the write guarded on that read, so an edit made in between
+// wins and the next sync makes the change again. An excluded or vanished row is
+// left alone. A refresh that changes nothing writes nothing.
+func (h *AuthorHandler) refreshProviderFields(ctx context.Context, existing, incoming *models.Book) {
+	if existing.ForeignID != incoming.ForeignID {
+		return
+	}
+	src := *incoming
+	src.UnknownFields = slices.Clone(incoming.UnknownFields)
+	for field, conflictName := range map[string]string{
+		models.BookFieldReleaseDate: "release_date",
+		models.BookFieldDescription: "description",
+	} {
+		has, err := h.books.HasABSConflictFor(ctx, existing.ID, conflictName)
+		if err != nil || has {
+			// Unreadable counts as present: skipping is the safe answer.
+			src.UnknownFields = append(src.UnknownFields, field)
+		}
+	}
+	probe := *existing
+	if len(probe.AdoptRefreshedProviderFields(&src)) == 0 {
+		return
+	}
+	if !h.refreshTitleMatch(ctx, existing) {
+		return
+	}
+	expectedUpdatedAt := existing.UpdatedAtRaw
+	if h.afterProviderFieldsRead != nil {
+		h.afterProviderFieldsRead()
+	}
+	changed := existing.AdoptRefreshedProviderFields(&src)
+	if len(changed) == 0 {
+		return
+	}
+	if written, err := h.writeTitleMatch(ctx, existing, expectedUpdatedAt); err != nil {
+		slog.Warn("catalogue sync: could not update provider fields", "book_id", existing.ID, "error", err)
+	} else if written {
+		slog.Debug("catalogue sync: updated provider fields", "book_id", existing.ID, "fields", changed)
+	}
 }
 
 // runCatalogueSync is the catalogue sync behind fetchAuthorBooks. It returns
@@ -2692,6 +2760,9 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 					slog.Warn("authors: update during dedup", "error", err, "book_id", existing.ID)
 				}
 			}
+			// Corrections made upstream to the release date, and a description
+			// the book lacks (#3105). Never clears.
+			h.refreshProviderFields(ctx, existing, &b)
 			// Attach whatever ids this fetch knows the book by, so the next
 			// sync from either provider resolves it exactly rather than
 			// relying on a title comparison (#1705).
@@ -3513,7 +3584,7 @@ func (h *AuthorHandler) findLibraryAuthorByName(ctx context.Context, name string
 	if want == "" {
 		return nil
 	}
-	authors, err := h.authors.ListByUser(ctx, auth.UserIDFromContext(ctx))
+	authors, err := h.authors.ListByUser(ctx, auth.ListScopeUserID(ctx))
 	if err != nil {
 		return nil
 	}
