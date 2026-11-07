@@ -7,10 +7,12 @@ import (
 	"net/url"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/auth"
+	"github.com/vavallee/bindery/internal/models"
 )
 
 type listNamesResp struct {
@@ -55,8 +57,9 @@ func TestListFileNamesListsEveryFileOfAnAudiobookFolder(t *testing.T) {
 			if code != http.StatusOK {
 				t.Fatalf("status = %d", code)
 			}
-			if !slices.Equal(got.names(), wantAliceOnly) {
-				t.Errorf("names = %v, want %v", got.names(), wantAliceOnly)
+			want := []string{"cover.jpg", "Disc 2/part2.mp3", "part1.mp3"}
+			if !slices.Equal(got.names(), want) {
+				t.Errorf("names = %v, want %v", got.names(), want)
 			}
 			if got.Truncated {
 				t.Error("truncated = true for a small folder")
@@ -91,6 +94,59 @@ func TestListFileNamesRefusesUntrackedPathAndOtherUsersBook(t *testing.T) {
 	}
 	if code, _ := listNames(t, fx, fx.aliceBook.ID, fx.folder, fx.env.bob, "user"); code != http.StatusNotFound {
 		t.Errorf("other user's book = %d, want 404", code)
+	}
+}
+
+// Parts sort in natural order, so part2 comes before part10 and a 12 part book
+// reads 1 to 12.
+func TestListFileNamesNaturalOrder(t *testing.T) {
+	fx := newZipOtherBookFixture(t)
+	dir := filepath.Join(fx.root, "Jane Doe", "Twelve Parts")
+	var want []string
+	for i := 1; i <= 12; i++ {
+		name := "Part " + strconv.Itoa(i) + ".mp3"
+		mustWrite(t, filepath.Join(dir, name))
+		want = append(want, name)
+	}
+	mustWrite(t, filepath.Join(dir, "cover.jpg"))
+	if err := fx.env.books.AddBookFile(fx.env.ctx, fx.aliceBook.ID, models.MediaTypeAudiobook, dir); err != nil {
+		t.Fatal(err)
+	}
+	_, got := listNames(t, fx, fx.aliceBook.ID, dir, fx.env.alice, "user")
+	want = append([]string{"cover.jpg"}, want...)
+	if !slices.Equal(got.names(), want) {
+		t.Errorf("names = %v, want %v", got.names(), want)
+	}
+}
+
+func TestNaturalLess(t *testing.T) {
+	in := []string{"part10.mp3", "Part2.mp3", "part1.mp3", "Disc 2/a.mp3", "Disc 10/a.mp3", "b.mp3", "B10.mp3", "b9.mp3"}
+	want := []string{"b.mp3", "b9.mp3", "B10.mp3", "Disc 2/a.mp3", "Disc 10/a.mp3", "part1.mp3", "Part2.mp3", "part10.mp3"}
+	sort.Slice(in, func(i, j int) bool { return naturalLess(in[i], in[j]) })
+	if !slices.Equal(in, want) {
+		t.Errorf("sorted = %v, want %v", in, want)
+	}
+}
+
+// Past the cap the first maxListedFiles in the displayed natural order are
+// kept, not whichever the directory walk met first.
+func TestListFileNamesTruncatesInDisplayOrder(t *testing.T) {
+	fx := newZipOtherBookFixture(t)
+	dir := filepath.Join(fx.root, "Jane Doe", "Many Parts")
+	for i := 1; i <= maxListedFiles+20; i++ {
+		mustWrite(t, filepath.Join(dir, "p"+strconv.Itoa(i)+".mp3"))
+	}
+	if err := fx.env.books.AddBookFile(fx.env.ctx, fx.aliceBook.ID, models.MediaTypeAudiobook, dir); err != nil {
+		t.Fatal(err)
+	}
+	_, got := listNames(t, fx, fx.aliceBook.ID, dir, fx.env.alice, "user")
+	if !got.Truncated || len(got.Files) != maxListedFiles {
+		t.Fatalf("len = %d truncated = %v", len(got.Files), got.Truncated)
+	}
+	for i, f := range got.Files {
+		if want := "p" + strconv.Itoa(i+1) + ".mp3"; f.Name != want {
+			t.Fatalf("entry %d = %q, want %q", i, f.Name, want)
+		}
 	}
 }
 

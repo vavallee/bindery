@@ -1217,6 +1217,34 @@ describe('BookDetailPage — dual-format book', () => {
     expect(api.getBookFileNames).toHaveBeenCalledWith(42, '/library/redshirts-audio')
   })
 
+  it('collapses a long file list behind a summary and keeps a short one open', async () => {
+    const audio = makeBook({
+      mediaType: 'audiobook',
+      bookFiles: [makeFile({ id: 1, format: 'audiobook', path: '/library/long-audio' })],
+    })
+    vi.mocked(api.getBook).mockResolvedValue(audio)
+    const mk = (n: number) => ({
+      files: Array.from({ length: n }, (_, i) => ({ name: `part${i + 1}.mp3`, sizeBytes: 10 })),
+      truncated: false,
+    })
+
+    vi.mocked(api.getBookFileNames).mockResolvedValue(mk(25))
+    const long = renderBookDetailPage()
+    const longBox = await screen.findByTestId('file-names-/library/long-audio')
+    const details = longBox.querySelector('details')
+    expect(details).not.toBeNull()
+    expect(details).not.toHaveAttribute('open')
+    expect(within(longBox).getByRole('region', { hidden: true })).toHaveClass('overflow-y-auto')
+    expect(within(longBox).getByText('part25.mp3')).toBeInTheDocument()
+    long.unmount()
+
+    vi.mocked(api.getBookFileNames).mockResolvedValue(mk(12))
+    renderBookDetailPage()
+    const shortBox = await screen.findByTestId('file-names-/library/long-audio')
+    expect(shortBox.querySelector('details')).toBeNull()
+    expect(within(shortBox).getByText('part12.mp3')).toBeInTheDocument()
+  })
+
   it('does not look up names for an ebook row, whose path already names the file', async () => {
     vi.mocked(api.getBook).mockResolvedValue(
       makeBook({ bookFiles: [makeFile({ id: 1, format: 'ebook', path: '/library/book.epub' })] }),

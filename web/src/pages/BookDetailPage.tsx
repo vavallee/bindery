@@ -50,6 +50,9 @@ function baseName(path: string): string {
   return parts[parts.length - 1] || path
 }
 
+/** More names than this collapse behind a summary. */
+const LONG_FILE_LIST = 20
+
 /**
  * The file names inside an audiobook row (#3579). An audiobook is registered by
  * its folder, so the row's path alone does not say which parts it holds. Loaded
@@ -71,16 +74,36 @@ function FileNames({ bookId, row }: { bookId: number; row: FileRow }) {
 
   if (!names || names.files.length === 0) return null
   if (names.files.length === 1 && names.files[0].name === baseName(row.path)) return null
+  const list = (
+    <ul className="pl-3 space-y-0.5">
+      {names.files.map(f => (
+        <li key={f.name} className="flex gap-2 min-w-0 text-xs text-fg-muted">
+          <code className="min-w-0 font-mono break-all" title={f.name}>{f.name}</code>
+          {!!f.sizeBytes && <span className="shrink-0">{formatBytes(f.sizeBytes)}</span>}
+        </li>
+      ))}
+    </ul>
+  )
+  // A long list collapses behind a summary and scrolls inside a capped box, so
+  // a 60 part audiobook does not push the rest of the page away.
+  const long = names.files.length > LONG_FILE_LIST
   return (
     <li data-testid={`file-names-${row.path}`} className="px-3 pb-2 -mt-1">
-      <ul className="pl-3 space-y-0.5">
-        {names.files.map(f => (
-          <li key={f.name} className="flex gap-2 min-w-0 text-xs text-fg-muted">
-            <code className="min-w-0 font-mono break-all" title={f.name}>{f.name}</code>
-            {!!f.sizeBytes && <span className="shrink-0">{formatBytes(f.sizeBytes)}</span>}
-          </li>
-        ))}
-      </ul>
+      {long ? (
+        <details>
+          <summary className="cursor-pointer text-xs text-fg-muted pl-3 py-0.5">
+            {t('bookDetail.fileNamesCount', { count: names.files.length })}
+          </summary>
+          <div
+            tabIndex={0}
+            role="region"
+            aria-label={t('bookDetail.fileNamesRegion', { name: baseName(row.path) })}
+            className="max-h-64 overflow-y-auto mt-1"
+          >
+            {list}
+          </div>
+        </details>
+      ) : list}
       {names.truncated && (
         <p className="pl-3 mt-1 text-xs text-fg-muted">{t('bookDetail.fileNamesTruncated')}</p>
       )}

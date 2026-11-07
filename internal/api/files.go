@@ -167,6 +167,56 @@ func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 // a folder with a huge number of files cannot produce an unbounded response.
 const maxListedFiles = 500
 
+// maxWalkedFiles bounds how many entries one listing collects before sorting.
+const maxWalkedFiles = 20000
+
+// naturalLess orders names the way a person reads them: runs of digits compare
+// by value (part2 before part10), everything else compares case insensitively,
+// and a plain byte comparison breaks any remaining tie so the order is stable.
+func naturalLess(a, b string) bool {
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		ca, cb := a[i], b[j]
+		if isDigit(ca) && isDigit(cb) {
+			si := i
+			for i < len(a) && isDigit(a[i]) {
+				i++
+			}
+			sj := j
+			for j < len(b) && isDigit(b[j]) {
+				j++
+			}
+			na, nb := strings.TrimLeft(a[si:i], "0"), strings.TrimLeft(b[sj:j], "0")
+			if len(na) != len(nb) {
+				return len(na) < len(nb)
+			}
+			if na != nb {
+				return na < nb
+			}
+			continue
+		}
+		la, lb := lowerByte(ca), lowerByte(cb)
+		if la != lb {
+			return la < lb
+		}
+		i++
+		j++
+	}
+	if len(a)-i != len(b)-j {
+		return len(a)-i < len(b)-j
+	}
+	return a < b
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+func lowerByte(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c + 'a' - 'A'
+	}
+	return c
+}
+
 // listedFile is one file inside a tracked book path, named relative to it.
 type listedFile struct {
 	Name      string `json:"name"`
@@ -247,8 +297,9 @@ func (h *FileHandler) ListFileNames(w http.ResponseWriter, r *http.Request) {
 			if skip(rel, false) || !d.Type().IsRegular() {
 				return nil
 			}
-			if len(files) >= maxListedFiles {
-				truncated = true
+			// Bound memory on an absurd folder. Below this the cut after
+			// sorting is exact; above it the walk order decides which are kept.
+			if len(files) >= maxWalkedFiles {
 				return fs.SkipAll
 			}
 			var size int64
@@ -258,7 +309,13 @@ func (h *FileHandler) ListFileNames(w http.ResponseWriter, r *http.Request) {
 			files = append(files, listedFile{Name: rel, SizeBytes: size})
 			return nil
 		})
-		sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
+		// Sort first, then cut, so the entries kept are the first ones in the
+		// order the page shows.
+		sort.SliceStable(files, func(i, j int) bool { return naturalLess(files[i].Name, files[j].Name) })
+		if len(files) > maxListedFiles {
+			files = files[:maxListedFiles]
+			truncated = true
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"files": files, "truncated": truncated})
 }
