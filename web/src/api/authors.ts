@@ -164,6 +164,9 @@ export interface MergeAuthorsResult {
   BooksReparented: number
   AliasesMigrated: number
   AliasesCreated: number
+  // Names the merge could not record as an alias because another author
+  // already holds them. Null or absent when nothing was left out.
+  AliasesSkipped?: string[] | null
   TargetUpdated: boolean
 }
 

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import MergeAuthorsModal from './MergeAuthorsModal'
 import { api } from '../api/client'
 import type { Author } from '../api/client'
@@ -175,5 +175,45 @@ describe('MergeAuthorsModal', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
     fireEvent.click(container.firstChild as HTMLElement)
     expect(onClose).toHaveBeenCalledTimes(2)
+  })
+
+  // #3565: a name another author already holds cannot be saved as an alias.
+  async function mergeOneIntoTwo(onClose: () => void, onMerged: () => void) {
+    render(<MergeAuthorsModal authors={authors} initialTargetId={2} onClose={onClose} onMerged={onMerged} />)
+    fireEvent.change(selects().source, { target: { value: '1' } })
+    await screen.findByText('4 book(s) will move to the target.')
+    fireEvent.click(mergeButton())
+    await acceptConfirm()
+  }
+
+  it('names the aliases the merge could not save and stays open until dismissed', async () => {
+    vi.mocked(api.mergeAuthors).mockResolvedValue({
+      BooksReparented: 4, AliasesMigrated: 0, AliasesCreated: 0, AliasesSkipped: ['Ursula Le Guin'], TargetUpdated: true,
+    })
+    const onClose = vi.fn()
+    const onMerged = vi.fn()
+    await mergeOneIntoTwo(onClose, onMerged)
+
+    const notice = await screen.findByRole('status')
+    expect(within(notice).getByText('Ursula Le Guin')).toBeInTheDocument()
+    expect(notice).toHaveTextContent('mergeAuthorsModal.mergedWithSkipped')
+    expect(onMerged).toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'mergeAuthorsModal.done' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes straight away when nothing was skipped, whether the list is null or empty', async () => {
+    for (const skipped of [null, []]) {
+      vi.mocked(api.mergeAuthors).mockResolvedValue({
+        BooksReparented: 4, AliasesMigrated: 0, AliasesCreated: 1, AliasesSkipped: skipped, TargetUpdated: true,
+      })
+      const onClose = vi.fn()
+      await mergeOneIntoTwo(onClose, vi.fn())
+      await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+      expect(screen.queryByRole('status')).toBeNull()
+      cleanup()
+    }
   })
 })
