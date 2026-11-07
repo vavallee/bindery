@@ -47,6 +47,16 @@ type DownloadClient struct {
 	// handed the credential itself.
 	APIKeyConfigured   bool `json:"apiKeyConfigured"`
 	PasswordConfigured bool `json:"passwordConfigured"`
+
+	// ProxyUsername and ProxyPassword are optional HTTP basic auth credentials
+	// for a qBittorrent client behind a reverse proxy that demands them before
+	// the request reaches qBittorrent (#3693). They are separate from the
+	// client's own Username and Password. ProxyPassword is write-only like
+	// Password: blanked on every response, with ProxyPasswordConfigured
+	// reporting presence.
+	ProxyUsername           string `json:"proxyUsername"`
+	ProxyPassword           string `json:"proxyPassword"`
+	ProxyPasswordConfigured bool   `json:"proxyPasswordConfigured"`
 }
 
 type DownloadClientHealth struct {

@@ -19,7 +19,8 @@ type DownloadClientRepo struct {
 const downloadClientSelectColumns = `
 	id, name, type, host, port, api_key, use_ssl, url_base, username, password,
 	category, category_audiobook, path_remap, priority, enabled,
-	enabled_for_books, enabled_for_audiobooks, remove_on_import, created_at, updated_at`
+	enabled_for_books, enabled_for_audiobooks, remove_on_import, created_at, updated_at,
+	proxy_username, proxy_password`
 
 // torrentClientTypes and usenetClientTypes are the download-client types each
 // protocol can be served by. They back the protocol-scoped queries below; a new
@@ -112,6 +113,12 @@ func hydrateClientCredentials(c *models.DownloadClient) {
 }
 
 func normalizeClientCredentialStorage(c *models.DownloadClient) {
+	// Proxy basic auth is a qBittorrent-only feature (#3693); do not keep it on
+	// a row of any other type.
+	if c.Type != "qbittorrent" {
+		c.ProxyUsername = ""
+		c.ProxyPassword = ""
+	}
 	if !isCredentialClient(c.Type) {
 		return
 	}
@@ -146,7 +153,8 @@ func (r *DownloadClientRepo) List(ctx context.Context) ([]models.DownloadClient,
 		var enabled, useSSL, enabledForBooks, enabledForAudiobooks, removeOnImport int
 		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
 			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-			&enabled, &enabledForBooks, &enabledForAudiobooks, &removeOnImport, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&enabled, &enabledForBooks, &enabledForAudiobooks, &removeOnImport, &c.CreatedAt, &c.UpdatedAt,
+			&c.ProxyUsername, &c.ProxyPassword); err != nil {
 			return nil, err
 		}
 		c.Enabled = enabled == 1
@@ -168,7 +176,8 @@ func (r *DownloadClientRepo) GetByID(ctx context.Context, id int64) (*models.Dow
 		FROM download_clients WHERE id=?`, id).
 		Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
 			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-			&enabled, &enabledForBooks, &enabledForAudiobooks, &removeOnImport, &c.CreatedAt, &c.UpdatedAt)
+			&enabled, &enabledForBooks, &enabledForAudiobooks, &removeOnImport, &c.CreatedAt, &c.UpdatedAt,
+			&c.ProxyUsername, &c.ProxyPassword)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -200,7 +209,8 @@ func (r *DownloadClientRepo) ListEnabled(ctx context.Context) ([]models.Download
 		var enabled, useSSL, enabledForBooks, enabledForAudiobooks, removeOnImport int
 		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
 			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-			&enabled, &enabledForBooks, &enabledForAudiobooks, &removeOnImport, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&enabled, &enabledForBooks, &enabledForAudiobooks, &removeOnImport, &c.CreatedAt, &c.UpdatedAt,
+			&c.ProxyUsername, &c.ProxyPassword); err != nil {
 			return nil, err
 		}
 		c.Enabled = enabled == 1
@@ -222,7 +232,8 @@ func (r *DownloadClientRepo) GetFirstEnabled(ctx context.Context) (*models.Downl
 		FROM download_clients WHERE enabled=1 ORDER BY priority LIMIT 1`).
 		Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
 			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-			&enabled, &enabledForBooks, &enabledForAudiobooks, &removeOnImport, &c.CreatedAt, &c.UpdatedAt)
+			&enabled, &enabledForBooks, &enabledForAudiobooks, &removeOnImport, &c.CreatedAt, &c.UpdatedAt,
+			&c.ProxyUsername, &c.ProxyPassword)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -250,7 +261,8 @@ func (r *DownloadClientRepo) GetFirstEnabledByProtocol(ctx context.Context, prot
 		FROM download_clients WHERE enabled=1 AND type IN (`+placeholders+`) ORDER BY priority LIMIT 1`, args...).
 		Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
 			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-			&enabled, &enabledForBooks, &enabledForAudiobooks, &removeOnImport, &c.CreatedAt, &c.UpdatedAt)
+			&enabled, &enabledForBooks, &enabledForAudiobooks, &removeOnImport, &c.CreatedAt, &c.UpdatedAt,
+			&c.ProxyUsername, &c.ProxyPassword)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
@@ -285,7 +297,8 @@ func (r *DownloadClientRepo) GetEnabledByProtocol(ctx context.Context, protocol 
 		var enabled, useSSL, enabledForBooks, enabledForAudiobooks, removeOnImport int
 		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
 			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-			&enabled, &enabledForBooks, &enabledForAudiobooks, &removeOnImport, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&enabled, &enabledForBooks, &enabledForAudiobooks, &removeOnImport, &c.CreatedAt, &c.UpdatedAt,
+			&c.ProxyUsername, &c.ProxyPassword); err != nil {
 			return nil, err
 		}
 		c.Enabled = enabled == 1
@@ -303,9 +316,9 @@ func (r *DownloadClientRepo) Create(ctx context.Context, c *models.DownloadClien
 	normalizeClientCredentialStorage(c)
 	now := time.Now().UTC()
 	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO download_clients (name, type, host, port, api_key, use_ssl, url_base, username, password, category, category_audiobook, path_remap, priority, enabled, enabled_for_books, enabled_for_audiobooks, remove_on_import, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.Name, c.Type, c.Host, c.Port, c.APIKey, c.UseSSL, c.URLBase, c.Username, c.Password, c.Category, c.CategoryAudiobook, c.PathRemap, c.Priority, c.Enabled, c.EnabledForBooks, c.EnabledForAudiobooks, c.RemoveOnImport, now, now)
+		INSERT INTO download_clients (name, type, host, port, api_key, use_ssl, url_base, username, password, category, category_audiobook, path_remap, priority, enabled, enabled_for_books, enabled_for_audiobooks, remove_on_import, proxy_username, proxy_password, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.Name, c.Type, c.Host, c.Port, c.APIKey, c.UseSSL, c.URLBase, c.Username, c.Password, c.Category, c.CategoryAudiobook, c.PathRemap, c.Priority, c.Enabled, c.EnabledForBooks, c.EnabledForAudiobooks, c.RemoveOnImport, c.ProxyUsername, c.ProxyPassword, now, now)
 	if err != nil {
 		return fmt.Errorf("create download client: %w", err)
 	}
@@ -325,10 +338,10 @@ func (r *DownloadClientRepo) Update(ctx context.Context, c *models.DownloadClien
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE download_clients SET name=?, type=?, host=?, port=?, api_key=?, use_ssl=?,
 		                            url_base=?, username=?, password=?, category=?, category_audiobook=?, path_remap=?, priority=?, enabled=?,
-		                            enabled_for_books=?, enabled_for_audiobooks=?, remove_on_import=?, updated_at=?
+		                            enabled_for_books=?, enabled_for_audiobooks=?, remove_on_import=?, proxy_username=?, proxy_password=?, updated_at=?
 		WHERE id=?`,
 		c.Name, c.Type, c.Host, c.Port, c.APIKey, c.UseSSL, c.URLBase, c.Username, c.Password, c.Category, c.CategoryAudiobook, c.PathRemap, c.Priority, c.Enabled,
-		c.EnabledForBooks, c.EnabledForAudiobooks, c.RemoveOnImport, now, c.ID)
+		c.EnabledForBooks, c.EnabledForAudiobooks, c.RemoveOnImport, c.ProxyUsername, c.ProxyPassword, now, c.ID)
 	return err
 }
 

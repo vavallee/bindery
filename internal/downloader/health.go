@@ -370,6 +370,7 @@ func checkQbittorrentCategoryPath(ctx context.Context, client *models.DownloadCl
 	expected := cleanConfiguredDir(ExpectedDownloadDirForClient(client, models.MediaTypeEbook, downloadDir, audiobookDownloadDir))
 
 	qb := qbittorrent.New(client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL)
+	qb.SetBasicAuth(client.ProxyUsername, client.ProxyPassword)
 	categories, err := qb.GetCategories(ctx)
 	if err != nil {
 		return healthError(fmt.Sprintf("qBittorrent category path check failed: %v", err))

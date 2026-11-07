@@ -259,6 +259,47 @@ export default function ClientsTab({ clients, setClients }: Props) {
   )
 }
 
+// ProxyAuthFields is the optional HTTP basic auth pair for a qBittorrent that
+// sits behind a reverse proxy wanting credentials before the request reaches it
+// (a seedbox, for example) (#3693). Collapsed unless the client already has one.
+function ProxyAuthFields({ idPrefix, username, setUsername, password, setPassword, passwordStored, defaultOpen }: {
+  idPrefix: string
+  username: string
+  setUsername: (v: string) => void
+  password: string
+  setPassword: (v: string) => void
+  passwordStored: boolean
+  defaultOpen: boolean
+}) {
+  const { t } = useTranslation()
+  const labelCls = 'block text-xs text-fg-muted mb-1'
+  return (
+    <details open={defaultOpen || undefined} className="text-sm">
+      <summary className="cursor-pointer text-xs text-fg-muted">{t('settings.clients.proxyAuthSummary')}</summary>
+      <div className="mt-2 space-y-2">
+        <p className="text-xs text-fg-muted">{t('settings.clients.proxyAuthHelp')}</p>
+        <div>
+          <label htmlFor={`${idPrefix}-proxy-user`} className={labelCls}>{t('settings.clients.proxyUsername')}</label>
+          <input id={`${idPrefix}-proxy-user`} {...literalInputAttrs} value={username} onChange={e => setUsername(e.target.value)} className={inputCls} />
+        </div>
+        <div>
+          <label htmlFor={`${idPrefix}-proxy-pass`} className={labelCls}>{t('settings.clients.proxyPassword')}</label>
+          <input
+            id={`${idPrefix}-proxy-pass`}
+            {...secretInputAttrs}
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            placeholder={passwordStored ? '••••••••' : ''}
+            type="password"
+            className={inputCls}
+          />
+          {passwordStored && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.proxyPasswordKeepHint')}</p>}
+        </div>
+      </div>
+    </details>
+  )
+}
+
 function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; onClose: () => void; onSaved: (c: DownloadClient) => void }) {
   const fid = useId()
   const { t } = useTranslation()
@@ -272,6 +313,8 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
   // the input's value to find. Blank on save means "keep the stored one".
   const [credential, setCredential] = useState('')
   const [username, setUsername] = useState(client.username || '')
+  const [proxyUsername, setProxyUsername] = useState(client.proxyUsername || '')
+  const [proxyPassword, setProxyPassword] = useState('')
   const [useSSL, setUseSSL] = useState(client.useSsl || false)
   const [urlBase, setUrlBase] = useState(client.urlBase || '')
   const [category, setCategory] = useState(client.category)
@@ -291,6 +334,8 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
     setType(newType)
     setCredential('')
     setUsername('')
+    setProxyUsername('')
+    setProxyPassword('')
   }
 
   const isPasswordClient = (t: string) => t === 'qbittorrent' || t === 'transmission' || t === 'nzbget' || t === 'deluge' || t === 'rtorrent'
@@ -335,6 +380,12 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
       enabledForBooks,
       enabledForAudiobooks,
       priority: parseInt(priority) || 0,
+    }
+    if (type === 'qbittorrent') {
+      data.proxyUsername = proxyUsername.trim()
+      if (proxyPassword) data.proxyPassword = proxyPassword
+      // No username means no basic auth, so a stored password goes with it.
+      else if (!proxyUsername.trim()) data.clearProxyPassword = true
     }
     if (isPasswordClient(type)) {
       data.clearApiKey = true
@@ -450,6 +501,17 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
           ? t('settings.clients.credentialKeepHint')
           : t('settings.clients.credentialUnsetHint')}</p>
       </div>
+      {type === 'qbittorrent' && (
+        <ProxyAuthFields
+          idPrefix={`edit-${client.id}`}
+          username={proxyUsername}
+          setUsername={setProxyUsername}
+          password={proxyPassword}
+          setPassword={setProxyPassword}
+          passwordStored={type === client.type && !!client.proxyPasswordConfigured}
+          defaultOpen={!!client.proxyUsername}
+        />
+      )}
       <div>
         <label htmlFor={`${fid}-5`} className={labelCls}>{type === 'transmission' ? t('settings.clients.downloadDir', 'Download Directory') : t('settings.clients.categoryLabel', 'Category / Label')}</label>
         <input id={`${fid}-5`} value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? t('settings.clients.downloadDirPlaceholder', '/downloads (leave blank for default)') : 'books'} className={inputCls} />
@@ -544,6 +606,8 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   const [port, setPort] = useState('8080')
   const [credential, setCredential] = useState('')
   const [username, setUsername] = useState('')
+  const [proxyUsername, setProxyUsername] = useState('')
+  const [proxyPassword, setProxyPassword] = useState('')
   const [useSSL, setUseSSL] = useState(false)
   const [urlBase, setUrlBase] = useState('')
   const [category, setCategory] = useState('books')
@@ -572,6 +636,8 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
     setType(newType)
     setCredential('')
     setUsername('')
+    setProxyUsername('')
+    setProxyPassword('')
     if (newType === 'nzbget') {
       setName('NZBGet')
       setPort('6789')
@@ -612,6 +678,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
     enabledForAudiobooks,
     priority: parseInt(priority) || 0,
     ...(supportsRemoveOnImport(type) ? { removeOnImport } : {}),
+    ...(type === 'qbittorrent' ? { proxyUsername: proxyUsername.trim(), proxyPassword } : {}),
   })
 
   const submit = async () => {
@@ -705,6 +772,17 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         <label htmlFor={`${fid}-5`} className={labelCls}>{isPasswordClient(type) ? t('settings.clients.password', 'Password') : t('settings.clients.apiKey', 'API Key')}</label>
         <input id={`${fid}-5`} {...secretInputAttrs} value={credential} onChange={e => setCredential(e.target.value)} placeholder={isPasswordClient(type) ? t('settings.clients.password', 'Password') : t('settings.clients.apiKey', 'API Key')} type="password" className={inputCls} />
       </div>
+      {type === 'qbittorrent' && (
+        <ProxyAuthFields
+          idPrefix={fid}
+          username={proxyUsername}
+          setUsername={setProxyUsername}
+          password={proxyPassword}
+          setPassword={setProxyPassword}
+          passwordStored={false}
+          defaultOpen={false}
+        />
+      )}
       <div>
         <label htmlFor={`${fid}-6`} className={labelCls}>{type === 'transmission' ? t('settings.clients.downloadDir', 'Download Directory') : t('settings.clients.categoryLabel', 'Category / Label')}</label>
         <input id={`${fid}-6`} value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? t('settings.clients.downloadDirPlaceholder', '/downloads (leave blank for default)') : 'books'} className={inputCls} />

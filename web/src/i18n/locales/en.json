@@ -1808,6 +1808,11 @@
       "apiKeyEditLabel": "API Key (leave blank to keep current)",
       "credentialKeepHint": "Bindery no longer sends a saved password or API key back to the browser. Leave this blank to keep the one already stored.",
       "credentialUnsetHint": "No credential is stored for this client yet.",
+      "proxyAuthSummary": "Proxy login (optional)",
+      "proxyAuthHelp": "Only needed when a reverse proxy in front of qBittorrent, such as a seedbox, asks for a username and password (HTTP basic auth) before it lets requests through. This is separate from the qBittorrent login above.",
+      "proxyUsername": "Proxy username",
+      "proxyPassword": "Proxy password",
+      "proxyPasswordKeepHint": "Leave blank to keep the stored proxy password. Clear the proxy username to remove it.",
       "unknownError": "Unknown error",
       "remapAssist": {
         "heading": "Suggest a path remap",

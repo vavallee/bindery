@@ -142,6 +142,8 @@ func configFingerprint(c *models.DownloadClient) string {
 		c.Username,
 		c.Password,
 		c.APIKey,
+		c.ProxyUsername,
+		c.ProxyPassword,
 	} {
 		h.Write([]byte(s))
 		h.Write([]byte{0})
@@ -197,9 +199,11 @@ func QbittorrentFor(c *models.DownloadClient) *qbittorrent.Client {
 // QbittorrentFor is the method form for callers that hold their own cache.
 func (c *ClientCache) QbittorrentFor(client *models.DownloadClient) *qbittorrent.Client {
 	e := c.lookupOrBuild(client, func() *cachedEntry {
-		return &cachedEntry{qbittorrent: qbittorrent.New(
+		qb := qbittorrent.New(
 			client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL,
-		)}
+		)
+		qb.SetBasicAuth(client.ProxyUsername, client.ProxyPassword)
+		return &cachedEntry{qbittorrent: qb}
 	})
 	return e.qbittorrent
 }
