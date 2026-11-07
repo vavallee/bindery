@@ -29,6 +29,10 @@ export interface GeneralTabProps {
 // the server's [1h, 168h] range is valid too and gets its own option appended.
 const HARDCOVER_SYNC_INTERVAL_PRESETS = ['1h', '3h', '6h', '12h', '24h', '48h', '168h']
 
+// Preset values offered by the library scan interval picker (#3692). The server
+// accepts any duration in [15m, 168h].
+const LIBRARY_SCAN_INTERVAL_PRESETS = ['15m', '30m', '1h', '3h', '6h', '12h', '24h', '168h']
+
 // Preset values offered by the release discovery picker (#2236). The server
 // accepts "off" or any duration in [24h, 720h]; anything else gets its own
 // option appended, the same as the Hardcover picker.
@@ -302,6 +306,9 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   // its own option rather than letting the select render blank (#1848).
   const hardcoverSyncInterval = settings['hardcover.sync_interval'] ?? '24h'
   const hardcoverSyncIntervalIsCustom = !HARDCOVER_SYNC_INTERVAL_PRESETS.includes(hardcoverSyncInterval)
+  // Same for the library scan interval, [15m, 168h] on the server (#3692).
+  const libraryScanInterval = settings['library.scan_interval'] || '6h'
+  const libraryScanIntervalIsCustom = !LIBRARY_SCAN_INTERVAL_PRESETS.includes(libraryScanInterval)
   // Discovery ships off (#2236): nothing stored means Off, not the weekly
   // default the other cadences fall back to.
   const discoveryInterval = settings['authors.discovery.interval'] || 'off'
@@ -963,6 +970,49 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                   "unset" while the scheduler is happily honouring it. */}
               {hardcoverSyncIntervalIsCustom && (
                 <option value={hardcoverSyncInterval}>{hardcoverSyncInterval}</option>
+              )}
+            </select>
+            <p className="text-xs text-fg-muted mt-1">
+              {t('settings.general.searchIntervalRestart')}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Library scan interval (#3692). Another scheduler cadence read once at
+          startup, so it sits with the two above. */}
+      <section>
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.libraryScan', 'Library scan')}</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          <div>
+            <label htmlFor={`${fid}-12`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+              {t('settings.general.libraryScanIntervalLabel', 'Library scan interval')}
+            </label>
+            <p className="text-xs text-fg-muted mb-2">
+              {t('settings.general.libraryScanIntervalHint')}
+            </p>
+            <select id={`${fid}-12`}
+              data-testid="library-scan-interval"
+              value={libraryScanInterval}
+              onChange={async e => {
+                const next = e.target.value
+                setSettings(s => ({ ...s, 'library.scan_interval': next }))
+                await api.setSetting('library.scan_interval', next).catch(console.error)
+              }}
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
+            >
+              <option value="15m">{t('settings.general.interval.minutes', { count: 15 })}</option>
+              <option value="30m">{t('settings.general.interval.minutes', { count: 30 })}</option>
+              <option value="1h">{t('settings.general.interval.hours', { count: 1 })}</option>
+              <option value="3h">{t('settings.general.interval.hours', { count: 3 })}</option>
+              <option value="6h">{t('settings.general.interval.withDefault', { interval: t('settings.general.interval.hours', { count: 6 }) })}</option>
+              <option value="12h">{t('settings.general.interval.hours', { count: 12 })}</option>
+              <option value="24h">{t('settings.general.interval.hours', { count: 24 })}</option>
+              <option value="168h">{t('settings.general.interval.days', { count: 7 })}</option>
+              {/* The server accepts anything in [15m, 168h], so a value set via
+                  the API need not be a preset; keep it visible, not blank. */}
+              {libraryScanIntervalIsCustom && (
+                <option value={libraryScanInterval}>{libraryScanInterval}</option>
               )}
             </select>
             <p className="text-xs text-fg-muted mt-1">

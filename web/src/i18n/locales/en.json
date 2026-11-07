@@ -2283,6 +2283,9 @@
       "hardcoverSync": "Hardcover list sync",
       "hardcoverSyncIntervalLabel": "Hardcover list sync interval",
       "hardcoverSyncIntervalHint": "How often Bindery re-syncs your enabled Hardcover import lists. Lower it if you curate a Hardcover list as your main way of adding books. Use Sync now on the Import tab for an immediate run.",
+      "libraryScan": "Library scan",
+      "libraryScanIntervalLabel": "Library scan interval",
+      "libraryScanIntervalHint": "How often Bindery scans your library folders for new and changed files. Lower it if you drop files in by hand and want them picked up sooner. Raise it if your library is large or on slow storage. The Scan Library button runs one right away.",
       "discovery": "New release discovery",
       "discoveryIntervalLabel": "Check monitored authors for new books",
       "discoveryIntervalHint": "Scheduled discovery is off until you pick an interval. Pick one and Bindery checks each monitored author's catalogue that often, adding books it does not have yet, following the author's monitoring settings and leaving the grabbing to the next wanted search; authors set to not add new items are never checked.",
@@ -2355,6 +2358,8 @@
         "external": "External"
       },
       "interval": {
+        "minutes_one": "{{count}} minute",
+        "minutes_other": "{{count}} minutes",
         "hours_one": "{{count}} hour",
         "hours_other": "{{count}} hours",
         "days_one": "{{count}} day",

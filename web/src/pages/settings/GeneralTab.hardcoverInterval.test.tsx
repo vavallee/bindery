@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import GeneralTab from './GeneralTab'
 import { api } from '../../api/client'
 
@@ -49,6 +49,40 @@ beforeEach(() => {
   vi.mocked(api.getStorage).mockRejectedValue(new Error('no storage'))
   vi.mocked(api.authConfig).mockRejectedValue(new Error('no auth cfg'))
   vi.mocked(api.setSetting).mockReset()
+})
+
+// #3692: the library scan interval picker follows the same rules: default 6h,
+// presets selected as stored, and a valid-but-unlisted value kept visible.
+describe('Library scan interval picker', () => {
+  it('falls back to the 6h default when nothing is stored', async () => {
+    render(<GeneralTab />)
+    const select = (await screen.findByTestId('library-scan-interval')) as HTMLSelectElement
+    expect(select.value).toBe('6h')
+  })
+
+  it('shows a stored preset as selected', async () => {
+    seedSettings({ 'library.scan_interval': '30m' })
+    render(<GeneralTab />)
+    const select = (await screen.findByTestId('library-scan-interval')) as HTMLSelectElement
+    expect(select.value).toBe('30m')
+  })
+
+  it('keeps a valid-but-unlisted value selected instead of rendering blank', async () => {
+    seedSettings({ 'library.scan_interval': '90m' })
+    render(<GeneralTab />)
+    const select = (await screen.findByTestId('library-scan-interval')) as HTMLSelectElement
+    expect(select.value).toBe('90m')
+    expect(within(select).getByRole('option', { name: '90m' })).toBeInTheDocument()
+  })
+
+  it('saves the chosen interval under library.scan_interval', async () => {
+    vi.mocked(api.setSetting).mockResolvedValue(undefined as never)
+    render(<GeneralTab />)
+    const select = (await screen.findByTestId('library-scan-interval')) as HTMLSelectElement
+    fireEvent.change(select, { target: { value: '1h' } })
+    await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('library.scan_interval', '1h'))
+    expect(select.value).toBe('1h')
+  })
 })
 
 // #1848 — the server accepts any interval in [1h, 168h], so the stored value

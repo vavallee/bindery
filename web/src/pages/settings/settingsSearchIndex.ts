@@ -40,6 +40,7 @@ export const HEADINGS: HeadingEntry[] = [
   { tab: 'general', key: 'settings.general.library', adminOnly: true },
   { tab: 'general', key: 'settings.general.search', adminOnly: true },
   { tab: 'general', key: 'settings.general.hardcoverSync', fallback: 'Hardcover list sync', adminOnly: true },
+  { tab: 'general', key: 'settings.general.libraryScan', fallback: 'Library scan', adminOnly: true },
   { tab: 'general', key: 'settings.general.discovery', adminOnly: true },
   { tab: 'general', key: 'settings.general.seriesCheck', adminOnly: true },
   { tab: 'general', key: 'settings.general.defaultLibraryLocation', adminOnly: true },

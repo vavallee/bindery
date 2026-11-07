@@ -834,6 +834,26 @@ func TestValidateSettingValue_HardcoverSyncInterval(t *testing.T) {
 	}
 }
 
+// TestValidateSettingValue_LibraryScanInterval covers the library scan cadence
+// (#3692): empty is allowed (scheduler falls back to 6h), [15m, 168h] is
+// accepted inclusive, and short, long and unparseable values are rejected. The
+// scheduler re-checks the same bounds in resolveLibraryScanInterval.
+func TestValidateSettingValue_LibraryScanInterval(t *testing.T) {
+	if err := validateSettingValue(SettingLibraryScanInterval, ""); err != nil {
+		t.Errorf("empty should be accepted: %v", err)
+	}
+	for _, v := range []string{"15m", "1h", "6h", "168h"} {
+		if err := validateSettingValue(SettingLibraryScanInterval, v); err != nil {
+			t.Errorf("%q should be accepted: %v", v, err)
+		}
+	}
+	for _, v := range []string{"14m", "169h", "nightly"} {
+		if err := validateSettingValue(SettingLibraryScanInterval, v); err == nil {
+			t.Errorf("%q should be rejected", v)
+		}
+	}
+}
+
 func TestValidateSettingValue_ImportMode(t *testing.T) {
 	// Empty = auto (same as the explicit "auto"), accepted.
 	if err := validateSettingValue(SettingImportMode, ""); err != nil {
