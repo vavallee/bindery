@@ -173,5 +173,9 @@ func (h *AuthorAliasHandler) Merge(w http.ResponseWriter, r *http.Request) {
 	slog.Info("merged authors", "sourceId", req.SourceID, "targetId", targetID,
 		"booksReparented", result.BooksReparented, "aliasesMigrated", result.AliasesMigrated,
 		"aliasesCreated", result.AliasesCreated)
+	if len(result.AliasesSkipped) > 0 {
+		slog.Warn("merge could not record alias: another author holds the name",
+			"sourceId", req.SourceID, "targetId", targetID, "names", result.AliasesSkipped)
+	}
 	writeJSON(w, http.StatusOK, result)
 }

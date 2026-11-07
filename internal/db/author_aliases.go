@@ -321,7 +321,11 @@ type MergeResult struct {
 	BooksReparented int64
 	AliasesMigrated int64
 	AliasesCreated  int64
-	TargetUpdated   bool
+	// AliasesSkipped lists names the merge could not record as an alias on
+	// the target because another author already holds that name (alias names
+	// are unique across the instance).
+	AliasesSkipped []string
+	TargetUpdated  bool
 }
 
 // Merge collapses sourceID into targetID:
@@ -404,6 +408,18 @@ func (r *AuthorAliasRepo) Merge(ctx context.Context, sourceID, targetID int64, o
 		return nil, fmt.Errorf("record source name alias: %w", err)
 	} else if alias {
 		result.AliasesCreated++
+	} else if name := strings.TrimSpace(source.Name); name != "" {
+		// Ignored because the name is already an alias. That is fine when
+		// target holds it; when another author does, the pen name is not
+		// recorded anywhere, so tell the caller (#3565).
+		var holder int64
+		if err := tx.QueryRowContext(ctx,
+			"SELECT author_id FROM author_aliases WHERE name = ?", name).Scan(&holder); err != nil {
+			return nil, fmt.Errorf("check alias holder %q: %w", name, err)
+		}
+		if holder != targetID {
+			result.AliasesSkipped = append(result.AliasesSkipped, name)
+		}
 	}
 
 	// Propagate monitored/profile fields. Target's seeded defaults
