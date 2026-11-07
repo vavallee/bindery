@@ -3810,8 +3810,34 @@ func namesAuthorAmbiguously(parsed ParsedFile, layoutAuthor string) bool {
 	if layoutAuthor == "" || parsed.Title == "" || parsed.Author == "" {
 		return false
 	}
-	return lookupAuthorMatch(parsed.Title, layoutAuthor) && !namesAuthorConfidently(parsed.Title, layoutAuthor) &&
-		!namesAuthorConfidently(parsed.Author, layoutAuthor)
+	if namesAuthorConfidently(parsed.Title, layoutAuthor) || namesAuthorConfidently(parsed.Author, layoutAuthor) {
+		return false
+	}
+	return lookupAuthorMatch(parsed.Title, layoutAuthor) || echoesAuthorSurname(parsed.Title, layoutAuthor)
+}
+
+// echoesAuthorSurname is the looser test for a lone surname spelled a little
+// differently from the folder author's ("Dostoyevsky" in a Dostoevsky folder).
+// MatchAuthorName gives such a pair no band at all, so lookupAuthorMatch cannot
+// see it, yet the scan still fuzzy-matched the side as a title against
+// "Dostoevsky 8" (#3494). It is only ever used to withhold that fuzzy title
+// match, never to claim a book, so a wrong answer costs a book that is named
+// exactly or by its other side, not a wrong link. Both words must be longer
+// than the short-surname cut ("Jones" and "Jonas" are different people).
+func echoesAuthorSurname(side, layoutAuthor string) bool {
+	if len(strings.Fields(side)) != 1 {
+		return false
+	}
+	fields := strings.Fields(layoutAuthor)
+	if len(fields) == 0 {
+		return false
+	}
+	surname := strings.ToLower(fields[len(fields)-1])
+	word := strings.ToLower(strings.Trim(side, " .,;"))
+	if len([]rune(word)) < 6 || len([]rune(surname)) < 6 {
+		return false
+	}
+	return textutil.JaroWinkler(word, surname) >= 0.88
 }
 
 // ErrScanAlreadyRunning was StartScan's answer to a request made while a
