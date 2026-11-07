@@ -381,15 +381,30 @@ var ownerTables = []string{
 
 // purgeOrder deletes the child side before the parent so a purge does not lean
 // on cascade ordering. authors comes after books because books.author_id is
-// ON DELETE CASCADE: removing an author takes every book still hanging off it,
-// including one another user owns. That is inherent in removing the author, and
-// it is part of why purge is a deliberate choice rather than the default.
+// ON DELETE CASCADE: removing an author takes every book still hanging off it.
+// Delete re-homes an author that still holds another account's books (see
+// rehomeAuthorsSQL) before this step, so only the purged user's own rows go.
 var purgeOrder = []string{
 	"downloads",
 	"books",
 	"authors",
 	"import_lists",
 }
+
+// rehomeAuthorsSQL runs during a purge, after the user's own books are deleted.
+// An author of the purged user that still has books under it is handed to the
+// account that owns all of them, or made shared (owner NULL) when they have
+// several owners or any has none. Without this the author delete cascades into
+// those books (#3559). Authors left with no books are not touched and are
+// deleted by the purge.
+const rehomeAuthorsSQL = `
+UPDATE authors SET owner_user_id = (
+    SELECT CASE WHEN COUNT(*) = COUNT(b.owner_user_id)
+                 AND COUNT(DISTINCT b.owner_user_id) = 1
+                THEN MIN(b.owner_user_id) END
+    FROM books b WHERE b.author_id = authors.id)
+WHERE owner_user_id = ?
+  AND EXISTS (SELECT 1 FROM books b WHERE b.author_id = authors.id)`
 
 // sharedConfigTables are instance wide config that happens to carry an
 // owner_user_id: the create handlers stamp whichever admin made the row, but
@@ -437,10 +452,10 @@ type UserOwnedRows struct {
 	// reported for transparency but never reassigned or purged; see Delete.
 	Blocklist int `json:"blocklist"`
 	// OthersBooks and OthersBookFiles count books under this user's authors
-	// that someone else owns (or nobody does), and their files. A purge removes
-	// the authors and books.author_id is ON DELETE CASCADE, so those go too.
-	// They are reported so the admin sees the full cost of purge; they are not
-	// rows the user owns, so Total ignores them.
+	// that someone else owns (or nobody does), and their files. A purge keeps
+	// them and hands their author to the book owner (or makes it shared), so the
+	// admin can see what survives. They are not rows the user owns, so Total
+	// ignores them.
 	OthersBooks     int `json:"othersBooks"`
 	OthersBookFiles int `json:"othersBookFiles"`
 }
@@ -572,6 +587,14 @@ func (r *UserRepo) Delete(ctx context.Context, id int64, plan UserDeletePlan) er
 			// #nosec G201 -- t comes from purgeOrder, a package-level literal
 			// slice; no caller-supplied value reaches this string.
 			q := fmt.Sprintf("DELETE FROM %s WHERE owner_user_id = ?", t)
+			if t == "authors" {
+				// The user's own books are gone by now, so any book still under
+				// one of their authors belongs to someone else. Keep that author
+				// (#3559) instead of letting the cascade take those books.
+				if _, err := tx.ExecContext(ctx, rehomeAuthorsSQL, id); err != nil {
+					return fmt.Errorf("keep authors holding other accounts' books: %w", err)
+				}
+			}
 			if _, err := tx.ExecContext(ctx, q, id); err != nil {
 				return fmt.Errorf("purge %s: %w", t, err)
 			}

@@ -116,10 +116,9 @@ export default function DeleteUserDialog({ user, counts, users, busy, onCancel, 
               <span className="font-medium">{t('users.deletePurge')}</span>
               <span className="block text-xs text-fg-muted">{t('users.deletePurgeHint')}</span>
               {othersBooks > 0 && (
-                <span className="block text-xs text-red-700 dark:text-red-400 mt-1">
+                <span className="block text-xs text-fg-muted mt-1">
                   {t('users.deletePurgeOthers', {
                     books: t('users.deletePurgeOthersBooks', { count: othersBooks }),
-                    files: t('users.deletePurgeOthersFiles', { count: counts.othersBookFiles }),
                   })}
                 </span>
               )}

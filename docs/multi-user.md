@@ -190,7 +190,7 @@ curl -X DELETE "http://bindery:8787/api/v1/auth/users/2?strategy=purge" \
 ```
 
 - **`reassign`** hands every row the account owns, plus its history, to the account in `reassignTo`. Leave `reassignTo` out and the rows lose their owner, which makes them shared (with tenancy on, every user can see them and only an admin can change them). `reassignTo` must be an existing account other than the one being deleted.
-- **`purge`** deletes the downloads, books, authors, import lists and history the account owns, along with any other rows recorded against it. Deleting an author also deletes every book under it, including books that belong to other accounts or to nobody. Check the author list before you purge.
+- **`purge`** deletes the downloads, books, authors, import lists and history the account owns, along with any other rows recorded against it. Books that other accounts (or nobody) own are kept, even when they sit under one of the account's authors. That author stays: it goes to the account that owns the remaining books, or becomes shared when they have several owners or one has no owner. The `counts` object reports these as `othersBooks` and `othersBookFiles`; they do not trigger the `409`, and the dialog tells you how many books are kept.
 
 Under either strategy:
 
