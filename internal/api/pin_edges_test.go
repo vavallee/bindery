@@ -80,7 +80,7 @@ func TestClientForGrab_Routing(t *testing.T) {
 		if c != nil || pin != nil || !errors.As(err, &perr) || perr.Reason != db.PinClientWrongProtocol {
 			t.Fatalf("usenet pinned indexer, torrent release: got %v, %v, %v", c, pin, err)
 		}
-		tor := &models.DownloadClient{Name: "qbit", Type: "qbittorrent", Host: "h", Port: 1, Enabled: true}
+		tor := &models.DownloadClient{Name: "qbit", Type: "qbittorrent", Host: "h", Port: 1, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true}
 		if err := f.clients.Create(ctx, tor); err != nil {
 			t.Fatal(err)
 		}

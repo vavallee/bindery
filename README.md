@@ -268,6 +268,8 @@ The full reference, including path remapping, API key seeding, trusted proxies a
 | **Authentication** | Local accounts, API keys, OIDC, forward auth proxy |
 | **Reading apps** | OPDS 1.2 with search at `/opds/` |
 
+All download clients support **Use SSL** and **URL Base** for connections through a reverse-proxy subpath, plus independent **eligible for books / eligible for audiobooks** toggles (both on by default) so a grab only reaches clients configured for that media type. Bindery sends to the highest-ranked eligible client; if sending fails, it reports the error without retrying another client because the first may already have accepted the release.
+
 ## Architecture
 
 Bindery is a single Go binary (chi router) with the React frontend embedded through `go:embed`, talking to SQLite in WAL mode through the pure Go `modernc.org/sqlite` driver. No CGO, no external database, no sidecars.

@@ -36,7 +36,7 @@ function client(overrides: Partial<DownloadClient>): DownloadClient {
   return {
     id: 1, name: 'c', type: 'qbittorrent', host: 'h', port: 1, apiKey: '', username: '', password: '',
     apiKeyConfigured: false, passwordConfigured: false, useSsl: false, urlBase: '', category: '',
-    enabled: true, ...overrides,
+    enabled: true, enabledForBooks: true, enabledForAudiobooks: true, priority: 0, ...overrides,
   }
 }
 

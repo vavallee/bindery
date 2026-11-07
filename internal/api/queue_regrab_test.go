@@ -117,6 +117,7 @@ func TestQueueGrab_ImportBlockedIsRegrabbable(t *testing.T) {
 	host, port := testServerHostPort(t, srv.URL)
 	if err := clients.Create(ctx, &models.DownloadClient{
 		Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true,
+		EnabledForBooks: true, EnabledForAudiobooks: true,
 	}); err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -400,6 +401,7 @@ func regrabDownloadClient(t *testing.T, clients *db.DownloadClientRepo) (string,
 	host, port := testServerHostPort(t, srv.URL)
 	if err := clients.Create(context.Background(), &models.DownloadClient{
 		Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true,
+		EnabledForBooks: true, EnabledForAudiobooks: true,
 	}); err != nil {
 		t.Fatalf("create client: %v", err)
 	}

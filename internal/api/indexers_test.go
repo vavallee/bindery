@@ -24,6 +24,7 @@ import (
 type mockIndexerSearcher struct {
 	ebookResults []newznab.SearchResult
 	audioResults []newznab.SearchResult
+	queryResults []newznab.SearchResult
 
 	// SearchBook runs the ebook and audiobook legs of a dual-format book
 	// concurrently, so both goroutines land here. mu guards the recorded
@@ -81,7 +82,7 @@ func (m *mockIndexerSearcher) SearchBookWithDebug(_ context.Context, _ []models.
 }
 
 func (m *mockIndexerSearcher) SearchQuery(_ context.Context, _ []models.Indexer, _ string) []newznab.SearchResult {
-	return nil
+	return m.queryResults
 }
 
 func indexerFixture(t *testing.T) *IndexerHandler {
@@ -366,6 +367,32 @@ func TestIndexerSearchQuery_MissingQ(t *testing.T) {
 	h.SearchQuery(rec, httptest.NewRequest(http.MethodGet, "/indexer/search", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for missing q param, got %d", rec.Code)
+	}
+}
+
+func TestIndexerSearchQuery_DetectsMediaTypeFromReleaseTitle(t *testing.T) {
+	h := indexerFixture(t)
+	h.searcher = &mockIndexerSearcher{queryResults: []newznab.SearchResult{
+		{Title: "A Novel.m4b + PDF"},
+		{Title: "A Novel.epub"},
+	}}
+	rec := httptest.NewRecorder()
+	h.SearchQuery(rec, httptest.NewRequest(http.MethodGet, "/indexer/search?q=novel", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var results []newznab.SearchResult
+	if err := json.NewDecoder(rec.Body).Decode(&results); err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	if results[0].MediaType != models.MediaTypeAudiobook {
+		t.Errorf("mixed audiobook release media type = %q, want audiobook", results[0].MediaType)
+	}
+	if results[1].MediaType != models.MediaTypeEbook {
+		t.Errorf("ebook release media type = %q, want ebook", results[1].MediaType)
 	}
 }
 

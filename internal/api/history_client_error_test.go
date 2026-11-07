@@ -141,7 +141,7 @@ func TestQueueGrabSendFailureHistoryAndWebhookUseFixedText(t *testing.T) {
 	n := notifier.New(notifs)
 	n.SetValidator(nil)
 	h.WithNotifier(n)
-	if err := clients.Create(ctx, &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true}); err != nil {
+	if err := clients.Create(ctx, &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true}); err != nil {
 		t.Fatal(err)
 	}
 

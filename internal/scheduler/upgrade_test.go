@@ -77,6 +77,7 @@ func newUpgradeSweepFixture(t *testing.T, upgradeAllowed bool, ownedFile string,
 	}
 	if err := clients.Create(ctx, &models.DownloadClient{
 		Name: "qbit", Type: "qbittorrent", Host: "127.0.0.1", Port: 1, Enabled: true,
+		EnabledForBooks: true, EnabledForAudiobooks: true,
 	}); err != nil {
 		t.Fatalf("client create: %v", err)
 	}

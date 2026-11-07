@@ -163,7 +163,7 @@ func TestQueueGrabSendFailureStoredForRoleRendering(t *testing.T) {
 
 	h, _, _, clients, _, ctx := queueFixture(t)
 	host, port := testServerHostPort(t, srv.URL)
-	if err := clients.Create(ctx, &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true}); err != nil {
+	if err := clients.Create(ctx, &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true}); err != nil {
 		t.Fatal(err)
 	}
 	body := bytes.NewBufferString(`{"guid":"send-fail-guid","nzbUrl":"` + indexerSrv.URL + `/x.nzb","title":"Some Title"}`)

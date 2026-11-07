@@ -84,12 +84,12 @@ func newPinFixture(t *testing.T) *pinFixture {
 	rel := newPinSAB(t)
 
 	pubHost, pubPort := testServerHostPort(t, pub.srv.URL)
-	pubC := &models.DownloadClient{Name: "sab-public", Type: "sabnzbd", Host: pubHost, Port: pubPort, Enabled: true, Priority: 1}
+	pubC := &models.DownloadClient{Name: "sab-public", Type: "sabnzbd", Host: pubHost, Port: pubPort, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true, Priority: 1}
 	if err := clients.Create(ctx, pubC); err != nil {
 		t.Fatalf("create public client: %v", err)
 	}
 	privHost, privPort := testServerHostPort(t, priv.srv.URL)
-	privC := &models.DownloadClient{Name: "sab-private", Type: "sabnzbd", Host: privHost, Port: privPort, Enabled: true, Priority: 50}
+	privC := &models.DownloadClient{Name: "sab-private", Type: "sabnzbd", Host: privHost, Port: privPort, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true, Priority: 50}
 	if err := clients.Create(ctx, privC); err != nil {
 		t.Fatalf("create private client: %v", err)
 	}

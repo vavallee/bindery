@@ -70,6 +70,7 @@ func categoryFixture(t *testing.T, srvURL string) (*QueueHandler, *sql.DB, *mode
 	host, port := testServerHostPort(t, srvURL)
 	if err := clients.Create(ctx, &models.DownloadClient{
 		Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true,
+		EnabledForBooks: true, EnabledForAudiobooks: true,
 		Category: ebookCategory, CategoryAudiobook: audiobookCategory,
 	}); err != nil {
 		t.Fatalf("create client: %v", err)

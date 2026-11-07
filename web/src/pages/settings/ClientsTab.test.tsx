@@ -45,6 +45,9 @@ function makeClient(overrides: Partial<DownloadClient> = {}): DownloadClient {
     categoryAudiobook: '',
     pathRemap: '',
     enabled: true,
+    priority: 0,
+    enabledForBooks: true,
+    enabledForAudiobooks: true,
     ...overrides,
   }
 }
