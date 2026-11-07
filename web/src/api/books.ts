@@ -11,6 +11,11 @@ export interface BookFile {
   createdAt: string
 }
 
+export interface BookFileNames {
+  files: { name: string; sizeBytes: number }[]
+  truncated: boolean
+}
+
 // One provider's id for a book, from the identity map added in #1705.
 export interface BookIdentifier {
   bookId: number
@@ -279,6 +284,10 @@ export const booksApi = {
   deleteBook: (id: number, deleteFiles = false) =>
     request<void>(`/book/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
   deleteBookFile: (id: number, queryParams = '') => request<Book>(`/book/${id}/file${queryParams}`, { method: 'DELETE' }),
+  // The files behind one tracked book_files row: every part of an audiobook
+  // folder, or the single file of any other row (#3579).
+  getBookFileNames: (id: number, path: string) =>
+    request<BookFileNames>(`/book/${id}/files?path=${encodeURIComponent(path)}`),
   searchBook: (id: number) => request<SearchBookResponse>(`/book/${id}/search`, { method: 'POST' }),
   getLastSearchDebug: () => request<SearchDebug>(`/search/last-debug`),
   enrichAudiobook: (id: number) => request<Book>(`/book/${id}/enrich-audiobook`, { method: 'POST' }),

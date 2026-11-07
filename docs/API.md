@@ -363,6 +363,7 @@ POST   /api/v1/book/{id}/enrich-audiobook         pull narrator/duration/cover f
 POST   /api/v1/book/{id}/cover                    set the cover from the request body (raw JPEG, PNG, WebP or GIF, max 10 MB); answers 413 over the limit and 415 for anything that is not one of those four; stored locally, replaces the current cover, and a refresh does not replace it. Answers the full book, as `GET /book/{id}` does
 POST   /api/v1/book/{id}/search                   manual indexer search
 GET    /api/v1/book/{id}/file                     download the imported file (auth required; `?path=…` serves one specific tracked file, for a book holding several of a format; `?format=ebook|audiobook` picks the format on dual-format books; `?path=` wins when both are sent)
+GET    /api/v1/book/{id}/files                    list the file names behind one tracked path (auth required; `?path=…` is required and must be one of the book's own tracked paths). An audiobook folder lists every file inside it (relative names, at most 500, `truncated` set past that); a single file lists as itself. Files another book tracks inside the folder are left out, as in the zip download
 GET    /api/v1/book/{id}/calibre                  where the book stands in the Calibre delivery queue (see Calibre below)
 ```
 

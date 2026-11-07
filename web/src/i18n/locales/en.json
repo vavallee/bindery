@@ -3047,6 +3047,7 @@
     "copy": "Copy",
     "copied": "Copied",
     "copyPath": "Copy file path to clipboard",
+    "fileNamesTruncated": "Only the first files are listed.",
     "download": "Download",
     "rebind": "Re-bind",
     "cover": {

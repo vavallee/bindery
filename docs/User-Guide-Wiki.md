@@ -912,6 +912,9 @@ to the records. Things worth knowing before you judge the results:
   per book with a sentence saying why and what to do: add the author, confirm
   a suggested book, or choose one. See [Adopting files already in your
   library](#adopting-files-already-in-your-library).
+- **An audiobook row on the book page lists the files inside its folder.** An
+  audiobook is registered by its folder, so the row shows the folder path, and
+  the file names of every part (with sizes) are listed under it, up to 500.
 - **Fix match corrects the link and leaves the file alone by default.** When a
   book page shows the wrong file, the **Fix match** button reassigns it to the
   book you pick. After you pick the book, the modal asks what should happen to

@@ -93,6 +93,15 @@ describe('booksApi request shapes', () => {
     expect(new URLSearchParams(seen[1].query).get('authorId')).toBe('9')
   })
 
+  it('asks for the file names behind one tracked path', async () => {
+    const seen = record({
+      'GET /book/4/files': () => HttpResponse.json({ files: [{ name: 'a.mp3', sizeBytes: 1 }], truncated: false }),
+    })
+    const res = await booksApi.getBookFileNames(4, '/lib/My Book')
+    expect(res.files[0].name).toBe('a.mp3')
+    expect(new URLSearchParams(seen[0].query).get('path')).toBe('/lib/My Book')
+  })
+
   it('maps the single book actions onto the right verbs and bodies', async () => {
     const seen = record({
       'DELETE /book/4': () => new HttpResponse(null, { status: 204 }),
