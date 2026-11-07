@@ -88,7 +88,7 @@ function SeedRatioField({ value, onChange, source }: { value: number | null | un
         </label>
       </div>
       {source === 'prowlarr' && (
-        <p className="text-xs text-amber-600 dark:text-amber-500 mt-1">{t('settings.indexers.form.seedRatioFromProwlarr')}</p>
+        <p className="text-xs text-amber-700 dark:text-amber-500 mt-1">{t('settings.indexers.form.seedRatioFromProwlarr')}</p>
       )}
       <p className="text-xs text-fg-muted mt-1">{t('settings.indexers.form.seedRatioHint')}</p>
     </div>
@@ -166,7 +166,7 @@ function SeedTimeFields({ seedTime, onSeedTime, inactive, onInactive, source }: 
         />
       </div>
       {source === 'prowlarr' && (
-        <p className="text-xs text-amber-600 dark:text-amber-500 mt-1">{t('settings.indexers.form.seedTimeFromProwlarr')}</p>
+        <p className="text-xs text-amber-700 dark:text-amber-500 mt-1">{t('settings.indexers.form.seedTimeFromProwlarr')}</p>
       )}
       <p className="text-xs text-fg-muted mt-1">{t('settings.indexers.form.seedTimeHint')}</p>
     </div>
@@ -899,7 +899,7 @@ function EditProwlarrForm({ instance, onClose, onSaved }: { instance: ProwlarrIn
         <label htmlFor={`${fid}-2`} className={labelCls}>{t('settings.indexers.form.url')}</label>
         <input id={`${fid}-2`} {...urlInputAttrs} value={url} onChange={e => setUrl(e.target.value)} placeholder={t('settings.prowlarr.urlPlaceholder')} className={inputCls} />
         {urlChanged && (
-          <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">{t('settings.prowlarr.urlChangeWarning')}</p>
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">{t('settings.prowlarr.urlChangeWarning')}</p>
         )}
       </div>
       <div>

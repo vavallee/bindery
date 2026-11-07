@@ -167,7 +167,7 @@ export default function EditBookModal({ book, onClose, onSaved, onSeriesSaved, s
   const lockBadge = (field: string) =>
     locked.includes(field) ? (
       <span
-        className="ml-1 text-xs text-amber-600 dark:text-amber-400"
+        className="ml-1 text-xs text-amber-700 dark:text-amber-400"
         title={t('bookDetail.edit.lockedHint', 'Manually edited — metadata refresh will not overwrite this field')}
       >
         🔒

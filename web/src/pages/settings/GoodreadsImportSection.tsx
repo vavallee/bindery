@@ -164,7 +164,7 @@ export default function GoodreadsImportSection() {
         />
       </label>
 
-      {error && <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{error}</p>}
+      {error && <p className="mt-2 text-xs text-rose-700 dark:text-rose-400">{error}</p>}
 
       {preview && (
         <div className="mt-4 p-3 border border-slate-200 dark:border-zinc-800 rounded bg-slate-100 dark:bg-zinc-900 space-y-3">

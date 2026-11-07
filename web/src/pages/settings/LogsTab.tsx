@@ -297,7 +297,7 @@ export default function LogsTab() {
           const rows = logEntries.map((e, i) => {
             const levelCls =
               e.level === 'ERROR' ? 'text-red-700 dark:text-red-400' :
-              e.level === 'WARN'  ? 'text-amber-600 dark:text-amber-400' :
+              e.level === 'WARN'  ? 'text-amber-700 dark:text-amber-400' :
               e.level === 'DEBUG' ? 'text-fg-muted' :
               'text-accent-text'
             // Support both ring buffer (time/msg/attrs) and DB (ts/message/fields) shapes.

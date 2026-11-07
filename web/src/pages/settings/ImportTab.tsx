@@ -791,7 +791,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
       </div>
 
       {error && (
-        <div className="mt-2 text-sm text-rose-600 dark:text-rose-400">
+        <div className="mt-2 text-sm text-rose-700 dark:text-rose-400">
           {error}
           {(error.toLowerCase().includes('token') || error.toLowerCase().includes('not configured')) && (
             <span className="block mt-1 text-xs">

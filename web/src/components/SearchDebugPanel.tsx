@@ -128,17 +128,17 @@ export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Pr
                 <div>raw from indexers: {debug.pipeline.rawCount}</div>
                 <div>after dedupe: {debug.pipeline.afterDedupe}{' '}
                   {debug.pipeline.rawCount !== debug.pipeline.afterDedupe && (
-                    <span className="text-amber-600 dark:text-amber-400">(−{debug.pipeline.rawCount - debug.pipeline.afterDedupe})</span>
+                    <span className="text-amber-700 dark:text-amber-400">(−{debug.pipeline.rawCount - debug.pipeline.afterDedupe})</span>
                   )}
                 </div>
                 <div>after usenet-junk filter: {debug.pipeline.afterUsenetJunk}{' '}
                   {debug.pipeline.afterDedupe !== debug.pipeline.afterUsenetJunk && (
-                    <span className="text-amber-600 dark:text-amber-400">(−{debug.pipeline.afterDedupe - debug.pipeline.afterUsenetJunk})</span>
+                    <span className="text-amber-700 dark:text-amber-400">(−{debug.pipeline.afterDedupe - debug.pipeline.afterUsenetJunk})</span>
                   )}
                 </div>
                 <div>after relevance filter: {debug.pipeline.afterRelevance}{' '}
                   {debug.pipeline.afterUsenetJunk !== debug.pipeline.afterRelevance && (
-                    <span className="text-amber-600 dark:text-amber-400">(−{debug.pipeline.afterUsenetJunk - debug.pipeline.afterRelevance})</span>
+                    <span className="text-amber-700 dark:text-amber-400">(−{debug.pipeline.afterUsenetJunk - debug.pipeline.afterRelevance})</span>
                   )}
                 </div>
                 {droppedTotal > 0 && (

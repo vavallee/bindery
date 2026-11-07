@@ -209,7 +209,14 @@ beforeAll(async () => {
 }, 60_000)
 
 // A text class also sets a checkbox's tick colour; that is not text.
-const NOT_TEXT = new Set(['../components/CatalogueReconciliationModal.tsx text-red-600'])
+const NOT_TEXT = new Set([
+  '../components/CatalogueReconciliationModal.tsx text-red-600',
+  // The recommendation card's stars are decoration beside the rating, which
+  // is stated as text (#3396).
+  '../components/RecommendationCard.tsx text-amber-500',
+])
+
+const GREYS = /^(?:slate|zinc|gray|neutral|stone)-/
 
 const HUE_TEXT = /^(dark:)?text-([a-z]+-\d+|white|black)$/
 const HUE_BG = /^(dark:)?bg-([a-z]+-\d+|white|black)$/
@@ -247,6 +254,42 @@ describe('explicit text colours on the background in the same string', () => {
           const ratio = contrast(fg, bg)
           const shown = opacity ? `${ground[0]}/${opacity}` : ground[0]
           if (ratio < AA_NORMAL) failures.push(`${file}: ${theme} ${text[0]} on ${shown} is ${ratio.toFixed(2)}:1`)
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(100)
+    expect(failures, failures.join('\n')).toEqual([])
+  })
+
+  // Text that names a colour for each theme (text-amber-700
+  // dark:text-amber-400) but no background of its own sits on whatever its
+  // parent paints, which a string cannot show. It is measured on the page and
+  // on the card of each theme, the two surfaces nearly all of it lands on.
+  // Greys are left to the tokens above.
+  it('stay AA on the page and on cards when the string has no background', () => {
+    const failures: string[] = []
+    let checked = 0
+    for (const [file, source] of Object.entries(sources)) {
+      if (/\.test\.tsx?$/.test(file)) continue
+      for (const [, str] of source.matchAll(/["'`]([^"'`]*\btext-[a-z]+-\d+[^"'`]*)["'`]/g)) {
+        const classes = str.split(/\s+/)
+        if (classes.some(c => HUE_BG.test(c.split('/')[0]))) continue
+        const texts = classes.map(c => c.match(HUE_TEXT)).filter((m): m is RegExpMatchArray => m !== null)
+        const light = texts.find(m => !m[1])
+        const dark = texts.find(m => m[1])
+        if (!light || !dark) continue
+        for (const [theme, text] of [['light', light], ['dark', dark]] as const) {
+          if (GREYS.test(text[2]) || NOT_TEXT.has(`${file} ${text[0]}`)) continue
+          const fg = TAILWIND.get(text[2])
+          if (!fg) continue
+          const grounds = theme === 'dark'
+            ? [['the page', SURFACES.darkPage], ['a card', SURFACES.darkCard]]
+            : [['the page', SURFACES.lightPage], ['a card', SURFACES.lightCard]]
+          for (const [name, bg] of grounds) {
+            checked++
+            const ratio = contrast(fg, bg)
+            if (ratio < AA_NORMAL) failures.push(`${file}: ${theme} ${text[0]} on ${name} is ${ratio.toFixed(2)}:1`)
+          }
         }
       }
     }
