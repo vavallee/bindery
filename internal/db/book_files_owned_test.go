@@ -278,6 +278,31 @@ func TestBookFileRepo_EbookFileTrackedByBook(t *testing.T) {
 			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
 		}
 	}
+
+	// A query failure is returned, not read as "not tracked".
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := files.EbookFileTrackedByBook(ctx, "/lib/own.epub", book.ID); err == nil || got {
+		t.Errorf("closed db: got %v, %v, want false and an error", got, err)
+	}
+}
+
+// BookRepo exposes the own ebook check to the delete guard.
+func TestBookRepo_EbookFileTrackedByBook(t *testing.T) {
+	database, author, book := openTestDB(t)
+	ctx := context.Background()
+	repo := NewBookRepo(database)
+	other := secondBook(t, database, author.ID, "Other")
+	if err := repo.AddBookFile(ctx, book.ID, models.MediaTypeEbook, "/lib/own.epub"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.EbookFileTrackedByBook(ctx, "/lib/own.epub", book.ID); err != nil || !got {
+		t.Errorf("own row: got %v, %v, want true", got, err)
+	}
+	if got, err := repo.EbookFileTrackedByBook(ctx, "/lib/own.epub", other.ID); err != nil || got {
+		t.Errorf("another book: got %v, %v, want false", got, err)
+	}
 }
 
 // TestBookFileRepo_PathUnderOtherBookDir (#3336): a folder row covers every
