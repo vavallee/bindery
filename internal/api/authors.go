@@ -1443,6 +1443,11 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// metadata payload — the on-disk delete is skipped with a WARN log
 	// rather than walking outside the library.
 	var pathsToRemove []string
+	// The ebook paths the author's own book_files rows name. The cascade drops
+	// those rows before the sweep, so the guard's own-ebook exception (#3561)
+	// would otherwise find nothing and keep an ebook that sits inside another
+	// author's book folder.
+	ownEbooks := map[string]struct{}{}
 	if r.URL.Query().Get("deleteFiles") == "true" {
 		// Include excluded books: the FK cascade below deletes them too, so
 		// their files must be swept as well or they are orphaned on disk.
@@ -1461,6 +1466,9 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			if len(files) > 0 {
 				for _, f := range files {
 					pathsToRemove = append(pathsToRemove, f.Path)
+					if f.Format == models.MediaTypeEbook {
+						ownEbooks[f.Path] = struct{}{}
+					}
 				}
 				continue
 			}
@@ -1485,8 +1493,9 @@ func (h *AuthorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// so excludeBookID=0 makes the ownership guard skip any path still tracked by
 	// a surviving book of another author — deleting an author must not delete a
 	// file some other book still owns (#1368).
+	owner := cascadedEbookOwner{bookFileOwner: h.books, ebooks: ownEbooks}
 	for _, p := range pathsToRemove {
-		if _, err := safeRemoveBookPath(r.Context(), h.roots, h.books, 0, p, "", "author_id", id); err != nil {
+		if _, err := safeRemoveBookPath(r.Context(), h.roots, owner, 0, p, "", "author_id", id); err != nil {
 			slog.Warn("delete author: failed to remove file", "author_id", id, "path", p, "error", err)
 		}
 	}

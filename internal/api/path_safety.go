@@ -584,3 +584,22 @@ func pathGuardedByOtherBook(ctx context.Context, owner bookFileOwner, excludeBoo
 	}
 	return owner.PathUnderOtherBookDir(ctx, path, excludeBookID)
 }
+
+// cascadedEbookOwner is the bookFileOwner for a sweep that runs after a cascade
+// has already deleted the swept books' rows, as the author delete does. The
+// own-ebook exception in pathGuardedByOtherBook reads a row that is gone by
+// then, so the ebook paths those rows named are captured before the cascade and
+// answered from ebooks, whatever book id the sweep passes (the author delete
+// passes 0). Every other check still reads the live table, so a path a
+// surviving book names, or a file no captured row names, stays guarded.
+type cascadedEbookOwner struct {
+	bookFileOwner
+	ebooks map[string]struct{}
+}
+
+func (o cascadedEbookOwner) EbookFileTrackedByBook(ctx context.Context, path string, bookID int64) (bool, error) {
+	if _, ok := o.ebooks[path]; ok {
+		return true, nil
+	}
+	return o.bookFileOwner.EbookFileTrackedByBook(ctx, path, bookID)
+}
