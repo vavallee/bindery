@@ -381,7 +381,10 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
       enabledForAudiobooks,
       priority: parseInt(priority) || 0,
     }
-    if (type === 'qbittorrent') {
+    // Only mention the proxy login when there is one, or when one was saved
+    // and may be changing, so a client that never used it saves as before.
+    const hadProxy = type === client.type && (!!client.proxyUsername || !!client.proxyPasswordConfigured)
+    if (type === 'qbittorrent' && (proxyUsername.trim() || proxyPassword || hadProxy)) {
       data.proxyUsername = proxyUsername.trim()
       if (proxyPassword) data.proxyPassword = proxyPassword
       // No username means no basic auth, so a stored password goes with it.
@@ -678,7 +681,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
     enabledForAudiobooks,
     priority: parseInt(priority) || 0,
     ...(supportsRemoveOnImport(type) ? { removeOnImport } : {}),
-    ...(type === 'qbittorrent' ? { proxyUsername: proxyUsername.trim(), proxyPassword } : {}),
+    ...(type === 'qbittorrent' && (proxyUsername.trim() || proxyPassword) ? { proxyUsername: proxyUsername.trim(), proxyPassword } : {}),
   })
 
   const submit = async () => {
