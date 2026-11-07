@@ -536,6 +536,8 @@ func TestScanLibrary_MultiAuthorAndVariantSpellingFilenamesAreNotMatchedOnTheAut
 		{"multi author with ampersand, no book", "Stephen King", "The Talisman", "Stephen King & Peter Straub - The Talisman.epub", []string{"Stephen King 8", "Carrie"}, nil},
 		{"multi author, book exists", "Stephen King", "The Talisman", "Stephen King, Peter Straub - The Talisman.epub", []string{"Stephen King 8", "The Talisman"}, []string{"The Talisman"}},
 		{"variant spelling, no book", "Dostoevsky", "Notes from Underground", "Dostoevski - Notes from Underground.epub", []string{"Dostoevsky 8", "Demons"}, nil},
+		{"variant spelling not in the ambiguous band, no book", "Dostoevsky", "Notes from Underground", "Dostoyevsky - Notes from Underground.epub", []string{"Dostoevsky 8", "Demons"}, nil},
+		{"variant spelling with given name, no book", "Fyodor Dostoevsky", "Notes from Underground", "Fyodor Dostoyevsky - Notes from Underground.epub", []string{"Fyodor Dostoevsky 8", "Demons"}, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -565,6 +567,7 @@ func TestScanLibrary_MultiAuthorFilenameUnmatchedEntryNamesTheRealTitle(t *testi
 	for _, c := range []struct{ author, name, want string }{
 		{"Stephen King", "Stephen King, Peter Straub - The Talisman.epub", "The Talisman"},
 		{"Dostoevsky", "Dostoevski - Notes from Underground.epub", "Notes from Underground"},
+		{"Dostoevsky", "Dostoyevsky - Notes from Underground.epub", "Notes from Underground"},
 	} {
 		t.Run(c.author, func(t *testing.T) {
 			s, _, books, authors, _, libraryDir, ctx := unmatchedFixture(t)
@@ -590,6 +593,7 @@ func TestScanLibrary_ForwardFilenameStartingWithTheAuthorKeepsItsMatch(t *testin
 		{"in a book folder", "Tom Clancy", "Net Force", "Tom Clancy and Steve Pieczenik's Net Force - Steve Perry.epub", "Tom Clancy and Steve Pieczenik's Net Force"},
 		{"comma title", "Stephen King", "", "Stephen King, A Life - Lisa Rogak.epub", "Stephen King, A Life"},
 		{"ambiguous spelling book named exactly", "Dostoevsky", "", "Dostoevski - Lisa Rogak.epub", "Dostoevski"},
+		{"unrelated one word title keeps its match", "Dostoevsky", "", "Demons - Lisa Rogak.epub", "Demons"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
