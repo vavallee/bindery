@@ -4,6 +4,30 @@ All notable changes to Bindery are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com) and versions follow
 [Semantic Versioning](https://semver.org).
 
+## [v1.48.0] - 2026-11-06
+
+Reject releases by words in the title, per client media eligibility and priority for download clients, tighter handling of cover images, sign in attempts and qBittorrent links, and a round of multi-user and Calibre fixes. Adds database migration 116, which runs on startup. Existing download clients stay eligible for both books and audiobooks, but priority now ranks before category hints, so a grab may pick a different client than before.
+
+### Added
+- **Reject releases by words in the title** (#3416, #3688). A new admin setting under General, Downloads takes a list like Graphic Audio, Full Cast, abridged. Any release whose title contains one of them is left out of automatic and interactive search, ignoring case, accents on Latin letters and dots or dashes, and matching whole words only. Rejected releases still show under Filtered on the book page, so you can grab one by hand. Empty by default.
+- **Download client media eligibility and priority** (#2633). Download clients now have independent "Eligible for books" and "Eligible for audiobooks" toggles (both on by default) and a configurable Priority. Priority is considered before category hints, so existing installs may select a different client. Grabs go to the highest ranked eligible client, and a failed send is reported rather than retried because the client may already have accepted it. Thanks to niddelicious.
+
+### Changed
+- **The delete user dialog now warns about other accounts' books** (#3559, #3683). Purging a user also removes books other accounts keep under that user's authors. The dialog and the 409 reply now show how many books and files that is before you pick purge.
+- **Deleting a user is documented** (#3567, #3682). `docs/multi-user.md` now describes what deleting a user does with their data.
+
+### Fixed
+- **Cover image proxy only serves verified image types** (#3696). The proxy now works out the type of each cover from the image bytes instead of trusting the type the remote host reports, serves only PNG, JPEG, GIF, WebP and AVIF covers (BMP and ICO are refused), and adds a locked down Content-Security-Policy to every proxied image. Cached covers are checked again before they are served, and any entry that does not match is fetched afresh.
+- **Login failures are throttled per address and per account and address pair** (#3696). Wrong passwords are counted for each address and account pair and for each address overall. Account names ignore case and surrounding spaces, and IPv6 addresses in the same /64 share a count. The same limits apply to OPDS Basic auth.
+- **qBittorrent only receives http, https and magnet links** (#3696). The link scheme is now read case insensitively, so `HTTPS://` links are fetched by Bindery like any other web link, `MAGNET:` links still work, and links with any other scheme (or none) are refused with a clear error instead of being passed on to qBittorrent.
+- **Add Book and Add Author find authors another account added** (#3557, #3605). With tenancy off, or for an admin, Add Book now files the book under the author that is already in the library instead of answering 409 "author already exists", and Add Author offers the existing author as the match instead of creating a second one or returning a conflict with no author attached.
+- **Purging a user no longer deletes shared profiles and root folders** (#3558, #3676). Quality profiles, metadata profiles and root folders are instance wide, but they carry the stamp of the admin who created them, so purging that admin wiped them for everyone. They now survive and just lose the stamp.
+- **Nightly recommendations now refresh every account** (#3566, #3604). The 24 hour job used to regenerate Discover only for the operator account, so other admin and user accounts waited until they pressed Refresh.
+- **Wanted page grab timer** (#3607, #3678). Leaving the Wanted page right after grabbing a release no longer lets the 1.2 second "Grabbed" timer fire into a page that is gone.
+- **Hardcover release dates** (#3621, #3677). Books now use the exact release date Hardcover knows instead of showing 1 January of the release year.
+- **Calibre import keeps books that differ by a subtitle apart** (#3631, #3679). Two Calibre books by the same author whose titles differ only by a subtitle used to collapse into one row, and one of them lost its Calibre id. A row that belongs to another book still in your Calibre library is no longer taken over, so both stay. Ids left behind by a removed or renumbered book are still rebound as before.
+- **Calibre import no longer rescans every author for each book** (#1469, #3680). The import used to load the whole authors table once per book, which made big libraries crawl. It now loads authors once per run and keeps that list up to date as new authors are created, with the same matching rules as before.
+
 ## [v1.47.0] - 2026-11-06
 
 Bindery can now upgrade the ebooks you already have, find new books in a monitored series, undo a bad import in one step, prefer audiobook narrators and unabridged editions, and import from folders that are not library roots. Every new behaviour is off until you switch it on, so an upgrade changes nothing by itself. Adds database migrations 121 to 123, which run on startup. Migration 122 also switches off the long unused "upgrade allowed" flag on existing quality profiles, so only profiles you opt in afterwards start upgrading.
