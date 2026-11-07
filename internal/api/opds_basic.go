@@ -121,7 +121,7 @@ func (v *opdsBasicVerifier) check(ctx context.Context, limiter *auth.LoginLimite
 		}
 		// Cheap early refusal before taking the lead, as before this cache
 		// existed. Cache hits above never reach it.
-		if limiter != nil && !limiter.Allow(ip) {
+		if limiter != nil && !limiter.AllowLogin(ip, username) {
 			v.mu.Unlock()
 			return opdsBasicLimited
 		}
@@ -129,7 +129,7 @@ func (v *opdsBasicVerifier) check(ctx context.Context, limiter *auth.LoginLimite
 		v.inflight[k] = f
 		v.mu.Unlock()
 
-		out := v.lead(ctx, limiter, ip, password, storedHash, userKnown)
+		out := v.lead(ctx, limiter, ip, username, password, storedHash, userKnown)
 
 		v.mu.Lock()
 		f.outcome = out
@@ -145,8 +145,8 @@ func (v *opdsBasicVerifier) check(ctx context.Context, limiter *auth.LoginLimite
 
 // lead runs the one verification for a flight: reserve the attempt, run the
 // KDF, and settle the reservation (refund if nothing ran, reset on success).
-func (v *opdsBasicVerifier) lead(ctx context.Context, limiter *auth.LoginLimiter, ip, password, storedHash string, userKnown bool) opdsBasicOutcome {
-	if limiter != nil && !limiter.Acquire(ip) {
+func (v *opdsBasicVerifier) lead(ctx context.Context, limiter *auth.LoginLimiter, ip, username, password, storedHash string, userKnown bool) opdsBasicOutcome {
+	if limiter != nil && !limiter.AcquireLogin(ip, username) {
 		return opdsBasicLimited
 	}
 	ok, err := v.verify(ctx, password, storedHash)
@@ -154,14 +154,14 @@ func (v *opdsBasicVerifier) lead(ctx context.Context, limiter *auth.LoginLimiter
 		// Gave up waiting for a KDF slot: nothing was verified, so the
 		// attempt must not count toward locking the address out.
 		if limiter != nil {
-			limiter.Release(ip)
+			limiter.ReleaseLogin(ip, username)
 		}
 		return opdsBasicAbandoned
 	}
 	v.kdfRuns.Add(1)
 	if ok && userKnown {
 		if limiter != nil {
-			limiter.Reset(ip)
+			limiter.LoginSucceeded(ip, username)
 		}
 		return opdsBasicOK
 	}

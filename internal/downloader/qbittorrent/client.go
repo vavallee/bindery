@@ -337,9 +337,55 @@ func writeAddTorrentFields(mw *multipart.Writer, category, savePath string) erro
 	return nil
 }
 
+type linkKind int
+
+const (
+	linkHTTP linkKind = iota + 1
+	linkMagnet
+)
+
+// classifyLink reports how a release link is handled. The scheme is compared
+// case-insensitively, as URL schemes are. http and https links are fetched by
+// Bindery, magnet links are passed through, and anything else (including an
+// empty or unparsable value) is refused.
+func classifyLink(raw string) (linkKind, error) {
+	if len(raw) >= len("magnet:") && strings.EqualFold(raw[:len("magnet:")], "magnet:") {
+		if !validMagnet(raw) {
+			return 0, errors.New("unsupported download link: magnet link contains a line break or NUL")
+		}
+		return linkMagnet, nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return 0, errors.New("unsupported download link: not a valid URL")
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return linkHTTP, nil
+	default:
+		return 0, fmt.Errorf("unsupported download link scheme %q: only http, https and magnet links are accepted", u.Scheme)
+	}
+}
+
+// validMagnet reports whether a magnet link is a single line. qBittorrent
+// reads the urls field one link per line, so a magnet carrying CR, LF or NUL
+// is not one link. Other characters, spaces included, are passed through.
+func validMagnet(s string) bool {
+	return !strings.ContainsAny(s, "\r\n\x00")
+}
+
 // AddTorrent submits a magnet link or torrent URL to qBittorrent for download
 // and returns the torrent hash when it can be determined.
 func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath string) (string, error) {
+	// Decide what kind of link this is before anything else. Only http(s)
+	// links (fetched by Bindery) and magnet links are handed over; every
+	// other value is refused here and never reaches qBittorrent.
+	magnetOrURL = strings.TrimSpace(magnetOrURL)
+	kind, err := classifyLink(magnetOrURL)
+	if err != nil {
+		return "", err
+	}
+
 	// Serialise concurrent AddTorrent calls so that each goroutine's
 	// before-snapshot → submit → poll sequence is atomic. Without this, two
 	// concurrent calls both snapshot an identical beforeSet, both submit their
@@ -393,7 +439,7 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	// torrentFile holds the raw .torrent bytes when the add is a file upload,
 	// so a 409 duplicate response can still recover the infohash.
 	var torrentFile []byte
-	if strings.HasPrefix(magnetOrURL, "http://") || strings.HasPrefix(magnetOrURL, "https://") {
+	if kind == linkHTTP {
 		// Fetch the .torrent content in Bindery so qBittorrent never needs to
 		// reach the indexer URL directly (which may be a Docker-only hostname
 		// like prowlarr:9696 that qBittorrent can't resolve from its network).
@@ -403,6 +449,9 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 		}
 
 		if fetched.magnetURL != "" {
+			if !validMagnet(fetched.magnetURL) {
+				return "", errors.New("fetch torrent content: redirect magnet link contains a line break or NUL")
+			}
 			submitted = fetched.magnetURL
 			form := url.Values{"urls": {fetched.magnetURL}}
 			setAddTorrentFields(form, category, savePath)

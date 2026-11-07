@@ -326,13 +326,15 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	ip := clientIP(r)
-	if !h.limiter.Allow(ip) {
-		writeErr(w, http.StatusTooManyRequests, "too many attempts — try again later")
-		return
-	}
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	// Failures are tracked per address and account pair, and per address
+	// overall (see auth.LoginLimiter.AcquireLogin).
+	if !h.limiter.AllowLogin(ip, req.Username) {
+		writeErr(w, http.StatusTooManyRequests, "too many attempts — try again later")
 		return
 	}
 	u, err := h.users.GetByUsername(ctx, strings.TrimSpace(req.Username))
@@ -355,7 +357,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// run. Acquire counts and checks in one step, and the reservation stands
 	// as a failure unless Reset clears it on success. It is taken before
 	// waiting for a KDF slot, so queued requests are already counted.
-	if !h.limiter.Acquire(ip) {
+	if !h.limiter.AcquireLogin(ip, req.Username) {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts — try again later")
 		return
 	}
@@ -364,7 +366,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		// The client went away while waiting for a KDF slot. Nothing was
 		// verified, so refund the reservation: abandoned requests must not
 		// lock the address out.
-		h.limiter.Release(ip)
+		h.limiter.ReleaseLogin(ip, req.Username)
 		writeErr(w, http.StatusServiceUnavailable, "server busy, try again")
 		return
 	}
@@ -372,7 +374,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	h.limiter.Reset(ip)
+	h.limiter.LoginSucceeded(ip, req.Username)
 	if !h.issueSession(w, r, ctx, u.ID, req.RememberMe) {
 		return
 	}

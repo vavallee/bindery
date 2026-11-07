@@ -16,7 +16,7 @@ import (
 // TestImageProxy_ShardedLayout verifies that a cache miss writes the image into
 // image-cache/<first2chars>/<key> (not flat at the top level).
 func TestImageProxy_ShardedLayout(t *testing.T) {
-	upstream := newFakeUpstream("image/jpeg", []byte("SHARDEDBODY"), http.StatusOK)
+	upstream := newFakeUpstream("image/jpeg", []byte("\xff\xd8\xffSHARDEDBODY"), http.StatusOK)
 	defer upstream.Close()
 
 	dir := t.TempDir()
@@ -62,7 +62,7 @@ func TestImageProxy_ShardedCacheHit(t *testing.T) {
 	if err := os.MkdirAll(shardDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(shardDir, key), []byte("SEEDED"), 0o640); err != nil {
+	if err := os.WriteFile(filepath.Join(shardDir, key), []byte("\x89PNG\r\n\x1a\nSEEDED"), 0o640); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(shardDir, key+".ct"), []byte("image/png"), 0o640); err != nil {
@@ -90,7 +90,7 @@ func TestImageProxy_ShardedCacheHit(t *testing.T) {
 // TestImageProxy_AtomicWrite_NoTmpLeft verifies that after a successful write,
 // no .tmp files are left in the cache directory.
 func TestImageProxy_AtomicWrite_NoTmpLeft(t *testing.T) {
-	upstream := newFakeUpstream("image/jpeg", []byte("ATOMIC"), http.StatusOK)
+	upstream := newFakeUpstream("image/jpeg", []byte("\xff\xd8\xffATOMIC"), http.StatusOK)
 	defer upstream.Close()
 
 	dir := t.TempDir()
@@ -122,7 +122,7 @@ func TestImageProxy_AtomicWrite_NoTmpLeft(t *testing.T) {
 // serves <shard>/<key>, never <key>.tmp.
 func TestImageProxy_StaleTmpIgnoredAsCache(t *testing.T) {
 	dir := t.TempDir()
-	upstream := newFakeUpstream("image/jpeg", []byte("FRESHBODY"), http.StatusOK)
+	upstream := newFakeUpstream("image/jpeg", []byte("\xff\xd8\xffFRESHBODY"), http.StatusOK)
 	defer upstream.Close()
 
 	h := newTestHandler(dir, upstream)
@@ -153,7 +153,7 @@ func TestImageProxy_StaleTmpIgnoredAsCache(t *testing.T) {
 // TestImageProxy_ExpiredCacheRefetches covers the TTL branch: when an existing
 // cached file is older than imageCacheTTL, a fresh upstream fetch must occur.
 func TestImageProxy_ExpiredCacheRefetches(t *testing.T) {
-	upstream := newFakeUpstream("image/jpeg", []byte("REFETCHED"), http.StatusOK)
+	upstream := newFakeUpstream("image/jpeg", []byte("\xff\xd8\xffREFETCHED"), http.StatusOK)
 	defer upstream.Close()
 
 	dir := t.TempDir()
@@ -326,7 +326,7 @@ func TestMigrateFlatCache_SkipsDirsAndCTOnly(t *testing.T) {
 // URLs at a cold cache. All should succeed and produce valid cache entries;
 // no .tmp files should be left behind.
 func TestImageProxy_ConcurrentWrites(t *testing.T) {
-	upstream := newFakeUpstream("image/jpeg", []byte("CONCURRENT"), http.StatusOK)
+	upstream := newFakeUpstream("image/jpeg", []byte("\xff\xd8\xffCONCURRENT"), http.StatusOK)
 	defer upstream.Close()
 
 	dir := t.TempDir()
@@ -377,7 +377,7 @@ func TestImageProxy_ConcurrentWrites(t *testing.T) {
 // for the same URL. The atomic rename pattern must guarantee every response
 // sees a complete body — no truncated reads.
 func TestImageProxy_ConcurrentSameURL(t *testing.T) {
-	body := []byte("SAMEURLBODY")
+	body := []byte("\xff\xd8\xffSAMEURLBODY")
 	upstream := newFakeUpstream("image/jpeg", body, http.StatusOK)
 	defer upstream.Close()
 
