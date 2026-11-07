@@ -29,6 +29,7 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
   const [sourceBookCount, setSourceBookCount] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [skipped, setSkipped] = useState<string[] | null>(null)
 
   // Preview: fetch source's book count so the user sees how many books will
   // be reparented. Cheap — the author list already has statistics on each
@@ -71,9 +72,17 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
     setBusy(true)
     setError(null)
     try {
-      await api.mergeAuthors(Number(targetId), Number(sourceId))
+      const result = await api.mergeAuthors(Number(targetId), Number(sourceId))
       onMerged()
-      onClose()
+      // The server serialises an empty list as null. Names it lists could not
+      // be recorded as aliases because another author holds them (#3565); keep
+      // the dialog open so that is read, rather than closing on a silent loss.
+      const left = result?.AliasesSkipped ?? []
+      if (left.length > 0) {
+        setSkipped(left)
+      } else {
+        onClose()
+      }
     } catch (e) {
       setError(errorText(e, t('mergeAuthorsModal.failed', 'Merge failed')))
     } finally {
@@ -98,6 +107,25 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
           </p>
         </div>
 
+        {skipped ? (
+          <>
+            <div className="p-4 space-y-3">
+              <div role="status" className="text-sm text-slate-800 dark:text-zinc-200 space-y-2">
+                <p>{t('mergeAuthorsModal.mergedWithSkipped')}</p>
+                <ul className="list-disc pl-5 font-mono text-xs">
+                  {skipped.map(name => <li key={name}>{name}</li>)}
+                </ul>
+                <p className="text-xs text-fg-muted">{t('mergeAuthorsModal.skippedHint')}</p>
+              </div>
+            </div>
+            <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end">
+              <button onClick={onClose} className={`px-4 py-2 ${primaryFill} rounded text-sm font-medium`}>
+                {t('mergeAuthorsModal.done')}
+              </button>
+            </div>
+          </>
+        ) : (
+        <>
         <div className="p-4 space-y-3">
           <div>
             <label htmlFor={`${fid}-remove`} className="block text-xs text-fg-muted mb-1">{t('mergeAuthorsModal.removeLabel')}</label>
@@ -164,6 +192,8 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
             {busy ? t('mergeAuthorsModal.merging') : t('mergeAuthorsModal.mergeButton')}
           </button>
         </div>
+        </>
+        )}
       </div>
     </div>
   )

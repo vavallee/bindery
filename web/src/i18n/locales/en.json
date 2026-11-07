@@ -2746,7 +2746,10 @@
     "failed": "Merge failed",
     "counting": "Counting books…",
     "willMove": "book(s) will move to the target.",
-    "aliasPreserved": "Alias preserved:"
+    "aliasPreserved": "Alias preserved:",
+    "mergedWithSkipped": "The authors were merged, but these names were not saved as aliases because another author already holds them:",
+    "skippedHint": "Add them to the kept author by hand if you still need them as pen names.",
+    "done": "Done"
   },
   "pagination": {
     "previous": "Previous",
