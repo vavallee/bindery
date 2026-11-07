@@ -3053,6 +3053,10 @@
     "copy": "Copy",
     "copied": "Copied",
     "copyPath": "Copy file path to clipboard",
+    "fileNamesTruncated": "Only the first files are listed.",
+    "fileNamesCount_one": "{{count}} file",
+    "fileNamesCount_other": "{{count}} files",
+    "fileNamesRegion": "Files in {{name}}",
     "download": "Download",
     "rebind": "Re-bind",
     "cover": {

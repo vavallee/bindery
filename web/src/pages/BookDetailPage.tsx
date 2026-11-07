@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, BINDERY_BASE, Book, BookSeriesExclusion, HistoryEvent, MediaType, SearchResult, SearchDebug, Series } from '../api/client'
@@ -48,6 +48,67 @@ function formatDuration(seconds?: number): string {
 function baseName(path: string): string {
   const parts = path.replace(/[/\\]+$/, '').split(/[/\\]/)
   return parts[parts.length - 1] || path
+}
+
+/** More names than this collapse behind a summary. */
+const LONG_FILE_LIST = 20
+
+/**
+ * The file names inside an audiobook row (#3579). An audiobook is registered by
+ * its folder, so the row's path alone does not say which parts it holds. Loaded
+ * per row, only for tracked audiobook rows (an ebook row's path already ends in
+ * its file name). Renders nothing while loading, on error, or when the row is
+ * just the one file its path already names.
+ */
+function FileNames({ bookId, row }: { bookId: number; row: FileRow }) {
+  const { t } = useTranslation()
+  const [names, setNames] = useState<{ files: { name: string; sizeBytes: number }[]; truncated: boolean } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    api.getBookFileNames(bookId, row.path).then(
+      res => { if (!cancelled) setNames(res) },
+      () => { if (!cancelled) setNames(null) },
+    )
+    return () => { cancelled = true }
+  }, [bookId, row.path])
+
+  if (!names || names.files.length === 0) return null
+  if (names.files.length === 1 && names.files[0].name === baseName(row.path)) return null
+  const list = (
+    <ul className="pl-3 space-y-0.5">
+      {names.files.map(f => (
+        <li key={f.name} className="flex gap-2 min-w-0 text-xs text-fg-muted">
+          <code className="min-w-0 font-mono break-all" title={f.name}>{f.name}</code>
+          {!!f.sizeBytes && <span className="shrink-0">{formatBytes(f.sizeBytes)}</span>}
+        </li>
+      ))}
+    </ul>
+  )
+  // A long list collapses behind a summary and scrolls inside a capped box, so
+  // a 60 part audiobook does not push the rest of the page away.
+  const long = names.files.length > LONG_FILE_LIST
+  return (
+    <li data-testid={`file-names-${row.path}`} className="px-3 pb-2 -mt-1">
+      {long ? (
+        <details>
+          <summary className="cursor-pointer text-xs text-fg-muted pl-3 py-0.5">
+            {t('bookDetail.fileNamesCount', { count: names.files.length })}
+          </summary>
+          <div
+            tabIndex={0}
+            role="region"
+            aria-label={t('bookDetail.fileNamesRegion', { name: baseName(row.path) })}
+            className="max-h-64 overflow-y-auto mt-1"
+          >
+            {list}
+          </div>
+        </details>
+      ) : list}
+      {names.truncated && (
+        <p className="pl-3 mt-1 text-xs text-fg-muted">{t('bookDetail.fileNamesTruncated')}</p>
+      )}
+    </li>
+  )
 }
 
 /** One on-disk file, labelled by its own format rather than the book's. */
@@ -1365,8 +1426,8 @@ function BookDetailPageInner() {
 
                       <ul>
                         {group.rows.map(row => (
+                          <Fragment key={row.path}>
                           <li
-                            key={row.path}
                             className="px-3 py-2 flex items-center gap-2 min-w-0 border-t first:border-t-0 border-slate-100 dark:border-zinc-900"
                           >
                             <code
@@ -1445,6 +1506,10 @@ function BookDetailPageInner() {
                               ]}
                             />
                           </li>
+                          {row.tracked && row.format === 'audiobook' && (
+                            <FileNames bookId={book.id} row={row} />
+                          )}
+                          </Fragment>
                         ))}
                       </ul>
                     </>

@@ -1038,6 +1038,7 @@ func main() {
 		registerBookCoverRoutes(r, bookHandler)
 		r.Post("/book/{id}/search", indexerHandler.SearchBook)
 		r.Get("/book/{id}/file", fileHandler.Download)
+		r.Get("/book/{id}/files", fileHandler.ListFileNames)
 
 		// Wanted
 		r.Get("/wanted/missing", bookHandler.ListWanted)

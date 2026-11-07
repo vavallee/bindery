@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -160,6 +161,163 @@ func (h *FileHandler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.serveFile(w, r, id, filePath)
+}
+
+// maxListedFiles caps how many entries ListFileNames returns for one folder, so
+// a folder with a huge number of files cannot produce an unbounded response.
+const maxListedFiles = 500
+
+// maxWalkedFiles bounds how many entries one listing collects before sorting.
+const maxWalkedFiles = 20000
+
+// naturalLess orders names the way a person reads them: runs of digits compare
+// by value (part2 before part10), everything else compares case insensitively,
+// and a plain byte comparison breaks any remaining tie so the order is stable.
+func naturalLess(a, b string) bool {
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		ca, cb := a[i], b[j]
+		if isDigit(ca) && isDigit(cb) {
+			si := i
+			for i < len(a) && isDigit(a[i]) {
+				i++
+			}
+			sj := j
+			for j < len(b) && isDigit(b[j]) {
+				j++
+			}
+			na, nb := strings.TrimLeft(a[si:i], "0"), strings.TrimLeft(b[sj:j], "0")
+			if len(na) != len(nb) {
+				return len(na) < len(nb)
+			}
+			if na != nb {
+				return na < nb
+			}
+			continue
+		}
+		la, lb := lowerByte(ca), lowerByte(cb)
+		if la != lb {
+			return la < lb
+		}
+		i++
+		j++
+	}
+	if len(a)-i != len(b)-j {
+		return len(a)-i < len(b)-j
+	}
+	return a < b
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+func lowerByte(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c + 'a' - 'A'
+	}
+	return c
+}
+
+// listedFile is one file inside a tracked book path, named relative to it.
+type listedFile struct {
+	Name      string `json:"name"`
+	SizeBytes int64  `json:"sizeBytes"`
+}
+
+// ListFileNames answers GET /book/{id}/files?path=, the names of the files
+// behind one tracked book_files row (#3579). An audiobook is recorded by its
+// folder, so the book page showed one folder path and gave no way to see the
+// parts inside it. A row that is a single file lists as that one file.
+//
+// The path is resolved against the book's own book_files rows, like Download's
+// ?path=, so the query string selects among a known set. The folder walk is the
+// zip download's: it goes through openServable (allow-list, no file links),
+// leaves out what another book tracks inside the folder, skips links and
+// special files, and returns names relative to the folder with forward slashes.
+// At most maxListedFiles are returned, with truncated set when there were more.
+func (h *FileHandler) ListFileNames(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+	book, err := h.books.GetByID(r.Context(), id)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	if book == nil || !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "book not found"})
+		return
+	}
+	requested := r.URL.Query().Get("path")
+	if requested == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
+		return
+	}
+	resolved, err := h.trackedFilePath(r.Context(), id, requested)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	if resolved == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "path is not tracked against this book"})
+		return
+	}
+	sp, err := h.openServable(r.Context(), resolved)
+	if writeServeError(w, r, err) {
+		return
+	}
+	defer sp.Close()
+
+	files := []listedFile{}
+	truncated := false
+	if !sp.info.IsDir() {
+		files = append(files, listedFile{Name: filepath.Base(filepath.Clean(resolved)), SizeBytes: sp.info.Size()})
+	} else {
+		skip, err := h.trackedByOtherBook(r.Context(), id, resolved)
+		if err != nil {
+			writeServerError(w, r, err)
+			return
+		}
+		base := filepath.ToSlash(sp.rel)
+		_ = fs.WalkDir(sp.root.FS(), base, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			rel := p
+			if base != "." {
+				rel = strings.TrimPrefix(p, base+"/")
+			}
+			if d.IsDir() {
+				if p != base && skip(rel, true) {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if skip(rel, false) || !d.Type().IsRegular() {
+				return nil
+			}
+			// Bound memory on an absurd folder. Below this the cut after
+			// sorting is exact; above it the walk order decides which are kept.
+			if len(files) >= maxWalkedFiles {
+				return fs.SkipAll
+			}
+			var size int64
+			if info, ierr := d.Info(); ierr == nil {
+				size = info.Size()
+			}
+			files = append(files, listedFile{Name: rel, SizeBytes: size})
+			return nil
+		})
+		// Sort first, then cut, so the entries kept are the first ones in the
+		// order the page shows.
+		sort.SliceStable(files, func(i, j int) bool { return naturalLess(files[i].Name, files[j].Name) })
+		if len(files) > maxListedFiles {
+			files = files[:maxListedFiles]
+			truncated = true
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files, "truncated": truncated})
 }
 
 // trackedFilePath resolves requested against the book's book_files rows and

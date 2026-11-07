@@ -56,6 +56,7 @@ vi.mock('../api/client', async importOriginal => {
       uploadBookCover: vi.fn(),
       deleteBook: vi.fn(),
       deleteBookFile: vi.fn(),
+      getBookFileNames: vi.fn(),
       toggleExcluded: vi.fn(),
       enrichAudiobook: vi.fn(),
       listAuthorSeries: vi.fn(),
@@ -243,6 +244,7 @@ beforeEach(() => {
   vi.mocked(api.updateBook).mockImplementation(async (_id, patch) => makeBook(patch))
   vi.mocked(api.deleteBook).mockResolvedValue(undefined)
   vi.mocked(api.deleteBookFile).mockImplementation(async () => makeBook())
+  vi.mocked(api.getBookFileNames).mockResolvedValue({ files: [], truncated: false })
   vi.mocked(api.toggleExcluded).mockImplementation(async () => makeBook({ excluded: true }))
   vi.mocked(api.enrichAudiobook).mockImplementation(async () => makeBook())
   vi.mocked(api.listAuthorSeries).mockResolvedValue([])
@@ -1187,6 +1189,83 @@ describe('BookDetailPage — dual-format book', () => {
     fireEvent.click(await screen.findByRole('checkbox'))
     fireEvent.click(screen.getByRole('button', { name: 'Delete from disk' }))
     await waitFor(() => expect(api.deleteBookFile).toHaveBeenCalledWith(42, '?format=ebook'))
+  })
+
+  // #3579: an audiobook is registered by its folder, so the row's path alone
+  // does not name the parts. Every file inside shows.
+  it('lists every file name of a multi-file audiobook folder', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(
+      makeBook({
+        mediaType: 'audiobook',
+        bookFiles: [makeFile({ id: 1, format: 'audiobook', path: '/library/redshirts-audio' })],
+      }),
+    )
+    vi.mocked(api.getBookFileNames).mockResolvedValue({
+      files: [
+        { name: 'part1.mp3', sizeBytes: 1024 },
+        { name: 'part2.mp3', sizeBytes: 2048 },
+        { name: 'Disc 2/part3.mp3', sizeBytes: 0 },
+      ],
+      truncated: false,
+    })
+    renderBookDetailPage()
+
+    const names = within(await screen.findByTestId('file-names-/library/redshirts-audio'))
+    expect(names.getByText('part1.mp3')).toBeInTheDocument()
+    expect(names.getByText('part2.mp3')).toBeInTheDocument()
+    expect(names.getByText('Disc 2/part3.mp3')).toBeInTheDocument()
+    expect(api.getBookFileNames).toHaveBeenCalledWith(42, '/library/redshirts-audio')
+  })
+
+  it('collapses a long file list behind a summary and keeps a short one open', async () => {
+    const audio = makeBook({
+      mediaType: 'audiobook',
+      bookFiles: [makeFile({ id: 1, format: 'audiobook', path: '/library/long-audio' })],
+    })
+    vi.mocked(api.getBook).mockResolvedValue(audio)
+    const mk = (n: number) => ({
+      files: Array.from({ length: n }, (_, i) => ({ name: `part${i + 1}.mp3`, sizeBytes: 10 })),
+      truncated: false,
+    })
+
+    vi.mocked(api.getBookFileNames).mockResolvedValue(mk(25))
+    const long = renderBookDetailPage()
+    const longBox = await screen.findByTestId('file-names-/library/long-audio')
+    const details = longBox.querySelector('details')
+    expect(details).not.toBeNull()
+    expect(details).not.toHaveAttribute('open')
+    expect(within(longBox).getByRole('region', { hidden: true })).toHaveClass('overflow-y-auto')
+    expect(within(longBox).getByText('part25.mp3')).toBeInTheDocument()
+    long.unmount()
+
+    vi.mocked(api.getBookFileNames).mockResolvedValue(mk(12))
+    renderBookDetailPage()
+    const shortBox = await screen.findByTestId('file-names-/library/long-audio')
+    expect(shortBox.querySelector('details')).toBeNull()
+    expect(within(shortBox).getByText('part12.mp3')).toBeInTheDocument()
+  })
+
+  it('does not look up names for an ebook row, whose path already names the file', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(
+      makeBook({ bookFiles: [makeFile({ id: 1, format: 'ebook', path: '/library/book.epub' })] }),
+    )
+    renderBookDetailPage()
+    await screen.findByTestId('file-group-ebook')
+    expect(api.getBookFileNames).not.toHaveBeenCalled()
+  })
+
+  it('shows nothing extra when the audiobook row is one file its path already names', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(
+      makeBook({
+        mediaType: 'audiobook',
+        bookFiles: [makeFile({ id: 1, format: 'audiobook', path: '/library/book.m4b' })],
+      }),
+    )
+    vi.mocked(api.getBookFileNames).mockResolvedValue({ files: [{ name: 'book.m4b', sizeBytes: 5 }], truncated: false })
+    renderBookDetailPage()
+    await screen.findByTestId('file-group-audiobook')
+    await waitFor(() => expect(api.getBookFileNames).toHaveBeenCalled())
+    expect(screen.queryByTestId('file-names-/library/book.m4b')).toBeNull()
   })
 
   // The old format switcher told you a wanted format was "Not downloaded";
