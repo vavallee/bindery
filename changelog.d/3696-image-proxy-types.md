@@ -1,2 +1,0 @@
-### Fixed
-- **Cover image proxy only serves verified image types** (#3696). The proxy now works out the type of each cover from the image bytes instead of trusting the type the remote host reports, serves only PNG, JPEG, GIF, WebP and AVIF covers (BMP and ICO are refused), and adds a locked down Content-Security-Policy to every proxied image. Cached covers are checked again before they are served, and any entry that does not match is fetched afresh.
