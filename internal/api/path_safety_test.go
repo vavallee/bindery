@@ -476,6 +476,8 @@ type stubOwner struct {
 	err      error
 	underErr error // fails only PathUnderOtherBookDir
 	under    map[string]bool
+	ownErr   error // fails only EbookFileTrackedByBook
+	ownEbook map[string]bool
 }
 
 func (s stubOwner) PathOwnedByOtherBook(_ context.Context, path string, _ int64) (bool, error) {
@@ -493,6 +495,33 @@ func (s stubOwner) PathUnderOtherBookDir(_ context.Context, path string, _ int64
 		return false, s.underErr
 	}
 	return s.under[path], nil
+}
+
+func (s stubOwner) EbookFileTrackedByBook(_ context.Context, path string, _ int64) (bool, error) {
+	if s.err != nil {
+		return false, s.err
+	}
+	if s.ownErr != nil {
+		return false, s.ownErr
+	}
+	return s.ownEbook[path], nil
+}
+
+// TestPathGuardedByOtherBook_OwnEbookLookupErrorPropagates: when the lookup of
+// the book's own ebook row fails, ownership is unclear, so the guard reports the
+// error and the delete leaves the file alone (#3561).
+func TestPathGuardedByOtherBook_OwnEbookLookupErrorPropagates(t *testing.T) {
+	owner := stubOwner{ownErr: os.ErrPermission}
+	if _, err := pathGuardedByOtherBook(context.Background(), owner, 1, "/x/y.epub"); err == nil {
+		t.Fatal("own ebook row lookup error was swallowed")
+	}
+	epub := mustWrite(t, filepath.Join(t.TempDir(), "Book.epub"))
+	if skipped, err := safeRemoveBookPath(context.Background(), nil, owner, 1, epub, "ebook"); err != nil || !skipped {
+		t.Errorf("safeRemoveBookPath = %v, %v, want skipped", skipped, err)
+	}
+	if !exists(epub) {
+		t.Error("the file must survive when ownership cannot be read")
+	}
 }
 
 // TestPathGuardedByOtherBook_AncestorLookupErrorPropagates: when only the

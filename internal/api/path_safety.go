@@ -561,6 +561,9 @@ type bookFileOwner interface {
 	// PathUnderOtherBookDir reports whether a book other than
 	// excludeBookID tracks a folder containing path (#3336).
 	PathUnderOtherBookDir(ctx context.Context, path string, excludeBookID int64) (bool, error)
+	// EbookFileTrackedByBook reports whether bookID's own ebook row names
+	// exactly path (#3561).
+	EbookFileTrackedByBook(ctx context.Context, path string, bookID int64) (bool, error)
 }
 
 // pathGuardedByOtherBook is the single ownership predicate every delete sweep
@@ -568,9 +571,16 @@ type bookFileOwner interface {
 // book tracks. A folder row owns what is below it even when no row names the
 // file exactly, so an exact-path check alone let a sweep through a box set's
 // folder take files from a nested book's folder (#3336).
+//
+// The one exception is an ebook file excludeBookID itself tracks. A folder row
+// is an audiobook and covers its tracks, not an ebook that landed beside them
+// (#3556), so without it the file outlived its book's delete (#3561).
 func pathGuardedByOtherBook(ctx context.Context, owner bookFileOwner, excludeBookID int64, path string) (bool, error) {
 	if owned, err := owner.PathOwnedByOtherBook(ctx, path, excludeBookID); err != nil || owned {
 		return owned, err
+	}
+	if own, err := owner.EbookFileTrackedByBook(ctx, path, excludeBookID); err != nil || own {
+		return false, err
 	}
 	return owner.PathUnderOtherBookDir(ctx, path, excludeBookID)
 }
