@@ -567,9 +567,19 @@ func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, aut
 				"src", srcFile, "dst", fileDest)
 			continue
 		}
-		if perr := dropPlaceFile(importCtx, srcFile, fileDest, linkMode); perr != nil {
+		finalDest, derr := s.dropEbookDestination(importCtx, book.ID, folder, fileDest)
+		if derr != nil {
+			lastErr = derr
+			continue
+		}
+		if perr := dropPlaceFile(importCtx, srcFile, finalDest, linkMode); perr != nil {
 			lastErr = perr
 			continue
+		}
+		if rerr := s.books.RecordDropPlacement(importCtx, finalDest, book.ID); rerr != nil {
+			// The file is placed. Not knowing whose it is only means a later
+			// drop of this book takes a new name instead of replacing it.
+			slog.Warn("drop: could not record which book placed a file", "dst", finalDest, "error", rerr)
 		}
 		placedDests[fileDest] = struct{}{}
 		placed++
@@ -636,10 +646,50 @@ func (s *Scanner) finishDrop(ctx context.Context, dl *models.Download, layout, l
 	})
 }
 
+// dropEbookDestination returns where a book's ebook goes in the drop folder.
+// Two books can render to the same name (the same title under two author rows
+// with one name), and the first one's file may still be waiting for the external
+// tool, so only a file this book placed is replaced (#3562). Anything else at
+// that name, another book's drop or a file Bindery did not put there, is left
+// alone and this book takes the first free " (2)" style name.
+//
+// The rendered name is resolved against folder here, on the variable the file
+// checks use, because that is the guard CodeQL's go/path-injection query credits
+// (see WriteOPFSidecarFile). A name that leaves the folder is refused.
+func (s *Scanner) dropEbookDestination(ctx context.Context, bookID int64, folder, dest string) (string, error) {
+	rel, err := filepath.Rel(filepath.Clean(folder), filepath.Clean(dest))
+	if err != nil || !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("drop destination %q is outside the drop folder %q", dest, folder)
+	}
+	target := filepath.Join(filepath.Clean(folder), rel)
+	ext := filepath.Ext(target)
+	stem := strings.TrimSuffix(target, ext)
+	for n := 1; n < 1000; n++ {
+		candidate := target
+		if n > 1 {
+			candidate = fmt.Sprintf("%s (%d)%s", stem, n, ext)
+		}
+		if _, err := os.Lstat(candidate); os.IsNotExist(err) {
+			return candidate, nil
+		} else if err != nil {
+			return "", fmt.Errorf("check drop destination %q: %w", candidate, err)
+		}
+		holder, err := s.books.DropPlacementBook(ctx, candidate)
+		if err != nil {
+			return "", err
+		}
+		if holder == bookID {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("no available drop destination for %q after 999 attempts", target)
+}
+
 // dropPlaceFile copies or hardlinks a single file into the drop folder. The
-// source is never removed (the download keeps seeding). A stale prior drop is
+// source is never removed (the download keeps seeding). Whatever is at dst is
 // removed first so hardlink (os.Link) doesn't fail on EEXIST and copy stays
-// deterministic.
+// deterministic, so the caller decides whether dst may be replaced (see
+// dropEbookDestination).
 func dropPlaceFile(ctx context.Context, src, dst, linkMode string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), dirperm.Library()); err != nil {
 		return fmt.Errorf("create drop dir: %w", err)
