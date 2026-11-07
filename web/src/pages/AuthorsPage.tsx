@@ -398,7 +398,7 @@ export default function AuthorsPage() {
               </div>
             }
           />
-          <span className="text-slate-800 dark:text-zinc-200 truncate hover:text-emerald-500">{author.authorName}</span>
+          <span className="text-slate-800 dark:text-zinc-200 truncate hover:text-emerald-700 dark:hover:text-emerald-500">{author.authorName}</span>
         </Link>
       ),
     },

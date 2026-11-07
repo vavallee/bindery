@@ -296,6 +296,46 @@ describe('explicit text colours on the background in the same string', () => {
     expect(checked).toBeGreaterThan(100)
     expect(failures, failures.join('\n')).toEqual([])
   })
+
+  // A hover or focus colour is the text's colour while it is pointed at or
+  // focused, so it has to read as well as the resting one. The cases above
+  // only see resting colours, which let hover:text-emerald-500 (2.5:1) and
+  // hover:text-rose-500 through. Measured like the case above, with the
+  // dark:hover: class on dark when the string has one, else the shared class.
+  it('stay AA on hover and focus, on the page and on cards', () => {
+    const STATE_TEXT = /^(dark:)?(?:hover|focus):text-([a-z]+-\d+)$/
+    const failures: string[] = []
+    let checked = 0
+    for (const [file, source] of Object.entries(sources)) {
+      if (/\.test\.tsx?$/.test(file)) continue
+      // Comments quote old class strings (buttons.ts does); skip them.
+      const code = source.replace(/^\s*\/\/.*$/gm, '')
+      for (const [, str] of code.matchAll(/["'`]([^"'`]*\b(?:hover|focus):text-[a-z]+-\d+[^"'`]*)["'`]/g)) {
+        const classes = str.split(/\s+/)
+        if (classes.some(c => HUE_BG.test(c.split('/')[0]))) continue
+        const states = classes.map(c => c.match(STATE_TEXT)).filter((m): m is RegExpMatchArray => m !== null)
+        const light = states.filter(m => !m[1])
+        const dark = states.some(m => m[1]) ? states.filter(m => m[1]) : light
+        for (const [theme, texts] of [['light', light], ['dark', dark]] as const) {
+          for (const text of texts) {
+            if (GREYS.test(text[2])) continue
+            const fg = TAILWIND.get(text[2])
+            if (!fg) continue
+            const grounds = theme === 'dark'
+              ? [['the page', SURFACES.darkPage], ['a card', SURFACES.darkCard]]
+              : [['the page', SURFACES.lightPage], ['a card', SURFACES.lightCard]]
+            for (const [name, bg] of grounds) {
+              checked++
+              const ratio = contrast(fg, bg)
+              if (ratio < AA_NORMAL) failures.push(`${file}: ${theme} ${text[0]} on ${name} is ${ratio.toFixed(2)}:1`)
+            }
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(10)
+    expect(failures, failures.join('\n')).toEqual([])
+  })
 })
 
 // A grey text colour with no background in its string sits on the page or on a
