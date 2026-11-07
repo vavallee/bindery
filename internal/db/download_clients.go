@@ -119,6 +119,12 @@ func normalizeClientCredentialStorage(c *models.DownloadClient) {
 		c.ProxyUsername = ""
 		c.ProxyPassword = ""
 	}
+	// No proxy username means no basic auth. Drop the password with it so a
+	// later save that sets a username cannot bring the old secret back.
+	c.ProxyUsername = strings.TrimSpace(c.ProxyUsername)
+	if c.ProxyUsername == "" {
+		c.ProxyPassword = ""
+	}
 	if !isCredentialClient(c.Type) {
 		return
 	}

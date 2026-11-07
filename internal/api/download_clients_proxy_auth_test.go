@@ -85,6 +85,32 @@ func TestDownloadClientProxyAuth_NeverReturnedAndKeptOnUpdate(t *testing.T) {
 	}
 }
 
+// Emptying the proxy username drops the stored proxy password with it, so a
+// later save that sets a username again cannot resurrect the old secret.
+func TestDownloadClientProxyAuth_EmptyUsernameDropsStoredPassword(t *testing.T) {
+	h, clients := downloadClientFixture(t)
+	seeded := seedDownloadClient(t, clients, models.DownloadClient{
+		Name: "qBit", Type: "qbittorrent", Host: "10.10.10.11", Port: 8080, Username: "admin", Password: "x",
+		ProxyUsername: "proxyuser", ProxyPassword: "proxy-secret", Enabled: true,
+	})
+	if rec := updateDownloadClient(t, h, seeded.ID,
+		`{"name":"q","type":"qbittorrent","host":"10.10.10.11","port":8080,"proxyUsername":""}`); rec.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
+	}
+	stored, _ := clients.GetByID(context.Background(), seeded.ID)
+	if stored.ProxyUsername != "" || stored.ProxyPassword != "" {
+		t.Fatalf("proxy login not dropped: %q / %q", stored.ProxyUsername, stored.ProxyPassword)
+	}
+	if rec := updateDownloadClient(t, h, seeded.ID,
+		`{"name":"q","type":"qbittorrent","host":"10.10.10.11","port":8080,"proxyUsername":"other"}`); rec.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
+	}
+	stored, _ = clients.GetByID(context.Background(), seeded.ID)
+	if stored.ProxyPassword != "" {
+		t.Fatalf("old proxy password came back: %q", stored.ProxyPassword)
+	}
+}
+
 func TestDownloadClientProxyAuth_OnlyKeptForQbittorrent(t *testing.T) {
 	h, clients := downloadClientFixture(t)
 	body := `{"name":"SAB","host":"10.10.10.10","type":"sabnzbd","apiKey":"k","proxyUsername":"u","proxyPassword":"p","enabled":true}`

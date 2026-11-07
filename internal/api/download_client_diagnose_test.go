@@ -570,6 +570,25 @@ func TestDiagnose_ClientSecretsNeverReachTheResponse(t *testing.T) {
 		}
 	})
 
+	t.Run("qbittorrent proxy password", func(t *testing.T) {
+		const proxyPassword = "proxy-pass-SECRET-7788"
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, pass, _ := r.BasicAuth()
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprintf(w, "proxy refused password %s", pass)
+		}))
+		defer srv.Close()
+		host, port := serverAddr(t, srv.URL)
+		resp, raw := runDiagnose(t, diagnoseSetup{downloadDir: t.TempDir()}, &models.DownloadClient{
+			Name: "qBit", Type: "qbittorrent", Host: host, Port: port, Username: "admin", Password: "pw",
+			ProxyUsername: "proxyuser", ProxyPassword: proxyPassword, Category: "books", Enabled: true,
+		})
+		wantDiagStatus(t, resp, diagCodeConnect, diagFail)
+		if strings.Contains(raw, proxyPassword) {
+			t.Errorf("response contains the proxy password: %s", raw)
+		}
+	})
+
 	t.Run("transmission password", func(t *testing.T) {
 		const password = "trans-pass-SECRET-9012"
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
