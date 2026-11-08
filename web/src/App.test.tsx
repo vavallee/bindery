@@ -147,6 +147,18 @@ describe('App — /authors alias', () => {
     expect(window.location.pathname).toBe('/')
   })
 
+  // The redirect used to drop the query string, so /authors?sort=books-desc
+  // (or a page or search link) landed on "/" in the default order.
+  it('keeps the query string, so a sort or search in the link survives', async () => {
+    window.history.pushState(null, '', '/authors?sort=books-desc&q=weir')
+
+    renderShell()
+
+    expect(await screen.findByTestId('page-authors')).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/')
+    expect(window.location.search).toBe('?sort=books-desc&q=weir')
+  })
+
   // The alias is still the right answer for /authors specifically, because it
   // means something. Everything else now lands on the catch-all below.
   it('does not send an unrouted path to the authors page', () => {

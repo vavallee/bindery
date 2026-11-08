@@ -45,6 +45,20 @@ describe('FilterBar', () => {
     expect(onChange).toHaveBeenCalledWith('za')
   })
 
+  // Sort is one choice: once it is made the menu has nothing left to offer,
+  // so it closes and hands focus back to its trigger.
+  it('closes the sort menu once an option is picked', () => {
+    const onChange = vi.fn()
+    render(<FilterBar sort={{ value: 'az', onChange, label: 'Sort by', options: [{ value: 'az', label: 'A to Z' }, { value: 'za', label: 'Z to A' }] }} />)
+    const trigger = screen.getByRole('button', { name: 'Sort by' })
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('radio', { name: 'Z to A' }))
+    expect(onChange).toHaveBeenCalledWith('za')
+    expect(screen.queryByRole('radio', { name: 'Z to A' })).not.toBeInTheDocument()
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(trigger).toHaveFocus()
+  })
+
   it('reports typed search text and names the field by its placeholder', () => {
     const onChange = vi.fn()
     render(<FilterBar search={{ value: '', onChange, placeholder: 'Search books' }} />)

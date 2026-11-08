@@ -100,6 +100,13 @@ function SettingsTabRedirect() {
   return <Navigate to={`/settings?tab=${encodeURIComponent(tab ?? '')}`} replace />
 }
 
+// /authors is an alias for "/" (see the route). The query string goes along,
+// so a link like /authors?sort=books-desc keeps its sort, search and page.
+function AuthorsAliasRedirect() {
+  const { search } = useLocation()
+  return <Navigate to={{ pathname: '/', search }} replace />
+}
+
 // Catch-all. Without it an unrouted path rendered the header and nav around an
 // empty <main>, which reads as a broken app rather than a wrong address. That is
 // the failure /authors used to have (see the comment on its alias below).
@@ -391,7 +398,7 @@ function Shell() {
                 around an empty <main> — a blank page rather than a 404. Alias it
                 to the canonical "/" the same way /blocklist aliases into
                 settings, so a guessed or bookmarked URL lands somewhere. */}
-            <Route path="/authors" element={<Navigate to="/" replace />} />
+            <Route path="/authors" element={<AuthorsAliasRedirect />} />
             {/* The Activity nav group's own address, so the group label and
                 the URL agree when someone types it. */}
             <Route path="/activity" element={<Navigate to="/wanted" replace />} />

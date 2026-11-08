@@ -577,6 +577,108 @@ describe('AuthorsPage — filter and sort popovers', () => {
   })
 })
 
+describe('AuthorsPage sort persistence', () => {
+  const sorts = () => vi.mocked(api.listAuthors).mock.calls.map(c => (c[0] as { sort?: string }).sort)
+  const checkedSort = () => {
+    fireEvent.click(screen.getByRole('button', { name: /^Sort/ }))
+    return screen.getAllByRole('radio').filter(r => r.getAttribute('aria-checked') === 'true').map(r => r.textContent)
+  }
+
+  // Shows the URL as the page sees it, so a test can check what was written.
+  function LocationProbe() {
+    const location = useLocation()
+    return <span data-testid="location-search">{location.search}</span>
+  }
+  const renderAt = async (url: string) => {
+    render(
+      <MemoryRouter initialEntries={[url]}>
+        <Routes>
+          <Route path="/" element={<><AuthorsPage /><LocationProbe /></>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(api.listAuthors).toHaveBeenCalled())
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    vi.mocked(api.listAuthors).mockResolvedValue({
+      items: [{ id: 7, foreignAuthorId: 'OL7', authorName: 'Andy Weir', sortName: 'Weir, Andy', monitored: true } as never],
+      total: 1, limit: 100, offset: 0,
+    })
+  })
+
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('closes the sort menu once a sort is picked', async () => {
+    await renderAt('/')
+    await screen.findByText('Andy Weir')
+
+    fireEvent.click(screen.getByRole('button', { name: /^Sort/ }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Most books' }))
+
+    expect(screen.queryByRole('radio', { name: 'Most books' })).not.toBeInTheDocument()
+    await waitFor(() => expect(sorts()).toContain('books-desc'))
+  })
+
+  it('remembers the picked sort for the next visit', async () => {
+    await renderAt('/')
+    await screen.findByText('Andy Weir')
+
+    fireEvent.click(screen.getByRole('button', { name: /^Sort/ }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Most books' }))
+
+    expect(localStorage.getItem('bindery.sort.authors')).toBe('books-desc')
+    expect(screen.getByTestId('location-search')).toHaveTextContent('?sort=books-desc')
+  })
+
+  // A reload, or coming back to the page from the nav, carries no ?sort=, so
+  // the stored choice is what keeps the list in the order the user left it.
+  it('restores the stored sort when the URL has none', async () => {
+    localStorage.setItem('bindery.sort.authors', 'books-desc')
+    await renderAt('/')
+    await screen.findByText('Andy Weir')
+
+    expect(sorts()[0]).toBe('books-desc')
+    expect(checkedSort()).toEqual(['✓Most books'])
+  })
+
+  it('lets a sort in the URL win over the stored one', async () => {
+    localStorage.setItem('bindery.sort.authors', 'books-desc')
+    await renderAt('/?sort=rating-desc')
+    await screen.findByText('Andy Weir')
+
+    expect(sorts()).toEqual(['rating-desc'])
+    expect(checkedSort()).toEqual(['✓Highest rated'])
+  })
+
+  it('ignores a stored value that is not a sort', async () => {
+    localStorage.setItem('bindery.sort.authors', 'nonsense')
+    await renderAt('/')
+    await screen.findByText('Andy Weir')
+
+    expect(sorts()[0]).toBe('az')
+  })
+
+  // Going back to the default keeps the URL clean, and the default is what
+  // is stored, so the next visit does not bring the old sort back.
+  it('stores the default too, so picking it back sticks', async () => {
+    localStorage.setItem('bindery.sort.authors', 'books-desc')
+    await renderAt('/')
+    await screen.findByText('Andy Weir')
+
+    fireEvent.click(screen.getByRole('button', { name: /^Sort/ }))
+    fireEvent.click(screen.getByRole('radio', { name: 'A-Z' }))
+
+    expect(localStorage.getItem('bindery.sort.authors')).toBe('az')
+    expect(screen.getByTestId('location-search')).toHaveTextContent(/^$/)
+    await waitFor(() => expect(sorts()).toContain('az'))
+  })
+})
+
 describe('AuthorsPage — rating column', () => {
   const authorWith = (averageRating: number) => ({
     id: 7,

@@ -81,7 +81,8 @@ export default function FilterPopover({
   ariaLabel?: string
   /** Shown on the trigger so an applied filter is visible without opening it. */
   activeCount?: number
-  children: ReactNode
+  /** A function child gets `close`, for a panel that is done once a choice is made. */
+  children: ReactNode | ((close: () => void) => ReactNode)
 }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -140,7 +141,7 @@ export default function FilterPopover({
           id={panelId}
           className="absolute left-0 top-full mt-1 z-20 min-w-[13rem] max-h-[70dvh] overflow-y-auto rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-lg divide-y divide-slate-200 dark:divide-zinc-700"
         >
-          {children}
+          {typeof children === 'function' ? children(close) : children}
         </div>
       )}
     </div>
