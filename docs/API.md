@@ -98,6 +98,14 @@ GET    /api/v1/author/{id}/aliases                list merged-in alias rows
 POST   /api/v1/author/{id}/merge                  merge another author into this one
 ```
 
+`POST /api/v1/author/{id}/merge` takes `{"sourceId": 123}` (and an optional
+`overwriteDefaults`, default `true`); `{id}` is the author that is kept. It
+answers `{"BooksReparented", "AliasesMigrated", "AliasesCreated",
+"AliasesSkipped", "TargetUpdated"}`. Alias names are unique across the
+instance, so a source name another author already holds cannot be recorded on
+the kept author: it is listed in `AliasesSkipped` (`null` when there are none)
+and the server logs a warning (#3565).
+
 Each author in `GET /api/v1/author` carries `statistics.bookCount` (the author's
 books, scoped to the caller like `GET /book`) and `statistics.availableBookCount`
 (#3092), the subset in the library by the same rule as `GET /book?status=imported`:
