@@ -1678,6 +1678,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		Status:           models.StateGrabbed,
 		Protocol:         best.Protocol,
 		Quality:          indexer.ParseRelease(best.Title).Format,
+		MediaType:        mediaType, // the slot this grab fills (#1964)
 	}
 
 	if existing != nil {

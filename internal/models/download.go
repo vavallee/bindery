@@ -106,6 +106,12 @@ type Download struct {
 	// The queue "Match to book" action imports from here directly. Empty when
 	// no path was recorded (never completed, or matched successfully).
 	ImportPath string `json:"-"`
+	// MediaType is the format slot this grab was made for, MediaTypeEbook or
+	// MediaTypeAudiobook, stamped when the grab is created (#1964). The import
+	// path reads it ahead of every inference. Empty for a row that predates
+	// the column, a manual import, or a grab whose format was never known;
+	// callers treat empty as "unknown" and fall back to deriving it.
+	MediaType string `json:"-"`
 }
 
 // IsOrphanedImport reports whether d finished importing into a book that has

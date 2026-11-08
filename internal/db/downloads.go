@@ -20,7 +20,7 @@ const downloadSelectColumns = `
 	id, guid, book_id, edition_id, indexer_id, download_client_id,
 	title, nzb_url, size, sabnzbd_nzo_id, torrent_id, status, protocol,
 	quality, indexer_flags, error_message, added_at, grabbed_at, completed_at, imported_at,
-	dead_at, import_retry_count, COALESCE(owner_user_id, 0), import_path`
+	dead_at, import_retry_count, COALESCE(owner_user_id, 0), import_path, media_type`
 
 // deadAtSQL is the moment a dead download's attempt ended, as the scheduler's
 // re-grab cooldown measures it. dead_at is the stamp written at the moment of
@@ -306,11 +306,11 @@ func (r *DownloadRepo) Create(ctx context.Context, d *models.Download) error {
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO downloads (guid, book_id, edition_id, indexer_id, download_client_id,
 		                       title, nzb_url, size, sabnzbd_nzo_id, torrent_id, status, protocol,
-		                       quality, indexer_flags, error_message, owner_user_id, added_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                       quality, indexer_flags, error_message, owner_user_id, media_type, added_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.GUID, d.BookID, d.EditionID, d.IndexerID, d.DownloadClientID,
 		d.Title, d.NZBURL, d.Size, d.SABnzbdNzoID, d.TorrentID, d.Status, d.Protocol,
-		d.Quality, d.IndexerFlags, d.ErrorMessage, downloadOwnerArg(d.OwnerUserID), now)
+		d.Quality, d.IndexerFlags, d.ErrorMessage, downloadOwnerArg(d.OwnerUserID), d.MediaType, now)
 	if err != nil {
 		return fmt.Errorf("create download: %w", err)
 	}
@@ -414,6 +414,7 @@ const regrabClaimSQL = `
 		    quality=?,
 		    indexer_flags=?,
 		    owner_user_id=?,
+		    media_type=?,
 		    error_message='',
 		    import_path='',
 		    added_at=?,
@@ -431,7 +432,7 @@ func (r *DownloadRepo) claimForRegrab(ctx context.Context, d *models.Download, q
 	args := []any{
 		d.BookID, d.EditionID, d.IndexerID, d.DownloadClientID,
 		d.Title, d.NZBURL, d.Size, models.StateGrabbed, d.Protocol,
-		d.Quality, d.IndexerFlags, downloadOwnerArg(d.OwnerUserID), now, d.ID,
+		d.Quality, d.IndexerFlags, downloadOwnerArg(d.OwnerUserID), d.MediaType, now, d.ID,
 	}
 	args = append(args, states...)
 	result, err := r.db.ExecContext(ctx, query, args...)
@@ -1030,7 +1031,7 @@ func (r *DownloadRepo) query(ctx context.Context, q string, args ...interface{})
 			&d.Title, &d.NZBURL, &d.Size, &d.SABnzbdNzoID, &d.TorrentID, &d.Status, &d.Protocol,
 			&d.Quality, &d.IndexerFlags, &d.ErrorMessage,
 			&d.AddedAt, &d.GrabbedAt, &d.CompletedAt, &d.ImportedAt, &d.DeadAt,
-			&d.ImportRetryCount, &d.OwnerUserID, &d.ImportPath,
+			&d.ImportRetryCount, &d.OwnerUserID, &d.ImportPath, &d.MediaType,
 		); err != nil {
 			return nil, fmt.Errorf("scan download: %w", err)
 		}

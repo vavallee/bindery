@@ -301,6 +301,61 @@ func TestTryImportInternal_FormatScopedShortCircuitStillFires(t *testing.T) {
 	}
 }
 
+// TestTryImportInternal_StampedMediaTypeDecidesTheShortCircuit (#1964): on a
+// media_type=both book whose release names no format, the old chain could not
+// tell the slot and always declined. The grab's stamp now answers exactly, in
+// both directions, through the real import path.
+func TestTryImportInternal_StampedMediaTypeDecidesTheShortCircuit(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stamp  string
+		status models.DownloadState
+	}{
+		{"stamped ebook, ebook already in the library", models.MediaTypeEbook, models.StateImported},
+		{"stamped audiobook, only the ebook is in the library", models.MediaTypeAudiobook, models.StateImportFailed},
+		{"unstamped row with no signal keeps declining", "", models.StateImportFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			libraryDir := t.TempDir()
+			s, book, dlRepo, bookRepo, ctx := formatScopeFixture(t, libraryDir, t.TempDir())
+
+			libEpub := filepath.Join(libraryDir, "we-who-wrestle-with-god.epub")
+			if err := os.WriteFile(libEpub, []byte("epub-in-library"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := bookRepo.AddBookFile(ctx, book.ID, models.MediaTypeEbook, libEpub); err != nil {
+				t.Fatal(err)
+			}
+
+			dl := &models.Download{
+				GUID:      "guid-1964",
+				Title:     "We Who Wrestle with God",
+				BookID:    &book.ID,
+				Status:    models.StateCompleted,
+				MediaType: tc.stamp,
+			}
+			if err := dlRepo.Create(ctx, dl); err != nil {
+				t.Fatal(err)
+			}
+			// Read back from the db so the stamp is proven to survive storage.
+			stored, err := dlRepo.GetByGUID(ctx, dl.GUID)
+			if err != nil || stored == nil {
+				t.Fatalf("reload: %v", err)
+			}
+
+			s.tryImportInternal(ctx, stored, t.TempDir(), "", "", "", nil, nil)
+
+			got, err := dlRepo.GetByGUID(ctx, dl.GUID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != tc.status {
+				t.Errorf("status = %q, want %q", got.Status, tc.status)
+			}
+		})
+	}
+}
+
 // TestCheckQbittorrentDownloads_1885_SiblingFormatDoesNotCloseGrab guards the
 // same short-circuit on the qBittorrent poll path, where the download's format
 // is recovered from the category the torrent sits under (the inverse of
@@ -488,6 +543,21 @@ func TestDownloadFormat(t *testing.T) {
 			&models.Download{Title: "Andy Weir - Project Hail Mary-SEEDPOOL", Quality: "m4b"},
 			both, "", models.MediaTypeAudiobook, "",
 		},
+		// #1964: the grab's own stamp is the top signal, so none of the guesses
+		// below it can contradict what the decision engine actually picked.
+		{"stamped audiobook resolves a dual-format book whose release names nothing",
+			&models.Download{Title: "Andy Weir - Project Hail Mary-SEEDPOOL", MediaType: models.MediaTypeAudiobook},
+			both, "", models.MediaTypeAudiobook, "the title carries no token, so the old chain answered unknown"},
+		{"stamped ebook beats a release that parses as audiobook",
+			&models.Download{Title: "Andy Weir - Project Hail Mary (Unabridged) M4B", Quality: "m4b", MediaType: models.MediaTypeEbook},
+			both, "", models.MediaTypeEbook, "the stamp is what was grabbed, the title is only a guess"},
+		{"stamped format beats a category-derived hint",
+			&models.Download{MediaType: models.MediaTypeEbook}, both, models.MediaTypeAudiobook,
+			models.MediaTypeEbook, "the poll path's category hint is itself an inference"},
+		{"unstamped row keeps the old chain", &models.Download{Quality: "epub", MediaType: ""}, both, "",
+			models.MediaTypeEbook, "rows predating migration 126 must behave as before"},
+		{"garbage stamp is ignored", &models.Download{Quality: "epub", MediaType: "both"}, both, "",
+			models.MediaTypeEbook, "only a concrete slot counts"},
 		{"garbage hint is ignored", &models.Download{Quality: "epub"}, both, "both", models.MediaTypeEbook, ""},
 		{"nil book and no signals", &models.Download{}, nil, "", "", ""},
 		{"nil download", nil, both, "", "", ""},
