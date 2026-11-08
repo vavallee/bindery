@@ -1502,7 +1502,7 @@ func copyFileRooted(srcRoot, dstRoot *os.Root, rel string) error {
 // cancellation path, where the caller is already returning ctx.Err() and
 // the Close error is meaningless.
 func copyFileCtx(ctx context.Context, src, dst string) error {
-	return copyFileOpenCtx(ctx, src, dst, os.O_TRUNC)
+	return copyFileModeCtx(ctx, src, dst, false)
 }
 
 // copyFileExclusiveCtx is copyFileCtx that never replaces anything: when dst
@@ -1510,23 +1510,42 @@ func copyFileCtx(ctx context.Context, src, dst string) error {
 // as it was. The partial-file cleanup only ever removes a dst this call
 // created.
 func copyFileExclusiveCtx(ctx context.Context, src, dst string) error {
-	return copyFileOpenCtx(ctx, src, dst, os.O_EXCL)
+	return copyFileModeCtx(ctx, src, dst, true)
 }
 
-// copyFileOpenCtx is the body of copyFileCtx and copyFileExclusiveCtx. flag is
-// added to O_RDWR|O_CREATE when dst is opened: O_TRUNC is os.Create, O_EXCL
-// refuses an existing dst.
-func copyFileOpenCtx(ctx context.Context, src, dst string, flag int) error {
+// copyFileModeCtx opens src for copyFileCtx and copyFileExclusiveCtx, then
+// creates dst: truncating whatever is there, or with O_EXCL when exclusive.
+func copyFileModeCtx(ctx context.Context, src, dst string, exclusive bool) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dst, os.O_RDWR|os.O_CREATE|flag, 0o666) // #nosec G302 -- the mode os.Create uses, left to the umask like every library file
+	if exclusive {
+		return copyToNewFileCtx(ctx, in, dst)
+	}
+	out, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
+	return copyOpenedCtx(ctx, in, out, dst)
+}
+
+// copyToNewFileCtx copies in to dst, which it creates exclusively, so an
+// existing dst fails with an error matching fs.ErrExist and is left alone.
+func copyToNewFileCtx(ctx context.Context, in *os.File, dst string) error {
+	out, err := os.OpenFile(dst, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o666) // #nosec G302 -- the mode os.Create uses, left to the umask like every library file
+	if err != nil {
+		return err
+	}
+	return copyOpenedCtx(ctx, in, out, dst)
+}
+
+// copyOpenedCtx is the body of copyFileCtx and copyFileExclusiveCtx once both
+// files are open: it copies in to out (a file just created at dst), syncs and
+// closes out, and removes dst on failure or cancellation. It owns out.
+func copyOpenedCtx(ctx context.Context, in, out *os.File, dst string) error {
 	// closeOnce flag so the cancellation defer and the happy-path Close do
 	// not double-close the same fd.
 	closed := false
