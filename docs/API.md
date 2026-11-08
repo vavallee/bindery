@@ -1777,7 +1777,7 @@ GET    /api/v1/auth/oidc/{provider}/callback      OIDC redirect target
 
 GET    /api/v1/auth/users                         list users (admin)
 POST   /api/v1/auth/users                         create (admin)
-DELETE /api/v1/auth/users/{id}                    delete (admin)
+DELETE /api/v1/auth/users/{id}                    delete (admin); 409 for your own account, 400 for the last admin
 PUT    /api/v1/auth/users/{id}/role               change role (admin), body {"role": "admin"|"user"|"requester"}; 404 for an unknown user
 PUT    /api/v1/auth/users/{id}/auto-approve       per-account request auto-approval (admin), body {"enabled": true|false}
 PUT    /api/v1/auth/users/{id}/reset-password     reset (admin)

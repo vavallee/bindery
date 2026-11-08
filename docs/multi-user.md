@@ -198,6 +198,7 @@ Under either strategy:
 - Recommendations, dismissals and the user's Refresh all status are removed.
 - Blocklist entries stay, with the record of who added them cleared. They are shown in the `counts` but do not trigger the `409`, so an account whose only data is blocklist entries is deleted at once.
 - The last admin cannot be deleted: the request is refused with `400` and `cannot delete the last admin user`. If that admin owns data and you gave no strategy, the `409` comes first.
+- You cannot delete the account you are signed in with: the request is refused with `409` before anything else is checked, whatever the `strategy`, and nothing is changed. Sign in as another admin to remove it. Requests made with the API key, or let in as admin by the `disabled` or `local-only` auth mode, act as the install rather than as a person, so they can still delete any account the last admin rule allows. The Users page disables Delete on your own row, and on the last admin's.
 
 An unknown `strategy` or a `reassignTo` that is not a number answers `400`. `reassignTo` is ignored under `purge`. If the delete still finds rows pointing at the user, it answers `409` with `rows still reference this user` and nothing is deleted; that means a bug, so report it.
 

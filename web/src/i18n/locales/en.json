@@ -2866,6 +2866,8 @@
     "demote": "Make user",
     "resetPassword": "Reset password",
     "deleteConfirm": "Delete user \"{{username}}\"? This cannot be undone.",
+    "deleteSelfHint": "You can't delete the account you're signed in with. Sign in as another admin to remove it.",
+    "deleteLastAdminHint": "This is the only admin. Make another user an admin before deleting this one.",
     "loadFail": "Failed to load users",
     "deleteFail": "Failed to delete user",
     "roleFail": "Failed to change role",

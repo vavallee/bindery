@@ -135,7 +135,8 @@ func (h *UserManagementHandler) Create(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, toUserResponse(*u))
 }
 
-// Delete removes a user (admin-only). Cannot delete the last admin.
+// Delete removes a user (admin-only). Cannot delete the last admin, and a
+// signed in admin cannot delete their own account (409).
 // DELETE /api/v1/auth/users/:id[?strategy=reassign|purge][&reassignTo=<id>]
 //
 // A user who owns rows cannot be deleted without saying what happens to them
@@ -151,6 +152,19 @@ func (h *UserManagementHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	// A signed in admin cannot delete their own account: the session would
+	// end on the next request with nobody having chosen to hand over the
+	// install. Checked before the owned rows count and before any strategy
+	// runs. The API key and the auth mode act as the install rather than as a
+	// person; the middleware stamps the operator's id on those requests, so
+	// that id is not "you" and they may still remove the operator while
+	// another admin remains (the last admin guard in the repo still applies).
+	if ctx := r.Context(); !auth.AuthedViaAPIKey(ctx) && !auth.AdminByAuthMode(ctx) &&
+		auth.UserIDFromContext(ctx) == id {
+		writeErr(w, http.StatusConflict, "you cannot delete your own account; sign in as another admin to remove it")
 		return
 	}
 
