@@ -28,9 +28,11 @@ func ebookPathsOf(t *testing.T, files []models.BookFile) []string {
 }
 
 // TestScanLibrary_RegistersOtherFormatBesideTrackedEbook: a book that already
-// tracks Title.epub gains Title.azw3 and Title.pdf from the same folder. A
+// tracks Title.epub gains Title.azw3 and Title.mobi from the same folder. A
 // second epub with a different name ("Title (2).epub") is a same-format copy,
-// not another format, and stays out of the book.
+// not another format, and stays out of the book. A same name PDF is a
+// supplement-class file (#2188) and is left to the ordinary rules, which send
+// it to Unmatched rather than attach it.
 func TestScanLibrary_RegistersOtherFormatBesideTrackedEbook(t *testing.T) {
 	s, books, authors, settings, libDir, ctx := trackedPathsFixture(t)
 	author := createScanAuthor(t, ctx, authors)
@@ -48,6 +50,7 @@ func TestScanLibrary_RegistersOtherFormatBesideTrackedEbook(t *testing.T) {
 	}
 	epub := write("Alpha Adventure.epub")
 	azw3 := write("Alpha Adventure.azw3")
+	mobi := write("Alpha Adventure.mobi")
 	pdf := write("Alpha Adventure.pdf")
 	copyEpub := write("Alpha Adventure (2).epub")
 
@@ -63,7 +66,7 @@ func TestScanLibrary_RegistersOtherFormatBesideTrackedEbook(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := ebookPathsOf(t, files)
-	want := []string{filepath.Clean(azw3), filepath.Clean(epub), filepath.Clean(pdf)}
+	want := []string{filepath.Clean(azw3), filepath.Clean(epub), filepath.Clean(mobi)}
 	sort.Strings(want)
 	if len(got) != len(want) {
 		t.Fatalf("book ebook files = %v, want %v (other formats beside the tracked file must be registered)", got, want)
@@ -74,14 +77,14 @@ func TestScanLibrary_RegistersOtherFormatBesideTrackedEbook(t *testing.T) {
 		}
 	}
 	for _, p := range got {
-		if p == filepath.Clean(copyEpub) {
-			t.Fatalf("a same-format copy with another name must not be attached: %v", got)
+		if p == filepath.Clean(copyEpub) || p == filepath.Clean(pdf) {
+			t.Fatalf("a same-format copy or a supplement-class file must not be attached: %v", got)
 		}
 	}
 
 	p := readScanResult(t, ctx, settings)
 	if p.Reconciled != 2 {
-		t.Errorf("Reconciled = %d, want 2 (the azw3 and the pdf)", p.Reconciled)
+		t.Errorf("Reconciled = %d, want 2 (the azw3 and the mobi)", p.Reconciled)
 	}
 	if got := p.Reconciled + p.Unmatched + p.AlreadyTrack; got != p.FilesFound {
 		t.Errorf("counters don't add up: reconciled+unmatched+already_tracked = %d, files_found = %d", got, p.FilesFound)
@@ -161,5 +164,131 @@ func TestScanLibrary_OtherFormatOfAnotherBookIsNotTakenOver(t *testing.T) {
 	}
 	if owner == nil || owner.ID != other.ID {
 		t.Fatalf("mobi owner = %+v, want book %d", owner, other.ID)
+	}
+}
+
+// hasEbookFile reports whether the book tracks any ebook file.
+func hasEbookFile(t *testing.T, files []models.BookFile) bool {
+	t.Helper()
+	return len(ebookPathsOf(t, files)) > 0
+}
+
+// writeBookSized writes a book-sized file at path, creating its folder.
+func writeBookSized(t *testing.T, path string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, bookSized("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestScanLibrary_AudiobookFolderIsNotAnEbookSibling: an audiobook is tracked
+// as its folder, and a folder has no ebook extension. A loose epub named like
+// the folder ("Alpha Adventure/" and "Alpha Adventure.epub") is not another
+// format of that audiobook, and neither is "Mr.epub" beside the folder
+// "Mr. Mercedes/", whose name filepath.Ext would cut at the dot.
+func TestScanLibrary_AudiobookFolderIsNotAnEbookSibling(t *testing.T) {
+	s, books, authors, _, libDir, ctx := trackedPathsFixture(t)
+	author := createScanAuthor(t, ctx, authors)
+
+	authorDir := filepath.Join(libDir, "Jane Doe")
+	alphaDir := filepath.Join(authorDir, "Alpha Adventure")
+	mercedesDir := filepath.Join(authorDir, "Mr. Mercedes")
+	writeBookSized(t, filepath.Join(alphaDir, "01 - track.mp3"))
+	writeBookSized(t, filepath.Join(mercedesDir, "01 - track.mp3"))
+	writeBookSized(t, filepath.Join(authorDir, "Alpha Adventure.epub"))
+	writeBookSized(t, filepath.Join(authorDir, "Mr.epub"))
+
+	alpha := createScanBook(t, ctx, books, author.ID, "ol:alpha", "Alpha Adventure", models.BookStatusImported, models.MediaTypeAudiobook)
+	if err := books.AddBookFile(ctx, alpha.ID, models.MediaTypeAudiobook, alphaDir); err != nil {
+		t.Fatal(err)
+	}
+	mercedes := createScanBook(t, ctx, books, author.ID, "ol:mercedes", "Mr. Mercedes", models.BookStatusImported, models.MediaTypeAudiobook)
+	if err := books.AddBookFile(ctx, mercedes.ID, models.MediaTypeAudiobook, mercedesDir); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ScanLibrary(ctx)
+
+	for _, b := range []*models.Book{alpha, mercedes} {
+		files, err := books.ListFiles(ctx, b.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hasEbookFile(t, files) {
+			t.Errorf("audiobook %q gained an ebook from a loose file named like its folder: %v", b.Title, ebookPathsOf(t, files))
+		}
+		got, err := books.GetByID(ctx, b.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.MediaType != models.MediaTypeAudiobook {
+			t.Errorf("audiobook %q media type = %q, want %q", b.Title, got.MediaType, models.MediaTypeAudiobook)
+		}
+	}
+}
+
+// TestScanLibrary_CaseVariantOfAKnownFormatIsNotAnotherFormat: with
+// Title.epub tracked, Title.azw3 is another format but Title.ePub is the same
+// format in other letter case. Attaching the azw3 must not make the ePub look
+// new.
+func TestScanLibrary_CaseVariantOfAKnownFormatIsNotAnotherFormat(t *testing.T) {
+	s, books, authors, _, libDir, ctx := trackedPathsFixture(t)
+	author := createScanAuthor(t, ctx, authors)
+
+	dir := filepath.Join(libDir, "Jane Doe", "Alpha Adventure")
+	epub := writeBookSized(t, filepath.Join(dir, "Alpha Adventure.epub"))
+	azw3 := writeBookSized(t, filepath.Join(dir, "Alpha Adventure.azw3"))
+	writeBookSized(t, filepath.Join(dir, "Alpha Adventure.ePub"))
+
+	book := createScanBook(t, ctx, books, author.ID, "ol:alpha", "Alpha Adventure", models.BookStatusImported, models.MediaTypeEbook)
+	if err := books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, epub); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ScanLibrary(ctx)
+
+	files, err := books.ListFiles(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ebookPathsOf(t, files)
+	want := []string{filepath.Clean(azw3), filepath.Clean(epub)}
+	sort.Strings(want)
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("book ebook files = %v, want %v (the ePub variant is not another format)", got, want)
+	}
+}
+
+// TestScanLibrary_SupplementBesideNewEbookStaysASidecar keeps #2188: a same
+// name .pdf, .txt or .rtf beside an epub the same pass attaches is that
+// epub's sidecar, counted as tracked, not a second format of the book.
+func TestScanLibrary_SupplementBesideNewEbookStaysASidecar(t *testing.T) {
+	s, books, authors, settings, libDir, ctx := trackedPathsFixture(t)
+	author := createScanAuthor(t, ctx, authors)
+
+	dir := filepath.Join(libDir, "Jane Doe", "Beta Business")
+	epub := writeBookSized(t, filepath.Join(dir, "Beta Business.epub"))
+	for _, ext := range []string{".pdf", ".txt", ".rtf"} {
+		writeBookSized(t, filepath.Join(dir, "Beta Business"+ext))
+	}
+	book := createScanBook(t, ctx, books, author.ID, "ol:beta", "Beta Business", models.BookStatusWanted, models.MediaTypeEbook)
+
+	s.ScanLibrary(ctx)
+
+	files, err := books.ListFiles(ctx, book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ebookPathsOf(t, files)
+	if len(got) != 1 || got[0] != filepath.Clean(epub) {
+		t.Fatalf("book ebook files = %v, want only the epub (supplements stay sidecars, #2188)", got)
+	}
+	p := readScanResult(t, ctx, settings)
+	if p.Reconciled != 1 || p.Unmatched != 0 || p.AlreadyTrack != 3 {
+		t.Errorf("reconciled/unmatched/already_tracked = %d/%d/%d, want 1/0/3", p.Reconciled, p.Unmatched, p.AlreadyTrack)
 	}
 }

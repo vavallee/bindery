@@ -3506,16 +3506,18 @@ type bookFormatClaim struct {
 	format string
 }
 
-// ebookStemOwner is what one library-scan pass knows about an ebook file that
-// shares a name with an untracked file in its folder (#1357): the book that
-// attached it during the pass, or, for a file tracked before the pass, its
-// path so the book is looked up only when a sibling actually turns up.
+// ebookStemOwner is what one library-scan pass knows about the ebook files
+// that share one name in one folder (#1357): the book that attached the first
+// of them during the pass, or, for a file tracked before the pass, its path
+// so the book is looked up only when a sibling actually turns up. The owner
+// is set once and never replaced.
 type ebookStemOwner struct {
 	bookID      int64
 	trackedPath string
-	// ext is the known file's extension. A file with the same one is a
-	// second copy differing only in letter case, not another format.
-	ext string
+	// exts are the lower case extensions already known under this name. A
+	// file with one of them is a second copy in the same format (perhaps in
+	// other letter case), not another format.
+	exts map[string]bool
 }
 
 // scanBook is the precomputed per-book data the library-scan reconciliation
@@ -4330,22 +4332,35 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	// "Dune.epub" in the same folder (#1357). A file reconciled during this
 	// pass is added with its book, so both formats of a new book attach in
 	// one pass.
-	ebookStems := make(map[string]ebookStemOwner)
+	//
+	// Only a path with a real ebook extension counts. An audiobook is tracked
+	// as its folder, and detectDownloadFormat calls anything without an audio
+	// extension an ebook, so a folder "Alpha/" would otherwise vouch for a
+	// loose "Alpha.epub", and "Mr. Mercedes/" (cut at the dot) for "Mr.epub".
+	ebookStems := make(map[string]*ebookStemOwner)
 	ebookStemKey := func(cleanPath string) string {
 		return s.pathKey(strings.TrimSuffix(cleanPath, filepath.Ext(cleanPath)))
+	}
+	noteEbookStem := func(cleanPath string, bookID int64, trackedPath string) {
+		if !IsEbookFile(cleanPath) {
+			return
+		}
+		key := ebookStemKey(cleanPath)
+		owner := ebookStems[key]
+		if owner == nil {
+			owner = &ebookStemOwner{bookID: bookID, trackedPath: trackedPath, exts: make(map[string]bool)}
+			ebookStems[key] = owner
+		}
+		owner.exts[strings.ToLower(filepath.Ext(cleanPath))] = true
 	}
 	if allPaths, err := s.books.ListAllBookFilePaths(ctx); err == nil {
 		for _, p := range allPaths {
 			cleanP := filepath.Clean(p)
 			trackedPaths[s.pathKey(cleanP)] = true
-			switch detectDownloadFormat([]string{cleanP}) {
-			case models.MediaTypeAudiobook:
+			if detectDownloadFormat([]string{cleanP}) == models.MediaTypeAudiobook {
 				markAudioParent(cleanP)
-			case models.MediaTypeEbook:
-				if _, ok := ebookStems[ebookStemKey(cleanP)]; !ok {
-					ebookStems[ebookStemKey(cleanP)] = ebookStemOwner{trackedPath: cleanP, ext: filepath.Ext(cleanP)}
-				}
 			}
+			noteEbookStem(cleanP, 0, cleanP)
 		}
 	}
 
@@ -4668,14 +4683,20 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	// format of it later in the pass finds its book (see ebookStems).
 	rememberEbookStem := func(bookID int64, detectedFmt, cleanPath string) {
 		if detectedFmt == models.MediaTypeEbook {
-			ebookStems[ebookStemKey(cleanPath)] = ebookStemOwner{bookID: bookID, ext: filepath.Ext(cleanPath)}
+			noteEbookStem(cleanPath, bookID, "")
 		}
 	}
 	// otherFormatOwner returns the listed book that tracks an ebook file with
-	// cleanPath's name in cleanPath's folder, or 0.
+	// cleanPath's name in cleanPath's folder, or 0. Only a real ebook format
+	// qualifies: a same name .pdf, .txt, .rtf, .cbz or .cbr beside an epub is
+	// its sidecar under #2188, and those rules still decide it.
 	otherFormatOwner := func(cleanPath string) int64 {
-		owner, ok := ebookStems[ebookStemKey(cleanPath)]
-		if !ok || strings.EqualFold(owner.ext, filepath.Ext(cleanPath)) {
+		ext := strings.ToLower(filepath.Ext(cleanPath))
+		if !IsEbookFile(cleanPath) || supplementClassExts[ext] {
+			return 0
+		}
+		owner := ebookStems[ebookStemKey(cleanPath)]
+		if owner == nil || owner.exts[ext] {
 			return 0
 		}
 		bookID := owner.bookID

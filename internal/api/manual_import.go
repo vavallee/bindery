@@ -673,9 +673,10 @@ func directoryMatchesTracked(path string, tracked map[string]struct{}, trackedFi
 // empty even though the tracking row exists. This must match the importer's
 // idempotency guard, or a copied manual-import source will keep reappearing.
 //
-// For an ebook unit the guard is per extension, as the importer's is: an AZW3
-// imported for a book that has an EPUB lands next to it as another format
-// (#1357), so only a tracked file with unitPath's own extension counts.
+// For an ebook unit the guard is per extension, close to the importer's per
+// path guard: an AZW3 imported for a book that has an EPUB lands next to it
+// as another format (#1357), so only a tracked file with unitPath's own
+// extension counts.
 // unitPath is empty for a folder unit, which counts any tracked file of
 // format.
 func bookHasImportedFormat(book *models.Book, format, unitPath string, files []models.BookFile) bool {

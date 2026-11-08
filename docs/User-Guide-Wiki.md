@@ -943,15 +943,23 @@ to the records. Things worth knowing before you judge the results:
   over automatically.
 - A folder holding both an ebook and an audiobook for the same book attaches
   both in a single scan — one file per format, so a second scan is not needed.
-- **Other ebook formats of a book are attached to it.** A file with the same
-  name as an ebook a book already has, in the same folder, with a different
-  extension (`Dune.azw3` or `Dune.pdf` next to `Dune.epub`), is added to that
-  book as another format instead of being listed as unmatched. This works for
-  files from earlier scans and for a book the same scan matches, so a new
-  folder holding `Dune.epub` and `Dune.azw3` attaches both at once. A second
-  copy in the same format has a different name (`Dune (2).epub`) and is not
-  attached this way. The book page lists every file, and nothing is deleted
-  (#1357).
+- **Other ebook formats of a book are attached to it.** An EPUB, AZW3,
+  AZW, MOBI, FB2, DJVU or LIT file with the same name as an ebook a book
+  already has, in the same folder, with a different extension (`Dune.azw3`
+  next to `Dune.epub`), is added to that book as another format instead of
+  being listed as unmatched. This works for files from earlier scans and for a
+  book the same scan matches, so a new folder holding `Dune.epub` and
+  `Dune.azw3` attaches both at once. A same name PDF, TXT, RTF, CBZ or CBR is
+  not attached this way: beside a real ebook it counts as that ebook's
+  companion, as described below, so adopt it from **Import → In your library**
+  if you want it on the book. A second copy in the same format has a different
+  name (`Dune (2).epub`) and is not attached either, and an audiobook folder
+  never counts as an ebook of the same name. Ignoring a file on **Import → In
+  your library** does not stop a later scan attaching it this way. The book
+  page lists every file, and nothing is deleted (#1357).
+- A book with several ebook formats serves one of them through OPDS and
+  downloads, in this order of preference: EPUB, KEPUB, AZW3, MOBI, PDF, then
+  anything else. The other files stay on the book.
 - In a **flat** layout, where audiobooks sit straight in the author folder as
   `Author/Title.mp3`, each file is matched on its own. A tracked audiobook only
   claims the other files in that folder that are tracks of it (the same name
