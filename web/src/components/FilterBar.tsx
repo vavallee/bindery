@@ -112,7 +112,16 @@ export default function FilterBar<S extends string, O extends string>({
         <div className="flex items-center gap-2 flex-wrap pointer-coarse:gap-y-5">
           {sort && (
             <FilterPopover label={t('common.sort', 'Sort')} ariaLabel={sort.label}>
-              <FilterGroup label={sort.label} value={sort.value} onChange={sort.onChange} options={sort.options} />
+              {/* One choice, so picking it closes the menu. Filters stays
+                  open: it can hold several facets to set in one visit. */}
+              {close => (
+                <FilterGroup
+                  label={sort.label}
+                  value={sort.value}
+                  onChange={next => { sort.onChange(next); close() }}
+                  options={sort.options}
+                />
+              )}
             </FilterPopover>
           )}
           {filters && (

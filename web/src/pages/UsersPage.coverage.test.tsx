@@ -17,9 +17,9 @@ vi.mock('react-i18next', () => ({
   }),
 }))
 
-const auth = vi.hoisted(() => ({ isAdmin: true }))
+const auth = vi.hoisted(() => ({ isAdmin: true, username: 'admin' as string | undefined }))
 vi.mock('../auth/AuthContext', () => ({
-  useAuth: () => ({ isAdmin: auth.isAdmin, status: { username: 'admin' } }),
+  useAuth: () => ({ isAdmin: auth.isAdmin, status: { username: auth.username } }),
 }))
 
 vi.mock('../api/client', () => ({
@@ -58,6 +58,7 @@ describe('UsersPage coverage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     auth.isAdmin = true
+    auth.username = 'admin'
     vi.mocked(api.listUsers).mockResolvedValue([user(1, 'admin', 'admin'), user(2, 'reader'), user(3, 'guest', 'requester')])
     vi.mocked(api.setUserRole).mockResolvedValue({ ok: true })
     vi.mocked(api.setUserAutoApprove).mockResolvedValue({ ok: true })
@@ -169,13 +170,40 @@ describe('UsersPage coverage', () => {
   })
 
   it('shows a plain delete failure', async () => {
-    vi.mocked(api.deleteUser).mockRejectedValue(new Error('cannot delete yourself'))
+    vi.mocked(api.deleteUser).mockRejectedValue(new Error('database is locked'))
     render(<UsersPage />)
-    await screen.findByText('admin')
-    fireEvent.click(within(rowFor('admin')).getByRole('button', { name: 'common.delete' }))
+    await screen.findByText('reader')
+    fireEvent.click(within(rowFor('reader')).getByRole('button', { name: 'common.delete' }))
     await acceptConfirm()
-    expect(await screen.findByText('cannot delete yourself')).toBeInTheDocument()
+    expect(await screen.findByText('database is locked')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  // The server refuses both, so the button says so instead of failing after
+  // the confirm. Disabled, not hidden, so the row keeps its shape and the
+  // reason is one hover away. Reset password stays available.
+  it('disables Delete on your own row and explains why', async () => {
+    vi.mocked(api.listUsers).mockResolvedValue([user(1, 'admin', 'admin'), user(2, 'boss', 'admin'), user(3, 'reader')])
+    render(<UsersPage />)
+    await screen.findByText('reader')
+    const own = within(rowFor('admin')).getByRole('button', { name: 'common.delete' })
+    expect(own).toBeDisabled()
+    expect(own).toHaveAttribute('title', 'users.deleteSelfHint')
+    fireEvent.click(own)
+    expect(api.deleteUser).not.toHaveBeenCalled()
+    expect(within(rowFor('admin')).getByRole('button', { name: 'users.resetPassword' })).toBeEnabled()
+    expect(within(rowFor('boss')).getByRole('button', { name: 'common.delete' })).toBeEnabled()
+    expect(within(rowFor('reader')).getByRole('button', { name: 'common.delete' })).toBeEnabled()
+  })
+
+  it('disables Delete on the last admin even when it is not your row', async () => {
+    auth.username = undefined
+    render(<UsersPage />)
+    await screen.findByText('reader')
+    const last = within(rowFor('admin')).getByRole('button', { name: 'common.delete' })
+    expect(last).toBeDisabled()
+    expect(last).toHaveAttribute('title', 'users.deleteLastAdminHint')
+    expect(within(rowFor('reader')).getByRole('button', { name: 'common.delete' })).toBeEnabled()
   })
 
   it('asks what to do with owned data on a 409, then reassigns it to the chosen user', async () => {

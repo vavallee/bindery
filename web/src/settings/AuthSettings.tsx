@@ -10,17 +10,30 @@ import { primaryFill } from '../components/buttons'
 
 const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm'
 
+// savedConfig turns a provider as the GET returned it into what the PUT takes
+// back. It starts from the whole stored object, so allowed_groups and any field
+// this screen does not render go back unchanged instead of being dropped. The
+// secret is never returned, so it goes back blank, which the backend reads as
+// "keep the stored one".
+function savedConfig(p: OidcProvider): OidcProviderConfig {
+  const stored: Partial<OidcProvider> = { ...p }
+  delete stored.status
+  return { ...stored, id: p.id, name: p.name, issuer: p.issuer ?? '', client_id: p.client_id ?? '', scopes: p.scopes ?? [], client_secret: '' }
+}
+
 export default function AuthSettings() {
   const { t } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
-  // GET returns public shape only (no client_secret). We track display list
-  // separately from the full configs we accumulate during add operations.
+  // GET returns every stored field but client_secret. We track display list
+  // separately from the full configs we accumulate during add and edit.
   const [displayed, setDisplayed] = useState<OidcProvider[]>([])
-  // Full configs built up in-session from add operations. Used as the write
+  // Full configs built up in-session from add and edit. Used as the write
   // source for PUT. Entries not in this map (i.e. loaded from GET) are sent
-  // with client_secret:'' — backend preserves the existing secret for those.
+  // as savedConfig makes them, with client_secret:'' so the backend keeps the
+  // stored secret.
   const [fullConfigs, setFullConfigs] = useState<Map<string, OidcProviderConfig>>(new Map())
   const [showAdd, setShowAdd] = useState(false)
+  const [editing, setEditing] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -28,8 +41,14 @@ export default function AuthSettings() {
     api.oidcProviders().then(setDisplayed).catch(console.error)
   }, [])
 
-  const buildPutPayload = (ids: string[]): OidcProviderConfig[] =>
-    ids.map(id => fullConfigs.get(id) ?? { id, name: displayed.find(p => p.id === id)?.name ?? id, issuer: '', client_id: '', client_secret: '', scopes: [] })
+  const configFor = (id: string): OidcProviderConfig => {
+    const known = fullConfigs.get(id)
+    if (known) return known
+    const p = displayed.find(d => d.id === id)
+    return p ? savedConfig(p) : { id, name: id, issuer: '', client_id: '', client_secret: '', scopes: [] }
+  }
+
+  const buildPutPayload = (ids: string[]): OidcProviderConfig[] => ids.map(configFor)
 
   const remove = async (id: string) => {
     if (!await confirm({
@@ -71,6 +90,24 @@ export default function AuthSettings() {
     }
   }
 
+  // edit replaces one saved provider in place, keeping its position and id.
+  const edit = async (cfg: OidcProviderConfig) => {
+    setSaving(true)
+    setError('')
+    try {
+      const nextConfigs = new Map(fullConfigs).set(cfg.id, cfg)
+      await api.oidcSetProviders(displayed.map(p => nextConfigs.get(p.id) ?? configFor(p.id)))
+      setDisplayed(ps => ps.map(p => (p.id === cfg.id ? { ...p, name: cfg.name } : p)))
+      api.oidcProviders().then(setDisplayed).catch(() => {})
+      setFullConfigs(nextConfigs)
+      setEditing(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('settings.oidc.saveFail'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <section>
       {confirmDialog}
@@ -87,36 +124,48 @@ export default function AuthSettings() {
         )}
 
         {displayed.map(p => (
-          <div key={p.id} className="flex items-start justify-between py-2 border-b border-slate-200 dark:border-zinc-800 last:border-0 gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-slate-800 dark:text-zinc-200">{p.name}</span>
-                {p.status?.state === 'failed' ? (
-                  <span
-                    title={p.status.last_error}
-                    className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300"
-                  >
-                    {t('settings.oidc.statusFailed')}
-                  </span>
-                ) : p.status?.state === 'ok' ? (
-                  <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
-                    {t('settings.oidc.statusOk')}
-                  </span>
-                ) : null}
+          <div key={p.id} className="py-2 border-b border-slate-200 dark:border-zinc-800 last:border-0">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-slate-800 dark:text-zinc-200">{p.name}</span>
+                  {p.status?.state === 'failed' ? (
+                    <span
+                      title={p.status.last_error}
+                      className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300"
+                    >
+                      {t('settings.oidc.statusFailed')}
+                    </span>
+                  ) : p.status?.state === 'ok' ? (
+                    <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
+                      {t('settings.oidc.statusOk')}
+                    </span>
+                  ) : null}
+                </div>
+                {p.status?.state === 'failed' && p.status.last_error && (
+                  <p className="text-xs text-red-700 dark:text-red-400 mt-1 break-all">
+                    {p.status.last_error}
+                  </p>
+                )}
               </div>
-              {p.status?.state === 'failed' && p.status.last_error && (
-                <p className="text-xs text-red-700 dark:text-red-400 mt-1 break-all">
-                  {p.status.last_error}
-                </p>
-              )}
+              <button
+                onClick={() => { setShowAdd(false); setEditing(p.id) }}
+                disabled={saving}
+                className="text-xs text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 shrink-0"
+              >
+                {t('common.edit')}
+              </button>
+              <button
+                onClick={() => remove(p.id)}
+                disabled={saving}
+                className="text-xs text-red-700 dark:text-red-400 hover:underline disabled:opacity-50 shrink-0"
+              >
+                {t('common.remove')}
+              </button>
             </div>
-            <button
-              onClick={() => remove(p.id)}
-              disabled={saving}
-              className="text-xs text-red-700 dark:text-red-400 hover:underline disabled:opacity-50 shrink-0"
-            >
-              {t('common.remove')}
-            </button>
+            {editing === p.id && (
+              <ProviderForm initial={configFor(p.id)} onSave={edit} onCancel={() => setEditing(null)} saving={saving} />
+            )}
           </div>
         ))}
 
@@ -127,10 +176,10 @@ export default function AuthSettings() {
         {error && <Alert tier="error">{error}</Alert>}
 
         {showAdd ? (
-          <AddProviderForm onAdd={add} onCancel={() => setShowAdd(false)} saving={saving} />
+          <ProviderForm onSave={add} onCancel={() => setShowAdd(false)} saving={saving} />
         ) : (
           <button
-            onClick={() => setShowAdd(true)}
+            onClick={() => { setEditing(null); setShowAdd(true) }}
             className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
           >
             {t('settings.oidc.addButton')}
@@ -141,23 +190,35 @@ export default function AuthSettings() {
   )
 }
 
-function AddProviderForm({
-  onAdd,
+// ProviderForm adds a provider, or with initial edits a saved one. An edit
+// keeps the id (the stored secret and the callback URL hang off it) and sends
+// the secret only when one is typed: blank keeps the stored secret.
+function ProviderForm({
+  initial,
+  onSave,
   onCancel,
   saving,
 }: {
-  onAdd: (cfg: OidcProviderConfig) => void
+  initial?: OidcProviderConfig
+  onSave: (cfg: OidcProviderConfig) => void
   onCancel: () => void
   saving: boolean
 }) {
   const fid = useId()
   const { t } = useTranslation()
-  const [id, setId] = useState('')
-  const [name, setName] = useState('')
-  const [issuer, setIssuer] = useState('')
-  const [clientId, setClientId] = useState('')
+  const editing = initial !== undefined
+  const [id, setId] = useState(initial?.id ?? '')
+  const [name, setName] = useState(initial?.name ?? '')
+  const [issuer, setIssuer] = useState(initial?.issuer ?? '')
+  const [clientId, setClientId] = useState(initial?.client_id ?? '')
   const [clientSecret, setClientSecret] = useState('')
-  const [scopes, setScopes] = useState('openid email profile')
+  const [scopes, setScopes] = useState(initial ? initial.scopes.join(' ') : 'openid email profile')
+  const [allowedGroups, setAllowedGroups] = useState((initial?.allowed_groups ?? []).join('\n'))
+  // The stored secret belongs to the stored issuer, so pointing a saved
+  // provider at another one needs its secret again (the backend refuses it
+  // otherwise, rather than send the old secret to a different IdP).
+  const issuerChanged = editing && issuer.trim() !== (initial.issuer ?? '').trim()
+  const secretRequired = !editing || issuerChanged
   // Live callback URL preview — fetched once from the backend so we get the
   // same base URL Bindery itself will resolve at /login (honors the env var
   // / forwarded-headers precedence). Older backends don't have this endpoint;
@@ -194,23 +255,33 @@ function AddProviderForm({
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    onAdd({
-      id: id.trim(),
+    // One group per line: a group name can hold spaces ("Domain Users") or
+    // commas (an LDAP DN), so neither separates them.
+    const groups = allowedGroups.split('\n').map(g => g.trim()).filter(Boolean)
+    // Groups the form was given and the user emptied go as an explicit [],
+    // the only thing that clears them. An empty list the form was never given
+    // is left out, so the backend keeps whatever is stored: the provider list
+    // can arrive without allowed_groups, and that must not open the login.
+    const hadGroups = (initial?.allowed_groups?.length ?? 0) > 0
+    onSave({
+      ...initial,
+      id: initial ? initial.id : id.trim(),
       name: name.trim(),
       issuer: issuer.trim(),
       client_id: clientId.trim(),
       client_secret: clientSecret.trim(),
       scopes: scopes.trim().split(/\s+/).filter(Boolean),
+      allowed_groups: groups.length > 0 || hadGroups ? groups : undefined,
     })
   }
 
   return (
     <form onSubmit={submit} className="space-y-3 pt-2 border-t border-slate-200 dark:border-zinc-800">
-      <p className="text-xs font-medium text-slate-700 dark:text-zinc-300">{t('settings.oidc.addHeading')}</p>
+      <p className="text-xs font-medium text-slate-700 dark:text-zinc-300">{t(editing ? 'settings.oidc.editHeading' : 'settings.oidc.addHeading')}</p>
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.oidc.fieldId')}</label>
-          <input id={`${fid}-1`} value={id} onChange={e => setId(e.target.value)} required placeholder="google" className={inputCls} />
+          <input id={`${fid}-1`} value={id} onChange={e => setId(e.target.value)} required disabled={editing} placeholder="google" className={`${inputCls} disabled:opacity-60`} />
         </div>
         <div>
           <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">{t('settings.oidc.fieldName')}</label>
@@ -262,12 +333,20 @@ function AddProviderForm({
         </div>
         <div>
           <label htmlFor={`${fid}-4`} className="block text-xs text-fg-muted mb-1">{t('settings.oidc.fieldClientSecret')}</label>
-          <input id={`${fid}-4`} {...secretInputAttrs} value={clientSecret} onChange={e => setClientSecret(e.target.value)} required type="password" className={inputCls} />
+          <input id={`${fid}-4`} {...secretInputAttrs} value={clientSecret} onChange={e => setClientSecret(e.target.value)} required={secretRequired} placeholder={secretRequired ? undefined : t('settings.oidc.clientSecretKeep')} type="password" className={inputCls} />
+          {issuerChanged && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">{t('settings.oidc.clientSecretIssuerChanged')}</p>
+          )}
         </div>
       </div>
       <div>
         <label htmlFor={`${fid}-5`} className="block text-xs text-fg-muted mb-1">{t('settings.oidc.fieldScopes')}</label>
         <input id={`${fid}-5`} value={scopes} onChange={e => setScopes(e.target.value)} className={inputCls} />
+      </div>
+      <div>
+        <label htmlFor={`${fid}-6`} className="block text-xs text-fg-muted mb-1">{t('settings.oidc.fieldAllowedGroups')}</label>
+        <textarea id={`${fid}-6`} value={allowedGroups} onChange={e => setAllowedGroups(e.target.value)} rows={3} className={inputCls} />
+        <p className="text-[11px] text-fg-muted mt-1">{t('settings.oidc.allowedGroupsHint')}</p>
       </div>
       <div className="flex gap-2 justify-end">
         <button type="button" onClick={onCancel} className="px-3 py-1.5 text-sm text-fg-muted">
@@ -275,10 +354,10 @@ function AddProviderForm({
         </button>
         <button
           type="submit"
-          disabled={saving || !id || !name || !issuer || !clientId || !clientSecret}
+          disabled={saving || !id || !name || !issuer || !clientId || (secretRequired && !clientSecret.trim())}
           className={`px-3 py-1.5 ${primaryFill} rounded text-sm font-medium disabled:opacity-50`}
         >
-          {saving ? t('common.saving') : t('settings.oidc.addSave')}
+          {saving ? t('common.saving') : t(editing ? 'settings.oidc.editSave' : 'settings.oidc.addSave')}
         </button>
       </div>
     </form>

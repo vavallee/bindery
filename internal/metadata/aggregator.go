@@ -103,6 +103,7 @@ func (a *aggregatorCore) SearchAuthorsWithOutcome(ctx context.Context, query str
 	}
 	merged := dedupeAuthorsByName(all, normalizedProviderName(providerName(a.primary)))
 	rerankAuthorsByRelevance(merged, query)
+	merged = demoteCompositeAuthors(merged, query)
 	return merged, outcome, nil
 }
 

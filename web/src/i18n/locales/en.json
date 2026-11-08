@@ -2535,6 +2535,12 @@
       "addButton": "+ Add Provider",
       "addHeading": "New OIDC Provider",
       "addSave": "Add Provider",
+      "editHeading": "Edit OIDC Provider",
+      "editSave": "Save Changes",
+      "clientSecretKeep": "Leave blank to keep the saved secret",
+      "clientSecretIssuerChanged": "The issuer changed, so enter the client secret from that identity provider. The saved one is never sent to a new issuer.",
+      "fieldAllowedGroups": "Allowed groups",
+      "allowedGroupsHint": "One group or role per line, written exactly as your identity provider sends it. Leave empty to let everyone who signs in with this provider in.",
       "removeConfirm": "Remove this OIDC provider?",
       "saveFail": "Failed to save providers",
       "fieldId": "ID",
@@ -2810,10 +2816,15 @@
     "clientMissing": "An indexer is configured but there is no download client — searches will find releases, but every grab will fail.",
     "indexerMissing": "A download client is configured but there is no indexer — searches have nowhere to look and will find nothing.",
     "indexers": "Set up Indexers",
-    "downloadClients": "Set up Download Clients"
+    "downloadClients": "Set up Download Clients",
+    "rootFolders": "Set up Root Folders"
   },
   "setupBanner": {
-    "both": "Finish setting up: add an indexer and a download client so searches and downloads work."
+    "both": "Finish setting up: add an indexer and a download client so searches and downloads work.",
+    "rootFolder": "Finish setting up: add a root folder so imported books have a library folder to go to.",
+    "rootFolderIndexer": "Finish setting up: add a root folder and an indexer so searches and imports work.",
+    "rootFolderClient": "Finish setting up: add a root folder and a download client so downloads and imports work.",
+    "all": "Finish setting up: add a root folder, an indexer and a download client so searches, downloads and imports work."
   },
   "whatsNew": {
     "updated": "Updated to v{{version}}.",
@@ -2821,6 +2832,7 @@
   },
   "setupChecklist": {
     "title": "Setup progress",
+    "rootFolder": "Add a root folder",
     "indexer": "Add an indexer",
     "client": "Add a download client",
     "author": "Add an author",
@@ -2866,6 +2878,8 @@
     "demote": "Make user",
     "resetPassword": "Reset password",
     "deleteConfirm": "Delete user \"{{username}}\"? This cannot be undone.",
+    "deleteSelfHint": "You can't delete the account you're signed in with. Sign in as another admin to remove it.",
+    "deleteLastAdminHint": "This is the only admin. Make another user an admin before deleting this one.",
     "loadFail": "Failed to load users",
     "deleteFail": "Failed to delete user",
     "roleFail": "Failed to change role",

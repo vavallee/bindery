@@ -166,22 +166,36 @@ export default function UsersPage() {
     </label>
   )
 
-  const actionButtons = (u: ManagedUser) => (
-    <>
-      <button
-        onClick={() => handleReset(u.id)}
-        className={`${btnCls} text-xs bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300 pointer-coarse:py-2.5`}
-      >
-        {t('users.resetPassword')}
-      </button>
-      <button
-        onClick={() => handleDelete(u)}
-        className={`${btnCls} text-xs bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-700 dark:text-red-400 pointer-coarse:py-2.5`}
-      >
-        {t('common.delete')}
-      </button>
-    </>
-  )
+  // The server refuses to delete your own account or the last admin, so the
+  // button says why up front instead of failing after the confirm.
+  const adminCount = users.filter(x => x.role === 'admin').length
+  const deleteBlockedReason = (u: ManagedUser): string | undefined => {
+    if (u.username === status?.username) return t('users.deleteSelfHint')
+    if (u.role === 'admin' && adminCount <= 1) return t('users.deleteLastAdminHint')
+    return undefined
+  }
+
+  const actionButtons = (u: ManagedUser) => {
+    const blocked = deleteBlockedReason(u)
+    return (
+      <>
+        <button
+          onClick={() => handleReset(u.id)}
+          className={`${btnCls} text-xs bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300 pointer-coarse:py-2.5`}
+        >
+          {t('users.resetPassword')}
+        </button>
+        <button
+          onClick={() => handleDelete(u)}
+          disabled={!!blocked}
+          title={blocked}
+          className={`${btnCls} text-xs bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-700 dark:text-red-400 pointer-coarse:py-2.5 disabled:opacity-50 disabled:cursor-not-allowed`}
+        >
+          {t('common.delete')}
+        </button>
+      </>
+    )
+  }
 
   if (!isAdmin) {
     return (

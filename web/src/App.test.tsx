@@ -61,6 +61,7 @@ vi.mock('./api/client', () => ({
     // SetupBanner (mounted in the admin shell) probes these on mount.
     listIndexers: vi.fn().mockResolvedValue([]),
     listDownloadClients: vi.fn().mockResolvedValue([]),
+    setupState: vi.fn().mockResolvedValue({ hasIndexer: true, hasClient: true, hasAuthor: true, hasGrab: true, hasImport: true, complete: true }),
     // The Import nav badge reads this once for an admin.
     unmatchedSummary: vi.fn().mockResolvedValue({ pending: 0, pendingFiles: 0, ignored: 0, adopted: 0, scan: {} }),
     pendingRequestCount: vi.fn().mockResolvedValue({ count: 3 }),
@@ -145,6 +146,18 @@ describe('App — /authors alias', () => {
 
     expect(await screen.findByTestId('page-authors')).toBeInTheDocument()
     expect(window.location.pathname).toBe('/')
+  })
+
+  // The redirect used to drop the query string, so /authors?sort=books-desc
+  // (or a page or search link) landed on "/" in the default order.
+  it('keeps the query string, so a sort or search in the link survives', async () => {
+    window.history.pushState(null, '', '/authors?sort=books-desc&q=weir')
+
+    renderShell()
+
+    expect(await screen.findByTestId('page-authors')).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/')
+    expect(window.location.search).toBe('?sort=books-desc&q=weir')
   })
 
   // The alias is still the right answer for /authors specifically, because it

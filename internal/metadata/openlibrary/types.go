@@ -4,9 +4,26 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // OpenLibrary API response types
+
+// subjectList is a work's subjects with OpenLibrary's machine tags
+// ("seriesRed Rising Trilogy", "nyt:hardcover-fiction=2015-01-25",
+// "place:Mars") dropped as they are decoded, so they never become a book's
+// genres or count toward the ten genre cap. See textutil.IsJunkSubject.
+type subjectList []string
+
+func (s *subjectList) UnmarshalJSON(data []byte) error {
+	var raw []string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*s = textutil.DropJunkSubjects(raw)
+	return nil
+}
 
 // flexStringSlice unmarshals a JSON array whose elements may be plain strings
 // or objects (e.g. {"key": "...", "title": "..."}). Strings are kept as-is;
@@ -84,19 +101,19 @@ type searchResponse struct {
 }
 
 type searchDoc struct {
-	Key              string   `json:"key"` // e.g. "/works/OL123W"
-	Title            string   `json:"title"`
-	AuthorName       []string `json:"author_name"`
-	AuthorKey        []string `json:"author_key"` // e.g. ["OL123A"]
-	FirstPublishYear int      `json:"first_publish_year"`
-	CoverI           *int     `json:"cover_i"` // cover ID
-	ISBN             []string `json:"isbn"`
-	Language         []string `json:"language"`
-	NumberOfPages    *int     `json:"number_of_pages_median"`
-	Publisher        []string `json:"publisher"`
-	Subject          []string `json:"subject"`
-	RatingsAvg       float64  `json:"ratings_average"`
-	RatingsCount     int      `json:"ratings_count"`
+	Key              string      `json:"key"` // e.g. "/works/OL123W"
+	Title            string      `json:"title"`
+	AuthorName       []string    `json:"author_name"`
+	AuthorKey        []string    `json:"author_key"` // e.g. ["OL123A"]
+	FirstPublishYear int         `json:"first_publish_year"`
+	CoverI           *int        `json:"cover_i"` // cover ID
+	ISBN             []string    `json:"isbn"`
+	Language         []string    `json:"language"`
+	NumberOfPages    *int        `json:"number_of_pages_median"`
+	Publisher        []string    `json:"publisher"`
+	Subject          subjectList `json:"subject"`
+	RatingsAvg       float64     `json:"ratings_average"`
+	RatingsCount     int         `json:"ratings_count"`
 }
 
 type authorSearchResponse struct {
@@ -125,7 +142,7 @@ type authorWorkEntry struct {
 	Title       string          `json:"title"`
 	Description interface{}     `json:"description"`
 	Covers      []int           `json:"covers"`
-	Subjects    []string        `json:"subjects"`
+	Subjects    subjectList     `json:"subjects"`
 	Series      flexStringSlice `json:"series"`
 	// Authors carries the work's credited author references
 	// ({"author": {"key": "/authors/OL123A"}}), used to tell co-authored
@@ -142,7 +159,7 @@ type workResponse struct {
 	Title       string          `json:"title"`
 	Description interface{}     `json:"description"` // can be string or {type, value}
 	Covers      []int           `json:"covers"`
-	Subjects    []string        `json:"subjects"`
+	Subjects    subjectList     `json:"subjects"`
 	Authors     []workAuthor    `json:"authors"`
 	Series      flexStringSlice `json:"series"`
 	// CoverEdition points at the edition OpenLibrary's own work page
@@ -225,8 +242,8 @@ type subjectWork struct {
 		Key  string `json:"key"` // "/authors/OL123A"
 		Name string `json:"name"`
 	} `json:"authors"`
-	CoverID          *int     `json:"cover_id"`
-	FirstPublishYear int      `json:"first_publish_year"`
-	Subject          []string `json:"subject"`
-	EditionCount     int      `json:"edition_count"`
+	CoverID          *int        `json:"cover_id"`
+	FirstPublishYear int         `json:"first_publish_year"`
+	Subject          subjectList `json:"subject"`
+	EditionCount     int         `json:"edition_count"`
 }

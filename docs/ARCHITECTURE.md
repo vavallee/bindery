@@ -147,6 +147,7 @@ Registered by `internal/scheduler`. Every job runs under `SkipIfStillRunning`, s
 | `hardcover-sync` | `hardcover.sync_interval`, default 24h, read at startup | Syncs Hardcover import lists, when configured. |
 | `telemetry-ping` | 24h | Anonymous install ping, unless opted out. |
 | `log-trim` | 24h | Trims the persistent log store to its retention. |
+| `download-trim` | 6h, not registered when `BINDERY_DOWNLOAD_RETENTION_DAYS=0` | Deletes finished (imported or failed) download rows older than the retention window. |
 
 ## Why these choices
 

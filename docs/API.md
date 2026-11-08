@@ -98,6 +98,14 @@ GET    /api/v1/author/{id}/aliases                list merged-in alias rows
 POST   /api/v1/author/{id}/merge                  merge another author into this one
 ```
 
+`POST /api/v1/author/{id}/merge` takes `{"sourceId": 123}` (and an optional
+`overwriteDefaults`, default `true`); `{id}` is the author that is kept. It
+answers `{"BooksReparented", "AliasesMigrated", "AliasesCreated",
+"AliasesSkipped", "TargetUpdated"}`. Alias names are unique across the
+instance, so a source name another author already holds cannot be recorded on
+the kept author: it is listed in `AliasesSkipped` (`null` when there are none)
+and the server logs a warning (#3565).
+
 Each author in `GET /api/v1/author` carries `statistics.bookCount` (the author's
 books, scoped to the caller like `GET /book`) and `statistics.availableBookCount`
 (#3092), the subset in the library by the same rule as `GET /book?status=imported`:
@@ -1077,6 +1085,7 @@ GET    /api/v1/backup                             list stored backups (admin)
 DELETE /api/v1/backup/{filename}                  delete one backup (admin)
 POST   /api/v1/backup/{filename}/restore          stage a backup for the next restart (admin, X-Confirm-Restore: true)
 GET    /api/v1/system/status                      version, commit, build date, newest published release, image cache size, Hardcover feature state; `hardcoverPausedUntil` while the daily quota holds, `hardcoverTokenRejected` while Hardcover has refused the saved token; `features` lists optional API behaviour an integration can detect (`requestsForUser`)
+GET    /api/v1/system/setup-state                 first run checklist state (indexer, client, author, grab, import, complete); admins also get `blocked`, `blockedArea`, `blockedReason` and `hasLibraryFolder` (a root folder exists, or BINDERY_LIBRARY_DIR is writable; left out while the storage probe has no answer)
 POST   /api/v1/library/scan                       start a library scan in the background (202; {"queued": true} when one is already running)
 GET    /api/v1/library/duplicate-candidates      read-only duplicate title groups across every author, paginated (#2999)
 GET    /api/v1/library/scan/status                summary of the last library scan, paths included (admin)
@@ -1777,7 +1786,7 @@ GET    /api/v1/auth/oidc/{provider}/callback      OIDC redirect target
 
 GET    /api/v1/auth/users                         list users (admin)
 POST   /api/v1/auth/users                         create (admin)
-DELETE /api/v1/auth/users/{id}                    delete (admin)
+DELETE /api/v1/auth/users/{id}                    delete (admin), ?strategy=reassign|purge[&reassignTo=<id>]; 409 with counts when the user owns data and no strategy was given, 409 for your own account, 400 for the last admin (see multi-user.md)
 PUT    /api/v1/auth/users/{id}/role               change role (admin), body {"role": "admin"|"user"|"requester"}; 404 for an unknown user
 PUT    /api/v1/auth/users/{id}/auto-approve       per-account request auto-approval (admin), body {"enabled": true|false}
 PUT    /api/v1/auth/users/{id}/reset-password     reset (admin)
