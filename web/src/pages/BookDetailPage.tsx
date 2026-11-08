@@ -423,6 +423,9 @@ function BookDetailPageInner() {
   const [searching, setSearching] = useState(false)
   const [autoSearching, setAutoSearching] = useState(false)
   const [autoSearchNotice, setAutoSearchNotice] = useState<string | null>(null)
+  // The automatic search's outcome, shown beside its button. The banner below
+  // the header card sat under the fold on a phone, so the click looked dead.
+  const [autoSearchStatus, setAutoSearchStatus] = useState<{ ok: boolean; text: string } | null>(null)
   const [results, setResults] = useState<SearchResult[] | null>(null)
   // Releases the relevance and language filters dropped (#2334).
   const [filtered, setFiltered] = useState<SearchResult[]>([])
@@ -661,12 +664,15 @@ function BookDetailPageInner() {
     // A leftover "automatic search started" banner over a fresh list of
     // releases reads as if the automatic run produced the list (#2668).
     setAutoSearchNotice(null)
+    setAutoSearchStatus(null)
     try {
+      // GET /indexer is admin only, so a user role account never asks, and a
+      // failed list only loses the "no indexers" hint, never the results.
       const [r, indexers] = await Promise.all([
         api.searchBook(book.id),
-        api.listIndexers(),
+        isAdmin ? api.listIndexers().catch(() => null) : Promise.resolve(null),
       ])
-      setHasIndexers(indexers.length > 0)
+      setHasIndexers(indexers === null ? null : indexers.length > 0)
       setResults(r.results)
       setFiltered(r.filtered ?? [])
       setFilteredTotal(r.filteredTotal)
@@ -702,12 +708,14 @@ function BookDetailPageInner() {
     const el = searchResultsRef.current
     // jsdom and some older engines have no scrollIntoView.
     if (!el || typeof el.scrollIntoView !== 'function') return
-    // Already on screen: scrolling would only move the page for nothing.
-    const top = el.getBoundingClientRect().top
-    if (top >= 0 && top < window.innerHeight) return
-    const reduceMotion = typeof window.matchMedia === 'function'
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    el.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' })
+    // Fully on screen: scrolling would only move the page for nothing. A top
+    // edge just above the fold is not enough, since the message under it is
+    // still hidden. 'nearest' moves only as far as needed, and 'auto' jumps
+    // (no smooth scroll CSS is set), so the answer is in view the moment it
+    // lands. 'instant' would throw in some older browsers.
+    const { top, bottom } = el.getBoundingClientRect()
+    if (top >= 0 && bottom <= window.innerHeight) return
+    el.scrollIntoView({ block: 'nearest', behavior: 'auto' })
   }, [revealResults])
 
   // #2668 (ThatDeltaGuy): the automatic counterpart of runSearch above. That
@@ -720,6 +728,7 @@ function BookDetailPageInner() {
     if (!book) return
     setAutoSearching(true)
     setAutoSearchNotice(null)
+    setAutoSearchStatus(null)
     setError(null)
     try {
       const res = await api.searchBookAutomatic(book.id)
@@ -729,16 +738,16 @@ function BookDetailPageInner() {
       // which is exactly where this button lives, so it cannot be reused
       // (#2669 copy, #2668 button).
       if (isAutoGrabRefusal(res)) {
-        setError(t('search.autoGrabDisabledSingleBook'))
+        setAutoSearchStatus({ ok: false, text: t('search.autoGrabDisabledSingleBook') })
         return
       }
       const item = res.results[String(book.id)]
       if (item && !item.ok) {
         throw new Error(item.error || t('bookDetail.autoSearchFailed'))
       }
-      setAutoSearchNotice(t('bookDetail.autoSearchStarted'))
+      setAutoSearchStatus({ ok: true, text: t('bookDetail.autoSearchStarted') })
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('bookDetail.autoSearchFailed'))
+      setAutoSearchStatus({ ok: false, text: e instanceof Error ? e.message : t('bookDetail.autoSearchFailed') })
     } finally {
       setAutoSearching(false)
     }
@@ -1292,6 +1301,14 @@ function BookDetailPageInner() {
                 <span aria-hidden>⚡</span>{' '}
                 {autoSearching ? t('bookDetail.autoSearchStarting') : t('bookDetail.autoSearch')}
               </button>
+            )}
+            {canAutoSearch && (
+              <p
+                role="status"
+                className={`text-sm ${autoSearchStatus?.ok === false ? 'text-red-700 dark:text-red-300' : 'text-emerald-700 dark:text-emerald-300'}`}
+              >
+                {autoSearchStatus?.text}
+              </p>
             )}
           </div>
         </div>
