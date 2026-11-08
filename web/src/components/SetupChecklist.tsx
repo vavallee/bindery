@@ -3,12 +3,19 @@ import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, type SetupState } from '../api/client'
 import Alert from './Alert'
+import { useIsAdmin } from '../auth/AuthContext'
+import { useLibraryFolderReady } from './useLibraryFolderReady'
 
 const STORAGE_KEY = 'bindery.setupChecklistDismissed'
 const FOCUS_REFETCH_MS = 60_000
 
+// hasRootFolder is not part of the server's SetupState: it is worked out in
+// the browser from the same root folder list the Root Folders tab shows, plus
+// storage health for BINDERY_LIBRARY_DIR (see useLibraryFolderReady).
+type StepState = SetupState & { hasRootFolder: boolean }
+
 interface Step {
-  key: 'hasIndexer' | 'hasClient' | 'hasAuthor' | 'hasGrab' | 'hasImport'
+  key: 'hasRootFolder' | 'hasIndexer' | 'hasClient' | 'hasAuthor' | 'hasGrab' | 'hasImport'
   labelKey: string
   fallback: string
   to?: string
@@ -19,8 +26,18 @@ interface Step {
 // Ordered as the pipeline runs. Account creation is deliberately absent:
 // the user cannot be looking at this without having done it, so listing it
 // would spend the first line of the checklist on a step that is always
-// already ticked.
-const STEPS: Step[] = [
+// already ticked. The root folder comes first because without a library
+// folder nothing that is grabbed has anywhere to be imported to.
+const ROOT_FOLDER_STEP: Step = {
+  key: 'hasRootFolder',
+  labelKey: 'setupChecklist.rootFolder',
+  fallback: 'Add a root folder',
+  to: '/settings?tab=rootfolders',
+  actionKey: 'gettingStarted.rootFolders',
+  actionFallback: 'Set up Root Folders',
+}
+
+const PIPELINE_STEPS: Step[] = [
   {
     key: 'hasIndexer',
     labelKey: 'setupChecklist.indexer',
@@ -79,6 +96,9 @@ const blockedAreas: Record<string, { to: string; actionKey: string; actionFallba
 // deliberately run a partial setup (e.g. catalogue-only, no downloads).
 export default function SetupChecklist() {
   const { t } = useTranslation()
+  const isAdmin = useIsAdmin()
+  // Only admins can add a root folder, so only they are shown the step.
+  const libraryReady = useLibraryFolderReady(isAdmin)
   const [state, setState] = useState<SetupState | null>(null)
   const [dismissed, setDismissed] = useState(() => {
     try {
@@ -138,17 +158,21 @@ export default function SetupChecklist() {
     )
   }
 
-  if (!state || state.complete || dismissed) return null
+  // Wait for the library folder answer too, so the strip never names a later
+  // step first and then jumps back to the root folder.
+  if (!state || state.complete || dismissed || libraryReady === null) return null
 
-  const done = STEPS.filter(s => state[s.key]).length
-  const next = STEPS.find(s => !state[s.key])
+  const stepList = isAdmin ? [ROOT_FOLDER_STEP, ...PIPELINE_STEPS] : PIPELINE_STEPS
+  const progress: StepState = { ...state, hasRootFolder: libraryReady }
+  const done = stepList.filter(s => progress[s.key]).length
+  const next = stepList.find(s => !progress[s.key])
 
   // Stop nagging once all but one step is done. The server's `complete` is the
   // real definition of "set up" and already hides this; it counts indexer,
   // client, author and import, deliberately not the first grab. This second
   // threshold covers the remaining near-done shapes, where a checklist is more
   // clutter than help and the last step tends to happen on its own.
-  if (done >= STEPS.length - 1) return null
+  if (done >= stepList.length - 1) return null
 
   const dismiss = () => {
     try {
@@ -170,16 +194,16 @@ export default function SetupChecklist() {
       <span
         className="hidden sm:flex items-center gap-1"
         role="img"
-        aria-label={t('setupChecklist.progress', '{{done}} of {{total}} steps done', { done, total: STEPS.length })}
+        aria-label={t('setupChecklist.progress', '{{done}} of {{total}} steps done', { done, total: stepList.length })}
       >
-        {STEPS.map(step => (
+        {stepList.map(step => (
           <span
             key={step.key}
-            className={`h-1.5 w-6 rounded-full ${state[step.key] ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
+            className={`h-1.5 w-6 rounded-full ${progress[step.key] ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
           />
         ))}
       </span>
-      <span className="text-fg-muted whitespace-nowrap sm:hidden">{done}/{STEPS.length}</span>
+      <span className="text-fg-muted whitespace-nowrap sm:hidden">{done}/{stepList.length}</span>
 
       {next && (
         <span className="min-w-0 flex items-center gap-2 truncate">

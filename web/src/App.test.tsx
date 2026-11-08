@@ -61,6 +61,7 @@ vi.mock('./api/client', () => ({
     // SetupBanner (mounted in the admin shell) probes these on mount.
     listIndexers: vi.fn().mockResolvedValue([]),
     listDownloadClients: vi.fn().mockResolvedValue([]),
+    listRootFolders: vi.fn().mockResolvedValue([{ id: 1, path: '/books', freeSpace: 0, createdAt: '' }]),
     // The Import nav badge reads this once for an admin.
     unmatchedSummary: vi.fn().mockResolvedValue({ pending: 0, pendingFiles: 0, ignored: 0, adopted: 0, scan: {} }),
     pendingRequestCount: vi.fn().mockResolvedValue({ count: 3 }),

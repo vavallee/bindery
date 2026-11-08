@@ -13,6 +13,9 @@ vi.mock('../api/client', async importOriginal => {
       ...actual.api,
       listAuthors: vi.fn(),
       setupState: vi.fn(),
+      // A root folder exists, so these tests see the pipeline steps; the
+      // root folder step has its own tests in SetupChecklist.rootfolder.test.
+      listRootFolders: vi.fn().mockResolvedValue([{ id: 1, path: '/books', freeSpace: 0, createdAt: '' }]),
     },
   }
 })
@@ -91,7 +94,7 @@ describe('AuthorsPage setup checklist', () => {
     renderPage()
 
     expect(await screen.findByText('Setup progress')).toBeInTheDocument()
-    expect(screen.getByText('0/5')).toBeInTheDocument()
+    expect(screen.getByText('1/6')).toBeInTheDocument()
     expect(screen.getByText('Add an indexer')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Set up Indexers' })).toHaveAttribute('href', '/settings?tab=indexers')
   })
@@ -112,7 +115,7 @@ describe('AuthorsPage setup checklist', () => {
 
     renderPage()
 
-    expect(await screen.findByText('3/5')).toBeInTheDocument()
+    expect(await screen.findByText('4/6')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Set up Indexers' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Set up Download Clients' })).not.toBeInTheDocument()
     // The next outstanding step is what the strip names.
