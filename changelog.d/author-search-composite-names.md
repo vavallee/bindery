@@ -1,2 +1,0 @@
-### Fixed
-- **Author search stops offering audiobook cast lists as authors**. Searching "John Scalzi" used to list OpenLibrary records like "Tavia Gilbert, William Dufris, John Scalzi" next to the real author. Records that name three or more people now sort below single authors, and are left out entirely when the exact author is in the results. Names like "Martin Luther King, Jr." are still one person.

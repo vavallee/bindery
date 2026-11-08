@@ -1,2 +1,0 @@
-### Fixed
-- **Authors sort sticks** (#3747). Picking a sort now closes the Sort menu on every list page that has one (Authors, Books, Wanted and the books on an author page). On the Authors page the sort is also remembered across reloads the way grid or table view already was, and a sort in the link still wins when there is one. Links to `/authors` keep their sort, search and page instead of dropping them on the way to the Authors page.
