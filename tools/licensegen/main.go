@@ -45,13 +45,24 @@ const mainModule = "github.com/vavallee/bindery"
 const outputFile = "THIRD_PARTY_LICENSES.md"
 
 // licenseOverride records a module whose license the classifier cannot
-// identify with sufficient confidence. Each entry names the file that was read
-// by hand and the reason the override exists; nothing here is a guess.
+// identify with sufficient confidence, or whose linked code is covered by more
+// license files than the classifier reports. Each entry names the files that
+// were read by hand and the reason the override exists; nothing here is a
+// guess.
 type licenseOverride struct {
 	name   string // SPDX identifier
 	file   string // path relative to the module root
-	url    string
+	url    string // {version} is replaced with the module version
 	reason string
+	// extra lists further files to reproduce, each with its own label. A file
+	// the classifier already found keeps its text and takes this label.
+	extra []extraFile
+}
+
+// extraFile is one additional license or notice file named by an override.
+type extraFile struct {
+	file string // path relative to the module root
+	spdx string // label for this file's text
 }
 
 var overrides = map[string]licenseOverride{
@@ -61,7 +72,7 @@ var overrides = map[string]licenseOverride{
 	"modernc.org/mathutil": {
 		name:   "BSD-3-Clause",
 		file:   "LICENSE",
-		url:    "https://gitlab.com/cznic/mathutil/-/blob/v1.7.1/LICENSE",
+		url:    "https://gitlab.com/cznic/mathutil/-/blob/{version}/LICENSE",
 		reason: "classifier returns Unknown; LICENSE is BSD-3-Clause with a non-standard copyright holder line",
 	},
 	// go-licenses latches onto LICENSE-3RD-PARTY.md (the musl/SQLite notices
@@ -70,8 +81,71 @@ var overrides = map[string]licenseOverride{
 	"modernc.org/libc": {
 		name:   "BSD-3-Clause",
 		file:   "LICENSE",
-		url:    "https://gitlab.com/cznic/libc/-/blob/v1.74.4/LICENSE",
+		url:    "https://gitlab.com/cznic/libc/-/blob/{version}/LICENSE",
 		reason: "go-licenses selects the vendored third-party notice file; the module's own license is LICENSE",
+		extra: []extraFile{
+			// Go (BSD-3-Clause), musl, go-netdb and nixpkgs (MIT) notices.
+			{file: "LICENSE-3RD-PARTY.md", spdx: "Third-party notices (BSD-3-Clause, MIT)"},
+		},
+	},
+	// go-licenses reports only LICENSE-GO, which no source file in the module
+	// refers to. memory.go and mmap_windows.go point at LICENSE (The Memory
+	// Authors) and mmap_unix.go, derived from mmap-go, at LICENSE-MMAP-GO
+	// (Evan Shaw). Both are BSD-3-Clause and both are linked.
+	"modernc.org/memory": {
+		name:   "BSD-3-Clause",
+		file:   "LICENSE",
+		url:    "https://gitlab.com/cznic/memory/-/blob/{version}/LICENSE",
+		reason: "go-licenses selects LICENSE-GO, which no source file references; the module's own LICENSE and the mmap-go LICENSE-MMAP-GO cover the linked code",
+		extra: []extraFile{
+			{file: "LICENSE-MMAP-GO", spdx: "BSD-3-Clause"},
+		},
+	},
+	// The transpiled SQLite amalgamation in lib/ is linked and carries
+	// SQLite's public domain dedication, which the module ships as
+	// LICENSE-SQLITE. go-licenses reports only the driver's own LICENSE.
+	"modernc.org/sqlite": {
+		name:   "BSD-3-Clause",
+		file:   "LICENSE",
+		url:    "https://gitlab.com/cznic/sqlite/-/blob/{version}/LICENSE",
+		reason: "go-licenses reports only LICENSE; the linked SQLite C code in lib/ is covered by the public domain dedication in LICENSE-SQLITE",
+		extra: []extraFile{
+			{file: "LICENSE-SQLITE", spdx: "SQLite public domain dedication"},
+		},
+	},
+}
+
+// shippedBuildPackages are devDependencies whose output, not only their
+// tooling, ends up in the shipped bundle: Tailwind emits its preflight and
+// theme CSS and the forms plugin emits its form styles into the built
+// stylesheet, so both are attributed like production dependencies.
+var shippedBuildPackages = []string{"tailwindcss", "@tailwindcss/forms"}
+
+// vendoredAsset is third-party material copied into web/src rather than
+// installed as a package, so there is no node_modules copy to read its license
+// from. The license text is kept beside this tool.
+type vendoredAsset struct {
+	name    string
+	version string
+	spdx    string
+	file    string // license text, relative to the repository root
+	usage   string
+}
+
+var vendoredAssets = []vendoredAsset{
+	{
+		name:    "Heroicons",
+		version: "v2",
+		spdx:    "MIT",
+		file:    "tools/licensegen/vendored/heroicons-v2.LICENSE",
+		usage:   "SVG path data of the outline icons (users, cog, user circle, plus, magnifying glass) inlined in web/src components",
+	},
+	{
+		name:    "Heroicons",
+		version: "v1",
+		spdx:    "MIT",
+		file:    "tools/licensegen/vendored/heroicons-v1.LICENSE",
+		usage:   "SVG path data of the book open, light bulb, star, menu and close icons inlined in web/src components",
 	},
 }
 
@@ -91,6 +165,7 @@ type goListPackage struct {
 // licenseFile is one license or notice document reproduced in the output.
 type licenseFile struct {
 	rel  string // path relative to the module root
+	spdx string // classification of this file; empty means the owner's
 	text string
 }
 
@@ -111,7 +186,16 @@ type npmPackage struct {
 	name     string
 	version  string
 	spdx     string
+	build    bool // a devDependency listed because its output ships
 	licenses []licenseFile
+}
+
+// goStd is the license of the Go standard library and runtime, which every
+// binary links. The toolchain version is deliberately left out of the report
+// so a Go patch bump does not trip the drift gate; the text itself has not
+// changed in years, and if it ever does the gate should fire.
+type goStd struct {
+	text string
 }
 
 func main() {
@@ -131,8 +215,16 @@ func main() {
 	if err != nil {
 		fatal(fmt.Errorf("npm packages: %w", err))
 	}
+	std, err := collectGoStd()
+	if err != nil {
+		fatal(fmt.Errorf("go standard library: %w", err))
+	}
+	assets, err := collectVendored(root)
+	if err != nil {
+		fatal(fmt.Errorf("vendored assets: %w", err))
+	}
 
-	out := render(mods, pkgs)
+	out := render(mods, pkgs, std, assets)
 	dest := filepath.Join(root, outputFile)
 
 	if *check {
@@ -209,22 +301,27 @@ func collectGoModules(root string) ([]module, error) {
 	for path, m := range byPath {
 		if c, ok := classified[path]; ok {
 			m.spdx, m.url = c.spdx, c.url
-			for _, rel := range c.files {
-				text, readErr := readModuleFile(m.dir, rel)
+			for _, f := range c.files {
+				text, readErr := readModuleFile(m.dir, f.rel)
 				if readErr != nil {
 					return nil, readErr
 				}
-				m.licenses = append(m.licenses, licenseFile{rel: rel, text: text})
+				m.licenses = append(m.licenses, licenseFile{rel: f.rel, spdx: f.spdx, text: text})
 			}
 		}
 		if o, ok := overrides[path]; ok {
-			m.spdx, m.url, m.override = o.name, o.url, o.reason
-			text, readErr := readModuleFile(m.dir, o.file)
-			if readErr != nil {
-				return nil, readErr
-			}
-			if !hasFile(m.licenses, o.file) {
-				m.licenses = append([]licenseFile{{rel: o.file, text: text}}, m.licenses...)
+			m.spdx, m.url, m.override = o.name, strings.ReplaceAll(o.url, "{version}", m.version), o.reason
+			files := append([]extraFile{{file: o.file, spdx: o.name}}, o.extra...)
+			for _, f := range files {
+				if i := fileIndex(m.licenses, f.file); i >= 0 {
+					m.licenses[i].spdx = f.spdx
+					continue
+				}
+				text, readErr := readModuleFile(m.dir, f.file)
+				if readErr != nil {
+					return nil, readErr
+				}
+				m.licenses = append(m.licenses, licenseFile{rel: f.file, spdx: f.spdx, text: text})
 			}
 		}
 		if m.spdx == "" {
@@ -242,13 +339,13 @@ func collectGoModules(root string) ([]module, error) {
 	return mods, nil
 }
 
-func hasFile(files []licenseFile, rel string) bool {
-	for _, f := range files {
+func fileIndex(files []licenseFile, rel string) int {
+	for i, f := range files {
 		if f.rel == rel {
-			return true
+			return i
 		}
 	}
-	return false
+	return -1
 }
 
 func sortFiles(files []licenseFile) {
@@ -279,7 +376,15 @@ func goListDeps(root, goos string) ([]goListPackage, error) {
 type classification struct {
 	spdx  string
 	url   string
-	files []string // module-relative license file paths
+	files []classifiedFile
+}
+
+// classifiedFile is one module-relative license file with the classification
+// go-licenses gave that file, which can differ from the module's (go-jose's
+// json/LICENSE is BSD-3-Clause inside an Apache-2.0 module).
+type classifiedFile struct {
+	rel  string
+	spdx string
 }
 
 // classify runs `go-licenses report` once per release GOOS and folds the
@@ -325,8 +430,8 @@ func classify(root string, pkgToModule map[string]string) (map[string]classifica
 				c.spdx, c.url = spdx, url
 			}
 			rel := moduleRelative(path, modPath)
-			if !contains(c.files, rel) {
-				c.files = append(c.files, rel)
+			if !hasClassified(c.files, rel) {
+				c.files = append(c.files, classifiedFile{rel: rel, spdx: spdx})
 			}
 			result[modPath] = c
 		}
@@ -368,6 +473,15 @@ func rank(spdx string) int {
 	default:
 		return 0
 	}
+}
+
+func hasClassified(files []classifiedFile, rel string) bool {
+	for _, f := range files {
+		if f.rel == rel {
+			return true
+		}
+	}
+	return false
 }
 
 func contains(list []string, s string) bool {
@@ -483,6 +597,19 @@ func collectNPMPackages(root string) ([]npmPackage, error) {
 	}
 	walk(tree.Dependencies)
 
+	build := map[string]bool{}
+	for _, name := range shippedBuildPackages {
+		if _, ok := flat[name]; ok {
+			continue
+		}
+		version, err := npmVersion(filepath.Join(web, "node_modules", filepath.FromSlash(name)))
+		if err != nil {
+			return nil, err
+		}
+		flat[name] = version
+		build[name] = true
+	}
+
 	names := make([]string, 0, len(flat))
 	for n := range flat {
 		names = append(names, n)
@@ -500,9 +627,57 @@ func collectNPMPackages(root string) ([]npmPackage, error) {
 		if err != nil {
 			return nil, err
 		}
-		pkgs = append(pkgs, npmPackage{name: name, version: flat[name], spdx: spdx, licenses: files})
+		pkgs = append(pkgs, npmPackage{name: name, version: flat[name], spdx: spdx, build: build[name], licenses: files})
 	}
 	return pkgs, nil
+}
+
+func npmVersion(dir string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(dir, "package.json")) //nolint:gosec // path is under web/node_modules
+	if err != nil {
+		return "", fmt.Errorf("read package.json in %s: %w", dir, err)
+	}
+	var meta struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(b, &meta); err != nil {
+		return "", fmt.Errorf("decode package.json in %s: %w", dir, err)
+	}
+	if meta.Version == "" {
+		return "", fmt.Errorf("no version in %s/package.json", dir)
+	}
+	return meta.Version, nil
+}
+
+// collectGoStd reads the LICENSE of the toolchain doing the build.
+func collectGoStd() (goStd, error) {
+	out, err := command("go", "env", "GOROOT").Output()
+	if err != nil {
+		return goStd{}, fmt.Errorf("go env GOROOT: %w", err)
+	}
+	text, err := readModuleFile(strings.TrimSpace(string(out)), "LICENSE")
+	if err != nil {
+		return goStd{}, err
+	}
+	return goStd{text: text}, nil
+}
+
+// vendoredText is a vendored asset with its license text read from disk.
+type vendoredText struct {
+	vendoredAsset
+	text string
+}
+
+func collectVendored(root string) ([]vendoredText, error) {
+	out := make([]vendoredText, 0, len(vendoredAssets))
+	for _, a := range vendoredAssets {
+		text, err := readModuleFile(root, a.file)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, vendoredText{vendoredAsset: a, text: text})
+	}
+	return out, nil
 }
 
 func npmLicenseID(dir string) (string, error) {
@@ -561,17 +736,18 @@ func npmLicenseFiles(dir string) ([]licenseFile, error) {
 
 // ── rendering ─────────────────────────────────────────────────────────────
 
-func render(mods []module, pkgs []npmPackage) string {
+func render(mods []module, pkgs []npmPackage, std goStd, assets []vendoredText) string {
 	var b strings.Builder
-	writeHeader(&b, mods, pkgs)
+	writeHeader(&b, mods, pkgs, assets)
 	writeGoTable(&b, mods)
 	writeNPMTable(&b, pkgs)
+	writeVendoredTable(&b, assets)
 	writeNotices(&b, mods)
-	writeTexts(&b, mods, pkgs)
+	writeTexts(&b, mods, pkgs, std, assets)
 	return b.String()
 }
 
-func writeHeader(b *strings.Builder, mods []module, pkgs []npmPackage) {
+func writeHeader(b *strings.Builder, mods []module, pkgs []npmPackage, assets []vendoredText) {
 	fmt.Fprintf(b, `# Third-party licenses
 
 Bindery is MIT licensed (see [LICENSE](LICENSE)). The released binaries
@@ -598,10 +774,17 @@ travels with every binary, archive and container image.
   `+"`tools/licensegen/main.go`"+`.
 - **npm:** production dependencies of `+"`web/package.json`"+` and their transitive
   production dependencies — the code that ends up in the Vite bundle embedded by
-  `+"`internal/webui`"+`. devDependencies (Vite, ESLint, Vitest, Tailwind's
-  compiler) are build and test tooling; their own code is not shipped, and
-  Tailwind's generated utility CSS — which is shipped — is MIT licensed like
-  Tailwind itself.
+  `+"`internal/webui`"+`. devDependencies (Vite, ESLint, Vitest) are build and
+  test tooling and their own code is not shipped. The exceptions are
+  devDependencies whose output is shipped: Tailwind and its forms plugin write
+  their preflight, theme and form CSS into the built stylesheet, so they are
+  listed with the production packages.
+- **Go standard library:** the Go runtime and standard library are linked into
+  every binary. They are BSD-3-Clause (The Go Authors) and their LICENSE is
+  reproduced below.
+- **Vendored assets:** third-party material copied into `+"`web/src`"+` rather
+  than installed as a package (icon path data). Their license texts are kept in
+  `+"`tools/licensegen/vendored`"+`.
 
 Where the two rules disagree we err towards listing too much rather than too
 little: a package that is in the production tree but whose code never reaches
@@ -610,9 +793,9 @@ its type definitions) is listed anyway, and modules that only build on one of
 the three release platforms are listed for all of them. Omitting something that
 does ship is the failure that matters.
 
-%d Go modules, %d npm packages.
+%d Go modules, %d npm packages, %d vendored assets.
 
-`, strings.Join(releaseGOOS, ", "), len(mods), len(pkgs))
+`, strings.Join(releaseGOOS, ", "), len(mods), len(pkgs), len(assets))
 }
 
 func writeGoTable(b *strings.Builder, mods []module) {
@@ -652,8 +835,23 @@ func writeGoTable(b *strings.Builder, mods []module) {
 
 func writeNPMTable(b *strings.Builder, pkgs []npmPackage) {
 	b.WriteString("## npm packages (embedded web bundle)\n\n| Package | Version | License |\n| --- | --- | --- |\n")
+	var build []string
 	for _, p := range pkgs {
 		fmt.Fprintf(b, "| %s | %s | %s |\n", p.name, p.version, p.spdx)
+		if p.build {
+			build = append(build, "`"+p.name+"`")
+		}
+	}
+	b.WriteString("\n")
+	if len(build) > 0 {
+		fmt.Fprintf(b, "%s are devDependencies, listed because the CSS they generate is part of the shipped bundle.\n\n", strings.Join(build, " and "))
+	}
+}
+
+func writeVendoredTable(b *strings.Builder, assets []vendoredText) {
+	b.WriteString("## Vendored assets (embedded web bundle)\n\n| Asset | Version | License | Used as |\n| --- | --- | --- | --- |\n")
+	for _, a := range assets {
+		fmt.Fprintf(b, "| %s | %s | %s | %s |\n", a.name, a.version, a.spdx, a.usage)
 	}
 	b.WriteString("\n")
 }
@@ -677,7 +875,7 @@ func writeNotices(b *strings.Builder, mods []module) {
 // writeTexts reproduces every distinct license text once, listing the modules
 // and packages it covers. Deduplicating keeps the file navigable — the Go
 // BSD-3-Clause text alone would otherwise repeat a dozen times.
-func writeTexts(b *strings.Builder, mods []module, pkgs []npmPackage) {
+func writeTexts(b *strings.Builder, mods []module, pkgs []npmPackage, std goStd, assets []vendoredText) {
 	type group struct {
 		spdx    string
 		text    string
@@ -699,15 +897,25 @@ func writeTexts(b *strings.Builder, mods []module, pkgs []npmPackage) {
 			g.holders = append(g.holders, entry)
 		}
 	}
+	label := func(f licenseFile, owner string) string {
+		if f.spdx != "" {
+			return f.spdx
+		}
+		return owner
+	}
 	for _, m := range mods {
 		for _, f := range m.licenses {
-			add(m.spdx, m.path+"@"+m.version, f)
+			add(label(f, m.spdx), m.path+"@"+m.version, f)
 		}
 	}
+	add("BSD-3-Clause", "Go standard library and runtime", licenseFile{rel: "GOROOT/LICENSE", text: std.text})
 	for _, p := range pkgs {
 		for _, f := range p.licenses {
-			add(p.spdx, "npm:"+p.name+"@"+p.version, f)
+			add(label(f, p.spdx), "npm:"+p.name+"@"+p.version, f)
 		}
+	}
+	for _, a := range assets {
+		add(a.spdx, "vendored:"+a.name+" "+a.version, licenseFile{rel: a.file, text: a.text})
 	}
 	sort.Slice(order, func(i, j int) bool {
 		a, c := groups[order[i]], groups[order[j]]
