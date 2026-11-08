@@ -943,6 +943,15 @@ to the records. Things worth knowing before you judge the results:
   over automatically.
 - A folder holding both an ebook and an audiobook for the same book attaches
   both in a single scan — one file per format, so a second scan is not needed.
+- **Other ebook formats of a book are attached to it.** A file with the same
+  name as an ebook a book already has, in the same folder, with a different
+  extension (`Dune.azw3` or `Dune.pdf` next to `Dune.epub`), is added to that
+  book as another format instead of being listed as unmatched. This works for
+  files from earlier scans and for a book the same scan matches, so a new
+  folder holding `Dune.epub` and `Dune.azw3` attaches both at once. A second
+  copy in the same format has a different name (`Dune (2).epub`) and is not
+  attached this way. The book page lists every file, and nothing is deleted
+  (#1357).
 - In a **flat** layout, where audiobooks sit straight in the author folder as
   `Author/Title.mp3`, each file is matched on its own. A tracked audiobook only
   claims the other files in that folder that are tracks of it (the same name
@@ -1155,6 +1164,10 @@ Things worth knowing:
   refused rather than split into a second folder: the files stay where they
   were and the queue says why. Delete the existing audiobook first to replace
   it.
+- An ebook in another format than the one a book already has, an AZW3 for a
+  book with an EPUB, is listed and imported next to the existing file, so the
+  book keeps both. Only a file in a format the book already has is hidden as
+  already imported (#1357).
 
 ## Restyling files you already have
 
