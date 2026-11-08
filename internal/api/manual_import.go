@@ -672,12 +672,26 @@ func directoryMatchesTracked(path string, tracked map[string]struct{}, trackedFi
 // may receive a book value from a catalogue projection where those fields are
 // empty even though the tracking row exists. This must match the importer's
 // idempotency guard, or a copied manual-import source will keep reappearing.
-func bookHasImportedFormat(book *models.Book, format string, files []models.BookFile) bool {
+//
+// For an ebook unit the guard is per extension, close to the importer's per
+// path guard: an AZW3 imported for a book that has an EPUB lands next to it
+// as another format (#1357), so only a tracked file with unitPath's own
+// extension counts.
+// unitPath is empty for a folder unit, which counts any tracked file of
+// format.
+func bookHasImportedFormat(book *models.Book, format, unitPath string, files []models.BookFile) bool {
 	if book == nil {
 		return false
 	}
+	unitExt := ""
+	if format == models.MediaTypeEbook {
+		unitExt = strings.ToLower(filepath.Ext(unitPath))
+	}
 	for _, file := range files {
 		if file.Format != format {
+			continue
+		}
+		if unitExt != "" && strings.ToLower(filepath.Ext(file.Path)) != unitExt {
 			continue
 		}
 		if _, err := os.Stat(file.Path); err == nil {
@@ -978,8 +992,12 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 			// filtering (#2480 review: this ran for every unit, in both
 			// modes, doubling the warm-cache stat count for no reason).
 			alreadyImported := includeImported && isAlreadyTracked(c.path, c.isDir, tracked, trackedFiles)
+			unitFile := c.path
+			if c.isDir {
+				unitFile = ""
+			}
 			if !alreadyImported && res.Match == "confident" && res.Book != nil &&
-				bookHasImportedFormat(res.Book, res.DetectedFormat, filesByBook[res.Book.ID]) {
+				bookHasImportedFormat(res.Book, res.DetectedFormat, unitFile, filesByBook[res.Book.ID]) {
 				alreadyImported = true
 			}
 			if alreadyImported && !includeImported {

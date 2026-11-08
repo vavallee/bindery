@@ -3506,6 +3506,20 @@ type bookFormatClaim struct {
 	format string
 }
 
+// ebookStemOwner is what one library-scan pass knows about the ebook files
+// that share one name in one folder (#1357): the book that attached the first
+// of them during the pass, or, for a file tracked before the pass, its path
+// so the book is looked up only when a sibling actually turns up. The owner
+// is set once and never replaced.
+type ebookStemOwner struct {
+	bookID      int64
+	trackedPath string
+	// exts are the lower case extensions already known under this name. A
+	// file with one of them is a second copy in the same format (perhaps in
+	// other letter case), not another format.
+	exts map[string]bool
+}
+
 // scanBook is the precomputed per-book data the library-scan reconciliation
 // loop needs. Hoisting normalizeTitle into this struct makes it run once per
 // book instead of once per (file, book) pair — see ScanLibrary.
@@ -4313,6 +4327,32 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// audiobook beside it, as it did before #1985.
 		return stem == "" || stems[stem]
 	}
+	// ebookStems maps a tracked ebook file's path without its extension to
+	// the file, so an untracked "Dune.azw3" can find the book that tracks
+	// "Dune.epub" in the same folder (#1357). A file reconciled during this
+	// pass is added with its book, so both formats of a new book attach in
+	// one pass.
+	//
+	// Only a path with a real ebook extension counts. An audiobook is tracked
+	// as its folder, and detectDownloadFormat calls anything without an audio
+	// extension an ebook, so a folder "Alpha/" would otherwise vouch for a
+	// loose "Alpha.epub", and "Mr. Mercedes/" (cut at the dot) for "Mr.epub".
+	ebookStems := make(map[string]*ebookStemOwner)
+	ebookStemKey := func(cleanPath string) string {
+		return s.pathKey(strings.TrimSuffix(cleanPath, filepath.Ext(cleanPath)))
+	}
+	noteEbookStem := func(cleanPath string, bookID int64, trackedPath string) {
+		if !IsEbookFile(cleanPath) {
+			return
+		}
+		key := ebookStemKey(cleanPath)
+		owner := ebookStems[key]
+		if owner == nil {
+			owner = &ebookStemOwner{bookID: bookID, trackedPath: trackedPath, exts: make(map[string]bool)}
+			ebookStems[key] = owner
+		}
+		owner.exts[strings.ToLower(filepath.Ext(cleanPath))] = true
+	}
 	if allPaths, err := s.books.ListAllBookFilePaths(ctx); err == nil {
 		for _, p := range allPaths {
 			cleanP := filepath.Clean(p)
@@ -4320,6 +4360,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			if detectDownloadFormat([]string{cleanP}) == models.MediaTypeAudiobook {
 				markAudioParent(cleanP)
 			}
+			noteEbookStem(cleanP, 0, cleanP)
 		}
 	}
 
@@ -4399,8 +4440,12 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	// its candidate list from just the matching authors instead of walking
 	// every book in the library.
 	booksByAuthor := make(map[int64][]int)
+	// listedBooks is every book the scan may write to: List leaves out
+	// excluded books, and a row left by a deleted book has no book here.
+	listedBooks := make(map[int64]bool, len(allBooks))
 	for i := range allBooks {
 		b := &allBooks[i]
+		listedBooks[b.ID] = true
 		if !isReconcileCandidate(b) {
 			continue
 		}
@@ -4634,6 +4679,44 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		return titleReconcileHit{sb: sb, score: jwScore, blocked: blocked, claimed: claimed}, true
 	}
 
+	// rememberEbookStem records an ebook file this pass attached, so another
+	// format of it later in the pass finds its book (see ebookStems).
+	rememberEbookStem := func(bookID int64, detectedFmt, cleanPath string) {
+		if detectedFmt == models.MediaTypeEbook {
+			noteEbookStem(cleanPath, bookID, "")
+		}
+	}
+	// otherFormatOwner returns the listed book that tracks an ebook file with
+	// cleanPath's name in cleanPath's folder, or 0. Only a real ebook format
+	// qualifies: a same name .pdf, .txt, .rtf, .cbz or .cbr beside an epub is
+	// its sidecar under #2188, and those rules still decide it.
+	otherFormatOwner := func(cleanPath string) int64 {
+		ext := strings.ToLower(filepath.Ext(cleanPath))
+		if !IsEbookFile(cleanPath) || supplementClassExts[ext] {
+			return 0
+		}
+		owner := ebookStems[ebookStemKey(cleanPath)]
+		if owner == nil || owner.exts[ext] {
+			return 0
+		}
+		bookID := owner.bookID
+		if bookID == 0 {
+			f, err := s.books.FileByPath(ctx, owner.trackedPath)
+			if err != nil {
+				slog.Warn("library scan: could not look up the book of a tracked file", "path", owner.trackedPath, "error", err)
+				return 0
+			}
+			if f == nil {
+				return 0
+			}
+			bookID = f.BookID
+		}
+		if !listedBooks[bookID] {
+			return 0
+		}
+		return bookID
+	}
+
 	// claimTitleHit records the chosen hit and reports a write error as unmatched.
 	claimTitleHit := func(hit titleReconcileHit, path, cleanPath, detectedFmt string) bool {
 		b := hit.sb.book
@@ -4655,6 +4738,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			markAudioParent(cleanPath)
 		}
 		reconciledBooks[bookFormatClaim{b.ID, detectedFmt}] = true
+		rememberEbookStem(b.ID, detectedFmt, cleanPath)
 		reconciled++
 		return true
 	}
@@ -4835,6 +4919,27 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			continue
 		}
 
+		// Another format of a book that already has this file's name in this
+		// folder (#1357): "Dune.azw3" next to the "Dune.epub" a book tracks.
+		// That is the layout an import gives a multi-format download, so it is
+		// not the fuzzy title guess the one file per format claim exists to
+		// stop. A same-format copy has another name ("Dune (2).epub") and is
+		// not matched here.
+		if detectedFmt == models.MediaTypeEbook && !fileTooSmall {
+			if bookID := otherFormatOwner(cleanPath); bookID != 0 {
+				err := s.books.AddBookFile(ctx, bookID, models.MediaTypeEbook, registeredPath)
+				if err == nil {
+					slog.Info("library scan: added another format beside the book's file", "id", bookID, "path", path)
+					trackedPaths[s.pathKey(registeredPath)] = true
+					reconciledBooks[bookFormatClaim{bookID, models.MediaTypeEbook}] = true
+					rememberEbookStem(bookID, models.MediaTypeEbook, cleanPath)
+					reconciled++
+					continue
+				}
+				slog.Error("library scan: failed to add another format to a book", "id", bookID, "path", path, "error", err)
+			}
+		}
+
 		// Parse the filename for title/author hints, then let the folder
 		// hierarchy correct them. A file under <root>/<Author>/<Book>/<file>
 		// names the AUTHOR unambiguously and dash-safe, unlike splitting an
@@ -4964,6 +5069,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 					markAudioParent(cleanPath)
 				}
 				reconciledBooks[bookFormatClaim{b.ID, detectedFmt}] = true
+				rememberEbookStem(b.ID, detectedFmt, cleanPath)
 				reconciled++
 				matched = true
 				break
@@ -5040,6 +5146,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 							markAudioParent(cleanPath)
 						}
 						reconciledBooks[bookFormatClaim{book.ID, detectedFmt}] = true
+						rememberEbookStem(book.ID, detectedFmt, cleanPath)
 						reconciled++
 						matched = true
 					}

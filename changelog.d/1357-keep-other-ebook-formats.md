@@ -1,0 +1,2 @@
+### Changed
+- **Library scan picks up the other ebook formats of a book** (#1357). An AZW3 or MOBI sitting next to a book's EPUB with the same name is now added to that book as another format, instead of landing on the Import page for you to adopt by hand. A new folder holding both formats attaches both in one scan. Import, From a folder also stops hiding an ebook as already imported when the book only has it in a different format. Same name PDFs and notes files are still treated as companions, a second copy in the same format is still left alone, and nothing is deleted.

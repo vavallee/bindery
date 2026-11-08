@@ -1356,17 +1356,25 @@ func TestBookHasImportedFormat_EdgeCases(t *testing.T) {
 	writeTestFile(t, present)
 	book := &models.Book{ID: 1}
 
-	if bookHasImportedFormat(nil, models.MediaTypeEbook, nil) {
+	if bookHasImportedFormat(nil, models.MediaTypeEbook, "", nil) {
 		t.Fatal("nil book should not report an imported format")
 	}
-	if bookHasImportedFormat(book, models.MediaTypeEbook, []models.BookFile{{Format: models.MediaTypeAudiobook, Path: present}}) {
+	if bookHasImportedFormat(book, models.MediaTypeEbook, "", []models.BookFile{{Format: models.MediaTypeAudiobook, Path: present}}) {
 		t.Fatal("different format should not count")
 	}
-	if bookHasImportedFormat(book, models.MediaTypeEbook, []models.BookFile{{Format: models.MediaTypeEbook, Path: missing}}) {
+	if bookHasImportedFormat(book, models.MediaTypeEbook, "", []models.BookFile{{Format: models.MediaTypeEbook, Path: missing}}) {
 		t.Fatal("missing file should not count as imported")
 	}
-	if !bookHasImportedFormat(book, models.MediaTypeEbook, []models.BookFile{{Format: models.MediaTypeEbook, Path: present}}) {
+	if !bookHasImportedFormat(book, models.MediaTypeEbook, "", []models.BookFile{{Format: models.MediaTypeEbook, Path: present}}) {
 		t.Fatal("present file should count as imported")
+	}
+	// Ebooks compare by extension (#1357): an AZW3 is another format of a
+	// book that has an EPUB, a second EPUB is not.
+	if bookHasImportedFormat(book, models.MediaTypeEbook, "/in/book.azw3", []models.BookFile{{Format: models.MediaTypeEbook, Path: present}}) {
+		t.Fatal("an ebook in another extension should not count as imported")
+	}
+	if !bookHasImportedFormat(book, models.MediaTypeEbook, "/in/copy.EPUB", []models.BookFile{{Format: models.MediaTypeEbook, Path: present}}) {
+		t.Fatal("an ebook with the tracked file's extension should count as imported")
 	}
 }
 
@@ -1640,6 +1648,53 @@ func TestManualImportScan_RefillsAcrossRoundsWhenFormatFilterEmptiesAPage(t *tes
 	// one massive or unbounded walk.
 	if stub.lookupBatchCalls != maxScanRounds {
 		t.Errorf("LookupBatch called %d times, want exactly maxScanRounds=%d", stub.lookupBatchCalls, maxScanRounds)
+	}
+}
+
+// TestManualImportScan_ShowsAnotherEbookFormatOfAnImportedBook: a book that
+// already has an EPUB is not "already imported" for an AZW3 of it (#1357).
+// The importer adds the AZW3 next to the EPUB, so the scan must offer it. A
+// second EPUB is still hidden, as the importer would only count it as the
+// file it already has.
+func TestManualImportScan_ShowsAnotherEbookFormatOfAnImportedBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	ctx := context.Background()
+	authors := db.NewAuthorRepo(database)
+	books := db.NewBookRepo(database)
+	downloads := db.NewDownloadRepo(database)
+	trackedBook := seedBook(t, authors, books, ctx)
+	root := resolvedTempDir(t)
+	canonical := filepath.Join(root, "library", "canonical.epub")
+	writeTestFile(t, canonical)
+	if err := books.AddBookFile(ctx, trackedBook.ID, models.MediaTypeEbook, canonical); err != nil {
+		t.Fatalf("attach tracked file: %v", err)
+	}
+	otherFormat := filepath.Join(root, "incoming", "book.azw3")
+	sameFormat := filepath.Join(root, "incoming", "copy.epub")
+	writeTestFile(t, otherFormat)
+	writeTestFile(t, sameFormat)
+
+	stub := &stubManualImportScanner{lookupResult: importer.LookupResult{
+		Match: "confident", Book: trackedBook, DetectedFormat: models.MediaTypeEbook,
+	}}
+	h := NewManualImportHandler(stub, downloads, books).WithRoots(NewLibraryRoots(nil, root))
+
+	rec := httptest.NewRecorder()
+	h.Scan(rec, scanRequest(filepath.Join(root, "incoming")))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp ScanResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].Path != otherFormat {
+		t.Fatalf("items = %+v, want only %s (another format of an imported book)", resp.Items, otherFormat)
 	}
 }
 
