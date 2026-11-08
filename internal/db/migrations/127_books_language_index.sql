@@ -12,6 +12,10 @@
 -- and format filters lost their own indexes. With language first the index is
 -- only searched when the query names a language.
 --
--- Measured at 50,000 books: language filtered page 14 ms to 0.26 ms,
--- LanguageCounts 39 ms to 30 ms, default page 7 ms to 3 ms.
+-- Measured at 50,000 books: a page filtered to a language 5% of the library
+-- is in 17 ms to about 4.5 ms (its count 6.6 ms to 0.2 ms), LanguageCounts
+-- 39 ms to 30 ms, default page 7 ms to 3 ms. Filtering to the library's
+-- majority language gets somewhat slower (85%: 36 ms to 42 ms), since the
+-- planner takes language = ? as selective; the filter is for finding the
+-- minority or wrong languages, so that is the case it is tuned for.
 CREATE INDEX IF NOT EXISTS idx_books_language_excluded ON books(language, excluded, owner_user_id);

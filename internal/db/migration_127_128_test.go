@@ -104,8 +104,9 @@ func TestLanguageCounts_PlanUsesLanguageIndex(t *testing.T) {
 }
 
 // A Books page filtered to one language, and the default page's count, both
-// read books through idx_books_language_excluded: at 50,000 books the filtered
-// page went from 14 ms to 0.26 ms and the default count from 5.8 ms to 2.4 ms.
+// read books through idx_books_language_excluded: at 50,000 books a page
+// filtered to a language 5% of the library is in went from 17 ms to about
+// 4.5 ms and the default count from 5.8 ms to 2.4 ms.
 func TestListPageFiltered_LanguagePlanUsesLanguageIndex(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
