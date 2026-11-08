@@ -2,6 +2,7 @@ package abs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -167,6 +168,16 @@ func (i *Importer) matchHardcoverSeries(ctx context.Context, cfg ImportConfig, r
 	seriesResult, err := i.upsertHardcoverSeries(ctx, cfg, runID, book.ID, item.ItemID, selected.Catalog, selected.Book, stats)
 	if err != nil {
 		slog.Warn("abs import: hardcover series link failed", "itemID", item.ItemID, "series", selected.Catalog.ForeignID, "error", err)
+		if stats != nil {
+			stats.SeriesLinkFailed++
+		}
+		// Two local series with this title is a local state the next run
+		// will find again, so asking Hardcover again changes nothing until
+		// the item changes or the duplicates are merged. Record it like a
+		// miss (#2173). Any other error may be transient and records nothing.
+		if errors.Is(err, errAmbiguousSeriesMatch) && !incomplete {
+			i.recordSeriesMatch(ctx, cfg, item.ItemID, inputHash, seriesMatchOutcomeAmbiguous)
+		}
 		return metadataMergeResult{}, seriesUpsertResult{}
 	}
 	if seriesResult.Linked {
@@ -355,12 +366,12 @@ func (i *Importer) upsertHardcoverSeries(ctx context.Context, cfg ImportConfig, 
 	}
 	matchedBy := ""
 	if existing == nil {
-		match, ambiguous, err := i.findSeriesByTitle(ctx, catalog.Title)
+		match, ambiguous, err := i.findSeriesByTitle(ctx, catalog.Title, bookID)
 		if err != nil {
 			return seriesUpsertResult{}, err
 		}
 		if ambiguous {
-			return seriesUpsertResult{}, fmt.Errorf("ambiguous existing series match for %q", catalog.Title)
+			return seriesUpsertResult{}, fmt.Errorf("%w for %q", errAmbiguousSeriesMatch, catalog.Title)
 		}
 		if match != nil {
 			existing = match
@@ -525,7 +536,7 @@ func (i *Importer) linkExistingHardcoverCatalogBooks(ctx context.Context, cfg Im
 		return 0, err
 	}
 	if seriesRow == nil {
-		match, ambiguous, err := i.findSeriesByTitle(ctx, catalog.Title)
+		match, ambiguous, err := i.findSeriesByTitle(ctx, catalog.Title, importedBookID)
 		if err != nil || ambiguous {
 			return 0, err
 		}

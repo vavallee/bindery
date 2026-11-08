@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1359,12 +1360,12 @@ func (i *Importer) upsertSeries(ctx context.Context, cfg ImportConfig, runID, bo
 	}
 	matchedBy := ""
 	if existing == nil {
-		match, ambiguous, err := i.findSeriesByTitle(ctx, title)
+		match, ambiguous, err := i.findSeriesByTitle(ctx, title, bookID)
 		if err != nil {
 			return seriesUpsertResult{}, err
 		}
 		if ambiguous {
-			return seriesUpsertResult{}, fmt.Errorf("ambiguous existing series match for %q", title)
+			return seriesUpsertResult{}, fmt.Errorf("%w for %q", errAmbiguousSeriesMatch, title)
 		}
 		if match != nil {
 			existing = match
@@ -1569,24 +1570,53 @@ func (s *ImportStats) rememberDryRunSeriesMembership(key string) {
 	s.dryRunSeriesMemberships[strings.TrimSpace(key)] = struct{}{}
 }
 
-func (i *Importer) findSeriesByTitle(ctx context.Context, title string) (*models.Series, bool, error) {
+// errAmbiguousSeriesMatch is returned when more than one local series has the
+// title being linked and nothing picks between them (#2173).
+var errAmbiguousSeriesMatch = errors.New("ambiguous existing series match")
+
+// findSeriesByTitle returns the one local series whose normalized title is
+// title. When several share it, which happens on installs where the Calibre
+// and ABS imports each created a row for the same series, the one bookID
+// already belongs to wins (#2173). Anything else stays ambiguous: guessing
+// would put the book in a series the user may be about to merge or delete.
+func (i *Importer) findSeriesByTitle(ctx context.Context, title string, bookID int64) (*models.Series, bool, error) {
 	all, err := i.series.List(ctx)
 	if err != nil {
 		return nil, false, err
 	}
 	key := normalizeTitle(title)
-	var match *models.Series
+	var matches []models.Series
 	for idx := range all {
-		if normalizeTitle(all[idx].Title) != key {
+		if normalizeTitle(all[idx].Title) == key {
+			matches = append(matches, all[idx])
+		}
+	}
+	switch {
+	case len(matches) == 0:
+		return nil, false, nil
+	case len(matches) == 1:
+		return &matches[0], false, nil
+	case bookID == 0:
+		return nil, true, nil
+	}
+	memberOf, err := i.series.GetSeriesIDsForBook(ctx, bookID)
+	if err != nil {
+		return nil, false, err
+	}
+	var held *models.Series
+	for idx := range matches {
+		if !slices.Contains(memberOf, matches[idx].ID) {
 			continue
 		}
-		if match != nil {
+		if held != nil {
 			return nil, true, nil
 		}
-		copy := all[idx]
-		match = &copy
+		held = &matches[idx]
 	}
-	return match, false, nil
+	if held == nil {
+		return nil, true, nil
+	}
+	return held, false, nil
 }
 
 func (i *Importer) upsertEditions(ctx context.Context, cfg ImportConfig, runID, bookID int64, item NormalizedLibraryItem) (int, error) {
