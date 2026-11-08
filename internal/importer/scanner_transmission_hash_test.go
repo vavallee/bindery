@@ -427,6 +427,59 @@ func TestCheckTransmissionDownloads_TerminalLegacyRowDoesNotBlockRecovery(t *tes
 	}
 }
 
+// TestCheckTransmissionDownloads_TorrentInBothCategoriesCountedOnce guards the
+// dedupe in the single fetch (#3714). The torrent sits in the audiobook
+// directory and carries the ebook label, so both categories match it. Listed
+// twice, it would be two candidates for the legacy row below, and with names
+// that do not settle it the row would be left stranded instead of recovered.
+func TestCheckTransmissionDownloads_TorrentInBothCategoriesCountedOnce(t *testing.T) {
+	grabbedAt := time.Now().Add(-48 * time.Hour).UTC()
+	const hash = "89abcdef0123456789abcdef0123456789abcdef"
+
+	srv := httptest.NewServer(transmissionListHandler(t, []map[string]any{{
+		"id":          1,
+		"hashString":  hash,
+		"name":        "Completely Unrelated Name",
+		"status":      0,
+		"percentDone": 0.5,
+		"downloadDir": "/tr/audio",
+		"labels":      []string{"/tr"},
+		"addedDate":   grabbedAt.Unix(),
+	}}))
+	defer srv.Close()
+
+	s, _, _, ctx := scannerFixture(t, t.TempDir())
+	client := transmissionClientFixture(t, s, ctx, srv, "/tr")
+	client.CategoryAudiobook = "/tr/audio"
+
+	staleID := "17"
+	dl := &models.Download{
+		GUID:             "guid-both-categories",
+		DownloadClientID: &client.ID,
+		Title:            "Stranded Release",
+		NZBURL:           "magnet:?xt=urn:btih:89ab",
+		Status:           models.DownloadStatusDownloading,
+		Protocol:         "torrent",
+		TorrentID:        &staleID,
+	}
+	if err := s.downloads.Create(ctx, dl); err != nil {
+		t.Fatalf("create download: %v", err)
+	}
+	if err := s.downloads.SetGrabbedAt(ctx, dl.ID, grabbedAt); err != nil {
+		t.Fatalf("set grabbed_at: %v", err)
+	}
+
+	s.checkTransmissionDownloads(ctx, client)
+
+	got, err := s.downloads.GetByGUID(ctx, dl.GUID)
+	if err != nil {
+		t.Fatalf("get by guid: %v", err)
+	}
+	if got.TorrentID == nil || *got.TorrentID != hash {
+		t.Fatalf("torrent matched by both categories should be one candidate and recover the row; torrent id = %q, want %q", derefTorrentID(got.TorrentID), hash)
+	}
+}
+
 // TestCheckTransmissionDownloads_OneFetchPerPoll pins the importer poll to a
 // single torrent-get (#3714). It used to fetch the whole list once per
 // category and, when nothing matched, once more unfiltered for the
