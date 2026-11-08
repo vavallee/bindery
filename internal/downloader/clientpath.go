@@ -155,12 +155,17 @@ func GrabSavePath(ctx context.Context, client *models.DownloadClient, mediaType,
 		info.Path, info.Source = strings.TrimSpace(dir), "the client default"
 		return info, nil
 	case "transmission":
-		// SendDownload passes client.Category (never the audiobook category)
-		// as download-dir when it is an absolute path.
+		// SendDownload passes transmissionDownloadDir as download-dir: the
+		// audiobook category for audiobooks when absolute, else the ebook
+		// category when absolute.
 		info.Category = client.Category
-		if strings.HasPrefix(info.Category, "/") {
-			info.Path, info.Source = info.Category, "the save path Bindery sends"
+		if sent := transmissionDownloadDir(client, mediaType); sent != "" {
+			info.Category = sent
+			info.Path, info.Source = sent, "the save path Bindery sends"
 			return info, nil
+		}
+		if mediaType == models.MediaTypeAudiobook && client.CategoryAudiobook != "" {
+			info.Category = client.CategoryAudiobook
 		}
 		dir, err := TransmissionFor(client).DownloadDir(ctx)
 		if err != nil {

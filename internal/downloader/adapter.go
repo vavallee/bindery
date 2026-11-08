@@ -213,13 +213,12 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 	case "transmission":
 		trans := TransmissionFor(client)
 		// Transmission's download-dir must be an absolute path. The Category
-		// field is repurposed as an optional path override for Transmission; if
-		// the user left it as a bare label (e.g. "books") we pass "" so
-		// Transmission falls back to its own configured default directory.
-		transDL := client.Category
-		if !strings.HasPrefix(transDL, "/") {
-			transDL = ""
-		}
+		// and audiobook Category fields are repurposed as optional path
+		// overrides for Transmission, picked per media type like every other
+		// client (#2499); if the user left the one in force as a bare label
+		// (e.g. "books") we pass "" so Transmission falls back to its own
+		// configured default directory.
+		transDL := transmissionDownloadDir(client, opts.MediaType)
 		added, err := trans.AddTorrentWithLimits(ctx, sourceURL, transDL, transmission.SeedLimits{
 			Ratio:       opts.SeedRatio,
 			IdleMinutes: opts.InactiveSeedTimeMinutes,
@@ -322,6 +321,22 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		result.RemoteID = resp.NzoIDs[0]
 		return result, nil
 	}
+}
+
+// transmissionDownloadDir is the download-dir a Transmission grab of mediaType
+// sends: the audiobook category for an audiobook grab when it is an absolute
+// path, otherwise the ebook category when that is absolute, otherwise "" (the
+// client default). Falling back to the ebook path keeps an audiobook out of
+// Transmission's default folder, where nothing Bindery polls would match it,
+// because Bindery sets no Transmission labels on add (#2499).
+func transmissionDownloadDir(client *models.DownloadClient, mediaType string) string {
+	if mediaType == models.MediaTypeAudiobook && strings.HasPrefix(client.CategoryAudiobook, "/") {
+		return client.CategoryAudiobook
+	}
+	if strings.HasPrefix(client.Category, "/") {
+		return client.Category
+	}
+	return ""
 }
 
 // torrentSavePath renders Bindery's target download directory in the download
@@ -613,9 +628,21 @@ func getNZBGetLiveStatuses(ctx context.Context, client *models.DownloadClient) (
 func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) (map[string]LiveStatus, error) {
 	if client.Type == "transmission" {
 		trans := TransmissionFor(client)
-		torrents, err := trans.GetTorrents(ctx, client.Category)
-		if err != nil {
-			return nil, err
+		// Both the ebook and the audiobook destination, as the stall check and
+		// the importer poll (#2499).
+		var torrents []transmission.Torrent
+		seen := make(map[int64]bool)
+		for _, cat := range CategoriesToPoll(client) {
+			got, err := trans.GetTorrents(ctx, cat)
+			if err != nil {
+				return nil, err
+			}
+			for _, t := range got {
+				if !seen[t.ID] {
+					seen[t.ID] = true
+					torrents = append(torrents, t)
+				}
+			}
 		}
 
 		out := make(map[string]LiveStatus, len(torrents))
