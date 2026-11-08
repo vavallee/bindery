@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { MemoryRouter, useLocation } from 'react-router'
@@ -483,6 +483,80 @@ describe('BooksPage — filter chips, table cells and select-all', () => {
     await waitFor(() => expect(media[media.length - 1]).toBeNull())
     fireEvent.click(screen.getAllByText('✕')[0].closest('button')!)
     await waitFor(() => expect(screen.getByText('No books in your library yet')).toBeInTheDocument())
+  })
+
+  // #1160: the language filter offers the languages the library holds, most
+  // common first, with the books that have none last.
+  it('filters by a language the library holds, or by books with no language', async () => {
+    const langs: Array<string | null> = []
+    server.use(
+      http.get(apiUrl('/book/languages'), () =>
+        HttpResponse.json([{ code: 'ita', count: 3 }, { code: '', count: 2 }, { code: 'eng', count: 1 }])),
+      http.get(apiUrl('/book'), ({ request }) => {
+        langs.push(new URL(request.url).searchParams.get('language'))
+        return HttpResponse.json({ items: [makeBook({ id: 1, title: 'Dune' })], total: 1, limit: 50, offset: 0 })
+      }),
+    )
+    renderBooksPage()
+    await waitFor(() => expect(langs.length).toBeGreaterThan(0))
+    expect(langs.at(-1)).toBeNull()
+
+    const languageGroup = async () => {
+      if (!screen.queryByRole('radiogroup', { name: 'Language:' })) {
+        fireEvent.click(screen.getByRole('button', { name: /Filters/ }))
+      }
+      return screen.findByRole('radiogroup', { name: 'Language:' })
+    }
+    const group = await languageGroup()
+    const names = within(group).getAllByRole('radio')
+      .map(r => r.getAttribute('aria-label') || r.textContent?.replace('✓', '').trim())
+    expect(names).toEqual(['All', 'Italian (3)', 'English (1)', 'No language (2)'])
+
+    fireEvent.click(within(group).getByRole('radio', { name: 'Italian (3)' }))
+    await waitFor(() => expect(langs.at(-1)).toBe('ita'))
+    const chip = () => screen.getAllByText('✕').map(x => x.closest('button')!)
+    expect(chip().map(c => c.textContent)).toEqual([expect.stringContaining('Italian')])
+
+    fireEvent.click(within(await languageGroup()).getByRole('radio', { name: 'No language (2)' }))
+    await waitFor(() => expect(langs.at(-1)).toBe('unknown'))
+    expect(chip().map(c => c.textContent)).toEqual([expect.stringContaining('No language')])
+
+    fireEvent.click(chip()[0])
+    await waitFor(() => expect(langs.at(-1)).toBeNull())
+  })
+
+  it('reads a hand typed language as the listed option and names mul and und plainly', async () => {
+    const langs: Array<string | null> = []
+    server.use(
+      http.get(apiUrl('/book/languages'), () =>
+        HttpResponse.json([{ code: 'eng', count: 4 }, { code: 'mul', count: 1 }, { code: '', count: 2 }])),
+      http.get(apiUrl('/book'), ({ request }) => {
+        langs.push(new URL(request.url).searchParams.get('language'))
+        return HttpResponse.json({ items: [makeBook({ id: 1, title: 'Dune' })], total: 1, limit: 50, offset: 0 })
+      }),
+    )
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/?lang=en']}>
+        <BooksPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(langs.at(-1)).toBe('eng'))
+    fireEvent.click(screen.getByRole('button', { name: /Filters/ }))
+    const group = await screen.findByRole('radiogroup', { name: 'Language:' })
+    const radios = within(group).getAllByRole('radio')
+    expect(radios.map(r => r.getAttribute('aria-label') || r.textContent?.replace('✓', '').trim()))
+      .toEqual(['All', 'English (4)', 'Multiple languages (1)', 'No language (2)'])
+    expect(within(group).getByRole('radio', { name: 'English (4)' })).toHaveAttribute('aria-checked', 'true')
+    unmount()
+
+    // "und" names no language, so it is the No language filter.
+    render(
+      <MemoryRouter initialEntries={['/?lang=und']}>
+        <BooksPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(langs.at(-1)).toBe('unknown'))
+    expect(screen.queryByText(/Root/)).toBeNull()
   })
 
   it('renders author, year and format cells, and select-all on the page toggles every row', async () => {

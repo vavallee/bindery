@@ -68,3 +68,23 @@ export function languageName(code?: string | null): string | null {
   if (!canonical) return null
   return NAMES.get(canonical) ?? canonical
 }
+
+// displayLanguageName names a language in the UI language when the browser
+// knows it (Intl.DisplayNames reads the ISO 639-2/B codes Bindery stores, so
+// "fre" is "French", or "Französisch" in German), falling back to
+// languageName's English name or the code itself.
+export function displayLanguageName(code: string, lng?: string): string {
+  const canonical = canonicalLanguage(code)
+  if (!canonical) return code
+  // Not left to ICU, which is not consistent about the special codes (it
+  // names "und" "root", for one). The Books page folds und, mis and zxx into
+  // its No language option; mul is a value of its own.
+  if (canonical === 'mul') return 'Multiple languages'
+  try {
+    const name = new Intl.DisplayNames([lng || 'en'], { type: 'language' }).of(canonical)
+    if (name && name.toLowerCase() !== canonical) return name.charAt(0).toLocaleUpperCase(lng || 'en') + name.slice(1)
+  } catch {
+    // an unknown UI locale or an old browser: use the short list instead
+  }
+  return languageName(canonical) ?? canonical
+}

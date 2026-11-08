@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from '../components/useConfirmDialog'
@@ -17,7 +17,8 @@ import BookStatusLegend from '../components/BookStatusLegend'
 import { useView } from '../components/useView'
 import GettingStartedGuidance from '../components/GettingStartedGuidance'
 import { useNeedsSetup } from '../components/useNeedsSetup'
-import { api, BINDERY_BASE, Book, MediaType } from '../api/client'
+import { api, BINDERY_BASE, Book, BookLanguageCount, MediaType } from '../api/client'
+import { canonicalLanguage, displayLanguageName } from '../util/language'
 import BulkActionBar from '../components/BulkActionBar'
 import Pagination from '../components/Pagination'
 import { useServerPagination } from '../components/usePagination'
@@ -48,7 +49,34 @@ const STATUS_FILTERS: readonly StatusFilter[] = ['', 'wanted', 'imported', 'skip
 const MEDIA_FILTERS: readonly MediaFilter[] = ['', 'ebook', 'audiobook', 'both']
 // Query-string keys and their defaults. A value equal to its default is left
 // out of the URL, so an untouched list stays at a clean /books.
-const LIST_DEFAULTS = { q: '', status: '', media: '', sort: 'title-az' }
+const LIST_DEFAULTS = { q: '', status: '', media: '', lang: '', sort: 'title-az' }
+// The language filter's value is a stored language code, or "unknown" for
+// books with no language (#1160). The codes come from the library, so they are
+// checked for shape rather than against a fixed list.
+const LANGUAGE_UNKNOWN = 'unknown'
+const LANGUAGE_PARAM = /^[a-z]{2,12}$/
+// The codes that name no language. The server lists them under No language
+// (models.UndeterminedLanguageCodes), so the URL does too.
+const LANGUAGE_UNDETERMINED = new Set(['und', 'mis', 'zxx'])
+
+// languageParam reads the lang URL value the way the server will: a spelling
+// canonicalLanguage knows ("en", "en-US", "English") becomes the stored code,
+// and a code that names no language becomes "unknown".
+function languageParam(raw: string): string {
+  const v = raw.trim().toLowerCase()
+  if (!v || v === LANGUAGE_UNKNOWN) return v
+  const code = canonicalLanguage(v)
+  if (LANGUAGE_UNDETERMINED.has(code)) return LANGUAGE_UNKNOWN
+  return LANGUAGE_PARAM.test(code) ? code : ''
+}
+
+// matchLanguageOption picks the listed language a hand typed value means, so
+// ?lang=fi selects a listed "fin" instead of adding a second Finnish.
+function matchLanguageOption(value: string, counts: BookLanguageCount[]): string {
+  if (!value || value === LANGUAGE_UNKNOWN || counts.some(c => c.code === value)) return value
+  const name = displayLanguageName(value)
+  return counts.find(c => c.code && displayLanguageName(c.code) === name)?.code ?? value
+}
 // The table's sortable columns and the whitelisted sort values behind them.
 const BOOK_COLUMN_SORTS = {
   title: { asc: 'title-az', desc: 'title-za' },
@@ -68,7 +96,7 @@ const statusLabelKeys: Record<string, string> = {
 }
 
 export default function BooksPage() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const navigate = useNavigate()
   const { confirm, confirmDialog } = useConfirmDialog()
   const [books, setBooks] = useState<Book[]>([])
@@ -86,6 +114,10 @@ export default function BooksPage() {
   const updateList = list.update
   const setStatusFilter = (status: StatusFilter) => updateList({ status, page: null })
   const setMediaFilter = (media: MediaFilter) => updateList({ media, page: null })
+  const setLanguageFilter = (lang: string) => updateList({ lang, page: null })
+  // The languages the library holds, for the language filter's options.
+  const [languageCounts, setLanguageCounts] = useState<BookLanguageCount[]>([])
+  const languageFilter = matchLanguageOption(languageParam(list.values.lang), languageCounts)
   const setSort = (next: SortMode) => updateList({ sort: next, page: null })
   // Keystroke-level changes replace the history entry instead of pushing one.
   const commitSearch = useCallback((q: string) => updateList({ q, page: null }, { replace: true }), [updateList])
@@ -117,12 +149,12 @@ export default function BooksPage() {
 
   // Shown on the Filters trigger so an applied filter is visible without
   // opening it. Status is not counted: it has its own row and is never hidden.
-  const activeFilterCount = [mediaFilter, monitoredFilter].filter(Boolean).length
+  const activeFilterCount = [mediaFilter, monitoredFilter, languageFilter].filter(Boolean).length
   // The query a total belongs to, minus the page. The snap back to the last
   // page may only use a total fetched for the query on screen: going back
   // across a filter change would otherwise clamp with the other query's total
   // before the refetch starts, and a failed fetch (total 0) would reset it.
-  const queryKey = JSON.stringify([debouncedSearch, statusFilter, mediaFilter, monitoredFilter, sort])
+  const queryKey = JSON.stringify([debouncedSearch, statusFilter, mediaFilter, monitoredFilter, languageFilter, sort])
   const [totalKey, setTotalKey] = useState<string | null>(null)
   const { page, pageSize, paginationProps } = useServerPagination(total, 50, 'books', {
     page: list.page,
@@ -143,6 +175,7 @@ export default function BooksPage() {
       status: statusFilter || undefined,
       mediaType: mediaFilter || undefined,
       monitored: monitoredParam,
+      language: languageFilter || undefined,
       sort,
     }).then(({ items, total }) => {
       if (request !== loadRequestRef.current) return
@@ -157,7 +190,41 @@ export default function BooksPage() {
       .finally(() => {
         if (request === loadRequestRef.current) setLoading(false)
       })
-  }, [page, pageSize, debouncedSearch, statusFilter, mediaFilter, monitoredParam, sort, queryKey])
+  }, [page, pageSize, debouncedSearch, statusFilter, mediaFilter, monitoredParam, languageFilter, sort, queryKey])
+
+  const languageLabel = (code: string) => {
+    if (code === LANGUAGE_UNKNOWN) return t('books.languageUnknownBadge', 'No language')
+    if (code === 'mul') return t('books.languageMultiple', 'Multiple languages')
+    return displayLanguageName(code, i18n?.resolvedLanguage)
+  }
+  // All, then each language the library holds (most common first), then the
+  // books with none. A chosen value the counts do not list (fetch failed, or
+  // its last book changed language) is kept so the active option stays shown.
+  const languageOptions: Array<{ value: string; label: ReactNode; ariaLabel?: string }> = [
+    { value: '', label: t('common.all') },
+    ...languageCounts.map(c => {
+      const value = c.code || LANGUAGE_UNKNOWN
+      const name = languageLabel(value)
+      return {
+        value,
+        label: <>{name} <span className="text-fg-muted">{c.count}</span></>,
+        ariaLabel: `${name} (${c.count})`,
+      }
+    }).sort((a, b) => Number(a.value === LANGUAGE_UNKNOWN) - Number(b.value === LANGUAGE_UNKNOWN)),
+  ]
+  if (languageFilter && !languageOptions.some(o => o.value === languageFilter)) {
+    languageOptions.push({ value: languageFilter, label: languageLabel(languageFilter) })
+  }
+
+  // Fetched once: the options only need to name the languages the library
+  // holds, and a failure leaves the filter showing just the chosen value.
+  useEffect(() => {
+    let cancelled = false
+    api.bookLanguages()
+      .then(counts => { if (!cancelled) setLanguageCounts(counts) })
+      .catch(() => { /* no options; the list itself still works */ })
+    return () => { cancelled = true }
+  }, [])
 
   // A selection only means something on the page it was made on.
   useEffect(() => { setSelectedIds(new Set()) }, [page, queryKey])
@@ -391,11 +458,20 @@ export default function BooksPage() {
                   { value: 'unmonitored' as const, label: t('books.filterUnmonitored', 'Unmonitored') },
                 ]}
               />
+              {languageOptions.length > 1 && (
+                <FilterGroup
+                  label={t('books.filterLanguage', 'Language:')}
+                  value={languageFilter}
+                  onChange={setLanguageFilter}
+                  options={languageOptions}
+                />
+              )}
             </>
           ),
         }}
         chips={[
           ...(mediaFilter ? [{ key: 'media', label: t(`common.${mediaFilter}`), onClear: () => setMediaFilter('') }] : []),
+          ...(languageFilter ? [{ key: 'language', label: languageLabel(languageFilter), onClear: () => setLanguageFilter('') }] : []),
           ...(monitoredFilter ? [{
             key: 'monitored',
             label: monitoredFilter === 'monitored' ? t('books.filterMonitoredOnly', 'Monitored') : t('books.filterUnmonitored', 'Unmonitored'),
@@ -410,7 +486,7 @@ export default function BooksPage() {
       {loading ? (
         view === 'table' ? <SkeletonRows /> : <SkeletonCards />
       ) : total === 0 ? (
-        !debouncedSearch && !statusFilter && !mediaFilter && !monitoredFilter ? (
+        !debouncedSearch && !statusFilter && !mediaFilter && !monitoredFilter && !languageFilter ? (
           <EmptyState title={t('books.empty')} hint={t('books.emptyHint')}>
             {needsAny && <GettingStartedGuidance reasonKey="gettingStarted.reasonBooks" needsIndexer={needsIndexer} needsClient={needsClient} />}
           </EmptyState>

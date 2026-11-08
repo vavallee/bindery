@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { canonicalLanguage, languageName } from './language'
+import { canonicalLanguage, displayLanguageName, languageName } from './language'
 
 describe('canonicalLanguage', () => {
   it('folds every spelling of a language onto its ISO 639-2/B code', () => {
@@ -43,5 +43,15 @@ describe('languageName', () => {
     expect(languageName('fra')).toBe('French')
     expect(languageName('swe')).toBe('swe')
     expect(languageName('')).toBeNull()
+  })
+})
+
+describe('displayLanguageName', () => {
+  it('names a stored code in the UI language and falls back to the code', () => {
+    expect(displayLanguageName('ita')).toBe('Italian')
+    expect(displayLanguageName('fre', 'de')).toBe('Französisch')
+    expect(displayLanguageName('swe')).toBe('Swedish')
+    expect(displayLanguageName('xyz')).toBe('xyz')
+    expect(displayLanguageName('mul')).toBe('Multiple languages')
   })
 })

@@ -818,6 +818,8 @@
     "sortStatusAZ": "Status A–Z",
     "sortStatusZA": "Status Z–A",
     "languageUnknownBadge": "No language",
+    "filterLanguage": "Language:",
+    "languageMultiple": "Multiple languages",
     "countLabel_one": "{{count}} book",
     "countLabel_other": "{{count}} books"
   },

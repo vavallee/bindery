@@ -209,6 +209,13 @@ export interface BookSeriesExclusion {
   position: string
 }
 
+// One language in the caller's library and how many books are in it (#1160).
+// An empty code counts the books with no language.
+export interface BookLanguageCount {
+  code: string
+  count: number
+}
+
 export const booksApi = {
   // Metadata search
   searchAuthors: (term: string) => request<Author[]>(`/search/author?term=${encodeURIComponent(term)}`),
@@ -242,7 +249,7 @@ export const booksApi = {
   },
 
   // Books
-  listBooks: (params?: { authorId?: number; status?: string; monitored?: boolean; includeExcluded?: boolean; limit?: number; offset?: number; search?: string; mediaType?: string; sort?: string; releaseFrom?: string; releaseBefore?: string }) => {
+  listBooks: (params?: { authorId?: number; status?: string; monitored?: boolean; includeExcluded?: boolean; limit?: number; offset?: number; search?: string; mediaType?: string; sort?: string; releaseFrom?: string; releaseBefore?: string; language?: string }) => {
     const q = new URLSearchParams()
     if (params?.authorId) q.set('authorId', String(params.authorId))
     if (params?.status) q.set('status', params.status)
@@ -255,9 +262,13 @@ export const booksApi = {
     if (params?.sort) q.set('sort', params.sort)
     if (params?.releaseFrom) q.set('releaseFrom', params.releaseFrom)
     if (params?.releaseBefore) q.set('releaseBefore', params.releaseBefore)
+    if (params?.language) q.set('language', params.language)
     const qs = q.toString()
     return request<Page<Book>>(`/book${qs ? '?' + qs : ''}`)
   },
+  // The languages the Books page language filter offers: what the caller's
+  // library actually holds, most common first.
+  bookLanguages: () => request<BookLanguageCount[]>('/book/languages'),
   // listAllBooks pages through the server until the full set is collected. For
   // callers that need every book (calendar month, author detail, series book
   // picker) rather than one display page. Heavy on very large libraries by

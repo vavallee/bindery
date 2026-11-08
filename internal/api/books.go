@@ -352,6 +352,7 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 			Sort:          r.URL.Query().Get("sort"),
 			ReleaseFrom:   strings.TrimSpace(r.URL.Query().Get("releaseFrom")),
 			ReleaseBefore: strings.TrimSpace(r.URL.Query().Get("releaseBefore")),
+			Language:      r.URL.Query().Get("language"),
 		}, limit, offset)
 	}
 
@@ -372,6 +373,20 @@ func (h *BookHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit:  limit,
 		Offset: offset,
 	})
+}
+
+// Languages answers GET /book/languages: the languages of the books the caller
+// can see, with how many books are in each, most common first, and an entry
+// with an empty code for books with no language. The Books page builds its
+// language filter from it (#1160). Scoped like the list: under tenancy a
+// non-admin counts only their own and unowned books.
+func (h *BookHandler) Languages(w http.ResponseWriter, r *http.Request) {
+	counts, err := h.books.LanguageCounts(r.Context(), auth.ListScopeUserID(r.Context()))
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, counts)
 }
 
 // parseMonitoredParam maps the ?monitored= query value to a tri-state filter:

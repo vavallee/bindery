@@ -317,6 +317,14 @@ grab", not "won't list". Open the author and select the ones you never want ther
 **Exclude** them; the Books page has Monitor, Unmonitor and Delete, but Exclude
 lives on the author page.
 
+To find the books in one language, open **Filters** on the Books page and pick
+it under **Language**. The list names the languages your library actually
+holds, most common first, with how many books are in each, and ends with **No
+language** for books that have none. It combines with Status, Type, Monitored
+and the search box. A book's language comes from the metadata source, from its
+ebook file when the file is imported, or from your own edit on the book page;
+edit a book to correct one that is wrong.
+
 ## From Wanted to your library
 
 **Search.** A scheduled sweep (default every 12 hours; interval in Settings →
