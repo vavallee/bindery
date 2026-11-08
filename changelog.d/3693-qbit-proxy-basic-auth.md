@@ -1,2 +1,0 @@
-### Added
-- **Basic auth for proxied qBittorrent** (#3693). If your qBittorrent sits behind a reverse proxy that wants a username and password first, like a lot of seedboxes, there is now an optional "Proxy login" section on the qBittorrent client form. Bindery sends it with every request, including the connection test, next to the normal qBittorrent login, and only to the host and scheme you configured.
