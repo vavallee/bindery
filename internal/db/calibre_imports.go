@@ -262,6 +262,52 @@ func (r *CalibreProvenanceRepo) DeleteByLocal(ctx context.Context, entityType st
 	return count, nil
 }
 
+// CalibreCreatedBookFile is a book_files row a Calibre import run created,
+// with the provenance key that proves it.
+type CalibreCreatedBookFile struct {
+	Path       string
+	BookID     int64
+	SourceID   string
+	ExternalID string
+}
+
+// ListCreatedBookFiles returns the book_files rows a Calibre import created
+// and still owns: the row's provenance (entity_type book_file, external_id
+// externalIDPrefix + path) still points at the row's book, and some run
+// recorded a "created" snapshot for that same key and book. A row a download,
+// scan or the user added has no such snapshot, even when a later import
+// refreshed its provenance, so it is never returned (#3630).
+func (r *CalibreProvenanceRepo) ListCreatedBookFiles(ctx context.Context, externalIDPrefix string) ([]CalibreCreatedBookFile, error) {
+	rows, err := r.exec.QueryContext(ctx, `
+		SELECT bf.path, bf.book_id, p.source_id, p.external_id
+		FROM calibre_provenance p
+		JOIN book_files bf
+		  ON bf.path = substr(p.external_id, length(?) + 1)
+		 AND bf.book_id = p.local_id
+		WHERE p.entity_type = 'book_file'
+		  AND substr(p.external_id, 1, length(?)) = ?
+		  AND EXISTS (
+			SELECT 1 FROM calibre_entity_snapshots s
+			WHERE s.entity_type = 'book_file'
+			  AND s.external_id = p.external_id
+			  AND s.local_id = p.local_id
+			  AND s.outcome = 'created')
+		ORDER BY bf.id`, externalIDPrefix, externalIDPrefix, externalIDPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("list calibre created book files: %w", err)
+	}
+	defer rows.Close()
+	var out []CalibreCreatedBookFile
+	for rows.Next() {
+		var f CalibreCreatedBookFile
+		if err := rows.Scan(&f.Path, &f.BookID, &f.SourceID, &f.ExternalID); err != nil {
+			return nil, fmt.Errorf("scan calibre created book file: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // CalibreEntitySnapshotRepo manages calibre_entity_snapshots. Each row holds
 // one before/after snapshot of a single (book/author/edition) the importer
 // mutated during a run. Rollback reads these in reverse to restore state.

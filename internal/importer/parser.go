@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/vavallee/bindery/internal/models"
 )
 
 // ParsedFile contains metadata extracted from a filename.
@@ -99,24 +101,12 @@ var dashNormalizer = strings.NewReplacer(
 	"−", "-", // − minus sign
 )
 
-// bookExtensions lists common ebook file extensions, plus the audio ones the
-// parser has always accepted as book files. The audio part is NOT the shared
-// models.IsAudioPath set on purpose: it leaves out .aac and .wma, and widening
-// it would make IsBookFile accept files the importer never treated as books.
-var bookExtensions = map[string]bool{
-	".epub": true, ".mobi": true, ".azw3": true, ".azw": true,
-	".pdf": true, ".djvu": true, ".cbr": true, ".cbz": true,
-	".fb2": true, ".lit": true, ".txt": true, ".rtf": true,
-	".mp3": true, ".m4a": true, ".m4b": true, ".flac": true, ".ogg": true, ".opus": true,
-}
-
 // ParseFilename extracts book metadata from a filename or directory name.
 func ParseFilename(path string) ParsedFile {
 	p := ParsedFile{FilePath: path}
 
-	ext := strings.ToLower(filepath.Ext(path))
-	if bookExtensions[ext] {
-		p.Format = strings.TrimPrefix(ext, ".")
+	if models.IsBookFilePath(path) {
+		p.Format = strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
 	}
 
 	// Work with the base name without extension
@@ -266,8 +256,9 @@ func ParseFilename(path string) ParsedFile {
 	return p
 }
 
-// IsBookFile returns true if the path has a recognized book extension.
+// IsBookFile returns true if the path has a recognized book extension. The
+// allowlist lives in models.IsBookFilePath so the Calibre import, which this
+// package cannot be imported by, reads the same set (#3630).
 func IsBookFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	return bookExtensions[ext]
+	return models.IsBookFilePath(path)
 }

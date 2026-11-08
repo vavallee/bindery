@@ -31,6 +31,13 @@ type ImportStats struct {
 	SeriesLinked     int `json:"seriesLinked"`
 	SeriesFailures   int `json:"seriesFailures,omitempty"`
 	Skipped          int `json:"skipped"`
+	// FormatsSkipped counts Calibre formats left untracked because Bindery
+	// cannot use the file, such as the ORIGINAL_EPUB backup Polish keeps
+	// (#3630).
+	FormatsSkipped int `json:"formatsSkipped,omitempty"`
+	// UnsupportedFilesRemoved counts book_files rows an earlier import created
+	// for such formats that this run stopped tracking. Files on disk stay.
+	UnsupportedFilesRemoved int `json:"unsupportedFilesRemoved,omitempty"`
 }
 
 // ImportProgress is the live poll shape for GET /calibre/import/status.
@@ -292,6 +299,9 @@ func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 		i.fail(err)
 		return stats
 	}
+
+	// Clear out what imports before #3630 tracked and this one no longer will.
+	stats.UnsupportedFilesRemoved = i.removeUnsupportedBookFiles(ctx)
 	i.setProgress(func(p *ImportProgress) {
 		p.Total = total
 		p.Message = fmt.Sprintf("scanning %d books…", total)
@@ -334,7 +344,8 @@ func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 		"authorsAdded", stats.AuthorsAdded, "authorsLinked", stats.AuthorsLinked,
 		"booksAdded", stats.BooksAdded, "booksUpdated", stats.BooksUpdated,
 		"editionsAdded", stats.EditionsAdded, "duplicatesMerged", stats.DuplicatesMerged,
-		"skipped", stats.Skipped)
+		"skipped", stats.Skipped, "formatsSkipped", stats.FormatsSkipped,
+		"unsupportedFilesRemoved", stats.UnsupportedFilesRemoved)
 	i.setProgress(func(p *ImportProgress) {
 		p.Message = "done"
 	})
@@ -446,7 +457,7 @@ func (i *Importer) importOne(ctx context.Context, runID int64, cb CalibreBook, s
 	// book with none, and there was no supported way to re-point a stale row
 	// for a Calibre library: a folder scan fights the Calibre-shaped layout,
 	// and manual-import/match needs a downloadId a Calibre book never has.
-	i.registerBookFiles(ctx, runID, book.row, cb)
+	i.registerBookFiles(ctx, runID, book.row, cb, stats)
 
 	// Series persistence (#905). Calibre's books_series_link plus series
 	// table is read by the cursor as cb.Series; we propagate the membership
@@ -500,16 +511,28 @@ func calibreFormatMediaType(format string) string {
 // inserted it. A path a real download placed, or an earlier run created, gets
 // its provenance refreshed but is never unwound by this run's rollback.
 //
+// Only formats Bindery can use are tracked, judged by the same extension
+// allowlist the library scan and folder imports use. Calibre lists every file
+// it keeps, including the ORIGINAL_EPUB / ORIGINAL_AZW3 backups its Polish and
+// Fix EPUB tools leave beside the book, and tracking those made each one an
+// ebook file Bindery could not open, remap or deliver (#3630).
+//
 // Failures are logged and never abort the import: the book and its metadata
 // are already committed, and losing the whole row over a file-tracking write
 // would be a worse outcome than an untracked path.
-func (i *Importer) registerBookFiles(ctx context.Context, runID int64, book *models.Book, cb CalibreBook) {
+func (i *Importer) registerBookFiles(ctx context.Context, runID int64, book *models.Book, cb CalibreBook, stats *ImportStats) {
 	if i.books == nil || book == nil || book.ID == 0 {
 		return
 	}
 	for _, f := range cb.Formats {
 		path := strings.TrimSpace(f.AbsolutePath)
 		if path == "" {
+			continue
+		}
+		if !models.IsBookFilePath(path) {
+			slog.Debug("calibre import: not tracking a format Bindery cannot use",
+				"calibre_id", cb.CalibreID, "book_id", book.ID, "format", f.Format, "path", path)
+			stats.FormatsSkipped++
 			continue
 		}
 		created, err := i.books.AddBookFileIfMissing(ctx, book.ID, calibreFormatMediaType(f.Format), path)
@@ -527,6 +550,57 @@ func (i *Importer) registerBookFiles(ctx context.Context, runID int64, book *mod
 }
 
 const bookFileExternalIDPrefix = "calibre:book-file:"
+
+// removeUnsupportedBookFiles stops tracking the book_files rows earlier imports
+// created for formats Bindery cannot use, before registerBookFiles learned to
+// skip them (#3630). It returns how many rows it removed.
+//
+// Only rows the import's own records prove it created are touched: provenance
+// still pointing at the row's book plus a "created" snapshot (see
+// ListCreatedBookFiles). A row with the same extension that a download, a scan
+// or the user added stays. The file on disk is never touched, and the row goes
+// through UntrackFilePathForBook, which refreshes the book's status the way
+// removing a file entry by hand does. The provenance goes with the row, so a
+// later rollback of the run that created it reports it as already undone.
+//
+// Running at the start of every import is safe: once the rows are gone there
+// is nothing left to match, and the query is a single indexed join.
+func (i *Importer) removeUnsupportedBookFiles(ctx context.Context) int {
+	if i.books == nil || i.provenance == nil {
+		return 0
+	}
+	created, err := i.provenance.ListCreatedBookFiles(ctx, bookFileExternalIDPrefix)
+	if err != nil {
+		slog.Warn("calibre import: could not list book files earlier imports created", "error", err)
+		return 0
+	}
+	removed := 0
+	for _, f := range created {
+		if models.IsBookFilePath(f.Path) {
+			continue
+		}
+		ok, err := i.books.UntrackFilePathForBook(ctx, f.Path, f.BookID)
+		if err != nil {
+			slog.Warn("calibre import: could not stop tracking an unusable book file",
+				"book_id", f.BookID, "path", f.Path, "error", err)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		removed++
+		slog.Debug("calibre import: stopped tracking a format Bindery cannot use",
+			"book_id", f.BookID, "path", f.Path)
+		if err := i.provenance.DeleteByExternal(ctx, f.SourceID, entityTypeBookFile, f.ExternalID); err != nil {
+			slog.Warn("calibre import: could not drop provenance for an untracked book file",
+				"book_id", f.BookID, "path", f.Path, "error", err)
+		}
+	}
+	if removed > 0 {
+		slog.Info("calibre import: stopped tracking book files Bindery cannot use", "removed", removed)
+	}
+	return removed
+}
 
 // calibreBookFileExternalID is the provenance key for a book_files row created
 // during a Calibre import run. The path is the natural key: book_files.path is

@@ -876,11 +876,11 @@ func TestImporter_RegisterBookFilesIgnoresUnusableBooks(t *testing.T) {
 	imp, _, _, _, _, _, _ := newImporterFixture(t)
 	cb := sampleCalibreBook(1, "Book One", "Alice Author")
 
-	imp.registerBookFiles(context.Background(), 0, nil, cb)
-	imp.registerBookFiles(context.Background(), 0, &models.Book{ID: 0}, cb)
+	imp.registerBookFiles(context.Background(), 0, nil, cb, &ImportStats{})
+	imp.registerBookFiles(context.Background(), 0, &models.Book{ID: 0}, cb, &ImportStats{})
 
 	noRepo := &Importer{}
-	noRepo.registerBookFiles(context.Background(), 0, &models.Book{ID: 1}, cb)
+	noRepo.registerBookFiles(context.Background(), 0, &models.Book{ID: 1}, cb, &ImportStats{})
 }
 
 // TestImporter_SubtitleVariantsKeepDistinctCalibreIDs: two Calibre books by one
