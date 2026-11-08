@@ -265,7 +265,16 @@ type BookListFilter struct {
 	// books held out of the scheduled search until a future date, and
 	// UpcomingHide lists everything else. Empty means no narrowing.
 	Upcoming string
+	// Language restricts to books in one language (#1160). Any spelling
+	// NormalizeLanguageCode knows is accepted ("it", "it-IT", "ita"), since
+	// books.language holds the normalised code. LanguageUnknown lists books
+	// with no language. Empty disables the filter.
+	Language string
 }
+
+// LanguageUnknown is the BookListFilter.Language value that lists books with
+// no language recorded.
+const LanguageUnknown = "unknown"
 
 // Values of BookListFilter.Upcoming.
 const (
@@ -435,6 +444,12 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 		where += " AND books.release_date < ?"
 		args = append(args, rb)
 	}
+	if lang := strings.TrimSpace(f.Language); strings.EqualFold(lang, LanguageUnknown) {
+		where += " AND TRIM(books.language) = ''"
+	} else if code := models.NormalizeLanguageCode(lang); code != "" {
+		where += " AND books.language = ?"
+		args = append(args, code)
+	}
 
 	// The count needs the author join only for a search (it matches the author's
 	// search key); every other predicate reads books alone. Without a search it
@@ -471,6 +486,41 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 		return nil, 0, err
 	}
 	return books, total, nil
+}
+
+// LanguageCount is one language and how many books are in it. An empty Code
+// counts the books with no language.
+type LanguageCount struct {
+	Code  string `json:"code"`
+	Count int    `json:"count"`
+}
+
+// LanguageCounts lists the languages of the books userID can see (0 =
+// unscoped, otherwise their own and unowned books, as ListPageFiltered
+// scopes), excluded books left out, most common first. It is what the Books
+// page offers in its language filter (#1160), so only languages that would
+// match something are listed.
+func (r *BookRepo) LanguageCounts(ctx context.Context, userID int64) ([]LanguageCount, error) {
+	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE excluded = 0", userID)
+	rows, err := r.exec.QueryContext(ctx,
+		"SELECT TRIM(books.language) AS lang, COUNT(*) FROM books "+where+
+			" GROUP BY lang ORDER BY COUNT(*) DESC, lang", args...)
+	if err != nil {
+		return nil, fmt.Errorf("count book languages: %w", err)
+	}
+	defer rows.Close()
+	out := []LanguageCount{}
+	for rows.Next() {
+		var c LanguageCount
+		if err := rows.Scan(&c.Code, &c.Count); err != nil {
+			return nil, fmt.Errorf("scan book language count: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate book language counts: %w", err)
+	}
+	return out, nil
 }
 
 func (r *BookRepo) count(ctx context.Context, query string, args []any) (int, error) {

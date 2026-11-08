@@ -69,12 +69,23 @@ describe('booksApi request shapes', () => {
     await booksApi.listBooks({
       authorId: 2, status: 'wanted', monitored: false, includeExcluded: true, limit: 5, offset: 10,
       search: 'dune', mediaType: 'ebook', sort: 'title', releaseFrom: '2026-01-01', releaseBefore: '2026-02-01',
+      language: 'ita',
     })
     expect(seen[0].query).toBe('')
     expect(Object.fromEntries(new URLSearchParams(seen[1].query))).toEqual({
       authorId: '2', status: 'wanted', monitored: 'false', includeExcluded: 'true', limit: '5', offset: '10',
       search: 'dune', mediaType: 'ebook', sort: 'title', releaseFrom: '2026-01-01', releaseBefore: '2026-02-01',
+      language: 'ita',
     })
+  })
+
+  it('asks for the languages in the library', async () => {
+    const seen = record({
+      'GET /book/languages': () => HttpResponse.json([{ code: 'ita', count: 3 }, { code: '', count: 1 }]),
+    })
+    const res = await booksApi.bookLanguages()
+    expect(seen[0].path).toBe('/book/languages')
+    expect(res).toEqual([{ code: 'ita', count: 3 }, { code: '', count: 1 }])
   })
 
   it('collects every page of books for listAllBooks', async () => {

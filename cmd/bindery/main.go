@@ -1026,6 +1026,7 @@ func main() {
 
 		// Books
 		r.Get("/book", bookHandler.List)
+		r.Get("/book/languages", bookHandler.Languages)
 		r.Post("/book/bulk", bulkHandler.BooksBulk)
 		r.Get("/book/{id}", bookHandler.Get)
 		r.Put("/book/{id}", bookHandler.Update)

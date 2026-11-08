@@ -351,6 +351,8 @@ fingerprint and the next request rescans.
 
 ```
 GET    /api/v1/book?status=wanted                 filter by status (wanted, imported, skipped); `imported` is the In library view and also lists a `wanted` book that already has at least one tracked file (of that format when `mediaType` is set), so a partly owned dual format book appears under both
+GET    /api/v1/book?language=ita                  filter by language, any spelling (`it`, `it-IT`, `ita`); `language=unknown` lists books with no language. Combines with `status`, `mediaType`, `monitored` and `search`
+GET    /api/v1/book/languages                     the languages of the books the caller can see, most common first: [{code, count}], with an empty `code` for books with no language. Excluded books are not counted; under tenancy a non-admin counts their own and unowned books, like the list
 POST   /api/v1/book/bulk                          bulk monitor / status flip / exclude / unexclude (`"expectNoFiles": true` skips books that have files on `exclude`)
 GET    /api/v1/book/{id}                          book detail (with editions, history, formats; `importInFlight: true` while a download for it is still on its way into the library)
 PUT    /api/v1/book/{id}                          update monitor / status / metadata
