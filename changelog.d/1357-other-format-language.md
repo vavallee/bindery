@@ -1,2 +1,0 @@
-### Fixed
-- **Another ebook format found by the library scan now fills a missing book language too** (#1357, #1160). When a scan added an AZW3 or MOBI beside the EPUB a book already tracks, it skipped the language check the other scan matches do, so a book with no language stayed blank even when that file declared one. It now takes the file's language the same way, and still only when the book has none.
