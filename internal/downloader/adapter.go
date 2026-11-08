@@ -213,10 +213,12 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 	case "transmission":
 		trans := TransmissionFor(client)
 		// Transmission's download-dir must be an absolute path. The Category
-		// field is repurposed as an optional path override for Transmission; if
-		// the user left it as a bare label (e.g. "books") we pass "" so
-		// Transmission falls back to its own configured default directory.
-		transDL := client.Category
+		// and audiobook Category fields are repurposed as optional path
+		// overrides for Transmission, picked per media type like every other
+		// client (#2499); if the user left the one in force as a bare label
+		// (e.g. "books") we pass "" so Transmission falls back to its own
+		// configured default directory.
+		transDL := ResolveCategory(client, opts.MediaType)
 		if !strings.HasPrefix(transDL, "/") {
 			transDL = ""
 		}
@@ -613,9 +615,21 @@ func getNZBGetLiveStatuses(ctx context.Context, client *models.DownloadClient) (
 func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) (map[string]LiveStatus, error) {
 	if client.Type == "transmission" {
 		trans := TransmissionFor(client)
-		torrents, err := trans.GetTorrents(ctx, client.Category)
-		if err != nil {
-			return nil, err
+		// Both the ebook and the audiobook destination, as the stall check and
+		// the importer poll (#2499).
+		var torrents []transmission.Torrent
+		seen := make(map[int64]bool)
+		for _, cat := range CategoriesToPoll(client) {
+			got, err := trans.GetTorrents(ctx, cat)
+			if err != nil {
+				return nil, err
+			}
+			for _, t := range got {
+				if !seen[t.ID] {
+					seen[t.ID] = true
+					torrents = append(torrents, t)
+				}
+			}
 		}
 
 		out := make(map[string]LiveStatus, len(torrents))

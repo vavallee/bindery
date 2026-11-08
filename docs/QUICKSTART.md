@@ -113,7 +113,9 @@ username/password for the others), and the **Category / Label** (default
 > **The category must already exist in the client.** Bindery does not create
 > it for you. Create the matching category/label in SABnzbd / NZBGet /
 > qBittorrent / Deluge first, or grabs will be misfiled or rejected.
-> (Transmission uses a download-directory path instead of a category.
+> (Transmission uses a download-directory path instead of a category, and
+> honours the audiobook category the same way, so audiobooks can go to their
+> own absolute path.
 > rTorrent applies the label itself via `d.custom1`, so nothing needs to
 > exist up front — leaving it blank makes Bindery poll every torrent.)
 

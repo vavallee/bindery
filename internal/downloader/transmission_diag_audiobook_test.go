@@ -1,0 +1,26 @@
+package downloader
+
+import (
+	"context"
+	"testing"
+
+	"github.com/vavallee/bindery/internal/models"
+)
+
+// The doctor reports the audiobook destination Transmission is sent (#2499).
+func TestGrabSavePath_TransmissionAudiobookCategory(t *testing.T) {
+	c := fakeClient(t, transmissionDirFake(t, "/tr/default", false), "transmission")
+	c.Category, c.CategoryAudiobook = "/tr/books", "/tr/audio"
+	for mediaType, want := range map[string]string{
+		models.MediaTypeAudiobook: "/tr/audio",
+		models.MediaTypeEbook:     "/tr/books",
+	} {
+		info, err := GrabSavePath(context.Background(), c, mediaType, "", "", "")
+		if err != nil {
+			t.Fatalf("%s: %v", mediaType, err)
+		}
+		if info.Path != want || info.Category != want {
+			t.Errorf("%s: path %q category %q, want %q", mediaType, info.Path, info.Category, want)
+		}
+	}
+}
