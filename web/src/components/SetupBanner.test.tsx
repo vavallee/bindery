@@ -91,6 +91,24 @@ describe('SetupBanner root folder', () => {
     expect(screen.getByRole('link', { name: 'Set up Indexers' })).toHaveAttribute('href', '/settings?tab=indexers')
   })
 
+  // The root folder answer takes two requests, so the indexer and client one
+  // lands first. Showing the two part message and then swapping it for the
+  // three part one would announce the banner twice.
+  it('waits for the root folder answer before saying anything', async () => {
+    setup({ indexer: false, client: false, library: false })
+    let resolveStorage: (v: StorageHealth) => void = () => {}
+    vi.mocked(api.getStorage).mockReturnValue(new Promise(r => { resolveStorage = r }))
+    const { container } = renderIt()
+
+    await waitFor(() => expect(api.listDownloadClients).toHaveBeenCalled())
+    await waitFor(() => expect(api.getStorage).toHaveBeenCalled())
+    await Promise.resolve()
+    expect(container).toBeEmptyDOMElement()
+
+    resolveStorage(storage(false))
+    expect(await screen.findByText(/add a root folder, an indexer and a download client/)).toBeInTheDocument()
+  })
+
   it('renders nothing when everything is in place', async () => {
     setup({ indexer: true, client: true, library: true })
     const { container } = renderIt()

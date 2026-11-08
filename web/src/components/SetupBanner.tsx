@@ -51,8 +51,8 @@ export default function SetupBanner() {
   const { t } = useTranslation()
   const { needsIndexer, needsClient, needsAny } = useNeedsSetup()
   // Mounted for admins only (App.tsx), who are the ones who can add one.
-  // Unknown (null) counts as fine until answered, so nothing flashes.
-  const needsRoot = useLibraryFolderReady(true) === false
+  const libraryReady = useLibraryFolderReady(true)
+  const needsRoot = libraryReady === false
   const [dismissed, setDismissed] = useState(() => {
     try {
       return localStorage.getItem(STORAGE_KEY)
@@ -60,6 +60,11 @@ export default function SetupBanner() {
       return null
     }
   })
+
+  // Say nothing until the root folder answer is in. It takes two requests,
+  // so the indexer and client answer lands first, and showing that message
+  // only to swap it for the root folder one would announce the banner twice.
+  if (libraryReady === null) return null
 
   const sig = signature(needsRoot, needsIndexer, needsClient)
   if (!(needsAny || needsRoot) || dismissed === sig) return null
