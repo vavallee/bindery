@@ -199,6 +199,66 @@ func TestResolveHardcoverSyncInterval(t *testing.T) {
 	}
 }
 
+// TestStart_ScanLibraryUsesConfiguredInterval verifies the scan-library cron
+// entry honours a valid configured library.scan_interval (#3692). 45m is used
+// because no other job registers at that cadence.
+func TestStart_ScanLibraryUsesConfiguredInterval(t *testing.T) {
+	s := schedulerWithSetting(t, true, "library.scan_interval", "45m")
+	s.Start()
+	entries := s.cron.Entries()
+	s.Stop()
+
+	if !hasEntryWithDelay(entries, 45*time.Minute) {
+		t.Error("expected a cron entry at the configured 45m interval, found none")
+	}
+}
+
+// TestStart_ScanLibraryKeepsSixHourDefault: with nothing stored the scan stays
+// on the 6h timer it always had, so an install that never touches the setting
+// behaves as before.
+func TestStart_ScanLibraryKeepsSixHourDefault(t *testing.T) {
+	s := schedulerWithSetting(t, true, "library.scan_interval", "")
+	s.Start()
+	entries := s.cron.Entries()
+	s.Stop()
+
+	if defaultLibraryScanInterval != 6*time.Hour || !hasEntryWithDelay(entries, defaultLibraryScanInterval) {
+		t.Errorf("expected a 6h scan entry by default (default is %s)", defaultLibraryScanInterval)
+	}
+}
+
+// TestResolveLibraryScanInterval covers the helper directly: unset falls back
+// to 6h, inclusive bounds pass through, and out-of-bounds or unparseable values
+// fall back, the same clamping the API validator enforces.
+func TestResolveLibraryScanInterval(t *testing.T) {
+	resolve := func(seed bool, v string) time.Duration {
+		return schedulerWithSetting(t, seed, "library.scan_interval", v).resolveLibraryScanInterval()
+	}
+	if got := resolve(false, ""); got != defaultLibraryScanInterval {
+		t.Errorf("nil settings: got %s, want %s", got, defaultLibraryScanInterval)
+	}
+	if got := resolve(true, ""); got != defaultLibraryScanInterval {
+		t.Errorf("unset setting: got %s, want %s", got, defaultLibraryScanInterval)
+	}
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{
+		{"15m", minLibraryScanInterval},
+		{"1h", time.Hour},
+		{"168h", maxLibraryScanInterval},
+	} {
+		if got := resolve(true, tc.value); got != tc.want {
+			t.Errorf("valid %q: got %s, want %s", tc.value, got, tc.want)
+		}
+	}
+	for _, bad := range []string{"14m", "169h", "garbage"} {
+		if got := resolve(true, bad); got != defaultLibraryScanInterval {
+			t.Errorf("invalid %q: got %s, want default %s", bad, got, defaultLibraryScanInterval)
+		}
+	}
+}
+
 // TestStart_SearchWantedUsesConfiguredInterval verifies the search-wanted cron
 // entry honours a valid configured search.interval rather than the default.
 func TestStart_SearchWantedUsesConfiguredInterval(t *testing.T) {

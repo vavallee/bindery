@@ -418,6 +418,11 @@ func TestValidateSettingValue_KnownKeysUnchanged(t *testing.T) {
 		{"hardcover sync interval rejects under an hour", SettingHardcoverSyncInterval, "5m", true},
 		{"hardcover sync interval rejects over a week", SettingHardcoverSyncInterval, "1000h", true},
 
+		{"library scan interval accepts 6h", SettingLibraryScanInterval, "6h", false},
+		{"library scan interval accepts empty", SettingLibraryScanInterval, "", false},
+		{"library scan interval rejects under 15 minutes", SettingLibraryScanInterval, "5m", true},
+		{"library scan interval rejects over a week", SettingLibraryScanInterval, "1000h", true},
+
 		{"discovery interval accepts off", SettingAuthorDiscoveryInterval, "off", false},
 		{"discovery interval accepts empty", SettingAuthorDiscoveryInterval, "", false},
 		{"discovery interval accepts daily", SettingAuthorDiscoveryInterval, "24h", false},
@@ -496,6 +501,7 @@ var webSettingKeys = []string{
 	"import.write_opf_sidecar",
 	"library.defaultAudiobookRootFolderId",
 	"library.defaultRootFolderId",
+	"library.scan_interval",
 	"log.retention_days",
 	"metadata.primary_provider",
 	"naming.audiobook_file_template",

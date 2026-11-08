@@ -159,6 +159,31 @@ const (
 	maxHardcoverSyncInterval = 168 * time.Hour
 )
 
+// defaultLibraryScanInterval is the fallback library scan cadence used when the
+// "library.scan_interval" DB setting is absent or invalid. 6h is the literal the
+// scan-library job was registered with before the setting existed (#3692), so an
+// install that never touches the setting keeps its previous behaviour.
+const defaultLibraryScanInterval = 6 * time.Hour
+
+// minLibraryScanInterval and maxLibraryScanInterval mirror the bounds the API
+// validator enforces for "library.scan_interval" (see
+// internal/api/settings_handler.go::validateSettingValue,
+// SettingLibraryScanInterval case), re-checked here for values that reached the
+// DB out-of-band. The floor is 15m: a scan walks every library root, and the
+// cron chain skips a run while the previous one is still going, so a faster
+// setting would only keep a big library permanently scanning.
+const (
+	minLibraryScanInterval = 15 * time.Minute
+	maxLibraryScanInterval = 168 * time.Hour
+)
+
+// resolveLibraryScanInterval reads the "library.scan_interval" DB setting and
+// returns the library scan cadence, with the same unset/invalid/out-of-bounds
+// fallback rules as resolveSearchInterval (#3692).
+func (s *Scheduler) resolveLibraryScanInterval() time.Duration {
+	return s.resolveInterval("library.scan_interval", defaultLibraryScanInterval, minLibraryScanInterval, maxLibraryScanInterval)
+}
+
 // resolveSearchInterval reads the "search.interval" DB setting and returns the
 // wanted-book search cadence. It falls back to defaultSearchInterval (logging a
 // WARN) when the setting is unset/empty, unparseable, or outside the
@@ -642,8 +667,10 @@ func (s *Scheduler) Start() {
 		s.refreshMetadata()
 	}))
 
-	// Scan library every 6 hours
-	s.cron.AddFunc("@every 6h", runJob("scan-library", func() {
+	// Scan library on a configurable interval (default 6h). Read once at
+	// Start(), so a restart applies a change, and clamped to the bounds the API
+	// validator enforces (#3692).
+	s.cron.AddFunc(fmt.Sprintf("@every %s", s.resolveLibraryScanInterval()), runJob("scan-library", func() {
 		slog.Info("job: scan library")
 		s.scanner.ScanLibrary(s.ctx())
 	}))

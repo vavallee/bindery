@@ -202,7 +202,7 @@ describe('Settings search', () => {
     const ADMIN_ONLY = [
       'settings.general.fileNaming', 'settings.general.downloads', 'settings.general.storage', 'settings.general.dbCheck',
       'settings.general.library', 'settings.general.search', 'settings.general.hardcoverSync',
-      'settings.general.discovery', 'settings.general.seriesCheck', 'settings.general.defaultLibraryLocation',
+      'settings.general.libraryScan', 'settings.general.discovery', 'settings.general.seriesCheck', 'settings.general.defaultLibraryLocation',
     ]
     const EVERYONE = ['settings.general.appearance']
     expect(HEADINGS.filter(h => h.adminOnly).map(h => h.key)).toEqual(ADMIN_ONLY)

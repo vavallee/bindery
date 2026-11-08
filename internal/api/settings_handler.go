@@ -234,6 +234,13 @@ const SettingSearchInterval = "search.interval"
 // literal the job used before the setting existed). Takes effect on restart.
 const SettingHardcoverSyncInterval = "hardcover.sync_interval"
 
+// SettingLibraryScanInterval is the KV key for the library scan cadence (#3692).
+// Value is a Go duration string (e.g. "30m", "6h", "24h") bounded to
+// [15m, 168h]. Empty or unset falls back to the scheduler's
+// defaultLibraryScanInterval (6h, the literal the job used before the setting
+// existed). Takes effect on restart.
+const SettingLibraryScanInterval = "library.scan_interval"
+
 // SettingAuthorDiscoveryInterval is the KV key for how often each monitored
 // author's catalogue is checked for new books by the scheduled discovery job
 // (#2236). Value is "off" or a Go duration string bounded to [24h, 720h].
@@ -1275,6 +1282,23 @@ func validateSettingValue(key, value string) error {
 		}
 		if d > 168*time.Hour {
 			return fmt.Errorf("hardcover.sync_interval %q exceeds the maximum of 168h (7 days)", value)
+		}
+	case SettingLibraryScanInterval:
+		// Empty = unset (scheduler falls back to its built-in 6h default).
+		// Below 15m a scan of a big library would never finish before the next
+		// one is due; above a week the setting stops being a cadence.
+		if value == "" {
+			return nil
+		}
+		d, err := time.ParseDuration(value)
+		if err != nil {
+			return fmt.Errorf("library.scan_interval %q is not a valid duration (e.g. 30m, 6h, 24h)", value)
+		}
+		if d < 15*time.Minute {
+			return fmt.Errorf("library.scan_interval %q is too short, the minimum is 15m", value)
+		}
+		if d > 168*time.Hour {
+			return fmt.Errorf("library.scan_interval %q exceeds the maximum of 168h (7 days)", value)
 		}
 	case SettingSeriesMonitoringInterval:
 		// Same bounds and meaning as authors.discovery.interval: unset and

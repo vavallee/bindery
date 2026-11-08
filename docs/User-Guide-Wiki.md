@@ -96,7 +96,8 @@ Almost every "why is Bindery doing that?" question comes down to one of these.
 ### 1. Library Scan is a reconciler, not an importer
 
 **Scan Library** (Settings → General → Library, and automatically every 6
-hours) matches files already on disk to books **already in your catalogue**.
+hours by default; change that under Settings → General → Library scan, from 15
+minutes to 7 days, applied after a restart) matches files already on disk to books **already in your catalogue**.
 It never creates authors or books from files on its own. If you point a fresh
 install at a folder of 3,000 epubs and hit Scan, you get a long list of
 unmatched books on **Import → In your library** and an empty library, because

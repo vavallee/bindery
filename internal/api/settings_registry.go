@@ -192,6 +192,12 @@ var settingDescriptors = []SettingDescriptor{
 		State:           SettingStateActive,
 	},
 	{
+		Key: SettingLibraryScanInterval, Type: SettingTypeDuration, Default: "6h", Min: "15m", Max: "168h",
+		Description:     "How often the library is scanned for new and changed files. The Scan Library button on Settings, General runs one right away.",
+		RestartRequired: true,
+		State:           SettingStateActive,
+	},
+	{
 		Key: SettingAuthorDiscoveryInterval, Type: SettingTypeDuration, Default: "off", Min: "24h", Max: "720h",
 		Description: "How often each monitored author's catalogue is checked for new books. Unset and \"off\" both mean no scheduled discovery; store a duration to turn it on.",
 		State:       SettingStateActive,
