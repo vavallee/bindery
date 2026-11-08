@@ -2084,8 +2084,13 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 		_ = json.Unmarshal([]byte(genresStr), &b.Genres)
 		// OpenLibrary machine tags ("nyt:...=2015-01-25") stored before
 		// ingest dropped them are hidden on read; the next save stores the
-		// clean list.
-		b.Genres = textutil.DropJunkSubjects(b.Genres)
+		// clean list. Genres the user locked are theirs and are left alone,
+		// and the narrow rule only matches OpenLibrary's own "key:value"
+		// shape, so an unlocked genre from an Audiobookshelf import such as
+		// "Time: Future" or "E=mc2" is kept too.
+		if !b.IsFieldLocked(models.BookFieldGenres) {
+			b.Genres = textutil.DropOpenLibraryMachineTags(b.Genres)
+		}
 		if b.Genres == nil {
 			b.Genres = []string{}
 		}
