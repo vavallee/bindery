@@ -12,10 +12,11 @@ import (
 var trailingGroupRE = regexp.MustCompile(`\s*[\[(]([^\[\]()]*)[\])]\s*$`)
 
 // trailingBareMarkerRE matches the two marker words written into a title with
-// no brackets, after a space or a separator: "Acts of War: Unabridged
-// Audiobook". Both words are required; a title that merely ends in
-// "Audiobook" is left alone.
-var trailingBareMarkerRE = regexp.MustCompile(`(?i)[\s,:;/-]+(?:unabridged\s*,?\s*audiobook|audiobook\s*,?\s*unabridged)\s*$`)
+// no brackets, after a colon, comma or hyphen separator: "Acts of War:
+// Unabridged Audiobook". Both words and the separator are required, so a
+// title that merely ends in the words ("How to Record an Unabridged
+// Audiobook") is left alone.
+var trailingBareMarkerRE = regexp.MustCompile(`(?i)\s*[:,-]\s*(?:unabridged\s*,?\s*audiobook|audiobook\s*,?\s*unabridged)\s*$`)
 
 // formatMarkerWords are the only words a trailing group may hold to count as
 // a format note rather than part of the title.
