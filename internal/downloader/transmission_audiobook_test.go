@@ -44,26 +44,33 @@ func sentTransmissionDir(t *testing.T, client *models.DownloadClient, mediaType 
 }
 
 // An audiobook grab honours the audiobook category as Transmission's
-// download-dir, the same way an ebook grab honours the category (#2499).
+// download-dir (#2499). The audiobook absolute path wins, otherwise the ebook
+// absolute path, otherwise none: an audiobook must never land in a folder
+// Bindery does not poll.
 func TestSendDownload_TransmissionAudiobookDestination(t *testing.T) {
-	mk := func() *models.DownloadClient {
-		return &models.DownloadClient{Category: "/tr/books", CategoryAudiobook: "/tr/audio"}
+	cases := []struct {
+		name       string
+		cat, audio string
+		mediaType  string
+		want       string
+		wantSent   bool
+	}{
+		{"abs/abs audiobook", "/tr/books", "/tr/audio", models.MediaTypeAudiobook, "/tr/audio", true},
+		{"abs/abs ebook", "/tr/books", "/tr/audio", models.MediaTypeEbook, "/tr/books", true},
+		{"label/abs audiobook", "books", "/tr/audio", models.MediaTypeAudiobook, "/tr/audio", true},
+		{"label/abs ebook", "books", "/tr/audio", models.MediaTypeEbook, "", false},
+		{"abs/label audiobook falls back to ebook", "/tr/books", "audio", models.MediaTypeAudiobook, "/tr/books", true},
+		{"label/label audiobook", "books", "audio", models.MediaTypeAudiobook, "", false},
+		{"abs/empty audiobook", "/tr/books", "", models.MediaTypeAudiobook, "/tr/books", true},
 	}
-	if got, _ := sentTransmissionDir(t, mk(), models.MediaTypeAudiobook); got != "/tr/audio" {
-		t.Errorf("audiobook download-dir = %q, want /tr/audio", got)
-	}
-	if got, _ := sentTransmissionDir(t, mk(), models.MediaTypeEbook); got != "/tr/books" {
-		t.Errorf("ebook download-dir = %q, want /tr/books", got)
-	}
-	// With no audiobook category set the audiobook falls back to Category.
-	c := &models.DownloadClient{Category: "/tr/books"}
-	if got, _ := sentTransmissionDir(t, c, models.MediaTypeAudiobook); got != "/tr/books" {
-		t.Errorf("fallback audiobook download-dir = %q, want /tr/books", got)
-	}
-	// A bare label is not a directory, so the leading slash rule still sends none.
-	c = &models.DownloadClient{Category: "/tr/books", CategoryAudiobook: "audio"}
-	if got, ok := sentTransmissionDir(t, c, models.MediaTypeAudiobook); ok {
-		t.Errorf("label category sent download-dir %q, want none", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &models.DownloadClient{Category: tc.cat, CategoryAudiobook: tc.audio}
+			got, ok := sentTransmissionDir(t, c, tc.mediaType)
+			if got != tc.want || ok != tc.wantSent {
+				t.Errorf("download-dir = %q (sent %v), want %q (sent %v)", got, ok, tc.want, tc.wantSent)
+			}
+		})
 	}
 }
 

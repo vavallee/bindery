@@ -24,3 +24,17 @@ func TestGrabSavePath_TransmissionAudiobookCategory(t *testing.T) {
 		}
 	}
 }
+
+// The doctor mirrors the grab when the audiobook category is a bare label:
+// the ebook path is what is sent.
+func TestGrabSavePath_TransmissionAudiobookLabelFallsBack(t *testing.T) {
+	c := fakeClient(t, transmissionDirFake(t, "/tr/default", false), "transmission")
+	c.Category, c.CategoryAudiobook = "/tr/books", "audio"
+	info, err := GrabSavePath(context.Background(), c, models.MediaTypeAudiobook, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Path != "/tr/books" || info.Source != "the save path Bindery sends" {
+		t.Errorf("path %q source %q, want /tr/books from the save path Bindery sends", info.Path, info.Source)
+	}
+}

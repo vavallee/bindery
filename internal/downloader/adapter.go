@@ -218,10 +218,7 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		// client (#2499); if the user left the one in force as a bare label
 		// (e.g. "books") we pass "" so Transmission falls back to its own
 		// configured default directory.
-		transDL := ResolveCategory(client, opts.MediaType)
-		if !strings.HasPrefix(transDL, "/") {
-			transDL = ""
-		}
+		transDL := transmissionDownloadDir(client, opts.MediaType)
 		added, err := trans.AddTorrentWithLimits(ctx, sourceURL, transDL, transmission.SeedLimits{
 			Ratio:       opts.SeedRatio,
 			IdleMinutes: opts.InactiveSeedTimeMinutes,
@@ -324,6 +321,22 @@ func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 		result.RemoteID = resp.NzoIDs[0]
 		return result, nil
 	}
+}
+
+// transmissionDownloadDir is the download-dir a Transmission grab of mediaType
+// sends: the audiobook category for an audiobook grab when it is an absolute
+// path, otherwise the ebook category when that is absolute, otherwise "" (the
+// client default). Falling back to the ebook path keeps an audiobook out of
+// Transmission's default folder, where nothing Bindery polls would match it,
+// because Bindery sets no Transmission labels on add (#2499).
+func transmissionDownloadDir(client *models.DownloadClient, mediaType string) string {
+	if mediaType == models.MediaTypeAudiobook && strings.HasPrefix(client.CategoryAudiobook, "/") {
+		return client.CategoryAudiobook
+	}
+	if strings.HasPrefix(client.Category, "/") {
+		return client.Category
+	}
+	return ""
 }
 
 // torrentSavePath renders Bindery's target download directory in the download
