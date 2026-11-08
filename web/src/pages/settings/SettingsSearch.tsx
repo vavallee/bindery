@@ -2,8 +2,8 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { searchSettings, SearchResult, SettingsTabId } from './settingsSearchIndex'
 
-// A search box at the top of Settings that jumps to a tab or section heading
-// (#3059). It is a combobox over a listbox (ARIA 1.2): focus stays in the input,
+// A search box at the top of Settings that jumps to a tab, a section heading or
+// a single field (#3059). It is a combobox over a listbox (ARIA 1.2): focus stays in the input,
 // the highlighted option is named by aria-activedescendant, and a polite live
 // region announces how many results there are.
 
@@ -11,6 +11,8 @@ export interface SettingsSearchPick {
   tab: SettingsTabId
   /** Heading text to scroll to once the tab has rendered. */
   heading?: string
+  /** Field anchor id (the setting key) to scroll to and highlight. */
+  anchor?: string
 }
 
 interface Props {
@@ -61,7 +63,7 @@ export default function SettingsSearch({ tabs, isAdmin, settingKeys, onPick, onA
   const pick = (r: SearchResult) => {
     setQuery('')
     setActive(0)
-    onPick({ tab: r.tab, heading: r.kind === 'heading' ? r.heading : undefined })
+    onPick({ tab: r.tab, heading: r.kind === 'heading' ? r.heading : undefined, anchor: r.kind === 'field' ? r.anchor : undefined })
   }
 
   const open = query.trim() !== ''
@@ -132,7 +134,7 @@ export default function SettingsSearch({ tabs, isAdmin, settingKeys, onPick, onA
               id={optionId(i)}
               role="option"
               aria-selected={i === current}
-                onClick={() => pick(r)}
+              onClick={() => pick(r)}
               className={`cursor-pointer min-h-11 flex flex-wrap items-center gap-x-2 px-3 py-2 text-sm border-l-4 forced-colors:outline-2 -outline-offset-2 ${
                 i === current
                   ? 'border-emerald-600 dark:border-emerald-500 bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white forced-colors:outline'
@@ -140,7 +142,7 @@ export default function SettingsSearch({ tabs, isAdmin, settingKeys, onPick, onA
               }`}
             >
               <span className="font-medium break-words">
-                {r.kind === 'tab' ? r.tabLabel : r.kind === 'heading' ? r.heading : r.settingKey}
+                {r.kind === 'tab' ? r.tabLabel : r.kind === 'heading' ? r.heading : r.kind === 'field' ? r.label : r.settingKey}
               </span>
               {r.kind !== 'tab' && (
                 <span className="text-xs text-fg-muted">{r.tabLabel}</span>

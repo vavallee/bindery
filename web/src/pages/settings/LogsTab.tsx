@@ -386,7 +386,7 @@ export default function LogsTab() {
       <section className="mt-8">
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.logRetention')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div id="log.retention_days" className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="min-w-0">
               <label htmlFor={`${fid}-retention`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.logRetentionLabel')}</label>
               <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.logRetentionHint')}</p>
@@ -483,7 +483,7 @@ export default function LogsTab() {
       <section className="mt-8">
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.telemetry')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
-          <div className="flex items-start justify-between gap-4">
+          <div id="telemetry.enabled" className="flex items-start justify-between gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.telemetryLabel')}</label>
               <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.telemetryHint')}</p>

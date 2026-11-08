@@ -152,7 +152,7 @@ export default function MetadataTab() {
 
         {/* Metadata provider */}
         <div className="space-y-4">
-        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+        <div id="metadata.primary_provider" className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
           <label htmlFor={`${fid}-5`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
             {t('settings.general.metadataProviderLabel', 'Primary metadata provider')}
           </label>
@@ -199,7 +199,7 @@ export default function MetadataTab() {
         {/* Metadata sources that can be turned off (#1890, #2015). One stored
             list, metadata.enrichers_disabled, so a checked box means the source
             is NOT in it. The primary stays on whatever the list says. */}
-        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900" data-testid="metadata-sources">
+        <div id="metadata.enrichers_disabled" className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900" data-testid="metadata-sources">
           <h4 className="text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
             {t('settings.general.enrichersHeading', 'Enrichers')}
           </h4>
@@ -262,7 +262,7 @@ export default function MetadataTab() {
 
         {/* Author defaults */}
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
-          <div>
+          <div id="default.media_type">
             <label htmlFor={`${fid}-6`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.defaultMediaTypeLabel', 'Default media type')}
             </label>
@@ -283,7 +283,7 @@ export default function MetadataTab() {
               <option value="both">{t('mediaType.both', 'Both')}</option>
             </select>
             {(settings['default.media_type'] ?? 'ebook') !== 'both' && (
-              <label className="mt-3 flex items-start gap-2 text-sm text-slate-800 dark:text-zinc-200">
+              <label id="default.media_type_strict" className="mt-3 flex items-start gap-2 text-sm text-slate-800 dark:text-zinc-200">
                 <input
                   type="checkbox"
                   className="mt-0.5"
@@ -303,7 +303,7 @@ export default function MetadataTab() {
               </label>
             )}
           </div>
-          <div>
+          <div id="author.default_monitor_mode">
             <label htmlFor={`${fid}-7`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.defaultMonitorModeLabel', 'Default monitor mode')}
             </label>
@@ -326,7 +326,7 @@ export default function MetadataTab() {
             </select>
           </div>
           {(settings['author.default_monitor_mode'] ?? 'all') === 'latest' && (
-            <div>
+            <div id="author.default_monitor_latest_count">
               <label htmlFor={`${fid}-8`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
                 {t('settings.general.defaultMonitorLatestCountLabel', 'Latest book count')}
               </label>
@@ -349,7 +349,7 @@ export default function MetadataTab() {
 
         {/* Auto-grab */}
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <div className="flex items-center justify-between">
+          <div id="autoGrab.enabled" className="flex items-center justify-between">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.autoGrabLabel')}</label>
               <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.autoGrabHint')}</p>
@@ -369,7 +369,7 @@ export default function MetadataTab() {
 
         {/* Recommendations */}
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <div className="flex items-center justify-between">
+          <div id="recommendations.enabled" className="flex items-center justify-between">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.recommendationsLabel')}</label>
               <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.recommendationsHint')}</p>
@@ -390,7 +390,7 @@ export default function MetadataTab() {
         {/* Author photos and bios from Wikidata (#3287). Opt in, like NB and
             BnF: while off, Wikimedia is sent no request. */}
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <div className="flex items-center justify-between gap-4">
+          <div id="metadata.author_enrichment.wikidata" className="flex items-center justify-between gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.authorWikidataLabel', 'Author photos and bios from Wikidata')}</label>
               <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.authorWikidataHint', 'Fills an author\'s missing photo and bio from Wikimedia Commons and Wikipedia, found on Wikidata by the author\'s library authority ID (NORAF, GND, BnF or OpenLibrary), never by name. Lookups ride on the daily author refresh, and each photo and bio is credited on the author\'s page. While this is off, Wikimedia is sent no request.')}</p>

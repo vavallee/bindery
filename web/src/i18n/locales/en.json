@@ -1292,7 +1292,7 @@
     },
     "sectionLabel": "Settings section",
     "search": {
-      "label": "Find a settings tab or section",
+      "label": "Find a setting, tab or section",
       "placeholder": "Try telemetry, naming or a setting key",
       "results": "Settings search results",
       "none": "No matching tab or section",

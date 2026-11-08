@@ -112,7 +112,7 @@ export default function RootFoldersTab() {
       )}
 
       {rootFolders.length > 0 && (
-        <div className="mb-6">
+        <div id="library.defaultRootFolderId" className="mb-6">
           <label htmlFor="default-root-folder" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
             {t('settings.rootfolders.defaultLabel')}
           </label>
@@ -132,7 +132,7 @@ export default function RootFoldersTab() {
       )}
 
       {rootFolders.length > 0 && (
-        <div className="mb-6">
+        <div id="library.defaultAudiobookRootFolderId" className="mb-6">
           <label htmlFor="default-audiobook-root-folder" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
             {t('settings.rootfolders.audiobookDefaultLabel')}
           </label>
