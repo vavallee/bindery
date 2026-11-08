@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"testing"
 
@@ -159,7 +160,7 @@ func TestImporter_CleanupKeepsCalibreOnlyFormats(t *testing.T) {
 func plantCalibreCreatedFile(t *testing.T, books *db.BookRepo, snaps *db.CalibreEntitySnapshotRepo, prov *db.CalibreProvenanceRepo, runID, bookID int64, path string) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := books.AddBookFileIfMissing(ctx, bookID, models.MediaTypeEbook, path); err != nil {
+	if _, err := books.AddBookFileIfMissing(ctx, bookID, models.BookFileFormatFor(path, models.MediaTypeEbook), path); err != nil {
 		t.Fatalf("AddBookFileIfMissing: %v", err)
 	}
 	externalID := calibreBookFileExternalID(path)
@@ -348,5 +349,154 @@ func TestRollback_AfterARunWithSkippedFormats(t *testing.T) {
 	}
 	if b, _ := bookRepo.GetByCalibreID(ctx, 2); b != nil {
 		t.Errorf("book the rolled back run created survived: %+v", b)
+	}
+}
+
+// A book with an EPUB and an AAC in Calibre stays owned in both formats across
+// imports: the cleanup that runs on the second import must not take the AAC
+// back and drop the book to wanted.
+func TestImporter_EpubPlusAacStaysOwned(t *testing.T) {
+	imp, fr, _, bookRepo, _, _, _ := newSeriesRollbackFixture(t)
+	ctx := context.Background()
+	cb := sampleCalibreBook(1, "Book One", "Alice Author")
+	cb.Formats = append(cb.Formats, CalibreFormat{Format: "AAC", FileName: "Book One", AbsolutePath: "/lib/Book One.aac"})
+	fr.books = []CalibreBook{cb}
+
+	for run := 1; run <= 2; run++ {
+		stats, err := imp.Run(ctx, "/lib")
+		if err != nil {
+			t.Fatalf("run %d: %v", run, err)
+		}
+		if stats.UnsupportedFilesRemoved != 0 {
+			t.Errorf("run %d removed %d rows, want 0", run, stats.UnsupportedFilesRemoved)
+		}
+	}
+	book, _ := bookRepo.GetByCalibreID(ctx, 1)
+	if book.AudiobookFilePath != "/lib/Book One.aac" {
+		t.Errorf("audiobook path = %q, want the AAC", book.AudiobookFilePath)
+	}
+	if book.EbookFilePath != "/lib/Book One.epub" {
+		t.Errorf("ebook path = %q, want the EPUB", book.EbookFilePath)
+	}
+	if book.Status != models.BookStatusImported {
+		t.Errorf("status = %q, want %q", book.Status, models.BookStatusImported)
+	}
+}
+
+// The legacy books.file_path column is what OPDS and the file download serve.
+// A re-import used to set it from Formats[0] whatever that was, so a book whose
+// only Calibre format is the Polish backup got the backup served as its file.
+func TestImporter_LegacyFilePathSkipsUnusableFormats(t *testing.T) {
+	imp, fr, _, bookRepo, _, _, _ := newSeriesRollbackFixture(t)
+	ctx := context.Background()
+	cb := sampleCalibreBook(1, "Book One", "Alice Author")
+	cb.Formats = []CalibreFormat{{Format: "ORIGINAL_EPUB", FileName: "Book One", AbsolutePath: "/lib/Book One.original_epub"}}
+	fr.books = []CalibreBook{cb}
+	// The first run creates the book; the second goes through applyBookFields.
+	for run := 1; run <= 2; run++ {
+		if _, err := imp.Run(ctx, "/lib"); err != nil {
+			t.Fatalf("run %d: %v", run, err)
+		}
+	}
+	book, _ := bookRepo.GetByCalibreID(ctx, 1)
+	if book.FilePath != "" {
+		t.Errorf("legacy file_path = %q, want empty for a book with no usable format", book.FilePath)
+	}
+}
+
+func TestFirstTrackedFormatPath(t *testing.T) {
+	cases := []struct {
+		name    string
+		formats []CalibreFormat
+		want    string
+	}{
+		{"backup first", []CalibreFormat{
+			{Format: "ORIGINAL_EPUB", AbsolutePath: "/lib/a.original_epub"},
+			{Format: "EPUB", AbsolutePath: "/lib/a.epub"},
+		}, "/lib/a.epub"},
+		{"calibre only format", []CalibreFormat{
+			{Format: "KFX", AbsolutePath: "/lib/a.kfx"},
+			{Format: "PRC", AbsolutePath: "/lib/a.prc"},
+		}, "/lib/a.prc"},
+		{"none usable", []CalibreFormat{
+			{Format: "KFX", AbsolutePath: "/lib/a.kfx"},
+			{Format: "ORIGINAL_AZW3", AbsolutePath: "/lib/a.original_azw3"},
+		}, ""},
+		{"empty path skipped", []CalibreFormat{
+			{Format: "EPUB", AbsolutePath: ""},
+			{Format: "MOBI", AbsolutePath: "/lib/a.mobi"},
+		}, "/lib/a.mobi"},
+	}
+	for _, tc := range cases {
+		if got := firstTrackedFormatPath(CalibreBook{Formats: tc.formats}); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The cleanup goes by the row's current owner. A backup row an import created
+// for book A that the user has since moved to book B (Fix match) no longer
+// matches its provenance, so it is not the import's to remove. Pins the
+// bf.book_id = p.local_id guard.
+func TestImporter_CleanupSkipsARowMovedToAnotherBook(t *testing.T) {
+	imp, fr, _, bookRepo, runsRepo, snapRepo, provRepo := newSeriesRollbackFixture(t)
+	ctx := context.Background()
+	fr.books = []CalibreBook{sampleCalibreBook(1, "Book One", "Alice Author"), sampleCalibreBook(2, "Book Two", "Alice Author")}
+	if _, err := imp.Run(ctx, "/lib"); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	a, _ := bookRepo.GetByCalibreID(ctx, 1)
+	b, _ := bookRepo.GetByCalibreID(ctx, 2)
+	backup := "/lib/Book One.original_epub"
+	plantCalibreCreatedFile(t, bookRepo, snapRepo, provRepo, latestRunID(t, runsRepo), a.ID, backup)
+	if _, err := bookRepo.MoveBookFile(ctx, backup, b.ID, models.MediaTypeEbook); err != nil {
+		t.Fatalf("MoveBookFile: %v", err)
+	}
+
+	stats, err := imp.Run(ctx, "/lib")
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if stats.UnsupportedFilesRemoved != 0 {
+		t.Errorf("UnsupportedFilesRemoved = %d, want 0", stats.UnsupportedFilesRemoved)
+	}
+	if got := trackedPaths(t, bookRepo, b.ID); len(got) != 2 || !slices.Contains(got, backup) {
+		t.Errorf("book two tracked = %v, want its EPUB plus the moved %s", got, backup)
+	}
+}
+
+// The created snapshot must be for the book the provenance now names. A row
+// the import created for book A, moved to book B, and whose provenance a later
+// write then pointed at B has no created snapshot for B, so it is not the
+// import's either. Pins the s.local_id = p.local_id guard.
+func TestImporter_CleanupNeedsTheSnapshotForTheCurrentBook(t *testing.T) {
+	imp, fr, _, bookRepo, runsRepo, snapRepo, provRepo := newSeriesRollbackFixture(t)
+	ctx := context.Background()
+	fr.books = []CalibreBook{sampleCalibreBook(1, "Book One", "Alice Author"), sampleCalibreBook(2, "Book Two", "Alice Author")}
+	if _, err := imp.Run(ctx, "/lib"); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	runID := latestRunID(t, runsRepo)
+	a, _ := bookRepo.GetByCalibreID(ctx, 1)
+	b, _ := bookRepo.GetByCalibreID(ctx, 2)
+	backup := "/lib/Book One.original_epub"
+	plantCalibreCreatedFile(t, bookRepo, snapRepo, provRepo, runID, a.ID, backup)
+	if _, err := bookRepo.MoveBookFile(ctx, backup, b.ID, models.MediaTypeEbook); err != nil {
+		t.Fatalf("MoveBookFile: %v", err)
+	}
+	rid := runID
+	if err := provRepo.Upsert(ctx, &models.CalibreProvenance{SourceID: defaultSourceID, EntityType: entityTypeBookFile, ExternalID: calibreBookFileExternalID(backup), LocalID: b.ID, ImportRunID: &rid}); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := imp.Run(ctx, "/lib")
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if stats.UnsupportedFilesRemoved != 0 {
+		t.Errorf("UnsupportedFilesRemoved = %d, want 0", stats.UnsupportedFilesRemoved)
+	}
+	if got := trackedPaths(t, bookRepo, b.ID); len(got) != 2 || !slices.Contains(got, backup) {
+		t.Errorf("book two tracked = %v, want its EPUB plus the moved %s", got, backup)
 	}
 }

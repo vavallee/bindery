@@ -271,28 +271,47 @@ type CalibreCreatedBookFile struct {
 	ExternalID string
 }
 
+// listCreatedBookFilesSQL drives from the snapshots, the table that grows with
+// every import: one pass over calibre_entity_snapshots collects the distinct
+// created book_file keys, and each is then looked up through provenance's
+// UNIQUE (source_id, entity_type, external_id) index and book_files' UNIQUE
+// path index. An earlier shape drove from provenance with a correlated EXISTS
+// on the snapshots, which have no index on external_id, so it rescanned the
+// whole snapshots table once per provenance row: 10,000 books over 40 imports
+// did not finish in five minutes. Pinned by
+// TestListCreatedBookFiles_PlanHasNoCorrelatedScan.
+//
+// Arguments: the external_id prefix, three times.
+const listCreatedBookFilesSQL = `
+	SELECT bf.path, bf.book_id, p.source_id, p.external_id
+	FROM (
+		SELECT DISTINCT source_id, external_id, local_id
+		FROM calibre_entity_snapshots
+		WHERE entity_type = 'book_file' AND outcome = 'created'
+	) s
+	CROSS JOIN calibre_provenance p
+	  ON p.source_id = s.source_id
+	 AND p.entity_type = 'book_file'
+	 AND p.external_id = s.external_id
+	CROSS JOIN book_files bf
+	  ON bf.path = substr(p.external_id, length(?) + 1)
+	WHERE substr(s.external_id, 1, length(?)) = ?
+	  AND p.local_id = s.local_id
+	  AND bf.book_id = p.local_id
+	ORDER BY bf.id`
+
 // ListCreatedBookFiles returns the book_files rows a Calibre import created
 // and still owns: the row's provenance (entity_type book_file, external_id
 // externalIDPrefix + path) still points at the row's book, and some run
 // recorded a "created" snapshot for that same key and book. A row a download,
 // scan or the user added has no such snapshot, even when a later import
 // refreshed its provenance, so it is never returned (#3630).
+//
+// It runs at the start of every import, and calibre_entity_snapshots grows by
+// every run and is never pruned, so the plan matters: see
+// listCreatedBookFilesSQL.
 func (r *CalibreProvenanceRepo) ListCreatedBookFiles(ctx context.Context, externalIDPrefix string) ([]CalibreCreatedBookFile, error) {
-	rows, err := r.exec.QueryContext(ctx, `
-		SELECT bf.path, bf.book_id, p.source_id, p.external_id
-		FROM calibre_provenance p
-		JOIN book_files bf
-		  ON bf.path = substr(p.external_id, length(?) + 1)
-		 AND bf.book_id = p.local_id
-		WHERE p.entity_type = 'book_file'
-		  AND substr(p.external_id, 1, length(?)) = ?
-		  AND EXISTS (
-			SELECT 1 FROM calibre_entity_snapshots s
-			WHERE s.entity_type = 'book_file'
-			  AND s.external_id = p.external_id
-			  AND s.local_id = p.local_id
-			  AND s.outcome = 'created')
-		ORDER BY bf.id`, externalIDPrefix, externalIDPrefix, externalIDPrefix)
+	rows, err := r.exec.QueryContext(ctx, listCreatedBookFilesSQL, externalIDPrefix, externalIDPrefix, externalIDPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("list calibre created book files: %w", err)
 	}
