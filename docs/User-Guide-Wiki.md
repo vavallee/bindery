@@ -114,7 +114,9 @@ by editing the book, is never changed by a scan. A file that declares no
 specific language (`und`, `mul`) leaves the book blank. Books whose ebook was
 already in your library before this existed get the same treatment once, in
 the background, on the first start after the update; the log line
-`filled book languages from tracked ebook files` says how many.
+`filled book languages from tracked ebook files` says how many. If none of
+those files can be opened (the library volume is not mounted yet, say), the
+pass is tried again on the next start.
 
 The scan leaves out folders that are not library content: known junk and sync
 folders (`.torrents`, `.Trash-*`, `.Trashes`, `.incomplete`,

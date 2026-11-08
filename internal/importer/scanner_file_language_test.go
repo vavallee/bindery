@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -22,6 +23,7 @@ type fileLanguageFixture struct {
 	series   *db.SeriesRepo
 	settings *db.SettingsRepo
 	history  *db.HistoryRepo
+	profiles *db.MetadataProfileRepo
 	author   *models.Author
 	ctx      context.Context
 }
@@ -39,6 +41,7 @@ func newFileLanguageFixture(t *testing.T, libDir, authorName string) fileLanguag
 		series:   db.NewSeriesRepo(database),
 		settings: db.NewSettingsRepo(database),
 		history:  db.NewHistoryRepo(database),
+		profiles: db.NewMetadataProfileRepo(database),
 		ctx:      ctx,
 	}
 	authors := db.NewAuthorRepo(database)
@@ -46,7 +49,7 @@ func newFileLanguageFixture(t *testing.T, libDir, authorName string) fileLanguag
 		f.books, authors, f.history, libDir, "", "", "", "").
 		WithSeriesRepo(f.series).
 		WithSettings(f.settings).
-		WithLanguageEnforcement(db.NewMetadataProfileRepo(database), db.NewBlocklistRepo(database))
+		WithLanguageEnforcement(f.profiles, db.NewBlocklistRepo(database))
 	f.author = &models.Author{ForeignID: "ol:file-lang", Name: authorName, SortName: authorName}
 	if err := authors.Create(ctx, f.author); err != nil {
 		t.Fatal(err)
@@ -259,5 +262,177 @@ func TestBackfillFileLanguagesOnce(t *testing.T) {
 	f.s.BackfillFileLanguagesOnce(f.ctx)
 	if got := f.reload(t, blank.ID).Language; got != "" {
 		t.Errorf("second run filled the language again (%q); it must run once", got)
+	}
+}
+
+// writeEpubWithLanguages writes a book sized EPUB at dst declaring each of
+// langs as a dc:language, in order.
+func writeEpubWithLanguages(t *testing.T, dst string, langs ...string) {
+	t.Helper()
+	var decl strings.Builder
+	for _, l := range langs {
+		decl.WriteString("<dc:language>" + l + "</dc:language>")
+	}
+	opf := `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Recursion</dc:title><dc:creator>Blake Crouch</dc:creator>` + decl.String() + `
+  </metadata>
+</package>`
+	data, err := os.ReadFile(writeTestEpub(t, "content.opf", opf))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestFillLanguageFromFile_StaleSnapshot is the long scan case: the scan read
+// the book blank and unlocked at its start, and by the time it reaches the
+// file a provider set a language, or the user locked the field. The write must
+// see the row as it is now, not as the scan listed it.
+func TestFillLanguageFromFile_StaleSnapshot(t *testing.T) {
+	libDir := t.TempDir()
+	p := filepath.Join(libDir, "Recursion.epub")
+	writeEpubWithLanguage(t, p, "fr")
+
+	t.Run("language set since", func(t *testing.T) {
+		f := newFileLanguageFixture(t, libDir, "Blake Crouch")
+		book := f.addBook(t, &models.Book{ForeignID: "ol:stale-a", Title: "Recursion"})
+		stale := f.reload(t, book.ID)
+		if err := f.books.SetLanguage(f.ctx, book.ID, "eng"); err != nil {
+			t.Fatal(err)
+		}
+		if filled, _ := f.s.fillLanguageFromFile(f.ctx, stale, f.author, p); filled {
+			t.Error("reported a fill over a language set since the snapshot")
+		}
+		if got := f.reload(t, book.ID).Language; got != "eng" {
+			t.Errorf("language = %q, want eng kept", got)
+		}
+	})
+
+	t.Run("locked since", func(t *testing.T) {
+		f := newFileLanguageFixture(t, libDir, "Blake Crouch")
+		book := f.addBook(t, &models.Book{ForeignID: "ol:stale-b", Title: "Recursion"})
+		stale := f.reload(t, book.ID)
+		locked := f.reload(t, book.ID)
+		locked.LockField(models.BookFieldLanguage)
+		if err := f.books.Update(f.ctx, locked); err != nil {
+			t.Fatal(err)
+		}
+		if filled, _ := f.s.fillLanguageFromFile(f.ctx, stale, f.author, p); filled {
+			t.Error("reported a fill over a lock added since the snapshot")
+		}
+		if got := f.reload(t, book.ID).Language; got != "" {
+			t.Errorf("language = %q, want the locked empty value kept", got)
+		}
+	})
+}
+
+// TestScanLibrary_RestrictedProfilePicksAllowedLanguage: a bilingual file
+// records the first declared language the author's profile allows, as an
+// import does, and the first declared one when the profile allows any.
+func TestScanLibrary_RestrictedProfilePicksAllowedLanguage(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		allowed string
+		want    string
+	}{
+		{"english only profile", "eng", "eng"},
+		{"any language profile", "", "fre"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			libDir := t.TempDir()
+			dir := filepath.Join(libDir, "Blake Crouch", "Recursion")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeEpubWithLanguages(t, filepath.Join(dir, "Recursion - Blake Crouch.epub"), "fr", "en")
+			f := newFileLanguageFixture(t, libDir, "Blake Crouch")
+			p, err := f.profiles.GetByID(f.ctx, models.DefaultMetadataProfileID)
+			if err != nil || p == nil {
+				t.Fatalf("default profile: %v", err)
+			}
+			p.AllowedLanguages = c.allowed
+			if err := f.profiles.Update(f.ctx, p); err != nil {
+				t.Fatal(err)
+			}
+			book := f.addBook(t, &models.Book{ForeignID: "ol:recursion", Title: "Recursion"})
+
+			f.s.ScanLibrary(f.ctx)
+
+			if got := f.reload(t, book.ID).Language; got != c.want {
+				t.Errorf("language = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestBackfillFileLanguagesOnce_InterruptedWritesNoMarker: a pass cut short by
+// shutdown leaves the marker unset, so the next start runs it.
+func TestBackfillFileLanguagesOnce_InterruptedWritesNoMarker(t *testing.T) {
+	libDir := t.TempDir()
+	f := newFileLanguageFixture(t, libDir, "Blake Crouch")
+	book := f.addBook(t, &models.Book{ForeignID: "ol:int", Title: "Interrupted"})
+	p := filepath.Join(libDir, "Interrupted.epub")
+	writeEpubWithLanguage(t, p, "es")
+	if err := f.books.AddBookFile(f.ctx, book.ID, models.MediaTypeEbook, p); err != nil {
+		t.Fatal(err)
+	}
+
+	cancelled, cancel := context.WithCancel(f.ctx)
+	cancel()
+	f.s.BackfillFileLanguagesOnce(cancelled)
+	if st, _ := f.settings.Get(f.ctx, fileLanguageBackfillKey); st != nil {
+		t.Fatalf("an interrupted pass wrote the marker %q", st.Value)
+	}
+	if got := f.reload(t, book.ID).Language; got != "" {
+		t.Fatalf("an interrupted pass filled the language (%q)", got)
+	}
+
+	f.s.BackfillFileLanguagesOnce(f.ctx)
+	if got := f.reload(t, book.ID).Language; got != "spa" {
+		t.Errorf("language after the next start = %q, want spa", got)
+	}
+	if st, _ := f.settings.Get(f.ctx, fileLanguageBackfillKey); st == nil || st.Value != "1" {
+		t.Errorf("marker after a full pass = %+v, want 1", st)
+	}
+}
+
+// TestBackfillFileLanguagesOnce_NothingReadableWritesNoMarker: books to fill
+// and not one file that opens is a library volume not mounted yet, so the
+// marker stays unset and the next start tries again.
+func TestBackfillFileLanguagesOnce_NothingReadableWritesNoMarker(t *testing.T) {
+	libDir := t.TempDir()
+	f := newFileLanguageFixture(t, libDir, "Blake Crouch")
+	var paths []string
+	var books []*models.Book
+	for _, title := range []string{"One", "Two"} {
+		b := f.addBook(t, &models.Book{ForeignID: "ol:" + title, Title: title})
+		p := filepath.Join(libDir, title+".epub")
+		if err := f.books.AddBookFile(f.ctx, b.ID, models.MediaTypeEbook, p); err != nil {
+			t.Fatal(err)
+		}
+		books, paths = append(books, b), append(paths, p)
+	}
+
+	f.s.BackfillFileLanguagesOnce(f.ctx)
+	if st, _ := f.settings.Get(f.ctx, fileLanguageBackfillKey); st != nil {
+		t.Fatalf("a pass that opened no file wrote the marker %q", st.Value)
+	}
+
+	// The volume comes up.
+	for _, p := range paths {
+		writeEpubWithLanguage(t, p, "it")
+	}
+	f.s.BackfillFileLanguagesOnce(f.ctx)
+	for _, b := range books {
+		if got := f.reload(t, b.ID).Language; got != "ita" {
+			t.Errorf("%s: language = %q, want ita", b.Title, got)
+		}
+	}
+	if st, _ := f.settings.Get(f.ctx, fileLanguageBackfillKey); st == nil || st.Value != "1" {
+		t.Errorf("marker = %+v, want 1", st)
 	}
 }

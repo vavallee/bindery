@@ -5041,12 +5041,10 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 						slog.Info("library scan: reconciled book via series position",
 							"series", parsed.Series, "position", parsed.SeriesNumber, "title", book.Title, "path", path)
 						s.fillCoverFromFile(ctx, book, registeredPath)
-						// GetBookBySeriesPosition reads a few columns and no
-						// field locks, so the language fill gets the full row.
+						// GetBookBySeriesPosition reads no field locks;
+						// BookRepo.FillLanguage checks the lock itself.
 						if detectedFmt == models.MediaTypeEbook {
-							if full, err := s.books.GetByID(ctx, book.ID); err == nil && full != nil {
-								s.fillLanguageFromFile(ctx, full, authorMap[full.AuthorID], registeredPath)
-							}
+							s.fillLanguageFromFile(ctx, book, authorMap[book.AuthorID], registeredPath)
 						}
 						trackedPaths[s.pathKey(registeredPath)] = true
 						if detectedFmt == models.MediaTypeAudiobook {
