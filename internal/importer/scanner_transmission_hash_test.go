@@ -426,3 +426,43 @@ func TestCheckTransmissionDownloads_TerminalLegacyRowDoesNotBlockRecovery(t *tes
 		t.Fatalf("expected the imported download to keep %q, got %q", "20", got)
 	}
 }
+
+// TestCheckTransmissionDownloads_OneFetchPerPoll pins the importer poll to a
+// single torrent-get (#3714). It used to fetch the whole list once per
+// category and, when nothing matched, once more unfiltered for the
+// misconfiguration warning, although every fetch returns the same list.
+func TestCheckTransmissionDownloads_OneFetchPerPoll(t *testing.T) {
+	cases := []struct {
+		name     string
+		torrents []map[string]any
+	}{
+		{"matched", []map[string]any{
+			{"id": 1, "hashString": "aaa1", "downloadDir": "/tr"},
+			{"id": 2, "hashString": "aaa2", "downloadDir": "/tr/audio"},
+		}},
+		{"nothing matched", []map[string]any{
+			{"id": 3, "hashString": "aaa3", "downloadDir": "/elsewhere"},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls int
+			list := transmissionListHandler(t, tc.torrents)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				list(w, r)
+			}))
+			defer srv.Close()
+
+			s, _, _, ctx := scannerFixture(t, t.TempDir())
+			client := transmissionClientFixture(t, s, ctx, srv, "/tr")
+			client.CategoryAudiobook = "/tr/audio"
+
+			s.checkTransmissionDownloads(ctx, client)
+
+			if calls != 1 {
+				t.Fatalf("torrent-get calls = %d, want 1 per poll", calls)
+			}
+		})
+	}
+}

@@ -1127,3 +1127,77 @@ func TestSendDownload_QbittorrentGlobalRemapOnly(t *testing.T) {
 		t.Errorf("savepath = %q, want /data from the global remap", gotSavePath)
 	}
 }
+
+// TestGetLiveStatusesTransmission_OneFetchForBothCategories pins the queue
+// overlay to a single torrent-get per poll (#3714). GetTorrents always pulls
+// the whole list and filters client side, so fetching once per category
+// downloaded and decoded every torrent twice on a client with an audiobook
+// category. The single fetch must keep the exact matching rule: a cleaned
+// downloadDir match or a case insensitive label, never a path prefix.
+func TestGetLiveStatusesTransmission_OneFetchForBothCategories(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Method == "torrent-get" {
+			calls++
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"result": "success",
+			"arguments": map[string]any{"torrents": []map[string]any{
+				{"id": 1, "hashString": "AAA1", "downloadDir": "/tr/"},
+				{"id": 2, "hashString": "aaa2", "downloadDir": "/tr/audio"},
+				{"id": 3, "hashString": "aaa3", "downloadDir": "/elsewhere", "labels": []string{"/TR"}},
+				{"id": 4, "hashString": "aaa4", "downloadDir": "/tr/audio", "labels": []string{"/tr"}},
+				{"id": 5, "hashString": "aaa5", "downloadDir": "/tr/audiobooks"},
+				{"id": 6, "hashString": "aaa6", "downloadDir": "/elsewhere"},
+			}},
+		})
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+
+	both := &models.DownloadClient{Type: "transmission", Host: host, Port: port,
+		Category: "/tr", CategoryAudiobook: "/tr/audio"}
+	got, _, err := GetLiveStatuses(context.Background(), both)
+	if err != nil {
+		t.Fatalf("GetLiveStatuses: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("torrent-get calls = %d, want 1 per poll", calls)
+	}
+	for _, key := range []string{"1", "aaa1", "2", "aaa2", "3", "aaa3", "4", "aaa4"} {
+		if _, ok := got[key]; !ok {
+			t.Errorf("missing %q from overlay %v", key, got)
+		}
+	}
+	for _, key := range []string{"5", "aaa5", "6", "aaa6"} {
+		if _, ok := got[key]; ok {
+			t.Errorf("%q should not match either category", key)
+		}
+	}
+	if len(got) != 8 {
+		t.Errorf("overlay has %d keys, want 8 (four torrents by id and hash)", len(got))
+	}
+
+	// The ebook category alone must not pick up the audiobook folder beneath it.
+	calls = 0
+	ebookOnly := &models.DownloadClient{Type: "transmission", Host: host, Port: port, Category: "/tr"}
+	got, _, err = GetLiveStatuses(context.Background(), ebookOnly)
+	if err != nil {
+		t.Fatalf("GetLiveStatuses ebook only: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("torrent-get calls = %d, want 1", calls)
+	}
+	if _, ok := got["2"]; ok {
+		t.Errorf("/tr matched a torrent in /tr/audio")
+	}
+	for _, key := range []string{"1", "3", "4"} {
+		if _, ok := got[key]; !ok {
+			t.Errorf("ebook only overlay missing %q", key)
+		}
+	}
+}

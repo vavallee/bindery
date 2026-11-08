@@ -356,24 +356,54 @@ func (c *Client) GetTorrents(ctx context.Context, downloadDir string) ([]Torrent
 	// carries a label matching the Category string the torrent is included, which
 	// lets operators use labels instead of (or in addition to) a directory path.
 	if downloadDir != "" {
-		want := filepath.Clean(downloadDir)
 		var filtered []Torrent
 		for _, t := range resp.Arguments.Torrents {
-			if filepath.Clean(t.DownloadDir) == want {
+			if InCategory(t, downloadDir) {
 				filtered = append(filtered, t)
-				continue
-			}
-			for _, label := range t.Labels {
-				if strings.EqualFold(label, downloadDir) {
-					filtered = append(filtered, t)
-					break
-				}
 			}
 		}
 		return filtered, nil
 	}
 
 	return resp.Arguments.Torrents, nil
+}
+
+// InCategory reports whether t belongs to category under the rule GetTorrents
+// filters by: a downloadDir equal to category once both are cleaned, or a
+// label equal to it ignoring case. An empty category matches every torrent.
+func InCategory(t Torrent, category string) bool {
+	if category == "" {
+		return true
+	}
+	if filepath.Clean(t.DownloadDir) == filepath.Clean(category) {
+		return true
+	}
+	for _, label := range t.Labels {
+		if strings.EqualFold(label, category) {
+			return true
+		}
+	}
+	return false
+}
+
+// SelectCategories returns the torrents in any of categories, each once (by
+// id), in the order a GetTorrents call per category would have produced them.
+// It lets a caller polling several categories fetch the whole list once with
+// GetTorrents(ctx, "") instead of once per category, since every call pulls
+// the full list anyway (#3714).
+func SelectCategories(torrents []Torrent, categories []string) []Torrent {
+	var out []Torrent
+	seen := make(map[int64]bool)
+	for _, cat := range categories {
+		for _, t := range torrents {
+			if seen[t.ID] || !InCategory(t, cat) {
+				continue
+			}
+			seen[t.ID] = true
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // Files returns the per-torrent file list for torrentID. Names are paths

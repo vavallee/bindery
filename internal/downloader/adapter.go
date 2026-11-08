@@ -629,21 +629,14 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 	if client.Type == "transmission" {
 		trans := TransmissionFor(client)
 		// Both the ebook and the audiobook destination, as the stall check and
-		// the importer poll (#2499).
-		var torrents []transmission.Torrent
-		seen := make(map[int64]bool)
-		for _, cat := range CategoriesToPoll(client) {
-			got, err := trans.GetTorrents(ctx, cat)
-			if err != nil {
-				return nil, err
-			}
-			for _, t := range got {
-				if !seen[t.ID] {
-					seen[t.ID] = true
-					torrents = append(torrents, t)
-				}
-			}
+		// the importer poll (#2499). One fetch: torrent-get always returns the
+		// whole list, so filtering per category locally saves pulling and
+		// decoding it again for the second category.
+		all, err := trans.GetTorrents(ctx, "")
+		if err != nil {
+			return nil, err
 		}
+		torrents := transmission.SelectCategories(all, CategoriesToPoll(client))
 
 		out := make(map[string]LiveStatus, len(torrents))
 		for _, t := range torrents {
