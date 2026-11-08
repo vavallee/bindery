@@ -504,6 +504,13 @@ func migrate(database *sql.DB) error {
 		return fmt.Errorf("backfill book file formats: %w", err)
 	}
 
+	// OpenLibrary's merge queue appends "(Duplicate of OL...)" to the title of
+	// a work it has flagged, and author syncs stored that note as part of the
+	// book's name. Ingest strips it now; this rewrites the rows already stored.
+	if err := runBackfillOnce(database, backfillRevKeyOLDuplicateTitle, olDuplicateTitleRev, backfillOLDuplicateTitles); err != nil {
+		return fmt.Errorf("backfill openlibrary duplicate titles: %w", err)
+	}
+
 	return nil
 }
 
@@ -550,7 +557,14 @@ const (
 	backfillRevKeyASINCase     = "backfill.asin_case_rev"
 	backfillRevKeyLanguageCode = "backfill.language_code_rev"
 	backfillRevKeyBookFileFmt  = "backfill.book_file_format_rev"
+
+	backfillRevKeyOLDuplicateTitle = "backfill.ol_duplicate_title_rev"
 )
+
+// olDuplicateTitleRev is the revision of the rule behind
+// backfillOLDuplicateTitles (textutil.StripOpenLibraryDuplicateMarker). Bump
+// it if that rule changes so stored titles are brought up to it.
+const olDuplicateTitleRev = 1
 
 // bookFileFormatRev is the revision of the audio-extension rule behind
 // backfillBookFileFormats. Bump it if the set of audio extensions grows.
@@ -570,6 +584,7 @@ func BackfillRevisionKeys() []string {
 		backfillRevKeyASINCase,
 		backfillRevKeyLanguageCode,
 		backfillRevKeyBookFileFmt,
+		backfillRevKeyOLDuplicateTitle,
 	}
 }
 
@@ -1529,6 +1544,7 @@ func stampBackfillRevisions(database *sql.DB) {
 	markBackfillRevision(database, backfillRevKeyASINCase, isbnutil.NormalizeASINRev)
 	markBackfillRevision(database, backfillRevKeyLanguageCode, models.NormalizeLanguageCodeRev)
 	markBackfillRevision(database, backfillRevKeyBookFileFmt, bookFileFormatRev)
+	markBackfillRevision(database, backfillRevKeyOLDuplicateTitle, olDuplicateTitleRev)
 }
 
 // backfillBookFileFormats relabels book_files rows that hold an audio file but
@@ -1591,5 +1607,85 @@ func backfillBookFileFormats(database *sql.DB) error {
 		}
 	}
 	slog.Info("relabelled audio files recorded as ebook files", "files", n, "books", len(ids))
+	return nil
+}
+
+// backfillOLDuplicateTitles strips OpenLibrary's "(Duplicate of OL...)" merge
+// queue note from stored book titles, the rows author syncs wrote before
+// ingest started removing it. Each rewrite is logged with the old and new
+// title so an operator can see exactly what changed.
+//
+// The derived columns move with the title, computed by the same functions
+// BookRepo.Update uses, so the row reads as if ingest had stored the clean
+// title in the first place. sort_title follows only when it carried the note
+// too. A title the user locked is theirs and is left alone.
+//
+// Unconditional and idempotent like the other backfills; migrate() gates it on
+// backfill.ol_duplicate_title_rev against olDuplicateTitleRev.
+func backfillOLDuplicateTitles(database *sql.DB) error {
+	type pending struct {
+		id               int64
+		old, title, sort string
+	}
+	// Read phase in its own scope so the cursor closes before the write tx
+	// opens: holding a read cursor across Begin() risks "database is locked".
+	// LIKE only narrows the scan to candidates; the Go rule decides.
+	updates, err := func() ([]pending, error) {
+		rows, err := database.Query(`SELECT id, title, COALESCE(sort_title, '') FROM books
+			WHERE title LIKE '%duplicate of%'
+			  AND ? NOT IN (SELECT value FROM json_each(COALESCE(locked_fields, '[]')))`, models.BookFieldTitle)
+		if err != nil {
+			return nil, fmt.Errorf("read books for duplicate title backfill: %w", err)
+		}
+		defer rows.Close()
+		var out []pending
+		for rows.Next() {
+			var p pending
+			if err := rows.Scan(&p.id, &p.old, &p.sort); err != nil {
+				return nil, fmt.Errorf("scan book for duplicate title backfill: %w", err)
+			}
+			p.title = textutil.StripOpenLibraryDuplicateMarker(p.old)
+			if p.title == strings.TrimSpace(p.old) {
+				continue
+			}
+			p.sort = textutil.StripOpenLibraryDuplicateMarker(p.sort)
+			out = append(out, p)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate books for duplicate title backfill: %w", err)
+		}
+		return out, nil
+	}()
+	if err != nil {
+		return err
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+
+	tx, err := database.Begin()
+	if err != nil {
+		return fmt.Errorf("begin duplicate title backfill tx: %w", err)
+	}
+	stmt, err := tx.Prepare("UPDATE books SET title = ?, sort_title = ?, dedup_key = ?, sort_key = ?, search_key = ? WHERE id = ?")
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("prepare duplicate title backfill: %w", err)
+	}
+	defer stmt.Close()
+	for _, u := range updates {
+		if _, err := stmt.Exec(u.title, u.sort, indexer.CanonicalDedupKey(u.title), bookSortKey(u.sort, u.title),
+			textutil.FoldForSearch(u.title), u.id); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("update title for book %d: %w", u.id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit duplicate title backfill: %w", err)
+	}
+	for _, u := range updates {
+		slog.Info("removed openlibrary duplicate note from book title", "bookID", u.id, "from", u.old, "to", u.title)
+	}
+	slog.Info("backfilled openlibrary duplicate titles", "rows", len(updates))
 	return nil
 }

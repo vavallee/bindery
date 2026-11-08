@@ -196,8 +196,8 @@ func (c *Client) SearchBooks(ctx context.Context, query string) ([]models.Book, 
 		workID := strings.TrimPrefix(doc.Key, "/works/")
 		b := models.Book{
 			ForeignID:        workID,
-			Title:            doc.Title,
-			SortTitle:        doc.Title,
+			Title:            olTitle(doc.Title),
+			SortTitle:        olTitle(doc.Title),
 			Genres:           truncateSlice(doc.Subject, 10),
 			AverageRating:    doc.RatingsAvg,
 			RatingsCount:     doc.RatingsCount,
@@ -268,8 +268,8 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 
 	b := &models.Book{
 		ForeignID:        foreignID,
-		Title:            resp.Title,
-		SortTitle:        resp.Title,
+		Title:            olTitle(resp.Title),
+		SortTitle:        olTitle(resp.Title),
 		Description:      extractText(resp.Description),
 		Genres:           truncateSlice(resp.Subjects, 10),
 		MetadataProvider: "openlibrary",
@@ -500,8 +500,8 @@ func (c *Client) authorWorks(ctx context.Context, authorForeignID string) (books
 		}
 		b := models.Book{
 			ForeignID:        workID,
-			Title:            entry.Title,
-			SortTitle:        entry.Title,
+			Title:            olTitle(entry.Title),
+			SortTitle:        olTitle(entry.Title),
 			Description:      extractText(entry.Description),
 			Genres:           truncateSlice(entry.Subjects, 10),
 			SeriesRefs:       seriesRefsFrom(c.resolveSeriesKeys(ctx, entry.Series)),
@@ -609,8 +609,8 @@ func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) 
 		}
 		b := models.Book{
 			ForeignID:                workID,
-			Title:                    doc.Title,
-			SortTitle:                doc.Title,
+			Title:                    olTitle(doc.Title),
+			SortTitle:                olTitle(doc.Title),
 			Genres:                   truncateSlice(doc.Subject, 10),
 			Language:                 pickPreferredLanguage(doc.Language),
 			RatingsCount:             doc.RatingsCount,
@@ -1226,7 +1226,7 @@ func (c *Client) GetSubjectBooks(ctx context.Context, subject string, limit int)
 		workID := strings.TrimPrefix(w.Key, "/works/")
 		cand := models.RecommendationCandidate{
 			ForeignID: workID,
-			Title:     w.Title,
+			Title:     olTitle(w.Title),
 			Genres:    truncateSlice(w.Subject, 10),
 			MediaType: models.MediaTypeEbook,
 		}
@@ -1272,8 +1272,8 @@ func (c *Client) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, 
 	// Fallback: construct from ISBN response
 	b := &models.Book{
 		ForeignID:        strings.TrimPrefix(resp.Key, "/books/"),
-		Title:            resp.Title,
-		SortTitle:        resp.Title,
+		Title:            olTitle(resp.Title),
+		SortTitle:        olTitle(resp.Title),
 		MetadataProvider: "openlibrary",
 		Monitored:        true,
 		Status:           models.BookStatusWanted,
@@ -1339,15 +1339,16 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, target interface{})
 }
 
 // extractText handles OpenLibrary's description field which can be a string
-// or an object like {"type": "/type/text", "value": "..."}.
+// or an object like {"type": "/type/text", "value": "..."}. A double quote
+// left unpaired at either end is dropped (trimUnmatchedQuote).
 func extractText(v interface{}) string {
 	switch t := v.(type) {
 	case string:
-		return t
+		return trimUnmatchedQuote(t)
 	case map[string]interface{}:
 		if val, ok := t["value"]; ok {
 			if s, ok := val.(string); ok {
-				return s
+				return trimUnmatchedQuote(s)
 			}
 		}
 	}
