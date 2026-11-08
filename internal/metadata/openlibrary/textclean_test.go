@@ -11,7 +11,12 @@ func TestTrimUnmatchedQuote(t *testing.T) {
 	}{
 		{"stray leading quote", `"Darrow would have lived in peace, but his enemies brought him war.`, "Darrow would have lived in peace, but his enemies brought him war."},
 		{"stray trailing quote", `Ash and blood and bone."`, "Ash and blood and bone."},
-		{"stray leading quote with balanced quotes inside", `"He is called "the Reaper" by friends and foes.`, `He is called "the Reaper" by friends and foes.`},
+		{"leading quote with other quotes inside is a guess", `"He is called "the Reaper" by friends and foes.`, `"He is called "the Reaper" by friends and foes.`},
+		{"dialogue with an open last quote stays", `"Hello," she said. Then "bye`, `"Hello," she said. Then "bye`},
+		{"multi paragraph curly openers stay", "“First paragraph.\n\n“Second paragraph.”", "“First paragraph.\n\n“Second paragraph.”"},
+		{"leading curly opener with a later paragraph opener stays", "“First paragraph.\n\n“Second paragraph.", "“First paragraph.\n\n“Second paragraph."},
+		{"straight stray quote beside balanced curly quotes", "\"They call him “the Reaper”.", "They call him “the Reaper”."},
+		{"only a curly quote", "“", "“"},
 		{"stray leading curly quote", "“Break the chains.", "Break the chains."},
 		{"stray trailing curly quote", "Break the chains.”", "Break the chains."},
 		{"whole description quoted stays", `"Break the chains." A rallying cry.`, `"Break the chains." A rallying cry.`},
@@ -92,5 +97,33 @@ func TestGetAuthorWorks_HTTP_CleansDuplicateMarker(t *testing.T) {
 		if b.ForeignID == "OL1W" && b.Description != "Darrow returns." {
 			t.Errorf("OL1W description = %q, want the stray leading quote gone", b.Description)
 		}
+	}
+}
+
+// TestSearchBooksAndISBNFallback_HTTP_CleanDuplicateMarker covers the two other
+// title entry points: the add dialog's search and an ISBN whose edition record
+// links no work.
+func TestSearchBooksAndISBNFallback_HTTP_CleanDuplicateMarker(t *testing.T) {
+	c := newClientWithPaths(t, map[string]interface{}{
+		"/search.json": jsonStr(map[string]any{"docs": []map[string]any{
+			{"key": "/works/OL1W", "title": "Light Bringer (Duplicate of OL31211W)"},
+		}}),
+		"/isbn/9780425285961.json": jsonStr(map[string]any{
+			"key": "/books/OL2M", "title": "Golden Son (Duplicate of OL26431102M)",
+		}),
+	})
+	books, err := c.SearchBooks(context.Background(), "light bringer")
+	if err != nil {
+		t.Fatalf("SearchBooks: %v", err)
+	}
+	if len(books) != 1 || books[0].Title != "Light Bringer" || books[0].SortTitle != "Light Bringer" {
+		t.Errorf("SearchBooks = %+v, want one %q", books, "Light Bringer")
+	}
+	book, err := c.GetBookByISBN(context.Background(), "9780425285961")
+	if err != nil {
+		t.Fatalf("GetBookByISBN: %v", err)
+	}
+	if book == nil || book.Title != "Golden Son" || book.SortTitle != "Golden Son" {
+		t.Errorf("GetBookByISBN = %+v, want %q", book, "Golden Son")
 	}
 }

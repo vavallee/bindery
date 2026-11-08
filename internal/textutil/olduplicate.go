@@ -9,7 +9,7 @@ import (
 // work it has flagged as a duplicate of another, as in
 // "Light Bringer (Duplicate of OL31211W)". The note is an editor's
 // bookkeeping, not part of the title, and only ever sits at the end.
-var olDuplicateMarkerRE = regexp.MustCompile(`(?i)\s*\(\s*duplicate\s+of\s+(?:/works/)?OL\w+\s*\)\s*$`)
+var olDuplicateMarkerRE = regexp.MustCompile(`(?i)\s*\(\s*duplicate\s+of\s+(?:/works/)?OL\d+[AMW]\s*\)\s*$`)
 
 // StripOpenLibraryDuplicateMarker removes a trailing "(Duplicate of OL...)"
 // note from a title. A title that would be left empty is returned trimmed but

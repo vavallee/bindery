@@ -15,35 +15,36 @@ func olTitle(raw string) string {
 
 // trimUnmatchedQuote drops a double quote that opens or closes a description
 // without a partner, the stray leading quote some OpenLibrary records carry
-// (Golden Son's starts with one). A description that is quoted as a whole, or
-// that quotes something inside it, is balanced and comes back unchanged.
+// (Golden Son's starts with one).
 //
-// Straight quotes have no direction, so they are judged by count: an odd
-// number means one is unpaired, and it is taken off only when it sits at one
-// end and the other end has none, which is the only case where it is clear
-// which quote is the stray one. Curly quotes say which way they face, so a
-// leading opener is dropped when openers outnumber closers, and a trailing
-// closer when closers outnumber openers.
+// It only acts when the quote is the very first or very last character and is
+// the only quote of its kind in the text: the only straight quote, or the only
+// curly one. Any other quote makes the pairing a guess, so the text is left
+// alone. That keeps a balanced description, a line of dialogue like
+// "Hello," she said. Then "bye, and the multi paragraph convention where each
+// quoted paragraph opens with “ and only the last one closes. A description
+// that is nothing but the quote is kept as it is.
 func trimUnmatchedQuote(s string) string {
 	s = strings.TrimSpace(s)
-	if s == "" {
+	if len([]rune(s)) < 2 {
 		return s
 	}
-	if strings.Count(s, `"`)%2 == 1 {
-		starts, ends := strings.HasPrefix(s, `"`), strings.HasSuffix(s, `"`)
-		switch {
-		case starts && !ends:
-			s = strings.TrimSpace(s[1:])
-		case ends && !starts:
-			s = strings.TrimSpace(s[:len(s)-1])
+	for _, kind := range [][]string{{`"`}, {"“", "”"}} {
+		n := 0
+		for _, q := range kind {
+			n += strings.Count(s, q)
 		}
-	}
-	opens, closes := strings.Count(s, "“"), strings.Count(s, "”")
-	switch {
-	case opens > closes && strings.HasPrefix(s, "“"):
-		s = strings.TrimSpace(strings.TrimPrefix(s, "“"))
-	case closes > opens && strings.HasSuffix(s, "”"):
-		s = strings.TrimSpace(strings.TrimSuffix(s, "”"))
+		if n != 1 {
+			continue
+		}
+		for _, q := range kind {
+			switch {
+			case strings.HasPrefix(s, q):
+				return strings.TrimSpace(strings.TrimPrefix(s, q))
+			case strings.HasSuffix(s, q):
+				return strings.TrimSpace(strings.TrimSuffix(s, q))
+			}
+		}
 	}
 	return s
 }

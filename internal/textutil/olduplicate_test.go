@@ -15,6 +15,9 @@ func TestStripOpenLibraryDuplicateMarker(t *testing.T) {
 		{"other parenthetical kept", "Red Rising (Red Rising Saga #1)", "Red Rising (Red Rising Saga #1)"},
 		{"not at the end", "Notes (Duplicate of OL1W) Revisited", "Notes (Duplicate of OL1W) Revisited"},
 		{"not an OL key", "Copies (Duplicate of the original)", "Copies (Duplicate of the original)"},
+		{"name starting with Ol", "Twins (Duplicate of Oliver)", "Twins (Duplicate of Oliver)"},
+		{"lower case name starting with ol", "Twins (duplicate of olga)", "Twins (duplicate of olga)"},
+		{"OL key with an unknown type letter", "Twins (Duplicate of OL123X)", "Twins (Duplicate of OL123X)"},
 		{"marker only keeps the title", "(Duplicate of OL1W)", "(Duplicate of OL1W)"},
 		{"empty", "", ""},
 	}
