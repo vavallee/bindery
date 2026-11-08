@@ -2082,6 +2082,10 @@ func (r *BookRepo) query(ctx context.Context, q string, args []any) ([]models.Bo
 		b.AnyEditionOK = anyEditionOK == 1
 		b.Excluded = excluded == 1
 		_ = json.Unmarshal([]byte(genresStr), &b.Genres)
+		// OpenLibrary machine tags ("nyt:...=2015-01-25") stored before
+		// ingest dropped them are hidden on read; the next save stores the
+		// clean list.
+		b.Genres = textutil.DropJunkSubjects(b.Genres)
 		if b.Genres == nil {
 			b.Genres = []string{}
 		}
