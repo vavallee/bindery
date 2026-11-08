@@ -4442,10 +4442,10 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 	booksByAuthor := make(map[int64][]int)
 	// listedBooks is every book the scan may write to: List leaves out
 	// excluded books, and a row left by a deleted book has no book here.
-	listedBooks := make(map[int64]bool, len(allBooks))
+	listedBooks := make(map[int64]*models.Book, len(allBooks))
 	for i := range allBooks {
 		b := &allBooks[i]
-		listedBooks[b.ID] = true
+		listedBooks[b.ID] = b
 		if !isReconcileCandidate(b) {
 			continue
 		}
@@ -4711,7 +4711,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 			}
 			bookID = f.BookID
 		}
-		if !listedBooks[bookID] {
+		if listedBooks[bookID] == nil {
 			return 0
 		}
 		return bookID
@@ -4933,6 +4933,11 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				err := s.books.AddBookFile(ctx, bookID, models.MediaTypeEbook, registeredPath)
 				if err == nil {
 					slog.Info("library scan: added another format beside the book's file", "id", bookID, "path", path)
+					// Same fill as the other attach points (#1160): the book
+					// may have no language yet, and this file may declare one.
+					if b := listedBooks[bookID]; b != nil {
+						s.fillLanguageFromFile(ctx, b, authorMap[b.AuthorID], registeredPath)
+					}
 					trackedPaths[s.pathKey(registeredPath)] = true
 					reconciledBooks[bookFormatClaim{bookID, models.MediaTypeEbook}] = true
 					rememberEbookStem(bookID, models.MediaTypeEbook, cleanPath)

@@ -204,6 +204,52 @@ func TestScanLibrary_SeriesMatchLanguage(t *testing.T) {
 	}
 }
 
+// TestScanLibrary_OtherFormatLanguage covers the other format attach (#1357):
+// the book already tracks Recursion.epub, which declares no language, and the
+// scan adds the Recursion.azw3 beside it. That attach is held to the same
+// three states as the others, read from the Kindle file's EXTH language.
+func TestScanLibrary_OtherFormatLanguage(t *testing.T) {
+	for _, c := range languageCases("ger") {
+		t.Run(c.name, func(t *testing.T) {
+			libDir := t.TempDir()
+			dir := filepath.Join(libDir, "Blake Crouch", "Recursion")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			epub := filepath.Join(dir, "Recursion.epub")
+			if err := os.WriteFile(epub, bookSized("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			azw3 := filepath.Join(dir, "Recursion.azw3")
+			if err := os.WriteFile(azw3, bookSized(string(buildMobi(mobiFile{
+				dbName:   "Recursion",
+				encoding: 65001,
+				exth:     []exthRecord{{exthTitle, []byte("Recursion")}, {exthLanguage, []byte("de")}},
+			}))), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			f := newFileLanguageFixture(t, libDir, "Blake Crouch")
+			book := f.addBook(t, c.book(&models.Book{ForeignID: "ol:recursion", Title: "Recursion", Status: models.BookStatusImported}))
+			if err := f.books.AddBookFile(f.ctx, book.ID, models.MediaTypeEbook, epub); err != nil {
+				t.Fatal(err)
+			}
+
+			f.s.ScanLibrary(f.ctx)
+
+			files, err := f.books.ListFiles(f.ctx, book.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := ebookPathsOf(t, files); len(got) != 2 {
+				t.Fatalf("book ebook files = %v, want the epub and the azw3", got)
+			}
+			if got := f.reload(t, book.ID).Language; got != c.want {
+				t.Errorf("language = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 // TestBackfillFileLanguagesOnce covers books whose ebook was tracked before
 // the scan read languages: one pass fills the blanks, leaves provider and
 // locked values alone, skips a missing file, and never runs again.
