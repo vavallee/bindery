@@ -1,0 +1,21 @@
+-- +migrate Up
+-- The Books page fetches its language counts on every mount and can filter to
+-- one language (#1160); both read the whole books table. This index serves the
+-- language filter as a search and covers LanguageCounts and the default
+-- page's count (language, excluded and the owner scope are all they read).
+--
+-- Language leads on purpose. Bindery never runs ANALYZE, so the planner takes
+-- any equality on a leading column as selective. With excluded first, every
+-- Books page query (they all carry excluded = 0, which matches nearly every
+-- row) switched to this index and sorted the whole library in a temp b-tree:
+-- the default page went from 7 ms to 34 ms at 50,000 books, and the status
+-- and format filters lost their own indexes. With language first the index is
+-- only searched when the query names a language.
+--
+-- Measured at 50,000 books: a page filtered to a language 5% of the library
+-- is in 17 ms to about 4.5 ms (its count 6.6 ms to 0.2 ms), LanguageCounts
+-- 39 ms to 30 ms, default page 7 ms to 3 ms. Filtering to the library's
+-- majority language gets somewhat slower (85%: 36 ms to 42 ms), since the
+-- planner takes language = ? as selective; the filter is for finding the
+-- minority or wrong languages, so that is the case it is tuned for.
+CREATE INDEX IF NOT EXISTS idx_books_language_excluded ON books(language, excluded, owner_user_id);

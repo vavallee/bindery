@@ -1,0 +1,2 @@
+### Changed
+- **Faster Books page and Calibre import start** (#3724, #3727). Two new database indexes. Filtering the Books page to a language that only part of your library is in is roughly four times faster on a big library, and the language counts and default page load a bit quicker too. Every Calibre import, the daily sync included, now starts about eight times faster on a library that has been syncing for a while.

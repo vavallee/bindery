@@ -272,13 +272,17 @@ type CalibreCreatedBookFile struct {
 }
 
 // listCreatedBookFilesSQL drives from the snapshots, the table that grows with
-// every import: one pass over calibre_entity_snapshots collects the distinct
-// created book_file keys, and each is then looked up through provenance's
-// UNIQUE (source_id, entity_type, external_id) index and book_files' UNIQUE
-// path index. An earlier shape drove from provenance with a correlated EXISTS
-// on the snapshots, which have no index on external_id, so it rescanned the
-// whole snapshots table once per provenance row: 10,000 books over 40 imports
-// did not finish in five minutes. Pinned by
+// every import: one pass collects the distinct created book_file keys, and
+// each is then looked up through provenance's UNIQUE (source_id, entity_type,
+// external_id) index and book_files' UNIQUE path index. The pass reads the
+// partial covering index idx_calibre_snapshots_created_book_file (migration
+// 128), so it touches only the created book_file rows rather than every
+// snapshot of every run: 10,000 books over 40 imports went from 334ms to 42ms.
+// SQLite only uses a partial index when the query's WHERE implies its
+// predicate, so the subquery's WHERE must keep matching it. An earlier shape
+// drove from provenance with a correlated EXISTS on the snapshots and
+// rescanned the whole table once per provenance row: the same library did not
+// finish in five minutes. Pinned by
 // TestListCreatedBookFiles_PlanHasNoCorrelatedScan.
 //
 // Arguments: the external_id prefix, three times.

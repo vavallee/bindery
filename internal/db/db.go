@@ -364,6 +364,21 @@ func migrate(database *sql.DB) error {
 		return err
 	}
 
+	// A database in the #1932 state (014 recorded, books.excluded missing; see
+	// ensureBooksExcludedColumn below) must be repaired before the apply loop
+	// too: migration 127 indexes books.excluded and fails without it. Only
+	// when 014 is recorded, so a database older than 014 still gets the column
+	// from 014 itself rather than a duplicate column error.
+	var has014 int
+	if err := database.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version = 14").Scan(&has014); err != nil {
+		return fmt.Errorf("check migration 14: %w", err)
+	}
+	if has014 > 0 {
+		if err := ensureBooksExcludedColumn(database); err != nil {
+			return fmt.Errorf("repair legacy books.excluded column: %w", err)
+		}
+	}
+
 	for _, entry := range entries {
 		v, err := migrationVersion(entry.Name())
 		if err != nil {
