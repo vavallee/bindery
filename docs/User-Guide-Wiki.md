@@ -322,8 +322,9 @@ it under **Language**. The list names the languages your library actually
 holds, most common first, with how many books are in each, and ends with **No
 language** for books that have none. It combines with Status, Type, Monitored
 and the search box. A book's language comes from the metadata source, from its
-ebook file when the file is imported, or from your own edit on the book page;
-edit a book to correct one that is wrong.
+ebook file when the file is imported (or when a library scan attaches it to a
+book that has no language), or from your own edit on the book page; edit a book
+to correct one that is wrong.
 
 ## From Wanted to your library
 
@@ -888,7 +889,9 @@ to the records. Things worth knowing before you judge the results:
   files. Run **Refresh metadata** on authors to fill in covers and details,
   and the scan to attach files. "Fresh import looks empty" is expected, not
   broken. The Calibre library import is the exception on the files half: it
-  reads the path of every format from `metadata.db` and tracks it directly, so
+  reads the path of every format Bindery can use from `metadata.db` (not
+  Calibre's `ORIGINAL_EPUB` style backups, see
+  [Calibre integration](Calibre-Integration-Wiki.md)) and tracks it directly, so
   those books arrive with their files already attached and do not need a scan
   to find them (#1635). In 1.32.1 and earlier it recorded nothing, which left
   a Calibre-managed book looking imported while Bindery tracked no file for it.

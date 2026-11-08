@@ -15,7 +15,7 @@ Single-user installs are unaffected in practice: all data remains owned by user 
 curl -X POST -H "X-Api-Key: <key>" http://bindery:8787/api/v1/backup
 
 # Via UI
-Settings → Logs → Backups → Create backup
+Settings → Logs → Backup & Restore → Create Backup
 
 # Verify it was written
 ls -lh /config/backups/bindery_*.db
@@ -23,14 +23,15 @@ ls -lh /config/backups/bindery_*.db
 
 ### Kubernetes
 
-Copy the database file out of the PVC **before** stopping Bindery. With the pod still running:
+The image is distroless: it has no shell and no `tar`, so `kubectl exec` and `kubectl cp` cannot reach files inside the Bindery pod. The API backup above lands in `/config/backups` on the PVC. To get a copy off the cluster, scale Bindery down and read the PVC from a helper pod (the chart names the PVC `<release>-config`):
 
 ```bash
-# Find the pod name
-kubectl get pods -l app=bindery
-
-# Copy bindery.db from the PVC to your local machine
-kubectl cp bindery-0:/config/bindery.db ./bindery-pre-v1.db
+kubectl scale deployment/bindery --replicas=0
+kubectl run bindery-copy --restart=Never --image=busybox:1.37 \
+  --overrides='{"spec":{"volumes":[{"name":"config","persistentVolumeClaim":{"claimName":"bindery-config"}}],"containers":[{"name":"bindery-copy","image":"busybox:1.37","command":["sleep","3600"],"volumeMounts":[{"name":"config","mountPath":"/config"}]}]}}'
+kubectl cp bindery-copy:/config/bindery.db ./bindery-pre-v1.db
+kubectl delete pod bindery-copy
+kubectl scale deployment/bindery --replicas=1
 
 # Confirm the copy is non-zero and readable
 sqlite3 ./bindery-pre-v1.db "SELECT count(*) FROM books;"
@@ -63,16 +64,7 @@ Check the logs for `applied migration version=25 file=025_multiuser.sql`. If the
 
 ### Kubernetes dry-run
 
-```bash
-# Spin up a one-off pod against the backup copy (copy it into a temp PVC or emptyDir)
-kubectl run bindery-dryrun --rm -it --restart=Never \
-  --image=ghcr.io/vavallee/bindery:v1.0.0 \
-  --env="BINDERY_DB_PATH=/tmp/bindery-dryrun.db" \
-  --overrides='{"spec":{"volumes":[{"name":"tmp","emptyDir":{}}],"containers":[{"name":"bindery-dryrun","volumeMounts":[{"name":"tmp","mountPath":"/tmp"}]}]}}' \
-  -- sh -c "cp /config/bindery.db /tmp/bindery-dryrun.db && bindery"
-```
-
-Or, more practically: copy the DB locally, run the binary locally, verify integrity:
+The image has no shell, so a one-off pod cannot copy the database before starting Bindery. Use the copy from Step 1 instead: run the binary locally against it and verify integrity:
 
 ```bash
 # Pull and run the new binary locally against the backup
@@ -113,8 +105,9 @@ docker stop bindery   # or kill the process
 # 3. Pull the new image / replace the binary
 docker pull ghcr.io/vavallee/bindery:v1.0.0
 
-# 4. Start — migration runs automatically
-docker start bindery
+# 4. Recreate the container on the new image; the migration runs at startup.
+#    (docker start would restart the old container on the old image.)
+docker rm bindery && docker run ...   # or: docker compose up -d
 
 # 5. Tail logs to confirm
 docker logs -f bindery | grep -E "migration|error"
@@ -147,7 +140,7 @@ curl -s -H "X-Api-Key: <key>" http://bindery:8787/api/v1/author | jq 'length'
 curl -s -H "X-Api-Key: <key>" http://bindery:8787/api/v1/book   | jq 'length'
 ```
 
-Check **Settings → Users** — you should see your original admin account listed with role `admin`.
+Open the **Users** page from the header: you should see your original admin account listed with role `admin`.
 
 ## Rollback
 
@@ -160,14 +153,18 @@ To roll back: restore from the backup taken in Step 1.
 ```bash
 docker stop bindery
 cp /config/backups/bindery_<timestamp>.db /config/bindery.db
-docker run ... ghcr.io/vavallee/bindery:v0.24.0   # previous image
+docker run ... ghcr.io/vavallee/bindery:v0.22.0   # the last release before v1.0.0
 ```
 
 ### Kubernetes rollback
 
 ```bash
-# Copy the backup back into the PVC
-kubectl cp ./bindery-pre-v1.db bindery-0:/config/bindery.db
+# Copy the backup back into the PVC through a helper pod, as in Step 1
+kubectl scale deployment/bindery --replicas=0
+kubectl run bindery-copy --restart=Never --image=busybox:1.37 \
+  --overrides='{"spec":{"volumes":[{"name":"config","persistentVolumeClaim":{"claimName":"bindery-config"}}],"containers":[{"name":"bindery-copy","image":"busybox:1.37","command":["sleep","3600"],"volumeMounts":[{"name":"config","mountPath":"/config"}]}]}}'
+kubectl cp ./bindery-pre-v1.db bindery-copy:/config/bindery.db
+kubectl delete pod bindery-copy
 
 # Roll back the Helm release
 helm rollback bindery

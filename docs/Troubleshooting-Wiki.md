@@ -735,7 +735,7 @@ Bindery waited 15 seconds for OpenLibrary (run by the Internet Archive) and got 
 - **VPN or datacenter IP** — the Internet Archive throttles or blocks many shared VPN and hosting IP ranges.
 - **OpenLibrary outage** — the Internet Archive has intermittent downtime.
 
-Bindery's primary metadata provider is OpenLibrary, DNB (the German national library), or Hardcover. If OpenLibrary is unreachable for you long-term, switching the primary provider to Hardcover (`Settings → Metadata Profiles → Library Defaults`, requires a Hardcover API token) is a working English-language alternative; otherwise the fix is to make OpenLibrary reachable.
+Bindery's primary metadata provider is OpenLibrary, DNB (the German national library), Nasjonalbiblioteket (the National Library of Norway), the Bibliothèque nationale de France, or Hardcover. If OpenLibrary is unreachable for you long-term, switching the primary provider to Hardcover (`Settings → Metadata Profiles → Library Defaults`, requires a Hardcover API token) is a working English-language alternative; otherwise the fix is to make OpenLibrary reachable.
 
 **Fixes:**
 
@@ -898,10 +898,10 @@ If you reshape your library regularly, **Rename files** on the book or author pa
 
 These come from the Import page and the **Reassign file to another book** window, and they mean different things.
 
-**"Bindery cannot read this file: NAME."** The path sits inside one of your library folders, but Bindery could not open it. The file was moved or renamed, the drive is not mounted, or the account Bindery runs as is not allowed to read the folder. A file that is itself a link to something missing gets the outside roots message below instead, deliberately. Older versions reported this case as "outside the configured library roots" even though the root they listed contained the file ([#3332](https://github.com/vavallee/bindery/discussions/3332)). Check from inside the container, because the path that matters is the one the container sees:
+**"Bindery cannot read this file: NAME."** The path sits inside one of your library folders, but Bindery could not open it. The file was moved or renamed, the drive is not mounted, or the account Bindery runs as is not allowed to read the folder. A file that is itself a link to something missing gets the outside roots message below instead, deliberately. Older versions reported this case as "outside the configured library roots" even though the root they listed contained the file ([#3332](https://github.com/vavallee/bindery/discussions/3332)). Check with the container's mounts, because the path that matters is the one the container sees. The Bindery image has no shell or `ls`, so borrow its volumes in a throwaway container running as the same user (`user:` in Compose, here `1000:1000`):
 
 ```
-docker exec -it bindery ls -l "/books_drive/Audiobooks/Author/Book/file.mp3"
+docker run --rm --volumes-from bindery --user 1000:1000 busybox ls -l "/books_drive/Audiobooks/Author/Book/file.mp3"
 ```
 
 The image is minimal and may have no `ls`. If so, check the bind mount instead: the host folder must be mapped to the same path in the container, the drive must be up when the container starts, and `user: "UID:GID"` in Compose must be able to read it. On Docker Desktop with WSL a drive that was unmounted or slept can leave a stale mount, so restart the container after it is back. If the file really was renamed, use **Forget this file** on the book and let a scan register the new name.

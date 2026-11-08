@@ -226,9 +226,10 @@ TOKEN=$(curl -s -b "bindery_session=<value>" \
 
 curl -X POST http://bindery:8787/api/v1/author \
   -b "bindery_session=<value>" \
+  -H "X-Requested-With: bindery-ui" \
   -H "X-CSRF-Token: $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "Ursula K. Le Guin"}'
+  -d '{"foreignAuthorId": "<id from /search/author>", "authorName": "Ursula K. Le Guin"}'
 ```
 
 **API scripts using `X-Api-Key`:** CSRF is not required — API-key requests bypass the check entirely. Existing automation continues to work without changes.
@@ -246,6 +247,6 @@ curl -X POST http://bindery:8787/api/v1/author \
 | In `local-only` mode, requests from outside the LAN are served without a login | Bindery is behind a reverse proxy or ingress and `BINDERY_TRUSTED_PROXY` is unset, so the proxy's own private address is taken as the client IP | Set `BINDERY_TRUSTED_PROXY` to the proxy's IP or CIDR so the real client IP is resolved from `X-Forwarded-For`, or switch to `enabled` mode. The startup log carries the same warning. |
 | `DELETE /auth/users/{id}` answers 409 with a `counts` object | The user owns library data, and Bindery will not guess whether to keep or delete it | Repeat the request with `?strategy=reassign` (optionally `&reassignTo=<id>`) to move the data, or `?strategy=purge` to delete it (see "Deleting a user" above). |
 | `403 Forbidden` on an API call that worked before v1.0 | Session-cookie mutations now require `X-CSRF-Token` | Switch callers to `X-Api-Key` auth (CSRF-exempt), or add a `GET /auth/csrf` preflight to your script (see "CSRF tokens" above). |
-| Admin locked out — no admin account exists or all admins deleted | User row has `role='user'` or all admin rows were removed | Recover via direct DB update (no Bindery restart needed if you can write to the DB file): `sqlite3 /config/bindery.db "UPDATE users SET role='admin' WHERE username='<your-username>';"` — or in Kubernetes: `kubectl exec deploy/bindery -- sqlite3 /config/bindery.db "UPDATE users SET role='admin' WHERE id=1;"` |
+| Admin locked out: no admin account exists or all admins deleted | User row has `role='user'` or all admin rows were removed | Recover via direct DB update (no Bindery restart needed if you can write to the DB file): `sqlite3 /config/bindery.db "UPDATE users SET role='admin' WHERE username='<your-username>';"`, run from the host or from a helper pod that mounts the config volume, because the Bindery image has no shell or `sqlite3`, so `kubectl exec` / `docker exec` cannot run it. |
 | OIDC user auto-provisioned as `user` but should be `admin` | `BINDERY_OIDC_ADMIN_GROUP` not set, so the IdP group is never consulted | Set `BINDERY_OIDC_ADMIN_GROUP` to the IdP group name (and `BINDERY_OIDC_GROUP_CLAIM` if your IdP emits groups under a non-default claim). To promote a single existing account without group mapping: `PUT /api/v1/auth/users/{id}/role` with `{"role": "admin"}`. |
 | Non-admin user can reach admin settings page in UI | Browser cached a pre-v1.0 session or route bundle | Hard-refresh the page (`Ctrl+Shift+R`). If it persists, log out and back in. The backend enforces role checks regardless of what the UI renders. |
