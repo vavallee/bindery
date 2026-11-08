@@ -411,6 +411,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateInternal,
 	},
 	{
+		Key: "backfill.file_language_rev", Type: SettingTypeInt, Default: "0",
+		Description: "Set to 1 once the one-off pass that fills an empty book language from its tracked ebook file has run after an upgrade. Bindery checks it at every start and skips the pass when it is set. Removing the row is harmless but makes the next start repeat the pass once.",
+		State:       SettingStateInternal,
+	},
+	{
 		Key: "backfill.language_code_rev", Type: SettingTypeInt, Default: "0",
 		Description: "Revision of the language code normalizer the startup backfill last ran at (models.NormalizeLanguageCodeRev). Bindery compares it with the current revision at every start and re-runs the backfill only when they differ. Removing the row is harmless but makes the next start repeat the backfill once.",
 		State:       SettingStateInternal,

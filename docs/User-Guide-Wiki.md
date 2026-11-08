@@ -106,6 +106,16 @@ nothing populated the catalogue first. That list is where you can adopt them.
 The sequence that works is always: **populate the catalogue, then scan**. See
 [Bringing in an existing library](#bringing-in-an-existing-library) below.
 
+When the scan attaches an ebook (EPUB, MOBI, AZW or AZW3) to a book that has
+no language, the book takes the language the file declares (an EPUB's
+`dc:language`, or the language a Kindle file records in its header). It only
+fills a blank: a language that came from the metadata source, or one you set
+by editing the book, is never changed by a scan. A file that declares no
+specific language (`und`, `mul`) leaves the book blank. Books whose ebook was
+already in your library before this existed get the same treatment once, in
+the background, on the first start after the update; the log line
+`filled book languages from tracked ebook files` says how many.
+
 The scan leaves out folders that are not library content: known junk and sync
 folders (`.torrents`, `.Trash-*`, `.Trashes`, `.incomplete`,
 `.bindery-stage-*`, `.AppleDouble`, `.AppleDB`, `.Spotlight-V100`,

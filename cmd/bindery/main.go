@@ -732,6 +732,10 @@ func main() {
 	importScanner.WithReplacedFileRemover(api.NewReplacedFileRemover(libraryRoots, bookRepo))
 	importScanner.WithSeriesRepo(seriesRepo)
 	importScanner.WithEditions(editionRepo)
+	// The library scan fills an empty book language from the ebook it
+	// attaches (#1160). Books whose ebook was tracked before that get one
+	// pass now, in the background, and a settings row stops it repeating.
+	bgJobs.Go("file-language-backfill", importScanner.BackfillFileLanguagesOnce)
 
 	// Startup check: warn if a configured default root folder no longer exists on disk.
 	for _, d := range []struct{ key, kind, fallback string }{
