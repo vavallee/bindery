@@ -126,6 +126,11 @@ type ImportStats struct {
 	MetadataAutoResolved int `json:"metadataAutoResolved"`
 	Skipped              int `json:"skipped"`
 	Failed               int `json:"failed"`
+	// SeriesLinkFailed counts series links that failed inside items that
+	// otherwise imported, such as a series title shared by two local rows
+	// (#2173). Those items are not Failed, so without this the run summary
+	// read as clean while their series never linked.
+	SeriesLinkFailed int `json:"seriesLinkFailed"`
 
 	dryRunSeriesExternalIDs map[string]struct{}
 	dryRunSeriesTitles      map[string]struct{}

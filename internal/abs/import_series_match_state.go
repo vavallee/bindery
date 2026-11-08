@@ -17,6 +17,10 @@ import (
 const (
 	seriesMatchOutcomeMatched = "matched"
 	seriesMatchOutcomeMiss    = "miss"
+	// seriesMatchOutcomeAmbiguous is a Hardcover match that could not be
+	// linked because more than one local series has its title (#2173). It is
+	// retried on the miss schedule, on a full run, or when the item changes.
+	seriesMatchOutcomeAmbiguous = "ambiguous"
 
 	// seriesMatchMissTTL is how long a recorded miss is trusted. Hardcover
 	// gains series and volumes slowly, so a nightly import re-asking once a
@@ -87,7 +91,7 @@ func (i *Importer) seriesMatchAlreadyDone(ctx context.Context, cfg ImportConfig,
 	switch state.Outcome {
 	case seriesMatchOutcomeMatched:
 		return true
-	case seriesMatchOutcomeMiss:
+	case seriesMatchOutcomeMiss, seriesMatchOutcomeAmbiguous:
 		return i.seriesMatchNow().Before(seriesMatchMissExpiry(state.CheckedAt, state.InputHash))
 	}
 	return false

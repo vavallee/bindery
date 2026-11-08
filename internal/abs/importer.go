@@ -526,7 +526,8 @@ func (i *Importer) runLibrary(ctx context.Context, cfg ImportConfig, authorMatch
 		"seriesLinked", libStats.SeriesLinked,
 		"editionsAdded", libStats.EditionsAdded,
 		"skipped", libStats.Skipped,
-		"failed", libStats.Failed)
+		"failed", libStats.Failed,
+		"seriesLinkFailed", libStats.SeriesLinkFailed)
 	return libStats, nil
 }
 
@@ -628,6 +629,7 @@ func diffImportStats(before ImportStats, after *ImportStats) *ImportStats {
 		MetadataAutoResolved: after.MetadataAutoResolved - before.MetadataAutoResolved,
 		Skipped:              after.Skipped - before.Skipped,
 		Failed:               after.Failed - before.Failed,
+		SeriesLinkFailed:     after.SeriesLinkFailed - before.SeriesLinkFailed,
 	}
 }
 
@@ -742,6 +744,7 @@ func (i *Importer) importOne(ctx context.Context, cfg ImportConfig, runID int64,
 		seriesResult, err := i.upsertSeries(ctx, cfg, runID, bookResult.row.ID, item.ItemID, series, stats)
 		if err != nil {
 			slog.Warn("abs import: series upsert failed", "itemID", item.ItemID, "series", series.Name, "error", err)
+			stats.SeriesLinkFailed++
 			continue
 		}
 		if seriesResult.Linked && seriesResult.CountKey != "" {
