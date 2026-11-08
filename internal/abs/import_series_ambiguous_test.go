@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -121,5 +122,98 @@ func TestHardcoverSeries_TwinTitlePrefersSeriesHoldingTheBook(t *testing.T) {
 	}
 	if state := requireSeriesMatchState(t, importer, item); state == nil || state.Outcome != seriesMatchOutcomeMatched {
 		t.Fatalf("state = %+v, want matched", state)
+	}
+}
+
+// The ABS series path hits the same ambiguity when an item's own series name
+// matches two local rows and no provenance points at either. The run counts it.
+func TestSeriesLinkFailed_CountsAmbiguousABSSeriesUpsert(t *testing.T) {
+	t.Parallel()
+	importer, _, _, _, _, _, _, _, _, _ := newABSImporterFixture(t)
+	item := hardcoverSeriesABSItem()
+	item.Series = []NormalizedSeries{{ID: "s-different-seasons", Name: "Different Seasons", Sequence: "1"}}
+	createSeriesTwin(t, importer, "calibre:series:different-seasons", "Different Seasons")
+	createSeriesTwin(t, importer, "abs:series:lib-other:li-other", "Different Seasons")
+
+	stats := runSeriesMatchImportStats(t, importer, &stubABSMetadataProvider{}, item, nil)
+	if stats.SeriesLinkFailed != 1 {
+		t.Fatalf("SeriesLinkFailed = %d, want 1 for the ambiguous ABS series", stats.SeriesLinkFailed)
+	}
+	if stats.Failed != 0 {
+		t.Fatalf("Failed = %d, want 0: the item itself imported", stats.Failed)
+	}
+}
+
+func TestDiffImportStats_CarriesSeriesLinkFailed(t *testing.T) {
+	t.Parallel()
+	got := diffImportStats(ImportStats{SeriesLinkFailed: 2}, &ImportStats{SeriesLinkFailed: 5})
+	if got.SeriesLinkFailed != 3 {
+		t.Fatalf("per library SeriesLinkFailed = %d, want 3", got.SeriesLinkFailed)
+	}
+}
+
+// Only the ambiguity is a stable local state. Any other failure linking the
+// series (here the series store itself erroring) may clear by the next run,
+// so nothing is recorded and the item is retried.
+func TestSeriesMatchState_OtherLinkErrorRecordsNothing(t *testing.T) {
+	t.Parallel()
+	importer, _, _, _, _, _, _, _, _, _ := newABSImporterFixture(t)
+	enableHardcoverSeriesMatching(t, importer)
+	item := hardcoverSeriesABSItem()
+
+	broken, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	broken.Close()
+	importer.series = db.NewSeriesRepo(broken)
+
+	provider := matchedProvider(item)
+	stats := runSeriesMatchImportStats(t, importer, provider, item, nil)
+	if provider.searchSeriesCalls != 1 {
+		t.Fatalf("SearchSeries calls = %d, want 1", provider.searchSeriesCalls)
+	}
+	if stats.SeriesLinkFailed != 1 {
+		t.Fatalf("SeriesLinkFailed = %d, want 1", stats.SeriesLinkFailed)
+	}
+	if state := requireSeriesMatchState(t, importer, item); state != nil {
+		t.Fatalf("non ambiguous link error recorded %+v, want no state so the next run retries", state)
+	}
+}
+
+// When both importers linked the book, it belongs to both twins, so membership
+// cannot pick one and the link stays ambiguous.
+func TestHardcoverSeries_BookInBothTwinsStaysAmbiguous(t *testing.T) {
+	t.Parallel()
+	importer, _, _, seriesRepo, _, _, _, _, _, _ := newABSImporterFixture(t)
+	ctx := context.Background()
+	item := hardcoverSeriesABSItem()
+	item.Title = "Different Seasons"
+	item.Series = []NormalizedSeries{{ID: "s-different-seasons", Name: "Different Seasons", Sequence: "1"}}
+
+	runSeriesMatchImport(t, importer, &stubABSMetadataProvider{}, item, nil)
+	absSeries, err := seriesRepo.GetByForeignID(ctx, absForeignID("series", item.LibraryID, seriesExternalID(item.Series[0])))
+	if err != nil || absSeries == nil {
+		t.Fatalf("setup: ABS series = %+v, err %v", absSeries, err)
+	}
+	books, err := seriesRepo.ListBooksInSeries(ctx, absSeries.ID)
+	if err != nil || len(books) != 1 {
+		t.Fatalf("setup: books in ABS series = %+v, err %v", books, err)
+	}
+	twin := createSeriesTwin(t, importer, "calibre:series:different-seasons", "Different Seasons")
+	if err := seriesRepo.LinkBook(ctx, twin.ID, books[0].ID, "1", false); err != nil {
+		t.Fatalf("link book to twin: %v", err)
+	}
+
+	enableHardcoverSeriesMatching(t, importer)
+	stats := runSeriesMatchImportStats(t, importer, matchedProvider(item), item, nil)
+	if stats.SeriesLinkFailed != 1 {
+		t.Fatalf("SeriesLinkFailed = %d, want 1", stats.SeriesLinkFailed)
+	}
+	if linked, err := seriesRepo.GetByHardcoverSeriesID(ctx, "hc-series:2173"); err != nil || linked != nil {
+		t.Fatalf("Hardcover series linked to %+v (err %v), want neither twin", linked, err)
+	}
+	if state := requireSeriesMatchState(t, importer, item); state == nil || state.Outcome != seriesMatchOutcomeAmbiguous {
+		t.Fatalf("state = %+v, want %q", state, seriesMatchOutcomeAmbiguous)
 	}
 }
