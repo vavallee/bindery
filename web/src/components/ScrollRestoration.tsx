@@ -64,7 +64,9 @@ function maxScrollY(): number {
  *  - a POP (back, forward, the Android back gesture, the iOS swipe) returns to
  *    where that history entry was left, keyed by location.key and kept in
  *    sessionStorage so it survives a reload too;
- *  - a PUSH that changes the list's `page` param also starts at the top;
+ *  - a PUSH that changes the list's `page` param also starts at the top, and
+ *    so does one that changes Settings' `tab` param, so the new tab opens
+ *    with its heading in view;
  *  - a REPLACE to a different pathname starts at the top as well: that is
  *    how a navigation from inside an open modal arrives (useModal);
  *  - a REPLACE within the page and other query-only pushes (filters, sort,
@@ -191,9 +193,12 @@ export default function ScrollRestoration() {
     if (navigationType !== 'PUSH') return
     // A new page starts at the top, and so does a new page of a list:
     // Pagination sits below the rows, so page 2 would otherwise open at its
-    // bottom.
-    const pageParam = (search: string | null) => new URLSearchParams(search ?? '').get('page')
-    if (previousPathname !== location.pathname || pageParam(previousSearch) !== pageParam(location.search)) {
+    // bottom. A new Settings tab too, or it opens at the old tab's offset with
+    // its heading off screen. A tab link that names a field carries a hash and
+    // returned above, so it still lands on the field.
+    const param = (search: string | null, name: string) => new URLSearchParams(search ?? '').get(name)
+    const changed = (name: string) => param(previousSearch, name) !== param(location.search, name)
+    if (previousPathname !== location.pathname || changed('page') || changed('tab')) {
       window.scrollTo(0, 0)
     }
     // positions() only reads a ref; it does not need to be a dependency.
