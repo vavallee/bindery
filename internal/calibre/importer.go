@@ -511,8 +511,10 @@ func calibreFormatMediaType(format string) string {
 // inserted it. A path a real download placed, or an earlier run created, gets
 // its provenance refreshed but is never unwound by this run's rollback.
 //
-// Only formats Bindery can use are tracked, judged by the same extension
-// allowlist the library scan and folder imports use. Calibre lists every file
+// Only formats Bindery can use are tracked, judged by
+// models.IsCalibreBookFilePath: the library scan's extension allowlist plus the
+// few Calibre reading formats the scan never took (PRC, bare KEPUB, AAC), which
+// earlier imports always tracked. Calibre lists every file
 // it keeps, including the ORIGINAL_EPUB / ORIGINAL_AZW3 backups its Polish and
 // Fix EPUB tools leave beside the book, and tracking those made each one an
 // ebook file Bindery could not open, remap or deliver (#3630).
@@ -529,7 +531,7 @@ func (i *Importer) registerBookFiles(ctx context.Context, runID int64, book *mod
 		if path == "" {
 			continue
 		}
-		if !models.IsBookFilePath(path) {
+		if !models.IsCalibreBookFilePath(path) {
 			slog.Debug("calibre import: not tracking a format Bindery cannot use",
 				"calibre_id", cb.CalibreID, "book_id", book.ID, "format", f.Format, "path", path)
 			stats.FormatsSkipped++
@@ -576,7 +578,7 @@ func (i *Importer) removeUnsupportedBookFiles(ctx context.Context) int {
 	}
 	removed := 0
 	for _, f := range created {
-		if models.IsBookFilePath(f.Path) {
+		if models.IsCalibreBookFilePath(f.Path) {
 			continue
 		}
 		ok, err := i.books.UntrackFilePathForBook(ctx, f.Path, f.BookID)

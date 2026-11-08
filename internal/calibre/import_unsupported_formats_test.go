@@ -86,6 +86,73 @@ func TestImporter_KeepsKepubEpub(t *testing.T) {
 	}
 }
 
+// Formats the library scan does not accept but people really read from a
+// Calibre library stay tracked: Mobipocket PRC, Kobo KEPUB stored bare as
+// .kepub, and AAC audio, which the Calibre audio map always carried. KFX and
+// the Polish backup do not.
+func TestImporter_TracksCalibreOnlyFormats(t *testing.T) {
+	imp, fr, _, bookRepo, _, _, _ := newSeriesRollbackFixture(t)
+	ctx := context.Background()
+	cb := sampleCalibreBook(1, "Book One", "Alice Author")
+	cb.Formats = []CalibreFormat{
+		{Format: "PRC", FileName: "Book One", AbsolutePath: "/lib/Book One.prc"},
+		{Format: "KEPUB", FileName: "Book One", AbsolutePath: "/lib/Book One.kepub"},
+		{Format: "AAC", FileName: "Book One", AbsolutePath: "/lib/Book One.aac"},
+		{Format: "KFX", FileName: "Book One", AbsolutePath: "/lib/Book One.kfx"},
+		{Format: "ORIGINAL_EPUB", FileName: "Book One", AbsolutePath: "/lib/Book One.original_epub"},
+	}
+	fr.books = []CalibreBook{cb}
+
+	stats, err := imp.Run(ctx, "/lib")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	book, _ := bookRepo.GetByCalibreID(ctx, 1)
+	got := trackedPaths(t, bookRepo, book.ID)
+	want := []string{"/lib/Book One.aac", "/lib/Book One.kepub", "/lib/Book One.prc"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("tracked = %v, want %v", got, want)
+	}
+	if stats.FormatsSkipped != 2 {
+		t.Errorf("FormatsSkipped = %d, want 2 (KFX and ORIGINAL_EPUB)", stats.FormatsSkipped)
+	}
+}
+
+// The cleanup must never take back a Calibre-created row for a format the
+// import still tracks, while KFX and ORIGINAL_EPUB rows go.
+func TestImporter_CleanupKeepsCalibreOnlyFormats(t *testing.T) {
+	imp, fr, _, bookRepo, runsRepo, snapRepo, provRepo := newSeriesRollbackFixture(t)
+	ctx := context.Background()
+	cb := sampleCalibreBook(1, "Book One", "Alice Author")
+	fr.books = []CalibreBook{cb}
+	if _, err := imp.Run(ctx, "/lib"); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	runID := latestRunID(t, runsRepo)
+	book, _ := bookRepo.GetByCalibreID(ctx, 1)
+	for _, ext := range []string{".prc", ".kepub", ".aac", ".kfx", ".original_epub"} {
+		plantCalibreCreatedFile(t, bookRepo, snapRepo, provRepo, runID, book.ID, "/lib/Book One"+ext)
+	}
+
+	stats, err := imp.Run(ctx, "/lib")
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if stats.UnsupportedFilesRemoved != 2 {
+		t.Errorf("UnsupportedFilesRemoved = %d, want 2 (KFX and ORIGINAL_EPUB)", stats.UnsupportedFilesRemoved)
+	}
+	got := trackedPaths(t, bookRepo, book.ID)
+	want := []string{"/lib/Book One.aac", "/lib/Book One.epub", "/lib/Book One.kepub", "/lib/Book One.prc"}
+	if len(got) != len(want) {
+		t.Fatalf("tracked = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("tracked = %v, want %v", got, want)
+		}
+	}
+}
+
 // plantCalibreCreatedFile reproduces a row an import from before #3630 left
 // behind: a book_files row, its provenance, and the run's "created" snapshot,
 // exactly what registerBookFiles wrote for every format.
