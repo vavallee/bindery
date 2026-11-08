@@ -444,8 +444,12 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 		where += " AND books.release_date < ?"
 		args = append(args, rb)
 	}
-	if lang := strings.TrimSpace(f.Language); strings.EqualFold(lang, LanguageUnknown) {
-		where += " AND TRIM(books.language) = ''"
+	if lang := strings.TrimSpace(f.Language); strings.EqualFold(lang, LanguageUnknown) ||
+		(lang != "" && models.IsUndeterminedLanguage(models.NormalizeLanguageCode(lang))) {
+		// "und", "mis" and "zxx" name no language, so they count as none.
+		pred, predArgs := undeterminedLanguageSQL()
+		where += " AND " + pred
+		args = append(args, predArgs...)
 	} else if code := models.NormalizeLanguageCode(lang); code != "" {
 		where += " AND books.language = ?"
 		args = append(args, code)
@@ -488,6 +492,17 @@ func (r *BookRepo) ListPageFiltered(ctx context.Context, f BookListFilter, limit
 	return books, total, nil
 }
 
+// undeterminedLanguageSQL is the predicate for a book with no language: blank,
+// or one of models.UndeterminedLanguageCodes.
+func undeterminedLanguageSQL() (string, []any) {
+	codes := models.UndeterminedLanguageCodes
+	args := make([]any, 0, len(codes))
+	for _, c := range codes {
+		args = append(args, c)
+	}
+	return "LOWER(TRIM(books.language)) IN (''" + strings.Repeat(", ?", len(codes)) + ")", args
+}
+
 // LanguageCount is one language and how many books are in it. An empty Code
 // counts the books with no language.
 type LanguageCount struct {
@@ -499,11 +514,15 @@ type LanguageCount struct {
 // unscoped, otherwise their own and unowned books, as ListPageFiltered
 // scopes), excluded books left out, most common first. It is what the Books
 // page offers in its language filter (#1160), so only languages that would
-// match something are listed.
+// match something are listed. Books in an undetermined language ("und",
+// "mis", "zxx") count under the empty code with the books that have none.
 func (r *BookRepo) LanguageCounts(ctx context.Context, userID int64) ([]LanguageCount, error) {
-	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE excluded = 0", userID)
+	pred, predArgs := undeterminedLanguageSQL()
+	where, scopeArgs := QueryScopeForIncludingNull("books.owner_user_id", "WHERE excluded = 0", userID)
+	// The CASE placeholders come before the WHERE ones in the statement.
+	args := append(append([]any{}, predArgs...), scopeArgs...)
 	rows, err := r.exec.QueryContext(ctx,
-		"SELECT TRIM(books.language) AS lang, COUNT(*) FROM books "+where+
+		"SELECT CASE WHEN "+pred+" THEN '' ELSE TRIM(books.language) END AS lang, COUNT(*) FROM books "+where+
 			" GROUP BY lang ORDER BY COUNT(*) DESC, lang", args...)
 	if err != nil {
 		return nil, fmt.Errorf("count book languages: %w", err)

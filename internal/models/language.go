@@ -10,6 +10,21 @@ import (
 // language filter always has a value to consult.
 const DefaultMetadataProfileID int64 = 1
 
+// UndeterminedLanguageCodes are the ISO 639-2 codes that name no language:
+// undetermined, uncoded and no linguistic content. An EPUB can declare one and
+// an import stores it, but for finding books by language such a book has no
+// language, so the Books page language filter lists it under "No language"
+// (#1160). "mul" (several languages) is not here: it does say something about
+// the book, and is listed as a value of its own.
+var UndeterminedLanguageCodes = []string{"und", "mis", "zxx"}
+
+// IsUndeterminedLanguage reports whether code is empty or one of
+// UndeterminedLanguageCodes.
+func IsUndeterminedLanguage(code string) bool {
+	code = strings.ToLower(strings.TrimSpace(code))
+	return code == "" || slices.Contains(UndeterminedLanguageCodes, code)
+}
+
 // ParseAllowedLanguages turns a metadata profile's allowed_languages CSV
 // (e.g. "eng,fre,ger") into the normalized lowercase set used when filtering
 // metadata responses. Whitespace around codes is tolerated. An empty string

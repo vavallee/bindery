@@ -525,6 +525,40 @@ describe('BooksPage — filter chips, table cells and select-all', () => {
     await waitFor(() => expect(langs.at(-1)).toBeNull())
   })
 
+  it('reads a hand typed language as the listed option and names mul and und plainly', async () => {
+    const langs: Array<string | null> = []
+    server.use(
+      http.get(apiUrl('/book/languages'), () =>
+        HttpResponse.json([{ code: 'eng', count: 4 }, { code: 'mul', count: 1 }, { code: '', count: 2 }])),
+      http.get(apiUrl('/book'), ({ request }) => {
+        langs.push(new URL(request.url).searchParams.get('language'))
+        return HttpResponse.json({ items: [makeBook({ id: 1, title: 'Dune' })], total: 1, limit: 50, offset: 0 })
+      }),
+    )
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/?lang=en']}>
+        <BooksPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(langs.at(-1)).toBe('eng'))
+    fireEvent.click(screen.getByRole('button', { name: /Filters/ }))
+    const group = await screen.findByRole('radiogroup', { name: 'Language:' })
+    const radios = within(group).getAllByRole('radio')
+    expect(radios.map(r => r.getAttribute('aria-label') || r.textContent?.replace('✓', '').trim()))
+      .toEqual(['All', 'English (4)', 'Multiple languages (1)', 'No language (2)'])
+    expect(within(group).getByRole('radio', { name: 'English (4)' })).toHaveAttribute('aria-checked', 'true')
+    unmount()
+
+    // "und" names no language, so it is the No language filter.
+    render(
+      <MemoryRouter initialEntries={['/?lang=und']}>
+        <BooksPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(langs.at(-1)).toBe('unknown'))
+    expect(screen.queryByText(/Root/)).toBeNull()
+  })
+
   it('renders author, year and format cells, and select-all on the page toggles every row', async () => {
     server.use(
       http.get(apiUrl('/book'), () =>

@@ -52,5 +52,6 @@ describe('displayLanguageName', () => {
     expect(displayLanguageName('fre', 'de')).toBe('Französisch')
     expect(displayLanguageName('swe')).toBe('Swedish')
     expect(displayLanguageName('xyz')).toBe('xyz')
+    expect(displayLanguageName('mul')).toBe('Multiple languages')
   })
 })

@@ -18,7 +18,7 @@ import { useView } from '../components/useView'
 import GettingStartedGuidance from '../components/GettingStartedGuidance'
 import { useNeedsSetup } from '../components/useNeedsSetup'
 import { api, BINDERY_BASE, Book, BookLanguageCount, MediaType } from '../api/client'
-import { displayLanguageName } from '../util/language'
+import { canonicalLanguage, displayLanguageName } from '../util/language'
 import BulkActionBar from '../components/BulkActionBar'
 import Pagination from '../components/Pagination'
 import { useServerPagination } from '../components/usePagination'
@@ -55,6 +55,28 @@ const LIST_DEFAULTS = { q: '', status: '', media: '', lang: '', sort: 'title-az'
 // checked for shape rather than against a fixed list.
 const LANGUAGE_UNKNOWN = 'unknown'
 const LANGUAGE_PARAM = /^[a-z]{2,12}$/
+// The codes that name no language. The server lists them under No language
+// (models.UndeterminedLanguageCodes), so the URL does too.
+const LANGUAGE_UNDETERMINED = new Set(['und', 'mis', 'zxx'])
+
+// languageParam reads the lang URL value the way the server will: a spelling
+// canonicalLanguage knows ("en", "en-US", "English") becomes the stored code,
+// and a code that names no language becomes "unknown".
+function languageParam(raw: string): string {
+  const v = raw.trim().toLowerCase()
+  if (!v || v === LANGUAGE_UNKNOWN) return v
+  const code = canonicalLanguage(v)
+  if (LANGUAGE_UNDETERMINED.has(code)) return LANGUAGE_UNKNOWN
+  return LANGUAGE_PARAM.test(code) ? code : ''
+}
+
+// matchLanguageOption picks the listed language a hand typed value means, so
+// ?lang=fi selects a listed "fin" instead of adding a second Finnish.
+function matchLanguageOption(value: string, counts: BookLanguageCount[]): string {
+  if (!value || value === LANGUAGE_UNKNOWN || counts.some(c => c.code === value)) return value
+  const name = displayLanguageName(value)
+  return counts.find(c => c.code && displayLanguageName(c.code) === name)?.code ?? value
+}
 // The table's sortable columns and the whitelisted sort values behind them.
 const BOOK_COLUMN_SORTS = {
   title: { asc: 'title-az', desc: 'title-za' },
@@ -87,7 +109,6 @@ export default function BooksPage() {
   const list = useListParams(LIST_DEFAULTS)
   const statusFilter = oneOf(list.values.status, STATUS_FILTERS, '')
   const mediaFilter = oneOf(list.values.media, MEDIA_FILTERS, '')
-  const languageFilter = LANGUAGE_PARAM.test(list.values.lang) ? list.values.lang : ''
   const sort = oneOf(list.values.sort, SORT_MODES, 'title-az')
   const debouncedSearch = list.values.q
   const updateList = list.update
@@ -96,6 +117,7 @@ export default function BooksPage() {
   const setLanguageFilter = (lang: string) => updateList({ lang, page: null })
   // The languages the library holds, for the language filter's options.
   const [languageCounts, setLanguageCounts] = useState<BookLanguageCount[]>([])
+  const languageFilter = matchLanguageOption(languageParam(list.values.lang), languageCounts)
   const setSort = (next: SortMode) => updateList({ sort: next, page: null })
   // Keystroke-level changes replace the history entry instead of pushing one.
   const commitSearch = useCallback((q: string) => updateList({ q, page: null }, { replace: true }), [updateList])
@@ -170,9 +192,11 @@ export default function BooksPage() {
       })
   }, [page, pageSize, debouncedSearch, statusFilter, mediaFilter, monitoredParam, languageFilter, sort, queryKey])
 
-  const languageLabel = (code: string) => code === LANGUAGE_UNKNOWN
-    ? t('books.languageUnknownBadge', 'No language')
-    : displayLanguageName(code, i18n?.resolvedLanguage)
+  const languageLabel = (code: string) => {
+    if (code === LANGUAGE_UNKNOWN) return t('books.languageUnknownBadge', 'No language')
+    if (code === 'mul') return t('books.languageMultiple', 'Multiple languages')
+    return displayLanguageName(code, i18n?.resolvedLanguage)
+  }
   // All, then each language the library holds (most common first), then the
   // books with none. A chosen value the counts do not list (fetch failed, or
   // its last book changed language) is kept so the active option stays shown.
