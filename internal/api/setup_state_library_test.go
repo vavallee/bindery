@@ -149,3 +149,27 @@ func TestSetupStateLibrary_HungProbeLeavesItOut(t *testing.T) {
 		t.Fatal("request hung on a stuck probe")
 	}
 }
+
+// The blocked check and the library folder answer share one probe. On a hung
+// mount a request that reaches both must still wait one bound, not one each.
+func TestSetupStateLibrary_HungProbeWaitsOnceForBothPaths(t *testing.T) {
+	f := newBlockedFixture(t) // has import history, so the blocked check probes too
+	release := make(chan struct{})
+	defer close(release)
+	f.h.blocked.probe = func(string, bool) bool { <-release; return true }
+	const wait = 300 * time.Millisecond
+	f.h.blocked.wait = wait
+
+	start := time.Now()
+	s, _ := f.get(t, "admin")
+	elapsed := time.Since(start)
+	if s.Complete {
+		t.Fatal("fixture must not be complete, or the library path skips the probe")
+	}
+	if s.HasLibraryFolder != nil {
+		t.Errorf("hasLibraryFolder = %v before any probe finished", *s.HasLibraryFolder)
+	}
+	if elapsed >= wait*3/2 {
+		t.Errorf("request took %v, want under %v (one probe wait)", elapsed, wait*3/2)
+	}
+}

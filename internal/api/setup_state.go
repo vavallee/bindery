@@ -121,8 +121,10 @@ func (h *SetupStateHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// this endpoint's non-admin callers are not otherwise shown. Auth
 	// disabled and API key callers are stamped admin by the middleware.
 	if auth.UserRoleFromContext(ctx) == "admin" {
-		h.blocked.apply(ctx, h.clients, &state)
-		state.HasLibraryFolder = h.libraryFolder(ctx, state.Complete)
+		// One probe wait budget for both, so a hung mount costs one bound.
+		pctx := h.blocked.withProbeDeadline(ctx)
+		h.blocked.apply(pctx, h.clients, &state)
+		state.HasLibraryFolder = h.libraryFolder(pctx, state.Complete)
 	}
 	writeJSON(w, http.StatusOK, state)
 }

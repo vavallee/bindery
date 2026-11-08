@@ -256,9 +256,12 @@ func (bc *blockedChecker) storageBroken(ctx context.Context, clients []models.Do
 	done := bc.inflight
 	bc.mu.Unlock()
 
-	wait := bc.wait
-	if wait == 0 {
-		wait = storageProbeWait
+	wait := bc.probeWait()
+	if deadline, ok := ctx.Value(probeDeadlineKey{}).(time.Time); ok {
+		wait = time.Until(deadline)
+	}
+	if wait < 0 {
+		wait = 0
 	}
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
@@ -288,6 +291,25 @@ func (bc *blockedChecker) libraryUsable(ctx context.Context, clients []models.Do
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 	return bc.libraryOK, bc.libraryProbed
+}
+
+func (bc *blockedChecker) probeWait() time.Duration {
+	if bc.wait != 0 {
+		return bc.wait
+	}
+	return storageProbeWait
+}
+
+// probeDeadlineKey carries one request's deadline for waiting on the storage
+// probe. A request can reach storageBroken twice (the blocked check, then the
+// library folder answer) and both wait on the same in flight probe, so they
+// share one deadline instead of waiting one bound each. It bounds only that
+// wait: database reads keep the request's own context.
+type probeDeadlineKey struct{}
+
+// withProbeDeadline starts the request's single probe wait budget.
+func (bc *blockedChecker) withProbeDeadline(ctx context.Context) context.Context {
+	return context.WithValue(ctx, probeDeadlineKey{}, time.Now().Add(bc.probeWait()))
 }
 
 // allClientsFailing is true when at least one client is enabled and every

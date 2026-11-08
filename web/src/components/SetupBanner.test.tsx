@@ -119,6 +119,19 @@ describe('SetupBanner root folder', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
+  // The server leaves hasLibraryFolder out while its probe has no answer (a
+  // hung mount). Unknown is not a reason to ask for a root folder.
+  it('treats a missing library folder answer as done', async () => {
+    vi.mocked(api.listIndexers).mockResolvedValue([])
+    vi.mocked(api.listDownloadClients).mockResolvedValue([])
+    vi.mocked(api.setupState).mockResolvedValue(setupState(undefined))
+    renderIt()
+
+    expect(await screen.findByText(/add an indexer and a download client/)).toBeInTheDocument()
+    expect(screen.queryByText(/root folder/)).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Set up Indexers' })).toBeInTheDocument()
+  })
+
   it('never asks /system/storage, which probes the mounts uncached', async () => {
     setup({ indexer: false, client: false, library: false })
     renderIt()
