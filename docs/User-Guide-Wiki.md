@@ -1684,7 +1684,9 @@ click away, and says when more than eight things matched.
 
 Every searchable setting has a link you can share. The setting key is the anchor,
 so `/settings?tab=metadata#metadata.primary_provider` opens Metadata and lands on
-the primary provider. Picking a result puts that link in the address bar. A
+the primary provider. Picking a result puts that link in the address bar. The
+setting decides the tab, so a link whose `?tab=` names a different tab still
+opens the right one and keeps the anchor. A
 setting that only appears while another option is on, such as the Calibre plugin
 URL, is found by search but the link has nothing to land on until that option is
 set.

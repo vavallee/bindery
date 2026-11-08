@@ -25,8 +25,6 @@ export interface FieldEntry {
   help?: string
   /** The tab only renders this field for admins. */
   adminOnly?: boolean
-  /** Only rendered while another option is on, so a deep link may find nothing. */
-  conditional?: boolean
 }
 
 const G = 'settings.general.'
@@ -36,13 +34,13 @@ export const FIELDS: FieldEntry[] = [
   // General (everything below Appearance and Security is admin only).
   { key: 'import.mode', tab: 'general', adminOnly: true, label: G + 'importMode.label', help: G + 'importMode.hint' },
   { key: 'import.audiobook.mode', tab: 'general', adminOnly: true, label: G + 'audiobookImportMode', help: G + 'audiobookImportModeHint' },
-  { key: 'import.audiobook.flatten_multi_disc', tab: 'general', adminOnly: true, conditional: true, label: G + 'flattenMultiDisc', help: G + 'flattenMultiDiscHint' },
+  { key: 'import.audiobook.flatten_multi_disc', tab: 'general', adminOnly: true, label: G + 'flattenMultiDisc', help: G + 'flattenMultiDiscHint' },
   { key: 'import.ebook.content_check', tab: 'general', adminOnly: true, label: G + 'ebookContentCheck', help: G + 'ebookContentCheckHint' },
   { key: 'import.audiobook.content_check', tab: 'general', adminOnly: true, label: G + 'audiobookContentCheck', help: G + 'audiobookContentCheckHint' },
-  { key: 'import.drop_folder', tab: 'general', adminOnly: true, conditional: true, label: G + 'dropFolder', help: G + 'dropFolderHint' },
-  { key: 'import.audiobook.drop_folder', tab: 'general', adminOnly: true, conditional: true, label: G + 'audiobookDropFolder', help: G + 'audiobookDropFolderHint' },
-  { key: 'import.drop_layout', tab: 'general', adminOnly: true, conditional: true, label: G + 'dropLayout' },
-  { key: 'import.drop_link_mode', tab: 'general', adminOnly: true, conditional: true, label: G + 'dropLinkMode' },
+  { key: 'import.drop_folder', tab: 'general', adminOnly: true, label: G + 'dropFolder', help: G + 'dropFolderHint' },
+  { key: 'import.audiobook.drop_folder', tab: 'general', adminOnly: true, label: G + 'audiobookDropFolder', help: G + 'audiobookDropFolderHint' },
+  { key: 'import.drop_layout', tab: 'general', adminOnly: true, label: G + 'dropLayout' },
+  { key: 'import.drop_link_mode', tab: 'general', adminOnly: true, label: G + 'dropLinkMode' },
   { key: 'import.source_folders', tab: 'general', adminOnly: true, label: G + 'importSources', help: G + 'importSourcesHint' },
   { key: 'import.write_opf_sidecar', tab: 'general', adminOnly: true, label: G + 'writeOPFSidecar', help: G + 'writeOPFSidecarHint' },
   { key: 'naming.bookTemplate', tab: 'general', adminOnly: true, label: G + 'bookTemplate' },
@@ -59,9 +57,9 @@ export const FIELDS: FieldEntry[] = [
   // Metadata
   { key: 'metadata.primary_provider', tab: 'metadata', label: G + 'metadataProviderLabel', help: G + 'metadataProviderHint' },
   { key: 'default.media_type', tab: 'metadata', label: G + 'defaultMediaTypeLabel', help: G + 'defaultMediaTypeHint' },
-  { key: 'default.media_type_strict', tab: 'metadata', conditional: true, label: G + 'strictMediaTypeLabel', help: G + 'strictMediaTypeHint' },
+  { key: 'default.media_type_strict', tab: 'metadata', label: G + 'strictMediaTypeLabel', help: G + 'strictMediaTypeHint' },
   { key: 'author.default_monitor_mode', tab: 'metadata', label: G + 'defaultMonitorModeLabel', help: G + 'defaultMonitorModeHint' },
-  { key: 'author.default_monitor_latest_count', tab: 'metadata', conditional: true, label: G + 'defaultMonitorLatestCountLabel' },
+  { key: 'author.default_monitor_latest_count', tab: 'metadata', label: G + 'defaultMonitorLatestCountLabel' },
   { key: 'autoGrab.enabled', tab: 'metadata', label: G + 'autoGrabLabel', help: G + 'autoGrabHint' },
   { key: 'recommendations.enabled', tab: 'metadata', label: G + 'recommendationsLabel', help: G + 'recommendationsHint' },
   { key: 'metadata.author_enrichment.wikidata', tab: 'metadata', label: G + 'authorWikidataLabel', help: G + 'authorWikidataHint' },
@@ -74,13 +72,13 @@ export const FIELDS: FieldEntry[] = [
   // Calibre
   { key: 'calibre.library_path', tab: 'calibre', label: C + 'fields.libraryPath', help: C + 'fields.libraryPathHint' },
   { key: 'calibre.mode', tab: 'calibre', label: C + 'mode.heading' },
-  { key: 'calibre.binary_path', tab: 'calibre', conditional: true, label: C + 'fields.binaryPath', help: C + 'fields.binaryPathHint' },
-  { key: 'calibre.plugin_transport', tab: 'calibre', conditional: true, label: C + 'transport.label' },
-  { key: 'calibre.plugin_url', tab: 'calibre', conditional: true, label: C + 'fields.pluginUrl', help: C + 'fields.pluginUrlHint' },
-  { key: 'calibre.plugin_api_key', tab: 'calibre', conditional: true, label: C + 'fields.apiKey', help: C + 'fields.apiKeyHint' },
-  { key: 'calibre.push_path_remap', tab: 'calibre', conditional: true, label: C + 'fields.pushRemap', help: C + 'fields.pushRemapHint' },
+  { key: 'calibre.binary_path', tab: 'calibre', label: C + 'fields.binaryPath', help: C + 'fields.binaryPathHint' },
+  { key: 'calibre.plugin_transport', tab: 'calibre', label: C + 'transport.label' },
+  { key: 'calibre.plugin_url', tab: 'calibre', label: C + 'fields.pluginUrl', help: C + 'fields.pluginUrlHint' },
+  { key: 'calibre.plugin_api_key', tab: 'calibre', label: C + 'fields.apiKey', help: C + 'fields.apiKeyHint' },
+  { key: 'calibre.push_path_remap', tab: 'calibre', label: C + 'fields.pushRemap', help: C + 'fields.pushRemapHint' },
   { key: 'calibre.library_import_enabled', tab: 'calibre', label: C + 'import.heading', help: C + 'import.hint' },
-  { key: 'calibre.sync_on_startup', tab: 'calibre', conditional: true, label: C + 'import.syncOnStartup', help: C + 'import.syncOnStartupHint' },
+  { key: 'calibre.sync_on_startup', tab: 'calibre', label: C + 'import.syncOnStartup', help: C + 'import.syncOnStartupHint' },
   { key: 'cwa.ingest_path', tab: 'calibre', label: C + 'cwa.ingestPath', help: C + 'cwa.ingestPathHint' },
 
   // API keys

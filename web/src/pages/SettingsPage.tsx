@@ -230,18 +230,26 @@ export default function SettingsPage() {
   // so /settings?tab=metadata#metadata.primary_provider is a stable link.
   const [pendingAnchor, setPendingAnchor] = useState<string | null>(null)
   const highlightTimer = useRef<number | undefined>(undefined)
-  useEffect(() => () => window.clearTimeout(highlightTimer.current), [])
+  const highlighted = useRef<HTMLElement | null>(null)
+  const clearHighlight = useCallback(() => {
+    window.clearTimeout(highlightTimer.current)
+    highlighted.current?.classList.remove(...HIGHLIGHT_CLASSES)
+    highlighted.current = null
+  }, [])
+  useEffect(() => clearHighlight, [clearHighlight])
   useEffect(() => {
     const root = contentRef.current
     if (!pendingAnchor || !root) return
     const find = () => root.querySelector<HTMLElement>(`[id="${pendingAnchor.replace(/["\\]/g, '')}"]`)
     const land = (el: HTMLElement) => {
       el.scrollIntoView?.({ block: 'center' })
+      // Take the ring off the previous field first, so two quick picks never
+      // leave one behind. Not tied to this effect's cleanup: landing resets
+      // pendingAnchor, which re-runs the effect, and the ring must still go.
+      clearHighlight()
       el.classList.add(...HIGHLIGHT_CLASSES)
-      // Not cleared by this effect's cleanup: landing resets pendingAnchor,
-      // which re-runs the effect, and the highlight must still come off.
-      window.clearTimeout(highlightTimer.current)
-      highlightTimer.current = window.setTimeout(() => el.classList.remove(...HIGHLIGHT_CLASSES), 2500)
+      highlighted.current = el
+      highlightTimer.current = window.setTimeout(clearHighlight, 2500)
       const control = el.matches(FOCUSABLE) ? el : el.querySelector<HTMLElement>(FOCUSABLE)
       control?.focus({ preventScroll: true })
       setPendingAnchor(null)
@@ -255,16 +263,21 @@ export default function SettingsPage() {
     observer.observe(root, { childList: true, subtree: true })
     const giveUp = window.setTimeout(() => { observer.disconnect(); setPendingAnchor(null) }, 4000)
     return () => { observer.disconnect(); window.clearTimeout(giveUp) }
-  }, [pendingAnchor, tab])
+  }, [pendingAnchor, tab, clearHighlight])
 
   // A URL hash that names a field opens its tab and lands on it. A non admin
   // gets nothing for a field their tab list hides, and an unknown hash is left
-  // to the browser.
+  // to the browser. The field decides the tab: a stale or wrong ?tab= is
+  // corrected and the hash kept, so the link stays shareable.
   useEffect(() => {
     const anchor = decodeURIComponent(location.hash.replace(/^#/, ''))
     const field = anchor ? fieldForAnchor(anchor) : undefined
     if (!field || (!isAdmin && (field.adminOnly || ADMIN_TABS.includes(field.tab)))) return
-    if (field.tab !== tab) setTab(field.tab, { replace: true })
+    if (field.tab !== tab) {
+      const params = new URLSearchParams(searchParams)
+      params.set('tab', field.tab)
+      navigate({ pathname: location.pathname, search: `?${params}`, hash: location.hash }, { replace: true })
+    }
     setPendingAnchor(field.key)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.hash, location.key, isAdmin])

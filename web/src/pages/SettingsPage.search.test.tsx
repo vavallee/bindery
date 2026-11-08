@@ -49,7 +49,11 @@ vi.mock('../api/client', async importOriginal => {
 })
 vi.mock('../components/ProtocolMismatchWarning', () => ({ default: () => null }))
 
-vi.mock('./settings/GeneralTab', () => ({ default: () => <p>general tab</p> }))
+// The real General tab hides import.mode from non admins; this stub renders it
+// anyway, so only the page's own adminOnly guard keeps a deep link off it.
+vi.mock('./settings/GeneralTab', () => ({
+  default: () => <div><p>general tab</p><div id="import.mode"><input aria-label="import mode" /></div></div>,
+}))
 vi.mock('./settings/AboutTab', () => ({ default: () => <p>about tab</p> }))
 vi.mock('./settings/IndexersTab', () => ({ default: () => <p>indexers tab</p> }))
 vi.mock('./settings/ClientsTab', () => ({ default: () => <p>clients tab</p> }))
@@ -72,6 +76,7 @@ vi.mock('./settings/MetadataTab', async () => {
               <select id="provider-select"><option>openlibrary</option></select>
             </div>
           )}
+          {ready && <div id="autoGrab.enabled"><button type="button">auto grab</button></div>}
         </div>
       )
     },
@@ -255,6 +260,44 @@ describe('Settings search', () => {
       renderSettings('/settings#metadata.primary_provider')
       expect(await screen.findByText('metadata tab')).toBeInTheDocument()
       await waitFor(() => expect(document.getElementById('metadata.primary_provider')).toHaveClass('ring-2'))
+    })
+
+    it('moves the ring when a second field is picked quickly, and clears both after the timeout', async () => {
+      renderSettings()
+      type('primary metadata')
+      fireEvent.keyDown(box(), { key: 'Enter' })
+      const a = await waitFor(() => {
+        const el = document.getElementById('metadata.primary_provider')
+        expect(el).toHaveClass('ring-2')
+        return el as HTMLElement
+      })
+      type('autoGrab.enabled')
+      fireEvent.keyDown(box(), { key: 'Enter' })
+      const b = document.getElementById('autoGrab.enabled') as HTMLElement
+      await waitFor(() => expect(b).toHaveClass('ring-2'))
+      expect(a).not.toHaveClass('ring-2')
+      await waitFor(() => expect(b).not.toHaveClass('ring-2'), { timeout: 4000 })
+      expect(a).not.toHaveClass('ring-2')
+    }, 10000)
+
+    it('keeps the hash and corrects the tab when ?tab= disagrees with the field', async () => {
+      renderSettings('/settings?tab=general#autoGrab.enabled')
+      expect(await screen.findByText('metadata tab')).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('?tab=metadata#autoGrab.enabled'))
+      await waitFor(() => expect(document.getElementById('autoGrab.enabled')).toHaveClass('ring-2'))
+    })
+
+    it('does not land a non admin on an admin only field of a tab they can open', async () => {
+      state.isAdmin = false
+      renderSettings('/settings#import.mode')
+      const field = await waitFor(() => {
+        const el = document.getElementById('import.mode')
+        expect(el).not.toBeNull()
+        return el as HTMLElement
+      })
+      await new Promise(r => setTimeout(r, 100))
+      expect(field).not.toHaveClass('ring-2')
+      expect(field.querySelector('input')).not.toHaveFocus()
     })
 
     it('ignores a hash that is not a field', async () => {
