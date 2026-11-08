@@ -1711,18 +1711,34 @@ commas or new lines: `Graphic Audio, Full Cast, abridged`. The key is
 
 ## Finding a setting when you do not know its tab
 
-The search box at the top of Settings matches tab names and section headings
-(Telemetry, File Naming, API Keys and so on) in your language, and for admins also
-the key of any registered setting. Press `/` to jump to the box, type a few
-letters, then use the arrow keys and Enter, or just tap a result. Enter on its own
-takes the first one, and Escape clears the box. A tab or key result opens that
-tab; a heading result also scrolls to the section. The list closes when you click
-away, and says when more than eight things matched.
+The search box at the top of Settings matches tab names, section headings and
+individual settings, in your language. A setting is found by its label, by its
+setting key (so a key quoted in these docs or in a support thread finds its
+field), or by a word from its help text once you have typed three letters or
+more. Admins also get the key of any registered setting that has no field of its
+own, which opens Advanced. Press `/` to jump to the box, type a few letters, then
+use the arrow keys and Enter, or just tap a result. Enter on its own takes the
+first one, and Escape clears the box. A tab result opens that tab, a heading
+result also scrolls to the section, and a setting result scrolls to the field,
+highlights it for a moment and puts the cursor in it. The list closes when you
+click away, and says when more than eight things matched.
 
-It does not search individual field labels or help text, so a setting that has no
-heading of its own is found through its tab or section. Non admins are only
-offered the tabs and sections they can see: the admin sections of General, such
-as File Naming and Downloads, are left out for them.
+Every searchable setting has a link you can share. The setting key is the anchor,
+so `/settings?tab=metadata#metadata.primary_provider` opens Metadata and lands on
+the primary provider. Picking a result puts that link in the address bar. The
+setting decides the tab, so a link whose `?tab=` names a different tab still
+opens the right one and keeps the anchor. A
+setting that only appears while another option is on, such as the Calibre plugin
+URL, is found by search but the link has nothing to land on until that option is
+set.
+
+Not searchable yet: the fields of the Audiobookshelf, Grimmory, Quality,
+Import and Notifications tabs, which save through their own forms rather than as
+stored settings, and rows you created yourself (individual indexers, download
+clients, notification targets). Those are found through their tab or section.
+Non admins are only offered the tabs, sections and settings they can see: the
+admin sections of General, such as File Naming and Downloads, are left out for
+them, and a link to an admin setting does nothing for them.
 
 ## Settings most people never touch
 

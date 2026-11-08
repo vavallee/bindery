@@ -143,7 +143,7 @@ export default function ApiKeysTab() {
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.apiKeys')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
-          <div>
+          <div id="googlebooks.apiKey">
             <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.general.googleBooksKey')}</label>
             <div className="flex flex-wrap gap-2">
               <input id={`${fid}-1`}
@@ -175,7 +175,7 @@ export default function ApiKeysTab() {
                 {t('settings.general.hardcoverTokenRejected')}
               </p>
             )}
-            <div>
+            <div id="hardcover.api_token">
               <div className="flex items-center justify-between gap-3 mb-1">
                 <label className="block text-xs text-fg-muted">
                   {t('settings.general.hardcoverApiToken', 'Hardcover API Token')}
@@ -241,7 +241,7 @@ export default function ApiKeysTab() {
               )}
             </div>
 
-            <div className="flex items-center justify-between gap-4">
+            <div id="hardcover.enhanced_series_enabled" className="flex items-center justify-between gap-4">
               <div className="min-w-0">
                 <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">
                   {t('settings.general.enhancedHardcoverSeries', 'Enhanced Hardcover series')}

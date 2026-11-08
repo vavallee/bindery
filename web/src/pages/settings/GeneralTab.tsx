@@ -363,7 +363,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.fileNaming')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
-          <div>
+          <div id="import.mode">
             <label className="block text-xs text-fg-muted mb-1">{t('settings.general.importMode.label', 'Import Mode')}</label>
             <p className="text-xs text-fg-muted mb-2">
               {/* JSX drops the newline between a text line and a following
@@ -404,7 +404,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               </p>
             )}
           </div>
-          <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
+          <div id="import.audiobook.mode" className="border-t border-slate-200 dark:border-zinc-800 pt-3">
             <label htmlFor="import-audiobook-mode" className="block text-xs text-fg-muted mb-1">
               {t('settings.general.audiobookImportMode')}
             </label>
@@ -429,7 +429,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             </select>
           </div>
           {['copy', 'hardlink'].includes(audiobookMode) && (
-            <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
+            <div id="import.audiobook.flatten_multi_disc" className="border-t border-slate-200 dark:border-zinc-800 pt-3">
               <label className="flex items-start gap-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -452,7 +452,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               </label>
             </div>
           )}
-          <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
+          <div id="import.ebook.content_check" className="border-t border-slate-200 dark:border-zinc-800 pt-3">
             <label htmlFor="import-ebook-content-check" className="block text-xs text-fg-muted mb-1">
               {t('settings.general.ebookContentCheck')}
             </label>
@@ -475,7 +475,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               <option value="block">{t('settings.general.contentCheckBlock')}</option>
             </select>
           </div>
-          <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
+          <div id="import.audiobook.content_check" className="border-t border-slate-200 dark:border-zinc-800 pt-3">
             <label htmlFor="import-audiobook-content-check" className="block text-xs text-fg-muted mb-1">
               {t('settings.general.audiobookContentCheck')}
             </label>
@@ -501,7 +501,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
           {anyExternal && (
             <div className="border-t border-slate-200 dark:border-zinc-800 pt-3 space-y-3">
               {importMode === 'external' && (
-              <div>
+              <div id="import.drop_folder">
                 <label htmlFor={`${fid}-3`} className="block text-xs text-fg-muted mb-1">{t('settings.general.dropFolder', 'Drop folder')}</label>
                 <p className="text-xs text-fg-muted mb-2">
                   {t('settings.general.dropFolderHint', 'Optional. In External mode, Bindery renames each finished download into this folder for a watch-folder tool (Calibre-Web-Automated, Storyteller) to ingest, instead of leaving it in the download dir. The source is never moved, so torrents keep seeding. Bindery still reconciles the managed copy on the next library scan. Leave empty to hand off in place.')}
@@ -523,7 +523,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               </div>
               )}
               {audiobookMode === 'external' && (
-              <div>
+              <div id="import.audiobook.drop_folder">
                 <label htmlFor="import-audiobook-drop-folder" className="block text-xs text-fg-muted mb-1">{t('settings.general.audiobookDropFolder')}</label>
                 <p className="text-xs text-fg-muted mb-2">
                   {t('settings.general.audiobookDropFolderHint')}
@@ -547,7 +547,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               </div>
               )}
               <div className="flex gap-6 flex-wrap">
-                <div>
+                <div id="import.drop_layout">
                   <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.general.dropLayout', 'Layout')}</label>
                   <select id={`${fid}-1`}
                     value={settings['import.drop_layout'] ?? 'flat'}
@@ -562,7 +562,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                     <option value="templated">{t('settings.general.dropLayoutTemplated', 'Templated ({Author}/{Title}…)')}</option>
                   </select>
                 </div>
-                <div>
+                <div id="import.drop_link_mode">
                   <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">{t('settings.general.dropLinkMode', 'Placement')}</label>
                   <select id={`${fid}-2`}
                     value={settings['import.drop_link_mode'] ?? 'copy'}
@@ -580,7 +580,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               </div>
             </div>
           )}
-          <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
+          <div id="import.source_folders" className="border-t border-slate-200 dark:border-zinc-800 pt-3">
             <label htmlFor="import-source-folders" className="block text-xs text-fg-muted mb-1">{t('settings.general.importSources', 'Import source folders')}</label>
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.importSourcesHint', 'Optional. One absolute folder path per line. Import, From a folder can browse and import from these in addition to your root folders. They are not root folders: no author is filed there and Bindery never scans them as a library. Bindery never writes new files there, but in move mode an import removes the imported files from them. Mount a folder read only to make a move fail instead of delete.')}
@@ -603,7 +603,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             </div>
             {sourcesErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{sourcesErr}</p>}
           </div>
-          <div className="border-t border-slate-200 dark:border-zinc-800 pt-3">
+          <div id="import.write_opf_sidecar" className="border-t border-slate-200 dark:border-zinc-800 pt-3">
             <label className="flex items-start gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -626,6 +626,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             </label>
           </div>
           <NamingTemplateField
+            anchorId="naming.bookTemplate"
             label={t('settings.general.bookTemplate')}
             kind="book"
             placeholder="{Author}/{Title} ({Year})/{Title} - {Author}.{ext}"
@@ -636,6 +637,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             saveResult={bookTemplateResult}
           />
           <NamingTemplateField
+            anchorId="naming_template_audiobook"
             label={t('settings.general.audiobookTemplate')}
             hint={t('settings.general.audiobookTemplateHint')}
             kind="audiobook"
@@ -646,7 +648,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             saving={saving === 'naming_template_audiobook'}
             saveResult={audiobookTemplateResult}
           />
-          <div>
+          <div id="naming.audiobook_file_template">
             <label htmlFor={`${fid}-4`} className="block text-xs text-fg-muted mb-1">
               {t('settings.general.audiobookFileTemplate', 'Audiobook file naming (per track)')}
             </label>
@@ -676,7 +678,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.downloads')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
-          <div>
+          <div id="search.preferredLanguage">
             <label htmlFor={`${fid}-5`} className="block text-xs text-fg-muted mb-1">{t('settings.general.preferredLanguage')}</label>
             <p className="text-xs text-fg-muted mb-2">{t('settings.general.preferredLanguageHint')}</p>
             <div className="flex flex-wrap gap-2">
@@ -697,7 +699,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             {langErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{langErr}</p>}
           </div>
           {isAdmin && (
-            <div>
+            <div id="search.rejectWords">
               <label htmlFor={`${fid}-rejectwords`} className="block text-xs text-fg-muted mb-1">{t('settings.general.rejectWords')}</label>
               <p className="text-xs text-fg-muted mb-2">{t('settings.general.rejectWordsHint')}</p>
               <div className="flex flex-wrap gap-2">
@@ -904,7 +906,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.search')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <div>
+          <div id="search.interval">
             <label htmlFor={`${fid}-10`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.searchIntervalLabel')}
             </label>
@@ -940,7 +942,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.hardcoverSync', 'Hardcover list sync')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <div>
+          <div id="hardcover.sync_interval">
             <label htmlFor={`${fid}-11`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.hardcoverSyncIntervalLabel', 'Hardcover list sync interval')}
             </label>
@@ -984,7 +986,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.libraryScan', 'Library scan')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <div>
+          <div id="library.scan_interval">
             <label htmlFor={`${fid}-12`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.libraryScanIntervalLabel', 'Library scan interval')}
             </label>
@@ -1027,7 +1029,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.discovery')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <div>
+          <div id="authors.discovery.interval">
             <label htmlFor="discovery-interval" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.discoveryIntervalLabel')}
             </label>
@@ -1062,7 +1064,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.seriesCheck')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <div>
+          <div id="series.monitoring.interval">
             <label htmlFor="series-check-interval" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.seriesCheckIntervalLabel')}
             </label>

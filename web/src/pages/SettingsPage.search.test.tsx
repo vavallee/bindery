@@ -49,13 +49,39 @@ vi.mock('../api/client', async importOriginal => {
 })
 vi.mock('../components/ProtocolMismatchWarning', () => ({ default: () => null }))
 
-vi.mock('./settings/GeneralTab', () => ({ default: () => <p>general tab</p> }))
+// The real General tab hides import.mode from non admins; this stub renders it
+// anyway, so only the page's own adminOnly guard keeps a deep link off it.
+vi.mock('./settings/GeneralTab', () => ({
+  default: () => <div><p>general tab</p><div id="import.mode"><input aria-label="import mode" /></div></div>,
+}))
 vi.mock('./settings/AboutTab', () => ({ default: () => <p>about tab</p> }))
 vi.mock('./settings/IndexersTab', () => ({ default: () => <p>indexers tab</p> }))
 vi.mock('./settings/ClientsTab', () => ({ default: () => <p>clients tab</p> }))
 vi.mock('./settings/NotificationsTab', () => ({ default: () => <p>notifications tab</p> }))
 vi.mock('./settings/QualityTab', () => ({ default: () => <p>quality tab</p> }))
-vi.mock('./settings/MetadataTab', () => ({ default: () => <p>metadata tab</p> }))
+// Stands in for the tab's anchored field wrappers, rendering late like a tab
+// that fetches first.
+vi.mock('./settings/MetadataTab', async () => {
+  const { useEffect, useState } = await import('react')
+  return {
+    default: function MetadataStub() {
+      const [ready, setReady] = useState(false)
+      useEffect(() => { const id = setTimeout(() => setReady(true), 30); return () => clearTimeout(id) }, [])
+      return (
+        <div>
+          <p>metadata tab</p>
+          {ready && (
+            <div id="metadata.primary_provider">
+              <label htmlFor="provider-select">provider</label>
+              <select id="provider-select"><option>openlibrary</option></select>
+            </div>
+          )}
+          {ready && <div id="autoGrab.enabled"><button type="button">auto grab</button></div>}
+        </div>
+      )
+    },
+  }
+})
 vi.mock('./settings/RootFoldersTab', () => ({ default: () => <p>rootfolders tab</p> }))
 vi.mock('./settings/CalibreTab', () => ({ default: () => <p>calibre tab</p> }))
 vi.mock('./settings/ABSTab', () => ({ default: () => <p>abs tab</p> }))
@@ -79,19 +105,19 @@ vi.mock('./settings/LogsTab', async () => {
 
 function Where() {
   const l = useLocation()
-  return <output data-testid="where">{l.search}</output>
+  return <output data-testid="where">{l.search + l.hash}</output>
 }
 
-function renderSettings() {
+function renderSettings(entry = '/settings') {
   return render(
-    <MemoryRouter initialEntries={['/settings']}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes><Route path="/settings" element={<SettingsPage />} /></Routes>
       <Where />
     </MemoryRouter>,
   )
 }
 
-const box = () => screen.getByRole('combobox', { name: 'Find a settings tab or section' })
+const box = () => screen.getByRole('combobox', { name: 'Find a setting, tab or section' })
 const type = (text: string) => {
   fireEvent.focus(box())
   fireEvent.change(box(), { target: { value: text } })
@@ -112,7 +138,7 @@ describe('Settings search', () => {
   it('jumps to a tab by its name with Enter on the first result', async () => {
     renderSettings()
     type('blocklist')
-    expect(optionNames()).toEqual(['Blocklist'])
+    expect(optionNames()[0]).toBe('Blocklist') // later rows are fields whose help text mentions it
     fireEvent.keyDown(box(), { key: 'Enter' })
     expect(await screen.findByText('blocklist tab')).toBeInTheDocument()
     expect(screen.getByTestId('where')).toHaveTextContent('tab=blocklist')
@@ -122,7 +148,7 @@ describe('Settings search', () => {
   it('finds a section heading, switches to its tab and focuses the heading once it renders', async () => {
     renderSettings()
     type('telemetry')
-    expect(optionNames()).toEqual(['Usage TelemetryLogs'])
+    expect(optionNames()[0]).toBe('Usage TelemetryLogs')
     fireEvent.keyDown(box(), { key: 'Enter' })
     await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('tab=logs'))
     const heading = await screen.findByRole('heading', { name: 'Usage Telemetry' })
@@ -135,7 +161,7 @@ describe('Settings search', () => {
     type('dateiben')
     expect(optionNames()).toEqual(['DateibenennungGeneral'])
     type('file naming')
-    expect(optionNames()).toEqual([])
+    expect(optionNames()).not.toContain('File namingGeneral')
   })
 
   it('finds an active setting key and opens Advanced, ignoring inert keys', async () => {
@@ -160,7 +186,7 @@ describe('Settings search', () => {
     fireEvent.keyDown(box(), { key: 'ArrowDown' })
     expect(box()).toHaveAttribute('aria-activedescendant', options[1].id)
     expect(options[1]).toHaveAttribute('aria-selected', 'true')
-    expect(status()).toHaveTextContent(`${options.length} results`)
+    expect(status()).toHaveTextContent(/\d+ results/)
   })
 
   it('clears with Escape and says when nothing matches', () => {
@@ -176,6 +202,120 @@ describe('Settings search', () => {
     renderSettings()
     fireEvent.keyDown(document.body, { key: '/' })
     expect(box()).toHaveFocus()
+  })
+
+  describe('field results (#3059)', () => {
+    it('finds a field by its label and lands on it, highlighted and focused, with the anchor in the URL', async () => {
+      renderSettings()
+      type('primary metadata')
+      expect(optionNames()).toEqual(['Primary metadata providerMetadata Profiles'])
+      fireEvent.keyDown(box(), { key: 'Enter' })
+      await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('?tab=metadata#metadata.primary_provider'))
+      const field = await waitFor(() => {
+        const el = document.getElementById('metadata.primary_provider')
+        expect(el).not.toBeNull()
+        return el as HTMLElement
+      })
+      await waitFor(() => expect(field.querySelector('select')).toHaveFocus())
+      expect(field).toHaveClass('ring-2')
+    })
+
+    it('removes the highlight after a moment', async () => {
+      renderSettings('/settings#metadata.primary_provider')
+      const field = await waitFor(() => {
+        const el = document.getElementById('metadata.primary_provider')
+        expect(el).toHaveClass('ring-2')
+        return el as HTMLElement
+      })
+      await waitFor(() => expect(field).not.toHaveClass('ring-2'), { timeout: 4000 })
+    }, 10000)
+
+    it('finds a field by its setting key, once, even when the Advanced list also has the key', async () => {
+      vi.mocked(api.listSettingDescriptors).mockResolvedValue([{ key: 'metadata.primary_provider', state: 'active' }] as never)
+      renderSettings()
+      fireEvent.focus(box())
+      await waitFor(() => expect(api.listSettingDescriptors).toHaveBeenCalledTimes(1))
+      type('metadata.primary')
+      await waitFor(() => expect(optionNames()).toEqual(['Primary metadata providerMetadata Profiles']))
+    })
+
+    it('finds a field by its help text', () => {
+      renderSettings()
+      type('legal deposit')
+      expect(optionNames()).toContain('Primary metadata providerMetadata Profiles')
+      type('ab') // too short to search help text
+      expect(optionNames().every(n => !n?.startsWith('Primary metadata provider'))).toBe(true)
+    })
+
+    it('matches a field label in the active language', () => {
+      state.overrides = { 'settings.general.metadataProviderLabel': 'Primärer Metadatenanbieter' }
+      renderSettings()
+      type('metadatenanb')
+      expect(optionNames()).toEqual(['Primärer MetadatenanbieterMetadata Profiles'])
+      type('primary metadata')
+      expect(optionNames().some(n => n?.startsWith('Primärer'))).toBe(false)
+    })
+
+    it('opens the field a URL hash names, on the tab it lives on', async () => {
+      renderSettings('/settings#metadata.primary_provider')
+      expect(await screen.findByText('metadata tab')).toBeInTheDocument()
+      await waitFor(() => expect(document.getElementById('metadata.primary_provider')).toHaveClass('ring-2'))
+    })
+
+    it('moves the ring when a second field is picked quickly, and clears both after the timeout', async () => {
+      renderSettings()
+      type('primary metadata')
+      fireEvent.keyDown(box(), { key: 'Enter' })
+      const a = await waitFor(() => {
+        const el = document.getElementById('metadata.primary_provider')
+        expect(el).toHaveClass('ring-2')
+        return el as HTMLElement
+      })
+      type('autoGrab.enabled')
+      fireEvent.keyDown(box(), { key: 'Enter' })
+      const b = document.getElementById('autoGrab.enabled') as HTMLElement
+      await waitFor(() => expect(b).toHaveClass('ring-2'))
+      expect(a).not.toHaveClass('ring-2')
+      await waitFor(() => expect(b).not.toHaveClass('ring-2'), { timeout: 4000 })
+      expect(a).not.toHaveClass('ring-2')
+    }, 10000)
+
+    it('keeps the hash and corrects the tab when ?tab= disagrees with the field', async () => {
+      renderSettings('/settings?tab=general#autoGrab.enabled')
+      expect(await screen.findByText('metadata tab')).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('?tab=metadata#autoGrab.enabled'))
+      await waitFor(() => expect(document.getElementById('autoGrab.enabled')).toHaveClass('ring-2'))
+    })
+
+    it('does not land a non admin on an admin only field of a tab they can open', async () => {
+      state.isAdmin = false
+      renderSettings('/settings#import.mode')
+      const field = await waitFor(() => {
+        const el = document.getElementById('import.mode')
+        expect(el).not.toBeNull()
+        return el as HTMLElement
+      })
+      await new Promise(r => setTimeout(r, 100))
+      expect(field).not.toHaveClass('ring-2')
+      expect(field.querySelector('input')).not.toHaveFocus()
+    })
+
+    it('ignores a hash that is not a field', async () => {
+      renderSettings('/settings#nothing-here')
+      expect(await screen.findByText('general tab')).toBeInTheDocument()
+      expect(screen.queryByText('metadata tab')).toBeNull()
+    })
+
+    it('gives a non admin no results from admin tabs or admin only settings, and ignores their deep links', async () => {
+      state.isAdmin = false
+      renderSettings('/settings#metadata.primary_provider')
+      expect(await screen.findByText('general tab')).toBeInTheDocument()
+      expect(screen.queryByText('metadata tab')).toBeNull()
+      for (const q of ['primary metadata', 'metadata.primary_provider', 'import mode', 'telemetry', 'calibre.library_path', 'rejectWords', 'wikidata']) {
+        type(q)
+        expect(optionNames(), q).toEqual([])
+      }
+    })
   })
 
   it('never offers admin tabs, headings or keys to a non admin', () => {
@@ -288,7 +428,7 @@ describe('Settings search', () => {
     Element.prototype.scrollIntoView = scroll
     renderSettings()
     type('usage    telemetry')
-    expect(optionNames()).toEqual(['Usage TelemetryLogs'])
+    expect(optionNames()[0]).toBe('Usage TelemetryLogs')
     fireEvent.keyDown(box(), { key: 'Enter' })
     const heading = await screen.findByRole('heading', { name: 'Usage Telemetry' })
     await waitFor(() => expect(scroll).toHaveBeenCalledTimes(1))

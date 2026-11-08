@@ -350,7 +350,7 @@ function CalibreSection({
       <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
 
         {/* Shared library path — used by both write integration and library import */}
-        <div>
+        <div id="calibre.library_path">
           <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.calibre.fields.libraryPath', 'Library path')}</label>
           <p className="text-xs text-fg-muted mb-2">
             <RichText text={t('settings.calibre.fields.libraryPathHint', 'Directory containing <code>metadata.db</code>. Used by both the write integration and library import.')} components={{ code: <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded" /> }} />
@@ -373,7 +373,7 @@ function CalibreSection({
           )}
         </div>
 
-        <div className="pt-1 border-t border-slate-200 dark:border-zinc-800">
+        <div id="calibre.mode" className="pt-1 border-t border-slate-200 dark:border-zinc-800">
           <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-2 mt-3">{t('settings.calibre.mode.heading', 'Write integration')}</label>
           <div className="space-y-1.5">
             {([
@@ -414,7 +414,7 @@ function CalibreSection({
         )}
 
         {mode === 'calibredb' && (
-          <div>
+          <div id="calibre.binary_path">
             <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">{t('settings.calibre.fields.binaryPath', 'Binary path (optional)')}</label>
             <p className="text-xs text-fg-muted mb-2"><RichText text={t('settings.calibre.fields.binaryPathHint', 'Leave blank to resolve <code>calibredb</code> on PATH. Set explicitly when running in a container that bundles Calibre at a pinned location.')} components={{ code: <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded" /> }} /></p>
             <div className="flex flex-wrap gap-2">
@@ -437,7 +437,7 @@ function CalibreSection({
         )}
 
         {mode === 'plugin' && (
-          <div data-testid="calibre-transport">
+          <div id="calibre.plugin_transport" data-testid="calibre-transport">
             <label className="block text-xs text-fg-muted mb-1">{t('settings.calibre.transport.label')}</label>
             <div className="space-y-1.5">
               {([
@@ -464,7 +464,7 @@ function CalibreSection({
         )}
 
         {mode === 'plugin' && !pulling && (
-          <div>
+          <div id="calibre.plugin_url">
             <label htmlFor={`${fid}-3`} className="block text-xs text-fg-muted mb-1">{t('settings.calibre.fields.pluginUrl', 'Plugin URL')}</label>
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.calibre.fields.pluginUrlHint', 'Base URL of the Bindery Bridge plugin’s HTTP server running inside Calibre.')}
@@ -490,7 +490,7 @@ function CalibreSection({
         )}
 
         {mode === 'plugin' && (
-          <div>
+          <div id="calibre.plugin_api_key">
             <label htmlFor={`${fid}-4`} className="block text-xs text-fg-muted mb-1">{t('settings.calibre.fields.apiKey', 'API key')}</label>
             <p className="text-xs text-fg-muted mb-2">
               {pulling
@@ -519,7 +519,7 @@ function CalibreSection({
         )}
 
         {mode === 'plugin' && !pulling && (
-          <div>
+          <div id="calibre.push_path_remap">
             <label htmlFor={`${fid}-5`} className="block text-xs text-fg-muted mb-1">{t('settings.calibre.fields.pushRemap', 'Push path remap')}</label>
             <p className="text-xs text-fg-muted mb-2">
               <RichText text={t('settings.calibre.fields.pushRemapHint', { pair: 'from:to', linux: '/books:/mnt/user/media/books', windows: '/books:\\\\nas\\media\\books', defaultValue: 'Optional. If the Calibre container mounts your library at a different path than Bindery, map Bindery’s prefix to Calibre’s as <code>{{pair}}</code> pairs (comma separated), e.g. <code>{{linux}}</code>. For Calibre on Windows, map to a network share, e.g. <code>{{windows}}</code>; a share address is more reliable than a mapped drive letter, which the running Calibre may not see. Leave empty when both containers see the library at the same path.' })} components={{ code: <code className="font-mono" /> }} />
@@ -605,7 +605,7 @@ function CalibreSection({
 
         {/* Library import (read side): Calibre → Bindery */}
         <div className="pt-3 border-t border-slate-200 dark:border-zinc-800 space-y-3">
-          <div className="flex items-center justify-between">
+          <div id="calibre.library_import_enabled" className="flex items-center justify-between">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.calibre.import.heading', 'Library import')}</label>
               <p className="text-xs text-fg-muted mt-0.5">
@@ -625,7 +625,7 @@ function CalibreSection({
 
           {libraryImportEnabled && (
             <>
-              <div className="flex items-center justify-between">
+              <div id="calibre.sync_on_startup" className="flex items-center justify-between">
                 <div>
                   <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.calibre.import.syncOnStartup', 'Sync on startup')}</label>
                   <p className="text-xs text-fg-muted mt-0.5">{t('settings.calibre.import.syncOnStartupHint', 'Re-import each time Bindery starts. Safe to leave on — imports are incremental and idempotent.')}</p>
@@ -717,7 +717,7 @@ function CalibreSection({
         <p className="text-xs text-fg-muted mb-4">
           <RichText text={t('settings.calibre.cwa.intro', 'When set, every successful ebook import is also copied into this directory so a sibling <cwa>CWA</cwa> container can ingest it. Bindery keeps its own copy. Audiobooks are not mirrored. This mirror is independent of the write integration above, and it does nothing in External import mode; use the Drop folder on the General tab for that setup. Leave blank to disable.')} components={{ cwa: <a href="https://github.com/crocodilestick/Calibre-Web-Automated" target="_blank" rel="noopener noreferrer" className="text-accent-text underline" /> }} />
         </p>
-        <div>
+        <div id="cwa.ingest_path">
           <label htmlFor={`${fid}-6`} className="block text-xs text-fg-muted mb-1">{t('settings.calibre.cwa.ingestPath', 'Ingest folder path')}</label>
           <p className="text-xs text-fg-muted mb-2"><RichText text={t('settings.calibre.cwa.ingestPathHint', { path: '/cwa-book-ingest', defaultValue: 'Mount the same path into both containers. CWA’s docs use <code>{{path}}</code>.' })} components={{ code: <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded" /> }} /></p>
           <div className="flex flex-wrap gap-2">

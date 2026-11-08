@@ -27,6 +27,8 @@ export interface NamingTemplateFieldProps {
   onChange: (value: string) => void
   onSave: () => void
   saving: boolean
+  /** Anchor id for the Settings search (#3059); the setting key. */
+  anchorId?: string
   /** Save-confirmation state from useSaveResult. Defaults to 'idle'. */
   saveResult?: SaveResult
 }
@@ -41,6 +43,7 @@ export default function NamingTemplateField({
   onSave,
   saving,
   saveResult = 'idle',
+  anchorId,
 }: NamingTemplateFieldProps) {
   const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -83,7 +86,7 @@ export default function NamingTemplateField({
   }
 
   return (
-    <div>
+    <div id={anchorId}>
       <label className={labelCls}>{label}</label>
       {hint && <p className="text-xs text-fg-muted mb-2">{hint}</p>}
 

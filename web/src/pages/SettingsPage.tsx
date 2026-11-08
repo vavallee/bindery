@@ -1,9 +1,10 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router'
+import { useLocation, useNavigate, useSearchParams } from 'react-router'
 import { lazyWithReload } from '../util/lazyWithReload'
 import { useTranslation } from 'react-i18next'
 import { api, DownloadClient, Indexer, ProwlarrInstance } from '../api/client'
 import SettingsSearch, { SettingsSearchPick } from './settings/SettingsSearch'
+import { fieldForAnchor } from './settings/settingsFieldIndex'
 import { useAuth } from '../auth/AuthContext'
 import ProtocolMismatchWarning from '../components/ProtocolMismatchWarning'
 import { BELOW_MD, useMediaQuery } from '../components/useMediaQuery'
@@ -42,6 +43,10 @@ const AdvancedTab = lazyWithReload(() => import('./settings/AdvancedTab'), './se
 const AboutTab = lazyWithReload(() => import('./settings/AboutTab'), './settings/AboutTab')
 
 type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'grimmory' | 'api-keys' | 'advanced' | 'about'
+
+// Classes added to a field for a moment after search or a deep link lands on it.
+const HIGHLIGHT_CLASSES = ['ring-2', 'ring-emerald-500', 'ring-offset-2', 'dark:ring-offset-zinc-950', 'rounded-md']
+const FOCUSABLE = 'input:not([type=hidden]):not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled)'
 
 const ADMIN_TABS: Tab[] = ['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'grimmory', 'api-keys', 'advanced']
 
@@ -118,6 +123,8 @@ export default function SettingsPage() {
   const { t } = useTranslation()
   const { isAdmin } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
+  const navigate = useNavigate()
   const tab = tabFromParam(searchParams.get('tab'))
   const narrow = useMediaQuery(BELOW_MD)
 
@@ -218,10 +225,74 @@ export default function SettingsPage() {
     return () => { observer.disconnect(); window.clearTimeout(giveUp) }
   }, [pendingHeading, tab])
 
+  // A field the page should scroll to and highlight once its tab has rendered.
+  // The anchor is the setting key, which is also the element id the tab sets,
+  // so /settings?tab=metadata#metadata.primary_provider is a stable link.
+  const [pendingAnchor, setPendingAnchor] = useState<string | null>(null)
+  const highlightTimer = useRef<number | undefined>(undefined)
+  const highlighted = useRef<HTMLElement | null>(null)
+  const clearHighlight = useCallback(() => {
+    window.clearTimeout(highlightTimer.current)
+    highlighted.current?.classList.remove(...HIGHLIGHT_CLASSES)
+    highlighted.current = null
+  }, [])
+  useEffect(() => clearHighlight, [clearHighlight])
+  useEffect(() => {
+    const root = contentRef.current
+    if (!pendingAnchor || !root) return
+    const find = () => root.querySelector<HTMLElement>(`[id="${pendingAnchor.replace(/["\\]/g, '')}"]`)
+    const land = (el: HTMLElement) => {
+      el.scrollIntoView?.({ block: 'center' })
+      // Take the ring off the previous field first, so two quick picks never
+      // leave one behind. Not tied to this effect's cleanup: landing resets
+      // pendingAnchor, which re-runs the effect, and the ring must still go.
+      clearHighlight()
+      el.classList.add(...HIGHLIGHT_CLASSES)
+      highlighted.current = el
+      highlightTimer.current = window.setTimeout(clearHighlight, 2500)
+      const control = el.matches(FOCUSABLE) ? el : el.querySelector<HTMLElement>(FOCUSABLE)
+      control?.focus({ preventScroll: true })
+      setPendingAnchor(null)
+    }
+    const now = find()
+    if (now) { land(now); return }
+    const observer = new MutationObserver(() => {
+      const el = find()
+      if (el) { observer.disconnect(); land(el) }
+    })
+    observer.observe(root, { childList: true, subtree: true })
+    const giveUp = window.setTimeout(() => { observer.disconnect(); setPendingAnchor(null) }, 4000)
+    return () => { observer.disconnect(); window.clearTimeout(giveUp) }
+  }, [pendingAnchor, tab, clearHighlight])
+
+  // A URL hash that names a field opens its tab and lands on it. A non admin
+  // gets nothing for a field their tab list hides, and an unknown hash is left
+  // to the browser. The field decides the tab: a stale or wrong ?tab= is
+  // corrected and the hash kept, so the link stays shareable.
+  useEffect(() => {
+    const anchor = decodeURIComponent(location.hash.replace(/^#/, ''))
+    const field = anchor ? fieldForAnchor(anchor) : undefined
+    if (!field || (!isAdmin && (field.adminOnly || ADMIN_TABS.includes(field.tab)))) return
+    if (field.tab !== tab) {
+      const params = new URLSearchParams(searchParams)
+      params.set('tab', field.tab)
+      navigate({ pathname: location.pathname, search: `?${params}`, hash: location.hash }, { replace: true })
+    }
+    setPendingAnchor(field.key)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.hash, location.key, isAdmin])
+
   const onSearchPick = useCallback((pick: SettingsSearchPick) => {
+    if (pick.anchor) {
+      // Put the anchor in the URL so the position can be copied and shared.
+      const params = new URLSearchParams(searchParams)
+      params.set('tab', pick.tab)
+      navigate({ pathname: location.pathname, search: `?${params}`, hash: `#${pick.anchor}` })
+      return
+    }
     setTab(pick.tab)
     setPendingHeading(pick.heading ?? null)
-  }, [setTab])
+  }, [setTab, navigate, location.pathname, searchParams])
 
   const renderTab = () => {
     switch (tab) {

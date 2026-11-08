@@ -1,0 +1,2 @@
+### Added
+- **Settings search finds individual settings** (#3059). The search box in Settings now matches a setting's label, its setting key and its help text, not just tabs and section headings. Picking a result scrolls to the field, highlights it and puts the cursor in it, and the link is shareable, for example `/settings?tab=metadata#metadata.primary_provider`. Covers the stored settings on General, Metadata, Root Folders, Calibre, API Keys and Logs.

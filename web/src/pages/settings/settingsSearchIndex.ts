@@ -1,15 +1,15 @@
 // The small index behind the Settings search box (#3059): tab names, the
 // section headings the tabs render, and, for admins, registered setting keys.
 //
-// Deliberately NOT here: per field labels and help text. That version needs an
-// anchor on every field and a test that fails when a new setting forgets one,
-// which is a much larger change. This slice only gets someone to the right tab
-// (and to the right section heading on it).
+// Field level results (label, help text and setting key, each with an anchor
+// the tab renders) come from settingsFieldIndex.ts.
 //
 // Each heading entry names the i18n key the tab renders it with, so the search
 // matches the text the user actually sees in their language. A few headings are
 // plain English literals in their tab today; those are indexed as literals,
 // which is exactly what the page shows.
+
+import { FIELDS } from './settingsFieldIndex'
 
 export type SettingsTabId =
   | 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general'
@@ -78,6 +78,7 @@ export const HEADINGS: HeadingEntry[] = [
 export type SearchResult =
   | { kind: 'tab'; id: string; tab: SettingsTabId; tabLabel: string }
   | { kind: 'heading'; id: string; tab: SettingsTabId; tabLabel: string; heading: string }
+  | { kind: 'field'; id: string; tab: SettingsTabId; tabLabel: string; label: string; anchor: string; settingKey: string }
   | { kind: 'key'; id: string; tab: SettingsTabId; tabLabel: string; settingKey: string }
 
 export const MAX_RESULTS = 8
@@ -97,6 +98,11 @@ export interface SearchInput {
   isAdmin: boolean
   /** Registered setting keys; only passed for admins, who can open Advanced. */
   settingKeys?: string[]
+}
+
+// Help text can carry markup such as <b> or <code>; match the words a person reads.
+function stripTags(s: string): string {
+  return s.replace(/<[^>]*>/g, '')
 }
 
 function norm(s: string): string {
@@ -131,14 +137,36 @@ export function searchSettings({ query, tabs, t, isAdmin, settingKeys = [] }: Se
     const k = rank(heading, needle)
     if (k >= 0) scored.push({ r: { kind: 'heading', id: `h:${h.tab}:${h.key ?? h.literal}`, tab: h.tab, tabLabel, heading }, rank: k, order: order++ })
   }
+  // A field matches on its label (as ranked as a heading), then on its setting
+  // key, then on its help text. Help text is long, so it only counts when the
+  // label and key did not match.
+  const fieldKeys = new Set<string>()
+  for (const f of FIELDS) {
+    const tabLabel = tabLabels.get(f.tab)
+    if (!tabLabel) continue // the viewer cannot open that tab
+    if (f.adminOnly && !isAdmin) continue // the tab hides this field from them
+    fieldKeys.add(f.key)
+    const label = t(f.label)
+    let k = rank(label, needle)
+    if (k < 0) {
+      const kk = rank(f.key, needle)
+      if (kk >= 0) k = kk + 3
+    }
+    if (k < 0 && f.help && needle.length >= 3) {
+      const hk = rank(stripTags(t(f.help)), needle)
+      if (hk >= 0) k = 6
+    }
+    if (k >= 0) scored.push({ r: { kind: 'field', id: `f:${f.key}`, tab: f.tab, tabLabel, label, anchor: f.key, settingKey: f.key }, rank: k, order: order++ })
+  }
   const advancedLabel = tabLabels.get('advanced')
   if (advancedLabel) {
     for (const settingKey of settingKeys) {
+      if (fieldKeys.has(settingKey)) continue // its own field result already covers it
       const k = rank(settingKey, needle)
       if (k >= 0) scored.push({ r: { kind: 'key', id: `k:${settingKey}`, tab: 'advanced', tabLabel: advancedLabel, settingKey }, rank: k + 3, order: order++ })
     }
   }
-  // Tab and heading matches outrank key matches, so a short query still lists
+  // Tab, heading and field label matches outrank key matches, so a short query still lists
   // the tabs first. Within a rank, keep tab order then index order.
   scored.sort((a, b) => a.rank - b.rank || a.order - b.order)
   return { results: scored.slice(0, MAX_RESULTS).map(s => s.r), total: scored.length }
