@@ -411,6 +411,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateInternal,
 	},
 	{
+		Key: "backfill.ol_duplicate_title_rev", Type: SettingTypeInt, Default: "0",
+		Description: "Revision of the rule that strips OpenLibrary's \"(Duplicate of OL...)\" note from book titles, as the startup backfill last ran it. Bindery compares it with the current revision at every start and re-runs the backfill only when they differ. Removing the row is harmless but makes the next start repeat the backfill once.",
+		State:       SettingStateInternal,
+	},
+	{
 		Key: "backfill.file_language_rev", Type: SettingTypeInt, Default: "0",
 		Description: "Set to 1 once the one-off pass that fills an empty book language from its tracked ebook file has run after an upgrade. Bindery checks it at every start and skips the pass when it is set. Removing the row is harmless but makes the next start repeat the pass once.",
 		State:       SettingStateInternal,
