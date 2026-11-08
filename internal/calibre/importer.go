@@ -566,9 +566,10 @@ const bookFileExternalIDPrefix = "calibre:book-file:"
 // later rollback of the run that created it reports it as already undone.
 //
 // Running at the start of every import is safe: once the rows are gone there
-// is nothing left to match. The query is one pass over the snapshots with
-// index lookups into provenance and book_files (see listCreatedBookFilesSQL),
-// about 130ms for 10,000 books over 40 imports.
+// is nothing left to match. The query is one pass over the created book_file
+// snapshots, read through a partial index, with index lookups into provenance
+// and book_files (see listCreatedBookFilesSQL): about 42ms for 10,000 books
+// over 40 imports.
 //
 // Only rows from imports since v1.35.0 carry the created snapshot. Rows an
 // import from v1.32.2 to v1.34.x created have provenance only and are never

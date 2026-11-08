@@ -2840,6 +2840,11 @@ func TestReconcileMigrationVersionsLeavesFreshDB(t *testing.T) {
 // marker state from #1932: migration 014 is marked applied even though the
 // old positional runner skipped its SQL. The 010 no-op means marker-only
 // reconciliation cannot identify this state, so migrate repairs the schema.
+//
+// The database is rolled back to before migration 127, which indexes
+// books.excluded: the first migration since 014 to name the column, so on a
+// database in this state it fails unless the repair runs before the apply
+// loop reaches it.
 func TestMigrate_RepairsLegacyMissingExcludedColumn(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
@@ -2847,12 +2852,25 @@ func TestMigrate_RepairsLegacyMissingExcludedColumn(t *testing.T) {
 	}
 	defer database.Close()
 
-	if _, err := database.Exec("ALTER TABLE books DROP COLUMN excluded"); err != nil {
-		t.Fatalf("simulate legacy missing column: %v", err)
+	for _, stmt := range []string{
+		"DROP INDEX idx_books_language_excluded",
+		"DELETE FROM schema_migrations WHERE version = 127",
+		"ALTER TABLE books DROP COLUMN excluded",
+	} {
+		if _, err := database.Exec(stmt); err != nil {
+			t.Fatalf("simulate legacy missing column: %s: %v", stmt, err)
+		}
 	}
 
 	if err := migrate(database); err != nil {
 		t.Fatalf("migrate repair: %v", err)
+	}
+	var indexed int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_books_language_excluded'`).Scan(&indexed); err != nil {
+		t.Fatal(err)
+	}
+	if indexed != 1 {
+		t.Error("migration 127 did not create idx_books_language_excluded on the repaired database")
 	}
 
 	rows, err := database.Query("PRAGMA table_info(books)")

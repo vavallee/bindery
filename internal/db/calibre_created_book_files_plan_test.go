@@ -10,8 +10,12 @@ import (
 // the Calibre import runs at the start of every import (#3630). The snapshots
 // table grows with every run and is never pruned; a plan that scans it once
 // per provenance row (a correlated subquery) took minutes on a large library.
-// The only full scan allowed is the single pass over the snapshots; provenance
-// and book_files must be index lookups.
+// The snapshots are read once, through the partial index migration 128 adds
+// for exactly this query's predicate, so the pass covers only the created
+// book_file rows rather than every snapshot; provenance and book_files must be
+// index lookups. Which index those two lookups pick is left to the planner.
+const createdBookFileIndex = "idx_calibre_snapshots_created_book_file"
+
 func TestListCreatedBookFiles_PlanHasNoCorrelatedScan(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
@@ -45,10 +49,14 @@ func TestListCreatedBookFiles_PlanHasNoCorrelatedScan(t *testing.T) {
 		if !strings.HasPrefix(d, "SCAN ") {
 			continue
 		}
-		// The snapshots table itself, or "s", the distinct keys drawn from it.
-		if d != "SCAN calibre_entity_snapshots" && d != "SCAN s" {
-			t.Errorf("plan scans something other than the snapshots once: %q\n%s", d, plan)
+		// "s" is the distinct keys drawn from the snapshots; the snapshots
+		// themselves may only be read through the partial index.
+		if d != "SCAN s" && !strings.HasPrefix(d, "SCAN calibre_entity_snapshots USING COVERING INDEX "+createdBookFileIndex) {
+			t.Errorf("plan scans something other than the created book_file snapshots once: %q\n%s", d, plan)
 		}
+	}
+	if !strings.Contains(plan, "calibre_entity_snapshots USING COVERING INDEX "+createdBookFileIndex) {
+		t.Errorf("plan does not read the snapshots through %s:\n%s", createdBookFileIndex, plan)
 	}
 	for _, table := range []string{"p USING", "bf USING"} {
 		if !strings.Contains(plan, "SEARCH "+table) {
