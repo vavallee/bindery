@@ -1,2 +1,0 @@
-### Fixed
-- **Downloads remember which format they were for** (#1964). A grab now records whether it was the ebook or the audiobook, and the importer uses that instead of guessing from the release title or the client category. This matters most for books you want in both formats, where a release with no format in its name could not be told apart. Downloads from before this update keep working the way they did.

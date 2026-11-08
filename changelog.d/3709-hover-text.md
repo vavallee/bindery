@@ -1,2 +1,0 @@
-### Fixed
-- **Readable link and button text on hover in the light theme** (#3084): author, book and title links in Authors, Books, Wanted and import turned emerald-500 or emerald-600 on hover, 2.3 to 3.5:1 on light, and the remove buttons for an alias, a pending download and a Hardcover link turned a lighter red or rose than they rest at. They now use a darker shade on hover in the light theme (4.5:1 and up); the dark theme is unchanged.
