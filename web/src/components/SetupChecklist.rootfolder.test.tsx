@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import SetupChecklist from './SetupChecklist'
 import { api } from '../api/client'
-import type { RootFolder, SetupState, StorageHealth } from '../api/client'
+import type { SetupState } from '../api/client'
 import en from '../i18n/locales/en.json'
 
 vi.mock('../api/client', async importOriginal => {
@@ -33,25 +33,8 @@ function state(overrides: Partial<SetupState> = {}): SetupState {
     hasGrab: false,
     hasImport: false,
     complete: false,
+    hasLibraryFolder: false,
     ...overrides,
-  }
-}
-
-function folder(path: string): RootFolder {
-  return { id: 1, path, freeSpace: 0, createdAt: '' }
-}
-
-function storage(library: { exists: boolean; writable: boolean }): StorageHealth {
-  return {
-    downloadDir: '/downloads',
-    audiobookDownloadDir: '',
-    libraryDir: '/books',
-    audiobookDir: '',
-    dirs: [
-      { name: 'download', path: '/downloads', exists: true, writable: true },
-      { name: 'library', path: '/books', ...library },
-    ],
-    hardlinkable: false,
   }
 }
 
@@ -63,13 +46,18 @@ function renderIt() {
   )
 }
 
+// /system/storage probes the media mounts with no cache on every call, so the
+// checklist must answer from the setup state alone.
+function expectNoStorageCalls() {
+  expect(api.getStorage).not.toHaveBeenCalled()
+  expect(api.listRootFolders).not.toHaveBeenCalled()
+}
+
 describe('SetupChecklist root folder step', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
     authState.isAdmin = true
-    vi.mocked(api.listRootFolders).mockResolvedValue([])
-    vi.mocked(api.getStorage).mockResolvedValue(storage({ exists: false, writable: false }))
   })
 
   // A fresh install with no root folder and no usable BINDERY_LIBRARY_DIR has
@@ -82,6 +70,7 @@ describe('SetupChecklist root folder step', () => {
     expect(screen.getByText('0/6')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Set up Root Folders' })).toHaveAttribute('href', '/settings?tab=rootfolders')
     expect(screen.queryByText('Add an indexer')).not.toBeInTheDocument()
+    expectNoStorageCalls()
   })
 
   it('orders the steps root folder, indexer, download client', async () => {
@@ -98,70 +87,77 @@ describe('SetupChecklist root folder step', () => {
     expect(segments[2].className).toContain('bg-emerald-600')
   })
 
-  it('counts the step done once a root folder exists', async () => {
-    vi.mocked(api.listRootFolders).mockResolvedValue([folder('/mnt/books')])
-    vi.mocked(api.setupState).mockResolvedValue(state())
-    renderIt()
-
-    expect(await screen.findByText('Add an indexer')).toBeInTheDocument()
-    expect(screen.getByText('1/6')).toBeInTheDocument()
-    expect(screen.queryByText('Add a root folder')).not.toBeInTheDocument()
-    expect(api.getStorage).not.toHaveBeenCalled()
-  })
-
-  // No root folder row is needed when BINDERY_LIBRARY_DIR is mounted: the
-  // importer falls back to it, so asking for a root folder would be wrong.
-  it('counts the step done when the configured library folder is usable', async () => {
-    vi.mocked(api.getStorage).mockResolvedValue(storage({ exists: true, writable: true }))
-    vi.mocked(api.setupState).mockResolvedValue(state({ hasIndexer: true }))
+  it('counts the step done when the server says there is a library folder', async () => {
+    vi.mocked(api.setupState).mockResolvedValue(state({ hasLibraryFolder: true, hasIndexer: true }))
     renderIt()
 
     expect(await screen.findByText('Add a download client')).toBeInTheDocument()
     expect(screen.getByText('2/6')).toBeInTheDocument()
+    expect(screen.queryByText('Add a root folder')).not.toBeInTheDocument()
+    expectNoStorageCalls()
   })
 
-  it('still asks when the library folder exists but cannot be written', async () => {
-    vi.mocked(api.getStorage).mockResolvedValue(storage({ exists: true, writable: false }))
-    vi.mocked(api.setupState).mockResolvedValue(state())
+  // The server leaves the field out while its storage probe has no answer
+  // (a hung mount). That is not a reason to nag.
+  it('counts the step done when the server leaves the answer out', async () => {
+    vi.mocked(api.setupState).mockResolvedValue(state({ hasLibraryFolder: undefined }))
     renderIt()
 
-    expect(await screen.findByText('Add a root folder')).toBeInTheDocument()
+    expect(await screen.findByText('Add an indexer')).toBeInTheDocument()
+    expect(screen.getByText('1/6')).toBeInTheDocument()
   })
 
-  // Non admins cannot add root folders and cannot read storage health, so the
-  // step is left out rather than shown as something they cannot do.
+  // Non admins cannot add root folders, so the step is left out rather than
+  // shown as something they cannot do.
   it('leaves the step out for non admins', async () => {
     authState.isAdmin = false
-    vi.mocked(api.setupState).mockResolvedValue(state())
+    vi.mocked(api.setupState).mockResolvedValue(state({ hasLibraryFolder: undefined }))
     renderIt()
 
     expect(await screen.findByText('Add an indexer')).toBeInTheDocument()
     expect(screen.getByText('0/5')).toBeInTheDocument()
     expect(screen.queryByText('Add a root folder')).not.toBeInTheDocument()
-    expect(api.listRootFolders).not.toHaveBeenCalled()
-    expect(api.getStorage).not.toHaveBeenCalled()
+    expectNoStorageCalls()
   })
 
-  it('does not nag about root folders when the lookup fails', async () => {
-    vi.mocked(api.listRootFolders).mockRejectedValue(new Error('boom'))
-    vi.mocked(api.setupState).mockResolvedValue(state())
-    renderIt()
+  it('shows nothing until the setup state arrives, then never names the root folder when it is fine', async () => {
+    let resolveState: (v: SetupState) => void = () => {}
+    vi.mocked(api.setupState).mockReturnValue(new Promise(r => { resolveState = r }))
+    const seen: string[] = []
+    const { container } = renderIt()
+    const observer = new MutationObserver(() => seen.push(container.textContent ?? ''))
+    observer.observe(container, { childList: true, subtree: true, characterData: true })
 
+    await waitFor(() => expect(api.setupState).toHaveBeenCalled())
+    expect(container).toBeEmptyDOMElement()
+
+    resolveState(state({ hasLibraryFolder: true }))
     expect(await screen.findByText('Add an indexer')).toBeInTheDocument()
-    expect(screen.getByText('1/6')).toBeInTheDocument()
+    observer.disconnect()
+    expect(seen.some(text => text.includes('Add a root folder'))).toBe(false)
   })
 
-  it('waits for the root folder answer instead of flashing a later step', async () => {
-    let resolveFolders: (v: RootFolder[]) => void = () => {}
-    vi.mocked(api.listRootFolders).mockReturnValue(new Promise(r => { resolveFolders = r }))
-    vi.mocked(api.setupState).mockResolvedValue(state())
-    renderIt()
+  it('makes no storage call once setup is complete', async () => {
+    vi.mocked(api.setupState).mockResolvedValue(state({
+      hasLibraryFolder: true, hasIndexer: true, hasClient: true, hasAuthor: true, hasGrab: true, hasImport: true, complete: true,
+    }))
+    const { container } = renderIt()
 
     await waitFor(() => expect(api.setupState).toHaveBeenCalled())
     await Promise.resolve()
-    expect(screen.queryByText('Add an indexer')).not.toBeInTheDocument()
-    resolveFolders([])
-    expect(await screen.findByText('Add a root folder')).toBeInTheDocument()
+    expect(container).toBeEmptyDOMElement()
+    expectNoStorageCalls()
+  })
+
+  it('makes no storage call when the checklist was dismissed', async () => {
+    localStorage.setItem('bindery.setupChecklistDismissed', '1')
+    vi.mocked(api.setupState).mockResolvedValue(state())
+    const { container } = renderIt()
+
+    await waitFor(() => expect(api.setupState).toHaveBeenCalled())
+    await Promise.resolve()
+    expect(container).toBeEmptyDOMElement()
+    expectNoStorageCalls()
   })
 
   it('has its strings in en.json', () => {

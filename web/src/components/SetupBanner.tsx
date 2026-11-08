@@ -51,7 +51,7 @@ export default function SetupBanner() {
   const { t } = useTranslation()
   const { needsIndexer, needsClient, needsAny } = useNeedsSetup()
   // Mounted for admins only (App.tsx), who are the ones who can add one.
-  const libraryReady = useLibraryFolderReady(true)
+  const libraryReady = useLibraryFolderReady()
   const needsRoot = libraryReady === false
   const [dismissed, setDismissed] = useState(() => {
     try {
@@ -61,9 +61,9 @@ export default function SetupBanner() {
     }
   })
 
-  // Say nothing until the root folder answer is in. It takes two requests,
-  // so the indexer and client answer lands first, and showing that message
-  // only to swap it for the root folder one would announce the banner twice.
+  // Say nothing until the root folder answer is in. It arrives separately
+  // from the indexer and client answer, and showing that message only to swap
+  // it for the root folder one would announce the banner twice.
   if (libraryReady === null) return null
 
   const sig = signature(needsRoot, needsIndexer, needsClient)

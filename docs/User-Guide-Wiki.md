@@ -1915,6 +1915,11 @@ existing library or use Calibre or Audiobookshelf, are not nagged.
 (`GET /api/v1/system/setup-state` carries `blocked`, `blockedArea` and
 `blockedReason` for admins.)
 
+Before the first import, the Setup progress strip on the Authors page and the
+setup banner ask admins to add a root folder when there is nowhere for imports
+to go: no root folder, and the folder BINDERY_LIBRARY_DIR points at is missing
+or not writable. Mounting that folder is just as good as adding a root folder.
+
 **My browser can reach qBittorrent but Bindery's Test fails.**
 In Docker, `localhost` inside Bindery's container is Bindery, not the client —
 use the service name or LAN IP. Also check for qBittorrent's persisted IP ban

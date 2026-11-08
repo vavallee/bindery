@@ -4,14 +4,12 @@ import { useTranslation } from 'react-i18next'
 import { api, type SetupState } from '../api/client'
 import Alert from './Alert'
 import { useIsAdmin } from '../auth/AuthContext'
-import { useLibraryFolderReady } from './useLibraryFolderReady'
 
 const STORAGE_KEY = 'bindery.setupChecklistDismissed'
 const FOCUS_REFETCH_MS = 60_000
 
-// hasRootFolder is not part of the server's SetupState: it is worked out in
-// the browser from the same root folder list the Root Folders tab shows, plus
-// storage health for BINDERY_LIBRARY_DIR (see useLibraryFolderReady).
+// hasRootFolder reads the server's hasLibraryFolder: a root folder exists, or
+// BINDERY_LIBRARY_DIR is writable. A missing value (unknown) counts as done.
 type StepState = SetupState & { hasRootFolder: boolean }
 
 interface Step {
@@ -96,9 +94,8 @@ const blockedAreas: Record<string, { to: string; actionKey: string; actionFallba
 // deliberately run a partial setup (e.g. catalogue-only, no downloads).
 export default function SetupChecklist() {
   const { t } = useTranslation()
-  const isAdmin = useIsAdmin()
   // Only admins can add a root folder, so only they are shown the step.
-  const libraryReady = useLibraryFolderReady(isAdmin)
+  const isAdmin = useIsAdmin()
   const [state, setState] = useState<SetupState | null>(null)
   const [dismissed, setDismissed] = useState(() => {
     try {
@@ -158,12 +155,10 @@ export default function SetupChecklist() {
     )
   }
 
-  // Wait for the library folder answer too, so the strip never names a later
-  // step first and then jumps back to the root folder.
-  if (!state || state.complete || dismissed || libraryReady === null) return null
+  if (!state || state.complete || dismissed) return null
 
   const stepList = isAdmin ? [ROOT_FOLDER_STEP, ...PIPELINE_STEPS] : PIPELINE_STEPS
-  const progress: StepState = { ...state, hasRootFolder: libraryReady }
+  const progress: StepState = { ...state, hasRootFolder: state.hasLibraryFolder !== false }
   const done = stepList.filter(s => progress[s.key]).length
   const next = stepList.find(s => !progress[s.key])
 

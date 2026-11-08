@@ -6,6 +6,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/telemetry"
 )
 
@@ -31,6 +32,15 @@ type SetupState struct {
 	// Complete is true once the pipeline is configured AND has produced an
 	// import — the point at which the checklist has nothing left to say.
 	Complete bool `json:"complete"`
+
+	// HasLibraryFolder says whether imports have a folder to land in: a root
+	// folder row exists, or BINDERY_LIBRARY_DIR is a writable directory (the
+	// importer falls back to it, so a root folder row is not required). It is
+	// true once Complete, since an import has already landed. Admins only,
+	// since only they can add a root folder; it is left out for everyone else,
+	// and also while the cached storage probe has no answer yet (a hung
+	// mount). The UI treats a missing value as done.
+	HasLibraryFolder *bool `json:"hasLibraryFolder,omitempty"`
 
 	// Blocked is true when this install has imported through Bindery before
 	// but cannot import right now, and has been that way for a couple of
@@ -112,6 +122,33 @@ func (h *SetupStateHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// disabled and API key callers are stamped admin by the middleware.
 	if auth.UserRoleFromContext(ctx) == "admin" {
 		h.blocked.apply(ctx, h.clients, &state)
+		state.HasLibraryFolder = h.libraryFolder(ctx, state.Complete)
 	}
 	writeJSON(w, http.StatusOK, state)
+}
+
+// libraryFolder answers SetupState.HasLibraryFolder, cheapest source first:
+// a complete setup, then root folder rows, and only then the blocked check's
+// cached, time bounded storage probe. It never probes the disk itself, so the
+// request costs at most one probe per storageProbeTTL however often the page
+// loads, and a hung mount answers nil instead of holding the request.
+func (h *SetupStateHandler) libraryFolder(ctx context.Context, complete bool) *bool {
+	yes := true
+	if complete {
+		return &yes
+	}
+	if h.blocked.rootFolders != nil {
+		if roots, err := h.blocked.rootFolders.List(ctx); err == nil && len(roots) > 0 {
+			return &yes
+		}
+	}
+	var clients []models.DownloadClient
+	if h.clients != nil {
+		clients, _ = h.clients.List(ctx)
+	}
+	ok, known := h.blocked.libraryUsable(ctx, clients)
+	if !known {
+		return nil
+	}
+	return &ok
 }

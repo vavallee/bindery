@@ -79,10 +79,15 @@ type blockedChecker struct {
 	mu         sync.Mutex
 	storageAt  time.Time
 	storageBad bool
-	inflight   chan struct{}
-	sinceArea  string
-	since      time.Time
-	lastSeen   time.Time
+	// libraryOK is the probe's answer for LibraryDir as a write target, and
+	// libraryProbed says the last finished probe included it (it does only
+	// when there are no root folders; see storageTargets).
+	libraryOK     bool
+	libraryProbed bool
+	inflight      chan struct{}
+	sinceArea     string
+	since         time.Time
+	lastSeen      time.Time
 }
 
 // WithBlockedChecks supplies what the blocked state is derived from. Without
@@ -228,16 +233,22 @@ func (bc *blockedChecker) storageBroken(ctx context.Context, clients []models.Do
 		if probe == nil {
 			probe = dirAccessible
 		}
+		libraryDir := bc.cfg.LibraryDir
 		go func() {
-			bad := false
+			bad, libOK, libProbed := false, false, false
 			for _, t := range targets {
-				if !probe(t.path, t.write) {
+				ok := probe(t.path, t.write)
+				if t.write && t.path == libraryDir {
+					libOK, libProbed = ok, true
+				}
+				if !ok {
 					bad = true
 					break
 				}
 			}
 			bc.mu.Lock()
 			bc.storageBad, bc.storageAt, bc.inflight = bad, bc.clock(), nil
+			bc.libraryOK, bc.libraryProbed = libOK, libProbed
 			bc.mu.Unlock()
 			close(done)
 		}()
@@ -259,6 +270,24 @@ func (bc *blockedChecker) storageBroken(ctx context.Context, clients []models.Do
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 	return bc.storageBad
+}
+
+// libraryUsable reports whether LibraryDir is a writable directory, from the
+// same cached, time bounded probe as storageBroken (it refreshes that cache
+// when stale). known is false until a finished probe has covered LibraryDir,
+// which also covers a probe still stuck on a hung mount. Callers check root
+// folders first: LibraryDir is only probed when there are none.
+func (bc *blockedChecker) libraryUsable(ctx context.Context, clients []models.DownloadClient) (ok, known bool) {
+	if bc.cfg == nil {
+		return false, false
+	}
+	if bc.cfg.LibraryDir == "" {
+		return false, true
+	}
+	bc.storageBroken(ctx, clients)
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	return bc.libraryOK, bc.libraryProbed
 }
 
 // allClientsFailing is true when at least one client is enabled and every

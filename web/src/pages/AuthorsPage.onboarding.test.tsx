@@ -13,9 +13,6 @@ vi.mock('../api/client', async importOriginal => {
       ...actual.api,
       listAuthors: vi.fn(),
       setupState: vi.fn(),
-      // A root folder exists, so these tests see the pipeline steps; the
-      // root folder step has its own tests in SetupChecklist.rootfolder.test.
-      listRootFolders: vi.fn().mockResolvedValue([{ id: 1, path: '/books', freeSpace: 0, createdAt: '' }]),
     },
   }
 })
@@ -66,6 +63,9 @@ function state(overrides: Partial<SetupState> = {}): SetupState {
     hasGrab: false,
     hasImport: false,
     complete: false,
+    // A library folder exists, so these tests see the pipeline steps; the
+    // root folder step has its own tests in SetupChecklist.rootfolder.test.
+    hasLibraryFolder: true,
     ...overrides,
   }
 }

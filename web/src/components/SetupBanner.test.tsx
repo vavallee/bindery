@@ -3,7 +3,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import SetupBanner from './SetupBanner'
 import { api } from '../api/client'
-import type { Indexer, DownloadClient, StorageHealth } from '../api/client'
+import type { Indexer, DownloadClient, SetupState } from '../api/client'
 import en from '../i18n/locales/en.json'
 
 vi.mock('../api/client', async importOriginal => {
@@ -14,6 +14,7 @@ vi.mock('../api/client', async importOriginal => {
       ...actual.api,
       listIndexers: vi.fn(),
       listDownloadClients: vi.fn(),
+      setupState: vi.fn(),
       listRootFolders: vi.fn(),
       getStorage: vi.fn(),
     },
@@ -26,22 +27,17 @@ vi.mock('react-i18next', () => ({
   }),
 }))
 
-function storage(libraryExists: boolean): StorageHealth {
+function setupState(hasLibraryFolder: boolean | undefined): SetupState {
   return {
-    downloadDir: '/downloads',
-    audiobookDownloadDir: '',
-    libraryDir: '/books',
-    audiobookDir: '',
-    dirs: [{ name: 'library', path: '/books', exists: libraryExists, writable: libraryExists }],
-    hardlinkable: false,
+    hasIndexer: false, hasClient: false, hasAuthor: false, hasGrab: false, hasImport: false, complete: false,
+    hasLibraryFolder,
   }
 }
 
 function setup({ indexer, client, library }: { indexer: boolean; client: boolean; library: boolean }) {
   vi.mocked(api.listIndexers).mockResolvedValue(indexer ? [{ id: 1 } as Indexer] : [])
   vi.mocked(api.listDownloadClients).mockResolvedValue(client ? [{ id: 1 } as DownloadClient] : [])
-  vi.mocked(api.listRootFolders).mockResolvedValue([])
-  vi.mocked(api.getStorage).mockResolvedValue(storage(library))
+  vi.mocked(api.setupState).mockResolvedValue(setupState(library))
 }
 
 function renderIt() {
@@ -91,29 +87,52 @@ describe('SetupBanner root folder', () => {
     expect(screen.getByRole('link', { name: 'Set up Indexers' })).toHaveAttribute('href', '/settings?tab=indexers')
   })
 
-  // The root folder answer takes two requests, so the indexer and client one
-  // lands first. Showing the two part message and then swapping it for the
-  // three part one would announce the banner twice.
-  it('waits for the root folder answer before saying anything', async () => {
+  // The library folder answer arrives separately from the indexer and client
+  // one. Showing the two part message and then swapping it for the three part
+  // one would announce the banner twice.
+  it('waits for the library folder answer before saying anything', async () => {
     setup({ indexer: false, client: false, library: false })
-    let resolveStorage: (v: StorageHealth) => void = () => {}
-    vi.mocked(api.getStorage).mockReturnValue(new Promise(r => { resolveStorage = r }))
+    let resolveState: (v: SetupState) => void = () => {}
+    vi.mocked(api.setupState).mockReturnValue(new Promise(r => { resolveState = r }))
     const { container } = renderIt()
 
     await waitFor(() => expect(api.listDownloadClients).toHaveBeenCalled())
-    await waitFor(() => expect(api.getStorage).toHaveBeenCalled())
+    await Promise.resolve()
     await Promise.resolve()
     expect(container).toBeEmptyDOMElement()
 
-    resolveStorage(storage(false))
+    resolveState(setupState(false))
     expect(await screen.findByText(/add a root folder, an indexer and a download client/)).toBeInTheDocument()
+  })
+
+  // A dismissal stored before the root folder step existed has no root part.
+  // It must still match its state once the library folder is fine.
+  it('keeps honouring an older dismissal when the library folder is fine', async () => {
+    localStorage.setItem('bindery.setupBannerDismissed', 'indexer+')
+    setup({ indexer: false, client: true, library: true })
+    const { container } = renderIt()
+
+    await waitFor(() => expect(api.setupState).toHaveBeenCalled())
+    await waitFor(() => expect(api.listDownloadClients).toHaveBeenCalled())
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('never asks /system/storage, which probes the mounts uncached', async () => {
+    setup({ indexer: false, client: false, library: false })
+    renderIt()
+
+    await screen.findByText(/add a root folder/)
+    expect(api.getStorage).not.toHaveBeenCalled()
+    expect(api.listRootFolders).not.toHaveBeenCalled()
   })
 
   it('renders nothing when everything is in place', async () => {
     setup({ indexer: true, client: true, library: true })
     const { container } = renderIt()
 
-    await waitFor(() => expect(api.getStorage).toHaveBeenCalled())
+    await waitFor(() => expect(api.setupState).toHaveBeenCalled())
     await Promise.resolve()
     expect(container).toBeEmptyDOMElement()
   })

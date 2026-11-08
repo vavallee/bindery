@@ -31,6 +31,9 @@ export interface SetupState {
   /** Names the problem and the fix, never a path. English; the UI localises by blockedArea. */
   blockedReason?: string
   blockedArea?: 'storage' | 'indexer' | 'download-client'
+  /** Admin-only. Imports have a folder to land in: a root folder exists, or
+   *  BINDERY_LIBRARY_DIR is writable. Left out while unknown; treat that as yes. */
+  hasLibraryFolder?: boolean
 }
 
 export interface LogEntry {
