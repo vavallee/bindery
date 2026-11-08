@@ -4906,9 +4906,8 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		// not matched here.
 		if detectedFmt == models.MediaTypeEbook && !fileTooSmall {
 			if bookID := otherFormatOwner(cleanPath); bookID != 0 {
-				if err := s.books.AddBookFile(ctx, bookID, models.MediaTypeEbook, registeredPath); err != nil {
-					slog.Error("library scan: failed to add another format to a book", "id", bookID, "path", path, "error", err)
-				} else {
+				err := s.books.AddBookFile(ctx, bookID, models.MediaTypeEbook, registeredPath)
+				if err == nil {
 					slog.Info("library scan: added another format beside the book's file", "id", bookID, "path", path)
 					trackedPaths[s.pathKey(registeredPath)] = true
 					reconciledBooks[bookFormatClaim{bookID, models.MediaTypeEbook}] = true
@@ -4916,6 +4915,7 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 					reconciled++
 					continue
 				}
+				slog.Error("library scan: failed to add another format to a book", "id", bookID, "path", path, "error", err)
 			}
 		}
 
