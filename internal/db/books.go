@@ -1645,6 +1645,30 @@ func (r *BookRepo) FillImageURL(ctx context.Context, id int64, imageURL string) 
 	return n > 0, nil
 }
 
+// FillLanguage sets a book's language only while it has none and the field is
+// not locked, and reports whether it did. The language read from a book's own
+// file uses it (#1160): the library scan works from rows listed when it
+// started, so a language a provider or the user set, or a lock added, between
+// that list and this write must win over the file.
+func (r *BookRepo) FillLanguage(ctx context.Context, id int64, language string) (bool, error) {
+	language = models.NormalizeLanguageCode(language)
+	if language == "" {
+		return false, nil
+	}
+	res, err := r.exec.ExecContext(ctx, `UPDATE books SET language=?, updated_at=?
+		WHERE id=? AND TRIM(language)=''
+		  AND ? NOT IN (SELECT value FROM json_each(COALESCE(locked_fields, '[]')))`,
+		language, timeValueArg(time.Now().UTC()), id, models.BookFieldLanguage)
+	if err != nil {
+		return false, fmt.Errorf("fill book %d language: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("fill book %d language: %w", id, err)
+	}
+	return n > 0, nil
+}
+
 // ListWithLocalImagePath returns books whose image_url is an absolute
 // filesystem path rather than a URL, including excluded ones, so the #2564
 // startup repair can rewrite them. Nothing in Bindery wrote such a value to

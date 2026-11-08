@@ -763,6 +763,11 @@ func main() {
 	// importRoots: adoption only registers files already in the library.
 	unmatchedUnitRepo := db.NewUnmatchedUnitRepo(database)
 	importScanner.WithUnmatchedUnits(unmatchedUnitRepo)
+	// The library scan fills an empty book language from the ebook it
+	// attaches (#1160). Books whose ebook was tracked before that get one
+	// pass now, in the background, once the scanner is fully configured; a
+	// settings row stops it repeating.
+	bgJobs.Go("file-language-backfill", importScanner.BackfillFileLanguagesOnce)
 	adoptionHandler := api.NewAdoptionHandler(unmatchedUnitRepo, bookRepo, authorRepo, authorHandler, libraryRoots, importScanner, settingsRepo)
 	// Any claim present at startup belongs to a process that is gone.
 	if n, err := adoptionHandler.RecoverStaleClaims(ctxBoot, 0); err != nil {

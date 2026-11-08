@@ -4731,6 +4731,9 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 		}
 		slog.Info("library scan: reconciled book", "title", b.Title, "path", path, "jw", hit.score)
 		s.fillCoverFromFile(ctx, b, registeredPath)
+		if detectedFmt == models.MediaTypeEbook {
+			s.fillLanguageFromFile(ctx, b, authorMap[b.AuthorID], registeredPath)
+		}
 		trackedPaths[s.pathKey(registeredPath)] = true
 		if detectedFmt == models.MediaTypeAudiobook {
 			// Sibling tracks of a just-reconciled audiobook folder belong to
@@ -5064,6 +5067,9 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 				}
 				slog.Info("library scan: reconciled book via ASIN", "asin", parsed.ASIN, "title", b.Title, "path", path)
 				s.fillCoverFromFile(ctx, b, registeredPath)
+				if detectedFmt == models.MediaTypeEbook {
+					s.fillLanguageFromFile(ctx, b, authorMap[b.AuthorID], registeredPath)
+				}
 				trackedPaths[s.pathKey(registeredPath)] = true
 				if detectedFmt == models.MediaTypeAudiobook {
 					markAudioParent(cleanPath)
@@ -5141,6 +5147,11 @@ func (s *Scanner) scanLibrary(ctx context.Context) {
 						slog.Info("library scan: reconciled book via series position",
 							"series", parsed.Series, "position", parsed.SeriesNumber, "title", book.Title, "path", path)
 						s.fillCoverFromFile(ctx, book, registeredPath)
+						// GetBookBySeriesPosition reads no field locks;
+						// BookRepo.FillLanguage checks the lock itself.
+						if detectedFmt == models.MediaTypeEbook {
+							s.fillLanguageFromFile(ctx, book, authorMap[book.AuthorID], registeredPath)
+						}
 						trackedPaths[s.pathKey(registeredPath)] = true
 						if detectedFmt == models.MediaTypeAudiobook {
 							markAudioParent(cleanPath)
