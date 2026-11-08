@@ -2,8 +2,12 @@ package importer
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -187,9 +191,87 @@ func TestDrop_FileBinderyDidNotPlaceIsKept(t *testing.T) {
 	}
 }
 
-// TestDropEbookDestination_LookupFailureFailsThePlacement: when the book that
-// placed a file can't be read, nothing is overwritten on a guess.
-func TestDropEbookDestination_LookupFailureFailsThePlacement(t *testing.T) {
+// TestDrop_RacingHandoffsOfOneNameKeepEveryFile: handoffs of same-named books
+// running at once must each end up with a file of their own. Checking the name
+// first and writing after let two of them see it free, and the later write
+// removed the earlier book's file.
+func TestDrop_RacingHandoffsOfOneNameKeepEveryFile(t *testing.T) {
+	for _, mode := range []string{"copy", "hardlink"} {
+		t.Run(mode, func(t *testing.T) {
+			database, err := db.OpenMemory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { database.Close() })
+			s := &Scanner{books: db.NewBookRepo(database)}
+			folder := t.TempDir()
+			dest := filepath.Join(folder, "Title T - Author A.epub")
+
+			const books = 8
+			srcs := make([]string, books)
+			for i := range srcs {
+				srcs[i] = filepath.Join(t.TempDir(), "release.epub")
+				if err := os.WriteFile(srcs[i], []byte(fmt.Sprintf("book %d", i+1)), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var wg sync.WaitGroup
+			errs := make([]error, books)
+			for i := range srcs {
+				wg.Go(func() {
+					_, errs[i] = s.dropPlaceEbook(t.Context(), int64(i+1), folder, dest, srcs[i], mode)
+				})
+			}
+			wg.Wait()
+			for i, err := range errs {
+				if err != nil {
+					t.Errorf("book %d: %v", i+1, err)
+				}
+			}
+
+			entries, err := os.ReadDir(folder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := make(map[string]bool, len(entries))
+			for _, e := range entries {
+				got[readDropFile(t, filepath.Join(folder, e.Name()))] = true
+			}
+			for i := range books {
+				if want := fmt.Sprintf("book %d", i+1); !got[want] {
+					t.Errorf("%s's file is missing from the drop folder (%d files)", want, len(entries))
+				}
+			}
+		})
+	}
+}
+
+// TestDropCreateFile_NeverReplaces: claiming a name must fail on anything
+// already there, in both modes, and leave it as it was.
+func TestDropCreateFile_NeverReplaces(t *testing.T) {
+	for _, mode := range []string{"copy", "hardlink"} {
+		t.Run(mode, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "release.epub")
+			if err := os.WriteFile(src, []byte("new"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			dst := filepath.Join(t.TempDir(), "Title.epub")
+			if err := os.WriteFile(dst, []byte("waiting"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := dropCreateFile(t.Context(), src, dst, mode); !errors.Is(err, fs.ErrExist) {
+				t.Fatalf("err = %v, want one matching fs.ErrExist", err)
+			}
+			if got := readDropFile(t, dst); got != "waiting" {
+				t.Errorf("the file at the name was changed to %q", got)
+			}
+		})
+	}
+}
+
+// TestDropPlaceEbook_LookupFailureFailsThePlacement: when the book that placed
+// a file can't be read, nothing is overwritten on a guess.
+func TestDropPlaceEbook_LookupFailureFailsThePlacement(t *testing.T) {
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -200,21 +282,38 @@ func TestDropEbookDestination_LookupFailureFailsThePlacement(t *testing.T) {
 	if err := os.WriteFile(dest, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	src := filepath.Join(t.TempDir(), "release.epub")
+	if err := os.WriteFile(src, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	database.Close()
 
-	if _, err := s.dropEbookDestination(context.Background(), 1, folder, dest); err == nil {
+	if _, err := s.dropPlaceEbook(context.Background(), 1, folder, dest, src, "copy"); err == nil {
 		t.Fatal("want an error when the placement lookup fails")
+	}
+	if got := readDropFile(t, dest); got != "x" {
+		t.Errorf("the file at the name was changed to %q", got)
+	}
+	if n := countDropFiles(t, folder); n != 1 {
+		t.Errorf("drop folder holds %d files, want only the one that was there", n)
 	}
 }
 
-// TestDropEbookDestination_RefusesANameOutsideTheFolder: a rendered name that
-// leaves the drop folder is an error, not a place to write.
-func TestDropEbookDestination_RefusesANameOutsideTheFolder(t *testing.T) {
+// TestDropPlaceEbook_RefusesANameOutsideTheFolder: a rendered name that leaves
+// the drop folder is an error, not a place to write.
+func TestDropPlaceEbook_RefusesANameOutsideTheFolder(t *testing.T) {
 	folder := filepath.Join(t.TempDir(), "drop")
+	src := filepath.Join(t.TempDir(), "release.epub")
+	if err := os.WriteFile(src, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	s := &Scanner{}
 	for _, dest := range []string{filepath.Join(folder, "..", "Title.epub"), filepath.Join(filepath.Dir(folder), "drop2", "Title.epub")} {
-		if got, err := s.dropEbookDestination(context.Background(), 1, folder, dest); err == nil {
+		if got, err := s.dropPlaceEbook(context.Background(), 1, folder, dest, src, "copy"); err == nil {
 			t.Errorf("dest %q: got %q, want an error", dest, got)
+		}
+		if _, err := os.Lstat(dest); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("dest %q: something was written there (%v)", dest, err)
 		}
 	}
 }

@@ -1502,13 +1502,28 @@ func copyFileRooted(srcRoot, dstRoot *os.Root, rel string) error {
 // cancellation path, where the caller is already returning ctx.Err() and
 // the Close error is meaningless.
 func copyFileCtx(ctx context.Context, src, dst string) error {
+	return copyFileOpenCtx(ctx, src, dst, os.O_TRUNC)
+}
+
+// copyFileExclusiveCtx is copyFileCtx that never replaces anything: when dst
+// already exists it fails with an error matching fs.ErrExist and dst is left
+// as it was. The partial-file cleanup only ever removes a dst this call
+// created.
+func copyFileExclusiveCtx(ctx context.Context, src, dst string) error {
+	return copyFileOpenCtx(ctx, src, dst, os.O_EXCL)
+}
+
+// copyFileOpenCtx is the body of copyFileCtx and copyFileExclusiveCtx. flag is
+// added to O_RDWR|O_CREATE when dst is opened: O_TRUNC is os.Create, O_EXCL
+// refuses an existing dst.
+func copyFileOpenCtx(ctx context.Context, src, dst string, flag int) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_RDWR|os.O_CREATE|flag, 0o666) // #nosec G302 -- the mode os.Create uses, left to the umask like every library file
 	if err != nil {
 		return err
 	}

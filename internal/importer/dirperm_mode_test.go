@@ -92,6 +92,12 @@ func TestPlacementModesWithClearedUmask(t *testing.T) {
 		{"CopyFileCtx", func(src, dst string) error { return CopyFileCtx(context.Background(), src, dst) }},
 		{"HardlinkFile", func(src, dst string) error { return HardlinkFile(src, dst) }},
 		{"dropPlaceFile", func(src, dst string) error { return dropPlaceFile(context.Background(), src, dst, "copy") }},
+		{"dropPlaceEbook", func(src, dst string) error {
+			// dst is <base>/library/<author>/<book>/book.epub, so library is the drop folder.
+			folder := filepath.Dir(filepath.Dir(filepath.Dir(dst)))
+			_, err := (&Scanner{}).dropPlaceEbook(context.Background(), 1, folder, dst, src, "copy")
+			return err
+		}},
 		{"StagedImport", func(src, dst string) error {
 			_, commit, rollback, err := StagedImport(context.Background(), "move", src, dst)
 			if err != nil {

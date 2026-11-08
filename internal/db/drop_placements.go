@@ -8,8 +8,8 @@ import (
 )
 
 // DropPlacementBook returns the book that last placed path in a drop folder, or
-// 0 when no live book did: the file came from somewhere else, or its book has
-// since been deleted (#3562).
+// 0 when no placement is on record: the file came from somewhere else, or the
+// book that placed it has since been deleted and its row went with it (#3562).
 func (r *BookRepo) DropPlacementBook(ctx context.Context, path string) (int64, error) {
 	var bookID int64
 	err := r.db.QueryRowContext(ctx, `SELECT book_id FROM drop_placements WHERE path = ?`, path).Scan(&bookID)
