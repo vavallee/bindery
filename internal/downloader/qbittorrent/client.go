@@ -134,8 +134,10 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 // It is independent of the WebUI login form. An empty username turns it off.
 //
 // The header is added by a transport wrapper, so no request site can forget
-// it, but only for the configured host: a redirect to anywhere else goes out
-// without it. The indexer torrent fetch uses its own client and never sees it.
+// it, but only for the configured scheme and host: a redirect to anywhere
+// else, or from https down to http on the same host:port, goes out without it,
+// so the credentials never cross the wire in cleartext when https was asked
+// for. The indexer torrent fetch uses its own client and never sees it.
 func (c *Client) SetBasicAuth(username, password string) {
 	inner := c.http.Transport
 	if b, ok := inner.(*basicAuthTransport); ok {
@@ -145,24 +147,25 @@ func (c *Client) SetBasicAuth(username, password string) {
 		c.http.Transport = inner
 		return
 	}
-	host := ""
+	scheme, host := "", ""
 	if u, err := url.Parse(c.baseURL); err == nil {
-		host = u.Host
+		scheme, host = u.Scheme, u.Host
 	}
-	c.http.Transport = &basicAuthTransport{inner: inner, host: host, username: username, password: password}
+	c.http.Transport = &basicAuthTransport{inner: inner, scheme: scheme, host: host, username: username, password: password}
 }
 
 // basicAuthTransport adds an Authorization: Basic header to requests bound for
-// host.
+// scheme://host.
 type basicAuthTransport struct {
 	inner    http.RoundTripper
+	scheme   string
 	host     string
 	username string
 	password string
 }
 
 func (t *basicAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.URL.Host != t.host {
+	if req.URL.Scheme != t.scheme || req.URL.Host != t.host {
 		return t.inner.RoundTrip(req)
 	}
 	// RoundTrippers must not modify the caller's request.

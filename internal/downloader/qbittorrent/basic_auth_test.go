@@ -126,3 +126,49 @@ func TestBasicAuth_NotForwardedToAnotherHost(t *testing.T) {
 	c.SetBasicAuth("proxyuser", "proxypass")
 	_ = c.Test(context.Background())
 }
+
+// A client configured for https must not put the proxy credentials on a plain
+// http request to the same host:port, which is what a downgrade redirect
+// produces: the header would cross the wire in cleartext (#3703).
+func TestBasicAuth_NotSentOverHTTPWhenConfiguredForHTTPS(t *testing.T) {
+	var mu sync.Mutex
+	sawHeader := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _, has := r.BasicAuth()
+		mu.Lock()
+		sawHeader = has
+		mu.Unlock()
+		_, _ = w.Write([]byte("v4.6.0"))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	port, _ := strconv.Atoi(u.Port())
+
+	get := func(c *Client) bool {
+		t.Helper()
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/api/v2/app/version", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := c.http.Do(req)
+		if err != nil {
+			t.Fatalf("request: %v", err)
+		}
+		_ = resp.Body.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		return sawHeader
+	}
+
+	secure := New(u.Hostname(), port, "admin", "secret", "", true)
+	secure.SetBasicAuth("proxyuser", "proxypass")
+	if get(secure) {
+		t.Error("https configured client sent basic auth on an http request to the same host:port")
+	}
+
+	plain := New(u.Hostname(), port, "admin", "secret", "", false)
+	plain.SetBasicAuth("proxyuser", "proxypass")
+	if !get(plain) {
+		t.Error("http configured client stopped sending basic auth to its own host")
+	}
+}
