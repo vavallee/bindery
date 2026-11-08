@@ -13,6 +13,14 @@ func olTitle(raw string) string {
 	return textutil.StripOpenLibraryDuplicateMarker(raw)
 }
 
+// olDisplayTitle is the title a book is created under: the merge queue's
+// duplicate note comes off first, then the audio format note, so
+// "X [Audiobook] (Duplicate of OL1W)" becomes "X". Author sync keeps using
+// olTitle until its noise filter has seen the "(Audio CD)" form.
+func olDisplayTitle(raw string) string {
+	return stripFormatMarker(olTitle(raw))
+}
+
 // trimUnmatchedQuote drops a double quote that opens or closes a description
 // without a partner, the stray leading quote some OpenLibrary records carry
 // (Golden Son's starts with one).

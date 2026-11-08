@@ -193,6 +193,7 @@ func (c *Client) SearchBooks(ctx context.Context, query string) ([]models.Book, 
 
 	books := make([]models.Book, 0, len(resp.Docs))
 	for _, doc := range resp.Docs {
+		doc.Title = olDisplayTitle(doc.Title)
 		workID := strings.TrimPrefix(doc.Key, "/works/")
 		b := models.Book{
 			ForeignID:        workID,
@@ -265,6 +266,7 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 	if err := c.getJSON(ctx, u, &resp); err != nil {
 		return nil, fmt.Errorf("get book %s: %w", foreignID, err)
 	}
+	resp.Title = olDisplayTitle(resp.Title)
 
 	b := &models.Book{
 		ForeignID:        foreignID,
@@ -498,6 +500,8 @@ func (c *Client) authorWorks(ctx context.Context, authorForeignID string) (books
 		if shouldFilterOLNoise(entry.Title, entry.Subjects) {
 			continue
 		}
+		// After the noise check, which still needs to see "(Audio CD)".
+		entry.Title = olDisplayTitle(entry.Title)
 		b := models.Book{
 			ForeignID:        workID,
 			Title:            olTitle(entry.Title),
@@ -557,6 +561,8 @@ func (c *Client) authorWorks(ctx context.Context, authorForeignID string) (books
 		if shouldFilterOLNoise(e.Title, e.Genres) {
 			continue
 		}
+		e.Title = olDisplayTitle(e.Title)
+		e.SortTitle = e.Title
 		e.Author = &models.Author{
 			ForeignID:        authorForeignID,
 			MetadataProvider: "openlibrary",
@@ -1223,6 +1229,7 @@ func (c *Client) GetSubjectBooks(ctx context.Context, subject string, limit int)
 
 	candidates := make([]models.RecommendationCandidate, 0, len(resp.Works))
 	for _, w := range resp.Works {
+		w.Title = olDisplayTitle(w.Title)
 		workID := strings.TrimPrefix(w.Key, "/works/")
 		cand := models.RecommendationCandidate{
 			ForeignID: workID,
@@ -1268,6 +1275,7 @@ func (c *Client) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, 
 		workID := strings.TrimPrefix(resp.Works[0].Key, "/works/")
 		return c.GetBook(ctx, workID)
 	}
+	resp.Title = olDisplayTitle(resp.Title)
 
 	// Fallback: construct from ISBN response
 	b := &models.Book{
