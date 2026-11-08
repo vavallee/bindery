@@ -482,37 +482,32 @@ func GetStalledTorrents(ctx context.Context, client *models.DownloadClient) (Sta
 		// the importer does (#2712). Polling Category alone left audiobook
 		// torrents out of stall detection. A torrent both filters return is
 		// counted once, or the outage guard's denominator would double it.
-		seen := make(map[int64]bool)
-		for _, cat := range CategoriesToPoll(client) {
-			torrents, err := trans.GetTorrents(ctx, cat)
-			if err != nil {
-				return StallReport{}, err
+		// One fetch filtered locally: torrent-get returns the whole list
+		// whatever the category (#3714).
+		all, err := trans.GetTorrents(ctx, "")
+		if err != nil {
+			return StallReport{}, err
+		}
+		for _, t := range transmission.SelectCategories(all, CategoriesToPoll(client)) {
+			if t.PercentDone < 1 {
+				report.Incomplete++
 			}
-			for _, t := range torrents {
-				if seen[t.ID] {
-					continue
-				}
-				seen[t.ID] = true
-				if t.PercentDone < 1 {
-					report.Incomplete++
-				}
-				// Keyed by info hash, which is what a download stores (#2711).
-				// The numeric id is deliberately not offered as a fallback: the
-				// caller removes what it matches here, and a session id that
-				// has been renumbered would remove the wrong torrent. A magnet
-				// carries its info hash from the moment it is added, so one
-				// with no metadata still has a hash to key on.
-				hash := strings.ToLower(strings.TrimSpace(t.HashString))
-				if hash == "" {
-					continue
-				}
-				switch {
-				// status 0 = stopped; treat stopped+error as stalled
-				case t.Status == 0 && strings.TrimSpace(t.ErrorString) != "":
-					report.ClientReported[hash] = true
-				case transmissionHasNoMetadata(t):
-					report.NoMetadata[hash] = true
-				}
+			// Keyed by info hash, which is what a download stores (#2711).
+			// The numeric id is deliberately not offered as a fallback: the
+			// caller removes what it matches here, and a session id that
+			// has been renumbered would remove the wrong torrent. A magnet
+			// carries its info hash from the moment it is added, so one
+			// with no metadata still has a hash to key on.
+			hash := strings.ToLower(strings.TrimSpace(t.HashString))
+			if hash == "" {
+				continue
+			}
+			switch {
+			// status 0 = stopped; treat stopped+error as stalled
+			case t.Status == 0 && strings.TrimSpace(t.ErrorString) != "":
+				report.ClientReported[hash] = true
+			case transmissionHasNoMetadata(t):
+				report.NoMetadata[hash] = true
 			}
 		}
 		return report, nil

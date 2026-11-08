@@ -174,3 +174,52 @@ func TestGetStalledTorrents_QBittorrent_ServerError(t *testing.T) {
 		t.Fatal("expected error from 500 response, got nil")
 	}
 }
+
+// TestGetStalledTorrents_Transmission_OneFetchForBothCategories pins the stall
+// check to a single torrent-get with an audiobook category set (#3714), and
+// checks the stalled set and the incomplete count match what a fetch per
+// category produced: both categories, a torrent in both counted once, and no
+// prefix match from /tr/audio onto /tr/audiobooks.
+func TestGetStalledTorrents_Transmission_OneFetchForBothCategories(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Method == "torrent-get" {
+			calls++
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"result": "success",
+			"arguments": map[string]any{"torrents": []map[string]any{
+				{"id": 1, "hashString": "AAA1", "downloadDir": "/tr/", "status": 0, "errorString": "tracker gone", "percentDone": 0.5, "totalSize": 100},
+				{"id": 2, "hashString": "aaa2", "downloadDir": "/tr/audio", "status": 0, "errorString": "disk full", "percentDone": 0.2, "totalSize": 100},
+				{"id": 3, "hashString": "aaa3", "downloadDir": "/tr/audio", "labels": []string{"/TR"}, "status": 4},
+				{"id": 4, "hashString": "aaa4", "downloadDir": "/tr/audiobooks", "status": 0, "errorString": "not ours", "percentDone": 0.1, "totalSize": 100},
+				{"id": 5, "hashString": "aaa5", "downloadDir": "/tr", "status": 6, "percentDone": 1, "totalSize": 100},
+			}},
+		})
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{Type: "transmission", Host: host, Port: port,
+		Category: "/tr", CategoryAudiobook: "/tr/audio"}
+
+	report, err := GetStalledTorrents(context.Background(), client)
+	if err != nil {
+		t.Fatalf("GetStalledTorrents: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("torrent-get calls = %d, want 1 per check", calls)
+	}
+	if len(report.ClientReported) != 2 || !report.ClientReported["aaa1"] || !report.ClientReported["aaa2"] {
+		t.Errorf("ClientReported = %v, want aaa1 and aaa2", report.ClientReported)
+	}
+	if len(report.NoMetadata) != 1 || !report.NoMetadata["aaa3"] {
+		t.Errorf("NoMetadata = %v, want aaa3", report.NoMetadata)
+	}
+	if report.Incomplete != 3 {
+		t.Errorf("Incomplete = %d, want 3 (torrent 3 once, torrent 4 not ours, torrent 5 done)", report.Incomplete)
+	}
+}
