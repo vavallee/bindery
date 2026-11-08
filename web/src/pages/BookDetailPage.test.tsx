@@ -762,6 +762,30 @@ describe('BookDetailPage — search', () => {
     }
   })
 
+  // A manual test on dev: with no indexers the "No indexers configured" box
+  // landed just under the fold. Its top edge was on screen, which counted as
+  // visible, so nothing moved and the click looked dead. Anything not fully
+  // on screen is now brought into view, instantly and only as far as needed.
+  it('brings the no indexers message into view when it starts on screen but ends below the fold', async () => {
+    const { scrollIntoView, restore } = mockScrolling(window.innerHeight - 40)
+    try {
+      vi.mocked(api.listIndexers).mockResolvedValue([])
+      vi.mocked(api.searchBook).mockResolvedValue({ results: [], debug: null })
+
+      renderBookDetailPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+
+      expect(await screen.findByText(/No indexers configured/)).toBeInTheDocument()
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', behavior: 'instant' })
+      const target = scrollIntoView.mock.instances[0] as unknown as HTMLElement
+      expect(within(target).getByText(/No indexers configured/)).toBeInTheDocument()
+    } finally {
+      restore()
+    }
+  })
+
   it.each([
     ['the wheel', () => fireEvent.wheel(window)],
     ['a touch drag', () => fireEvent.touchMove(window)],
@@ -2358,6 +2382,34 @@ describe('BookDetailPage automatic search (#2668)', () => {
     fireEvent.click(screen.getByRole('button', { name: new RegExp(autoLabel) }))
 
     expect(await screen.findByText('book not found')).toBeInTheDocument()
+  })
+
+  // The outcome used to land in a banner under the header card, which on a
+  // long page or a phone sits below the fold, so the click looked dead. It
+  // now shows beside the button that was pressed, as a live status.
+  it.each([
+    ['started', () => {}, () => translate('bookDetail.autoSearchStarted')],
+    ['refused because automatic grabbing is off', () => {
+      vi.mocked(api.searchBookAutomatic).mockResolvedValue({
+        results: { '42': { ok: false, code: 'auto_grab_disabled', error: 'automatic grabbing is disabled' } },
+      })
+    }, () => translate('search.autoGrabDisabledSingleBook')],
+    ['a per book error', () => {
+      vi.mocked(api.searchBookAutomatic).mockResolvedValue({ results: { '42': { ok: false, error: 'book not found' } } })
+    }, () => 'book not found'],
+    ['a failed request', () => {
+      vi.mocked(api.searchBookAutomatic).mockRejectedValue(new Error('server unavailable'))
+    }, () => 'server unavailable'],
+  ])('shows the automatic search outcome next to its button: %s', async (_case, arrange, expected) => {
+    arrange()
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+
+    const button = screen.getByRole('button', { name: new RegExp(autoLabel) })
+    fireEvent.click(button)
+
+    const status = await within(button.parentElement as HTMLElement).findByRole('status')
+    await waitFor(() => expect(status).toHaveTextContent(expected()))
   })
 
   it('clears the started notice when the interactive search is run next', async () => {
