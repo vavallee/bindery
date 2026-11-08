@@ -2816,10 +2816,15 @@
     "clientMissing": "An indexer is configured but there is no download client — searches will find releases, but every grab will fail.",
     "indexerMissing": "A download client is configured but there is no indexer — searches have nowhere to look and will find nothing.",
     "indexers": "Set up Indexers",
-    "downloadClients": "Set up Download Clients"
+    "downloadClients": "Set up Download Clients",
+    "rootFolders": "Set up Root Folders"
   },
   "setupBanner": {
-    "both": "Finish setting up: add an indexer and a download client so searches and downloads work."
+    "both": "Finish setting up: add an indexer and a download client so searches and downloads work.",
+    "rootFolder": "Finish setting up: add a root folder so imported books have a library folder to go to.",
+    "rootFolderIndexer": "Finish setting up: add a root folder and an indexer so searches and imports work.",
+    "rootFolderClient": "Finish setting up: add a root folder and a download client so downloads and imports work.",
+    "all": "Finish setting up: add a root folder, an indexer and a download client so searches, downloads and imports work."
   },
   "whatsNew": {
     "updated": "Updated to v{{version}}.",
@@ -2827,6 +2832,7 @@
   },
   "setupChecklist": {
     "title": "Setup progress",
+    "rootFolder": "Add a root folder",
     "indexer": "Add an indexer",
     "client": "Add a download client",
     "author": "Add an author",

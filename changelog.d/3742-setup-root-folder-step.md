@@ -1,0 +1,2 @@
+### Fixed
+- **Setup asks for a library folder first** (#3742). The setup banner and the Setup progress strip now start with "Add a root folder" when there is nowhere for imports to go, ahead of the indexer and download client, with a link to Settings, Root Folders. It counts as done as soon as a root folder exists or the folder BINDERY_LIBRARY_DIR points at is mounted and writable, so installs that already use that folder are not asked. Only admins see the step, since only they can add one.
