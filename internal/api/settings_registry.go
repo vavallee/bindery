@@ -193,7 +193,7 @@ var settingDescriptors = []SettingDescriptor{
 	},
 	{
 		Key: SettingLibraryScanInterval, Type: SettingTypeDuration, Default: "6h", Min: "15m", Max: "168h",
-		Description:     "How often the library is scanned for new and changed files. The Scan button on Settings, General runs one right away.",
+		Description:     "How often the library is scanned for new and changed files. The Scan Library button on Settings, General runs one right away.",
 		RestartRequired: true,
 		State:           SettingStateActive,
 	},
