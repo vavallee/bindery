@@ -666,11 +666,13 @@ function BookDetailPageInner() {
     setAutoSearchNotice(null)
     setAutoSearchStatus(null)
     try {
+      // GET /indexer is admin only, so a user role account never asks, and a
+      // failed list only loses the "no indexers" hint, never the results.
       const [r, indexers] = await Promise.all([
         api.searchBook(book.id),
-        api.listIndexers(),
+        isAdmin ? api.listIndexers().catch(() => null) : Promise.resolve(null),
       ])
-      setHasIndexers(indexers.length > 0)
+      setHasIndexers(indexers === null ? null : indexers.length > 0)
       setResults(r.results)
       setFiltered(r.filtered ?? [])
       setFilteredTotal(r.filteredTotal)
@@ -708,11 +710,12 @@ function BookDetailPageInner() {
     if (!el || typeof el.scrollIntoView !== 'function') return
     // Fully on screen: scrolling would only move the page for nothing. A top
     // edge just above the fold is not enough, since the message under it is
-    // still hidden. 'nearest' moves only as far as needed, and instantly, so
-    // the answer is in view the moment it lands.
+    // still hidden. 'nearest' moves only as far as needed, and 'auto' jumps
+    // (no smooth scroll CSS is set), so the answer is in view the moment it
+    // lands. 'instant' would throw in some older browsers.
     const { top, bottom } = el.getBoundingClientRect()
     if (top >= 0 && bottom <= window.innerHeight) return
-    el.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+    el.scrollIntoView({ block: 'nearest', behavior: 'auto' })
   }, [revealResults])
 
   // #2668 (ThatDeltaGuy): the automatic counterpart of runSearch above. That

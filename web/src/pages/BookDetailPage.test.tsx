@@ -778,7 +778,7 @@ describe('BookDetailPage — search', () => {
 
       expect(await screen.findByText(/No indexers configured/)).toBeInTheDocument()
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
-      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', behavior: 'instant' })
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', behavior: 'auto' })
       const target = scrollIntoView.mock.instances[0] as unknown as HTMLElement
       expect(within(target).getByText(/No indexers configured/)).toBeInTheDocument()
     } finally {
@@ -813,6 +813,37 @@ describe('BookDetailPage — search', () => {
     } finally {
       restore()
     }
+  })
+
+  // GET /indexer is admin only, and the search fetched it alongside the
+  // releases with Promise.all, so a user role account got "admin role
+  // required" and lost the results. The indexer list is a hint for the empty
+  // state, never a reason to drop the answer.
+  it.each([
+    ['a non admin, without asking for the admin only list', true],
+    ['an admin whose indexer list fails', false],
+  ])('still shows the results for %s', async (_who, nonAdmin) => {
+    if (nonAdmin) asAnotherUser()
+    vi.mocked(api.listIndexers).mockRejectedValue(new Error('admin role required'))
+    vi.mocked(api.searchBook).mockResolvedValue({ results: [makeResult({ guid: 'r1', title: 'A Result' })], debug: null })
+
+    renderBookDetailPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+
+    expect(await screen.findByText('A Result')).toBeInTheDocument()
+    expect(screen.queryByText('admin role required')).toBeNull()
+    if (nonAdmin) expect(api.listIndexers).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the generic empty message when the indexer list is unknown', async () => {
+    asAnotherUser()
+    vi.mocked(api.searchBook).mockResolvedValue({ results: [], debug: null })
+
+    renderBookDetailPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+
+    expect(await screen.findByText(/No results on any indexer/)).toBeInTheDocument()
+    expect(screen.queryByText(/No indexers configured/)).toBeNull()
   })
 
   it('shows an empty search state when no indexers are configured', async () => {
