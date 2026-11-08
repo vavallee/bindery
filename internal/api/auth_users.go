@@ -158,10 +158,14 @@ func (h *UserManagementHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// A signed in admin cannot delete their own account: the session would
 	// end on the next request with nobody having chosen to hand over the
 	// install. Checked before the owned rows count and before any strategy
-	// runs. The API key and the auth mode act as the install rather than as a
-	// person; the middleware stamps the operator's id on those requests, so
-	// that id is not "you" and they may still remove the operator while
-	// another admin remains (the last admin guard in the repo still applies).
+	// runs. The exemption follows the credential, not the id: a request
+	// authenticated by the API key, or admitted as admin by the auth mode,
+	// acts as the install rather than as a person and skips this guard, so it
+	// may still remove the operator while another admin remains (the last
+	// admin guard in the repo still applies). Without a session the
+	// middleware stamps the operator's id on such requests; with one, the id
+	// stays the session user's, so a signed in admin who also sends a valid
+	// API key skips the guard too.
 	if ctx := r.Context(); !auth.AuthedViaAPIKey(ctx) && !auth.AdminByAuthMode(ctx) &&
 		auth.UserIDFromContext(ctx) == id {
 		writeErr(w, http.StatusConflict, "you cannot delete your own account; sign in as another admin to remove it")
