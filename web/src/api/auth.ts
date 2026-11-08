@@ -41,6 +41,12 @@ export interface OidcProviderStatus {
 export interface OidcProvider {
   id: string
   name: string
+  // The stored config without the secret. Every caller gets issuer, client_id
+  // and scopes; allowed_groups only reaches an admin.
+  issuer?: string
+  client_id?: string
+  scopes?: string[]
+  allowed_groups?: string[]
   // Optional runtime status. Present on responses from a backend that
   // tracks failed-discovery state; absent for older backends.
   status?: OidcProviderStatus
@@ -51,8 +57,10 @@ export interface OidcProviderConfig {
   name: string
   issuer: string
   client_id: string
+  // Write only. Blank keeps the secret already stored for this id.
   client_secret: string
   scopes: string[]
+  allowed_groups?: string[]
 }
 
 // UserOwnedRows counts the rows that reference a user, as returned in the 409
