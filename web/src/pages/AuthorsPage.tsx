@@ -33,8 +33,21 @@ import { SORT_MODES, type SortMode } from './authorSortModes'
 
 type MonitoredFilter = '' | 'monitored' | 'unmonitored'
 
-// Query-string keys and their defaults; defaults stay out of the URL.
-const LIST_DEFAULTS = { q: '', sort: 'az' }
+// Query-string keys and their defaults; defaults stay out of the URL. Sort's
+// default is empty so a URL without ?sort= can be told apart from one asking
+// for 'az', and fall back to the stored sort instead.
+const LIST_DEFAULTS = { q: '', sort: '' }
+// The last sort picked, kept like the view mode so a reload or a visit from
+// the nav (neither carries ?sort=) keeps the order the user left the list in.
+const SORT_STORAGE_KEY = 'bindery.sort.authors'
+
+function readStoredSort(): SortMode {
+  try {
+    return oneOf(localStorage.getItem(SORT_STORAGE_KEY) ?? '', SORT_MODES, 'az')
+  } catch {
+    return 'az'
+  }
+}
 // The table's sortable columns and the whitelisted sort values behind them.
 const AUTHOR_COLUMN_SORTS = {
   name: { asc: 'az', desc: 'za' },
@@ -76,11 +89,19 @@ export default function AuthorsPage() {
   // Page, search and sort live in the URL so going back from an author lands
   // on the same page of the same list (#3052). The monitored filter, view and
   // page size stay in localStorage as preferences that already survive it.
+  // Sort is in both: a ?sort= in the URL wins, and without one the stored
+  // sort applies.
   const list = useListParams(LIST_DEFAULTS)
-  const sort = oneOf(list.values.sort, SORT_MODES, 'az')
+  const [storedSort, setStoredSort] = useState<SortMode>(readStoredSort)
+  const sort = oneOf(list.values.sort, SORT_MODES, storedSort)
   const debouncedSearch = list.values.q
   const updateList = list.update
-  const setSort = (next: SortMode) => updateList({ sort: next, page: null })
+  const setSort = (next: SortMode) => {
+    setStoredSort(next)
+    try { localStorage.setItem(SORT_STORAGE_KEY, next) } catch { /* ignore */ }
+    // The default stays out of the URL; it is stored, so it still applies.
+    updateList({ sort: next === 'az' ? null : next, page: null })
+  }
   // Keystroke-level changes replace the history entry instead of pushing one.
   const commitSearch = useCallback((q: string) => updateList({ q, page: null }, { replace: true }), [updateList])
   const [search, setSearch] = useUrlSearchInput(debouncedSearch, commitSearch)
