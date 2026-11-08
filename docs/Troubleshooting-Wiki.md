@@ -904,7 +904,7 @@ These come from the Import page and the **Reassign file to another book** window
 docker run --rm --volumes-from bindery --user 1000:1000 busybox ls -l "/books_drive/Audiobooks/Author/Book/file.mp3"
 ```
 
-The image is minimal and may have no `ls`. If so, check the bind mount instead: the host folder must be mapped to the same path in the container, the drive must be up when the container starts, and `user: "UID:GID"` in Compose must be able to read it. On Docker Desktop with WSL a drive that was unmounted or slept can leave a stale mount, so restart the container after it is back. If the file really was renamed, use **Forget this file** on the book and let a scan register the new name.
+Check the bind mount too: the host folder must be mapped to the same path in the container, the drive must be up when the container starts, and `user: "UID:GID"` in Compose must be able to read it. On Docker Desktop with WSL a drive that was unmounted or slept can leave a stale mount, so restart the container after it is back. If the file really was renamed, use **Forget this file** on the book and let a scan register the new name.
 
 **"path is outside the configured library roots: ..."** The path does not resolve under any listed root. That is what you get for a file outside them, for a link inside a library that points out of it, and also for a file that does not exist outside them, and for a link that points at nothing or loops back on itself, because Bindery deliberately answers the same way whether or not anything is there. The message does not mean the file exists. Either add the real folder in Settings, Root Folders, or replace the symlink inside your library with the file itself. A link that points out of a root is refused on purpose.
 

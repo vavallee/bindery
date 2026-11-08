@@ -23,7 +23,7 @@ ls -lh /config/backups/bindery_*.db
 
 ### Kubernetes
 
-The image is distroless: it has no shell and no `tar`, so `kubectl exec` and `kubectl cp` cannot reach files inside the Bindery pod. The API backup above lands in `/config/backups` on the PVC. To get a copy off the cluster, scale Bindery down and read the PVC from a helper pod (the chart names the PVC `<release>-config`):
+The image is distroless: it has no shell and no `tar`, so `kubectl exec` and `kubectl cp` cannot reach files inside the Bindery pod. The API backup above lands in `/config/backups` on the PVC. To get a copy off the cluster, scale Bindery down and read the PVC from a helper pod (the chart always names the PVC `bindery-config`):
 
 ```bash
 kubectl scale deployment/bindery --replicas=0
@@ -57,7 +57,7 @@ docker run --rm \
   -e BINDERY_PORT=18787 \
   -v /tmp:/tmp \
   -p 18787:18787 \
-  ghcr.io/vavallee/bindery:v1.0.0
+  ghcr.io/vavallee/bindery:1.0.0
 ```
 
 Check the logs for `applied migration version=25 file=025_multiuser.sql`. If the migration fails on the copy, Bindery logs the error and exits before starting.
@@ -103,7 +103,7 @@ docker stop bindery   # or kill the process
 # 2. Backup is already done (Step 1)
 
 # 3. Pull the new image / replace the binary
-docker pull ghcr.io/vavallee/bindery:v1.0.0
+docker pull ghcr.io/vavallee/bindery:1.0.0
 
 # 4. Recreate the container on the new image; the migration runs at startup.
 #    (docker start would restart the old container on the old image.)
@@ -121,7 +121,7 @@ docker logs -f bindery | grep -E "migration|error"
 
 # 2. Update the image tag
 helm upgrade bindery charts/bindery \
-  --set image.tag=v1.0.0 \
+  --set image.tag=1.0.0 \
   --reuse-values
 
 # 3. Watch the rollout
@@ -153,7 +153,10 @@ To roll back: restore from the backup taken in Step 1.
 ```bash
 docker stop bindery
 cp /config/backups/bindery_<timestamp>.db /config/bindery.db
-docker run ... ghcr.io/vavallee/bindery:v0.22.0   # the last release before v1.0.0
+# The database runs in WAL mode: drop the newer write-ahead files so they
+# are not replayed onto the restored copy
+rm -f /config/bindery.db-wal /config/bindery.db-shm
+docker run ... ghcr.io/vavallee/bindery:0.22.0   # the last release before v1.0.0
 ```
 
 ### Kubernetes rollback
@@ -162,7 +165,9 @@ docker run ... ghcr.io/vavallee/bindery:v0.22.0   # the last release before v1.0
 # Copy the backup back into the PVC through a helper pod, as in Step 1
 kubectl scale deployment/bindery --replicas=0
 kubectl run bindery-copy --restart=Never --image=busybox:1.37 \
-  --overrides='{"spec":{"volumes":[{"name":"config","persistentVolumeClaim":{"claimName":"bindery-config"}}],"containers":[{"name":"bindery-copy","image":"busybox:1.37","command":["sleep","3600"],"volumeMounts":[{"name":"config","mountPath":"/config"}]}]}}'
+  --overrides='{"spec":{"volumes":[{"name":"config","persistentVolumeClaim":{"claimName":"bindery-config"}}],"containers":[{"name":"bindery-copy","image":"busybox:1.37","command":["sh","-c","rm -f /config/bindery.db-wal /config/bindery.db-shm; sleep 3600"],"volumeMounts":[{"name":"config","mountPath":"/config"}]}]}}'
+# The pod first removes the WAL mode files (bindery.db-wal, bindery.db-shm)
+# so the newer write-ahead log is not replayed onto the restored copy
 kubectl cp ./bindery-pre-v1.db bindery-copy:/config/bindery.db
 kubectl delete pod bindery-copy
 
