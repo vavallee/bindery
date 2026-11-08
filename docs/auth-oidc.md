@@ -90,7 +90,9 @@ Providers are configured in **Settings → General → Security → SSO / OIDC P
 | `client_id` | From your IdP app registration. |
 | `client_secret` | From your IdP app registration. Stored in the `settings` table — treat the database as sensitive. |
 | `scopes` | JSON array of scope strings (e.g. `["openid", "email", "profile"]`). The Settings form takes them space separated and converts. |
-| `allowed_groups` | Optional JSON array of IdP groups or roles allowed to log in (e.g. `["bindery-users"]`). Omitted or empty allows every authenticated user. It has no field in the Settings form today: set it through the `auth.oidc.providers` settings key or a `PUT /api/v1/auth/oidc/providers` call, and the form preserves the value it does not show. |
+| `allowed_groups` | Optional JSON array of IdP groups or roles allowed to log in (e.g. `["bindery-users"]`). Omitted or empty allows every authenticated user. The Settings form takes one group per line. |
+
+**Edit** on a saved provider opens the same form filled in, so you can change anything but the `id` in place. Leave the client secret blank to keep the saved one. Saving any change in this section sends every provider back with all its stored fields, and Bindery refuses a save that would clear a saved provider's `issuer` or `client_id`. Earlier versions sent the other providers back with those fields blank, so adding or removing one provider in the form wiped the issuer, client id, scopes and `allowed_groups` of all the others: if a provider stopped working after such a change, edit it and fill them in again.
 
 Providers can also be set directly via the `settings` table key `auth.oidc.providers` (JSON array) for scripted deploys.
 

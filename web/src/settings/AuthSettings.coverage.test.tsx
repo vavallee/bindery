@@ -39,6 +39,25 @@ const providers: OidcProvider[] = [
 
 const blankFor = (id: string, name: string) => ({ id, name, issuer: '', client_id: '', client_secret: '', scopes: [] })
 
+// What an admin's GET returns for saved providers: every stored field but the
+// secret. future_field stands in for a field this screen does not know about.
+const savedGoogle = {
+  id: 'google', name: 'Google', issuer: 'https://accounts.google.com', client_id: 'g-client',
+  scopes: ['openid', 'email'], status: { state: 'ok' as const },
+}
+const savedKeycloak = {
+  id: 'kc', name: 'Keycloak', issuer: 'https://kc.example/realms/home', client_id: 'bindery',
+  scopes: ['openid', 'groups'], allowed_groups: ['/bindery-users', 'Domain Users'], future_field: 'kept',
+  status: { state: 'ok' as const },
+}
+// What a save sends back for them: the stored object as it came, minus the
+// status block, plus a blank secret (keep the stored one).
+const sentGoogle = { id: 'google', name: 'Google', issuer: 'https://accounts.google.com', client_id: 'g-client', scopes: ['openid', 'email'], client_secret: '' }
+const sentKeycloak = {
+  id: 'kc', name: 'Keycloak', issuer: 'https://kc.example/realms/home', client_id: 'bindery',
+  scopes: ['openid', 'groups'], allowed_groups: ['/bindery-users', 'Domain Users'], future_field: 'kept', client_secret: '',
+}
+
 const originalExec = Object.getOwnPropertyDescriptor(document, 'execCommand')
 
 beforeEach(() => {
@@ -115,6 +134,17 @@ describe('AuthSettings provider list', () => {
     await waitFor(() => expect(screen.queryByText('Keycloak')).not.toBeInTheDocument())
   })
 
+  it('keeps every stored field of the providers it does not remove', async () => {
+    vi.mocked(api.oidcProviders).mockResolvedValue([savedGoogle, savedKeycloak, { id: 'plain', name: 'Plain' }])
+    render(<AuthSettings />)
+    await screen.findByText('Keycloak')
+    fireEvent.click(screen.getAllByRole('button', { name: 'common.remove' })[2])
+    await acceptConfirm()
+    await waitFor(() => expect(api.oidcSetProviders).toHaveBeenCalledTimes(1))
+    const sent = vi.mocked(api.oidcSetProviders).mock.calls[0][0]
+    expect(JSON.stringify(sent)).toBe(JSON.stringify([sentGoogle, sentKeycloak]))
+  })
+
   it('shows an error alert when removal fails', async () => {
     vi.mocked(api.oidcProviders).mockResolvedValue([providers[0]])
     vi.mocked(api.oidcSetProviders).mockRejectedValueOnce(new Error('write failed'))
@@ -156,6 +186,19 @@ describe('AuthSettings add provider', () => {
     expect(await screen.findByText('My IdP')).toBeInTheDocument()
     await waitFor(() => expect(api.oidcProviders).toHaveBeenCalledTimes(2))
     expect(screen.queryByRole('button', { name: 'settings.oidc.addSave' })).not.toBeInTheDocument()
+  })
+
+  it('keeps every stored field of the saved providers when a third is added', async () => {
+    vi.mocked(api.oidcProviders).mockResolvedValue([savedGoogle, savedKeycloak])
+    render(<AuthSettings />)
+    await screen.findByText('Keycloak')
+    const form = await openAddForm()
+    fillForm(form)
+    fireEvent.submit(form)
+    await waitFor(() => expect(api.oidcSetProviders).toHaveBeenCalledTimes(1))
+    const sent = vi.mocked(api.oidcSetProviders).mock.calls[0][0]
+    expect(JSON.stringify(sent.slice(0, 2))).toBe(JSON.stringify([sentGoogle, sentKeycloak]))
+    expect(sent[2]).toEqual({ id: 'my idp', name: 'My IdP', issuer: 'https://idp.example', client_id: 'client', client_secret: 'secret', scopes: ['openid', 'groups'] })
   })
 
   it('reuses a config added this session when another provider is added', async () => {
@@ -233,6 +276,87 @@ describe('AuthSettings add provider', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.oidc.callbackUrlCopied' }))
     await waitFor(() => expect(screen.getByDisplayValue('https://books.example/auth/abc/cb')).toBeInTheDocument())
+  })
+})
+
+describe('AuthSettings edit provider', () => {
+  async function openEdit(index: number) {
+    render(<AuthSettings />)
+    await screen.findByText('Keycloak')
+    fireEvent.click(screen.getAllByRole('button', { name: 'common.edit' })[index])
+    return screen.getByRole('button', { name: 'settings.oidc.editSave' }).closest('form') as HTMLFormElement
+  }
+
+  beforeEach(() => {
+    vi.mocked(api.oidcProviders).mockResolvedValue([savedGoogle, savedKeycloak])
+  })
+
+  it('edits a saved provider in place, keeping allowed groups and unknown fields, and sends no secret when untouched', async () => {
+    const form = await openEdit(1)
+    const f = within(form)
+    expect(f.getByLabelText('settings.oidc.fieldId')).toHaveValue('kc')
+    expect(f.getByLabelText('settings.oidc.fieldId')).toBeDisabled()
+    expect(f.getByLabelText('settings.oidc.fieldIssuer')).toHaveValue('https://kc.example/realms/home')
+    expect(f.getByLabelText('settings.oidc.fieldClientId')).toHaveValue('bindery')
+    expect(f.getByLabelText('settings.oidc.fieldScopes')).toHaveValue('openid groups')
+    expect(f.getByLabelText('settings.oidc.fieldAllowedGroups')).toHaveValue('/bindery-users\nDomain Users')
+    const secret = f.getByLabelText('settings.oidc.fieldClientSecret')
+    expect(secret).toHaveValue('')
+    expect(secret).not.toBeRequired()
+
+    fireEvent.change(f.getByLabelText('settings.oidc.fieldName'), { target: { value: ' Keycloak Home ' } })
+    const save = f.getByRole('button', { name: 'settings.oidc.editSave' })
+    expect(save).toBeEnabled()
+    // The list reloads from the server after a save.
+    vi.mocked(api.oidcProviders).mockResolvedValue([savedGoogle, { ...savedKeycloak, name: 'Keycloak Home' }])
+    fireEvent.submit(form)
+
+    await waitFor(() => expect(api.oidcSetProviders).toHaveBeenCalledTimes(1))
+    const sent = vi.mocked(api.oidcSetProviders).mock.calls[0][0]
+    expect(sent).toEqual([sentGoogle, { ...sentKeycloak, name: 'Keycloak Home' }])
+    expect(sent[1].client_secret).toBe('')
+    expect(sent[1]).not.toHaveProperty('status')
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'settings.oidc.editSave' })).not.toBeInTheDocument())
+    expect(screen.getByText('Keycloak Home')).toBeInTheDocument()
+  })
+
+  it('sends a new secret and the edited group list, one group per line', async () => {
+    const form = await openEdit(1)
+    const f = within(form)
+    fireEvent.change(f.getByLabelText('settings.oidc.fieldClientSecret'), { target: { value: ' rotated ' } })
+    fireEvent.change(f.getByLabelText('settings.oidc.fieldAllowedGroups'), { target: { value: ' /bindery-users \n\ncn=readers,ou=groups,dc=example\n' } })
+    fireEvent.submit(form)
+    await waitFor(() => expect(api.oidcSetProviders).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.oidcSetProviders).mock.calls[0][0][1]).toEqual({
+      ...sentKeycloak,
+      client_secret: 'rotated',
+      allowed_groups: ['/bindery-users', 'cn=readers,ou=groups,dc=example'],
+    })
+  })
+
+  it('clears allowed groups when the list is emptied', async () => {
+    const form = await openEdit(1)
+    fireEvent.change(within(form).getByLabelText('settings.oidc.fieldAllowedGroups'), { target: { value: '  ' } })
+    fireEvent.submit(form)
+    await waitFor(() => expect(api.oidcSetProviders).toHaveBeenCalledTimes(1))
+    const sent = vi.mocked(api.oidcSetProviders).mock.calls[0][0][1]
+    expect(sent.allowed_groups ?? []).toEqual([])
+    expect(JSON.parse(JSON.stringify(sent))).not.toHaveProperty('allowed_groups')
+  })
+
+  it('cancels without saving, and keeps the form open with the error when the save fails', async () => {
+    let form = await openEdit(0)
+    fireEvent.click(within(form).getByRole('button', { name: 'common.cancel' }))
+    expect(screen.queryByRole('button', { name: 'settings.oidc.editSave' })).not.toBeInTheDocument()
+    expect(api.oidcSetProviders).not.toHaveBeenCalled()
+
+    vi.mocked(api.oidcSetProviders).mockRejectedValueOnce(new Error('write failed'))
+    fireEvent.click(screen.getAllByRole('button', { name: 'common.edit' })[0])
+    form = screen.getByRole('button', { name: 'settings.oidc.editSave' }).closest('form') as HTMLFormElement
+    fireEvent.submit(form)
+    expect(await screen.findByText('write failed')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'settings.oidc.editSave' })).toBeInTheDocument()
+    expect(screen.getByText('Google')).toBeInTheDocument()
   })
 })
 

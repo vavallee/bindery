@@ -826,6 +826,17 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 	// Merge: preserve existing secret when incoming secret is empty.
 	merged := make([]oidc.ProviderConfig, 0, len(incoming))
 	for _, p := range incoming {
+		// A saved provider sent back without its issuer or client id is a
+		// client that rebuilt the array from partial data, which is how the
+		// Settings screen once wiped every provider but the one it touched.
+		// Refuse it rather than store a provider that can no longer log
+		// anyone in. One already stored blank may still be sent back blank.
+		if prev, ok := existingByID[p.ID]; ok &&
+			((prev.Issuer != "" && strings.TrimSpace(p.Issuer) == "") ||
+				(prev.ClientID != "" && strings.TrimSpace(p.ClientID) == "")) {
+			writeErr(w, http.StatusBadRequest, "issuer and client_id cannot be cleared on a saved provider: "+p.ID)
+			return
+		}
 		if p.ClientSecret == "" {
 			prev, ok := existingByID[p.ID]
 			if !ok {

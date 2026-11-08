@@ -242,3 +242,48 @@ func TestSetProviders_NonAdminForbidden(t *testing.T) {
 		t.Errorf("non-admin caller mutated the provider set despite 403: %+v", ps)
 	}
 }
+
+// TestSetProviders_RefusesBlankingSavedIdentity: a PUT that sends a saved
+// provider back with its issuer or client_id blank is refused and stores
+// nothing. The Settings screen used to send every provider it had not added
+// itself that way, so removing or adding one provider wiped the issuer, client
+// id, scopes and allowed groups of all the others. A provider stored blank
+// before this guard can still be sent back blank, so it can be removed.
+func TestSetProviders_RefusesBlankingSavedIdentity(t *testing.T) {
+	seed := `[
+		{"id":"kc","name":"KC","issuer":"https://kc.example.com","client_id":"cid","client_secret":"s","scopes":["openid"],"allowed_groups":["/bindery-users"]},
+		{"id":"broken","name":"Broken","issuer":"","client_id":"","client_secret":"s2","scopes":[]}
+	]`
+	for _, c := range []struct {
+		name string
+		body string
+		want int
+	}{
+		{"issuer blanked", `[{"id":"kc","name":"KC","issuer":"","client_id":"cid","client_secret":"","scopes":["openid"]}]`, http.StatusBadRequest},
+		{"client_id blanked", `[{"id":"kc","name":"KC","issuer":"https://kc.example.com","client_id":"  ","client_secret":"","scopes":["openid"]}]`, http.StatusBadRequest},
+		{"already blank provider kept blank", `[{"id":"kc","name":"KC","issuer":"https://kc.example.com","client_id":"cid","client_secret":"","scopes":["openid"]},{"id":"broken","name":"Broken","issuer":"","client_id":"","client_secret":"","scopes":[]}]`, http.StatusOK},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, settings := newOIDCSetProvidersFixture(t)
+			ctx := context.Background()
+			rec := httptest.NewRecorder()
+			h.SetProviders(rec, jsonReq(http.MethodPut, "/api/v1/auth/oidc/providers", seed, ctx))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("seed status=%d; body=%s", rec.Code, rec.Body.String())
+			}
+			rec = httptest.NewRecorder()
+			h.SetProviders(rec, jsonReq(http.MethodPut, "/api/v1/auth/oidc/providers", c.body, ctx))
+			if rec.Code != c.want {
+				t.Fatalf("status=%d, want %d; body=%s", rec.Code, c.want, rec.Body.String())
+			}
+			if c.want != http.StatusBadRequest {
+				return
+			}
+			ps := storedProviders(t, settings)
+			if len(ps) != 2 || ps[0].Issuer != "https://kc.example.com" || ps[0].ClientID != "cid" ||
+				len(ps[0].AllowedGroups) != 1 || ps[0].AllowedGroups[0] != "/bindery-users" {
+				t.Errorf("a refused PUT changed the stored providers: %+v", ps)
+			}
+		})
+	}
+}
