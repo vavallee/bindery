@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -283,6 +284,87 @@ func TestSetProviders_RefusesBlankingSavedIdentity(t *testing.T) {
 			if len(ps) != 2 || ps[0].Issuer != "https://kc.example.com" || ps[0].ClientID != "cid" ||
 				len(ps[0].AllowedGroups) != 1 || ps[0].AllowedGroups[0] != "/bindery-users" {
 				t.Errorf("a refused PUT changed the stored providers: %+v", ps)
+			}
+		})
+	}
+}
+
+// TestSetProviders_AllowedGroupsFailClosed: a saved provider sent back without
+// the allowed_groups key keeps its stored groups, because a client working from
+// the non admin view of the provider list never saw them. Only an explicit []
+// clears them. A null counts as not sent.
+func TestSetProviders_AllowedGroupsFailClosed(t *testing.T) {
+	seed := `[{"id":"kc","name":"KC","issuer":"https://kc.example.com","client_id":"cid","client_secret":"s","scopes":["openid"],"allowed_groups":["/bindery-users"]}]`
+	for _, c := range []struct {
+		name string
+		body string
+		want []string
+	}{
+		{"key omitted keeps", `[{"id":"kc","name":"KC renamed","issuer":"https://kc.example.com","client_id":"cid","client_secret":"","scopes":["openid"]}]`, []string{"/bindery-users"}},
+		{"null keeps", `[{"id":"kc","name":"KC","issuer":"https://kc.example.com","client_id":"cid","client_secret":"","scopes":["openid"],"allowed_groups":null}]`, []string{"/bindery-users"}},
+		{"explicit empty clears", `[{"id":"kc","name":"KC","issuer":"https://kc.example.com","client_id":"cid","client_secret":"","scopes":["openid"],"allowed_groups":[]}]`, nil},
+		{"explicit list replaces", `[{"id":"kc","name":"KC","issuer":"https://kc.example.com","client_id":"cid","client_secret":"","scopes":["openid"],"allowed_groups":["admins","readers"]}]`, []string{"admins", "readers"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, settings := newOIDCSetProvidersFixture(t)
+			ctx := context.Background()
+			rec := httptest.NewRecorder()
+			h.SetProviders(rec, jsonReq(http.MethodPut, "/api/v1/auth/oidc/providers", seed, ctx))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("seed status=%d; body=%s", rec.Code, rec.Body.String())
+			}
+			rec = httptest.NewRecorder()
+			h.SetProviders(rec, jsonReq(http.MethodPut, "/api/v1/auth/oidc/providers", c.body, ctx))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d; body=%s", rec.Code, rec.Body.String())
+			}
+			ps := storedProviders(t, settings)
+			if len(ps) != 1 {
+				t.Fatalf("stored %d providers, want 1", len(ps))
+			}
+			if strings.Join(ps[0].AllowedGroups, ",") != strings.Join(c.want, ",") {
+				t.Errorf("allowed_groups = %v, want %v", ps[0].AllowedGroups, c.want)
+			}
+		})
+	}
+}
+
+// TestSetProviders_IssuerChangeNeedsSecret: the stored secret belongs to the
+// IdP it was issued by, so pointing a saved provider at another issuer without
+// a new secret is refused rather than sending the old secret there. With a
+// secret it saves, and surrounding whitespace is not a change.
+func TestSetProviders_IssuerChangeNeedsSecret(t *testing.T) {
+	seed := `[{"id":"kc","name":"KC","issuer":"https://kc.example.com","client_id":"cid","client_secret":"old","scopes":["openid"]}]`
+	for _, c := range []struct {
+		name       string
+		body       string
+		wantStatus int
+		wantSecret string
+		wantIssuer string
+	}{
+		{"new issuer without secret", `[{"id":"kc","name":"KC","issuer":"https://evil.example.com","client_id":"cid","client_secret":"","scopes":["openid"]}]`, http.StatusBadRequest, "old", "https://kc.example.com"},
+		{"new issuer with secret", `[{"id":"kc","name":"KC","issuer":"https://new.example.com","client_id":"cid","client_secret":"fresh","scopes":["openid"]}]`, http.StatusOK, "fresh", "https://new.example.com"},
+		{"same issuer padded", `[{"id":"kc","name":"KC","issuer":" https://kc.example.com ","client_id":"cid","client_secret":"","scopes":["openid"]}]`, http.StatusOK, "old", " https://kc.example.com "},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, settings := newOIDCSetProvidersFixture(t)
+			ctx := context.Background()
+			rec := httptest.NewRecorder()
+			h.SetProviders(rec, jsonReq(http.MethodPut, "/api/v1/auth/oidc/providers", seed, ctx))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("seed status=%d; body=%s", rec.Code, rec.Body.String())
+			}
+			rec = httptest.NewRecorder()
+			h.SetProviders(rec, jsonReq(http.MethodPut, "/api/v1/auth/oidc/providers", c.body, ctx))
+			if rec.Code != c.wantStatus {
+				t.Fatalf("status=%d, want %d; body=%s", rec.Code, c.wantStatus, rec.Body.String())
+			}
+			if c.wantStatus == http.StatusBadRequest && !strings.Contains(rec.Body.String(), "kc") {
+				t.Errorf("error does not name the provider: %s", rec.Body.String())
+			}
+			ps := storedProviders(t, settings)
+			if len(ps) != 1 || ps[0].ClientSecret != c.wantSecret || ps[0].Issuer != c.wantIssuer {
+				t.Errorf("stored = %+v, want issuer %q secret %q", ps, c.wantIssuer, c.wantSecret)
 			}
 		})
 	}

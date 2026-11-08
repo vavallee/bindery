@@ -334,14 +334,53 @@ describe('AuthSettings edit provider', () => {
     })
   })
 
-  it('clears allowed groups when the list is emptied', async () => {
+  it('clears allowed groups with an explicit empty list when the list is emptied', async () => {
     const form = await openEdit(1)
     fireEvent.change(within(form).getByLabelText('settings.oidc.fieldAllowedGroups'), { target: { value: '  ' } })
     fireEvent.submit(form)
     await waitFor(() => expect(api.oidcSetProviders).toHaveBeenCalledTimes(1))
-    const sent = vi.mocked(api.oidcSetProviders).mock.calls[0][0][1]
-    expect(sent.allowed_groups ?? []).toEqual([])
-    expect(JSON.parse(JSON.stringify(sent))).not.toHaveProperty('allowed_groups')
+    const sent = JSON.parse(JSON.stringify(vi.mocked(api.oidcSetProviders).mock.calls[0][0][1]))
+    expect(sent.allowed_groups).toEqual([])
+  })
+
+  it('leaves allowed_groups out when the provider list arrived without it, so the stored groups are kept', async () => {
+    // The list a non admin gets has no allowed_groups. An edit from it must
+    // not send [] and open the login to everyone the IdP knows.
+    const withoutGroups: Partial<typeof savedKeycloak> = { ...savedKeycloak }
+    delete withoutGroups.allowed_groups
+    vi.mocked(api.oidcProviders).mockResolvedValue([savedGoogle, withoutGroups as OidcProvider])
+    const form = await openEdit(1)
+    expect(within(form).getByLabelText('settings.oidc.fieldAllowedGroups')).toHaveValue('')
+    fireEvent.change(within(form).getByLabelText('settings.oidc.fieldName'), { target: { value: 'Renamed' } })
+    fireEvent.submit(form)
+    await waitFor(() => expect(api.oidcSetProviders).toHaveBeenCalledTimes(1))
+    const sent = JSON.parse(JSON.stringify(vi.mocked(api.oidcSetProviders).mock.calls[0][0]))
+    expect(sent[0]).not.toHaveProperty('allowed_groups')
+    expect(sent[1]).not.toHaveProperty('allowed_groups')
+    expect(sent[1].name).toBe('Renamed')
+  })
+
+  it('requires the client secret again when the issuer changes', async () => {
+    const form = await openEdit(1)
+    const f = within(form)
+    const secret = f.getByLabelText('settings.oidc.fieldClientSecret')
+    const save = f.getByRole('button', { name: 'settings.oidc.editSave' })
+    expect(secret).not.toBeRequired()
+    expect(f.queryByText('settings.oidc.clientSecretIssuerChanged')).not.toBeInTheDocument()
+    // Padding around the same issuer is not a change.
+    fireEvent.change(f.getByLabelText('settings.oidc.fieldIssuer'), { target: { value: ' https://kc.example/realms/home ' } })
+    expect(secret).not.toBeRequired()
+
+    fireEvent.change(f.getByLabelText('settings.oidc.fieldIssuer'), { target: { value: 'https://other.example' } })
+    expect(secret).toBeRequired()
+    expect(f.getByText('settings.oidc.clientSecretIssuerChanged')).toBeInTheDocument()
+    expect(save).toBeDisabled()
+
+    fireEvent.change(secret, { target: { value: 'other-secret' } })
+    expect(save).toBeEnabled()
+    fireEvent.submit(form)
+    await waitFor(() => expect(api.oidcSetProviders).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.oidcSetProviders).mock.calls[0][0][1]).toMatchObject({ issuer: 'https://other.example', client_secret: 'other-secret' })
   })
 
   it('cancels without saving, and keeps the form open with the error when the save fails', async () => {

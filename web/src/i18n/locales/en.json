@@ -2538,6 +2538,7 @@
       "editHeading": "Edit OIDC Provider",
       "editSave": "Save Changes",
       "clientSecretKeep": "Leave blank to keep the saved secret",
+      "clientSecretIssuerChanged": "The issuer changed, so enter the client secret from that identity provider. The saved one is never sent to a new issuer.",
       "fieldAllowedGroups": "Allowed groups",
       "allowedGroupsHint": "One group or role per line, written exactly as your identity provider sends it. Leave empty to let everyone who signs in with this provider in.",
       "removeConfirm": "Remove this OIDC provider?",

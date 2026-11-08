@@ -214,6 +214,11 @@ function ProviderForm({
   const [clientSecret, setClientSecret] = useState('')
   const [scopes, setScopes] = useState(initial ? initial.scopes.join(' ') : 'openid email profile')
   const [allowedGroups, setAllowedGroups] = useState((initial?.allowed_groups ?? []).join('\n'))
+  // The stored secret belongs to the stored issuer, so pointing a saved
+  // provider at another one needs its secret again (the backend refuses it
+  // otherwise, rather than send the old secret to a different IdP).
+  const issuerChanged = editing && issuer.trim() !== (initial.issuer ?? '').trim()
+  const secretRequired = !editing || issuerChanged
   // Live callback URL preview — fetched once from the backend so we get the
   // same base URL Bindery itself will resolve at /login (honors the env var
   // / forwarded-headers precedence). Older backends don't have this endpoint;
@@ -253,6 +258,11 @@ function ProviderForm({
     // One group per line: a group name can hold spaces ("Domain Users") or
     // commas (an LDAP DN), so neither separates them.
     const groups = allowedGroups.split('\n').map(g => g.trim()).filter(Boolean)
+    // Groups the form was given and the user emptied go as an explicit [],
+    // the only thing that clears them. An empty list the form was never given
+    // is left out, so the backend keeps whatever is stored: the provider list
+    // can arrive without allowed_groups, and that must not open the login.
+    const hadGroups = (initial?.allowed_groups?.length ?? 0) > 0
     onSave({
       ...initial,
       id: initial ? initial.id : id.trim(),
@@ -261,7 +271,7 @@ function ProviderForm({
       client_id: clientId.trim(),
       client_secret: clientSecret.trim(),
       scopes: scopes.trim().split(/\s+/).filter(Boolean),
-      allowed_groups: groups.length > 0 ? groups : undefined,
+      allowed_groups: groups.length > 0 || hadGroups ? groups : undefined,
     })
   }
 
@@ -323,7 +333,10 @@ function ProviderForm({
         </div>
         <div>
           <label htmlFor={`${fid}-4`} className="block text-xs text-fg-muted mb-1">{t('settings.oidc.fieldClientSecret')}</label>
-          <input id={`${fid}-4`} {...secretInputAttrs} value={clientSecret} onChange={e => setClientSecret(e.target.value)} required={!editing} placeholder={editing ? t('settings.oidc.clientSecretKeep') : undefined} type="password" className={inputCls} />
+          <input id={`${fid}-4`} {...secretInputAttrs} value={clientSecret} onChange={e => setClientSecret(e.target.value)} required={secretRequired} placeholder={secretRequired ? undefined : t('settings.oidc.clientSecretKeep')} type="password" className={inputCls} />
+          {issuerChanged && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">{t('settings.oidc.clientSecretIssuerChanged')}</p>
+          )}
         </div>
       </div>
       <div>
@@ -341,7 +354,7 @@ function ProviderForm({
         </button>
         <button
           type="submit"
-          disabled={saving || !id || !name || !issuer || !clientId || (!editing && !clientSecret)}
+          disabled={saving || !id || !name || !issuer || !clientId || (secretRequired && !clientSecret.trim())}
           className={`px-3 py-1.5 ${primaryFill} rounded text-sm font-medium disabled:opacity-50`}
         >
           {saving ? t('common.saving') : t(editing ? 'settings.oidc.editSave' : 'settings.oidc.addSave')}

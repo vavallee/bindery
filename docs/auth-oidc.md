@@ -92,7 +92,7 @@ Providers are configured in **Settings → General → Security → SSO / OIDC P
 | `scopes` | JSON array of scope strings (e.g. `["openid", "email", "profile"]`). The Settings form takes them space separated and converts. |
 | `allowed_groups` | Optional JSON array of IdP groups or roles allowed to log in (e.g. `["bindery-users"]`). Omitted or empty allows every authenticated user. The Settings form takes one group per line. |
 
-**Edit** on a saved provider opens the same form filled in, so you can change anything but the `id` in place. Leave the client secret blank to keep the saved one. Saving any change in this section sends every provider back with all its stored fields, and Bindery refuses a save that would clear a saved provider's `issuer` or `client_id`. Earlier versions sent the other providers back with those fields blank, so adding or removing one provider in the form wiped the issuer, client id, scopes and `allowed_groups` of all the others: if a provider stopped working after such a change, edit it and fill them in again.
+**Edit** on a saved provider opens the same form filled in, so you can change anything but the `id` in place. Leave the client secret blank to keep the saved one, unless you change the issuer: a new issuer needs its client secret again, and Bindery refuses the save without one rather than send the saved secret to a different IdP. Saving any change in this section sends every provider back with all its stored fields, and Bindery refuses a save that would clear a saved provider's `issuer` or `client_id`. A save that leaves the `allowed_groups` key out (or sends `null`) keeps the stored groups; only an explicit `[]` clears them, which the form sends when you empty the list. Earlier versions sent the other providers back with those fields blank, so adding or removing one provider in the form wiped the issuer, client id, scopes and `allowed_groups` of all the others: if a provider stopped working after such a change, edit it and fill them in again, with its client secret.
 
 Providers can also be set directly via the `settings` table key `auth.oidc.providers` (JSON array) for scripted deploys.
 
@@ -201,6 +201,9 @@ Only users who already exist can log in, and only through OIDC. **Create the acc
 | Non-empty string | Secret updated to the new value |
 | Empty string `""` or field absent | Existing secret preserved unchanged |
 | Empty string on a provider id that is not already stored | Rejected with `400 client_secret required for new provider: <id>` |
+| Empty string with an `issuer` other than the stored one | Rejected with `400 client_secret required when the issuer changes: <id>`, so the stored secret never goes to another IdP |
+
+`allowed_groups` works the same way: left out (or `null`) on a stored provider keeps the stored groups, and only an explicit `[]` clears them. A PUT that blanks the `issuer` or `client_id` of a stored provider is rejected with `400`.
 
 To rotate a secret, PUT the whole array back with the new value. There is no per-provider path and no POST:
 

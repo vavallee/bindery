@@ -803,10 +803,27 @@ func (h *OIDCHandler) callerIsAdmin(r *http.Request) bool {
 // PUT /api/v1/auth/oidc/providers
 func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	var incoming []oidc.ProviderConfig
-	if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
+	// Each entry is decoded twice: into the struct, and as raw keys, because
+	// the struct cannot tell an omitted allowed_groups from an empty one.
+	var rawItems []json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&rawItems); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
+	}
+	incoming := make([]oidc.ProviderConfig, len(rawItems))
+	groupsSent := make([]bool, len(rawItems))
+	for i, item := range rawItems {
+		keys := map[string]json.RawMessage{}
+		if err := json.Unmarshal(item, &incoming[i]); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		if err := json.Unmarshal(item, &keys); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		v, ok := keys["allowed_groups"]
+		groupsSent[i] = ok && strings.TrimSpace(string(v)) != "null"
 	}
 
 	// Load existing providers so we can preserve secrets not re-submitted.
@@ -825,17 +842,31 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 
 	// Merge: preserve existing secret when incoming secret is empty.
 	merged := make([]oidc.ProviderConfig, 0, len(incoming))
-	for _, p := range incoming {
-		// A saved provider sent back without its issuer or client id is a
-		// client that rebuilt the array from partial data, which is how the
-		// Settings screen once wiped every provider but the one it touched.
-		// Refuse it rather than store a provider that can no longer log
-		// anyone in. One already stored blank may still be sent back blank.
-		if prev, ok := existingByID[p.ID]; ok &&
-			((prev.Issuer != "" && strings.TrimSpace(p.Issuer) == "") ||
-				(prev.ClientID != "" && strings.TrimSpace(p.ClientID) == "")) {
-			writeErr(w, http.StatusBadRequest, "issuer and client_id cannot be cleared on a saved provider: "+p.ID)
-			return
+	for i, p := range incoming {
+		if prev, ok := existingByID[p.ID]; ok {
+			// A saved provider sent back without its issuer or client id is
+			// a client that rebuilt the array from partial data, which is how
+			// the Settings screen once wiped every provider but the one it
+			// touched. Refuse it rather than store a provider that can no
+			// longer log anyone in. One already stored blank may still be
+			// sent back blank.
+			if (strings.TrimSpace(prev.Issuer) != "" && strings.TrimSpace(p.Issuer) == "") ||
+				(strings.TrimSpace(prev.ClientID) != "" && strings.TrimSpace(p.ClientID) == "") {
+				writeErr(w, http.StatusBadRequest, "issuer and client_id cannot be cleared on a saved provider: "+p.ID)
+				return
+			}
+			// The stored secret was issued by the stored issuer. Never carry
+			// it over to another one: a new issuer needs its own secret.
+			if p.ClientSecret == "" && strings.TrimSpace(p.Issuer) != strings.TrimSpace(prev.Issuer) {
+				writeErr(w, http.StatusBadRequest, "client_secret required when the issuer changes: "+p.ID)
+				return
+			}
+			// Fail closed on the login filter: a client that never saw the
+			// groups (the provider list a non admin gets has none) must not
+			// clear them by leaving the key out. Only an explicit [] clears.
+			if !groupsSent[i] {
+				p.AllowedGroups = prev.AllowedGroups
+			}
 		}
 		if p.ClientSecret == "" {
 			prev, ok := existingByID[p.ID]
