@@ -585,17 +585,17 @@ func (c *Client) searchAuthorWorks(ctx context.Context, authorForeignID string) 
 	var resp struct {
 		NumFound int `json:"numFound"`
 		Docs     []struct {
-			Key              string   `json:"key"`
-			Title            string   `json:"title"`
-			Language         []string `json:"language"`
-			EditionCount     int      `json:"edition_count"`
-			FirstPublishYear int      `json:"first_publish_year"`
-			CoverI           *int     `json:"cover_i"`
-			ISBN             []string `json:"isbn"`
-			Subject          []string `json:"subject"`
-			RatingsCount     int      `json:"ratings_count"`
-			RatingsAverage   float64  `json:"ratings_average"`
-			AuthorKey        []string `json:"author_key"`
+			Key              string      `json:"key"`
+			Title            string      `json:"title"`
+			Language         []string    `json:"language"`
+			EditionCount     int         `json:"edition_count"`
+			FirstPublishYear int         `json:"first_publish_year"`
+			CoverI           *int        `json:"cover_i"`
+			ISBN             []string    `json:"isbn"`
+			Subject          subjectList `json:"subject"`
+			RatingsCount     int         `json:"ratings_count"`
+			RatingsAverage   float64     `json:"ratings_average"`
+			AuthorKey        []string    `json:"author_key"`
 		} `json:"docs"`
 	}
 	if err := c.getJSON(ctx, u, &resp); err != nil {
