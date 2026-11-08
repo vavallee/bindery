@@ -12,7 +12,7 @@ export default function BookAuthorLink({ book, className }: { book?: BookRef; cl
     <p className={`text-xs text-fg-muted truncate ${className ?? ''}`}>
       <Link
         to={`/book/${book.id}`}
-        className="hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+        className="hover:text-emerald-700 dark:hover:text-emerald-400 transition-colors"
       >
         {book.title}
       </Link>
@@ -21,7 +21,7 @@ export default function BookAuthorLink({ book, className }: { book?: BookRef; cl
           {' · '}
           <Link
             to={`/author/${book.authorId}`}
-            className="hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+            className="hover:text-emerald-700 dark:hover:text-emerald-400 transition-colors"
           >
             {book.authorName}
           </Link>

@@ -461,7 +461,7 @@ export default function WantedPage() {
                       // hopDepth: 1 — first hop into a book detail page from
                       // this list, not a further Previous/Next chain hop.
                       state={{ ids: pageItemIds, index: i, hopDepth: 1 }}
-                      className="block [overflow-wrap:anywhere] sm:truncate text-sm font-medium text-slate-800 dark:text-zinc-200 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+                      className="block [overflow-wrap:anywhere] sm:truncate text-sm font-medium text-slate-800 dark:text-zinc-200 hover:text-emerald-700 dark:hover:text-emerald-400 transition-colors"
                     >
                       {book.title}
                     </Link>
@@ -472,7 +472,7 @@ export default function WantedPage() {
                       {authorName ? (
                         <Link
                           to={`/author/${book.authorId}`}
-                          className="hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors rounded-sm"
+                          className="hover:text-emerald-700 dark:hover:text-emerald-400 transition-colors rounded-sm"
                         >
                           {authorName}
                         </Link>

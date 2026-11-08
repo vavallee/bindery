@@ -708,7 +708,7 @@ export default function QueuePage() {
                       </button>
                       <button
                         onClick={() => handleDismissPending(item.id)}
-                        className="px-3 py-1.5 text-xs text-fg-muted hover:text-red-400 rounded"
+                        className="px-3 py-1.5 text-xs text-fg-muted hover:text-red-700 dark:hover:text-red-400 rounded"
                       >
                         {t('common.dismiss', 'Dismiss')}
                       </button>

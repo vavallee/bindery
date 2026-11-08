@@ -156,7 +156,7 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
         ) : item.state === 'adopted' && item.book ? (
           <p className="truncate text-xs text-fg-muted">
             {t('adoption.row.adoptedAs', 'Adopted as')}{' '}
-            <Link to={`/book/${item.book.id}`} className="font-medium text-slate-800 dark:text-zinc-200 hover:text-emerald-600">{item.book.title}</Link>
+            <Link to={`/book/${item.book.id}`} className="font-medium text-slate-800 dark:text-zinc-200 hover:text-emerald-700 dark:hover:text-emerald-600">{item.book.title}</Link>
           </p>
         ) : top ? (
           <p className="flex min-w-0 items-center gap-2 text-xs" title={tooltip}>

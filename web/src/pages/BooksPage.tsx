@@ -258,7 +258,7 @@ export default function BooksPage() {
       cell: book => book.author ? (
         <Link
           to={`/author/${book.authorId}`}
-          className="text-fg-muted hover:text-emerald-500 dark:hover:text-emerald-400"
+          className="text-fg-muted hover:text-emerald-700 dark:hover:text-emerald-400"
           onClick={e => e.stopPropagation()}
         >
           {book.author.authorName}
