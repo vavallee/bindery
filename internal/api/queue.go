@@ -1256,8 +1256,18 @@ func retryGrabRequest(d models.Download) grabRequest {
 		BookID:    d.BookID,
 		IndexerID: d.IndexerID,
 		Protocol:  d.Protocol,
-		MediaType: indexer.MediaTypeForFormat(d.Quality),
+		MediaType: retryMediaType(d),
 	}
+}
+
+// retryMediaType is the media type a retried row is re-grabbed under: the
+// slot stamped on it when it was first grabbed (#1964), else the one its
+// parsed format implies, which is all a row from before the stamp has.
+func retryMediaType(d models.Download) string {
+	if m := stampedMediaType(d.MediaType); m != "" {
+		return m
+	}
+	return indexer.MediaTypeForFormat(d.Quality)
 }
 
 // resendRelease re-sends the release a dead row holds. The state gate is
@@ -1565,6 +1575,19 @@ func grabMediaType(requested, title string) string {
 	return indexer.MediaTypeForFormat(indexer.ParseRelease(title).Format)
 }
 
+// stampedMediaType is the value a grab records in downloads.media_type
+// (#1964): the concrete slot, or "" when the grab never knew one. grabMediaType
+// has already folded a title token in for a free-text grab, so a token inferred
+// there is recorded as well; "both" and anything else is not a slot and is
+// stored as unknown, which the import path answers by falling back.
+func stampedMediaType(mediaType string) string {
+	switch mediaType {
+	case models.MediaTypeEbook, models.MediaTypeAudiobook:
+		return mediaType
+	}
+	return ""
+}
+
 // grab executes the core grab logic: creates a download record and sends to the client.
 // It is called by both the HTTP Grab handler and PendingHandler.Grab.
 func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Download, error) {
@@ -1731,6 +1754,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		Protocol:         protocol,
 		Quality:          indexer.ParseRelease(req.Title).Format,
 		IndexerFlags:     indexerFlags,
+		MediaType:        stampedMediaType(req.MediaType),
 	}
 	if existing != nil {
 		dl.ID = existing.ID

@@ -1493,6 +1493,8 @@ func audiobookMarked(title string) bool {
 // toward — models.MediaTypeEbook, models.MediaTypeAudiobook, or "" when it
 // cannot be determined. Signals, strongest first:
 //
+//  0. the media type stamped on the download when it was grabbed (#1964),
+//     absent on rows that predate migration 126 and on manual imports;
 //  1. an explicit caller hint (manual import, drop-folder hand-off): a human or
 //     an API caller declared the format outright, so it wins over inference;
 //  2. the book's own media type when the book is monitored for a SINGLE format
@@ -1508,6 +1510,12 @@ func audiobookMarked(title string) bool {
 // resolves to "" — callers MUST treat that as "unknown", never as "either
 // format" (#1885).
 func downloadFormat(dl *models.Download, book *models.Book, formatHint string) string {
+	// The grab's own stamp (#1964) is what the decision engine actually
+	// picked, so it outranks every inference below, the caller's hint included:
+	// the poll path's hint is itself recovered from a client category.
+	if dl != nil && (dl.MediaType == models.MediaTypeEbook || dl.MediaType == models.MediaTypeAudiobook) {
+		return dl.MediaType
+	}
 	if formatHint == models.MediaTypeEbook || formatHint == models.MediaTypeAudiobook {
 		return formatHint
 	}

@@ -614,6 +614,19 @@ client that is enabled but does not answer is the usual `502`, with the message
 extended to say the indexer is pinned and no other client was tried. The field is
 only returned by the admin only indexer endpoints.
 
+#### Grabbed format on a download
+
+A grab records which format it was for, `ebook` or `audiobook`, on its download
+row (#1964). It is the media type the grab was sent under: the one in the body of
+`POST /queue/grab` (falling back to the release title's format when the body names
+none or says `both`), the format the scheduler searched for, or the one a retry
+carried over from the row it re-sends. The importer reads it first when it has to
+decide which slot of a book a download fills, ahead of the client category and the
+release title, which only ever guessed. It is not part of any API response. A row
+with no recorded format, such as one grabbed before this was recorded, a manual
+import, or a grab whose format was never known, is resolved the old way, so
+nothing about those changes.
+
 
 Which indexer a grab belongs to is decided once, from the `indexerId` you send
 and the release URL's host, before the URL is signed. Signing never overrides
