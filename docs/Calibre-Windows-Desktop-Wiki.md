@@ -227,8 +227,8 @@ Checked in this order (`internal/api/opds_auth.go`). The first match wins.
 
 Two limits matter for readers.
 
-- **The feed does not carry the API key.** Every link Bindery writes into a feed, including the download link, is the plain address with no query string (`internal/opds/builder.go`). A `?apikey=` on the catalogue address authenticates that one request only. The links the reader follows next do not have it, so the key is no way to make a reader that does not send a login work.
-- **Basic needs a password on the account.** An account that proxy mode created automatically on someone's first request has an empty password (`GetOrCreateByUsername` in `internal/db/auth.go`), so Basic can never match it. Give the reader an account that has a password, or use the API key. Turning off local sign in with `BINDERY_LOCAL_AUTH_ENABLED=false` stops the login form but does not itself stop OPDS Basic for accounts that do have a password.
+- **The feed does not carry the API key.** No link Bindery writes into a feed carries the API key or any other credential, including the download link (`internal/opds/builder.go`). Some links do have a query string, such as the search template and proxied cover images, but none holds a key. A `?apikey=` on the catalogue address authenticates that one request only. The links the reader follows next do not have it, so the key is no way to make a reader that does not send a login work.
+- **Basic needs a password on the account.** An account created automatically on someone's first proxy or OIDC sign in has an empty password (`GetOrCreateByUsername` and the OIDC provisioning in `internal/db/auth.go`), so Basic can never match it. An account an admin created with a password does work, which is why `docs/auth-oidc.md` has you create accounts before turning local sign in off. Give the reader an account that has a password, or use the API key. Turning off local sign in with `BINDERY_LOCAL_AUTH_ENABLED=false` stops the login form but does not itself stop OPDS Basic for accounts that do have a password.
 
 ### Workarounds that exist today
 
