@@ -453,7 +453,7 @@ func TestFetchTorrentContent_Paths(t *testing.T) {
 		"/badlocation": "Location",
 		"/ftp":         `unsupported redirect scheme "ftp"`,
 		"/loop":        "too many redirects",
-		"/empty":       "empty response",
+		"/empty":       "empty torrent response",
 		"/big":         "response exceeds 32 bytes",
 	} {
 		if _, err := c.fetchTorrentContent(ctx, srv.URL+path); err == nil || !strings.Contains(err.Error(), want) {
@@ -482,7 +482,7 @@ func TestFetchTorrentContent_ValidationAndTransport(t *testing.T) {
 	dead := srv.URL
 	srv.Close()
 	_, err := c.fetchTorrentContent(ctx, dead+"/x.torrent?apikey=SECRET")
-	if err == nil || !strings.Contains(err.Error(), "fetch torrent from indexer") {
+	if err == nil || !strings.Contains(err.Error(), "fetch torrent: request to indexer failed") {
 		t.Fatalf("transport: %v", err)
 	}
 	if strings.Contains(err.Error(), "SECRET") {

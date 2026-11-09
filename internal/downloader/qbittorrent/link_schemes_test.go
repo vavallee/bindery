@@ -44,6 +44,9 @@ func newAddRecorder(t *testing.T) *addRecorder {
 		}
 	}))
 	t.Cleanup(r.srv.Close)
+	oldFetch := torrentFetchTimeout
+	torrentFetchTimeout = 500 * time.Millisecond
+	t.Cleanup(func() { torrentFetchTimeout = oldFetch })
 	old := hashPollTimeout
 	hashPollTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { hashPollTimeout = old })

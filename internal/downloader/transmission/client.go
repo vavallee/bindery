@@ -19,9 +19,9 @@ import (
 
 	"github.com/vavallee/bindery/internal/downloader/clienthost"
 	"github.com/vavallee/bindery/internal/downloader/nethint"
+	"github.com/vavallee/bindery/internal/downloader/torrentfetch"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
 	"github.com/vavallee/bindery/internal/httpsec"
-	"github.com/vavallee/bindery/internal/useragent"
 )
 
 // Client interacts with the Transmission RPC API.
@@ -538,78 +538,18 @@ type fetchedTorrent struct {
 }
 
 // fetchTorrentContent resolves an indexer http(s) download link into either the
-// .torrent bytes Bindery would otherwise have asked Transmission to fetch, or —
-// when the link 30x-redirects to a magnet: URI — the magnet itself (#1006).
-//
-// Redirects are followed manually (CheckRedirect short-circuits) so that a
-// redirect to a magnet: Location is captured rather than handed to Go's HTTP
-// client, which rejects it with "unsupported protocol scheme magnet". Every hop
-// is re-validated against the SSRF policy, so a redirect can't be used to reach
-// a blocked host. 50 MB cap matches the NZB fetch cap on SAB/NZBGet so an
-// indexer returning HTML by mistake can't OOM the process.
+// .torrent bytes or, when the link redirects to a magnet: URI, the magnet
+// itself (#1006). The fetch, its SSRF checks on every hop, the size cap and the
+// timeout live in torrentfetch, shared by all four torrent clients (#1470).
 func (c *Client) fetchTorrentContent(ctx context.Context, torrentURL string) (*fetchedTorrent, error) {
-	fetchClient := &http.Client{
+	res, err := torrentfetch.Fetch(ctx, torrentURL, torrentfetch.Options{
 		Transport: c.fetchHTTP.Transport,
-		Timeout:   c.fetchHTTP.Timeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+		Validate:  c.validateTorrentFetchURL,
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	current := torrentURL
-	for redirects := 0; redirects <= 5; redirects++ {
-		if err := c.validateTorrentFetchURL(current); err != nil {
-			return nil, fmt.Errorf("fetch torrent: %w", httpsec.RedactURLError(err))
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, current, nil)
-		if err != nil {
-			return nil, fmt.Errorf("fetch torrent: %w", httpsec.RedactURLError(err))
-		}
-		req.Header.Set("Accept", "application/x-bittorrent")
-		// Some indexers fingerprint the User-Agent and serve an anti-bot 403
-		// to Go's default UA (#1053); use the project UA like the search path.
-		req.Header.Set("User-Agent", useragent.Get())
-
-		resp, err := fetchClient.Do(req)
-		if err != nil {
-			// Scrub the indexer apikey the *url.Error would otherwise leak into
-			// the download row / history / webhook payloads.
-			return nil, fmt.Errorf("fetch torrent from indexer: %w", httpsec.RedactURLError(err))
-		}
-
-		if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
-			location := resp.Header.Get("Location")
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			if location == "" {
-				return nil, fmt.Errorf("fetch torrent: redirect without location")
-			}
-			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(location)), "magnet:") {
-				return &fetchedTorrent{magnetURL: location}, nil
-			}
-			next, err := req.URL.Parse(location)
-			if err != nil {
-				return nil, fmt.Errorf("fetch torrent: invalid redirect location: %w", httpsec.RedactURLError(err))
-			}
-			if next.Scheme != "http" && next.Scheme != "https" {
-				return nil, fmt.Errorf("fetch torrent: unsupported redirect scheme %q", next.Scheme)
-			}
-			current = next.String()
-			continue
-		}
-
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
-			return nil, fmt.Errorf("fetch torrent: indexer returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-		}
-		data, err := io.ReadAll(io.LimitReader(resp.Body, 50<<20)) // 50 MB cap
-		if err != nil {
-			return nil, fmt.Errorf("fetch torrent: %w", httpsec.RedactURLError(err))
-		}
-		return &fetchedTorrent{data: data}, nil
-	}
-	return nil, fmt.Errorf("fetch torrent: too many redirects")
+	return &fetchedTorrent{data: res.Data, magnetURL: res.MagnetURL}, nil
 }
 
 // buildRequest constructs a Transmission RPC request.
