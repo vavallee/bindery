@@ -2,6 +2,7 @@
 package abs
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -258,10 +259,15 @@ func (c *Client) GetLibraryItem(ctx context.Context, id string) (*LibraryItem, e
 	return &out, nil
 }
 
-func (c *Client) doJSON(ctx context.Context, method, path string, body io.Reader, out any) error {
+func (c *Client) doJSON(ctx context.Context, method, path string, body []byte, out any) error {
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+		// A reader is consumed by the first attempt, so each attempt gets its own.
+		var reader io.Reader
+		if body != nil {
+			reader = bytes.NewReader(body)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
 		if err != nil {
 			return err
 		}

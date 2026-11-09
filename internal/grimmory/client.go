@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -157,22 +156,26 @@ func NewClient(baseURL, apiKey string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	transport := &http.Transport{
-		DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
-	}
+	// Same policy as the Audiobookshelf client: dialled directly (never via
+	// BINDERY_OUTBOUND_PROXY), with the dial and every redirect hop checked so
+	// a redirect or a rebound hostname cannot reach a link-local or metadata
+	// address.
+	transport := httpsec.DirectGuardedTransport(httpsec.PolicyService)
 	return &Client{
 		baseURL:   u,
 		apiKey:    k,
 		userAgent: useragent.Get(),
 		http: &http.Client{
-			Timeout:   defaultTimeout,
-			Transport: transport,
+			Timeout:       defaultTimeout,
+			Transport:     transport,
+			CheckRedirect: httpsec.RedirectGuard(httpsec.PolicyService),
 		},
 		// Book files can be tens of MB over a slow LAN link; give uploads
 		// their own generous deadline instead of the 10s API timeout.
 		upload: &http.Client{
-			Timeout:   uploadTimeout,
-			Transport: transport,
+			Timeout:       uploadTimeout,
+			Transport:     transport,
+			CheckRedirect: httpsec.RedirectGuard(httpsec.PolicyService),
 		},
 	}, nil
 }

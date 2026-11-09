@@ -417,7 +417,7 @@ func TestClient_DoJSONSendsBodyContentType(t *testing.T) {
 		auth = r.Header.Get("Authorization")
 		w.WriteHeader(http.StatusNoContent)
 	})
-	if err := c.doJSON(context.Background(), http.MethodPost, "/api/x", strings.NewReader(`{}`), nil); err != nil {
+	if err := c.doJSON(context.Background(), http.MethodPost, "/api/x", []byte(`{}`), nil); err != nil {
 		t.Fatal(err)
 	}
 	if ct != "application/json" || auth != "Bearer key" {
@@ -611,5 +611,29 @@ func TestBookConflictValues_RoundTrip(t *testing.T) {
 	}
 	if SerializeBookConflictValue(b, "bogus") != "" {
 		t.Error("unknown field serialised to non-empty")
+	}
+}
+
+// A retried request must resend the whole body: the first attempt drains the
+// reader, so every attempt needs a fresh one.
+func TestClient_DoJSONResendsBodyOnRetry(t *testing.T) {
+	var bodies []string
+	c := covCliClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		if len(bodies) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	c.httpClient = &http.Client{Transport: covCliIgnoreCtxTransport{base: http.DefaultTransport}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // backoff returns immediately; the transport ignores the context
+	if err := c.doJSON(ctx, http.MethodPost, "/api/x", []byte(`{"a":1}`), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 2 || bodies[0] != `{"a":1}` || bodies[1] != `{"a":1}` {
+		t.Fatalf("bodies = %q, want the full body on both attempts", bodies)
 	}
 }
