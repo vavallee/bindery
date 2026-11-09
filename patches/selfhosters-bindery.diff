@@ -1,0 +1,23 @@
+--- a/templates/bindery.xml
++++ b/templates/bindery.xml
+@@ -7,7 +7,7 @@
+   <Privileged>false</Privileged>
+   <Support>https://discord.gg/RpuYYRM9cZ</Support>
+   <Project>https://github.com/vavallee/bindery</Project>
+-  <Overview>Bindery is a self-hosted ebook and audiobook automation server. Search OpenLibrary, Hardcover, and DNB for books and authors; monitor authors and series; hand requests to your *arr-style indexers and download client (NZB or torrent); import completed files into your library with proper metadata; serve an OPDS 1.2 catalogue to e-readers. Distroless image, Apache 2.0.&#xD;
++  <Overview>Bindery is a self-hosted ebook and audiobook automation server. Replacement for the retired Readarr: monitors authors, searches Newznab/Torznab indexers, downloads via SABnzbd/NZBGet/qBittorrent and others, imports ebooks and audiobooks in one instance. Search OpenLibrary, Hardcover, and DNB for books and authors; monitor authors and series; hand requests to your *arr-style indexers and download client (NZB or torrent); import completed files into your library with proper metadata; serve an OPDS 1.2 catalogue to e-readers. Distroless image, MIT licensed.&#xD;
+ &#xD;
+ First-run: open the WebUI to create an admin account. No env vars required for auth.&#xD;
+ &#xD;
+@@ -19,9 +19,9 @@
+   <ExtraParams>--user 99:100</ExtraParams>
+   <Config Name="WebUI" Target="8787" Default="8787" Mode="tcp" Description="HTTP port for the web interface, API, and OPDS catalogue." Type="Port" Display="always" Required="true" Mask="false">8787</Config>
+   <Config Name="Config" Target="/config" Default="/mnt/user/appdata/bindery" Mode="rw" Description="SQLite database, image cache, and backups. Must persist across container restarts." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/bindery</Config>
+-  <Config Name="Books" Target="/books" Default="" Mode="rw" Description="Imported ebook library root. Bindery moves/copies/hardlinks files here from Downloads after import." Type="Path" Display="always" Required="true" Mask="false"/>
++  <Config Name="Books" Target="/books" Default="/mnt/user/Books" Mode="rw" Description="Imported ebook library root. Bindery moves/copies/hardlinks files here from Downloads after import." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Books</Config>
+   <Config Name="Audiobooks" Target="/audiobooks" Default="" Mode="rw" Description="Optional separate root for imported audiobook folders. Leave blank to keep audiobooks under /books. If you map a path here, also set BINDERY_AUDIOBOOK_DIR=/audiobooks below." Type="Path" Display="always" Required="false" Mask="false"/>
+-  <Config Name="Downloads" Target="/downloads" Default="" Mode="rw" Description="Watch folder for completed downloads. Should match the path SABnzbd / qBittorrent writes to." Type="Path" Display="always" Required="true" Mask="false"/>
++  <Config Name="Downloads" Target="/downloads" Default="/mnt/user/downloads/bindery" Mode="rw" Description="Watch folder for completed downloads. Should match the path SABnzbd / qBittorrent writes to." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/downloads/bindery</Config>
+   <Config Name="Log Level" Target="BINDERY_LOG_LEVEL" Default="info|debug|warn|error" Mode="" Description="Log verbosity: debug, info, warn, error." Type="Variable" Display="always" Required="false" Mask="false"/>
+   <Config Name="PUID" Target="BINDERY_PUID" Default="99" Mode="" Description="UID the container will validate against. Must match the UID half of the --user flag in Extra Parameters. Default 99 = Unraid 'nobody'." Type="Variable" Display="always" Required="false" Mask="false">99</Config>
+   <Config Name="PGID" Target="BINDERY_PGID" Default="100" Mode="" Description="GID the container will validate against. Must match the GID half of the --user flag in Extra Parameters. Default 100 = Unraid 'users'." Type="Variable" Display="always" Required="false" Mask="false">100</Config>
