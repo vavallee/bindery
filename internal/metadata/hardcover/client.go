@@ -763,12 +763,172 @@ func (c *Client) GetEditions(ctx context.Context, bookForeignID string) ([]model
 			book { title }
 		}
 	}`
-	const idGQL = `query GetEditions($bookID: Int!, $limit: Int!, $offset: Int!) {
+	// Prefer the slug lookup; only fall back to a book_id lookup when the slug
+	// matches no editions, since a numeric value is ambiguous between a numeric
+	// slug and the DB-id fallback (#1256). The old code queried book_id directly
+	// for any numeric value, returning the editions of an unrelated book.
+	editions, err := c.fetchEditionPages(ctx, slugGQL, map[string]any{"slug": id})
+	if err != nil || len(editions) > 0 {
+		return editions, err
+	}
+	if numericID, ok := hardcoverNumericID(id); ok {
+		return c.fetchEditionPages(ctx, editionsByBookIDGQL, map[string]any{"bookID": numericID})
+	}
+	return editions, nil
+}
+
+const editionsByBookIDGQL = `query GetEditions($bookID: Int!, $limit: Int!, $offset: Int!) {
+	editions(
+		where: {book_id: {_eq: $bookID}},
+		limit: $limit,
+		offset: $offset,
+		order_by: {id: asc}
+	) {
+		id
+		title
+		isbn_10
+		isbn_13
+		asin
+		publisher { name }
+		release_date
+		release_year
+		physical_format
+		edition_format
+		edition_information
+		pages
+		image { url }
+		language { language }
+		reading_format { format }
+		audio_seconds
+		book { title }
+	}
+}`
+
+// fetchEditionPages pages one per book editions query at editionsPageSize rows,
+// to editionsMaxCount rows. gql must take $limit and $offset.
+func (c *Client) fetchEditionPages(ctx context.Context, gql string, vars map[string]any) ([]models.Edition, error) {
+	editions := make([]models.Edition, 0, editionsPageSize)
+	for offset := 0; offset < editionsMaxCount; offset += editionsPageSize {
+		vars["limit"] = editionsPageSize
+		vars["offset"] = offset
+		var resp struct {
+			Data struct {
+				Editions []hcEdition `json:"editions"`
+			} `json:"data"`
+		}
+		if err := c.query(ctx, gql, vars, &resp); err != nil {
+			return nil, fmt.Errorf("hardcover get editions: %w", err)
+		}
+		for _, e := range resp.Data.Editions {
+			editions = append(editions, hardcoverEditionToModel(e))
+		}
+		if len(resp.Data.Editions) < editionsPageSize {
+			break
+		}
+	}
+	return editions, nil
+}
+
+// editionsBatchChunk is how many works one batched edition query names. The
+// editions of the chunk are paged at editionsPageSize rows, so a chunk of
+// ordinary books is one request and a chunk with a very large one is a few.
+const editionsBatchChunk = 10
+
+// GetEditionsBatch fetches the editions of many works in far fewer requests
+// than one GetEditions call each (#2795). ids are Hardcover foreign ids, with
+// or without the hc: prefix; the result is keyed by the id as given. An id
+// missing from the result failed and was not answered, so the caller may retry
+// it; an id present with no editions was answered with none.
+//
+// The works go out in chunks of editionsBatchChunk slugs with one
+// _in query each, ordered by (book_id, id) so paging is global and a work whose
+// editions straddle a page boundary still comes back whole. A chunk that fails
+// falls back to GetEditions per work, so one bad chunk loses nothing. A work
+// the slug query finds no editions for gets the book_id lookup GetEditions
+// would make, as its own query: slug and book_id are never joined in one _or,
+// which Hardcover cannot serve from an index (#3333).
+func (c *Client) GetEditionsBatch(ctx context.Context, ids []string) (map[string][]models.Edition, error) {
+	if c.authorizationToken(ctx) == "" {
+		return nil, metadata.ErrProviderNotConfigured
+	}
+	out := make(map[string][]models.Edition, len(ids))
+	slugByID := make(map[string]string, len(ids))
+	var slugs []string
+	for _, raw := range ids {
+		slug := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), idPrefix))
+		if slug == "" {
+			out[raw] = nil
+			continue
+		}
+		if _, dup := slugByID[raw]; dup {
+			continue
+		}
+		slugByID[raw] = slug
+		slugs = append(slugs, slug)
+	}
+	// ids sharing a slug (with and without the prefix) are answered together.
+	bySlug := make(map[string][]models.Edition, len(slugs))
+	answered := make(map[string]bool, len(slugs))
+	unique := slugs[:0:0]
+	seen := make(map[string]bool, len(slugs))
+	for _, s := range slugs {
+		if !seen[s] {
+			seen[s] = true
+			unique = append(unique, s)
+		}
+	}
+	for start := 0; start < len(unique); start += editionsBatchChunk {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+		chunk := unique[start:min(start+editionsBatchChunk, len(unique))]
+		rows, err := c.fetchEditionsChunk(ctx, chunk)
+		if err != nil {
+			// One bad chunk must not lose its works: ask for them one by one.
+			slog.Debug("hardcover editions batch failed; fetching per work", "works", len(chunk), "error", err)
+			for _, slug := range chunk {
+				editions, err := c.GetEditions(ctx, slug)
+				if err != nil {
+					continue
+				}
+				bySlug[slug], answered[slug] = editions, true
+			}
+			continue
+		}
+		for _, slug := range chunk {
+			editions := rows[slug]
+			if len(editions) == 0 {
+				// Same fallback as GetEditions: a numeric value may be a book
+				// id rather than a slug (#1256).
+				if numericID, ok := hardcoverNumericID(slug); ok {
+					fallback, err := c.fetchEditionPages(ctx, editionsByBookIDGQL, map[string]any{"bookID": numericID})
+					if err != nil {
+						continue
+					}
+					editions = fallback
+				}
+			}
+			bySlug[slug], answered[slug] = editions, true
+		}
+	}
+	for raw, slug := range slugByID {
+		if answered[slug] {
+			out[raw] = bySlug[slug]
+		}
+	}
+	return out, nil
+}
+
+// fetchEditionsChunk runs the batched slug query for one chunk and returns the
+// editions per slug. Any failed page fails the chunk: a partial answer would
+// look like a work with fewer editions.
+func (c *Client) fetchEditionsChunk(ctx context.Context, slugs []string) (map[string][]models.Edition, error) {
+	const gql = `query GetEditionsBatch($slugs: [String!]!, $limit: Int!, $offset: Int!) {
 		editions(
-			where: {book_id: {_eq: $bookID}},
+			where: {book: {slug: {_in: $slugs}}},
 			limit: $limit,
 			offset: $offset,
-			order_by: {id: asc}
+			order_by: [{book_id: asc}, {id: asc}]
 		) {
 			id
 			title
@@ -786,45 +946,35 @@ func (c *Client) GetEditions(ctx context.Context, bookForeignID string) ([]model
 			language { language }
 			reading_format { format }
 			audio_seconds
-			book { title }
+			book { title slug }
 		}
 	}`
-
-	fetchAll := func(gql string, vars map[string]any) ([]models.Edition, error) {
-		editions := make([]models.Edition, 0, editionsPageSize)
-		for offset := 0; offset < editionsMaxCount; offset += editionsPageSize {
-			vars["limit"] = editionsPageSize
-			vars["offset"] = offset
-			var resp struct {
-				Data struct {
-					Editions []hcEdition `json:"editions"`
-				} `json:"data"`
+	out := make(map[string][]models.Edition, len(slugs))
+	for offset := 0; offset < editionsMaxCount*len(slugs); offset += editionsPageSize {
+		var resp struct {
+			Data struct {
+				Editions []hcEdition `json:"editions"`
+			} `json:"data"`
+		}
+		vars := map[string]any{"slugs": slugs, "limit": editionsPageSize, "offset": offset}
+		if err := c.query(ctx, gql, vars, &resp); err != nil {
+			return nil, fmt.Errorf("hardcover get editions batch: %w", err)
+		}
+		for _, e := range resp.Data.Editions {
+			if e.Book == nil || e.Book.Slug == "" {
+				// Cannot be attributed to a work; fail the chunk so each work
+				// is refetched on its own.
+				return nil, errors.New("hardcover editions batch: row without a book slug")
 			}
-			if err := c.query(ctx, gql, vars, &resp); err != nil {
-				return nil, fmt.Errorf("hardcover get editions: %w", err)
-			}
-			for _, e := range resp.Data.Editions {
-				editions = append(editions, hardcoverEditionToModel(e))
-			}
-			if len(resp.Data.Editions) < editionsPageSize {
-				break
+			if len(out[e.Book.Slug]) < editionsMaxCount {
+				out[e.Book.Slug] = append(out[e.Book.Slug], hardcoverEditionToModel(e))
 			}
 		}
-		return editions, nil
+		if len(resp.Data.Editions) < editionsPageSize {
+			break
+		}
 	}
-
-	// Prefer the slug lookup; only fall back to a book_id lookup when the slug
-	// matches no editions, since a numeric value is ambiguous between a numeric
-	// slug and the DB-id fallback (#1256). The old code queried book_id directly
-	// for any numeric value, returning the editions of an unrelated book.
-	editions, err := fetchAll(slugGQL, map[string]any{"slug": id})
-	if err != nil || len(editions) > 0 {
-		return editions, err
-	}
-	if numericID, ok := hardcoverNumericID(id); ok {
-		return fetchAll(idGQL, map[string]any{"bookID": numericID})
-	}
-	return editions, nil
+	return out, nil
 }
 
 func (c *Client) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, error) {
@@ -1441,6 +1591,7 @@ type hcEdition struct {
 	AudioSeconds       *int             `json:"audio_seconds"`
 	Book               *struct {
 		Title string `json:"title"`
+		Slug  string `json:"slug"`
 	} `json:"book"`
 }
 
