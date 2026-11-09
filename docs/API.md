@@ -571,6 +571,7 @@ poll by id (#3133). These calls start a search and return its run id:
 
 * `POST /book/bulk` and `POST /wanted/bulk` with `"action": "search"` (and
   `"monitor"` on books): `results.<bookId>.runId`, one per book that was queued.
+  A book named twice in one request is searched once.
 * `PUT /book/{id}` when the write makes the book wanted and monitored:
   `searchRunId` on the book in the response.
 * `POST /author/book` with `searchOnAdd`: `searchRunId` on the book in the
@@ -590,7 +591,10 @@ poll by id (#3133). These calls start a search and return its run id:
 | `startedAt`, `finishedAt` | timestamps; `finishedAt` is absent until finished |
 
 Runs live in memory, at most 500 of them, each for an hour after its last
-change. A restart forgets them. An unknown or expired id answers `404`, and so
+change. When the store is full the oldest run goes first, so a bulk search over
+more than 500 books, or another user's busy bulk search, can push your runs out
+and their ids then answer `404`. Poll soon after you start a search rather
+than holding an id for long. A restart forgets every run. An unknown or expired id answers `404`, and so
 does a run that belongs to another user: with `BINDERY_ENFORCE_TENANCY` on, a
 user reads only their own runs and an admin or API key reads all, the same
 scope as the book lists. Searches the scheduler starts on its own (the wanted

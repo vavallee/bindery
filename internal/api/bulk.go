@@ -514,17 +514,26 @@ func (h *BulkHandler) RefreshRunning() bool {
 	return h.refreshesRunning.Load() > 0
 }
 
-// queueRun registers the run for a book a bulk request is about to search and
-// remembers it in runIDs, which fanOutSearches hands to the search. A book
-// named twice shares one run. Returns "" when no store is wired (#3133).
-func (h *BulkHandler) queueRun(runIDs map[int64]string, book models.Book) string {
-	if id, ok := runIDs[book.ID]; ok {
+// queueSearch adds book to the books a bulk request will search and registers
+// its run, returning the run id ("" when no store is wired). A book named twice
+// in one request is queued once: runIDs holds every book already queued, with
+// its id, so the second mention returns that id and adds nothing, and two
+// searches never record into one run (#3133).
+//
+// A book with no owner is open to every user under tenancy, so its run
+// belongs to the user who asked for the search; otherwise nobody but an admin
+// could read it back.
+func (h *BulkHandler) queueSearch(ctx context.Context, targets *[]models.Book, runIDs map[int64]string, book models.Book) string {
+	if id, queued := runIDs[book.ID]; queued {
 		return id
 	}
-	id := h.runs.Start(book.OwnerUserID, book.ID, string(indexer.OriginBulk))
-	if id != "" {
-		runIDs[book.ID] = id
+	owner := book.OwnerUserID
+	if owner == 0 {
+		owner = auth.UserIDFromContext(ctx)
 	}
+	id := h.runs.Start(owner, book.ID, string(indexer.OriginBulk))
+	runIDs[book.ID] = id
+	*targets = append(*targets, book)
 	return id
 }
 
@@ -623,8 +632,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 			book, becameSearchable, opErr = h.setBookMonitored(r.Context(), id, true)
 			if opErr == nil && becameSearchable && book != nil {
 				if skipped = h.bookSearchSkip(book, autoGrabEnabled(r.Context(), h.settings)); skipped == "" {
-					searchTargets = append(searchTargets, *book)
-					runID = h.queueRun(runIDs, *book)
+					runID = h.queueSearch(r.Context(), &searchTargets, runIDs, *book)
 					queued = true
 				}
 			}
@@ -645,8 +653,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 			}
 			// searchRefused already returned above, so the switch is on.
 			if skipped = h.bookSearchSkip(book, true); skipped == "" {
-				searchTargets = append(searchTargets, *book)
-				runID = h.queueRun(runIDs, *book)
+				runID = h.queueSearch(r.Context(), &searchTargets, runIDs, *book)
 				queued = true
 			}
 		case "set_media_type":
@@ -745,8 +752,7 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 			}
 			// searchRefused already returned above, so the switch is on.
 			if skipped = h.bookSearchSkip(book, true); skipped == "" {
-				searchTargets = append(searchTargets, *book)
-				runID = h.queueRun(runIDs, *book)
+				runID = h.queueSearch(r.Context(), &searchTargets, runIDs, *book)
 				queued = true
 			}
 		case "unmonitor":

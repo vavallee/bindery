@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ type runSpy struct {
 	seen  map[int64]string // book id -> run id the search was given
 	done  chan struct{}
 	want  int
+	calls atomic.Int32
 }
 
 func newRunSpy(store *searchruns.Store, want int) *runSpy {
@@ -36,12 +38,14 @@ func newRunSpy(store *searchruns.Store, want int) *runSpy {
 func (s *runSpy) SearchAndGrabBook(ctx context.Context, book models.Book) {
 	id := searchruns.RunIDFrom(ctx)
 	s.store.Running(id)
-	s.store.Record(id, searchruns.Result{Outcome: "no results"})
+	s.store.Record(id, searchruns.Result{Outcome: "no results", RawResults: 3})
 	s.store.Finish(id)
+	s.calls.Add(1)
 	s.mu.Lock()
 	s.seen[book.ID] = id
 	if len(s.seen) == s.want {
 		close(s.done)
+		s.want = -1
 	}
 	s.mu.Unlock()
 }
@@ -345,5 +349,70 @@ func TestRequestsApprove_NoRunIDWhenNothingSearched(t *testing.T) {
 	rec := f.approve(f.admin, created.ID, `{}`)
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "searchRunId") {
 		t.Fatalf("want no searchRunId: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Naming a book twice in one bulk request searches it once. Before, the book
+// was queued twice under one run id, so two searches recorded into one run,
+// the counts doubled and the first to return marked it finished.
+func TestBulk_BookSearch_DuplicateIDsSearchOnce(t *testing.T) {
+	for _, action := range []string{"books", "wanted"} {
+		t.Run(action, func(t *testing.T) {
+			auth.SetEnforceTenancyForTests(t, false)
+			searchPaceInterval = 0
+			t.Cleanup(func() { searchPaceInterval = 3 * time.Second })
+			f := seedTwoUserBulk(t)
+			store := searchruns.NewStore(10, time.Hour)
+			spy := newRunSpy(store, 1)
+			f.h.searcher = spy
+			f.h.WithSearchRuns(store)
+			handler := f.h.BooksBulk
+			if action == "wanted" {
+				handler = f.h.WantedBulk
+			}
+
+			body := fmt.Sprintf(`{"ids":[%d,%d],"action":"search"}`, f.b1.ID, f.b1.ID)
+			item := decodeBulk(t, postBulkAs(t, handler, body, f.u1, auth.RoleUser)).Results[strconv.FormatInt(f.b1.ID, 10)]
+			spy.wait(t)
+			time.Sleep(200 * time.Millisecond)
+			if n := spy.calls.Load(); n != 1 {
+				t.Fatalf("the book was searched %d times, want once", n)
+			}
+			run, ok := store.Get(item.RunID, 0)
+			if !ok || run.RawResults != 3 || run.State != searchruns.StateFinished {
+				t.Fatalf("run counts must not double: %+v ok=%v", run, ok)
+			}
+		})
+	}
+}
+
+// Under tenancy a book with no owner is open to every user, so the run of a
+// search one of them starts is theirs: they must be able to poll it.
+func TestBulk_BookSearch_RunOfAnUnownedBookBelongsToTheActingUser(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	f := seedTwoUserBulk(t)
+	store := searchruns.NewStore(10, time.Hour)
+	spy := newRunSpy(store, 1)
+	f.h.searcher = spy
+	f.h.WithSearchRuns(store)
+	orphan := mustCreateBook(t, f.books, context.Background(), &models.Book{
+		ForeignID: "OL-ORPHAN", AuthorID: f.a1.ID, Title: "Orphan", SortTitle: "orphan",
+		Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook,
+		Genres: []string{}, MetadataProvider: "openlibrary", Monitored: true,
+	})
+	if _, err := f.database.Exec(`UPDATE books SET owner_user_id = NULL WHERE id = ?`, orphan.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	item := decodeBulk(t, postBulkAs(t, f.h.BooksBulk, fmt.Sprintf(`{"ids":[%d],"action":"search"}`, orphan.ID), f.u1, auth.RoleUser)).Results[strconv.FormatInt(orphan.ID, 10)]
+	if !item.Queued || item.RunID == "" {
+		t.Fatalf("search should queue: %+v", item)
+	}
+	spy.wait(t)
+	if _, ok := store.Get(item.RunID, f.u1); !ok {
+		t.Fatal("the user who started the search must read its run")
+	}
+	if _, ok := store.Get(item.RunID, f.u2); ok {
+		t.Fatal("another user must not read it")
 	}
 }
