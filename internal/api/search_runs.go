@@ -1,14 +1,11 @@
 package api
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/vavallee/bindery/internal/auth"
-	"github.com/vavallee/bindery/internal/indexer"
-	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/searchruns"
 )
 
@@ -35,11 +32,4 @@ func (h *SearchRunHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, run)
-}
-
-// startSearchRun registers a run for book when store is wired and returns the
-// run id and a context carrying it. With no store it returns "" and ctx as is.
-func startSearchRun(ctx context.Context, store *searchruns.Store, book *models.Book, origin indexer.SearchOrigin) (string, context.Context) {
-	id := store.Start(book.OwnerUserID, book.ID, string(origin))
-	return id, searchruns.WithRunID(ctx, id)
 }
