@@ -15,6 +15,7 @@ import (
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/searchruns"
 )
 
 // errBulkNotOwned is the sentinel returned by the per-ID bulk helpers when the
@@ -106,6 +107,10 @@ type BulkHandler struct {
 	// see #846 and the mirroring pattern in recommendations.go.
 	lifetimeCtx context.Context
 
+	// runs registers a pollable run for every search a bulk action queues
+	// (#3133). Optional; nil queues the searches without ids.
+	runs *searchruns.Store
+
 	// refreshesRunning counts "refresh selected" fan-outs still in flight.
 	refreshesRunning atomic.Int32
 }
@@ -145,6 +150,12 @@ func (h *BulkHandler) WithRefreshFunc(fn func(author *models.Author)) *BulkHandl
 	if fn != nil {
 		h.refreshAuthor = fn
 	}
+	return h
+}
+
+// WithSearchRuns attaches the store that gives each queued book search a run id.
+func (h *BulkHandler) WithSearchRuns(runs *searchruns.Store) *BulkHandler {
+	h.runs = runs
 	return h
 }
 
@@ -196,6 +207,9 @@ type bulkItemResult struct {
 	// but will not, naming why: one of the searchSkip* constants. Absent when
 	// the action never searches (unmonitor, delete and so on).
 	SearchSkipped string `json:"searchSkipped,omitempty"`
+	// RunID is set on an entry whose search was queued (#3133). Poll
+	// GET /search/runs/{id} for how it ended. Absent when nothing was queued.
+	RunID string `json:"runId,omitempty"`
 }
 
 // Reasons a bulk action that searches did not queue a search for an ID
@@ -464,7 +478,7 @@ func (h *BulkHandler) AuthorsBulk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(searchTargets) > 0 && h.searcher != nil {
-		h.fanOutSearches(searchTargets)
+		h.fanOutSearches(searchTargets, nil)
 	}
 	if len(refreshTargets) > 0 && h.refreshAuthor != nil {
 		h.fanOutRefreshes(refreshTargets)
@@ -500,6 +514,29 @@ func (h *BulkHandler) RefreshRunning() bool {
 	return h.refreshesRunning.Load() > 0
 }
 
+// queueSearch adds book to the books a bulk request will search and registers
+// its run, returning the run id ("" when no store is wired). A book named twice
+// in one request is queued once: runIDs holds every book already queued, with
+// its id, so the second mention returns that id and adds nothing, and two
+// searches never record into one run (#3133).
+//
+// A book with no owner is open to every user under tenancy, so its run
+// belongs to the user who asked for the search; otherwise nobody but an admin
+// could read it back.
+func (h *BulkHandler) queueSearch(ctx context.Context, targets *[]models.Book, runIDs map[int64]string, book models.Book) string {
+	if id, queued := runIDs[book.ID]; queued {
+		return id
+	}
+	owner := book.OwnerUserID
+	if owner == 0 {
+		owner = auth.UserIDFromContext(ctx)
+	}
+	id := h.runs.Start(owner, book.ID, string(indexer.OriginBulk))
+	runIDs[book.ID] = id
+	*targets = append(*targets, book)
+	return id
+}
+
 // fanOutSearches dispatches per-book indexer searches under a bounded pool
 // so a single bulk action can't spawn one goroutine per book. The pool
 // runs on the process-lifecycle context (see WithLifetimeCtx, falling back
@@ -507,13 +544,13 @@ func (h *BulkHandler) RefreshRunning() bool {
 // indexer round-trips and a server shutdown cancels in-flight searches
 // rather than letting them grab torrents mid-shutdown. The bulk endpoint
 // is fire-and-forget for searches by design (results show up in History).
-func (h *BulkHandler) fanOutSearches(books []models.Book) {
+func (h *BulkHandler) fanOutSearches(books []models.Book, runIDs map[int64]string) {
 	if h.searcher == nil || len(books) == 0 {
 		return
 	}
 	bgCtx := h.bgCtx()
 	go concurrency.RunBoundedPaced(bgCtx, books, bulkSearchConcurrency, searchPaceInterval, func(ctx context.Context, b models.Book) {
-		h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(ctx, indexer.OriginBulk), b)
+		h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(searchruns.WithRunID(ctx, runIDs[b.ID]), indexer.OriginBulk), b)
 	})
 }
 
@@ -571,6 +608,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 	resp := bulkResponse{Results: make(map[string]bulkItemResult, len(req.IDs))}
 
 	var searchTargets []models.Book
+	runIDs := map[int64]string{}
 
 	// Same refusal as the author and wanted bulk paths: the multi-select
 	// Search on the author page posts here (#2669).
@@ -581,6 +619,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 	for _, id := range req.IDs {
 		key := fmt.Sprintf("%d", id)
 		queued := false
+		runID := ""
 		skipped := ""
 		var opErr error
 		switch req.Action {
@@ -593,7 +632,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 			book, becameSearchable, opErr = h.setBookMonitored(r.Context(), id, true)
 			if opErr == nil && becameSearchable && book != nil {
 				if skipped = h.bookSearchSkip(book, autoGrabEnabled(r.Context(), h.settings)); skipped == "" {
-					searchTargets = append(searchTargets, *book)
+					runID = h.queueSearch(r.Context(), &searchTargets, runIDs, *book)
 					queued = true
 				}
 			}
@@ -614,7 +653,7 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 			}
 			// searchRefused already returned above, so the switch is on.
 			if skipped = h.bookSearchSkip(book, true); skipped == "" {
-				searchTargets = append(searchTargets, *book)
+				runID = h.queueSearch(r.Context(), &searchTargets, runIDs, *book)
 				queued = true
 			}
 		case "set_media_type":
@@ -636,11 +675,11 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 			resp.Results[key] = bulkItemResult{Error: opErr.Error()}
 			continue
 		}
-		resp.Results[key] = bulkItemResult{OK: true, Queued: queued, SearchSkipped: skipped}
+		resp.Results[key] = bulkItemResult{OK: true, Queued: queued, SearchSkipped: skipped, RunID: runID}
 	}
 
 	if len(searchTargets) > 0 && h.searcher != nil {
-		h.fanOutSearches(searchTargets)
+		h.fanOutSearches(searchTargets, runIDs)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -675,6 +714,7 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 	resp := bulkResponse{Results: make(map[string]bulkItemResult, len(req.IDs))}
 
 	var searchTargets []models.Book
+	runIDs := map[int64]string{}
 
 	// The search action needs the full book for each id. Fetch them in one
 	// query instead of a GetByID per id — GetByID runs the book CTE (which
@@ -695,6 +735,7 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 	for _, id := range req.IDs {
 		key := fmt.Sprintf("%d", id)
 		queued := false
+		runID := ""
 		skipped := ""
 		var opErr error
 		switch req.Action {
@@ -711,7 +752,7 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 			}
 			// searchRefused already returned above, so the switch is on.
 			if skipped = h.bookSearchSkip(book, true); skipped == "" {
-				searchTargets = append(searchTargets, *book)
+				runID = h.queueSearch(r.Context(), &searchTargets, runIDs, *book)
 				queued = true
 			}
 		case "unmonitor":
@@ -723,11 +764,11 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 			resp.Results[key] = bulkItemResult{Error: opErr.Error()}
 			continue
 		}
-		resp.Results[key] = bulkItemResult{OK: true, Queued: queued, SearchSkipped: skipped}
+		resp.Results[key] = bulkItemResult{OK: true, Queued: queued, SearchSkipped: skipped, RunID: runID}
 	}
 
 	if len(searchTargets) > 0 && h.searcher != nil {
-		h.fanOutSearches(searchTargets)
+		h.fanOutSearches(searchTargets, runIDs)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

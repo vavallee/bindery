@@ -315,6 +315,10 @@ type requestResponse struct {
 	// "admin". Both are absent when the owner asked themselves.
 	CreatedVia string `json:"createdVia,omitempty"`
 	CreatedBy  string `json:"createdBy,omitempty"`
+	// SearchRunID is the run of the search an approval with search on add
+	// started. Poll GET /search/runs/{id} for how it ended. Only the approve
+	// response and an auto approved create carry it (#3133).
+	SearchRunID string `json:"searchRunId,omitempty"`
 }
 
 type requestListResponse struct {
@@ -330,6 +334,7 @@ func toRequestResponse(req models.LibraryRequest, admin bool) requestResponse {
 		status = models.RequestStatusPending
 	}
 	out := requestResponse{
+		SearchRunID:   req.SearchRunID,
 		ID:            req.ID,
 		Kind:          req.Kind,
 		ForeignID:     req.ForeignID,
@@ -1004,7 +1009,7 @@ func (h *RequestHandler) runClaimedApproval(ctx context.Context, req *models.Lib
 		}
 	}()
 	defer stopRenew()
-	bookID, authorID, status, msg, err := h.runApproval(ctx, req, body)
+	bookID, authorID, runID, status, msg, err := h.runApproval(ctx, req, body)
 	stopRenew()
 	if err != nil || msg != "" {
 		if relErr := h.requests.Release(ctx, req.ID, req.ClaimToken); relErr != nil {
@@ -1026,6 +1031,7 @@ func (h *RequestHandler) runClaimedApproval(ctx context.Context, req *models.Lib
 	if err != nil || done == nil {
 		return nil, 0, "", fmt.Errorf("reload approved request: %w", err)
 	}
+	done.SearchRunID = runID
 	return done, 0, "", nil
 }
 
@@ -1066,20 +1072,20 @@ func (h *RequestHandler) renewClaim(id int64, token string) (stop func()) {
 
 // runApproval validates a claimed request and runs the add. It returns the
 // created ids, or a status and sentence for a refusal, or an error.
-func (h *RequestHandler) runApproval(ctx context.Context, req *models.LibraryRequest, body approveBody) (bookID, authorID *int64, status int, msg string, err error) {
+func (h *RequestHandler) runApproval(ctx context.Context, req *models.LibraryRequest, body approveBody) (bookID, authorID *int64, searchRunID string, status int, msg string, err error) {
 	var p requestPayload
 	if jerr := json.Unmarshal([]byte(req.PayloadJSON), &p); jerr != nil ||
 		p.Kind != req.Kind || p.ForeignID != req.ForeignID || !validForeignID(p.ForeignID) ||
 		(p.ForeignAuthorID != "" && !validForeignID(p.ForeignAuthorID)) || !validRequestMediaType(p.MediaType) {
-		return nil, nil, http.StatusUnprocessableEntity, "This request's stored details are not valid. Decline it and ask for it again.", nil
+		return nil, nil, "", http.StatusUnprocessableEntity, "This request's stored details are not valid. Decline it and ask for it again.", nil
 	}
 	if inLib, lerr := h.alreadyInLibrary(ctx, p.Kind, p.ForeignID); lerr != nil {
-		return nil, nil, 0, "", lerr
+		return nil, nil, "", 0, "", lerr
 	} else if inLib != "" {
-		return nil, nil, http.StatusConflict, inLib, nil
+		return nil, nil, "", http.StatusConflict, inLib, nil
 	}
 	if h.adder == nil {
-		return nil, nil, http.StatusServiceUnavailable, "Adding is not available right now.", nil
+		return nil, nil, "", http.StatusServiceUnavailable, "Adding is not available right now.", nil
 	}
 
 	mediaType := p.MediaType
@@ -1104,8 +1110,9 @@ func (h *RequestHandler) runApproval(ctx context.Context, req *models.LibraryReq
 		})
 		if aerr != nil {
 			status, msg, err := approvalErrorResponse(aerr)
-			return nil, nil, status, msg, err
+			return nil, nil, "", status, msg, err
 		}
+		searchRunID = res.SearchRunID
 		if res.Book != nil {
 			bookID = &res.Book.ID
 		}
@@ -1132,13 +1139,13 @@ func (h *RequestHandler) runApproval(ctx context.Context, req *models.LibraryReq
 		})
 		if aerr != nil {
 			status, msg, err := approvalErrorResponse(aerr)
-			return nil, nil, status, msg, err
+			return nil, nil, "", status, msg, err
 		}
 		if res.Author != nil {
 			authorID = &res.Author.ID
 		}
 	}
-	return bookID, authorID, 0, "", nil
+	return bookID, authorID, searchRunID, 0, "", nil
 }
 
 // approvalErrorResponse maps an add core error to what the approve route

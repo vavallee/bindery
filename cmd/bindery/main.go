@@ -47,6 +47,7 @@ import (
 	"github.com/vavallee/bindery/internal/prowlarr"
 	"github.com/vavallee/bindery/internal/recommender"
 	"github.com/vavallee/bindery/internal/scheduler"
+	"github.com/vavallee/bindery/internal/searchruns"
 	"github.com/vavallee/bindery/internal/telemetry"
 	"github.com/vavallee/bindery/internal/useragent"
 	"github.com/vavallee/bindery/internal/webui"
@@ -571,6 +572,11 @@ func main() {
 	// search handler and the scheduler's automatic searches (#2154).
 	searchDebugLog := indexer.NewDebugLog()
 	sched.WithSearchDebugLog(searchDebugLog)
+	// One bounded, in memory store of search runs (#3133): handlers register a
+	// run and return its id, the scheduler finishes it, GET /search/runs/{id}
+	// reads it. Not persisted, so a restart forgets old runs.
+	searchRuns := searchruns.NewStore(searchruns.DefaultMax, searchruns.DefaultTTL)
+	sched.WithSearchRuns(searchRuns)
 	// Register the Calibre importer as the 24-hour sync job. The scheduler
 	// only fires the job when the syncer is non-nil, so no guard needed here.
 	sched.WithCalibreSyncer(calibreImporter)
@@ -670,11 +676,13 @@ func main() {
 		WithEditionHydration(editionRepo).
 		WithRoots(libraryRoots).
 		WithLifetimeCtx(appCtx).
+		WithSearchRuns(searchRuns).
 		WithNotifier(notif). // bookAnnounced when a refresh or discovery adds books (#2236)
 		WithJobs(bgJobs).    // drain an in-flight author catalogue sync on shutdown (#2371)
 		WithCoverStore(coverStore)
 	authorAliasHandler := api.NewAuthorAliasHandler(authorRepo, authorAliasRepo)
 	bookHandler := api.NewBookHandler(bookRepo, metaAgg, historyRepo, sched).
+		WithSearchRuns(searchRuns).
 		WithSettings(settingsRepo).
 		WithDownloads(downloadRepo).
 		WithAuthors(authorRepo).
@@ -796,6 +804,7 @@ func main() {
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
 	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)
 	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched).
+		WithSearchRuns(searchRuns).
 		WithSeriesRepo(seriesRepo).
 		WithSettingsRepo(settingsRepo).
 		WithLifetimeCtx(appCtx).
@@ -1003,6 +1012,8 @@ func main() {
 		// Library search (header typeahead, #2551): local catalogue only.
 		r.Get("/search/library", librarySearchHandler.Search)
 		r.Get("/book/lookup", searchHandler.Lookup)
+		// How one search ended, by the run id a search response carried (#3133).
+		r.Get("/search/runs/{id}", api.NewSearchRunHandler(searchRuns).Get)
 
 		// Authors
 		r.Get("/author", authorHandler.List)

@@ -77,7 +77,7 @@ Outside these trees the format differs on purpose. The Calibre bridge adds a mac
 ```
 GET    /api/v1/author                             list authors (paginated, filterable)
 POST   /api/v1/author                             add an author (triggers async book fetch)
-POST   /api/v1/author/book                        add one book by foreign id (creates its author if needed)
+POST   /api/v1/author/book                        add one book by foreign id (creates its author if needed); with `searchOnAdd` the book in the response carries `searchRunId` (see search runs)
 POST   /api/v1/author/bulk                        bulk add/update
 GET    /api/v1/author/{id}                        author detail
 PUT    /api/v1/author/{id}                        update monitored / metadata profile, or the bio: `description` set by hand is kept as the user's own and no refresh replaces it; an empty string clears it for the provider to fill again (#3287). 409 when the author changed since it was read, such as a scheduled refresh in between: reload and save again
@@ -363,7 +363,7 @@ GET    /api/v1/book?language=ita                  filter by language, any spelli
 GET    /api/v1/book/languages                     the languages of the books the caller can see, most common first: [{code, count}], with an empty `code` for books with no language (including `und`, `mis` and `zxx`; `mul` is listed as itself). Excluded books are not counted; under tenancy a non-admin counts their own and unowned books, like the list
 POST   /api/v1/book/bulk                          bulk monitor / status flip / exclude / unexclude (`"expectNoFiles": true` skips books that have files on `exclude`)
 GET    /api/v1/book/{id}                          book detail (with editions, history, formats; `importInFlight: true` while a download for it is still on its way into the library)
-PUT    /api/v1/book/{id}                          update monitor / status / metadata
+PUT    /api/v1/book/{id}                          update monitor / status / metadata; when the write starts a search, the book in the response carries `searchRunId` (see search runs)
 DELETE /api/v1/book/{id}                          remove from library
 DELETE /api/v1/book/{id}/file                     delete imported file(s) on disk (`?format=ebook|audiobook` scopes to one format; `?path=…` deregisters one tracked path WITHOUT deleting anything on disk)
 PUT    /api/v1/book/{id}/exclude                  exclude from future searches
@@ -472,6 +472,10 @@ For those actions an `ok` entry carries one of two extra fields:
 * `"queued": true`: at least one search for this id is on its way. It is set
   only when that search will actually run: a searcher is configured,
   automatic grabbing is on, and the book still needs a format.
+* `"runId": "<id>"`: set with `queued` on a book `search` or `monitor`, and on
+  a wanted `search`. Poll `GET /search/runs/{id}` for how that search ended
+  (see search runs below). An author `search` queues several books and returns
+  no run ids.
 * `"searchSkipped": "<reason>"`: the action succeeded but no search was
   queued. The reasons are `no_format_needed` (every format the book wants is
   already on disk), `nothing_wanted` (an author with no monitored wanted book
@@ -518,6 +522,7 @@ POST   /api/v1/indexer/{id}/test                  probe a saved indexer (admin)
 POST   /api/v1/indexer/test                       probe an unsaved config posted in the body (admin)
 GET    /api/v1/indexer/search?q=…                 multi-indexer ad-hoc query
 GET    /api/v1/search/last-debug                  newest search audit trail you can see (debugging; see below)
+GET    /api/v1/search/runs/{id}                   how one search ended, by the run id a search response carried (see below)
 
 GET    /api/v1/prowlarr                           list registered Prowlarr servers (admin)
 GET    /api/v1/prowlarr/{id}                      fetch one (admin)
@@ -557,6 +562,43 @@ interactive search. The payload says which search it is (#2154):
 Check `bookId` and `startedAt` before reading the rest: an automatic search
 that ran after yours will replace it as the newest. 404 means nothing has run
 since startup.
+
+#### Search runs
+
+`last-debug` holds one search per user, so two overlapping searches overwrite
+each other. A search run is a small record of one search that a script can
+poll by id (#3133). These calls start a search and return its run id:
+
+* `POST /book/bulk` and `POST /wanted/bulk` with `"action": "search"` (and
+  `"monitor"` on books): `results.<bookId>.runId`, one per book that was queued.
+  A book named twice in one request is searched once.
+* `PUT /book/{id}` when the write makes the book wanted and monitored:
+  `searchRunId` on the book in the response.
+* `POST /author/book` with `searchOnAdd`: `searchRunId` on the book in the
+  response.
+* `POST /requests/{id}/approve` with `searchOnAdd` on a book request:
+  `searchRunId` on the request in the response.
+
+`GET /search/runs/{id}` returns the run:
+
+| Field | Meaning |
+|-------|---------|
+| `id`, `bookId`, `origin` | the run, the book searched for, and what started it (`bulk`, `book`, `add`) |
+| `state` | `queued` (accepted, a bulk search paces its books), `running`, or `finished` |
+| `outcome` | once finished, the same words as the `book search finished` log line: `grabbed`, `no results`, `nothing approved`, `send to downloader failed` and so on. A run that never searched says `auto-grab disabled`, `unmonitored author` or `not searched` |
+| `indexers`, `rawResults`, `afterFilters`, `approved`, `elapsedMs` | the log line's counts. A book searched in two formats is one run, and the counts add up |
+| `grabbed` | the release that was sent to a download client: `title`, `indexer`, `protocol`, `mediaType`, `size`. No URL |
+| `startedAt`, `finishedAt` | timestamps; `finishedAt` is absent until finished |
+
+Runs live in memory, at most 500 of them, each for an hour after its last
+change. When the store is full the oldest run goes first, so a bulk search over
+more than 500 books, or another user's busy bulk search, can push your runs out
+and their ids then answer `404`. Poll soon after you start a search rather
+than holding an id for long. A restart forgets every run. An unknown or expired id answers `404`, and so
+does a run that belongs to another user: with `BINDERY_ENFORCE_TENANCY` on, a
+user reads only their own runs and an admin or API key reads all, the same
+scope as the book lists. Searches the scheduler starts on its own (the wanted
+sweep, series fill, list sync) are not recorded. `last-debug` is unchanged.
 
 #### Quality profiles
 
@@ -1865,6 +1907,7 @@ A request as the API returns it:
 | `createdAt`, `decidedAt` | timestamps |
 | `fulfilled` | approved and on disk: the book imported, or at least one of the author's books |
 | `booksTotal`, `booksImported` | an approved author request's progress |
+| `searchRunId` | the approve response for a book request with `searchOnAdd`: the run to poll at `GET /search/runs/{id}` |
 | `username`, `resultBookId`, `resultAuthorId` | admin queue only |
 | `createdVia`, `createdBy` | admin queue only, and only for a request made with `forUser`: `createdVia` is `api_key` or `admin`, and `createdBy` the admin's username for `admin` |
 
