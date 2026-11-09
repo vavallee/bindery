@@ -1031,6 +1031,8 @@ func main() {
 
 		// Books
 		r.Get("/book", bookHandler.List)
+		// Paged read only export for companion tools (#3328).
+		r.Get("/library/export", api.NewLibraryExportHandler(bookRepo, db.NewBookFileRepo(database), editionRepo, seriesRepo).Export)
 		r.Get("/book/languages", bookHandler.Languages)
 		r.Post("/book/bulk", bulkHandler.BooksBulk)
 		r.Get("/book/{id}", bookHandler.Get)
