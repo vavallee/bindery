@@ -429,6 +429,9 @@ func TestLibraryExport_BatchLoadingDoesNotScaleWithPageSize(t *testing.T) {
 	if len(big.Items[149].Files) != 1 || len(big.Items[149].Editions) != 1 || len(big.Items[149].Series) != 1 {
 		t.Fatalf("attachments missing on the last item: %+v", big.Items[149])
 	}
+	if nSmall == 0 || nBig == 0 {
+		t.Fatalf("the counting driver saw no queries (%d and %d), so the comparison below proves nothing", nSmall, nBig)
+	}
 	if nSmall != nBig {
 		t.Fatalf("queries scale with page size: %d for 2 books, %d for 150", nBig, nSmall)
 	}
