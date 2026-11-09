@@ -429,6 +429,10 @@ func (h *AuthorHandler) prefetchHardcoverEditions(ctx context.Context, targets [
 	for start := 0; start < len(batchable); start += prefetchEditionBatchSize {
 		groups = append(groups, batchable[start:min(start+prefetchEditionBatchSize, len(batchable))])
 	}
+	var (
+		leftMu     sync.Mutex
+		unanswered []editionTarget
+	)
 	concurrency.RunBounded(ctx, groups, authorAutoSearchConcurrency, func(ctx context.Context, group []editionTarget) {
 		ids := make([]string, 0, len(group))
 		for _, t := range group {
@@ -440,9 +444,13 @@ func (h *AuthorHandler) prefetchHardcoverEditions(ctx context.Context, targets [
 				cache.store(t.cacheKey(), editions)
 				continue
 			}
-			fetchOne(ctx, t)
+			leftMu.Lock()
+			unanswered = append(unanswered, t)
+			leftMu.Unlock()
 		}
 	})
+	// The per book fetches run a few at a time, as they did before batching.
+	perBook = append(perBook, unanswered...)
 	concurrency.RunBounded(ctx, perBook, authorAutoSearchConcurrency, fetchOne)
 	return cache
 }
