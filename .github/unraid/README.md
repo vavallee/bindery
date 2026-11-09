@@ -18,10 +18,12 @@ reads to render the install page for Bindery.
 
 ## Install counts: HOST_OS detection
 
-Unraid's Docker manager sets `HOST_OS=Unraid` in every container it creates.
-Bindery's telemetry ping (only when telemetry is on) reads it and reports the
-deployment method as `unraid` instead of `docker`, so Unraid installs are
-counted without anything in this template. An explicit `BINDERY_DEPLOY_METHOD`
+Unraid's Docker manager (dockerMan, the Docker tab and Community Applications)
+sets `HOST_OS=Unraid` in every container it creates. Bindery's telemetry ping
+(only when telemetry is on) reads it and reports the deployment method as
+`unraid` instead of `docker`, so Unraid installs are counted without anything
+in this template. Containers started outside dockerMan, such as Compose Manager
+or a plain `docker run`, do not get it and still count as `docker`. An explicit `BINDERY_DEPLOY_METHOD`
 still wins. Do not add `BINDERY_DEPLOY_METHOD` here; `HOST_OS` already covers
 it.
 
@@ -46,7 +48,11 @@ Every time this file changes:
    `selfhosters/unRAID-CA-templates` and open a PR there. The two files match
    apart from the fields that belong to the feed: `<TemplateURL>` (each feed
    points at its own raw URL), and on their side `<Support>` and `<Category>`
-   as they chose them.
+   as they chose them. Known harmless differences: their Log Level and Cookie
+   Secure defaults are pipe separated lists (`info|debug|warn|error`,
+   `auto|always|never`), which CA renders as dropdowns, and this file carries
+   empty `PostArgs`, `CPUset`, `DateInstalled`, `DonateText`, `DonateLink` and
+   `Requires` tags that theirs omits.
 3. Check these always hold in both copies:
    - The overview names Readarr (CA search matches overview text).
    - The licence reads MIT. The image is distroless, so saying so is accurate.
