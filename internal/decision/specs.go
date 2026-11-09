@@ -231,47 +231,6 @@ func (AlreadyImportedSpec) IsSatisfiedBy(r Release, book models.Book) (bool, str
 	}
 }
 
-// --- SizeLimit ---
-
-// SizeLimitSpec rejects releases outside a configured byte range.
-// Zero values for Min/Max mean "no limit".
-type SizeLimitSpec struct {
-	MinBytes int64
-	MaxBytes int64
-}
-
-func (s SizeLimitSpec) IsSatisfiedBy(r Release, _ models.Book) (bool, string) {
-	if s.MinBytes > 0 && r.Size < s.MinBytes {
-		return false, fmt.Sprintf("release size %d B below minimum %d B", r.Size, s.MinBytes)
-	}
-	if s.MaxBytes > 0 && r.Size > s.MaxBytes {
-		return false, fmt.Sprintf("release size %d B above maximum %d B", r.Size, s.MaxBytes)
-	}
-	return true, ""
-}
-
-// --- LanguageFilter ---
-
-// LanguageFilterSpec rejects releases whose language tag is explicitly set
-// and does not appear in the allowed list. Empty language on the release
-// always passes (data not available). Empty allowedLangs means no filter.
-type LanguageFilterSpec struct {
-	AllowedLangs []string // ISO 639-1 or ISO 639-3, e.g. ["en", "eng"]
-}
-
-func (s LanguageFilterSpec) IsSatisfiedBy(r Release, _ models.Book) (bool, string) {
-	if len(s.AllowedLangs) == 0 || r.Language == "" {
-		return true, ""
-	}
-	lang := strings.ToLower(r.Language)
-	for _, a := range s.AllowedLangs {
-		if strings.ToLower(a) == lang {
-			return true, ""
-		}
-	}
-	return false, fmt.Sprintf("release language %q not in allowed list", r.Language)
-}
-
 // --- CustomFormatScore ---
 
 // CustomFormatScoreSpec does not reject releases — it annotates the Release

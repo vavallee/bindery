@@ -392,77 +392,6 @@ func TestAlreadyImportedSpec_UntaggedFallsBackToFilePath(t *testing.T) {
 	}
 }
 
-// --- SizeLimitSpec ---
-
-func TestSizeLimitSpec_NoLimits(t *testing.T) {
-	s := decision.SizeLimitSpec{}
-	ok, _ := s.IsSatisfiedBy(release(withSize(500)), emptyBook())
-	if !ok {
-		t.Fatal("no limits — should pass")
-	}
-}
-
-func TestSizeLimitSpec_BelowMin(t *testing.T) {
-	s := decision.SizeLimitSpec{MinBytes: 1000}
-	ok, _ := s.IsSatisfiedBy(release(withSize(500)), emptyBook())
-	if ok {
-		t.Fatal("below min — should reject")
-	}
-}
-
-func TestSizeLimitSpec_AboveMax(t *testing.T) {
-	s := decision.SizeLimitSpec{MaxBytes: 1000}
-	ok, _ := s.IsSatisfiedBy(release(withSize(2000)), emptyBook())
-	if ok {
-		t.Fatal("above max — should reject")
-	}
-}
-
-func TestSizeLimitSpec_InRange(t *testing.T) {
-	s := decision.SizeLimitSpec{MinBytes: 100, MaxBytes: 2000}
-	ok, _ := s.IsSatisfiedBy(release(withSize(1000)), emptyBook())
-	if !ok {
-		t.Fatal("in range — should pass")
-	}
-}
-
-// --- LanguageFilterSpec ---
-
-func TestLanguageFilterSpec_NoFilter(t *testing.T) {
-	s := decision.LanguageFilterSpec{}
-	ok, _ := s.IsSatisfiedBy(release(withLanguage("fr")), emptyBook())
-	if !ok {
-		t.Fatal("no filter — should pass")
-	}
-}
-
-func TestLanguageFilterSpec_EmptyLanguage(t *testing.T) {
-	s := decision.LanguageFilterSpec{AllowedLangs: []string{"en"}}
-	ok, _ := s.IsSatisfiedBy(release(withLanguage("")), emptyBook())
-	if !ok {
-		t.Fatal("empty language — should pass")
-	}
-}
-
-func TestLanguageFilterSpec_Allowed(t *testing.T) {
-	s := decision.LanguageFilterSpec{AllowedLangs: []string{"en", "fr"}}
-	ok, _ := s.IsSatisfiedBy(release(withLanguage("FR")), emptyBook())
-	if !ok {
-		t.Fatal("FR should match fr (case-insensitive)")
-	}
-}
-
-func TestLanguageFilterSpec_NotAllowed(t *testing.T) {
-	s := decision.LanguageFilterSpec{AllowedLangs: []string{"en"}}
-	ok, reason := s.IsSatisfiedBy(release(withLanguage("de")), emptyBook())
-	if ok {
-		t.Fatal("de not in allowed list — should reject")
-	}
-	if reason == "" {
-		t.Fatal("should return reason")
-	}
-}
-
 // --- CustomFormatScoreSpec ---
 
 func TestCustomFormatScoreSpec_NeverRejects(t *testing.T) {
@@ -562,7 +491,7 @@ func TestDecisionMaker_StopsAtFirstRejection(t *testing.T) {
 	// Two specs that both reject — only first reason should appear.
 	dm := decision.New(
 		decision.AlreadyImportedSpec{},
-		decision.SizeLimitSpec{MinBytes: 999_999_999},
+		decision.NewBlocklistedSpec([]models.BlocklistEntry{{GUID: "test-guid"}}),
 	)
 	decisions := dm.Evaluate([]decision.Release{release()}, bookWithFile())
 	if decisions[0].Rejection != "book already imported" {
