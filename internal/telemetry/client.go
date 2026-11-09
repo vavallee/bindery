@@ -30,6 +30,7 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
@@ -348,13 +349,19 @@ func (c *Client) isEnabled(ctx context.Context) bool {
 }
 
 // detectDeploy returns a best-effort label for how this binary is being run:
-// "kubernetes" inside a pod, "docker" inside any other container, "binary"
-// otherwise. Pod detection wins over docker because every k8s pod also has
-// a container runtime underneath. The Helm chart can override by setting
-// BINDERY_DEPLOY_METHOD if it wants to distinguish helm from raw manifests.
+// "unraid" in a container Unraid's Docker manager created, "kubernetes"
+// inside a pod, "docker" inside any other container, "binary" otherwise.
+// Unraid's manager injects HOST_OS=Unraid into every container it starts,
+// so Unraid boxes are counted without a template change. Pod detection wins
+// over docker because every k8s pod also has a container runtime underneath.
+// BINDERY_DEPLOY_METHOD, when set, wins over all of it; the Helm chart uses
+// it to tell helm from raw manifests.
 func detectDeploy() string {
 	if v := os.Getenv("BINDERY_DEPLOY_METHOD"); v != "" {
 		return v
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("HOST_OS")), "unraid") {
+		return "unraid"
 	}
 	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
 		return "kubernetes"

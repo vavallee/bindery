@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -1700,5 +1701,51 @@ func TestHandleStatsReportsBuildSHA(t *testing.T) {
 func TestBuildSHADefaultsToUnknown(t *testing.T) {
 	if buildSHA != "unknown" {
 		t.Errorf("buildSHA = %q at test time, want the unstamped default %q", buildSHA, "unknown")
+	}
+}
+
+// TestHandlePing_AcceptsUnraidDeploy pins "unraid" as an accepted deploy
+// label, both on /api/ping and on the preview deploy filter, while an
+// unknown label is still blanked.
+func TestHandlePing_AcceptsUnraidDeploy(t *testing.T) {
+	s := newTestServer(t, "v1.49.0")
+	s.limiter = newRateLimiter(time.Hour, time.Minute)
+
+	for i, tc := range []struct{ sent, want string }{
+		{"unraid", "unraid"},
+		{"truenas", ""},
+	} {
+		body := pingRequest{
+			InstallID: fmt.Sprintf("33333333-3333-3333-3333-33333333333%d", i),
+			Version:   "1.49.0",
+			OS:        "linux",
+			Arch:      "amd64",
+			Deploy:    tc.sent,
+		}
+		buf, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/api/ping", bytes.NewReader(buf))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", 30+i)
+		rec := httptest.NewRecorder()
+		s.handlePing(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("deploy %q: status = %d, want 200", tc.sent, rec.Code)
+		}
+		var stored string
+		if err := s.db.QueryRowContext(context.Background(),
+			`SELECT deploy FROM installs WHERE install_id = ?`, body.InstallID,
+		).Scan(&stored); err != nil {
+			t.Fatalf("read back deploy: %v", err)
+		}
+		if stored != tc.want {
+			t.Errorf("deploy %q stored as %q, want %q", tc.sent, stored, tc.want)
+		}
+	}
+
+	if f := parsePreviewFilters(map[string][]string{"deploy": {"unraid"}}); f.Deploy != "unraid" {
+		t.Errorf("preview filter deploy = %q, want unraid", f.Deploy)
+	}
+	if !strings.Contains(renderPreviewFilters(previewFilters{Range: "30d", OS: "all", Deploy: "unraid"}), `value="unraid" selected`) {
+		t.Error("preview filter has no selected Unraid option")
 	}
 }
