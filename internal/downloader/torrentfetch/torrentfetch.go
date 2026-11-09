@@ -23,9 +23,10 @@ import (
 )
 
 const (
-	// Timeout bounds one whole fetch, each redirect hop included. A .torrent
-	// is small but indexers behind a proxy can be slow to produce it, so this
-	// is deliberately longer than the 15 second RPC timeout Deluge and
+	// Timeout bounds one whole fetch, every redirect hop included: Fetch puts
+	// it on the context, not only on each request. A .torrent is small but
+	// indexers behind a proxy can be slow to produce it, so this is
+	// deliberately longer than the 15 second RPC timeout Deluge and
 	// qBittorrent used to inherit by accident.
 	Timeout = 60 * time.Second
 
@@ -95,9 +96,12 @@ func Fetch(ctx context.Context, rawURL string, opt Options) (*Result, error) {
 			return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 		}
 	}
+	// http.Client.Timeout restarts on every hop, so the deadline lives on the
+	// context to bound the whole chain.
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	client := &http.Client{
 		Transport: opt.Transport,
-		Timeout:   timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -127,8 +131,14 @@ func Fetch(ctx context.Context, rawURL string, opt Options) (*Result, error) {
 			if location == "" {
 				return nil, fmt.Errorf("fetch torrent: redirect without location")
 			}
-			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(location)), "magnet:") {
-				return &Result{MagnetURL: location}, nil
+			if magnet := strings.TrimSpace(location); strings.HasPrefix(strings.ToLower(magnet), "magnet:") {
+				// A magnet is one line. qBittorrent reads its urls field one
+				// link per line, so a CR, LF or NUL would smuggle a second
+				// link in; no client has a use for one, so refuse it here.
+				if strings.ContainsAny(magnet, "\r\n\x00") {
+					return nil, fmt.Errorf("fetch torrent: redirect magnet link contains a line break or NUL")
+				}
+				return &Result{MagnetURL: magnet}, nil
 			}
 			next, err := req.URL.Parse(location)
 			if err != nil {

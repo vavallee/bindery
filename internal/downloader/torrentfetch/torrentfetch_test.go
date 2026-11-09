@@ -2,8 +2,10 @@ package torrentfetch_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -107,7 +109,7 @@ func TestFetch_RedirectHandling(t *testing.T) {
 	if err != nil || got.MagnetURL != "magnet:?xt=urn:btih:abc" || got.Data != nil {
 		t.Fatalf("magnet redirect: %v, %+v", err, got)
 	}
-	if got, err = torrentfetch.Fetch(ctx, srv.URL+"/magnet-space", opt); err != nil || got.MagnetURL == "" {
+	if got, err = torrentfetch.Fetch(ctx, srv.URL+"/magnet-space", opt); err != nil || got.MagnetURL != "MAGNET:?xt=urn:btih:abc" {
 		t.Fatalf("padded magnet redirect: %v, %+v", err, got)
 	}
 	for path, want := range map[string]string{
@@ -193,5 +195,32 @@ func TestFetch_RedactsSecretsInTransportErrors(t *testing.T) {
 	_, err := torrentfetch.Fetch(context.Background(), url+"/x?passkey=SECRETVALUE", torrentfetch.Options{Validate: allowAll})
 	if err == nil || strings.Contains(err.Error(), "SECRETVALUE") {
 		t.Fatalf("err = %v, want an error without the passkey", err)
+	}
+}
+
+// http.Client.Timeout restarts on every hop. The deadline must cover the whole
+// chain, so several slow hops that each fit inside it still fail together.
+func TestFetch_TimeoutBoundsTheWholeRedirectChain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(150 * time.Millisecond)
+		n, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/hop"))
+		if n >= 4 {
+			_, _ = w.Write([]byte("payload"))
+			return
+		}
+		http.Redirect(w, r, "/hop"+strconv.Itoa(n+1), http.StatusFound)
+	}))
+	defer srv.Close()
+
+	// Each hop takes 150ms, well under 400ms; five hops take 750ms.
+	_, err := torrentfetch.Fetch(context.Background(), srv.URL+"/hop0", torrentfetch.Options{Validate: allowAll, Timeout: 400 * time.Millisecond})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context deadline exceeded", err)
+	}
+	// With room for the whole chain it succeeds, so the failure above is the
+	// total and not any single hop.
+	got, err := torrentfetch.Fetch(context.Background(), srv.URL+"/hop0", torrentfetch.Options{Validate: allowAll, Timeout: 5 * time.Second})
+	if err != nil || string(got.Data) != "payload" {
+		t.Fatalf("slow chain inside the timeout: %v, %+v", err, got)
 	}
 }
