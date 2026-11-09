@@ -400,7 +400,8 @@ a restart. A daily query limit stops the burst before the indexer has to refuse
 it; the hold is what happens when it refuses anyway.
 
 **Decision.** Each release is checked against your quality profile (allowed
-formats), delay profile, blocklist, size limits, and language filter. A
+formats), delay profile, blocklist and language filter. Size is not a
+limit: it only counts toward the score that ranks the releases that pass. A
 quality profile is two ordered lists, ebook formats and audiobook formats;
 only ticked formats may be grabbed, and when more than one ticked format is
 found the one nearest the top of its list wins, on the scheduled sweep and on
