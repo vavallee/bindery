@@ -204,7 +204,40 @@ Bindery stops at Calibre; Calibre does the device side.
 2. Select the books and use **Send to device**.
 3. Kobo renders KEPUB better than plain EPUB (faster page turns, reading stats). Recent Calibre versions can convert to KEPUB on their own; if yours does not offer it, the KoboTouchExtended plugin adds it.
 
-Reading Bindery's library on an e-reader directly over OPDS is not covered here yet. It is being checked in [#2834](https://github.com/vavallee/bindery/issues/2834).
+Reading Bindery's library directly on an e-reader, without Calibre, is covered in [Reading on an e-reader over OPDS](#reading-on-an-e-reader-over-opds).
+
+## Reading on an e-reader over OPDS
+
+Besides the Calibre route, Bindery serves its own OPDS catalogue at `/opds` (under `BINDERY_URL_BASE` if you set one). Readers such as KOReader and Moon+ Reader browse it and download books straight from Bindery, with no Calibre involved. A requester account gets `403` here; only admin and user accounts can read the feed.
+
+**What works.** Add the catalogue to the reader as `https://your-bindery-address/opds`, with your Bindery username and password saved in the reader. The reader sends them as HTTP Basic credentials on every request, so browsing and downloading both work. KOReader was measured doing exactly this: browse and download with a saved login.
+
+**What fails: the Android download manager.** Moon+ Reader on Android was measured behind a reverse proxy, away from home. Browsing the catalogue with the saved login worked, but the book download was handed to Android's download manager (user agent `Dalvik/2.1.0`), which sends no login, so `/opds/book/<id>/file` answered `401`. At home it worked only because of the local network exemption described below. Bindery does not change this: a download link that carries its own credential was proposed in [#3464](https://github.com/vavallee/bindery/issues/3464) and declined, because a link that downloads without a login ends up in proxy logs and reader histories. The reader hands the download to something else, so the fix has to be on one of the sides below.
+
+### How OPDS decides who may in
+
+Checked in this order (`internal/api/opds_auth.go`). The first match wins.
+
+1. **Auth mode Disabled** admits everyone, as long as the address used to reach Bindery is an accepted host name.
+2. **The API key**, sent as an `X-Api-Key` header or as `?apikey=` on the URL. Unlike the main API, OPDS takes the query form on every route it serves, because a reader cannot always set a header. The key is in **Settings, General, Security**.
+3. **Auth mode Local only** admits a reader on a private network address (and again only under an accepted host name). The address is the one Bindery sees, so behind a reverse proxy this depends on `BINDERY_TRUSTED_PROXY`.
+4. **A signed in session cookie.** Readers do not have one.
+5. **Basic credentials**, a Bindery username and password.
+6. Otherwise `401` with a Basic challenge, which is what makes a reader prompt for a login.
+
+Two limits matter for readers.
+
+- **The feed does not carry the API key.** Every link Bindery writes into a feed, including the download link, is the plain address with no query string (`internal/opds/builder.go`). A `?apikey=` on the catalogue address authenticates that one request only. The links the reader follows next do not have it, so the key is no way to make a reader that does not send a login work.
+- **Basic needs a password on the account.** An account that proxy mode created automatically on someone's first request has an empty password (`GetOrCreateByUsername` in `internal/db/auth.go`), so Basic can never match it. Give the reader an account that has a password, or use the API key. Turning off local sign in with `BINDERY_LOCAL_AUTH_ENABLED=false` stops the login form but does not itself stop OPDS Basic for accounts that do have a password.
+
+### Workarounds that exist today
+
+- **Use a reader that sends its login on downloads.** KOReader does, per the measurement above. Whether a given reader can be told to download itself rather than through the system downloader is a reader setting, not something Bindery controls.
+- **Local network exemption.** With the auth mode set to **Local only**, readers on your home network need no login at all. This is why the failure shows up only away from home. Do not use it as a fix for remote reading: it also opens the whole web UI and API to the private network as the administrator.
+- **Reverse proxy.** Because Bindery accepts `X-Api-Key` on any OPDS route, a proxy you control can add that header itself to the requests the download manager makes, or rewrite the acquisition links, which is what the reporter of [#3464](https://github.com/vavallee/bindery/issues/3464) does. The trade-off is yours: a proxy rule that adds the key for `/opds/book/<id>/file` makes that path download for anyone who can reach the proxy, so restrict it, for example to your own source addresses or behind the proxy's own login or an expiring signed link. Bindery has no setting for this and does not check what the proxy does.
+- **Via Calibre.** If the e-reader can be plugged in, the [Kobo route above](#get-books-onto-a-kobo) avoids OPDS completely.
+
+If your reader works some other way, say which reader and which step fails in a new issue.
 
 ## What to expect day to day
 
