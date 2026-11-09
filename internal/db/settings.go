@@ -5,20 +5,84 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
 )
 
+// authKeyPrefix marks the settings the auth middleware reads on every request
+// (mode, API key, session secrets). Only these are cached: they change rarely
+// and are read constantly. Per-user state (epoch, role, revocation) lives
+// elsewhere and is deliberately never cached so a password change or logout
+// takes effect on the next request.
+const authKeyPrefix = "auth."
+
+// SettingsRepo reads and writes the settings table. auth.* keys are served
+// from a write-through in-process cache; every writer in this type
+// invalidates it. Bindery runs as one process, so nothing else writes these
+// rows behind the repo's back.
 type SettingsRepo struct {
 	db *sql.DB
+
+	mu    sync.RWMutex
+	cache map[string]*models.Setting // nil value means the key is absent
+	gen   uint64                     // bumped on every invalidation
 }
 
 func NewSettingsRepo(db *sql.DB) *SettingsRepo {
-	return &SettingsRepo{db: db}
+	return &SettingsRepo{db: db, cache: make(map[string]*models.Setting)}
+}
+
+func cacheable(key string) bool { return strings.HasPrefix(key, authKeyPrefix) }
+
+// invalidate drops cached entries for keys. Called after the write has been
+// issued, whether or not it succeeded, so a failed write can never leave a
+// stale entry behind.
+func (r *SettingsRepo) invalidate(keys ...string) {
+	r.mu.Lock()
+	r.gen++
+	for _, k := range keys {
+		delete(r.cache, k)
+	}
+	r.mu.Unlock()
 }
 
 func (r *SettingsRepo) Get(ctx context.Context, key string) (*models.Setting, error) {
+	if !cacheable(key) {
+		return r.query(ctx, key)
+	}
+	r.mu.RLock()
+	s, ok := r.cache[key]
+	gen := r.gen
+	r.mu.RUnlock()
+	if ok {
+		return copySetting(s), nil
+	}
+	s, err := r.query(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	// A write that landed while we were reading bumped gen; skip the fill so
+	// we never cache a value the write already replaced.
+	if r.gen == gen {
+		r.cache[key] = copySetting(s)
+	}
+	r.mu.Unlock()
+	return s, nil
+}
+
+func copySetting(s *models.Setting) *models.Setting {
+	if s == nil {
+		return nil
+	}
+	c := *s
+	return &c
+}
+
+func (r *SettingsRepo) query(ctx context.Context, key string) (*models.Setting, error) {
 	var s models.Setting
 	err := r.db.QueryRowContext(ctx, "SELECT key, value, updated_at FROM settings WHERE key=?", key).
 		Scan(&s.Key, &s.Value, &s.UpdatedAt)
@@ -32,6 +96,7 @@ func (r *SettingsRepo) Get(ctx context.Context, key string) (*models.Setting, er
 }
 
 func (r *SettingsRepo) Set(ctx context.Context, key, value string) error {
+	defer r.invalidate(key)
 	now := time.Now().UTC()
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
@@ -47,6 +112,7 @@ func (r *SettingsRepo) Set(ctx context.Context, key, value string) error {
 // admins, both want to claim admin, but only one wins SetIfAbsent and the
 // other falls back to the default role.
 func (r *SettingsRepo) SetIfAbsent(ctx context.Context, key, value string) (bool, error) {
+	defer r.invalidate(key)
 	now := time.Now().UTC()
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
@@ -75,6 +141,11 @@ func (r *SettingsRepo) SetMany(ctx context.Context, kvs []SettingKV) error {
 	if len(kvs) == 0 {
 		return nil
 	}
+	keys := make([]string, len(kvs))
+	for i, kv := range kvs {
+		keys[i] = kv.Key
+	}
+	defer r.invalidate(keys...)
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -117,6 +188,7 @@ func (r *SettingsRepo) List(ctx context.Context) ([]models.Setting, error) {
 }
 
 func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
+	defer r.invalidate(key)
 	_, err := r.db.ExecContext(ctx, "DELETE FROM settings WHERE key=?", key)
 	return err
 }
