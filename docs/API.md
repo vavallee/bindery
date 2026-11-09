@@ -362,6 +362,7 @@ GET    /api/v1/book?status=wanted                 filter by status (wanted, impo
 GET    /api/v1/book?language=ita                  filter by language, any spelling (`it`, `it-IT`, `ita`); `language=unknown` lists books with no language, counting `und`, `mis` and `zxx` (codes that name no language) as none. Combines with `status`, `mediaType`, `monitored` and `search`. Ignored on the `authorId` and `includeExcluded` forms of the list, which page in memory
 GET    /api/v1/book/languages                     the languages of the books the caller can see, most common first: [{code, count}], with an empty `code` for books with no language (including `und`, `mis` and `zxx`; `mul` is listed as itself). Excluded books are not counted; under tenancy a non-admin counts their own and unowned books, like the list
 POST   /api/v1/book/bulk                          bulk monitor / status flip / exclude / unexclude (`"expectNoFiles": true` skips books that have files on `exclude`)
+GET    /api/v1/library/export?limit=&cursor=      paged read only export for companion tools: books with files, editions and series memberships (see Library export)
 GET    /api/v1/book/{id}                          book detail (with editions, history, formats; `importInFlight: true` while a download for it is still on its way into the library)
 PUT    /api/v1/book/{id}                          update monitor / status / metadata; when the write starts a search, the book in the response carries `searchRunId` (see search runs)
 DELETE /api/v1/book/{id}                          remove from library
@@ -1931,6 +1932,61 @@ A requester may call only `/requests`, `/requests/{id}` (DELETE),
 `/search/book`, `/book/lookup`, rate limited per user), `/images` (rate limited per user with a larger allowance), `/health`
 and the session routes under `/auth`. Every other route answers `403` for
 that role, and `/opds` does too.
+
+### Library export
+
+`GET /api/v1/library/export?limit=&cursor=` is a read only, paged dump of the
+library for companion tools that would otherwise page `/book`, `/series` and
+the file lists separately (#3328). It is scoped exactly as `GET /book` is: an
+admin or API key sees every book, and under `BINDERY_ENFORCE_TENANCY` a user
+sees their own and unowned books. Excluded books are left out. A requester
+account cannot call it.
+
+`limit` defaults to 100 and is capped at 200 (a larger value returns 200).
+A `limit` below 1 or not a number, or a malformed `cursor`, answers `400`.
+Books come in ascending id order. `cursor` is the `nextCursor` of the previous
+page; treat it as opaque. It is a keyset page, so books added or removed while
+you walk the export never shift or repeat a page. A page costs four queries
+whatever its size.
+
+```json
+{
+  "version": 1,
+  "nextCursor": "412",
+  "items": [
+    {
+      "id": 17,
+      "title": "The Hobbit",
+      "authorId": 3,
+      "authorName": "J. R. R. Tolkien",
+      "files": [
+        {"path": "/books/Tolkien/The Hobbit.epub", "format": "epub", "size": 482113, "mediaType": "ebook"}
+      ],
+      "editions": [
+        {"id": 41, "foreignEditionId": "OL1M", "title": "The Hobbit", "isbn13": "9780261102217",
+         "isbn10": "", "asin": "", "publisher": "HarperCollins", "format": "Paperback",
+         "language": "eng", "isEbook": false}
+      ],
+      "series": [
+        {"id": 9, "title": "Middle-earth", "position": "1", "primary": true}
+      ]
+    }
+  ]
+}
+```
+
+`nextCursor` is the empty string on the last page, and an empty library
+answers `"items": []`. The three arrays on a book are always present, empty
+when there is nothing to list. `files[].format` is the lower case file
+extension (empty when the path has none) and `mediaType` is `ebook` or
+`audiobook`. `editions` carry empty strings, not null, for an identifier the
+edition lacks. `series` lists the primary series first.
+
+`version` is the contract. It is `1` today and changes only when a reader of
+the previous shape would misread the new one: a field removed or renamed, or
+given a different meaning. New fields can be added to the same version, so
+read the fields you know and ignore the rest, and check `version` after each
+update.
 
 ### Arr-compatible queue
 

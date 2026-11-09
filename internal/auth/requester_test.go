@@ -61,6 +61,7 @@ var requesterDeniedRoutes = []struct{ method, path string }{
 	{http.MethodGet, "/api/v1/search/runs/abc"},
 	// Library scan, adoption and bulk refresh.
 	{http.MethodPost, "/api/v1/library/scan"},
+	{http.MethodGet, "/api/v1/library/export"},
 	{http.MethodGet, "/api/v1/library/unmatched"},
 	{http.MethodGet, "/api/v1/library/unmatched/summary"},
 	{http.MethodPost, "/api/v1/library/unmatched/7/adopt"},
