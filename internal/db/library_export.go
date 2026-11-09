@@ -28,10 +28,11 @@ type ExportBookRow struct {
 // next one.
 func (r *BookRepo) ListExportPage(ctx context.Context, afterID int64, limit int, userID int64) ([]ExportBookRow, error) {
 	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE books.excluded = 0 AND books.id > ?", userID, afterID)
-	rows, err := r.db.QueryContext(ctx, `
+	q := `
 		SELECT books.id, books.title, books.author_id, COALESCE(au.name, '')
-		FROM books LEFT JOIN authors au ON au.id = books.author_id `+where+`
-		ORDER BY books.id LIMIT ?`, append(args, limit)...)
+		FROM books LEFT JOIN authors au ON au.id = books.author_id ` + where + `
+		ORDER BY books.id LIMIT ?` // #nosec G202 -- where is built from fixed predicates; every value stays a bound arg
+	rows, err := r.db.QueryContext(ctx, q, append(args, limit)...)
 	if err != nil {
 		return nil, fmt.Errorf("list export page: %w", err)
 	}
