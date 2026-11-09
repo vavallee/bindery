@@ -191,7 +191,6 @@ func main() {
 	prowlarrRepo := db.NewProwlarrRepo(database)
 	metadataProfileRepo := db.NewMetadataProfileRepo(database)
 	delayProfileRepo := db.NewDelayProfileRepo(database)
-	customFormatRepo := db.NewCustomFormatRepo(database)
 	userRepo := db.NewUserRepo(database)
 	// One denylist instance, shared by the logout handler and the auth
 	// middleware, so a logout is seen by the very next request.
@@ -802,7 +801,6 @@ func main() {
 	importListHandler := api.NewImportListHandler(importListRepo, settingsRepo, hcSyncer, userRepo).WithDailyQuota(dailyQuota)
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
-	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)
 	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched).
 		WithSearchRuns(searchRuns).
 		WithSeriesRepo(seriesRepo).
@@ -1222,12 +1220,6 @@ func main() {
 			r.Get("/delayprofile/{id}", delayProfileHandler.Get)
 			r.Put("/delayprofile/{id}", delayProfileHandler.Update)
 			r.Delete("/delayprofile/{id}", delayProfileHandler.Delete)
-
-			r.Get("/customformat", customFormatHandler.List)
-			r.Post("/customformat", customFormatHandler.Create)
-			r.Get("/customformat/{id}", customFormatHandler.Get)
-			r.Put("/customformat/{id}", customFormatHandler.Update)
-			r.Delete("/customformat/{id}", customFormatHandler.Delete)
 		})
 
 		// Metadata profiles: reads open, writes admin only (see

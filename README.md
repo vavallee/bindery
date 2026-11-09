@@ -157,7 +157,7 @@ Being upfront saves everyone time. These are tracked, and the [roadmap](docs/ROA
 - Newznab and Torznab indexers queried in parallel and ranked by your format order, edition tags (RETAIL, UNABRIDGED, ABRIDGED), year, grabs, size and ISBN match. Prowlarr can sync its indexers into Bindery, with seed ratio and seed time per indexer.
 - SABnzbd, NZBGet, qBittorrent, Transmission, Deluge and rTorrent or ruTorrent, with SSL and URL base support. Pin an indexer to a download client, and remove a torrent once it is imported and seeded.
 - **Diagnose** on each download client checks the connection, the category, where grabs land, the path remap, read access, and whether imports can hardlink, then names the first thing to fix. No shell needed, which matters in a distroless image.
-- Automatic search on an interval and on add, interactive search per book, and a global pause. Quality profiles per media type, language filter, custom formats, delay profiles, freeleech only indexers, a blocklist, and a per indexer daily query limit with polite back off when an indexer refuses.
+- Automatic search on an interval and on add, interactive search per book, and a global pause. Quality profiles per media type, language filter, delay profiles, freeleech only indexers, a blocklist, and a per indexer daily query limit with polite back off when an indexer refuses.
 - Failed downloads can be retried one at a time or all at once. Releases the filters set aside stay visible in interactive search with the reason, and you can still grab them.
 - Multi book packs are recognised and not auto grabbed; manual import splits one across several books.
 

@@ -30,9 +30,8 @@ type Release struct {
 	// release carrying "epub mobi" can be judged on both. Empty when the
 	// caller knows one format only (the importer), in which case Format alone
 	// is judged.
-	Formats     []string
-	MediaType   string // "ebook" | "audiobook" | "" — set for dual-format book searches
-	CustomScore int    // cumulative custom-format score
+	Formats   []string
+	MediaType string // "ebook" | "audiobook" | "" — set for dual-format book searches
 	// DownloadVolumeFactor is the torznab downloadvolumefactor: the fraction of
 	// the release size charged against the user's download ratio (0 =
 	// freeleech, 1 = normal). nil means the indexer did not report it.
@@ -66,7 +65,7 @@ func New(specs ...Specification) *DecisionMaker {
 
 // Evaluate runs every release through all specs. Rejected releases carry the
 // rejection reason from the first spec that fired. Survivors are returned in
-// the original order; callers may subsequently rank them by CustomScore.
+// the original order.
 func (d *DecisionMaker) Evaluate(releases []Release, book models.Book) []Decision {
 	out := make([]Decision, 0, len(releases))
 	for _, r := range releases {
