@@ -449,9 +449,9 @@ func (s *Scheduler) WithCalibreDeliverer(d CalibreDeliverer) {
 	if d == nil {
 		return
 	}
-	s.cron.AddFunc("@every 1m", runJob("calibre-deliver", func() {
+	s.addJob("@every 1m", "calibre-deliver", func() {
 		d.RunDeliveries(s.ctx())
-	}))
+	})
 }
 
 // WithRecommender registers a recommendation engine that runs every 24 hours.
@@ -622,18 +622,18 @@ func (s *Scheduler) Start() {
 	// after SABnzbd finishes post-processing (unrar/par-check). The actual
 	// lag between "100%" and "imported" = SAB post-processing time +
 	// up to 15s poll + file-move time.
-	s.cron.AddFunc("@every 15s", runJob("check-downloads", func() {
+	s.addJob("@every 15s", "check-downloads", func() {
 		slog.Debug("job: check downloads")
 		s.scanner.CheckDownloads(s.ctx())
-	}))
+	})
 
 	// Stall detection runs every 5 minutes. Checking every 15s would be
 	// noisy for a condition that changes slowly; 5 minutes is frequent
 	// enough to act well within any reasonable stall timeout.
-	s.cron.AddFunc("@every 5m", runJob("check-stalled", func() {
+	s.addJob("@every 5m", "check-stalled", func() {
 		slog.Debug("job: check stalled downloads")
 		s.checkStalledDownloads(s.ctx())
-	}))
+	})
 
 	// Re-probe download-client health every 15 minutes. Health was previously
 	// only written at boot and on create/update/test, so a client that broke
@@ -643,10 +643,10 @@ func (s *Scheduler) Start() {
 	// edge-triggers the notification, so a persistent failure still notifies
 	// once rather than every cycle.
 	if s.downloadHealth != nil {
-		s.cron.AddFunc("@every 15m", runJob("download-client-health", func() {
+		s.addJob("@every 15m", "download-client-health", func() {
 			slog.Debug("job: refresh download client health")
 			s.refreshDownloadClientHealth(s.ctx())
-		}))
+		})
 	}
 
 	// Search for wanted books on a configurable interval (default 12h).
@@ -654,38 +654,38 @@ func (s *Scheduler) Start() {
 	// resolveSearchInterval clamps to the same [1h, 168h] bounds the API
 	// validator enforces, falling back to the default for out-of-range values.
 	searchDuration := s.resolveSearchInterval()
-	s.cron.AddFunc(fmt.Sprintf("@every %s", searchDuration), runJob("search-wanted", func() {
+	s.addJob(fmt.Sprintf("@every %s", searchDuration), "search-wanted", func() {
 		slog.Info("job: search wanted books")
 		s.searchWanted()
-	}))
+	})
 
 	// Refresh author profiles a batch at a time, so each author is refreshed
 	// about once every 24 hours without a nightly burst (#2595). See
 	// metadata_refresh.go for the batch size and the staleness cursor.
-	s.cron.AddFunc("@every 1h", runJob("refresh-metadata", func() {
+	s.addJob("@every 1h", "refresh-metadata", func() {
 		slog.Info("job: refresh metadata")
 		s.refreshMetadata()
-	}))
+	})
 
 	// Scan library on a configurable interval (default 6h). Read once at
 	// Start(), so a restart applies a change, and clamped to the bounds the API
 	// validator enforces (#3692).
-	s.cron.AddFunc(fmt.Sprintf("@every %s", s.resolveLibraryScanInterval()), runJob("scan-library", func() {
+	s.addJob(fmt.Sprintf("@every %s", s.resolveLibraryScanInterval()), "scan-library", func() {
 		slog.Info("job: scan library")
 		s.scanner.ScanLibrary(s.ctx())
-	}))
+	})
 
 	// Sync Calibre library every 24 hours when a syncer is registered.
 	if s.calibreSyncer != nil {
-		s.cron.AddFunc("@every 24h", runJob("calibre-sync", func() {
+		s.addJob("@every 24h", "calibre-sync", func() {
 			slog.Info("job: calibre library sync")
 			s.calibreSyncer.RunSync(s.ctx())
-		}))
+		})
 	}
 
 	// Generate recommendations every 24 hours when the engine is registered.
 	if s.recommender != nil {
-		s.cron.AddFunc("@every 24h", runJob("recommendations", func() {
+		s.addJob("@every 24h", "recommendations", func() {
 			slog.Info("job: generate recommendations")
 			if s.settings != nil {
 				if setting, _ := s.settings.Get(s.ctx(), "recommendations.enabled"); setting == nil || setting.Value != "true" {
@@ -699,7 +699,7 @@ func (s *Scheduler) Start() {
 					slog.Error("recommendation engine failed", "userId", uid, "error", err)
 				}
 			}
-		}))
+		})
 	}
 
 	// Sync Hardcover import lists on a configurable interval (default 24h).
@@ -708,19 +708,19 @@ func (s *Scheduler) Start() {
 	// (#1848).
 	if s.hcSyncer != nil {
 		hcInterval := s.resolveHardcoverSyncInterval()
-		s.cron.AddFunc(fmt.Sprintf("@every %s", hcInterval), runJob("hardcover-sync", func() {
+		s.addJob(fmt.Sprintf("@every %s", hcInterval), "hardcover-sync", func() {
 			slog.Info("job: sync hardcover lists")
 			if err := s.hcSyncer.Sync(s.ctx()); err != nil {
 				slog.Error("hardcover list sync failed", "error", err)
 			}
-		}))
+		})
 	}
 
 	// Send anonymous install ping every 24 hours.
 	if s.telemetry != nil {
-		s.cron.AddFunc("@every 24h", runJob("telemetry-ping", func() {
+		s.addJob("@every 24h", "telemetry-ping", func() {
 			s.telemetry.Ping(s.ctx())
-		}))
+		})
 		// Also fire once on startup (non-blocking). Tracked so Stop() can
 		// wait for it to finish before tearing down other resources.
 		s.bgWg.Add(1)
@@ -736,7 +736,7 @@ func (s *Scheduler) Start() {
 		if defaultRetainDays <= 0 {
 			defaultRetainDays = 14
 		}
-		s.cron.AddFunc("@every 24h", runJob("log-trim", func() {
+		s.addJob("@every 24h", "log-trim", func() {
 			slog.Debug("job: trim log entries")
 			retainDays := defaultRetainDays
 			// Prefer the DB setting when available so UI changes take effect without restart.
@@ -751,7 +751,7 @@ func (s *Scheduler) Start() {
 			if err := s.logs.Trim(s.ctx(), cutoff); err != nil {
 				slog.Warn("log trim failed", "error", err)
 			}
-		}))
+		})
 	}
 
 	// Trim finished download rows (imported or failed, past the retention
@@ -760,10 +760,10 @@ func (s *Scheduler) Start() {
 	// that would never reach it. A pass with nothing to trim is one indexed
 	// query. Not registered when retention is off (BINDERY_DOWNLOAD_RETENTION_DAYS=0).
 	if s.downloads != nil && s.downloadRetainDays > 0 {
-		s.cron.AddFunc("@every 6h", runJob("download-trim", func() {
+		s.addJob("@every 6h", "download-trim", func() {
 			slog.Debug("job: trim finished downloads")
 			s.trimFinishedDownloads(s.ctx())
-		}))
+		})
 	}
 
 	s.cron.Start()
@@ -2433,4 +2433,13 @@ func describeIndexerFailures(payload map[string]any, failed []indexer.IndexerDeb
 	}
 	payload["indexersFailed"] = fmt.Sprintf("%d of %d", len(failed), attempted)
 	payload["indexerFailures"] = details
+}
+
+// addJob registers fn under name on spec, wrapped by runJob. A spec cron
+// cannot parse is logged with the job name and the job is skipped; it never
+// panics, so one bad interval cannot take the other jobs down with it.
+func (s *Scheduler) addJob(spec, name string, fn func()) {
+	if _, err := s.cron.AddFunc(spec, runJob(name, fn)); err != nil {
+		slog.Error("scheduler: could not register job", "job", name, "spec", spec, "error", err)
+	}
 }

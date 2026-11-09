@@ -108,9 +108,9 @@ func (s *Scheduler) WithSeriesChecker(c SeriesChecker) {
 		interval: s.resolveSeriesMonitorInterval,
 		now:      time.Now,
 	}
-	s.cron.AddFunc("@every 1h", runJob("series-monitoring", func() {
+	s.addJob("@every 1h", "series-monitoring", func() {
 		job.tick(s.ctx())
-	}))
+	})
 }
 
 // resolveSeriesMonitorInterval reads series.monitoring.interval. It ships off:

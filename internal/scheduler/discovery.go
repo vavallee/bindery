@@ -185,9 +185,9 @@ func (s *Scheduler) WithAuthorDiscoverer(d AuthorDiscoverer) {
 		interval:   s.resolveDiscoveryInterval,
 		now:        time.Now,
 	}
-	s.cron.AddFunc("@every 1h", runJob("author-discovery", func() {
+	s.addJob("@every 1h", "author-discovery", func() {
 		job.tick(s.ctx())
-	}))
+	})
 }
 
 // resolveDiscoveryInterval reads authors.discovery.interval. Discovery ships

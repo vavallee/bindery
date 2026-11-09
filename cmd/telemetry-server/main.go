@@ -73,6 +73,9 @@ type server struct {
 	latestVersion atomic.Pointer[string]
 	statsToken    string
 	limiter       *rateLimiter
+	// trustedProxies are the peers whose X-Real-Ip / X-Forwarded-For are
+	// believed for rate limiting. Empty means use the TCP peer address.
+	trustedProxies []*net.IPNet
 }
 
 // latest returns the most recent published version the server advertises.
@@ -887,6 +890,10 @@ func main() {
 		statsToken: statsToken,
 		// Each IP may ping at most once per hour.
 		limiter: newRateLimiter(1*time.Hour, 5*time.Minute),
+		// Forwarding headers are only trusted from these peers. Behind a
+		// reverse proxy set TRUSTED_PROXIES to its address range, otherwise
+		// every client shares the proxy's rate-limit bucket.
+		trustedProxies: parseTrustedProxies(env("TRUSTED_PROXIES", "")),
 	}
 	// Seed the advertised version from the env; the poller below overrides it
 	// with the newest GitHub release once it can reach the API.
@@ -1238,7 +1245,7 @@ const telemetryFieldsHTML = `<!DOCTYPE html>
 </html>`
 
 func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
-	ip := realIP(r)
+	ip := realIP(r, s.trustedProxies)
 	if !s.limiter.allow(ip) {
 		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return
@@ -3764,13 +3771,24 @@ func normalizeVersion(v string) string {
 	return v
 }
 
-// realIP returns the client IP for rate limiting. Prefers X-Real-Ip set by
-// Traefik (which reflects the actual downstream address regardless of any
-// X-Forwarded-For the client may have injected). Falls back to the rightmost
-// address in X-Forwarded-For — the one appended by the closest trusted proxy —
-// and finally to RemoteAddr. Never uses the leftmost X-Forwarded-For value,
-// which a client can spoof freely.
-func realIP(r *http.Request) string {
+// realIP returns the client IP for rate limiting. Forwarding headers are only
+// believed when the TCP peer is inside the trusted proxy list
+// (TRUSTED_PROXIES). For a trusted peer it prefers X-Real-Ip set by Traefik
+// (which reflects the actual downstream address regardless of any
+// X-Forwarded-For the client may have injected), then the rightmost address in
+// X-Forwarded-For (the one appended by the closest trusted proxy). Never uses
+// the leftmost X-Forwarded-For value, which a client can spoof freely. With no
+// trusted proxies, or an untrusted peer, the TCP RemoteAddr is the client.
+func realIP(r *http.Request, trusted []*net.IPNet) string {
+	// RemoteAddr is "IP:port"; strip the port so each unique client IP gets
+	// one rate-limit bucket regardless of which ephemeral port it connects from.
+	peer := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		peer = host
+	}
+	if !ipInNets(peer, trusted) {
+		return peer
+	}
 	if xri := strings.TrimSpace(r.Header.Get("X-Real-Ip")); xri != "" {
 		return xri
 	}
@@ -3780,12 +3798,47 @@ func realIP(r *http.Request) string {
 			return ip
 		}
 	}
-	// RemoteAddr is "IP:port"; strip the port so each unique client IP gets
-	// one rate-limit bucket regardless of which ephemeral port it connects from.
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
+	return peer
+}
+
+func ipInNets(host string, nets []*net.IPNet) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
 	}
-	return r.RemoteAddr
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseTrustedProxies parses a comma separated list of CIDRs or bare IPs.
+// An entry that does not parse is logged and skipped rather than silently
+// dropped: a typo here changes what the rate limiter keys on.
+func parseTrustedProxies(raw string) []*net.IPNet {
+	var out []*net.IPNet
+	for _, e := range strings.Split(raw, ",") {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		if !strings.Contains(e, "/") {
+			if strings.Contains(e, ":") {
+				e += "/128"
+			} else {
+				e += "/32"
+			}
+		}
+		_, n, err := net.ParseCIDR(e)
+		if err != nil {
+			slog.Warn("TRUSTED_PROXIES: ignoring invalid entry", "entry", e)
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
 }
 
 // rateLimiter is a simple in-memory token bucket: one ping per window per IP.
