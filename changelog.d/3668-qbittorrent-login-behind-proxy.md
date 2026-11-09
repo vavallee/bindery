@@ -1,0 +1,2 @@
+### Fixed
+- **qBittorrent behind a reverse proxy can log in again** (#3668). Bindery's login sent `Origin` and `Referer` headers that qBittorrent's CSRF check compares with the host it receives, so a seedbox or any other proxied qBittorrent turned the login away with `HTTP 401: Unauthorized` while the *arr apps connected fine with the same settings. The login now sends neither header, like those clients, and a remaining 401 explains that it comes from a proxy login or qBittorrent's Host header validation, not the username and password.
