@@ -35,6 +35,15 @@ type Provider interface {
 	GetBookByISBN(ctx context.Context, isbn string) (*models.Book, error)
 }
 
+// EditionsBatchProvider is implemented by providers that can fetch the editions
+// of many works in fewer requests than one GetEditions call each. The result is
+// keyed by the id as given. An id missing from it was not answered (the caller
+// should fetch it per work); an id present with no editions was answered with
+// none.
+type EditionsBatchProvider interface {
+	GetEditionsBatch(ctx context.Context, ids []string) (map[string][]models.Edition, error)
+}
+
 // SeriesSearchResult is a provider-neutral series discovery result.
 type SeriesSearchResult struct {
 	ForeignID  string

@@ -281,6 +281,10 @@ func (a *Aggregator) GetEditionsFromProvider(ctx context.Context, providerName, 
 	return a.load().GetEditionsFromProvider(ctx, providerName, bookForeignID)
 }
 
+func (a *Aggregator) GetEditionsBatchFromProvider(ctx context.Context, providerName string, ids []string) map[string][]models.Edition {
+	return a.load().GetEditionsBatchFromProvider(ctx, providerName, ids)
+}
+
 func (a *Aggregator) GetBookByISBN(ctx context.Context, isbn string) (*models.Book, error) {
 	return a.load().GetBookByISBN(ctx, isbn)
 }

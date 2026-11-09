@@ -894,6 +894,75 @@ func (a *aggregatorCore) GetEditionsFromProvider(ctx context.Context, providerNa
 	return nil, ErrProviderNotConfigured
 }
 
+// GetEditionsBatchFromProvider fetches the editions of many works from a named
+// provider in as few requests as the provider allows, sharing the per work
+// editions cache with GetEditionsFromProvider: cached works cost nothing and
+// fetched ones are cached for the next call. The result is keyed by the id as
+// given and holds only the works that were answered. A work missing from it
+// (or every work, when the provider cannot batch or the batch failed) is for
+// the caller to fetch per work with GetEditionsFromProvider.
+func (a *aggregatorCore) GetEditionsBatchFromProvider(ctx context.Context, providerName string, ids []string) map[string][]models.Edition {
+	out := make(map[string][]models.Edition, len(ids))
+	providerName = strings.TrimSpace(strings.ToLower(providerName))
+	if providerName == "" || len(ids) == 0 {
+		return out
+	}
+	var provider Provider
+	for _, p := range a.providers() {
+		if p != nil && normalizedProviderName(p.Name()) == normalizedProviderName(providerName) {
+			provider = p
+			break
+		}
+	}
+	if provider == nil {
+		return out
+	}
+	provider, scope := resolveCacheProvider(ctx, provider)
+	batcher, ok := provider.(EditionsBatchProvider)
+	if !ok {
+		return out
+	}
+	hardcover := normalizedProviderName(provider.Name()) == "hardcover"
+	cacheKey := func(id string) string {
+		if hardcover {
+			id = strings.TrimSpace(strings.TrimPrefix(id, "hc:"))
+		}
+		return "editions:" + scope + ":" + id
+	}
+	cache := a.cache
+	if cache == nil {
+		cache = a.requests.shortCache()
+	}
+	var missing []string
+	a.requests.mu.Lock()
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if value, ok := cache.get(cacheKey(id)); ok {
+			out[id] = cloneEditions(value.([]models.Edition))
+			continue
+		}
+		missing = append(missing, id)
+	}
+	a.requests.mu.Unlock()
+	if len(missing) == 0 {
+		return out
+	}
+	fetched, err := batcher.GetEditionsBatch(ctx, missing)
+	if err != nil {
+		slog.Debug("editions batch failed; callers fetch per work", "provider", providerName, "error", err)
+	}
+	a.requests.mu.Lock()
+	defer a.requests.mu.Unlock()
+	for id, editions := range fetched {
+		cache.set(cacheKey(id), cloneEditions(editions))
+		out[id] = cloneEditions(editions)
+	}
+	return out
+}
+
 // GetBookByISBN is GetBookByISBNWithOutcome for callers that only display or
 // match the record. A caller that shows the record for the user to add, or
 // writes its ids, needs the outcome instead.

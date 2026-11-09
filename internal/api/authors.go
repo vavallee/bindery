@@ -355,6 +355,10 @@ func (h *AuthorHandler) hydrateHardcoverEditionsFrom(ctx context.Context, book *
 	})
 }
 
+// prefetchEditionBatchSize is how many Hardcover works one prefetch batch names.
+// It matches the client's chunk, so a batch is one query.
+const prefetchEditionBatchSize = 10
+
 // prefetchHardcoverEditions fills a cache with the edition lookups the sync loop
 // is about to make, running them a few at a time instead of one after another.
 //
@@ -389,7 +393,7 @@ func (h *AuthorHandler) prefetchHardcoverEditions(ctx context.Context, targets [
 	if len(pending) == 0 || h.meta == nil {
 		return cache
 	}
-	concurrency.RunBounded(ctx, pending, authorAutoSearchConcurrency, func(ctx context.Context, t editionTarget) {
+	fetchOne := func(ctx context.Context, t editionTarget) {
 		var (
 			editions []models.Edition
 			err      error
@@ -407,7 +411,47 @@ func (h *AuthorHandler) prefetchHardcoverEditions(ctx context.Context, targets [
 			return
 		}
 		cache.store(t.cacheKey(), editions)
+	}
+
+	// Targets Hardcover answers go out a chunk per request (#2795). Anything
+	// the batch leaves unanswered, and every target another provider owns,
+	// takes the per book path above.
+	var batchable []editionTarget
+	var perBook []editionTarget
+	for _, t := range pending {
+		if t.ViaProvider || strings.HasPrefix(strings.TrimSpace(t.ForeignID), "hc:") {
+			batchable = append(batchable, t)
+		} else {
+			perBook = append(perBook, t)
+		}
+	}
+	var groups [][]editionTarget
+	for start := 0; start < len(batchable); start += prefetchEditionBatchSize {
+		groups = append(groups, batchable[start:min(start+prefetchEditionBatchSize, len(batchable))])
+	}
+	var (
+		leftMu     sync.Mutex
+		unanswered []editionTarget
+	)
+	concurrency.RunBounded(ctx, groups, authorAutoSearchConcurrency, func(ctx context.Context, group []editionTarget) {
+		ids := make([]string, 0, len(group))
+		for _, t := range group {
+			ids = append(ids, t.ForeignID)
+		}
+		answered := h.meta.GetEditionsBatchFromProvider(ctx, "hardcover", ids)
+		for _, t := range group {
+			if editions, ok := answered[strings.TrimSpace(t.ForeignID)]; ok {
+				cache.store(t.cacheKey(), editions)
+				continue
+			}
+			leftMu.Lock()
+			unanswered = append(unanswered, t)
+			leftMu.Unlock()
+		}
 	})
+	// The per book fetches run a few at a time, as they did before batching.
+	perBook = append(perBook, unanswered...)
+	concurrency.RunBounded(ctx, perBook, authorAutoSearchConcurrency, fetchOne)
 	return cache
 }
 
