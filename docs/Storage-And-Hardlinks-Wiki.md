@@ -67,12 +67,12 @@ To import such a download, either rename one of the files at the source and retr
 
 An audiobook is tracked as its whole folder. A box set folder such as `Series 1-4/`, with a subfolder per volume, can therefore hold files that other books also track, either as individual tracks or as a subfolder of their own.
 
-Deleting a book with its files, deleting one of its files, and the stale copy cleanup after a reassign never remove a file that another book tracks, and never remove a file that sits under a folder another book tracks. This holds even when the other book's folder row belongs to a book that no longer exists, because refusing to delete is the safe answer when ownership is unclear. Bindery logs the skipped path and leaves it on disk.
+Deleting a book with its files, deleting one of its files, and the stale copy cleanup after a reassign never remove a file that another book tracks, and never remove a file that sits under a folder another book tracks. This holds even when the other book's folder row belongs to a book that no longer exists, because refusing to delete is the safe answer when ownership is unclear. Bindery logs the skipped path and leaves it on disk. The one exception is a book's own ebook file: when the book itself tracks that exact file as its ebook, deleting the book, its ebook format or that file removes it even if it sits inside another book's folder.
 
 What you will see:
 
 - Deleting a whole book or a whole format reports success and leaves the protected files behind. Once both books are deleted, the emptied folder stays on disk too. Remove them by hand when you are sure which book they belong to.
-- Deleting a single file that sits under another book's folder is refused with a 409 that says another book owns it. Removing it without `delete=true` still works: that only stops tracking the file and never touches the disk.
+- Deleting a single file that sits under another book's folder is refused with a 409 that says another book owns it, unless it is this book's own tracked ebook file, which is removed. Removing it without `delete=true` still works: that only stops tracking the file and never touches the disk.
 
 Folders are compared as written in the database, after cleaning `.` and `..` and ignoring a trailing slash. A library that spells the same folder with different letter case, or with Windows style backslashes (some SMB shares), is not covered by this protection.
 

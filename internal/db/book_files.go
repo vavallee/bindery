@@ -418,6 +418,20 @@ func (r *BookFileRepo) PathOwnedByLiveOtherBook(ctx context.Context, path string
 	return owner != excludeBookID, nil
 }
 
+// EbookFileTrackedByBook reports whether bookID's own ebook row names exactly
+// path. An ebook row is one file, not part of any audiobook folder it happens to
+// sit in, so the delete guard lets that book remove it (#3561).
+func (r *BookFileRepo) EbookFileTrackedByBook(ctx context.Context, path string, bookID int64) (bool, error) {
+	var tracked bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM book_files WHERE path = ? AND book_id = ? AND format = ?)`,
+		path, bookID, models.MediaTypeEbook).Scan(&tracked)
+	if err != nil {
+		return false, fmt.Errorf("book_files ebook row lookup: %w", err)
+	}
+	return tracked, nil
+}
+
 // PathUnderOtherBookDir reports whether a strict ancestor directory of path is
 // itself registered in book_files by a book other than excludeBookID. An
 // audiobook is often recorded as its whole folder, and that row covers every
