@@ -32,7 +32,7 @@ func TestSettingsRepo_AuthKeyServedFromCache(t *testing.T) {
 	}
 }
 
-// Non-auth keys stay uncached, so a write that bypasses the repo (backfill
+// Keys outside the per-request auth set stay uncached, so a write that bypasses the repo (backfill
 // markers, tests) is still seen.
 func TestSettingsRepo_NonAuthKeyNotCached(t *testing.T) {
 	database, err := OpenMemory()
@@ -42,15 +42,19 @@ func TestSettingsRepo_NonAuthKeyNotCached(t *testing.T) {
 	defer database.Close()
 	repo := NewSettingsRepo(database)
 	ctx := context.Background()
-	if err := repo.Set(ctx, "other.key", "a"); err != nil {
-		t.Fatal(err)
-	}
-	_, _ = repo.Get(ctx, "other.key")
-	if _, err := database.Exec(`UPDATE settings SET value='b' WHERE key='other.key'`); err != nil {
-		t.Fatal(err)
-	}
-	if s, _ := repo.Get(ctx, "other.key"); s == nil || s.Value != "b" {
-		t.Fatalf("non-auth key was cached: %+v", s)
+	// auth.oidc.providers is an auth.* key the middleware does not read per
+	// request, so it stays uncached along with everything else.
+	for _, key := range []string{"other.key", "auth.oidc.providers"} {
+		if err := repo.Set(ctx, key, "a"); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = repo.Get(ctx, key)
+		if _, err := database.Exec(`UPDATE settings SET value='b' WHERE key=?`, key); err != nil {
+			t.Fatal(err)
+		}
+		if s, _ := repo.Get(ctx, key); s == nil || s.Value != "b" {
+			t.Fatalf("%s was cached: %+v", key, s)
+		}
 	}
 }
 

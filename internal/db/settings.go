@@ -5,21 +5,26 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// authKeyPrefix marks the settings the auth middleware reads on every request
+// cachedKeys are the settings the auth middleware reads on every request
 // (mode, API key, session secrets). Only these are cached: they change rarely
-// and are read constantly. Per-user state (epoch, role, revocation) lives
-// elsewhere and is deliberately never cached so a password change or logout
-// takes effect on the next request.
-const authKeyPrefix = "auth."
+// and are read constantly. Other auth.* keys (OIDC providers and the like) and
+// per-user state (epoch, role, revocation) stay uncached, so a password change
+// or logout takes effect on the very next request. The strings match the
+// api.SettingAuth* constants; db cannot import api.
+var cachedKeys = map[string]struct{}{
+	"auth.mode":                    {},
+	"auth.api_key":                 {}, //nolint:gosec // setting key name, not a credential
+	"auth.session_secret":          {}, //nolint:gosec // setting key name, not a credential
+	"auth.session_secret_previous": {}, //nolint:gosec // setting key name, not a credential
+}
 
-// SettingsRepo reads and writes the settings table. auth.* keys are served
+// SettingsRepo reads and writes the settings table. The keys in cachedKeys are served
 // from a write-through in-process cache; every writer in this type
 // invalidates it. Bindery runs as one process, so nothing else writes these
 // rows behind the repo's back.
@@ -35,7 +40,10 @@ func NewSettingsRepo(db *sql.DB) *SettingsRepo {
 	return &SettingsRepo{db: db, cache: make(map[string]*models.Setting)}
 }
 
-func cacheable(key string) bool { return strings.HasPrefix(key, authKeyPrefix) }
+func cacheable(key string) bool {
+	_, ok := cachedKeys[key]
+	return ok
+}
 
 // invalidate drops cached entries for keys. Called after the write has been
 // issued, whether or not it succeeded, so a failed write can never leave a
