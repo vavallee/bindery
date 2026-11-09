@@ -76,6 +76,7 @@ func newSettings(t *testing.T) *db.SettingsRepo {
 func clearDeployEnv(t *testing.T) {
 	t.Setenv("BINDERY_DEPLOY_METHOD", "")
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	t.Setenv("HOST_OS", "")
 	t.Setenv("BINDERY_TELEMETRY_DISABLED", "")
 	t.Setenv("BINDERY_TELEMETRY_FORCE", "")
 }
@@ -279,5 +280,40 @@ func TestDetectDeploy(t *testing.T) {
 	}
 	if got := detectDeploy(); got != want {
 		t.Errorf("no env: got %q, want %q", got, want)
+	}
+}
+
+// Resolution order: an explicit BINDERY_DEPLOY_METHOD wins, then Unraid's
+// HOST_OS, then the pod, docker and binary probes.
+func TestDetectDeploy_Unraid(t *testing.T) {
+	for _, v := range []string{"Unraid", "unraid", "UNRAID", " Unraid "} {
+		clearDeployEnv(t)
+		t.Setenv("HOST_OS", v)
+		if got := detectDeploy(); got != "unraid" {
+			t.Errorf("HOST_OS=%q: got %q, want unraid", v, got)
+		}
+	}
+
+	clearDeployEnv(t)
+	t.Setenv("HOST_OS", "Unraid")
+	t.Setenv("BINDERY_DEPLOY_METHOD", "helm")
+	if got := detectDeploy(); got != "helm" {
+		t.Errorf("explicit override: got %q, want helm", got)
+	}
+
+	clearDeployEnv(t)
+	t.Setenv("HOST_OS", "Unraid")
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+	if got := detectDeploy(); got != "unraid" {
+		t.Errorf("HOST_OS beats the pod probe: got %q, want unraid", got)
+	}
+
+	for _, v := range []string{"Linux", "TrueNAS", "unraid-ish"} {
+		clearDeployEnv(t)
+		t.Setenv("HOST_OS", v)
+		t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+		if got := detectDeploy(); got != "kubernetes" {
+			t.Errorf("HOST_OS=%q: got %q, want the existing kubernetes default", v, got)
+		}
 	}
 }

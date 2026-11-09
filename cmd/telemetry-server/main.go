@@ -774,6 +774,7 @@ var validDeploys = map[string]bool{
 	"docker":     true,
 	"binary":     true,
 	"helm":       true, // Helm chart can opt-in via BINDERY_DEPLOY_METHOD=helm
+	"unraid":     true, // detected from the HOST_OS=Unraid env Unraid's Docker manager sets
 }
 
 type pingResponse struct {
@@ -1169,7 +1170,7 @@ const telemetryFieldsHTML = `<!DOCTYPE html>
 
   <div class="field">
     <code>deploy</code>
-    <div class="why">How Bindery is being run: <code>kubernetes</code> (inside a pod), <code>docker</code> (inside any other container), <code>binary</code> (bare metal), <code>helm</code> (Helm chart, when the chart sets <code>BINDERY_DEPLOY_METHOD=helm</code>). Detected from <code>KUBERNETES_SERVICE_HOST</code> and the presence of <code>/.dockerenv</code>. Helps us know which deployment paths are worth supporting.</div>
+    <div class="why">How Bindery is being run: <code>kubernetes</code> (inside a pod), <code>docker</code> (inside any other container), <code>binary</code> (bare metal), <code>helm</code> (Helm chart, when the chart sets <code>BINDERY_DEPLOY_METHOD=helm</code>), <code>unraid</code> (a container started by Unraid). Detected from <code>HOST_OS</code>, <code>KUBERNETES_SERVICE_HOST</code> and the presence of <code>/.dockerenv</code>. Helps us know which deployment paths are worth supporting.</div>
   </div>
 
   <h2>Features (sent starting v1.15.3+, optional)</h2>
@@ -2645,7 +2646,7 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 type previewFilters struct {
 	Range  string // 7d, 30d, 90d, all
 	OS     string // linux, windows, darwin, all
-	Deploy string // docker, binary, kubernetes, helm, all
+	Deploy string // docker, binary, kubernetes, helm, unraid, all
 }
 
 // validPreviewRanges enumerates the accepted values for the range filter.
@@ -3622,6 +3623,7 @@ func renderPreviewFilters(f previewFilters) string {
 	sb.WriteString(opt("binary", "Binary", f.Deploy))
 	sb.WriteString(opt("kubernetes", "Kubernetes", f.Deploy))
 	sb.WriteString(opt("helm", "Helm", f.Deploy))
+	sb.WriteString(opt("unraid", "Unraid", f.Deploy))
 	sb.WriteString(`</select></div>`)
 	sb.WriteString(`<noscript><button type="submit">Apply</button></noscript>`)
 	sb.WriteString(`</form>`)
