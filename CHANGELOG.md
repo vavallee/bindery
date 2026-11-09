@@ -4,6 +4,14 @@ All notable changes to Bindery are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com) and versions follow
 [Semantic Versioning](https://semver.org).
 
+## [v1.49.1] - 2026-11-09
+
+A small patch so Unraid installs can be counted. Nothing changes for you unless telemetry is on, and there are no database migrations.
+
+### Changed
+- **Telemetry counts Unraid installs** (#3765). The daily ping (when telemetry is on) now reports `unraid` as the deployment method for containers started by Unraid, detected from the `HOST_OS=Unraid` variable Unraid's Docker manager sets on every container it creates (Compose Manager and plain `docker run` do not). Before, those showed up as plain `docker`. Setting `BINDERY_DEPLOY_METHOD` still overrides it.
+- **Unraid template tidy up** (#3765). The Community Applications template now says Bindery replaces the retired Readarr, so search finds it, and Books and Downloads are required with their usual defaults. The `.github/unraid/README.md` covers how the two template copies are kept in step.
+
 ## [v1.49.0] - 2026-11-08
 
 Find any setting from the Settings search, filter the Books page by language, see the files inside an audiobook folder, pick how often the library is scanned and log in to a qBittorrent that sits behind a proxy. The Calibre import stops tracking backup formats, library scans now attach a book's other ebook formats on their own, and downloads remember which format they were for. Adds database migrations 124 to 128, which run on startup. The first start after updating also reads the language from the ebook files of books that have none, once, in the background.
