@@ -39,6 +39,7 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/clienthost"
 	"github.com/vavallee/bindery/internal/downloader/infohash"
 	"github.com/vavallee/bindery/internal/downloader/nethint"
+	"github.com/vavallee/bindery/internal/downloader/torrentfetch"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/useragent"
@@ -773,75 +774,17 @@ func (c *Client) validateTorrentFetchURL(raw string) error {
 }
 
 // fetchTorrentContent resolves an indexer http(s) download link into either the
-// .torrent bytes or, when the link 30x-redirects to a magnet: URI, the magnet
-// itself (#1006). Every hop is re-validated against the SSRF policy so a
-// redirect cannot be used to reach a blocked host.
+// .torrent bytes or, when the link redirects to a magnet: URI, the magnet
+// itself (#1006). The fetch, its SSRF checks on every hop, the size cap and the
+// timeout live in torrentfetch, shared by all four torrent clients (#1470).
 func (c *Client) fetchTorrentContent(ctx context.Context, rawURL string) (*fetchedTorrentContent, error) {
-	fetchClient := &http.Client{
+	res, err := torrentfetch.Fetch(ctx, rawURL, torrentfetch.Options{
 		Transport: c.fetchTransport,
-		Timeout:   60 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+		Validate:  c.validateTorrentFetchURL,
+		MaxBytes:  maxTorrentFileBytes,
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	current := rawURL
-	for redirects := 0; redirects <= 5; redirects++ {
-		if err := c.validateTorrentFetchURL(current); err != nil {
-			return nil, fmt.Errorf("fetch torrent: %w", httpsec.RedactURLError(err))
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, current, nil)
-		if err != nil {
-			return nil, fmt.Errorf("fetch torrent: %w", httpsec.RedactURLError(err))
-		}
-		req.Header.Set("Accept", "application/x-bittorrent")
-		// Some indexers serve an anti-bot 403 to Go's default UA (#1053).
-		req.Header.Set("User-Agent", useragent.Get())
-
-		resp, err := fetchClient.Do(req)
-		if err != nil {
-			// Scrub the indexer apikey the *url.Error would otherwise leak into
-			// the download row / history / webhook payloads.
-			return nil, fmt.Errorf("fetch torrent from indexer: %w", httpsec.RedactURLError(err))
-		}
-
-		if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
-			location := resp.Header.Get("Location")
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			if location == "" {
-				return nil, fmt.Errorf("fetch torrent: redirect without location")
-			}
-			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(location)), "magnet:") {
-				return &fetchedTorrentContent{magnetURL: location}, nil
-			}
-			next, err := req.URL.Parse(location)
-			if err != nil {
-				return nil, fmt.Errorf("fetch torrent: invalid redirect location: %w", httpsec.RedactURLError(err))
-			}
-			if next.Scheme != "http" && next.Scheme != "https" {
-				return nil, fmt.Errorf("fetch torrent: unsupported redirect scheme %q", next.Scheme)
-			}
-			current = next.String()
-			continue
-		}
-
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
-			return nil, fmt.Errorf("fetch torrent: indexer returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-		}
-		data, err := io.ReadAll(io.LimitReader(resp.Body, maxTorrentFileBytes+1))
-		if err != nil {
-			return nil, fmt.Errorf("fetch torrent: %w", httpsec.RedactURLError(err))
-		}
-		if int64(len(data)) > maxTorrentFileBytes {
-			return nil, fmt.Errorf("fetch torrent: response exceeds %d bytes", maxTorrentFileBytes)
-		}
-		if len(data) == 0 {
-			return nil, fmt.Errorf("fetch torrent: empty response")
-		}
-		return &fetchedTorrentContent{data: data}, nil
-	}
-	return nil, fmt.Errorf("fetch torrent: too many redirects")
+	return &fetchedTorrentContent{data: res.Data, magnetURL: res.MagnetURL}, nil
 }

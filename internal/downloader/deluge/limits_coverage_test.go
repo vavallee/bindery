@@ -1,25 +1,8 @@
 package deluge
 
 import (
-	"errors"
-	"strings"
 	"testing"
-	"testing/iotest"
 )
-
-func TestReadLimited(t *testing.T) {
-	got, err := readLimited(strings.NewReader("abc"), 3)
-	if err != nil || string(got) != "abc" {
-		t.Fatalf("at the cap: got (%q, %v), want the whole body", got, err)
-	}
-	if _, err := readLimited(strings.NewReader("abcd"), 3); err == nil || !strings.Contains(err.Error(), "exceeds 3 bytes") {
-		t.Fatalf("over the cap: err = %v", err)
-	}
-	boom := errors.New("read failed")
-	if _, err := readLimited(iotest.ErrReader(boom), 3); !errors.Is(err, boom) {
-		t.Fatalf("reader error: err = %v, want %v", err, boom)
-	}
-}
 
 func TestDaemonHostLabel(t *testing.T) {
 	tests := []struct {

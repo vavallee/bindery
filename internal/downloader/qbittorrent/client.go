@@ -23,9 +23,9 @@ import (
 
 	"github.com/vavallee/bindery/internal/downloader/clienthost"
 	"github.com/vavallee/bindery/internal/downloader/nethint"
+	"github.com/vavallee/bindery/internal/downloader/torrentfetch"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
 	"github.com/vavallee/bindery/internal/httpsec"
-	"github.com/vavallee/bindery/internal/useragent"
 )
 
 // AuthError signals that qBittorrent responded but rejected the login.
@@ -66,6 +66,10 @@ var tagGrace = 2 * time.Second
 // maxTorrentFileBytes caps the torrent payload Bindery will fetch before
 // uploading it to qBittorrent.
 var maxTorrentFileBytes int64 = 50 << 20
+
+// torrentFetchTimeout overrides torrentfetch.Timeout when non zero. Tests that
+// aim a fetch at an unroutable address set it so they do not wait a minute.
+var torrentFetchTimeout time.Duration
 
 // maxAPIResponseBytes caps a qBittorrent WebUI API reply. /api/v2/torrents/info
 // returns every torrent in one document, the same shape that made a 1 MiB cap
@@ -818,81 +822,21 @@ type fetchedTorrentContent struct {
 	magnetURL string
 }
 
-// fetchTorrentContent downloads a .torrent file URL and returns its raw bytes.
-// It limits the response size and validates each redirect target before fetch.
+// fetchTorrentContent resolves an indexer http(s) download link into either the
+// .torrent bytes or, when the link redirects to a magnet: URI, the magnet
+// itself (#1006). The fetch, its SSRF checks on every hop, the size cap and the
+// timeout live in torrentfetch, shared by all four torrent clients (#1470).
 func (c *Client) fetchTorrentContent(ctx context.Context, rawURL string) (*fetchedTorrentContent, error) {
-	current := rawURL
-	fetchClient := &http.Client{
-		// Guard the dial against the indexer-controlled torrent URL: the loop
-		// re-validates each redirect hop, and this adds a per-dial recheck so a
-		// DNS rebind between validate and connect can't reach a forbidden host.
-		// Uses the download-fetch-policy transport, not the RPC client's (which
-		// targets the admin-configured download client over loopback).
+	res, err := torrentfetch.Fetch(ctx, rawURL, torrentfetch.Options{
 		Transport: c.fetchTransport,
-		Timeout:   c.http.Timeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+		Validate:  c.validateTorrentFetchURL,
+		MaxBytes:  maxTorrentFileBytes,
+		Timeout:   torrentFetchTimeout,
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	for redirects := 0; redirects <= 5; redirects++ {
-		if err := c.validateTorrentFetchURL(current); err != nil {
-			return nil, httpsec.RedactURLError(err)
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, current, nil)
-		if err != nil {
-			return nil, fmt.Errorf("build torrent fetch request: %w", httpsec.RedactURLError(err))
-		}
-		req.Header.Set("Accept", "application/x-bittorrent")
-		// Some indexers fingerprint the User-Agent and serve an anti-bot 403
-		// to Go's default UA (#1053); use the project UA like the search path.
-		req.Header.Set("User-Agent", useragent.Get())
-
-		resp, err := fetchClient.Do(req)
-		if err != nil {
-			// Scrub the indexer apikey the *url.Error would otherwise leak into
-			// the download row / history / webhook payloads.
-			return nil, httpsec.RedactURLError(err)
-		}
-
-		if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
-			location := resp.Header.Get("Location")
-			_, _ = io.Copy(io.Discard, resp.Body)
-			if err := resp.Body.Close(); err != nil {
-				return nil, fmt.Errorf("close redirect body: %w", err)
-			}
-			if location == "" {
-				return nil, fmt.Errorf("redirect without location")
-			}
-			if strings.HasPrefix(strings.ToLower(location), "magnet:") {
-				return &fetchedTorrentContent{magnetURL: location}, nil
-			}
-			next, err := req.URL.Parse(location)
-			if err != nil {
-				return nil, fmt.Errorf("invalid redirect location: %w", httpsec.RedactURLError(err))
-			}
-			if next.Scheme != "http" && next.Scheme != "https" {
-				return nil, fmt.Errorf("unsupported redirect scheme %q", next.Scheme)
-			}
-			current = next.String()
-			continue
-		}
-
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("indexer returned HTTP %d", resp.StatusCode)
-		}
-		data, err := readLimited(resp.Body, maxTorrentFileBytes, "torrent response")
-		if err != nil {
-			return nil, err
-		}
-		if len(data) == 0 {
-			return nil, fmt.Errorf("empty torrent response")
-		}
-		return &fetchedTorrentContent{data: data}, nil
-	}
-
-	return nil, fmt.Errorf("too many redirects")
+	return &fetchedTorrentContent{data: res.Data, magnetURL: res.MagnetURL}, nil
 }
 
 func (c *Client) validateTorrentFetchURL(raw string) error {
