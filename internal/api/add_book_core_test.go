@@ -391,6 +391,8 @@ func TestWriteAddBookError_Statuses(t *testing.T) {
 			errorBody("mediaType must be 'ebook', 'audiobook', or 'both'")},
 		{"author metadata unavailable", errAddBookAuthorMetadataUnavailable, http.StatusUnprocessableEntity,
 			errorBody("Author metadata unavailable for this result. Add the author manually first (Authors → Add Author by name), then try again.")},
+		{"author exists", errAddBookAuthorExists, http.StatusConflict,
+			errorBody("author already exists")},
 		{"author held by another account", errAddBookAuthorHeld, http.StatusConflict,
 			errorBody(authorHeldByAnotherAccountMessage)},
 		{"author unresolved", errAddBookAuthorUnresolved, http.StatusInternalServerError,
@@ -420,8 +422,8 @@ func TestWriteAddBookError_Statuses(t *testing.T) {
 			errorBody("internal server error")},
 	})
 	// A sentinel added to the table without a row above would go unchecked.
-	if len(addBookErrorResponses) != 8 {
-		t.Errorf("addBookErrorResponses has %d rows, this test covers 8; add a case for the new one", len(addBookErrorResponses))
+	if len(addBookErrorResponses) != 9 {
+		t.Errorf("addBookErrorResponses has %d rows, this test covers 9; add a case for the new one", len(addBookErrorResponses))
 	}
 }
 

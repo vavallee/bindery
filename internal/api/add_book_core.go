@@ -68,6 +68,7 @@ var (
 	errAddBookForeignBookIDRequired     = errors.New("add book: foreignBookId required")
 	errAddBookInvalidMediaType          = errors.New("add book: invalid media type")
 	errAddBookAuthorMetadataUnavailable = errors.New("add book: author metadata unavailable")
+	errAddBookAuthorExists              = errors.New("add book: author already exists")
 	errAddBookAuthorHeld                = errors.New("add book: author held by another account")
 	errAddBookAuthorUnresolved          = errors.New("add book: could not resolve author")
 	errAddBookCancelled                 = errors.New("add book: request cancelled")
@@ -84,6 +85,7 @@ var addBookErrorResponses = []struct {
 	{errAddBookForeignBookIDRequired, http.StatusBadRequest, "foreignBookId required"},
 	{errAddBookInvalidMediaType, http.StatusBadRequest, "mediaType must be 'ebook', 'audiobook', or 'both'"},
 	{errAddBookAuthorMetadataUnavailable, http.StatusUnprocessableEntity, "Author metadata unavailable for this result. Add the author manually first (Authors → Add Author by name), then try again."},
+	{errAddBookAuthorExists, http.StatusConflict, "author already exists"},
 	{errAddBookAuthorHeld, http.StatusConflict, authorHeldByAnotherAccountMessage},
 	{errAddBookAuthorUnresolved, http.StatusInternalServerError, "could not resolve author"},
 	{errAddBookCancelled, http.StatusGatewayTimeout, "request cancelled"},
@@ -372,7 +374,12 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 				// see it (authors.foreign_id is unique per instance, #3555).
 				author, _ = h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignAuthorID, scopeID)
 				if author == nil {
-					return addBookResult{}, errAddBookAuthorHeld
+					// Only a scoped caller (tenancy on, not an admin) can miss a
+					// row another account holds; otherwise keep the plain text.
+					if scopeID != 0 {
+						return addBookResult{}, errAddBookAuthorHeld
+					}
+					return addBookResult{}, errAddBookAuthorExists
 				}
 			} else {
 				author = fetched

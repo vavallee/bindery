@@ -235,8 +235,14 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 				return createAuthorResult{}, &authorConflictError{Canonical: existing, Message: "author already exists"}
 			}
 			// Neither lookup found a row the caller can see, yet the unique
-			// foreign id is taken: with tenancy on, another account holds it.
-			return createAuthorResult{}, &authorConflictError{Message: authorHeldByAnotherAccountMessage}
+			// foreign id is taken. Only a caller whose list is scoped (tenancy
+			// on, not an admin) can be missing a row another account holds; for
+			// anyone else the cause is something else, such as an orphaned
+			// identifier row, so keep the plain text.
+			if scopeID != 0 {
+				return createAuthorResult{}, &authorConflictError{Message: authorHeldByAnotherAccountMessage}
+			}
+			return createAuthorResult{}, &authorConflictError{Message: "author already exists"}
 		}
 		return createAuthorResult{}, err
 	}
