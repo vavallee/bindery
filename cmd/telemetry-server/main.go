@@ -890,10 +890,10 @@ func main() {
 		statsToken: statsToken,
 		// Each IP may ping at most once per hour.
 		limiter: newRateLimiter(1*time.Hour, 5*time.Minute),
-		// Forwarding headers are only trusted from these peers. Behind a
-		// reverse proxy set TRUSTED_PROXIES to its address range, otherwise
-		// every client shares the proxy's rate-limit bucket.
-		trustedProxies: parseTrustedProxies(env("TRUSTED_PROXIES", "")),
+		// Forwarding headers are only trusted from these peers. Unset means
+		// loopback and private ranges; set TRUSTED_PROXIES to a CIDR list to
+		// narrow that, or to "none" to use the TCP peer only.
+		trustedProxies: resolveTrustedProxies(env("TRUSTED_PROXIES", "")),
 	}
 	// Seed the advertised version from the env; the poller below overrides it
 	// with the newest GitHub release once it can reach the API.
@@ -3895,3 +3895,26 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// resolveTrustedProxies turns the TRUSTED_PROXIES value into the peer list
+// whose forwarding headers are believed. Unset or empty means the private
+// defaults, "none" means believe nobody (TCP peer only), anything else is an
+// explicit list that replaces the defaults.
+func resolveTrustedProxies(raw string) []*net.IPNet {
+	raw = strings.TrimSpace(raw)
+	switch {
+	case raw == "":
+		return defaultTrustedProxies
+	case strings.EqualFold(raw, "none"):
+		return nil
+	}
+	return parseTrustedProxies(raw)
+}
+
+// defaultTrustedProxies are loopback, RFC1918, link-local and ULA ranges: a
+// reverse proxy in front of the ping server normally sits on one of them, so
+// the server works behind Traefik with no configuration. The tradeoff is that
+// a client on one of these networks could choose its own rate-limit bucket if
+// the server were ever exposed directly on a private network; that is a rate
+// limit bypass only. Set TRUSTED_PROXIES=none to refuse every forwarding header.
+var defaultTrustedProxies = parseTrustedProxies("127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, fc00::/7, fe80::/10")

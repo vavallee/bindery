@@ -52,3 +52,37 @@ func TestRealIP_TrustedPeerUsesForwardingHeaders(t *testing.T) {
 		}
 	}
 }
+
+// The default (TRUSTED_PROXIES unset) must work behind a reverse proxy on a
+// private network without any configuration, and must not believe a public peer.
+func TestRealIP_DefaultTrustsPrivatePeersOnly(t *testing.T) {
+	def := resolveTrustedProxies("")
+	for _, peer := range []string{"127.0.0.1:1", "10.1.2.3:1", "172.20.0.5:1", "192.168.1.9:1", "169.254.1.1:1", "[::1]:1", "[fd12:3456::1]:1", "[fe80::1]:1"} {
+		if got := realIP(ipReq(peer, "198.51.100.1", ""), def); got != "198.51.100.1" {
+			t.Errorf("default, private peer %s: realIP = %q, want X-Real-Ip", peer, got)
+		}
+		if got := realIP(ipReq(peer, "", "1.1.1.1, 198.51.100.2"), def); got != "198.51.100.2" {
+			t.Errorf("default, private peer %s: realIP = %q, want rightmost XFF", peer, got)
+		}
+	}
+	for _, peer := range []string{"203.0.113.9:1", "[2001:db8::1]:1", "172.32.0.1:1"} {
+		if got := realIP(ipReq(peer, "198.51.100.1", "198.51.100.2"), def); got == "198.51.100.1" || got == "198.51.100.2" {
+			t.Errorf("default, public peer %s: forwarding header was believed (%q)", peer, got)
+		}
+	}
+}
+
+func TestRealIP_NoneAndExplicitList(t *testing.T) {
+	none := resolveTrustedProxies("none")
+	if got := realIP(ipReq("10.1.2.3:1", "198.51.100.1", "198.51.100.2"), none); got != "10.1.2.3" {
+		t.Errorf("none, private peer: realIP = %q, want the peer 10.1.2.3", got)
+	}
+	explicit := resolveTrustedProxies("203.0.113.0/24")
+	if got := realIP(ipReq("203.0.113.9:1", "198.51.100.1", ""), explicit); got != "198.51.100.1" {
+		t.Errorf("explicit list, listed peer: realIP = %q", got)
+	}
+	// An explicit list replaces the defaults: a private peer outside it is not trusted.
+	if got := realIP(ipReq("10.1.2.3:1", "198.51.100.1", ""), explicit); got != "10.1.2.3" {
+		t.Errorf("explicit list, private peer: realIP = %q, want 10.1.2.3", got)
+	}
+}
