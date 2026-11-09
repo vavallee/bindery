@@ -98,6 +98,12 @@ type createAuthorLookupError struct {
 func (e *createAuthorLookupError) Error() string { return e.Err.Error() }
 func (e *createAuthorLookupError) Unwrap() error { return e.Err }
 
+// authorHeldByAnotherAccountMessage is the 409 body when an add collides with
+// an author another account holds (#3555). authors.foreign_id is unique across
+// the instance, so the second account cannot have its own row. The text names
+// no account and the response carries no author.
+const authorHeldByAnotherAccountMessage = "This author is already in another account's library on this instance, and an author can only be in one account's library. Ask that account's owner, or use the requester role to request books."
+
 // authorConflictError is a 409: the author already exists, or its name
 // resolves to one that does. Canonical, when set, is the existing author the
 // handler returns so the client can offer to open it.
@@ -228,7 +234,9 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 			if existing, _ := h.authors.GetByAnyForeignIDForUser(ctx, author.ForeignID, scopeID); existing != nil {
 				return createAuthorResult{}, &authorConflictError{Canonical: existing, Message: "author already exists"}
 			}
-			return createAuthorResult{}, &authorConflictError{Message: "author already exists"}
+			// Neither lookup found a row the caller can see, yet the unique
+			// foreign id is taken: with tenancy on, another account holds it.
+			return createAuthorResult{}, &authorConflictError{Message: authorHeldByAnotherAccountMessage}
 		}
 		return createAuthorResult{}, err
 	}

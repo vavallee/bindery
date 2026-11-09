@@ -68,7 +68,7 @@ var (
 	errAddBookForeignBookIDRequired     = errors.New("add book: foreignBookId required")
 	errAddBookInvalidMediaType          = errors.New("add book: invalid media type")
 	errAddBookAuthorMetadataUnavailable = errors.New("add book: author metadata unavailable")
-	errAddBookAuthorExists              = errors.New("add book: author already exists")
+	errAddBookAuthorHeld                = errors.New("add book: author held by another account")
 	errAddBookAuthorUnresolved          = errors.New("add book: could not resolve author")
 	errAddBookCancelled                 = errors.New("add book: request cancelled")
 	errAddBookNotFound                  = errors.New("add book: book not found after author sync")
@@ -84,7 +84,7 @@ var addBookErrorResponses = []struct {
 	{errAddBookForeignBookIDRequired, http.StatusBadRequest, "foreignBookId required"},
 	{errAddBookInvalidMediaType, http.StatusBadRequest, "mediaType must be 'ebook', 'audiobook', or 'both'"},
 	{errAddBookAuthorMetadataUnavailable, http.StatusUnprocessableEntity, "Author metadata unavailable for this result. Add the author manually first (Authors → Add Author by name), then try again."},
-	{errAddBookAuthorExists, http.StatusConflict, "author already exists"},
+	{errAddBookAuthorHeld, http.StatusConflict, authorHeldByAnotherAccountMessage},
 	{errAddBookAuthorUnresolved, http.StatusInternalServerError, "could not resolve author"},
 	{errAddBookCancelled, http.StatusGatewayTimeout, "request cancelled"},
 	{errAddBookNotFound, http.StatusNotFound, "book not found after author sync — try again shortly"},
@@ -367,10 +367,12 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 				if !strings.Contains(err.Error(), "UNIQUE constraint failed") && !errors.Is(err, db.ErrAuthorIdentifierConflict) {
 					return addBookResult{}, err
 				}
-				// Race: another request created it between our check and insert.
+				// Either a concurrent request created it between our check and
+				// insert, or another account holds it and the scoped lookup cannot
+				// see it (authors.foreign_id is unique per instance, #3555).
 				author, _ = h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignAuthorID, scopeID)
 				if author == nil {
-					return addBookResult{}, errAddBookAuthorExists
+					return addBookResult{}, errAddBookAuthorHeld
 				}
 			} else {
 				author = fetched
