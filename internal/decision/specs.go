@@ -2,7 +2,6 @@ package decision
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/indexer"
@@ -228,68 +227,6 @@ func (AlreadyImportedSpec) IsSatisfiedBy(r Release, book models.Book) (bool, str
 			return false, "book already imported"
 		}
 		return true, ""
-	}
-}
-
-// --- CustomFormatScore ---
-
-// CustomFormatScoreSpec does not reject releases — it annotates the Release
-// with a cumulative score from all matching custom formats. Since it never
-// returns false, it must run after blocking specs.
-type CustomFormatScoreSpec struct {
-	Formats []models.CustomFormat
-}
-
-func (s *CustomFormatScoreSpec) IsSatisfiedBy(r Release, _ models.Book) (bool, string) {
-	return true, "" // scoring only; never rejects
-}
-
-// Score computes the total custom-format score for a release.
-// A format matches when all of its conditions are satisfied.
-func (s *CustomFormatScoreSpec) Score(r Release) int {
-	var total int
-	for i, cf := range s.Formats {
-		if s.matchesAll(r, s.Formats[i].Conditions) {
-			total += i + 1 // simple weight: earlier formats score higher
-			_ = cf
-		}
-	}
-	return total
-}
-
-func (s *CustomFormatScoreSpec) matchesAll(r Release, conditions []models.CustomCondition) bool {
-	for _, c := range conditions {
-		matched := s.matchCondition(r, c)
-		if c.Negate {
-			matched = !matched
-		}
-		if !matched {
-			return false
-		}
-	}
-	return true
-}
-
-func (s *CustomFormatScoreSpec) matchCondition(r Release, c models.CustomCondition) bool {
-	switch c.Type {
-	case "releaseTitle":
-		re, err := regexp.Compile("(?i)" + c.Pattern)
-		if err != nil {
-			return false
-		}
-		return re.MatchString(r.Title)
-	case "releaseGroup":
-		re, err := regexp.Compile("(?i)" + c.Pattern)
-		if err != nil {
-			return false
-		}
-		return re.MatchString(r.Title)
-	case "format":
-		return strings.EqualFold(r.Format, c.Pattern)
-	case "protocol":
-		return strings.EqualFold(r.Protocol, c.Pattern)
-	default:
-		return false
 	}
 }
 

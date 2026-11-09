@@ -45,9 +45,6 @@ func TestOversizeBody_Is413(t *testing.T) {
 		{name: "metadata profile create", method: http.MethodPost, build: func(d *sql.DB) http.HandlerFunc {
 			return NewMetadataProfileHandler(db.NewMetadataProfileRepo(d)).Create
 		}},
-		{name: "custom format create", method: http.MethodPost, build: func(d *sql.DB) http.HandlerFunc {
-			return NewCustomFormatHandler(db.NewCustomFormatRepo(d)).Create
-		}},
 		{name: "notification create", method: http.MethodPost, build: func(d *sql.DB) http.HandlerFunc {
 			return NewNotificationHandler(db.NewNotificationRepo(d), nil).Create
 		}},

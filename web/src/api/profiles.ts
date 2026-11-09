@@ -40,17 +40,6 @@ export interface DelayProfile {
   order: number
 }
 
-export interface CustomFormat {
-  id: number
-  name: string
-  conditions: Array<{
-    type: string
-    pattern: string
-    negate: boolean
-    required: boolean
-  }>
-}
-
 export interface RootFolder {
   id: number
   path: string
@@ -79,11 +68,6 @@ export const profilesApi = {
   listDelayProfiles: () => request<DelayProfile[]>('/delayprofile'),
   addDelayProfile: (data: Partial<DelayProfile>) => request<DelayProfile>('/delayprofile', { method: 'POST', body: JSON.stringify(data) }),
   deleteDelayProfile: (id: number) => request<void>(`/delayprofile/${id}`, { method: 'DELETE' }),
-
-  // Custom Formats
-  listCustomFormats: () => request<CustomFormat[]>('/customformat'),
-  addCustomFormat: (data: Partial<CustomFormat>) => request<CustomFormat>('/customformat', { method: 'POST', body: JSON.stringify(data) }),
-  deleteCustomFormat: (id: number) => request<void>(`/customformat/${id}`, { method: 'DELETE' }),
 
   // Root Folders
   listRootFolders: () => request<RootFolder[]>('/rootfolder'),
