@@ -1,0 +1,664 @@
+[
+ {
+  "source": "clear",
+  "wantedTitle": "Dune",
+  "wantedAuthor": "Frank Herbert",
+  "mediaType": "ebook",
+  "release": "Frank Herbert - Dune (2005) [EPUB]",
+  "expect": "keep"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "The Martian",
+  "wantedAuthor": "Andy Weir",
+  "mediaType": "ebook",
+  "release": "Andy.Weir.The.Martian.2014.Retail.EPUB.eBook-BitBook",
+  "expect": "keep"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Project Hail Mary",
+  "wantedAuthor": "Andy Weir",
+  "mediaType": "ebook",
+  "release": "Andy Weir - Project Hail Mary (2021) (epub)",
+  "expect": "keep"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Gone Girl",
+  "wantedAuthor": "Gillian Flynn",
+  "mediaType": "ebook",
+  "release": "Gillian Flynn - Gone Girl (2012) [EPUB MOBI]",
+  "expect": "keep"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "The Chamber",
+  "wantedAuthor": "John Grisham",
+  "mediaType": "ebook",
+  "release": "John Grisham - The Chamber (1994) (epub)",
+  "expect": "keep",
+  "authorTitles": [
+   "The Firm",
+   "The Appeal"
+  ]
+ },
+ {
+  "source": "3247",
+  "wantedTitle": "Caroline's Child",
+  "wantedAuthor": "Debbie Macomber",
+  "mediaType": "ebook",
+  "release": "Debbie Macomber - Caroline's Child (epub)",
+  "expect": "keep",
+  "authorTitles": [
+   "Lonesome Cowboy",
+   "Texas Two-Step"
+  ]
+ },
+ {
+  "source": "3455",
+  "wantedTitle": "Hawk",
+  "wantedAuthor": "James Patterson",
+  "mediaType": "ebook",
+  "release": "James.Patterson-Hawk.A.Maximum.Ride.Novel.2020.Retail.EPUB.eBook-BitBook",
+  "expect": "keep",
+  "seriesTitle": "Maximum Ride: Hawk",
+  "seriesPosition": "1",
+  "authorTitles": [
+   "City of the Dead"
+  ]
+ },
+ {
+  "source": "3455",
+  "wantedTitle": "Tales of the Black Widowers",
+  "wantedAuthor": "Isaac Asimov",
+  "mediaType": "ebook",
+  "release": "Isaac Asimov - Tales of the Black Widowers (epub)",
+  "expect": "keep",
+  "seriesTitle": "Black Widowers",
+  "seriesPosition": "1",
+  "authorTitles": [
+   "More Tales of the Black Widowers"
+  ]
+ },
+ {
+  "source": "3455",
+  "wantedTitle": "Reunion in Death",
+  "wantedAuthor": "Nora Roberts",
+  "mediaType": "ebook",
+  "release": "Reunion in Death - Nora Roberts; J. D. Robb",
+  "expect": "keep"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Harry Potter and the Order of the Phoenix",
+  "wantedAuthor": "J.K. Rowling",
+  "mediaType": "ebook",
+  "release": "J.K. Rowling - Harry Potter and the Order of the Phoenix (epub)",
+  "expect": "keep",
+  "authorTitles": [
+   "Harry Potter and the Deathly Hallows"
+  ]
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "The Way of Kings",
+  "wantedAuthor": "Brandon Sanderson",
+  "mediaType": "audiobook",
+  "release": "Brandon Sanderson - The Way of Kings (Unabridged) (Michael Kramer & Kate Reading) [MP3 64kbps]",
+  "expect": "keep"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Rainbow Six",
+  "wantedAuthor": "Tom Clancy",
+  "mediaType": "ebook",
+  "release": "Tom Clancy - Rainbow Six (epub)",
+  "expect": "keep"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Tom Clancy's Rainbow Six",
+  "wantedAuthor": "Tom Clancy",
+  "mediaType": "ebook",
+  "release": "Tom Clancy - Rainbow Six [EPUB]",
+  "expect": "keep"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Mort",
+  "wantedAuthor": "Terry Pratchett",
+  "mediaType": "audiobook",
+  "release": "Terry Pratchett - Mort - read by Nigel Planer - Unabridged [M4B]",
+  "expect": "keep"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "The Eye of the World",
+  "wantedAuthor": "Robert Jordan",
+  "mediaType": "ebook",
+  "release": "Robert Jordan - The Eye of the World [Wheel of Time 01] (epub)",
+  "expect": "keep",
+  "seriesTitle": "The Wheel of Time",
+  "seriesPosition": "1"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Path of the Deathless Book 1",
+  "wantedAuthor": "OstensibleMammal",
+  "mediaType": "ebook",
+  "release": "OstensibleMammal - Path of the Deathless Book One (epub)",
+  "expect": "keep"
+ },
+ {
+  "source": "3247",
+  "wantedTitle": "Dominion of Blades: A LitRPG Adventure (Volume 1)",
+  "wantedAuthor": "Kari Nordmann",
+  "mediaType": "ebook",
+  "release": "Kari Nordmann - Dominion of Blades (Volume 1) [EPUB]",
+  "expect": "keep",
+  "seriesTitle": "Dominion of Blades",
+  "seriesPosition": "1",
+  "note": "synthetic author"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Becoming",
+  "wantedAuthor": "Michelle Obama",
+  "mediaType": "ebook",
+  "release": "Michelle Obama - Becoming (2018) retail epub",
+  "expect": "keep"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "The Subtle Art of Not Giving a F*ck",
+  "wantedAuthor": "Mark Manson",
+  "mediaType": "ebook",
+  "release": "Mark Manson - The Subtle Art of Not Giving a Fck (2016) [EPUB]",
+  "expect": "keep"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Guards! Guards!",
+  "wantedAuthor": "Terry Pratchett",
+  "mediaType": "ebook",
+  "release": "Pratchett, Terry - Guards! Guards! (epub mobi)",
+  "expect": "keep"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Ender's Game",
+  "wantedAuthor": "Orson Scott Card",
+  "mediaType": "ebook",
+  "release": "Orson.Scott.Card.Enders.Game.1985.RETAIL.EPUB-GRP",
+  "expect": "keep"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "L'Outsider",
+  "wantedAuthor": "Stephen King",
+  "mediaType": "ebook",
+  "release": "Stephen.King.L.Outsider.2018.FR.EPUB-GRP",
+  "expect": "keep"
+ },
+ {
+  "source": "3455/3247",
+  "wantedTitle": "The Chamber",
+  "wantedAuthor": "John Grisham",
+  "mediaType": "ebook",
+  "release": "John Grisham - Three Classic Thrillers (The Firm; The Appeal; The Chamber) (v5.0) (epub)",
+  "expect": "drop",
+  "authorTitles": [
+   "The Firm",
+   "The Appeal"
+  ],
+  "note": "multi-book pack, imported as the wanted book"
+ },
+ {
+  "source": "3455/3247",
+  "wantedTitle": "Caroline's Child",
+  "wantedAuthor": "Debbie Macomber",
+  "mediaType": "ebook",
+  "release": "Debbie Macomber - [Heart of Texas 01-03] - Lonesome Cowboy; Texas Two-Step; Caroline's Child (v5.0) (epub)",
+  "expect": "drop",
+  "seriesTitle": "Heart of Texas",
+  "seriesPosition": "3",
+  "authorTitles": [
+   "Lonesome Cowboy",
+   "Texas Two-Step"
+  ],
+  "note": "multi-book pack, zero padded range plus semicolon list"
+ },
+ {
+  "source": "3455",
+  "wantedTitle": "Steel Rain",
+  "wantedAuthor": "Kari Nordmann",
+  "mediaType": "ebook",
+  "release": "Steel Rain. Waffen SS Battles in the West 1944-1945 REPOST",
+  "expect": "drop",
+  "note": "other author whose title starts with the wanted title; synthetic wanted author, book unreleased",
+  "knownGap": true,
+  "gapReason": "Junk that passes. A different author's book with the wanted title as its opening words; the author trails the title and nothing compares it with the wanted author."
+ },
+ {
+  "source": "3455",
+  "wantedTitle": "Brothers and Sisters",
+  "wantedAuthor": "Kari Nordmann",
+  "mediaType": "ebook",
+  "release": "Brothers and Sisters of Disabled Children - P. Burke (2004) REPOST",
+  "expect": "drop",
+  "note": "other author, title starts with the wanted title",
+  "knownGap": true,
+  "gapReason": "Junk that passes. A different author's book whose title starts with the wanted title; the author trails the title and nothing compares it with the wanted author."
+ },
+ {
+  "source": "3455",
+  "wantedTitle": "Cold Comfort",
+  "wantedAuthor": "Kari Nordmann",
+  "mediaType": "ebook",
+  "release": "Cold Comfort   R.A. McGee [EN EPUB] [ebook] [ps]",
+  "expect": "drop",
+  "note": "other author, title equals the wanted title",
+  "knownGap": true,
+  "gapReason": "Junk that passes. A different author's book with exactly the wanted title; the release names its author after the title and the wanted author is not named at all."
+ },
+ {
+  "source": "3455/3461",
+  "wantedTitle": "Hawk",
+  "wantedAuthor": "James Patterson",
+  "mediaType": "ebook",
+  "release": "James.Patterson-City.Of.The.Dead.A.Maximum.Ride.Novel.Hawk.2.2021.Retail.EPUB.eBook-BitBook",
+  "expect": "drop",
+  "seriesTitle": "Maximum Ride: Hawk",
+  "seriesPosition": "1",
+  "authorTitles": [
+   "City of the Dead"
+  ],
+  "knownGap": true,
+  "gapReason": "Junk that passes. Book 2 of the series, same author, with 'Hawk' only in the subtitle and the series number written 'Hawk.2'; the trailing number and other title rules do not stop it even with the library title and series position supplied."
+ },
+ {
+  "source": "3455/3461",
+  "wantedTitle": "Hawk",
+  "wantedAuthor": "James Patterson",
+  "mediaType": "ebook",
+  "release": "James.Patterson.-.City.Of.The.Dead.A.Maximum.Ride.Novel.Hawk.2.2021.Retail.EPUB.eBook-BitBook",
+  "expect": "drop",
+  "seriesTitle": "Maximum Ride: Hawk",
+  "seriesPosition": "1",
+  "authorTitles": [
+   "City of the Dead"
+  ],
+  "knownGap": true,
+  "gapReason": "Junk that passes. Same as the previous Hawk case with a different separator, and with a re-upload suffix for the third."
+ },
+ {
+  "source": "3455/3461",
+  "wantedTitle": "Hawk",
+  "wantedAuthor": "James Patterson",
+  "mediaType": "ebook",
+  "release": "James.Patterson.-.City.Of.The.Dead.A.Maximum.Ride.Novel.Hawk.2.2021.Retail.EPUB.eBook-BitBook-xpost",
+  "expect": "drop",
+  "seriesTitle": "Maximum Ride: Hawk",
+  "seriesPosition": "1",
+  "authorTitles": [
+   "City of the Dead"
+  ],
+  "knownGap": true,
+  "gapReason": "Junk that passes. Same as the previous Hawk case with a different separator, and with a re-upload suffix for the third."
+ },
+ {
+  "source": "3455",
+  "wantedTitle": "Tales of the Black Widowers",
+  "wantedAuthor": "Isaac Asimov",
+  "mediaType": "ebook",
+  "release": "Isaac Asimov - [Black Widowers 02] - More Tales of the Black Widowers (epub)",
+  "expect": "drop",
+  "seriesTitle": "Black Widowers",
+  "seriesPosition": "1",
+  "authorTitles": [
+   "More Tales of the Black Widowers"
+  ],
+  "knownGap": true,
+  "gapReason": "Junk that passes. A sibling title that contains the wanted title; the library title and series position are supplied and it is still kept."
+ },
+ {
+  "source": "3455",
+  "wantedTitle": "Hawk",
+  "wantedAuthor": "James Patterson",
+  "mediaType": "ebook",
+  "release": "James Patterson - City of the Dead (A Maximum Ride Novel) (epub)",
+  "expect": "drop",
+  "seriesTitle": "Maximum Ride: Hawk",
+  "seriesPosition": "1",
+  "authorTitles": [
+   "City of the Dead"
+  ],
+  "note": "same wrong book without the Hawk word"
+ },
+ {
+  "source": "3247",
+  "wantedTitle": "Dominion of Blades: A LitRPG Adventure (Volume 1)",
+  "wantedAuthor": "Kari Nordmann",
+  "mediaType": "audiobook",
+  "release": "Kari Nordmann - Dominion of Blades 1-2 [MP3]",
+  "expect": "drop",
+  "seriesTitle": "Dominion of Blades",
+  "seriesPosition": "1",
+  "note": "range directly after the wanted title, folder held book 1 and 2"
+ },
+ {
+  "source": "3247",
+  "wantedTitle": "Dominion of Blades: A LitRPG Adventure (Volume 1)",
+  "wantedAuthor": "Kari Nordmann",
+  "mediaType": "ebook",
+  "release": "Kari Nordmann - Dominion of Blades Series 1-7 (epub)",
+  "expect": "drop",
+  "seriesTitle": "Dominion of Blades",
+  "seriesPosition": "1"
+ },
+ {
+  "source": "3247",
+  "wantedTitle": "Dominion of Blades: A LitRPG Adventure (Volume 1)",
+  "wantedAuthor": "Kari Nordmann",
+  "mediaType": "ebook",
+  "release": "Kari Nordmann - Dominion of Blades (3 Books) (epub)",
+  "expect": "drop",
+  "seriesTitle": "Dominion of Blades",
+  "seriesPosition": "1"
+ },
+ {
+  "source": "3247",
+  "wantedTitle": "Dominion of Blades: A LitRPG Adventure (Volume 1)",
+  "wantedAuthor": "Kari Nordmann",
+  "mediaType": "ebook",
+  "release": "Kari Nordmann - Dominion of Blades Series Pack (epub)",
+  "expect": "drop",
+  "seriesTitle": "Dominion of Blades",
+  "seriesPosition": "1"
+ },
+ {
+  "source": "3247",
+  "wantedTitle": "Dominion of Blades: A LitRPG Adventure (Volume 1)",
+  "wantedAuthor": "Kari Nordmann",
+  "mediaType": "ebook",
+  "release": "Kari Nordmann - Dominion of Blades Complete Collection Books 1-3 (epub)",
+  "expect": "drop",
+  "seriesTitle": "Dominion of Blades",
+  "seriesPosition": "1"
+ },
+ {
+  "source": "3388",
+  "wantedTitle": "Harry Potter en de Orde van de Feniks",
+  "wantedAuthor": "J.K. Rowling",
+  "mediaType": "audiobook",
+  "release": "J.K. Rowling - Harry Potter en de Relieken van de Dood [MP3]",
+  "expect": "drop",
+  "seriesTitle": "Harry Potter",
+  "seriesPosition": "5",
+  "authorTitles": [
+   "Harry Potter en de Relieken van de Dood"
+  ]
+ },
+ {
+  "source": "3388",
+  "wantedTitle": "Harry Potter and the Order of the Phoenix",
+  "wantedAuthor": "J.K. Rowling",
+  "mediaType": "audiobook",
+  "release": "Harry Potter 07 - De Relieken van de Dood - J.K. Rowling [MP3]",
+  "expect": "drop",
+  "seriesTitle": "Harry Potter",
+  "seriesPosition": "5",
+  "authorTitles": [
+   "Harry Potter and the Deathly Hallows"
+  ]
+ },
+ {
+  "source": "3388",
+  "wantedTitle": "Harry Potter and the Order of the Phoenix",
+  "wantedAuthor": "J.K. Rowling",
+  "mediaType": "ebook",
+  "release": "J.K. Rowling - Harry Potter and the Deathly Hallows (epub)",
+  "expect": "drop",
+  "seriesTitle": "Harry Potter",
+  "seriesPosition": "5",
+  "authorTitles": [
+   "Harry Potter and the Deathly Hallows"
+  ]
+ },
+ {
+  "source": "2921",
+  "wantedTitle": "Path of the Deathless Book 1",
+  "wantedAuthor": "OstensibleMammal",
+  "mediaType": "ebook",
+  "release": "OstensibleMammal - Path of the Deathless Book 2 (epub)",
+  "expect": "drop"
+ },
+ {
+  "source": "2502",
+  "wantedTitle": "Dune",
+  "wantedAuthor": "Frank Herbert",
+  "mediaType": "ebook",
+  "release": "Dune - Pamela Barnes (2012) (epub)",
+  "expect": "drop",
+  "note": "different author, same title"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "12 Rules for Life",
+  "wantedAuthor": "Jordan B. Peterson",
+  "mediaType": "ebook",
+  "release": "Jordan B. Peterson - 12 More Rules for Life (epub)",
+  "expect": "drop"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Dune",
+  "wantedAuthor": "Frank Herbert",
+  "mediaType": "ebook",
+  "release": "Summary of Dune by Frank Herbert - Study Guide (epub)",
+  "expect": "drop",
+  "note": "study aid",
+  "knownGap": true,
+  "gapReason": "Junk that passes. A study aid about the wanted book; the wanted title and author are both named and nothing rejects the summary wording here."
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Dune",
+  "wantedAuthor": "Frank Herbert",
+  "mediaType": "ebook",
+  "release": "Brian Herbert - Dune: Paul of Dune (epub)",
+  "expect": "drop",
+  "note": "sibling by another author"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Gone Girl",
+  "wantedAuthor": "Gillian Flynn",
+  "mediaType": "ebook",
+  "release": "Gone Girl 2014 1080p BluRay x264-GRP",
+  "expect": "drop",
+  "note": "film"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Gone Girl",
+  "wantedAuthor": "Gillian Flynn",
+  "mediaType": "ebook",
+  "release": "Gillian Flynn - Gone Girl (epub)",
+  "expect": "drop",
+  "category": "2040",
+  "note": "indexer files it under movies"
+ },
+ {
+  "source": "clear",
+  "wantedTitle": "Gone Girl",
+  "wantedAuthor": "Gillian Flynn",
+  "mediaType": "ebook",
+  "release": "Totally Unrelated Cookbook - Soups of the World (epub)",
+  "expect": "drop"
+ },
+ {
+  "source": "usenet",
+  "wantedTitle": "Dune",
+  "wantedAuthor": "Frank Herbert",
+  "mediaType": "ebook",
+  "release": "[01/45] - \"Frank Herbert - Dune.part01.rar\" yEnc (1/200)",
+  "expect": "drop"
+ },
+ {
+  "source": "usenet",
+  "wantedTitle": "Dune",
+  "wantedAuthor": "Frank Herbert",
+  "mediaType": "audiobook",
+  "release": "Frank Herbert - Dune Part 03 of 41 m4b",
+  "expect": "drop",
+  "note": "lone audio part"
+ },
+ {
+  "source": "usenet",
+  "wantedTitle": "Dune",
+  "wantedAuthor": "Frank Herbert",
+  "mediaType": "audiobook",
+  "release": "Frank Herbert - Dune Chapter 12 [MP3]",
+  "expect": "drop",
+  "note": "chapter fragment"
+ },
+ {
+  "source": "usenet",
+  "wantedTitle": "Dune",
+  "wantedAuthor": "Frank Herbert",
+  "mediaType": "audiobook",
+  "release": "Frank Herbert - Dune (Part 3 of 5) FLAC",
+  "expect": "drop"
+ },
+ {
+  "source": "usenet",
+  "wantedTitle": "Dune",
+  "wantedAuthor": "Frank Herbert",
+  "mediaType": "audiobook",
+  "release": "Frank Herbert - Dune Part 1 of 2 Complete MP3",
+  "expect": "keep",
+  "note": "whole set in two parts, kept by the whole set rule"
+ },
+ {
+  "source": "usenet",
+  "wantedTitle": "Dune",
+  "wantedAuthor": "Frank Herbert",
+  "mediaType": "audiobook",
+  "release": "Frank Herbert - Dune - All 5 Parts MP3",
+  "expect": "keep"
+ },
+ {
+  "source": "usenet",
+  "wantedTitle": "Dune",
+  "wantedAuthor": "Frank Herbert",
+  "mediaType": "audiobook",
+  "release": "Frank Herbert - Dune (Unabridged) [MP3 64kbps]",
+  "expect": "keep"
+ },
+ {
+  "source": "falsedrop",
+  "wantedTitle": "The Hobbit",
+  "wantedAuthor": "J.R.R. Tolkien",
+  "mediaType": "ebook",
+  "release": "J.R.R. Tolkien - The Hobbit, or There and Back Again (epub)",
+  "expect": "keep",
+  "note": "alternate or title (#3409)"
+ },
+ {
+  "source": "falsedrop",
+  "wantedTitle": "Dune",
+  "wantedAuthor": "Frank Herbert",
+  "mediaType": "ebook",
+  "release": "Dune (Frank Herbert) - EPUB",
+  "expect": "keep"
+ },
+ {
+  "source": "falsedrop",
+  "wantedTitle": "The Name of the Wind",
+  "wantedAuthor": "Patrick Rothfuss",
+  "mediaType": "ebook",
+  "release": "Patrick Rothfuss - [Kingkiller Chronicle 01] - The Name of the Wind (epub)",
+  "expect": "keep",
+  "seriesTitle": "The Kingkiller Chronicle",
+  "seriesPosition": "1"
+ },
+ {
+  "source": "falsedrop",
+  "wantedTitle": "Mistborn: The Final Empire",
+  "wantedAuthor": "Brandon Sanderson",
+  "mediaType": "ebook",
+  "release": "Brandon Sanderson - Mistborn 01 - The Final Empire (epub)",
+  "expect": "keep",
+  "seriesTitle": "Mistborn",
+  "seriesPosition": "1"
+ },
+ {
+  "source": "falsedrop",
+  "wantedTitle": "Mistborn: The Final Empire",
+  "wantedAuthor": "Brandon Sanderson",
+  "mediaType": "ebook",
+  "release": "Brandon Sanderson - Mistborn (epub)",
+  "expect": "keep",
+  "seriesTitle": "Mistborn",
+  "seriesPosition": "1",
+  "note": "series name only, book 1 of the series"
+ },
+ {
+  "source": "falsedrop",
+  "wantedTitle": "Harry Potter and the Philosopher's Stone",
+  "wantedAuthor": "J.K. Rowling",
+  "mediaType": "ebook",
+  "release": "J.K. Rowling - Harry Potter and the Sorcerer's Stone (epub)",
+  "expect": "keep",
+  "note": "US title of the same book",
+  "knownGap": true,
+  "gapReason": "False drop, arguable. The US title of the same book; the keywords differ so the release is dropped as a different title. A person with the UK edition tracked might still want it."
+ },
+ {
+  "source": "falsedrop",
+  "wantedTitle": "Le Petit Prince",
+  "wantedAuthor": "Antoine de Saint-Exupéry",
+  "mediaType": "ebook",
+  "release": "Antoine de Saint-Exupery - Le Petit Prince (epub)",
+  "expect": "keep",
+  "knownGap": true,
+  "gapReason": "False drop. The unaccented spelling of the author does not match the accented author tokens; the accented control case below passes."
+ },
+ {
+  "source": "falsedrop",
+  "wantedTitle": "Dune",
+  "wantedAuthor": "Frank Herbert",
+  "mediaType": "ebook",
+  "release": "Herbert, Frank - Dune [Dune Chronicles 1] (azw3)",
+  "expect": "keep",
+  "seriesTitle": "Dune Chronicles",
+  "seriesPosition": "1"
+ },
+ {
+  "source": "falsedrop",
+  "wantedTitle": "Jurassic Park",
+  "wantedAuthor": "Michael Crichton",
+  "mediaType": "ebook",
+  "release": "Michael Crichton - Jurassic Park (1990) {epub}",
+  "expect": "keep"
+ },
+ {
+  "source": "falsedrop",
+  "wantedTitle": "Rendezvous with Rama",
+  "wantedAuthor": "Arthur C. Clarke",
+  "mediaType": "ebook",
+  "release": "Arthur C Clarke - Rendezvous With Rama (epub)",
+  "expect": "keep"
+ },
+ {
+  "source": "falsedrop",
+  "wantedTitle": "Le Petit Prince",
+  "wantedAuthor": "Antoine de Saint-Exupéry",
+  "mediaType": "ebook",
+  "release": "Antoine de Saint-Exupéry - Le Petit Prince (epub)",
+  "expect": "keep",
+  "note": "control for the unaccented spelling case above"
+ }
+]
