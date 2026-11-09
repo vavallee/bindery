@@ -27,6 +27,7 @@ import (
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/metrics"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/searchruns"
 )
 
 // CalibreSyncer is the narrow interface the scheduler calls to trigger a
@@ -240,7 +241,10 @@ type Scheduler struct {
 	// debugLog receives the audit trail of every automatic search, for
 	// GET /search/last-debug (#2154). Optional; nil records nothing.
 	debugLog *indexer.DebugLog
-	meta     *metadata.Aggregator
+	// searchRuns holds the pollable record of the searches a handler
+	// registered (#3133). Nil leaves every run call inert.
+	searchRuns *searchruns.Store
+	meta       *metadata.Aggregator
 
 	authors            *db.AuthorRepo
 	books              *db.BookRepo
@@ -465,6 +469,14 @@ func (s *Scheduler) WithRecommender(engine RecommendationEngine) {
 // rest) are recorded there next to the interactive ones (#2154).
 func (s *Scheduler) WithSearchDebugLog(l *indexer.DebugLog) {
 	s.debugLog = l
+}
+
+// WithSearchRuns shares the store behind GET /search/runs/{id}. A handler
+// registers a run and passes its id in the context; SearchAndGrabBook moves it
+// to running and finishes it with the outcome the completion log line carries
+// (#3133).
+func (s *Scheduler) WithSearchRuns(store *searchruns.Store) {
+	s.searchRuns = store
 }
 
 // WithOperatorUserID supplies the identity the recommendation job attributes
@@ -787,7 +799,17 @@ func (s *Scheduler) Stop() {
 // independent searches for whichever formats still lack a file on disk.
 // It is the same logic the 12-hour wanted-scan uses, promoted so on-add and
 // status-transition hooks can trigger a search without waiting for the next run.
+//
+// When ctx carries a run id (searchruns.WithRunID), the run is marked running
+// here and finished on the way out, whatever path the search takes. A caller
+// with no run id registers nothing: nobody holds an id to poll it by, and a
+// background sweep would push the runs people are polling out of the bounded
+// store.
 func (s *Scheduler) SearchAndGrabBook(ctx context.Context, book models.Book) {
+	if runID := searchruns.RunIDFrom(ctx); runID != "" {
+		s.searchRuns.Running(runID)
+		defer s.searchRuns.Finish(runID)
+	}
 	s.searchAndGrabFormats(ctx, book, neededFormats(&book), nil)
 }
 
@@ -812,7 +834,9 @@ func neededFormats(book *models.Book) []string {
 // one-off caller, which makes each invariant load happen lazily exactly as it
 // used to (#2370).
 func (s *Scheduler) searchAndGrabFormats(ctx context.Context, book models.Book, formats []string, sweep *sweepContext) {
+	runID := searchruns.RunIDFrom(ctx)
 	if len(formats) == 0 {
+		s.searchRuns.Record(runID, searchruns.Result{Outcome: searchruns.OutcomeNotSearched})
 		return
 	}
 	// The global auto-grab kill switch is enforced here, at the single point
@@ -823,6 +847,7 @@ func (s *Scheduler) searchAndGrabFormats(ctx context.Context, book models.Book, 
 	if !s.autoGrabEnabled(ctx) {
 		slog.Info("auto-grab disabled globally, skipping search",
 			"book_id", book.ID, "title", book.Title)
+		s.searchRuns.Record(runID, searchruns.Result{Outcome: "auto-grab disabled"})
 		return
 	}
 	// An unmonitored author's books are never grabbed automatically (#2742).
@@ -830,6 +855,7 @@ func (s *Scheduler) searchAndGrabFormats(ctx context.Context, book models.Book, 
 	// place a grab is dispatched from, so a new automatic caller inherits the
 	// rule rather than having to know it exists.
 	if s.skipUnmonitoredAuthor(ctx, book, sweep) {
+		s.searchRuns.Record(runID, searchruns.Result{Outcome: "unmonitored author"})
 		return
 	}
 	for _, mediaType := range formats {
@@ -1217,6 +1243,9 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	started := time.Now()
 	outcome := "aborted"
 	var indexerCount, rawResults, afterFilters, approved int
+	// grabbed is the release this search sent to a download client, for the
+	// run record (#3133). Title and indexer only; never the URL or GUID.
+	var grabbed *searchruns.Release
 	// dbg is the search's audit trail, set only when there is a debug log to
 	// record it in. It is recorded on the way out, with the outcome, so
 	// GET /search/last-debug shows automatic searches too (#2154).
@@ -1228,6 +1257,11 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 			dbg.Outcome = outcome
 			s.debugLog.RecordBackground(book.OwnerUserID, dbg)
 		}
+		s.searchRuns.Record(searchruns.RunIDFrom(ctx), searchruns.Result{
+			Outcome: outcome, Indexers: indexerCount, RawResults: rawResults,
+			AfterFilters: afterFilters, Approved: approved,
+			ElapsedMs: time.Since(started).Milliseconds(), Grabbed: grabbed,
+		})
 		slog.Info("book search finished",
 			"origin", string(indexer.SearchOriginFrom(ctx)),
 			"book", book.Title,
@@ -1737,6 +1771,10 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		slog.Warn("failed to update download status", "download_id", dl.ID, "status", models.StateDownloading, "error", err)
 	}
 	outcome = "grabbed"
+	grabbed = &searchruns.Release{
+		Title: best.Title, Indexer: best.IndexerName, Protocol: best.Protocol,
+		MediaType: mediaType, Size: best.Size,
+	}
 	slog.Info("sent to downloader", "client", client.Type, "title", best.Title)
 	// Record history for the auto-grab. Without this the History tab is
 	// empty for every scheduler-initiated grab (manual grabs via the queue

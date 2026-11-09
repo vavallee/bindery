@@ -27,6 +27,8 @@ const (
 // LibraryRequest is one row of the requests table (migration 089): a
 // requester asking for a book or an author to be added.
 type LibraryRequest struct {
+	// SearchRunID is the search an approval started, never stored (#3133).
+	SearchRunID string
 	ID          int64
 	OwnerUserID int64
 	// OwnerUsername is joined in for the admin queue only.

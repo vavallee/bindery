@@ -13,6 +13,7 @@ import (
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/searchruns"
 )
 
 // addBookParams is everything an Add Book needs, independent of HTTP. The
@@ -59,6 +60,9 @@ type addBookResult struct {
 	Author *models.Author
 	// AuthorCreated is true when this call inserted the author row.
 	AuthorCreated bool
+	// SearchRunID is the run of the search on add this call started, for GET
+	// /search/runs/{id}. Empty when no search was started (#3133).
+	SearchRunID string
 }
 
 // Refusals from addBookCore that carry no data. The AddBook handler maps
@@ -655,8 +659,13 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 	// explicitly asked to search on add, so the author monitoring rule must
 	// leave it alone. The other OriginAuthor site is the catalogue sync fanning
 	// out over works it discovered by itself, which the rule does suppress.
+	// The run id lets the caller poll how this search ends (#3133); it is on
+	// the result and on the book the AddBook handler writes back.
+	runID := ""
 	if req.SearchOnAdd && h.searcher != nil {
-		go h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(h.bgCtx(), indexer.OriginAdd), *book) // #nosec G118 -- intentional: search must outlive the request
+		runID = h.runs.Start(book.OwnerUserID, book.ID, string(indexer.OriginAdd))
+		book.SearchRunID = runID
+		go h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(searchruns.WithRunID(h.bgCtx(), runID), indexer.OriginAdd), *book) // #nosec G118 -- intentional: search must outlive the request
 	}
 
 	return addBookResult{
@@ -664,5 +673,6 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 		BookCreated:   bookInserted || fallbackSynced,
 		Author:        author,
 		AuthorCreated: authorWasJustCreated,
+		SearchRunID:   runID,
 	}, nil
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/searchruns"
 	"github.com/vavallee/bindery/internal/textutil"
 )
 
@@ -90,6 +91,7 @@ type AuthorHandler struct {
 	settings                    *db.SettingsRepo
 	profiles                    *db.MetadataProfileRepo
 	searcher                    BookSearcher
+	runs                        *searchruns.Store // optional; gives a search on add a pollable run (#3133)
 	finder                      LibraryFinder
 	editions                    *db.EditionRepo
 	roots                       *LibraryRoots // optional: library-root containment for delete
@@ -178,6 +180,13 @@ func (h *AuthorHandler) WithEditionFetcher(fetcher bookhydrate.EditionFetcher) *
 func (h *AuthorHandler) WithHardcoverFeatureSettings(settings *db.SettingsRepo, envEnabled bool) *AuthorHandler {
 	h.settings = settings
 	h.enhancedHardcoverEnvEnabled = envEnabled
+	return h
+}
+
+// WithSearchRuns attaches the store that gives a search on add a run id
+// (#3133). Optional.
+func (h *AuthorHandler) WithSearchRuns(runs *searchruns.Store) *AuthorHandler {
+	h.runs = runs
 	return h
 }
 

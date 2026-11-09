@@ -22,6 +22,7 @@ import (
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/searchruns"
 	"github.com/vavallee/bindery/internal/textutil"
 )
 
@@ -48,6 +49,15 @@ type BookHandler struct {
 	// context.Background() when not set; mirrors BulkHandler / AuthorHandler
 	// (see #846).
 	lifetimeCtx context.Context
+
+	// runs gives the search a status flip starts a pollable run (#3133).
+	runs *searchruns.Store
+}
+
+// WithSearchRuns attaches the store behind GET /search/runs/{id}. Optional.
+func (h *BookHandler) WithSearchRuns(runs *searchruns.Store) *BookHandler {
+	h.runs = runs
+	return h
 }
 
 // WithLifetimeCtx attaches the process-lifecycle context so the status-flip
@@ -692,7 +702,11 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if autoGrabEnabled {
-			go h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(bgCtx, indexer.OriginBook), b)
+			// The run id goes back on the response so a caller can poll how
+			// this search ends (#3133).
+			runID := h.runs.Start(b.OwnerUserID, b.ID, string(indexer.OriginBook))
+			book.SearchRunID = runID
+			go h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(searchruns.WithRunID(bgCtx, runID), indexer.OriginBook), b)
 		}
 	}
 

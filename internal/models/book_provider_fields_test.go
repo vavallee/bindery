@@ -53,6 +53,7 @@ var bookFieldDecisions = map[string]string{
 	"Author": "keep: joined", "ImportInFlight": "keep: transport", "Identifiers": "keep: joined",
 	"SeriesRefs": "keep: relinked by the caller", "ProviderISBNs": "keep: transport",
 	"CreditedAuthorForeignIDs": "keep: transport", "UnknownFields": "keep: transport", "Cleared": "keep: transport",
+	"SearchRunID": "keep: transport",
 }
 
 func TestProviderOwnedBookFields_EveryBookFieldDecided(t *testing.T) {

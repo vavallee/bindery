@@ -389,6 +389,9 @@ type fakeAdder struct {
 	lastAuthor createAuthorParams
 	// panicWith, when set, makes addBookCore panic with its value.
 	panicWith atomic.Pointer[string]
+	// runID is the search run id addBookCore reports, as when a search on add
+	// registered one (#3133).
+	runID string
 }
 
 func (a *fakeAdder) addBookCore(ctx context.Context, req addBookParams) (addBookResult, error) {
@@ -404,7 +407,7 @@ func (a *fakeAdder) addBookCore(ctx context.Context, req addBookParams) (addBook
 		return addBookResult{}, a.err
 	}
 	// No ids: the fake creates no rows for result_book_id to reference.
-	return addBookResult{}, nil
+	return addBookResult{SearchRunID: a.runID}, nil
 }
 
 func (a *fakeAdder) createAuthorCore(ctx context.Context, req createAuthorParams) (createAuthorResult, error) {
