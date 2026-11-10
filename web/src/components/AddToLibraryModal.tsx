@@ -12,6 +12,7 @@ import AddAuthorConfirm from './AddAuthorConfirm'
 import { AuthorAddDefaults, loadAuthorAddDefaults } from './authorAddDefaults'
 import AddBookConfirm from './AddBookConfirm'
 import { authorProviderKey } from '../util/authorMetadata'
+import { calendarYear } from '../util/calendarDate'
 import { providerDisplayName } from '../util/metadataSource'
 import { useModal } from './useModal'
 import CoverImage from './CoverImage'
@@ -267,7 +268,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
             <div className="text-xs text-fg-muted">{book.author.authorName}</div>
           )}
           {book.releaseDate && (
-            <div className="text-xs text-fg-muted">{new Date(book.releaseDate).getFullYear()}</div>
+            <div className="text-xs text-fg-muted">{calendarYear(book.releaseDate)}</div>
           )}
           <BookRating book={book} withCount className="block text-xs text-fg-muted" />
         </div>

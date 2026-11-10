@@ -23,6 +23,7 @@ import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
 import PackLabel from '../components/PackLabel'
 import ReleaseNarration from '../components/ReleaseNarration'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
+import { formatCalendarDate } from '../util/calendarDate'
 import { useClipboardCopy } from '../components/useClipboardCopy'
 import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
 import { safeHref } from '../util/safeHref'
@@ -1025,9 +1026,7 @@ function BookDetailPageInner() {
   const hasAnyFile = rows.length > 0
 
   const lang = languageName(book.language)
-  const publishedDate = book.releaseDate
-    ? new Date(book.releaseDate).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-    : null
+  const publishedDate = formatCalendarDate(book.releaseDate)
 
   // Mirrors models.Book.NeedsEbook/NeedsAudiobook, which is what
   // scheduler.SearchAndGrabBook feeds into neededFormats(): with no needed
