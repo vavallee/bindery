@@ -745,6 +745,18 @@ function BookDetailPageInner() {
       if (item && !item.ok) {
         throw new Error(item.error || t('bookDetail.autoSearchFailed'))
       }
+      // The search runs after the response, so "started" is only true if an
+      // indexer exists to ask. One look at the run settles the common case: a
+      // run that already finished having asked zero indexers means none is
+      // enabled. A run still queued or running keeps the started wording, and
+      // a failed lookup must not turn a started search into an error.
+      if (item?.runId) {
+        const run = await api.getSearchRun(item.runId).catch(() => null)
+        if (run && run.state === 'finished' && run.indexers === 0) {
+          setAutoSearchStatus({ ok: false, text: t('bookDetail.autoSearchNoIndexers') })
+          return
+        }
+      }
       setAutoSearchStatus({ ok: true, text: t('bookDetail.autoSearchStarted') })
     } catch (e) {
       setAutoSearchStatus({ ok: false, text: e instanceof Error ? e.message : t('bookDetail.autoSearchFailed') })

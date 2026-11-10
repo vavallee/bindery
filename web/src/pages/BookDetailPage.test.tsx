@@ -50,6 +50,7 @@ vi.mock('../api/client', async importOriginal => {
       listHistory: vi.fn(),
       searchBook: vi.fn(),
       searchBookAutomatic: vi.fn(),
+      getSearchRun: vi.fn(),
       listIndexers: vi.fn(),
       grab: vi.fn(),
       updateBook: vi.fn(),
@@ -2400,6 +2401,30 @@ describe('BookDetailPage automatic search (#2668)', () => {
     // the interactive button on this very page rather than telling the reader
     // to open a single book, which is where they already are.
     expect(translate('search.autoGrabDisabledSingleBook')).toContain('Metadata Profiles')
+  })
+
+  it('says no indexer is enabled when the run finished having asked none', async () => {
+    vi.mocked(api.searchBookAutomatic).mockResolvedValue({ results: { '42': { ok: true, queued: true, runId: 'r1' } } })
+    vi.mocked(api.getSearchRun).mockResolvedValue({ id: 'r1', state: 'finished', bookId: 42, outcome: 'no results', indexers: 0 })
+
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(autoLabel) }))
+
+    expect(await screen.findByText(translate('bookDetail.autoSearchNoIndexers'))).toBeInTheDocument()
+    expect(screen.queryByText(translate('bookDetail.autoSearchStarted'))).toBeNull()
+    expect(api.getSearchRun).toHaveBeenCalledWith('r1')
+  })
+
+  it('keeps the started wording while the run is still going', async () => {
+    vi.mocked(api.searchBookAutomatic).mockResolvedValue({ results: { '42': { ok: true, queued: true, runId: 'r1' } } })
+    vi.mocked(api.getSearchRun).mockResolvedValue({ id: 'r1', state: 'running', bookId: 42, indexers: 0 })
+
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(autoLabel) }))
+
+    expect(await screen.findByText(translate('bookDetail.autoSearchStarted'))).toBeInTheDocument()
   })
 
   it('surfaces a per book error from the automatic path', async () => {
