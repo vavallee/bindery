@@ -602,7 +602,7 @@ func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerU
 	// 7 produced a whole catalogue of NULL-owned (globally visible) book rows
 	// (#1872).
 	a.OwnerUserID = ownerUserID
-	if err := r.upsertIdentifierTx(ctx, tx, a.ID, a.ForeignID, now); err != nil {
+	if err := r.upsertIdentifierTx(ctx, tx, a.ID, a.ForeignID, now, true); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -655,7 +655,7 @@ func (r *AuthorRepo) ListAuthorIdentifiers(ctx context.Context, authorID int64) 
 }
 
 func (r *AuthorRepo) UpsertAuthorIdentifier(ctx context.Context, authorID int64, foreignID string) error {
-	return r.upsertIdentifierTx(ctx, r.exec, authorID, foreignID, time.Now().UTC())
+	return r.upsertIdentifierTx(ctx, r.exec, authorID, foreignID, time.Now().UTC(), false)
 }
 
 func (r *AuthorRepo) DeleteAuthorIdentifier(ctx context.Context, authorID int64, foreignID string) error {
@@ -671,7 +671,7 @@ func (r *AuthorRepo) DeleteAuthorIdentifier(ctx context.Context, authorID int64,
 	return nil
 }
 
-func (r *AuthorRepo) upsertIdentifierTx(ctx context.Context, exec dbExecutor, authorID int64, foreignID string, now time.Time) error {
+func (r *AuthorRepo) upsertIdentifierTx(ctx context.Context, exec dbExecutor, authorID int64, foreignID string, now time.Time, recheck bool) error {
 	foreignID = strings.TrimSpace(foreignID)
 	if authorID == 0 || foreignID == "" {
 		return nil
@@ -680,11 +680,16 @@ func (r *AuthorRepo) upsertIdentifierTx(ctx context.Context, exec dbExecutor, au
 	if err != nil {
 		return err
 	}
-	if !held {
+	if !held || recheck {
 		// A row the author already has is only refreshed, which adds no
 		// duplicate, so it is not checked again. That keeps an author
 		// editable when the rule has a pair it would now refuse, such as two
 		// accounts' copies left behind after tenancy was turned off (#3555).
+		// recheck is for a write that makes foreignID the author's primary id
+		// (a create, a changed foreign_id, a DNB upgrade): an identifier row
+		// the author already holds must not let a primary collide with
+		// another author's, which the per owner index cannot see across
+		// owners.
 		holder, err := identifierHolder(ctx, exec, authorID, foreignID)
 		if err != nil {
 			return err
@@ -965,10 +970,10 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, authorID int64, cu
 	if affected == 0 {
 		return nil
 	}
-	if err := r.upsertIdentifierTx(ctx, tx, authorID, target.ForeignID, now); err != nil {
+	if err := r.upsertIdentifierTx(ctx, tx, authorID, target.ForeignID, now, true); err != nil {
 		return err
 	}
-	if err := r.upsertIdentifierTx(ctx, tx, authorID, currentForeignID, now); err != nil {
+	if err := r.upsertIdentifierTx(ctx, tx, authorID, currentForeignID, now, false); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1032,6 +1037,10 @@ func (r *AuthorRepo) updateAuthor(ctx context.Context, a *models.Author, expecte
 }
 
 func (r *AuthorRepo) update(ctx context.Context, exec dbExecutor, a *models.Author, now time.Time, expectedUpdatedAt string) (bool, error) {
+	var oldPrimary string
+	if err := exec.QueryRowContext(ctx, "SELECT foreign_id FROM authors WHERE id=?", a.ID).Scan(&oldPrimary); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("read author %d: %w", a.ID, err)
+	}
 	query := `
 		UPDATE authors SET foreign_id=?, name=?, sort_name=?, sort_key=?, name_sort_key=?, search_key=?, description=?, image_url=?, disambiguation=?,
 		                   ratings_count=?, average_rating=?, monitored=?, quality_profile_id=?,
@@ -1063,7 +1072,7 @@ func (r *AuthorRepo) update(ctx context.Context, exec dbExecutor, a *models.Auth
 			return false, nil
 		}
 	}
-	if err := r.upsertIdentifierTx(ctx, exec, a.ID, a.ForeignID, now); err != nil {
+	if err := r.upsertIdentifierTx(ctx, exec, a.ID, a.ForeignID, now, strings.TrimSpace(a.ForeignID) != strings.TrimSpace(oldPrimary)); err != nil {
 		return false, err
 	}
 	return true, nil

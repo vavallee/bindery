@@ -3223,20 +3223,23 @@ func (h *AuthorHandler) reparentMisattachedBook(ctx context.Context, existing *m
 		// on a transient DB error.
 		return false
 	}
+	// Two accounts' copies of one author (#3555) stay after tenancy is turned
+	// off. Moving a book between them would park one account's book under the
+	// other's copy, the next sync of its own copy would move it back, and
+	// deleting the other copy meanwhile would cascade into it. Copies are told
+	// by owners that differ while the rows share any provider id, primary or
+	// secondary, since the two may know the author under different primary
+	// ids. Such a pair never moves, whatever the tenancy setting or the
+	// credited list. Rows of different owners that share no id are not
+	// copies and keep the rules below.
+	if owner != nil && owner.OwnerUserID != author.OwnerUserID && h.sharesProviderID(ctx, owner, author) {
+		return false
+	}
 	switch {
 	case owner == nil:
 		// Owner row was deleted; the book is orphaned.
 	case owner.ForeignID == author.ForeignID:
-		// Duplicate author rows sharing one provider identity. Rows with
-		// different owners are not duplicates but two accounts' copies of the
-		// author (#3555), which stay after tenancy is turned off. Moving the
-		// book would park one account's book under the other's copy, the next
-		// sync of its own copy would move it back, and deleting the other copy
-		// meanwhile would cascade into it. So that pair never moves, whatever
-		// the tenancy setting.
-		if owner.OwnerUserID != author.OwnerUserID {
-			return false
-		}
+		// Duplicate author rows sharing one provider identity.
 	case len(creditedAuthorIDs) > 0 && !slices.Contains(creditedAuthorIDs, owner.ForeignID):
 		// The synced author's catalogue contains this work but the current
 		// owner isn't credited on it — a mis-parent, not a co-author.

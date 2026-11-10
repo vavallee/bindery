@@ -514,6 +514,21 @@ func foldCollidingAuthors(ctx context.Context, tx *sql.Tx, query string, args ..
 				return fmt.Errorf("fold author %d into %d: %w", p.from, p.into, err)
 			}
 		}
+		// Keep the folded author's name, so a wrong provider mapping can be
+		// undone by hand: as an alias on the kept row when that name differs,
+		// and in the log either way.
+		var fromName, fromForeignID, intoName string
+		if err := tx.QueryRowContext(ctx, "SELECT name, foreign_id FROM authors WHERE id = ?", p.from).Scan(&fromName, &fromForeignID); err != nil {
+			return fmt.Errorf("fold author %d into %d: %w", p.from, p.into, err)
+		}
+		if err := tx.QueryRowContext(ctx, "SELECT name FROM authors WHERE id = ?", p.into).Scan(&intoName); err != nil {
+			return fmt.Errorf("fold author %d into %d: %w", p.from, p.into, err)
+		}
+		if fromName != intoName {
+			if _, err := insertMergeAlias(ctx, tx, p.into, fromName, fromForeignID); err != nil {
+				return fmt.Errorf("fold author %d into %d: record name alias: %w", p.from, p.into, err)
+			}
+		}
 		dropped, err := moveAuthorIdentifiersTx(ctx, tx, p.from, p.into, time.Now().UTC())
 		if err != nil {
 			return fmt.Errorf("fold author %d into %d: %w", p.from, p.into, err)
@@ -526,7 +541,8 @@ func foldCollidingAuthors(ctx context.Context, tx *sql.Tx, query string, args ..
 			return fmt.Errorf("fold author %d into %d: %w", p.from, p.into, err)
 		}
 		slog.Info("user delete: folded author into the new owner's row for the same author",
-			"from_author_id", p.from, "into_author_id", p.into)
+			"from_author_id", p.from, "from_name", fromName, "from_foreign_id", fromForeignID,
+			"into_author_id", p.into, "into_name", intoName)
 	}
 	return nil
 }
