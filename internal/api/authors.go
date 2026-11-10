@@ -4317,8 +4317,15 @@ func (h *AuthorHandler) recordBookIdentities(ctx context.Context, book *models.B
 // by title alone; the sync has just judged them different works and created
 // created as its own row, and Create could not record ids another row holds.
 // Without the move, a lookup by the work's hc: id would keep finding from.
-// The row's own foreign id is never touched.
+// The row's own foreign id is never touched, and a row with a file is left
+// alone entirely.
 func (h *AuthorHandler) moveHealedAliases(ctx context.Context, from, created *models.Book) {
+	// A row with a file keeps every id it holds. Taking one off it could
+	// leave the user's book unresolvable by an id it was imported under, and
+	// the new row finds itself by its own foreign id regardless.
+	if from.EbookFilePath != "" || from.AudiobookFilePath != "" || from.FilePath != "" {
+		return
+	}
 	for _, id := range []string{created.ForeignID, created.HardcoverForeignID} {
 		id = strings.TrimSpace(id)
 		if id == "" || id == from.ForeignID {

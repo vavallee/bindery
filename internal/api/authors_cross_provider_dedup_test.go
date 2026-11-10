@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -151,6 +152,19 @@ func TestFetchAuthorBooks_UnrelatedWorkStillCreatesARow(t *testing.T) {
 	}
 }
 
+// anthologyCredits is the credit list of the 2011 anthology OL17400760W as
+// OpenLibrary serves it: 33 people, its editor John Joseph Adams first and
+// Stephen King 20th.
+func anthologyCredits() []string {
+	out := make([]string, 33)
+	for i := range out {
+		out[i] = "OLC" + strconv.Itoa(i) + "A"
+	}
+	out[0] = "OL6811804A"
+	out[19] = "OL19981A"
+	return out
+}
+
 // otherWorldsOpenLibrary is the primary provider for the #3792 tests: Stephen
 // King's OpenLibrary works list in its live order, King and Straub's own
 // record for the 2026 novel first (undated, because the search page that
@@ -207,7 +221,7 @@ func otherWorldsAggregator() *metadata.Aggregator {
 			ForeignID: "OL17400760W", Title: "Other Worlds Than These", SortTitle: "other worlds than these",
 			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, Genres: []string{},
 			MetadataProvider: "openlibrary", Language: "eng", ReleaseDate: &otherWorldsAnthologyDate,
-			CreditedAuthorForeignIDs: []string{"OL6811804A", "OL19981A"},
+			CreditedAuthorForeignIDs: anthologyCredits(),
 		},
 	}}}
 	hardcover := &otherWorldsHardcover{stubMetaProvider{name: "hardcover", authorWorksByName: []models.Book{{
@@ -560,25 +574,25 @@ func TestFetchAuthorBooks_TranslationStaysOneBook(t *testing.T) {
 	}
 }
 
-// seedHobbitWithAlias stores Tolkien's Hobbit (OL27482W, 1937) holding the
-// graphic novel's id OL219602W as an alias, the way the old title dedup left
-// upgraded libraries, optionally with a file on disk.
-func seedHobbitWithAlias(t *testing.T, bookRepo *db.BookRepo, author *models.Author, owned bool) *models.Book {
+// seedWithAlias stores the first record of a book (id, year) holding another
+// record's id as an alias, the way the old title dedup left upgraded
+// libraries, optionally with a file on disk.
+func seedWithAlias(t *testing.T, bookRepo *db.BookRepo, author *models.Author, title, id string, year int, alias string, owned bool) *models.Book {
 	t.Helper()
 	ctx := context.Background()
 	row := &models.Book{
-		ForeignID: "OL27482W", AuthorID: author.ID, Title: "The Hobbit", SortTitle: "The Hobbit",
-		Genres: []string{}, Status: models.BookStatusWanted, Monitored: true, ReleaseDate: yearDate(1937),
+		ForeignID: id, AuthorID: author.ID, Title: title, SortTitle: title,
+		Genres: []string{}, Status: models.BookStatusWanted, Monitored: true, ReleaseDate: yearDate(year),
 		MediaType: models.MediaTypeEbook, MetadataProvider: "openlibrary", Language: "eng",
 	}
 	if err := bookRepo.Create(ctx, row); err != nil {
 		t.Fatal(err)
 	}
-	if err := bookRepo.UpsertBookIdentifier(ctx, row.ID, "OL219602W"); err != nil {
+	if err := bookRepo.UpsertBookIdentifier(ctx, row.ID, alias); err != nil {
 		t.Fatal(err)
 	}
 	if owned {
-		file := filepath.Join(t.TempDir(), "The Hobbit.epub")
+		file := filepath.Join(t.TempDir(), title+".epub")
 		if err := os.WriteFile(file, []byte("epub"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -597,7 +611,7 @@ func TestFetchAuthorBooks_UpgradedHobbitStaysOneBook(t *testing.T) {
 	for _, owned := range []bool{false, true} {
 		t.Run(fmt.Sprint("owned=", owned), func(t *testing.T) {
 			h, bookRepo, author := sameTitleLibrary(t, tolkien, "J.R.R. Tolkien", "The Hobbit", hobbitWorks, 1992)
-			row := seedHobbitWithAlias(t, bookRepo, author, owned)
+			row := seedWithAlias(t, bookRepo, author, "The Hobbit", "OL27482W", 1937, "OL219602W", owned)
 			h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
 			got := assertOneBook(t, bookRepo, author)
 			if got.ID != row.ID {
@@ -642,5 +656,101 @@ func TestAdoptMergedHardcoverLanguages(t *testing.T) {
 		if b.Language != want[i] {
 			t.Errorf("%s: language %q, want %q", b.ForeignID, b.Language, want[i])
 		}
+	}
+}
+
+// Real credit shapes from OpenLibrary where a co-author leads one duplicate
+// record of a book and trails another. A rule of "credited first on one and
+// not the other" split these into two rows; they are one book each.
+var coAuthorShapes = []struct {
+	name, authorKey, authorName, title string
+	works                              []sameTitleWork
+	alias                              string // the second record, held as an alias by an upgraded row
+}{
+	{
+		"Violent Cases", "OL26320A", "Neil Gaiman", "Violent Cases",
+		[]sameTitleWork{
+			{"OL34989722W", 2003, []string{"OL23919A", "OL26320A", "OL1X"}},
+			{"OL679355W", 1987, []string{"OL26320A", "OL23919A"}},
+		},
+		"OL679355W",
+	},
+	{
+		"Reliquary", "OL2631A", "Douglas Preston", "Reliquary",
+		[]sameTitleWork{
+			{"OL1957711W", 1997, []string{"OL2632A", "OL2631A"}},
+			{"OL1957712W", 2001, []string{"OL2631A", "OL2632A"}},
+		},
+		"OL1957712W",
+	},
+}
+
+// TestFetchAuthorBooks_CoAuthorLeadingOneRecordStaysOneBook: fresh library and
+// upgraded library, owned and not.
+func TestFetchAuthorBooks_CoAuthorLeadingOneRecordStaysOneBook(t *testing.T) {
+	for _, shape := range coAuthorShapes {
+		t.Run(shape.name+"/fresh", func(t *testing.T) {
+			h, bookRepo, author := sameTitleLibrary(t, shape.authorKey, shape.authorName, shape.title, shape.works, 1990)
+			h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+			assertOneBook(t, bookRepo, author)
+		})
+		for _, owned := range []bool{false, true} {
+			t.Run(fmt.Sprint(shape.name, "/upgrade/owned=", owned), func(t *testing.T) {
+				h, bookRepo, author := sameTitleLibrary(t, shape.authorKey, shape.authorName, shape.title, shape.works, 1990)
+				first := shape.works[0]
+				row := seedWithAlias(t, bookRepo, author, shape.title, first.id, first.year, shape.alias, owned)
+				h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+				got := assertOneBook(t, bookRepo, author)
+				if got.ID != row.ID {
+					t.Errorf("the surviving row is %d, want the stored row %d", got.ID, row.ID)
+				}
+				alias, err := bookRepo.GetBookIdentifier(context.Background(), shape.alias)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if alias == nil || alias.BookID != row.ID {
+					t.Errorf("the %s alias moved: %+v", shape.alias, alias)
+				}
+			})
+		}
+	}
+}
+
+// TestFetchAuthorBooks_OtherWorldsThanTheseOwnedKeepsItsAliases: the heal
+// creates the novel for an owned anthology too, but leaves every id the owned
+// row holds where it is. The novel is found by its own OpenLibrary id.
+func TestFetchAuthorBooks_OtherWorldsThanTheseOwnedKeepsItsAliases(t *testing.T) {
+	h, bookRepo, author, anthology := otherWorldsLibrary(t, "any")
+	ctx := context.Background()
+	file := filepath.Join(t.TempDir(), "Other Worlds Than These.epub")
+	if err := os.WriteFile(file, []byte("epub"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := bookRepo.AddBookFile(ctx, anthology.ID, models.MediaTypeEbook, file); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"OL44907743W", otherWorldsNovelHC} {
+		if err := bookRepo.UpsertBookIdentifier(ctx, anthology.ID, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("author has %d books, want 2", len(got))
+	}
+	alias, err := bookRepo.GetBookIdentifier(ctx, otherWorldsNovelHC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alias == nil || alias.BookID != anthology.ID {
+		t.Errorf("the owned anthology lost the hc: alias: %+v", alias)
+	}
+	novel, err := bookRepo.GetByForeignID(ctx, "OL44907743W")
+	if err != nil || novel == nil || novel.ID == anthology.ID || !novel.Monitored {
+		t.Errorf("the novel should have its own monitored row: %+v %v", novel, err)
 	}
 }

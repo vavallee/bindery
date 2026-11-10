@@ -1035,32 +1035,63 @@ func ReleaseDatesRuleOutSameWork(a, b *time.Time) bool {
 	return gap > TitleBindMaxYearGap
 }
 
+// Thresholds for CreditsShowAnotherAuthorsWork. A compilation or anthology
+// lists many contributors; a book the author wrote lists a few.
+const (
+	anthologyMinCredits   = 5 // the stored work credits at least this many people
+	anthologyCreditRatio  = 3 // and at least this many times as many as the incoming work
+	anthologyLeadingSlots = 3 // and the author is not among its first this many
+)
+
 // CreditsShowAnotherAuthorsWork reports whether a stored row the catalogue
-// sync reached by title, or through an alias it holds, is a different work by
-// someone else than the incoming one, judged on author credits (#3792).
-// authorKey is the synced author's id in the catalogue the credits come from;
-// the credit lists are in that catalogue's order, primary credit first.
+// sync reached by title, or through an alias it holds, is an anthology or
+// compilation the synced author merely contributed to, as opposed to the
+// incoming work (#3792). authorKey is the synced author's id in the catalogue
+// the credits come from; the credit lists are in that catalogue's order,
+// primary credit first.
 //
-// It is true only when the incoming work's primary credit is this author and
-// the stored work's primary credit is someone else. King's own record for
-// "Other Worlds Than These" (OL44907743W) is credited King, Straub; the 2011
-// anthology of the same name (OL17400760W) is credited to its editor first
-// and to 32 contributors after him, King among them. That is two books, and
-// owning the anthology does not change it.
+// It splits only when ALL of these hold:
+//   - the incoming work's primary credit is the synced author;
+//   - the stored work is anthology sized: at least anthologyMinCredits
+//     credits, and at least anthologyCreditRatio times as many as the
+//     incoming work;
+//   - the author is not among the stored work's first anthologyLeadingSlots
+//     credits.
 //
-// Dates never decide this. One book under several work ids decades apart is
-// the normal state of OpenLibrary (The Hobbit is OL27482W 1937 and
-// OL45346371W 2026, Persuasion has dozens of records dated 1818 to 2016), and
-// all of them are credited to the author first, so they stay one row however
-// their dates disagree or whichever of them Hardcover's date binds to.
+// King's own "Other Worlds Than These" (OL44907743W) is credited King,
+// Straub. The 2011 anthology of the same name (OL17400760W) credits 33
+// people, its editor first and King 20th. That splits, owned or not.
 //
-// Missing credits on either side prove nothing and never split.
+// The shape is deliberately that narrow, because a bare "credited first on
+// one record and not on the other" splits real books. Co-authors swap places
+// across duplicate records of one book: Gaiman's Violent Cases is credited
+// McKean, Gaiman on one record and Gaiman, McKean on another, and Preston and
+// Child records lead with either name. Those lists are short, and the author
+// is first or second on them, so they never split. Dates play no part: one
+// book under several work ids decades apart is the normal state of
+// OpenLibrary (The Hobbit, Persuasion).
+//
+// Missing credits on either side prove nothing and never split. The stored
+// row's credits are known only while its own work is in the same fetch (they
+// are never stored), so the check does nothing for a row whose work the
+// provider no longer lists.
 func CreditsShowAnotherAuthorsWork(storedCredits, incomingCredits []string, authorKey string) bool {
 	authorKey = strings.TrimSpace(authorKey)
 	if authorKey == "" || len(storedCredits) == 0 || len(incomingCredits) == 0 {
 		return false
 	}
-	return strings.TrimSpace(incomingCredits[0]) == authorKey && strings.TrimSpace(storedCredits[0]) != authorKey
+	if strings.TrimSpace(incomingCredits[0]) != authorKey {
+		return false
+	}
+	if len(storedCredits) < anthologyMinCredits || len(storedCredits) < anthologyCreditRatio*len(incomingCredits) {
+		return false
+	}
+	for i := 0; i < anthologyLeadingSlots && i < len(storedCredits); i++ {
+		if strings.TrimSpace(storedCredits[i]) == authorKey {
+			return false
+		}
+	}
+	return true
 }
 
 func authorWorkMergeKey(title string) string {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1156,20 +1157,36 @@ func TestMergeAuthorWorks_CloseOrMissingDatesStillBind(t *testing.T) {
 }
 
 func TestCreditsShowAnotherAuthorsWork(t *testing.T) {
-	const king, tolkien = "OL19981A", "OL26320A"
+	const king, gaiman, preston = "OL19981A", "OL26320A", "OL1394244A"
+	anthology := func(authorAt int) []string {
+		out := make([]string, 33)
+		for i := range out {
+			out[i] = "OLC" + strconv.Itoa(i) + "A"
+		}
+		if authorAt >= 0 {
+			out[authorAt] = king
+		}
+		return out
+	}
 	cases := []struct {
 		name             string
 		stored, incoming []string
 		author           string
 		want             bool
 	}{
-		{"anthology edited by someone else against King's novel", []string{"OL6811804A", king}, []string{king, "OL32650A"}, king, true},
-		{"two records both credited to the author first", []string{tolkien}, []string{tolkien}, tolkien, false},
-		{"an adaptation incoming against the author's record", []string{tolkien}, []string{"OL2453782A", "OL758306A", tolkien}, tolkien, false},
-		{"incoming not credited to the author first", []string{"OL6811804A"}, []string{"OL32650A", king}, king, false},
+		{"33 credit anthology with King 20th against King's novel", anthology(19), []string{king, "OL32650A"}, king, true},
+		{"anthology the author is not credited on at all", anthology(-1), []string{king, "OL32650A"}, king, true},
+		{"five credits, author fourth, against a sole credit", []string{"a", "b", "c", king, "e"}, []string{king}, king, true},
+		{"anthology with the author in the first slots", func() []string { l := anthology(-1); l[2] = king; return l }(), []string{king}, king, false},
+		{"co-authors swapped across duplicate records", []string{"OLMCKEANA", gaiman, "OLX"}, []string{gaiman, "OLMCKEANA"}, gaiman, false},
+		{"Preston and Child, Child first on the stored record", []string{"OLCHILDA", preston}, []string{preston, "OLCHILDA"}, preston, false},
+		{"four credits is not an anthology", []string{"a", "b", "c", "d"}, []string{king}, king, false},
+		{"five credits against two is not three times as many", []string{"a", "b", "c", "d", "e"}, []string{king, "x"}, king, false},
+		{"two records both credited to the author first", []string{gaiman}, []string{gaiman}, gaiman, false},
+		{"incoming not credited to the author first", anthology(-1), []string{"OL32650A", king}, king, false},
 		{"stored credits unknown", nil, []string{king}, king, false},
-		{"incoming credits unknown", []string{"OL6811804A"}, nil, king, false},
-		{"author key unknown", []string{"OL6811804A"}, []string{king}, "", false},
+		{"incoming credits unknown", anthology(19), nil, king, false},
+		{"author key unknown", anthology(19), []string{king}, "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
