@@ -78,15 +78,12 @@ The label belongs on the namespace, not in the chart, because Helm charts should
 
 ## Unraid (Community Applications)
 
-Bindery ships a Community Applications template at
-[`.github/unraid/bindery.xml`](../.github/unraid/bindery.xml). Once the
-template is registered with the CA feed, Unraid users can install Bindery
-from the **Apps** tab. Until then, paste the raw URL into Apps → "Click
-here to add a missing application":
-
-```
-https://raw.githubusercontent.com/vavallee/bindery/main/.github/unraid/bindery.xml
-```
+Bindery is in Community Applications. On the **Apps** tab, search for
+"bindery" and pick the entry by vavallee, which reads
+[`vavallee/unraid-templates`](https://github.com/vavallee/unraid-templates).
+An older community copy from the Selfhosters repository is listed too; both
+install the same image. The template's source is
+[`.github/unraid/bindery.xml`](../.github/unraid/bindery.xml).
 
 Defaults the template provides: bridge networking, port `8787`,
 `--user 99:100` (Unraid's `nobody:users`), and three prefilled mounts,
