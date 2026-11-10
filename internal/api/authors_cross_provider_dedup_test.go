@@ -754,3 +754,25 @@ func TestFetchAuthorBooks_OtherWorldsThanTheseOwnedKeepsItsAliases(t *testing.T)
 		t.Errorf("the novel should have its own monitored row: %+v %v", novel, err)
 	}
 }
+
+// TestFetchAuthorBooks_AnnotatedEditionStaysOneBook: Pride and Prejudice
+// OL43425577W credits five people with Austen fourth. An owned copy of it
+// beside the plain OL66524W is one book, not an anthology.
+func TestFetchAuthorBooks_AnnotatedEditionStaysOneBook(t *testing.T) {
+	const austen = "OL21594A"
+	works := []sameTitleWork{
+		{"OL43425577W", 2016, []string{"OLEDITORA", "OLANNOTA", "OLINTROA", austen, "OLILLUSA"}},
+		{"OL66524W", 1813, []string{austen}},
+	}
+	for _, owned := range []bool{false, true} {
+		t.Run(fmt.Sprint("owned=", owned), func(t *testing.T) {
+			h, bookRepo, author := sameTitleLibrary(t, austen, "Jane Austen", "Pride and Prejudice", works, 1813)
+			row := seedWithAlias(t, bookRepo, author, "Pride and Prejudice", "OL43425577W", 2016, "OL66524W", owned)
+			h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+			got := assertOneBook(t, bookRepo, author)
+			if got.ID != row.ID {
+				t.Errorf("the surviving row is %d, want the stored row %d", got.ID, row.ID)
+			}
+		})
+	}
+}

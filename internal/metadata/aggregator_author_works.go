@@ -1036,10 +1036,12 @@ func ReleaseDatesRuleOutSameWork(a, b *time.Time) bool {
 }
 
 // Thresholds for CreditsShowAnotherAuthorsWork. A compilation or anthology
-// lists many contributors; a book the author wrote lists a few.
+// lists many contributors; a book the author wrote lists a few, and an
+// annotated or illustrated edition a handful (Pride and Prejudice OL43425577W
+// credits five people, Austen fourth), which must stay under the line.
 const (
-	anthologyMinCredits   = 5 // the stored work credits at least this many people
-	anthologyCreditRatio  = 3 // and at least this many times as many as the incoming work
+	anthologyMinCredits   = 8 // the stored work credits at least this many people
+	anthologyCreditRatio  = 5 // and at least this many times as many as the incoming work
 	anthologyLeadingSlots = 3 // and the author is not among its first this many
 )
 
