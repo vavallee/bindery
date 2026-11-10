@@ -2852,7 +2852,21 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		//     behaviour — preserves the pre-#442 upgrade path).
 		//   • A duplicate that carries the same media_type as the existing row is
 		//     truly redundant and is silently skipped (no format gain).
-		if existing, seen := seenTitles.Lookup(b.Title); seen && existing != nil {
+		//
+		// A title is not proof on its own, though: OpenLibrary's 2011
+		// anthology "Other Worlds Than These" and Hardcover's 2026 novel of
+		// the same name are both under Stephen King, and binding the novel
+		// here recorded its Hardcover id on the anthology and never created
+		// it (#3792). A cross-provider pair whose dates rule that out goes on
+		// to the create path as the separate book it is.
+		titled, seen := seenTitles.Lookup(b.Title)
+		if seen && titled != nil && metadata.CrossProviderTitleMatchRuledOut(*titled, b) {
+			slog.Debug("not binding same-titled works whose release dates are too far apart",
+				"title", b.Title, "foreignId", b.ForeignID, "bookId", titled.ID, "bookForeignId", titled.ForeignID)
+			seen = false
+		}
+		if seen && titled != nil {
+			existing := titled
 			// existing is the row as this sync first saw it, and the
 			// provider calls since then leave plenty of time for an edit.
 			// Work from a fresh read and guard each write on it (#2926).

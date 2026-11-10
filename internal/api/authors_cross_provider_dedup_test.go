@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
@@ -143,5 +144,136 @@ func TestFetchAuthorBooks_UnrelatedWorkStillCreatesARow(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Fatalf("author has %d books, want 2; a distinct volume was collapsed", len(got))
+	}
+}
+
+// TestFetchAuthorBooks_SameTitleDecadeApartIsNotTheSameBook covers the sync
+// half of #3792. Once mergeAuthorWorks stops binding Stephen King's 2026
+// Hardcover novel "Other Worlds Than These" to OpenLibrary's 2011 anthology of
+// the same name, the sync receives both, and its title fallback must not bind
+// them back together: the novel used to land on the anthology row as a
+// "same-format duplicate", recording its Hardcover id there and never getting
+// a row of its own.
+func TestFetchAuthorBooks_SameTitleDecadeApartIsNotTheSameBook(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+
+	author := &models.Author{
+		ForeignID: "OL19981A", Name: "Stephen King", SortName: "King, Stephen",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	anthologyDate := time.Date(2011, 1, 1, 0, 0, 0, 0, time.UTC)
+	anthology := &models.Book{
+		ForeignID: "OL17400760W", AuthorID: author.ID,
+		Title: "Other Worlds Than These", SortTitle: "other worlds than these",
+		Genres: []string{}, Status: models.BookStatusWanted, ReleaseDate: &anthologyDate,
+		MediaType: models.MediaTypeEbook, MetadataProvider: "openlibrary", Language: "eng",
+	}
+	if err := bookRepo.Create(ctx, anthology); err != nil {
+		t.Fatal(err)
+	}
+
+	novelDate := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	works := []models.Book{
+		{
+			ForeignID: "OL17400760W", Title: "Other Worlds Than These", SortTitle: "other worlds than these",
+			Language: "eng", MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted,
+			MetadataProvider: "openlibrary", ReleaseDate: &anthologyDate,
+		},
+		{
+			ForeignID: "hc:other-worlds-than-these-a-talisman-novel-2026", Title: "Other Worlds Than These",
+			SortTitle: "other worlds than these", Language: "eng", MediaType: models.MediaTypeEbook,
+			Status: models.BookStatusWanted, MetadataProvider: "hardcover", ReleaseDate: &novelDate,
+		},
+	}
+	provider := &stubMetaProvider{works: works}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(provider),
+		settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		for _, b := range got {
+			t.Logf("book %d: %q (%s)", b.ID, b.Title, b.ForeignID)
+		}
+		t.Fatalf("author has %d books, want 2; the 2026 novel was folded into the 2011 anthology", len(got))
+	}
+	novel, err := bookRepo.GetByAnyForeignID(ctx, "hc:other-worlds-than-these-a-talisman-novel-2026")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if novel == nil || novel.ID == anthology.ID {
+		t.Fatalf("the novel's Hardcover id resolves to the anthology row: %+v", novel)
+	}
+	if novel.ReleaseDate == nil || novel.ReleaseDate.Year() != 2026 {
+		t.Errorf("the novel row should carry its own 2026 date, got %v", novel.ReleaseDate)
+	}
+}
+
+// TestFetchAuthorBooks_SameTitleCrossProviderCloseDatesStillMatch keeps the
+// ordinary cross-provider title match: the same book from Hardcover, dated a
+// couple of years after OpenLibrary's first edition, is still one row.
+func TestFetchAuthorBooks_SameTitleCrossProviderCloseDatesStillMatch(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	authorRepo := db.NewAuthorRepo(database)
+	bookRepo := db.NewBookRepo(database)
+	profileRepo := db.NewMetadataProfileRepo(database)
+	settingsRepo := db.NewSettingsRepo(database)
+
+	author := &models.Author{
+		ForeignID: "OL19981A", Name: "Stephen King", SortName: "King, Stephen",
+		MetadataProvider: "openlibrary", Monitored: false,
+	}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	olDate := time.Date(1984, 1, 1, 0, 0, 0, 0, time.UTC)
+	hcDate := time.Date(1986, 1, 1, 0, 0, 0, 0, time.UTC)
+	existing := &models.Book{
+		ForeignID: "OL81613W", AuthorID: author.ID,
+		Title: "The Talisman", SortTitle: "talisman",
+		Genres: []string{}, Status: models.BookStatusWanted, ReleaseDate: &olDate,
+		MediaType: models.MediaTypeEbook, MetadataProvider: "openlibrary", Language: "eng",
+	}
+	if err := bookRepo.Create(ctx, existing); err != nil {
+		t.Fatal(err)
+	}
+	works := []models.Book{{
+		ForeignID: "hc:the-talisman", Title: "The Talisman", SortTitle: "talisman",
+		Language: "eng", MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted,
+		MetadataProvider: "hardcover", ReleaseDate: &hcDate,
+	}}
+	provider := &stubMetaProvider{works: works}
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(provider),
+		settingsRepo, profileRepo, nil)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+
+	got, err := bookRepo.ListByAuthor(ctx, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("author has %d books, want 1; the same book was created twice", len(got))
 	}
 }
