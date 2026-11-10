@@ -147,26 +147,97 @@ func TestFetchAuthorBooks_UnrelatedWorkStillCreatesARow(t *testing.T) {
 	}
 }
 
-// TestFetchAuthorBooks_SameTitleDecadeApartIsNotTheSameBook covers the sync
-// half of #3792. Once mergeAuthorWorks stops binding Stephen King's 2026
-// Hardcover novel "Other Worlds Than These" to OpenLibrary's 2011 anthology of
-// the same name, the sync receives both, and its title fallback must not bind
-// them back together: the novel used to land on the anthology row as a
-// "same-format duplicate", recording its Hardcover id there and never getting
-// a row of its own.
-func TestFetchAuthorBooks_SameTitleDecadeApartIsNotTheSameBook(t *testing.T) {
+// otherWorldsOpenLibrary is the primary provider for the #3792 tests: Stephen
+// King's OpenLibrary works list in its live order, King and Straub's own
+// record for the 2026 novel first (undated, because the search page that
+// carries dates does not include it) and John Joseph Adams' 2011 anthology of
+// the same title second. Edition sampling calls King's record Portuguese: it
+// has one Portuguese edition and one with no language.
+type otherWorldsOpenLibrary struct {
+	stubMetaProvider
+}
+
+func (p *otherWorldsOpenLibrary) FillMissingWorkLanguages(_ context.Context, books []models.Book) int {
+	filled := 0
+	for i := range books {
+		if books[i].ForeignID == "OL44907743W" && books[i].Language == "" {
+			books[i].Language = "por"
+			filled++
+		}
+	}
+	return filled
+}
+
+// otherWorldsHardcover is the Hardcover supplement: King's catalogue holds the
+// novel, and it has English editions. Like the real client it answers language
+// evidence only for the hc: ids it is asked about.
+type otherWorldsHardcover struct {
+	stubMetaProvider
+}
+
+func (p *otherWorldsHardcover) GetAuthorWorkLanguageEvidence(_ context.Context, books []models.Book, _ []string) (map[string]metadata.AuthorWorkLanguageEvidence, error) {
+	out := map[string]metadata.AuthorWorkLanguageEvidence{}
+	for _, b := range books {
+		if b.ForeignID == otherWorldsNovelHC {
+			out[b.ForeignID] = metadata.AuthorWorkLanguageEvidence{State: metadata.AuthorWorkLanguageAllowed, Language: "eng"}
+		}
+	}
+	return out, nil
+}
+
+const otherWorldsNovelHC = "hc:other-worlds-than-these-a-talisman-novel-2026"
+
+var (
+	otherWorldsAnthologyDate = time.Date(2011, 1, 1, 0, 0, 0, 0, time.UTC)
+	otherWorldsNovelDate     = time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+)
+
+func otherWorldsAggregator() *metadata.Aggregator {
+	primary := &otherWorldsOpenLibrary{stubMetaProvider{name: "openlibrary", works: []models.Book{
+		{
+			ForeignID: "OL44907743W", Title: "Other Worlds Than These", SortTitle: "other worlds than these",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, Genres: []string{},
+			MetadataProvider: "openlibrary", CreditedAuthorForeignIDs: []string{"OL19981A", "OL19807A"},
+		},
+		{
+			ForeignID: "OL17400760W", Title: "Other Worlds Than These", SortTitle: "other worlds than these",
+			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, Genres: []string{},
+			MetadataProvider: "openlibrary", Language: "eng", ReleaseDate: &otherWorldsAnthologyDate,
+			CreditedAuthorForeignIDs: []string{"OL6811804A", "OL19981A"},
+		},
+	}}}
+	hardcover := &otherWorldsHardcover{stubMetaProvider{name: "hardcover", authorWorksByName: []models.Book{{
+		ForeignID: otherWorldsNovelHC, Title: "Other Worlds Than These", SortTitle: "other worlds than these",
+		MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, Genres: []string{},
+		MetadataProvider: "hardcover", ReleaseDate: &otherWorldsNovelDate,
+		SeriesRefs: []models.SeriesRef{{ForeignID: "hc-series:4521", Title: "The Talisman", Position: "3", Primary: true}},
+	}}}}
+	return metadata.NewAggregator(primary, hardcover).WithAudnexClient(nil)
+}
+
+// otherWorldsLibrary opens a library with Stephen King in it and the 2011
+// anthology already on his shelf, the reporter's starting point. allowed sets
+// the default metadata profile's languages ("any" for no filter).
+func otherWorldsLibrary(t *testing.T, allowed string) (*AuthorHandler, *db.BookRepo, *models.Author, *models.Book) {
+	t.Helper()
 	database, err := db.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
-
+	t.Cleanup(func() { database.Close() })
 	ctx := context.Background()
 	authorRepo := db.NewAuthorRepo(database)
 	bookRepo := db.NewBookRepo(database)
 	profileRepo := db.NewMetadataProfileRepo(database)
 	settingsRepo := db.NewSettingsRepo(database)
-
+	profile, err := profileRepo.GetByID(ctx, models.DefaultMetadataProfileID)
+	if err != nil || profile == nil {
+		t.Fatalf("default profile: %+v %v", profile, err)
+	}
+	profile.AllowedLanguages = allowed
+	if err := profileRepo.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
 	author := &models.Author{
 		ForeignID: "OL19981A", Name: "Stephen King", SortName: "King, Stephen",
 		MetadataProvider: "openlibrary", Monitored: false,
@@ -174,55 +245,98 @@ func TestFetchAuthorBooks_SameTitleDecadeApartIsNotTheSameBook(t *testing.T) {
 	if err := authorRepo.Create(ctx, author); err != nil {
 		t.Fatal(err)
 	}
-	anthologyDate := time.Date(2011, 1, 1, 0, 0, 0, 0, time.UTC)
 	anthology := &models.Book{
 		ForeignID: "OL17400760W", AuthorID: author.ID,
 		Title: "Other Worlds Than These", SortTitle: "other worlds than these",
-		Genres: []string{}, Status: models.BookStatusWanted, ReleaseDate: &anthologyDate,
+		Genres: []string{}, Status: models.BookStatusWanted, ReleaseDate: &otherWorldsAnthologyDate,
 		MediaType: models.MediaTypeEbook, MetadataProvider: "openlibrary", Language: "eng",
 	}
 	if err := bookRepo.Create(ctx, anthology); err != nil {
 		t.Fatal(err)
 	}
-
-	novelDate := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
-	works := []models.Book{
-		{
-			ForeignID: "OL17400760W", Title: "Other Worlds Than These", SortTitle: "other worlds than these",
-			Language: "eng", MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted,
-			MetadataProvider: "openlibrary", ReleaseDate: &anthologyDate,
-		},
-		{
-			ForeignID: "hc:other-worlds-than-these-a-talisman-novel-2026", Title: "Other Worlds Than These",
-			SortTitle: "other worlds than these", Language: "eng", MediaType: models.MediaTypeEbook,
-			Status: models.BookStatusWanted, MetadataProvider: "hardcover", ReleaseDate: &novelDate,
-		},
-	}
-	provider := &stubMetaProvider{works: works}
-	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(provider),
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, otherWorldsAggregator(),
 		settingsRepo, profileRepo, nil)
-	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+	return h, bookRepo, author, anthology
+}
 
+// assertOtherWorldsSplit checks the end state #3792 asks for: the anthology row
+// is still the anthology, and the novel has a row of its own that its
+// OpenLibrary and Hardcover ids both resolve to.
+func assertOtherWorldsSplit(t *testing.T, bookRepo *db.BookRepo, author *models.Author, anthology *models.Book) {
+	t.Helper()
+	ctx := context.Background()
 	got, err := bookRepo.ListByAuthor(ctx, author.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 {
 		for _, b := range got {
-			t.Logf("book %d: %q (%s)", b.ID, b.Title, b.ForeignID)
+			t.Logf("book %d: %q (%s) %v", b.ID, b.Title, b.ForeignID, b.ReleaseDate)
 		}
-		t.Fatalf("author has %d books, want 2; the 2026 novel was folded into the 2011 anthology", len(got))
+		t.Fatalf("author has %d books, want 2: the anthology and the novel", len(got))
 	}
-	novel, err := bookRepo.GetByAnyForeignID(ctx, "hc:other-worlds-than-these-a-talisman-novel-2026")
+	novel, err := bookRepo.GetByForeignID(ctx, "OL44907743W")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if novel == nil || novel.ID == anthology.ID {
-		t.Fatalf("the novel's Hardcover id resolves to the anthology row: %+v", novel)
+		t.Fatalf("King's own OpenLibrary record has no row of its own: %+v", novel)
 	}
 	if novel.ReleaseDate == nil || novel.ReleaseDate.Year() != 2026 {
-		t.Errorf("the novel row should carry its own 2026 date, got %v", novel.ReleaseDate)
+		t.Errorf("the novel row should carry the 2026 date, got %v", novel.ReleaseDate)
 	}
+	still, err := bookRepo.GetByID(ctx, anthology.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if still.ForeignID != "OL17400760W" || still.ReleaseDate == nil || still.ReleaseDate.Year() != 2011 {
+		t.Errorf("the anthology row changed: %+v", still)
+	}
+}
+
+// TestFetchAuthorBooks_OtherWorldsThanTheseGetsItsOwnRow is the end-to-end
+// regression for #3792, through the real aggregator and the catalogue sync,
+// with the works in the order OpenLibrary actually serves them. The novel used
+// to fold onto the anthology row through the sync's title fallback, which
+// recorded OL44907743W and the hc: id on the anthology and never created the
+// novel. With an English-only profile it was dropped before that: edition
+// sampling called King's record Portuguese, and the Hardcover evidence that
+// the novel has English editions was never asked for.
+func TestFetchAuthorBooks_OtherWorldsThanTheseGetsItsOwnRow(t *testing.T) {
+	for _, allowed := range []string{"any", "eng"} {
+		t.Run("languages="+allowed, func(t *testing.T) {
+			h, bookRepo, author, anthology := otherWorldsLibrary(t, allowed)
+			h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+			assertOtherWorldsSplit(t, bookRepo, author, anthology)
+			byHC, err := bookRepo.GetByAnyForeignID(context.Background(), otherWorldsNovelHC)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if byHC == nil || byHC.ForeignID != "OL44907743W" {
+				t.Errorf("the novel's Hardcover id should resolve to the novel row, got %+v", byHC)
+			}
+		})
+	}
+}
+
+// TestFetchAuthorBooks_OtherWorldsThanTheseHealsAnEarlierWrongBind covers the
+// libraries an earlier release already got wrong: the anthology row holds the
+// novel's OpenLibrary and Hardcover ids as aliases, so the id lookup resolved
+// the novel to it on every refresh. The next sync gives the novel its own row,
+// and the one after that finds it by its own id.
+func TestFetchAuthorBooks_OtherWorldsThanTheseHealsAnEarlierWrongBind(t *testing.T) {
+	h, bookRepo, author, anthology := otherWorldsLibrary(t, "any")
+	ctx := context.Background()
+	for _, id := range []string{"OL44907743W", otherWorldsNovelHC} {
+		if err := bookRepo.UpsertBookIdentifier(ctx, anthology.ID, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+	assertOtherWorldsSplit(t, bookRepo, author, anthology)
+
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+	assertOtherWorldsSplit(t, bookRepo, author, anthology)
 }
 
 // TestFetchAuthorBooks_SameTitleCrossProviderCloseDatesStillMatch keeps the

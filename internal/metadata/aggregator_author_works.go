@@ -156,12 +156,13 @@ func (a *aggregatorCore) GetAuthorWorkLanguageEvidence(ctx context.Context, book
 		}
 		merge(found)
 	}
+	asked, aliases := withMergedHardcoverAliases(books)
 	for _, enricher := range a.enrichers {
 		resolver, ok := enricher.(authorWorkLanguageEvidenceProvider)
 		if !ok {
 			continue
 		}
-		found, err := resolver.GetAuthorWorkLanguageEvidence(ctx, books, allowed)
+		found, err := resolver.GetAuthorWorkLanguageEvidence(ctx, asked, allowed)
 		if err != nil {
 			if !errors.Is(err, ErrProviderNotConfigured) {
 				slog.Warn("supplementing provider language evidence lookup failed; its works use the existing language fallbacks",
@@ -169,9 +170,53 @@ func (a *aggregatorCore) GetAuthorWorkLanguageEvidence(ctx context.Context, book
 			}
 			continue
 		}
+		for workID, hcID := range aliases {
+			if value, ok := found[hcID]; ok && value.State != AuthorWorkLanguageIndeterminate {
+				found[workID] = value
+			}
+		}
 		merge(found)
 	}
 	return evidence, nil
+}
+
+// withMergedHardcoverAliases extends books with one entry per merged work: a
+// primary-provider work that mergeAuthorWorks bound to a Hardcover book, asked
+// about under that book's hc: id. aliases maps the work's own foreign id to the
+// hc: id it was asked under.
+//
+// Hardcover answers only for hc: ids, so a merged OpenLibrary row used to get
+// no Hardcover evidence at all and was judged on OpenLibrary's edition sample
+// alone. For King's "Other Worlds Than These" that sample was one Portuguese
+// edition and one with no language, the majority vote said Portuguese, and an
+// English-only profile dropped the novel (#3792). Hardcover's edition evidence
+// is about the book the row is now bound to, so a definitive answer from it
+// stands for the row and outranks the sample in the sync's language filter.
+//
+// The alias carries no language of its own: Hardcover reads a work's scalar
+// language as its default edition's, and the OpenLibrary row's is not that.
+func withMergedHardcoverAliases(books []models.Book) ([]models.Book, map[string]string) {
+	var aliases map[string]string
+	present := make(map[string]bool, len(books))
+	for _, b := range books {
+		present[strings.TrimSpace(b.ForeignID)] = true
+	}
+	extended := books
+	for _, b := range books {
+		workID := strings.TrimSpace(b.ForeignID)
+		hcID := strings.TrimSpace(b.HardcoverForeignID)
+		if workID == "" || strings.HasPrefix(workID, "hc:") || !strings.HasPrefix(hcID, "hc:") || present[hcID] {
+			continue
+		}
+		if aliases == nil {
+			aliases = make(map[string]string)
+			extended = append(make([]models.Book, 0, len(books)+1), books...)
+		}
+		aliases[workID] = hcID
+		present[hcID] = true
+		extended = append(extended, models.Book{ForeignID: hcID, Title: b.Title, MetadataProvider: "hardcover"})
+	}
+	return extended, aliases
 }
 
 // FillMissingAuthorWorkLanguages asks the primary provider to derive a language
@@ -894,8 +939,8 @@ func (a *aggregatorCore) enrichMissingAuthorWorkCovers(ctx context.Context, book
 
 // mergeAuthorWorks folds the supplemental providers' works into the primary
 // list. A supplemental work whose title matches a primary one is taken as the
-// same work and its metadata merged in, unless the two release dates are too
-// far apart for that to be true (#3792); then it is kept as a row of its own.
+// same work and its metadata merged in; when several primary works share the
+// title, sameTitleBindTarget picks the one the dates agree with (#3792).
 func mergeAuthorWorks(primary, supplemental []models.Book) []models.Book {
 	books := make([]models.Book, 0, len(primary)+len(supplemental))
 	index := make(map[string][]int, len(primary)+len(supplemental))
@@ -910,63 +955,76 @@ func mergeAuthorWorks(primary, supplemental []models.Book) []models.Book {
 		if key == "" {
 			continue
 		}
-		candidates := index[key]
-		if pos, ok := sameTitleBindTarget(books, candidates, book); ok {
-			mergeAuthorWorkMetadata(&books[pos], book)
+		if candidates := index[key]; len(candidates) > 0 {
+			mergeAuthorWorkMetadata(&books[sameTitleBindTarget(books, candidates, book)], book)
 			continue
 		}
-		if len(candidates) > 0 {
-			slog.Debug("not merging same-titled works whose release dates are too far apart",
-				"title", book.Title, "foreignId", book.ForeignID, "primaryForeignId", books[candidates[0]].ForeignID)
-		}
-		index[key] = append(index[key], len(books))
+		index[key] = []int{len(books)}
 		books = append(books, book)
 	}
 	return books
 }
 
-// sameTitleBindTarget picks, among the rows sharing src's title, the first one
-// src can be bound to: the first whose release date does not rule it out. A
-// primary list can hold two works with one title (an anthology a story of the
-// author's appeared in, and the author's own book), so the first title hit is
-// not necessarily the right one.
-func sameTitleBindTarget(books []models.Book, candidates []int, src models.Book) (int, bool) {
+// sameTitleBindTarget picks which of the primary rows sharing src's title src
+// is bound to. candidates is never empty.
+//
+// A primary list can hold two different works under one title. OpenLibrary
+// lists Stephen King's own record for the 2026 King and Straub novel "Other
+// Worlds Than These" (undated there) and John Joseph Adams' 2011 anthology of
+// the same name (King has a story in it, and OpenLibrary credits every
+// contributor). Hardcover's 2026 novel belongs on the first, and the order the
+// list happens to be in must not decide it (#3792). So the choice goes, in
+// order: the first candidate whose date agrees with src's, then the first whose
+// date is unknown on either side, then the first candidate.
+//
+// The last step keeps the old title-only bind when every candidate's date
+// disagrees. A lone same-titled work years away is far more often one book
+// dated two ways (OpenLibrary dates the original-language first edition,
+// Hardcover the translation; or OpenLibrary's first_publish_year is simply
+// wrong) than two books, and splitting it would mint a duplicate row carrying
+// a recent date for monitoring to chase. The date only decides between
+// competing candidates.
+//
+// A shared author cannot make this choice. Both catalogues were fetched for the
+// same author, so every pair shares him by construction, and at this point the
+// OpenLibrary side carries author keys only, no names, so there is nothing for
+// textutil.MatchAuthorName to compare.
+func sameTitleBindTarget(books []models.Book, candidates []int, src models.Book) int {
+	unknown := -1
 	for _, pos := range candidates {
-		if !ReleaseDatesRuleOutSameWork(books[pos].ReleaseDate, src.ReleaseDate) {
-			return pos, true
+		switch {
+		case releaseDatesUnknown(books[pos].ReleaseDate, src.ReleaseDate):
+			if unknown < 0 {
+				unknown = pos
+			}
+		case !ReleaseDatesRuleOutSameWork(books[pos].ReleaseDate, src.ReleaseDate):
+			return pos
 		}
 	}
-	return 0, false
+	if unknown >= 0 {
+		return unknown
+	}
+	return candidates[0]
 }
 
-// TitleBindMaxYearGap is how many years apart two providers' release dates may
-// be while a matching title still binds the two records as one work.
+// TitleBindMaxYearGap is how many years apart two records' release dates may
+// be while a matching title can still bind them as one work (#3792).
 //
-// A title is all the OpenLibrary and Hardcover author catalogues share, and on
-// its own it bound Stephen King's 2026 novel "Other Worlds Than These" to John
-// Joseph Adams' 2011 anthology of the same name (#3792). The anthology took
-// over the novel's row, cover and date, so the sync filed a new release as
-// backlist and never wanted it.
-//
-// Requiring a shared author does not catch that. Both catalogues were fetched
-// for the same author, so every candidate pair shares him by construction, and
-// OpenLibrary credits all of an anthology's contributors, King among them. At
-// this point the OpenLibrary side also carries author keys only, no names, so
-// there is nothing for textutil.MatchAuthorName to compare.
-//
-// The dates do tell them apart, and both sides almost always carry one. The
-// limit is generous on purpose: OpenLibrary dates a work by its earliest
-// edition and Hardcover sometimes by a later default edition or a translation,
-// so the same book a few years apart is normal. A missed bind costs a second
-// row for the same title; a wrong one hides a new release, so the limit leans
-// towards binding.
+// It is generous on purpose. The same book is routinely dated a few years
+// apart by two catalogues: first edition against a later default edition, an
+// original against its translation. A gap past this, with a second record to
+// prefer or a distinct work id on each side, is a different book.
 const TitleBindMaxYearGap = 10
 
-// ReleaseDatesRuleOutSameWork reports whether two records matched by title are
-// too far apart in time to be one work. An unknown date on either side proves
-// nothing and never rules a match out.
+func releaseDatesUnknown(a, b *time.Time) bool {
+	return a == nil || b == nil || a.IsZero() || b.IsZero()
+}
+
+// ReleaseDatesRuleOutSameWork reports whether two records are too far apart in
+// time to be one work. An unknown date on either side proves nothing and never
+// rules a match out.
 func ReleaseDatesRuleOutSameWork(a, b *time.Time) bool {
-	if a == nil || b == nil || a.IsZero() || b.IsZero() {
+	if releaseDatesUnknown(a, b) {
 		return false
 	}
 	gap := a.Year() - b.Year()
@@ -976,19 +1034,58 @@ func ReleaseDatesRuleOutSameWork(a, b *time.Time) bool {
 	return gap > TitleBindMaxYearGap
 }
 
-// CrossProviderTitleMatchRuledOut is the same check for the catalogue sync's
-// title fallback, which binds an incoming work to a stored row when nothing
-// but the title connects them (#3792). It acts only when one side is an
-// OpenLibrary record and the other a Hardcover one, the pair mergeAuthorWorks
-// joins. Rows imported from a library (Audiobookshelf, Calibre, a manual add)
-// carry the date of whatever edition the user owns, and adopting them by title
-// is the point of the fallback, so they are left to it.
-func CrossProviderTitleMatchRuledOut(stored, incoming models.Book) bool {
-	a, b := normalizedProviderName(stored.MetadataProvider), normalizedProviderName(incoming.MetadataProvider)
-	if a == b || (a != "openlibrary" && a != "hardcover") || (b != "openlibrary" && b != "hardcover") {
+// olWorkIDRe matches an OpenLibrary work id ("OL44907743W").
+var olWorkIDRe = regexp.MustCompile(`^OL\d+W$`)
+
+// workIDNamespace names the catalogue a book's foreign id belongs to, for the
+// two catalogues whose ids name one work each: "openlibrary" for an
+// OpenLibrary work id, "hardcover" for an hc: id. Anything else (calibre:
+// stubs, library imports, other providers) is "".
+func workIDNamespace(id string) string {
+	id = strings.TrimSpace(id)
+	switch {
+	case strings.HasPrefix(id, "hc:"):
+		return "hardcover"
+	case olWorkIDRe.MatchString(id):
+		return "openlibrary"
+	}
+	return ""
+}
+
+// DistinctWorksByIDAndDate reports whether a stored book and an incoming work
+// are two different works by their own catalogue's account: both foreign ids
+// are work ids from the same catalogue (OpenLibrary or Hardcover), the ids
+// differ, and the release dates are too far apart for the catalogue to merely
+// be holding a duplicate record (#3792).
+//
+// It is for the catalogue sync, at the two places it binds a work to a row
+// through something weaker than the work's own id: the title fallback, and a
+// row found only through the work's Hardcover id. Rows from a library import
+// or a calibre: stub have no work id here and are never ruled out, because
+// adopting them by title is the point of the fallback.
+func DistinctWorksByIDAndDate(stored, incoming models.Book) bool {
+	ns := workIDNamespace(stored.ForeignID)
+	if ns == "" || ns != workIDNamespace(incoming.ForeignID) {
+		return false
+	}
+	if strings.TrimSpace(stored.ForeignID) == strings.TrimSpace(incoming.ForeignID) {
 		return false
 	}
 	return ReleaseDatesRuleOutSameWork(stored.ReleaseDate, incoming.ReleaseDate)
+}
+
+// TitleMatchRuledOut reports whether the catalogue sync's title fallback must
+// not bind incoming to stored: either the two carry different Hardcover ids,
+// or DistinctWorksByIDAndDate says they are different works (#3792).
+//
+// Different Hardcover ids alone are enough, with no date needed: each names
+// one Hardcover work, so two of them are two books whatever their titles say.
+func TitleMatchRuledOut(stored, incoming models.Book) bool {
+	a, b := hardcoverForeignIDForAuthorWork(stored), hardcoverForeignIDForAuthorWork(incoming)
+	if a != "" && b != "" && a != b {
+		return true
+	}
+	return DistinctWorksByIDAndDate(stored, incoming)
 }
 
 func authorWorkMergeKey(title string) string {

@@ -2654,6 +2654,22 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		// same book, and that id is exactly what the existing row was created
 		// with. Probing it turns a cross-provider duplicate into a match.
 		existing := h.resolveExistingBook(ctx, b.ForeignID, b.HardcoverForeignID)
+		// A row found through an alias rather than its own id may be one an
+		// earlier release bound to the wrong work by title: before #3792
+		// King's 2026 novel landed on the 2011 anthology of the same name, and
+		// the anthology row kept the novel's OpenLibrary and hc: ids as
+		// aliases. Every refresh then resolved the novel to it here. When the
+		// row's own work id and the incoming one are two different works by
+		// date, the alias is not trusted and the work is judged on its own
+		// (metadata.DistinctWorksByIDAndDate). The new row cannot claim the
+		// aliases the old one holds, but it is found by its own id from then
+		// on, so this happens once.
+		if existing != nil && existing.ForeignID != b.ForeignID && metadata.DistinctWorksByIDAndDate(*existing, b) {
+			slog.Info("not resolving a work through an id another work's row holds",
+				"title", b.Title, "foreignId", b.ForeignID, "hardcoverId", b.HardcoverForeignID,
+				"bookId", existing.ID, "bookForeignId", existing.ForeignID)
+			existing = nil
+		}
 
 		// Filter box-set/omnibus/carton "works" when the author's metadata
 		// profile has SkipPartBooks enabled. These are real OL records for a
@@ -2853,14 +2869,16 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		//   • A duplicate that carries the same media_type as the existing row is
 		//     truly redundant and is silently skipped (no format gain).
 		//
-		// A title is not proof on its own, though: OpenLibrary's 2011
-		// anthology "Other Worlds Than These" and Hardcover's 2026 novel of
-		// the same name are both under Stephen King, and binding the novel
-		// here recorded its Hardcover id on the anthology and never created
-		// it (#3792). A cross-provider pair whose dates rule that out goes on
-		// to the create path as the separate book it is.
+		// A title is not proof on its own, though. Stephen King's
+		// OpenLibrary list holds both his own record for the 2026 novel
+		// "Other Worlds Than These" and the 2011 anthology of the same name,
+		// and binding the novel here recorded its OpenLibrary and Hardcover
+		// ids on the anthology row and never created it (#3792). Two works
+		// with different Hardcover ids, or two distinct work ids from one
+		// catalogue whose dates disagree, go on to the create path as the
+		// separate books they are (metadata.TitleMatchRuledOut).
 		titled, seen := seenTitles.Lookup(b.Title)
-		if seen && titled != nil && metadata.CrossProviderTitleMatchRuledOut(*titled, b) {
+		if seen && titled != nil && metadata.TitleMatchRuledOut(*titled, b) {
 			slog.Debug("not binding same-titled works whose release dates are too far apart",
 				"title", b.Title, "foreignId", b.ForeignID, "bookId", titled.ID, "bookForeignId", titled.ForeignID)
 			seen = false
