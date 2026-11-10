@@ -724,6 +724,28 @@ function BookDetailPageInner() {
   // itself. This posts the book's single id to the bulk endpoint, which is the
   // only API entry point into scheduler.SearchAndGrabBook and already carries
   // the ownership check and the auto-grab refusal (see api/bulk.ts).
+  const noIndexerMessage = async (runId: string): Promise<string | null> => {
+    // Up to 3 looks about 300 ms apart, stopping at the first finished state.
+    let run: Awaited<ReturnType<typeof api.getSearchRun>> | null = null
+    for (let i = 0; i < 3; i++) {
+      if (i > 0) await new Promise(r => setTimeout(r, 300))
+      run = await api.getSearchRun(runId).catch(() => null)
+      if (!run || run.state === 'finished') break
+    }
+    // 'no results' is the outcome of a run that asked its indexers and got
+    // nothing, which is also what no enabled indexer looks like. Skips
+    // (unmonitored, auto-grab off, not searched) and failures keep "started".
+    if (!run || run.state !== 'finished' || run.outcome !== 'no results') return null
+    try {
+      const list = await api.listIndexers()
+      if (list.some(i => i.enabled)) return null
+      return t(list.length === 0 ? 'bookDetail.autoSearchNoIndexers' : 'bookDetail.autoSearchAllIndexersDisabled')
+    } catch {
+      // A 403 for a non admin, or any other failure: say nothing new.
+      return null
+    }
+  }
+
   const runAutoSearch = async () => {
     if (!book) return
     setAutoSearching(true)
@@ -746,14 +768,14 @@ function BookDetailPageInner() {
         throw new Error(item.error || t('bookDetail.autoSearchFailed'))
       }
       // The search runs after the response, so "started" is only true if an
-      // indexer exists to ask. One look at the run settles the common case: a
-      // run that already finished having asked zero indexers means none is
-      // enabled. A run still queued or running keeps the started wording, and
-      // a failed lookup must not turn a started search into an error.
+      // indexer exists to ask. Look at the run a few times (it may still be
+      // queued), and only when it finished having found nothing check the
+      // real enabled count: the run's own indexer count includes disabled
+      // ones. Any failure here keeps the "started" wording.
       if (item?.runId) {
-        const run = await api.getSearchRun(item.runId).catch(() => null)
-        if (run && run.state === 'finished' && run.indexers === 0) {
-          setAutoSearchStatus({ ok: false, text: t('bookDetail.autoSearchNoIndexers') })
+        const msg = await noIndexerMessage(item.runId)
+        if (msg) {
+          setAutoSearchStatus({ ok: false, text: msg })
           return
         }
       }
