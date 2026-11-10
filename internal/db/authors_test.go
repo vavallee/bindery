@@ -377,7 +377,7 @@ func TestAuthorRepo_UpgradeSyntheticDNB_RowUpdatedInPlace(t *testing.T) {
 		ImageURL:         "https://covers.openlibrary.org/a/id/foo.jpg",
 		MetadataProvider: "openlibrary",
 	}
-	if err := repo.UpgradeSyntheticDNB(ctx, synthetic.ForeignID, canonical); err != nil {
+	if err := repo.UpgradeSyntheticDNB(ctx, synthetic.ID, synthetic.ForeignID, canonical); err != nil {
 		t.Fatalf("UpgradeSyntheticDNB: %v", err)
 	}
 
@@ -419,7 +419,7 @@ func TestAuthorRepo_UpgradeSyntheticDNB_PreservesExistingDescriptiveFields(t *te
 	repo := NewAuthorRepo(database)
 	ctx := context.Background()
 
-	if err := repo.Create(ctx, &models.Author{
+	seeded := &models.Author{
 		ForeignID:        "dnb:author:x-y",
 		Name:             "X Y",
 		SortName:         "Y, X",
@@ -427,11 +427,12 @@ func TestAuthorRepo_UpgradeSyntheticDNB_PreservesExistingDescriptiveFields(t *te
 		ImageURL:         "kept.jpg",
 		Disambiguation:   "kept-disamb",
 		MetadataProvider: "dnb",
-	}); err != nil {
+	}
+	if err := repo.Create(ctx, seeded); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
-	if err := repo.UpgradeSyntheticDNB(ctx, "dnb:author:x-y", &models.Author{
+	if err := repo.UpgradeSyntheticDNB(ctx, seeded.ID, "dnb:author:x-y", &models.Author{
 		ForeignID:        "OL-X",
 		Name:             "X Y",
 		SortName:         "Y, X",
@@ -461,14 +462,17 @@ func TestAuthorRepo_UpgradeSyntheticDNB_BadArgs(t *testing.T) {
 	repo := NewAuthorRepo(database)
 	ctx := context.Background()
 
-	if err := repo.UpgradeSyntheticDNB(ctx, "", &models.Author{ForeignID: "OL-X"}); err == nil {
+	if err := repo.UpgradeSyntheticDNB(ctx, 1, "", &models.Author{ForeignID: "OL-X"}); err == nil {
 		t.Error("expected error when currentForeignID is empty")
 	}
-	if err := repo.UpgradeSyntheticDNB(ctx, "dnb:author:x", nil); err == nil {
+	if err := repo.UpgradeSyntheticDNB(ctx, 1, "dnb:author:x", nil); err == nil {
 		t.Error("expected error when target is nil")
 	}
-	if err := repo.UpgradeSyntheticDNB(ctx, "dnb:author:x", &models.Author{}); err == nil {
+	if err := repo.UpgradeSyntheticDNB(ctx, 1, "dnb:author:x", &models.Author{}); err == nil {
 		t.Error("expected error when target.ForeignID is empty")
+	}
+	if err := repo.UpgradeSyntheticDNB(ctx, 0, "dnb:author:x", &models.Author{ForeignID: "OL-X"}); err == nil {
+		t.Error("expected error when the author id is missing")
 	}
 }
 

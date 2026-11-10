@@ -624,12 +624,6 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 
 		// Look up or create the author
 		authorID, err := s.ensureAuthor(ctx, &book, nameIndex, ownerID, scopeUserID, qualityProfileID, rootFolderID)
-		if errors.Is(err, errAuthorOwnedByAnotherUser) {
-			slog.Info("hardcover list sync: book skipped, its author belongs to another user",
-				"title", book.Title, "author", book.Author.Name, "list_owner_user_id", scopeUserID)
-			countStat(func(st *SyncStats) { st.Skipped++ })
-			continue
-		}
 		if err != nil {
 			slog.Warn("failed to ensure author for book", "title", book.Title, "error", err)
 			countStat(func(st *SyncStats) { st.Failed++ })
@@ -848,13 +842,6 @@ func uniqueAuthorByName(index map[string][]models.Author, name string) *models.A
 	return &matches[0]
 }
 
-// errAuthorOwnedByAnotherUser reports that the book's author exists but is
-// owned by a user other than the list owner, under tenancy enforcement. It is
-// not a failure: authors.foreign_id is globally UNIQUE (migration 001), so
-// there is no parallel row to create, and the caller skips the book rather
-// than attaching it to an author its owner cannot see.
-var errAuthorOwnedByAnotherUser = errors.New("author is owned by another user")
-
 // ensureAuthor looks up the author by foreign ID, then by normalized name,
 // creating a minimal record only if neither matches. Returns the author's
 // database ID. ownerID (0 = global) and qualityProfileID (nil = the list has
@@ -882,14 +869,9 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIn
 	if existing != nil {
 		return existing.ID, nil
 	}
-	if scopeUserID != 0 {
-		// Nothing visible carries this foreign id. If another user's author
-		// holds it, creating would fail the UNIQUE constraint, so stop here
-		// with a reason the caller can report instead of a raw SQL error.
-		if foreign, ferr := s.authors.GetByAnyForeignID(ctx, book.Author.ForeignID); ferr == nil && foreign != nil {
-			return 0, errAuthorOwnedByAnotherUser
-		}
-	}
+	// Nothing the list owner can see carries this foreign id. Another user's
+	// author may, but authors are keyed per owner under tenancy (#3555), so
+	// the list owner gets their own row below rather than a skip.
 
 	// Name fallback: reuse an existing author with the same normalized name
 	// instead of spawning a parallel row, and attach the Hardcover foreign id
@@ -964,8 +946,10 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIn
 
 	if err := s.authors.CreateForUser(ctx, author, ownerID); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") || errors.Is(err, db.ErrAuthorIdentifierConflict) {
-			// Race: author created between our check and insert
-			existing, _ = s.authors.GetByAnyForeignID(ctx, author.ForeignID)
+			// Race: author created between our check and insert. Same scope
+			// as the lookup above, so the list never lands on an author
+			// another user owns.
+			existing, _ = s.authors.GetByAnyForeignIDForUser(ctx, author.ForeignID, scopeUserID)
 			if existing != nil {
 				return existing.ID, nil
 			}

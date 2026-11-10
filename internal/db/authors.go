@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -347,10 +348,25 @@ func (r *AuthorRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*mod
 	return &a, nil
 }
 
+// unscopedAuthorOrder picks one row when several accounts hold their own row
+// for the same provider id (#3555): a shared row (no owner) first, then the
+// oldest. The oldest is the row the instance would have held alone before
+// authors were keyed per owner, so an unscoped caller (an import, an admin, a
+// lookup with tenancy off) keeps resolving to the author it always did.
+const unscopedAuthorOrder = ` ORDER BY (owner_user_id IS NOT NULL), id LIMIT 1`
+
+// scopedAuthorOrder is the user scoped form: the caller's own row before a
+// shared one, then the oldest.
+const scopedAuthorOrder = ` ORDER BY (owner_user_id IS NULL), id LIMIT 1`
+
+// GetByForeignID returns the author whose primary provider id is foreignID,
+// from any account. When several accounts hold their own row for it, the
+// shared row wins, then the oldest (unscopedAuthorOrder). Code acting for a
+// user should call GetByForeignIDForUser.
 func (r *AuthorRepo) GetByForeignID(ctx context.Context, foreignID string) (*models.Author, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT `+authorSelectCols+`
-		FROM authors WHERE foreign_id = ?`, foreignID)
+		FROM authors WHERE foreign_id = ?`+unscopedAuthorOrder, foreignID)
 
 	a, err := scanAuthorRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -363,15 +379,16 @@ func (r *AuthorRepo) GetByForeignID(ctx context.Context, foreignID string) (*mod
 }
 
 // GetByForeignIDForUser returns the author with the given foreign_id that is
-// visible to userID — i.e. owned by that user or with a NULL owner. When
-// userID is 0 the search is global (same as GetByForeignID).
+// visible to userID, that is owned by that user or with a NULL owner, the
+// user's own row first. When userID is 0 the search is global (same as
+// GetByForeignID).
 func (r *AuthorRepo) GetByForeignIDForUser(ctx context.Context, foreignID string, userID int64) (*models.Author, error) {
 	if userID == 0 {
 		return r.GetByForeignID(ctx, foreignID)
 	}
 	row := r.db.QueryRowContext(ctx, `
 		SELECT `+authorSelectCols+`
-		FROM authors WHERE foreign_id = ? AND (owner_user_id = ? OR owner_user_id IS NULL)`, foreignID, userID)
+		FROM authors WHERE foreign_id = ? AND (owner_user_id = ? OR owner_user_id IS NULL)`+scopedAuthorOrder, foreignID, userID)
 
 	a, err := scanAuthorRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -397,7 +414,8 @@ func (r *AuthorRepo) GetByAnyForeignID(ctx context.Context, foreignID string) (*
 		SELECT `+authorSelectColsA+`
 		FROM author_identifiers ai
 		JOIN authors a ON a.id = ai.author_id
-		WHERE ai.foreign_id = ?`, foreignID)
+		WHERE ai.foreign_id = ?
+		ORDER BY (a.owner_user_id IS NOT NULL), a.id LIMIT 1`, foreignID)
 	a, err := scanAuthorRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -440,17 +458,22 @@ func (r *AuthorRepo) LibraryIDsByAnyForeignIDsForUser(ctx context.Context, forei
 	in := "(" + strings.Join(placeholders, ",") + ")"
 	scope := ""
 	var scopeArgs []any
+	// pref orders the rows of one foreign id the way the single row lookups
+	// do (#3555): unscoped, a shared row before an owned one; scoped, the
+	// user's own row before a shared one. Then the oldest.
+	pref := "(a.owner_user_id IS NOT NULL)"
 	if userID != 0 {
 		scope = " AND (a.owner_user_id = ? OR a.owner_user_id IS NULL)"
 		scopeArgs = []any{userID}
+		pref = "(a.owner_user_id IS NULL)"
 	}
 	// Primary ids sort first (rank 0) so the first row per foreign id wins.
-	//nolint:gosec // G202: in is generated ? placeholders and scope a fixed owner predicate; every foreign id and the user id are bound via args
-	query := `SELECT a.foreign_id, a.id, 0 AS rank FROM authors a WHERE a.foreign_id IN ` + in + scope + `
+	//nolint:gosec // G202: in is generated ? placeholders, scope a fixed owner predicate and pref a fixed expression; every foreign id and the user id are bound via args
+	query := `SELECT a.foreign_id, a.id, 0 AS rank, ` + pref + ` AS pref FROM authors a WHERE a.foreign_id IN ` + in + scope + `
 		UNION ALL
-		SELECT ai.foreign_id, a.id, 1 AS rank FROM author_identifiers ai
+		SELECT ai.foreign_id, a.id, 1 AS rank, ` + pref + ` AS pref FROM author_identifiers ai
 		JOIN authors a ON a.id = ai.author_id WHERE ai.foreign_id IN ` + in + scope + `
-		ORDER BY rank`
+		ORDER BY rank, pref, 2`
 	args := make([]any, 0, 2*(len(inArgs)+len(scopeArgs)))
 	args = append(args, inArgs...)
 	args = append(args, scopeArgs...)
@@ -464,8 +487,8 @@ func (r *AuthorRepo) LibraryIDsByAnyForeignIDsForUser(ctx context.Context, forei
 	for rows.Next() {
 		var foreignID string
 		var id int64
-		var rank int
-		if err := rows.Scan(&foreignID, &id, &rank); err != nil {
+		var rank, pref int
+		if err := rows.Scan(&foreignID, &id, &rank, &pref); err != nil {
 			return nil, fmt.Errorf("scan library author id: %w", err)
 		}
 		if _, dup := out[foreignID]; !dup {
@@ -494,7 +517,8 @@ func (r *AuthorRepo) GetByAnyForeignIDForUser(ctx context.Context, foreignID str
 		SELECT `+authorSelectColsA+`
 		FROM author_identifiers ai
 		JOIN authors a ON a.id = ai.author_id
-		WHERE ai.foreign_id = ? AND (a.owner_user_id = ? OR a.owner_user_id IS NULL)`, foreignID, userID)
+		WHERE ai.foreign_id = ? AND (a.owner_user_id = ? OR a.owner_user_id IS NULL)
+		ORDER BY (a.owner_user_id IS NULL), a.id LIMIT 1`, foreignID, userID)
 	a, err := scanAuthorRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -587,7 +611,11 @@ func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerU
 	return nil
 }
 
-// GetAuthorIdentifier returns the owner row for foreignID, or nil when unknown.
+// GetAuthorIdentifier returns the holder row for foreignID, or nil when
+// unknown. Under tenancy several accounts' authors can hold the same id
+// (#3555); the lowest author id is returned. To ask whether one particular
+// author holds it, use ListAuthorIdentifiers or DeleteAuthorIdentifier, which
+// take the author.
 func (r *AuthorRepo) GetAuthorIdentifier(ctx context.Context, foreignID string) (*models.AuthorIdentifier, error) {
 	foreignID = strings.TrimSpace(foreignID)
 	if foreignID == "" {
@@ -595,7 +623,8 @@ func (r *AuthorRepo) GetAuthorIdentifier(ctx context.Context, foreignID string) 
 	}
 	row := r.exec.QueryRowContext(ctx, `
 		SELECT author_id, provider, foreign_id, created_at, updated_at
-		FROM author_identifiers WHERE foreign_id = ?`, foreignID)
+		FROM author_identifiers WHERE foreign_id = ?
+		ORDER BY author_id LIMIT 1`, foreignID)
 	var out models.AuthorIdentifier
 	if err := row.Scan(&out.AuthorID, &out.Provider, &out.ForeignID, &out.CreatedAt, &out.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -647,31 +676,75 @@ func (r *AuthorRepo) upsertIdentifierTx(ctx context.Context, exec dbExecutor, au
 	if authorID == 0 || foreignID == "" {
 		return nil
 	}
+	holder, err := identifierHolder(ctx, exec, authorID, foreignID)
+	if err != nil {
+		return err
+	}
+	if holder != 0 {
+		return &AuthorIdentifierConflictError{ForeignID: foreignID, AuthorID: holder}
+	}
 	provider := models.AuthorProviderFromForeignID(foreignID)
-	result, err := exec.ExecContext(ctx, `
+	if _, err := exec.ExecContext(ctx, `
 		INSERT INTO author_identifiers (author_id, provider, foreign_id, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(foreign_id) DO UPDATE SET
+		ON CONFLICT(author_id, foreign_id) DO UPDATE SET
 			provider = excluded.provider,
-			updated_at = excluded.updated_at
-		WHERE author_identifiers.author_id = excluded.author_id`,
-		authorID, provider, foreignID, now, now)
-	if err != nil {
+			updated_at = excluded.updated_at`,
+		authorID, provider, foreignID, now, now); err != nil {
 		return fmt.Errorf("upsert author identifier %q: %w", foreignID, err)
 	}
-	affected, err := result.RowsAffected()
+	return nil
+}
+
+// identifierHolder returns the id of another author that already holds
+// foreignID in a way authorID may not share, or 0 when none does. It is the
+// uniqueness rule author_identifiers.foreign_id and authors.foreign_id used to
+// enforce on their own before authors were keyed per owner (#3555):
+//
+//   - With tenancy on, a provider id belongs to one author per owner, a NULL
+//     owner counting as owner 0 (the same key as the unique index on
+//     authors). Another account's row for the same author does not conflict.
+//   - With tenancy off, a provider id belongs to one author in the whole
+//     instance, as it always did: another author's identifier row conflicts,
+//     and so does another author's primary foreign_id when foreignID is
+//     authorID's own primary (the old authors.foreign_id UNIQUE).
+//
+// An identifier row whose author is gone conflicts in either mode, as it did
+// under the old UNIQUE. Callers run this inside the transaction that writes
+// the row, and the pool is a single connection, so the check and the write
+// cannot interleave with another writer.
+func identifierHolder(ctx context.Context, exec dbExecutor, authorID int64, foreignID string) (int64, error) {
+	var holder int64
+	var err error
+	if auth.EnforceTenancy() {
+		err = exec.QueryRowContext(ctx, `
+			SELECT ai.author_id
+			FROM author_identifiers ai
+			LEFT JOIN authors a ON a.id = ai.author_id
+			WHERE ai.foreign_id = ? AND ai.author_id <> ?
+			  AND (a.id IS NULL OR COALESCE(a.owner_user_id, 0) =
+			       (SELECT COALESCE(owner_user_id, 0) FROM authors WHERE id = ?))
+			ORDER BY ai.author_id LIMIT 1`,
+			foreignID, authorID, authorID).Scan(&holder)
+	} else {
+		err = exec.QueryRowContext(ctx, `
+			SELECT holder FROM (
+				SELECT author_id AS holder FROM author_identifiers
+				WHERE foreign_id = ? AND author_id <> ?
+				UNION ALL
+				SELECT id FROM authors
+				WHERE foreign_id = ? AND id <> ?
+				  AND foreign_id = (SELECT foreign_id FROM authors WHERE id = ?)
+			) ORDER BY holder LIMIT 1`,
+			foreignID, authorID, foreignID, authorID, authorID).Scan(&holder)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
 	if err != nil {
-		return fmt.Errorf("check author identifier %q: %w", foreignID, err)
+		return 0, fmt.Errorf("check author identifier holder %q: %w", foreignID, err)
 	}
-	if affected > 0 {
-		return nil
-	}
-	var ownerID int64
-	row := exec.QueryRowContext(ctx, "SELECT author_id FROM author_identifiers WHERE foreign_id = ?", foreignID)
-	if err := row.Scan(&ownerID); err != nil {
-		return fmt.Errorf("read author identifier owner %q: %w", foreignID, err)
-	}
-	return &AuthorIdentifierConflictError{ForeignID: foreignID, AuthorID: ownerID}
+	return holder, nil
 }
 
 // GetByDNBSyntheticName returns the synthetic DNB-only author row (one whose
@@ -735,13 +808,15 @@ func (r *AuthorRepo) GetByDNBSyntheticName(ctx context.Context, sortName string,
 // fields replaced. Existing relations (books, aliases) keep pointing at the
 // same primary-key row so the user keeps one author record.
 //
-// currentForeignID is matched by exact equality; pass the value previously
-// returned by GetByDNBSyntheticName. target carries the canonical fields.
+// authorID and currentForeignID identify the row; pass the id and foreign id
+// of the author GetByDNBSyntheticName returned. Both must match, so the
+// upgrade touches that one row and never another account's row carrying the
+// same synthetic id (#3555). target carries the canonical fields.
 // Returns an error only on a SQL failure — a no-op update (e.g. row gone)
 // is silent.
-func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID string, target *models.Author) error {
-	if currentForeignID == "" || target == nil || target.ForeignID == "" {
-		return fmt.Errorf("upgrade synthetic dnb: missing currentForeignID or target")
+func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, authorID int64, currentForeignID string, target *models.Author) error {
+	if authorID == 0 || currentForeignID == "" || target == nil || target.ForeignID == "" {
+		return fmt.Errorf("upgrade synthetic dnb: missing author, currentForeignID or target")
 	}
 	now := time.Now().UTC()
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -765,7 +840,7 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 		    disambiguation    = CASE WHEN ? != '' THEN ? ELSE disambiguation END,
 		    metadata_provider = COALESCE(NULLIF(?, ''), metadata_provider),
 		    updated_at        = ?
-		WHERE foreign_id = ?`,
+		WHERE id = ? AND foreign_id = ?`,
 		target.ForeignID,                                // foreign_id =
 		target.Name,                                     // name = COALESCE(NULLIF(?,''), name)
 		target.SortName,                                 // sort_name = COALESCE(NULLIF(?,''), sort_name)
@@ -783,7 +858,8 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 		target.Disambiguation, target.Disambiguation, // disambiguation
 		target.MetadataProvider, // metadata_provider = COALESCE(NULLIF(?,''), metadata_provider)
 		timeValueArg(now),       // updated_at
-		currentForeignID)        // WHERE foreign_id = ?
+		authorID,                // WHERE id = ?
+		currentForeignID)        // AND foreign_id = ?
 	if err != nil {
 		return fmt.Errorf("upgrade synthetic dnb author %q -> %q: %w", currentForeignID, target.ForeignID, err)
 	}
@@ -793,10 +869,6 @@ func (r *AuthorRepo) UpgradeSyntheticDNB(ctx context.Context, currentForeignID s
 	}
 	if affected == 0 {
 		return nil
-	}
-	var authorID int64
-	if err := tx.QueryRowContext(ctx, "SELECT id FROM authors WHERE foreign_id = ?", target.ForeignID).Scan(&authorID); err != nil {
-		return fmt.Errorf("lookup upgraded dnb author %q: %w", target.ForeignID, err)
 	}
 	if err := r.upsertIdentifierTx(ctx, tx, authorID, target.ForeignID, now); err != nil {
 		return err

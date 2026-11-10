@@ -797,13 +797,8 @@ func (i *Importer) rollbackAuthorIdentifiers(ctx context.Context, authors *db.Au
 		if strings.EqualFold(foreignID, currentPrimary) {
 			continue
 		}
-		identifier, err := authors.GetAuthorIdentifier(ctx, foreignID)
-		if err != nil {
-			return err
-		}
-		if identifier == nil || identifier.AuthorID != author.ID {
-			continue
-		}
+		// Keyed on this author: removes only its row, a no op when it does
+		// not hold the id. Several accounts' authors can hold one id (#3555).
 		if err := authors.DeleteAuthorIdentifier(ctx, author.ID, foreignID); err != nil {
 			return err
 		}

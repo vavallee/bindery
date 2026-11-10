@@ -41,7 +41,7 @@ func TestUpgradeSyntheticDNBRespectsTheUserMark(t *testing.T) {
 			}
 			target := &models.Author{ForeignID: "dnb:gnd:" + name, Name: "Kari Nordmann", MetadataProvider: "dnb",
 				Description: "From the provider.", ImageURL: "https://provider.example/k.jpg"}
-			if err := repo.UpgradeSyntheticDNB(ctx, synthetic, target); err != nil {
+			if err := repo.UpgradeSyntheticDNB(ctx, a.ID, synthetic, target); err != nil {
 				t.Fatal(err)
 			}
 			got, err := repo.GetByID(ctx, a.ID)

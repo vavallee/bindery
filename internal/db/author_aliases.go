@@ -436,10 +436,18 @@ func (r *AuthorAliasRepo) Merge(ctx context.Context, sourceID, targetID int64, o
 		result.TargetUpdated = updated
 	}
 
+	// OR IGNORE: since authors are keyed per owner (#3555) two accounts' rows
+	// for the same author carry the same provider ids, so an admin merging
+	// one into the other finds target already holding some of them. Those
+	// source rows are dropped below instead of failing the merge.
 	if _, err := tx.ExecContext(ctx,
-		"UPDATE author_identifiers SET author_id = ?, updated_at = ? WHERE author_id = ?",
+		"UPDATE OR IGNORE author_identifiers SET author_id = ?, updated_at = ? WHERE author_id = ?",
 		targetID, time.Now().UTC(), sourceID); err != nil {
 		return nil, fmt.Errorf("migrate author identifiers: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM author_identifiers WHERE author_id = ?", sourceID); err != nil {
+		return nil, fmt.Errorf("drop duplicate source identifiers: %w", err)
 	}
 
 	// Finally, remove the source author. FK cascade handles any stragglers
