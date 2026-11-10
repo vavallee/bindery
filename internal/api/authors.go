@@ -3227,7 +3227,16 @@ func (h *AuthorHandler) reparentMisattachedBook(ctx context.Context, existing *m
 	case owner == nil:
 		// Owner row was deleted; the book is orphaned.
 	case owner.ForeignID == author.ForeignID:
-		// Duplicate author rows sharing one provider identity.
+		// Duplicate author rows sharing one provider identity. Rows with
+		// different owners are not duplicates but two accounts' copies of the
+		// author (#3555), which stay after tenancy is turned off. Moving the
+		// book would park one account's book under the other's copy, the next
+		// sync of its own copy would move it back, and deleting the other copy
+		// meanwhile would cascade into it. So that pair never moves, whatever
+		// the tenancy setting.
+		if owner.OwnerUserID != author.OwnerUserID {
+			return false
+		}
 	case len(creditedAuthorIDs) > 0 && !slices.Contains(creditedAuthorIDs, owner.ForeignID):
 		// The synced author's catalogue contains this work but the current
 		// owner isn't credited on it — a mis-parent, not a co-author.

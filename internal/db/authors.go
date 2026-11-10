@@ -676,12 +676,22 @@ func (r *AuthorRepo) upsertIdentifierTx(ctx context.Context, exec dbExecutor, au
 	if authorID == 0 || foreignID == "" {
 		return nil
 	}
-	holder, err := identifierHolder(ctx, exec, authorID, foreignID)
+	held, err := authorHoldsIdentifier(ctx, exec, authorID, foreignID)
 	if err != nil {
 		return err
 	}
-	if holder != 0 {
-		return &AuthorIdentifierConflictError{ForeignID: foreignID, AuthorID: holder}
+	if !held {
+		// A row the author already has is only refreshed, which adds no
+		// duplicate, so it is not checked again. That keeps an author
+		// editable when the rule has a pair it would now refuse, such as two
+		// accounts' copies left behind after tenancy was turned off (#3555).
+		holder, err := identifierHolder(ctx, exec, authorID, foreignID)
+		if err != nil {
+			return err
+		}
+		if holder != 0 {
+			return &AuthorIdentifierConflictError{ForeignID: foreignID, AuthorID: holder}
+		}
 	}
 	provider := models.AuthorProviderFromForeignID(foreignID)
 	if _, err := exec.ExecContext(ctx, `
@@ -714,6 +724,13 @@ func (r *AuthorRepo) upsertIdentifierTx(ctx context.Context, exec dbExecutor, au
 // the row, and the pool is a single connection, so the check and the write
 // cannot interleave with another writer.
 func identifierHolder(ctx context.Context, exec dbExecutor, authorID int64, foreignID string) (int64, error) {
+	return identifierHolderExcept(ctx, exec, authorID, foreignID, 0)
+}
+
+// identifierHolderExcept is identifierHolder ignoring exceptID as a holder:
+// the author whose identifiers a merge or a fold is handing to authorID, which
+// still exists while they move.
+func identifierHolderExcept(ctx context.Context, exec dbExecutor, authorID int64, foreignID string, exceptID int64) (int64, error) {
 	var holder int64
 	var err error
 	if auth.EnforceTenancy() {
@@ -721,22 +738,22 @@ func identifierHolder(ctx context.Context, exec dbExecutor, authorID int64, fore
 			SELECT ai.author_id
 			FROM author_identifiers ai
 			LEFT JOIN authors a ON a.id = ai.author_id
-			WHERE ai.foreign_id = ? AND ai.author_id <> ?
+			WHERE ai.foreign_id = ? AND ai.author_id <> ? AND ai.author_id <> ?
 			  AND (a.id IS NULL OR COALESCE(a.owner_user_id, 0) =
 			       (SELECT COALESCE(owner_user_id, 0) FROM authors WHERE id = ?))
 			ORDER BY ai.author_id LIMIT 1`,
-			foreignID, authorID, authorID).Scan(&holder)
+			foreignID, authorID, exceptID, authorID).Scan(&holder)
 	} else {
 		err = exec.QueryRowContext(ctx, `
 			SELECT holder FROM (
 				SELECT author_id AS holder FROM author_identifiers
-				WHERE foreign_id = ? AND author_id <> ?
+				WHERE foreign_id = ? AND author_id <> ? AND author_id <> ?
 				UNION ALL
 				SELECT id FROM authors
-				WHERE foreign_id = ? AND id <> ?
+				WHERE foreign_id = ? AND id <> ? AND id <> ?
 				  AND foreign_id = (SELECT foreign_id FROM authors WHERE id = ?)
 			) ORDER BY holder LIMIT 1`,
-			foreignID, authorID, foreignID, authorID, authorID).Scan(&holder)
+			foreignID, authorID, exceptID, foreignID, authorID, exceptID, authorID).Scan(&holder)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
@@ -745,6 +762,84 @@ func identifierHolder(ctx context.Context, exec dbExecutor, authorID int64, fore
 		return 0, fmt.Errorf("check author identifier holder %q: %w", foreignID, err)
 	}
 	return holder, nil
+}
+
+// authorHoldsIdentifier reports whether authorID already has an identifier
+// row for foreignID.
+func authorHoldsIdentifier(ctx context.Context, exec dbExecutor, authorID int64, foreignID string) (bool, error) {
+	var n int
+	if err := exec.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM author_identifiers WHERE author_id = ? AND foreign_id = ?",
+		authorID, foreignID).Scan(&n); err != nil {
+		return false, fmt.Errorf("check author identifier %q for author %d: %w", foreignID, authorID, err)
+	}
+	return n > 0, nil
+}
+
+// listAuthorIdentifierIDs returns the provider ids authorID holds, read in
+// full and closed before the caller writes in the same transaction.
+func listAuthorIdentifierIDs(ctx context.Context, exec dbExecutor, authorID int64) ([]string, error) {
+	rows, err := exec.QueryContext(ctx,
+		"SELECT foreign_id FROM author_identifiers WHERE author_id = ? ORDER BY foreign_id", authorID)
+	if err != nil {
+		return nil, fmt.Errorf("list identifiers of author %d: %w", authorID, err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan identifier of author %d: %w", authorID, err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list identifiers of author %d: %w", authorID, err)
+	}
+	return ids, nil
+}
+
+// moveAuthorIdentifiersTx hands fromID's identifier rows to intoID, for a
+// merge or a user delete folding one author into another. Each identifier
+// goes through the rule every other write uses (identifierHolder): one that
+// another author in intoID's scope already holds is dropped rather than
+// moved, because moving it would leave two authors holding it and every later
+// Update of the other one would fail (#3555). One intoID already has is just
+// removed from fromID. Returns the identifiers dropped because another author
+// holds them.
+func moveAuthorIdentifiersTx(ctx context.Context, exec dbExecutor, fromID, intoID int64, now time.Time) ([]string, error) {
+	ids, err := listAuthorIdentifierIDs(ctx, exec, fromID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := exec.ExecContext(ctx, "DELETE FROM author_identifiers WHERE author_id = ?", fromID); err != nil {
+		return nil, fmt.Errorf("drop identifiers of author %d: %w", fromID, err)
+	}
+	var dropped []string
+	for _, id := range ids {
+		held, err := authorHoldsIdentifier(ctx, exec, intoID, id)
+		if err != nil {
+			return nil, err
+		}
+		if held {
+			continue
+		}
+		holder, err := identifierHolderExcept(ctx, exec, intoID, id, fromID)
+		if err != nil {
+			return nil, err
+		}
+		if holder != 0 {
+			dropped = append(dropped, id)
+			continue
+		}
+		if _, err := exec.ExecContext(ctx, `
+			INSERT INTO author_identifiers (author_id, provider, foreign_id, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?)`,
+			intoID, models.AuthorProviderFromForeignID(id), id, now, now); err != nil {
+			return nil, fmt.Errorf("move identifier %q to author %d: %w", id, intoID, err)
+		}
+	}
+	return dropped, nil
 }
 
 // GetByDNBSyntheticName returns the synthetic DNB-only author row (one whose

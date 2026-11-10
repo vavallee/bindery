@@ -406,13 +406,25 @@ UPDATE authors SET owner_user_id = (
 WHERE owner_user_id = ?
   AND EXISTS (SELECT 1 FROM books b WHERE b.author_id = authors.id)`
 
+// authorIdentitySQL lists every provider id an author answers to: its
+// identifier rows and its primary foreign_id. Two rows sharing any of them in
+// one account are the same author for the per owner rule (identifierHolder).
+const authorIdentitySQL = `
+SELECT author_id, foreign_id FROM author_identifiers
+UNION
+SELECT id, foreign_id FROM authors WHERE foreign_id <> ''`
+
 // rehomeCollisionsSQL finds the authors rehomeAuthorsSQL is about to hand to an
-// owner that already holds its own row for the same provider id (#3555). The
-// unique index on (owner, foreign_id) would refuse the rehome, so each pair is
-// folded into the row the new owner already has first. The target owner is
-// computed exactly as rehomeAuthorsSQL computes it.
+// owner that already holds its own row for the same author (#3555): a row
+// sharing any provider id with it, primary or secondary. Handing it over as is
+// would leave the new owner with two authors holding one id, which the unique
+// index refuses for a primary and identifierHolder refuses on every later
+// Update for a secondary. Each one is folded into the row the new owner
+// already has instead, preferring the row with the same primary id. The
+// target owner is computed exactly as rehomeAuthorsSQL computes it.
 const rehomeCollisionsSQL = `
-SELECT s.id, d.id FROM (
+WITH ident AS (` + authorIdentitySQL + `),
+src AS (
     SELECT a.id, a.foreign_id, (
         SELECT CASE WHEN COUNT(*) = COUNT(b.owner_user_id)
                      AND COUNT(DISTINCT b.owner_user_id) = 1
@@ -421,18 +433,35 @@ SELECT s.id, d.id FROM (
     FROM authors a
     WHERE a.owner_user_id = ?
       AND EXISTS (SELECT 1 FROM books b WHERE b.author_id = a.id)
-) s
-JOIN authors d ON d.foreign_id = s.foreign_id AND d.id <> s.id
-              AND COALESCE(d.owner_user_id, 0) = COALESCE(s.target, 0)`
+)
+SELECT id, into_id FROM (
+    SELECT s.id, (
+        SELECT d.id FROM authors d
+        WHERE d.id <> s.id
+          AND COALESCE(d.owner_user_id, 0) = COALESCE(s.target, 0)
+          AND EXISTS (SELECT 1 FROM ident si JOIN ident di ON di.foreign_id = si.foreign_id
+                      WHERE si.author_id = s.id AND di.author_id = d.id)
+        ORDER BY (d.foreign_id = s.foreign_id) DESC, d.id LIMIT 1) AS into_id
+    FROM src s
+) WHERE into_id IS NOT NULL`
 
 // reassignCollisionsSQL is rehomeCollisionsSQL for a reassign: every author the
 // departing user owns goes to one owner (NULL when reassignTo is unset), and an
-// author that owner already holds its own row for is folded into that row.
+// author sharing any provider id with a row that owner already holds is folded
+// into that row.
 const reassignCollisionsSQL = `
-SELECT s.id, d.id FROM authors s
-JOIN authors d ON d.foreign_id = s.foreign_id AND d.id <> s.id
-              AND COALESCE(d.owner_user_id, 0) = COALESCE(?, 0)
-WHERE s.owner_user_id = ?`
+WITH ident AS (` + authorIdentitySQL + `)
+SELECT id, into_id FROM (
+    SELECT s.id, (
+        SELECT d.id FROM authors d
+        WHERE d.id <> s.id
+          AND COALESCE(d.owner_user_id, 0) = COALESCE(?, 0)
+          AND EXISTS (SELECT 1 FROM ident si JOIN ident di ON di.foreign_id = si.foreign_id
+                      WHERE si.author_id = s.id AND di.author_id = d.id)
+        ORDER BY (d.foreign_id = s.foreign_id) DESC, d.id LIMIT 1) AS into_id
+    FROM authors s
+    WHERE s.owner_user_id = ?
+) WHERE into_id IS NOT NULL`
 
 type authorFoldPair struct{ from, into int64 }
 
@@ -459,11 +488,12 @@ func collidingAuthorPairs(ctx context.Context, tx *sql.Tx, query string, args ..
 }
 
 // foldCollidingAuthors folds each author the query returns into the row the
-// new owner already holds for the same provider id: its books, aliases,
-// identifiers, monitored series and the rows that point at it move to the
-// kept row, then it is deleted. It only runs where two accounts held their own
-// row for one author, which needs tenancy on (#3555); with one row per author
-// the query finds nothing.
+// new owner already holds for the same author: its books, aliases, monitored
+// series and the rows that point at it move to the kept row, its identifiers
+// move where no other author of the new owner holds them
+// (moveAuthorIdentifiersTx), then it is deleted. It only runs where two
+// accounts held their own row for one author, which needs tenancy on now or
+// earlier (#3555); with one row per author the query finds nothing.
 //
 // It is a re-pointing, not AuthorAliasRepo.Merge: the kept row keeps its own
 // settings, which belong to the account that is staying.
@@ -476,7 +506,6 @@ func foldCollidingAuthors(ctx context.Context, tx *sql.Tx, query string, args ..
 		for _, stmt := range []string{
 			"UPDATE books SET author_id = ? WHERE author_id = ?",
 			"UPDATE author_aliases SET author_id = ? WHERE author_id = ?",
-			"UPDATE OR IGNORE author_identifiers SET author_id = ? WHERE author_id = ?",
 			"UPDATE OR IGNORE author_monitored_series SET author_id = ? WHERE author_id = ?",
 			"UPDATE unmatched_units SET created_author_id = ? WHERE created_author_id = ?",
 			"UPDATE requests SET result_author_id = ? WHERE result_author_id = ?",
@@ -485,8 +514,13 @@ func foldCollidingAuthors(ctx context.Context, tx *sql.Tx, query string, args ..
 				return fmt.Errorf("fold author %d into %d: %w", p.from, p.into, err)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, "DELETE FROM author_identifiers WHERE author_id = ?", p.from); err != nil {
+		dropped, err := moveAuthorIdentifiersTx(ctx, tx, p.from, p.into, time.Now().UTC())
+		if err != nil {
 			return fmt.Errorf("fold author %d into %d: %w", p.from, p.into, err)
+		}
+		if len(dropped) > 0 {
+			slog.Info("user delete: dropped identifiers another author of the new owner holds",
+				"from_author_id", p.from, "into_author_id", p.into, "identifiers", dropped)
 		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM authors WHERE id = ?", p.from); err != nil {
 			return fmt.Errorf("fold author %d into %d: %w", p.from, p.into, err)
