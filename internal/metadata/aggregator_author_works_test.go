@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1039,5 +1040,211 @@ func TestMergeAuthorWorkMetadata_SupplementDateIsMarkedUnknown(t *testing.T) {
 	mergeAuthorWorkMetadata(&dst3, models.Book{MetadataProvider: "hardcover"})
 	if len(dst3.UnknownFields) != 0 {
 		t.Errorf("nothing was filled, nothing to mark: %v", dst3.UnknownFields)
+	}
+}
+
+// otherWorlds builds the #3792 works: Stephen King's OpenLibrary list holds his
+// own record for the 2026 King and Straub novel "Other Worlds Than These",
+// undated because only the search page carries dates and it is not on it, and
+// John Joseph Adams' 2011 anthology of the same name, which credits King as a
+// contributor. Hardcover's King catalogue holds the novel, dated 2026.
+func otherWorlds() (kingsOwn, anthology, hcNovel models.Book) {
+	anthologyDate := time.Date(2011, 1, 1, 0, 0, 0, 0, time.UTC)
+	novelDate := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	kingsOwn = models.Book{ForeignID: "OL44907743W", Title: "Other Worlds Than These", MetadataProvider: "openlibrary"}
+	anthology = models.Book{
+		ForeignID: "OL17400760W", Title: "Other Worlds Than These", MetadataProvider: "openlibrary",
+		ImageURL: "https://covers.openlibrary.org/b/id/anthology-L.jpg", ReleaseDate: &anthologyDate,
+		CreditedAuthorForeignIDs: []string{"OL6811804A", "OL19981A"},
+	}
+	hcNovel = models.Book{
+		ForeignID: "hc:other-worlds-than-these-a-talisman-novel-2026", Title: "Other Worlds Than These",
+		MetadataProvider: "hardcover", ReleaseDate: &novelDate,
+		SeriesRefs: []models.SeriesRef{{ForeignID: "hc-series:4521", Title: "The Talisman", Position: "3", Primary: true}},
+	}
+	return kingsOwn, anthology, hcNovel
+}
+
+// TestMergeAuthorWorks_PrefersTheCandidateTheDatesDoNotRuleOut covers #3792:
+// whichever order OpenLibrary lists the two same-titled works in, the
+// Hardcover novel binds to King's own record and never to the anthology.
+func TestMergeAuthorWorks_PrefersTheCandidateTheDatesDoNotRuleOut(t *testing.T) {
+	kingsOwn, anthology, hcNovel := otherWorlds()
+	for _, tc := range []struct {
+		name    string
+		primary []models.Book
+	}{
+		{"live order, King's record first", []models.Book{kingsOwn, anthology}},
+		{"anthology first", []models.Book{anthology, kingsOwn}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mergeAuthorWorks(tc.primary, []models.Book{hcNovel})
+			if len(got) != 2 {
+				t.Fatalf("expected the two OpenLibrary rows and no third, got %d: %+v", len(got), got)
+			}
+			for _, b := range got {
+				switch b.ForeignID {
+				case "OL44907743W":
+					if b.HardcoverForeignID != hcNovel.ForeignID || b.ReleaseDate == nil || b.ReleaseDate.Year() != 2026 {
+						t.Errorf("King's record should carry the novel's Hardcover id and date: %+v", b)
+					}
+				case "OL17400760W":
+					if b.HardcoverForeignID != "" || len(b.SeriesRefs) != 0 || b.ReleaseDate.Year() != 2011 {
+						t.Errorf("the anthology picked up the novel's Hardcover data: %+v", b)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestMergeAuthorWorks_PrefersADatedFitOverAnUndatedCandidate: an undated
+// candidate is only a fallback when no candidate's date agrees.
+func TestMergeAuthorWorks_PrefersADatedFitOverAnUndatedCandidate(t *testing.T) {
+	_, _, hcNovel := otherWorlds()
+	olNovel := time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC)
+	primary := []models.Book{
+		{ForeignID: "OL1W", Title: "Other Worlds Than These", MetadataProvider: "openlibrary"},
+		{ForeignID: "OL44907743W", Title: "Other Worlds Than These", MetadataProvider: "openlibrary", ReleaseDate: &olNovel},
+	}
+	got := mergeAuthorWorks(primary, []models.Book{hcNovel})
+	if got[0].HardcoverForeignID != "" || got[1].HardcoverForeignID != hcNovel.ForeignID {
+		t.Fatalf("the novel should bind to the dated record that fits: %+v", got)
+	}
+}
+
+// TestMergeAuthorWorks_LoneDistantCandidateStillBinds keeps one book dated two
+// ways as one row. OpenLibrary dates Kafka's "The Trial" by the 1925 German
+// first edition and Hardcover by an English translation; with no competing
+// candidate the date gap is not evidence of a second book, and splitting it
+// would mint a duplicate row with a recent date for monitoring to chase.
+func TestMergeAuthorWorks_LoneDistantCandidateStillBinds(t *testing.T) {
+	original := time.Date(1925, 1, 1, 0, 0, 0, 0, time.UTC)
+	translation := time.Date(1998, 1, 1, 0, 0, 0, 0, time.UTC)
+	primary := []models.Book{{ForeignID: "OL15011W", Title: "The Trial", MetadataProvider: "openlibrary", ReleaseDate: &original}}
+	supplemental := []models.Book{{ForeignID: "hc:the-trial", Title: "The Trial", MetadataProvider: "hardcover", ReleaseDate: &translation}}
+	got := mergeAuthorWorks(primary, supplemental)
+	if len(got) != 1 || got[0].HardcoverForeignID != "hc:the-trial" || got[0].ReleaseDate.Year() != 1925 {
+		t.Fatalf("one book dated two ways should stay one row with OpenLibrary's date, got %+v", got)
+	}
+}
+
+// TestMergeAuthorWorks_CloseOrMissingDatesStillBind keeps the ordinary merge:
+// the same work seen through both providers, with dates a few years apart or
+// a date missing on one side, is still one row.
+func TestMergeAuthorWorks_CloseOrMissingDatesStillBind(t *testing.T) {
+	d := func(y int) *time.Time { t := time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC); return &t }
+	cases := []struct {
+		name   string
+		ol, hc *time.Time
+	}{
+		{"same year", d(2011), d(2011)},
+		{"a few years apart", d(1984), d(1990)},
+		{"at the limit", d(2000), d(2000 + TitleBindMaxYearGap)},
+		{"no OpenLibrary date", nil, d(2026)},
+		{"no Hardcover date", d(2011), nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			primary := []models.Book{{ForeignID: "OL1W", Title: "The Talisman", MetadataProvider: "openlibrary", ReleaseDate: tc.ol}}
+			supplemental := []models.Book{{ForeignID: "hc:the-talisman", Title: "The Talisman", MetadataProvider: "hardcover", ReleaseDate: tc.hc}}
+			got := mergeAuthorWorks(primary, supplemental)
+			if len(got) != 1 || got[0].HardcoverForeignID != "hc:the-talisman" {
+				t.Fatalf("same work should merge into one row carrying the Hardcover id, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestCreditsShowAnotherAuthorsWork(t *testing.T) {
+	const king, gaiman, preston, austen = "OL19981A", "OL26320A", "OL1394244A", "OL21594A"
+	anthology := func(authorAt int) []string {
+		out := make([]string, 33)
+		for i := range out {
+			out[i] = "OLC" + strconv.Itoa(i) + "A"
+		}
+		if authorAt >= 0 {
+			out[authorAt] = king
+		}
+		return out
+	}
+	cases := []struct {
+		name             string
+		stored, incoming []string
+		author           string
+		want             bool
+	}{
+		{"33 credit anthology with King 20th against King's novel", anthology(19), []string{king, "OL32650A"}, king, true},
+		{"anthology the author is not credited on at all", anthology(-1), []string{king, "OL32650A"}, king, true},
+		{"eight credits, author fourth, against a sole credit", []string{"a", "b", "c", king, "e", "f", "g", "h"}, []string{king}, king, true},
+		{"seven credits is one under the minimum", []string{"a", "b", "c", king, "e", "f", "g"}, []string{king}, king, false},
+		{"ten credits against two is exactly five times as many", []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}, []string{king, "x"}, king, true},
+		{"eight credits against two is only four times as many", []string{"a", "b", "c", "d", "e", "f", "g", "h"}, []string{king, "x"}, king, false},
+		{"annotated edition, five credits with the author fourth", []string{"OLEDITORA", "OLANNOTA", "OLINTROA", austen, "OLILLUSA"}, []string{austen}, austen, false},
+		{"anthology with the author in the first slots", func() []string { l := anthology(-1); l[2] = king; return l }(), []string{king}, king, false},
+		{"co-authors swapped across duplicate records", []string{"OLMCKEANA", gaiman, "OLX"}, []string{gaiman, "OLMCKEANA"}, gaiman, false},
+		{"Preston and Child, Child first on the stored record", []string{"OLCHILDA", preston}, []string{preston, "OLCHILDA"}, preston, false},
+		{"four credits is not an anthology", []string{"a", "b", "c", "d"}, []string{king}, king, false},
+		{"two records both credited to the author first", []string{gaiman}, []string{gaiman}, gaiman, false},
+		{"incoming not credited to the author first", anthology(-1), []string{"OL32650A", king}, king, false},
+		{"stored credits unknown", nil, []string{king}, king, false},
+		{"incoming credits unknown", anthology(19), nil, king, false},
+		{"author key unknown", anthology(19), []string{king}, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CreditsShowAnotherAuthorsWork(tc.stored, tc.incoming, tc.author); got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAggregator_GetAuthorWorkLanguageEvidence_MergedRowAsksHardcover covers
+// the language half of #3792. King's OpenLibrary record for the novel has one
+// Portuguese edition and one with no language, so edition sampling calls it
+// Portuguese and an English-only profile dropped it. Once mergeAuthorWorks has
+// bound the row to the Hardcover novel, Hardcover is asked about it under the
+// hc: id, and a definitive answer stands for the OpenLibrary row.
+func TestAggregator_GetAuthorWorkLanguageEvidence_MergedRowAsksHardcover(t *testing.T) {
+	provider := &mockAuthorWorkLanguageEvidenceProvider{
+		mockProvider: mockProvider{name: "hardcover"},
+		evidence: map[string]AuthorWorkLanguageEvidence{
+			"hc:novel":    {State: AuthorWorkLanguageAllowed, Language: "eng"},
+			"hc:unsure":   {State: AuthorWorkLanguageIndeterminate},
+			"hc:own-work": {State: AuthorWorkLanguageNotAllowed, Language: "spa"},
+		},
+	}
+	agg := newTestAggregator(&mockProvider{name: "openlibrary"}, provider)
+	books := []models.Book{
+		{ForeignID: "OL44907743W", HardcoverForeignID: "hc:novel", Language: "por"},
+		{ForeignID: "OL2W", HardcoverForeignID: "hc:unsure"},
+		{ForeignID: "hc:own-work"},
+		{ForeignID: "OL3W"},
+	}
+	got, err := agg.GetAuthorWorkLanguageEvidence(context.Background(), books, []string{"eng"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["OL44907743W"].State != AuthorWorkLanguageAllowed {
+		t.Errorf("the merged row should take Hardcover's allowed answer, got %+v", got["OL44907743W"])
+	}
+	if _, ok := got["OL2W"]; ok {
+		t.Errorf("an indeterminate Hardcover answer must not stand for the row: %+v", got["OL2W"])
+	}
+	if got["hc:own-work"].State != AuthorWorkLanguageNotAllowed {
+		t.Errorf("a Hardcover work's own evidence is unchanged, got %+v", got["hc:own-work"])
+	}
+	var alias *models.Book
+	for i := range provider.books {
+		if provider.books[i].ForeignID == "hc:novel" {
+			alias = &provider.books[i]
+		}
+	}
+	if alias == nil || alias.Language != "" {
+		t.Errorf("Hardcover should be asked about hc:novel with no language of OpenLibrary's: %+v", provider.books)
+	}
+	if len(books) != 4 {
+		t.Errorf("the caller's slice must not grow: %d", len(books))
 	}
 }

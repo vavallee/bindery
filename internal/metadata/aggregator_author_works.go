@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/indexer"
@@ -155,12 +156,13 @@ func (a *aggregatorCore) GetAuthorWorkLanguageEvidence(ctx context.Context, book
 		}
 		merge(found)
 	}
+	asked, aliases := withMergedHardcoverAliases(books)
 	for _, enricher := range a.enrichers {
 		resolver, ok := enricher.(authorWorkLanguageEvidenceProvider)
 		if !ok {
 			continue
 		}
-		found, err := resolver.GetAuthorWorkLanguageEvidence(ctx, books, allowed)
+		found, err := resolver.GetAuthorWorkLanguageEvidence(ctx, asked, allowed)
 		if err != nil {
 			if !errors.Is(err, ErrProviderNotConfigured) {
 				slog.Warn("supplementing provider language evidence lookup failed; its works use the existing language fallbacks",
@@ -168,9 +170,53 @@ func (a *aggregatorCore) GetAuthorWorkLanguageEvidence(ctx context.Context, book
 			}
 			continue
 		}
+		for workID, hcID := range aliases {
+			if value, ok := found[hcID]; ok && value.State != AuthorWorkLanguageIndeterminate {
+				found[workID] = value
+			}
+		}
 		merge(found)
 	}
 	return evidence, nil
+}
+
+// withMergedHardcoverAliases extends books with one entry per merged work: a
+// primary-provider work that mergeAuthorWorks bound to a Hardcover book, asked
+// about under that book's hc: id. aliases maps the work's own foreign id to the
+// hc: id it was asked under.
+//
+// Hardcover answers only for hc: ids, so a merged OpenLibrary row used to get
+// no Hardcover evidence at all and was judged on OpenLibrary's edition sample
+// alone. For King's "Other Worlds Than These" that sample was one Portuguese
+// edition and one with no language, the majority vote said Portuguese, and an
+// English-only profile dropped the novel (#3792). Hardcover's edition evidence
+// is about the book the row is now bound to, so a definitive answer from it
+// stands for the row and outranks the sample in the sync's language filter.
+//
+// The alias carries no language of its own: Hardcover reads a work's scalar
+// language as its default edition's, and the OpenLibrary row's is not that.
+func withMergedHardcoverAliases(books []models.Book) ([]models.Book, map[string]string) {
+	var aliases map[string]string
+	present := make(map[string]bool, len(books))
+	for _, b := range books {
+		present[strings.TrimSpace(b.ForeignID)] = true
+	}
+	extended := books
+	for _, b := range books {
+		workID := strings.TrimSpace(b.ForeignID)
+		hcID := strings.TrimSpace(b.HardcoverForeignID)
+		if workID == "" || strings.HasPrefix(workID, "hc:") || !strings.HasPrefix(hcID, "hc:") || present[hcID] {
+			continue
+		}
+		if aliases == nil {
+			aliases = make(map[string]string)
+			extended = append(make([]models.Book, 0, len(books)+1), books...)
+		}
+		aliases[workID] = hcID
+		present[hcID] = true
+		extended = append(extended, models.Book{ForeignID: hcID, Title: b.Title, MetadataProvider: "hardcover"})
+	}
+	return extended, aliases
 }
 
 // FillMissingAuthorWorkLanguages asks the primary provider to derive a language
@@ -891,15 +937,16 @@ func (a *aggregatorCore) enrichMissingAuthorWorkCovers(ctx context.Context, book
 	}
 }
 
+// mergeAuthorWorks folds the supplemental providers' works into the primary
+// list. A supplemental work whose title matches a primary one is taken as the
+// same work and its metadata merged in; when several primary works share the
+// title, sameTitleBindTarget picks the one the dates agree with (#3792).
 func mergeAuthorWorks(primary, supplemental []models.Book) []models.Book {
 	books := make([]models.Book, 0, len(primary)+len(supplemental))
-	index := make(map[string]int, len(primary)+len(supplemental))
+	index := make(map[string][]int, len(primary)+len(supplemental))
 	for _, book := range primary {
-		key := authorWorkMergeKey(book.Title)
-		if key != "" {
-			if _, exists := index[key]; !exists {
-				index[key] = len(books)
-			}
+		if key := authorWorkMergeKey(book.Title); key != "" {
+			index[key] = append(index[key], len(books))
 		}
 		books = append(books, book)
 	}
@@ -908,14 +955,145 @@ func mergeAuthorWorks(primary, supplemental []models.Book) []models.Book {
 		if key == "" {
 			continue
 		}
-		if pos, ok := index[key]; ok {
-			mergeAuthorWorkMetadata(&books[pos], book)
+		if candidates := index[key]; len(candidates) > 0 {
+			mergeAuthorWorkMetadata(&books[sameTitleBindTarget(books, candidates, book)], book)
 			continue
 		}
-		index[key] = len(books)
+		index[key] = []int{len(books)}
 		books = append(books, book)
 	}
 	return books
+}
+
+// sameTitleBindTarget picks which of the primary rows sharing src's title src
+// is bound to. candidates is never empty.
+//
+// A primary list can hold two different works under one title. OpenLibrary
+// lists Stephen King's own record for the 2026 King and Straub novel "Other
+// Worlds Than These" (undated there) and John Joseph Adams' 2011 anthology of
+// the same name (King has a story in it, and OpenLibrary credits every
+// contributor). Hardcover's 2026 novel belongs on the first, and the order the
+// list happens to be in must not decide it (#3792). So the choice goes, in
+// order: the first candidate whose date agrees with src's, then the first whose
+// date is unknown on either side, then the first candidate.
+//
+// The last step keeps the old title-only bind when every candidate's date
+// disagrees. A lone same-titled work years away is far more often one book
+// dated two ways (OpenLibrary dates the original-language first edition,
+// Hardcover the translation; or OpenLibrary's first_publish_year is simply
+// wrong) than two books, and splitting it would mint a duplicate row carrying
+// a recent date for monitoring to chase. The date only decides between
+// competing candidates.
+//
+// A shared author cannot make this choice. Both catalogues were fetched for the
+// same author, so every pair shares him by construction, and at this point the
+// OpenLibrary side carries author keys only, no names, so there is nothing for
+// textutil.MatchAuthorName to compare.
+func sameTitleBindTarget(books []models.Book, candidates []int, src models.Book) int {
+	unknown := -1
+	for _, pos := range candidates {
+		switch {
+		case releaseDatesUnknown(books[pos].ReleaseDate, src.ReleaseDate):
+			if unknown < 0 {
+				unknown = pos
+			}
+		case !ReleaseDatesRuleOutSameWork(books[pos].ReleaseDate, src.ReleaseDate):
+			return pos
+		}
+	}
+	if unknown >= 0 {
+		return unknown
+	}
+	return candidates[0]
+}
+
+// TitleBindMaxYearGap is how many years apart two records' release dates may
+// be and still count as agreeing, when sameTitleBindTarget chooses which of
+// several same-titled works a supplemental work binds to (#3792).
+//
+// It is generous on purpose: the same book is routinely dated a few years
+// apart by two catalogues (first edition against a later default edition, an
+// original against its translation). It only ever chooses between candidates;
+// a date gap never splits a row (see CreditsShowAnotherAuthorsWork).
+const TitleBindMaxYearGap = 10
+
+func releaseDatesUnknown(a, b *time.Time) bool {
+	return a == nil || b == nil || a.IsZero() || b.IsZero()
+}
+
+// ReleaseDatesRuleOutSameWork reports whether two records are too far apart in
+// time to be one work. An unknown date on either side proves nothing and never
+// rules a match out.
+func ReleaseDatesRuleOutSameWork(a, b *time.Time) bool {
+	if releaseDatesUnknown(a, b) {
+		return false
+	}
+	gap := a.Year() - b.Year()
+	if gap < 0 {
+		gap = -gap
+	}
+	return gap > TitleBindMaxYearGap
+}
+
+// Thresholds for CreditsShowAnotherAuthorsWork. A compilation or anthology
+// lists many contributors; a book the author wrote lists a few, and an
+// annotated or illustrated edition a handful (Pride and Prejudice OL43425577W
+// credits five people, Austen fourth), which must stay under the line.
+const (
+	anthologyMinCredits   = 8 // the stored work credits at least this many people
+	anthologyCreditRatio  = 5 // and at least this many times as many as the incoming work
+	anthologyLeadingSlots = 3 // and the author is not among its first this many
+)
+
+// CreditsShowAnotherAuthorsWork reports whether a stored row the catalogue
+// sync reached by title, or through an alias it holds, is an anthology or
+// compilation the synced author merely contributed to, as opposed to the
+// incoming work (#3792). authorKey is the synced author's id in the catalogue
+// the credits come from; the credit lists are in that catalogue's order,
+// primary credit first.
+//
+// It splits only when ALL of these hold:
+//   - the incoming work's primary credit is the synced author;
+//   - the stored work is anthology sized: at least anthologyMinCredits
+//     credits, and at least anthologyCreditRatio times as many as the
+//     incoming work;
+//   - the author is not among the stored work's first anthologyLeadingSlots
+//     credits.
+//
+// King's own "Other Worlds Than These" (OL44907743W) is credited King,
+// Straub. The 2011 anthology of the same name (OL17400760W) credits 33
+// people, its editor first and King 20th. That splits, owned or not.
+//
+// The shape is deliberately that narrow, because a bare "credited first on
+// one record and not on the other" splits real books. Co-authors swap places
+// across duplicate records of one book: Gaiman's Violent Cases is credited
+// McKean, Gaiman on one record and Gaiman, McKean on another, and Preston and
+// Child records lead with either name. Those lists are short, and the author
+// is first or second on them, so they never split. Dates play no part: one
+// book under several work ids decades apart is the normal state of
+// OpenLibrary (The Hobbit, Persuasion).
+//
+// Missing credits on either side prove nothing and never split. The stored
+// row's credits are known only while its own work is in the same fetch (they
+// are never stored), so the check does nothing for a row whose work the
+// provider no longer lists.
+func CreditsShowAnotherAuthorsWork(storedCredits, incomingCredits []string, authorKey string) bool {
+	authorKey = strings.TrimSpace(authorKey)
+	if authorKey == "" || len(storedCredits) == 0 || len(incomingCredits) == 0 {
+		return false
+	}
+	if strings.TrimSpace(incomingCredits[0]) != authorKey {
+		return false
+	}
+	if len(storedCredits) < anthologyMinCredits || len(storedCredits) < anthologyCreditRatio*len(incomingCredits) {
+		return false
+	}
+	for i := 0; i < anthologyLeadingSlots && i < len(storedCredits); i++ {
+		if strings.TrimSpace(storedCredits[i]) == authorKey {
+			return false
+		}
+	}
+	return true
 }
 
 func authorWorkMergeKey(title string) string {
