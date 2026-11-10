@@ -51,6 +51,7 @@ vi.mock('../api/client', async importOriginal => {
       listHistory: vi.fn(),
       searchBook: vi.fn(),
       searchBookAutomatic: vi.fn(),
+      getSearchRun: vi.fn(),
       listIndexers: vi.fn(),
       grab: vi.fn(),
       updateBook: vi.fn(),
@@ -2401,6 +2402,85 @@ describe('BookDetailPage automatic search (#2668)', () => {
     // the interactive button on this very page rather than telling the reader
     // to open a single book, which is where they already are.
     expect(translate('search.autoGrabDisabledSingleBook')).toContain('Metadata Profiles')
+  })
+
+  describe('with a queued run', () => {
+    const queue = (run: Partial<import('../api/bulk').SearchRun> | Error = {}) => {
+      vi.mocked(api.searchBookAutomatic).mockResolvedValue({ results: { '42': { ok: true, queued: true, runId: 'r1' } } })
+      if (run instanceof Error) vi.mocked(api.getSearchRun).mockRejectedValue(run)
+      else vi.mocked(api.getSearchRun).mockResolvedValue({ id: 'r1', state: 'finished', bookId: 42, outcome: 'no results', indexers: 0, ...run })
+    }
+    const idx = (enabled: boolean) => ({ id: 1, name: 'x', enabled }) as never
+    const click = async () => {
+      renderBookDetailPage()
+      await screen.findByRole('heading', { name: 'The Final Empire' })
+      fireEvent.click(screen.getByRole('button', { name: new RegExp(autoLabel) }))
+    }
+    const started = () => translate('bookDetail.autoSearchStarted')
+
+    it('says none is configured when the run found nothing and there are no indexers', async () => {
+      queue()
+      vi.mocked(api.listIndexers).mockResolvedValue([])
+      await click()
+      expect(await screen.findByText(translate('bookDetail.autoSearchNoIndexers'))).toBeInTheDocument()
+      expect(screen.queryByText(started())).toBeNull()
+    })
+
+    it('says every indexer is disabled when some exist and none is enabled', async () => {
+      queue({ indexers: 2 })
+      vi.mocked(api.listIndexers).mockResolvedValue([idx(false), idx(false)])
+      await click()
+      expect(await screen.findByText(translate('bookDetail.autoSearchAllIndexersDisabled'))).toBeInTheDocument()
+    })
+
+    it('keeps the started wording when an enabled indexer found nothing', async () => {
+      queue({ indexers: 1 })
+      vi.mocked(api.listIndexers).mockResolvedValue([idx(true)])
+      await click()
+      expect(await screen.findByText(started())).toBeInTheDocument()
+    })
+
+    it('keeps the started wording for a skipped run, without asking for indexers', async () => {
+      queue({ outcome: 'unmonitored author' })
+      vi.mocked(api.listIndexers).mockResolvedValue([])
+      await click()
+      expect(await screen.findByText(started())).toBeInTheDocument()
+      expect(api.listIndexers).not.toHaveBeenCalled()
+    })
+
+    it('waits for a queued run to finish', async () => {
+      queue()
+      vi.mocked(api.getSearchRun)
+        .mockResolvedValueOnce({ id: 'r1', state: 'queued', bookId: 42, indexers: 0 })
+        .mockResolvedValueOnce({ id: 'r1', state: 'running', bookId: 42, indexers: 0 })
+        .mockResolvedValueOnce({ id: 'r1', state: 'finished', bookId: 42, outcome: 'no results', indexers: 0 })
+      vi.mocked(api.listIndexers).mockResolvedValue([])
+      await click()
+      expect(await screen.findByText(translate('bookDetail.autoSearchNoIndexers'), {}, { timeout: 3000 })).toBeInTheDocument()
+      expect(api.getSearchRun).toHaveBeenCalledTimes(3)
+    })
+
+    it('keeps the started wording when the run never finishes within the wait', async () => {
+      queue({ state: 'running', outcome: undefined })
+      await click()
+      expect(await screen.findByText(started(), {}, { timeout: 3000 })).toBeInTheDocument()
+      expect(api.getSearchRun).toHaveBeenCalledTimes(3)
+      expect(api.listIndexers).not.toHaveBeenCalled()
+    })
+
+    it('keeps the started wording when the indexer list is forbidden', async () => {
+      queue()
+      vi.mocked(api.listIndexers).mockRejectedValue(new Error('forbidden'))
+      await click()
+      expect(await screen.findByText(started())).toBeInTheDocument()
+    })
+
+    it('keeps the started wording when the run lookup fails', async () => {
+      queue(new Error('boom'))
+      await click()
+      expect(await screen.findByText(started())).toBeInTheDocument()
+      expect(api.listIndexers).not.toHaveBeenCalled()
+    })
   })
 
   it('surfaces a per book error from the automatic path', async () => {
