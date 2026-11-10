@@ -32,7 +32,11 @@ function parseSeriesFilter(raw: string | null): SeriesFilter {
 // before today; 'upcoming' counts the rest. A book with no release date counts
 // as upcoming, not released: the case the issue names is an unpublished volume
 // known only by a working title, which has no date yet. The two scopes split
-// the gaps between them, so released plus upcoming always equals all.
+// the local gaps between them, but a series' count is not a sum: it is the
+// larger of its local gaps and its Hardcover missing books, and the unopened
+// Hardcover estimate has no dates, so it sits in neither scope. A linked series
+// whose only gaps come from that estimate shows under All and under neither
+// Released nor Upcoming until its card is opened.
 const MISSING_SCOPES = ['all', 'released', 'upcoming'] as const
 type MissingScope = typeof MISSING_SCOPES[number]
 
@@ -40,9 +44,11 @@ function parseMissingScope(raw: string | null): MissingScope {
   return MISSING_SCOPES.find(m => m === raw) ?? 'all'
 }
 
-// releaseDate is a UTC timestamp; compare its date part as text against
+// releaseDate is a UTC timestamp; its date part is compared as text against
 // today's UTC date, the same comparison AuthorDetailPage's published filter
-// uses, so a time zone cannot move a book across the line.
+// uses, so the two pages agree on what is out. "Today" is the UTC date, not
+// the viewer's: away from UTC a book dated today or tomorrow can change scope
+// up to a day before or after the viewer's own midnight.
 function inMissingScope(releaseDate: string | undefined, scope: MissingScope, today: string): boolean {
   if (scope === 'all') return true
   const released = !!releaseDate && releaseDate.slice(0, 10) <= today
@@ -457,8 +463,9 @@ export default function SeriesPage() {
     const params = new URLSearchParams(searchParams)
     if (next === 'all') params.delete('filter')
     else params.set('filter', next)
-    // The scope belongs to the Missing filter alone; leaving it drops it.
-    if (next !== 'missing') params.delete('missing')
+    // Every filter change starts at the All missing scope, so a scope left in
+    // the URL cannot switch itself on when Missing books is picked.
+    params.delete('missing')
     setSearchParams(params, { replace: true })
     // Opening a card can move it between Missing and Complete (its exact
     // Hardcover diff replaces the estimate), so the open card stays listed
@@ -469,6 +476,16 @@ export default function SeriesPage() {
   // Only read while the Missing filter is on, where its control shows; a
   // stray ?missing= under another filter changes nothing.
   const missingScope: MissingScope = filter === 'missing' ? parseMissingScope(searchParams.get('missing')) : 'all'
+  // A ?missing= that does nothing (unknown value, 'all', or under another
+  // filter) is dropped from the URL rather than left to resurface later.
+  const rawMissing = searchParams.get('missing')
+  const strayMissing = rawMissing !== null && (requestedFilter !== 'missing' || missingScope === 'all')
+  useEffect(() => {
+    if (!strayMissing) return
+    const params = new URLSearchParams(searchParams)
+    params.delete('missing')
+    setSearchParams(params, { replace: true })
+  }, [strayMissing, searchParams, setSearchParams])
   const selectMissingScope = (next: MissingScope) => {
     const params = new URLSearchParams(searchParams)
     if (next === 'all') params.delete('missing')

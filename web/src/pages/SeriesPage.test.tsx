@@ -1850,12 +1850,71 @@ describe('SeriesPage filters', () => {
       expect(await screen.findByRole('heading', { name: 'Future Gap' })).toBeInTheDocument()
       expect(headings()).toHaveLength(4)
       expect(screen.queryByText('1 released missing')).not.toBeInTheDocument()
+      await waitFor(() => expect(currentSearch).toBe(''))
+      // Picking Missing books afterwards starts at All missing, not at the
+      // scope that was sitting in the URL.
+      fireEvent.click(screen.getByRole('button', { name: 'Missing books' }))
+      expect(currentSearch).toBe('?filter=missing')
+      expect(within(scopeGroup()).getByRole('button', { name: 'All missing' })).toHaveAttribute('aria-pressed', 'true')
       unmount()
 
       renderAt(scoped, enhancedOff, '/series?filter=missing&missing=bogus')
       expect(await screen.findByRole('heading', { name: 'Future Gap' })).toBeInTheDocument()
       expect(within(scopeGroup()).getByRole('button', { name: 'All missing' })).toHaveAttribute('aria-pressed', 'true')
       expect(headings()).toEqual(['Future Gap', 'Released Gap', 'Working Title'])
+      await waitFor(() => expect(currentSearch).toBe('?filter=missing'))
+    })
+
+    it('counts a book dated today as released', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      onTestFinished(() => { vi.useRealTimers() })
+      vi.setSystemTime(new Date('2026-06-15T12:00:00Z'))
+      renderAt([
+        series(6, 'Out Today', [dated(book(61, 'imported'), PAST), dated(book(62, 'wanted'), '2026-06-15T00:00:00Z')]),
+        series(7, 'Out Tomorrow', [dated(book(71, 'imported'), PAST), dated(book(72, 'wanted'), '2026-06-16T00:00:00Z')]),
+      ], enhancedOff, '/series?filter=missing&missing=released')
+      expect(await screen.findByRole('heading', { name: 'Out Today' })).toBeInTheDocument()
+      expect(headings()).toEqual(['Out Today'])
+      expect(screen.getByText('1 released missing')).toBeInTheDocument()
+    })
+
+    it('collapses the open card when the scope changes', async () => {
+      renderAt([
+        series(8, 'Old Gap', [dated(book(81, 'imported'), PAST), dated(book(82, 'wanted'), PAST)]),
+        ...scoped,
+      ], enhancedOff, '/series?filter=missing&missing=released')
+      expect(await screen.findByRole('heading', { name: 'Old Gap' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('heading', { name: 'Old Gap' }))
+      // While open the card stays listed, so a collapse is what lets Upcoming
+      // drop it.
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'Upcoming' }))
+      expect(headings()).not.toContain('Old Gap')
+      expect(headings()).toEqual(['Future Gap', 'Released Gap', 'Working Title'])
+    })
+
+    it('clears the scope with the filter when a Hardcover add reveals a hidden series', async () => {
+      const hcLink = link(9, 1)
+      const existing = series(9, 'Already Here', [dated(book(91, 'imported'), PAST)], { hardcoverLink: hcLink })
+      vi.mocked(api.searchHardcoverSeries).mockResolvedValue([{
+        foreignId: 'hc-series:9', providerId: '9', title: 'Already Here', authorName: 'Some Author', bookCount: 1, readersCount: 1, books: [],
+      }])
+      vi.mocked(api.createSeries).mockRejectedValue(new ApiError(409, { error: 'already', seriesId: 9 }, 'Conflict'))
+      vi.mocked(api.getSeriesHardcoverDiff).mockResolvedValue({
+        seriesId: 9, link: hcLink, present: [], missing: [], localOnly: [], uncertain: [], covered: [], presentCount: 1, missingCount: 0,
+      })
+      renderAt([...scoped, existing], enhancedOn, '/series?filter=missing&missing=released')
+      expect(await screen.findByRole('heading', { name: 'Released Gap' })).toBeInTheDocument()
+      expect(headings()).not.toContain('Already Here')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Add Series' }))
+      const dialog = await screen.findByRole('dialog', { name: 'Add Series' })
+      fireEvent.change(within(dialog).getByRole('searchbox', { name: 'Search Hardcover for a series' }), { target: { value: 'already' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Search' }))
+      await within(dialog).findByText('Some Author')
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Add Already Here' }))
+
+      await waitFor(() => expect(currentSearch).toBe(''))
+      expect(await screen.findByRole('heading', { name: 'Already Here' })).toBeInTheDocument()
     })
 
     it('leaves the undated Hardcover estimate out of the scoped counts until the diff brings dates', async () => {
