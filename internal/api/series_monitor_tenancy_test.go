@@ -87,14 +87,27 @@ func TestSeriesCheckAddsForTheSeriesOwner(t *testing.T) {
 
 // TestSeriesCheckNeverAttachesToAnotherAccountsAuthor: the catalogue author is
 // another account's row, so adding there would put the book in the wrong
-// library. The check adds nothing.
+// library. It used to add nothing; since authors are keyed per owner (#3555)
+// the check creates the series owner's own row for the author and files the
+// book there, leaving the other account's author alone.
 func TestSeriesCheckNeverAttachesToAnotherAccountsAuthor(t *testing.T) {
-	h, series, books, _, _ := tenancyMonitorFixture(t, false)
-	res, err := h.CheckSeries(context.Background(), series)
-	if err != nil || res.Created != 0 {
-		t.Fatalf("res = %+v, err = %v, want nothing added", res, err)
+	h, series, books, alice, database := tenancyMonitorFixture(t, false)
+	ctx := context.Background()
+	res, err := h.CheckSeries(ctx, series)
+	if err != nil || res.Created != 1 {
+		t.Fatalf("res = %+v, err = %v, want one book added under the owner's own author", res, err)
 	}
-	if got, _ := books.GetByForeignID(context.Background(), "hc:oathbringer"); got != nil {
-		t.Errorf("a book was added under another account's author: %+v", got)
+	authors := db.NewAuthorRepo(database)
+	theirs, _ := authors.GetByForeignID(ctx, "hc:brandon-sanderson")
+	mine, _ := authors.GetByForeignIDForUser(ctx, "hc:brandon-sanderson", alice)
+	if theirs == nil || mine == nil || mine.ID == theirs.ID || mine.OwnerUserID != alice {
+		t.Fatalf("authors: other account's %+v, owner's %+v; want a separate row for account %d", theirs, mine, alice)
+	}
+	got, _ := books.GetByForeignID(ctx, "hc:oathbringer")
+	if got == nil || got.AuthorID != mine.ID || got.OwnerUserID != alice {
+		t.Fatalf("new book = %+v, want it account %d's, under author %d", got, alice, mine.ID)
+	}
+	if theirBooks, _ := books.ListByAuthor(ctx, theirs.ID); len(theirBooks) != 1 {
+		t.Errorf("the other account's author gained books: %+v", theirBooks)
 	}
 }

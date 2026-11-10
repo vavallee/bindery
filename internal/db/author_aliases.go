@@ -325,7 +325,11 @@ type MergeResult struct {
 	// the target because another author already holds that name (alias names
 	// are unique across the instance).
 	AliasesSkipped []string
-	TargetUpdated  bool
+	// IdentifiersDropped lists source's provider ids that were not moved to
+	// the target because another author in the target's account already
+	// holds them (#3555).
+	IdentifiersDropped []string
+	TargetUpdated      bool
 }
 
 // Merge collapses sourceID into targetID:
@@ -436,10 +440,20 @@ func (r *AuthorAliasRepo) Merge(ctx context.Context, sourceID, targetID int64, o
 		result.TargetUpdated = updated
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		"UPDATE author_identifiers SET author_id = ?, updated_at = ? WHERE author_id = ?",
-		targetID, time.Now().UTC(), sourceID); err != nil {
+	// Since authors are keyed per owner (#3555) two accounts' rows for one
+	// author carry the same provider ids, and an admin can merge across
+	// accounts. Each identifier goes through the per owner rule: one target
+	// already has, or one another author in target's account holds, is dropped
+	// rather than moved, so a merge never leaves two authors in one account
+	// holding the same id.
+	dropped, err := moveAuthorIdentifiersTx(ctx, tx, sourceID, targetID, time.Now().UTC())
+	if err != nil {
 		return nil, fmt.Errorf("migrate author identifiers: %w", err)
+	}
+	result.IdentifiersDropped = dropped
+	if len(dropped) > 0 {
+		slog.Info("author merge: dropped identifiers another author in the target's account holds",
+			"source_author_id", sourceID, "target_author_id", targetID, "identifiers", dropped)
 	}
 
 	// Finally, remove the source author. FK cascade handles any stragglers

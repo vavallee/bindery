@@ -652,7 +652,10 @@ func (r *ABSReviewItemRepo) ResolveAuthorForPrimary(ctx context.Context, sourceI
 	// importer records the alias itself at creation time.
 	if updated > 0 && primaryAuthor != "" && textutil.NormalizeAuthorName(name) != key {
 		var canonicalID int64
-		err := r.db.QueryRowContext(ctx, "SELECT id FROM authors WHERE foreign_id = ?", foreignID).Scan(&canonicalID)
+		// The same row AuthorRepo.GetByForeignID picks, which is the one the
+		// ABS importer will attach to, when several accounts hold their own
+		// row for this author (#3555).
+		err := r.db.QueryRowContext(ctx, "SELECT id FROM authors WHERE foreign_id = ?"+unscopedAuthorOrder, foreignID).Scan(&canonicalID)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			// canonical author not yet created locally; alias will be added

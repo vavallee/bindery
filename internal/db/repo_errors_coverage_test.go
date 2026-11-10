@@ -123,7 +123,7 @@ func TestReposSurfaceDatabaseErrors(t *testing.T) {
 		{"AuthorRepo.StampDiscovery", func() error { return NewAuthorRepo(closed).StampDiscovery(ctx, 1, now) }},
 		{"AuthorRepo.UnmonitoredAuthorIDs", func() error { _, err := NewAuthorRepo(closed).UnmonitoredAuthorIDs(ctx); return err }},
 		{"AuthorRepo.Update", func() error { return NewAuthorRepo(closed).Update(ctx, &models.Author{}) }},
-		{"AuthorRepo.UpgradeSyntheticDNB", func() error { return NewAuthorRepo(closed).UpgradeSyntheticDNB(ctx, "x", &models.Author{}) }},
+		{"AuthorRepo.UpgradeSyntheticDNB", func() error { return NewAuthorRepo(closed).UpgradeSyntheticDNB(ctx, 1, "x", &models.Author{}) }},
 		{"AuthorRepo.UpsertAuthorIdentifier", func() error { return NewAuthorRepo(closed).UpsertAuthorIdentifier(ctx, 1, "x") }},
 		{"BlocklistRepo.Create", func() error { return NewBlocklistRepo(closed).Create(ctx, &models.BlocklistEntry{}) }},
 		{"BlocklistRepo.CreateByUser", func() error { return NewBlocklistRepo(closed).CreateByUser(ctx, &models.BlocklistEntry{}, 1) }},

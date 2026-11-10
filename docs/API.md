@@ -101,10 +101,14 @@ POST   /api/v1/author/{id}/merge                  merge another author into this
 `POST /api/v1/author/{id}/merge` takes `{"sourceId": 123}` (and an optional
 `overwriteDefaults`, default `true`); `{id}` is the author that is kept. It
 answers `{"BooksReparented", "AliasesMigrated", "AliasesCreated",
-"AliasesSkipped", "TargetUpdated"}`. Alias names are unique across the
+"AliasesSkipped", "IdentifiersDropped", "TargetUpdated"}`. Alias names are unique across the
 instance, so a source name another author already holds cannot be recorded on
 the kept author: it is listed in `AliasesSkipped` (`null` when there are none)
-and the server logs a warning (#3565).
+and the server logs a warning (#3565). A provider id of the source that another
+author in the kept author's account already holds is not moved, since within
+one account an id answers to one author; it is listed in `IdentifiersDropped`
+(`null` when there are none). That only happens when merging across accounts
+(#3555).
 
 Each author in `GET /api/v1/author` carries `statistics.bookCount` (the author's
 books, scoped to the caller like `GET /book`) and `statistics.availableBookCount`
