@@ -2216,6 +2216,7 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	// fallback. When the profile actually restricts language, edition-sample
 	// those works so the OL tail is caught (#891). Gated on allowedLangs being
 	// set so we don't spend the round-trips when the filter is "any".
+	adoptMergedHardcoverLanguages(books, languageEvidence)
 	var langSampled int
 	if len(allowedLangs) > 0 {
 		langSampled = h.meta.FillMissingAuthorWorkLanguages(ctx, books)
@@ -2658,16 +2659,16 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		// earlier release bound to the wrong work by title: before #3792
 		// King's 2026 novel landed on the 2011 anthology of the same name, and
 		// the anthology row kept the novel's OpenLibrary and hc: ids as
-		// aliases. Every refresh then resolved the novel to it here. When the
-		// row's own work id and the incoming one are two different works by
-		// date, the alias is not trusted and the work is judged on its own
-		// (metadata.DistinctWorksByIDAndDate). The new row cannot claim the
-		// aliases the old one holds, but it is found by its own id from then
-		// on, so this happens once.
-		if existing != nil && existing.ForeignID != b.ForeignID && metadata.DistinctWorksByIDAndDate(*existing, b) {
+		// aliases. Every refresh then resolved the novel to it here. When
+		// metadata.SameTitleWorksAreDistinct says the two are different works,
+		// the alias is not trusted and the work is judged on its own; if it is
+		// created, the aliases move to its row (healedAliases below).
+		var healedFrom *models.Book
+		if existing != nil && existing.ForeignID != b.ForeignID && metadata.SameTitleWorksAreDistinct(*existing, b) {
 			slog.Info("not resolving a work through an id another work's row holds",
 				"title", b.Title, "foreignId", b.ForeignID, "hardcoverId", b.HardcoverForeignID,
 				"bookId", existing.ID, "bookForeignId", existing.ForeignID)
+			healedFrom = existing
 			existing = nil
 		}
 
@@ -2873,12 +2874,11 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		// OpenLibrary list holds both his own record for the 2026 novel
 		// "Other Worlds Than These" and the 2011 anthology of the same name,
 		// and binding the novel here recorded its OpenLibrary and Hardcover
-		// ids on the anthology row and never created it (#3792). Two works
-		// with different Hardcover ids, or two distinct work ids from one
-		// catalogue whose dates disagree, go on to the create path as the
-		// separate books they are (metadata.TitleMatchRuledOut).
+		// ids on the anthology row and never created it (#3792). A pair
+		// metadata.SameTitleWorksAreDistinct separates goes on to the create
+		// path as the separate books they are.
 		titled, seen := seenTitles.Lookup(b.Title)
-		if seen && titled != nil && metadata.TitleMatchRuledOut(*titled, b) {
+		if seen && titled != nil && metadata.SameTitleWorksAreDistinct(*titled, b) {
 			slog.Debug("not binding same-titled works whose release dates are too far apart",
 				"title", b.Title, "foreignId", b.ForeignID, "bookId", titled.ID, "bookForeignId", titled.ForeignID)
 			seen = false
@@ -3063,6 +3063,9 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 			slog.Warn("failed to create book", "title", b.Title, "error", err)
 			failed++
 			continue
+		}
+		if healedFrom != nil {
+			h.moveHealedAliases(ctx, healedFrom, &b)
 		}
 		// Claim this row for the create path (#2328). seenTitles above already
 		// holds it, so a later work with the same normalised title reaches the
@@ -4068,6 +4071,31 @@ func applyAuthorMajorityLanguageFallback(books []models.Book, evidence map[strin
 	}
 }
 
+// adoptMergedHardcoverLanguages stores Hardcover's language on a work merged
+// with a Hardcover book when Hardcover's evidence found an edition in an
+// allowed language (#3792). The evidence was asked for under the hc: id
+// (metadata.withMergedHardcoverAliases) and already decides the language
+// filter; without this the row kept OpenLibrary's edition sample, so King's
+// novel passed an English-only profile but was stored, shown and sent to
+// Calibre as Portuguese.
+//
+// Only merged rows: a Hardcover work's own evidence stays filter-only, as
+// authorWorkPassesLanguageFilter describes. An indeterminate or not-allowed
+// answer changes nothing, and a not-allowed work is filtered out anyway.
+func adoptMergedHardcoverLanguages(books []models.Book, evidence map[string]metadata.AuthorWorkLanguageEvidence) {
+	for i := range books {
+		id := strings.TrimSpace(books[i].ForeignID)
+		if id == "" || strings.HasPrefix(id, "hc:") || !strings.HasPrefix(strings.TrimSpace(books[i].HardcoverForeignID), "hc:") {
+			continue
+		}
+		found, ok := evidence[id]
+		if !ok || found.State != metadata.AuthorWorkLanguageAllowed || strings.TrimSpace(found.Language) == "" {
+			continue
+		}
+		books[i].Language = found.Language
+	}
+}
+
 // authorWorkPassesLanguageFilter applies provider-supplied edition evidence
 // when it is definitive and otherwise falls through to the work's scalar
 // language. Evidence is filter-only: it never rewrites the preferred/display
@@ -4258,6 +4286,35 @@ func (h *AuthorHandler) recordBookIdentities(ctx context.Context, book *models.B
 			slog.Warn("could not record book identifier",
 				"bookId", book.ID, "title", book.Title, "foreignId", id, "error", err)
 		}
+	}
+}
+
+// moveHealedAliases hands created the ids it is known by that from still holds
+// as aliases (#3792). from is a row an earlier release bound created's work to
+// by title alone; the sync has just judged them different works and created
+// created as its own row, and Create could not record ids another row holds.
+// Without the move, a lookup by the work's hc: id would keep finding from.
+// The row's own foreign id is never touched.
+func (h *AuthorHandler) moveHealedAliases(ctx context.Context, from, created *models.Book) {
+	for _, id := range []string{created.ForeignID, created.HardcoverForeignID} {
+		id = strings.TrimSpace(id)
+		if id == "" || id == from.ForeignID {
+			continue
+		}
+		owner, err := h.books.GetBookIdentifier(ctx, id)
+		if err != nil || owner == nil || owner.BookID != from.ID {
+			continue
+		}
+		if err := h.books.DeleteBookIdentifier(ctx, from.ID, id); err != nil {
+			slog.Warn("could not release a wrongly bound book identifier", "bookId", from.ID, "foreignId", id, "error", err)
+			continue
+		}
+		if err := h.books.UpsertBookIdentifier(ctx, created.ID, id); err != nil {
+			slog.Warn("could not record a released book identifier", "bookId", created.ID, "foreignId", id, "error", err)
+			continue
+		}
+		slog.Info("moved a book identifier from a row it was wrongly bound to",
+			"foreignId", id, "fromBookId", from.ID, "toBookId", created.ID, "title", created.Title)
 	}
 }
 

@@ -1012,8 +1012,9 @@ func sameTitleBindTarget(books []models.Book, candidates []int, src models.Book)
 //
 // It is generous on purpose. The same book is routinely dated a few years
 // apart by two catalogues: first edition against a later default edition, an
-// original against its translation. A gap past this, with a second record to
-// prefer or a distinct work id on each side, is a different book.
+// original against its translation. A gap past it is never enough on its own:
+// it only chooses between competing candidates (sameTitleBindTarget) or
+// confirms what SameTitleWorksAreDistinct already has other evidence for.
 const TitleBindMaxYearGap = 10
 
 func releaseDatesUnknown(a, b *time.Time) bool {
@@ -1052,40 +1053,58 @@ func workIDNamespace(id string) string {
 	return ""
 }
 
-// DistinctWorksByIDAndDate reports whether a stored book and an incoming work
-// are two different works by their own catalogue's account: both foreign ids
-// are work ids from the same catalogue (OpenLibrary or Hardcover), the ids
-// differ, and the release dates are too far apart for the catalogue to merely
-// be holding a duplicate record (#3792).
+// SameTitleWorksAreDistinct reports whether the catalogue sync must keep an
+// incoming work off a stored row it reached through something weaker than the
+// work's own id: the title fallback, or an alias the row holds (#3792).
 //
-// It is for the catalogue sync, at the two places it binds a work to a row
-// through something weaker than the work's own id: the title fallback, and a
-// row found only through the work's Hardcover id. Rows from a library import
-// or a calibre: stub have no work id here and are never ruled out, because
-// adopting them by title is the point of the fallback.
-func DistinctWorksByIDAndDate(stored, incoming models.Book) bool {
-	ns := workIDNamespace(stored.ForeignID)
-	if ns == "" || ns != workIDNamespace(incoming.ForeignID) {
+// It is deliberately narrow, because one book under several work ids is the
+// normal state of OpenLibrary: The Hobbit alone is OL27482W (1937), OL219602W
+// (1990) and OL45346371W (2026), all titled the same. A date gap between two
+// bare OpenLibrary works says nothing, and splitting on it gives a fresh
+// library three wanted Hobbits. So every one of these must hold:
+//
+//   - The incoming work is bound to a Hardcover book. mergeAuthorWorks chose
+//     that binding by date among the same-titled candidates, which is the
+//     evidence a bare work id lacks.
+//   - The stored row is not bound to that same Hardcover book (its own
+//     HardcoverForeignID, when the row carries one).
+//   - The two are different works by their ids: the stored row carries a
+//     different Hardcover id, or both foreign ids are work ids of one
+//     catalogue and differ. Calibre stubs and library imports have neither
+//     and keep title adoption.
+//   - The release dates are more than TitleBindMaxYearGap years apart. Two
+//     Hardcover books, like two OpenLibrary records, can be one book that
+//     catalogue never merged, and only a gap this size says otherwise.
+//   - The stored row has no file. Splitting a book the user owns would put a
+//     second copy on the Wanted list and download it again, which is worse
+//     than leaving a wrong title match in place.
+//
+// The reported case passes every test: King's own record OL44907743W carries
+// the novel's hc: id and its 2026 date, and the anthology OL17400760W is dated
+// 2011. That holds whether the anthology row was found by title, or through
+// the aliases an earlier release recorded on it, which is why the stored row
+// holding the hc: id as an alias does not count as being bound to it.
+func SameTitleWorksAreDistinct(stored, incoming models.Book) bool {
+	hc := hardcoverForeignIDForAuthorWork(incoming)
+	if hc == "" {
 		return false
 	}
-	if strings.TrimSpace(stored.ForeignID) == strings.TrimSpace(incoming.ForeignID) {
+	storedHC := hardcoverForeignIDForAuthorWork(stored)
+	if storedHC == hc {
 		return false
 	}
-	return ReleaseDatesRuleOutSameWork(stored.ReleaseDate, incoming.ReleaseDate)
-}
-
-// TitleMatchRuledOut reports whether the catalogue sync's title fallback must
-// not bind incoming to stored: either the two carry different Hardcover ids,
-// or DistinctWorksByIDAndDate says they are different works (#3792).
-//
-// Different Hardcover ids alone are enough, with no date needed: each names
-// one Hardcover work, so two of them are two books whatever their titles say.
-func TitleMatchRuledOut(stored, incoming models.Book) bool {
-	a, b := hardcoverForeignIDForAuthorWork(stored), hardcoverForeignIDForAuthorWork(incoming)
-	if a != "" && b != "" && a != b {
+	if stored.EbookFilePath != "" || stored.AudiobookFilePath != "" || stored.FilePath != "" {
+		return false
+	}
+	if !ReleaseDatesRuleOutSameWork(stored.ReleaseDate, incoming.ReleaseDate) {
+		return false
+	}
+	if storedHC != "" {
 		return true
 	}
-	return DistinctWorksByIDAndDate(stored, incoming)
+	ns := workIDNamespace(stored.ForeignID)
+	return ns != "" && ns == workIDNamespace(incoming.ForeignID) &&
+		strings.TrimSpace(stored.ForeignID) != strings.TrimSpace(incoming.ForeignID)
 }
 
 func authorWorkMergeKey(title string) string {
