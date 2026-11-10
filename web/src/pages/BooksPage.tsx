@@ -28,6 +28,7 @@ import BookRating from '../components/BookRating'
 import CoverImage from '../components/CoverImage'
 import { btn } from '../components/buttons'
 import { errorText } from '../util/errorText'
+import { calendarYear } from '../util/calendarDate'
 import CoverPlaceholder from '../components/CoverPlaceholder'
 
 type SortMode =
@@ -337,7 +338,7 @@ export default function BooksPage() {
       header: t('books.colYear'),
       sortKey: 'year',
       className: 'text-fg-muted whitespace-nowrap hidden sm:table-cell',
-      cell: book => (book.releaseDate ? new Date(book.releaseDate).getFullYear() : '—'),
+      cell: book => (calendarYear(book.releaseDate) ?? '—'),
     },
     {
       key: 'rating',
@@ -570,7 +571,7 @@ export default function BooksPage() {
                 </div>
                 <div className="flex items-center justify-between mt-0.5">
                   {book.releaseDate && (
-                    <p className="text-[10px] text-fg-muted">{new Date(book.releaseDate).getFullYear()}</p>
+                    <p className="text-[10px] text-fg-muted">{calendarYear(book.releaseDate)}</p>
                   )}
                   <BookRating book={book} className="text-[10px] text-fg-muted" />
                   {/* An action that fetches a file, styled as one. As a green

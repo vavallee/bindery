@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useTimeZone } from '../test/useTimeZone'
 import { http, HttpResponse } from 'msw'
 import { MemoryRouter, useLocation } from 'react-router'
 import BooksPage from './BooksPage'
@@ -642,5 +643,27 @@ describe('BooksPage — book link nav state (#2548)', () => {
 
     await waitFor(() => expect(located?.pathname).toBe('/book/2'))
     expect(located?.state).toEqual({ ids: [1, 2], index: 1, hopDepth: 1 })
+  })
+})
+
+// Release dates are UTC midnight calendar dates; a viewer west of UTC must
+// still see the same year, not the year before.
+describe('BooksPage release year time zone', () => {
+  useTimeZone('America/New_York')
+
+  it('shows 2014 for a Jan 1 UTC release in New York', async () => {
+    server.use(
+      http.get(apiUrl('/book'), () =>
+        HttpResponse.json({
+          items: [makeBook({ id: 1, title: 'Year Only', releaseDate: '2014-01-01T00:00:00Z' })],
+          total: 1,
+          limit: 50,
+          offset: 0,
+        }),
+      ),
+    )
+    renderBooksPage()
+    expect(await screen.findByText('2014')).toBeInTheDocument()
+    expect(screen.queryByText('2013')).toBeNull()
   })
 })

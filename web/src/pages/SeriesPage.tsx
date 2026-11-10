@@ -3,6 +3,7 @@ import { Link, useLocation, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, MediaType, Series, SeriesHardcoverDiff, SeriesHardcoverDiffBook, SeriesHardcoverLink, SeriesHardcoverSearchResult, SystemStatus } from '../api/client'
 import { hardcoverSeriesUrl } from '../util/metadataSource'
+import { calendarYear } from '../util/calendarDate'
 import { foldedIncludes } from '../util/foldForSearch'
 import AddSeriesBookModal from '../components/AddSeriesBookModal'
 import HardcoverSeriesLinkModal from '../components/HardcoverSeriesLinkModal'
@@ -828,7 +829,7 @@ export default function SeriesPage() {
                           </p>
                           {entry.book?.releaseDate && (
                             <p className="text-xs text-fg-muted">
-                              {new Date(entry.book.releaseDate).getFullYear()}
+                              {calendarYear(entry.book.releaseDate)}
                             </p>
                           )}
                         </div>

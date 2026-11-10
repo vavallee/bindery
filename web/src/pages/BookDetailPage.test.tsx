@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { useTimeZone } from '../test/useTimeZone'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import BookDetailPage, { FilteredResultsSection, SearchResultsSection } from './BookDetailPage'
@@ -2513,5 +2514,18 @@ describe('BookDetailPage — metadata you already have', () => {
     const genres = await screen.findByRole('list', { name: 'Genres' })
     expect(within(genres).getAllByRole('listitem').map(li => li.textContent)).toEqual(['Dystopia', 'Classics'])
     expect(screen.getByRole('switch')).toHaveTextContent('Monitored')
+  })
+})
+
+// Release dates are UTC midnight calendar dates; a viewer west of UTC must
+// still see the same day, not the day before.
+describe('BookDetailPage release date time zone', () => {
+  useTimeZone('America/New_York')
+
+  it('shows Jan 1, 2014 for a UTC midnight release date in New York', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ releaseDate: '2014-01-01T00:00:00Z' }))
+    renderBookDetailPage()
+    expect(await screen.findByText(/Jan 1, 2014/)).toBeInTheDocument()
+    expect(screen.queryByText(/Dec 31, 2013/)).toBeNull()
   })
 })
