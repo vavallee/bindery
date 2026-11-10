@@ -1790,6 +1790,107 @@ describe('SeriesPage filters', () => {
     expect(headings()).toEqual(['Gappy'])
   })
 
+  // Missing scope (#2871): released counts books dated today or earlier, a
+  // book with no date counts as upcoming. Dates sit far from today so the test
+  // does not depend on the clock.
+  describe('missing scope', () => {
+    const PAST = '2001-05-01T00:00:00Z'
+    const FUTURE = '2999-05-01T00:00:00Z'
+    const dated = (b: Book, releaseDate?: string): Book => ({ ...b, releaseDate })
+    const scoped = [
+      // Its only gap is a book that is not out yet.
+      series(1, 'Future Gap', [dated(book(11, 'imported'), PAST), dated(book(12, 'wanted'), FUTURE)]),
+      // A gap that has been out for years, plus an undated working title.
+      series(2, 'Released Gap', [dated(book(21, 'wanted'), PAST), dated(book(22, 'wanted'))]),
+      // Only gap has no release date: a working title volume.
+      series(3, 'Working Title', [dated(book(31, 'imported'), PAST), dated(book(32, 'wanted'))]),
+      series(4, 'Finished', [dated(book(41, 'imported'), PAST)]),
+    ]
+    const scopeGroup = () => screen.getByRole('group', { name: 'Which missing books' })
+
+    it('counts a series whose only gap is a future book as missing under all and not under released', async () => {
+      renderAt(scoped, enhancedOff, '/series?filter=missing')
+      expect(await screen.findByRole('heading', { name: 'Future Gap' })).toBeInTheDocument()
+      expect(within(scopeGroup()).getByRole('button', { name: 'All missing' })).toHaveAttribute('aria-pressed', 'true')
+      expect(headings()).toEqual(['Future Gap', 'Released Gap', 'Working Title'])
+
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'Released' }))
+      expect(currentSearch).toBe('?filter=missing&missing=released')
+      expect(headings()).toEqual(['Released Gap'])
+      // The badge follows the scope: the undated book is not counted.
+      expect(screen.getByText('1 released missing')).toBeInTheDocument()
+
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'Upcoming' }))
+      expect(currentSearch).toBe('?filter=missing&missing=upcoming')
+      expect(headings()).toEqual(['Future Gap', 'Released Gap', 'Working Title'])
+      expect(screen.getAllByText('1 upcoming')).toHaveLength(3)
+
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'All missing' }))
+      expect(currentSearch).toBe('?filter=missing')
+      expect(screen.getByText('2 missing')).toBeInTheDocument()
+
+      expect(api.fillSeries).not.toHaveBeenCalled()
+      expect(api.getSeriesHardcoverDiff).not.toHaveBeenCalled()
+    })
+
+    it('shows the scope only under Missing books and drops it when the filter changes', async () => {
+      renderAt(scoped, enhancedOff, '/series?filter=missing&missing=released')
+      expect(await screen.findByRole('heading', { name: 'Released Gap' })).toBeInTheDocument()
+      expect(headings()).toEqual(['Released Gap'])
+
+      fireEvent.click(screen.getByRole('button', { name: 'Complete' }))
+      expect(currentSearch).toBe('?filter=complete')
+      expect(screen.queryByRole('group', { name: 'Which missing books' })).not.toBeInTheDocument()
+      // Complete is unscoped: a future gap is still a gap.
+      expect(headings()).toEqual(['Finished'])
+    })
+
+    it('ignores a stray scope under another filter and an unknown scope value', async () => {
+      const { unmount } = renderAt(scoped, enhancedOff, '/series?missing=released')
+      expect(await screen.findByRole('heading', { name: 'Future Gap' })).toBeInTheDocument()
+      expect(headings()).toHaveLength(4)
+      expect(screen.queryByText('1 released missing')).not.toBeInTheDocument()
+      unmount()
+
+      renderAt(scoped, enhancedOff, '/series?filter=missing&missing=bogus')
+      expect(await screen.findByRole('heading', { name: 'Future Gap' })).toBeInTheDocument()
+      expect(within(scopeGroup()).getByRole('button', { name: 'All missing' })).toHaveAttribute('aria-pressed', 'true')
+      expect(headings()).toEqual(['Future Gap', 'Released Gap', 'Working Title'])
+    })
+
+    it('leaves the undated Hardcover estimate out of the scoped counts until the diff brings dates', async () => {
+      vi.mocked(api.getSeriesHardcoverDiff).mockResolvedValue({
+        seriesId: 5,
+        link: link(5, 4),
+        present: [],
+        missing: [
+          { foreignBookId: 'hc:5a', providerId: '5a', title: 'Out Already', position: '2', releaseDate: PAST },
+          { foreignBookId: 'hc:5b', providerId: '5b', title: 'Not Yet', position: '3', releaseDate: FUTURE },
+          { foreignBookId: 'hc:5c', providerId: '5c', title: 'Untitled', position: '4' },
+        ],
+        localOnly: [], uncertain: [], covered: [], presentCount: 1, missingCount: 3,
+      })
+      renderAt([
+        series(5, 'Hardcover Gap', [dated(book(51, 'imported'), PAST)], { hardcoverLink: link(5, 4) }),
+      ], enhancedOn, '/series?filter=missing')
+      expect(await screen.findByText('3 missing')).toBeInTheDocument()
+
+      // Unopened, the estimate is a bare count with no dates: not guessed into
+      // the released scope.
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'Released' }))
+      expect(headings()).toEqual([])
+
+      // Opened (from the all scope), the diff's dates decide.
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'All missing' }))
+      fireEvent.click(screen.getByRole('heading', { name: 'Hardcover Gap' }))
+      await waitFor(() => expect(api.getSeriesHardcoverDiff).toHaveBeenCalledWith(5))
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'Released' }))
+      expect(await screen.findByText('1 released missing')).toBeInTheDocument()
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'Upcoming' }))
+      expect(await screen.findByText('2 upcoming')).toBeInTheDocument()
+    })
+  })
+
   // Book count filter (#3317): computed from series.books.length alone.
   describe('size filter', () => {
     const sized = [

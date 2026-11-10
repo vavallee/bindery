@@ -27,6 +27,28 @@ function parseSeriesFilter(raw: string | null): SeriesFilter {
   return SERIES_FILTERS.find(f => f === raw) ?? 'all'
 }
 
+// Which missing books the Missing filter counts (#2871), kept in `?missing=`.
+// 'all' is every gap, as before. 'released' counts only books dated on or
+// before today; 'upcoming' counts the rest. A book with no release date counts
+// as upcoming, not released: the case the issue names is an unpublished volume
+// known only by a working title, which has no date yet. The two scopes split
+// the gaps between them, so released plus upcoming always equals all.
+const MISSING_SCOPES = ['all', 'released', 'upcoming'] as const
+type MissingScope = typeof MISSING_SCOPES[number]
+
+function parseMissingScope(raw: string | null): MissingScope {
+  return MISSING_SCOPES.find(m => m === raw) ?? 'all'
+}
+
+// releaseDate is a UTC timestamp; compare its date part as text against
+// today's UTC date, the same comparison AuthorDetailPage's published filter
+// uses, so a time zone cannot move a book across the line.
+function inMissingScope(releaseDate: string | undefined, scope: MissingScope, today: string): boolean {
+  if (scope === 'all') return true
+  const released = !!releaseDate && releaseDate.slice(0, 10) <= today
+  return scope === 'released' ? released : !released
+}
+
 // Book count filter (#3317), kept in `?size=`. Computed from series.books.length
 // alone, so a one book series can be told from a longer one without a fetch.
 const SERIES_SIZES = ['any', 'single', 'multi'] as const
@@ -50,17 +72,38 @@ function monitoredSplitParts(series: Series): number {
 // once the card has been opened, otherwise the estimate from the linked
 // series' book count. Both come from data already on the page; the filters
 // never fetch a diff per series to decide.
-function seriesMissingCounts(series: Series, enhancedHardcoverApi: boolean, diff?: SeriesHardcoverDiff) {
+//
+// scopedMissingCount is the same figure narrowed to a missing scope. Local gaps
+// carry their own release date. Hardcover books not in the library have a date
+// only in the diff, so a scoped count uses the diff once the card has been
+// opened; the unopened estimate is a bare number with no dates behind it and
+// is left out of both scoped counts rather than guessed into one of them.
+// gapCount, hardcoverMissingCount and displayMissingCount never narrow: Fill
+// acts on every gap whatever the scope.
+function seriesMissingCounts(series: Series, enhancedHardcoverApi: boolean, diff?: SeriesHardcoverDiff, scope: MissingScope = 'all', today: string = todayUTC()) {
   const books = series.books ?? []
   // Excluded books are not a gap: counting them showed a "missing" pill
   // that Fill could not act on (#2324). Nor is a split edition part of a book
   // already in the series, which Fill skips (#3048).
   const splitParts = new Set(series.splitEditionPartBookIds ?? [])
-  const gapCount = books.filter(b => b.book && b.book.status !== 'imported' && !b.book.excluded && !splitParts.has(b.bookId)).length
+  const gaps = books.filter(b => b.book && b.book.status !== 'imported' && !b.book.excluded && !splitParts.has(b.bookId))
+  const gapCount = gaps.length
   const hardcoverMissingEstimate = enhancedHardcoverApi ? Math.max(0, (series.hardcoverLink?.hardcoverBookCount ?? 0) - books.length) : 0
   const hardcoverMissingCount = enhancedHardcoverApi ? (diff?.missingCount ?? hardcoverMissingEstimate) : 0
   const displayMissingCount = Math.max(gapCount, hardcoverMissingCount)
-  return { gapCount, hardcoverMissingCount, displayMissingCount }
+  let scopedMissingCount = displayMissingCount
+  if (scope !== 'all') {
+    const scopedGaps = gaps.filter(b => inMissingScope(b.book?.releaseDate, scope, today)).length
+    const scopedHardcover = enhancedHardcoverApi && diff
+      ? diff.missing.filter(m => inMissingScope(m.releaseDate, scope, today)).length
+      : 0
+    scopedMissingCount = Math.max(scopedGaps, scopedHardcover)
+  }
+  return { gapCount, hardcoverMissingCount, displayMissingCount, scopedMissingCount }
+}
+
+function todayUTC(): string {
+  return new Date().toISOString().slice(0, 10)
 }
 
 export default function SeriesPage() {
@@ -157,6 +200,7 @@ export default function SeriesPage() {
     const params = new URLSearchParams(searchParams)
     params.delete('filter')
     params.delete('size')
+    params.delete('missing')
     setSearchParams(params, { replace: true })
   }
 
@@ -413,12 +457,26 @@ export default function SeriesPage() {
     const params = new URLSearchParams(searchParams)
     if (next === 'all') params.delete('filter')
     else params.set('filter', next)
+    // The scope belongs to the Missing filter alone; leaving it drops it.
+    if (next !== 'missing') params.delete('missing')
     setSearchParams(params, { replace: true })
     // Opening a card can move it between Missing and Complete (its exact
     // Hardcover diff replaces the estimate), so the open card stays listed
     // until the user picks another filter; then the list starts clean.
     setExpanded(null)
   }
+
+  // Only read while the Missing filter is on, where its control shows; a
+  // stray ?missing= under another filter changes nothing.
+  const missingScope: MissingScope = filter === 'missing' ? parseMissingScope(searchParams.get('missing')) : 'all'
+  const selectMissingScope = (next: MissingScope) => {
+    const params = new URLSearchParams(searchParams)
+    if (next === 'all') params.delete('missing')
+    else params.set('missing', next)
+    setSearchParams(params, { replace: true })
+    setExpanded(null)
+  }
+  const today = todayUTC()
 
   const size = parseSeriesSize(searchParams.get('size'))
   const selectSize = (next: SeriesSize) => {
@@ -440,7 +498,7 @@ export default function SeriesPage() {
   const matchesFilter = (series: Series) => {
     switch (filter) {
       case 'missing':
-        return seriesMissingCounts(series, enhancedHardcoverApi, diffs[series.id]).displayMissingCount > 0
+        return seriesMissingCounts(series, enhancedHardcoverApi, diffs[series.id], missingScope, today).scopedMissingCount > 0
       case 'complete':
         // A series with no books is not complete, it is empty.
         return (series.books?.length ?? 0) > 0 &&
@@ -501,6 +559,22 @@ export default function SeriesPage() {
             </button>
           ))}
         </div>
+        {filter === 'missing' && (
+          <div role="group" aria-label={t('series.missingScopeLabel')} className="flex gap-1 pointer-coarse:gap-y-5 flex-wrap items-center">
+            {MISSING_SCOPES.map(m => (
+              <button
+                key={m}
+                type="button"
+                aria-pressed={missingScope === m}
+                onClick={() => selectMissingScope(m)}
+                title={m === 'all' ? undefined : t(enhancedHardcoverApi ? 'series.missingScopeHintHardcover' : 'series.missingScopeHint')}
+                className={`touch-target px-3 py-1 rounded-md text-xs font-medium transition-colors ${missingScope === m ? 'bg-slate-300 dark:bg-zinc-700 text-slate-900 dark:text-white' : 'text-fg-muted hover:text-slate-900 dark:hover:text-white'}`}
+              >
+                {t(`series.missingScope.${m}`)}
+              </button>
+            ))}
+          </div>
+        )}
         <div role="group" aria-label={t('series.sizeLabel')} className="flex gap-1 pointer-coarse:gap-y-5 flex-wrap items-center">
           {SERIES_SIZES.map(z => (
             <button
@@ -545,7 +619,11 @@ export default function SeriesPage() {
             const books = series.books ?? []
             const bookCount = books.length
             const diff = diffs[series.id]
-            const { gapCount, hardcoverMissingCount, displayMissingCount } = seriesMissingCounts(series, enhancedHardcoverApi, diff)
+            // The badge follows the missing scope while it narrows the list,
+            // so a card listed under "Released" says how many released books
+            // it lacks, not a total that includes the ones it was listed for
+            // leaving out.
+            const { gapCount, hardcoverMissingCount, scopedMissingCount: displayMissingCount } = seriesMissingCounts(series, enhancedHardcoverApi, diff, missingScope, today)
             const fillNeeded = gapCount > 0 || hardcoverMissingCount > 0
             const splitPartIds = new Set(series.splitEditionPartBookIds ?? [])
             const splitPartsToUnmonitor = monitoredSplitParts(series)
@@ -575,7 +653,9 @@ export default function SeriesPage() {
                     <div className="flex-shrink-0 flex items-center gap-2">
                       {displayMissingCount > 0 && (
                         <span className="text-xs text-amber-800 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">
-                          {t('series.missingBadge', { count: displayMissingCount })}
+                          {missingScope === 'all'
+                            ? t('series.missingBadge', { count: displayMissingCount })
+                            : t(`series.missingBadgeScope.${missingScope}`, { count: displayMissingCount })}
                         </span>
                       )}
                       <span className="text-xs text-fg-muted bg-slate-200 dark:bg-zinc-800 px-2 py-0.5 rounded-full">

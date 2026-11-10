@@ -1047,6 +1047,18 @@
       "unlinked": "Not linked to Hardcover",
       "shortlisted": "Shortlisted"
     },
+    "missingScopeLabel": "Which missing books",
+    "missingScope": {
+      "all": "All missing",
+      "released": "Released",
+      "upcoming": "Upcoming"
+    },
+    "missingScopeHint": "Released counts books dated today or earlier. A book with no release date counts as upcoming.",
+    "missingScopeHintHardcover": "Released counts books dated today or earlier. A book with no release date counts as upcoming. Hardcover books you do not have yet count here once the series has been opened, since their dates load with it.",
+    "missingBadgeScope": {
+      "released": "{{count}} released missing",
+      "upcoming": "{{count}} upcoming"
+    },
     "sizeLabel": "Series size",
     "size": {
       "any": "Any size",
