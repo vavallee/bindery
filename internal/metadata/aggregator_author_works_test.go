@@ -1155,36 +1155,25 @@ func TestMergeAuthorWorks_CloseOrMissingDatesStillBind(t *testing.T) {
 	}
 }
 
-func TestSameTitleWorksAreDistinct(t *testing.T) {
-	old := time.Date(2011, 1, 1, 0, 0, 0, 0, time.UTC)
-	near := time.Date(2014, 1, 1, 0, 0, 0, 0, time.UTC)
-	recent := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
-	book := func(id, provider, hc string, date *time.Time) models.Book {
-		return models.Book{ForeignID: id, MetadataProvider: provider, HardcoverForeignID: hc, ReleaseDate: date}
-	}
-	owned := book("OL17400760W", "openlibrary", "", &old)
-	owned.EbookFilePath = "/books/anthology.epub"
+func TestCreditsShowAnotherAuthorsWork(t *testing.T) {
+	const king, tolkien = "OL19981A", "OL26320A"
 	cases := []struct {
 		name             string
-		stored, incoming models.Book
+		stored, incoming []string
+		author           string
 		want             bool
 	}{
-		{"the reported pair", book("OL17400760W", "openlibrary", "", &old), book("OL44907743W", "openlibrary", "hc:novel", &recent), true},
-		{"stored row bound to another Hardcover book", book("OL1W", "openlibrary", "hc:a", &old), book("OL2W", "openlibrary", "hc:b", &recent), true},
-		{"Hardcover works of their own", book("hc:a", "hardcover", "", &old), book("hc:b", "hardcover", "", &recent), true},
-		{"two bare OpenLibrary records of one book", book("OL27482W", "openlibrary", "", &old), book("OL219602W", "openlibrary", "", &recent), false},
-		{"bare incoming against a Hardcover-bound row", book("OL27482W", "openlibrary", "hc:hobbit", &old), book("OL219602W", "openlibrary", "", &recent), false},
-		{"both bound to the same Hardcover book", book("OL1W", "openlibrary", "hc:a", &old), book("OL2W", "openlibrary", "hc:a", &recent), false},
-		{"different Hardcover ids close in time", book("OL1W", "openlibrary", "hc:a", &old), book("OL2W", "openlibrary", "hc:b", &near), false},
-		{"different Hardcover ids, no dates", book("OL1W", "openlibrary", "hc:a", nil), book("OL2W", "openlibrary", "hc:b", nil), false},
-		{"the stored row is owned", owned, book("OL44907743W", "openlibrary", "hc:novel", &recent), false},
-		{"across catalogues the ids prove nothing", book("OL15011W", "openlibrary", "", &old), book("hc:novel", "hardcover", "", &recent), false},
-		{"calibre stub keeps title adoption", book("calibre:12", "calibre", "", &old), book("OL2W", "openlibrary", "hc:novel", &recent), false},
-		{"library import keeps title adoption", book("abs:li_1", "audiobookshelf", "", &old), book("hc:novel", "hardcover", "", &recent), false},
+		{"anthology edited by someone else against King's novel", []string{"OL6811804A", king}, []string{king, "OL32650A"}, king, true},
+		{"two records both credited to the author first", []string{tolkien}, []string{tolkien}, tolkien, false},
+		{"an adaptation incoming against the author's record", []string{tolkien}, []string{"OL2453782A", "OL758306A", tolkien}, tolkien, false},
+		{"incoming not credited to the author first", []string{"OL6811804A"}, []string{"OL32650A", king}, king, false},
+		{"stored credits unknown", nil, []string{king}, king, false},
+		{"incoming credits unknown", []string{"OL6811804A"}, nil, king, false},
+		{"author key unknown", []string{"OL6811804A"}, []string{king}, "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := SameTitleWorksAreDistinct(tc.stored, tc.incoming); got != tc.want {
+			if got := CreditsShowAnotherAuthorsWork(tc.stored, tc.incoming, tc.author); got != tc.want {
 				t.Errorf("got %v, want %v", got, tc.want)
 			}
 		})

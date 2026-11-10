@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,7 +201,7 @@ func otherWorldsAggregator() *metadata.Aggregator {
 		{
 			ForeignID: "OL44907743W", Title: "Other Worlds Than These", SortTitle: "other worlds than these",
 			MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, Genres: []string{},
-			MetadataProvider: "openlibrary", CreditedAuthorForeignIDs: []string{"OL19981A", "OL19807A"},
+			MetadataProvider: "openlibrary", CreditedAuthorForeignIDs: []string{"OL19981A", "OL32650A"},
 		},
 		{
 			ForeignID: "OL17400760W", Title: "Other Worlds Than These", SortTitle: "other worlds than these",
@@ -242,7 +244,7 @@ func otherWorldsLibrary(t *testing.T, allowed string) (*AuthorHandler, *db.BookR
 	}
 	author := &models.Author{
 		ForeignID: "OL19981A", Name: "Stephen King", SortName: "King, Stephen",
-		MetadataProvider: "openlibrary", Monitored: false,
+		MetadataProvider: "openlibrary", Monitored: true,
 	}
 	if err := authorRepo.Create(ctx, author); err != nil {
 		t.Fatal(err)
@@ -354,6 +356,31 @@ func TestFetchAuthorBooks_OtherWorldsThanTheseHealsAnEarlierWrongBind(t *testing
 	assertOtherWorldsSplit(t, bookRepo, author, anthology)
 }
 
+// TestFetchAuthorBooks_OtherWorldsThanTheseWithTheAnthologyOwned: the issue
+// says the anthology was already in the catalogue, and it may well be on
+// disk. Owning it does not make the novel the same book: the novel still gets
+// its own row, wanted.
+func TestFetchAuthorBooks_OtherWorldsThanTheseWithTheAnthologyOwned(t *testing.T) {
+	h, bookRepo, author, anthology := otherWorldsLibrary(t, "any")
+	ctx := context.Background()
+	file := filepath.Join(t.TempDir(), "Other Worlds Than These.epub")
+	if err := os.WriteFile(file, []byte("epub"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := bookRepo.AddBookFile(ctx, anthology.ID, models.MediaTypeEbook, file); err != nil {
+		t.Fatal(err)
+	}
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+	assertOtherWorldsSplit(t, bookRepo, author, anthology)
+	novel, err := bookRepo.GetByForeignID(ctx, "OL44907743W")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !novel.Monitored || novel.Status != models.BookStatusWanted {
+		t.Errorf("the novel should be monitored and wanted: monitored=%v status=%q", novel.Monitored, novel.Status)
+	}
+}
+
 // TestFetchAuthorBooks_SameTitleCrossProviderCloseDatesStillMatch keeps the
 // ordinary cross-provider title match: the same book from Hardcover, dated a
 // couple of years after OpenLibrary's first edition, is still one row.
@@ -407,29 +434,23 @@ func TestFetchAuthorBooks_SameTitleCrossProviderCloseDatesStillMatch(t *testing.
 	}
 }
 
-// hobbitAggregator serves The Hobbit the way OpenLibrary does: three work
-// records for one book, dated 1937, 1990 and 2026 by the search page, plus
-// Hardcover's record of it dated hcYear.
-func hobbitAggregator(hcYear int) *metadata.Aggregator {
-	d := func(y int) *time.Time { t := time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC); return &t }
-	work := func(id string, year int) models.Book {
-		return models.Book{
-			ForeignID: id, Title: "The Hobbit", SortTitle: "hobbit", MediaType: models.MediaTypeEbook,
-			Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary",
-			Language: "eng", ReleaseDate: d(year),
-		}
-	}
-	primary := &stubMetaProvider{name: "openlibrary", works: []models.Book{
-		work("OL27482W", 1937), work("OL219602W", 1990), work("OL45346371W", 2026),
-	}}
-	hardcover := &stubMetaProvider{name: "hardcover", authorWorksByName: []models.Book{{
-		ForeignID: "hc:the-hobbit", Title: "The Hobbit", SortTitle: "hobbit", MediaType: models.MediaTypeEbook,
-		Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "hardcover", ReleaseDate: d(hcYear),
-	}}}
-	return metadata.NewAggregator(primary, hardcover).WithAudnexClient(nil)
+// sameTitleWork is one OpenLibrary work record in the duplicate-record tests:
+// its id, search page year and credits, primary first.
+type sameTitleWork struct {
+	id      string
+	year    int
+	credits []string
 }
 
-func hobbitLibrary(t *testing.T, hcYear int) (*AuthorHandler, *db.BookRepo, *models.Author) {
+func yearDate(y int) *time.Time {
+	t := time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC)
+	return &t
+}
+
+// sameTitleLibrary opens a library with one monitored author whose
+// OpenLibrary works list holds works, all titled title, and whose Hardcover
+// catalogue holds one book of that title dated hcYear.
+func sameTitleLibrary(t *testing.T, authorKey, authorName, title string, works []sameTitleWork, hcYear int) (*AuthorHandler, *db.BookRepo, *models.Author) {
 	t.Helper()
 	database, err := db.OpenMemory()
 	if err != nil {
@@ -442,18 +463,32 @@ func hobbitLibrary(t *testing.T, hcYear int) (*AuthorHandler, *db.BookRepo, *mod
 	profileRepo := db.NewMetadataProfileRepo(database)
 	settingsRepo := db.NewSettingsRepo(database)
 	author := &models.Author{
-		ForeignID: "OL26320A", Name: "J.R.R. Tolkien", SortName: "Tolkien, J.R.R.",
+		ForeignID: authorKey, Name: authorName, SortName: authorName,
 		MetadataProvider: "openlibrary", Monitored: true,
 	}
 	if err := authorRepo.Create(ctx, author); err != nil {
 		t.Fatal(err)
 	}
-	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, hobbitAggregator(hcYear),
-		settingsRepo, profileRepo, nil)
+	olWorks := make([]models.Book, 0, len(works))
+	for _, w := range works {
+		olWorks = append(olWorks, models.Book{
+			ForeignID: w.id, Title: title, SortTitle: title, MediaType: models.MediaTypeEbook,
+			Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary",
+			Language: "eng", ReleaseDate: yearDate(w.year), CreditedAuthorForeignIDs: w.credits,
+		})
+	}
+	primary := &stubMetaProvider{name: "openlibrary", works: olWorks}
+	hardcover := &stubMetaProvider{name: "hardcover", authorWorksByName: []models.Book{{
+		ForeignID: "hc:" + strings.ToLower(strings.ReplaceAll(title, " ", "-")), Title: title, SortTitle: title,
+		MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted, Genres: []string{},
+		MetadataProvider: "hardcover", ReleaseDate: yearDate(hcYear),
+	}}}
+	agg := metadata.NewAggregator(primary, hardcover).WithAudnexClient(nil)
+	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, agg, settingsRepo, profileRepo, nil)
 	return h, bookRepo, author
 }
 
-func assertOneHobbit(t *testing.T, bookRepo *db.BookRepo, author *models.Author) []models.Book {
+func assertOneBook(t *testing.T, bookRepo *db.BookRepo, author *models.Author) models.Book {
 	t.Helper()
 	got, err := bookRepo.ListByAuthor(context.Background(), author.ID)
 	if err != nil {
@@ -463,53 +498,149 @@ func assertOneHobbit(t *testing.T, bookRepo *db.BookRepo, author *models.Author)
 		for _, b := range got {
 			t.Logf("book %d: %q (%s) %v monitored=%v", b.ID, b.Title, b.ForeignID, b.ReleaseDate, b.Monitored)
 		}
-		t.Fatalf("author has %d Hobbits, want 1", len(got))
+		t.Fatalf("author has %d rows for one book, want 1", len(got))
 	}
-	return got
+	return got[0]
+}
+
+const tolkien = "OL26320A"
+
+// hobbitWorks is The Hobbit as OpenLibrary holds it: Tolkien's records from
+// 1937 and 2026, and the 1990 graphic novel adaptation, credited to its
+// adapter and illustrator first and to Tolkien third.
+var hobbitWorks = []sameTitleWork{
+	{"OL27482W", 1937, []string{tolkien}},
+	{"OL219602W", 1990, []string{"OL2453782A", "OL758306A", tolkien}},
+	{"OL45346371W", 2026, []string{tolkien}},
 }
 
 // TestFetchAuthorBooks_DuplicateOpenLibraryWorksStayOneBook guards the other
-// side of #3792. OpenLibrary holds The Hobbit as three work records decades
-// apart, none of them a different book. A fresh library must get one row, as
-// before, not three monitored, wanted Hobbits.
+// side of #3792. OpenLibrary holds The Hobbit under several work ids decades
+// apart. A fresh library gets one row, as before, whether Hardcover dates the
+// book by its first edition or by a modern one, which binds it to a later
+// record.
 func TestFetchAuthorBooks_DuplicateOpenLibraryWorksStayOneBook(t *testing.T) {
-	h, bookRepo, author := hobbitLibrary(t, 1937)
-	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
-	assertOneHobbit(t, bookRepo, author)
-	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
-	assertOneHobbit(t, bookRepo, author)
+	for _, hcYear := range []int{1937, 2026} {
+		t.Run(fmt.Sprint("hardcover=", hcYear), func(t *testing.T) {
+			h, bookRepo, author := sameTitleLibrary(t, tolkien, "J.R.R. Tolkien", "The Hobbit", hobbitWorks, hcYear)
+			h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+			assertOneBook(t, bookRepo, author)
+			h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+			assertOneBook(t, bookRepo, author)
+		})
+	}
 }
 
-// TestFetchAuthorBooks_OwnedBookIsNeverSplit covers an upgraded library: an
-// owned Hobbit row (OL27482W, 1937) holds OL219602W as an alias the old title
-// dedup recorded. Even with Hardcover's record dated so that the merge binds
-// it to OL219602W, the sync must not mint a wanted second Hobbit for a book
-// already on disk.
-func TestFetchAuthorBooks_OwnedBookIsNeverSplit(t *testing.T) {
-	h, bookRepo, author := hobbitLibrary(t, 1992)
+// TestFetchAuthorBooks_ClassicDatedByAModernEditionStaysOneBook: Persuasion
+// has records dated from 1818 to 2016, all credited to Austen. Hardcover
+// dating it 2015 binds it to a 2015 record, which is still the same book.
+func TestFetchAuthorBooks_ClassicDatedByAModernEditionStaysOneBook(t *testing.T) {
+	const austen = "OL21594A"
+	works := []sameTitleWork{
+		{"OL40957767W", 1818, []string{austen}},
+		{"OL38090337W", 2010, []string{austen}},
+		{"OL40833975W", 2015, []string{austen}},
+		{"OL40893310W", 2016, []string{austen, "OL9604390A"}},
+	}
+	h, bookRepo, author := sameTitleLibrary(t, austen, "Jane Austen", "Persuasion", works, 2015)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+	assertOneBook(t, bookRepo, author)
+}
+
+// TestFetchAuthorBooks_TranslationStaysOneBook: OpenLibrary dates Kafka's The
+// Trial by the 1925 German first edition and Hardcover by a 1998 translation.
+func TestFetchAuthorBooks_TranslationStaysOneBook(t *testing.T) {
+	const kafka = "OL25344A"
+	works := []sameTitleWork{{"OL15011W", 1925, []string{kafka}}}
+	h, bookRepo, author := sameTitleLibrary(t, kafka, "Franz Kafka", "The Trial", works, 1998)
+	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+	got := assertOneBook(t, bookRepo, author)
+	if got.ReleaseDate == nil || got.ReleaseDate.Year() != 1925 {
+		t.Errorf("the row should keep OpenLibrary's 1925 date, got %v", got.ReleaseDate)
+	}
+}
+
+// seedHobbitWithAlias stores Tolkien's Hobbit (OL27482W, 1937) holding the
+// graphic novel's id OL219602W as an alias, the way the old title dedup left
+// upgraded libraries, optionally with a file on disk.
+func seedHobbitWithAlias(t *testing.T, bookRepo *db.BookRepo, author *models.Author, owned bool) *models.Book {
+	t.Helper()
 	ctx := context.Background()
-	d := time.Date(1937, 1, 1, 0, 0, 0, 0, time.UTC)
-	owned := &models.Book{
-		ForeignID: "OL27482W", AuthorID: author.ID, Title: "The Hobbit", SortTitle: "hobbit",
-		Genres: []string{}, Status: models.BookStatusImported, ReleaseDate: &d,
+	row := &models.Book{
+		ForeignID: "OL27482W", AuthorID: author.ID, Title: "The Hobbit", SortTitle: "The Hobbit",
+		Genres: []string{}, Status: models.BookStatusWanted, Monitored: true, ReleaseDate: yearDate(1937),
 		MediaType: models.MediaTypeEbook, MetadataProvider: "openlibrary", Language: "eng",
 	}
-	if err := bookRepo.Create(ctx, owned); err != nil {
+	if err := bookRepo.Create(ctx, row); err != nil {
 		t.Fatal(err)
 	}
-	if err := bookRepo.UpsertBookIdentifier(ctx, owned.ID, "OL219602W"); err != nil {
+	if err := bookRepo.UpsertBookIdentifier(ctx, row.ID, "OL219602W"); err != nil {
 		t.Fatal(err)
 	}
-	file := filepath.Join(t.TempDir(), "The Hobbit.epub")
-	if err := os.WriteFile(file, []byte("epub"), 0o600); err != nil {
-		t.Fatal(err)
+	if owned {
+		file := filepath.Join(t.TempDir(), "The Hobbit.epub")
+		if err := os.WriteFile(file, []byte("epub"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := bookRepo.AddBookFile(ctx, row.ID, models.MediaTypeEbook, file); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := bookRepo.AddBookFile(ctx, owned.ID, models.MediaTypeEbook, file); err != nil {
-		t.Fatal(err)
+	return row
+}
+
+// TestFetchAuthorBooks_UpgradedHobbitStaysOneBook covers upgraded libraries,
+// owned or not. Hardcover dated 1992 binds to the 1990 record, which the
+// stored Hobbit holds as an alias. Tolkien is that row's primary credit, so it
+// is his book and no second row is made; the alias stays where it is.
+func TestFetchAuthorBooks_UpgradedHobbitStaysOneBook(t *testing.T) {
+	for _, owned := range []bool{false, true} {
+		t.Run(fmt.Sprint("owned=", owned), func(t *testing.T) {
+			h, bookRepo, author := sameTitleLibrary(t, tolkien, "J.R.R. Tolkien", "The Hobbit", hobbitWorks, 1992)
+			row := seedHobbitWithAlias(t, bookRepo, author, owned)
+			h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
+			got := assertOneBook(t, bookRepo, author)
+			if got.ID != row.ID {
+				t.Errorf("the surviving Hobbit is %d, want the stored row %d", got.ID, row.ID)
+			}
+			alias, err := bookRepo.GetBookIdentifier(context.Background(), "OL219602W")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if alias == nil || alias.BookID != row.ID {
+				t.Errorf("the OL219602W alias moved: %+v", alias)
+			}
+		})
 	}
-	h.FetchAuthorBooks(author, false, models.MediaTypeEbook)
-	got := assertOneHobbit(t, bookRepo, author)
-	if got[0].ID != owned.ID {
-		t.Errorf("the surviving Hobbit is %d, want the owned row %d", got[0].ID, owned.ID)
+}
+
+// TestAdoptMergedHardcoverLanguages pins which language a merged row stores
+// when Hardcover's evidence decided the filter (#3792).
+func TestAdoptMergedHardcoverLanguages(t *testing.T) {
+	allowed := func(lang string) metadata.AuthorWorkLanguageEvidence {
+		return metadata.AuthorWorkLanguageEvidence{State: metadata.AuthorWorkLanguageAllowed, Language: lang}
+	}
+	books := []models.Book{
+		{ForeignID: "OL1W", HardcoverForeignID: "hc:a"},                  // no language yet: takes Hardcover's
+		{ForeignID: "OL2W", HardcoverForeignID: "hc:b", Language: "eng"}, // already allowed: kept
+		{ForeignID: "OL3W", HardcoverForeignID: "hc:c", Language: "por"}, // not allowed: replaced
+		{ForeignID: "hc:d", Language: "por"},                             // Hardcover's own work: filter only
+		{ForeignID: "OL5W", Language: "por"},                             // not merged: untouched
+		{ForeignID: "OL6W", HardcoverForeignID: "hc:f", Language: "por"}, // indeterminate: untouched
+	}
+	evidence := map[string]metadata.AuthorWorkLanguageEvidence{
+		"OL1W": allowed("eng"),
+		"OL2W": allowed("spa"),
+		"OL3W": allowed("eng"),
+		"hc:d": allowed("eng"),
+		"OL5W": allowed("eng"),
+		"OL6W": {State: metadata.AuthorWorkLanguageIndeterminate},
+	}
+	adoptMergedHardcoverLanguages(books, evidence, []string{"eng", "spa"})
+	want := []string{"eng", "eng", "eng", "por", "por", "por"}
+	for i, b := range books {
+		if b.Language != want[i] {
+			t.Errorf("%s: language %q, want %q", b.ForeignID, b.Language, want[i])
+		}
 	}
 }

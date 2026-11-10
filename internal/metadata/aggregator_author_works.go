@@ -1008,13 +1008,13 @@ func sameTitleBindTarget(books []models.Book, candidates []int, src models.Book)
 }
 
 // TitleBindMaxYearGap is how many years apart two records' release dates may
-// be while a matching title can still bind them as one work (#3792).
+// be and still count as agreeing, when sameTitleBindTarget chooses which of
+// several same-titled works a supplemental work binds to (#3792).
 //
-// It is generous on purpose. The same book is routinely dated a few years
-// apart by two catalogues: first edition against a later default edition, an
-// original against its translation. A gap past it is never enough on its own:
-// it only chooses between competing candidates (sameTitleBindTarget) or
-// confirms what SameTitleWorksAreDistinct already has other evidence for.
+// It is generous on purpose: the same book is routinely dated a few years
+// apart by two catalogues (first edition against a later default edition, an
+// original against its translation). It only ever chooses between candidates;
+// a date gap never splits a row (see CreditsShowAnotherAuthorsWork).
 const TitleBindMaxYearGap = 10
 
 func releaseDatesUnknown(a, b *time.Time) bool {
@@ -1035,76 +1035,32 @@ func ReleaseDatesRuleOutSameWork(a, b *time.Time) bool {
 	return gap > TitleBindMaxYearGap
 }
 
-// olWorkIDRe matches an OpenLibrary work id ("OL44907743W").
-var olWorkIDRe = regexp.MustCompile(`^OL\d+W$`)
-
-// workIDNamespace names the catalogue a book's foreign id belongs to, for the
-// two catalogues whose ids name one work each: "openlibrary" for an
-// OpenLibrary work id, "hardcover" for an hc: id. Anything else (calibre:
-// stubs, library imports, other providers) is "".
-func workIDNamespace(id string) string {
-	id = strings.TrimSpace(id)
-	switch {
-	case strings.HasPrefix(id, "hc:"):
-		return "hardcover"
-	case olWorkIDRe.MatchString(id):
-		return "openlibrary"
-	}
-	return ""
-}
-
-// SameTitleWorksAreDistinct reports whether the catalogue sync must keep an
-// incoming work off a stored row it reached through something weaker than the
-// work's own id: the title fallback, or an alias the row holds (#3792).
+// CreditsShowAnotherAuthorsWork reports whether a stored row the catalogue
+// sync reached by title, or through an alias it holds, is a different work by
+// someone else than the incoming one, judged on author credits (#3792).
+// authorKey is the synced author's id in the catalogue the credits come from;
+// the credit lists are in that catalogue's order, primary credit first.
 //
-// It is deliberately narrow, because one book under several work ids is the
-// normal state of OpenLibrary: The Hobbit alone is OL27482W (1937), OL219602W
-// (1990) and OL45346371W (2026), all titled the same. A date gap between two
-// bare OpenLibrary works says nothing, and splitting on it gives a fresh
-// library three wanted Hobbits. So every one of these must hold:
+// It is true only when the incoming work's primary credit is this author and
+// the stored work's primary credit is someone else. King's own record for
+// "Other Worlds Than These" (OL44907743W) is credited King, Straub; the 2011
+// anthology of the same name (OL17400760W) is credited to its editor first
+// and to 32 contributors after him, King among them. That is two books, and
+// owning the anthology does not change it.
 //
-//   - The incoming work is bound to a Hardcover book. mergeAuthorWorks chose
-//     that binding by date among the same-titled candidates, which is the
-//     evidence a bare work id lacks.
-//   - The stored row is not bound to that same Hardcover book (its own
-//     HardcoverForeignID, when the row carries one).
-//   - The two are different works by their ids: the stored row carries a
-//     different Hardcover id, or both foreign ids are work ids of one
-//     catalogue and differ. Calibre stubs and library imports have neither
-//     and keep title adoption.
-//   - The release dates are more than TitleBindMaxYearGap years apart. Two
-//     Hardcover books, like two OpenLibrary records, can be one book that
-//     catalogue never merged, and only a gap this size says otherwise.
-//   - The stored row has no file. Splitting a book the user owns would put a
-//     second copy on the Wanted list and download it again, which is worse
-//     than leaving a wrong title match in place.
+// Dates never decide this. One book under several work ids decades apart is
+// the normal state of OpenLibrary (The Hobbit is OL27482W 1937 and
+// OL45346371W 2026, Persuasion has dozens of records dated 1818 to 2016), and
+// all of them are credited to the author first, so they stay one row however
+// their dates disagree or whichever of them Hardcover's date binds to.
 //
-// The reported case passes every test: King's own record OL44907743W carries
-// the novel's hc: id and its 2026 date, and the anthology OL17400760W is dated
-// 2011. That holds whether the anthology row was found by title, or through
-// the aliases an earlier release recorded on it, which is why the stored row
-// holding the hc: id as an alias does not count as being bound to it.
-func SameTitleWorksAreDistinct(stored, incoming models.Book) bool {
-	hc := hardcoverForeignIDForAuthorWork(incoming)
-	if hc == "" {
+// Missing credits on either side prove nothing and never split.
+func CreditsShowAnotherAuthorsWork(storedCredits, incomingCredits []string, authorKey string) bool {
+	authorKey = strings.TrimSpace(authorKey)
+	if authorKey == "" || len(storedCredits) == 0 || len(incomingCredits) == 0 {
 		return false
 	}
-	storedHC := hardcoverForeignIDForAuthorWork(stored)
-	if storedHC == hc {
-		return false
-	}
-	if stored.EbookFilePath != "" || stored.AudiobookFilePath != "" || stored.FilePath != "" {
-		return false
-	}
-	if !ReleaseDatesRuleOutSameWork(stored.ReleaseDate, incoming.ReleaseDate) {
-		return false
-	}
-	if storedHC != "" {
-		return true
-	}
-	ns := workIDNamespace(stored.ForeignID)
-	return ns != "" && ns == workIDNamespace(incoming.ForeignID) &&
-		strings.TrimSpace(stored.ForeignID) != strings.TrimSpace(incoming.ForeignID)
+	return strings.TrimSpace(incomingCredits[0]) == authorKey && strings.TrimSpace(storedCredits[0]) != authorKey
 }
 
 func authorWorkMergeKey(title string) string {

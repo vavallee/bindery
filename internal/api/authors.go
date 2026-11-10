@@ -2216,7 +2216,7 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	// fallback. When the profile actually restricts language, edition-sample
 	// those works so the OL tail is caught (#891). Gated on allowedLangs being
 	// set so we don't spend the round-trips when the filter is "any".
-	adoptMergedHardcoverLanguages(books, languageEvidence)
+	adoptMergedHardcoverLanguages(books, languageEvidence, allowedLangs)
 	var langSampled int
 	if len(allowedLangs) > 0 {
 		langSampled = h.meta.FillMissingAuthorWorkLanguages(ctx, books)
@@ -2326,6 +2326,21 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	// divergence still matches while "Star Wars: A New Hope" no longer matches
 	// "Star Wars: The Empire Strikes Back".
 	seenTitles := indexer.NewTitleIndex[*models.Book]()
+	// The author credits this fetch carries for each work, keyed by work id,
+	// so a stored row can be judged on the credits of its own work when that
+	// work is in the same catalogue answer. Credits are transport only and
+	// never stored, so this is the only place a stored row's come from
+	// (metadata.CreditsShowAnotherAuthorsWork, #3792).
+	creditsByWork := make(map[string][]string, len(books))
+	for _, w := range books {
+		if id := strings.TrimSpace(w.ForeignID); id != "" && len(w.CreditedAuthorForeignIDs) > 0 {
+			creditsByWork[id] = w.CreditedAuthorForeignIDs
+		}
+	}
+	anotherAuthorsWork := func(stored *models.Book, incoming models.Book) bool {
+		return metadata.CreditsShowAnotherAuthorsWork(
+			creditsByWork[strings.TrimSpace(stored.ForeignID)], incoming.CreditedAuthorForeignIDs, author.ForeignID)
+	}
 	for i := range existingBooks {
 		seenTitles.Add(existingBooks[i].Title, &existingBooks[i])
 	}
@@ -2659,12 +2674,13 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		// earlier release bound to the wrong work by title: before #3792
 		// King's 2026 novel landed on the 2011 anthology of the same name, and
 		// the anthology row kept the novel's OpenLibrary and hc: ids as
-		// aliases. Every refresh then resolved the novel to it here. When
-		// metadata.SameTitleWorksAreDistinct says the two are different works,
-		// the alias is not trusted and the work is judged on its own; if it is
-		// created, the aliases move to its row (healedAliases below).
+		// aliases. Every refresh then resolved the novel to it here. When the
+		// credits say the row's own work is another author's
+		// (metadata.CreditsShowAnotherAuthorsWork), the alias is not trusted
+		// and the work is judged on its own; if it is created, the aliases
+		// move to its row (moveHealedAliases below).
 		var healedFrom *models.Book
-		if existing != nil && existing.ForeignID != b.ForeignID && metadata.SameTitleWorksAreDistinct(*existing, b) {
+		if existing != nil && existing.ForeignID != b.ForeignID && anotherAuthorsWork(existing, b) {
 			slog.Info("not resolving a work through an id another work's row holds",
 				"title", b.Title, "foreignId", b.ForeignID, "hardcoverId", b.HardcoverForeignID,
 				"bookId", existing.ID, "bookForeignId", existing.ForeignID)
@@ -2874,12 +2890,13 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 		// OpenLibrary list holds both his own record for the 2026 novel
 		// "Other Worlds Than These" and the 2011 anthology of the same name,
 		// and binding the novel here recorded its OpenLibrary and Hardcover
-		// ids on the anthology row and never created it (#3792). A pair
-		// metadata.SameTitleWorksAreDistinct separates goes on to the create
-		// path as the separate books they are.
+		// ids on the anthology row and never created it (#3792). When the
+		// credits say the row's work is another author's and the incoming one
+		// is this author's (metadata.CreditsShowAnotherAuthorsWork), the work
+		// goes on to the create path as the separate book it is.
 		titled, seen := seenTitles.Lookup(b.Title)
-		if seen && titled != nil && metadata.SameTitleWorksAreDistinct(*titled, b) {
-			slog.Debug("not binding same-titled works whose release dates are too far apart",
+		if seen && titled != nil && anotherAuthorsWork(titled, b) {
+			slog.Debug("not binding a work to a same-titled row credited to another author",
 				"title", b.Title, "foreignId", b.ForeignID, "bookId", titled.ID, "bookForeignId", titled.ForeignID)
 			seen = false
 		}
@@ -4081,8 +4098,11 @@ func applyAuthorMajorityLanguageFallback(books []models.Book, evidence map[strin
 //
 // Only merged rows: a Hardcover work's own evidence stays filter-only, as
 // authorWorkPassesLanguageFilter describes. An indeterminate or not-allowed
-// answer changes nothing, and a not-allowed work is filtered out anyway.
-func adoptMergedHardcoverLanguages(books []models.Book, evidence map[string]metadata.AuthorWorkLanguageEvidence) {
+// answer changes nothing, and a not-allowed work is filtered out anyway. A
+// row whose own language is already one the profile allows keeps it: the
+// evidence names just one allowed edition, which for a profile allowing
+// English and Spanish can be the Spanish one of an English book.
+func adoptMergedHardcoverLanguages(books []models.Book, evidence map[string]metadata.AuthorWorkLanguageEvidence, allowed []string) {
 	for i := range books {
 		id := strings.TrimSpace(books[i].ForeignID)
 		if id == "" || strings.HasPrefix(id, "hc:") || !strings.HasPrefix(strings.TrimSpace(books[i].HardcoverForeignID), "hc:") {
@@ -4090,6 +4110,9 @@ func adoptMergedHardcoverLanguages(books []models.Book, evidence map[string]meta
 		}
 		found, ok := evidence[id]
 		if !ok || found.State != metadata.AuthorWorkLanguageAllowed || strings.TrimSpace(found.Language) == "" {
+			continue
+		}
+		if current := strings.TrimSpace(books[i].Language); current != "" && models.IsLanguageAllowed(current, allowed, true) {
 			continue
 		}
 		books[i].Language = found.Language
