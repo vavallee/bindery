@@ -358,6 +358,14 @@ something to look for; once every monitored format is on disk it would do
 nothing, and the interactive button is the one that can still get you a
 different copy.
 
+Each interactive result shows its indexer, size and grab count. Torrent
+results also show seeders and peers when the indexer reports them, as Prowlarr
+and Jackett do (#3819). Grabs is a lifetime download count, so a release with
+many grabs can be dead today; seeders is the number to read when picking a
+torrent by hand, and a release with 0 seeders is shown in red. Peers is
+seeders plus leechers, as the indexer counts them. Usenet results, and torrent
+indexers that leave the counts out, show neither.
+
 **Two language titles.** A translated book whose title is stored as
 "translated / original", such as "El imperio final / The Final Empire", is
 searched under the translated part only, because no release is named with

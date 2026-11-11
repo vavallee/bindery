@@ -110,6 +110,11 @@ export interface SearchResult {
   nzbUrl: string
   infoUrl?: string // human-readable indexer detail/release page (open in new tab); absent when the indexer provides none
   grabs: number
+  // Torrent swarm counts from the torznab seeders and peers attributes
+  // (#3819); peers is seeders plus leechers. Absent when the indexer does not
+  // report them, which every usenet indexer is.
+  seeders?: number
+  peers?: number
   pubDate: string
   protocol: string   // "usenet" or "torrent"
   language?: string  // ISO 639-1 from newznab:attr language (when present)
