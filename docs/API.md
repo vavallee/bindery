@@ -454,8 +454,10 @@ primary series. `GET /book/{id}/series-exclusions` lists what was taken out.
 
 Duplicate series (#2173). `GET /series/duplicates` answers `{"groups":[..]}`.
 A group is two or more series whose titles normalize to the same identity
-key: case, punctuation, apostrophes, accents, `&` against "and" and a leading
-article (also in the "Expanse, The" form) are folded, and a bracketed or
+key: case, punctuation, apostrophes, accents, `&` against "and", a leading
+"The", "A" or "An" (also in the "Expanse, The" form) and a trailing bracketed
+or parenthesised format marker (`[Audiobook]`, `(Unabridged)`, `[Dramatized
+Adaptation]` and the like) are folded, and any other bracketed or
 parenthesised qualifier is kept, so "Discworld (Witches)" and "Discworld
 (City Watch)" are not a group. The Audiobookshelf import cannot pick between
 the series in a group and leaves the item's Hardcover series unlinked
