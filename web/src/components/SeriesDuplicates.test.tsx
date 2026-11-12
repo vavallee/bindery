@@ -141,6 +141,58 @@ describe('SeriesDuplicates', () => {
     expect(onMerged).not.toHaveBeenCalled()
   })
 
+  it('refreshes after a bulk merge even when it fails part way', async () => {
+    const onMerged = vi.fn()
+    vi.mocked(api.mergeSeriesDuplicates)
+      .mockResolvedValueOnce(dryRun)
+      .mockResolvedValueOnce({
+        dryRun: false, merged: 1, failed: 1,
+        results: [
+          { keepId: 1, sourceIds: [2], ok: true, plan: plan(1, 2, 1) },
+          { keepId: 5, sourceIds: [6], ok: false, error: 'merge failed, see the server log' },
+        ],
+      })
+    render(<SeriesDuplicates series={all} onMerged={onMerged} />)
+    await openList()
+    fireEvent.click(screen.getByRole('button', { name: 'series.duplicates.mergeAllMatching {"count":2}' }))
+    await acceptConfirm()
+    await waitFor(() => expect(onMerged).toHaveBeenCalled())
+    expect(api.listSeriesDuplicates).toHaveBeenCalledTimes(2)
+    expect(await screen.findByText('merge failed, see the server log')).toBeInTheDocument()
+  })
+
+  it('refreshes after a bulk merge whose request fails', async () => {
+    const onMerged = vi.fn()
+    vi.mocked(api.mergeSeriesDuplicates)
+      .mockResolvedValueOnce(dryRun)
+      .mockRejectedValueOnce(new Error('connection reset'))
+    render(<SeriesDuplicates series={all} onMerged={onMerged} />)
+    await openList()
+    fireEvent.click(screen.getByRole('button', { name: 'series.duplicates.mergeAllMatching {"count":2}' }))
+    await acceptConfirm()
+    await waitFor(() => expect(onMerged).toHaveBeenCalled())
+    expect(await screen.findByText('connection reset')).toBeInTheDocument()
+  })
+
+  it('falls back to the suggested keep when the picked one has left the group', async () => {
+    vi.mocked(api.mergeSeriesDuplicates).mockResolvedValue(dryRun)
+    const { rerender } = render(<SeriesDuplicates series={all} onMerged={vi.fn()} />)
+    await openList()
+    // Pick series 2 to keep in the first group.
+    fireEvent.click(within(screen.getAllByTestId('duplicate-group')[0]).getAllByRole('radio')[1])
+    // A reload where series 2 is gone and series 7 took its place.
+    vi.mocked(api.listSeriesDuplicates).mockResolvedValue({
+      groups: [{ ...groups[0], series: [groups[0].series[0], { ...groups[0].series[1], id: 7 }] }],
+    })
+    rerender(<SeriesDuplicates series={all.filter(s => s.id !== 2)} onMerged={vi.fn()} />)
+    await waitFor(() => expect(screen.getAllByTestId('duplicate-group')).toHaveLength(1))
+    expect(within(screen.getByTestId('duplicate-group')).getAllByRole('radio')[0]).toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'series.duplicates.mergeAllMatching {"count":1}' }))
+    await waitFor(() => expect(api.mergeSeriesDuplicates).toHaveBeenCalledWith({
+      groups: [{ keepId: 1, sourceIds: [7] }], dryRun: true,
+    }))
+  })
+
   it('opens the merge dialog on one group with the other series ticked, using the chosen keep', async () => {
     render(<SeriesDuplicates series={all} onMerged={vi.fn()} />)
     await openList()

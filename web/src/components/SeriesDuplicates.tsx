@@ -46,7 +46,12 @@ export default function SeriesDuplicates({ series, onMerged }: Props) {
   const seriesCount = series.length
   useEffect(() => { void load() }, [load, seriesCount])
 
-  const keepOf = (g: DuplicateSeriesGroup) => keep[g.key] ?? g.suggestedKeepId
+  // A keep picked before a reload can name a series the group no longer has
+  // (merged or deleted meanwhile): the suggestion stands in for it then.
+  const keepOf = (g: DuplicateSeriesGroup) => {
+    const picked = keep[g.key]
+    return picked !== undefined && g.series.some(s => s.id === picked) ? picked : g.suggestedKeepId
+  }
   const asGroup = (g: DuplicateSeriesGroup): DuplicateMergeGroup => {
     const keepId = keepOf(g)
     return { keepId, sourceIds: g.series.filter(s => s.id !== keepId).map(s => s.id) }
@@ -73,6 +78,9 @@ export default function SeriesDuplicates({ series, onMerged }: Props) {
 
   const mergeAllMatching = async () => {
     if (matching.length === 0) return
+    // Once the real merge has been sent, some groups may have merged whatever
+    // the outcome, so the list and the page refresh in every case.
+    let sent = false
     setBusy(true)
     setResult(null)
     setFailures([])
@@ -94,13 +102,14 @@ export default function SeriesDuplicates({ series, onMerged }: Props) {
         body: body.join('\n\n'),
         confirmLabel: t('series.duplicates.bulkConfirm', { count: ready.length }),
       })) return
+      sent = true
       const done = await api.mergeSeriesDuplicates({ groups: ready.map(r => ({ keepId: r.keepId, sourceIds: r.sourceIds })) })
       setResult(t('series.duplicates.bulkDone', { count: done.merged }))
       setFailures(done.results.filter(r => !r.ok).map(r => r.error ?? ''))
-      await afterMerge()
     } catch (err) {
       setResult(err instanceof Error ? err.message : t('series.merge.failed'))
     } finally {
+      if (sent) await afterMerge()
       setBusy(false)
     }
   }

@@ -222,3 +222,26 @@ func TestMergeMakesAmbiguousABSSeriesMatchesDue(t *testing.T) {
 		}
 	}
 }
+
+// A merge of differently titled series resolves no collision the ABS import
+// could have hit, so it leaves ambiguous rows to their schedule (#2173).
+func TestMergeOfDifferentTitlesLeavesAmbiguousABSSeriesMatches(t *testing.T) {
+	f := newMergeFixture(t, 0)
+	keep := f.newSeries("calibre-series:1", "Wayfarers")
+	src := f.newSeries("abs-series:1", "Galactic Commons")
+	states := NewABSSeriesMatchRepo(f.db)
+	recent := time.Now().UTC().Add(-time.Hour)
+	if err := states.Upsert(f.ctx, &models.ABSSeriesMatchState{SourceID: "s", LibraryID: "l", ItemID: "amb", InputHash: "h", Outcome: ABSSeriesMatchOutcomeAmbiguous}, recent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.series.Merge(f.ctx, keep, []int64{src}, ""); err != nil {
+		t.Fatal(err)
+	}
+	s, err := states.Get(f.ctx, "s", "l", "amb")
+	if err != nil || s == nil {
+		t.Fatalf("state = %+v, %v", s, err)
+	}
+	if s.CheckedAt.Before(recent.Add(-time.Minute)) {
+		t.Errorf("ambiguous row checked at %v after a merge of different titles, want it left at %v", s.CheckedAt, recent)
+	}
+}

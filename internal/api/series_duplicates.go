@@ -16,6 +16,10 @@ import (
 // transaction, so the cap bounds the request's run time, not its safety.
 const maxDuplicateMergeGroups = 5000
 
+// duplicateMergeFailed is a group's error when something other than the
+// request failed it. The detail goes to the log, as writeServerError does.
+const duplicateMergeFailed = "merge failed, see the server log"
+
 // Duplicates lists the series that share a title as the Audiobookshelf
 // import compares them (#2173): GET /series/duplicates. Each pair is a series
 // the import cannot pick between, so its items cannot link a Hardcover
@@ -88,10 +92,12 @@ func (h *SeriesHandler) MergeDuplicates(w http.ResponseWriter, r *http.Request) 
 		}
 		msg, err := h.checkDuplicateGroup(r, g, used)
 		if err != nil {
-			writeServerError(w, r, err)
-			return
-		}
-		if msg == "" {
+			// A failed lookup (a database error, a cancelled request) is this
+			// group's failure, not the request's: groups before it have
+			// committed, and their results must reach the caller.
+			slog.Warn("series duplicates: group check failed", "keep", g.KeepID, "sources", g.SourceIDs, "error", err)
+			msg = duplicateMergeFailed
+		} else if msg == "" {
 			plan, err := merge(r.Context(), g.KeepID, g.SourceIDs, "")
 			switch {
 			case errors.Is(err, sql.ErrNoRows):
@@ -102,7 +108,7 @@ func (h *SeriesHandler) MergeDuplicates(w http.ResponseWriter, r *http.Request) 
 				// A failed write rolled its transaction back, so the group
 				// is untouched; say so and carry on with the rest.
 				slog.Warn("series duplicates: merge failed", "keep", g.KeepID, "sources", g.SourceIDs, "error", err)
-				msg = "merge failed: " + err.Error()
+				msg = duplicateMergeFailed
 			default:
 				res.OK, res.Plan = true, plan
 			}
@@ -138,7 +144,11 @@ func (h *SeriesHandler) checkDuplicateGroup(r *http.Request, g DuplicateMergeGro
 	if used[g.KeepID] {
 		return fmt.Sprintf("series %d is already in another group", g.KeepID), nil
 	}
-	keepTitle, ok, err := h.series.SeriesTitle(r.Context(), g.KeepID)
+	titleOf := h.series.SeriesTitle
+	if h.seriesTitleFn != nil {
+		titleOf = h.seriesTitleFn
+	}
+	keepTitle, ok, err := titleOf(r.Context(), g.KeepID)
 	if err != nil {
 		return "", err
 	}
@@ -157,7 +167,7 @@ func (h *SeriesHandler) checkDuplicateGroup(r *http.Request, g DuplicateMergeGro
 			return fmt.Sprintf("series %d is already in another group", id), nil
 		}
 		seen[id] = true
-		title, ok, err := h.series.SeriesTitle(r.Context(), id)
+		title, ok, err := titleOf(r.Context(), id)
 		if err != nil {
 			return "", err
 		}

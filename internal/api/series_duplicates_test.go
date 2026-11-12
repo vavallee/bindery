@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -240,6 +241,9 @@ func TestSeriesDuplicatesMerge_PartialFailure(t *testing.T) {
 	if !out.Results[0].OK || out.Results[1].OK || !out.Results[2].OK || out.Results[3].OK {
 		t.Errorf("results = %+v", out.Results)
 	}
+	if out.Results[1].Error != duplicateMergeFailed || strings.Contains(out.Results[1].Error, "boom") {
+		t.Errorf("write failure error = %q, want the generic message without the SQLite detail", out.Results[1].Error)
+	}
 	if !strings.Contains(out.Results[3].Error, "another group") {
 		t.Errorf("reused id error = %q", out.Results[3].Error)
 	}
@@ -251,6 +255,45 @@ func TestSeriesDuplicatesMerge_PartialFailure(t *testing.T) {
 	}
 	if n := e.count(`SELECT COUNT(*) FROM series_aliases WHERE series_id = ?`, k2); n != 0 {
 		t.Errorf("failed group wrote %d aliases", n)
+	}
+	for _, id := range []int64{s1, s3} {
+		if n := e.count(`SELECT COUNT(*) FROM series WHERE id = ?`, id); n != 0 {
+			t.Errorf("series %d should have been merged away", id)
+		}
+	}
+}
+
+// A group whose check fails (a database error, a cancelled request) is
+// reported as that group's failure with a generic message; the groups before
+// it stay merged and are reported, and the ones after it still run.
+func TestSeriesDuplicatesMerge_CheckFailureIsPerGroup(t *testing.T) {
+	e := newDupEnv(t)
+	k1 := e.series("calibre-series:1", "Wayfarers", 1)
+	s1 := e.series("abs-series:1", "Wayfarers", 1)
+	k2 := e.series("calibre-series:2", "Murderbot", 1)
+	s2 := e.series("abs-series:2", "Murderbot", 1)
+	k3 := e.series("calibre-series:3", "Dune", 1)
+	s3 := e.series("abs-series:3", "Dune", 1)
+	e.h.seriesTitleFn = func(ctx context.Context, id int64) (string, bool, error) {
+		if id == k2 {
+			return "", false, errors.New("database is locked (SQLITE_BUSY)")
+		}
+		return e.repo.SeriesTitle(ctx, id)
+	}
+
+	code, out := e.bulk(fmt.Sprintf(`{"groups":[{"keepId":%d,"sourceIds":[%d]},{"keepId":%d,"sourceIds":[%d]},{"keepId":%d,"sourceIds":[%d]}]}`,
+		k1, s1, k2, s2, k3, s3))
+	if code != http.StatusOK {
+		t.Fatalf("status %d, want 200 with per group results", code)
+	}
+	if out.Merged != 2 || out.Failed != 1 || len(out.Results) != 3 {
+		t.Fatalf("response = %+v", out)
+	}
+	if r := out.Results[1]; r.OK || r.Error != duplicateMergeFailed {
+		t.Errorf("failed group = %+v, want the generic error %q", r, duplicateMergeFailed)
+	}
+	if n := e.count(`SELECT COUNT(*) FROM series WHERE id = ?`, s2); n != 1 {
+		t.Error("the failed group was merged")
 	}
 	for _, id := range []int64{s1, s3} {
 		if n := e.count(`SELECT COUNT(*) FROM series WHERE id = ?`, id); n != 0 {

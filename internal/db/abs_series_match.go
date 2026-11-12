@@ -12,8 +12,9 @@ import (
 
 // ABSSeriesMatchOutcomeAmbiguous is the outcome the ABS import records when
 // a Hardcover series could not be linked because more than one local series
-// has its title (#2173). A series merge makes these rows due again (see
-// SeriesRepo.Merge), so it is defined here rather than in the import.
+// has its title (#2173). A merge of two series with one title makes these
+// rows due again (see SeriesRepo.Merge), so it is defined here rather than in
+// the import.
 const ABSSeriesMatchOutcomeAmbiguous = "ambiguous"
 
 // ABSSeriesMatchRepo stores the per item outcome of the ABS import's Hardcover

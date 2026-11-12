@@ -470,9 +470,12 @@ Groups are independent: the response is always 200 for a well formed body,
 where `plan` is the merge plan carried out, or with `dryRun` the one that
 would be. At most 5000 groups per request.
 
-Any series merge, single or bulk, also makes every Audiobookshelf item the
-import recorded as ambiguous between two local series due again, so the next
-normal import retries them without `full`.
+A series merge, single or bulk, in which a source shares the keep series'
+title key also makes every Audiobookshelf item the import recorded as
+ambiguous between two local series due again, so the next normal import
+retries them without `full`. A merge of differently titled series does not.
+The bulk endpoint checks titles only; keeping groups with different authors
+out of a bulk merge is up to the caller, as the Series page does.
 
 `GET /series` returns the bare array it always has. Pagination is opt-in
 (#2345): pass `limit` and/or `offset` and you get an `{items, total, limit,

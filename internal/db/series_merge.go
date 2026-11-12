@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vavallee/bindery/internal/seriesmatch"
 	"github.com/vavallee/bindery/internal/textutil"
 )
 
@@ -33,6 +34,11 @@ type SeriesMergePlan struct {
 	// Monitored is the target's monitored state after the merge: monitored
 	// when it or any source was.
 	Monitored bool `json:"monitored"`
+
+	// resolvesTitleCollision is set when a source shares the target's
+	// seriesmatch.LookupKey, read before anything is renamed or deleted: the
+	// merge clears a pair the ABS import could not pick between (#2173).
+	resolvesTitleCollision bool
 }
 
 // SeriesMergeSource is one series merged into the target.
@@ -98,8 +104,9 @@ func (r *SeriesRepo) PlanMerge(ctx context.Context, targetID int64, sourceIDs []
 // still reports a source id links to the target instead of recreating the
 // source. The target keeps its own Hardcover link and genre override and
 // takes a source's only when it has none; it is monitored when any of the
-// series was. The sources are deleted, and the ABS import's ambiguous series
-// matches fall due so its next run retries them (#2173).
+// series was. The sources are deleted. When a source had the target's title,
+// as the ABS import compares titles, the import's ambiguous series matches
+// fall due so its next run retries them (#2173).
 //
 // Import provenance (ABS, Calibre) is not rewritten: rolling back an import
 // made before the merge leaves the books it filed in the target.
@@ -157,6 +164,7 @@ func (r *SeriesRepo) planMerge(ctx context.Context, targetID int64, sourceIDs []
 		plan.Title = t
 	}
 	hasLink, hasGenres := target.hardcoverLink, target.genreOverride.Valid
+	targetKey := seriesmatch.LookupKey(target.title)
 
 	// in tracks the target's membership as the plan builds up, so a book in
 	// two sources is moved once and then kept.
@@ -209,6 +217,9 @@ func (r *SeriesRepo) planMerge(ctx context.Context, targetID int64, sourceIDs []
 			plan.GenreOverrideFrom, hasGenres = id, true
 		}
 		plan.Monitored = plan.Monitored || src.monitored
+		if targetKey != "" && seriesmatch.LookupKey(src.title) == targetKey {
+			plan.resolvesTitleCollision = true
+		}
 	}
 	return plan, nil
 }
@@ -316,16 +327,22 @@ func (r *SeriesRepo) applyMerge(ctx context.Context, plan *SeriesMergePlan) erro
 	// The ABS import records an item it could not link because two local
 	// series share a title as ambiguous, and retries it only on the monthly
 	// miss schedule: its input hash does not cover local series, so a merge
-	// alone would not bring it back. Make every ambiguous row due now so the
-	// next normal import retries them (#2173). Every row, not this merge's:
-	// a row names an ABS item and nothing in it says which local series were
-	// the twins, and the item's book is often in neither of them. A retry
-	// that is still ambiguous records itself again. The rows are dated to
-	// the epoch rather than deleted, because an item with no row goes
-	// through the import's upgrade bootstrap, which may adopt it as matched
-	// without searching. Matched and miss rows are left alone.
-	add("make ambiguous ABS series matches due", `UPDATE abs_series_match_state SET checked_at = ? WHERE outcome = ?`,
-		time.Unix(0, 0).UTC(), ABSSeriesMatchOutcomeAmbiguous)
+	// alone would not bring it back. When this merge clears such a pair (a
+	// source with the target's lookup key), make the ambiguous rows due now
+	// so the next normal import retries them (#2173). A merge of differently
+	// titled series resolves no collision and re-dates nothing, so a library
+	// that keeps one pair apart on purpose does not re-search its items after
+	// every unrelated merge. Every ambiguous row, not this pair's: a row names
+	// an ABS item and nothing in it says which local series were the twins,
+	// and the item's book is often in neither of them. A retry that is still
+	// ambiguous records itself again. The rows are dated to the epoch rather
+	// than deleted, because an item with no row goes through the import's
+	// upgrade bootstrap, which may adopt it as matched without searching.
+	// Matched and miss rows are left alone.
+	if plan.resolvesTitleCollision {
+		add("make ambiguous ABS series matches due", `UPDATE abs_series_match_state SET checked_at = ? WHERE outcome = ?`,
+			time.Unix(0, 0).UTC(), ABSSeriesMatchOutcomeAmbiguous)
+	}
 	for _, st := range steps {
 		if _, err := r.exec.ExecContext(ctx, st.query, st.args...); err != nil {
 			return fmt.Errorf("%s: %w", st.what, err)

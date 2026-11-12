@@ -144,11 +144,11 @@ When that happens, admins see a banner on the Series page saying how many series
 
 - **Merge…** on a group opens the usual merge dialog with the other series already ticked, so you see the preview before anything changes.
 - **Merge all with matching authors** merges every group whose series share an author, in one go. It shows how many groups, how many series go away and how many books move, and asks before it runs. Each group is merged on its own, so one that fails leaves the rest done and is reported.
-- A group whose series hold books by different authors is probably two different series with the same name. It is listed with a note and left out of the bulk merge, so check it and merge it by hand only if it really is one series.
+- A group whose series hold books by different authors is probably two different series with the same name. It is listed with a note and left out of the bulk merge, so check it and merge it by hand only if it really is one series. That is the Series page's doing: the bulk API itself only checks that the titles match.
 
 Titles count as the same the way the Audiobookshelf import compares them, so case, punctuation and a trailing bracketed tag like `[Audiobook]` are ignored.
 
-Once the duplicates are merged, the next Audiobookshelf import retries the items it reported as `seriesLinkFailed` and links them. You don't need to run a full import for that: any merge makes those items due again.
+Once the duplicates are merged, the next Audiobookshelf import retries the items it recorded as ambiguous (counted under `seriesLinkFailed` in the run summary) and links them. You don't need to run a full import for that: merging two series with the same title makes those items due again. A merge of differently named series leaves them alone.
 
 ## Fixing One Book's Series
 

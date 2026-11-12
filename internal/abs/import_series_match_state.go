@@ -20,9 +20,10 @@ const (
 	// seriesMatchOutcomeAmbiguous is a Hardcover match that could not be
 	// linked because more than one local series has its title (#2173). It is
 	// retried on the miss schedule, on a full run, when the item changes, or
-	// after any series merge.
-	// A series merge makes these rows due at once, so merging the duplicates
-	// is enough for the next normal run to link the item.
+	// after a merge of two local series that share a title.
+	// Merging two series with one title makes these rows due at once, so
+	// merging the duplicates is enough for the next normal run to link the
+	// item.
 	seriesMatchOutcomeAmbiguous = db.ABSSeriesMatchOutcomeAmbiguous
 
 	// seriesMatchMissTTL is how long a recorded miss is trusted. Hardcover
