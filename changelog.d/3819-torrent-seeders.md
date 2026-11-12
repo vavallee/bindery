@@ -1,0 +1,2 @@
+### Added
+- **Seeders and peers on torrent search results** (#3819). Interactive search on the book page, the Wanted page and the Search page now shows a torrent release's seeders and peers next to its grab count, read from the torznab `seeders` and `peers` attributes Prowlarr and Jackett send. Grabs is a lifetime count, so this is what tells a well seeded release from a dead one; a release with 0 seeders is shown in red. Usenet results and indexers that do not report the counts look as before.

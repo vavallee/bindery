@@ -408,6 +408,12 @@ Clients written before this ignore the two new keys and see no change. Automatic
 searches never see a filtered release. The free text search
 (`GET /indexer/search`) does not return `filtered`.
 
+A torrent release in any of these lists, and in `GET /indexer/search`, carries
+`seeders` and `peers` when its indexer reports the torznab attributes of those
+names (#3819); `peers` is seeders plus leechers, as the indexer counts them.
+Both are absent, not 0, when the indexer does not report them, as with every
+usenet release, so a reported 0 means a dead torrent.
+
 Each book carries `averageRating` (community rating, 0 when the provider has none)
 and `ratingsCount` (#3124). `GET /book?sort=` also accepts `rating-desc` and
 `rating-asc`; unrated books sort last in both directions, and `rating-desc` breaks
