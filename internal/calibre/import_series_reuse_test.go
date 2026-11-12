@@ -494,6 +494,78 @@ func TestImporter_EmptySeriesReuseWritesNoAlias(t *testing.T) {
 	}
 }
 
+// TestImporter_MultiAuthorSeriesIntoEmptySeries checks that a Calibre series
+// written by several authors stays whole when it is filed into an empty
+// series. The empty reuse writes no alias, so before the run remembered the
+// name, the second author's book found a series holding only the first
+// author's book and got a Calibre row of its own; the next run then filed the
+// first book into that row as well.
+func TestImporter_MultiAuthorSeriesIntoEmptySeries(t *testing.T) {
+	f := newSeriesReuseFixture(t)
+	ctx := context.Background()
+	wildCards := f.seedSeries(t, seededSeries{"hc-series:wc", "Wild Cards", nil})
+	f.fr.books = []CalibreBook{
+		seriesCalibreBook(1, "Wild Cards", "George R. R. Martin", "Wild Cards", 1),
+		seriesCalibreBook(2, "Aces High", "Melinda Snodgrass", "Wild Cards", 2),
+	}
+	check := func(run string) {
+		t.Helper()
+		if got := f.seriesCount(t); got != 1 {
+			t.Errorf("%s: series rows = %d, want 1", run, got)
+		}
+		for _, id := range []int64{1, 2} {
+			if got := f.seriesOfCalibreBook(t, id); len(got) != 1 || got[0] != wildCards {
+				t.Errorf("%s: calibre book %d is in series %v, want [%d]", run, id, got, wildCards)
+			}
+		}
+	}
+
+	stats, err := f.imp.Run(ctx, "/lib")
+	if err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if stats.SeriesReused != 2 || stats.SeriesFailures != 0 {
+		t.Errorf("first run reused=%d failures=%d, want 2/0", stats.SeriesReused, stats.SeriesFailures)
+	}
+	check("first run")
+	if aliases, _ := f.series.AliasForeignIDs(ctx, []int64{wildCards}); len(aliases) != 0 {
+		t.Errorf("first run aliases = %v, want none (the series was empty)", aliases)
+	}
+
+	if _, err := f.imp.Run(ctx, "/lib"); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	check("second run")
+	if aliases, _ := f.series.AliasForeignIDs(ctx, []int64{wildCards}); len(aliases) != 1 {
+		t.Errorf("second run aliases = %v, want the calibre series id", aliases)
+	}
+}
+
+// TestResolveSeriesForgetsADeletedReuse checks that a series the run reused
+// and that was deleted since is not handed back for the name again.
+func TestResolveSeriesForgetsADeletedReuse(t *testing.T) {
+	f := newSeriesReuseFixture(t)
+	ctx := context.Background()
+	gone := f.seedSeries(t, seededSeries{"ol:series:wc", "Wild Cards", nil})
+	if err := f.series.Delete(ctx, gone); err != nil {
+		t.Fatalf("delete series: %v", err)
+	}
+	f.imp.seriesReusedByName = map[string]models.Series{
+		calibreSeriesForeignID("Wild Cards"): {ID: gone, ForeignID: "ol:series:wc", Title: "Wild Cards"},
+	}
+	book := &models.Book{ID: 9999, AuthorID: f.author(t, "Melinda Snodgrass")}
+	got, reused, err := f.imp.resolveSeries(ctx, book, "Wild Cards")
+	if err != nil {
+		t.Fatalf("resolveSeries: %v", err)
+	}
+	if got == nil || got.ID == gone || reused {
+		t.Errorf("resolveSeries = %+v reused=%v, want a new calibre row", got, reused)
+	}
+	if _, still := f.imp.seriesReusedByName[calibreSeriesForeignID("Wild Cards")]; still {
+		t.Error("the deleted series is still remembered for the name")
+	}
+}
+
 // TestImporter_SeriesResolveFailureCountsAndContinues checks that a database
 // error while finding the series is counted on the series side and does not
 // panic or abort.

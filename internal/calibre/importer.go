@@ -110,11 +110,15 @@ type Importer struct {
 	// than once, so the hint is logged once per name per run. seriesTentative
 	// holds the series this run reused while they were empty: the books this
 	// run put there are not evidence that the match was right, so no alias is
-	// written for them until a later run finds them there. Only touched by the
-	// import goroutine.
-	seriesIdx       *seriesTitleIndex
-	seriesAmbiguous map[string]struct{}
-	seriesTentative map[int64]struct{}
+	// written for them until a later run finds them there. seriesReusedByName
+	// maps the Calibre series id of each name this run filed into an existing
+	// series to that series, so every later book of the same Calibre series
+	// in the run follows the first one there, whoever wrote it. Only touched
+	// by the import goroutine.
+	seriesIdx          *seriesTitleIndex
+	seriesAmbiguous    map[string]struct{}
+	seriesTentative    map[int64]struct{}
+	seriesReusedByName map[string]models.Series
 
 	mu       sync.Mutex
 	running  bool
@@ -259,7 +263,9 @@ func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 	i.seriesIdx = &seriesTitleIndex{}
 	i.seriesAmbiguous = map[string]struct{}{}
 	i.seriesTentative = map[int64]struct{}{}
+	i.seriesReusedByName = map[string]models.Series{}
 	defer func() {
+		i.seriesReusedByName = nil
 		i.authorIdx = nil
 		i.seriesIdx = nil
 		i.seriesAmbiguous = nil
@@ -736,11 +742,31 @@ func (i *Importer) resolveSeries(ctx context.Context, book *models.Book, name st
 	if existing != nil {
 		return existing, false, nil
 	}
+	// A name this run already filed into an existing series goes to that
+	// series again, before the author check. The check is about whether the
+	// title match found the right series, and that was decided for this
+	// Calibre series by its first book. Without this, a series reused while
+	// empty and not given an alias split on its second author: "Wild Cards"
+	// would hold the Martin book, the Snodgrass book would find a series
+	// holding only another author's books, and get a Calibre row of its own.
+	if prev, ok := i.seriesReusedByName[foreignID]; ok {
+		_, live, err := i.series.SeriesTitle(ctx, prev.ID)
+		if err != nil {
+			return nil, false, err
+		}
+		if live {
+			return &prev, true, nil
+		}
+		delete(i.seriesReusedByName, foreignID)
+	}
 	match, byAuthor, err := i.findReusableSeries(ctx, book, name)
 	if err != nil {
 		return nil, false, err
 	}
 	if match != nil {
+		if i.seriesReusedByName != nil {
+			i.seriesReusedByName[foreignID] = *match
+		}
 		// The alias is permanent in effect: every later run resolves the
 		// name through it in the first step above and never reaches the
 		// author check again. So it is written only on positive evidence,
