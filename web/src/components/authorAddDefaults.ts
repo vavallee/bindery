@@ -25,10 +25,12 @@ export interface AuthorAddDefaults {
   monitorMode: AuthorMonitorMode
   monitorLatestCount: number
   qualityProfiles: QualityProfile[]
-  // The quality profile to preselect: the install default when it names an
-  // existing profile, otherwise the first profile, or null (None) when there
-  // are no profiles. An author with no quality profile accepts every format
-  // at grab and import (#3831), so None is offered but not the starting point.
+  // The quality profile the picker shows before the user touches it: the
+  // install default when it names an existing profile, otherwise null (None).
+  // Display only. The dialogs send qualityProfileId only once the user
+  // changes the picker, so an untouched picker leaves the choice to the
+  // server: the default on a new author, and the author's own profile when
+  // the add relinks one already in the library (#3831).
   qualityProfileId: number | null
 }
 
@@ -76,9 +78,10 @@ export async function loadAuthorAddDefaults(): Promise<AuthorAddDefaults> {
   const latest = Number(latestCountSetting?.value)
   const monitorLatestCount = Number.isInteger(latest) && latest > 0 ? latest : DEFAULT_MONITOR_LATEST_COUNT
   // A default naming a deleted profile is treated as unset, the same as the
-  // server does when it stamps the default on an author.
+  // server does when it stamps the default on an author. No first profile
+  // fallback: with no default the server gives the author none, so the picker
+  // says None rather than showing a profile that would not be applied.
   const defaultQualityId = Number(defaultQualitySetting?.value)
-  const preferredQuality = qualityProfiles.find(p => p.id === defaultQualityId)
-  const qualityProfileId = preferredQuality ? preferredQuality.id : (qualityProfiles[0]?.id ?? null)
+  const qualityProfileId = qualityProfiles.find(p => p.id === defaultQualityId)?.id ?? null
   return { profiles, rootFolders, rootFolderId, audiobookRootFolderId, mediaType, monitorMode, monitorLatestCount, qualityProfiles, qualityProfileId }
 }

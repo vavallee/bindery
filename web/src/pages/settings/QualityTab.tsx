@@ -153,11 +153,15 @@ function NewAuthorQualityDefaults({ profiles }: { profiles: QualityProfile[] }) 
   const chosen = profiles.find(p => p.id === applyChoice) ?? profiles.find(p => p.id === effectiveDefault) ?? profiles[0]
 
   const saveDefault = async (value: string) => {
+    const previous = defaultId
     setDefaultId(value ? Number(value) : null)
     setDefaultErr(null)
     try {
       await api.setSetting(DEFAULT_QUALITY_PROFILE_SETTING, value)
     } catch (e) {
+      // Put the select back on what the server still holds, so it never
+      // shows a default that was not saved.
+      setDefaultId(previous)
       setDefaultErr(e instanceof Error ? e.message : t('settings.quality.defaultProfileSaveFail'))
     }
   }

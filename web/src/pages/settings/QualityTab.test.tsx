@@ -290,6 +290,20 @@ describe('QualityTab', () => {
       expect(picker).toHaveValue('')
     })
 
+    it('puts the default picker back when the save fails', async () => {
+      mockList.mockResolvedValueOnce(profiles)
+      vi.mocked(api.getSetting).mockResolvedValueOnce({ key: 'author.default_quality_profile_id', value: '2' })
+      vi.mocked(api.countAuthorsWithoutQualityProfile).mockResolvedValueOnce({ count: 0 })
+      vi.mocked(api.setSetting).mockRejectedValueOnce(new Error('HTTP 500'))
+      render(<QualityTab />)
+      const picker = await screen.findByLabelText('settings.quality.defaultProfileLabel')
+      await waitFor(() => expect(picker).toHaveValue('2'))
+
+      fireEvent.change(picker, { target: { value: '1' } })
+      expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 500')
+      expect(picker).toHaveValue('2')
+    })
+
     it('offers the apply when authors have no profile, and only runs it after the confirm', async () => {
       mockList.mockResolvedValueOnce(profiles)
       vi.mocked(api.getSetting).mockRejectedValueOnce(new Error('HTTP 404'))

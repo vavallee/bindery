@@ -23,6 +23,9 @@ export default function ApproveRequestForm({ request, onApproved, onCancel }: Pr
   const [profileId, setProfileId] = useState<number | null>(null)
   // null is "None": no format filter at grab or import (#3831).
   const [qualityProfileId, setQualityProfileId] = useState<number | null>(null)
+  // Sent only when touched, so an untouched picker leaves the default to the
+  // server, the same rule as the Add Author dialog.
+  const [qualityProfileChanged, setQualityProfileChanged] = useState(false)
   const [rootFolderId, setRootFolderId] = useState<number | null>(null)
   const [monitorMode, setMonitorMode] = useState('all')
   const [mediaType, setMediaType] = useState(request.mediaType)
@@ -50,8 +53,9 @@ export default function ApproveRequestForm({ request, onApproved, onCancel }: Pr
     const choices: ApproveRequestChoices = { searchOnAdd, mediaType }
     if (isAuthor) {
       choices.metadataProfileId = profileId
-      // Only when the picker showed; otherwise the server default applies.
-      if ((defaults?.qualityProfiles ?? []).length > 0) {
+      // Only when the admin changed the picker, None included; left out, the
+      // server applies the default.
+      if (qualityProfileChanged) {
         choices.qualityProfileId = qualityProfileId
       }
       choices.rootFolderId = rootFolderId
@@ -87,7 +91,7 @@ export default function ApproveRequestForm({ request, onApproved, onCancel }: Pr
             {(defaults?.qualityProfiles ?? []).length > 0 && (
               <div>
                 <label htmlFor={fieldId('quality')} className="block text-xs text-fg-muted mb-1">{t('requests.admin.qualityProfile')}</label>
-                <select id={fieldId('quality')} value={qualityProfileId ?? ''} onChange={e => setQualityProfileId(e.target.value ? Number(e.target.value) : null)} className={selectClass}>
+                <select id={fieldId('quality')} value={qualityProfileId ?? ''} onChange={e => { setQualityProfileId(e.target.value ? Number(e.target.value) : null); setQualityProfileChanged(true) }} className={selectClass}>
                   <option value="">{t('common.qualityProfileNone')}</option>
                   {(defaults?.qualityProfiles ?? []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>

@@ -293,6 +293,24 @@ describe('AddAuthorConfirm', () => {
       expect(vi.mocked(api.addAuthor).mock.calls[0][0]).toEqual(expect.objectContaining({ qualityProfileId: 1 }))
     })
 
+    it('leaves qualityProfileId out when the picker is untouched', async () => {
+      renderConfirm(author({}), { defaults: { ...bareDefaults, qualityProfiles: qps, qualityProfileId: 2 } })
+      const picker = screen.getByLabelText('addToLibrary.author.qualityProfile')
+      await waitFor(() => expect(picker).toHaveValue('2'))
+      fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+      await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+      expect('qualityProfileId' in vi.mocked(api.addAuthor).mock.calls[0][0]).toBe(false)
+    })
+
+    it('shows None with no default and still leaves the field out', async () => {
+      renderConfirm(author({}), { defaults: { ...bareDefaults, qualityProfiles: qps, qualityProfileId: null } })
+      const picker = screen.getByLabelText('addToLibrary.author.qualityProfile')
+      await waitFor(() => expect(picker).toHaveValue(''))
+      fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+      await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+      expect('qualityProfileId' in vi.mocked(api.addAuthor).mock.calls[0][0]).toBe(false)
+    })
+
     it('sends an explicit null when None is chosen', async () => {
       renderConfirm(author({}), { defaults: { ...bareDefaults, qualityProfiles: qps, qualityProfileId: 2 } })
       const picker = screen.getByLabelText('addToLibrary.author.qualityProfile')
@@ -313,7 +331,7 @@ describe('AddAuthorConfirm', () => {
       expect('qualityProfileId' in vi.mocked(api.addAuthor).mock.calls[0][0]).toBe(false)
     })
 
-    it('loads the install default, falling back to the first profile when it is unset or deleted', async () => {
+    it('loads the install default, and None when it is unset or deleted', async () => {
       vi.mocked(api.listQualityProfiles).mockResolvedValue(qps)
       const withDefault = (value: string | null) => async (key: string) => {
         if (key === 'author.default_quality_profile_id' && value !== null) return { key, value }
@@ -322,9 +340,9 @@ describe('AddAuthorConfirm', () => {
       vi.mocked(api.getSetting).mockImplementation(withDefault('2'))
       expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ qualityProfiles: qps, qualityProfileId: 2 }))
       vi.mocked(api.getSetting).mockImplementation(withDefault(null))
-      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ qualityProfileId: 1 }))
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ qualityProfileId: null }))
       vi.mocked(api.getSetting).mockImplementation(withDefault('404'))
-      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ qualityProfileId: 1 }))
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ qualityProfileId: null }))
     })
   })
 

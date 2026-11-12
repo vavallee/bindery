@@ -88,6 +88,10 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
   const [profileId, setProfileId] = useState<number | null>(null)
   // null is the "None" choice: no format filter at grab or import (#3831).
   const [qualityProfileId, setQualityProfileId] = useState<number | null>(null)
+  // Sent only when touched, like the monitor fields: an untouched picker lets
+  // the server apply the default to a new author and keep the profile of one
+  // the add relinks.
+  const [qualityProfileChanged, setQualityProfileChanged] = useState(false)
   const [rootFolderId, setRootFolderId] = useState<number | null>(null)
   const [audiobookRootFolderId, setAudiobookRootFolderId] = useState<number | null>(null)
   const [searchOnAdd, setSearchOnAdd] = useState(loadAutoGrabDefault)
@@ -147,10 +151,10 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
         rootFolderId: rootFolderId,
         mediaType,
       }
-      // Sent whenever the picker shows, None included, so what the user saw
-      // is what the author gets. With no profiles there is no picker and the
-      // server's default (none, in that case) applies.
-      if (qualityProfiles.length > 0) {
+      // Only when the user changed the picker, None included. The picker
+      // starts on the default, or None without one, which is what the server
+      // gives a new author when the field is left out.
+      if (qualityProfileChanged) {
         request.qualityProfileId = qualityProfileId
       }
       // Only when the author will have audiobooks, which is also when the
@@ -228,7 +232,7 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
             {qualityProfiles.length > 0 && (
               <div>
                 <label htmlFor="add-author-quality-profile" className="block text-xs text-fg-muted mb-1">{t('addToLibrary.author.qualityProfile')}</label>
-                <select id="add-author-quality-profile" value={qualityProfileId ?? ''} onChange={e => setQualityProfileId(e.target.value ? Number(e.target.value) : null)} className={selectClass}>
+                <select id="add-author-quality-profile" value={qualityProfileId ?? ''} onChange={e => { setQualityProfileId(e.target.value ? Number(e.target.value) : null); setQualityProfileChanged(true) }} className={selectClass}>
                   <option value="">{t('common.qualityProfileNone')}</option>
                   {qualityProfiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>

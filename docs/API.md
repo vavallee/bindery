@@ -203,6 +203,10 @@ has no format filter at all: every format is accepted at grab and at import.
   it, a number sets it.
 - `POST /api/v1/requests/{id}/approve` follows the `POST /api/v1/author` rule.
 
+The web Add Author and request approval dialogs send `qualityProfileId` only
+when the user changed the picker, so an untouched picker gets the default on a
+new author and keeps the profile of an author that already exists.
+
 Every other path that creates an author (adding a book, series fill, the ABS,
 Calibre, CSV, Readarr and Goodreads imports, and Hardcover list sync when the
 list sets no profile of its own) gives it the default quality profile too.
@@ -688,13 +692,14 @@ POST   /api/v1/authors/without-quality-profile    give them one (admin), body {"
 
 The two `/authors/without-quality-profile` routes are the opt in fix for
 authors that have no quality profile and so accept every format at grab and
-at import (#3831). Nothing runs them automatically. Both cover the caller's
-own authors plus unowned (shared) ones, never another account's authors, admin
-or not. A request with no user identity (API key, local only, auth disabled)
-covers every author. The POST changes only authors with no profile, leaves
-the rest alone, and answers `400` when `qualityProfileId` is missing or names
-a profile that does not exist. The Settings page shows the count on the
-Quality tab.
+at import (#3831). Nothing runs them automatically. Both are admin only and
+cover every author in the library whichever account owns it, the same set the
+admin sees in the author list. That includes authors a request approval
+created for a requester. API key, local only and disabled auth requests act as
+the admin operator, so they get the same scope. The POST changes only authors
+with no profile, leaves the rest alone, and answers `400` when
+`qualityProfileId` is missing or names a profile that does not exist. The
+Settings page shows the count on the Quality tab.
 
 A profile is `{id, name, items, cutoff, upgradeAllowed, preferredNarrators, editionPreference}`. `items` is an array
 of `{quality, allowed}` in preference order, best first (#2733). The media
@@ -1827,6 +1832,8 @@ authors created without one, on every creation path. Empty, the default, means
 none, and an author with no quality profile accepts every format at grab and
 at import. A write must name an existing profile or be empty (`400`
 otherwise). A default that names a profile deleted later is treated as empty.
+If the default profile has upgrades on, authors created by an ABS or Calibre
+import join the upgrade sweep straight away.
 
 `metadata.primary_provider` accepts `openlibrary` (the default), `dnb`, `nb`
 (Nasjonalbiblioteket), `bnf` (Bibliothèque nationale de France, #3144) and

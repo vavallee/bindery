@@ -32,24 +32,27 @@ func NewAuthorQualityProfileUnsetHandler(authors *db.AuthorRepo, profiles *db.Qu
 }
 
 // qualityProfileUnsetScope is the set of authors the count and the apply act
-// on: the caller's own authors, plus the unowned shared ones when the caller
-// could already edit those one at a time. Another account's authors are never
-// included, admin or not, since authors are per account (#3555) and this is a
-// bulk change nobody on that account asked for.
+// on. It matches what the caller sees in the library (auth.ListScopeUserID):
 //
-// A caller with no user identity (API key, local only, auth disabled) is
-// admin equivalent everywhere else and owns nothing, so it covers every
-// author, the same unscoped view auth.ListScopeUserID gives it.
+//   - an admin, or anyone while tenancy is off, covers every author whatever
+//     its owner. Authors carry an owner even with tenancy off (CreateForUser
+//     stamps the acting user), and request approval creates the author as
+//     the requester. Limiting an admin to their own and unowned rows left out
+//     exactly the authors an approval added, which only an admin can fix.
+//   - a non admin under tenancy covers only their own authors. Unowned rows
+//     are not theirs to change, the same rule CheckWriteOwnership applies one
+//     author at a time.
+//
+// API key, local only and disabled auth requests carry the admin role and the
+// operator's user id (withOperatorUserID), so they take the admin branch like
+// any admin. The route is admin only today; the non admin branch keeps the
+// handler safe if that gate is ever loosened.
 func qualityProfileUnsetScope(r *http.Request) db.AuthorOwnerScope {
 	ctx := r.Context()
-	uid := auth.UserIDFromContext(ctx)
-	if uid == 0 {
+	if !auth.EnforceTenancy() || auth.UserRoleFromContext(ctx) == "admin" {
 		return db.AuthorOwnerScope{AllOwners: true}
 	}
-	return db.AuthorOwnerScope{
-		OwnerUserID:    uid,
-		IncludeUnowned: auth.CheckWriteOwnership(ctx, 0),
-	}
+	return db.AuthorOwnerScope{OwnerUserID: auth.UserIDFromContext(ctx)}
 }
 
 // Count answers how many authors in scope have no quality profile.

@@ -206,8 +206,8 @@ func TestUpdateAuthor_ExplicitNullClearsTheQualityProfile(t *testing.T) {
 	}
 }
 
-// unsetFixture seeds, under tenancy, one author per case the count and apply
-// must tell apart.
+// unsetFixture seeds one author per case the count and apply must tell
+// apart, with tenancy on or off.
 type unsetFixture struct {
 	qpDefaultFixture
 	alice, bob                            int64
@@ -217,7 +217,12 @@ type unsetFixture struct {
 
 func newUnsetFixture(t *testing.T) unsetFixture {
 	t.Helper()
-	auth.SetEnforceTenancyForTests(t, true)
+	return newUnsetFixtureTenancy(t, true)
+}
+
+func newUnsetFixtureTenancy(t *testing.T, tenancy bool) unsetFixture {
+	t.Helper()
+	auth.SetEnforceTenancyForTests(t, tenancy)
 	f := unsetFixture{qpDefaultFixture: newQPDefaultFixture(t)}
 	ctx := context.Background()
 	f.epub = f.profile(t, "Epub only")
@@ -270,34 +275,53 @@ func callUnset(t *testing.T, h *AuthorQualityProfileUnsetHandler, ctx context.Co
 	return rec.Code, out
 }
 
-func TestAuthorsWithoutQualityProfile_AdminTouchesOnlyOwnAndUnownedAuthors(t *testing.T) {
-	f := newUnsetFixture(t)
+// An admin covers every author in the library, whoever owns it, with tenancy
+// on or off. Authors carry an owner even with tenancy off, and request
+// approval creates the author as the requester (bob here), so a scope of own
+// plus unowned rows missed exactly the authors that needed the fix: with
+// tenancy off it counted 2 of the 3 authors with no profile.
+func TestAuthorsWithoutQualityProfile_AdminCoversEveryAuthor(t *testing.T) {
+	for _, tenancy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "tenancy off", true: "tenancy on"}[tenancy], func(t *testing.T) {
+			f := newUnsetFixtureTenancy(t, tenancy)
+			h := NewAuthorQualityProfileUnsetHandler(f.authors, f.profiles)
+			aliceAdmin := auth.WithUserRole(auth.WithUserID(context.Background(), f.alice), "admin")
+
+			code, out := callUnset(t, h, aliceAdmin, http.MethodGet, "")
+			if code != http.StatusOK || out["count"] != float64(3) {
+				t.Fatalf("count = %d %v, want 200 and 3 (alice's, bob's and the unowned author with no profile)", code, out)
+			}
+
+			code, out = callUnset(t, h, aliceAdmin, http.MethodPost, `{"qualityProfileId": `+strconv.FormatInt(f.epub, 10)+`}`)
+			if code != http.StatusOK || out["updated"] != float64(3) {
+				t.Fatalf("apply = %d %v, want 200 and 3 updated", code, out)
+			}
+			for _, id := range []int64{f.aliceNone, f.bobNone, f.unowned} {
+				if got := f.profileOf(t, id); got == nil || *got != f.epub {
+					t.Errorf("author %d profile = %s, want %d", id, qpID(got), f.epub)
+				}
+			}
+			if got := f.profileOf(t, f.aliceSet); got == nil || *got == f.epub {
+				t.Errorf("alice's configured author was changed to %s; only authors with no profile may change", qpID(got))
+			}
+
+			if _, out := callUnset(t, h, aliceAdmin, http.MethodGet, ""); out["count"] != float64(0) {
+				t.Errorf("count after apply = %v, want 0", out["count"])
+			}
+		})
+	}
+}
+
+// With tenancy off there is no per account library, so even a non admin sees
+// every author (ListScopeUserID is 0). The route is admin only; this pins the
+// handler's own scope.
+func TestAuthorsWithoutQualityProfile_TenancyOffNonAdminCoversEveryAuthor(t *testing.T) {
+	f := newUnsetFixtureTenancy(t, false)
 	h := NewAuthorQualityProfileUnsetHandler(f.authors, f.profiles)
-	aliceAdmin := auth.WithUserRole(auth.WithUserID(context.Background(), f.alice), "admin")
+	alice := auth.WithUserRole(auth.WithUserID(context.Background(), f.alice), "user")
 
-	code, out := callUnset(t, h, aliceAdmin, http.MethodGet, "")
-	if code != http.StatusOK || out["count"] != float64(2) {
-		t.Fatalf("count = %d %v, want 200 and 2 (alice's unset author and the unowned one)", code, out)
-	}
-
-	code, out = callUnset(t, h, aliceAdmin, http.MethodPost, `{"qualityProfileId": `+strconv.FormatInt(f.epub, 10)+`}`)
-	if code != http.StatusOK || out["updated"] != float64(2) {
-		t.Fatalf("apply = %d %v, want 200 and 2 updated", code, out)
-	}
-	for _, id := range []int64{f.aliceNone, f.unowned} {
-		if got := f.profileOf(t, id); got == nil || *got != f.epub {
-			t.Errorf("author %d profile = %s, want %d", id, qpID(got), f.epub)
-		}
-	}
-	if got := f.profileOf(t, f.bobNone); got != nil {
-		t.Errorf("bob's author was changed to %s; another account's authors must be left alone", qpID(got))
-	}
-	if got := f.profileOf(t, f.aliceSet); got == nil || *got == f.epub {
-		t.Errorf("alice's configured author was changed to %s; only authors with no profile may change", qpID(got))
-	}
-
-	if _, out := callUnset(t, h, aliceAdmin, http.MethodGet, ""); out["count"] != float64(0) {
-		t.Errorf("count after apply = %v, want 0", out["count"])
+	if _, out := callUnset(t, h, alice, http.MethodGet, ""); out["count"] != float64(3) {
+		t.Fatalf("count = %v, want 3", out["count"])
 	}
 }
 

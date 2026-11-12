@@ -13,29 +13,22 @@ import (
 // builds it from the caller's identity (see
 // internal/api.qualityProfileUnsetScope).
 type AuthorOwnerScope struct {
-	// AllOwners covers every author whatever its owner. Only for a caller
-	// with no user identity (API key, local only and disabled auth), which
-	// the rest of Bindery already treats as admin equivalent and unscoped.
+	// AllOwners covers every author whatever its owner: an admin, or any
+	// caller while tenancy is off, the same unscoped view the library list
+	// gives them.
 	AllOwners bool
-	// OwnerUserID covers the authors this account owns.
+	// OwnerUserID covers only the authors this account owns, for a non admin
+	// under tenancy. Unowned rows are not theirs to change.
 	OwnerUserID int64
-	// IncludeUnowned also covers authors with no owner, the shared rows that
-	// imports and pre tenancy installs create. Set only when the caller may
-	// write those rows one at a time (auth.CheckWriteOwnership with owner 0).
-	IncludeUnowned bool
 }
 
 // where returns the owner clause and its args. Another account's authors are
 // never in scope unless AllOwners is set.
 func (s AuthorOwnerScope) where() (string, []any) {
-	switch {
-	case s.AllOwners:
+	if s.AllOwners {
 		return "1 = 1", nil
-	case s.IncludeUnowned:
-		return "(owner_user_id = ? OR owner_user_id IS NULL)", []any{s.OwnerUserID}
-	default:
-		return "owner_user_id = ?", []any{s.OwnerUserID}
 	}
+	return "owner_user_id = ?", []any{s.OwnerUserID}
 }
 
 // CountWithoutQualityProfile counts the authors in scope that have no quality
@@ -56,9 +49,11 @@ func (r *AuthorRepo) CountWithoutQualityProfile(ctx context.Context, scope Autho
 // that have no quality profile, and returns how many changed. Authors that
 // already have a profile keep it.
 //
-// updated_at moves with the change so an Edit Author dialog opened before the
-// apply gets the usual stale write refusal instead of saving its old view of
-// the author over this one.
+// updated_at moves with the change. That is not a general stale write guard:
+// the Edit Author dialog sends no snapshot, so a dialog opened before the
+// apply still saves whatever fields it sends. It only protects a PUT already in flight, which
+// compares the row it loaded with the row it is about to write and refuses
+// when the apply landed in between.
 func (r *AuthorRepo) ApplyQualityProfileToUnset(ctx context.Context, scope AuthorOwnerScope, profileID int64) (int64, error) {
 	clause, args := scope.where()
 	args = append([]any{profileID, timeValueArg(time.Now().UTC())}, args...)

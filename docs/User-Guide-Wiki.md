@@ -450,17 +450,23 @@ versions of the dialog sent no profile, so authors added from the UI had none, a
 Edit Author showed the first profile as if it were selected (#3831).
 
 **Default quality profile for new authors.** Settings → Quality Profiles,
-above the profile list. Every author added without a choice gets it: from the
-Add Author dialog (where it is preselected), by adding a book, from a series
-fill, the ABS, Calibre, CSV, Readarr and Goodreads imports, and Hardcover
-list sync when the list sets no profile of its own. Empty means *None*. If the
-profile it names is deleted, new authors get none until you pick another.
+above the profile list. Every author added without a choice gets it: by adding
+a book, from a series fill, the ABS, Calibre, CSV, Readarr and Goodreads
+imports, Hardcover list sync when the list sets no profile of its own, and the
+Add Author and request approval dialogs when you leave their picker alone.
+Those pickers show the default, or *None* when there is no default, and only
+send a profile when you change them. Leaving the picker alone on an author
+that is already in your library keeps the profile it has. Empty means *None*.
+If the profile it names is deleted, new authors get none until you pick
+another. If the default profile has upgrades on, authors created by an ABS or
+Calibre import join the upgrade sweep straight away.
 
-**Authors that already have no profile.** When some of your authors have no
-quality profile the same section says how many and offers to give them one:
-pick a profile, press **Apply** and confirm. Only authors with no profile
-change, authors that have one keep it, and another account's authors are never
-touched. Nothing does this on its own, so check this notice after upgrading.
+**Authors that already have no profile.** When some authors have no quality
+profile the same section says how many and offers to give them one: pick a
+profile, press **Apply** and confirm. It covers every author in the library
+with no profile, whichever account added it, including authors added by
+approving someone's request. Authors that have one keep it. Nothing does this
+on its own, so check this notice after upgrading.
 
 **Audiobook narrator and edition preferences.** A quality profile can also
 prefer narrators and an edition type for audiobooks (#1358). Both are off
