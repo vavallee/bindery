@@ -22,9 +22,13 @@ type TitleDuplicateSeries struct {
 	Monitored       bool     `json:"monitored"`
 }
 
-// TitleDuplicateGroup is two or more series whose titles share the key the
-// Audiobookshelf import looks a series up by (seriesmatch.LookupKey), so it
-// cannot tell them apart (#2173).
+// TitleDuplicateGroup is two or more series whose titles share
+// seriesmatch.IdentityKey: the same title once case, punctuation, accents and a
+// leading article are folded, with any bracketed or parenthesised qualifier
+// kept (#2173). That is narrower than the key the Audiobookshelf import looks
+// a series up by, which drops the qualifier, on purpose: "Discworld (Witches)"
+// and "Discworld (City Watch)" share an author and are still two series, and a
+// group here is something the bulk merge will act on.
 type TitleDuplicateGroup struct {
 	Key string `json:"key"`
 	// SuggestedKeepID is the series to merge the others into: the one with a
@@ -39,12 +43,12 @@ type TitleDuplicateGroup struct {
 	Series []TitleDuplicateSeries `json:"series"`
 }
 
-// ListTitleDuplicates groups every series by seriesmatch.LookupKey and
+// ListTitleDuplicates groups every series by seriesmatch.IdentityKey and
 // returns the groups with more than one member. Series rows are global and
 // this is an admin view, so books of every owner count. Two queries in all,
 // however large the library: one for the series and one for their authors.
 func (r *SeriesRepo) ListTitleDuplicates(ctx context.Context) ([]TitleDuplicateGroup, error) {
-	byKey, err := r.seriesByLookupKey(ctx)
+	byKey, err := r.seriesByIdentityKey(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -121,10 +125,10 @@ func (r *SeriesRepo) ListTitleDuplicates(ctx context.Context) ([]TitleDuplicateG
 	return groups, nil
 }
 
-// seriesByLookupKey reads every series once and buckets it by
-// seriesmatch.LookupKey. The rows are closed before it returns, which the
+// seriesByIdentityKey reads every series once and buckets it by
+// seriesmatch.IdentityKey. The rows are closed before it returns, which the
 // author query after it needs on a one connection pool.
-func (r *SeriesRepo) seriesByLookupKey(ctx context.Context) (map[string][]*TitleDuplicateSeries, error) {
+func (r *SeriesRepo) seriesByIdentityKey(ctx context.Context) (map[string][]*TitleDuplicateSeries, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT s.id, s.title, s.foreign_id, s.monitored,
 		       EXISTS (SELECT 1 FROM series_hardcover_links l WHERE l.series_id = s.id),
@@ -143,9 +147,9 @@ func (r *SeriesRepo) seriesByLookupKey(ctx context.Context) (map[string][]*Title
 		}
 		s.Monitored = monitored == 1
 		s.Authors = []string{}
-		key := seriesmatch.LookupKey(s.Title)
+		key := seriesmatch.IdentityKey(s.Title)
 		if key == "" {
-			// A title that normalizes to nothing matches nothing on lookup.
+			// A title that normalizes to nothing matches nothing.
 			continue
 		}
 		byKey[key] = append(byKey[key], &s)

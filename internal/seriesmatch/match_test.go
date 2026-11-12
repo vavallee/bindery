@@ -333,3 +333,120 @@ func TestStripPartMarker(t *testing.T) {
 
 // The #2524 fractional-position and title-prefix rules are now
 // seriesmatch.SplitEditionPartOf (#3048), tested in split_edition_test.go.
+
+// TestIdentityKey pins what the identity key folds and what it keeps (#2173).
+// The qualifier pairs are the ones LookupKey collapses and a merge must not.
+func TestIdentityKey(t *testing.T) {
+	same := []struct{ a, b string }{
+		{"The Legend of Drizzt", "Legend of Drizzt"},
+		{"Legend of Drizzt, The", "The Legend of Drizzt"},
+		{"Legend of Drizzt, The", "Legend of Drizzt"},
+		{"Foundation & Empire", "Foundation and Empire"},
+		{"Les Misérables", "Les Miserables"},
+		{"Ender's Saga", "Enders Saga"},
+		{"Ender’s Saga", "Enders Saga"},
+		{"Wheel-of-Time", "wheel of  time"},
+		{"Müller Mysteries", "Mueller Mysteries"},
+		{"Discworld (Witches)", "discworld: witches"},
+		{"Star Wars [Legends]", "The Star Wars (Legends)"},
+	}
+	for _, tc := range same {
+		ka, kb := IdentityKey(tc.a), IdentityKey(tc.b)
+		if ka == "" || ka != kb {
+			t.Errorf("IdentityKey(%q) = %q, IdentityKey(%q) = %q, want one non empty key", tc.a, ka, tc.b, kb)
+		}
+	}
+	different := []struct{ a, b string }{
+		{"Discworld (City Watch)", "Discworld (Witches)"},
+		{"Discworld (Witches)", "Discworld"},
+		{"Star Wars [Legends]", "Star Wars (Canon)"},
+		{"Star Wars [Legends]", "Star Wars"},
+		{"Theatre of Blood", "atre of Blood"},
+		{"ハード", "ハート"},
+	}
+	for _, tc := range different {
+		if ka, kb := IdentityKey(tc.a), IdentityKey(tc.b); ka == kb {
+			t.Errorf("IdentityKey(%q) and IdentityKey(%q) are both %q, want different keys", tc.a, tc.b, ka)
+		}
+	}
+	// The reason the key exists: LookupKey reads these qualifiers as noise.
+	if LookupKey("Discworld (City Watch)") != LookupKey("Discworld (Witches)") {
+		t.Error("LookupKey no longer strips the qualifier; revisit whether IdentityKey is still needed")
+	}
+	for _, s := range []string{"", "   ", "!!!"} {
+		if got := IdentityKey(s); got != "" {
+			t.Errorf("IdentityKey(%q) = %q, want empty", s, got)
+		}
+	}
+	if got := IdentityKey("The"); got != "the" {
+		t.Errorf("IdentityKey(%q) = %q, want a lone article kept", "The", got)
+	}
+}
+
+// TestIdentityKeyQualifiers pins which trailing groups IdentityKey drops: a
+// group that is only a format marker, the Audiobookshelf shape the ABS import
+// already reads as the plain title (#1648), and nothing else.
+func TestIdentityKeyQualifiers(t *testing.T) {
+	cases := []struct {
+		title, want string
+	}{
+		{"The Expanse [Audiobook]", "expanse"},
+		{"The Expanse (Audio Book)", "expanse"},
+		{"The Expanse [Unabridged]", "expanse"},
+		{"The Expanse (Abridged)", "expanse"},
+		{"The Expanse [Dramatized Adaptation]", "expanse"},
+		{"The Expanse [Dramatised Adaptation]", "expanse"},
+		{"The Expanse (Dramatization)", "expanse"},
+		{"The Expanse [Full Cast]", "expanse"},
+		{"The Expanse [Full-Cast Dramatization]", "expanse"},
+		{"The Expanse (eBook)", "expanse"},
+		{"The Expanse (E-Book)", "expanse"},
+		{"The Expanse [Illustrated Edition]", "expanse"},
+		{"The Expanse [Unabridged] (Audiobook)", "expanse"},
+		{"Expanse, The [Audiobook]", "expanse"},
+		// Kept: a sub series, a continuity, a production, a stacked real group.
+		{"Discworld (City Watch)", "discworld city watch"},
+		{"Discworld (Witches) [Audiobook]", "discworld witches"},
+		{"Star Wars [Legends]", "star wars legends"},
+		{"Star Wars (Canon)", "star wars canon"},
+		{"The Stormlight Archive [GraphicAudio]", "stormlight archive graphicaudio"},
+		{"The Expanse (Audiobook Collection)", "expanse audiobook collection"},
+		// A title that is only a marker is not stripped to nothing.
+		{"[Audiobook]", "audiobook"},
+		{"Audiobook", "audiobook"},
+	}
+	for _, tc := range cases {
+		if got := IdentityKey(tc.title); got != tc.want {
+			t.Errorf("IdentityKey(%q) = %q, want %q", tc.title, got, tc.want)
+		}
+	}
+	if IdentityKey("The Expanse [Audiobook]") != IdentityKey("The Expanse") {
+		t.Error("the Audiobookshelf format tag splits a series the ABS import reads as one")
+	}
+}
+
+// TestIdentityKeyLeadingArticles pins that only English articles are dropped
+// from the front. The multilingual words textutil.IsArticle knows are ordinary
+// words at the start of many titles, so dropping them would merge unrelated
+// series; behind a filing form comma they are still read as articles.
+func TestIdentityKeyLeadingArticles(t *testing.T) {
+	cases := []struct {
+		title, want string
+	}{
+		{"The Witcher", "witcher"},
+		{"A Song of Ice and Fire", "song of ice and fire"},
+		{"An Ember in the Ashes", "ember in the ashes"},
+		{"Die Hard", "die hard"},
+		{"De Profundis", "de profundis"},
+		{"La La Land", "la la land"},
+		{"El Cid", "el cid"},
+		{"Das Boot", "das boot"},
+		{"Hobbit, Le", "le hobbit"},
+		{"Song of Ice and Fire, A", "song of ice and fire"},
+	}
+	for _, tc := range cases {
+		if got := IdentityKey(tc.title); got != tc.want {
+			t.Errorf("IdentityKey(%q) = %q, want %q", tc.title, got, tc.want)
+		}
+	}
+}

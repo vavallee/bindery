@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/textutil"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -33,6 +34,126 @@ func SamePosition(a, b string) bool {
 // so what it reports is exactly what the importer calls ambiguous.
 func LookupKey(title string) string {
 	return indexer.CanonicalDedupKey(title)
+}
+
+// IdentityKey is the key two series titles must share to be treated as one
+// series by anything that writes a lasting decision on the strength of the
+// title: the Calibre import reusing an existing series, and the duplicate
+// series finder and its bulk merge (#2173).
+//
+// It folds what carries no meaning: case, punctuation, apostrophes, accents,
+// an ampersand against "and", a leading English article, including the filing
+// form ("Legend of Drizzt, The"), and a trailing bracketed or parenthesised
+// group whose whole content is a format marker (identityFormatMarkers), such as
+// "The Expanse [Audiobook]", the shape Audiobookshelf hands back (#1648).
+//
+// Every other trailing qualifier is KEPT, unlike LookupKey, because on a
+// series title it usually names the sub series. "Discworld (City Watch)" and
+// "Discworld (Witches)" are two series by one author, and "Star Wars
+// [Legends]" is not "Star Wars (Canon)". LookupKey strips those as edition
+// noise, which is right for a book title and for the Audiobookshelf lookup,
+// and wrong for a merge.
+//
+// Only the/a/an are dropped from the front. The multilingual article list
+// textutil.IsArticle reads is safe behind a filing form comma, where the word
+// can only be an article, but at the front of a title several of its entries
+// are ordinary words in English or in their own language: "Die Hard", "De
+// Profundis", "La La Land". Dropping a leading "A" or "An" only merges a title
+// with the same title minus that article, which in English is the same title.
+func IdentityKey(title string) string {
+	t := stripFormatMarkerGroups(norm.NFC.String(strings.TrimSpace(title)))
+	t = textutil.RestoreFilingForm(t)
+	words := strings.Fields(identityFold(t))
+	if len(words) > 1 && identityArticles[words[0]] {
+		words = words[1:]
+	}
+	return strings.Join(words, " ")
+}
+
+// identityArticles are the leading words IdentityKey drops. See IdentityKey
+// for why the list is English only.
+var identityArticles = map[string]bool{"the": true, "a": true, "an": true}
+
+// identityFold is the character fold under IdentityKey: apostrophes deleted,
+// "&" spelled "and", every other non alphanumeric a space, lowercased,
+// umlauts expanded the way LookupKey reads them (so "Müller" and "Mueller"
+// stay one key), then the remaining Latin and Greek accents dropped by
+// FoldForSlug, which leaves scripts where the mark is the letter alone.
+func identityFold(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case textutil.IsApostrophe(r):
+			// Deleted, so a possessive stays one word.
+		case r == '&':
+			b.WriteString(" and ")
+		case unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.Is(unicode.Mn, r):
+			b.WriteRune(r)
+		default:
+			b.WriteRune(' ')
+		}
+	}
+	return textutil.FoldForSlug(textutil.TransliterateUmlauts(strings.ToLower(b.String())))
+}
+
+// identityFormatMarkers is the closed set of trailing group contents, after
+// identityFold, that describe how a series was published rather than which
+// series it is. It is the format and production vocabulary the rest of the
+// tree already reads as edition noise: the edition types narration parsing
+// recognises (internal/indexer/narration.go: unabridged, abridged,
+// dramatized or dramatised, full cast), the production descriptors the
+// metadata aggregator strips ("dramatized adaptation"), and the format words
+// the duplicate book keys drop (internal/duplicates editionMarkers:
+// audiobook, illustrated). Those lists cannot be imported from here
+// (internal/duplicates imports this package) and they match words anywhere
+// or at the end of a title, while this has to match a whole group, so the
+// words are listed again. Keep it to formats: anything that could name a
+// sub series or a continuity ("Legends", "Canon", "GraphicAudio", a
+// language) stays out.
+var identityFormatMarkers = map[string]bool{
+	"audiobook": true, "audio book": true, "audio": true,
+	"unabridged": true, "abridged": true,
+	"unabridged audiobook": true, "abridged audiobook": true,
+	"unabridged edition": true, "abridged edition": true,
+	"dramatized": true, "dramatised": true,
+	"dramatized adaptation": true, "dramatised adaptation": true,
+	"dramatization": true, "dramatisation": true,
+	"full cast": true, "full cast dramatization": true, "full cast dramatisation": true,
+	"full cast audio": true, "full cast audiobook": true,
+	"ebook": true, "e book": true,
+	"illustrated": true, "illustrated edition": true,
+}
+
+// stripFormatMarkerGroups removes trailing bracketed or parenthesised groups
+// whose content is a format marker, repeatedly, so "X [Unabridged]
+// (Audiobook)" reads as "X". It stops at the first group that is not a marker,
+// and never strips a title down to nothing.
+func stripFormatMarkerGroups(t string) string {
+	for {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			return t
+		}
+		var open byte
+		switch t[len(t)-1] {
+		case ')':
+			open = '('
+		case ']':
+			open = '['
+		default:
+			return t
+		}
+		start := strings.LastIndexByte(t, open)
+		if start <= 0 {
+			return t
+		}
+		head := strings.TrimSpace(t[:start])
+		if head == "" || !identityFormatMarkers[identityFold(t[start+1:len(t)-1])] {
+			return t
+		}
+		t = head
+	}
 }
 
 // NormalizeSeriesName reduces a series name for comparison: the canonical

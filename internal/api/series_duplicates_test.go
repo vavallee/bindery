@@ -213,6 +213,35 @@ func TestSeriesDuplicatesMerge_RejectsGroups(t *testing.T) {
 	}
 }
 
+// Sub series that differ only by a qualifier are not duplicates, so the bulk
+// merge refuses them even though the Audiobookshelf import's LookupKey reads
+// them as one title; a twin with the same qualifier still merges (#2173).
+func TestSeriesDuplicatesMerge_KeepsQualifiers(t *testing.T) {
+	e := newDupEnv(t)
+	cityWatch := e.series("abs-series:1", "Discworld (City Watch)", 1)
+	witches := e.series("abs-series:2", "Discworld (Witches)", 1)
+	twin := e.series("calibre:series:Discworld (Witches)", "discworld: witches", 1)
+	legends := e.series("abs-series:3", "Star Wars [Legends]", 1)
+	canon := e.series("abs-series:4", "Star Wars (Canon)", 1)
+
+	for _, pair := range [][2]int64{{witches, cityWatch}, {legends, canon}} {
+		code, out := e.bulk(fmt.Sprintf(`{"groups":[{"keepId":%d,"sourceIds":[%d]}]}`, pair[0], pair[1]))
+		if code != http.StatusOK || out.Failed != 1 || out.Merged != 0 {
+			t.Fatalf("merge %d into %d: status %d, response %+v", pair[1], pair[0], code, out)
+		}
+		if r := out.Results[0]; r.OK || !strings.Contains(r.Error, "is not a duplicate") {
+			t.Errorf("merge %d into %d: result = %+v, want refused as not a duplicate", pair[1], pair[0], r)
+		}
+	}
+	code, out := e.bulk(fmt.Sprintf(`{"groups":[{"keepId":%d,"sourceIds":[%d]}]}`, witches, twin))
+	if code != http.StatusOK || out.Merged != 1 || out.Failed != 0 {
+		t.Fatalf("twin merge: status %d, response %+v", code, out)
+	}
+	if n := e.count(`SELECT COUNT(*) FROM series`); n != 4 {
+		t.Errorf("series = %d, want 4 (only the twin merged away)", n)
+	}
+}
+
 // One group failing, at validation or at write, leaves that group whole and
 // does not stop the others; the results say which was which.
 func TestSeriesDuplicatesMerge_PartialFailure(t *testing.T) {

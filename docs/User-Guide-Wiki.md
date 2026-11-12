@@ -932,6 +932,12 @@ to the records. Things worth knowing before you judge the results:
 - The scan only matches files whose **author already exists** in Bindery, by
   normalised name — `B. Sanderson/` on disk won't match a "Brandon Sanderson"
   author row.
+- The Calibre library import files a book into a series Bindery already has
+  under the same title, from the Audiobookshelf import or a metadata refresh,
+  when that series holds books by the same author or none yet, instead of
+  making a second copy (#2173). See
+  [Reading an existing Calibre library](Calibre-Integration-Wiki.md#reading-an-existing-calibre-library)
+  for how ties are handled.
 - A Calibre book credited to several people is filed under the **first**
   author only. Bindery books carry a single author, so the other credits are
   not recorded. Those co-authors still get their own author page as soon as a
