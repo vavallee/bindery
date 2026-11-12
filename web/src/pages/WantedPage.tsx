@@ -7,6 +7,7 @@ import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
 import { calendarYear } from '../util/calendarDate'
 import PackLabel from '../components/PackLabel'
 import ReleaseNarration from '../components/ReleaseNarration'
+import ReleaseSwarm from '../components/ReleaseSwarm'
 import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
@@ -567,6 +568,7 @@ export default function WantedPage() {
                           </span>
                           <span className="text-fg-muted truncate block">
                             {r.indexerName} &middot; {formatBytes(r.size)} &middot; {t('search.grabs', { n: r.grabs, defaultValue: '{{n}} grabs' })}
+                            <ReleaseSwarm seeders={r.seeders} peers={r.peers} />
                             {safeHref(r.infoUrl) && (
                               <>
                                 {' '}&middot;{' '}

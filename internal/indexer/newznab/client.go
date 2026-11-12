@@ -1023,6 +1023,10 @@ func (c *Client) parseResults(items []rssItem) []SearchResult {
 				if f, err := strconv.ParseFloat(strings.TrimSpace(attr.Value), 64); err == nil {
 					r.DownloadVolumeFactor = &f
 				}
+			case "seeders":
+				r.Seeders = parseSwarmCount(attr.Value)
+			case "peers":
+				r.Peers = parseSwarmCount(attr.Value)
 			}
 		}
 
@@ -1035,6 +1039,17 @@ func (c *Client) parseResults(items []rssItem) []SearchResult {
 		results = append(results, r)
 	}
 	return results
+}
+
+// parseSwarmCount reads a torznab seeders or peers value. A malformed or
+// negative value leaves the count unreported (nil) rather than showing it as
+// 0, which would read as a dead torrent.
+func parseSwarmCount(v string) *int {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 0 {
+		return nil
+	}
+	return &n
 }
 
 // redactedErr flattens err to a string with secrets redacted (the apikey query

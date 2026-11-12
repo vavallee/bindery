@@ -22,6 +22,7 @@ import { useConfirmDialog } from '../components/useConfirmDialog'
 import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
 import PackLabel from '../components/PackLabel'
 import ReleaseNarration from '../components/ReleaseNarration'
+import ReleaseSwarm from '../components/ReleaseSwarm'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { formatCalendarDate } from '../util/calendarDate'
 import { useClipboardCopy } from '../components/useClipboardCopy'
@@ -240,6 +241,7 @@ function ReleaseRow({
         </div>
         <span className="text-fg-muted truncate block">
           {r.indexerName} · {formatBytes(r.size)} · {t('search.grabs', { n: r.grabs, defaultValue: '{{n}} grabs' })}
+          <ReleaseSwarm seeders={r.seeders} peers={r.peers} />
           {safeHref(r.infoUrl) && (
             <>
               {' · '}

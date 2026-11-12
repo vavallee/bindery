@@ -411,6 +411,10 @@
     "grabFailed": "Grab failed",
     "indexerLink": "indexer",
     "grabs": "{{n}} grabs",
+    "seeders_one": "{{count}} seeder",
+    "seeders_other": "{{count}} seeders",
+    "peers_one": "{{count}} peer",
+    "peers_other": "{{count}} peers",
     "pack": {
       "label": "Multi-book pack",
       "matched": "Matched \"{{marker}}\"",
