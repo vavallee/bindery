@@ -269,7 +269,7 @@ type covSyABSImporter struct {
 
 func (s *covSyABSImporter) Start(context.Context, abs.ImportConfig) error { return nil }
 func (s *covSyABSImporter) Progress() abs.ImportProgress                  { return abs.ImportProgress{} }
-func (s *covSyABSImporter) RecentRuns(context.Context, int) ([]models.ABSImportRun, error) {
+func (s *covSyABSImporter) RunsPage(context.Context, int, int) ([]models.ABSImportRun, error) {
 	return s.runs, s.runsErr
 }
 func (s *covSyABSImporter) RollbackPreview(_ context.Context, id int64) (*abs.RollbackResult, error) {

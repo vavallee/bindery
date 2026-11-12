@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -369,5 +370,68 @@ func TestABSReviewItemRepoDismissByRunID(t *testing.T) {
 	count, err = repo.DismissByRunID(ctx, 999)
 	if err != nil || count != 0 {
 		t.Fatalf("DismissByRunID(unknown) = %d err=%v, want 0/nil", count, err)
+	}
+}
+
+// TestABSImportRunRepoListPage covers paging over runs (#2173). A multi
+// library import writes one row per library, often in the same second, so
+// the pages must stay stable when started_at ties and fall back to id.
+func TestABSImportRunRepoListPage(t *testing.T) {
+	t.Parallel()
+
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatalf("OpenMemory: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	ctx := context.Background()
+	repo := NewABSImportRunRepo(database)
+
+	var ids []int64
+	for _, lib := range []string{"lib-1", "lib-2", "lib-3", "lib-4", "lib-5"} {
+		run := &models.ABSImportRun{SourceID: "default", LibraryID: lib, Status: "completed", SummaryJSON: "{}"}
+		if err := repo.Create(ctx, run); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		ids = append(ids, run.ID)
+	}
+	// Every row starts in the same second, except the first one created,
+	// which is moved a day later so it must lead despite the lowest id.
+	tied := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	if _, err := database.ExecContext(ctx, `UPDATE abs_import_runs SET started_at = ?`, tied); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `UPDATE abs_import_runs SET started_at = ? WHERE id = ?`, tied.Add(24*time.Hour), ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	want := []int64{ids[0], ids[4], ids[3], ids[2], ids[1]}
+
+	var got []int64
+	for offset := 0; offset < 6; offset += 2 {
+		page, err := repo.ListPage(ctx, 2, offset)
+		if err != nil {
+			t.Fatalf("ListPage(2, %d): %v", offset, err)
+		}
+		for _, run := range page {
+			got = append(got, run.ID)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("paged ids = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("paged ids = %v, want %v", got, want)
+		}
+	}
+
+	past, err := repo.ListPage(ctx, 10, 5)
+	if err != nil || len(past) != 0 {
+		t.Fatalf("ListPage past the end = %d rows, %v; want none", len(past), err)
+	}
+	// A negative offset is treated as zero rather than an SQL error.
+	first, err := repo.ListPage(ctx, 1, -3)
+	if err != nil || len(first) != 1 || first[0].ID != ids[0] {
+		t.Fatalf("ListPage(1, -3) = %+v, %v; want the newest run", first, err)
 	}
 }

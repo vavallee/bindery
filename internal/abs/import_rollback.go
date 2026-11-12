@@ -52,10 +52,17 @@ type RollbackResult struct {
 }
 
 func (i *Importer) RecentRuns(ctx context.Context, limit int) ([]models.ABSImportRun, error) {
+	return i.RunsPage(ctx, limit, 0)
+}
+
+// RunsPage lists recorded runs newest first, skipping offset of them. Each
+// row is one library of an import, so a large multi library import needs
+// more than one page (#2173).
+func (i *Importer) RunsPage(ctx context.Context, limit, offset int) ([]models.ABSImportRun, error) {
 	if i.runs == nil {
 		return nil, nil
 	}
-	return i.runs.ListRecent(ctx, limit)
+	return i.runs.ListPage(ctx, limit, offset)
 }
 
 func HydrateRun(run models.ABSImportRun) PersistedImportRun {

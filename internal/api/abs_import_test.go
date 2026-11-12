@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/abs"
@@ -18,7 +19,9 @@ type stubABSImporter struct {
 	lastCfg  abs.ImportConfig
 	progress abs.ImportProgress
 	runs     []models.ABSImportRun
-	rollback *abs.RollbackResult
+	// gotLimit and gotOffset record the paging the last RunsPage call asked for.
+	gotLimit, gotOffset int
+	rollback            *abs.RollbackResult
 	// rollbackErr, when set, is returned by RollbackPreview and Rollback.
 	rollbackErr error
 }
@@ -29,8 +32,16 @@ func (s *stubABSImporter) Start(_ context.Context, cfg abs.ImportConfig) error {
 }
 
 func (s *stubABSImporter) Progress() abs.ImportProgress { return s.progress }
-func (s *stubABSImporter) RecentRuns(context.Context, int) ([]models.ABSImportRun, error) {
-	return s.runs, nil
+func (s *stubABSImporter) RunsPage(_ context.Context, limit, offset int) ([]models.ABSImportRun, error) {
+	s.gotLimit, s.gotOffset = limit, offset
+	if offset >= len(s.runs) {
+		return nil, nil
+	}
+	end := offset + limit
+	if end > len(s.runs) {
+		end = len(s.runs)
+	}
+	return s.runs[offset:end], nil
 }
 func (s *stubABSImporter) RollbackPreview(context.Context, int64) (*abs.RollbackResult, error) {
 	if s.rollbackErr != nil {
@@ -253,5 +264,57 @@ func TestABSImportHandler_StartUnclassifiedImporterErrorIsGeneric500(t *testing.
 	// not classify is a fault underneath it, not a bad request.
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+// TestABSImportHandler_RunsHonoursPaging pins #2173: the runs list used to
+// ignore limit and offset and always return the newest 10 rows, so a run over
+// 26 libraries could not be seen past its last 10.
+func TestABSImportHandler_RunsHonoursPaging(t *testing.T) {
+	t.Parallel()
+
+	runs := make([]models.ABSImportRun, 26)
+	for i := range runs {
+		runs[i] = models.ABSImportRun{ID: int64(100 - i), SourceID: "default", Status: "completed"}
+	}
+	stub := &stubABSImporter{runs: runs}
+	h := NewABSImportHandler(stub, func(context.Context) ABSStoredConfig { return ABSStoredConfig{} })
+
+	cases := []struct {
+		query       string
+		wantLimit   int
+		wantOffset  int
+		wantLen     int
+		wantFirstID int64
+	}{
+		{"", 10, 0, 10, 100},                     // defaults unchanged
+		{"?limit=30", 30, 0, 26, 100},            // more than 10 now comes back
+		{"?offset=10", 10, 10, 10, 90},           // offset moves the window
+		{"?limit=5&offset=20", 5, 20, 5, 80},     // both together
+		{"?limit=1000", 200, 0, 26, 100},         // clamped to the ceiling
+		{"?limit=abc&offset=-4", 10, 0, 10, 100}, // bad values fall back like other lists
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		h.Runs(rec, httptest.NewRequest(http.MethodGet, "/api/v1/abs/import/runs"+tc.query, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%q: status = %d", tc.query, rec.Code)
+		}
+		var got []abs.PersistedImportRun
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("%q: decode: %v", tc.query, err)
+		}
+		if stub.gotLimit != tc.wantLimit || stub.gotOffset != tc.wantOffset {
+			t.Errorf("%q: importer asked for limit=%d offset=%d, want %d/%d", tc.query, stub.gotLimit, stub.gotOffset, tc.wantLimit, tc.wantOffset)
+		}
+		if len(got) != tc.wantLen || got[0].ID != tc.wantFirstID {
+			t.Errorf("%q: got %d runs, want %d starting at id %d", tc.query, len(got), tc.wantLen, tc.wantFirstID)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.Runs(rec, httptest.NewRequest(http.MethodGet, "/api/v1/abs/import/runs?offset=26", nil))
+	if body := strings.TrimSpace(rec.Body.String()); rec.Code != http.StatusOK || body != "[]" {
+		t.Fatalf("offset past the end = %d %q, want 200 []", rec.Code, body)
 	}
 }
