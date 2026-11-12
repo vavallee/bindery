@@ -124,7 +124,7 @@ With multi-user tenancy on, a check adds books for the account that owns the ser
 
 ## Merging Series
 
-One series can end up as several rows, when a provider names it in more than one way or a provider fix renames it. **Merge…** on the series you want to keep opens a dialog to pick the others and fold them into it:
+One series can end up as several rows, when a provider names it in more than one way or a provider fix renames it. Imports try not to add to that: the Audiobookshelf and Calibre imports both file a series into an existing one of the same title instead of creating their own, and the Calibre import only does so when that series holds books by the same author or none at all. Before that, running the Calibre import after the Audiobookshelf import made a second copy of every series the two shared, and the Audiobookshelf import then logged `ambiguous existing series match` for those books and could not link them to a Hardcover series. Copies made that way stay until you merge them. **Merge…** on the series you want to keep opens a dialog to pick the others and fold them into it:
 
 - Their books join it. A book already in it keeps its position there; a source fills a position it left empty.
 - The series becomes a book's primary series where a merged one was.

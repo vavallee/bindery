@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,8 +30,11 @@ type ImportStats struct {
 	EditionsAdded    int `json:"editionsAdded"`
 	DuplicatesMerged int `json:"duplicatesMerged"`
 	SeriesLinked     int `json:"seriesLinked"`
-	SeriesFailures   int `json:"seriesFailures,omitempty"`
-	Skipped          int `json:"skipped"`
+	// SeriesReused counts series links filed into a series another importer
+	// or a metadata sync had already created, instead of a new row (#2173).
+	SeriesReused   int `json:"seriesReused,omitempty"`
+	SeriesFailures int `json:"seriesFailures,omitempty"`
+	Skipped        int `json:"skipped"`
 	// FormatsSkipped counts Calibre formats left untracked because Bindery
 	// cannot use the file, such as the ORIGINAL_EPUB backup Polish keeps
 	// (#3630).
@@ -98,6 +102,14 @@ type Importer struct {
 	listAuthors func(ctx context.Context) ([]models.Author, error)
 
 	authorIdx *authorIndex
+
+	// seriesIdx groups every series by db.SeriesTitleKey for one run, loaded
+	// the first time a Calibre series name has no row of its own (#2173).
+	// seriesAmbiguous holds the names already logged as existing more than
+	// once, so the hint is logged once per name per run. Only touched by the
+	// import goroutine.
+	seriesIdx       *seriesTitleIndex
+	seriesAmbiguous map[string]struct{}
 
 	mu       sync.Mutex
 	running  bool
@@ -239,7 +251,13 @@ func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 	stats := &ImportStats{}
 	// Fresh author name index for this run, loaded on the first lookup (#1469).
 	i.authorIdx = &authorIndex{}
-	defer func() { i.authorIdx = nil }()
+	i.seriesIdx = &seriesTitleIndex{}
+	i.seriesAmbiguous = map[string]struct{}{}
+	defer func() {
+		i.authorIdx = nil
+		i.seriesIdx = nil
+		i.seriesAmbiguous = nil
+	}()
 	var runID int64
 	// Run record: only created on a real (non-dry-run) import. A dry run
 	// today doesn't exist at the API surface, but the run field is here so
@@ -344,6 +362,7 @@ func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 		"authorsAdded", stats.AuthorsAdded, "authorsLinked", stats.AuthorsLinked,
 		"booksAdded", stats.BooksAdded, "booksUpdated", stats.BooksUpdated,
 		"editionsAdded", stats.EditionsAdded, "duplicatesMerged", stats.DuplicatesMerged,
+		"seriesLinked", stats.SeriesLinked, "seriesReused", stats.SeriesReused,
 		"skipped", stats.Skipped, "formatsSkipped", stats.FormatsSkipped,
 		"unsupportedFilesRemoved", stats.UnsupportedFilesRemoved)
 	i.setProgress(func(p *ImportProgress) {
@@ -630,20 +649,14 @@ func parseCalibreBookFileExternalID(externalID string) (path string, ok bool) {
 	return rest, true
 }
 
-// attachBookToSeries upserts the Bindery series row for cb.Series and links
-// the book at the recorded position. The series row uses a synthetic
-// foreign ID of "calibre:series:<name>" so subsequent reruns find and reuse
-// it (CreateOrGet semantics) and any later metadata-provider sync can
-// promote the foreign ID to a real one without losing the link. Errors are
+// attachBookToSeries finds or creates the Bindery series row for cb.Series
+// (see resolveSeries) and links the book at the recorded position. Errors are
 // logged at WARN and counted as skipped on the series side, but never abort
 // the book import: a series-link failure is strictly less damaging than
 // losing the book itself.
 func (i *Importer) attachBookToSeries(ctx context.Context, runID int64, book *models.Book, cs *CalibreSeries, stats *ImportStats) {
-	series := &models.Series{
-		ForeignID: calibreSeriesForeignID(cs.Name),
-		Title:     cs.Name,
-	}
-	if err := i.series.CreateOrGet(ctx, series); err != nil {
+	series, reused, err := i.resolveSeries(ctx, book, cs.Name)
+	if err != nil {
 		slog.Warn("calibre import: series upsert failed", "name", cs.Name, "error", err)
 		stats.SeriesFailures++
 		return
@@ -673,7 +686,10 @@ func (i *Importer) attachBookToSeries(ctx context.Context, runID int64, book *mo
 		// series should survive a single-book rollback, so we only record
 		// the link, not the series create. The snapshot is what puts the
 		// link in rollback's work list, and it is only written when this run
-		// created the membership.
+		// created the membership. A series resolveSeries reused from another
+		// importer or a metadata sync is covered by the same rule: nothing
+		// the Calibre run records names the series row, so rolling the run
+		// back can only take this book out of it, never delete it (#2173).
 		externalID := calibreSeriesLinkExternalID(book.ID, series.ID)
 		i.upsertProvenance(ctx, runID, entityTypeSeriesLink, externalID, book.ID)
 		if created {
@@ -681,6 +697,188 @@ func (i *Importer) attachBookToSeries(ctx context.Context, runID int64, book *mo
 		}
 	}
 	stats.SeriesLinked++
+	if reused {
+		stats.SeriesReused++
+	}
+}
+
+// resolveSeries returns the series a Calibre series name files into, and
+// whether it is a series this import reused rather than its own row (#2173).
+//
+// The Calibre row comes first: a series whose foreign id, or an alias of it,
+// is "calibre:series:<name>" is the one earlier runs used. Otherwise a series
+// that already exists under the same title is reused, provided it is plausibly
+// the same series (see findReusableSeries), and the Calibre id is recorded as
+// an alias of it so the next run lands there through the first step and the
+// title match never runs again for that name. Only when neither finds a series
+// is the Calibre row created, with a synthetic foreign id that a later
+// metadata sync can promote to a real one without losing the link.
+//
+// Before #2173 the title step did not exist, so a Calibre import after an
+// Audiobookshelf import or an author sync forked every series the two shared,
+// and the Audiobookshelf import then logged each of them as an ambiguous match
+// and could not link a Hardcover series to any of the books.
+//
+// There is no dry run on the Calibre import, so this always writes.
+func (i *Importer) resolveSeries(ctx context.Context, book *models.Book, name string) (*models.Series, bool, error) {
+	foreignID := calibreSeriesForeignID(name)
+	existing, err := i.series.GetByForeignID(ctx, foreignID)
+	if err != nil {
+		return nil, false, err
+	}
+	if existing != nil {
+		return existing, false, nil
+	}
+	match, err := i.findReusableSeries(ctx, book, name)
+	if err != nil {
+		return nil, false, err
+	}
+	if match != nil {
+		// The alias is a shortcut for later runs, not part of this book's
+		// link: when it cannot be written the next run makes the same title
+		// decision again, so a failure is logged and the link still goes
+		// ahead. A Calibre rollback leaves the alias in place on purpose. It
+		// only says which series this name resolves to, which is what the
+		// title match would decide again, and it goes away with the series if
+		// the user deletes it or follows it if the user merges it.
+		if _, err := i.series.AddAlias(ctx, foreignID, match.ID); err != nil {
+			slog.Warn("calibre import: could not record the calibre series id on the reused series",
+				"name", name, "series_id", match.ID, "error", err)
+		}
+		slog.Debug("calibre import: filing into the existing series of the same title",
+			"name", name, "series_id", match.ID, "series_foreign_id", match.ForeignID, "book_id", book.ID)
+		return match, true, nil
+	}
+	series := &models.Series{ForeignID: foreignID, Title: name}
+	if err := i.series.CreateOrGet(ctx, series); err != nil {
+		return nil, false, err
+	}
+	if i.seriesIdx != nil {
+		i.seriesIdx.add(*series)
+	}
+	return series, false, nil
+}
+
+// findReusableSeries returns the existing series a Calibre series name should
+// file into, or nil when the Calibre import should use its own row.
+//
+// A candidate is a series whose title has the same db.SeriesTitleKey as name,
+// the key the Audiobookshelf import matches by too. It is acceptable only when
+// it already holds a book by this book's author, or holds no books at all.
+// That is stricter than the Audiobookshelf import on purpose: a same titled
+// series holding only other authors' books ("Foundation" by two different
+// writers) is a different series, and filing into it would be wrong in a way
+// the user cannot easily see.
+//
+// With one acceptable candidate, that is the series. With several, the one
+// already holding this book wins, the same tie break the Audiobookshelf import
+// uses. When even that does not decide, it returns nil and the caller falls
+// back to the Calibre row it would have used before #2173, rather than pick
+// one of the candidates. The candidates are already duplicates of each other.
+// Guessing would file books into whichever one the guess favoured, so the
+// user, who has to merge them on the Series page anyway, would find books
+// split across rows by chance instead of by importer. Falling back keeps this
+// run no worse than the old behaviour and leaves the merge with the user, who
+// gets one INFO line per name saying so.
+func (i *Importer) findReusableSeries(ctx context.Context, book *models.Book, name string) (*models.Series, error) {
+	key := db.SeriesTitleKey(name)
+	if key == "" || book == nil {
+		return nil, nil
+	}
+	idx := i.seriesIdx
+	if idx == nil {
+		idx = &seriesTitleIndex{}
+	}
+	if err := idx.load(ctx, i.series); err != nil {
+		return nil, err
+	}
+	var acceptable []models.Series
+	for _, c := range idx.byKey[key] {
+		books, byAuthor, err := i.series.SeriesAuthorEvidence(ctx, c.ID, book.AuthorID)
+		if err != nil {
+			return nil, err
+		}
+		if books == 0 || byAuthor > 0 {
+			acceptable = append(acceptable, c)
+		}
+	}
+	switch len(acceptable) {
+	case 0:
+		return nil, nil
+	case 1:
+		return &acceptable[0], nil
+	}
+	memberOf, err := i.series.GetSeriesIDsForBook(ctx, book.ID)
+	if err != nil {
+		return nil, err
+	}
+	var held []int
+	for n := range acceptable {
+		if slices.Contains(memberOf, acceptable[n].ID) {
+			held = append(held, n)
+		}
+	}
+	if len(held) == 1 {
+		return &acceptable[held[0]], nil
+	}
+	i.logAmbiguousSeries(name, len(acceptable))
+	return nil, nil
+}
+
+// logAmbiguousSeries tells the user, once per name per run, that a series
+// exists more than once and the import kept its own row instead of choosing.
+func (i *Importer) logAmbiguousSeries(name string, copies int) {
+	k := strings.ToLower(strings.TrimSpace(name))
+	if i.seriesAmbiguous != nil {
+		if _, done := i.seriesAmbiguous[k]; done {
+			return
+		}
+		i.seriesAmbiguous[k] = struct{}{}
+	}
+	slog.Info("calibre import: series exists more than once, filing into the calibre series; merge the copies on the Series page",
+		"name", name, "copies", copies)
+}
+
+// seriesTitleIndex groups series by db.SeriesTitleKey so a run computes each
+// stored title's key once instead of once per Calibre series (#2173). Rows
+// this run creates are added as it goes; rows it reuses are already in it.
+type seriesTitleIndex struct {
+	loaded bool
+	byKey  map[string][]models.Series
+}
+
+func (x *seriesTitleIndex) load(ctx context.Context, repo *db.SeriesRepo) error {
+	if x.loaded {
+		return nil
+	}
+	all, err := repo.ListTitles(ctx)
+	if err != nil {
+		return err
+	}
+	x.byKey = make(map[string][]models.Series, len(all))
+	x.loaded = true
+	for _, s := range all {
+		x.add(s)
+	}
+	return nil
+}
+
+// add files s under its key. It does nothing before load, which reads s from
+// the database anyway, or for a row already indexed.
+func (x *seriesTitleIndex) add(s models.Series) {
+	if !x.loaded || s.ID == 0 {
+		return
+	}
+	key := db.SeriesTitleKey(s.Title)
+	if key == "" {
+		return
+	}
+	for _, have := range x.byKey[key] {
+		if have.ID == s.ID {
+			return
+		}
+	}
+	x.byKey[key] = append(x.byKey[key], s)
 }
 
 // calibreSeriesForeignID synthesises a stable, namespaced foreign id for a
