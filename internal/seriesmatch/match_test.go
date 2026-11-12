@@ -333,3 +333,52 @@ func TestStripPartMarker(t *testing.T) {
 
 // The #2524 fractional-position and title-prefix rules are now
 // seriesmatch.SplitEditionPartOf (#3048), tested in split_edition_test.go.
+
+// TestIdentityKey pins what the identity key folds and what it keeps (#2173).
+// The qualifier pairs are the ones LookupKey collapses and a merge must not.
+func TestIdentityKey(t *testing.T) {
+	same := []struct{ a, b string }{
+		{"The Legend of Drizzt", "Legend of Drizzt"},
+		{"Legend of Drizzt, The", "The Legend of Drizzt"},
+		{"Legend of Drizzt, The", "Legend of Drizzt"},
+		{"Foundation & Empire", "Foundation and Empire"},
+		{"Les Misérables", "Les Miserables"},
+		{"Ender's Saga", "Enders Saga"},
+		{"Ender’s Saga", "Enders Saga"},
+		{"Wheel-of-Time", "wheel of  time"},
+		{"Müller Mysteries", "Mueller Mysteries"},
+		{"Discworld (Witches)", "discworld: witches"},
+		{"Star Wars [Legends]", "The Star Wars (Legends)"},
+	}
+	for _, tc := range same {
+		ka, kb := IdentityKey(tc.a), IdentityKey(tc.b)
+		if ka == "" || ka != kb {
+			t.Errorf("IdentityKey(%q) = %q, IdentityKey(%q) = %q, want one non empty key", tc.a, ka, tc.b, kb)
+		}
+	}
+	different := []struct{ a, b string }{
+		{"Discworld (City Watch)", "Discworld (Witches)"},
+		{"Discworld (Witches)", "Discworld"},
+		{"Star Wars [Legends]", "Star Wars (Canon)"},
+		{"Star Wars [Legends]", "Star Wars"},
+		{"Theatre of Blood", "atre of Blood"},
+		{"ハード", "ハート"},
+	}
+	for _, tc := range different {
+		if ka, kb := IdentityKey(tc.a), IdentityKey(tc.b); ka == kb {
+			t.Errorf("IdentityKey(%q) and IdentityKey(%q) are both %q, want different keys", tc.a, tc.b, ka)
+		}
+	}
+	// The reason the key exists: LookupKey reads these qualifiers as noise.
+	if LookupKey("Discworld (City Watch)") != LookupKey("Discworld (Witches)") {
+		t.Error("LookupKey no longer strips the qualifier; revisit whether IdentityKey is still needed")
+	}
+	for _, s := range []string{"", "   ", "!!!"} {
+		if got := IdentityKey(s); got != "" {
+			t.Errorf("IdentityKey(%q) = %q, want empty", s, got)
+		}
+	}
+	if got := IdentityKey("The"); got != "the" {
+		t.Errorf("IdentityKey(%q) = %q, want a lone article kept", "The", got)
+	}
+}

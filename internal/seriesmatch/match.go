@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/textutil"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -33,6 +34,46 @@ func SamePosition(a, b string) bool {
 // so what it reports is exactly what the importer calls ambiguous.
 func LookupKey(title string) string {
 	return indexer.CanonicalDedupKey(title)
+}
+
+// IdentityKey is the key two series titles must share to be treated as one
+// series by anything that writes a lasting decision on the strength of the
+// title: the Calibre import reusing an existing series, and the duplicate
+// series finder and its bulk merge (#2173).
+//
+// It folds what carries no meaning: case, punctuation, apostrophes, accents,
+// an ampersand against "and", and a leading article, including the filing form
+// ("Legend of Drizzt, The"). Unlike LookupKey it KEEPS a trailing bracketed or
+// parenthesised qualifier, because on a series title that qualifier usually
+// names the sub series. "Discworld (City Watch)" and "Discworld (Witches)" are
+// two series by one author, and "Star Wars [Legends]" is not "Star Wars
+// (Canon)". LookupKey strips those as edition noise, which is right for a book
+// title and for the Audiobookshelf lookup, and wrong for a merge.
+func IdentityKey(title string) string {
+	t := textutil.RestoreFilingForm(norm.NFC.String(strings.TrimSpace(title)))
+	var b strings.Builder
+	b.Grow(len(t))
+	for _, r := range t {
+		switch {
+		case textutil.IsApostrophe(r):
+			// Deleted, so a possessive stays one word.
+		case r == '&':
+			b.WriteString(" and ")
+		case unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.Is(unicode.Mn, r):
+			b.WriteRune(r)
+		default:
+			b.WriteRune(' ')
+		}
+	}
+	// Umlauts expand first, the way LookupKey reads them, so "Müller" and
+	// "Mueller" stay one key; FoldForSlug then drops the remaining Latin and
+	// Greek accents without touching scripts where the mark is the letter.
+	folded := textutil.FoldForSlug(textutil.TransliterateUmlauts(strings.ToLower(b.String())))
+	words := strings.Fields(folded)
+	if len(words) > 1 && textutil.IsArticle(words[0]) {
+		words = words[1:]
+	}
+	return strings.Join(words, " ")
 }
 
 // NormalizeSeriesName reduces a series name for comparison: the canonical

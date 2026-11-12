@@ -20,11 +20,12 @@ const maxDuplicateMergeGroups = 5000
 // request failed it. The detail goes to the log, as writeServerError does.
 const duplicateMergeFailed = "merge failed, see the server log"
 
-// Duplicates lists the series that share a title as the Audiobookshelf
-// import compares them (#2173): GET /series/duplicates. Each pair is a series
-// the import cannot pick between, so its items cannot link a Hardcover
-// series until the pair is merged. Admin only: it reads every series and
-// every book's author, whoever owns them.
+// Duplicates lists the series that share a title (#2173): GET
+// /series/duplicates. Titles are compared by seriesmatch.IdentityKey, which
+// keeps sub series qualifiers apart. Each pair is also a pair the
+// Audiobookshelf import cannot pick between, so its items cannot link a
+// Hardcover series until the pair is merged. Admin only: it reads every
+// series and every book's author, whoever owns them.
 func (h *SeriesHandler) Duplicates(w http.ResponseWriter, r *http.Request) {
 	groups, err := h.series.ListTitleDuplicates(r.Context())
 	if err != nil {
@@ -57,9 +58,11 @@ type DuplicateMergeResult struct {
 // (db.SeriesRepo.Merge, one transaction per group), so a group is merged
 // whole or not at all, and one failing group does not stop the others. A
 // group is refused when a series in it does not exist, appears in an earlier
-// group, or does not share the keep series' title as the Audiobookshelf
-// import compares titles: this endpoint clears duplicates, it is not a
-// general purpose merge.
+// group, or does not share the keep series' seriesmatch.IdentityKey, the key
+// the finder groups by: this endpoint clears duplicates, it is not a general
+// purpose merge. IdentityKey keeps a bracketed or parenthesised qualifier, so
+// "Discworld (Witches)" is refused as a duplicate of "Discworld (City Watch)"
+// even though the Audiobookshelf import's looser LookupKey reads them as one.
 func (h *SeriesHandler) MergeDuplicates(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Groups []DuplicateMergeGroup `json:"groups"`
@@ -155,7 +158,7 @@ func (h *SeriesHandler) checkDuplicateGroup(r *http.Request, g DuplicateMergeGro
 	if !ok {
 		return fmt.Sprintf("series %d does not exist", g.KeepID), nil
 	}
-	key := seriesmatch.LookupKey(keepTitle)
+	key := seriesmatch.IdentityKey(keepTitle)
 	seen := map[int64]bool{}
 	for _, id := range g.SourceIDs {
 		switch {
@@ -174,7 +177,7 @@ func (h *SeriesHandler) checkDuplicateGroup(r *http.Request, g DuplicateMergeGro
 		if !ok {
 			return fmt.Sprintf("series %d does not exist", id), nil
 		}
-		if key == "" || seriesmatch.LookupKey(title) != key {
+		if key == "" || seriesmatch.IdentityKey(title) != key {
 			return fmt.Sprintf("%q is not a duplicate of %q", title, keepTitle), nil
 		}
 	}

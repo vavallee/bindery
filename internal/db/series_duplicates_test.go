@@ -57,13 +57,13 @@ func groupFor(t *testing.T, groups []TitleDuplicateGroup, id int64) *TitleDuplic
 	return nil
 }
 
-// Titles that differ only in case, punctuation and a bracketed qualifier
-// share the import's lookup key and group; a different title does not.
-func TestListTitleDuplicates_GroupsByLookupKey(t *testing.T) {
+// Titles that differ only in case, punctuation and the filing form of the
+// article share the identity key and group; a different title does not.
+func TestListTitleDuplicates_GroupsByIdentityKey(t *testing.T) {
 	f := newMergeFixture(t, 0)
 	a := f.newSeries("calibre-series:1", "The Stormlight Archive")
 	b := f.newSeries("abs-series:1", "the stormlight archive!")
-	c := f.newSeries("abs-series:2", "The Stormlight Archive [Audiobook]")
+	c := f.newSeries("abs-series:2", "Stormlight Archive, The")
 	other := f.newSeries("abs-series:3", "Mistborn")
 
 	groups, err := f.series.ListTitleDuplicates(f.ctx)
@@ -167,6 +167,42 @@ func TestListTitleDuplicates_DisjointAuthorsFlagged(t *testing.T) {
 	}
 	if g := groupFor(t, groups, s1); g == nil || !g.SameAuthors {
 		t.Errorf("dune group = %+v, want sameAuthors true", g)
+	}
+}
+
+// Sub series that share a base title and an author but carry different
+// qualifiers are two series, not duplicates. LookupKey drops the qualifier, so
+// before the finder grouped by IdentityKey these were offered as one group
+// with matching authors, and "Merge all" would have merged them (#2173).
+func TestListTitleDuplicates_KeepsQualifiers(t *testing.T) {
+	f := newMergeFixture(t, 0)
+	cityWatch := f.newSeries("abs-series:1", "Discworld (City Watch)")
+	witches := f.newSeries("abs-series:2", "Discworld (Witches)")
+	twin := f.newSeries("calibre:series:Discworld (Witches)", "discworld: witches")
+	legends := f.newSeries("abs-series:3", "Star Wars [Legends]")
+	canon := f.newSeries("abs-series:4", "Star Wars (Canon)")
+	for _, id := range []int64{cityWatch, witches, twin} {
+		f.linkBookID(id, f.addAuthorBook("Terry Pratchett"))
+	}
+	for _, id := range []int64{legends, canon} {
+		f.linkBookID(id, f.addAuthorBook("Timothy Zahn"))
+	}
+
+	groups, err := f.series.ListTitleDuplicates(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("groups = %+v, want only the Witches twins", groups)
+	}
+	g := groupFor(t, groups, witches)
+	if g == nil || len(g.Series) != 2 || groupFor(t, groups, twin) != g {
+		t.Fatalf("Witches group = %+v, want the two Witches rows", g)
+	}
+	for _, id := range []int64{cityWatch, legends, canon} {
+		if groupFor(t, groups, id) != nil {
+			t.Errorf("series %d was grouped with a sub series of another qualifier", id)
+		}
 	}
 }
 
