@@ -38,6 +38,7 @@ vi.mock('../api/client', async importOriginal => {
       unlinkSeriesHardcover: vi.fn(),
       getSeriesHardcoverDiff: vi.fn(),
       unmonitorSeriesSplitParts: vi.fn(),
+      listSeriesDuplicates: vi.fn(),
     },
   }
 })
@@ -52,6 +53,8 @@ vi.mock('../auth/AuthContext', async importOriginal => ({
 function renderSeriesPage(series: Series[], status: SystemStatus = { version: 'dev', commit: 'unknown', buildDate: '', enhancedHardcoverApi: true, hardcoverTokenConfigured: true }) {
   vi.mocked(api.listSeries).mockResolvedValue(series)
   vi.mocked(api.status).mockResolvedValue(status)
+  // A queued mockResolvedValueOnce still wins over this default.
+  vi.mocked(api.listSeriesDuplicates).mockResolvedValue({ groups: [] })
   return render(
     <MemoryRouter>
       <SeriesPage />
@@ -1110,6 +1113,25 @@ describe('SeriesPage', () => {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
     }
     expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+    expect(api.listSeriesDuplicates).not.toHaveBeenCalled()
+  })
+
+  // Duplicate series (#2173): an admin sees how many titles exist twice.
+  it('tells an admin when series appear more than once', async () => {
+    vi.mocked(api.listSeriesDuplicates).mockResolvedValueOnce({
+      groups: [{
+        key: 'fjellserien', suggestedKeepId: 41, sameAuthors: true,
+        series: [
+          { id: 41, title: 'Fjellserien', foreignSeriesId: 'a', bookCount: 1, authors: [], hardcoverLinked: false, monitored: false },
+          { id: 42, title: 'fjellserien', foreignSeriesId: 'b', bookCount: 0, authors: [], hardcoverLinked: false, monitored: false },
+        ],
+      }],
+    })
+    renderSeriesPage([
+      { id: 41, foreignSeriesId: 'a', title: 'Fjellserien', description: '', monitored: false, books: [] },
+      { id: 42, foreignSeriesId: 'b', title: 'fjellserien', description: '', monitored: false, books: [] },
+    ])
+    expect(await screen.findByTestId('series-duplicates')).toHaveTextContent('1 series title appears more than once')
   })
 
   it('adds only the selected Hardcover missing book from its row', async () => {

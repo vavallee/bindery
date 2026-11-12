@@ -432,6 +432,8 @@ PATCH  /api/v1/series/{id}                        monitor / unmonitor (admin): {
                                                   released books) or "all" (adds every missing book). Read by the scheduled series check while
                                                   `series.monitoring.interval` is set; each series carries `monitoring` {mode,lastCheckAt,nextCheckAt,lastStatus,lastMessage,lastCreated}
 POST   /api/v1/series/{id}/merge                  merge other series into this one: {"sourceIds":[..],"title":"optional rename","dryRun":true} previews (admin)
+GET    /api/v1/series/duplicates                  series that share a title as the Audiobookshelf import compares titles, grouped (admin), see below
+POST   /api/v1/series/duplicates/merge            merge duplicate groups: {"groups":[{"keepId":1,"sourceIds":[2]}],"dryRun":true} (admin), see below
 POST   /api/v1/series/{id}/books                  add a book or update its position: {"bookId":1,"positionInSeries":"2","primarySeries":true}; positionInSeries is optional (admin)
 DELETE /api/v1/series/{id}/books/{bookId}         take a book out of the series, and keep it out on refresh (admin)
 POST   /api/v1/abs/import                         start an Audiobookshelf import (admin): {"dryRun":true,"libraryIds":[..],"full":true}, all optional. libraryIds must be a subset of the configured libraries (400 on an unknown id), full re-runs the Hardcover series match for every item
@@ -449,6 +451,37 @@ it, leaves it out. Adding the book back with `POST /series/{id}/books` forgets
 that, and so does an admin unlocking all of the book's fields (`PUT /book/{id}`
 with `"lockedFields": []`; another user's unlock leaves the book's series alone). Adding a book as primary makes it the book's only
 primary series. `GET /book/{id}/series-exclusions` lists what was taken out.
+
+Duplicate series (#2173). `GET /series/duplicates` answers `{"groups":[..]}`.
+A group is two or more series whose titles normalize to the same key the
+Audiobookshelf import looks a series up by, so it cannot pick between them
+and leaves the item's Hardcover series unlinked (`seriesLinkFailed` in the
+run summary). Each group carries `key`, `suggestedKeepId` (the series with a
+Hardcover link, else the most books, else the lowest id), `sameAuthors` and
+`series`, the suggested keep first. Each series has `id`, `title`,
+`foreignSeriesId`, `bookCount`, `authors` (distinct author names of its books,
+every owner's), `hardcoverLinked` and `monitored`. `sameAuthors` is true only
+when every series in the group that holds books shares an author with the
+suggested keep (or, when that one is empty, with the fullest series); empty
+series count as compatible. False usually means two different series with
+one name.
+
+`POST /series/duplicates/merge` runs each group through the same merge as
+`POST /series/{id}/merge` (books, aliases, Hardcover link and the rest), one
+transaction per group, keeping the keep series' title. A group is refused,
+and left as it was, when a series in it does not exist, appears in an earlier
+group of the same request, or does not share the keep series' title key.
+Groups are independent: the response is always 200 for a well formed body,
+`{"dryRun":..,"merged":N,"failed":N,"results":[{"keepId","sourceIds","ok","error","plan"}]}`,
+where `plan` is the merge plan carried out, or with `dryRun` the one that
+would be. At most 5000 groups per request.
+
+A series merge, single or bulk, in which a source shares the keep series'
+title key also makes every Audiobookshelf item the import recorded as
+ambiguous between two local series due again, so the next normal import
+retries them without `full`. A merge of differently titled series does not.
+The bulk endpoint checks titles only; keeping groups with different authors
+out of a bulk merge is up to the caller, as the Series page does.
 
 `GET /series` returns the bare array it always has. Pagination is opt-in
 (#2345): pass `limit` and/or `offset` and you get an `{items, total, limit,

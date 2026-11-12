@@ -27,6 +27,14 @@ func SamePosition(a, b string) bool {
 	return aerr == nil && berr == nil && math.Abs(af-bf) < 0.001
 }
 
+// LookupKey is the key two series titles must share for the Audiobookshelf
+// import to treat them as the same series when it looks one up by name
+// (findSeriesByTitle). The duplicate series finder groups by it too (#2173),
+// so what it reports is exactly what the importer calls ambiguous.
+func LookupKey(title string) string {
+	return indexer.CanonicalDedupKey(title)
+}
+
 // NormalizeSeriesName reduces a series name for comparison: the canonical
 // dedup key, minus a redundant trailing collective noun ("… Series", "…
 // Trilogy").
