@@ -176,14 +176,43 @@ func TestSeriesAuthorEvidence(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			books, hit, err := series.SeriesAuthorEvidence(ctx, tc.seriesID, tc.author)
+			ev, err := series.SeriesAuthorEvidence(ctx, tc.seriesID, tc.author)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if books != tc.wantBooks || hit != tc.wantHit {
-				t.Errorf("SeriesAuthorEvidence = %d books, %d by author; want %d, %d", books, hit, tc.wantBooks, tc.wantHit)
+			if !ev.Exists || ev.Books != tc.wantBooks || ev.ByAuthor != tc.wantHit {
+				t.Errorf("SeriesAuthorEvidence = %+v; want existing, %d books, %d by author", ev, tc.wantBooks, tc.wantHit)
+			}
+			if ev.AuthorName != "Isaac Asimov" || ev.HardcoverAuthorName != "" {
+				t.Errorf("SeriesAuthorEvidence names = %q / %q, want the author's name and no Hardcover author", ev.AuthorName, ev.HardcoverAuthorName)
 			}
 		})
+	}
+
+	// A Hardcover link's author comes back with the evidence.
+	linked := mkSeries("s:linked")
+	if err := series.UpsertHardcoverLink(ctx, &models.SeriesHardcoverLink{
+		SeriesID: linked, HardcoverSeriesID: "hc-series:42", HardcoverTitle: "Foundation", HardcoverAuthorName: "Isaac Asimov",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ev, err := series.SeriesAuthorEvidence(ctx, linked, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ev.Exists || ev.Books != 0 || ev.HardcoverAuthorName != "Isaac Asimov" || ev.AuthorName != "Someone Else" {
+		t.Errorf("linked series evidence = %+v", ev)
+	}
+	// A series that is gone reads as not existing, not as empty.
+	if err := series.Delete(ctx, linked); err != nil {
+		t.Fatal(err)
+	}
+	ev, err = series.SeriesAuthorEvidence(ctx, linked, asimov)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Exists || ev.Books != 0 {
+		t.Errorf("deleted series evidence = %+v, want not existing", ev)
 	}
 
 	titles, err := series.ListTitles(ctx)

@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -28,19 +30,47 @@ func (r *SeriesRepo) ListTitles(ctx context.Context) ([]models.Series, error) {
 	return out, rows.Err()
 }
 
-// SeriesAuthorEvidence reports how many books seriesID holds and how many of
-// them are by authorID. An importer deciding whether a same titled series is
-// the one it is filing a book into reads it: a series that holds only other
-// authors' books is a different series that happens to share a name.
-func (r *SeriesRepo) SeriesAuthorEvidence(ctx context.Context, seriesID, authorID int64) (books, byAuthor int, err error) {
-	err = r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN b.author_id = ? THEN 1 ELSE 0 END), 0)
-		   FROM series_books sb JOIN books b ON b.id = sb.book_id
-		  WHERE sb.series_id = ?`, authorID, seriesID).Scan(&books, &byAuthor)
-	if err != nil {
-		return 0, 0, fmt.Errorf("series %d author evidence: %w", seriesID, err)
+// SeriesAuthorEvidence is what an importer reads before filing a book by one
+// author into a same titled series it did not create (#2173).
+type SeriesAuthorEvidence struct {
+	// Exists is false when the series is gone, deleted or merged away since
+	// the caller listed it. Every other field is then zero.
+	Exists bool
+	// Books is how many books the series holds, ByAuthor how many of them are
+	// by the author asked about.
+	Books, ByAuthor int
+	// HardcoverAuthorName is the author the series' Hardcover link names, or
+	// "" when it has no link or the link names nobody.
+	HardcoverAuthorName string
+	// AuthorName is the name of the author asked about, read in the same
+	// query so the caller can compare it with HardcoverAuthorName.
+	AuthorName string
+}
+
+// SeriesAuthorEvidence reports, in one query, whether seriesID still exists,
+// how many books it holds and how many of them are by authorID, and the author
+// its Hardcover link names. A series that holds only other authors' books, or
+// an empty one linked to another author's Hardcover series, is a different
+// series that happens to share a name.
+func (r *SeriesRepo) SeriesAuthorEvidence(ctx context.Context, seriesID, authorID int64) (SeriesAuthorEvidence, error) {
+	var ev SeriesAuthorEvidence
+	err := r.db.QueryRowContext(ctx,
+		`SELECT
+		     (SELECT COUNT(*) FROM series_books sb WHERE sb.series_id = s.id),
+		     (SELECT COUNT(*) FROM series_books sb JOIN books b ON b.id = sb.book_id
+		       WHERE sb.series_id = s.id AND b.author_id = ?),
+		     COALESCE((SELECT l.hardcover_author_name FROM series_hardcover_links l WHERE l.series_id = s.id), ''),
+		     COALESCE((SELECT a.name FROM authors a WHERE a.id = ?), '')
+		   FROM series s WHERE s.id = ?`, authorID, authorID, seriesID).
+		Scan(&ev.Books, &ev.ByAuthor, &ev.HardcoverAuthorName, &ev.AuthorName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SeriesAuthorEvidence{}, nil
 	}
-	return books, byAuthor, nil
+	if err != nil {
+		return SeriesAuthorEvidence{}, fmt.Errorf("series %d author evidence: %w", seriesID, err)
+	}
+	ev.Exists = true
+	return ev, nil
 }
 
 // AddAlias records foreignID as another id for seriesID in series_aliases, the

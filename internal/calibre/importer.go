@@ -104,13 +104,17 @@ type Importer struct {
 
 	authorIdx *authorIndex
 
-	// seriesIdx groups every series by seriesmatch.LookupKey for one run, loaded
-	// the first time a Calibre series name has no row of its own (#2173).
-	// seriesAmbiguous holds the names already logged as existing more than
-	// once, so the hint is logged once per name per run. Only touched by the
+	// seriesIdx groups every series by seriesmatch.IdentityKey for one run,
+	// loaded the first time a Calibre series name has no row of its own
+	// (#2173). seriesAmbiguous holds the names already logged as existing more
+	// than once, so the hint is logged once per name per run. seriesTentative
+	// holds the series this run reused while they were empty: the books this
+	// run put there are not evidence that the match was right, so no alias is
+	// written for them until a later run finds them there. Only touched by the
 	// import goroutine.
 	seriesIdx       *seriesTitleIndex
 	seriesAmbiguous map[string]struct{}
+	seriesTentative map[int64]struct{}
 
 	mu       sync.Mutex
 	running  bool
@@ -254,10 +258,12 @@ func (i *Importer) run(ctx context.Context, libraryPath string) *ImportStats {
 	i.authorIdx = &authorIndex{}
 	i.seriesIdx = &seriesTitleIndex{}
 	i.seriesAmbiguous = map[string]struct{}{}
+	i.seriesTentative = map[int64]struct{}{}
 	defer func() {
 		i.authorIdx = nil
 		i.seriesIdx = nil
 		i.seriesAmbiguous = nil
+		i.seriesTentative = nil
 	}()
 	var runID int64
 	// Run record: only created on a real (non-dry-run) import. A dry run
@@ -709,10 +715,10 @@ func (i *Importer) attachBookToSeries(ctx context.Context, runID int64, book *mo
 // The Calibre row comes first: a series whose foreign id, or an alias of it,
 // is "calibre:series:<name>" is the one earlier runs used. Otherwise a series
 // that already exists under the same title is reused, provided it is plausibly
-// the same series (see findReusableSeries), and the Calibre id is recorded as
-// an alias of it so the next run lands there through the first step and the
-// title match never runs again for that name. Only when neither finds a series
-// is the Calibre row created, with a synthetic foreign id that a later
+// the same series (see findReusableSeries). When that series already held
+// books by this book's author, the Calibre id is recorded as an alias of it so
+// the next run lands there through the first step. Only when neither finds a
+// series is the Calibre row created, with a synthetic foreign id that a later
 // metadata sync can promote to a real one without losing the link.
 //
 // Before #2173 the title step did not exist, so a Calibre import after an
@@ -730,24 +736,36 @@ func (i *Importer) resolveSeries(ctx context.Context, book *models.Book, name st
 	if existing != nil {
 		return existing, false, nil
 	}
-	match, err := i.findReusableSeries(ctx, book, name)
+	match, byAuthor, err := i.findReusableSeries(ctx, book, name)
 	if err != nil {
 		return nil, false, err
 	}
 	if match != nil {
-		// The alias is a shortcut for later runs, not part of this book's
-		// link: when it cannot be written the next run makes the same title
-		// decision again, so a failure is logged and the link still goes
-		// ahead. A Calibre rollback leaves the alias in place on purpose. It
-		// only says which series this name resolves to, which is what the
-		// title match would decide again, and it goes away with the series if
-		// the user deletes it or follows it if the user merges it.
-		if _, err := i.series.AddAlias(ctx, foreignID, match.ID); err != nil {
-			slog.Warn("calibre import: could not record the calibre series id on the reused series",
-				"name", name, "series_id", match.ID, "error", err)
+		// The alias is permanent in effect: every later run resolves the
+		// name through it in the first step above and never reaches the
+		// author check again. So it is written only on positive evidence,
+		// when the series already held books by this author before this run
+		// touched it. A series reused because it was empty gets no alias;
+		// the next run decides again, when the books this run filed are there
+		// to see and the user has had the chance to take them out.
+		//
+		// A failed write is logged and the link still goes ahead, since the
+		// next run simply makes the same decision. A Calibre rollback leaves
+		// the alias in place: it goes away with the series if the user deletes
+		// it, and follows it if the user merges it.
+		_, tentative := i.seriesTentative[match.ID]
+		switch {
+		case byAuthor && !tentative:
+			if _, err := i.series.AddAlias(ctx, foreignID, match.ID); err != nil {
+				slog.Warn("calibre import: could not record the calibre series id on the reused series",
+					"name", name, "series_id", match.ID, "error", err)
+			}
+		case !byAuthor && i.seriesTentative != nil:
+			i.seriesTentative[match.ID] = struct{}{}
 		}
 		slog.Debug("calibre import: filing into the existing series of the same title",
-			"name", name, "series_id", match.ID, "series_foreign_id", match.ForeignID, "book_id", book.ID)
+			"name", name, "series_id", match.ID, "series_foreign_id", match.ForeignID,
+			"book_id", book.ID, "held_author_books", byAuthor)
 		return match, true, nil
 	}
 	series := &models.Series{ForeignID: foreignID, Title: name}
@@ -763,71 +781,109 @@ func (i *Importer) resolveSeries(ctx context.Context, book *models.Book, name st
 // findReusableSeries returns the existing series a Calibre series name should
 // file into, or nil when the Calibre import should use its own row.
 //
-// A candidate is a series whose title has the same seriesmatch.LookupKey as
-// name, the key the Audiobookshelf import looks series up by and the duplicate
-// series finder groups by, so all three agree on what "the same series" is: a
-// series one importer created is the one the other finds, and a pair this
-// import refuses to choose between is a pair the finder offers to merge. A
-// candidate is acceptable only when
-// it already holds a book by this book's author, or holds no books at all.
-// That is stricter than the Audiobookshelf import on purpose: a same titled
-// series holding only other authors' books ("Foundation" by two different
-// writers) is a different series, and filing into it would be wrong in a way
-// the user cannot easily see.
+// A candidate is a series whose title has the same seriesmatch.IdentityKey as
+// name, the key the duplicate series finder groups by, so a pair this import
+// refuses to choose between is a pair the finder offers to merge. The key
+// folds case, punctuation, accents and a leading article but keeps a
+// bracketed or parenthesised qualifier, so "Discworld (Witches)" never files
+// into "Discworld (City Watch)". It is stricter than the LookupKey the
+// Audiobookshelf import looks series up by, on purpose: this match writes an
+// alias that outlives the run.
 //
-// With one acceptable candidate, that is the series. With several, the one
-// already holding this book wins, the same tie break the Audiobookshelf import
-// uses. When even that does not decide, it returns nil and the caller falls
-// back to the Calibre row it would have used before #2173, rather than pick
-// one of the candidates. The candidates are already duplicates of each other.
-// Guessing would file books into whichever one the guess favoured, so the
-// user, who has to merge them on the Series page anyway, would find books
-// split across rows by chance instead of by importer. Falling back keeps this
-// run no worse than the old behaviour and leaves the merge with the user, who
-// gets one INFO line per name saying so.
-func (i *Importer) findReusableSeries(ctx context.Context, book *models.Book, name string) (*models.Series, error) {
-	key := seriesmatch.LookupKey(name)
+// Each candidate is then read for author evidence, and stricter than the
+// Audiobookshelf import on purpose too:
+//
+//   - one already holding a book by this book's author is a positive match;
+//   - an empty one is acceptable, unless its Hardcover link names a different
+//     author;
+//   - one holding only other authors' books ("Foundation" by two different
+//     writers) is a different series, and one that no longer exists (deleted
+//     or merged away since the index was read) is no series at all.
+//
+// Positive matches outrank empty ones: an empty series is only considered when
+// no candidate holds this author's books. Within the winning tier one
+// candidate is the series, and with several the one already holding this book
+// wins, the same tie break the Audiobookshelf import uses. When even that does
+// not decide, it returns nil and the caller falls back to the Calibre row it
+// would have used before #2173, rather than pick one of the candidates. The
+// candidates are already duplicates of each other. Guessing would file books
+// into whichever one the guess favoured, so the user, who has to merge them on
+// the Series page anyway, would find books split across rows by chance
+// instead of by importer. Falling back keeps this run no worse than the old
+// behaviour and leaves the merge with the user, who gets one INFO line per
+// name saying so.
+//
+// byAuthor reports whether the returned series is a positive match.
+func (i *Importer) findReusableSeries(ctx context.Context, book *models.Book, name string) (_ *models.Series, byAuthor bool, _ error) {
+	key := seriesmatch.IdentityKey(name)
 	if key == "" || book == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 	idx := i.seriesIdx
 	if idx == nil {
 		idx = &seriesTitleIndex{}
 	}
 	if err := idx.load(ctx, i.series); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	var acceptable []models.Series
+	var positive, empty []models.Series
 	for _, c := range idx.byKey[key] {
-		books, byAuthor, err := i.series.SeriesAuthorEvidence(ctx, c.ID, book.AuthorID)
+		ev, err := i.series.SeriesAuthorEvidence(ctx, c.ID, book.AuthorID)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		if books == 0 || byAuthor > 0 {
-			acceptable = append(acceptable, c)
+		switch {
+		case !ev.Exists:
+			continue
+		case ev.ByAuthor > 0:
+			positive = append(positive, c)
+		case ev.Books == 0 && hardcoverAuthorAgrees(ev.HardcoverAuthorName, ev.AuthorName):
+			empty = append(empty, c)
 		}
 	}
-	switch len(acceptable) {
+	tier, byAuthor := positive, true
+	if len(tier) == 0 {
+		tier, byAuthor = empty, false
+	}
+	switch len(tier) {
 	case 0:
-		return nil, nil
+		return nil, false, nil
 	case 1:
-		return &acceptable[0], nil
+		return &tier[0], byAuthor, nil
 	}
 	memberOf, err := i.series.GetSeriesIDsForBook(ctx, book.ID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var held []int
-	for n := range acceptable {
-		if slices.Contains(memberOf, acceptable[n].ID) {
+	for n := range tier {
+		if slices.Contains(memberOf, tier[n].ID) {
 			held = append(held, n)
 		}
 	}
 	if len(held) == 1 {
-		return &acceptable[held[0]], nil
+		return &tier[held[0]], byAuthor, nil
 	}
-	i.logAmbiguousSeries(name, len(acceptable))
-	return nil, nil
+	i.logAmbiguousSeries(name, len(tier))
+	return nil, false, nil
+}
+
+// hardcoverAuthorAgrees reports whether an empty series' Hardcover link is
+// compatible with filing a book by authorName into it. No link, or a link that
+// names nobody, has nothing to disagree with. Otherwise the two names must
+// meet after normalization, word order and initials included, so "Sanderson,
+// Brandon" agrees with "Brandon Sanderson".
+func hardcoverAuthorAgrees(hardcoverAuthor, authorName string) bool {
+	if strings.TrimSpace(hardcoverAuthor) == "" {
+		return true
+	}
+	theirs := textutil.NormalizeAuthorNameWithVariants(hardcoverAuthor)
+	for _, form := range textutil.NormalizeAuthorNameWithVariants(authorName) {
+		if form != "" && slices.Contains(theirs, form) {
+			return true
+		}
+	}
+	return false
 }
 
 // logAmbiguousSeries tells the user, once per name per run, that a series
@@ -844,7 +900,7 @@ func (i *Importer) logAmbiguousSeries(name string, copies int) {
 		"name", name, "copies", copies)
 }
 
-// seriesTitleIndex groups series by seriesmatch.LookupKey so a run computes each
+// seriesTitleIndex groups series by seriesmatch.IdentityKey so a run computes each
 // stored title's key once instead of once per Calibre series (#2173). Rows
 // this run creates are added as it goes; rows it reuses are already in it.
 type seriesTitleIndex struct {
@@ -874,7 +930,7 @@ func (x *seriesTitleIndex) add(s models.Series) {
 	if !x.loaded || s.ID == 0 {
 		return
 	}
-	key := seriesmatch.LookupKey(s.Title)
+	key := seriesmatch.IdentityKey(s.Title)
 	if key == "" {
 		return
 	}

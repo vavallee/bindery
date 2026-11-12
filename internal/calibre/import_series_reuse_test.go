@@ -86,6 +86,17 @@ func (f *seriesReuseFixture) seedSeries(t *testing.T, s seededSeries) int64 {
 	return row.ID
 }
 
+// linkHardcover gives a seeded series a Hardcover link naming author, the way
+// a metadata sync leaves a linked series that holds no books yet.
+func (f *seriesReuseFixture) linkHardcover(t *testing.T, seriesID int64, foreignID, title, author string) {
+	t.Helper()
+	if err := f.series.UpsertHardcoverLink(context.Background(), &models.SeriesHardcoverLink{
+		SeriesID: seriesID, HardcoverSeriesID: foreignID, HardcoverTitle: title, HardcoverAuthorName: author,
+	}); err != nil {
+		t.Fatalf("link series %d to Hardcover: %v", seriesID, err)
+	}
+}
+
 type seededBook struct{ title, author string }
 
 type seededSeries struct {
@@ -125,16 +136,22 @@ func (f *seriesReuseFixture) seriesCount(t *testing.T) int {
 // "calibre:series:<name>" row instead.
 func TestImporter_SeriesReuse(t *testing.T) {
 	const calibreRow = -1
+	// noAlias means the Calibre series id resolves to no series after the
+	// run: the book went into an empty series, which earns no alias (#2173).
+	const noAlias = -2
 	cases := []struct {
-		name     string
-		seed     []seededSeries
+		name string
+		seed []seededSeries
+		// links gives a seeded series (by index) a Hardcover link naming
+		// this author.
+		links    map[int]string
 		incoming []CalibreBook
 		// wantIn is the index into seed of the series each imported book
 		// ends up in, or calibreRow for the Calibre import's own row.
 		wantIn      []int
 		wantSeries  int
 		wantReused  int
-		wantAliasOn int // index into seed the Calibre id resolves to, or calibreRow
+		wantAliasOn int // index into seed the Calibre id resolves to, calibreRow, or noAlias
 	}{
 		{
 			name: "reuses the Audiobookshelf series of the same title and author",
@@ -179,7 +196,7 @@ func TestImporter_SeriesReuse(t *testing.T) {
 			wantIn:      []int{0},
 			wantSeries:  1,
 			wantReused:  1,
-			wantAliasOn: 0,
+			wantAliasOn: noAlias,
 		},
 		{
 			name: "skips another author's series and reuses the empty one",
@@ -193,7 +210,7 @@ func TestImporter_SeriesReuse(t *testing.T) {
 			wantIn:      []int{1},
 			wantSeries:  2,
 			wantReused:  1,
-			wantAliasOn: 1,
+			wantAliasOn: noAlias,
 		},
 		{
 			name: "two acceptable copies, the one already holding the book wins",
@@ -224,6 +241,79 @@ func TestImporter_SeriesReuse(t *testing.T) {
 			wantReused:  0,
 			wantAliasOn: calibreRow,
 		},
+		{
+			name: "a sub series with another qualifier is a different series",
+			seed: []seededSeries{{"abs:series:lib1:dw", "Discworld (City Watch)", []seededBook{{"Guards! Guards!", "Terry Pratchett"}}}},
+			incoming: []CalibreBook{
+				seriesCalibreBook(1, "Equal Rites", "Terry Pratchett", "Discworld (Witches)", 3),
+			},
+			wantIn:      []int{calibreRow},
+			wantSeries:  2,
+			wantReused:  0,
+			wantAliasOn: calibreRow,
+		},
+		{
+			name: "a bracketed qualifier is not a parenthesised other one",
+			seed: []seededSeries{{"abs:series:lib1:sw", "Star Wars [Legends]", []seededBook{{"Heir to the Empire", "Timothy Zahn"}}}},
+			incoming: []CalibreBook{
+				seriesCalibreBook(1, "Thrawn", "Timothy Zahn", "Star Wars (Canon)", 1),
+			},
+			wantIn:      []int{calibreRow},
+			wantSeries:  2,
+			wantReused:  0,
+			wantAliasOn: calibreRow,
+		},
+		{
+			name: "a plain twin differing only by its leading article is reused",
+			seed: []seededSeries{{"abs:series:lib1:d", "The Legend of Drizzt", []seededBook{{"Homeland", "R. A. Salvatore"}}}},
+			incoming: []CalibreBook{
+				seriesCalibreBook(1, "Exile", "R. A. Salvatore", "Legend of Drizzt", 2),
+			},
+			wantIn:      []int{0},
+			wantSeries:  1,
+			wantReused:  1,
+			wantAliasOn: 0,
+		},
+		{
+			name: "a series holding the author's books beats an empty linked one",
+			seed: []seededSeries{
+				{"abs:series:lib1:m", "Mistborn", []seededBook{{"The Well of Ascension", "Brandon Sanderson"}}},
+				{"hc-series:100", "Mistborn", nil},
+			},
+			links: map[int]string{1: "Brandon Sanderson"},
+			incoming: []CalibreBook{
+				seriesCalibreBook(1, "The Final Empire", "Brandon Sanderson", "Mistborn", 1),
+			},
+			wantIn:      []int{0},
+			wantSeries:  2,
+			wantReused:  1,
+			wantAliasOn: 0,
+		},
+		{
+			name:  "an empty series linked to another author on Hardcover is not reused",
+			seed:  []seededSeries{{"hc-series:200", "Foundation", nil}},
+			links: map[int]string{0: "Isaac Asimov"},
+			incoming: []CalibreBook{
+				seriesCalibreBook(1, "Foundation Rising", "Someone Else", "Foundation", 1),
+			},
+			wantIn:      []int{calibreRow},
+			wantSeries:  2,
+			wantReused:  0,
+			wantAliasOn: calibreRow,
+		},
+		{
+			name:  "an empty series linked to the same author on Hardcover is reused",
+			seed:  []seededSeries{{"hc-series:300", "Mistborn", nil}},
+			links: map[int]string{0: "Sanderson, Brandon"},
+			incoming: []CalibreBook{
+				seriesCalibreBook(1, "The Final Empire", "Brandon Sanderson", "Mistborn", 1),
+				seriesCalibreBook(2, "The Well of Ascension", "Brandon Sanderson", "Mistborn", 2),
+			},
+			wantIn:      []int{0, 0},
+			wantSeries:  1,
+			wantReused:  2,
+			wantAliasOn: noAlias,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -232,6 +322,9 @@ func TestImporter_SeriesReuse(t *testing.T) {
 			seeded := make([]int64, len(tc.seed))
 			for n, s := range tc.seed {
 				seeded[n] = f.seedSeries(t, s)
+			}
+			for n, author := range tc.links {
+				f.linkHardcover(t, seeded[n], tc.seed[n].foreignID, tc.seed[n].title, author)
 			}
 			f.fr.books = tc.incoming
 
@@ -250,21 +343,28 @@ func TestImporter_SeriesReuse(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GetByForeignID: %v", err)
 			}
-			if calibreSeries == nil {
-				t.Fatal("the calibre series id resolves to no series")
-			}
-			resolve := func(idx int) int64 {
-				if idx == calibreRow {
-					return calibreSeries.ID
+			switch {
+			case tc.wantAliasOn == noAlias:
+				if calibreSeries != nil {
+					t.Errorf("calibre series id resolves to %d (%q), want nothing", calibreSeries.ID, calibreSeries.ForeignID)
 				}
-				return seeded[idx]
-			}
-			if tc.wantAliasOn == calibreRow {
+			case calibreSeries == nil:
+				t.Fatal("the calibre series id resolves to no series")
+			case tc.wantAliasOn == calibreRow:
 				if calibreSeries.ForeignID != calibreSeriesForeignID(tc.incoming[0].Series.Name) {
 					t.Errorf("calibre series id resolves to %d (%q), want the calibre row", calibreSeries.ID, calibreSeries.ForeignID)
 				}
-			} else if calibreSeries.ID != seeded[tc.wantAliasOn] {
+			case calibreSeries.ID != seeded[tc.wantAliasOn]:
 				t.Errorf("calibre series id resolves to %d, want seeded series %d", calibreSeries.ID, seeded[tc.wantAliasOn])
+			}
+			resolve := func(idx int) int64 {
+				if idx == calibreRow {
+					if calibreSeries == nil {
+						t.Fatal("expected a calibre row")
+					}
+					return calibreSeries.ID
+				}
+				return seeded[idx]
 			}
 
 			for n, cb := range tc.incoming {
@@ -307,7 +407,7 @@ func TestFindReusableSeriesOutsideARun(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := f.imp.findReusableSeries(ctx, tc.book, tc.series)
+			got, _, err := f.imp.findReusableSeries(ctx, tc.book, tc.series)
 			if err != nil {
 				t.Fatalf("findReusableSeries: %v", err)
 			}
@@ -328,6 +428,72 @@ func TestFindReusableSeriesOutsideARun(t *testing.T) {
 	}
 }
 
+// TestFindReusableSeriesSkipsAStaleCandidate checks that a series the run's
+// index still lists but that is gone, deleted or merged away mid run, is not
+// mistaken for an empty series and reused.
+func TestFindReusableSeriesSkipsAStaleCandidate(t *testing.T) {
+	f := newSeriesReuseFixture(t)
+	ctx := context.Background()
+	gone := f.seedSeries(t, seededSeries{"ol:series:mistborn", "Mistborn", nil})
+	f.imp.seriesIdx = &seriesTitleIndex{}
+	if err := f.imp.seriesIdx.load(ctx, f.series); err != nil {
+		t.Fatalf("load index: %v", err)
+	}
+	if err := f.series.Delete(ctx, gone); err != nil {
+		t.Fatalf("delete series: %v", err)
+	}
+	book := &models.Book{ID: 9999, AuthorID: f.author(t, "Brandon Sanderson")}
+	got, _, err := f.imp.findReusableSeries(ctx, book, "Mistborn")
+	if err != nil {
+		t.Fatalf("findReusableSeries: %v", err)
+	}
+	if got != nil {
+		t.Errorf("findReusableSeries returned deleted series %d, want none", got.ID)
+	}
+}
+
+// TestImporter_EmptySeriesReuseWritesNoAlias checks that a series reused
+// because it was empty gets no alias in that run, not even from the run's own
+// second book, so the next run decides again instead of skipping the author
+// check for good. Once a later run finds the author's books there, the alias
+// is written.
+func TestImporter_EmptySeriesReuseWritesNoAlias(t *testing.T) {
+	f := newSeriesReuseFixture(t)
+	ctx := context.Background()
+	empty := f.seedSeries(t, seededSeries{"ol:series:mistborn", "Mistborn", nil})
+	f.fr.books = []CalibreBook{
+		seriesCalibreBook(1, "The Final Empire", "Brandon Sanderson", "Mistborn", 1),
+		seriesCalibreBook(2, "The Well of Ascension", "Brandon Sanderson", "Mistborn", 2),
+	}
+	if _, err := f.imp.Run(ctx, "/lib"); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	aliases, err := f.series.AliasForeignIDs(ctx, []int64{empty})
+	if err != nil {
+		t.Fatalf("AliasForeignIDs: %v", err)
+	}
+	if len(aliases) != 0 {
+		t.Fatalf("aliases after reusing an empty series = %v, want none", aliases)
+	}
+
+	stats, err := f.imp.Run(ctx, "/lib")
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	// The first book matches on the books the first run filed and writes the
+	// alias; the second then resolves through it.
+	if stats.SeriesReused != 1 || f.seriesCount(t) != 1 {
+		t.Errorf("second run reused=%d rows=%d, want 1/1", stats.SeriesReused, f.seriesCount(t))
+	}
+	aliases, err = f.series.AliasForeignIDs(ctx, []int64{empty})
+	if err != nil {
+		t.Fatalf("AliasForeignIDs: %v", err)
+	}
+	if len(aliases) != 1 || aliases[0] != calibreSeriesForeignID("Mistborn") {
+		t.Errorf("aliases after the second run = %v, want the calibre series id", aliases)
+	}
+}
+
 // TestImporter_SeriesResolveFailureCountsAndContinues checks that a database
 // error while finding the series is counted on the series side and does not
 // panic or abort.
@@ -345,7 +511,7 @@ func TestImporter_SeriesResolveFailureCountsAndContinues(t *testing.T) {
 	if stats.SeriesFailures != 1 || stats.SeriesLinked != 0 {
 		t.Errorf("stats failures=%d linked=%d, want 1/0", stats.SeriesFailures, stats.SeriesLinked)
 	}
-	if _, err := imp.findReusableSeries(context.Background(), &models.Book{ID: 1, AuthorID: 1}, "Cradle"); err == nil {
+	if _, _, err := imp.findReusableSeries(context.Background(), &models.Book{ID: 1, AuthorID: 1}, "Cradle"); err == nil {
 		t.Error("findReusableSeries on a closed database returned no error")
 	}
 }
