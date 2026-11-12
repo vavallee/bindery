@@ -281,6 +281,75 @@ func TestImporter_SeriesReuse(t *testing.T) {
 	}
 }
 
+// TestFindReusableSeriesOutsideARun calls the matcher with no run state, the
+// way a caller other than run() would: the index loads on demand, and an
+// undecided tie still returns no series every time it is asked.
+func TestFindReusableSeriesOutsideARun(t *testing.T) {
+	f := newSeriesReuseFixture(t)
+	ctx := context.Background()
+	empty := f.seedSeries(t, seededSeries{"ol:series:mistborn", "Mistborn", nil})
+	f.seedSeries(t, seededSeries{"abs:series:lib1:c", "Cradle", []seededBook{{"Unsouled", "Will Wight"}}})
+	f.seedSeries(t, seededSeries{"abs:series:lib2:c", "Cradle", []seededBook{{"Soulsmith", "Will Wight"}}})
+	book := &models.Book{ID: 9999, AuthorID: f.author(t, "Will Wight")}
+
+	cases := []struct {
+		name   string
+		series string
+		book   *models.Book
+		want   int64
+	}{
+		{"empty series is reused", "Mistborn", book, empty},
+		{"undecided tie", "Cradle", book, 0},
+		{"undecided tie asked again", "Cradle", book, 0},
+		{"no candidate", "Stormlight", book, 0},
+		{"title with no key", "!!!", book, 0},
+		{"no book", "Mistborn", nil, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := f.imp.findReusableSeries(ctx, tc.book, tc.series)
+			if err != nil {
+				t.Fatalf("findReusableSeries: %v", err)
+			}
+			var gotID int64
+			if got != nil {
+				gotID = got.ID
+			}
+			if gotID != tc.want {
+				t.Errorf("findReusableSeries(%q) = series %d, want %d", tc.series, gotID, tc.want)
+			}
+		})
+	}
+
+	var idx seriesTitleIndex
+	idx.add(models.Series{ID: 1, Title: "Mistborn"})
+	if idx.byKey != nil {
+		t.Errorf("add before load indexed a row: %+v", idx.byKey)
+	}
+}
+
+// TestImporter_SeriesResolveFailureCountsAndContinues checks that a database
+// error while finding the series is counted on the series side and does not
+// panic or abort.
+func TestImporter_SeriesResolveFailureCountsAndContinues(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	series := db.NewSeriesRepo(database)
+	imp := (&Importer{}).WithSeries(series)
+	database.Close()
+
+	stats := &ImportStats{}
+	imp.attachBookToSeries(context.Background(), 0, &models.Book{ID: 1, AuthorID: 1}, &CalibreSeries{Name: "Cradle"}, stats)
+	if stats.SeriesFailures != 1 || stats.SeriesLinked != 0 {
+		t.Errorf("stats failures=%d linked=%d, want 1/0", stats.SeriesFailures, stats.SeriesLinked)
+	}
+	if _, err := imp.findReusableSeries(context.Background(), &models.Book{ID: 1, AuthorID: 1}, "Cradle"); err == nil {
+		t.Error("findReusableSeries on a closed database returned no error")
+	}
+}
+
 // TestImporter_SeriesReuseRerunFindsAlias checks that a rerun after a reuse
 // lands on the reused series through the alias and creates nothing.
 func TestImporter_SeriesReuseRerunFindsAlias(t *testing.T) {
