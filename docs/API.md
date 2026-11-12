@@ -435,7 +435,13 @@ POST   /api/v1/series/{id}/merge                  merge other series into this o
 POST   /api/v1/series/{id}/books                  add a book or update its position: {"bookId":1,"positionInSeries":"2","primarySeries":true}; positionInSeries is optional (admin)
 DELETE /api/v1/series/{id}/books/{bookId}         take a book out of the series, and keep it out on refresh (admin)
 POST   /api/v1/abs/import                         start an Audiobookshelf import (admin): {"dryRun":true,"libraryIds":[..],"full":true}, all optional. libraryIds must be a subset of the configured libraries (400 on an unknown id), full re-runs the Hardcover series match for every item
+GET    /api/v1/abs/import/runs                    recorded import runs, newest first (admin): ?limit (default 10, max 200) and ?offset. One row per library, so an import over many libraries spans several rows
 ```
+
+`GET /abs/import/runs` used to ignore `limit` and `offset` and always answer
+the newest 10 rows (#2173). It still answers a bare array. A `limit` that is
+not a positive number falls back to 10, a larger one is capped at 200, a bad
+`offset` counts as 0, and an offset past the end gives `[]`.
 
 Taking a book out of a series is remembered (#2554): a refresh that still
 reports the book in that series, under its own provider id or one merged into
