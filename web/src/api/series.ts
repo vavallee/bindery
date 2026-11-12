@@ -156,6 +156,45 @@ export interface SeriesMergePlan {
   monitored: boolean
 }
 
+// Duplicate series (#2173): series whose titles the Audiobookshelf import
+// cannot tell apart. GET /series/duplicates lists them, admin only.
+export interface DuplicateSeries {
+  id: number
+  title: string
+  foreignSeriesId: string
+  bookCount: number
+  authors: string[]
+  hardcoverLinked: boolean
+  monitored: boolean
+}
+
+export interface DuplicateSeriesGroup {
+  key: string
+  suggestedKeepId: number
+  // False when the series hold books by different authors: probably two
+  // series with one name, so never part of the bulk merge.
+  sameAuthors: boolean
+  series: DuplicateSeries[]
+}
+
+export interface DuplicateMergeGroup {
+  keepId: number
+  sourceIds: number[]
+}
+
+export interface DuplicateMergeResult extends DuplicateMergeGroup {
+  ok: boolean
+  error?: string
+  plan?: SeriesMergePlan
+}
+
+export interface DuplicateMergeResponse {
+  dryRun: boolean
+  merged: number
+  failed: number
+  results: DuplicateMergeResult[]
+}
+
 export const seriesApi = {
   // Series
   listSeries: () => request<Series[]>('/series'),
@@ -171,6 +210,9 @@ export const seriesApi = {
   deleteSeries: (id: number) => request<void>(`/series/${id}`, { method: 'DELETE' }),
   mergeSeries: (id: number, data: { sourceIds: number[]; title?: string; dryRun?: boolean }) =>
     request<SeriesMergePlan>(`/series/${id}/merge`, { method: 'POST', body: JSON.stringify(data) }),
+  listSeriesDuplicates: () => request<{ groups: DuplicateSeriesGroup[] }>('/series/duplicates'),
+  mergeSeriesDuplicates: (data: { groups: DuplicateMergeGroup[]; dryRun?: boolean }) =>
+    request<DuplicateMergeResponse>('/series/duplicates/merge', { method: 'POST', body: JSON.stringify(data) }),
   linkBookToSeries: (id: number, data: { bookId: number; positionInSeries: string; primarySeries: boolean }) =>
     request<Series>(`/series/${id}/books`, { method: 'POST', body: JSON.stringify(data) }),
   // #2525: a book can sit in several series, and only one of them names its

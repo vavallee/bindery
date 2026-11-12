@@ -10,6 +10,8 @@ interface Props {
   series: Series[]
   onClose: () => void
   onMerged: () => void
+  // Series ticked when the dialog opens, as the duplicate list does (#2173).
+  initialSourceIds?: number[]
 }
 
 // MergeSeriesModal folds other series into the one it was opened on (#2554):
@@ -18,11 +20,11 @@ interface Props {
 // the plan the server computes (a dry run), and only then applies it. Any
 // change to the selection or the name drops the preview, so what is applied is
 // always what was shown.
-export default function MergeSeriesModal({ target, series, onClose, onMerged }: Props) {
+export default function MergeSeriesModal({ target, series, onClose, onMerged, initialSourceIds }: Props) {
   const { t } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
   const [filter, setFilter] = useState('')
-  const [selected, setSelected] = useState<number[]>([])
+  const [selected, setSelected] = useState<number[]>(initialSourceIds ?? [])
   const [title, setTitle] = useState('')
   const [plan, setPlan] = useState<SeriesMergePlan | null>(null)
   const [busy, setBusy] = useState(false)
