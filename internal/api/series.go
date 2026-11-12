@@ -52,6 +52,10 @@ type SeriesHandler struct {
 
 	editionFetcher bookhydrate.EditionFetcher
 
+	// seriesTitleFn replaces series.SeriesTitle in the duplicate merge's
+	// group check; tests use it to fail one group's lookup.
+	seriesTitleFn func(ctx context.Context, id int64) (string, bool, error)
+
 	// checking holds the ids of series a scheduled check is running for, and
 	// checkMediaType resolves the media type of books it adds (#2523).
 	checking       sync.Map

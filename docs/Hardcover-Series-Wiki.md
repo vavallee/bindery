@@ -124,7 +124,7 @@ With multi-user tenancy on, a check adds books for the account that owns the ser
 
 ## Merging Series
 
-One series can end up as several rows, when a provider names it in more than one way or a provider fix renames it. Imports try not to add to that: the Audiobookshelf and Calibre imports both file a series into an existing one of the same title instead of creating their own, and the Calibre import only does so when that series holds books by the same author or none at all. Before that, running the Calibre import after the Audiobookshelf import made a second copy of every series the two shared, and the Audiobookshelf import then logged `ambiguous existing series match` for those books and could not link them to a Hardcover series. Copies made that way stay until you merge them. **Merge…** on the series you want to keep opens a dialog to pick the others and fold them into it:
+One series can end up as several rows, when a provider names it in more than one way or a provider fix renames it. **Merge…** on the series you want to keep opens a dialog to pick the others and fold them into it:
 
 - Their books join it. A book already in it keeps its position there; a source fills a position it left empty.
 - The series becomes a book's primary series where a merged one was.
@@ -135,6 +135,22 @@ One series can end up as several rows, when a provider names it in more than one
 The dialog previews every change, including books whose positions differ, before anything is applied. Merging is for admins.
 
 Undoing an import (ABS, Calibre) made before a merge does not take the merged books back out of the series you kept.
+
+## Finding Duplicate Series
+
+A library that ran both the Calibre and the Audiobookshelf import can hold the same series twice, one row from each. The Audiobookshelf import can't tell the two apart when it links a Hardcover series, so it skips those items and counts them as `seriesLinkFailed` in the run summary.
+
+Those pairs came from the Calibre import, which used to create its own row for every series even when one of the same title already existed. It now files into the existing series instead, when that series holds books by the same author or none yet, so new pairs stop appearing; a same titled series holding only other authors' books is left alone. When two or more copies would fit and none already holds the book, it keeps using its own Calibre row and logs `series exists more than once` rather than pick one. Pairs an earlier import made stay until you merge them here.
+
+When that happens, admins see a banner on the Series page saying how many series titles appear more than once. **Review** lists each group with its series, their book counts, authors and Hardcover link, and the one Bindery suggests keeping: the one with a Hardcover link, else the one with the most books. You can pick a different one to keep.
+
+- **Merge…** on a group opens the usual merge dialog with the other series already ticked, so you see the preview before anything changes.
+- **Merge all with matching authors** merges every group whose series share an author, in one go. It shows how many groups, how many series go away and how many books move, and asks before it runs. Each group is merged on its own, so one that fails leaves the rest done and is reported.
+- A group whose series hold books by different authors is probably two different series with the same name. It is listed with a note and left out of the bulk merge, so check it and merge it by hand only if it really is one series. That is the Series page's doing: the bulk API itself only checks that the titles match.
+
+Titles count as the same the way the Audiobookshelf import compares them, so case, punctuation and a trailing bracketed tag like `[Audiobook]` are ignored.
+
+Once the duplicates are merged, the next Audiobookshelf import retries the items it recorded as ambiguous (counted under `seriesLinkFailed` in the run summary) and links them. You don't need to run a full import for that: merging two series with the same title makes those items due again. A merge of differently named series leaves them alone.
 
 ## Fixing One Book's Series
 

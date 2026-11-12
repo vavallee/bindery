@@ -5,19 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
 )
-
-// SeriesTitleKey is the key two series titles share when they name the same
-// series. The Audiobookshelf and Calibre imports both match an incoming series
-// to an existing row by it (#2173), so they agree on what "the same series"
-// is: a series one importer created is the series the other one finds. It is
-// the book dedup key, which folds case, punctuation, a leading article and a
-// trailing bracketed note.
-func SeriesTitleKey(title string) string {
-	return indexer.CanonicalDedupKey(title)
-}
 
 // ListTitles returns the id, foreign id and title of every series, without the
 // extras List hydrates. It is the cheap read behind an importer's per run

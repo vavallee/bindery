@@ -16,6 +16,7 @@ import (
 	"github.com/vavallee/bindery/internal/covers"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/seriesmatch"
 	"github.com/vavallee/bindery/internal/textutil"
 )
 
@@ -103,7 +104,7 @@ type Importer struct {
 
 	authorIdx *authorIndex
 
-	// seriesIdx groups every series by db.SeriesTitleKey for one run, loaded
+	// seriesIdx groups every series by seriesmatch.LookupKey for one run, loaded
 	// the first time a Calibre series name has no row of its own (#2173).
 	// seriesAmbiguous holds the names already logged as existing more than
 	// once, so the hint is logged once per name per run. Only touched by the
@@ -762,8 +763,12 @@ func (i *Importer) resolveSeries(ctx context.Context, book *models.Book, name st
 // findReusableSeries returns the existing series a Calibre series name should
 // file into, or nil when the Calibre import should use its own row.
 //
-// A candidate is a series whose title has the same db.SeriesTitleKey as name,
-// the key the Audiobookshelf import matches by too. It is acceptable only when
+// A candidate is a series whose title has the same seriesmatch.LookupKey as
+// name, the key the Audiobookshelf import looks series up by and the duplicate
+// series finder groups by, so all three agree on what "the same series" is: a
+// series one importer created is the one the other finds, and a pair this
+// import refuses to choose between is a pair the finder offers to merge. A
+// candidate is acceptable only when
 // it already holds a book by this book's author, or holds no books at all.
 // That is stricter than the Audiobookshelf import on purpose: a same titled
 // series holding only other authors' books ("Foundation" by two different
@@ -781,7 +786,7 @@ func (i *Importer) resolveSeries(ctx context.Context, book *models.Book, name st
 // run no worse than the old behaviour and leaves the merge with the user, who
 // gets one INFO line per name saying so.
 func (i *Importer) findReusableSeries(ctx context.Context, book *models.Book, name string) (*models.Series, error) {
-	key := db.SeriesTitleKey(name)
+	key := seriesmatch.LookupKey(name)
 	if key == "" || book == nil {
 		return nil, nil
 	}
@@ -839,7 +844,7 @@ func (i *Importer) logAmbiguousSeries(name string, copies int) {
 		"name", name, "copies", copies)
 }
 
-// seriesTitleIndex groups series by db.SeriesTitleKey so a run computes each
+// seriesTitleIndex groups series by seriesmatch.LookupKey so a run computes each
 // stored title's key once instead of once per Calibre series (#2173). Rows
 // this run creates are added as it goes; rows it reuses are already in it.
 type seriesTitleIndex struct {
@@ -869,7 +874,7 @@ func (x *seriesTitleIndex) add(s models.Series) {
 	if !x.loaded || s.ID == 0 {
 		return
 	}
-	key := db.SeriesTitleKey(s.Title)
+	key := seriesmatch.LookupKey(s.Title)
 	if key == "" {
 		return
 	}

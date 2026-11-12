@@ -8,26 +8,6 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// TestSeriesTitleKey pins the titles the Calibre and Audiobookshelf imports
-// treat as one series (#2173).
-func TestSeriesTitleKey(t *testing.T) {
-	cases := []struct {
-		a, b string
-		same bool
-	}{
-		{"Arcane Ascension", "arcane ascension", true},
-		{"The Expanse", "Expanse, The", true},
-		{"Cradle", "Cradle [Graphic Audio]", true},
-		{"Mistborn", "Mistborn Saga", false},
-		{"Foundation", "Foundation and Empire", false},
-	}
-	for _, tc := range cases {
-		if got := SeriesTitleKey(tc.a) == SeriesTitleKey(tc.b); got != tc.same {
-			t.Errorf("SeriesTitleKey(%q) == SeriesTitleKey(%q) is %v, want %v", tc.a, tc.b, got, tc.same)
-		}
-	}
-}
-
 func TestSeriesAddAlias(t *testing.T) {
 	cases := []struct {
 		name      string

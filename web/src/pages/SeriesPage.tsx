@@ -10,6 +10,7 @@ import HardcoverSeriesLinkModal from '../components/HardcoverSeriesLinkModal'
 import SeriesNameModal from '../components/SeriesNameModal'
 import HardcoverSeriesAddSearch from '../components/HardcoverSeriesAddSearch'
 import MergeSeriesModal from '../components/MergeSeriesModal'
+import SeriesDuplicates from '../components/SeriesDuplicates'
 import { btn, btnSize, primaryFill } from '../components/buttons'
 import { useIsAdmin } from '../auth/AuthContext'
 import Switch from '../components/Switch'
@@ -607,6 +608,12 @@ export default function SeriesPage() {
           ))}
         </div>
       </div>
+
+      {/* Series that exist twice under one title (#2173). Admin only, as the
+          merge is; shown once the list is in so its count does not jump. */}
+      {isAdmin && !loading && !loadError && (
+        <SeriesDuplicates series={seriesList} onMerged={refreshSeriesList} />
+      )}
 
       {loading ? (
         <SkeletonRows rows={4} />

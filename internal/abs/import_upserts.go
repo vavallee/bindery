@@ -16,6 +16,7 @@ import (
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/seriesmatch"
 	"github.com/vavallee/bindery/internal/textutil"
 )
 
@@ -1538,7 +1539,7 @@ func (s *ImportStats) dryRunSeriesAlreadyPlanned(externalID, title string) bool 
 	if _, ok := s.dryRunSeriesExternalIDs[strings.TrimSpace(externalID)]; ok {
 		return true
 	}
-	if _, ok := s.dryRunSeriesTitles[db.SeriesTitleKey(title)]; ok {
+	if _, ok := s.dryRunSeriesTitles[normalizeTitle(title)]; ok {
 		return true
 	}
 	return false
@@ -1552,7 +1553,7 @@ func (s *ImportStats) rememberDryRunSeries(externalID, title string) {
 		s.dryRunSeriesTitles = make(map[string]struct{})
 	}
 	s.dryRunSeriesExternalIDs[strings.TrimSpace(externalID)] = struct{}{}
-	s.dryRunSeriesTitles[db.SeriesTitleKey(title)] = struct{}{}
+	s.dryRunSeriesTitles[normalizeTitle(title)] = struct{}{}
 }
 
 func (s *ImportStats) dryRunSeriesMembershipAlreadyPlanned(key string) bool {
@@ -1584,12 +1585,10 @@ func (i *Importer) findSeriesByTitle(ctx context.Context, title string, bookID i
 	if err != nil {
 		return nil, false, err
 	}
-	// db.SeriesTitleKey is shared with the Calibre import, so both importers
-	// agree on which rows are the same series.
-	key := db.SeriesTitleKey(title)
+	key := seriesmatch.LookupKey(title)
 	var matches []models.Series
 	for idx := range all {
-		if db.SeriesTitleKey(all[idx].Title) == key {
+		if seriesmatch.LookupKey(all[idx].Title) == key {
 			matches = append(matches, all[idx])
 		}
 	}
