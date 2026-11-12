@@ -190,6 +190,23 @@ instead of starting a second sync (#2601). It is also set from the moment
 `POST /api/v1/author` answers, for the catalogue sync the add starts, so a page
 opened straight after the add sees it (#3058).
 
+`qualityProfileId` on `POST /api/v1/author` and `PUT /api/v1/author/{id}`
+tells "left out" apart from `null` (#3831). An author with no quality profile
+has no format filter at all: every format is accepted at grab and at import.
+
+- `POST /api/v1/author`: left out gives the new author the
+  `author.default_quality_profile_id` setting's profile, or none when that is
+  unset or names a deleted profile. `null` means none, whatever the default.
+  When the add relinks an existing author instead, left out keeps that
+  author's own profile (it used to clear it).
+- `PUT /api/v1/author/{id}`: left out leaves the profile alone, `null` clears
+  it, a number sets it.
+- `POST /api/v1/requests/{id}/approve` follows the `POST /api/v1/author` rule.
+
+Every other path that creates an author (adding a book, series fill, the ABS,
+Calibre, CSV, Readarr and Goodreads imports, and Hardcover list sync when the
+list sets no profile of its own) gives it the default quality profile too.
+
 `POST /api/v1/author` accepts an optional `monitorNewItems` (#2541), the same
 field `PUT /api/v1/author/{id}` takes: `all` (the default) lets a refresh add
 newly discovered books, `none` keeps the catalogue as it was added. Any other
@@ -665,7 +682,19 @@ GET    /api/v1/qualityprofile/{id}                read one
 POST   /api/v1/qualityprofile                     create (admin)
 PUT    /api/v1/qualityprofile/{id}                update (admin)
 DELETE /api/v1/qualityprofile/{id}                remove (admin); 409 while an author uses it
+GET    /api/v1/authors/without-quality-profile    count authors with no quality profile (admin), {"count": N}
+POST   /api/v1/authors/without-quality-profile    give them one (admin), body {"qualityProfileId": N}, answers {"updated": N}
 ```
+
+The two `/authors/without-quality-profile` routes are the opt in fix for
+authors that have no quality profile and so accept every format at grab and
+at import (#3831). Nothing runs them automatically. Both cover the caller's
+own authors plus unowned (shared) ones, never another account's authors, admin
+or not. A request with no user identity (API key, local only, auth disabled)
+covers every author. The POST changes only authors with no profile, leaves
+the rest alone, and answers `400` when `qualityProfileId` is missing or names
+a profile that does not exist. The Settings page shows the count on the
+Quality tab.
 
 A profile is `{id, name, items, cutoff, upgradeAllowed, preferredNarrators, editionPreference}`. `items` is an array
 of `{quality, allowed}` in preference order, best first (#2733). The media
@@ -1791,6 +1820,13 @@ unset key:
 | `default.media_type` | add author dialog |
 | `author.default_monitor_mode` | add author dialog |
 | `author.default_monitor_latest_count` | add author dialog |
+| `author.default_quality_profile_id` | add author dialog |
+
+`author.default_quality_profile_id` (#3831) is the quality profile id given to
+authors created without one, on every creation path. Empty, the default, means
+none, and an author with no quality profile accepts every format at grab and
+at import. A write must name an existing profile or be empty (`400`
+otherwise). A default that names a profile deleted later is treated as empty.
 
 `metadata.primary_provider` accepts `openlibrary` (the default), `dnb`, `nb`
 (Nasjonalbiblioteket), `bnf` (Bibliothèque nationale de France, #3144) and

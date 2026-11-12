@@ -276,7 +276,7 @@ any remaining books under a *Books* divider. **Add Book** opens on *Books*,
 up both kinds, so switching views is instant, and each view shows how many
 results it holds. Which button you pressed otherwise only changes the
 placeholder. What you pick decides what happens next: an author row leads to the monitoring
-step (metadata profile, root folder, media type, monitor mode, auto-grab), a
+step (quality profile, metadata profile, root folder, media type, monitor mode, auto-grab), a
 book row to the single-book step (cover, identifiers, format, search on add).
 Rows that already match something in your library say **In your library** with
 an **Open** link instead of Select, and adding one anyway is refused with a
@@ -440,6 +440,27 @@ all. A list with entries but nothing ticked means nothing of that kind is
 grabbed for the author. Profiles made
 before this rule existed were reversed once on upgrade, so a profile you
 never reordered now reads best first and prefers what it always did.
+
+**Authors with no quality profile accept every format.** An author whose
+quality profile is *None* has no format filter at all: a release in any
+format can be grabbed for them, and a download in any format is imported, a
+PDF included. The Add Author dialog and Edit Author both offer *None (accepts
+every format)* and show it when that is the author's real state. Earlier
+versions of the dialog sent no profile, so authors added from the UI had none, and
+Edit Author showed the first profile as if it were selected (#3831).
+
+**Default quality profile for new authors.** Settings → Quality Profiles,
+above the profile list. Every author added without a choice gets it: from the
+Add Author dialog (where it is preselected), by adding a book, from a series
+fill, the ABS, Calibre, CSV, Readarr and Goodreads imports, and Hardcover
+list sync when the list sets no profile of its own. Empty means *None*. If the
+profile it names is deleted, new authors get none until you pick another.
+
+**Authors that already have no profile.** When some of your authors have no
+quality profile the same section says how many and offers to give them one:
+pick a profile, press **Apply** and confirm. Only authors with no profile
+change, authors that have one keep it, and another account's authors are never
+touched. Nothing does this on its own, so check this notice after upgrading.
 
 **Audiobook narrator and edition preferences.** A quality profile can also
 prefer narrators and an edition type for audiobooks (#1358). Both are off

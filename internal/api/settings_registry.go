@@ -136,6 +136,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingAuthorDefaultQualityProfileID, Type: SettingTypeInt, Default: "", Min: "1",
+		Description: "quality_profiles.id given to authors added without a quality profile. Empty means none, and an author with no quality profile accepts every format at grab and at import. A deleted profile is treated as empty.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: SettingRequestsMaxPendingPerUser, Type: SettingTypeInt, Default: "25", Min: "1", Max: "10000",
 		Description: "How many requests one requester may have waiting for an admin's decision. Further requests answer 429 until some are decided.",
 		State:       SettingStateActive,

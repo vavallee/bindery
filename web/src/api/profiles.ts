@@ -57,6 +57,12 @@ export const profilesApi = {
     request<QualityProfile>(`/qualityprofile/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteQualityProfile: (id: number) =>
     request<void>(`/qualityprofile/${id}`, { method: 'DELETE' }),
+  // Authors with no quality profile accept every format at grab and import
+  // (#3831). Admin only; both cover the caller's own and unowned authors.
+  countAuthorsWithoutQualityProfile: () =>
+    request<{ count: number }>('/authors/without-quality-profile'),
+  applyQualityProfileToAuthorsWithout: (qualityProfileId: number) =>
+    request<{ updated: number }>('/authors/without-quality-profile', { method: 'POST', body: JSON.stringify({ qualityProfileId }) }),
 
   // Metadata Profiles
   listMetadataProfiles: () => request<MetadataProfile[]>('/metadataprofile'),

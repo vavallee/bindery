@@ -2332,7 +2332,7 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 		applyProfile = false
 		// Backfilled from a series catalogue, so there is no user monitor
 		// choice to carry — take the install-wide default (#1666).
-		db.ApplyAuthorMonitorDefaults(ctx, h.settings, author)
+		db.ApplyAuthorCreateDefaults(ctx, h.settings, author)
 		if err := h.authors.CreateForUser(ctx, author, seriesJobOwner(ctx)); err != nil {
 			return nil, err
 		}

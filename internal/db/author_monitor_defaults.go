@@ -52,8 +52,10 @@ func ResolveAuthorMonitorDefaults(ctx context.Context, settings *SettingsRepo) (
 }
 
 // ApplyAuthorMonitorDefaults stamps the install-wide monitor defaults onto an
-// author that is about to be created. Call it immediately before Create on
-// every path that does not take an explicit mode from the user.
+// author that is about to be created. Create paths call it through
+// ApplyAuthorCreateDefaults, which also stamps the default quality profile
+// (#3831), immediately before Create on every path that does not take an
+// explicit mode from the user.
 //
 // A mode already set on the author wins, so a caller with a deliberate policy
 // keeps it — the Hardcover list syncer pins "none" (#1290) and the add-author

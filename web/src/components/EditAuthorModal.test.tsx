@@ -88,6 +88,34 @@ describe('EditAuthorModal', () => {
     expect(root.value).toBe('100')
   })
 
+  // #3831: an author with no quality profile used to show the first profile
+  // as selected, and saving untouched sent nothing, so the author kept
+  // accepting every format while the dialog said otherwise.
+  it('shows None for an author with no quality profile', async () => {
+    render(<EditAuthorModal author={{ ...baseAuthor, qualityProfileId: null }} onClose={onClose} onSaved={onSaved} />)
+
+    const { quality } = await getSelects()
+    expect(quality.value).toBe('')
+    expect(quality.selectedOptions[0].textContent).toBe('common.qualityProfileNone')
+    expect(screen.getByText('common.qualityProfileNoneHint')).toBeInTheDocument()
+
+    // Picking a profile from None is a real change and is sent.
+    fireEvent.change(quality, { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(api.updateAuthor).toHaveBeenCalledWith(42, { qualityProfileId: 2 }))
+  })
+
+  it('sends an explicit null when None is chosen', async () => {
+    render(<EditAuthorModal author={baseAuthor} onClose={onClose} onSaved={onSaved} />)
+
+    const { quality } = await getSelects()
+    fireEvent.change(quality, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(api.updateAuthor).toHaveBeenCalledTimes(1))
+    expect(api.updateAuthor).toHaveBeenCalledWith(42, { qualityProfileId: null })
+  })
+
   // #3240: each visible label is linked to its field, so it names the field
   // for screen readers and clicking it focuses the field.
   it('names every field by its visible label', async () => {

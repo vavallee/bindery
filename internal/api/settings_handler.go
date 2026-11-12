@@ -58,6 +58,11 @@ const (
 	SettingAuthorDefaultMonitorLatestCount = db.SettingAuthorDefaultMonitorLatestCount
 )
 
+// SettingAuthorDefaultQualityProfileID is the quality profile given to authors
+// created without one (#3831). Empty means none. Defined in internal/db for
+// the same reason as the monitor defaults.
+const SettingAuthorDefaultQualityProfileID = db.SettingAuthorDefaultQualityProfileID
+
 // SettingDefaultLibraryRootFolderID is the KV key that stores the ID of the
 // root folder used as the fallback library path when an author has no
 // per-author RootFolderID. Value is a decimal integer (the root_folder.id);
@@ -634,6 +639,10 @@ const SettingRecommendationsEnabled = "recommendations.enabled"
 //     author.default_monitor_latest_count: authorAddDefaults, which preselects
 //     the add author dialog. Root folder ids are numbers, not paths; the paths
 //     themselves live behind GET /rootfolder.
+//   - author.default_quality_profile_id: authorAddDefaults again, for the
+//     quality profile picker (#3831). A quality profile id, and the profiles
+//     themselves are already listable by every non requester account through
+//     GET /qualityprofile.
 //
 // Adding a key here hands its value to every authenticated account, so a new
 // entry needs a non admin screen that reads it and a value that says nothing
@@ -646,6 +655,7 @@ var nonAdminReadableSettings = map[string]bool{
 	SettingDefaultMediaType:                true,
 	SettingAuthorDefaultMonitorMode:        true,
 	SettingAuthorDefaultMonitorLatestCount: true,
+	SettingAuthorDefaultQualityProfileID:   true,
 }
 
 // isAdminOnlySetting reports whether a settings key may only be read by an
@@ -868,6 +878,10 @@ func (h *SettingsHandler) validateSettingDependencies(ctx context.Context, key, 
 	switch key {
 	case SettingImportSourceFolders:
 		return h.validateImportSourceTargets(value)
+	case SettingAuthorDefaultQualityProfileID:
+		// A typo'd id would otherwise save and quietly do nothing, since the
+		// read side treats a missing profile as no default.
+		return db.ValidateDefaultAuthorQualityProfileID(ctx, h.settings, value)
 	case SettingMetadataPrimaryProvider:
 		if value != "hardcover" {
 			return nil
@@ -1172,6 +1186,16 @@ func validateSettingValue(key, value string) error {
 		n, err := strconv.Atoi(value)
 		if err != nil || n <= 0 {
 			return fmt.Errorf("author.default_monitor_latest_count %q must be a positive integer", value)
+		}
+	case SettingAuthorDefaultQualityProfileID:
+		// Empty = no default. Whether the profile exists is checked in
+		// validateSettingDependencies, which can reach the database.
+		if value == "" {
+			return nil
+		}
+		id, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || id <= 0 {
+			return fmt.Errorf("%s %q must be a quality profile id or empty", key, value)
 		}
 	case SettingRequestsMaxPendingPerUser:
 		if value == "" {
