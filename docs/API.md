@@ -2008,6 +2008,8 @@ A request as the API returns it:
 | `fulfilled` | approved and on disk: the book imported, or at least one of the author's books |
 | `booksTotal`, `booksImported` | an approved author request's progress |
 | `searchRunId` | the approve response for a book request with `searchOnAdd`: the run to poll at `GET /search/runs/{id}` |
+| `notice` | admin responses only, so in practice the approve response, when the book was already in the library (#3835): one sentence saying whether the missing format is now monitored on the existing book or nothing was added. A requester never receives it, not even from a create that an auto approval resolved |
+| `alreadyInLibrary` | admin queue only, on a pending book request: `true` when the book is in the library and every requested format (the default format for a request with none) is on disk or monitored, so approving adds nothing. It is decided by the same rule approve uses, whoever owns the book. A request that needs a format added to another account's book under `BINDERY_ENFORCE_TENANCY` is not flagged, because approving it is refused |
 | `username`, `resultBookId`, `resultAuthorId` | admin queue only |
 | `createdVia`, `createdBy` | admin queue only, and only for a request made with `forUser`: `createdVia` is `api_key` or `admin`, and `createdBy` the admin's username for `admin` |
 
@@ -2023,8 +2025,23 @@ each item has only `id`, `title`, `authorName`, `series`, `seriesPosition`,
 apply to both kinds. The approval is claimed atomically, so of two concurrent
 approvals one adds and the other gets `409`, and a running approval renews its
 claim so a slow add cannot be taken over. A request whose item reached the
-library in the meantime answers `409`, and a failed add leaves the request
-pending. Unknown fields are refused with `400`.
+library in the meantime no longer answers `409` for a book (#3835): if the
+request asks for a format the existing book neither has on disk nor monitors,
+the approval monitors it on that book (and searches when `searchOnAdd` is set),
+and if every requested format is covered it adds nothing and resolves the
+request. Both answer `200` with the approved request, `resultBookId` set to the
+existing book and a `notice` sentence. Monitoring a format on a book the owner
+skipped or left unmonitored makes it wanted again. The save is conditional on
+the book not having changed since it was read; if it did, the approval reads it
+again and tries once more, then answers `409` asking the approver to retry. `409`
+also remains for an author already in the library. Under
+`BINDERY_ENFORCE_TENANCY` a book that belongs to another account is never
+widened: if it already covers every requested format the request is resolved
+without touching it, and if a format is missing the approval answers `409` and
+the request can be declined.
+`POST /api/v1/requests/{id}/decline` does not look at the library and always
+works on a pending request. A failed add leaves the request pending. Unknown
+fields are refused with `400`.
 
 A requester may call only `/requests`, `/requests/{id}` (DELETE),
 `/requests/library`, the three metadata searches (`/search/author`,

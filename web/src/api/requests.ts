@@ -26,6 +26,12 @@ export interface LibraryRequest {
   // or by the admin named in createdBy.
   createdVia?: 'api_key' | 'admin'
   createdBy?: string
+  // Admin only. On the approve response: a sentence saying the book was
+  // already in the library and what the approval did about it. On a pending
+  // book request in the queue: alreadyInLibrary is true when the library has
+  // every requested format, so approving adds nothing.
+  notice?: string
+  alreadyInLibrary?: boolean
 }
 
 export interface LibraryRequestList {

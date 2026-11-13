@@ -173,6 +173,7 @@ func TestReposSurfaceDatabaseErrors(t *testing.T) {
 		{"BookRepo.GetByForeignID", func() error { _, err := NewBookRepo(closed).GetByForeignID(ctx, "x"); return err }},
 		{"BookRepo.GetByForeignIDForUser", func() error { _, err := NewBookRepo(closed).GetByForeignIDForUser(ctx, "x", 1); return err }},
 		{"BookRepo.GetByForeignIDVisibleTo", func() error { _, err := NewBookRepo(closed).GetByForeignIDVisibleTo(ctx, "x", 1); return err }},
+		{"BookRepo.GetByForeignIDs", func() error { _, err := NewBookRepo(closed).GetByForeignIDs(ctx, []string{"x"}); return err }},
 		{"BookRepo.GetByID", func() error { _, err := NewBookRepo(closed).GetByID(ctx, 1); return err }},
 		{"BookRepo.GetByIDs", func() error { _, err := NewBookRepo(closed).GetByIDs(ctx, []int64{1}); return err }},
 		{"BookRepo.LibraryIDsByForeignIDsForUser", func() error {

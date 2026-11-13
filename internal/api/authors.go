@@ -1602,10 +1602,16 @@ func (h *AuthorHandler) ResolveDefaultMediaType(ctx context.Context) string {
 // behaviour. An invalid stored value — should never happen because writes
 // are validated — also falls back to ebook.
 func (h *AuthorHandler) resolveDefaultMediaType(ctx context.Context) string {
-	if h.settings == nil {
+	return defaultMediaTypeSetting(ctx, h.settings)
+}
+
+// defaultMediaTypeSetting reads default.media_type from settings: ebook when
+// the repository is absent or the value is unset or unknown.
+func defaultMediaTypeSetting(ctx context.Context, settings *db.SettingsRepo) string {
+	if settings == nil {
 		return models.MediaTypeEbook
 	}
-	s, _ := h.settings.Get(ctx, SettingDefaultMediaType)
+	s, _ := settings.Get(ctx, SettingDefaultMediaType)
 	if s == nil || s.Value == "" {
 		return models.MediaTypeEbook
 	}
