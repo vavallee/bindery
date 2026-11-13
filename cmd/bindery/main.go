@@ -595,6 +595,7 @@ func main() {
 	hcSyncer := hardcoverlistsyncer.New(importListRepo, authorRepo, bookRepo).
 		WithDailyQuota(dailyQuota).
 		WithSeriesRepo(seriesRepo).
+		WithSettings(settingsRepo). // default quality profile for list created authors (#3831)
 		WithTokenSource(func(ctx context.Context) string {
 			return api.GetHardcoverAPIToken(ctx, settingsRepo)
 		}).
@@ -1141,6 +1142,7 @@ func main() {
 		// Quality profiles: reads open, writes admin only (see
 		// registerQualityProfileRoutes).
 		registerQualityProfileRoutes(r, qualityProfileHandler)
+		registerAuthorQualityProfileUnsetRoutes(r, api.NewAuthorQualityProfileUnsetHandler(authorRepo, qualityProfileRepo))
 
 		// Settings: reads open to every role, but a non admin only gets the
 		// keys on the handler's allowlist (isAdminOnlySetting, #2361);

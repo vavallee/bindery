@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState, useId } from 'react'
+import { FormEvent, useCallback, useEffect, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, QualityProfile } from '../../api/client'
@@ -65,6 +65,7 @@ export default function QualityTab() {
       <p className="text-xs text-fg-muted mb-4">
         {t('settings.quality.description')}
       </p>
+      <NewAuthorQualityDefaults profiles={profiles} />
       {creating && (
         <QualityProfileForm
           onClose={() => setCreating(false)}
@@ -95,6 +96,145 @@ export default function QualityTab() {
         </div>
       )}
     </div>
+  )
+}
+
+const DEFAULT_QUALITY_PROFILE_SETTING = 'author.default_quality_profile_id'
+
+// The two halves of #3831 that live next to the profiles. An author with no
+// quality profile has no format filter at all, at grab or at import, and until
+// this setting existed every author added from the UI ended up that way.
+//
+// The default applies to new authors only. Existing authors with no profile
+// are counted and offered a one time apply, which never runs by itself.
+//
+// Every API call goes through Promise.resolve().then so a failure of any kind,
+// including an older server without these routes, lands in the catch and the
+// section simply stays quiet instead of breaking the profile list below it.
+function NewAuthorQualityDefaults({ profiles }: { profiles: QualityProfile[] }) {
+  const { t } = useTranslation()
+  const fid = useId()
+  const { confirm, confirmDialog } = useConfirmDialog()
+  const [defaultId, setDefaultId] = useState<number | null>(null)
+  const [defaultErr, setDefaultErr] = useState<string | null>(null)
+  const [unsetCount, setUnsetCount] = useState(0)
+  // The profile picked in the notice; null until the user changes it, so it
+  // follows the default (or the first profile) until then.
+  const [applyChoice, setApplyChoice] = useState<number | null>(null)
+  const [applying, setApplying] = useState(false)
+  const [applyMsg, setApplyMsg] = useState<string | null>(null)
+  const [applyErr, setApplyErr] = useState<string | null>(null)
+
+  const loadCount = useCallback(() =>
+    Promise.resolve()
+      .then(() => api.countAuthorsWithoutQualityProfile())
+      .then(r => setUnsetCount(r?.count ?? 0))
+      .catch(() => setUnsetCount(0)), [])
+
+  useEffect(() => {
+    let cancelled = false
+    Promise.resolve()
+      .then(() => api.getSetting(DEFAULT_QUALITY_PROFILE_SETTING))
+      .then(s => {
+        if (cancelled) return
+        const n = Number(s?.value)
+        setDefaultId(Number.isInteger(n) && n > 0 ? n : null)
+      })
+      .catch(() => { /* unset reads as a 404 */ })
+    loadCount()
+    return () => { cancelled = true }
+  }, [loadCount])
+
+  if (profiles.length === 0) return null
+
+  // A default that names a deleted profile shows as None, which is how the
+  // server treats it too.
+  const effectiveDefault = profiles.some(p => p.id === defaultId) ? defaultId : null
+  const chosen = profiles.find(p => p.id === applyChoice) ?? profiles.find(p => p.id === effectiveDefault) ?? profiles[0]
+
+  const saveDefault = async (value: string) => {
+    const previous = defaultId
+    setDefaultId(value ? Number(value) : null)
+    setDefaultErr(null)
+    try {
+      await api.setSetting(DEFAULT_QUALITY_PROFILE_SETTING, value)
+    } catch (e) {
+      // Put the select back on what the server still holds, so it never
+      // shows a default that was not saved.
+      setDefaultId(previous)
+      setDefaultErr(e instanceof Error ? e.message : t('settings.quality.defaultProfileSaveFail'))
+    }
+  }
+
+  const apply = async () => {
+    if (!await confirm({
+      title: t('common.confirmTitle'),
+      body: t('settings.quality.unsetConfirm', { count: unsetCount, name: chosen.name }),
+      confirmLabel: t('settings.quality.unsetApply'),
+    })) return
+    setApplying(true)
+    setApplyErr(null)
+    setApplyMsg(null)
+    try {
+      const res = await api.applyQualityProfileToAuthorsWithout(chosen.id)
+      setApplyMsg(t('settings.quality.unsetApplied', { count: res.updated }))
+      await loadCount()
+    } catch (e) {
+      setApplyErr(e instanceof Error ? e.message : t('settings.quality.unsetApplyFail'))
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  return (
+    <section className="mb-6 p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+      {confirmDialog}
+      <div id="author.default_quality_profile_id">
+        <label htmlFor={`${fid}-default`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+          {t('settings.quality.defaultProfileLabel')}
+        </label>
+        <p className="text-xs text-fg-muted mb-2">{t('settings.quality.defaultProfileHint')}</p>
+        <select
+          id={`${fid}-default`}
+          value={effectiveDefault ?? ''}
+          onChange={e => { void saveDefault(e.target.value) }}
+          className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
+        >
+          <option value="">{t('common.qualityProfileNone')}</option>
+          {profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        {defaultErr && <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-300">{defaultErr}</p>}
+      </div>
+      {unsetCount > 0 && (
+        <div className="mt-4 px-3 py-3 rounded bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 text-amber-900 dark:text-amber-200">
+          <p className="text-sm font-medium">{t('settings.quality.unsetNotice', { count: unsetCount })}</p>
+          <p className="text-xs mt-1">{t('settings.quality.unsetHint')}</p>
+          <div className="mt-2 flex flex-wrap items-end gap-2">
+            <div className="min-w-0">
+              <label htmlFor={`${fid}-apply`} className={labelCls}>{t('settings.quality.unsetProfileLabel')}</label>
+              <select
+                id={`${fid}-apply`}
+                value={chosen.id}
+                onChange={e => setApplyChoice(Number(e.target.value))}
+                className="max-w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm text-slate-900 dark:text-zinc-100"
+              >
+                {profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={() => { void apply() }}
+              disabled={applying}
+              className={`px-3 py-2 ${primaryFill} rounded text-xs font-medium disabled:opacity-50`}
+            >
+              {t('settings.quality.unsetApply')}
+            </button>
+          </div>
+          {applyErr && <p role="alert" className="mt-2 text-xs text-red-700 dark:text-red-300">{applyErr}</p>}
+        </div>
+      )}
+      {applyMsg && <p role="status" className="mt-3 text-xs text-fg-muted">{applyMsg}</p>}
+    </section>
   )
 }
 

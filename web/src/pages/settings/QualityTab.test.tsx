@@ -21,6 +21,10 @@ vi.mock('../../api/client', () => ({
     addQualityProfile: vi.fn(),
     updateQualityProfile: vi.fn(),
     deleteQualityProfile: vi.fn(),
+    getSetting: vi.fn(),
+    setSetting: vi.fn(),
+    countAuthorsWithoutQualityProfile: vi.fn(),
+    applyQualityProfileToAuthorsWithout: vi.fn(),
   },
 }))
 
@@ -69,7 +73,7 @@ describe('QualityTab', () => {
     })])
     render(<QualityTab />)
     await waitFor(() => {
-      expect(screen.getByText('Ebook Preferred')).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'Ebook Preferred' })).toBeInTheDocument()
     })
     // Numbering restarts per list: m4b is the only audiobook format, so it
     // is "1." in its own list rather than "3." in a flat one.
@@ -92,7 +96,7 @@ describe('QualityTab', () => {
       ],
     })])
     render(<QualityTab />)
-    await waitFor(() => screen.getByText('Ebook Preferred'))
+    await waitFor(() => screen.getByRole('heading', { name: 'Ebook Preferred' }))
     fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
     // Ebook list: prefer epub, then azw3; never pdf.
     expect(screen.getByText('settings.quality.summaryPreferThen first=epub rest=azw3')).toBeInTheDocument()
@@ -121,7 +125,7 @@ describe('QualityTab', () => {
       ],
     })])
     render(<QualityTab />)
-    await waitFor(() => screen.getByText('Ebook Preferred'))
+    await waitFor(() => screen.getByRole('heading', { name: 'Ebook Preferred' }))
     fireEvent.click(screen.getByRole('button', { name: 'common.edit' }))
     // The first "move down" belongs to epub, the top of the ebook list. It
     // swaps with pdf, its neighbour in that list, not with m4b, its
@@ -154,7 +158,7 @@ describe('QualityTab', () => {
       profile({ id: 3, name: 'Removing', upgradeAllowed: true, cutoff: 'epub', removeReplaced: true }),
     ])
     render(<QualityTab />)
-    await waitFor(() => screen.getByText('Upgrades'))
+    await waitFor(() => screen.getByRole('heading', { name: 'Upgrades' }))
     expect(screen.getAllByText('settings.quality.upgradesBadgeKeep cutoff=epub')).toHaveLength(1)
     expect(screen.getAllByText('settings.quality.upgradesBadgeRemove cutoff=epub')).toHaveLength(1)
   })
@@ -188,12 +192,12 @@ describe('QualityTab', () => {
     mockList.mockResolvedValueOnce([profile()])
     ;(api.deleteQualityProfile as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('profile is in use'))
     render(<QualityTab />)
-    await waitFor(() => screen.getByText('Ebook Preferred'))
+    await waitFor(() => screen.getByRole('heading', { name: 'Ebook Preferred' }))
     fireEvent.click(screen.getByRole('button', { name: 'common.delete' }))
     const dialog = await screen.findByRole('dialog')
     fireEvent.click(within(dialog).getByRole('button', { name: 'common.delete' }))
     expect(await screen.findByText('profile is in use')).toBeInTheDocument()
-    expect(screen.getByText('Ebook Preferred')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Ebook Preferred' })).toBeInTheDocument()
   })
 
   it('offers every release format the parser recognises (#1700)', async () => {
@@ -265,5 +269,62 @@ describe('QualityTab', () => {
     const sent = mockAdd.mock.calls[0][0] as QualityProfile
     expect(sent.upgradeAllowed).toBe(false)
     expect(sent.removeReplaced).toBe(false)
+  })
+
+  // #3831: the default for new authors, and the opt in apply for authors that
+  // have no profile and so accept every format.
+  describe('new author defaults (#3831)', () => {
+    const profiles = [profile({ id: 1, name: 'Any' }), profile({ id: 2, name: 'Epub only' })]
+
+    it('shows the stored default and saves a new one, None included', async () => {
+      mockList.mockResolvedValueOnce(profiles)
+      vi.mocked(api.getSetting).mockResolvedValueOnce({ key: 'author.default_quality_profile_id', value: '2' })
+      vi.mocked(api.countAuthorsWithoutQualityProfile).mockResolvedValueOnce({ count: 0 })
+      render(<QualityTab />)
+      const picker = await screen.findByLabelText('settings.quality.defaultProfileLabel')
+      await waitFor(() => expect(picker).toHaveValue('2'))
+      expect(screen.queryByText(/settings\.quality\.unsetNotice/)).toBeNull()
+
+      fireEvent.change(picker, { target: { value: '' } })
+      await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('author.default_quality_profile_id', ''))
+      expect(picker).toHaveValue('')
+    })
+
+    it('puts the default picker back when the save fails', async () => {
+      mockList.mockResolvedValueOnce(profiles)
+      vi.mocked(api.getSetting).mockResolvedValueOnce({ key: 'author.default_quality_profile_id', value: '2' })
+      vi.mocked(api.countAuthorsWithoutQualityProfile).mockResolvedValueOnce({ count: 0 })
+      vi.mocked(api.setSetting).mockRejectedValueOnce(new Error('HTTP 500'))
+      render(<QualityTab />)
+      const picker = await screen.findByLabelText('settings.quality.defaultProfileLabel')
+      await waitFor(() => expect(picker).toHaveValue('2'))
+
+      fireEvent.change(picker, { target: { value: '1' } })
+      expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 500')
+      expect(picker).toHaveValue('2')
+    })
+
+    it('offers the apply when authors have no profile, and only runs it after the confirm', async () => {
+      mockList.mockResolvedValueOnce(profiles)
+      vi.mocked(api.getSetting).mockRejectedValueOnce(new Error('HTTP 404'))
+      vi.mocked(api.countAuthorsWithoutQualityProfile)
+        .mockResolvedValueOnce({ count: 3 })
+        .mockResolvedValueOnce({ count: 0 })
+      vi.mocked(api.applyQualityProfileToAuthorsWithout).mockResolvedValueOnce({ updated: 3 })
+      render(<QualityTab />)
+
+      expect(await screen.findByText('settings.quality.unsetNotice count=3')).toBeInTheDocument()
+      fireEvent.change(screen.getByLabelText('settings.quality.unsetProfileLabel'), { target: { value: '2' } })
+      fireEvent.click(screen.getByRole('button', { name: 'settings.quality.unsetApply' }))
+
+      const dialog = await screen.findByRole('dialog')
+      expect(within(dialog).getByText('settings.quality.unsetConfirm count=3 name=Epub only')).toBeInTheDocument()
+      expect(api.applyQualityProfileToAuthorsWithout).not.toHaveBeenCalled()
+      fireEvent.click(within(dialog).getByRole('button', { name: 'settings.quality.unsetApply' }))
+
+      await waitFor(() => expect(api.applyQualityProfileToAuthorsWithout).toHaveBeenCalledWith(2))
+      expect(await screen.findByText('settings.quality.unsetApplied count=3')).toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByText(/settings\.quality\.unsetNotice/)).toBeNull())
+    })
   })
 })

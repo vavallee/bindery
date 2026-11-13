@@ -276,7 +276,7 @@ any remaining books under a *Books* divider. **Add Book** opens on *Books*,
 up both kinds, so switching views is instant, and each view shows how many
 results it holds. Which button you pressed otherwise only changes the
 placeholder. What you pick decides what happens next: an author row leads to the monitoring
-step (metadata profile, root folder, media type, monitor mode, auto-grab), a
+step (quality profile, metadata profile, root folder, media type, monitor mode, auto-grab), a
 book row to the single-book step (cover, identifiers, format, search on add).
 Rows that already match something in your library say **In your library** with
 an **Open** link instead of Select, and adding one anyway is refused with a
@@ -440,6 +440,33 @@ all. A list with entries but nothing ticked means nothing of that kind is
 grabbed for the author. Profiles made
 before this rule existed were reversed once on upgrade, so a profile you
 never reordered now reads best first and prefers what it always did.
+
+**Authors with no quality profile accept every format.** An author whose
+quality profile is *None* has no format filter at all: a release in any
+format can be grabbed for them, and a download in any format is imported, a
+PDF included. The Add Author dialog and Edit Author both offer *None (accepts
+every format)* and show it when that is the author's real state. Earlier
+versions of the dialog sent no profile, so authors added from the UI had none, and
+Edit Author showed the first profile as if it were selected (#3831).
+
+**Default quality profile for new authors.** Settings → Quality Profiles,
+above the profile list. Every author added without a choice gets it: by adding
+a book, from a series fill, the ABS, Calibre, CSV, Readarr and Goodreads
+imports, Hardcover list sync when the list sets no profile of its own, and the
+Add Author and request approval dialogs when you leave their picker alone.
+Those pickers show the default, or *None* when there is no default, and only
+send a profile when you change them. Leaving the picker alone on an author
+that is already in your library keeps the profile it has. Empty means *None*.
+If the profile it names is deleted, new authors get none until you pick
+another. If the default profile has upgrades on, authors created by an ABS or
+Calibre import join the upgrade sweep straight away.
+
+**Authors that already have no profile.** When some authors have no quality
+profile the same section says how many and offers to give them one: pick a
+profile, press **Apply** and confirm. It covers every author in the library
+with no profile, whichever account added it, including authors added by
+approving someone's request. Authors that have one keep it. Nothing does this
+on its own, so check this notice after upgrading.
 
 **Audiobook narrator and edition preferences.** A quality profile can also
 prefer narrators and an edition type for audiobooks (#1358). Both are off

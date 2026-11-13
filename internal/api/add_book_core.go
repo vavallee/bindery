@@ -365,7 +365,7 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 		if author == nil {
 			// Add-book creates the author as a side effect, so it never carries
 			// an explicit monitor choice — take the install-wide default (#1666).
-			db.ApplyAuthorMonitorDefaults(ctx, h.settings, fetched)
+			db.ApplyAuthorCreateDefaults(ctx, h.settings, fetched)
 			if err := h.authors.CreateForUser(ctx, fetched, userID); err != nil {
 				if !strings.Contains(err.Error(), "UNIQUE constraint failed") && !errors.Is(err, db.ErrAuthorIdentifierConflict) {
 					return addBookResult{}, err

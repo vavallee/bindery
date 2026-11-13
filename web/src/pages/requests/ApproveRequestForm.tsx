@@ -21,6 +21,11 @@ export default function ApproveRequestForm({ request, onApproved, onCancel }: Pr
   const isAuthor = request.kind === 'author'
   const [defaults, setDefaults] = useState<AuthorAddDefaults | null>(null)
   const [profileId, setProfileId] = useState<number | null>(null)
+  // null is "None": no format filter at grab or import (#3831).
+  const [qualityProfileId, setQualityProfileId] = useState<number | null>(null)
+  // Sent only when touched, so an untouched picker leaves the default to the
+  // server, the same rule as the Add Author dialog.
+  const [qualityProfileChanged, setQualityProfileChanged] = useState(false)
   const [rootFolderId, setRootFolderId] = useState<number | null>(null)
   const [monitorMode, setMonitorMode] = useState('all')
   const [mediaType, setMediaType] = useState(request.mediaType)
@@ -34,6 +39,7 @@ export default function ApproveRequestForm({ request, onApproved, onCancel }: Pr
       if (cancelled) return
       setDefaults(d)
       setProfileId(d.profiles.length > 0 ? d.profiles[0].id : null)
+      setQualityProfileId(d.qualityProfileId)
       setRootFolderId(d.rootFolderId)
       setMonitorMode(d.monitorMode)
       if (!request.mediaType && isAuthor) setMediaType(d.mediaType)
@@ -47,6 +53,11 @@ export default function ApproveRequestForm({ request, onApproved, onCancel }: Pr
     const choices: ApproveRequestChoices = { searchOnAdd, mediaType }
     if (isAuthor) {
       choices.metadataProfileId = profileId
+      // Only when the admin changed the picker, None included; left out, the
+      // server applies the default.
+      if (qualityProfileChanged) {
+        choices.qualityProfileId = qualityProfileId
+      }
       choices.rootFolderId = rootFolderId
       choices.monitorMode = monitorMode
     }
@@ -77,6 +88,15 @@ export default function ApproveRequestForm({ request, onApproved, onCancel }: Pr
                 {(defaults?.profiles ?? []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
+            {(defaults?.qualityProfiles ?? []).length > 0 && (
+              <div>
+                <label htmlFor={fieldId('quality')} className="block text-xs text-fg-muted mb-1">{t('requests.admin.qualityProfile')}</label>
+                <select id={fieldId('quality')} value={qualityProfileId ?? ''} onChange={e => { setQualityProfileId(e.target.value ? Number(e.target.value) : null); setQualityProfileChanged(true) }} className={selectClass}>
+                  <option value="">{t('common.qualityProfileNone')}</option>
+                  {(defaults?.qualityProfiles ?? []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+            )}
             <div>
               <label htmlFor={fieldId('root')} className="block text-xs text-fg-muted mb-1">{t('requests.admin.rootFolder')}</label>
               <select id={fieldId('root')} value={rootFolderId ?? ''} onChange={e => setRootFolderId(e.target.value ? Number(e.target.value) : null)} className={selectClass} disabled={!defaults}>

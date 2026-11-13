@@ -594,7 +594,6 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ForeignID             string  `json:"foreignAuthorId"`
 		Name                  string  `json:"authorName"`
-		QualityProfileID      *int64  `json:"qualityProfileId"`
 		MetadataProfileID     *int64  `json:"metadataProfileId"`
 		RootFolderID          *int64  `json:"rootFolderId"`
 		AudiobookRootFolderID *int64  `json:"audiobookRootFolderId"`
@@ -608,24 +607,28 @@ func (h *AuthorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MonitorNewItems *string `json:"monitorNewItems"`
 		SearchOnAdd     bool    `json:"searchOnAdd"`
 		MediaType       string  `json:"mediaType"`
+		// Left out means the install wide default quality profile; null
+		// means none, which accepts every format (#3831).
+		QualityProfileID nullableInt64 `json:"qualityProfileId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 	res, err := h.createAuthorCore(r.Context(), createAuthorParams{
-		ForeignID:             req.ForeignID,
-		Name:                  req.Name,
-		QualityProfileID:      req.QualityProfileID,
-		MetadataProfileID:     req.MetadataProfileID,
-		RootFolderID:          req.RootFolderID,
-		AudiobookRootFolderID: req.AudiobookRootFolderID,
-		Monitored:             req.Monitored,
-		MonitorMode:           req.MonitorMode,
-		MonitorLatestCount:    req.MonitorLatestCount,
-		MonitorNewItems:       req.MonitorNewItems,
-		SearchOnAdd:           req.SearchOnAdd,
-		MediaType:             req.MediaType,
+		ForeignID:              req.ForeignID,
+		Name:                   req.Name,
+		QualityProfileID:       req.QualityProfileID.Value,
+		QualityProfileExplicit: req.QualityProfileID.Set,
+		MetadataProfileID:      req.MetadataProfileID,
+		RootFolderID:           req.RootFolderID,
+		AudiobookRootFolderID:  req.AudiobookRootFolderID,
+		Monitored:              req.Monitored,
+		MonitorMode:            req.MonitorMode,
+		MonitorLatestCount:     req.MonitorLatestCount,
+		MonitorNewItems:        req.MonitorNewItems,
+		SearchOnAdd:            req.SearchOnAdd,
+		MediaType:              req.MediaType,
 	})
 	if err != nil {
 		h.writeCreateAuthorError(w, r, err)
@@ -1094,14 +1097,16 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Monitored             *bool   `json:"monitored"`
-		MonitorMode           *string `json:"monitorMode"`
-		MonitorLatestCount    *int    `json:"monitorLatestCount"`
-		MonitorNewItems       *string `json:"monitorNewItems"`
-		QualityProfileID      *int64  `json:"qualityProfileId"`
-		MetadataProfileID     *int64  `json:"metadataProfileId"`
-		RootFolderID          *int64  `json:"rootFolderId"`
-		AudiobookRootFolderID *int64  `json:"audiobookRootFolderId"`
+		Monitored          *bool   `json:"monitored"`
+		MonitorMode        *string `json:"monitorMode"`
+		MonitorLatestCount *int    `json:"monitorLatestCount"`
+		MonitorNewItems    *string `json:"monitorNewItems"`
+		// Left out leaves the profile alone; an explicit null clears it, so
+		// the Edit Author dialog's "None" can be saved (#3831).
+		QualityProfileID      nullableInt64 `json:"qualityProfileId"`
+		MetadataProfileID     *int64        `json:"metadataProfileId"`
+		RootFolderID          *int64        `json:"rootFolderId"`
+		AudiobookRootFolderID *int64        `json:"audiobookRootFolderId"`
 		// ClearAudiobookRootFolder lets the client explicitly reset the
 		// per-author audiobook root folder to "use the global dir". A nil
 		// AudiobookRootFolderID alone is ambiguous (omitted vs. cleared), so
@@ -1162,8 +1167,8 @@ func (h *AuthorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		author.MonitorLatestCount = *req.MonitorLatestCount
 	}
-	if req.QualityProfileID != nil {
-		author.QualityProfileID = req.QualityProfileID
+	if req.QualityProfileID.Set {
+		author.QualityProfileID = req.QualityProfileID.Value
 	}
 	if req.MetadataProfileID != nil {
 		author.MetadataProfileID = req.MetadataProfileID

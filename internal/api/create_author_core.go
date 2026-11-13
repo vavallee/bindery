@@ -18,15 +18,20 @@ import (
 // it itself. Ownership is not a field: the core reads the acting user from
 // ctx, exactly as the handler always has.
 type createAuthorParams struct {
-	ForeignID             string
-	Name                  string
-	QualityProfileID      *int64
-	MetadataProfileID     *int64
-	RootFolderID          *int64
-	AudiobookRootFolderID *int64
-	Monitored             bool
-	MonitorMode           *string
-	MonitorLatestCount    *int
+	ForeignID        string
+	Name             string
+	QualityProfileID *int64
+	// QualityProfileExplicit is true when the caller chose the quality
+	// profile, including choosing none with a nil QualityProfileID. False
+	// means no choice was made, so a new author gets the install wide
+	// default quality profile and a relinked one keeps its own (#3831).
+	QualityProfileExplicit bool
+	MetadataProfileID      *int64
+	RootFolderID           *int64
+	AudiobookRootFolderID  *int64
+	Monitored              bool
+	MonitorMode            *string
+	MonitorLatestCount     *int
 	// Settable at add time as of the Add Author redesign: before this it
 	// could only be changed on the author afterwards, so "catalogue this
 	// author once and never let a refresh grow it" was not expressible
@@ -191,7 +196,17 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 		// only by an admin, so a user who is not one gets the confirm merge
 		// conflict below instead, naming the author they matched.
 		if canRelinkAuthorToUpstream(canonical) && auth.CheckWriteOwnership(ctx, canonical.OwnerUserID) {
-			if err := h.relinkExistingAuthorToUpstream(ctx, canonical, author, req.Name, req.Monitored, monitorMode, monitorLatestCount, monitorNewItems, req.QualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID); err != nil {
+			// No choice keeps the profile the matched author already has. The
+			// relink used to write the request's nil over it, silently taking
+			// a configured author back to no format filter at all.
+			qualityProfileID := req.QualityProfileID
+			if !req.QualityProfileExplicit {
+				qualityProfileID = canonical.QualityProfileID
+				if qualityProfileID == nil {
+					qualityProfileID = db.ResolveDefaultAuthorQualityProfileID(ctx, h.settings)
+				}
+			}
+			if err := h.relinkExistingAuthorToUpstream(ctx, canonical, author, req.Name, req.Monitored, monitorMode, monitorLatestCount, monitorNewItems, qualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID); err != nil {
 				if isAuthorIdentityConflict(err) {
 					return createAuthorResult{}, &authorConflictError{Message: "upstream author already exists locally"}
 				}
@@ -218,7 +233,15 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 		}
 		return createAuthorResult{}, &authorConflictError{Canonical: canonical, Message: "author name already resolves to an existing author — confirm merge"}
 	}
-	applyAuthorCreateOptions(author, req.Monitored, monitorMode, monitorLatestCount, req.QualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID)
+	// An author with no quality profile accepts every format at grab and at
+	// import, so a request that makes no choice gets the install wide default
+	// quality profile, the same way it gets the default metadata profile. An
+	// explicit null is the user picking "None" and is kept (#3831).
+	qualityProfileID := req.QualityProfileID
+	if !req.QualityProfileExplicit {
+		qualityProfileID = db.ResolveDefaultAuthorQualityProfileID(ctx, h.settings)
+	}
+	applyAuthorCreateOptions(author, req.Monitored, monitorMode, monitorLatestCount, qualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID)
 	author.MonitorNewItems = monitorNewItems
 
 	if err := h.authors.CreateForUser(ctx, author, auth.UserIDFromContext(ctx)); err != nil {

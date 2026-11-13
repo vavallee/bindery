@@ -920,15 +920,17 @@ func (h *RequestHandler) PendingCount(w http.ResponseWriter, r *http.Request) {
 // folder and monitor fields apply to author requests; a book request uses
 // SearchOnAdd and MediaType, the same two choices the Add Book dialog offers.
 type approveBody struct {
-	QualityProfileID      *int64  `json:"qualityProfileId"`
-	MetadataProfileID     *int64  `json:"metadataProfileId"`
-	RootFolderID          *int64  `json:"rootFolderId"`
-	AudiobookRootFolderID *int64  `json:"audiobookRootFolderId"`
-	MonitorMode           *string `json:"monitorMode"`
-	MonitorLatestCount    *int    `json:"monitorLatestCount"`
-	MonitorNewItems       *string `json:"monitorNewItems"`
-	SearchOnAdd           *bool   `json:"searchOnAdd"`
-	MediaType             *string `json:"mediaType"`
+	// Left out means the install wide default quality profile; null means
+	// none (#3831).
+	QualityProfileID      nullableInt64 `json:"qualityProfileId"`
+	MetadataProfileID     *int64        `json:"metadataProfileId"`
+	RootFolderID          *int64        `json:"rootFolderId"`
+	AudiobookRootFolderID *int64        `json:"audiobookRootFolderId"`
+	MonitorMode           *string       `json:"monitorMode"`
+	MonitorLatestCount    *int          `json:"monitorLatestCount"`
+	MonitorNewItems       *string       `json:"monitorNewItems"`
+	SearchOnAdd           *bool         `json:"searchOnAdd"`
+	MediaType             *string       `json:"mediaType"`
 }
 
 // Approve adds what a request asked for and marks it approved.
@@ -1128,18 +1130,19 @@ func (h *RequestHandler) runApproval(ctx context.Context, req *models.LibraryReq
 		}
 	case models.RequestKindAuthor:
 		res, aerr := h.adder.createAuthorCore(ownerCtx, createAuthorParams{
-			ForeignID:             p.ForeignID,
-			Name:                  p.AuthorName,
-			QualityProfileID:      body.QualityProfileID,
-			MetadataProfileID:     body.MetadataProfileID,
-			RootFolderID:          body.RootFolderID,
-			AudiobookRootFolderID: body.AudiobookRootFolderID,
-			Monitored:             true,
-			MonitorMode:           body.MonitorMode,
-			MonitorLatestCount:    body.MonitorLatestCount,
-			MonitorNewItems:       body.MonitorNewItems,
-			SearchOnAdd:           searchOnAdd,
-			MediaType:             mediaType,
+			ForeignID:              p.ForeignID,
+			Name:                   p.AuthorName,
+			QualityProfileID:       body.QualityProfileID.Value,
+			QualityProfileExplicit: body.QualityProfileID.Set,
+			MetadataProfileID:      body.MetadataProfileID,
+			RootFolderID:           body.RootFolderID,
+			AudiobookRootFolderID:  body.AudiobookRootFolderID,
+			Monitored:              true,
+			MonitorMode:            body.MonitorMode,
+			MonitorLatestCount:     body.MonitorLatestCount,
+			MonitorNewItems:        body.MonitorNewItems,
+			SearchOnAdd:            searchOnAdd,
+			MediaType:              mediaType,
 			// The catalogue sync always runs: search on add happens inside
 			// it, and the core refuses search on add without it.
 			SkipCatalogueSync: false,

@@ -207,7 +207,7 @@ func (i *Importer) resolveAuthor(ctx context.Context, cfg ImportConfig, runID in
 	}
 	// An import carries no per-author monitor choice, so honour the install-wide
 	// default rather than letting the column default stamp "all" (#1666).
-	db.ApplyAuthorMonitorDefaults(ctx, i.settings, author)
+	db.ApplyAuthorCreateDefaults(ctx, i.settings, author)
 	if err := i.authors.Create(ctx, author); err != nil {
 		return nil, false, "", metadataMergeResult{}, err
 	}
@@ -351,7 +351,7 @@ func (i *Importer) resolveManualAuthor(ctx context.Context, cfg ImportConfig, ru
 	}
 	// An import carries no per-author monitor choice, so honour the install-wide
 	// default rather than letting the column default stamp "all" (#1666).
-	db.ApplyAuthorMonitorDefaults(ctx, i.settings, author)
+	db.ApplyAuthorCreateDefaults(ctx, i.settings, author)
 	if err := i.authors.Create(ctx, author); err != nil {
 		return nil, false, "", metadataMergeResult{}, err
 	}

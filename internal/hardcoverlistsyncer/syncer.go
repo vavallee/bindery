@@ -68,6 +68,11 @@ type ListSyncer struct {
 	books       *db.BookRepo
 	series      seriesLinker
 
+	// settings supplies the install wide default quality profile for an
+	// author created from a list that configures none (#3831). Nil means no
+	// default, which is what tests that never wire it get.
+	settings *db.SettingsRepo
+
 	tokenSource   func(context.Context) string
 	clientFactory hardcoverClientFactory
 	enricher      bookhydrate.AudiobookEnricher
@@ -145,6 +150,13 @@ func New(importLists *db.ImportListRepo, authors *db.AuthorRepo, books *db.BookR
 		books:         books,
 		clientFactory: func(apiKey string) hardcoverClient { return hardcover.NewAuthenticated(apiKey) },
 	}
+}
+
+// WithSettings wires the settings the syncer reads the default quality
+// profile from (#3831).
+func (s *ListSyncer) WithSettings(settings *db.SettingsRepo) *ListSyncer {
+	s.settings = settings
+	return s
 }
 
 // WithSeriesRepo wires the series persistence layer so that books imported
@@ -924,18 +936,16 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIn
 	// the sync, and each row must own its field.
 	//
 	// There is deliberately no fallback to the seeded id=1 profile when the list
-	// has none. Unlike metadata profiles, quality profiles are user-scoped:
-	// migration 025 backfills owner_user_id=1 onto every profile that predates
-	// multi-user, so on a tenanted install "profile 1" is one particular user's
-	// private profile, and stamping it here would hand it to authors created by
-	// somebody else's list. A list with no profile configured therefore still
-	// leaves this nil, which ResolveAuthorQualityProfile documents as "no format
-	// filter" — the same result as today, but now fixable from the list's
-	// settings instead of being unreachable.
+	// has none: that is just whichever profile happens to be first, not one
+	// anybody chose for new authors. A list with no profile configured gets the
+	// install wide default quality profile instead (#3831), which an admin set
+	// for exactly this, and stays nil when that is unset too, which
+	// ResolveAuthorQualityProfile documents as "no format filter".
 	if qualityProfileID != nil {
 		id := *qualityProfileID
 		author.QualityProfileID = &id
 	}
+	db.ApplyAuthorQualityProfileDefault(ctx, s.settings, author)
 
 	// Same copy-by-value rule as the quality profile: one pointer is shared
 	// across every author in the sync, and each row must own its field.

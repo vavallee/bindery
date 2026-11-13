@@ -60,7 +60,9 @@
     "hideDetails": "Hide details",
     "apply": "Apply",
     "unknownError": "Unknown error",
-    "bulkActionFailed": "Bulk action failed"
+    "bulkActionFailed": "Bulk action failed",
+    "qualityProfileNone": "None (accepts every format)",
+    "qualityProfileNoneHint": "With no quality profile every format gets through, at grab and at import."
   },
   "monitorMode": {
     "all": "All books",
@@ -2047,7 +2049,20 @@
       "summaryNoOpinionEbook": "No ebook formats listed: any ebook format is accepted, ranked by the built in order.",
       "summaryNoOpinionAudiobook": "No audiobook formats listed: any audiobook format is accepted, ranked by the built in order.",
       "summaryNoneAllowedEbook": "Nothing ticked: no ebook will be grabbed for this author.",
-      "summaryNoneAllowedAudiobook": "Nothing ticked: no audiobook will be grabbed for this author."
+      "summaryNoneAllowedAudiobook": "Nothing ticked: no audiobook will be grabbed for this author.",
+      "defaultProfileLabel": "Default quality profile for new authors",
+      "defaultProfileHint": "Given to every author added without a choice: imports, series fill, list syncs, and the Add Author and request dialogs when their picker is left alone. Those pickers show this default and only send a profile when you change them. None means new authors accept every format at grab and at import. If this profile has upgrades on, authors created by an ABS or Calibre import join the upgrade sweep straight away.",
+      "defaultProfileSaveFail": "Could not save the default quality profile",
+      "unsetNotice_one": "{{count}} author has no quality profile, so it accepts every format",
+      "unsetNotice_other": "{{count}} authors have no quality profile, so they accept every format",
+      "unsetHint": "Pick a profile to give to exactly those authors. Authors that already have one keep it. This covers every author in the library, whichever account added it.",
+      "unsetProfileLabel": "Profile to apply",
+      "unsetApply": "Apply",
+      "unsetConfirm_one": "Give {{count}} author the quality profile \"{{name}}\"? From then on it only grabs and imports the formats that profile allows.",
+      "unsetConfirm_other": "Give {{count}} authors the quality profile \"{{name}}\"? From then on they only grab and import the formats that profile allows.",
+      "unsetApplied_one": "Gave {{count}} author the profile.",
+      "unsetApplied_other": "Gave {{count}} authors the profile.",
+      "unsetApplyFail": "Could not apply the profile"
     },
     "metadata": {
       "heading": "Metadata Profiles",
@@ -2749,7 +2764,8 @@
       "providerMismatchNotice": "This record comes from {{linked}}, not from your primary metadata provider {{primary}}. If you add it, this author's catalogue will sync from {{linked}}. {{primary}} may still have the right record even though its search missed it.",
       "openExisting": "Open existing author",
       "findMetadata": "Find metadata",
-      "addFail": "Failed to add author"
+      "addFail": "Failed to add author",
+      "qualityProfile": "Quality profile"
     },
     "book": {
       "confirmAdd": "Add book",
@@ -3030,7 +3046,8 @@
       "searchOnAdd": "Search indexers after adding",
       "confirmApprove": "Approve and add",
       "approving": "Adding…",
-      "approveFailed": "Could not approve the request"
+      "approveFailed": "Could not approve the request",
+      "qualityProfile": "Quality profile"
     }
   },
   "bookStatus": {
