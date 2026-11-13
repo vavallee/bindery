@@ -232,8 +232,61 @@ func TestNew(t *testing.T) {
 	}
 
 	cs := New("securehost", 443, "u", "p", "", true)
-	if cs.baseURL != "https://securehost:443" {
+	if cs.baseURL != "https://securehost" {
 		t.Errorf("SSL baseURL: got %q", cs.baseURL)
+	}
+}
+
+// A default port is left out of baseURL so the Host header goes out without it
+// (#3668); any other port stays.
+func TestNew_DefaultPortOmitted(t *testing.T) {
+	cases := []struct {
+		host string
+		port int
+		ssl  bool
+		want string
+	}{
+		{"sun.seedhost.eu", 443, true, "https://sun.seedhost.eu/qbit"},
+		{"box.local", 80, false, "http://box.local/qbit"},
+		{"[::1]", 443, true, "https://[::1]/qbit"},
+		{"box.local", 443, false, "http://box.local:443/qbit"},
+		{"box.local", 80, true, "https://box.local:80/qbit"},
+		{"box.local", 8443, true, "https://box.local:8443/qbit"},
+	}
+	for _, tc := range cases {
+		if got := New(tc.host, tc.port, "u", "p", "/qbit", tc.ssl).baseURL; got != tc.want {
+			t.Errorf("New(%q, %d, ssl=%v) baseURL = %q, want %q", tc.host, tc.port, tc.ssl, got, tc.want)
+		}
+	}
+}
+
+// The Host header of the login carries no port for an https client on 443, and
+// the proxy basic auth still applies, since it reads its host from baseURL.
+func TestLogin_HostWithoutDefaultPort(t *testing.T) {
+	c := New("sun.seedhost.eu", 443, "u", "p", "", true)
+	var gotHost, gotAuth string
+	c.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotHost = r.Host
+		if gotHost == "" {
+			gotHost = r.URL.Host
+		}
+		gotAuth = r.Header.Get("Authorization")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Set-Cookie": {"SID=abc; path=/"}},
+			Body:       io.NopCloser(strings.NewReader("Ok.")),
+			Request:    r,
+		}, nil
+	})
+	c.SetBasicAuth("proxyuser", "proxypass")
+	if err := c.Login(context.Background()); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if gotHost != "sun.seedhost.eu" {
+		t.Errorf("Host = %q, want %q", gotHost, "sun.seedhost.eu")
+	}
+	if gotAuth == "" {
+		t.Error("proxy basic auth missing from the login request")
 	}
 }
 
@@ -312,10 +365,65 @@ func TestLogin_V5_NoContent(t *testing.T) {
 	}
 }
 
-// TestLogin_SendsCSRFHeaders verifies that Origin and Referer headers are
-// sent on every login request, as required by qBittorrent v5.x CSRF checks.
-// v4.x ignores these headers, so setting them is safe across versions.
-func TestLogin_SendsCSRFHeaders(t *testing.T) {
+// behindProxyQbit stands in for qBittorrent behind a reverse proxy (#3668).
+// qBittorrent compares an Origin or Referer header against the Host it
+// receives (webapplication.cpp, isCrossSiteRequest) and answers 401
+// Unauthorized on a mismatch, letting a request with neither header through.
+// Behind a proxy that Host is the proxy's upstream, so it can never match a
+// header built from the address Bindery dials.
+func behindProxyQbit(t *testing.T) *httptest.Server {
+	t.Helper()
+	const upstreamHost = "127.0.0.1:8080"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, header := range []string{"Origin", "Referer"} {
+			v := r.Header.Get(header)
+			if v == "" {
+				continue
+			}
+			if u, err := url.Parse(v); err != nil || u.Host != upstreamHost {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			break
+		}
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			if r.FormValue("username") != "admin" || r.FormValue("password") != "pass" {
+				_, _ = w.Write([]byte("Fails."))
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "s", Path: "/"})
+			w.WriteHeader(http.StatusNoContent)
+		case "/api/v2/app/version":
+			if _, err := r.Cookie("SID"); err != nil {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			_, _ = w.Write([]byte("v5.1.2"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestTest_BehindReverseProxy is #3668: a seedbox qBittorrent that the *arr
+// clients reach fine failed the connection test with "qBittorrent auth failed
+// (HTTP 401): Unauthorized", because the login carried an Origin and Referer
+// that qBittorrent's CSRF check rejected.
+func TestTest_BehindReverseProxy(t *testing.T) {
+	srv := behindProxyQbit(t)
+	c := newTestClient(srv.URL, "admin", "pass")
+	if err := c.Test(context.Background()); err != nil {
+		t.Fatalf("Test behind a reverse proxy: %v", err)
+	}
+}
+
+// TestLogin_SendsNoOriginOrReferer pins the header half of #3668. qBittorrent
+// accepts a login with neither header in every release (v4.6, v5.0, v5.1 and
+// master), which is what API clients such as the *arr apps send.
+func TestLogin_SendsNoOriginOrReferer(t *testing.T) {
 	var gotOrigin, gotReferer string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v2/auth/login" {
@@ -330,11 +438,34 @@ func TestLogin_SendsCSRFHeaders(t *testing.T) {
 	if err := c.Login(context.Background()); err != nil {
 		t.Fatalf("Login: %v", err)
 	}
-	if gotOrigin != srv.URL {
-		t.Errorf("Origin: want %q, got %q", srv.URL, gotOrigin)
+	if gotOrigin != "" || gotReferer != "" {
+		t.Errorf("login sent Origin %q and Referer %q, want neither", gotOrigin, gotReferer)
 	}
-	if gotReferer != srv.URL {
-		t.Errorf("Referer: want %q, got %q", srv.URL, gotReferer)
+}
+
+// TestLogin_AuthError_401 covers the hint for a 401. qBittorrent answers wrong
+// credentials with 200 "Fails.", so a 401 comes from a proxy or from
+// qBittorrent's Host header validation, and the message must point at both
+// rather than at the username and password.
+func TestLogin_AuthError_401(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL, "admin", "pass")
+	err := c.Login(context.Background())
+	var authErr *AuthError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("expected *AuthError, got %T: %v", err, err)
+	}
+	if authErr.Status != http.StatusUnauthorized || authErr.Body != "Unauthorized" {
+		t.Errorf("AuthError fields: got status=%d body=%q", authErr.Status, authErr.Body)
+	}
+	for _, want := range []string{"HTTP 401", "Proxy login", "Host header validation"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("401 message %q does not mention %q", err.Error(), want)
+		}
 	}
 }
 

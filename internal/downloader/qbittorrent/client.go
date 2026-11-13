@@ -44,6 +44,14 @@ func (e *AuthError) Error() string {
 			"Clear it in qBit (Tools → Options → Web UI → IP filtering, or the banlist in qBittorrent.conf — restart of qBit may not clear it because the banlist is persisted)."
 	case e.Status == http.StatusOK && e.Body == "Fails.":
 		return "qBittorrent auth failed: credentials rejected (check the WebUI username/password matches what's saved in bindery)."
+	case e.Status == http.StatusUnauthorized:
+		// qBittorrent answers wrong credentials with 200 "Fails.", so a 401
+		// means the request was turned away before the login was checked:
+		// by a proxy that wants its own login (#3693), or by qBittorrent's
+		// Host header validation.
+		return fmt.Sprintf("qBittorrent auth failed (HTTP 401): %s. The request was refused before the username and password were checked. "+
+			"If a reverse proxy in front of qBittorrent asks for its own login, fill in Proxy login on the client form; "+
+			"otherwise qBittorrent's Host header validation may be rejecting the host name bindery uses (Tools → Options → Web UI).", e.Body)
 	case e.Status == http.StatusForbidden:
 		return fmt.Sprintf("qBittorrent auth failed (HTTP 403): %s — host-header validation may be rejecting bindery; disable it in Tools → Options → Web UI, or whitelist the bindery container's hostname.", e.Body)
 	case e.Status != http.StatusOK:
@@ -112,7 +120,7 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 
 	jar, _ := cookiejar.New(nil)
 	return &Client{
-		baseURL:  fmt.Sprintf("%s://%s%s", scheme, clienthost.Authority(host, port), urlbase.Normalize(urlBase)),
+		baseURL:  fmt.Sprintf("%s://%s%s", scheme, authority(host, port, useSSL), urlbase.Normalize(urlBase)),
 		username: username,
 		password: password,
 		// Control client: dialled directly (never via BINDERY_OUTBOUND_PROXY),
@@ -130,6 +138,21 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 			return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 		},
 	}
+}
+
+// authority renders the host[:port] part of baseURL. The port is left out when
+// it is the scheme's default (443 for https, 80 for http), so Go sends a Host
+// header without it. A reverse proxy passes that header on, and qBittorrent's
+// Host header validation refuses "host:443" where it accepts "host" (#3668).
+func authority(host string, port int, useSSL bool) string {
+	if (useSSL && port == 443) || (!useSSL && port == 80) {
+		h := clienthost.Unbracket(strings.TrimSpace(host))
+		if strings.Contains(h, ":") {
+			return "[" + h + "]"
+		}
+		return h
+	}
+	return clienthost.Authority(host, port)
 }
 
 // SetBasicAuth makes every control request (login, polling, add, delete) carry
@@ -192,12 +215,12 @@ func (c *Client) Login(ctx context.Context) error {
 		return fmt.Errorf("build login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	// qBittorrent v5.x enforces CSRF protection on /auth/login and rejects
-	// requests without matching Origin and Referer headers (often silently —
-	// the empty-body 403 that motivated AuthError above). v4.x ignores these
-	// headers, so setting them is safe across versions.
-	req.Header.Set("Origin", c.baseURL)
-	req.Header.Set("Referer", c.baseURL)
+	// No Origin or Referer, as with the *arr clients. qBittorrent's CSRF check
+	// lets a request carrying neither through (API clients don't send them),
+	// and compares either one against the Host it receives. Behind a reverse
+	// proxy that Host is the proxy's upstream, or the public name without the
+	// port, so a header built from baseURL never matches and qBittorrent
+	// answers 401 Unauthorized before it looks at the credentials (#3668).
 
 	resp, err := c.http.Do(req)
 	if err != nil {
