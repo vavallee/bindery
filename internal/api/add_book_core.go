@@ -621,6 +621,27 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 	}
 	bookCreated = true
 
+	// 3 and 4. Monitor the book, apply the requested format, optionally search.
+	runID, err := h.monitorBookAndSearch(ctx, book, req)
+	if err != nil {
+		return addBookResult{}, err
+	}
+
+	return addBookResult{
+		Book:          book,
+		BookCreated:   bookInserted || fallbackSynced,
+		Author:        author,
+		AuthorCreated: authorWasJustCreated,
+		SearchRunID:   runID,
+	}, nil
+}
+
+// monitorBookAndSearch is steps 3 and 4 of addBookCore, shared with the
+// request approval of a book that is already in the library (#3835): mark
+// book monitored, apply req.MediaType and re-evaluate its status, save it, and
+// start the search when req.SearchOnAdd asks for one. It returns the search run
+// id, or "" when no search started. book is changed in place.
+func (h *AuthorHandler) monitorBookAndSearch(ctx context.Context, book *models.Book, req addBookParams) (string, error) {
 	// 3. Mark the book monitored (wanted). An explicit media-type choice is
 	// applied here too — the poll may have found a row created by the async
 	// catalogue sync (or one already in the library) carrying the default.
@@ -635,7 +656,7 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 		reevaluateBookStatus(book)
 	}
 	if err := h.books.Update(ctx, book); err != nil {
-		return addBookResult{}, err
+		return "", err
 	}
 
 	// 3b. Say so when this add went past the strict media-type policy (#1759).
@@ -669,11 +690,24 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 		go h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(searchruns.WithRunID(h.bgCtx(), runID), indexer.OriginAdd), *book) // #nosec G118 -- intentional: search must outlive the request
 	}
 
-	return addBookResult{
-		Book:          book,
-		BookCreated:   bookInserted || fallbackSynced,
-		Author:        author,
-		AuthorCreated: authorWasJustCreated,
-		SearchRunID:   runID,
-	}, nil
+	return runID, nil
+}
+
+// monitorExistingBookCore is the add for a book that is already in the
+// library, used when a request for it is approved (#3835). addBookCore refuses
+// such a book on purpose, so the Add dialog can never flip an owned book back
+// to wanted by accident. An approver deciding on a request is an explicit act,
+// so here the existing row is monitored for mediaType, which the caller has
+// already widened to include what the row had, and searched when asked.
+// A book the user skipped is wanted again; otherwise status is re-derived from
+// the formats still missing, as for any media type change.
+func (h *AuthorHandler) monitorExistingBookCore(ctx context.Context, book *models.Book, mediaType string, searchOnAdd bool) (addBookResult, error) {
+	if book.Status == models.BookStatusSkipped {
+		book.Status = models.BookStatusWanted
+	}
+	runID, err := h.monitorBookAndSearch(ctx, book, addBookParams{MediaType: mediaType, SearchOnAdd: searchOnAdd})
+	if err != nil {
+		return addBookResult{}, err
+	}
+	return addBookResult{Book: book, SearchRunID: runID}, nil
 }

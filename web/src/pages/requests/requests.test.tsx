@@ -37,6 +37,7 @@ vi.mock('react-i18next', () => ({
         'requests.admin.qualityProfile': 'Quality profile',
         'common.qualityProfileNone': 'None (accepts every format)',
         'requests.admin.requestedBy': 'asked by {{username}} on {{date}}',
+        'requests.admin.alreadyInLibrary': 'Already in the library',
         'requests.admin.createdByAPIKey': 'made for them with the API key',
         'requests.admin.createdByAdmin': 'made for them by {{username}}',
       }
@@ -122,6 +123,31 @@ describe('RequestsPage', () => {
     await waitFor(() => expect(screen.queryByText('Dune')).not.toBeInTheDocument())
     expect(changed).toHaveBeenCalled()
     window.removeEventListener('bindery:requests-changed', changed)
+  })
+
+  // #3835: the book reached the library while the request waited.
+  it('flags a pending request the library already covers, and shows what the approval did', async () => {
+    vi.mocked(api.listRequestQueue).mockResolvedValue({
+      items: [
+        req({ id: 1, title: 'Covered', username: 'reader', alreadyInLibrary: true }),
+        req({ id: 2, title: 'Standing', username: 'reader' }),
+      ],
+      total: 2, limit: 50, offset: 0,
+    })
+    const sentence = 'This book was already in the library with the requested format, so nothing was added and the request is resolved.'
+    vi.mocked(api.approveRequest).mockResolvedValue(req({ id: 1, title: 'Covered', status: 'approved', notice: sentence }))
+    render(<RequestsPage />)
+
+    const row = async (title: string) => (await screen.findByText(title)).closest('li') as HTMLElement
+    expect(within(await row('Covered')).getByText('Already in the library')).toBeInTheDocument()
+    expect(within(await row('Standing')).queryByText('Already in the library')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve request for Covered' }))
+    fireEvent.click(within(screen.getByRole('form', { name: 'Approve Covered' })).getByRole('button', { name: 'Approve and add' }))
+
+    // The row leaves the pending list, and the server's sentence stays on screen.
+    await waitFor(() => expect(screen.queryByText('Covered')).not.toBeInTheDocument())
+    expect(screen.getByRole('status')).toHaveTextContent(sentence)
   })
 
   it('says who made a request on its owner\'s behalf', async () => {

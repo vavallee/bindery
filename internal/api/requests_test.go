@@ -392,6 +392,18 @@ type fakeAdder struct {
 	// runID is the search run id addBookCore reports, as when a search on add
 	// registered one (#3133).
 	runID string
+	// existingCalls counts monitorExistingBookCore calls, and lastExistingType
+	// is the media type the last one was asked to monitor.
+	existingCalls    atomic.Int32
+	lastExistingType string
+}
+
+func (a *fakeAdder) monitorExistingBookCore(_ context.Context, _ *models.Book, mediaType string, _ bool) (addBookResult, error) {
+	a.existingCalls.Add(1)
+	a.mu.Lock()
+	a.lastExistingType = mediaType
+	a.mu.Unlock()
+	return addBookResult{}, a.err
 }
 
 func (a *fakeAdder) addBookCore(ctx context.Context, req addBookParams) (addBookResult, error) {
@@ -510,6 +522,9 @@ func TestRequestsApprove_RevalidatesPayload(t *testing.T) {
 		t.Fatalf("add core ran %d times on invalid payloads", adder.calls.Load())
 	}
 
+	// Filed before the author reaches the library, below.
+	authorReq := decodeRequest(t, f.create(t, f.other, `{"kind":"author","foreignId":"OL39307A"}`))
+
 	good := `{"kind":"book","foreignId":"OL27482W"}`
 	if _, err := f.database.ExecContext(ctx, "UPDATE requests SET payload_json = ? WHERE id = ?", good, created.ID); err != nil {
 		t.Fatal(err)
@@ -518,11 +533,13 @@ func TestRequestsApprove_RevalidatesPayload(t *testing.T) {
 	if err := f.books.Create(ctx, &models.Book{ForeignID: "OL27482W", AuthorID: author.ID, Title: "The War of the Worlds", SortTitle: "war"}); err != nil {
 		t.Fatal(err)
 	}
-	rec := f.approve(f.admin, created.ID, `{}`)
-	if rec.Code != http.StatusConflict || requestErrorBody(rec) != "This book is already in the library." {
-		t.Fatalf("approve after it reached the library: %d %q", rec.Code, requestErrorBody(rec))
+	// An author already in the library is still refused, and the request stays
+	// pending. (A book in the library is no longer a refusal: #3835.)
+	rec := f.approve(f.admin, authorReq.ID, `{}`)
+	if rec.Code != http.StatusConflict || requestErrorBody(rec) != "This author is already in the library." {
+		t.Fatalf("approve author after it reached the library: %d %q", rec.Code, requestErrorBody(rec))
 	}
-	if row, _ := f.requests.GetByID(ctx, created.ID); row.Status != models.RequestStatusPending {
+	if row, _ := f.requests.GetByID(ctx, authorReq.ID); row.Status != models.RequestStatusPending {
 		t.Fatalf("status after refused approval = %q, want pending", row.Status)
 	}
 	if rec := f.approve(f.admin, created.ID, `{"rootFolderId":1,"bogus":true}`); rec.Code != http.StatusBadRequest {

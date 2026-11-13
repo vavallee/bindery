@@ -50,6 +50,10 @@ const (
 type requestAdder interface {
 	addBookCore(ctx context.Context, req addBookParams) (addBookResult, error)
 	createAuthorCore(ctx context.Context, req createAuthorParams) (createAuthorResult, error)
+	// monitorExistingBookCore is the add for a book that is already in the
+	// library: it monitors the formats in mediaType on the existing row, and
+	// searches when asked (#3835).
+	monitorExistingBookCore(ctx context.Context, book *models.Book, mediaType string, searchOnAdd bool) (addBookResult, error)
 }
 
 // requestMetadata is the provider lookup a create uses to learn the title and
@@ -319,6 +323,13 @@ type requestResponse struct {
 	// started. Poll GET /search/runs/{id} for how it ended. Only the approve
 	// response and an auto approved create carry it (#3133).
 	SearchRunID string `json:"searchRunId,omitempty"`
+	// Notice is a sentence for the approver when an approval found the book
+	// already in the library (#3835). Only the approve response carries it.
+	Notice string `json:"notice,omitempty"`
+	// AlreadyInLibrary is true on a pending book request in the admin queue
+	// when the book is in the library with every requested format monitored
+	// or owned, so approving adds nothing (#3835).
+	AlreadyInLibrary bool `json:"alreadyInLibrary,omitempty"`
 }
 
 type requestListResponse struct {
@@ -335,6 +346,7 @@ func toRequestResponse(req models.LibraryRequest, admin bool) requestResponse {
 	}
 	out := requestResponse{
 		SearchRunID:   req.SearchRunID,
+		Notice:        req.Notice,
 		ID:            req.ID,
 		Kind:          req.Kind,
 		ForeignID:     req.ForeignID,
@@ -361,6 +373,7 @@ func toRequestResponse(req models.LibraryRequest, admin bool) requestResponse {
 		out.ResultAuthorID = req.ResultAuthorID
 		out.CreatedVia = req.CreatedVia
 		out.CreatedBy = req.CreatedByUsername
+		out.AlreadyInLibrary = req.AlreadyInLibrary
 	}
 	return out
 }
@@ -827,6 +840,81 @@ func (h *RequestHandler) alreadyInLibrary(ctx context.Context, owner int64, kind
 	return "", nil
 }
 
+// bookHeldByAnotherAccount reports whether book belongs to an account other
+// than owner while tenancy is enforced. Approving must not rewrite that
+// account's row, so such a request keeps the plain refusal (and can be
+// declined). With tenancy off the library is shared and nothing is held.
+func (h *RequestHandler) bookHeldByAnotherAccount(book *models.Book, owner int64) bool {
+	return auth.EnforceTenancy() && book.OwnerUserID != 0 && book.OwnerUserID != owner
+}
+
+// defaultMediaType is the install wide default format, which a request for
+// "any format" stands for when it meets the library.
+func (h *RequestHandler) defaultMediaType(ctx context.Context) string {
+	return defaultMediaTypeSetting(ctx, h.settings)
+}
+
+// effectiveMediaType is mediaType, or the default when the request named none.
+func (h *RequestHandler) effectiveMediaType(ctx context.Context, mediaType string) string {
+	if mediaType == "" {
+		return h.defaultMediaType(ctx)
+	}
+	return mediaType
+}
+
+// requestedFormats splits a media type into the formats it asks for.
+func requestedFormats(mediaType string) (ebook, audiobook bool) {
+	return mediaType == models.MediaTypeEbook || mediaType == models.MediaTypeBoth,
+		mediaType == models.MediaTypeAudiobook || mediaType == models.MediaTypeBoth
+}
+
+// missingRequestFormats reports which of the formats in mediaType the book
+// neither has monitored nor owns. A format counts as covered when its file is
+// on disk, or when the book is monitored for it. An unmonitored book, or one
+// the user skipped, covers nothing it has no file for: nobody is going to get
+// it. The legacy file_path column counts for the format the book is set to.
+func missingRequestFormats(b *models.Book, mediaType string) (ebook, audiobook bool) {
+	wantEbook, wantAudio := requestedFormats(mediaType)
+	ownsEbook := b.EbookFilePath != "" || (b.FilePath != "" && b.MediaType == models.MediaTypeEbook)
+	ownsAudio := b.AudiobookFilePath != "" || (b.FilePath != "" && b.MediaType == models.MediaTypeAudiobook)
+	ebook = wantEbook && !ownsEbook && (!b.Monitored || !b.WantsEbook())
+	audiobook = wantAudio && !ownsAudio && (!b.Monitored || !b.WantsAudiobook())
+	return ebook, audiobook
+}
+
+// approveExistingBook handles an approval whose book is already in the
+// library. It returns the search run id, if one started, and the sentence the
+// approver is told. When every requested format is covered nothing is written
+// and the request is simply resolved. Otherwise the existing row is widened to
+// the union of what it had and what was asked, through the same monitor and
+// search step addBookCore ends with.
+func (h *RequestHandler) approveExistingBook(ctx context.Context, book *models.Book, mediaType string, searchOnAdd bool) (runID, notice string, err error) {
+	missingEbook, missingAudio := missingRequestFormats(book, mediaType)
+	if !missingEbook && !missingAudio {
+		return "", "This book was already in the library with the requested format, so nothing was added and the request is resolved.", nil
+	}
+	ebook, audio := book.WantsEbook() || missingEbook, book.WantsAudiobook() || missingAudio
+	target := models.MediaTypeEbook
+	switch {
+	case ebook && audio:
+		target = models.MediaTypeBoth
+	case audio:
+		target = models.MediaTypeAudiobook
+	}
+	res, err := h.adder.monitorExistingBookCore(ctx, book, target, searchOnAdd)
+	if err != nil {
+		return "", "", err
+	}
+	added := models.MediaTypeEbook
+	switch {
+	case missingEbook && missingAudio:
+		added = "ebook and audiobook"
+	case missingAudio:
+		added = models.MediaTypeAudiobook
+	}
+	return res.SearchRunID, "This book was already in the library, so the " + added + " is now monitored on the existing book.", nil
+}
+
 func (h *RequestHandler) maxPendingPerUser(ctx context.Context) int {
 	if h.settings == nil {
 		return defaultRequestsMaxPendingPerUser
@@ -897,11 +985,31 @@ func (h *RequestHandler) Queue(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
+	defaultType := h.defaultMediaType(r.Context())
 	out := make([]requestResponse, 0, len(items))
 	for _, it := range items {
+		if it.Kind == models.RequestKindBook && (it.Status == models.RequestStatusPending || it.Status == models.RequestStatusApproving) {
+			it.AlreadyInLibrary = h.pendingBookCovered(r.Context(), it, defaultType)
+		}
 		out = append(out, toRequestResponse(it, true))
 	}
 	writeJSON(w, http.StatusOK, requestListResponse{Items: out, Total: total, Limit: limit, Offset: offset})
+}
+
+// pendingBookCovered reports whether a pending book request asks for nothing
+// the library lacks. A lookup error answers false: the badge is a hint, and a
+// row that cannot be checked is left looking like any other pending row.
+func (h *RequestHandler) pendingBookCovered(ctx context.Context, req models.LibraryRequest, defaultType string) bool {
+	mediaType := req.MediaType
+	if mediaType == "" {
+		mediaType = defaultType
+	}
+	existing, err := h.books.GetByForeignID(ctx, req.ForeignID)
+	if err != nil || existing == nil {
+		return false
+	}
+	missingEbook, missingAudio := missingRequestFormats(existing, mediaType)
+	return !missingEbook && !missingAudio
 }
 
 // PendingCount answers {"count": n} for the admin nav badge.
@@ -1018,7 +1126,7 @@ func (h *RequestHandler) runClaimedApproval(ctx context.Context, req *models.Lib
 		}
 	}()
 	defer stopRenew()
-	bookID, authorID, runID, status, msg, err := h.runApproval(ctx, req, body)
+	bookID, authorID, runID, notice, status, msg, err := h.runApproval(ctx, req, body)
 	stopRenew()
 	if err != nil || msg != "" {
 		if relErr := h.requests.Release(ctx, req.ID, req.ClaimToken); relErr != nil {
@@ -1041,6 +1149,7 @@ func (h *RequestHandler) runClaimedApproval(ctx context.Context, req *models.Lib
 		return nil, 0, "", fmt.Errorf("reload approved request: %w", err)
 	}
 	done.SearchRunID = runID
+	done.Notice = notice
 	return done, 0, "", nil
 }
 
@@ -1081,27 +1190,51 @@ func (h *RequestHandler) renewClaim(id int64, token string) (stop func()) {
 
 // runApproval validates a claimed request and runs the add. It returns the
 // created ids, or a status and sentence for a refusal, or an error.
-func (h *RequestHandler) runApproval(ctx context.Context, req *models.LibraryRequest, body approveBody) (bookID, authorID *int64, searchRunID string, status int, msg string, err error) {
+func (h *RequestHandler) runApproval(ctx context.Context, req *models.LibraryRequest, body approveBody) (bookID, authorID *int64, searchRunID, notice string, status int, msg string, err error) {
 	var p requestPayload
 	if jerr := json.Unmarshal([]byte(req.PayloadJSON), &p); jerr != nil ||
 		p.Kind != req.Kind || p.ForeignID != req.ForeignID || !validForeignID(p.ForeignID) ||
 		(p.ForeignAuthorID != "" && !validForeignID(p.ForeignAuthorID)) || !validRequestMediaType(p.MediaType) {
-		return nil, nil, "", http.StatusUnprocessableEntity, "This request's stored details are not valid. Decline it and ask for it again.", nil
+		return nil, nil, "", "", http.StatusUnprocessableEntity, "This request's stored details are not valid. Decline it and ask for it again.", nil
 	}
-	if inLib, lerr := h.alreadyInLibrary(ctx, req.OwnerUserID, p.Kind, p.ForeignID); lerr != nil {
-		return nil, nil, "", 0, "", lerr
-	} else if inLib != "" {
-		return nil, nil, "", http.StatusConflict, inLib, nil
-	}
-	if h.adder == nil {
-		return nil, nil, "", http.StatusServiceUnavailable, "Adding is not available right now.", nil
-	}
-
 	mediaType := p.MediaType
 	if body.MediaType != nil {
 		mediaType = *body.MediaType
 	}
 	searchOnAdd := body.SearchOnAdd != nil && *body.SearchOnAdd
+
+	// A book that reached the library while the request waited is no dead end
+	// (#3835): the approval widens the existing row to the formats the request
+	// asked for, or resolves the request when the library already has them. An
+	// author already in the library still refuses, as before.
+	if p.Kind == models.RequestKindBook {
+		existing, gerr := h.books.GetByForeignID(ctx, p.ForeignID)
+		if gerr != nil {
+			return nil, nil, "", "", 0, "", gerr
+		}
+		if existing != nil {
+			if h.bookHeldByAnotherAccount(existing, req.OwnerUserID) {
+				return nil, nil, "", "", http.StatusConflict, "This book is already in the library.", nil
+			}
+			if h.adder == nil {
+				return nil, nil, "", "", http.StatusServiceUnavailable, "Adding is not available right now.", nil
+			}
+			runID, note, aerr := h.approveExistingBook(ctx, existing, h.effectiveMediaType(ctx, mediaType), searchOnAdd)
+			if aerr != nil {
+				status, msg, err := approvalErrorResponse(aerr)
+				return nil, nil, "", "", status, msg, err
+			}
+			authorID := existing.AuthorID
+			return &existing.ID, &authorID, runID, note, 0, "", nil
+		}
+	} else if inLib, lerr := h.alreadyInLibrary(ctx, req.OwnerUserID, p.Kind, p.ForeignID); lerr != nil {
+		return nil, nil, "", "", 0, "", lerr
+	} else if inLib != "" {
+		return nil, nil, "", "", http.StatusConflict, inLib, nil
+	}
+	if h.adder == nil {
+		return nil, nil, "", "", http.StatusServiceUnavailable, "Adding is not available right now.", nil
+	}
 
 	// The requester owns what the approval creates. Their role goes with
 	// their id so the core's scoping treats the add as theirs, never as an
@@ -1119,7 +1252,7 @@ func (h *RequestHandler) runApproval(ctx context.Context, req *models.LibraryReq
 		})
 		if aerr != nil {
 			status, msg, err := approvalErrorResponse(aerr)
-			return nil, nil, "", status, msg, err
+			return nil, nil, "", "", status, msg, err
 		}
 		searchRunID = res.SearchRunID
 		if res.Book != nil {
@@ -1149,13 +1282,13 @@ func (h *RequestHandler) runApproval(ctx context.Context, req *models.LibraryReq
 		})
 		if aerr != nil {
 			status, msg, err := approvalErrorResponse(aerr)
-			return nil, nil, "", status, msg, err
+			return nil, nil, "", "", status, msg, err
 		}
 		if res.Author != nil {
 			authorID = &res.Author.ID
 		}
 	}
-	return bookID, authorID, searchRunID, 0, "", nil
+	return bookID, authorID, searchRunID, notice, 0, "", nil
 }
 
 // approvalErrorResponse maps an add core error to what the approve route
