@@ -1,5 +1,5 @@
 import { api } from '../api/client'
-import type { AuthorMonitorMode, MediaType, MetadataProfile, RootFolder } from '../api/client'
+import type { AuthorMonitorMode, MediaType, MetadataProfile, QualityProfile, RootFolder } from '../api/client'
 
 // What the author confirm step in AddToLibraryModal needs before an add can
 // be posted. Kept out of AddAuthorConfirm.tsx so that file exports only its
@@ -24,13 +24,21 @@ export interface AuthorAddDefaults {
   mediaType: MediaType
   monitorMode: AuthorMonitorMode
   monitorLatestCount: number
+  qualityProfiles: QualityProfile[]
+  // The quality profile the picker shows before the user touches it: the
+  // install default when it names an existing profile, otherwise null (None).
+  // Display only. The dialogs send qualityProfileId only once the user
+  // changes the picker, so an untouched picker leaves the choice to the
+  // server: the default on a new author, and the author's own profile when
+  // the add relinks one already in the library (#3831).
+  qualityProfileId: number | null
 }
 
 // loadAuthorAddDefaults gathers what the author confirm step needs before an
 // add can be posted. Every lookup degrades to its default on failure, so the
 // step is usable on an install with nothing configured.
 export async function loadAuthorAddDefaults(): Promise<AuthorAddDefaults> {
-  const [profiles, rootFolders, defaultRootSetting, defaultAudiobookRootSetting, mediaTypeSetting, monitorModeSetting, latestCountSetting] = await Promise.all([
+  const [profiles, rootFolders, defaultRootSetting, defaultAudiobookRootSetting, mediaTypeSetting, monitorModeSetting, latestCountSetting, qualityProfiles, defaultQualitySetting] = await Promise.all([
     api.listMetadataProfiles().catch((err: unknown) => { console.error(err); return [] as MetadataProfile[] }),
     api.listRootFolders().catch((err: unknown) => { console.error(err); return [] as RootFolder[] }),
     api.getSetting('library.defaultRootFolderId').catch(() => null),
@@ -38,6 +46,12 @@ export async function loadAuthorAddDefaults(): Promise<AuthorAddDefaults> {
     api.getSetting('default.media_type').catch(() => null),
     api.getSetting('author.default_monitor_mode').catch(() => null),
     api.getSetting('author.default_monitor_latest_count').catch(() => null),
+    // Started through Promise.resolve so even a synchronous failure degrades
+    // to "no profiles", which hides the picker and leaves the choice to the
+    // server's default, rather than failing the whole dialog. Quietly, since a
+    // requester is refused the profile list by design.
+    Promise.resolve().then(() => api.listQualityProfiles()).then(list => list ?? [], () => [] as QualityProfile[]),
+    Promise.resolve().then(() => api.getSetting('author.default_quality_profile_id')).catch(() => null),
   ])
   // Seed the root-folder picker from the install default rather than from
   // list position (#2166). The value here is posted as an explicit
@@ -63,5 +77,11 @@ export async function loadAuthorAddDefaults(): Promise<AuthorAddDefaults> {
   const monitorMode = isAuthorMonitorMode(modeValue) ? modeValue : DEFAULT_MONITOR_MODE
   const latest = Number(latestCountSetting?.value)
   const monitorLatestCount = Number.isInteger(latest) && latest > 0 ? latest : DEFAULT_MONITOR_LATEST_COUNT
-  return { profiles, rootFolders, rootFolderId, audiobookRootFolderId, mediaType, monitorMode, monitorLatestCount }
+  // A default naming a deleted profile is treated as unset, the same as the
+  // server does when it stamps the default on an author. No first profile
+  // fallback: with no default the server gives the author none, so the picker
+  // says None rather than showing a profile that would not be applied.
+  const defaultQualityId = Number(defaultQualitySetting?.value)
+  const qualityProfileId = qualityProfiles.find(p => p.id === defaultQualityId)?.id ?? null
+  return { profiles, rootFolders, rootFolderId, audiobookRootFolderId, mediaType, monitorMode, monitorLatestCount, qualityProfiles, qualityProfileId }
 }

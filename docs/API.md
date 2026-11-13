@@ -101,10 +101,14 @@ POST   /api/v1/author/{id}/merge                  merge another author into this
 `POST /api/v1/author/{id}/merge` takes `{"sourceId": 123}` (and an optional
 `overwriteDefaults`, default `true`); `{id}` is the author that is kept. It
 answers `{"BooksReparented", "AliasesMigrated", "AliasesCreated",
-"AliasesSkipped", "TargetUpdated"}`. Alias names are unique across the
+"AliasesSkipped", "IdentifiersDropped", "TargetUpdated"}`. Alias names are unique across the
 instance, so a source name another author already holds cannot be recorded on
 the kept author: it is listed in `AliasesSkipped` (`null` when there are none)
-and the server logs a warning (#3565).
+and the server logs a warning (#3565). A provider id of the source that another
+author in the kept author's account already holds is not moved, since within
+one account an id answers to one author; it is listed in `IdentifiersDropped`
+(`null` when there are none). That only happens when merging across accounts
+(#3555).
 
 Each author in `GET /api/v1/author` carries `statistics.bookCount` (the author's
 books, scoped to the caller like `GET /book`) and `statistics.availableBookCount`
@@ -185,6 +189,27 @@ and `POST /api/v1/author/{id}/refresh` answers **409 Conflict** while it is set
 instead of starting a second sync (#2601). It is also set from the moment
 `POST /api/v1/author` answers, for the catalogue sync the add starts, so a page
 opened straight after the add sees it (#3058).
+
+`qualityProfileId` on `POST /api/v1/author` and `PUT /api/v1/author/{id}`
+tells "left out" apart from `null` (#3831). An author with no quality profile
+has no format filter at all: every format is accepted at grab and at import.
+
+- `POST /api/v1/author`: left out gives the new author the
+  `author.default_quality_profile_id` setting's profile, or none when that is
+  unset or names a deleted profile. `null` means none, whatever the default.
+  When the add relinks an existing author instead, left out keeps that
+  author's own profile (it used to clear it).
+- `PUT /api/v1/author/{id}`: left out leaves the profile alone, `null` clears
+  it, a number sets it.
+- `POST /api/v1/requests/{id}/approve` follows the `POST /api/v1/author` rule.
+
+The web Add Author and request approval dialogs send `qualityProfileId` only
+when the user changed the picker, so an untouched picker gets the default on a
+new author and keeps the profile of an author that already exists.
+
+Every other path that creates an author (adding a book, series fill, the ABS,
+Calibre, CSV, Readarr and Goodreads imports, and Hardcover list sync when the
+list sets no profile of its own) gives it the default quality profile too.
 
 `POST /api/v1/author` accepts an optional `monitorNewItems` (#2541), the same
 field `PUT /api/v1/author/{id}` takes: `all` (the default) lets a refresh add
@@ -404,6 +429,12 @@ Clients written before this ignore the two new keys and see no change. Automatic
 searches never see a filtered release. The free text search
 (`GET /indexer/search`) does not return `filtered`.
 
+A torrent release in any of these lists, and in `GET /indexer/search`, carries
+`seeders` and `peers` when its indexer reports the torznab attributes of those
+names (#3819); `peers` is seeders plus leechers, as the indexer counts them.
+Both are absent, not 0, when the indexer does not report them, as with every
+usenet release, so a reported 0 means a dead torrent.
+
 Each book carries `averageRating` (community rating, 0 when the provider has none)
 and `ratingsCount` (#3124). `GET /book?sort=` also accepts `rating-desc` and
 `rating-asc`; unrated books sort last in both directions, and `rating-desc` breaks
@@ -422,10 +453,18 @@ PATCH  /api/v1/series/{id}                        monitor / unmonitor (admin): {
                                                   released books) or "all" (adds every missing book). Read by the scheduled series check while
                                                   `series.monitoring.interval` is set; each series carries `monitoring` {mode,lastCheckAt,nextCheckAt,lastStatus,lastMessage,lastCreated}
 POST   /api/v1/series/{id}/merge                  merge other series into this one: {"sourceIds":[..],"title":"optional rename","dryRun":true} previews (admin)
+GET    /api/v1/series/duplicates                  series that share a title, sub series qualifiers kept apart, grouped (admin), see below
+POST   /api/v1/series/duplicates/merge            merge duplicate groups: {"groups":[{"keepId":1,"sourceIds":[2]}],"dryRun":true} (admin), see below
 POST   /api/v1/series/{id}/books                  add a book or update its position: {"bookId":1,"positionInSeries":"2","primarySeries":true}; positionInSeries is optional (admin)
 DELETE /api/v1/series/{id}/books/{bookId}         take a book out of the series, and keep it out on refresh (admin)
 POST   /api/v1/abs/import                         start an Audiobookshelf import (admin): {"dryRun":true,"libraryIds":[..],"full":true}, all optional. libraryIds must be a subset of the configured libraries (400 on an unknown id), full re-runs the Hardcover series match for every item
+GET    /api/v1/abs/import/runs                    recorded import runs, newest first (admin): ?limit (default 10, max 200) and ?offset. One row per library, so an import over many libraries spans several rows
 ```
+
+`GET /abs/import/runs` used to ignore `limit` and `offset` and always answer
+the newest 10 rows (#2173). It still answers a bare array. A `limit` that is
+not a positive number falls back to 10, a larger one is capped at 200, a bad
+`offset` counts as 0, and an offset past the end gives `[]`.
 
 Taking a book out of a series is remembered (#2554): a refresh that still
 reports the book in that series, under its own provider id or one merged into
@@ -433,6 +472,44 @@ it, leaves it out. Adding the book back with `POST /series/{id}/books` forgets
 that, and so does an admin unlocking all of the book's fields (`PUT /book/{id}`
 with `"lockedFields": []`; another user's unlock leaves the book's series alone). Adding a book as primary makes it the book's only
 primary series. `GET /book/{id}/series-exclusions` lists what was taken out.
+
+Duplicate series (#2173). `GET /series/duplicates` answers `{"groups":[..]}`.
+A group is two or more series whose titles normalize to the same identity
+key: case, punctuation, apostrophes, accents, `&` against "and", a leading
+"The", "A" or "An" (also in the "Expanse, The" form) and a trailing bracketed
+or parenthesised format marker (`[Audiobook]`, `(Unabridged)`, `[Dramatized
+Adaptation]` and the like) are folded, and any other bracketed or
+parenthesised qualifier is kept, so "Discworld (Witches)" and "Discworld
+(City Watch)" are not a group. The Audiobookshelf import cannot pick between
+the series in a group and leaves the item's Hardcover series unlinked
+(`seriesLinkFailed` in the run summary). Each group carries `key`, `suggestedKeepId` (the series with a
+Hardcover link, else the most books, else the lowest id), `sameAuthors` and
+`series`, the suggested keep first. Each series has `id`, `title`,
+`foreignSeriesId`, `bookCount`, `authors` (distinct author names of its books,
+every owner's), `hardcoverLinked` and `monitored`. `sameAuthors` is true only
+when every series in the group that holds books shares an author with the
+suggested keep (or, when that one is empty, with the fullest series); empty
+series count as compatible. False usually means two different series with
+one name.
+
+`POST /series/duplicates/merge` runs each group through the same merge as
+`POST /series/{id}/merge` (books, aliases, Hardcover link and the rest), one
+transaction per group, keeping the keep series' title. A group is refused,
+and left as it was, when a series in it does not exist, appears in an earlier
+group of the same request, or does not share the keep series' identity key
+(the one `GET /series/duplicates` groups by).
+Groups are independent: the response is always 200 for a well formed body,
+`{"dryRun":..,"merged":N,"failed":N,"results":[{"keepId","sourceIds","ok","error","plan"}]}`,
+where `plan` is the merge plan carried out, or with `dryRun` the one that
+would be. At most 5000 groups per request.
+
+A series merge, single or bulk, in which a source shares the keep series'
+title as the Audiobookshelf import looks it up (that key drops a trailing
+qualifier) also makes every Audiobookshelf item the import recorded as
+ambiguous between two local series due again, so the next normal import
+retries them without `full`. A merge of differently titled series does not.
+The bulk endpoint checks titles only; keeping groups with different authors
+out of a bulk merge is up to the caller, as the Series page does.
 
 `GET /series` returns the bare array it always has. Pagination is opt-in
 (#2345): pass `limit` and/or `offset` and you get an `{items, total, limit,
@@ -609,7 +686,20 @@ GET    /api/v1/qualityprofile/{id}                read one
 POST   /api/v1/qualityprofile                     create (admin)
 PUT    /api/v1/qualityprofile/{id}                update (admin)
 DELETE /api/v1/qualityprofile/{id}                remove (admin); 409 while an author uses it
+GET    /api/v1/authors/without-quality-profile    count authors with no quality profile (admin), {"count": N}
+POST   /api/v1/authors/without-quality-profile    give them one (admin), body {"qualityProfileId": N}, answers {"updated": N}
 ```
+
+The two `/authors/without-quality-profile` routes are the opt in fix for
+authors that have no quality profile and so accept every format at grab and
+at import (#3831). Nothing runs them automatically. Both are admin only and
+cover every author in the library whichever account owns it, the same set the
+admin sees in the author list. That includes authors a request approval
+created for a requester. API key, local only and disabled auth requests act as
+the admin operator, so they get the same scope. The POST changes only authors
+with no profile, leaves the rest alone, and answers `400` when
+`qualityProfileId` is missing or names a profile that does not exist. The
+Settings page shows the count on the Quality tab.
 
 A profile is `{id, name, items, cutoff, upgradeAllowed, preferredNarrators, editionPreference}`. `items` is an array
 of `{quality, allowed}` in preference order, best first (#2733). The media
@@ -1735,6 +1825,15 @@ unset key:
 | `default.media_type` | add author dialog |
 | `author.default_monitor_mode` | add author dialog |
 | `author.default_monitor_latest_count` | add author dialog |
+| `author.default_quality_profile_id` | add author dialog |
+
+`author.default_quality_profile_id` (#3831) is the quality profile id given to
+authors created without one, on every creation path. Empty, the default, means
+none, and an author with no quality profile accepts every format at grab and
+at import. A write must name an existing profile or be empty (`400`
+otherwise). A default that names a profile deleted later is treated as empty.
+If the default profile has upgrades on, authors created by an ABS or Calibre
+import join the upgrade sweep straight away.
 
 `metadata.primary_provider` accepts `openlibrary` (the default), `dnb`, `nb`
 (Nasjonalbiblioteket), `bnf` (Bibliothèque nationale de France, #3144) and

@@ -48,6 +48,7 @@ vi.mock('react-i18next', () => ({
 vi.mock('../api/client', () => ({
   api: {
     listMetadataProfiles: vi.fn().mockResolvedValue([]),
+    listQualityProfiles: vi.fn().mockResolvedValue([]),
     listRootFolders: vi.fn().mockResolvedValue([]),
     getSetting: vi.fn().mockRejectedValue(new Error('HTTP 404')),
     listIndexers: vi.fn().mockResolvedValue([{ id: 1, enabled: true, type: 'newznab' }]),
@@ -83,6 +84,8 @@ const bareDefaults: AuthorAddDefaults = {
   mediaType: 'ebook',
   monitorMode: 'all',
   monitorLatestCount: 1,
+  qualityProfiles: [],
+  qualityProfileId: null,
 }
 
 function renderConfirm(a: Author, props: Partial<React.ComponentProps<typeof AddAuthorConfirm>> = {}) {
@@ -97,6 +100,7 @@ describe('AddAuthorConfirm', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(api.listMetadataProfiles).mockResolvedValue([])
+    vi.mocked(api.listQualityProfiles).mockResolvedValue([])
     vi.mocked(api.listRootFolders).mockResolvedValue([])
     vi.mocked(api.getSetting).mockRejectedValue(new Error('HTTP 404'))
     vi.mocked(api.listIndexers).mockResolvedValue([{ id: 1, enabled: true, type: 'newznab' }] as never)
@@ -269,6 +273,79 @@ describe('AddAuthorConfirm', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  // #3831: the dialog never sent a quality profile, so every author added here
+  // had none and accepted every format at grab and import.
+  describe('quality profile (#3831)', () => {
+    const qps = [
+      { id: 1, name: 'Any', upgradeAllowed: false, cutoff: '', items: [] },
+      { id: 2, name: 'Epub only', upgradeAllowed: false, cutoff: '', items: [] },
+    ]
+
+    it('preselects the default profile and sends the one selected', async () => {
+      renderConfirm(author({}), { defaults: { ...bareDefaults, qualityProfiles: qps, qualityProfileId: 2 } })
+      const picker = screen.getByLabelText('addToLibrary.author.qualityProfile')
+      await waitFor(() => expect(picker).toHaveValue('2'))
+      expect(screen.getByRole('option', { name: 'common.qualityProfileNone' })).toHaveValue('')
+
+      fireEvent.change(picker, { target: { value: '1' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+      await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+      expect(vi.mocked(api.addAuthor).mock.calls[0][0]).toEqual(expect.objectContaining({ qualityProfileId: 1 }))
+    })
+
+    it('leaves qualityProfileId out when the picker is untouched', async () => {
+      renderConfirm(author({}), { defaults: { ...bareDefaults, qualityProfiles: qps, qualityProfileId: 2 } })
+      const picker = screen.getByLabelText('addToLibrary.author.qualityProfile')
+      await waitFor(() => expect(picker).toHaveValue('2'))
+      fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+      await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+      expect('qualityProfileId' in vi.mocked(api.addAuthor).mock.calls[0][0]).toBe(false)
+    })
+
+    it('shows None with no default and still leaves the field out', async () => {
+      renderConfirm(author({}), { defaults: { ...bareDefaults, qualityProfiles: qps, qualityProfileId: null } })
+      const picker = screen.getByLabelText('addToLibrary.author.qualityProfile')
+      await waitFor(() => expect(picker).toHaveValue(''))
+      fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+      await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+      expect('qualityProfileId' in vi.mocked(api.addAuthor).mock.calls[0][0]).toBe(false)
+    })
+
+    it('sends an explicit null when None is chosen', async () => {
+      renderConfirm(author({}), { defaults: { ...bareDefaults, qualityProfiles: qps, qualityProfileId: 2 } })
+      const picker = screen.getByLabelText('addToLibrary.author.qualityProfile')
+      await waitFor(() => expect(picker).toHaveValue('2'))
+      fireEvent.change(picker, { target: { value: '' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+      await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+      const callArg = vi.mocked(api.addAuthor).mock.calls[0][0]
+      expect('qualityProfileId' in callArg).toBe(true)
+      expect(callArg.qualityProfileId).toBeNull()
+    })
+
+    it('shows no picker and sends nothing when there are no profiles', async () => {
+      renderConfirm(author({}))
+      expect(screen.queryByLabelText('addToLibrary.author.qualityProfile')).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+      await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+      expect('qualityProfileId' in vi.mocked(api.addAuthor).mock.calls[0][0]).toBe(false)
+    })
+
+    it('loads the install default, and None when it is unset or deleted', async () => {
+      vi.mocked(api.listQualityProfiles).mockResolvedValue(qps)
+      const withDefault = (value: string | null) => async (key: string) => {
+        if (key === 'author.default_quality_profile_id' && value !== null) return { key, value }
+        throw new Error('HTTP 404')
+      }
+      vi.mocked(api.getSetting).mockImplementation(withDefault('2'))
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ qualityProfiles: qps, qualityProfileId: 2 }))
+      vi.mocked(api.getSetting).mockImplementation(withDefault(null))
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ qualityProfileId: null }))
+      vi.mocked(api.getSetting).mockImplementation(withDefault('404'))
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ qualityProfileId: null }))
+    })
+  })
+
   // #2166: the picker used to seed from rfs[0], and that value is posted as an
   // explicit per-author rootFolderId, which the scanner resolves ahead of
   // library.defaultRootFolderId, so the install default was unreachable for
@@ -345,7 +422,7 @@ describe('AddAuthorConfirm', () => {
       vi.mocked(api.getSetting).mockRejectedValue(new Error('HTTP 404'))
       vi.mocked(api.listMetadataProfiles).mockRejectedValue(new Error('HTTP 500'))
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-      expect(await loadAuthorAddDefaults()).toEqual({ profiles: [], rootFolders: [], rootFolderId: null, audiobookRootFolderId: null, mediaType: 'ebook', monitorMode: 'all', monitorLatestCount: 1 })
+      expect(await loadAuthorAddDefaults()).toEqual({ profiles: [], rootFolders: [], rootFolderId: null, audiobookRootFolderId: null, mediaType: 'ebook', monitorMode: 'all', monitorLatestCount: 1, qualityProfiles: [], qualityProfileId: null })
       consoleError.mockRestore()
     })
   })

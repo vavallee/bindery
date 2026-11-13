@@ -4,8 +4,10 @@ import { useTranslation } from 'react-i18next'
 import { api, Book, SearchResult } from '../api/client'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
+import { calendarYear } from '../util/calendarDate'
 import PackLabel from '../components/PackLabel'
 import ReleaseNarration from '../components/ReleaseNarration'
+import ReleaseSwarm from '../components/ReleaseSwarm'
 import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
@@ -433,7 +435,7 @@ export default function WantedPage() {
 
           {pageItems.map((book, i) => {
             const isSelected = selectedIds.has(book.id)
-            const year = book.releaseDate ? new Date(book.releaseDate).getFullYear() : null
+            const year = calendarYear(book.releaseDate)
             const authorName = book.author?.authorName
             return (
               <div key={book.id} className={i < pageItems.length - 1 ? 'border-b border-slate-200 dark:border-zinc-800' : ''}>
@@ -566,6 +568,7 @@ export default function WantedPage() {
                           </span>
                           <span className="text-fg-muted truncate block">
                             {r.indexerName} &middot; {formatBytes(r.size)} &middot; {t('search.grabs', { n: r.grabs, defaultValue: '{{n}} grabs' })}
+                            <ReleaseSwarm seeders={r.seeders} peers={r.peers} />
                             {safeHref(r.infoUrl) && (
                               <>
                                 {' '}&middot;{' '}

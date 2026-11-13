@@ -136,6 +136,22 @@ The dialog previews every change, including books whose positions differ, before
 
 Undoing an import (ABS, Calibre) made before a merge does not take the merged books back out of the series you kept.
 
+## Finding Duplicate Series
+
+A library that ran both the Calibre and the Audiobookshelf import can hold the same series twice, one row from each. The Audiobookshelf import can't tell the two apart when it links a Hardcover series, so it skips those items and counts them as `seriesLinkFailed` in the run summary.
+
+Those pairs came from the Calibre import, which used to create its own row for every series even when one of the same title already existed. It now files into the existing series instead, when that series holds books by the same author or none yet, so new pairs stop appearing; a same titled series holding only other authors' books is left alone (see [Reading an existing Calibre library](Calibre-Integration-Wiki.md#reading-an-existing-calibre-library) for the details). When two or more copies would fit and none already holds the book, it keeps using its own Calibre row and logs `series exists more than once` rather than pick one. Pairs an earlier import made stay until you merge them here.
+
+When that happens, admins see a banner on the Series page saying how many series titles appear more than once. **Review** lists each group with its series, their book counts, authors and Hardcover link, and the one Bindery suggests keeping: the one with a Hardcover link, else the one with the most books. You can pick a different one to keep.
+
+- **Merge…** on a group opens the usual merge dialog with the other series already ticked, so you see the preview before anything changes.
+- **Merge all with matching authors** merges every group whose series share an author, in one go. It shows how many groups, how many series go away and how many books move, and asks before it runs. Each group is merged on its own, so one that fails leaves the rest done and is reported.
+- A group whose series hold books by different authors is probably two different series with the same name. It is listed with a note and left out of the bulk merge, so check it and merge it by hand only if it really is one series. That is the Series page's doing: the bulk API itself only checks that the titles match.
+
+Titles count as the same when they differ only in case, punctuation, accents, `&` against "and", a leading "The", "A" or "An" ("The Expanse", "Expanse, The"), or a trailing bracket or parenthesis that only names a format, such as `[Audiobook]`, `(Unabridged)` or `[Dramatized Adaptation]`, so "The Expanse [Audiobook]" groups with "The Expanse". Any other bracket or parenthesis is kept when grouping, so sub series such as "Discworld (Witches)" and "Discworld (City Watch)" are never offered as duplicates, and the bulk merge refuses them too. That is stricter than the Audiobookshelf import, which ignores any trailing qualifier when it looks a series up, so a pair like that can still show as ambiguous there; rename one of them if it does.
+
+Once the duplicates are merged, the next Audiobookshelf import retries the items it recorded as ambiguous (counted under `seriesLinkFailed` in the run summary) and links them. You don't need to run a full import for that: merging two series with the same title makes those items due again. A merge of differently named series leaves them alone.
+
 ## Fixing One Book's Series
 
 When one book is filed under the wrong series, or is missing its number, fix it from the book: **Edit metadata** has a **Series** field with the author's series, a position, and **New series…** to create one. Picking a series makes it the book's primary series and takes the book out of the one it was filed under; **No series** takes it out of every series it is in. A position is optional.

@@ -73,7 +73,6 @@ var (
 	errAddBookInvalidMediaType          = errors.New("add book: invalid media type")
 	errAddBookAuthorMetadataUnavailable = errors.New("add book: author metadata unavailable")
 	errAddBookAuthorExists              = errors.New("add book: author already exists")
-	errAddBookAuthorHeld                = errors.New("add book: author held by another account")
 	errAddBookAuthorUnresolved          = errors.New("add book: could not resolve author")
 	errAddBookCancelled                 = errors.New("add book: request cancelled")
 	errAddBookNotFound                  = errors.New("add book: book not found after author sync")
@@ -90,7 +89,6 @@ var addBookErrorResponses = []struct {
 	{errAddBookInvalidMediaType, http.StatusBadRequest, "mediaType must be 'ebook', 'audiobook', or 'both'"},
 	{errAddBookAuthorMetadataUnavailable, http.StatusUnprocessableEntity, "Author metadata unavailable for this result. Add the author manually first (Authors → Add Author by name), then try again."},
 	{errAddBookAuthorExists, http.StatusConflict, "author already exists"},
-	{errAddBookAuthorHeld, http.StatusConflict, authorHeldByAnotherAccountMessage},
 	{errAddBookAuthorUnresolved, http.StatusInternalServerError, "could not resolve author"},
 	{errAddBookCancelled, http.StatusGatewayTimeout, "request cancelled"},
 	{errAddBookNotFound, http.StatusNotFound, "book not found after author sync — try again shortly"},
@@ -344,11 +342,10 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 			// upgrade only replaces its identity and descriptive fields
 			// (db.AuthorRepo.UpgradeSyntheticDNB), never its owner, monitoring,
 			// profiles or root folders. Leaving it would give the caller a new
-			// author under the provider id, and authors.foreign_id is unique
-			// across users, so every other user's add under that id would then
-			// fail.
+			// author under the provider id next to a shared placeholder for the
+			// same person, which every user would then see twice.
 			if existing, lookupErr := h.authors.GetByDNBSyntheticName(ctx, fetched.SortName, userID); lookupErr == nil && existing != nil {
-				if err := h.authors.UpgradeSyntheticDNB(ctx, existing.ForeignID, fetched); err != nil {
+				if err := h.authors.UpgradeSyntheticDNB(ctx, existing.ID, existing.ForeignID, fetched); err != nil {
 					slog.Debug("AddBook: upgrade synthetic DNB author failed", "from", existing.ForeignID, "to", fetched.ForeignID, "error", err)
 				} else {
 					// Re-fetch the row by its new canonical ForeignID so subsequent
@@ -368,21 +365,16 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 		if author == nil {
 			// Add-book creates the author as a side effect, so it never carries
 			// an explicit monitor choice — take the install-wide default (#1666).
-			db.ApplyAuthorMonitorDefaults(ctx, h.settings, fetched)
+			db.ApplyAuthorCreateDefaults(ctx, h.settings, fetched)
 			if err := h.authors.CreateForUser(ctx, fetched, userID); err != nil {
 				if !strings.Contains(err.Error(), "UNIQUE constraint failed") && !errors.Is(err, db.ErrAuthorIdentifierConflict) {
 					return addBookResult{}, err
 				}
-				// Either a concurrent request created it between our check and
-				// insert, or another account holds it and the scoped lookup cannot
-				// see it (authors.foreign_id is unique per instance, #3555).
+				// Race: another request created it between our check and insert.
+				// Another account's row for the same author no longer collides:
+				// authors are keyed per owner under tenancy (#3555).
 				author, _ = h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignAuthorID, scopeID)
 				if author == nil {
-					// Only a scoped caller (tenancy on, not an admin) can miss a
-					// row another account holds; otherwise keep the plain text.
-					if scopeID != 0 {
-						return addBookResult{}, errAddBookAuthorHeld
-					}
 					return addBookResult{}, errAddBookAuthorExists
 				}
 			} else {

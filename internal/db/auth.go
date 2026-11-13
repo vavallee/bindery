@@ -406,6 +406,147 @@ UPDATE authors SET owner_user_id = (
 WHERE owner_user_id = ?
   AND EXISTS (SELECT 1 FROM books b WHERE b.author_id = authors.id)`
 
+// authorIdentitySQL lists every provider id an author answers to: its
+// identifier rows and its primary foreign_id. Two rows sharing any of them in
+// one account are the same author for the per owner rule (identifierHolder).
+const authorIdentitySQL = `
+SELECT author_id, foreign_id FROM author_identifiers
+UNION
+SELECT id, foreign_id FROM authors WHERE foreign_id <> ''`
+
+// rehomeCollisionsSQL finds the authors rehomeAuthorsSQL is about to hand to an
+// owner that already holds its own row for the same author (#3555): a row
+// sharing any provider id with it, primary or secondary. Handing it over as is
+// would leave the new owner with two authors holding one id, which the unique
+// index refuses for a primary and identifierHolder refuses on every later
+// Update for a secondary. Each one is folded into the row the new owner
+// already has instead, preferring the row with the same primary id. The
+// target owner is computed exactly as rehomeAuthorsSQL computes it.
+const rehomeCollisionsSQL = `
+WITH ident AS (` + authorIdentitySQL + `),
+src AS (
+    SELECT a.id, a.foreign_id, (
+        SELECT CASE WHEN COUNT(*) = COUNT(b.owner_user_id)
+                     AND COUNT(DISTINCT b.owner_user_id) = 1
+                    THEN MIN(b.owner_user_id) END
+        FROM books b WHERE b.author_id = a.id) AS target
+    FROM authors a
+    WHERE a.owner_user_id = ?
+      AND EXISTS (SELECT 1 FROM books b WHERE b.author_id = a.id)
+)
+SELECT id, into_id FROM (
+    SELECT s.id, (
+        SELECT d.id FROM authors d
+        WHERE d.id <> s.id
+          AND COALESCE(d.owner_user_id, 0) = COALESCE(s.target, 0)
+          AND EXISTS (SELECT 1 FROM ident si JOIN ident di ON di.foreign_id = si.foreign_id
+                      WHERE si.author_id = s.id AND di.author_id = d.id)
+        ORDER BY (d.foreign_id = s.foreign_id) DESC, d.id LIMIT 1) AS into_id
+    FROM src s
+) WHERE into_id IS NOT NULL`
+
+// reassignCollisionsSQL is rehomeCollisionsSQL for a reassign: every author the
+// departing user owns goes to one owner (NULL when reassignTo is unset), and an
+// author sharing any provider id with a row that owner already holds is folded
+// into that row.
+const reassignCollisionsSQL = `
+WITH ident AS (` + authorIdentitySQL + `)
+SELECT id, into_id FROM (
+    SELECT s.id, (
+        SELECT d.id FROM authors d
+        WHERE d.id <> s.id
+          AND COALESCE(d.owner_user_id, 0) = COALESCE(?, 0)
+          AND EXISTS (SELECT 1 FROM ident si JOIN ident di ON di.foreign_id = si.foreign_id
+                      WHERE si.author_id = s.id AND di.author_id = d.id)
+        ORDER BY (d.foreign_id = s.foreign_id) DESC, d.id LIMIT 1) AS into_id
+    FROM authors s
+    WHERE s.owner_user_id = ?
+) WHERE into_id IS NOT NULL`
+
+type authorFoldPair struct{ from, into int64 }
+
+// collidingAuthorPairs reads every (from, into) pair the query returns and
+// closes the rows before the caller starts writing in the same transaction.
+func collidingAuthorPairs(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]authorFoldPair, error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("find colliding authors: %w", err)
+	}
+	defer rows.Close()
+	var pairs []authorFoldPair
+	for rows.Next() {
+		var p authorFoldPair
+		if err := rows.Scan(&p.from, &p.into); err != nil {
+			return nil, fmt.Errorf("scan colliding author: %w", err)
+		}
+		pairs = append(pairs, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("find colliding authors: %w", err)
+	}
+	return pairs, nil
+}
+
+// foldCollidingAuthors folds each author the query returns into the row the
+// new owner already holds for the same author: its books, aliases, monitored
+// series and the rows that point at it move to the kept row, its identifiers
+// move where no other author of the new owner holds them
+// (moveAuthorIdentifiersTx), then it is deleted. It only runs where two
+// accounts held their own row for one author, which needs tenancy on now or
+// earlier (#3555); with one row per author the query finds nothing.
+//
+// It is a re-pointing, not AuthorAliasRepo.Merge: the kept row keeps its own
+// settings, which belong to the account that is staying.
+func foldCollidingAuthors(ctx context.Context, tx *sql.Tx, query string, args ...any) error {
+	pairs, err := collidingAuthorPairs(ctx, tx, query, args...)
+	if err != nil {
+		return err
+	}
+	for _, p := range pairs {
+		for _, stmt := range []string{
+			"UPDATE books SET author_id = ? WHERE author_id = ?",
+			"UPDATE author_aliases SET author_id = ? WHERE author_id = ?",
+			"UPDATE OR IGNORE author_monitored_series SET author_id = ? WHERE author_id = ?",
+			"UPDATE unmatched_units SET created_author_id = ? WHERE created_author_id = ?",
+			"UPDATE requests SET result_author_id = ? WHERE result_author_id = ?",
+		} {
+			if _, err := tx.ExecContext(ctx, stmt, p.into, p.from); err != nil {
+				return fmt.Errorf("fold author %d into %d: %w", p.from, p.into, err)
+			}
+		}
+		// Keep the folded author's name, so a wrong provider mapping can be
+		// undone by hand: as an alias on the kept row when that name differs,
+		// and in the log either way.
+		var fromName, fromForeignID, intoName string
+		if err := tx.QueryRowContext(ctx, "SELECT name, foreign_id FROM authors WHERE id = ?", p.from).Scan(&fromName, &fromForeignID); err != nil {
+			return fmt.Errorf("fold author %d into %d: %w", p.from, p.into, err)
+		}
+		if err := tx.QueryRowContext(ctx, "SELECT name FROM authors WHERE id = ?", p.into).Scan(&intoName); err != nil {
+			return fmt.Errorf("fold author %d into %d: %w", p.from, p.into, err)
+		}
+		if fromName != intoName {
+			if _, err := insertMergeAlias(ctx, tx, p.into, fromName, fromForeignID); err != nil {
+				return fmt.Errorf("fold author %d into %d: record name alias: %w", p.from, p.into, err)
+			}
+		}
+		dropped, err := moveAuthorIdentifiersTx(ctx, tx, p.from, p.into, time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("fold author %d into %d: %w", p.from, p.into, err)
+		}
+		if len(dropped) > 0 {
+			slog.Info("user delete: dropped identifiers another author of the new owner holds",
+				"from_author_id", p.from, "into_author_id", p.into, "identifiers", dropped)
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM authors WHERE id = ?", p.from); err != nil {
+			return fmt.Errorf("fold author %d into %d: %w", p.from, p.into, err)
+		}
+		slog.Info("user delete: folded author into the new owner's row for the same author",
+			"from_author_id", p.from, "from_name", fromName, "from_foreign_id", fromForeignID,
+			"into_author_id", p.into, "into_name", intoName)
+	}
+	return nil
+}
+
 // sharedConfigTables are instance wide config that happens to carry an
 // owner_user_id: the create handlers stamp whichever admin made the row, but
 // every account uses them (see docs/multi-user.md). A purge must not delete
@@ -591,6 +732,11 @@ func (r *UserRepo) Delete(ctx context.Context, id int64, plan UserDeletePlan) er
 				// The user's own books are gone by now, so any book still under
 				// one of their authors belongs to someone else. Keep that author
 				// (#3559) instead of letting the cascade take those books.
+				// Where the new owner already has their own row for that
+				// author, the books go to that row instead (#3555).
+				if err := foldCollidingAuthors(ctx, tx, rehomeCollisionsSQL, id); err != nil {
+					return fmt.Errorf("keep authors holding other accounts' books: %w", err)
+				}
 				if _, err := tx.ExecContext(ctx, rehomeAuthorsSQL, id); err != nil {
 					return fmt.Errorf("keep authors holding other accounts' books: %w", err)
 				}
@@ -608,6 +754,12 @@ func (r *UserRepo) Delete(ctx context.Context, id int64, plan UserDeletePlan) er
 			}
 		}
 	} else {
+		// An author the receiving owner already holds its own row for would
+		// collide on the (owner, foreign_id) index; fold it into that row
+		// first (#3555).
+		if err := foldCollidingAuthors(ctx, tx, reassignCollisionsSQL, plan.ReassignTo, id); err != nil {
+			return fmt.Errorf("reassign authors: %w", err)
+		}
 		// A nil ReassignTo binds as NULL, which is this schema's "global".
 		for _, t := range ownerTables {
 			// #nosec G201 -- t comes from ownerTables, a package-level literal

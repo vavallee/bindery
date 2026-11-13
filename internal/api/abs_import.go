@@ -17,7 +17,7 @@ import (
 type absImporterAPI interface {
 	Start(ctx context.Context, cfg abs.ImportConfig) error
 	Progress() abs.ImportProgress
-	RecentRuns(ctx context.Context, limit int) ([]models.ABSImportRun, error)
+	RunsPage(ctx context.Context, limit, offset int) ([]models.ABSImportRun, error)
 	RollbackPreview(ctx context.Context, runID int64) (*abs.RollbackResult, error)
 	Rollback(ctx context.Context, runID int64) (*abs.RollbackResult, error)
 }
@@ -123,8 +123,19 @@ func (h *ABSImportHandler) Status(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, h.importer.Progress())
 }
 
+// Default and ceiling for ?limit on the runs list. Each row is one library of
+// an import, so the ceiling leaves room for a large multi library run.
+const (
+	absImportRunsDefaultLimit = 10
+	absImportRunsMaxLimit     = 200
+)
+
+// Runs lists recorded import runs newest first. It honours ?limit (default
+// 10, max 200) and ?offset; it used to ignore both and always return the
+// newest 10 rows (#2173).
 func (h *ABSImportHandler) Runs(w http.ResponseWriter, r *http.Request) {
-	runs, err := h.importer.RecentRuns(r.Context(), 10)
+	limit, offset := parseLimitOffset(r, absImportRunsDefaultLimit, absImportRunsMaxLimit)
+	runs, err := h.importer.RunsPage(r.Context(), limit, offset)
 	if err != nil {
 		writeServerError(w, r, err)
 		return

@@ -8,6 +8,15 @@ export type AuthorBulkMonitorMode = Exclude<AuthorMonitorMode, 'series'>
 export type BookBulkAction = 'monitor' | 'unmonitor' | 'delete' | 'search' | 'set_media_type' | 'exclude' | 'unexclude'
 export type WantedBulkAction = 'search' | 'blocklist' | 'unmonitor'
 
+// GET /search/runs/{id} (#3133): how one queued search is going or ended.
+export interface SearchRun {
+  id: string
+  state: 'queued' | 'running' | 'finished'
+  bookId: number
+  outcome?: string
+  indexers: number
+}
+
 export interface BulkResult {
   // `code` is a stable machine readable reason for a failed entry, present
   // only where the client should react to the specific cause. Today the one
@@ -15,7 +24,7 @@ export interface BulkResult {
   // queued: a search action handed this id to the background search pool.
   // ok on a search means accepted, not finished (#2154). searchSkipped names
   // why an action that would have searched did not queue one.
-  results: Record<string, { ok: boolean; error?: string; code?: string; queued?: boolean; searchSkipped?: string }>
+  results: Record<string, { ok: boolean; error?: string; code?: string; queued?: boolean; searchSkipped?: string; runId?: string }>
 }
 
 export interface BulkSetAuthorMonitorModeOptions {
@@ -86,6 +95,7 @@ export const bulkApi = {
   // alias would have to repeat both guards, and a guard that exists twice is a
   // guard that can drift, so this posts the same body the author page's
   // searchAuthorWanted above does, with one id.
+  getSearchRun: (id: string) => request<SearchRun>(`/search/runs/${encodeURIComponent(id)}`),
   searchBookAutomatic: (id: number) =>
     request<BulkResult>('/book/bulk', { method: 'POST', body: JSON.stringify({ ids: [id], action: 'search' }) }),
   bulkActionBooks: (ids: number[], action: BookBulkAction, mediaType?: MediaType) =>

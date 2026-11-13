@@ -237,32 +237,43 @@ no format at all. A title that names an ebook format (epub, epub3, kepub, mobi,
 azw, azw3, kfx, pdf, doc, docx, html, htm, ebook, lit, prc, djvu, cbr, cbz, fb2,
 rtf, txt) is never dropped by this rule. An underscore counts as a space, so
 `Author_Title_Ch63_of_71_mp3` is dropped like the dotted form. The rule is exact
-about counters: a bare `NN of MM` with MM under 10, and a whole book `Part 1 of
-2`, are kept; a chapter marker or `NN of MM` with MM of 10 or more is dropped
-unless an ebook format or a series count word spares it.
+about counters: a bare `NN of MM` with MM under 10 is kept by this rule (the
+part rule below covers `Part 1 of 2` for audiobooks); a chapter marker or `NN of
+MM` with MM of 10 or more is dropped unless an ebook format or a series count word spares it.
 
 One more shape is dropped for audiobooks: a single part of a set. Bindery
 imports one grab as one book and cannot join several grabs, so `Part 3 of 5`,
-`Pt 2 of 3`, `Disc 2 of 4` and `CD 3 of 8` are partial books. The reason shown
-is `looks like one part of a multipart audiobook set (Part N of M), which
+`Pt 2 of 3`, `Disc 2 of 4`, `CD 3 of 8`, `Part 2 of 2`, and a counter in
+brackets such as `(2 of 2)` or `[1 of 3]` are partial books. This is how a
+dramatized recording posted as two torrents looks, for example `Morning Star (2
+of 2) by Pierce Brown [ENG / M4B]` next to the complete `Morning Star by Pierce
+Brown [ENG / M4B]`. The reason shown in the search debug view is `looks like one
+part of a multipart audiobook set (Part N of M, or N of M in brackets), which
 Bindery cannot assemble`. The rule is narrow:
 
-- the counter must come straight after part, pt, disc, disk or cd, and the total
-  must be 3 or more (`Part 1 of 2` is kept, since two parts are the likeliest
-  shape of one recording split in two; `Book 3 of 5` and a bare `3 of 5` are
-  not parts);
+- the counter must come straight after part, pt, disc, disk or cd, or sit alone
+  inside parentheses or square brackets. The total must be from 2 to 99 and the
+  number from 1 up to the total, so `(2 of 2024)` is a year and not a set, and a
+  bare `3 of 5` with no brackets is not a part;
+- a series count word straight before the counter means a place in a series and
+  keeps the release: `Book 1 of 6`, `Red Rising (Book 1 of 6)`, `Red Rising
+  Book (1 of 6)`. A bare `(1 of 6)` with no such word is dropped;
 - it applies to a title that names an audio format, or to one that names no
   format when the search is for an audiobook. An ebook format in the name, or an
   ebook search with no audio format in the name, is never affected;
-- a name with `all parts` or the word `complete` (`Disc 1 of 8 Complete`) is
-  kept as the whole set. `Unabridged` does not count, because single parts are
-  often labelled unabridged;
+- a name with `all parts` or the word `complete` (`Disc 1 of 8 Complete`,
+  `Complete (1 of 2) M4B`) is kept as the whole set. `Unabridged` does not
+  count, because single parts are often labelled unabridged;
 - a counter that the wanted book's own title contains is kept.
 
-The rule applies to torrent results as well as usenet ones. The price is that
-a recording posted as `Part 1 of 3` or longer is no longer eligible. Lone parts
-it does not recognise, and so keeps: `Part 3/5`, `3/5`, `Part III of V`,
-`Vol 3 of 5` and `Part One of Two`.
+The rule applies to torrent results as well as usenet ones. The price is that a
+recording posted as one whole under `Part 1 of 2` or `(1 of 2)` is no longer
+eligible. Before this rule covered two part sets, `Part 1 of 2` was kept on the
+guess that it was one recording split in two. These drops are listed in the
+search debug view only, they are not offered under Filtered on the book page.
+Lone parts it does not recognise, and so keeps: `Part 3/5`, `3/5`,
+`Part III of V`, `Vol 3 of 5`, `Part One of Two`, and a title whose last word
+before the brackets is a series word (`The Book (2 of 2)`).
 
 The file size is not used. A fragment is recognised by its name only, so an
 ebook with a chapter counter and no format word in its name is dropped too.
@@ -786,7 +797,7 @@ When that happens Bindery creates the author itself, with an id built from the n
 - **An OpenLibrary record with the same name blocks it, even one with no books.** That is probably the real person under a thin record, and a second author beside it would be a duplicate. Add the author from the Authors page by that OpenLibrary record instead.
 - **A different spelling is not detected.** If OpenLibrary knows the author as "J. R. Smith" and Google Books says "James Smith", Bindery sees two people and makes a new author. Merge them by hand afterwards.
 - The volume must be from Google Books, and the name needs at least one letter or digit.
-- The same name always gives the same id, and an author already in your library with that name is reused first. Two different people with exactly the same name share one author. Under multiple users the author belongs to whoever added it first, and a second user adding the same one gets a 409 saying the author is already in another account's library on this instance (see [multi-user](multi-user.md)).
+- The same name always gives the same id, and an author already in your library with that name is reused first. Two different people with exactly the same name share one author. Under multiple users with tenancy on, each account that adds the author gets its own row for it (see [multi-user](multi-user.md)); with tenancy off there is one row and a second account adding it gets "author already exists".
 - If the same person later turns up on OpenLibrary you will have two authors, because Bindery does not upgrade a `gb:author:` row in place the way it does for German National Library ones. Merge them by hand.
 
 Google Books cannot list an author's other works, so it never adds or removes books for such an author. Refreshing one still asks the name based sources (Hardcover when it is on, and Audible for audiobooks), which can add books matched by name. Add the author's other Google Books titles one at a time.

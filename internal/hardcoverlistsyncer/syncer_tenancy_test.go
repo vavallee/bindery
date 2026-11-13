@@ -363,10 +363,12 @@ func TestSyncOne_EnforcedTenancyReusesGlobalAuthor(t *testing.T) {
 }
 
 // TestSyncOne_EnforcedTenancySkipsWhenForeignIDBelongsToAnotherUser pins the
-// limit of this fix. books.foreign_id and authors.foreign_id are globally
-// UNIQUE (migration 001), so when the only row carrying the list's foreign id
-// belongs to another user there is no second row to create. The sync must then
-// leave that row alone and count the book as skipped, not failed.
+// limit of this fix. books.foreign_id is globally UNIQUE (migration 001), so
+// when the only row carrying a listed book's foreign id belongs to another
+// user there is no second row to create: the sync leaves that row alone and
+// counts the book as skipped, not failed. Authors are keyed per owner since
+// #3555, so another user holding the author is no longer a reason to skip:
+// alice's list gets its own Atwood row for the book nobody holds.
 func TestSyncOne_EnforcedTenancySkipsWhenForeignIDBelongsToAnotherUser(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	f := newTenancyFixture(t)
@@ -398,18 +400,30 @@ func TestSyncOne_EnforcedTenancySkipsWhenForeignIDBelongsToAnotherUser(t *testin
 	if stats.Failed != 0 {
 		t.Errorf("Failed = %d, want 0: a foreign id owned by another user is a skip, not a failure", stats.Failed)
 	}
-	if stats.Skipped != 2 {
-		t.Errorf("Skipped = %d, want 2 (both books hang off an author alice cannot use)", stats.Skipped)
+	if stats.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1 (bob's Oryx and Crake)", stats.Skipped)
 	}
-	if stats.Imported != 0 {
-		t.Errorf("Imported = %d, want 0", stats.Imported)
+	if stats.Imported != 1 {
+		t.Errorf("Imported = %d, want 1 (The Handmaid's Tale, under alice's own Atwood)", stats.Imported)
 	}
 
 	authorsAll, err := f.authors.List(ctx)
 	if err != nil {
 		t.Fatalf("List authors: %v", err)
 	}
-	if len(authorsAll) != 1 {
-		t.Errorf("got %d authors, want 1: bob's author must be neither reused nor duplicated", len(authorsAll))
+	if len(authorsAll) != 2 {
+		t.Fatalf("got %d authors, want 2: bob's Atwood untouched plus alice's own", len(authorsAll))
+	}
+	alices, err := f.authors.GetByForeignIDForUser(ctx, "hc:atwood", f.alice)
+	if err != nil || alices == nil || alices.ID == bobAuthor.ID || alices.OwnerUserID != f.alice {
+		t.Fatalf("alice's Atwood = %+v (err %v), want her own row", alices, err)
+	}
+	handmaid, err := f.books.GetByForeignID(ctx, "hc:handmaid")
+	if err != nil || handmaid == nil || handmaid.AuthorID != alices.ID || handmaid.OwnerUserID != f.alice {
+		t.Fatalf("handmaid = %+v (err %v), want alice's, under her Atwood %d", handmaid, err, alices.ID)
+	}
+	oryx, err := f.books.GetByForeignID(ctx, "hc:oryx")
+	if err != nil || oryx == nil || oryx.AuthorID != bobAuthor.ID || oryx.OwnerUserID != f.bob {
+		t.Fatalf("bob's oryx changed: %+v (err %v)", oryx, err)
 	}
 }

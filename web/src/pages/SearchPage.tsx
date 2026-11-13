@@ -6,6 +6,7 @@ import { formatBytes } from '../util/format'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { grabWithForceConfirm } from '../util/forceGrab'
 import { primaryFill } from '../components/buttons'
+import ReleaseSwarm from '../components/ReleaseSwarm'
 import { errorText } from '../util/errorText'
 
 export default function SearchPage() {
@@ -188,6 +189,7 @@ export default function SearchPage() {
                   <span className="truncate block text-slate-800 dark:text-zinc-200">{r.title}</span>
                   <span className="text-fg-muted truncate block">
                     {r.indexerName}{r.size ? ` · ${formatBytes(r.size)}` : ''}{r.grabs ? ` · ${r.grabs} grabs` : ''}
+                    <ReleaseSwarm seeders={r.seeders} peers={r.peers} />
                     {r.language && <span className="ml-2 uppercase">{r.language}</span>}
                   </span>
                 </div>

@@ -541,7 +541,7 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 		// left the library; the in library check below answers otherwise.
 		reopen = true
 	}
-	if msg, err := h.alreadyInLibrary(ctx, body.Kind, body.ForeignID); err != nil {
+	if msg, err := h.alreadyInLibrary(ctx, owner, body.Kind, body.ForeignID); err != nil {
 		writeServerError(w, r, err)
 		return
 	} else if msg != "" {
@@ -574,7 +574,7 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// The provider may answer with a canonical record whose id differs from
 	// the one asked for, and that record may be in the library already.
 	if req.resolvedID != "" && req.resolvedID != body.ForeignID {
-		if msg, err := h.alreadyInLibrary(ctx, req.Kind, req.resolvedID); err != nil {
+		if msg, err := h.alreadyInLibrary(ctx, owner, req.Kind, req.resolvedID); err != nil {
 			writeServerError(w, r, err)
 			return
 		} else if msg != "" {
@@ -795,10 +795,13 @@ func (h *RequestHandler) buildRequest(ctx context.Context, owner int64, kind, fo
 }
 
 // alreadyInLibrary returns the sentence to answer when the item is already in
-// the library, or "". The check is global, not scoped to the requester:
-// books.foreign_id is unique across users, so an item another user holds
-// cannot be added again either.
-func (h *RequestHandler) alreadyInLibrary(ctx context.Context, kind, foreignID string) (string, error) {
+// the library, or "". For a book the check is global, not scoped to the
+// requester: books.foreign_id is unique across users, so a book another user
+// holds cannot be added again either. For an author it is global with tenancy
+// off, and with tenancy on covers what owner can see (their own authors and
+// shared ones): each account holds its own row for an author (#3555), so
+// another account having the author does not stop owner getting it.
+func (h *RequestHandler) alreadyInLibrary(ctx context.Context, owner int64, kind, foreignID string) (string, error) {
 	switch kind {
 	case models.RequestKindBook:
 		b, err := h.books.GetByForeignID(ctx, foreignID)
@@ -809,7 +812,11 @@ func (h *RequestHandler) alreadyInLibrary(ctx context.Context, kind, foreignID s
 			return "This book is already in the library.", nil
 		}
 	case models.RequestKindAuthor:
-		a, err := h.authors.GetByAnyForeignID(ctx, foreignID)
+		scope := int64(0)
+		if auth.EnforceTenancy() {
+			scope = owner
+		}
+		a, err := h.authors.GetByAnyForeignIDForUser(ctx, foreignID, scope)
 		if err != nil {
 			return "", err
 		}
@@ -913,15 +920,17 @@ func (h *RequestHandler) PendingCount(w http.ResponseWriter, r *http.Request) {
 // folder and monitor fields apply to author requests; a book request uses
 // SearchOnAdd and MediaType, the same two choices the Add Book dialog offers.
 type approveBody struct {
-	QualityProfileID      *int64  `json:"qualityProfileId"`
-	MetadataProfileID     *int64  `json:"metadataProfileId"`
-	RootFolderID          *int64  `json:"rootFolderId"`
-	AudiobookRootFolderID *int64  `json:"audiobookRootFolderId"`
-	MonitorMode           *string `json:"monitorMode"`
-	MonitorLatestCount    *int    `json:"monitorLatestCount"`
-	MonitorNewItems       *string `json:"monitorNewItems"`
-	SearchOnAdd           *bool   `json:"searchOnAdd"`
-	MediaType             *string `json:"mediaType"`
+	// Left out means the install wide default quality profile; null means
+	// none (#3831).
+	QualityProfileID      nullableInt64 `json:"qualityProfileId"`
+	MetadataProfileID     *int64        `json:"metadataProfileId"`
+	RootFolderID          *int64        `json:"rootFolderId"`
+	AudiobookRootFolderID *int64        `json:"audiobookRootFolderId"`
+	MonitorMode           *string       `json:"monitorMode"`
+	MonitorLatestCount    *int          `json:"monitorLatestCount"`
+	MonitorNewItems       *string       `json:"monitorNewItems"`
+	SearchOnAdd           *bool         `json:"searchOnAdd"`
+	MediaType             *string       `json:"mediaType"`
 }
 
 // Approve adds what a request asked for and marks it approved.
@@ -1079,7 +1088,7 @@ func (h *RequestHandler) runApproval(ctx context.Context, req *models.LibraryReq
 		(p.ForeignAuthorID != "" && !validForeignID(p.ForeignAuthorID)) || !validRequestMediaType(p.MediaType) {
 		return nil, nil, "", http.StatusUnprocessableEntity, "This request's stored details are not valid. Decline it and ask for it again.", nil
 	}
-	if inLib, lerr := h.alreadyInLibrary(ctx, p.Kind, p.ForeignID); lerr != nil {
+	if inLib, lerr := h.alreadyInLibrary(ctx, req.OwnerUserID, p.Kind, p.ForeignID); lerr != nil {
 		return nil, nil, "", 0, "", lerr
 	} else if inLib != "" {
 		return nil, nil, "", http.StatusConflict, inLib, nil
@@ -1121,18 +1130,19 @@ func (h *RequestHandler) runApproval(ctx context.Context, req *models.LibraryReq
 		}
 	case models.RequestKindAuthor:
 		res, aerr := h.adder.createAuthorCore(ownerCtx, createAuthorParams{
-			ForeignID:             p.ForeignID,
-			Name:                  p.AuthorName,
-			QualityProfileID:      body.QualityProfileID,
-			MetadataProfileID:     body.MetadataProfileID,
-			RootFolderID:          body.RootFolderID,
-			AudiobookRootFolderID: body.AudiobookRootFolderID,
-			Monitored:             true,
-			MonitorMode:           body.MonitorMode,
-			MonitorLatestCount:    body.MonitorLatestCount,
-			MonitorNewItems:       body.MonitorNewItems,
-			SearchOnAdd:           searchOnAdd,
-			MediaType:             mediaType,
+			ForeignID:              p.ForeignID,
+			Name:                   p.AuthorName,
+			QualityProfileID:       body.QualityProfileID.Value,
+			QualityProfileExplicit: body.QualityProfileID.Set,
+			MetadataProfileID:      body.MetadataProfileID,
+			RootFolderID:           body.RootFolderID,
+			AudiobookRootFolderID:  body.AudiobookRootFolderID,
+			Monitored:              true,
+			MonitorMode:            body.MonitorMode,
+			MonitorLatestCount:     body.MonitorLatestCount,
+			MonitorNewItems:        body.MonitorNewItems,
+			SearchOnAdd:            searchOnAdd,
+			MediaType:              mediaType,
 			// The catalogue sync always runs: search on add happens inside
 			// it, and the core refuses search on add without it.
 			SkipCatalogueSync: false,

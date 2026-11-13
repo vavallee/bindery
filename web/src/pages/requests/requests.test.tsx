@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import MyRequestsPage from './MyRequestsPage'
@@ -34,6 +34,8 @@ vi.mock('react-i18next', () => ({
         'requests.admin.metadataProfile': 'Metadata profile',
         'requests.admin.rootFolder': 'Root folder',
         'requests.admin.monitorMode': 'Monitor',
+        'requests.admin.qualityProfile': 'Quality profile',
+        'common.qualityProfileNone': 'None (accepts every format)',
         'requests.admin.requestedBy': 'asked by {{username}} on {{date}}',
         'requests.admin.createdByAPIKey': 'made for them with the API key',
         'requests.admin.createdByAdmin': 'made for them by {{username}}',
@@ -53,6 +55,7 @@ vi.mock('../../api/client', () => ({
     declineRequest: vi.fn(),
     listMetadataProfiles: vi.fn().mockResolvedValue([{ id: 1, name: 'Standard' }]),
     listRootFolders: vi.fn().mockResolvedValue([{ id: 4, path: '/books' }]),
+    listQualityProfiles: vi.fn().mockResolvedValue([]),
     getSetting: vi.fn().mockRejectedValue(new Error('unset')),
   },
 }))
@@ -152,6 +155,54 @@ describe('RequestsPage', () => {
     await waitFor(() => expect(api.approveRequest).toHaveBeenCalledWith(5, expect.objectContaining({
       metadataProfileId: 1, rootFolderId: 4, monitorMode: 'all', mediaType: 'ebook', searchOnAdd: false,
     })))
+  })
+
+  // #3831: the picker shows the default but sends a profile only once the
+  // admin changes it, so an untouched picker leaves the default to the server.
+  describe('quality profile picker (#3831)', () => {
+    const qps = [
+      { id: 1, name: 'Any', upgradeAllowed: false, cutoff: '', items: [] },
+      { id: 2, name: 'Epub only', upgradeAllowed: false, cutoff: '', items: [] },
+    ]
+    const approveAuthor = async () => {
+      vi.mocked(api.listRequestQueue).mockResolvedValue({ items: [req({ id: 5, kind: 'author', title: 'Frank Herbert' })], total: 1, limit: 50, offset: 0 })
+      vi.mocked(api.approveRequest).mockResolvedValue(req({ id: 5, kind: 'author', status: 'approved' }))
+      render(<RequestsPage />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Approve request for Frank Herbert' }))
+      const form = screen.getByRole('form', { name: 'Approve Frank Herbert' })
+      return { form, picker: await within(form).findByRole('combobox', { name: 'Quality profile' }) }
+    }
+
+    beforeEach(() => {
+      vi.mocked(api.listQualityProfiles).mockResolvedValue(qps)
+      vi.mocked(api.getSetting).mockImplementation(async (key: string) => {
+        if (key === 'author.default_quality_profile_id') return { key, value: '2' }
+        throw new Error('unset')
+      })
+    })
+    afterEach(() => {
+      vi.mocked(api.listQualityProfiles).mockResolvedValue([])
+      vi.mocked(api.getSetting).mockRejectedValue(new Error('unset'))
+    })
+
+    it('shows the default and leaves qualityProfileId out when untouched', async () => {
+      const { form, picker } = await approveAuthor()
+      await waitFor(() => expect(picker).toHaveValue('2'))
+      fireEvent.click(within(form).getByRole('button', { name: 'Approve and add' }))
+      await waitFor(() => expect(api.approveRequest).toHaveBeenCalledTimes(1))
+      expect('qualityProfileId' in vi.mocked(api.approveRequest).mock.calls[0][1]).toBe(false)
+    })
+
+    it('sends the profile, or null for None, once the admin changes it', async () => {
+      const { form, picker } = await approveAuthor()
+      await waitFor(() => expect(picker).toHaveValue('2'))
+      fireEvent.change(picker, { target: { value: '' } })
+      fireEvent.click(within(form).getByRole('button', { name: 'Approve and add' }))
+      await waitFor(() => expect(api.approveRequest).toHaveBeenCalledTimes(1))
+      const choices = vi.mocked(api.approveRequest).mock.calls[0][1]
+      expect('qualityProfileId' in choices).toBe(true)
+      expect(choices.qualityProfileId).toBeNull()
+    })
   })
 
   it('declines with the reason typed', async () => {

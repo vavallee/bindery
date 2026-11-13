@@ -18,7 +18,7 @@ Real candidates, not commitments, roughly in order of how much they'd change the
 
 - **Series discovery** ([#2523](https://github.com/vavallee/bindery/issues/2523)): a monitored series finds its own new books. Waits on telling a new work from a new edition ([#2524](https://github.com/vavallee/bindery/issues/2524)); the first piece, not listing the split edition parts of a book you own as missing, shipped in v1.42.0, and the rest of that issue is still open.
 
-- **Multi user review** ([#3552](https://github.com/vavallee/bindery/issues/3552)): the first pass is done. It looked at what one user can see or change of another's data, with tenancy on and off, and its fixes shipped in v1.46.2, with more in the next patch release. What is left is writing up the supported multi user model and filing the smaller findings as their own issues. Data isolation is still opt in through `BINDERY_ENFORCE_TENANCY`, and `authors.foreign_id` is still unique across all users, so two users who want the same author collide.
+- **Multi user review** ([#3552](https://github.com/vavallee/bindery/issues/3552)): the first pass is done. It looked at what one user can see or change of another's data, with tenancy on and off, and its fixes shipped in v1.46.2, with more in the next patch release. What is left is writing up the supported multi user model and filing the smaller findings as their own issues. Data isolation is still opt in through `BINDERY_ENFORCE_TENANCY`. With it on, each account holds its own row for an author ([#3555](https://github.com/vavallee/bindery/issues/3555)); books are still held once per instance.
 
 - **Merge books / multiple editions** ([#1358](https://github.com/vavallee/bindery/issues/1358)) — group alternate and non-English editions under one book instead of minting duplicates. Real design work; matters most to non-English users.
 
@@ -91,7 +91,7 @@ If you need these sources, point a [Jackett](https://github.com/Jackett/Jackett)
 [OpenBooks](https://github.com/evan-buss/openbooks) (IRC-based ebook retrieval from `#ebooks` on IRCHighway) is a great tool but doesn't compose with Bindery's architecture:
 
 - **Protocol mismatch** — IRC DCC transfers are stateful, session-oriented, and manual (`@search` → results → `!<bot> <filename>`). Bindery's fire-and-forget grab → queue → import pipeline assumes an HTTP-fetchable URL (NZB, `.torrent`, magnet).
-- **No result metadata** — IRC search results are filenames, not structured release objects with size / pub-date / grabs / indexer ID. The ranker and custom-format matchers would degenerate to substring matching.
+- **No result metadata**: IRC search results are filenames, not structured release objects with size / pub-date / grabs / indexer ID. The ranker and format filters would degenerate to substring matching.
 - **Maintenance burden** — IRC bots rotate, channel rules change, trigger syntax drifts. Absorbing that churn into the release pipeline isn't in scope for a single-maintainer project.
 
 Run OpenBooks alongside Bindery for one-off lookups — it's a different tool with a different shape, and pretending otherwise degrades both.

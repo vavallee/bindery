@@ -167,6 +167,9 @@ export interface MergeAuthorsResult {
   // Names the merge could not record as an alias because another author
   // already holds them. Null or absent when nothing was left out.
   AliasesSkipped?: string[] | null
+  // Provider ids of the source not moved because another author in the kept
+  // author's account already holds them (#3555). Null or absent when none.
+  IdentifiersDropped?: string[] | null
   TargetUpdated: boolean
 }
 

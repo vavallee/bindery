@@ -206,10 +206,18 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                     onChange={e => setQualityProfileId(e.target.value ? Number(e.target.value) : null)}
                     className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
                   >
+                    {/* Without this option an author with no profile showed
+                        the first profile as selected, and saving untouched
+                        sent nothing, so the author silently kept accepting
+                        every format (#3831). Choosing it sends null. */}
+                    <option value="">{t('common.qualityProfileNone')}</option>
                     {qualityProfiles.map(p => (
                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
                   </select>
+                  {qualityProfileId === null && (
+                    <p className="text-xs text-fg-muted mt-1">{t('common.qualityProfileNoneHint')}</p>
+                  )}
                 </div>
               )}
               {metadataProfiles.length > 0 && (

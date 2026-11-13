@@ -40,17 +40,6 @@ export interface DelayProfile {
   order: number
 }
 
-export interface CustomFormat {
-  id: number
-  name: string
-  conditions: Array<{
-    type: string
-    pattern: string
-    negate: boolean
-    required: boolean
-  }>
-}
-
 export interface RootFolder {
   id: number
   path: string
@@ -68,6 +57,12 @@ export const profilesApi = {
     request<QualityProfile>(`/qualityprofile/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteQualityProfile: (id: number) =>
     request<void>(`/qualityprofile/${id}`, { method: 'DELETE' }),
+  // Authors with no quality profile accept every format at grab and import
+  // (#3831). Admin only; both cover the caller's own and unowned authors.
+  countAuthorsWithoutQualityProfile: () =>
+    request<{ count: number }>('/authors/without-quality-profile'),
+  applyQualityProfileToAuthorsWithout: (qualityProfileId: number) =>
+    request<{ updated: number }>('/authors/without-quality-profile', { method: 'POST', body: JSON.stringify({ qualityProfileId }) }),
 
   // Metadata Profiles
   listMetadataProfiles: () => request<MetadataProfile[]>('/metadataprofile'),
@@ -79,11 +74,6 @@ export const profilesApi = {
   listDelayProfiles: () => request<DelayProfile[]>('/delayprofile'),
   addDelayProfile: (data: Partial<DelayProfile>) => request<DelayProfile>('/delayprofile', { method: 'POST', body: JSON.stringify(data) }),
   deleteDelayProfile: (id: number) => request<void>(`/delayprofile/${id}`, { method: 'DELETE' }),
-
-  // Custom Formats
-  listCustomFormats: () => request<CustomFormat[]>('/customformat'),
-  addCustomFormat: (data: Partial<CustomFormat>) => request<CustomFormat>('/customformat', { method: 'POST', body: JSON.stringify(data) }),
-  deleteCustomFormat: (id: number) => request<void>(`/customformat/${id}`, { method: 'DELETE' }),
 
   // Root Folders
   listRootFolders: () => request<RootFolder[]>('/rootfolder'),
