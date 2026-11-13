@@ -49,7 +49,7 @@ func (e *AuthError) Error() string {
 		// means the request was turned away before the login was checked:
 		// by a proxy that wants its own login (#3693), or by qBittorrent's
 		// Host header validation.
-		return fmt.Sprintf("qBittorrent auth failed (HTTP 401): %s — the request was refused before the username and password were checked. "+
+		return fmt.Sprintf("qBittorrent auth failed (HTTP 401): %s. The request was refused before the username and password were checked. "+
 			"If a reverse proxy in front of qBittorrent asks for its own login, fill in Proxy login on the client form; "+
 			"otherwise qBittorrent's Host header validation may be rejecting the host name bindery uses (Tools → Options → Web UI).", e.Body)
 	case e.Status == http.StatusForbidden:
@@ -120,7 +120,7 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 
 	jar, _ := cookiejar.New(nil)
 	return &Client{
-		baseURL:  fmt.Sprintf("%s://%s%s", scheme, clienthost.Authority(host, port), urlbase.Normalize(urlBase)),
+		baseURL:  fmt.Sprintf("%s://%s%s", scheme, authority(host, port, useSSL), urlbase.Normalize(urlBase)),
 		username: username,
 		password: password,
 		// Control client: dialled directly (never via BINDERY_OUTBOUND_PROXY),
@@ -138,6 +138,21 @@ func New(host string, port int, username, password, urlBase string, useSSL bool)
 			return httpsec.ValidateOutboundURL(raw, httpsec.DownloadFetchPolicy())
 		},
 	}
+}
+
+// authority renders the host[:port] part of baseURL. The port is left out when
+// it is the scheme's default (443 for https, 80 for http), so Go sends a Host
+// header without it. A reverse proxy passes that header on, and qBittorrent's
+// Host header validation refuses "host:443" where it accepts "host" (#3668).
+func authority(host string, port int, useSSL bool) string {
+	if (useSSL && port == 443) || (!useSSL && port == 80) {
+		h := clienthost.Unbracket(strings.TrimSpace(host))
+		if strings.Contains(h, ":") {
+			return "[" + h + "]"
+		}
+		return h
+	}
+	return clienthost.Authority(host, port)
 }
 
 // SetBasicAuth makes every control request (login, polling, add, delete) carry

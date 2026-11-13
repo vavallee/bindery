@@ -232,8 +232,61 @@ func TestNew(t *testing.T) {
 	}
 
 	cs := New("securehost", 443, "u", "p", "", true)
-	if cs.baseURL != "https://securehost:443" {
+	if cs.baseURL != "https://securehost" {
 		t.Errorf("SSL baseURL: got %q", cs.baseURL)
+	}
+}
+
+// A default port is left out of baseURL so the Host header goes out without it
+// (#3668); any other port stays.
+func TestNew_DefaultPortOmitted(t *testing.T) {
+	cases := []struct {
+		host string
+		port int
+		ssl  bool
+		want string
+	}{
+		{"sun.seedhost.eu", 443, true, "https://sun.seedhost.eu/qbit"},
+		{"box.local", 80, false, "http://box.local/qbit"},
+		{"[::1]", 443, true, "https://[::1]/qbit"},
+		{"box.local", 443, false, "http://box.local:443/qbit"},
+		{"box.local", 80, true, "https://box.local:80/qbit"},
+		{"box.local", 8443, true, "https://box.local:8443/qbit"},
+	}
+	for _, tc := range cases {
+		if got := New(tc.host, tc.port, "u", "p", "/qbit", tc.ssl).baseURL; got != tc.want {
+			t.Errorf("New(%q, %d, ssl=%v) baseURL = %q, want %q", tc.host, tc.port, tc.ssl, got, tc.want)
+		}
+	}
+}
+
+// The Host header of the login carries no port for an https client on 443, and
+// the proxy basic auth still applies, since it reads its host from baseURL.
+func TestLogin_HostWithoutDefaultPort(t *testing.T) {
+	c := New("sun.seedhost.eu", 443, "u", "p", "", true)
+	var gotHost, gotAuth string
+	c.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotHost = r.Host
+		if gotHost == "" {
+			gotHost = r.URL.Host
+		}
+		gotAuth = r.Header.Get("Authorization")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Set-Cookie": {"SID=abc; path=/"}},
+			Body:       io.NopCloser(strings.NewReader("Ok.")),
+			Request:    r,
+		}, nil
+	})
+	c.SetBasicAuth("proxyuser", "proxypass")
+	if err := c.Login(context.Background()); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if gotHost != "sun.seedhost.eu" {
+		t.Errorf("Host = %q, want %q", gotHost, "sun.seedhost.eu")
+	}
+	if gotAuth == "" {
+		t.Error("proxy basic auth missing from the login request")
 	}
 }
 
