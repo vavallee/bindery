@@ -622,7 +622,7 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 	bookCreated = true
 
 	// 3 and 4. Monitor the book, apply the requested format, optionally search.
-	runID, err := h.monitorBookAndSearch(ctx, book, req)
+	runID, err := h.monitorBookAndSearch(ctx, book, req, "")
 	if err != nil {
 		return addBookResult{}, err
 	}
@@ -641,7 +641,12 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 // book monitored, apply req.MediaType and re-evaluate its status, save it, and
 // start the search when req.SearchOnAdd asks for one. It returns the search run
 // id, or "" when no search started. book is changed in place.
-func (h *AuthorHandler) monitorBookAndSearch(ctx context.Context, book *models.Book, req addBookParams) (string, error) {
+//
+// A non-empty expectedUpdatedAt (the snapshot's UpdatedAtRaw) makes the save
+// conditional: if the row changed since book was read, nothing is written, no
+// search starts and errBookChangedMeanwhile comes back, so a concurrent import
+// is never overwritten from a stale snapshot. addBookCore passes "".
+func (h *AuthorHandler) monitorBookAndSearch(ctx context.Context, book *models.Book, req addBookParams, expectedUpdatedAt string) (string, error) {
 	// 3. Mark the book monitored (wanted). An explicit media-type choice is
 	// applied here too — the poll may have found a row created by the async
 	// catalogue sync (or one already in the library) carrying the default.
@@ -655,7 +660,15 @@ func (h *AuthorHandler) monitorBookAndSearch(ctx context.Context, book *models.B
 		book.MediaType = req.MediaType
 		reevaluateBookStatus(book)
 	}
-	if err := h.books.Update(ctx, book); err != nil {
+	if expectedUpdatedAt != "" {
+		ok, err := h.books.UpdateIfUnchanged(ctx, book, expectedUpdatedAt)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", errBookChangedMeanwhile
+		}
+	} else if err := h.books.Update(ctx, book); err != nil {
 		return "", err
 	}
 
@@ -693,6 +706,10 @@ func (h *AuthorHandler) monitorBookAndSearch(ctx context.Context, book *models.B
 	return runID, nil
 }
 
+// errBookChangedMeanwhile means a conditional save lost to a concurrent write
+// to the same book row (an import setting a file path, say).
+var errBookChangedMeanwhile = errors.New("the book changed while it was being saved")
+
 // monitorExistingBookCore is the add for a book that is already in the
 // library, used when a request for it is approved (#3835). addBookCore refuses
 // such a book on purpose, so the Add dialog can never flip an owned book back
@@ -701,11 +718,15 @@ func (h *AuthorHandler) monitorBookAndSearch(ctx context.Context, book *models.B
 // already widened to include what the row had, and searched when asked.
 // A book the user skipped is wanted again; otherwise status is re-derived from
 // the formats still missing, as for any media type change.
+//
+// The save only lands if the row is as book was read (errBookChangedMeanwhile
+// otherwise), because it rewrites every column and a concurrent import must not
+// lose its file path to this snapshot.
 func (h *AuthorHandler) monitorExistingBookCore(ctx context.Context, book *models.Book, mediaType string, searchOnAdd bool) (addBookResult, error) {
 	if book.Status == models.BookStatusSkipped {
 		book.Status = models.BookStatusWanted
 	}
-	runID, err := h.monitorBookAndSearch(ctx, book, addBookParams{MediaType: mediaType, SearchOnAdd: searchOnAdd})
+	runID, err := h.monitorBookAndSearch(ctx, book, addBookParams{MediaType: mediaType, SearchOnAdd: searchOnAdd}, book.UpdatedAtRaw)
 	if err != nil {
 		return addBookResult{}, err
 	}
