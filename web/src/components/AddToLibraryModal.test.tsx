@@ -80,6 +80,7 @@ vi.mock('../api/client', () => ({
     searchAuthors: vi.fn(),
     searchBooks: vi.fn(),
     lookupISBN: vi.fn(),
+    lookupHardcover: vi.fn(),
     lookupASIN: vi.fn(),
     addAuthor: vi.fn(),
     addBook: vi.fn(),
@@ -315,6 +316,17 @@ describe('AddToLibraryModal - identifier dispatch', () => {
     expect(api.searchAuthors).not.toHaveBeenCalled()
     expect(api.searchBooks).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Select Iron Flame' })).toBeEnabled()
+  })
+
+  it('routes a Hardcover book link to the Hardcover lookup (#3839)', async () => {
+    vi.mocked(api.lookupHardcover).mockResolvedValue(book({ foreignBookId: 'hc:howl-of-the-hearthworld', title: 'Howl of the Hearthworld' }))
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
+    typeAndSearch('https://hardcover.app/books/howl-of-the-hearthworld')
+    await waitFor(() => expect(screen.getByText('Howl of the Hearthworld')).toBeInTheDocument())
+    expect(api.lookupHardcover).toHaveBeenCalledWith('howl-of-the-hearthworld')
+    expect(api.searchAuthors).not.toHaveBeenCalled()
+    expect(api.searchBooks).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Select Howl of the Hearthworld' })).toBeEnabled()
   })
 
   it('shows the error when the ASIN does not resolve', async () => {

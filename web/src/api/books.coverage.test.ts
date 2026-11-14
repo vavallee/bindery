@@ -36,11 +36,13 @@ describe('booksApi request shapes', () => {
     await booksApi.searchBooks('a/b')
     await booksApi.lookupISBN('978-0')
     await booksApi.lookupASIN('B00 X')
+    await booksApi.lookupHardcover('howl-of-the-hearthworld')
     expect(seen.map(s => [s.path, Object.fromEntries(new URLSearchParams(s.query))])).toEqual([
       ['/search/author', { term: 'le guin' }],
       ['/search/book', { term: 'a/b' }],
       ['/book/lookup', { isbn: '978-0' }],
       ['/book/lookup', { asin: 'B00 X' }],
+      ['/book/lookup', { hardcover: 'howl-of-the-hearthworld' }],
     ])
   })
 

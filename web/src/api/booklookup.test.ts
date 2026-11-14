@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { normalizeISBNInput, resolveBookQuery } from './booklookup'
+import { hardcoverSlugFromQuery, normalizeISBNInput, resolveBookQuery } from './booklookup'
 import { api } from './client'
 
 const ISBN_13 = '9780441172719'
@@ -67,6 +67,53 @@ describe('resolveBookQuery routes a separated ISBN to the lookup endpoint', () =
       expect(lookupISBN).not.toHaveBeenCalled()
     } finally {
       lookupISBN.mockRestore()
+      searchBooks.mockRestore()
+    }
+  })
+})
+
+// A Hardcover book reference names one book, so it goes to the lookup rather
+// than a title search that may not surface the book at all (#3839).
+describe('hardcoverSlugFromQuery', () => {
+  it.each([
+    ['the hc: id', 'hc:howl-of-the-hearthworld'],
+    ['an upper case prefix', 'HC:howl-of-the-hearthworld'],
+    ['the book page', 'https://hardcover.app/books/howl-of-the-hearthworld'],
+    ['a page with a trailing slash', 'https://hardcover.app/books/howl-of-the-hearthworld/'],
+    ['a tab of the page', 'https://hardcover.app/books/howl-of-the-hearthworld/editions'],
+    ['a query string', 'https://hardcover.app/books/howl-of-the-hearthworld?ref=search'],
+    ['www and http', 'http://www.hardcover.app/books/howl-of-the-hearthworld'],
+    ['no scheme', 'hardcover.app/books/howl-of-the-hearthworld'],
+    ['surrounding spaces', '  https://hardcover.app/books/howl-of-the-hearthworld  '],
+  ])('reads the slug from %s', (_name, input) => {
+    expect(hardcoverSlugFromQuery(input)).toBe('howl-of-the-hearthworld')
+  })
+
+  it.each([
+    ['a title', 'Howl of the Hearthworld'],
+    ['an empty hc: id', 'hc:'],
+    ['an author page', 'https://hardcover.app/authors/some-author'],
+    ['another site', 'https://example.com/books/howl-of-the-hearthworld'],
+    ['a look-alike host', 'https://hardcover.app.example.com/books/howl'],
+    ['the books index', 'https://hardcover.app/books/'],
+  ])('returns null for %s', (_name, input) => {
+    expect(hardcoverSlugFromQuery(input)).toBeNull()
+  })
+})
+
+describe('resolveBookQuery routes a Hardcover reference to the lookup endpoint', () => {
+  it.each([
+    ['hc:howl-of-the-hearthworld'],
+    ['https://hardcover.app/books/howl-of-the-hearthworld'],
+  ])('looks up %s by its slug', async input => {
+    const lookupHardcover = vi.spyOn(api, 'lookupHardcover').mockResolvedValue({ id: 1 } as never)
+    const searchBooks = vi.spyOn(api, 'searchBooks').mockResolvedValue([] as never)
+    try {
+      await resolveBookQuery(input)
+      expect(lookupHardcover).toHaveBeenCalledWith('howl-of-the-hearthworld')
+      expect(searchBooks).not.toHaveBeenCalled()
+    } finally {
+      lookupHardcover.mockRestore()
       searchBooks.mockRestore()
     }
   })
