@@ -1,8 +1,8 @@
 # Regression rate
 
-Generated 2026-11-14 at main `95a7b1f34245` by `go run ./tools/regressionrate`. Do not edit the tables by hand; rerun the tool.
+Generated 2026-11-14 at main `782009ccb210` by `go run ./tools/regressionrate`. Do not edit the tables by hand; rerun the tool.
 
-2463 non merge commits, 1048 of them `fix` commits, 176 release tags from v0.1.0 to v1.50.0.
+2464 non merge commits, 1048 of them `fix` commits, 176 release tags from v0.1.0 to v1.50.0.
 
 ## Method
 
@@ -27,13 +27,20 @@ What it cannot see: a fix that deletes old code to repair a bug a recent change 
 
 ## Headline
 
+Two numbers, because the question has a narrow and a broad answer:
+
+* **Narrow, release based: 6%** (55 of 854 fixes with deleted source lines) mostly rewrite code that first shipped in one of the two releases before the fix. At this cadence two releases is about 2.4 days, so this counts only bugs caught almost at once. The hand check below bounds its precision (about half of the sampled labels hold up). Its recall is not measured: nobody checked how many real regressions the 732 latent fixes hide.
+* **Broad, calendar based: 34%** (294 of 854) mostly rewrite shipped code that was 30 days old or less when the fix landed. This is the widest reading of "a recent change caused it". It is a bound, not an estimate: it also counts old bugs in recently edited code.
+
+Neither is the true rate of fixes repairing a recently shipped bug, and the history alone cannot pin that down further.
+
 | rule | fixes | unreleased | regression_1 | regression_2 | latent | regression share | shipped regression share |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| majority | 853 | 66 | 32 | 23 | 732 | **6%** | 7% |
-| youngest | 853 | 117 | 73 | 52 | 611 | 15% | 17% |
+| majority | 854 | 67 | 32 | 23 | 732 | **6%** | 7% |
+| youngest | 854 | 118 | 73 | 52 | 611 | 15% | 17% |
 | additive, youngest context | 82 | 7 | 6 | 1 | 68 | 9% | 9% |
 
-Shipped regression share leaves out unreleased fixes: of the bugs that reached a release, how many came from one of the last two. Of 1048 fix commits, 853 had blameable deleted lines, 82 were additive, 70 were tooling and 43 touched no blameable source.
+Shipped regression share leaves out unreleased fixes: of the bugs that reached a release, how many came from one of the last two. Of 1048 fix commits, 854 had blameable deleted lines, 82 were additive, 68 were tooling and 44 touched no blameable source.
 
 ### Calendar age of shipped code
 
@@ -43,7 +50,7 @@ By the youngest code touched, among fixes with deleted lines whose youngest code
 |---:|---:|---:|---:|
 | 240 | 215 | 183 | 98 |
 
-Fixes where at least half the blamed lines are shipped code 30 days old or less: **294 of 853 (34%)**. By the youngest line instead: 455 (53%). This is the widest reading of "a recent change caused it" and an upper bound; at this release cadence it covers code from the last few weeks of releases, and it carries the same misreadings as the release based rules.
+Fixes where at least half the blamed lines are shipped code 30 days old or less: **294 of 854 (34%)**. By the youngest line instead: 455 (53%). This is the broad bound from the headline; it carries the same misreadings as the release based rules.
 
 ## Trend
 
@@ -51,9 +58,9 @@ Class counts use the majority rule on fixes with deleted lines. Untagged fixes o
 
 | lines | fix commits | tooling | no source | additive | unreleased | regression_1 | regression_2 | latent | regression share | youngest rule | recent 30 days |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| v0.x | 112 | 19 | 16 | 9 | 13 | 5 | 4 | 46 | **13%** | 21% | 82% |
+| v0.x | 112 | 18 | 17 | 9 | 13 | 5 | 4 | 46 | **13%** | 21% | 82% |
 | v1.0 to v1.9 | 150 | 28 | 9 | 11 | 22 | 3 | 6 | 71 | **9%** | 10% | 77% |
-| v1.10 to v1.19 | 170 | 8 | 8 | 11 | 3 | 8 | 3 | 129 | **8%** | 19% | 38% |
+| v1.10 to v1.19 | 170 | 7 | 8 | 11 | 4 | 8 | 3 | 129 | **8%** | 19% | 38% |
 | v1.20 to v1.29 | 140 | 3 | 0 | 19 | 2 | 2 | 6 | 108 | **7%** | 8% | 22% |
 | v1.30 to v1.39 | 254 | 4 | 8 | 25 | 15 | 5 | 2 | 195 | **3%** | 10% | 18% |
 | v1.40 to v1.49 | 207 | 8 | 2 | 7 | 10 | 9 | 2 | 169 | **6%** | 21% | 20% |
@@ -65,7 +72,7 @@ Class counts use the majority rule on fixes with deleted lines.
 
 | line | fix commits | tooling | no source | additive | unreleased | regression_1 | regression_2 | latent | regression share | youngest rule | recent 30 days |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| v0.x | 112 | 19 | 16 | 9 | 13 | 5 | 4 | 46 | **13%** | 21% | 82% |
+| v0.x | 112 | 18 | 17 | 9 | 13 | 5 | 4 | 46 | **13%** | 21% | 82% |
 | v1.0.x | 11 | 0 | 1 | 2 | 1 | 1 | 0 | 6 | **12%** | 12% | 88% |
 | v1.1.x | 12 | 3 | 1 | 0 | 0 | 0 | 0 | 8 | **0%** | 0% | 100% |
 | v1.2.x | 42 | 11 | 4 | 5 | 2 | 0 | 2 | 18 | **9%** | 14% | 95% |
@@ -79,7 +86,7 @@ Class counts use the majority rule on fixes with deleted lines.
 | v1.10.x | 4 | 1 | 0 | 0 | 0 | 0 | 0 | 3 | **0%** | 33% | 100% |
 | v1.11.x | 15 | 4 | 2 | 1 | 0 | 0 | 0 | 8 | **0%** | 0% | 62% |
 | v1.12.x | 17 | 1 | 0 | 1 | 0 | 1 | 0 | 14 | **7%** | 7% | 20% |
-| v1.13.x | 15 | 1 | 0 | 0 | 1 | 0 | 1 | 12 | **7%** | 14% | 21% |
+| v1.13.x | 15 | 0 | 0 | 0 | 2 | 0 | 1 | 12 | **7%** | 13% | 20% |
 | v1.14.x | 16 | 0 | 0 | 2 | 0 | 0 | 1 | 13 | **7%** | 14% | 57% |
 | v1.15.x | 23 | 1 | 1 | 1 | 0 | 2 | 0 | 18 | **10%** | 10% | 50% |
 | v1.16.x | 30 | 0 | 1 | 4 | 1 | 0 | 0 | 24 | **0%** | 12% | 40% |
@@ -131,8 +138,8 @@ Class counts use the majority rule on fixes with deleted lines. A fix belongs to
 | internal/calibre | 18 | 0 | 0 | 2 | 1 | 2 | 0 | 13 | **12%** | 19% | 31% |
 | internal/downloader | 59 | 0 | 0 | 7 | 2 | 1 | 0 | 49 | **2%** | 13% | 33% |
 | web/src | 177 | 0 | 0 | 11 | 9 | 8 | 3 | 146 | **7%** | 20% | 34% |
-| other | 221 | 0 | 0 | 15 | 18 | 9 | 5 | 174 | **7%** | 12% | 32% |
-| (no source) | 113 | 70 | 43 | 0 | 0 | 0 | 0 | 0 | **n/a** | n/a | n/a |
+| other | 222 | 0 | 0 | 15 | 19 | 9 | 5 | 174 | **7%** | 12% | 31% |
+| (no source) | 112 | 68 | 44 | 0 | 0 | 0 | 0 | 0 | **n/a** | n/a | n/a |
 
 ## Changes that caused the most rework
 
@@ -189,7 +196,7 @@ Done on 2026-11-13 against main `95a7b1f3`. The tool's `-dump` output was sample
 
 ### Latent: 5 of 5 right
 
-`9776df933` (Fix Match confirmation, defect in the original v1.23 feature), `a813dab59` (pending releases keyed by GUID, an old schema choice), `d8a990d19` (wait for an unpacker, an old limitation), `3c55da65e` (ttlCache janitor leak, old), `5a9f3dc2a` (misleading download client errors, old). Two of these touched code only 12 and 21 days old and were still not regressions, which is why the calendar view is an upper bound and not an estimate.
+`9776df933` (Fix Match confirmation, defect in the original v1.23 feature), `a813dab59` (pending releases keyed by GUID, an old schema choice), `d8a990d19` (wait for an unpacker, an old limitation), `3c55da65e` (ttlCache janitor leak, old), `5a9f3dc2a` (misleading download client errors, old). Two of these touched code only 12 and 21 days old and were still not regressions, which is why the calendar view is a broad bound and not an estimate. Five latent samples check attribution, not recall: they say nothing about how many of the latent fixes are really regressions.
 
 ### Majority rule, regression_1: 5 of 8 right, 4 of them user facing
 
@@ -205,4 +212,8 @@ Counting every distinct majority regression_1 fix read across both samples, 7 of
 * **Mirrored code.** The TypeScript preview of a Go function inherits the Go bug and takes the blame for it.
 * **Fixes that are really enhancements.** The `fix` prefix is used for new behaviour as well as broken behaviour.
 
-None of these can be told apart from the diff alone, so the tool does not try. Read the release based numbers as an upper bound of roughly twice the true rate: with about half of the majority rule's regressions confirmed, the real share of source fixes repairing a bug from one of the two previous releases is around 3 to 4 percent, not the 15 percent the youngest rule gives.
+None of these can be told apart from the diff alone, so the tool does not try.
+
+### What the check does and does not measure
+
+It measures precision of the regression label: about half of the majority rule's regression_1 labels and under a third of the youngest rule's are right. It does not measure recall. Nobody sampled the latent fixes for real regressions the release window missed, and at about 2.4 days per two releases that window is narrow. So the release based share is a narrow figure whose precision is roughly known, and the 30 day calendar share is the broad bound; neither is the true rate.

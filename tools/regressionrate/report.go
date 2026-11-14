@@ -125,6 +125,16 @@ func (r *report) write(out io.Writer) error {
 	p("## Headline\n\n")
 	nm, d := share(all.majority)
 	n, _ := share(all.youngest)
+	cadence := float64(r.spanDays) / float64(max(1, len(r.rm.releases)-1))
+	p("Two numbers, because the question has a narrow and a broad answer:\n\n")
+	p("* **Narrow, release based: %s** (%d of %d fixes with deleted source lines) mostly rewrite code that first shipped in one of the two releases before the fix. "+
+		"At this cadence two releases is about %.1f days, so this counts only bugs caught almost at once. "+
+		"The hand check below bounds its precision (about half of the sampled labels hold up). Its recall is not measured: nobody checked how many real regressions the %d latent fixes hide.\n",
+		pct(nm, d), nm, d, 2*cadence, all.majority[Latent])
+	p("* **Broad, calendar based: %s** (%d of %d) mostly rewrite shipped code that was 30 days old or less when the fix landed. "+
+		"This is the widest reading of \"a recent change caused it\". It is a bound, not an estimate: it also counts old bugs in recently edited code.\n\n",
+		pct(all.recentMaj, d), all.recentMaj, d)
+	p("Neither is the true rate of fixes repairing a recently shipped bug, and the history alone cannot pin that down further.\n\n")
 	p("| rule | fixes | unreleased | regression_1 | regression_2 | latent | regression share | shipped regression share |\n|---|---:|---:|---:|---:|---:|---:|---:|\n")
 	p("| majority | %d | %d | %d | %d | %d | **%s** | %s |\n", d, all.majority[0], all.majority[1], all.majority[2], all.majority[3], pct(nm, d), pct(nm, nm+all.majority[Latent]))
 	p("| youngest | %d | %d | %d | %d | %d | %s | %s |\n", d, all.youngest[0], all.youngest[1], all.youngest[2], all.youngest[3], pct(n, d), pct(n, n+all.youngest[Latent]))
@@ -136,7 +146,7 @@ func (r *report) write(out io.Writer) error {
 	p("| up to 7 days | 8 to 30 days | 31 to 90 days | over 90 days |\n|---:|---:|---:|---:|\n")
 	p("| %d | %d | %d | %d |\n\n", all.ageBucket[0], all.ageBucket[1], all.ageBucket[2], all.ageBucket[3])
 	p("Fixes where at least half the blamed lines are shipped code 30 days old or less: **%d of %d (%s)**. By the youngest line instead: %d (%s). "+
-		"This is the widest reading of \"a recent change caused it\" and an upper bound; at this release cadence it covers code from the last few weeks of releases, and it carries the same misreadings as the release based rules.\n\n",
+		"This is the broad bound from the headline; it carries the same misreadings as the release based rules.\n\n",
 		all.recentMaj, d, pct(all.recentMaj, d), all.recent30(), pct(all.recent30(), d))
 
 	r.groupTable(w, "Trend", "lines", func(f *fixResult) string { return r.decade(f.rel) }, r.decadeOrder())

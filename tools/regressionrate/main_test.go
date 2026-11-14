@@ -72,6 +72,69 @@ new file mode 100644
 	}
 }
 
+func TestParseDiffDeletedDashLine(t *testing.T) {
+	// A deleted SQL comment line "-- note" shows as "--- note" in the diff.
+	diff := `diff --git a/q.go b/q.go
+--- a/q.go
++++ b/q.go
+@@ -4,2 +4,0 @@
+--- note
+-x
+@@ -9 +7 @@
+-y
++z
+`
+	got := parseDiff(diff)
+	want := []fileChange{{path: "q.go", deleted: [][2]int{{4, 2}, {9, 1}}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestTrivial(t *testing.T) {
+	for _, s := range []string{"", "   ", "}", "\t})", ");", "import (", `	"strings"`, "} else {", "return nil", "//"} {
+		if !trivial(s) {
+			t.Errorf("trivial(%q) = false", s)
+		}
+	}
+	for _, s := range []string{"return err", `x := "a b"`, "if rsrc == rdst {", "// explains the guard", `fmt.Println("x")`} {
+		if trivial(s) {
+			t.Errorf("trivial(%q) = true", s)
+		}
+	}
+	// Trivial lines do not vote: two recent braces cannot outvote one old
+	// line of logic.
+	f := &fixResult{rel: 10}
+	for _, b := range []blamedLine{{sha: "new", content: "}"}, {sha: "new", content: ""}, {sha: "old", content: "return oldA()"}} {
+		if !trivial(b.content) {
+			rel := 1
+			if b.sha == "new" {
+				rel = 9
+			}
+			f.lines = append(f.lines, lineAge{sha: b.sha, rel: rel})
+		}
+	}
+	summarize(f)
+	if f.majority != Latent {
+		t.Fatalf("majority = %s, want latent", f.majority)
+	}
+}
+
+func TestToolingSubject(t *testing.T) {
+	tooling := []string{"fix(lint): resolve errcheck", "fix: gofmt internal/calibre/syncer.go", "fix(test): flaky timeout", "fix(ci)!: pin action", "fix: lint failures in telemetry", "fix(api): gosec G104 in handler"}
+	user := []string{"fix(api): close the SSRF hole gosec found (#1)", "fix: restore series Fill; use WithoutCancel (G118)", "fix(importer): stop the linter in the name parser"}
+	for _, s := range tooling {
+		if !toolingSubject.MatchString(s) {
+			t.Errorf("%q should be tooling", s)
+		}
+	}
+	for _, s := range user {
+		if toolingSubject.MatchString(s) {
+			t.Errorf("%q should not be tooling", s)
+		}
+	}
+}
+
 func TestIsSourceAndArea(t *testing.T) {
 	yes := []string{"internal/api/books.go", "web/src/pages/Book.tsx", "cmd/bindery/main.go"}
 	no := []string{"internal/api/books_test.go", "web/src/App.test.tsx", "docs/x.go", "README.md", "web/package-lock.json", "tools/licensegen/vendored/x.go", "web/src/vite-env.d.ts", "tests/smoke/main.go"}

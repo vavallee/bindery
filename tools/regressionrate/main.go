@@ -263,6 +263,10 @@ var hunkHeader = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@`)
 func parseDiff(diff string) []fileChange {
 	var out []fileChange
 	var cur *fileChange
+	// File headers only appear between "diff --git" and the first hunk. A
+	// deleted line whose text starts with "-- " also reads "--- ..." and
+	// must not open a new file.
+	inHeader := false
 	sc := bufio.NewScanner(strings.NewReader(diff))
 	sc.Buffer(make([]byte, 1<<20), 1<<24)
 	for sc.Scan() {
@@ -270,15 +274,17 @@ func parseDiff(diff string) []fileChange {
 		switch {
 		case strings.HasPrefix(ln, "diff --git "):
 			cur = nil
-		case strings.HasPrefix(ln, "--- "):
-			old := strings.TrimPrefix(ln, "--- ")
-			if old == "/dev/null" {
-				cur = nil
+			inHeader = true
+		case inHeader && ln == "--- /dev/null":
+			cur = nil
+		case inHeader && strings.HasPrefix(ln, "--- a/"):
+			out = append(out, fileChange{path: strings.TrimPrefix(ln, "--- a/")})
+			cur = &out[len(out)-1]
+		case strings.HasPrefix(ln, "@@ "):
+			inHeader = false
+			if cur == nil {
 				continue
 			}
-			out = append(out, fileChange{path: strings.TrimPrefix(old, "a/")})
-			cur = &out[len(out)-1]
-		case strings.HasPrefix(ln, "@@ ") && cur != nil:
 			m := hunkHeader.FindStringSubmatch(ln)
 			if m == nil {
 				continue
@@ -376,7 +382,10 @@ const (
 	Tooling
 )
 
-var toolingSubject = regexp.MustCompile(`(?i)^fix\((lint|ci|test|tests|build|deps|e2e|vet)\)|gofmt|golangci|\blint\b|gosec|errcheck|sqlclosecheck|staticcheck|flaky`)
+// toolingSubject looks only at the scope and the first word of the
+// description, so a user facing fix that mentions a linter in passing
+// ("close the hole gosec found") still counts.
+var toolingSubject = regexp.MustCompile(`(?i)^fix(\((lint|ci|test|tests|build|deps|e2e|vet)\)!?:|(\([^)]*\))?!?:\s*(gofmt|golangci|lint\b|gosec|errcheck|sqlclosecheck|staticcheck|flaky))`)
 
 // fixResult is one classified fix.
 type fixResult struct {

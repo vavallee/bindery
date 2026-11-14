@@ -19,7 +19,7 @@ Done on 2026-11-13 against main `95a7b1f3`. The tool's `-dump` output was sample
 
 ### Latent: 5 of 5 right
 
-`9776df933` (Fix Match confirmation, defect in the original v1.23 feature), `a813dab59` (pending releases keyed by GUID, an old schema choice), `d8a990d19` (wait for an unpacker, an old limitation), `3c55da65e` (ttlCache janitor leak, old), `5a9f3dc2a` (misleading download client errors, old). Two of these touched code only 12 and 21 days old and were still not regressions, which is why the calendar view is an upper bound and not an estimate.
+`9776df933` (Fix Match confirmation, defect in the original v1.23 feature), `a813dab59` (pending releases keyed by GUID, an old schema choice), `d8a990d19` (wait for an unpacker, an old limitation), `3c55da65e` (ttlCache janitor leak, old), `5a9f3dc2a` (misleading download client errors, old). Two of these touched code only 12 and 21 days old and were still not regressions, which is why the calendar view is a broad bound and not an estimate. Five latent samples check attribution, not recall: they say nothing about how many of the latent fixes are really regressions.
 
 ### Majority rule, regression_1: 5 of 8 right, 4 of them user facing
 
@@ -35,4 +35,8 @@ Counting every distinct majority regression_1 fix read across both samples, 7 of
 * **Mirrored code.** The TypeScript preview of a Go function inherits the Go bug and takes the blame for it.
 * **Fixes that are really enhancements.** The `fix` prefix is used for new behaviour as well as broken behaviour.
 
-None of these can be told apart from the diff alone, so the tool does not try. Read the release based numbers as an upper bound of roughly twice the true rate: with about half of the majority rule's regressions confirmed, the real share of source fixes repairing a bug from one of the two previous releases is around 3 to 4 percent, not the 15 percent the youngest rule gives.
+None of these can be told apart from the diff alone, so the tool does not try.
+
+### What the check does and does not measure
+
+It measures precision of the regression label: about half of the majority rule's regression_1 labels and under a third of the youngest rule's are right. It does not measure recall. Nobody sampled the latent fixes for real regressions the release window missed, and at about 2.4 days per two releases that window is narrow. So the release based share is a narrow figure whose precision is roughly known, and the 30 day calendar share is the broad bound; neither is the true rate.
