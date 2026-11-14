@@ -45,12 +45,22 @@ func newFileTestServer(t *testing.T) *server {
 }
 
 func postPing(s *server, id string, n int) int {
+	code, _ := postPingBody(s, id, n)
+	return code
+}
+
+// postPingBody is postPing that also returns the response body, so a failing
+// test can say what the server answered.
+func postPingBody(s *server, id string, n int) (int, string) {
 	buf, _ := json.Marshal(pingRequest{InstallID: id, Version: "1.2.3", OS: "linux", Arch: "amd64", Deploy: "docker"})
 	req := httptest.NewRequest(http.MethodPost, "/api/ping", bytes.NewReader(buf))
-	req.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", n) // unique IP per ping, bypasses the limiter
+	// The limiter allows one ping per IP per window (an hour in the fixture),
+	// so every ping needs an IP no earlier ping used. n is spread over the
+	// 10.0.0.0/8 block, which is room for 16M pings.
+	req.RemoteAddr = fmt.Sprintf("10.%d.%d.%d:1234", n>>16&255, n>>8&255, n&255)
 	rec := httptest.NewRecorder()
 	s.handlePing(rec, req)
-	return rec.Code
+	return rec.Code, rec.Body.String()
 }
 
 // TestSnapshotDay_PingCommitsMidSnapshot is the regression test for the
@@ -92,7 +102,7 @@ func TestSnapshotDay_PingCommitsMidSnapshot(t *testing.T) {
 }
 
 // TestSnapshotDay_ConcurrentPings is the stress shape of the same bug:
-// pings arrive every few seconds in production, here continuously.
+// pings arrive every few seconds in production, here every few milliseconds.
 func TestSnapshotDay_ConcurrentPings(t *testing.T) {
 	s := newFileTestServer(t)
 	for i := 0; i < 200; i++ {
@@ -100,18 +110,32 @@ func TestSnapshotDay_ConcurrentPings(t *testing.T) {
 			time.Now().UTC().Add(-time.Hour), time.Now().UTC())
 	}
 	stop := make(chan struct{})
-	done := make(chan int, 1)
+	type result struct {
+		total, bad int
+		firstBad   string
+	}
+	done := make(chan result, 1)
 	go func() {
-		bad := 0
+		var r result
+		// About 200 pings a second, far above production's one every few
+		// seconds, but bounded so the rate does not depend on how fast the
+		// runner is.
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
 		for i := 0; ; i++ {
 			select {
 			case <-stop:
-				done <- bad
+				done <- r
 				return
-			default:
+			case <-tick.C:
 			}
-			if postPing(s, fmt.Sprintf("%08x-1111-1111-1111-111111111111", i), i%250+1) != http.StatusOK {
-				bad++
+			r.total++
+			code, body := postPingBody(s, fmt.Sprintf("%08x-1111-1111-1111-111111111111", i), i+1)
+			if code != http.StatusOK {
+				if r.bad == 0 {
+					r.firstBad = fmt.Sprintf("ping #%d: status %d body %q", i, code, body)
+				}
+				r.bad++
 			}
 		}
 	}()
@@ -121,10 +145,17 @@ func TestSnapshotDay_ConcurrentPings(t *testing.T) {
 			<-done
 			t.Fatalf("snapshotDay #%d: %v", i, err)
 		}
+		// Back to back snapshots hold the write lock almost continuously
+		// and starve the poster (it sent 1 to 2 pings in 30 runs), which
+		// proves nothing. A gap lets pings land before, during and after
+		// each snapshot.
+		time.Sleep(10 * time.Millisecond)
 	}
 	close(stop)
-	if bad := <-done; bad != 0 {
-		t.Fatalf("%d pings failed", bad)
+	r := <-done
+	t.Logf("sent %d pings", r.total)
+	if r.bad != 0 {
+		t.Fatalf("%d of %d pings failed, first: %s", r.bad, r.total, r.firstBad)
 	}
 }
 
