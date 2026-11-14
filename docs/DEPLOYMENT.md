@@ -56,7 +56,7 @@ helm install bindery charts/bindery \
 
 Every ingress template is gated on `ingress.enabled`, which defaults to false, so setting only `ingress.host` renders nothing. `ingress.type` selects what gets rendered: `traefik` (the default) emits a Traefik `IngressRoute`, `standard` emits a portable `networking.k8s.io/v1` Ingress you configure with `ingress.className`, `ingress.annotations` and `ingress.tls`.
 
-For GitOps, [`argocd/application.example.yaml`](../argocd/application.example.yaml) is a starting point for an ArgoCD `Application`. Copy it into your own repo and replace the placeholder host, NFS server and media path.
+For GitOps, [`argocd/application.example.yaml`](../argocd/application.example.yaml) is a starting point for an ArgoCD `Application`. Copy it into your own repo and replace the placeholder host, NFS server and media path. It uses `ingress.type: standard`, because the default Traefik `IngressRoute` carries a hardcoded `traefik-internal` ingress class annotation.
 
 ### Health checks
 

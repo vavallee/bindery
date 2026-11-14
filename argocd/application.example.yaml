@@ -30,17 +30,21 @@ spec:
       # example host) so the chart stays reusable; set your own values here.
       values: |
         # The chart defaults for entryPoints, certResolver and storageClass
-        # are the maintainer's cluster names. Set yours explicitly.
+        # are the maintainer's cluster names, so set what you need explicitly.
         ingress:
           enabled: true
-          # traefik renders an IngressRoute. Use type: standard with
-          # className and tls for any other ingress controller.
-          type: traefik
+          # "standard" renders a plain networking.k8s.io/v1 Ingress that works
+          # with any ingress controller. The default type "traefik" renders an
+          # IngressRoute that carries a hardcoded `traefik-internal` ingress
+          # class annotation, so Traefik would have to be configured to watch
+          # that class. If you want it anyway, set type: traefik and also set
+          # entryPoints (for example websecure) and certResolver to your names.
+          type: standard
+          className: traefik   # your IngressClass name, for example nginx
           host: bindery.example.com
-          # Your Traefik entry point and ACME resolver names.
-          entryPoints:
-            - websecure
-          certResolver: letsencrypt
+          tls:
+            - secretName: bindery-tls
+              hosts: [bindery.example.com]
         persistence:
           config:
             # Empty uses the cluster default StorageClass; or name one.
