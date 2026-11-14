@@ -57,7 +57,11 @@ func TestDownloadClientTransport_Results(t *testing.T) {
 	}))
 	before := counterValue(t, downloadClientRequestsTotal.WithLabelValues("deluge", ResultError))
 	req := httptest.NewRequest(http.MethodGet, "http://example.invalid/", nil)
-	if _, err := failing.RoundTrip(req); err == nil {
+	resp, err := failing.RoundTrip(req)
+	if resp != nil {
+		resp.Body.Close()
+	}
+	if err == nil {
 		t.Fatal("expected the transport error to pass through")
 	}
 	if got := counterValue(t, downloadClientRequestsTotal.WithLabelValues("deluge", ResultError)) - before; got != 1 {

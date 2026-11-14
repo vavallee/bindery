@@ -211,7 +211,7 @@ func (t *clientTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	case resp.StatusCode >= 400:
 		result = ResultRejected
 	}
-	downloadClientRequestsTotal.WithLabelValues(t.clientType, result).Inc()
+	downloadClientRequestsTotal.WithLabelValues(t.clientType, bound(result, clientResultLabels)).Inc()
 	downloadClientRequestDuration.WithLabelValues(t.clientType).Observe(time.Since(start).Seconds())
 	return resp, err
 }
