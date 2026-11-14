@@ -15,6 +15,7 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/nzbget"
 	"github.com/vavallee/bindery/internal/downloader/qbittorrent"
 	"github.com/vavallee/bindery/internal/downloader/transmission"
+	"github.com/vavallee/bindery/internal/metrics"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
 )
@@ -199,7 +200,20 @@ func TestClient(ctx context.Context, client *models.DownloadClient) error {
 	}
 }
 
+// SendDownload sends a release to a download client and records the attempt
+// in bindery_grabs_total. Both grab paths (the queue handler and the
+// scheduler's auto grab) come through here, so this one call counts them all.
 func SendDownload(ctx context.Context, client *models.DownloadClient, sourceURL, title string, options ...SendOptions) (*SendResult, error) {
+	res, err := sendDownload(ctx, client, sourceURL, title, options...)
+	var mediaType string
+	if len(options) > 0 {
+		mediaType = options[0].MediaType
+	}
+	metrics.ObserveGrab(mediaType, err)
+	return res, err
+}
+
+func sendDownload(ctx context.Context, client *models.DownloadClient, sourceURL, title string, options ...SendOptions) (*SendResult, error) {
 	var opts SendOptions
 	if len(options) > 0 {
 		opts = options[0]

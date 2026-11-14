@@ -971,6 +971,7 @@ func (s *Scanner) failImportWithCheck(ctx context.Context, dl *models.Download, 
 	}
 	s.createHistoryEventData(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, dl.OwnerUserID, data)
 	s.notify(ctx, notifierEventDownloadFailed, payload)
+	observeImportFailure(dl, status, reason)
 }
 
 // blockTinyOnlyDownload blocks a download whose only ebook files are under
@@ -2556,6 +2557,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 		s.fillCoverFromFile(ctx, book, destDir)
 		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, dl.OwnerUserID, withContentCheck(historyMeta, contentCheck))
+		observeImportSuccess(dl, models.MediaTypeAudiobook)
 		s.recordFixMatchMove(ctx, book, destDir)
 		s.notify(ctx, notifierEventBookImported, withContentCheckPayload(importedPayload(book, dl, models.MediaTypeAudiobook, destDir, mergeSkippedFiles), contentCheck))
 		// A folder source moved wholesale, so nothing is left of it. A lone
@@ -2899,6 +2901,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			importData["previous"] = append([]string(nil), upgrade.existing...)
 		}
 		s.createHistoryEventData(ctx, models.HistoryEventBookImported, dl.Title, dl.BookID, dl.OwnerUserID, withContentCheck(importData, contentCheck))
+		observeImportSuccess(dl, models.MediaTypeEbook)
 		if importPath, ok := importData["path"].(string); ok {
 			s.recordFixMatchMove(ctx, book, importPath)
 		}

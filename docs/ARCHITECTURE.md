@@ -103,7 +103,7 @@ The `internal/` tree is organised by domain, not by layer:
 | `grimmory` | Grimmory self-hosted digital-library integration: JWT/token client, post-import BookDrop pusher, and bulk sync job (Settings exposes config/test/sync routes under `/grimmory/*`). |
 | `hardcoverlistsyncer` | Syncs Hardcover reading lists into the catalogue as "wanted" books. |
 | `isbnutil` | Normalizes ISBN inputs for metadata-provider lookups. |
-| `metrics` | Prometheus exposition-format runtime metrics (registry, instances, HTTP handler). |
+| `metrics` | Prometheus exposition-format runtime metrics (registry, instances, HTTP handler). Every metric and label is listed in [metrics.md](metrics.md). |
 | `pathmap` | Rewrites paths between external-service mount points and Bindery-visible mount points. |
 | `useragent` | Produces the canonical `User-Agent` string sent on every outbound HTTP request. |
 
