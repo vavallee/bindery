@@ -1,0 +1,2 @@
+### Changed
+- **The Helm chart now refuses `replicaCount` above 1.** Bindery keeps its data in a single SQLite file and runs its scheduler inside the process with no leader election, so a second pod would duplicate grabs and imports and can corrupt the database. `helm install` and `helm template` now fail with a message explaining this instead of rendering two pods. A value of 1 (the default) or 0 is unaffected. If you had set a higher value, set it back to 1; the readiness and liveness probes restart a stuck pod.
