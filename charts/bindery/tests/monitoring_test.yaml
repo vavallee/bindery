@@ -110,7 +110,7 @@ tests:
           of: PrometheusRule
       - lengthEqual:
           path: spec.groups[0].rules
-          count: 8
+          count: 10
       - equal:
           path: spec.groups[0].rules[0].alert
           value: BinderyDown
@@ -129,19 +129,31 @@ tests:
       - matchRegex:
           path: spec.groups[0].rules[3].expr
           pattern: 'exported_job="check-downloads"\} > 3600'
+      - equal:
+          path: spec.groups[0].rules[4].alert
+          value: BinderySchedulerJobNeverSucceeded
       - matchRegex:
           path: spec.groups[0].rules[4].expr
-          pattern: 'exported_job="search-wanted"\} > 129600'
+          pattern: 'absent\(bindery_scheduler_last_success_timestamp_seconds\{job="bindery",namespace="media",exported_job="check-downloads"\}\)\s+and on\(\) \(up\{job="bindery",namespace="media"\} == 1\)'
+      - equal:
+          path: spec.groups[0].rules[4].for
+          value: 60m
       - matchRegex:
-          path: spec.groups[0].rules[6].expr
+          path: spec.groups[0].rules[5].expr
+          pattern: 'exported_job="search-wanted"\} > 612000'
+      - equal:
+          path: spec.groups[0].rules[6].for
+          value: 10200m
+      - matchRegex:
+          path: spec.groups[0].rules[8].expr
           pattern: 'bindery_imports_total'
       - matchRegex:
-          path: spec.groups[0].rules[7].expr
+          path: spec.groups[0].rules[9].expr
           pattern: 'bindery_download_client_requests_total\{job="bindery",namespace="media",result="error"\}'
       - exists:
-          path: spec.groups[0].rules[7].for
+          path: spec.groups[0].rules[9].for
       - exists:
-          path: spec.groups[0].rules[7].labels.severity
+          path: spec.groups[0].rules[9].labels.severity
 
   - it: takes thresholds from values and can turn rules off
     template: prometheusrule.yaml

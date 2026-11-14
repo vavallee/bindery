@@ -62,8 +62,8 @@
         "refresh": 2,
         "label": "Job",
         "current": {},
-        "hide": 2,
-        "includeAll": true,
+        "hide": 0,
+        "includeAll": false,
         "multi": false,
         "sort": 1
       }
@@ -104,7 +104,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "up{namespace=\"$namespace\",job=~\"$job\"}",
+          "expr": "up{namespace=\"$namespace\",job=\"$job\"}",
           "legendFormat": "{{pod}}"
         }
       ],
@@ -305,7 +305,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "process_resident_memory_bytes{namespace=\"$namespace\",job=~\"$job\"}",
+          "expr": "process_resident_memory_bytes{namespace=\"$namespace\",job=\"$job\"}",
           "legendFormat": ""
         }
       ],
@@ -349,7 +349,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "go_goroutines{namespace=\"$namespace\",job=~\"$job\"}",
+          "expr": "go_goroutines{namespace=\"$namespace\",job=\"$job\"}",
           "legendFormat": ""
         }
       ],
