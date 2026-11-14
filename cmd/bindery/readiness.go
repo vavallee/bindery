@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -34,13 +35,25 @@ func registerHealthRoutes(r chi.Router, database *sql.DB) {
 // only so a test can shorten it.
 var readinessTimeout = 2 * time.Second
 
-// readinessHandler answers GET /api/v1/health/ready. It returns 503 only when
-// the database reports a real error (closed handle, unreadable file, I/O or
-// corruption) and 200 otherwise, adding "busy":true when the check could not
-// finish in time. The pool holds a single connection (db.SetMaxOpenConns(1)),
-// so a library scan, a big import or a VACUUM can hold it well past any probe
-// budget while the app is fine. Failing readiness then would pull the pod out
-// of the Service and show users a 503 for no reason.
+// readinessCacheTTL is how long one check's answer is reused. The route is
+// unauthenticated and each check can hold the pool's only connection for up to
+// readinessTimeout, so without this anyone who can reach the port could keep
+// that connection busy by calling it in a loop.
+const readinessCacheTTL = time.Second
+
+// readinessHandler answers GET /api/v1/health/ready. It returns 503 when the
+// handle is closed or unusable, or the driver returns an error other than the
+// busy ones below, and 200 otherwise, adding "busy":true when the check could
+// not finish in time. It does not detect a damaged or unreadable database
+// file: the open connection answers SELECT 1, and even small table reads, from
+// memory without touching the file, so a deleted, truncated or chmod 000 file
+// still reads as ready. Catching that would need a check heavy enough to read
+// the whole file, which a probe every few seconds must not do.
+//
+// A busy database counts as ready. The pool holds a single connection
+// (db.SetMaxOpenConns(1)), so a library scan, a big import or a VACUUM can hold
+// it well past any probe budget while the app is fine. Failing readiness then
+// would pull the pod out of the Service and show users a 503 for no reason.
 //
 // It is unauthenticated (auth.AllowUnauthPath) so the kubelet can call it,
 // which is why the body is only ever a fixed status word: the cause goes to the
@@ -52,13 +65,11 @@ var readinessTimeout = 2 * time.Second
 // long write holds the connection, and a restart fixes neither: it only drops
 // in flight work and adds a SQLite recovery on top.
 func readinessHandler(database *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), readinessTimeout)
-		defer cancel()
-
+	rc := &readinessCache{check: func(ctx context.Context) error { return checkDatabaseReady(ctx, database) }}
+	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		err := checkDatabaseReady(ctx, database)
+		err := rc.result()
 		switch {
 		case err == nil:
 			_, _ = w.Write([]byte(`{"status":"ok"}`))
@@ -71,6 +82,32 @@ func readinessHandler(database *sql.DB) http.HandlerFunc {
 			_, _ = w.Write([]byte(`{"status":"unavailable"}`))
 		}
 	}
+}
+
+// readinessCache runs check at most once per readinessCacheTTL and shares the
+// answer with every caller. The mutex is held across the check, so callers that
+// arrive while one is running wait for it instead of queueing their own on the
+// connection. The check runs on its own context, not the request's, so one
+// caller hanging up cannot cache a cancellation for everyone else.
+type readinessCache struct {
+	check func(context.Context) error
+
+	mu  sync.Mutex
+	at  time.Time
+	err error
+}
+
+func (c *readinessCache) result() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.at.IsZero() && time.Since(c.at) < readinessCacheTTL {
+		return c.err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), readinessTimeout)
+	defer cancel()
+	c.err = c.check(ctx)
+	c.at = time.Now()
+	return c.err
 }
 
 func checkDatabaseReady(ctx context.Context, database *sql.DB) error {

@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -171,5 +174,68 @@ func TestDatabaseBusy(t *testing.T) {
 		if got := databaseBusy(c.err); got != c.busy {
 			t.Errorf("databaseBusy(%v) = %v, want %v", c.err, got, c.busy)
 		}
+	}
+}
+
+func TestReadinessCache_OneCheckPerWindow(t *testing.T) {
+	var calls atomic.Int32
+	rc := &readinessCache{check: func(context.Context) error {
+		calls.Add(1)
+		return nil
+	}}
+	for i := 0; i < 5; i++ {
+		if err := rc.result(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("check ran %d times within the cache window, want 1", n)
+	}
+	// Once the window has passed the next call checks again.
+	rc.mu.Lock()
+	rc.at = time.Now().Add(-2 * readinessCacheTTL)
+	rc.mu.Unlock()
+	_ = rc.result()
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("check ran %d times after the window expired, want 2", n)
+	}
+}
+
+// TestDatabaseBusy_RealSQLiteBusy gets a genuine SQLITE_BUSY out of the
+// driver: one connection holds an exclusive lock, a second handle with no
+// busy timeout reads the schema.
+func TestDatabaseBusy_RealSQLiteBusy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "busy.db")
+	locker, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = locker.Close() })
+	ctx := context.Background()
+	lc, err := locker.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lc.Close() }()
+	if _, err := lc.ExecContext(ctx, "CREATE TABLE t(x)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lc.ExecContext(ctx, "BEGIN EXCLUSIVE"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = lc.ExecContext(ctx, "ROLLBACK") }()
+
+	other, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = other.Close() })
+	var n int
+	err = other.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master").Scan(&n)
+	if err == nil {
+		t.Fatal("expected SQLITE_BUSY while another connection holds an exclusive lock")
+	}
+	if !databaseBusy(err) {
+		t.Fatalf("databaseBusy(%v) = false, want true for a driver SQLITE_BUSY", err)
 	}
 }
