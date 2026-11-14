@@ -2698,7 +2698,7 @@
   },
   "addToLibrary": {
     "title": "Add to library",
-    "description": "Search by author, title, ISBN, or ASIN. Pick an author to monitor their catalogue, or a single book to add just that one.",
+    "description": "Search by author, title, ISBN, or ASIN, or paste a Hardcover book link. Pick an author to monitor their catalogue, or a single book to add just that one.",
     "searchPlaceholder": "Author, title, ISBN, or ASIN (for example, Le Guin, Dune, 9780441478125, B0DBJBFHGT)",
     "addBook": "Add Book",
     "booksDivider": "Books",
