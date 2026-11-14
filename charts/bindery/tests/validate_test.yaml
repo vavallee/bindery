@@ -28,3 +28,24 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: replicaCount is 5
+
+  - it: fails template rendering for a negative replica count
+    set:
+      replicaCount: -1
+    asserts:
+      - failedTemplate:
+          errorPattern: must be a whole number
+
+  - it: fails template rendering for a non-numeric replica count
+    set:
+      replicaCount: abc
+    asserts:
+      - failedTemplate:
+          errorPattern: must be a whole number
+
+  - it: renders nothing for zero replicas
+    set:
+      replicaCount: 0
+    asserts:
+      - hasDocuments:
+          count: 0
