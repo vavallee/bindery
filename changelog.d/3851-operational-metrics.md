@@ -1,2 +1,0 @@
-### Added
-- **Operational metrics** (#3851). `/metrics` now also reports grabs, download client requests and their latency, import outcomes with a failure reason, indexer searches and their latency, the download queue by state, and when each scheduled job last finished cleanly. Every label comes from a small fixed set, so nothing about your library ends up in a label. See `docs/metrics.md` for the full list.
