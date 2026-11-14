@@ -45,10 +45,9 @@ const readinessCacheTTL = time.Second
 // handle is closed or unusable, or the driver returns an error other than the
 // busy ones below, and 200 otherwise, adding "busy":true when the check could
 // not finish in time. It does not detect a damaged or unreadable database
-// file: the open connection answers SELECT 1, and even small table reads, from
-// memory without touching the file, so a deleted, truncated or chmod 000 file
-// still reads as ready. Catching that would need a check heavy enough to read
-// the whole file, which a probe every few seconds must not do.
+// file: SELECT 1 does not read any table, so it cannot see a deleted, truncated
+// or chmod 000 file, and such a file still reads as ready. Catching that would
+// need a heavier check, which a probe every few seconds must not run.
 //
 // A busy database counts as ready. The pool holds a single connection
 // (db.SetMaxOpenConns(1)), so a library scan, a big import or a VACUUM can hold
