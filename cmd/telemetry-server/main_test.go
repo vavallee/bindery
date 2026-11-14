@@ -1749,3 +1749,47 @@ func TestHandlePing_AcceptsUnraidDeploy(t *testing.T) {
 		t.Error("preview filter has no selected Unraid option")
 	}
 }
+
+func TestHandleHome(t *testing.T) {
+	s := newTestServer(t, "")
+	rr := httptest.NewRecorder()
+	s.handleHome(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("content type = %q", ct)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"Ebooks and audiobooks, followed, fetched, checked and filed. One app, one binary.",
+		`<meta property="og:image" content="https://raw.githubusercontent.com/vavallee/bindery/main/.github/assets/logo.png">`,
+		`<meta property="og:url" content="https://getbindery.dev">`,
+		`<link rel="canonical" href="https://getbindery.dev">`,
+		`<meta name="description"`,
+		"<title>Bindery: ebook and audiobook manager, a Readarr alternative</title>",
+		"<h2>Quick start</h2>",
+		"<pre><code>services:",
+		"ghcr.io/vavallee/bindery:latest",
+		`src="https://raw.githubusercontent.com/vavallee/bindery/main/docs/screenshots/loop.gif"`,
+		`alt="Bindery: a tour through`,
+		"https://discord.gg/RpuYYRM9cZ",
+		"https://github.com/vavallee/bindery/releases",
+		"https://github.com/vavallee/bindery-plugins",
+		`href="/stats"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("home page missing %q", want)
+		}
+	}
+	// The CSP forbids scripts. The only script element allowed is the inert
+	// JSON-LD data block.
+	if n := strings.Count(body, "<script"); n != 1 || !strings.Contains(body, `<script type="application/ld+json">`) {
+		t.Errorf("want exactly one ld+json script element, found %d script tags", n)
+	}
+	for _, bad := range []string{"—", "–", " -- ", "Readarr replacement"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("home page contains %q", bad)
+		}
+	}
+}
