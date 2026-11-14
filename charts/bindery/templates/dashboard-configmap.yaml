@@ -1,0 +1,21 @@
+{{- if .Values.metrics.dashboard.enabled -}}
+{{- $db := .Values.metrics.dashboard -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "bindery.fullname" . }}-dashboard
+  namespace: {{ default .Release.Namespace $db.namespace }}
+  labels:
+    {{- include "bindery.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+    {{- with $db.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with $db.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  bindery.json: |-
+    {{- .Files.Get "dashboards/bindery.json" | nindent 4 }}
+{{- end }}

@@ -41,6 +41,13 @@ spec:
         # service.port set to anything but 8787 the two differ.
         - protocol: TCP
           port: http
+    {{- with .Values.networkPolicy.metricsFrom }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: http
+    {{- end }}
   egress:
     # DNS resolution — required for service discovery and for the metadata
     # providers / indexers referenced by hostname.
