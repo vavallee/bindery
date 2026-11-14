@@ -38,6 +38,13 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.service.port }}
+    {{- with .Values.networkPolicy.metricsFrom }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.service.port }}
+    {{- end }}
   egress:
     # DNS resolution — required for service discovery and for the metadata
     # providers / indexers referenced by hostname.

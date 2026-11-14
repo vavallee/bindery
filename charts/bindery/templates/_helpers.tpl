@@ -26,3 +26,23 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+The scrape path for /metrics: metrics.serviceMonitor.path when set, otherwise
+/metrics under env.BINDERY_URL_BASE.
+*/}}
+{{- define "bindery.metricsPath" -}}
+{{- if .Values.metrics.serviceMonitor.path -}}
+{{- .Values.metrics.serviceMonitor.path -}}
+{{- else -}}
+{{- printf "%s/metrics" (trimSuffix "/" (default "" .Values.env.BINDERY_URL_BASE)) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+PromQL label matchers that pick this release's series. The ServiceMonitor
+names the job after the Service.
+*/}}
+{{- define "bindery.metricsSelector" -}}
+job="{{ include "bindery.fullname" . }}",namespace="{{ .Release.Namespace }}"
+{{- end }}

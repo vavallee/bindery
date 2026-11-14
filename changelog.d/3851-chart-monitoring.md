@@ -1,0 +1,2 @@
+### Added
+- **Helm chart monitoring** (#3851). The chart can now render a Prometheus Operator ServiceMonitor, a PrometheusRule with a small set of alerts, and a Grafana dashboard ConfigMap, each behind its own `metrics.*.enabled` value and off by default. The ServiceMonitor and rules only render when the cluster has the monitoring.coreos.com API. `networkPolicy.metricsFrom` lets a Prometheus in another namespace through the NetworkPolicy. Suggested thresholds are in `docs/monitoring.md`.

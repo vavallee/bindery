@@ -149,6 +149,11 @@ networkPolicy:
   # Additional egress rules beyond DNS. One entry per downstream service —
   # SABnzbd, qBittorrent, Prowlarr, notification target, etc.
   egress: []
+  # Extra ingress peers allowed to reach the service port, for a Prometheus
+  # running in another namespace. NetworkPolicy works per port, so these
+  # peers can reach the whole port, not only /metrics.
+  # Example: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+  metricsFrom: []
   # Example entry — uncomment and adjust to allow egress to a named pod.
   # egress:
   #   - to:
@@ -200,3 +205,94 @@ logAlert:
   # Image for the alert script — needs sh + curl + jq. alpine/k8s ships all
   # three and is actively maintained. Pin a digest in strict environments.
   image: alpine/k8s:1.33.12
+
+metrics:
+  # Bindery serves Prometheus metrics at /metrics on the http port with no
+  # authentication, so a scrape needs no credentials. docs/monitoring.md
+  # covers what to set. The ServiceMonitor and PrometheusRule below need the
+  # Prometheus Operator CRDs (monitoring.coreos.com/v1). When the cluster
+  # does not serve that API they render nothing, even when enabled. With
+  # `helm template` pass `--api-versions monitoring.coreos.com/v1`.
+  serviceMonitor:
+    enabled: false
+    # Namespace for the ServiceMonitor. Empty means the release namespace.
+    namespace: ""
+    # Extra labels, typically whatever your Prometheus selects on,
+    # e.g. { release: kube-prometheus-stack }.
+    labels: {}
+    interval: 30s
+    scrapeTimeout: 10s
+    # Scrape path. Empty means /metrics under env.BINDERY_URL_BASE when that
+    # is set, otherwise /metrics.
+    path: ""
+    relabelings: []
+    metricRelabelings: []
+
+  prometheusRule:
+    enabled: false
+    # Namespace for the PrometheusRule. Empty means the release namespace.
+    namespace: ""
+    # Extra labels, typically whatever your Prometheus ruleSelector needs.
+    labels: {}
+    # Suggested thresholds, not SLOs: tune them to your instance. See
+    # docs/monitoring.md.
+    rules:
+      # Target down or missing from Prometheus entirely.
+      down:
+        enabled: true
+        for: 5m
+        severity: critical
+      # Share of HTTP responses that are 5xx.
+      http5xx:
+        enabled: true
+        ratio: 0.05
+        for: 15m
+        severity: warning
+      # A scheduled job has not finished cleanly for this many hours, or has
+      # not finished cleanly at all for that long since Bindery started.
+      # Choose hours comfortably above each job's interval. The search-wanted
+      # default covers the longest search interval Bindery accepts (168h);
+      # lower it to about three times your own interval.
+      schedulerStale:
+        enabled: true
+        for: 15m
+        severity: warning
+        jobs:
+          - job: check-downloads
+            hours: 1
+          - job: search-wanted
+            hours: 170
+      # A scheduled job panicked at least once in the last hour.
+      schedulerPanic:
+        enabled: true
+        for: 0m
+        severity: warning
+      # Share of import attempts over the last hour that failed or were
+      # blocked, once at least minImports attempts were made.
+      importFailures:
+        enabled: true
+        ratio: 0.5
+        minImports: 3
+        for: 30m
+        severity: warning
+      # Share of requests to one download client type that errored (5xx or
+      # no answer) over 10 minutes. The import poll talks to every client
+      # every 15 seconds, so a client that is down drives this to 1.
+      downloadClientErrors:
+        enabled: true
+        ratio: 0.5
+        for: 15m
+        severity: warning
+    # Extra rules appended to the group verbatim.
+    additionalRules: []
+
+  dashboard:
+    # ConfigMap holding a Grafana dashboard, labelled grafana_dashboard: "1"
+    # so the Grafana sidecar picks it up.
+    enabled: false
+    # Namespace for the ConfigMap. Empty means the release namespace. Set it
+    # to the namespace your Grafana sidecar watches if it only watches one.
+    namespace: ""
+    labels: {}
+    # e.g. { grafana_folder: Media } for sidecars that sort into folders.
+    annotations: {}

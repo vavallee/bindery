@@ -1,0 +1,126 @@
+{{- if and .Values.metrics.prometheusRule.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") -}}
+{{- $pr := .Values.metrics.prometheusRule -}}
+{{- $r := $pr.rules -}}
+{{- $sel := include "bindery.metricsSelector" . -}}
+{{- /*
+The scheduler metrics carry their own job label (the background job name).
+Prometheus keeps the target's job label and renames the scraped one to
+exported_job unless honorLabels is set, so the rules below read the job name
+from exported_job.
+*/ -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "bindery.fullname" . }}
+  namespace: {{ default .Release.Namespace $pr.namespace }}
+  labels:
+    {{- include "bindery.labels" . | nindent 4 }}
+    {{- with $pr.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: bindery
+      rules:
+        {{- if $r.down.enabled }}
+        - alert: BinderyDown
+          expr: up{ {{- $sel -}} } == 0
+          for: {{ $r.down.for }}
+          labels:
+            severity: {{ $r.down.severity }}
+          annotations:
+            summary: Bindery is not answering scrapes
+            description: Prometheus cannot scrape Bindery in {{ .Release.Namespace }}.
+        - alert: BinderyMetricsAbsent
+          expr: absent(up{ {{- $sel -}} })
+          for: {{ $r.down.for }}
+          labels:
+            severity: {{ $r.down.severity }}
+          annotations:
+            summary: Bindery has no scrape target
+            description: No Bindery target in {{ .Release.Namespace }} is known to Prometheus. Check the pod and the ServiceMonitor.
+        {{- end }}
+        {{- if $r.http5xx.enabled }}
+        - alert: BinderyHighHTTP5xxRatio
+          expr: |
+            sum(rate(bindery_http_requests_total{ {{- $sel -}} ,status=~"5.."}[5m]))
+              / sum(rate(bindery_http_requests_total{ {{- $sel -}} }[5m]))
+              > {{ $r.http5xx.ratio }}
+          for: {{ $r.http5xx.for }}
+          labels:
+            severity: {{ $r.http5xx.severity }}
+          annotations:
+            summary: Bindery is answering with server errors
+            description: '{{ "{{" }} $value | humanizePercentage {{ "}}" }} of Bindery HTTP responses are 5xx.'
+        {{- end }}
+        {{- if $r.schedulerStale.enabled }}
+        {{- range $r.schedulerStale.jobs }}
+        - alert: BinderySchedulerJobStale
+          expr: |
+            time() - bindery_scheduler_last_success_timestamp_seconds{ {{- $sel -}} ,exported_job="{{ .job }}"} > {{ mulf .hours 3600 }}
+          for: {{ $r.schedulerStale.for }}
+          labels:
+            severity: {{ $r.schedulerStale.severity }}
+            bindery_job: {{ .job | quote }}
+          annotations:
+            summary: Bindery job {{ .job }} has not succeeded for {{ .hours }}h
+            description: The {{ .job }} background job last finished cleanly {{ "{{" }} $value | humanizeDuration {{ "}}" }} ago.
+        - alert: BinderySchedulerJobNeverSucceeded
+          # The timestamp only appears after the first clean run since
+          # startup, so a job stuck from boot has no series to go stale.
+          expr: |
+            absent(bindery_scheduler_last_success_timestamp_seconds{ {{- $sel -}} ,exported_job="{{ .job }}"})
+              and on() (up{ {{- $sel -}} } == 1)
+          for: {{ mulf .hours 60 | int }}m
+          labels:
+            severity: {{ $r.schedulerStale.severity }}
+            bindery_job: {{ .job | quote }}
+          annotations:
+            summary: Bindery job {{ .job }} has not succeeded since startup
+            description: Bindery has been up for over {{ .hours }}h without the {{ .job }} background job finishing cleanly once.
+        {{- end }}
+        {{- end }}
+        {{- if $r.schedulerPanic.enabled }}
+        - alert: BinderySchedulerJobPanicking
+          expr: |
+            sum by (exported_job) (increase(bindery_scheduler_runs_total{ {{- $sel -}} ,result="panic"}[1h])) > 0
+          for: {{ $r.schedulerPanic.for }}
+          labels:
+            severity: {{ $r.schedulerPanic.severity }}
+          annotations:
+            summary: A Bindery background job panicked
+            description: Background job {{ "{{" }} $labels.exported_job {{ "}}" }} panicked in the last hour. The log has the stack.
+        {{- end }}
+        {{- if $r.importFailures.enabled }}
+        - alert: BinderyImportFailureRatio
+          expr: |
+            (
+              sum(increase(bindery_imports_total{ {{- $sel -}} ,result!="imported"}[1h]))
+                / sum(increase(bindery_imports_total{ {{- $sel -}} }[1h]))
+                > {{ $r.importFailures.ratio }}
+            )
+            and sum(increase(bindery_imports_total{ {{- $sel -}} }[1h])) >= {{ $r.importFailures.minImports }}
+          for: {{ $r.importFailures.for }}
+          labels:
+            severity: {{ $r.importFailures.severity }}
+          annotations:
+            summary: Most Bindery imports are failing
+            description: '{{ "{{" }} $value | humanizePercentage {{ "}}" }} of import attempts in the last hour failed or were blocked. The Queue page shows why.'
+        {{- end }}
+        {{- if $r.downloadClientErrors.enabled }}
+        - alert: BinderyDownloadClientErrors
+          expr: |
+            sum by (client_type) (rate(bindery_download_client_requests_total{ {{- $sel -}} ,result="error"}[10m]))
+              / sum by (client_type) (rate(bindery_download_client_requests_total{ {{- $sel -}} }[10m]))
+              > {{ $r.downloadClientErrors.ratio }}
+          for: {{ $r.downloadClientErrors.for }}
+          labels:
+            severity: {{ $r.downloadClientErrors.severity }}
+          annotations:
+            summary: Bindery cannot reach a download client
+            description: '{{ "{{" }} $value | humanizePercentage {{ "}}" }} of requests to {{ "{{" }} $labels.client_type {{ "}}" }} failed over 10 minutes.'
+        {{- end }}
+        {{- with $pr.additionalRules }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+{{- end }}
