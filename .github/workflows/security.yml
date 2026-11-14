@@ -52,10 +52,25 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+            registry.npmjs.org:443
+            pypi.org:443
+            files.pythonhosted.org:443
+            semgrep.dev:443
+            metrics.semgrep.dev:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -143,10 +158,20 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -175,10 +200,27 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            get.helm.sh:443
+            pypi.org:443
+            files.pythonhosted.org:443
+            api0.prismacloud.io:443
+            registry-1.docker.io:443
+            auth.docker.io:443
+            production.cloudfront.docker.com:443
+            ghcr.io:443
+            pkg-containers.githubusercontent.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -231,10 +273,30 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            registry.npmjs.org:443
+            registry-1.docker.io:443
+            auth.docker.io:443
+            production.cloudfront.docker.com:443
+            gcr.io:443
+            grype.anchore.io:443
+            tuf-repo-cdn.sigstore.dev:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -299,10 +361,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            registry.npmjs.org:443
+            registry-1.docker.io:443
+            auth.docker.io:443
+            production.cloudfront.docker.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -364,10 +443,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            registry-1.docker.io:443
+            auth.docker.io:443
+            production.cloudfront.docker.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -391,10 +478,14 @@ jobs:
       - policy-test
     if: always()
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
 
       - name: Write severity summary
         run: |
