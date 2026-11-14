@@ -8,7 +8,8 @@ Bindery exposes a REST API at `/api/v1/*`. Every Bindery feature is reachable fr
 
 Every request to `/api/v1/*` is authenticated **except** the bootstrap and identity endpoints:
 
-- `GET  /api/v1/health`
+- `GET  /api/v1/health` (static liveness: `{"status":"ok","version":"..."}`)
+- `GET  /api/v1/health/ready` (readiness: pings the database with a 2 second budget, `200 {"status":"ok"}` or `503 {"status":"unavailable"}`)
 - `GET  /api/v1/auth/status`
 - `POST /api/v1/auth/login`, `/auth/logout`, `/auth/setup`
 - `GET  /api/v1/auth/oidc/{provider}/login` and `/callback`
@@ -2045,8 +2046,8 @@ fields are refused with `400`.
 
 A requester may call only `/requests`, `/requests/{id}` (DELETE),
 `/requests/library`, the three metadata searches (`/search/author`,
-`/search/book`, `/book/lookup`, rate limited per user), `/images` (rate limited per user with a larger allowance), `/health`
-and the session routes under `/auth`. Every other route answers `403` for
+`/search/book`, `/book/lookup`, rate limited per user), `/images` (rate limited per user with a larger allowance), `/health`,
+`/health/ready` and the session routes under `/auth`. Every other route answers `403` for
 that role, and `/opds` does too.
 
 ### Library export
