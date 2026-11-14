@@ -9,7 +9,7 @@ Bindery exposes a REST API at `/api/v1/*`. Every Bindery feature is reachable fr
 Every request to `/api/v1/*` is authenticated **except** the bootstrap and identity endpoints:
 
 - `GET  /api/v1/health` (static liveness: `{"status":"ok","version":"..."}`)
-- `GET  /api/v1/health/ready` (readiness: pings the database with a 2 second budget, `200 {"status":"ok"}` or `503 {"status":"unavailable"}`)
+- `GET  /api/v1/health/ready` (readiness: pings the database with a 2 second budget; `503 {"status":"unavailable"}` only on a real database error, `200 {"status":"ok"}` otherwise, plus `"busy":true` when the single connection was held past the budget)
 - `GET  /api/v1/auth/status`
 - `POST /api/v1/auth/login`, `/auth/logout`, `/auth/setup`
 - `GET  /api/v1/auth/oidc/{provider}/login` and `/callback`

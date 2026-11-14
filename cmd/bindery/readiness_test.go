@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,6 +30,36 @@ func TestReadinessHandler_OKWithWorkingDB(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
 	}
 	if got := rec.Body.String(); got != `{"status":"ok"}` {
+		t.Errorf("body = %s", got)
+	}
+}
+
+// TestReadinessHandler_ReadyWhileConnectionHeld: the pool has one connection,
+// and a long scan, import or VACUUM can hold it past the probe's budget. That
+// is a busy database, not a broken one, so the pod must stay in the Service.
+func TestReadinessHandler_ReadyWhileConnectionHeld(t *testing.T) {
+	conn, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	prev := readinessTimeout
+	readinessTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { readinessTimeout = prev })
+
+	// Take the pool's only connection and keep it well past the timeout.
+	held, err := conn.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Close() }()
+
+	rec := httptest.NewRecorder()
+	readinessHandler(conn)(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health/ready", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 while the connection is merely busy (body %s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != `{"status":"ok","busy":true}` {
 		t.Errorf("body = %s", got)
 	}
 }
@@ -122,5 +154,22 @@ func TestHealthRoutes_NoAuthNeeded(t *testing.T) {
 	cookie := &http.Cookie{Name: auth.SessionCookieName, Value: v}
 	if rec := get("/api/v1/health/ready", cookie); rec.Code != http.StatusOK {
 		t.Errorf("requester /health/ready = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDatabaseBusy(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		busy bool
+	}{
+		{context.DeadlineExceeded, true},
+		{fmt.Errorf("ping: %w", context.DeadlineExceeded), true},
+		{context.Canceled, false},
+		{errors.New("sql: database is closed"), false},
+		{errors.New("disk I/O error"), false},
+	} {
+		if got := databaseBusy(c.err); got != c.busy {
+			t.Errorf("databaseBusy(%v) = %v, want %v", c.err, got, c.busy)
+		}
 	}
 }
