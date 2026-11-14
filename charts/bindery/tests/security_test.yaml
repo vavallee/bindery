@@ -102,7 +102,7 @@ tests:
             name: BINDERY_API_KEY
             valueFrom:
               secretKeyRef:
-                name: RELEASE-NAME-auth
+                name: bindery-auth
                 key: api-key
 
   - it: wires BINDERY_API_KEY from an externally-managed Secret
