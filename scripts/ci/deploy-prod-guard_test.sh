@@ -84,7 +84,7 @@ workflow="$here/../../.github/workflows/ci.yml"
 if masked=$(grep -nE '(\[|if|&&|\|\|)[^=]*\$\(gh_get' "$workflow"); then
   failed=$((failed + 1))
   echo "FAIL gh_get used inside a condition, assign it to a variable first:"
-  sed 's/^/     /' <<<"$masked"
+  printf '     %s\n' "${masked//$'\n'/$'\n'     }"
 else
   pass=$((pass + 1))
   echo "ok   gh_get results are assigned before they are tested"
