@@ -411,6 +411,7 @@ func (s *Scanner) failImportWithCheck(ctx context.Context, dl *models.Download, 
 	}
 	s.createHistoryEventData(ctx, models.HistoryEventImportFailed, dl.Title, dl.BookID, dl.OwnerUserID, data)
 	s.notify(ctx, notifierEventDownloadFailed, payload)
+	observeImportFailure(dl, status, reason)
 }
 
 // blockTinyOnlyDownload blocks a download whose only ebook files are under

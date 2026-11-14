@@ -1,0 +1,102 @@
+package importer
+
+import (
+	"regexp"
+	"strings"
+
+	"github.com/vavallee/bindery/internal/metrics"
+	"github.com/vavallee/bindery/internal/models"
+)
+
+// Import metrics (#3851). The importer records each failure as a user facing
+// message on the download row and in history, with no separate code, so the
+// bindery_imports_total reason label is derived from that message here.
+// fixedWording first drops quoted segments and path like words, which is
+// where messages embed paths, titles and release names, and the rules then
+// match the call sites' own wording. This is best effort: an unquoted error
+// from the OS or another package can still carry words the rules know, and
+// anything unrecognised is other. The result label comes from the state the
+// failure leaves the download in.
+
+// importReasonRules is checked in order; the first rule with a matching
+// phrase wins. Specific phrases come before broad ones ("failed").
+var importReasonRules = []struct {
+	reason  string
+	phrases []string
+}{
+	{metrics.ImportReasonRetryLimit, []string{"retry limit reached"}},
+	{metrics.ImportReasonSourceGone, []string{"no longer available in the client"}},
+	{metrics.ImportReasonRejectedLanguage, []string{"allows only"}},
+	{metrics.ImportReasonRejectedContent, []string{"the file says it is", "the files contain"}},
+	{metrics.ImportReasonRejectedFormat, []string{
+		"quality profile", "file format", "video content", "cannot split a pack",
+	}},
+	{metrics.ImportReasonNoFiles, []string{
+		"holds only an archive", "no book files", "too small to be a book",
+	}},
+	{metrics.ImportReasonPathMissing, []string{
+		"path not found", "nothing at ", "no content path", "none of its files are on this host",
+		"no longer present", "source unavailable",
+	}},
+	{metrics.ImportReasonUnmatched, []string{"could not match"}},
+	{metrics.ImportReasonConflict, []string{
+		"already has an audiobook", "another book", "same path", "same name",
+	}},
+	{metrics.ImportReasonPlacement, []string{
+		"failed to import", "partial import", "destination invalid", "not recorded",
+		"could not be recorded", "drop folder", "no library directory", "refused", "failed",
+		"check audiobook source", "not imported",
+	}},
+}
+
+// quotedSegment matches a double or single quoted run, which is how the
+// failure messages embed paths, titles and release names (%q).
+var quotedSegment = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|'[^']*'`)
+
+// fixedWording strips the parts of a failure message that come from the
+// user's data rather than from Bindery: quoted segments, and any word that
+// contains a path separator (an unquoted path or the part of one around a
+// space). What is left is the call site's own wording, which the rules match.
+func fixedWording(message string) string {
+	m := quotedSegment.ReplaceAllString(message, " ")
+	words := strings.Fields(m)
+	kept := words[:0]
+	for _, w := range words {
+		if strings.ContainsAny(w, `/\`) {
+			continue
+		}
+		kept = append(kept, w)
+	}
+	return " " + strings.ToLower(strings.Join(kept, " ")) + " "
+}
+
+// importFailureReason maps an import failure message onto the bounded reason
+// label set.
+func importFailureReason(message string) string {
+	m := fixedWording(message)
+	for _, rule := range importReasonRules {
+		for _, p := range rule.phrases {
+			if strings.Contains(m, p) {
+				return rule.reason
+			}
+		}
+	}
+	return metrics.LabelOther
+}
+
+// observeImportFailure records a failed or blocked import.
+func observeImportFailure(dl *models.Download, status models.DownloadState, message string) {
+	result := metrics.ImportResultFailed
+	if status == models.StateImportBlocked {
+		result = metrics.ImportResultBlocked
+	}
+	metrics.ObserveImport(dl.MediaType, result, importFailureReason(message))
+}
+
+// observeImportSuccess records a download imported into the library.
+func observeImportSuccess(dl *models.Download, mediaType string) {
+	if mediaType == "" {
+		mediaType = dl.MediaType
+	}
+	metrics.ObserveImport(mediaType, metrics.ImportResultImported, metrics.ImportReasonNone)
+}
