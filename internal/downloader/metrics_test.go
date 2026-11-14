@@ -177,3 +177,20 @@ func TestClientCache_InstrumentsEveryClientType(t *testing.T) {
 		}
 	}
 }
+
+// TestQbittorrentHealthCheck_RecordsClientRequest covers the one client the
+// health check builds outside the cache.
+func TestQbittorrentHealthCheck_RecordsClientRequest(t *testing.T) {
+	defer httpsec.AllowLoopbackForTests()()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	host, port := serverHostPort(t, srv.URL)
+	client := &models.DownloadClient{ID: 913870, Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p"}
+	before := clientRequests(t, "qbittorrent", "error")
+	_ = checkQbittorrentCategoryPath(context.Background(), client, "/downloads", "", "")
+	if got := clientRequests(t, "qbittorrent", "error") - before; got < 1 {
+		t.Errorf("health check requests moved by %v, want at least 1", got)
+	}
+}

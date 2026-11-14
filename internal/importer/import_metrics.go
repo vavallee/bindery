@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/metrics"
@@ -9,10 +10,13 @@ import (
 
 // Import metrics (#3851). The importer records each failure as a user facing
 // message on the download row and in history, with no separate code, so the
-// bindery_imports_total reason label is derived from that message here. The
-// rules match the fixed wording of the failImport call sites, never the
-// paths or titles a message embeds, and anything unrecognised is other. The
-// result label comes from the state the failure leaves the download in.
+// bindery_imports_total reason label is derived from that message here.
+// fixedWording first drops quoted segments and path like words, which is
+// where messages embed paths, titles and release names, and the rules then
+// match the call sites' own wording. This is best effort: an unquoted error
+// from the OS or another package can still carry words the rules know, and
+// anything unrecognised is other. The result label comes from the state the
+// failure leaves the download in.
 
 // importReasonRules is checked in order; the first rule with a matching
 // phrase wins. Specific phrases come before broad ones ("failed").
@@ -45,10 +49,31 @@ var importReasonRules = []struct {
 	}},
 }
 
+// quotedSegment matches a double or single quoted run, which is how the
+// failure messages embed paths, titles and release names (%q).
+var quotedSegment = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|'[^']*'`)
+
+// fixedWording strips the parts of a failure message that come from the
+// user's data rather than from Bindery: quoted segments, and any word that
+// contains a path separator (an unquoted path or the part of one around a
+// space). What is left is the call site's own wording, which the rules match.
+func fixedWording(message string) string {
+	m := quotedSegment.ReplaceAllString(message, " ")
+	words := strings.Fields(m)
+	kept := words[:0]
+	for _, w := range words {
+		if strings.ContainsAny(w, `/\`) {
+			continue
+		}
+		kept = append(kept, w)
+	}
+	return " " + strings.ToLower(strings.Join(kept, " ")) + " "
+}
+
 // importFailureReason maps an import failure message onto the bounded reason
 // label set.
 func importFailureReason(message string) string {
-	m := strings.ToLower(message)
+	m := fixedWording(message)
 	for _, rule := range importReasonRules {
 		for _, p := range rule.phrases {
 			if strings.Contains(m, p) {

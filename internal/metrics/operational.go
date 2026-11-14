@@ -228,11 +228,25 @@ type QueueCounter func(ctx context.Context) (map[string]int, error)
 // holding the scrape open.
 var queueCollectTimeout = 2 * time.Second
 
+// queueCacheTTL is how long one queue count answers scrapes. /metrics is
+// unauthenticated and the count takes a database connection, so however
+// often it is scraped the database is asked at most once per window.
+var queueCacheTTL = 10 * time.Second
+
+// queueNow is the clock the cache reads; tests replace it.
+var queueNow = time.Now
+
 type queueCollector struct {
 	mu      sync.RWMutex
 	states  []string
 	known   map[string]struct{}
 	counter QueueCounter
+
+	// fetchMu serialises counts so concurrent scrapes share one query, and
+	// guards the cache below.
+	fetchMu  sync.Mutex
+	cached   map[string]int
+	cachedAt time.Time
 }
 
 var queueCollectorInstance = &queueCollector{}
@@ -248,6 +262,31 @@ func SetQueueCounter(states []string, counter QueueCounter) {
 	queueCollectorInstance.states = append([]string(nil), states...)
 	queueCollectorInstance.known = set(states...)
 	queueCollectorInstance.counter = counter
+	queueCollectorInstance.fetchMu.Lock()
+	queueCollectorInstance.cached = nil
+	queueCollectorInstance.fetchMu.Unlock()
+}
+
+// counts returns the cached counts while they are fresh, otherwise asks the
+// counter. A failed count is not cached, so the next scrape tries again.
+func (c *queueCollector) counts(counter QueueCounter, timeout time.Duration) (map[string]int, error) {
+	c.fetchMu.Lock()
+	defer c.fetchMu.Unlock()
+	now := queueNow()
+	if c.cached != nil && now.Sub(c.cachedAt) < queueCacheTTL {
+		return c.cached, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	counts, err := counter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if counts == nil {
+		counts = map[string]int{}
+	}
+	c.cached, c.cachedAt = counts, now
+	return counts, nil
 }
 
 func (c *queueCollector) Describe(ch chan<- *prometheus.Desc) { ch <- queueItemsDesc }
@@ -260,9 +299,7 @@ func (c *queueCollector) Collect(ch chan<- prometheus.Metric) {
 	if counter == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	counts, err := counter(ctx)
+	counts, err := c.counts(counter, timeout)
 	if err != nil {
 		slog.Debug("metrics: queue count failed, skipping bindery_queue_items", "error", err)
 		return

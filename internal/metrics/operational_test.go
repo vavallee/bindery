@@ -33,6 +33,50 @@ func TestQueueCollector_TimesOut(t *testing.T) {
 	}
 }
 
+// TestQueueCollector_CachesCounts checks scrapes inside the cache window
+// share one count, a scrape after it counts again, and a failed count is not
+// cached.
+func TestQueueCollector_CachesCounts(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	prevNow := queueNow
+	queueNow = func() time.Time { return now }
+	t.Cleanup(func() { queueNow = prevNow; SetQueueCounter(nil, nil) })
+
+	calls := 0
+	fail := false
+	SetQueueCounter([]string{"downloading"}, func(context.Context) (map[string]int, error) {
+		calls++
+		if fail {
+			return nil, errors.New("database is locked")
+		}
+		return map[string]int{"downloading": calls}, nil
+	})
+
+	for i := 0; i < 5; i++ {
+		_ = scrape(t)
+	}
+	if calls != 1 {
+		t.Fatalf("5 scrapes inside the window made %d counts, want 1", calls)
+	}
+	if !strings.Contains(scrape(t), `bindery_queue_items{state="downloading"} 1`) {
+		t.Error("cached count not served")
+	}
+
+	now = now.Add(queueCacheTTL)
+	fail = true
+	if strings.Contains(scrape(t), "bindery_queue_items{") {
+		t.Error("a failed count after expiry still served samples")
+	}
+	fail = false
+	body := scrape(t)
+	if calls != 3 {
+		t.Errorf("a failed count was cached: %d counts, want 3", calls)
+	}
+	if !strings.Contains(body, `bindery_queue_items{state="downloading"} 3`) {
+		t.Errorf("fresh count not served after expiry")
+	}
+}
+
 // TestDownloadClientTransport_Results checks how responses map to result:
 // 2xx ok, 4xx rejected, 5xx and transport failures error.
 func TestDownloadClientTransport_Results(t *testing.T) {

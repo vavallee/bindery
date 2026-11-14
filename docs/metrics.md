@@ -62,7 +62,7 @@ Fetching a `.torrent` file from an indexer on a client's behalf is not a downloa
 
 Each failure is counted once per attempt, so a download that fails three times before it imports counts three failures and one import.
 
-`reason` is derived from the failure message shown on the Queue page:
+`reason` is derived from the failure message shown on the Queue page, after dropping the quoted paths, titles and release names it embeds. It is best effort: an unrecognised message is `other`.
 
 | Reason | Covers |
 | --- | --- |
@@ -93,7 +93,7 @@ An indexer skipped because it is in a rate limit cooldown or already at its dail
 | --- | --- | --- | --- |
 | `bindery_queue_items` | gauge | `state` | Download records in each state, across every user. |
 
-The gauge is counted from the database when Prometheus scrapes, with one `COUNT ... GROUP BY status` over an indexed column, so it is never stale. Every known state is reported, at 0 when empty. If the count does not finish within 2 seconds, or fails, that scrape leaves `bindery_queue_items` out rather than failing the whole scrape.
+The gauge is counted from the database when Prometheus scrapes, with one `COUNT ... GROUP BY status` over an indexed column. A count answers every scrape for 10 seconds, so the value is at most that old and the database is asked at most once per 10 seconds however often `/metrics` is requested. Every known state is reported, at 0 when empty. If the count does not finish within 2 seconds, or fails, that scrape leaves `bindery_queue_items` out rather than failing the whole scrape, and the next scrape tries again.
 
 `imported` and `failed` are terminal states and only grow until history is cleared, so for a dashboard of what is in flight use the other states.
 

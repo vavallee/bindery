@@ -105,6 +105,11 @@ func TestImportFailureReason_MapsEveryFailureFamily(t *testing.T) {
 		{"audiobook hardlink refused: cross device", metrics.ImportReasonPlacement},
 		{"audiobook moved to /lib/x but could not be recorded (db locked)", metrics.ImportReasonPlacement},
 		{"check audiobook source: permission denied", metrics.ImportReasonPlacement},
+		{`all 1 file(s) failed to import: open "/books/Nothing at Stake/x.epub": permission denied`, metrics.ImportReasonPlacement},
+		{`download path not found: "/downloads/Video Content Strategy"`, metrics.ImportReasonPathMissing},
+		{"all 1 file(s) failed to import: open /books/Nothing at Stake/x.epub: permission denied", metrics.ImportReasonPlacement},
+		{`no book files found in "/downloads/Could Not Match/Retry Limit Reached"`, metrics.ImportReasonNoFiles},
+		{`could not match this download to any book in your library. Parsed from filename: title="Video Content" author="Someone's \"Quality Profile\""`, metrics.ImportReasonUnmatched},
 		{"something nobody has written yet", metrics.LabelOther},
 	}
 	for _, c := range cases {
