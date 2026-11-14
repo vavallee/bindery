@@ -1,0 +1,48 @@
+# Example ArgoCD Application for Bindery.
+#
+# This is a template, not a live deployment. Nothing applies or syncs this
+# file. Copy it into your own GitOps repo (for example an app of apps
+# directory), replace the placeholder host, NFS server and path with your own
+# values, and pick the project and namespace you want.
+#
+# Prefer a dedicated namespace and AppProject over `default`: changing the
+# destination namespace of an existing Application later recreates every
+# resource, including the config PVC.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bindery
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: bindery
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vavallee/bindery
+    # Track a release tag (for example v1.2.3) for a pinned install, or main
+    # to follow every release.
+    targetRevision: main
+    path: charts/bindery
+    helm:
+      valueFiles:
+        - values.yaml
+      # Cluster specific overlay. values.yaml is neutral (ingress off,
+      # example host) so the chart stays reusable; set your own values here.
+      values: |
+        ingress:
+          enabled: true
+          host: bindery.example.com
+        nfs:
+          enabled: true
+          server: nfs.example.lan
+          path: /path/to/media
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: bindery
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true

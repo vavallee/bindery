@@ -56,6 +56,8 @@ helm install bindery charts/bindery \
 
 Every ingress template is gated on `ingress.enabled`, which defaults to false, so setting only `ingress.host` renders nothing. `ingress.type` selects what gets rendered: `traefik` (the default) emits a Traefik `IngressRoute`, `standard` emits a portable `networking.k8s.io/v1` Ingress you configure with `ingress.className`, `ingress.annotations` and `ingress.tls`.
 
+For GitOps, [`argocd/application.example.yaml`](../argocd/application.example.yaml) is a starting point for an ArgoCD `Application`. Copy it into your own repo and replace the placeholder host, NFS server and media path.
+
 ### Health checks
 
 Bindery answers `GET /api/v1/health` with 200 once it is serving. The container image declares its own Docker `HEALTHCHECK` that calls the binary's `healthcheck` subcommand against that endpoint, so `docker ps` shows a health column and Compose `depends_on: { bindery: { condition: service_healthy } }` works with no extra configuration. The Helm chart points a startup, readiness and liveness probe at the same path, and `hooks.postsyncSmoke` adds an ArgoCD PostSync job that fails the sync if the endpoint does not answer. Under `BINDERY_URL_BASE` the path moves under the prefix. The built in Docker `HEALTHCHECK` follows it, but update any probe you configure yourself.
