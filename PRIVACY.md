@@ -79,7 +79,7 @@ Telemetry is not shared with anyone, sold, or used for advertising. There are no
 Every claim here is checkable in the source:
 
 - client — [`internal/telemetry/client.go`](internal/telemetry/client.go)
-- server — [`cmd/telemetry-server/main.go`](cmd/telemetry-server/main.go)
+- server — [`cmd/telemetry-server/`](cmd/telemetry-server/) (retention in `retention.go` and `db.go`, IP handling in `realip.go` and `ping.go`)
 
 The retention windows are the `retentionWindow` and `ledgerRetentionWindow` constants; the IP handling is `realIP` and `limiter.allow` in the ping handler.
 
