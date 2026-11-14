@@ -1,0 +1,56 @@
+{
+  "status": "ahead",
+  "ahead_by": 2,
+  "behind_by": 0,
+  "total_commits": 2,
+  "base_commit": {
+    "sha": "26cbcb2744c1a3f34056a2af21392fafe9c8f43b"
+  },
+  "merge_base_commit": {
+    "sha": "26cbcb2744c1a3f34056a2af21392fafe9c8f43b"
+  },
+  "commits": [
+    {
+      "sha": "a1af08942b6bbb651a5ff02f6166c737de77a6f4",
+      "author": {
+        "login": "github-actions[bot]"
+      },
+      "commit": {
+        "author": {
+          "name": "github-actions[bot]",
+          "email": "41898282+github-actions[bot]@users.noreply.github.com"
+        },
+        "message": "chore(deploy): appVersion 1.50.0"
+      }
+    },
+    {
+      "sha": "3c53b48eb923f8efa18d0b04a97cf2140a5a345a",
+      "author": {
+        "login": "github-actions[bot]"
+      },
+      "commit": {
+        "author": {
+          "name": "github-actions[bot]",
+          "email": "41898282+github-actions[bot]@users.noreply.github.com"
+        },
+        "message": "chore(deploy): promote bindery to 1.50.0"
+      }
+    }
+  ],
+  "files": [
+    {
+      "filename": "charts/bindery/Chart.yaml",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2
+    },
+    {
+      "filename": "charts/bindery/values.yaml",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2
+    }
+  ]
+}
