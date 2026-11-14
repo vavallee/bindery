@@ -214,6 +214,8 @@ const NOT_TEXT = new Set([
   // The recommendation card's stars are decoration beside the rating, which
   // is stated as text (#3396).
   '../components/RecommendationCard.tsx text-amber-500',
+  // The upgrade checkboxes' tick (#3661).
+  '../pages/settings/QualityTab.tsx text-emerald-600',
 ])
 
 const GREYS = /^(?:slate|zinc|gray|neutral|stone)-/
@@ -261,32 +263,39 @@ describe('explicit text colours on the background in the same string', () => {
     expect(failures, failures.join('\n')).toEqual([])
   })
 
-  // Text that names a colour for each theme (text-amber-700
-  // dark:text-amber-400) but no background of its own sits on whatever its
-  // parent paints, which a string cannot show. It is measured on the page and
-  // on the card of each theme, the two surfaces nearly all of it lands on.
+  // Coloured text with no background of its own sits on whatever its parent
+  // paints, which a string cannot show. It is measured on the page and on the
+  // card of each theme, the two surfaces nearly all of it lands on: the dark:
+  // class on dark when the string has one, else the one class it has, which
+  // shows in both themes. Text opacity (dark:text-amber-500/90) is mixed in.
   // Greys are left to the tokens above.
   it('stay AA on the page and on cards when the string has no background', () => {
     const failures: string[] = []
     let checked = 0
     for (const [file, source] of Object.entries(sources)) {
       if (/\.test\.tsx?$/.test(file)) continue
-      for (const [, str] of source.matchAll(/["'`]([^"'`]*\btext-[a-z]+-\d+[^"'`]*)["'`]/g)) {
+      // Comments quote old class strings (buttons.ts does); skip them.
+      const code = source.replace(/^\s*\/\/.*$/gm, '')
+      for (const [, str] of code.matchAll(/["'`]([^"'`]*\btext-[a-z]+-\d+[^"'`]*)["'`]/g)) {
         const classes = str.split(/\s+/)
         if (classes.some(c => HUE_BG.test(c.split('/')[0]))) continue
-        const texts = classes.map(c => c.match(HUE_TEXT)).filter((m): m is RegExpMatchArray => m !== null)
-        const light = texts.find(m => !m[1])
-        const dark = texts.find(m => m[1])
-        if (!light || !dark) continue
-        for (const [theme, text] of [['light', light], ['dark', dark]] as const) {
+        const texts = classes
+          .map(c => ({ m: c.split('/')[0].match(HUE_TEXT), opacity: c.split('/')[1] }))
+          .filter((t): t is { m: RegExpMatchArray, opacity: string } => t.m !== null)
+        const light = texts.find(t => !t.m[1])
+        const dark = texts.find(t => t.m[1]) ?? light
+        for (const [theme, t] of [['light', light], ['dark', dark]] as const) {
+          if (!t) continue
+          const text = t.m
           if (GREYS.test(text[2]) || NOT_TEXT.has(`${file} ${text[0]}`)) continue
-          const fg = TAILWIND.get(text[2])
-          if (!fg) continue
+          const colour = TAILWIND.get(text[2])
+          if (!colour) continue
           const grounds = theme === 'dark'
             ? [['the page', SURFACES.darkPage], ['a card', SURFACES.darkCard]]
             : [['the page', SURFACES.lightPage], ['a card', SURFACES.lightCard]]
           for (const [name, bg] of grounds) {
             checked++
+            const fg = t.opacity ? mix(colour, bg, Number(t.opacity) / 100) : colour
             const ratio = contrast(fg, bg)
             if (ratio < AA_NORMAL) failures.push(`${file}: ${theme} ${text[0]} on ${name} is ${ratio.toFixed(2)}:1`)
           }
