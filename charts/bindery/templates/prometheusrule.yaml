@@ -65,6 +65,19 @@ spec:
           annotations:
             summary: Bindery job {{ .job }} has not succeeded for {{ .hours }}h
             description: The {{ .job }} background job last finished cleanly {{ "{{" }} $value | humanizeDuration {{ "}}" }} ago.
+        - alert: BinderySchedulerJobNeverSucceeded
+          # The timestamp only appears after the first clean run since
+          # startup, so a job stuck from boot has no series to go stale.
+          expr: |
+            absent(bindery_scheduler_last_success_timestamp_seconds{ {{- $sel -}} ,exported_job="{{ .job }}"})
+              and on() (up{ {{- $sel -}} } == 1)
+          for: {{ mulf .hours 60 | int }}m
+          labels:
+            severity: {{ $r.schedulerStale.severity }}
+            bindery_job: {{ .job | quote }}
+          annotations:
+            summary: Bindery job {{ .job }} has not succeeded since startup
+            description: Bindery has been up for over {{ .hours }}h without the {{ .job }} background job finishing cleanly once.
         {{- end }}
         {{- end }}
         {{- if $r.schedulerPanic.enabled }}
