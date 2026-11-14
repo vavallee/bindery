@@ -1,3 +1,7 @@
+# Bindery supports exactly one replica: it keeps its data in a single SQLite file
+# and runs its scheduler in-process with no leader election. The chart refuses to
+# render for any value above 1 (templates/validate.yaml). 0 is allowed so a
+# release can be scaled down for maintenance.
 replicaCount: 1
 
 image:

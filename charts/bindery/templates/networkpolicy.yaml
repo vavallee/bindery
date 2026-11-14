@@ -20,6 +20,21 @@ spec:
         {{- else }}
         - podSelector: {}
         {{- end }}
+        {{- if .Values.hooks.postsyncSmoke.enabled }}
+        # The ArgoCD PostSync smoke Job probes the Service, so let it in even
+        # when ingressSelector narrows everyone else.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: postsync-smoke
+        {{- end }}
+        {{- if .Values.logAlert.enabled }}
+        # The log alert CronJob reads the log API through the Service.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "bindery.name" . }}-log-alert
+              app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- end }}
       ports:
         - protocol: TCP
           port: {{ .Values.service.port }}
