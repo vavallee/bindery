@@ -30,14 +30,39 @@ jobs:
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            registry.npmjs.org:443
+            vuln.go.dev:443
+            golangci-lint.run:443
+            go.dev:443
+            golang.org:443
+            dl.google.com:443
+            nodejs.org:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # deploy-prod only runs on tags, so its status stamp guard is tested
+      # here where every PR exercises it.
+      - name: CI scripts (shellcheck and deploy guard tests)
+        run: |
+          shellcheck scripts/ci/*.sh
+          bash scripts/ci/deploy-prod-guard_test.sh
       # The shipped image must be built with the Go that CI tests and
       # govulncheck scans. Dependabot bumps the Dockerfile golang tag on its
       # own, which once left the image on 1.27.1 while everything else was
@@ -73,10 +98,29 @@ jobs:
     timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            registry.npmjs.org:443
+            golang.org:443
+            google.golang.org:443
+            modernc.org:443
+            go.dev:443
+            dl.google.com:443
+            nodejs.org:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -108,10 +152,27 @@ jobs:
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            registry.npmjs.org:443
+            go.dev:443
+            golang.org:443
+            dl.google.com:443
+            nodejs.org:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -137,10 +198,29 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            cli.codecov.io:443
+            ingest.codecov.io:443
+            api.codecov.io:443
+            keybase.io:443
+            go.dev:443
+            golang.org:443
+            dl.google.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -201,10 +281,25 @@ jobs:
           - shard: non-api
             scope: non-api
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            go.dev:443
+            golang.org:443
+            dl.google.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -231,10 +326,26 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            registry.npmjs.org:443
+            cli.codecov.io:443
+            ingest.codecov.io:443
+            api.codecov.io:443
+            keybase.io:443
+            storage.googleapis.com:443
+            nodejs.org:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -476,16 +587,47 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           IMAGE_TAG="sha-${GITHUB_SHA::7}"
           FILE_PATH="charts/bindery/values-dev.yaml"
           DEPLOY_BRANCH="auto/dev-deploy-${GITHUB_SHA::7}"
 
-          DEV_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/development" --jq .object.sha)
-          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -f ref="refs/heads/${DEPLOY_BRANCH}" \
-            -f sha="${DEV_SHA}"
+          # gh_get ENDPOINT JQ prints the jq result, prints nothing on a 404,
+          # and stops the job on any other API failure. gh writes the error
+          # body to stdout, so it is only echoed on success.
+          gh_get() {
+            local out
+            if out=$(gh api "$1" --jq "$2" 2>"${RUNNER_TEMP}/gh.err"); then
+              printf '%s' "${out}"
+              return 0
+            fi
+            if grep -q '(HTTP 404)' "${RUNNER_TEMP}/gh.err"; then
+              return 0
+            fi
+            cat "${RUNNER_TEMP}/gh.err" >&2
+            exit 1
+          }
 
-          FILE_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${DEPLOY_BRANCH}" --jq .sha 2>/dev/null || echo "")
+          # Every gh call below runs with --repo because this job does not
+          # check out the repository, so gh has no local git context.
+          DEV_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/development" --jq .object.sha)
+
+          # Create the deploy branch at the development tip, or reset it there
+          # when a rerun finds the branch left behind by an earlier attempt.
+          # Assign first: an exit inside $(...) used directly as a [ argument
+          # does not trip set -e, so a 5xx would read as "branch missing".
+          EXISTING_SHA=$(gh_get "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEPLOY_BRANCH}" .object.sha)
+          if [ -n "${EXISTING_SHA}" ]; then
+            echo "Resetting existing ${DEPLOY_BRANCH} to development (${DEV_SHA})"
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/${DEPLOY_BRANCH}" \
+              -X PATCH -f sha="${DEV_SHA}" -F force=true --silent
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/heads/${DEPLOY_BRANCH}" \
+              -f sha="${DEV_SHA}" --silent
+          fi
+
+          FILE_SHA=$(gh_get "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${DEPLOY_BRANCH}" .sha)
           CONTENT=$(printf 'image:\n  tag: "%s"\n' "${IMAGE_TAG}" | base64 -w0)
           if [ -n "$FILE_SHA" ]; then
             gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}" \
@@ -493,30 +635,41 @@ jobs:
               -f message="chore(deploy-dev): update to ${IMAGE_TAG} [skip ci]" \
               -f content="${CONTENT}" \
               -f sha="${FILE_SHA}" \
-              -f branch="${DEPLOY_BRANCH}"
+              -f branch="${DEPLOY_BRANCH}" --silent
           else
             gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}" \
               -X PUT \
               -f message="chore(deploy-dev): create values-dev.yaml for ${IMAGE_TAG} [skip ci]" \
               -f content="${CONTENT}" \
-              -f branch="${DEPLOY_BRANCH}"
+              -f branch="${DEPLOY_BRANCH}" --silent
           fi
 
-          # --repo is required because this job does not check out the
-          # repository, so gh has no local git context to infer the target
-          # from. Without it, `gh pr create` exits 1 with "not a git
-          # repository: .git" and the 2>/dev/null mask hides that error;
-          # the subsequent `gh pr merge` then fails for the same reason
-          # (and orphans the auto/dev-deploy-<sha> branch with the right
-          # content but no PR). The deploy-prod job below already has the
-          # --repo flag; this brings deploy-dev in line.
-          gh pr create \
-            --repo "${GITHUB_REPOSITORY}" \
-            --head "${DEPLOY_BRANCH}" \
-            --base development \
-            --title "chore(deploy-dev): update to ${IMAGE_TAG}" \
-            --body "Automated dev deploy: image tag \`${IMAGE_TAG}\`." 2>/dev/null || true
-          gh pr merge "${DEPLOY_BRANCH}" --repo "${GITHUB_REPOSITORY}" --squash --admin --delete-branch
+          # Reuse an open PR for this branch (a rerun after a failed merge),
+          # otherwise open one. A failed create stops the job here instead of
+          # surfacing later as a confusing merge error.
+          PR_URL=$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${DEPLOY_BRANCH}" \
+            --base development --state open --json url --jq '.[0].url // empty')
+          if [ -n "${PR_URL}" ]; then
+            echo "Reusing open PR ${PR_URL}"
+          else
+            PR_URL=$(gh pr create \
+              --repo "${GITHUB_REPOSITORY}" \
+              --head "${DEPLOY_BRANCH}" \
+              --base development \
+              --title "chore(deploy-dev): update to ${IMAGE_TAG}" \
+              --body "Automated dev deploy: image tag \`${IMAGE_TAG}\`.")
+            echo "Opened ${PR_URL}"
+          fi
+
+          # No --admin. development has no branch protection (checked with
+          # GET branches/development/protection, which returns 404), so a plain
+          # squash merge succeeds and --admin overrode nothing. If protection
+          # with required checks is ever added to development, this merge will
+          # fail loudly: the deploy commit is made with GITHUB_TOKEN and so
+          # triggers no CI, and GITHUB_TOKEN is not a repo admin, so --admin
+          # would not have bypassed it either. The fix then is the guarded
+          # status stamp deploy-prod uses, not a bypass flag.
+          gh pr merge "${PR_URL}" --repo "${GITHUB_REPOSITORY}" --squash --delete-branch
           echo "bindery-dev image tag updated to ${IMAGE_TAG}"
 
       - name: Trigger ArgoCD dev refresh
@@ -670,10 +823,25 @@ jobs:
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            go.dev:443
+            golang.org:443
+            dl.google.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -761,18 +929,55 @@ jobs:
         with:
           egress-policy: audit
 
+      # Only for scripts/ci/deploy-prod-guard.sh, taken from the tagged commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+
       - name: Update values.yaml on main
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           IMAGE_TAG="${GITHUB_REF_NAME#v}"
           FILE_PATH="charts/bindery/values.yaml"
           DEPLOY_BRANCH="auto/prod-deploy-${IMAGE_TAG}"
 
+          # gh_get ENDPOINT JQ prints the jq result, prints nothing on a 404,
+          # and stops the job on any other API failure. gh writes the error
+          # body to stdout, so it is only echoed on success.
+          gh_get() {
+            local out
+            if out=$(gh api "$1" --jq "$2" 2>"${RUNNER_TEMP}/gh.err"); then
+              printf '%s' "${out}"
+              return 0
+            fi
+            if grep -q '(HTTP 404)' "${RUNNER_TEMP}/gh.err"; then
+              return 0
+            fi
+            cat "${RUNNER_TEMP}/gh.err" >&2
+            exit 1
+          }
+
           MAIN_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/main" --jq .object.sha)
-          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -f ref="refs/heads/${DEPLOY_BRANCH}" \
-            -f sha="${MAIN_SHA}"
+
+          # Create the deploy branch at the main tip, or reset it there when a
+          # rerun finds the branch left behind by an earlier attempt. Resetting
+          # drops whatever that attempt (or anyone else) put on it, and the
+          # guard below then checks the branch holds only this run's commits.
+          # Assign first: an exit inside $(...) used directly as a [ argument
+          # does not trip set -e, so a 5xx would read as "branch missing".
+          EXISTING_SHA=$(gh_get "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEPLOY_BRANCH}" .object.sha)
+          if [ -n "${EXISTING_SHA}" ]; then
+            echo "Resetting existing ${DEPLOY_BRANCH} to main (${MAIN_SHA})"
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/${DEPLOY_BRANCH}" \
+              -X PATCH -f sha="${MAIN_SHA}" -F force=true --silent
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/heads/${DEPLOY_BRANCH}" \
+              -f sha="${MAIN_SHA}" --silent
+          fi
 
           FILE_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${DEPLOY_BRANCH}" --jq .sha)
           CONTENT=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${DEPLOY_BRANCH}" \
@@ -780,75 +985,105 @@ jobs:
 
           # Keep Chart.yaml's appVersion in step with the deployed tag. It sat
           # frozen (1.22.3 vs tag 1.30.0) because only values.yaml was bumped
-          # here — anyone reading `helm show chart` got a stale answer.
+          # here, so anyone reading `helm show chart` got a stale answer.
           CHART_PATH="charts/bindery/Chart.yaml"
           CHART_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${CHART_PATH}?ref=${DEPLOY_BRANCH}" --jq .sha)
           CHART_CONTENT=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${CHART_PATH}?ref=${DEPLOY_BRANCH}" \
             --jq '.content' | base64 -d | sed "s|^appVersion:.*|appVersion: \"${IMAGE_TAG}\"|" | base64 -w0)
-          gh api "repos/${GITHUB_REPOSITORY}/contents/${CHART_PATH}" \
+          CHART_COMMIT=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${CHART_PATH}" \
             -X PUT \
             -f message="chore(deploy): appVersion ${IMAGE_TAG}" \
             -f content="${CHART_CONTENT}" \
             -f sha="${CHART_SHA}" \
-            -f branch="${DEPLOY_BRANCH}"
+            -f branch="${DEPLOY_BRANCH}" \
+            --jq .commit.sha)
           # NOTE: the branch commit deliberately does NOT carry [skip ci]. The
-          # required checks (lint, validate, Security Summary) must actually run
-          # on the PR head, otherwise they stay "expected" forever and the merge
-          # below is blocked ("N of N required status checks are expected") — the
-          # default GITHUB_TOKEN is not a repo admin, so --admin can't override
-          # that. The [skip ci] is moved to the SQUASH subject instead, so the
-          # commit that lands on main still skips the pointless image rebuild.
-          gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}" \
+          # required checks (lint, validate, Security Summary) must report on
+          # the PR head, otherwise they stay "expected" forever and the merge
+          # below is blocked ("N of N required status checks are expected").
+          # The default GITHUB_TOKEN is not a repo admin, so --admin can't
+          # override that. The [skip ci] is moved to the SQUASH subject instead,
+          # so the commit that lands on main still skips the image rebuild.
+          VALUES_COMMIT=$(gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}" \
             -X PUT \
             -f message="chore(deploy): promote bindery to ${IMAGE_TAG}" \
             -f content="${CONTENT}" \
             -f sha="${FILE_SHA}" \
-            -f branch="${DEPLOY_BRANCH}"
+            -f branch="${DEPLOY_BRANCH}" \
+            --jq .commit.sha)
 
-          gh pr create \
-            --repo "${GITHUB_REPOSITORY}" \
-            --head "${DEPLOY_BRANCH}" \
-            --base main \
-            --title "chore(deploy): promote bindery to ${GITHUB_REF_NAME}" \
-            --body "Automated prod deploy: image tag \`${IMAGE_TAG}\`." 2>/dev/null || true
+          # Reuse an open PR for this branch (a rerun after a failed merge),
+          # otherwise open one, and fail on a create error.
+          PR_URL=$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${DEPLOY_BRANCH}" \
+            --base main --state open --json url --jq '.[0].url // empty')
+          if [ -n "${PR_URL}" ]; then
+            echo "Reusing open PR ${PR_URL}"
+          else
+            PR_URL=$(gh pr create \
+              --repo "${GITHUB_REPOSITORY}" \
+              --head "${DEPLOY_BRANCH}" \
+              --base main \
+              --title "chore(deploy): promote bindery to ${GITHUB_REF_NAME}" \
+              --body "Automated prod deploy: image tag \`${IMAGE_TAG}\`.")
+            echo "Opened ${PR_URL}"
+          fi
 
           # The deploy branch commit is authored by GITHUB_TOKEN, which does not
-          # trigger CI, and the required code-path checks (lint, validate (Go),
+          # trigger CI, and the required code path checks (lint, validate (Go),
           # Security Summary) are gated to code paths and would skip on a
-          # values.yaml-only change anyway. They therefore never report, leaving
+          # values.yaml only change anyway. They therefore never report, leaving
           # the PR BLOCKED ("N of N required status checks are expected") with a
-          # non-admin token (so --admin is not an option here). The image this
+          # non admin token (so --admin is not an option here). The image this
           # promote points at was already built, tested, scanned, and released
-          # at the tag build (this job needs image + goreleaser + predeploy-
-          # smoke), so stamp the required contexts green for this values-only
-          # promote. Keep this list in sync with branch protection on main.
-          HEAD_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/${DEPLOY_BRANCH}" --jq .object.sha)
+          # at the tag build (this job needs image + goreleaser + predeploy
+          # smoke), so stamp the required contexts green for this values only
+          # promote.
+          #
+          # The stamp bypasses those checks, so first prove the PR is the values
+          # only promote it claims to be: based on the main tip this run
+          # branched from, carrying exactly the two bot commits made above, and
+          # changing nothing but values.yaml and Chart.yaml. The guard fails the
+          # job otherwise and nothing is stamped. Tests live next to it.
+          gh api "repos/${GITHUB_REPOSITORY}/compare/main...${DEPLOY_BRANCH}" > "${RUNNER_TEMP}/deploy-compare.json"
+          bash scripts/ci/deploy-prod-guard.sh "${RUNNER_TEMP}/deploy-compare.json" \
+            "${MAIN_SHA}" "${CHART_COMMIT}" "${VALUES_COMMIT}"
+
+          # Stamp the exact commit the guard checked, not whatever the branch
+          # points at now. Keep this context list in sync with the required
+          # status checks in branch protection on main.
           for ctx in "lint" "validate (Go)" "Security Summary"; do
-            gh api "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            gh api "repos/${GITHUB_REPOSITORY}/statuses/${VALUES_COMMIT}" \
               -f state=success \
               -f context="${ctx}" \
-              -f description="values-only deploy promote; code validated at tag build" >/dev/null
+              -f description="values only deploy promote; code validated at tag build" --silent
           done
 
-          # Wait for the REQUIRED checks only — advisory scans (e.g. Container
+          # Wait for the REQUIRED checks only. Advisory scans (e.g. Container
           # Scan) must not gate this deploy. bucket is one of pass/fail/pending/
           # skipping/cancel; merge once nothing is pending and nothing failed.
+          # gh pr checks exits non zero while checks are pending, hence || true.
           echo "Waiting for required checks on ${DEPLOY_BRANCH}..."
+          CHECKS_GREEN=""
           for i in $(seq 1 40); do
-            BUCKETS=$(gh pr checks "${DEPLOY_BRANCH}" --repo "${GITHUB_REPOSITORY}" --required --json bucket --jq '.[].bucket' 2>/dev/null || true)
+            BUCKETS=$(gh pr checks "${PR_URL}" --repo "${GITHUB_REPOSITORY}" --required --json bucket --jq '.[].bucket' || true)
             if echo "${BUCKETS}" | grep -qE 'fail|cancel'; then
-              echo "::error::a required check failed on ${DEPLOY_BRANCH} — not promoting"; exit 1
+              echo "::error::a required check failed on ${DEPLOY_BRANCH}, not promoting"; exit 1
             fi
             if [ -n "${BUCKETS}" ] && ! echo "${BUCKETS}" | grep -q 'pending'; then
-              echo "required checks green"; break
+              echo "required checks green after ${i} poll(s)"; CHECKS_GREEN=1; break
             fi
             sleep 15
           done
+          if [ -z "${CHECKS_GREEN}" ]; then
+            echo "::error::required checks on ${DEPLOY_BRANCH} did not go green in 10 minutes"; exit 1
+          fi
 
-          # No --admin: required checks are green, so a normal squash-merge works
-          # with the default token. The [skip ci] subject keeps main from
-          # rebuilding the image for a values-only change.
-          gh pr merge "${DEPLOY_BRANCH}" --repo "${GITHUB_REPOSITORY}" --squash --delete-branch \
+          # No --admin: required checks are green, so a normal squash merge works
+          # with the default token. --match-head-commit refuses the merge if the
+          # branch moved after the guard ran. The [skip ci] subject keeps main
+          # from rebuilding the image for a values only change.
+          gh pr merge "${PR_URL}" --repo "${GITHUB_REPOSITORY}" --squash --delete-branch \
+            --match-head-commit "${VALUES_COMMIT}" \
             --subject "chore(deploy): promote bindery to ${IMAGE_TAG} [skip ci]"
           echo "bindery (prod) image tag updated to ${IMAGE_TAG}"
 

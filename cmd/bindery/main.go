@@ -933,10 +933,7 @@ func main() {
 		registerAPIErrorHandlers(r)
 
 		// System
-		r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"ok","version":"` + version + `"}`))
-		})
+		registerHealthRoutes(r, database)
 		r.Get("/system/status", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			cacheBytes, _ := imageProxyHandler.CacheSize()

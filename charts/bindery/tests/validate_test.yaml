@@ -1,0 +1,51 @@
+suite: replica count guard
+templates:
+  - validate.yaml
+
+tests:
+  - it: renders nothing with the default single replica
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders nothing for an explicit single replica
+    set:
+      replicaCount: 1
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: fails template rendering for two replicas
+    set:
+      replicaCount: 2
+    asserts:
+      - failedTemplate:
+          errorPattern: supports exactly one replica
+
+  - it: fails template rendering for a large replica count
+    set:
+      replicaCount: 5
+    asserts:
+      - failedTemplate:
+          errorPattern: replicaCount is 5
+
+  - it: fails template rendering for a negative replica count
+    set:
+      replicaCount: -1
+    asserts:
+      - failedTemplate:
+          errorPattern: must be a whole number
+
+  - it: fails template rendering for a non-numeric replica count
+    set:
+      replicaCount: abc
+    asserts:
+      - failedTemplate:
+          errorPattern: must be a whole number
+
+  - it: renders nothing for zero replicas
+    set:
+      replicaCount: 0
+    asserts:
+      - hasDocuments:
+          count: 0
