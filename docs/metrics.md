@@ -21,6 +21,8 @@ Every label comes from a fixed set, and a value outside the set is recorded as `
 | `job` | the scheduler's job names, fixed in code (`check-downloads`, `search-wanted`, `scan-library` and so on) |
 | `route` | the matched route template (`/api/v1/book/{id}`), or `other` |
 
+The scheduler metrics' `job` label collides with the `job` label Prometheus puts on every scraped series (the scrape job, usually the Service name). Unless the scrape config sets `honor_labels: true`, Prometheus keeps its own value and renames Bindery's to `exported_job`, so a query for the background job name reads `exported_job="check-downloads"`.
+
 ## Reference
 
 ### HTTP
@@ -114,7 +116,7 @@ sum(increase(bindery_imports_total{result!="imported"}[1h]))
   / sum(increase(bindery_imports_total[1h]))
 
 # Hours since the download poller last finished cleanly
-(time() - bindery_scheduler_last_success_timestamp_seconds{job="check-downloads"}) / 3600
+(time() - bindery_scheduler_last_success_timestamp_seconds{exported_job="check-downloads"}) / 3600
 
 # Download client errors per second by type
 sum by (client_type) (rate(bindery_download_client_requests_total{result="error"}[5m]))
