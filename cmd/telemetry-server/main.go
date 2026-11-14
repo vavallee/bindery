@@ -37,7 +37,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "modernc.org/sqlite"
+	sqlite "modernc.org/sqlite"
 )
 
 // buildSHA is stamped at image build time with -X main.buildSHA=<git sha>.
@@ -222,11 +222,23 @@ func sweepStaleAndDev(ctx context.Context, db *sql.DB) (int64, error) {
 // silently ignored, so the DB ran with journal DELETE and busy_timeout 0
 // and every concurrent write surfaced as SQLITE_BUSY (the nightly
 // snapshot/sweep failures and dropped pings). Applied per connection.
+//
+// _txlock=immediate makes every BeginTx issue BEGIN IMMEDIATE. busy_timeout
+// alone is not enough: in WAL mode a deferred transaction that reads first
+// and writes second fails at once with SQLITE_BUSY or SQLITE_BUSY_SNAPSHOT
+// if another connection committed in between, because its read snapshot is
+// stale and waiting cannot fix that, so the busy handler is never consulted
+// (snapshotDay hit this against live pings, "database is locked (5)/(517)").
+// Taking the write lock up front turns that into an ordinary wait that
+// busy_timeout covers. Every transaction in this server writes, and none is
+// read-only (plain reads go through db.QueryRowContext, not BeginTx), so
+// the handle-wide setting costs nothing and guards any future BeginTx.
 func sqliteDSN(dbPath string) string {
 	return dbPath +
 		"?_pragma=journal_mode(WAL)" +
 		"&_pragma=busy_timeout(5000)" +
-		"&_pragma=synchronous(NORMAL)"
+		"&_pragma=synchronous(NORMAL)" +
+		"&_txlock=immediate"
 }
 
 // createAggregateTables creates the daily aggregate tables (Phase 4), the
@@ -388,6 +400,48 @@ func readVersionCounts(ctx context.Context, tx *sql.Tx, dayStr string) (map[stri
 	return out, nil
 }
 
+// snapshotAfterReads is a test seam: snapshotDay calls it after its first
+// reads and before its first write, the window in which a deferred
+// transaction's read snapshot can go stale. Nil in production.
+var snapshotAfterReads func()
+
+// snapshotMaxAttempts and snapshotRetryBackoff bound the retry of a tick
+// that still hits a busy error (see retryBusy).
+const snapshotMaxAttempts = 3
+
+var snapshotRetryBackoff = 250 * time.Millisecond
+
+// isBusy reports whether err is SQLite's SQLITE_BUSY family: plain busy (5),
+// busy-snapshot (517), busy-recovery (261) and so on. Only these are
+// transient lock conflicts worth retrying.
+func isBusy(err error) bool {
+	var se *sqlite.Error
+	return errors.As(err, &se) && se.Code()&0xff == 5
+}
+
+// retryBusy runs fn up to snapshotMaxAttempts times, sleeping a growing
+// backoff between attempts, and only while fn fails with a busy error. Any
+// other error, and success, return at once. aggregateInterval is 24h, so
+// without this a transient lock would leave the dashboard rows stale until
+// the next tick, up to a day later.
+func retryBusy(ctx context.Context, fn func() error) error {
+	var err error
+	for attempt := 1; attempt <= snapshotMaxAttempts; attempt++ {
+		if err = fn(); err == nil || !isBusy(err) {
+			return err
+		}
+		if attempt == snapshotMaxAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(time.Duration(attempt) * snapshotRetryBackoff):
+		}
+	}
+	return err
+}
+
 func (s *server) snapshotDay(ctx context.Context, day time.Time) error {
 	dayStr := day.UTC().Format("2006-01-02")
 
@@ -398,6 +452,8 @@ func (s *server) snapshotDay(ctx context.Context, day time.Time) error {
 	defer func() { _ = tx.Rollback() }()
 
 	// daily_global: one row per day with active_day, new_installs, total.
+	// These reads run inside the write transaction opened above (see
+	// sqliteDSN), so no ping can commit between them and the writes below.
 	var activeDay, newInstalls, total int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM daily_activity WHERE day = ?`, dayStr,
@@ -413,6 +469,9 @@ func (s *server) snapshotDay(ctx context.Context, day time.Time) error {
 		`SELECT COUNT(*) FROM installs`,
 	).Scan(&total); err != nil {
 		return fmt.Errorf("snapshot %s: total: %w", dayStr, err)
+	}
+	if snapshotAfterReads != nil {
+		snapshotAfterReads()
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO daily_global (day, active_day, new_installs, total)
@@ -719,7 +778,8 @@ func (s *server) runAggregateLoop(ctx context.Context) {
 	for {
 		now := time.Now().UTC()
 		for i := 0; i <= aggregateHealDays; i++ {
-			if err := s.snapshotDay(ctx, now.AddDate(0, 0, -i)); err != nil {
+			day := now.AddDate(0, 0, -i)
+			if err := retryBusy(ctx, func() error { return s.snapshotDay(ctx, day) }); err != nil {
 				slog.Warn("snapshot failed", "days_ago", i, "error", err)
 			}
 		}
