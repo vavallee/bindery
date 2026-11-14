@@ -29,9 +29,22 @@ spec:
       # Cluster specific overlay. values.yaml is neutral (ingress off,
       # example host) so the chart stays reusable; set your own values here.
       values: |
+        # The chart defaults for entryPoints, certResolver and storageClass
+        # are the maintainer's cluster names. Set yours explicitly.
         ingress:
           enabled: true
+          # traefik renders an IngressRoute. Use type: standard with
+          # className and tls for any other ingress controller.
+          type: traefik
           host: bindery.example.com
+          # Your Traefik entry point and ACME resolver names.
+          entryPoints:
+            - websecure
+          certResolver: letsencrypt
+        persistence:
+          config:
+            # Empty uses the cluster default StorageClass; or name one.
+            storageClass: ""
         nfs:
           enabled: true
           server: nfs.example.lan
