@@ -56,6 +56,8 @@ helm install bindery charts/bindery \
 
 Every ingress template is gated on `ingress.enabled`, which defaults to false, so setting only `ingress.host` renders nothing. `ingress.type` selects what gets rendered: `traefik` (the default) emits a Traefik `IngressRoute`, `standard` emits a portable `networking.k8s.io/v1` Ingress you configure with `ingress.className`, `ingress.annotations` and `ingress.tls`.
 
+The chart can also render a Prometheus Operator `ServiceMonitor` and `PrometheusRule` and a Grafana dashboard, all off by default. See [monitoring.md](monitoring.md) for what to set and the suggested alert thresholds.
+
 ### Health checks
 
 Bindery answers `GET /api/v1/health` with 200 once it is serving. The container image declares its own Docker `HEALTHCHECK` that calls the binary's `healthcheck` subcommand against that endpoint, so `docker ps` shows a health column and Compose `depends_on: { bindery: { condition: service_healthy } }` works with no extra configuration. The Helm chart points a startup, readiness and liveness probe at the same path, and `hooks.postsyncSmoke` adds an ArgoCD PostSync job that fails the sync if the endpoint does not answer. Under `BINDERY_URL_BASE` the path moves under the prefix. The built in Docker `HEALTHCHECK` follows it, but update any probe you configure yourself.

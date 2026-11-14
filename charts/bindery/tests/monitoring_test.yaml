@@ -1,0 +1,230 @@
+suite: monitoring
+templates:
+  - servicemonitor.yaml
+  - prometheusrule.yaml
+  - dashboard-configmap.yaml
+  - networkpolicy.yaml
+
+tests:
+  - it: renders no monitoring objects by default
+    capabilities:
+      apiVersions:
+        - monitoring.coreos.com/v1
+    asserts:
+      - hasDocuments:
+          count: 0
+        template: servicemonitor.yaml
+      - hasDocuments:
+          count: 0
+        template: prometheusrule.yaml
+      - hasDocuments:
+          count: 0
+        template: dashboard-configmap.yaml
+
+  - it: renders no ServiceMonitor or PrometheusRule without the monitoring.coreos.com API, even when enabled
+    set:
+      metrics.serviceMonitor.enabled: true
+      metrics.prometheusRule.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+        template: servicemonitor.yaml
+      - hasDocuments:
+          count: 0
+        template: prometheusrule.yaml
+
+  - it: renders a ServiceMonitor that scrapes /metrics on the http port without credentials
+    template: servicemonitor.yaml
+    capabilities:
+      apiVersions:
+        - monitoring.coreos.com/v1
+    set:
+      metrics.serviceMonitor.enabled: true
+      metrics.serviceMonitor.labels:
+        release: kube-prometheus-stack
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ServiceMonitor
+      - equal:
+          path: metadata.labels.release
+          value: kube-prometheus-stack
+      - equal:
+          path: spec.endpoints[0].port
+          value: http
+      - equal:
+          path: spec.endpoints[0].path
+          value: /metrics
+      - equal:
+          path: spec.endpoints[0].interval
+          value: 30s
+      - notExists:
+          path: spec.endpoints[0].basicAuth
+      - notExists:
+          path: spec.endpoints[0].bearerTokenSecret
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/name"]
+          value: bindery
+
+  - it: puts the scrape path under BINDERY_URL_BASE
+    template: servicemonitor.yaml
+    capabilities:
+      apiVersions:
+        - monitoring.coreos.com/v1
+    set:
+      metrics.serviceMonitor.enabled: true
+      env.BINDERY_URL_BASE: /bindery/
+    asserts:
+      - equal:
+          path: spec.endpoints[0].path
+          value: /bindery/metrics
+
+  - it: an explicit path wins over BINDERY_URL_BASE
+    template: servicemonitor.yaml
+    capabilities:
+      apiVersions:
+        - monitoring.coreos.com/v1
+    set:
+      metrics.serviceMonitor.enabled: true
+      metrics.serviceMonitor.path: /custom/metrics
+      env.BINDERY_URL_BASE: /bindery
+    asserts:
+      - equal:
+          path: spec.endpoints[0].path
+          value: /custom/metrics
+
+  - it: renders the default alert rules with for and severity on each
+    template: prometheusrule.yaml
+    release:
+      namespace: media
+    capabilities:
+      apiVersions:
+        - monitoring.coreos.com/v1
+    set:
+      metrics.prometheusRule.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PrometheusRule
+      - lengthEqual:
+          path: spec.groups[0].rules
+          count: 8
+      - equal:
+          path: spec.groups[0].rules[0].alert
+          value: BinderyDown
+      - equal:
+          path: spec.groups[0].rules[0].expr
+          value: up{job="bindery",namespace="media"} == 0
+      - equal:
+          path: spec.groups[0].rules[0].labels.severity
+          value: critical
+      - equal:
+          path: spec.groups[0].rules[0].for
+          value: 5m
+      - matchRegex:
+          path: spec.groups[0].rules[2].expr
+          pattern: 'status=~"5.."\}\[5m\]\)\)\s+/ sum\(rate\(bindery_http_requests_total.*\s+> 0.05'
+      - matchRegex:
+          path: spec.groups[0].rules[3].expr
+          pattern: 'exported_job="check-downloads"\} > 3600'
+      - matchRegex:
+          path: spec.groups[0].rules[4].expr
+          pattern: 'exported_job="search-wanted"\} > 129600'
+      - matchRegex:
+          path: spec.groups[0].rules[6].expr
+          pattern: 'bindery_imports_total'
+      - matchRegex:
+          path: spec.groups[0].rules[7].expr
+          pattern: 'bindery_download_client_requests_total\{job="bindery",namespace="media",result="error"\}'
+      - exists:
+          path: spec.groups[0].rules[7].for
+      - exists:
+          path: spec.groups[0].rules[7].labels.severity
+
+  - it: takes thresholds from values and can turn rules off
+    template: prometheusrule.yaml
+    capabilities:
+      apiVersions:
+        - monitoring.coreos.com/v1
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.prometheusRule.rules.down.enabled: false
+      metrics.prometheusRule.rules.schedulerStale.enabled: false
+      metrics.prometheusRule.rules.schedulerPanic.enabled: false
+      metrics.prometheusRule.rules.importFailures.enabled: false
+      metrics.prometheusRule.rules.downloadClientErrors.enabled: false
+      metrics.prometheusRule.rules.http5xx.ratio: 0.2
+      metrics.prometheusRule.rules.http5xx.for: 1h
+      metrics.prometheusRule.rules.http5xx.severity: critical
+    asserts:
+      - lengthEqual:
+          path: spec.groups[0].rules
+          count: 1
+      - matchRegex:
+          path: spec.groups[0].rules[0].expr
+          pattern: '> 0.2'
+      - equal:
+          path: spec.groups[0].rules[0].for
+          value: 1h
+      - equal:
+          path: spec.groups[0].rules[0].labels.severity
+          value: critical
+
+  - it: renders the dashboard ConfigMap with the Grafana sidecar label when enabled
+    template: dashboard-configmap.yaml
+    set:
+      metrics.dashboard.enabled: true
+      metrics.dashboard.annotations:
+        grafana_folder: Media
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.labels.grafana_dashboard
+          value: "1"
+      - equal:
+          path: metadata.annotations.grafana_folder
+          value: Media
+      - matchRegex:
+          path: data["bindery.json"]
+          pattern: '"uid": "bindery-overview"'
+
+  - it: the dashboard does not need the monitoring.coreos.com API
+    template: dashboard-configmap.yaml
+    set:
+      metrics.dashboard.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: lets a Prometheus in another namespace through the NetworkPolicy
+    template: networkpolicy.yaml
+    set:
+      networkPolicy.enabled: true
+      networkPolicy.metricsFrom:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+    asserts:
+      - lengthEqual:
+          path: spec.ingress
+          count: 2
+      - equal:
+          path: spec.ingress[1].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: monitoring
+      - equal:
+          path: spec.ingress[1].ports[0].port
+          value: 8787
+
+  - it: adds no extra NetworkPolicy ingress rule by default
+    template: networkpolicy.yaml
+    set:
+      networkPolicy.enabled: true
+    asserts:
+      - lengthEqual:
+          path: spec.ingress
+          count: 1
