@@ -80,6 +80,10 @@ kubectl label namespace bindery \
 
 The label belongs on the namespace, not in the chart, because Helm charts should not create or mutate namespaces they're installed into.
 
+## Metrics
+
+Bindery serves Prometheus metrics at `/metrics` on the same port as the UI, with no authentication, so keep it off any publicly reachable side of a reverse proxy. [metrics.md](metrics.md) lists every metric, its labels and what it means.
+
 ## Unraid (Community Applications)
 
 Bindery is in Community Applications. On the **Apps** tab, search for

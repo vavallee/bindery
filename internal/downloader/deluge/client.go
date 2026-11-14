@@ -619,3 +619,10 @@ func (c *Client) doCall(ctx context.Context, method string, params []any) (json.
 	}
 	return rpcResp.Result, nil
 }
+
+// WrapTransport replaces the client's API transport with wrap applied to it.
+// The client cache uses it to count and time requests (#3851). Any separate
+// transport for fetching .torrent files from indexers is left alone.
+func (c *Client) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) {
+	c.http.Transport = wrap(c.http.Transport)
+}
