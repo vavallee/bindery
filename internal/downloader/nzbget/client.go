@@ -20,7 +20,6 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/nzbfetch"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
 	"github.com/vavallee/bindery/internal/httpsec"
-	"github.com/vavallee/bindery/internal/useragent"
 )
 
 // categoryNameKey matches the NZBGet config keys that carry a category's
@@ -340,41 +339,11 @@ func (c *Client) validateNZBFetchURL(raw string) error {
 	return c.validateNZBURL(raw)
 }
 
+// fetchNZBContent downloads the NZB at nzbURL through the fetch shared with
+// SABnzbd (#3795), so both usenet clients apply the same SSRF checks, size
+// cap and error diagnosis.
 func (c *Client) fetchNZBContent(ctx context.Context, nzbURL string) ([]byte, error) {
-	if err := c.validateNZBFetchURL(nzbURL); err != nil {
-		return nil, fmt.Errorf("fetch nzb: %w", httpsec.RedactURLError(err))
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nzbURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("fetch nzb: %w", httpsec.RedactURLError(err))
-	}
-	// Some indexers (e.g. nzbfinder.ws, #1053) fingerprint the User-Agent and
-	// serve an anti-bot 403 to Go's default UA, so use the project UA the
-	// search path already relies on.
-	req.Header.Set("User-Agent", useragent.Get())
-	resp, err := c.fetchHTTP.Do(req)
-	if err != nil {
-		// Scrub the indexer apikey the *url.Error would otherwise leak into
-		// the download row / history / webhook payloads.
-		return nil, fmt.Errorf("fetch nzb from indexer: %w", httpsec.RedactURLError(err))
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, nzbfetch.MaxErrorBody))
-		return nil, nzbfetch.Error(nzbURL, resp, body)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 50<<20)) // 50 MB cap
-	if err != nil {
-		return nil, fmt.Errorf("fetch nzb from indexer: %w", err)
-	}
-	// A 200 is not proof the indexer sent an NZB: a refused, expired or
-	// rate-limited grab often comes back as an error page with a success
-	// status. Forwarding that to the download client makes the client reject
-	// it, and the grab then fails under the client's name (#2105).
-	if err := nzbfetch.ValidateNZB(nzbURL, resp, body); err != nil {
-		return nil, err
-	}
-	return body, nil
+	return nzbfetch.Fetch(ctx, c.fetchHTTP, c.validateNZBFetchURL, nzbURL)
 }
 
 // GetQueue returns the active download groups from NZBGet.
