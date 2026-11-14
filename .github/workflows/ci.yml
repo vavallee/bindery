@@ -30,10 +30,29 @@ jobs:
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            registry.npmjs.org:443
+            vuln.go.dev:443
+            golangci-lint.run:443
+            go.dev:443
+            golang.org:443
+            dl.google.com:443
+            nodejs.org:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -79,10 +98,29 @@ jobs:
     timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            registry.npmjs.org:443
+            golang.org:443
+            google.golang.org:443
+            modernc.org:443
+            go.dev:443
+            dl.google.com:443
+            nodejs.org:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -114,10 +152,27 @@ jobs:
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            registry.npmjs.org:443
+            go.dev:443
+            golang.org:443
+            dl.google.com:443
+            nodejs.org:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -143,10 +198,29 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            cli.codecov.io:443
+            ingest.codecov.io:443
+            api.codecov.io:443
+            keybase.io:443
+            go.dev:443
+            golang.org:443
+            dl.google.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -207,10 +281,25 @@ jobs:
           - shard: non-api
             scope: non-api
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            go.dev:443
+            golang.org:443
+            dl.google.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -237,10 +326,26 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            registry.npmjs.org:443
+            cli.codecov.io:443
+            ingest.codecov.io:443
+            api.codecov.io:443
+            keybase.io:443
+            storage.googleapis.com:443
+            nodejs.org:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -718,10 +823,25 @@ jobs:
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            go.dev:443
+            golang.org:443
+            dl.google.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
