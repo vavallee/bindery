@@ -393,8 +393,9 @@ jobs:
       - name: helm-unittest (docker)
         run: |
           # Run as the runner user so helm-unittest can create
-          # tests/__snapshot__ inside the bind mounted checkout.
-          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/apps" \
+          # tests/__snapshot__ inside the bind mounted checkout. HOME must be
+          # writable too: helm needs a cache dir to load the plugin.
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/apps" \
             helmunittest/helm-unittest:latest \
             charts/bindery
 
