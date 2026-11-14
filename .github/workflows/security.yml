@@ -65,12 +65,12 @@ jobs:
             release-assets.githubusercontent.com:443
             raw.githubusercontent.com:443
             results-receiver.actions.githubusercontent.com:443
-            *.blob.core.windows.net:443
             registry.npmjs.org:443
             pypi.org:443
             files.pythonhosted.org:443
             semgrep.dev:443
             metrics.semgrep.dev:443
+            nodejs.org:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -171,7 +171,6 @@ jobs:
             release-assets.githubusercontent.com:443
             raw.githubusercontent.com:443
             results-receiver.actions.githubusercontent.com:443
-            *.blob.core.windows.net:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -286,7 +285,6 @@ jobs:
             release-assets.githubusercontent.com:443
             raw.githubusercontent.com:443
             results-receiver.actions.githubusercontent.com:443
-            *.blob.core.windows.net:443
             proxy.golang.org:443
             sum.golang.org:443
             storage.googleapis.com:443
@@ -374,7 +372,6 @@ jobs:
             release-assets.githubusercontent.com:443
             raw.githubusercontent.com:443
             results-receiver.actions.githubusercontent.com:443
-            *.blob.core.windows.net:443
             proxy.golang.org:443
             sum.golang.org:443
             storage.googleapis.com:443
@@ -382,6 +379,10 @@ jobs:
             registry-1.docker.io:443
             auth.docker.io:443
             production.cloudfront.docker.com:443
+            go.dev:443
+            golang.org:443
+            dl.google.com:443
+            nodejs.org:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

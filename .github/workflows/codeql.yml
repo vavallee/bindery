@@ -53,7 +53,6 @@ jobs:
             release-assets.githubusercontent.com:443
             raw.githubusercontent.com:443
             results-receiver.actions.githubusercontent.com:443
-            *.blob.core.windows.net:443
             proxy.golang.org:443
             sum.golang.org:443
             storage.googleapis.com:443
