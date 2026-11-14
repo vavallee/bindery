@@ -509,7 +509,10 @@ jobs:
 
           # Create the deploy branch at the development tip, or reset it there
           # when a rerun finds the branch left behind by an earlier attempt.
-          if [ -n "$(gh_get "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEPLOY_BRANCH}" .object.sha)" ]; then
+          # Assign first: an exit inside $(...) used directly as a [ argument
+          # does not trip set -e, so a 5xx would read as "branch missing".
+          EXISTING_SHA=$(gh_get "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEPLOY_BRANCH}" .object.sha)
+          if [ -n "${EXISTING_SHA}" ]; then
             echo "Resetting existing ${DEPLOY_BRANCH} to development (${DEV_SHA})"
             gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/${DEPLOY_BRANCH}" \
               -X PATCH -f sha="${DEV_SHA}" -F force=true --silent
@@ -843,7 +846,10 @@ jobs:
           # rerun finds the branch left behind by an earlier attempt. Resetting
           # drops whatever that attempt (or anyone else) put on it, and the
           # guard below then checks the branch holds only this run's commits.
-          if [ -n "$(gh_get "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEPLOY_BRANCH}" .object.sha)" ]; then
+          # Assign first: an exit inside $(...) used directly as a [ argument
+          # does not trip set -e, so a 5xx would read as "branch missing".
+          EXISTING_SHA=$(gh_get "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEPLOY_BRANCH}" .object.sha)
+          if [ -n "${EXISTING_SHA}" ]; then
             echo "Resetting existing ${DEPLOY_BRANCH} to main (${MAIN_SHA})"
             gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/${DEPLOY_BRANCH}" \
               -X PATCH -f sha="${MAIN_SHA}" -F force=true --silent

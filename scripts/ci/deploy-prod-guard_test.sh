@@ -76,6 +76,20 @@ check "wrong BASE_SHA argument" refuse '.' 5555555555555555555555555555555555555
 check "expects one more commit" refuse '.' "$BASE" "$C1" "$C2" 6666666666666666666666666666666666666666
 check "missing commit arguments" refuse '.' "$BASE"
 
+# The deploy jobs' gh_get helper exits 1 on a non 404 API error. That exit is
+# lost when the substitution is used directly as a [ or if argument (set -e
+# does not fire there), so a 5xx would read as "not found". Every call must
+# assign to a variable first.
+workflow="$here/../../.github/workflows/ci.yml"
+if masked=$(grep -nE '(\[|if|&&|\|\|)[^=]*\$\(gh_get' "$workflow"); then
+  failed=$((failed + 1))
+  echo "FAIL gh_get used inside a condition, assign it to a variable first:"
+  sed 's/^/     /' <<<"$masked"
+else
+  pass=$((pass + 1))
+  echo "ok   gh_get results are assigned before they are tested"
+fi
+
 echo
 echo "$pass passed, $failed failed"
 [ "$failed" -eq 0 ]
