@@ -63,15 +63,18 @@ spec:
               port: http
             failureThreshold: 30
             periodSeconds: 5
-          # Readiness round trips the database (2 s budget inside the
-          # handler, so timeoutSeconds must exceed it); while it fails the pod
-          # leaves the Service but keeps running. Liveness stays on the static
-          # /api/v1/health on purpose: a liveness probe that touches the
-          # database restarts the pod on a slow disk or a long write, which
-          # fixes neither.
+          # Readiness is on the static /api/v1/health for now. The route
+          # /api/v1/health/ready (database round trip, 2 s budget, so
+          # timeoutSeconds must exceed it) does not exist in releases up to
+          # v1.50.0, and a chart that points at it while the image is older
+          # answers 401 forever and leaves the pod out of the Service. Switch
+          # this path in the release that ships the route, together with the
+          # image bump. Liveness stays on the static route on purpose: a
+          # liveness probe that touches the database restarts the pod on a
+          # slow disk or a long write, which fixes neither.
           readinessProbe:
             httpGet:
-              path: /api/v1/health/ready
+              path: /api/v1/health
               port: http
             timeoutSeconds: 3
             failureThreshold: 3
