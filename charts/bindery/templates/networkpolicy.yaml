@@ -36,8 +36,11 @@ spec:
               app.kubernetes.io/instance: {{ .Release.Name }}
         {{- end }}
       ports:
+        # A NetworkPolicy port is matched against the pod, not the Service, so
+        # this names the container port instead of using service.port. With
+        # service.port set to anything but 8787 the two differ.
         - protocol: TCP
-          port: {{ .Values.service.port }}
+          port: http
   egress:
     # DNS resolution — required for service discovery and for the metadata
     # providers / indexers referenced by hostname.

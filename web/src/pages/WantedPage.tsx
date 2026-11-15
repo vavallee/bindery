@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { api, Book, SearchResult } from '../api/client'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
-import { calendarYear } from '../util/calendarDate'
+import { calendarYear, formatCalendarDate } from '../util/calendarDate'
 import PackLabel from '../components/PackLabel'
 import ReleaseNarration from '../components/ReleaseNarration'
 import ReleaseSwarm from '../components/ReleaseSwarm'
@@ -485,7 +485,7 @@ export default function WantedPage() {
                     </div>
                     {book.searchHeldUntil && (
                       <div className="truncate text-[10px] text-sky-700 dark:text-sky-400" data-testid="wanted-upcoming">
-                        {t('wanted.upcomingNote', { date: new Date(book.searchHeldUntil).toLocaleDateString() })}
+                        {t('wanted.upcomingNote', { date: formatCalendarDate(book.searchHeldUntil) ?? '' })}
                       </div>
                     )}
                     {book.authorUnmonitored && (

@@ -54,6 +54,7 @@ export default function AddBookConfirm(props: Props) {
         title={book.title}
         subtitle={book.author?.authorName}
         imageUrl={book.imageUrl}
+        requestableFormats={book.requestableFormats}
         onBack={onBack}
         onClose={onClose}
         onRequested={r => (onRequested ? onRequested(r) : onClose())}

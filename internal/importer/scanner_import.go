@@ -649,7 +649,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					case "copy":
 						fileErr = CopyFileCtx(importCtx, srcFile, dstFile)
 					default:
-						fileErr = MoveFileCtx(importCtx, srcFile, dstFile)
+						fileErr = MoveDownloadFileCtx(importCtx, srcFile, dstFile)
 					}
 					if fileErr != nil {
 						dirErr = fileErr
@@ -696,8 +696,8 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 				// multi-disc) into destDir with each track named from the
 				// template's {Part} order. This supersedes both the verbatim
 				// folder copy and the "Part NNN" multi-disc flatten. Move mode
-				// flattens via copy then removes the source, matching the
-				// multi-disc contract below.
+				// flattens via copy then removes what it placed from the
+				// source, matching the multi-disc contract below.
 				if tmpl := s.audiobookFileTemplate(ctx); tmpl != "" &&
 					(mode == "copy" || mode == "hardlink" || mode == "move") {
 					flattenMode := mode
@@ -714,11 +714,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 						return s.renamer.AudiobookFileName(tmpl, author, book, seriesTitle, seriesNum, strings.TrimPrefix(ext, "."), index+1)
 					}
 					slog.Info("renaming audiobook files per template", "src", audiobookSource, "dst", destDir, "mode", flattenMode, "template", tmpl)
-					dirErr = flattenAudiobookDirFiltered(importCtx, flattenMode, audiobookSource, destDir, namer, flattenSidecarSkip(mode))
+					var placed []string
+					placed, dirErr = flattenAudiobookDirFiltered(importCtx, flattenMode, audiobookSource, destDir, namer, flattenSidecarSkip(mode))
 					if dirErr == nil && mode == "move" && importCtx.Err() == nil {
-						if rmErr := os.RemoveAll(audiobookSource); rmErr != nil {
-							slog.Warn("could not remove source after move-mode audiobook rename", "src", audiobookSource, "error", rmErr)
-						}
+						finishFlattenMove(audiobookSource, placed, flattenSidecarSkip(mode))
 					}
 				} else if (mode == "copy" || mode == "hardlink" || mode == "move") &&
 					// Multi-disc flattening (#886): when enabled AND the source is
@@ -728,11 +727,14 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					// hardlink (it renames files, so it never touches the source);
 					// "move" — which since #1542 is what usenet downloads resolve
 					// to — flattens via copy and then removes the source, the same
-					// copy-then-delete contract as MoveDirCtx's slow path. The
-					// source removal is skipped when the import context was
-					// cancelled: sidecar carry is best-effort and swallows
-					// per-file errors, so only an uncancelled nil return proves
-					// the folder was fully placed.
+					// copy-then-delete contract as MoveDirCtx's slow path. Unlike
+					// that path a flatten does not carry the whole tree (nested
+					// files that are not audio stay out of the flat folder, and
+					// the root sidecar carry is best-effort), so the delete goes
+					// by what was placed: finishFlattenMove removes the folder
+					// only when nothing else is in it, and otherwise keeps the
+					// files that never reached the library. The removal is
+					// skipped altogether when the import context was cancelled.
 					s.flattenMultiDiscEnabled(ctx) &&
 					isMultiDiscAudiobook(audiobookSource) {
 					flattenMode := mode
@@ -740,11 +742,10 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 						flattenMode = "copy"
 					}
 					slog.Info("flattening multi-disc audiobook", "src", audiobookSource, "dst", destDir, "mode", flattenMode)
-					dirErr = flattenAudiobookDirFiltered(importCtx, flattenMode, audiobookSource, destDir, partName, flattenSidecarSkip(mode))
+					var placed []string
+					placed, dirErr = flattenAudiobookDirFiltered(importCtx, flattenMode, audiobookSource, destDir, partName, flattenSidecarSkip(mode))
 					if dirErr == nil && mode == "move" && importCtx.Err() == nil {
-						if rmErr := os.RemoveAll(audiobookSource); rmErr != nil {
-							slog.Warn("flatten: could not remove source after move-mode flatten", "src", audiobookSource, "error", rmErr)
-						}
+						finishFlattenMove(audiobookSource, placed, flattenSidecarSkip(mode))
 					}
 				} else if existingDir, merging := s.existingEbookDir(ctx, book); merging && s.pathKey(audiobookDest) == s.pathKey(existingDir) {
 					// Shared-folder layout (#1959): this book's ebook already
@@ -777,7 +778,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					case "copy":
 						mergeSkippedFiles, dirErr = CopyDirMergeCtx(importCtx, audiobookSource, destDir)
 					default:
-						mergeSkippedFiles, dirErr = MoveDirMergeCtx(importCtx, audiobookSource, destDir)
+						mergeSkippedFiles, dirErr = MoveDownloadDirMergeCtx(importCtx, audiobookSource, destDir)
 					}
 					if len(mergeSkippedFiles) > 0 {
 						slog.Warn("audiobook merge skipped same-named file(s) already present in the shared folder",
@@ -842,7 +843,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					case mode == "copy":
 						dirErr = CopyFileCtx(importCtx, audiobookSource, dstFile)
 					default:
-						dirErr = MoveFileCtx(importCtx, audiobookSource, dstFile)
+						dirErr = MoveDownloadFileCtx(importCtx, audiobookSource, dstFile)
 					}
 					// A lone .m4b had no cleanup at all, so any failure here
 					// left the directory MkdirAll had just made, and the next
