@@ -176,6 +176,30 @@ func (r *DownloadRepo) CountByStatuses(ctx context.Context, userID int64, status
 	return n, nil
 }
 
+// CountByStatus returns the number of downloads in each status across every
+// owner. It backs the bindery_queue_items gauge, which an operator scrapes,
+// so it is one indexed GROUP BY and carries no per user detail.
+func (r *DownloadRepo) CountByStatus(ctx context.Context) (map[string]int, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT status, COUNT(*) FROM downloads GROUP BY status")
+	if err != nil {
+		return nil, fmt.Errorf("count downloads by status: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]int)
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			return nil, fmt.Errorf("count downloads by status: %w", err)
+		}
+		out[status] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("count downloads by status: %w", err)
+	}
+	return out, nil
+}
+
 func (r *DownloadRepo) ListByStatusAndUser(ctx context.Context, status models.DownloadState, userID int64) ([]models.Download, error) {
 	where, args := QueryScope("WHERE status=?", userID, status)
 	return r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads "+where+" ORDER BY added_at DESC", args...)

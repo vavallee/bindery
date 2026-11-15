@@ -13,7 +13,14 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "bindery.selectorLabels" . | nindent 8 }}
+        # Deliberately NOT bindery.selectorLabels. The Service and the
+        # NetworkPolicy select on name+instance; carrying both would put this
+        # pod under the NetworkPolicy's egress lockdown (so it could never
+        # reach the Service it probes) and make it a Service endpoint
+        # candidate.
+        app.kubernetes.io/name: {{ include "bindery.name" . }}-postsync-smoke
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: postsync-smoke
     spec:
       restartPolicy: Never
       securityContext:

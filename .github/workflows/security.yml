@@ -52,10 +52,25 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            registry.npmjs.org:443
+            pypi.org:443
+            files.pythonhosted.org:443
+            semgrep.dev:443
+            metrics.semgrep.dev:443
+            nodejs.org:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -143,10 +158,19 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -175,10 +199,27 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            get.helm.sh:443
+            pypi.org:443
+            files.pythonhosted.org:443
+            api0.prismacloud.io:443
+            registry-1.docker.io:443
+            auth.docker.io:443
+            production.cloudfront.docker.com:443
+            ghcr.io:443
+            pkg-containers.githubusercontent.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -231,10 +272,29 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            registry.npmjs.org:443
+            registry-1.docker.io:443
+            auth.docker.io:443
+            production.cloudfront.docker.com:443
+            gcr.io:443
+            grype.anchore.io:443
+            tuf-repo-cdn.sigstore.dev:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -299,10 +359,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            registry.npmjs.org:443
+            registry-1.docker.io:443
+            auth.docker.io:443
+            production.cloudfront.docker.com:443
+            go.dev:443
+            golang.org:443
+            dl.google.com:443
+            nodejs.org:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -320,26 +400,45 @@ jobs:
       - name: Build frontend
         run: npm ci --prefix web && npm run build --prefix web
 
+      # The binary embeds internal/webui/dist and exits at startup when
+      # index.html is missing, so the built frontend has to be copied in
+      # before go build (same as the Makefile and the release job).
       - name: Build Bindery binary
-        run: go build -o bindery-dast ./cmd/bindery
+        run: |
+          rm -rf internal/webui/dist && cp -r web/dist internal/webui/dist && touch internal/webui/dist/.gitkeep
+          go build -o bindery-dast ./cmd/bindery
 
       - name: Start Bindery
         run: |
+          mkdir -p /tmp/bindery-dast-data
           BINDERY_DB_PATH=/tmp/bindery-dast.db \
+          BINDERY_DATA_DIR=/tmp/bindery-dast-data \
           BINDERY_API_KEY=zap-test-key \
-          ./bindery-dast &
-          # Wait for the service to be ready
+          ./bindery-dast > /tmp/bindery-dast.log 2>&1 &
+          # Wait for the service to be ready. Fail the job if it never comes
+          # up, otherwise ZAP scans a closed port and still reports green.
           for i in $(seq 1 30); do
             if curl -sf http://localhost:8787/api/v1/health; then
+              echo
               echo "Bindery is up"
-              break
+              exit 0
             fi
             sleep 2
           done
+          echo "::error::Bindery did not become healthy on :8787"
+          cat /tmp/bindery-dast.log
+          exit 1
 
       - name: ZAP Baseline Scan
+        # The image runs as the zap user (uid 1000) while the checkout is
+        # owned by the runner user, so the bind mounted /zap/wrk must be
+        # world writable or ZAP cannot write zap.yaml or its reports.
+        # -I keeps WARN level alerts from failing the job; ZAP exits 1 on a
+        # FAIL level rule and 3 on a scan error (target unreachable etc.),
+        # and both of those fail the step. A missing report fails it too.
         run: |
           mkdir -p zap-out
+          chmod 0777 zap-out
           docker run --rm --network=host \
             -v "$PWD/zap-out:/zap/wrk" \
             zaproxy/zap-stable \
@@ -347,7 +446,8 @@ jobs:
               -t http://localhost:8787 \
               -J zap-report.json \
               -r zap-report.html \
-              -I || true
+              -I
+          test -s zap-out/zap-report.json || { echo "::error::ZAP produced no report"; exit 1; }
 
       - name: Upload ZAP report artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -358,25 +458,34 @@ jobs:
           retention-days: 30
 
   # ── Helm unit tests ────────────────────────────────────────────────────────
-  # Stream C will add the test fixtures. continue-on-error until they land.
   policy-test:
     name: Helm Policy Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            registry-1.docker.io:443
+            auth.docker.io:443
+            production.cloudfront.docker.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: helm-unittest (docker)
         run: |
-          docker run --rm -v "$PWD:/apps" \
+          # Run as the runner user so helm-unittest can create
+          # tests/__snapshot__ inside the bind mounted checkout. HOME must be
+          # writable too: helm needs a cache dir to load the plugin.
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/apps" \
             helmunittest/helm-unittest:latest \
             charts/bindery
-        continue-on-error: true
 
   # ── Aggregate severity summary ─────────────────────────────────────────────
   summary:
@@ -391,10 +500,14 @@ jobs:
       - policy-test
     if: always()
     steps:
-      - name: Harden the runner (Audit all outbound calls)
+      - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          # block (#3852): hosts this job reached in audit mode plus setup and
+          # cache fallbacks. A new host fails the job; allowlist it on purpose.
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
 
       - name: Write severity summary
         run: |

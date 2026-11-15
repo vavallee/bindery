@@ -872,7 +872,9 @@ func main() {
 		WithFinder(seriesRepo, importScanner).
 		WithEditionHydration(editionRepo, metaAgg).
 		WithAppContext(appCtx)
-	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir).WithLocalCovers(coverStore)
+	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir).
+		WithLocalCovers(coverStore).
+		WithMaxCacheBytes(int64(cfg.ImageCacheMaxMB) << 20)
 	imageProxyHandler.StartEviction(24 * time.Hour)
 	// Proxied cover URLs must carry the path prefix so they resolve under a
 	// subpath deploy (BINDERY_URL_BASE). No-op when URLBase is empty.
@@ -897,6 +899,7 @@ func main() {
 	// require every scrape config to also carry the key, which is a
 	// worse default for the typical Helm-chart deployment.
 	metrics.SetBuildInfo(version, commit, date)
+	metrics.SetQueueCounter(downloadStateLabels(), downloadRepo.CountByStatus)
 	r.Handle("/metrics", metrics.Handler())
 
 	// Composite auth: session cookie (UI) OR API key (external apps) OR
@@ -932,10 +935,7 @@ func main() {
 		registerAPIErrorHandlers(r)
 
 		// System
-		r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"ok","version":"` + version + `"}`))
-		})
+		registerHealthRoutes(r, database)
 		r.Get("/system/status", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			cacheBytes, _ := imageProxyHandler.CacheSize()
@@ -949,8 +949,11 @@ func main() {
 				// by the telemetry ping server. Empty when no ping has
 				// succeeded yet or telemetry is disabled — the frontend
 				// shows an update badge only when it is set and newer.
-				LatestVersion                   string `json:"latestVersion,omitempty"`
-				ImageCacheBytes                 int64  `json:"imageCacheBytes"`
+				LatestVersion   string `json:"latestVersion,omitempty"`
+				ImageCacheBytes int64  `json:"imageCacheBytes"`
+				// ImageCacheMaxBytes is the cap the cover cache stops
+				// growing at, so an admin can see when it is full.
+				ImageCacheMaxBytes              int64  `json:"imageCacheMaxBytes"`
 				EnhancedHardcoverAPI            bool   `json:"enhancedHardcoverApi"`
 				HardcoverTokenConfigured        bool   `json:"hardcoverTokenConfigured"`
 				HardcoverPausedUntil            string `json:"hardcoverPausedUntil,omitempty"`
@@ -965,6 +968,7 @@ func main() {
 				BuildDate:                       date,
 				LatestVersion:                   telemetryClient.LatestVersion(),
 				ImageCacheBytes:                 cacheBytes,
+				ImageCacheMaxBytes:              imageProxyHandler.MaxCacheBytes(),
 				EnhancedHardcoverAPI:            hardcoverState.EnhancedHardcoverAPI,
 				HardcoverTokenConfigured:        hardcoverState.HardcoverTokenConfigured,
 				HardcoverPausedUntil:            pausedUntil,

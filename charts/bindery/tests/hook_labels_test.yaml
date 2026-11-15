@@ -1,0 +1,63 @@
+suite: hook pod labels
+templates:
+  - hooks/postsync-smoke.yaml
+  - log-alert-cronjob.yaml
+  - networkpolicy.yaml
+
+# The Service and NetworkPolicy select on app.kubernetes.io/name=bindery plus
+# app.kubernetes.io/instance. A hook pod carrying both is swept into the
+# NetworkPolicy (egress locked to DNS, so it cannot reach the Service) and is
+# an endpoint candidate for the Service. Pin that no hook pod does.
+tests:
+  - it: postsync smoke pod does not carry the Service selector labels
+    template: hooks/postsync-smoke.yaml
+    asserts:
+      - notEqual:
+          path: spec.template.metadata.labels["app.kubernetes.io/name"]
+          value: bindery
+      - equal:
+          path: spec.template.metadata.labels["app.kubernetes.io/component"]
+          value: postsync-smoke
+
+  - it: log alert pod does not carry the Service selector labels
+    template: log-alert-cronjob.yaml
+    set:
+      logAlert.enabled: true
+      logAlert.apiKeySecret.name: bindery-auth
+      logAlert.webhookSecret.name: discord-webhook
+    asserts:
+      - notEqual:
+          path: spec.jobTemplate.spec.template.metadata.labels["app.kubernetes.io/name"]
+          value: bindery
+
+  - it: NetworkPolicy admits the smoke pod even with a narrow ingressSelector
+    template: networkpolicy.yaml
+    set:
+      networkPolicy.enabled: true
+      networkPolicy.ingressSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+    asserts:
+      - contains:
+          path: spec.ingress[0].from
+          content:
+            podSelector:
+              matchLabels:
+                app.kubernetes.io/instance: RELEASE-NAME
+                app.kubernetes.io/component: postsync-smoke
+
+  - it: NetworkPolicy admits the log alert pod when it is enabled
+    template: networkpolicy.yaml
+    set:
+      networkPolicy.enabled: true
+      logAlert.enabled: true
+      logAlert.apiKeySecret.name: bindery-auth
+      logAlert.webhookSecret.name: discord-webhook
+    asserts:
+      - contains:
+          path: spec.ingress[0].from
+          content:
+            podSelector:
+              matchLabels:
+                app.kubernetes.io/name: bindery-log-alert
+                app.kubernetes.io/instance: RELEASE-NAME

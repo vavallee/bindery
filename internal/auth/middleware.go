@@ -395,6 +395,7 @@ func SessionCookieUsable(ctx context.Context, p Provider, cookie string, uid, ep
 func AllowUnauthPath(method, path string) bool {
 	switch path {
 	case "/api/v1/health",
+		"/api/v1/health/ready",
 		"/api/v1/auth/status",
 		"/api/v1/auth/login",
 		"/api/v1/auth/logout",

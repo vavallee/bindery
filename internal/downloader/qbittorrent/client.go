@@ -1129,3 +1129,10 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 
 	return readLimited(resp.Body, maxAPIResponseBytes, "qBittorrent API response")
 }
+
+// WrapTransport replaces the client's API transport with wrap applied to it.
+// The client cache uses it to count and time requests (#3851). Any separate
+// transport for fetching .torrent files from indexers is left alone.
+func (c *Client) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) {
+	c.http.Transport = wrap(c.http.Transport)
+}
