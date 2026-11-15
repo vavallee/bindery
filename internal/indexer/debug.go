@@ -120,6 +120,16 @@ type IndexerDebug struct {
 	// NumberWordError is why that extra query failed, if it did. The search
 	// itself is not failed by it.
 	NumberWordError string `json:"numberWordError,omitempty"`
+	// ApostropheQueries are the apostrophe free spellings of the title sent to
+	// this indexer after the search found nothing relevant (#3895), at most
+	// two, and ApostropheResults how many results the kept one returned. Empty
+	// on the common search, like the number word fields.
+	ApostropheQueries []string `json:"apostropheQueries,omitempty"`
+	ApostropheResults int      `json:"apostropheResults,omitempty"`
+	// ApostropheError is why one of those queries failed, if it did. A rate
+	// limit is also the row's Error, since it fails the search for this
+	// indexer.
+	ApostropheError string `json:"apostropheError,omitempty"`
 }
 
 // PipelineDebug counts how results flowed through each filter stage in the
@@ -227,6 +237,8 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 			observeSearch(idx, start, err)
 			entry.NumberWordQuery, entry.NumberWordResults = trace.NumberWordQuery, trace.NumberWordResults
 			entry.NumberWordError = trace.NumberWordError
+			entry.ApostropheQueries, entry.ApostropheResults = trace.ApostropheQueries, trace.ApostropheResults
+			entry.ApostropheError = trace.ApostropheError
 			if trace.BudgetExhausted {
 				s.flushQuota(ctx, idx, true)
 			}
