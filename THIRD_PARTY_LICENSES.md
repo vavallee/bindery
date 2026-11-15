@@ -95,14 +95,14 @@ does ship is the failure that matters.
 | cookie-es | 3.1.1 | MIT |
 | csstype | 3.2.3 | MIT |
 | html-parse-stringify | 4.0.1 | MIT |
-| i18next | 26.5.12 | MIT |
-| i18next-browser-languagedetector | 8.2.4 | MIT |
+| i18next | 26.7.2 | MIT |
+| i18next-browser-languagedetector | 8.3.0 | MIT |
 | react | 19.3.1 | MIT |
 | react-dom | 19.3.1 | MIT |
-| react-i18next | 17.1.9 | MIT |
+| react-i18next | 17.1.13 | MIT |
 | react-router | 8.5.1 | MIT |
 | scheduler | 0.28.0 | MIT |
-| tailwindcss | 4.3.3 | MIT |
+| tailwindcss | 4.3.5 | MIT |
 | typescript | 6.0.3 | Apache-2.0 |
 | use-sync-external-store | 1.6.0 | MIT |
 
@@ -1537,7 +1537,7 @@ SOFTWARE.
 <summary>Applies to 3 dependencies</summary>
 
 - npm:@tailwindcss/forms@0.5.11 (LICENSE)
-- npm:tailwindcss@4.3.3 (LICENSE)
+- npm:tailwindcss@4.3.5 (LICENSE)
 - vendored:Heroicons v2 (tools/licensegen/vendored/heroicons-v2.LICENSE)
 
 </details>
@@ -1684,13 +1684,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 32. MIT — npm:i18next-browser-languagedetector@8.2.4 (LICENSE)
+### 32. MIT — npm:i18next-browser-languagedetector@8.3.0 (LICENSE)
 
 <details>
 <summary>Applies to 2 dependencies</summary>
 
-- npm:i18next-browser-languagedetector@8.2.4 (LICENSE)
-- npm:react-i18next@17.1.9 (LICENSE)
+- npm:i18next-browser-languagedetector@8.3.0 (LICENSE)
+- npm:react-i18next@17.1.13 (LICENSE)
 
 </details>
 
@@ -1718,7 +1718,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 33. MIT — npm:i18next@26.5.12 (LICENSE)
+### 33. MIT — npm:i18next@26.7.2 (LICENSE)
 
 ```
 The MIT License (MIT)
