@@ -4,7 +4,7 @@ import { api, Author, Book } from '../api/client'
 import BookRating from './BookRating'
 import type { LibraryRequest } from '../api/client'
 import { useIsRequester } from '../auth/AuthContext'
-import { isbnFromQuery, resolveBookQuery } from '../api/booklookup'
+import { hardcoverSlugFromQuery, isbnFromQuery, resolveBookQuery } from '../api/booklookup'
 import { splitAuthorSearchResults } from './addAuthorTitleGuard'
 import { groupAddResults } from './addToLibraryGrouping'
 import type { AddResultFilter } from './addToLibraryGrouping'
@@ -57,7 +57,7 @@ function basePath(): string {
 }
 
 function isIdentifierQuery(q: string): boolean {
-  return isbnFromQuery(q) !== null || ASIN_RE.test(q)
+  return isbnFromQuery(q) !== null || ASIN_RE.test(q) || hardcoverSlugFromQuery(q) !== null
 }
 
 export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode, onRequested, standalone = false }: Props) {
@@ -116,9 +116,10 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
     setShowHidden(false)
     try {
       if (isIdentifierQuery(q)) {
-        // An ISBN or ASIN names one edition; the author endpoint has nothing
-        // to say about it. resolveBookQuery owns the lookup dispatch so this
-        // dialog and Manual Import accept exactly the same inputs.
+        // An ISBN or ASIN names one edition, and a Hardcover reference one
+        // book; the author endpoint has nothing to say about either.
+        // resolveBookQuery owns the lookup dispatch so this dialog and Manual
+        // Import accept exactly the same inputs.
         const found = await resolveBookQuery(q)
         setAuthors([])
         setHiddenAuthors([])

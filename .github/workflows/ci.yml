@@ -63,6 +63,7 @@ jobs:
         run: |
           shellcheck scripts/ci/*.sh
           bash scripts/ci/deploy-prod-guard_test.sh
+          bash scripts/ci/chart-probes-vs-image_test.sh
       # The shipped image must be built with the Go that CI tests and
       # govulncheck scans. Dependabot bumps the Dockerfile golang tag on its
       # own, which once left the image on 1.27.1 while everything else was
@@ -187,6 +188,61 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: make smoke
+
+  # The prod ArgoCD app syncs charts/bindery from main, but image.tag in
+  # values.yaml stays on the last release until deploy-prod bumps it, so a
+  # chart change can run against a binary that predates it. #3858 moved the
+  # readiness probe to /api/v1/health/ready, which v1.50.0 answers with 401,
+  # and the prod pod never became Ready. This boots the pinned image and
+  # requests every httpGet probe path the rendered chart declares.
+  chart-probes-vs-image:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (audit egress)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          # audit, not block: the exact ghcr.io blob hosts the image pull
+          # reaches are not yet observed for this job. Switch to block with
+          # the audited list once a run has shown them.
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: latest
+      - name: Render the chart and read the pinned image tag
+        run: |
+          helm template bindery charts/bindery > "${RUNNER_TEMP}/rendered.yaml"
+          tag=$(awk '/^image:/ {f=1; next} f && /^[^ #]/ {f=0} f && /^  tag:/ {gsub(/["\047 ]/, "", $2); print $2; exit}' charts/bindery/values.yaml)
+          if [ -z "$tag" ]; then
+            echo "::error::image.tag is empty in charts/bindery/values.yaml"
+            exit 1
+          fi
+          echo "PINNED_TAG=${tag}" >> "$GITHUB_ENV"
+      - name: Start the pinned image
+        run: |
+          docker run -d --name pinned -p 127.0.0.1:18787:8787 \
+            --tmpfs /data:mode=1777 \
+            -e BINDERY_DB_PATH=/data/bindery.db \
+            -e BINDERY_DATA_DIR=/data \
+            "ghcr.io/vavallee/bindery:${PINNED_TAG}"
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:18787/api/v1/health; then
+              echo
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::ghcr.io/vavallee/bindery:${PINNED_TAG} did not become healthy"
+          docker logs pinned
+          exit 1
+      - name: Every chart probe path is served by the pinned image
+        run: bash scripts/ci/chart-probes-vs-image.sh "${RUNNER_TEMP}/rendered.yaml" http://127.0.0.1:18787 "${PINNED_TAG}"
 
   # PR-only: Go tests with coverage. Race-detector runs as a separate
   # parallel job (validate-race-go) so neither stacks the other's overhead.
