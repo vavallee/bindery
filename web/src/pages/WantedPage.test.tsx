@@ -844,6 +844,15 @@ describe('WantedPage upcoming date west of UTC', () => {
     expect(note).toContain('2027')
     expect(note).not.toContain('14')
   })
+
+  it('leaves the date blank rather than printing an unparseable one', async () => {
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([
+      makeBook({ id: 1, title: 'Oathbringer', searchHeldUntil: 'nope' }),
+    ]))
+    renderWantedPage()
+    await screen.findByText('Oathbringer')
+    expect(screen.getByTestId('wanted-upcoming').textContent).toBe('Upcoming until ')
+  })
 })
 
 describe('WantedPage filter bar', () => {
