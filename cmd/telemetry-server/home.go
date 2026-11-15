@@ -4,30 +4,51 @@ import (
 	"net/http"
 )
 
-func (s *server) handleHome(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!doctype html>
+// homeHTML is the public landing page at getbindery.dev. It mirrors the top of
+// the README. The server's CSP allows https images and inline CSS but no
+// scripts, so the page is plain HTML and the only script element is an inert
+// JSON-LD data block.
+const homeHTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Bindery</title>
+<title>Bindery: ebook and audiobook manager, a Readarr alternative</title>
+<meta name="description" content="Bindery follows the authors you read, searches your Usenet and torrent indexers, grabs the best release, checks it is the right book, and files it where your reading and listening apps expect it. Ebooks and audiobooks, one app, one binary. MIT licensed.">
+<link rel="canonical" href="https://getbindery.dev">
+<meta property="og:title" content="Bindery: ebook and audiobook manager, a Readarr alternative">
+<meta property="og:description" content="Bindery follows the authors you read, searches your Usenet and torrent indexers, grabs the best release, checks it is the right book, and files it where your reading and listening apps expect it. Ebooks and audiobooks, one app, one binary. MIT licensed.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://getbindery.dev">
+<meta property="og:image" content="https://raw.githubusercontent.com/vavallee/bindery/main/.github/assets/logo.png">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Bindery: ebook and audiobook manager, a Readarr alternative">
+<meta name="twitter:description" content="Bindery follows the authors you read, searches your Usenet and torrent indexers, grabs the best release, checks it is the right book, and files it where your reading and listening apps expect it. Ebooks and audiobooks, one app, one binary. MIT licensed.">
+<meta name="twitter:image" content="https://raw.githubusercontent.com/vavallee/bindery/main/.github/assets/logo.png">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Bindery","applicationCategory":"MultimediaApplication","operatingSystem":"Linux, macOS, Windows","description":"Bindery follows the authors you read, searches your Usenet and torrent indexers, grabs the best release, checks it is the right book, and files it where your reading and listening apps expect it. Ebooks and audiobooks, one app, one binary. MIT licensed.","url":"https://getbindery.dev","license":"https://github.com/vavallee/bindery/blob/main/LICENSE","downloadUrl":"https://github.com/vavallee/bindery/releases","image":"https://raw.githubusercontent.com/vavallee/bindery/main/.github/assets/logo.png","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     min-height: 100svh;
-    display: flex; align-items: center; justify-content: center;
     background: #0f1117;
     color: #e2e8f0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
   .card {
     text-align: center;
-    padding: 3rem 2rem;
-    max-width: 520px;
+    padding: 3rem 1rem;
+    max-width: 760px;
+    margin: 0 auto;
   }
-  img { width: 96px; height: 96px; margin-bottom: 1.5rem; }
-  h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: .5rem; }
+  img.logo { width: 96px; height: 96px; margin-bottom: 1.5rem; }
+  img.hero { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid #334155; margin: 0 auto 2rem; }
+  h2 { font-size: 1.15rem; font-weight: 600; margin: 0 0 .75rem; text-align: left; }
+  pre { text-align: left; background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 1rem; overflow-x: auto; margin-bottom: 1rem; }
+  pre code { background: none; padding: 0; font-size: .8rem; line-height: 1.5; }
+  .quickstart { margin-bottom: 2rem; }
+  .quickstart p { text-align: left; margin-bottom: 1rem; font-size: .9rem; }
+  .links { margin-bottom: 0; }
+  h1 { font-size: clamp(1.5rem, 5vw, 2rem); line-height: 1.25; font-weight: 700; letter-spacing: -0.02em; margin-bottom: .5rem; }
   p  { color: #94a3b8; line-height: 1.7; margin-bottom: 2rem; }
   .features {
     display: flex; flex-direction: column; gap: .5rem;
@@ -62,34 +83,60 @@ func (s *server) handleHome(w http.ResponseWriter, _ *http.Request) {
 </head>
 <body>
 <div class="card">
-  <img src="https://raw.githubusercontent.com/vavallee/bindery/main/.github/assets/logo.png" alt="Bindery logo">
-  <h1>Bindery</h1>
-  <p><strong style="color:#e2e8f0">The Readarr replacement built to outlive its metadata sources.</strong><br>
-     Automated ebook &amp; audiobook management for Usenet &amp; torrents — monitor
-     authors, search indexers, download, and organize.</p>
+  <img class="logo" src="https://raw.githubusercontent.com/vavallee/bindery/main/.github/assets/logo.png" alt="Bindery logo" width="96" height="96">
+  <h1>Ebooks and audiobooks, followed, fetched, checked and filed. One app, one binary.</h1>
+  <p>Bindery follows the authors you read, searches your Usenet and torrent indexers, grabs the best release, checks it is the right book, and files it where your reading and listening apps expect it.</p>
+  <img class="hero" src="https://raw.githubusercontent.com/vavallee/bindery/main/docs/screenshots/loop.gif" alt="Bindery: a tour through authors, books, the release calendar and the download queue" width="1200">
   <div class="features">
-    <div class="feature"><div class="feature-dot"></div><span>No single point of failure for metadata — OpenLibrary, Google Books, Hardcover, DNB, Audnex, and Audible. Documented public APIs, zero scraping.</span></div>
-    <div class="feature"><div class="feature-dot"></div><span>Bring your dead Readarr install with you — import <code>readarr.db</code> and your authors, indexers, download clients, and blocklist come across in one step.</span></div>
-    <div class="feature"><div class="feature-dot"></div><span>Ebooks and audiobooks in independent slots — separate roots, narrator metadata, and multi-part audiobook handling.</span></div>
-    <div class="feature"><div class="feature-dot"></div><span>Usenet and torrents — SABnzbd, NZBGet, qBittorrent, Transmission, Deluge, and rTorrent.</span></div>
-    <div class="feature"><div class="feature-dot"></div><span>Boring to run, by design — a single Go binary, SQLite, distroless image, Helm chart, ARM down to a Pi Zero.</span></div>
+    <div class="feature"><div class="feature-dot"></div><span><strong>Ebooks and audiobooks on the same book.</strong> One title holds an ebook and an audiobook in separate slots, each with its own search, quality profile, download folder and library root.</span></div>
+    <div class="feature"><div class="feature-dot"></div><span><strong>Follows authors and keeps trying.</strong> Monitored authors are checked on a schedule you choose, wanted books are searched automatically, and failed downloads are retried.</span></div>
+    <div class="feature"><div class="feature-dot"></div><span><strong>Checks what it imports.</strong> A file whose embedded title, author or language says it is the wrong book is refused, its release is blocklisted, and the search runs again.</span></div>
+    <div class="feature"><div class="feature-dot"></div><span><strong>Built to share.</strong> Give family and friends requester accounts that can browse and ask for books but cannot download or change anything. Sign in with OIDC or your reverse proxy.</span></div>
+    <div class="feature"><div class="feature-dot"></div><span><strong>Brings your library with you.</strong> Import a Readarr database, a Goodreads CSV, a Calibre library or an Audiobookshelf server, then adopt files already on disk in place.</span></div>
+  </div>
+  <div class="quickstart">
+    <h2>Quick start</h2>
+    <pre><code>services:
+  bindery:
+    image: ghcr.io/vavallee/bindery:latest
+    container_name: bindery
+    user: "1000:1000"   # the uid:gid that owns your books and downloads
+    ports:
+      - 8787:8787
+    volumes:
+      - ./config:/config
+      - /media/books:/books
+      - /media/downloads:/downloads
+    environment:
+      - BINDERY_LOG_LEVEL=info
+    restart: unless-stopped</code></pre>
+    <p>Open <code>http://localhost:8787</code>, create the admin account on the first run page, add an indexer and a download client in Settings, and add your first author.</p>
   </div>
   <div class="links">
     <a class="primary" href="https://github.com/vavallee/bindery">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
         <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
       </svg>
       View on GitHub
     </a>
+    <a class="secondary" href="https://github.com/vavallee/bindery/tree/main/docs">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      Docs
+    </a>
+    <a class="secondary" href="https://github.com/vavallee/bindery/releases">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8l-9-5-9 5v8l9 5zM3.3 7.5 12 12.5l8.7-5M12 22V12.5"/></svg>
+      Releases
+    </a>
+    <a class="secondary" href="https://discord.gg/RpuYYRM9cZ">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Discord
+    </a>
     <a class="secondary" href="https://github.com/vavallee/bindery-plugins">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
-      </svg>
+      
       Calibre Plugin
     </a>
     <a class="secondary" href="/stats">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <line x1="18" y1="20" x2="18" y2="10"/>
         <line x1="12" y1="20" x2="12" y2="4"/>
         <line x1="6" y1="20" x2="6" y2="14"/>
@@ -99,7 +146,11 @@ func (s *server) handleHome(w http.ResponseWriter, _ *http.Request) {
   </div>
 </div>
 </body>
-</html>`))
+</html>`
+
+func (s *server) handleHome(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(homeHTML))
 }
 
 // handleTelemetryFields renders the public schema doc: every field a

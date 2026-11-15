@@ -897,6 +897,7 @@ func main() {
 	// require every scrape config to also carry the key, which is a
 	// worse default for the typical Helm-chart deployment.
 	metrics.SetBuildInfo(version, commit, date)
+	metrics.SetQueueCounter(downloadStateLabels(), downloadRepo.CountByStatus)
 	r.Handle("/metrics", metrics.Handler())
 
 	// Composite auth: session cookie (UI) OR API key (external apps) OR

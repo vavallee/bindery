@@ -339,7 +339,9 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 			client := s.makeClient(idx.URL, idx.APIKey)
 			cats := filterCategoriesForMedia(idx.Categories, c.MediaType, idx.IncludeParentCategories)
 			qctx := newznab.WithQueryBudget(ctx, s.quotaBudget(idx))
+			start := time.Now()
 			hits, trace, err := client.BookSearchTraced(qctx, c.Title, c.Author, cats)
+			observeSearch(idx, start, err)
 			if trace.BudgetExhausted {
 				s.flushQuota(ctx, idx, true)
 			}
@@ -425,7 +427,9 @@ func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, q
 
 			client := s.makeClient(idx.URL, idx.APIKey)
 			qctx := newznab.WithQueryBudget(ctx, s.quotaBudget(idx))
+			start := time.Now()
 			hits, err := client.Search(qctx, query, idx.Categories)
+			observeSearch(idx, start, err)
 			if err != nil {
 				if budgetExhausted(err) {
 					s.flushQuota(ctx, idx, true)
