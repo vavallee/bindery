@@ -252,3 +252,29 @@ func TestTrailingTitleNegativesNeedNoContext(t *testing.T) {
 		})
 	}
 }
+
+// The author's name after the title is not another title (#3902): library
+// books named "Octavia E. Butler: The Last Interview" have the primary title
+// "Octavia E. Butler".
+func TestTrailingTitleAuthorNameIsNotAnotherTitle(t *testing.T) {
+	others := []string{
+		"Octavia E. Butler : Lilith's Brood : the Xenogenesis Trilogy",
+		"Octavia E. Butler: The Last Interview: and Other Conversations",
+	}
+	for _, rel := range []string{
+		"Survivor by Octavia E Butler [ENG / EPUB MOBI]",
+		"Survivor by Octavia E Butler [ENG / EPUB] [VIP]",
+	} {
+		res := []newznab.SearchResult{{Title: rel, GUID: rel}}
+		kept, dropped := filterRelevantKeepDropped(res, "Survivor", "Octavia E. Butler", nil, bookContext{otherTitles: others})
+		if len(kept) != 1 {
+			t.Errorf("%q dropped: %+v", rel, dropped)
+		}
+	}
+	// A real other title still rejects.
+	res := []newznab.SearchResult{{Title: "Survivor by Octavia E Butler - Lilith's Brood [EPUB]", GUID: "x"}}
+	kept, _ := filterRelevantKeepDropped(res, "Survivor", "Octavia E. Butler", nil, bookContext{otherTitles: []string{"Lilith's Brood", "Octavia E. Butler: The Last Interview"}})
+	if len(kept) != 0 {
+		t.Errorf("a different library title must still reject")
+	}
+}

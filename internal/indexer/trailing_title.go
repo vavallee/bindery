@@ -91,6 +91,9 @@ type bookContext struct {
 	seriesTitle string
 	// otherTitles are the titles of the author's other books in the library.
 	otherTitles []string
+	// authorNames are the wanted book's author and aliases. A library title
+	// that reads as one of them is the author's name, not another book (#3902).
+	authorNames []string
 	// rejectWords are the operator's rejected words and phrases (#3416).
 	rejectWords []string
 }
@@ -415,9 +418,24 @@ func newTrailingRules(title string, bc bookContext, wanted ...[]string) *trailin
 		return ContainsPhrase(NormalizeRelease(v), seriesIdent) || (len(vi) > 0 && ContainsPhrase(seriesNorm, vi))
 	}
 
+	// isAuthorName reports whether v reads as the book's author (or an alias):
+	// "Octavia E. Butler: The Last Interview" has the primary title "Octavia E.
+	// Butler", and a release that names its author after the title ("Survivor by
+	// Octavia E Butler") is not naming another book (#3902).
+	authorIdents := map[string]bool{}
+	for _, a := range bc.authorNames {
+		if ident := titleIdentityKeywords(newznab.NormalizeQueryTitle(a)); len(ident) > 0 {
+			authorIdents[strings.Join(ident, " ")] = true
+		}
+	}
+	isAuthorName := func(v string) bool {
+		ident := titleIdentityKeywords(v)
+		return len(ident) > 0 && authorIdents[strings.Join(ident, " ")]
+	}
+
 	for _, raw := range bc.otherTitles {
 		cleaned := newznab.StripFormatQualifiers(newznab.NormalizeQueryTitle(raw))
-		if relatedToSeries(cleaned) {
+		if relatedToSeries(cleaned) || isAuthorName(cleaned) {
 			continue
 		}
 		if ident := titleIdentityKeywords(cleaned); len(ident) > 0 {
@@ -465,7 +483,7 @@ func newTrailingRules(title string, bc bookContext, wanted ...[]string) *trailin
 				continue
 			}
 			seen[key] = true
-			if relatedToSeries(v) || ContainsPhrase(wantedNorm, ident) {
+			if relatedToSeries(v) || isAuthorName(v) || ContainsPhrase(wantedNorm, ident) {
 				continue
 			}
 			normTitle := NormalizeRelease(v)
