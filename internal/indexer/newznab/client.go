@@ -421,6 +421,11 @@ type SearchTrace struct {
 	// cap. The caller treats it as it treats the same refusal on any other
 	// query (flush the count, no health strike).
 	BudgetExhausted bool
+	// ApostropheQueries are the apostrophe free title queries sent after the
+	// cascade found nothing relevant (#3895), and ApostropheResults how many
+	// results the one that was kept returned.
+	ApostropheQueries []string
+	ApostropheResults int
 }
 
 // BookSearchTraced is BookSearch plus a SearchTrace.
@@ -436,6 +441,90 @@ type SearchTrace struct {
 // nothing and a failing one pays a single query per indexer. Its results
 // replace the failed ones only when they pass the same relevance gate.
 func (c *Client) BookSearchTraced(ctx context.Context, title, author string, categories []int) ([]SearchResult, SearchTrace, error) {
+	results, trace, err := c.bookSearchNumberWord(ctx, title, author, categories)
+	if err != nil {
+		return nil, trace, err
+	}
+	return c.apostropheVariants(ctx, title, results, categories, trace)
+}
+
+// possessiveSRe matches the possessive "'s" ending a word. In the spaced
+// spelling it is dropped rather than left as a stray "s" word, which a strict
+// indexer would then require ("Carl Doomsday Scenario", not "Carl s ...").
+var possessiveSRe = regexp.MustCompile(`'[sS]\b`)
+
+// apostropheQueryVariants returns the apostrophe free spellings of a title's
+// outgoing query: the apostrophe removed ("Carls Doomsday Scenario") and the
+// apostrophe read as a space, with a possessive "s" dropped ("Carl Doomsday Scenario"). Nil when the title
+// has no apostrophe. The two collapse to one when they come out equal
+// ("Rock 'n' Roll" has a space either way once the spaces are collapsed), so a
+// query is never sent twice.
+func apostropheQueryVariants(title string) []string {
+	q := primaryTitleForQuery(title)
+	if !strings.Contains(q, "'") {
+		return nil
+	}
+	spelled := []string{
+		strings.Join(strings.Fields(strings.ReplaceAll(q, "'", "")), " "),
+		strings.Join(strings.Fields(strings.ReplaceAll(possessiveSRe.ReplaceAllString(q, " "), "'", " ")), " "),
+	}
+	var out []string
+	for _, v := range spelled {
+		if v == q || !hasSearchableText(v) || (len(out) > 0 && out[0] == v) {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// apostropheVariants is the apostrophe fallback (#3895). Some indexers return
+// nothing for any query containing an apostrophe ("Carl's Doomsday Scenario"
+// finds nothing, "Carls Doomsday Scenario" finds the release), and every tier
+// of the cascade keeps it. Like the number word variant (#3476) it is sent
+// only after the whole cascade has ended without a relevant result, so a
+// search that was finding its book pays nothing (daily query caps and rate
+// limits make an always on variant a doubling of every apostrophe title's
+// traffic). It is title only, one query per spelling, at most two, and the
+// first spelling whose results pass the relevance gate wins. The gate and
+// filterRelevant already read both spellings of a possessive (SigWords and
+// SigWordsElided), so what these queries return is accepted downstream.
+func (c *Client) apostropheVariants(ctx context.Context, title string, results []SearchResult, categories []int, trace SearchTrace) ([]SearchResult, SearchTrace, error) {
+	variants := apostropheQueryVariants(title)
+	if len(variants) == 0 || trace.BudgetExhausted {
+		return results, trace, nil
+	}
+	origQuery := TransliterateQuery(primaryTitleForQuery(title))
+	if len(results) > 0 && titleHasRelevantResult(origQuery, results) {
+		return results, trace, nil
+	}
+	for _, v := range variants {
+		query := TransliterateQuery(v)
+		slog.Debug("indexer query apostrophe variant", "title", query)
+		trace.ApostropheQueries = append(trace.ApostropheQueries, query)
+		extra, err := c.Search(ctx, query, categories)
+		if err != nil {
+			// An extra chance, not the search: a failure must not become an
+			// indexer error or a health strike.
+			slog.Debug("indexer query apostrophe variant failed", "error", err)
+			if errors.Is(err, ErrQueryBudgetExhausted) {
+				trace.BudgetExhausted = true
+			}
+			if IsHardIndexerError(err) || errors.Is(err, ErrQueryBudgetExhausted) || ctx.Err() != nil {
+				break
+			}
+			continue
+		}
+		if len(extra) > 0 && titleHasRelevantResult(query, extra) {
+			trace.ApostropheResults = len(extra)
+			return extra, trace, nil
+		}
+	}
+	return results, trace, nil
+}
+
+// bookSearchNumberWord is the tier cascade plus the number word variant.
+func (c *Client) bookSearchNumberWord(ctx context.Context, title, author string, categories []int) ([]SearchResult, SearchTrace, error) {
 	var trace SearchTrace
 	results, err := c.bookSearchSpellings(ctx, title, author, categories)
 	if err != nil {
