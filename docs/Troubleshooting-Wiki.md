@@ -211,6 +211,19 @@ matches a release named `Path of the Deathless Book 1`, and the reverse.
   shows in the debug panel's indexer row as `numberWordQuery`, with
   `numberWordResults` for what it returned, and `numberWordError` if that query
   failed (the search itself carries on).
+- **Apostrophes.** Some indexers return nothing for any query with an
+  apostrophe in it. When a search for a title such as `Carl's Doomsday Scenario`
+  still has nothing relevant after the tiers and the digit query above, Bindery
+  sends up to two more title only queries per indexer: the apostrophe removed
+  (`Carls Doomsday Scenario`) and the apostrophe read as a space with a
+  possessive `s` dropped (`Carl Doomsday Scenario`). A book that stays unfound
+  therefore costs up to six queries per indexer per search instead of four, on
+  every scheduler cycle, and each one counts against the indexer's daily query
+  cap. They show in the debug panel's indexer row as `apostropheQueries`, with
+  `apostropheResults` for what the kept spelling returned and `apostropheError`
+  if one failed. Nothing more is sent to an indexer after a failure, and a rate
+  limit on one of these queries puts the indexer in cooldown like any other.
+  Spellings that would leave next to nothing (`It's` as `Its`) are not sent.
 - **Relevance.** A different position still does not match: `Book One` is not
   `Book 10`, `Book 2` or `Book Two`, and the part and set rules (`Book 1 of 2`,
   `Part 3 of 5`, box sets) judge a `Book One` title exactly as they judge `Book 1`.
