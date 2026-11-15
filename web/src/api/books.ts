@@ -79,6 +79,10 @@ export interface Book {
   // Set on metadata search / lookup results whose foreign id already matches a
   // book the current user owns (#1227). It is the library row id, not `id`.
   libraryBookId?: number
+  // Set for a requester only, on a search result for a book they can see in
+  // the library that still lacks a format (#3898): the formats ("ebook",
+  // "audiobook") a request can still ask for.
+  requestableFormats?: string[]
   language?: string
   calibre_id?: number
   // True when this book's author is not monitored, so Bindery will not search
