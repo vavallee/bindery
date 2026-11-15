@@ -39,6 +39,17 @@ const (
 	// difference between a walk per request and a walk per ten minutes is the
 	// whole point.
 	imageCacheSizeTTL = 10 * time.Minute
+
+	// DefaultImageCacheMaxBytes is the ceiling on the on-disk cache when the
+	// operator sets none (BINDERY_IMAGE_CACHE_MAX_MB). The cache shares a
+	// volume with the SQLite database, and age was its only limit, so nothing
+	// bounded how much thirty days of distinct URLs could add up to. A cover
+	// is typically well under a megabyte, so 2 GiB is far more than a large
+	// library's covers and author photos need.
+	DefaultImageCacheMaxBytes int64 = 2 << 30
+
+	// imageCacheFullLogEvery spaces out the "cache is full" warning.
+	imageCacheFullLogEvery = time.Hour
 )
 
 // ImageProxyHandler serves GET /api/v1/images?url=<encoded>.
@@ -56,6 +67,10 @@ type ImageProxyHandler struct {
 	// answered from disk and never reaches the fetch path.
 	local *covers.Store
 
+	// maxBytes caps the on-disk cache. At the cap a fetched image is still
+	// served, it is just not written. Set once before serving requests.
+	maxBytes int64
+
 	// sizeMu guards the memoised cache total below. It is held across the
 	// directory walk in refreshCacheSizeLocked on purpose: that serialises a
 	// recount against the incremental adjustments Serve makes, so a write
@@ -67,6 +82,8 @@ type ImageProxyHandler struct {
 	// sizeAt is when sizeBytes was last recomputed from a full walk. Zero
 	// means never, which forces the first CacheSize call to seed it.
 	sizeAt time.Time
+	// fullLoggedAt is when the cache-full warning was last logged.
+	fullLoggedAt time.Time
 }
 
 // NewImageProxyHandler creates a handler that caches images under
@@ -74,6 +91,7 @@ type ImageProxyHandler struct {
 func NewImageProxyHandler(dataDir string) *ImageProxyHandler {
 	h := &ImageProxyHandler{
 		cacheDir: filepath.Join(dataDir, "image-cache"),
+		maxBytes: DefaultImageCacheMaxBytes,
 		client: &http.Client{
 			Timeout:   15 * time.Second,
 			Transport: imageProxyTransport(),
@@ -100,6 +118,45 @@ func NewImageProxyHandler(dataDir string) *ImageProxyHandler {
 func (h *ImageProxyHandler) WithLocalCovers(store *covers.Store) *ImageProxyHandler {
 	h.local = store
 	return h
+}
+
+// WithMaxCacheBytes sets the ceiling on the on-disk cache. A value of zero or
+// less keeps the default. Call it during startup, before serving requests.
+func (h *ImageProxyHandler) WithMaxCacheBytes(n int64) *ImageProxyHandler {
+	if n > 0 {
+		h.maxBytes = n
+	}
+	return h
+}
+
+// cacheHasRoom reports whether a write that grows the cache by delta bytes
+// keeps it within maxBytes. It reads the memoised total, so the cost is a
+// mutex and, at most once per imageCacheSizeTTL, the same walk /system/status
+// already triggers. Never a walk per request.
+//
+// The check and the write that follows are not one atomic step: requests
+// that pass together can overshoot the cap by what they hold in flight, each
+// at most imageMaxBytes. That is a bounded overshoot, and the next request
+// sees the new total.
+func (h *ImageProxyHandler) cacheHasRoom(delta int64) bool {
+	if delta <= 0 {
+		return true
+	}
+	size, _ := h.CacheSize()
+	if size+delta <= h.maxBytes {
+		return true
+	}
+	h.sizeMu.Lock()
+	warn := time.Since(h.fullLoggedAt) >= imageCacheFullLogEvery
+	if warn {
+		h.fullLoggedAt = time.Now()
+	}
+	h.sizeMu.Unlock()
+	if warn {
+		slog.Warn("imageproxy: cache is at its size cap, serving images without caching them until old entries expire",
+			"cacheBytes", size, "maxBytes", h.maxBytes)
+	}
+	return false
 }
 
 // imageProxyTransport returns the RoundTripper for the image-proxy client: a
@@ -338,7 +395,16 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	// sides rather than adding len(body) keeps it right when this request is
 	// refreshing an expired entry instead of adding a new one, and when only
 	// one of the two writes succeeded.
+	//
+	// The cache has a total size cap. An image that would take it past the
+	// cap is served exactly the same, it is just not stored, so the cache can
+	// never grow without bound on the volume it shares with the database.
+	// Entries leave by age only (the daily sweep), which frees room again.
 	priorBytes := cacheEntryBytes(imgFile, ctFile)
+	if !h.cacheHasRoom(int64(len(body)+len(ct)) - priorBytes) {
+		writeFetchedImage(w, ct, body)
+		return
+	}
 	if mkErr := os.MkdirAll(filepath.Dir(imgFile), imageDirMode); mkErr == nil { // #nosec G301 G304 G703 -- path derived from sha256(url), not user input
 		if f, ferr := os.CreateTemp(filepath.Dir(imgFile), ".img-*"); ferr == nil { // #nosec G304
 			if _, werr := f.Write(body); werr == nil {
@@ -363,6 +429,12 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	}
 	h.addCacheBytes(cacheEntryBytes(imgFile, ctFile) - priorBytes)
 
+	writeFetchedImage(w, ct, body)
+}
+
+// writeFetchedImage answers with an image that was just fetched from
+// upstream. ct must be a sniffed type, never an upstream value.
+func writeFetchedImage(w http.ResponseWriter, ct string, body []byte) {
 	setImageHeaders(w, ct)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
 	if _, err := w.Write(body); err != nil {

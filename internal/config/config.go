@@ -53,6 +53,10 @@ type Config struct {
 	// keeps every row, which is how Bindery behaved before the setting existed.
 	// History is never trimmed by this.
 	DownloadRetentionDays int
+	// ImageCacheMaxMB caps the proxied cover cache under the data directory, in
+	// megabytes (BINDERY_IMAGE_CACHE_MAX_MB, default 2048). At the cap covers
+	// are still fetched and served, just not stored.
+	ImageCacheMaxMB int
 	// Login rate limit (per-IP sliding window).
 	// BINDERY_RATE_LIMIT_MAX_FAILURES  (default: 5)
 	// BINDERY_RATE_LIMIT_WINDOW_MINUTES (default: 15)
@@ -126,6 +130,7 @@ func Load() *Config {
 		OIDCGroupClaim:           envOr("BINDERY_OIDC_GROUP_CLAIM", "groups"),
 		LogRetentionDays:         envInt("BINDERY_LOG_RETENTION_DAYS", 14),
 		DownloadRetentionDays:    envIntAllowZero("BINDERY_DOWNLOAD_RETENTION_DAYS", 90),
+		ImageCacheMaxMB:          envInt("BINDERY_IMAGE_CACHE_MAX_MB", 2048),
 		RateLimitMaxFailures:     envInt("BINDERY_RATE_LIMIT_MAX_FAILURES", 5),
 		RateLimitWindowMinutes:   envInt("BINDERY_RATE_LIMIT_WINDOW_MINUTES", 15),
 		URLBase:                  normalizeURLBase(envOr("BINDERY_URL_BASE", "")),

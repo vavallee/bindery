@@ -66,6 +66,11 @@ env:
   # trimmed; 0 keeps every row. History and the blocklist are never trimmed.
   # See docs/DEPLOYMENT.md for what trimming changes about duplicate grabs.
   BINDERY_DOWNLOAD_RETENTION_DAYS: "90"
+  # Ceiling in megabytes on the proxied cover cache (image-cache/ under
+  # BINDERY_DATA_DIR, the same volume as the database). At the ceiling covers
+  # are still fetched and shown, just not stored. Size it below the config
+  # volume if that volume is small.
+  BINDERY_IMAGE_CACHE_MAX_MB: "2048"
   # IMPORTANT: these defaults are placeholders, NOT a working layout — they are
   # two different paths and neither is backed by a mounted volume out of the
   # box. A dir that isn't inside a mounted volume writes to ephemeral container

@@ -1,0 +1,2 @@
+### Fixed
+- **The cover cache now has a size limit.** Cached covers were only ever removed by age (30 days), so nothing stopped the cache from growing until it filled the config volume, which is the same volume the database lives on. It now stops at 2 GiB by default. Once it is full, covers are still fetched and shown as usual, they are just not saved until older ones expire. Most libraries are nowhere near the limit and will see no change. Set `BINDERY_IMAGE_CACHE_MAX_MB` to raise or lower it.

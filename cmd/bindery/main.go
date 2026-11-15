@@ -872,7 +872,9 @@ func main() {
 		WithFinder(seriesRepo, importScanner).
 		WithEditionHydration(editionRepo, metaAgg).
 		WithAppContext(appCtx)
-	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir).WithLocalCovers(coverStore)
+	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir).
+		WithLocalCovers(coverStore).
+		WithMaxCacheBytes(int64(cfg.ImageCacheMaxMB) << 20)
 	imageProxyHandler.StartEviction(24 * time.Hour)
 	// Proxied cover URLs must carry the path prefix so they resolve under a
 	// subpath deploy (BINDERY_URL_BASE). No-op when URLBase is empty.
