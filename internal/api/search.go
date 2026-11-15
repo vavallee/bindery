@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -231,20 +233,23 @@ func (h *SearchHandler) lookupResult(ctx context.Context, book models.Book) book
 }
 
 // Lookup resolves a single book by a stable identifier passed as a query
-// param: either `isbn` (the original behavior) or `asin` (an Audible/audiobook
-// identifier). The route is shared (`/book/lookup`) so existing ISBN callers
-// keep working unchanged.
+// param: `isbn` (the original behavior), `asin` (an Audible/audiobook
+// identifier) or `hardcover` (a Hardcover book slug, #3839). The route is
+// shared (`/book/lookup`) so existing ISBN callers keep working unchanged.
 func (h *SearchHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 	asin := strings.TrimSpace(r.URL.Query().Get("asin"))
 	isbn := r.URL.Query().Get("isbn")
+	hardcover := strings.TrimSpace(r.URL.Query().Get("hardcover"))
 
 	switch {
 	case asin != "":
 		h.lookupByASIN(w, r, asin)
 	case isbn != "":
 		h.lookupByISBN(w, r, isbn)
+	case hardcover != "":
+		h.lookupByHardcover(w, r, hardcover)
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "isbn or asin parameter required"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "isbn, asin or hardcover parameter required"})
 	}
 }
 
@@ -313,6 +318,56 @@ func (h *SearchHandler) lookupByASIN(w http.ResponseWriter, r *http.Request, asi
 		book.ASIN = asin
 	}
 	book.MediaType = models.MediaTypeAudiobook
+
+	writeJSON(w, http.StatusOK, h.lookupResult(r.Context(), *book))
+}
+
+// hardcoverSlugRE is the shape of a Hardcover book slug, the last segment of a
+// hardcover.app/books/<slug> address: letters, digits and hyphens, the shape
+// Fix Match accepts for a Hardcover id too. A numeric value passes, and GetBook
+// falls back to the book's database id when no slug matches it.
+var hardcoverSlugRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
+
+// lookupByHardcover fetches one Hardcover book by its slug, for a book whose
+// Hardcover page exists but that the title search does not surface (#3839).
+// The `hc:` prefix Bindery stores Hardcover ids under is accepted and dropped.
+// The result is the record a Hardcover search hit would be, so adding it goes
+// through the normal add path.
+func (h *SearchHandler) lookupByHardcover(w http.ResponseWriter, r *http.Request, ref string) {
+	slug := strings.TrimPrefix(ref, "hc:")
+	if !hardcoverSlugRE.MatchString(slug) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "hardcover must be a Hardcover book slug, the last part of a hardcover.app/books/ address, such as howl-of-the-hearthworld",
+		})
+		return
+	}
+	// A provider turned off is not registered at all, so the aggregator would
+	// find nobody to ask and report a miss. Say why instead.
+	if !slices.Contains(h.meta.ProviderNames(), "hardcover") {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("Hardcover book %s could not be looked up because the Hardcover source is turned off in Settings, Metadata. Turn it on, or try searching by title instead.", slug),
+		})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), interactiveLookupTimeout)
+	defer cancel()
+	book, err := h.meta.GetBook(ctx, "hc:"+slug)
+	if errors.Is(err, metadata.ErrProviderNotConfigured) {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("Hardcover book %s could not be looked up because no Hardcover API token is saved. Add one in Settings, API Keys, or try searching by title instead.", slug),
+		})
+		return
+	}
+	if err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	if book == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("No Hardcover book found for %s. Check the address, or try searching by title instead.", slug),
+		})
+		return
+	}
 
 	writeJSON(w, http.StatusOK, h.lookupResult(r.Context(), *book))
 }
