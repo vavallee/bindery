@@ -227,6 +227,9 @@ export const booksApi = {
   searchBooks: (term: string) => request<Book[]>(`/search/book?term=${encodeURIComponent(term)}`),
   lookupISBN: (isbn: string) => request<Book>(`/book/lookup?isbn=${encodeURIComponent(isbn)}`),
   lookupASIN: (asin: string) => request<Book>(`/book/lookup?asin=${encodeURIComponent(asin)}`),
+  // A Hardcover book by its slug, for a book Hardcover has that the title
+  // search does not surface (#3839).
+  lookupHardcover: (slug: string) => request<Book>(`/book/lookup?hardcover=${encodeURIComponent(slug)}`),
 
   // Add a single book to wanted (adds author silently if new). mediaType
   // optionally forces ebook/audiobook/both; empty keeps the provider value /

@@ -80,7 +80,7 @@ Every push to `main` / `development` and every pull request runs through the ful
 | Image build | `docker/build-push-action@v6` with `linux/amd64` + `linux/arm64` | Multi-stage build using distroless `nonroot` base — no shell, no package manager, no root user |
 | Base image pinning | Dockerfile pins distroless digest | Protects against upstream tag-mutation |
 | Provenance / attestations | GitHub Actions OIDC + `packages: write` + `security-events: write` permissions | Published container has attached SLSA provenance |
-| Helm chart | `charts/bindery/` rendered and image tag auto-bumped per merge | Image digest lands in `values.yaml` via CI commit (`[skip ci]`) |
+| Helm chart | `charts/bindery/` linted (`helm lint --strict`) and image tag auto-bumped per release tag | On a `v*` tag, `deploy-prod` writes the release version (a tag such as `1.51.0`, not a digest) to `image.tag` in `values.yaml` and `appVersion` in `Chart.yaml` on `main` via a CI commit (`[skip ci]`). Merges to `main` do not change it |
 | Dependency pinning | `go.sum` (Go), `package-lock.json` (npm), `charts/bindery/Chart.yaml` (Helm) | All committed; `npm ci` refuses to install if the lockfile drifts |
 
 ### Dependency licences
@@ -109,14 +109,16 @@ Bindery is deliberately **credential-free in source**. The CI pipeline enforces 
 
 ### Release gating
 
-Tag pushes (`v*`) run every check above **before** the GitHub Release is cut:
+Tag pushes (`v*`) run the jobs in `.github/workflows/ci.yml`. What gates what on a tag:
 
-1. Go tests + golangci-lint + govulncheck (blocking)
-2. Frontend typecheck + lint + build (blocking)
-3. Docker multi-arch build (blocking)
-4. GoReleaser cross-compiles `linux/{amd64,arm64,armv7,armv6}`, `darwin/{amd64,arm64}`, `windows/{amd64,arm64}` and attaches SHA-256 checksums to the release (`bindery_vX.Y.Z_checksums.txt`)
+1. `test` (Go tests, frontend build, frontend tests) gates both `image` and `goreleaser`. Neither starts unless it passes.
+2. `image` needs only `test`. It builds and pushes the `linux/amd64` + `linux/arm64` image, including the `X.Y.Z` and `latest` tags. It does not wait for `goreleaser` or the smoke test, so a tag whose later jobs fail has still moved `latest`.
+3. `goreleaser` needs only `test`. It aborts if `CHANGELOG.md` has no section for the version, then cross-compiles `linux/{amd64,arm64,armv7,armv6}`, `darwin/{amd64,arm64}`, `windows/{amd64,arm64}` and attaches SHA-256 checksums to the GitHub Release (`bindery_X.Y.Z_checksums.txt`). It does not wait for the image build.
+4. `predeploy-smoke` needs `image`. `deploy-prod` needs `image`, `goreleaser` and `predeploy-smoke`. `notify-discord` needs `image` and `goreleaser`.
 
-A failing check at any step aborts the release — no artifacts are published from a red pipeline.
+`lint` (golangci-lint, govulncheck, frontend lint and typecheck), `licenses`, `smoke` and the `race` shards also run on a tag, but in parallel: no release job depends on them, so a failure there does not stop the image or the GitHub Release. `lint` blocks earlier instead, as a required check on pull requests into `main`.
+
+In short: a red `test` publishes nothing. A red lint, vulnerability or race run on the tag itself does not hold the release back, and the image and the GitHub Release can each publish without the other.
 
 ### Running the full local check suite
 
