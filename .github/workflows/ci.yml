@@ -1051,7 +1051,7 @@ jobs:
           # Stamp the exact commit the guard checked, not whatever the branch
           # points at now. Keep this context list in sync with the required
           # status checks in branch protection on main.
-          for ctx in "lint" "validate (Go)" "Security Summary"; do
+          for ctx in "lint" "validate (Go)" "Security Summary" "codecov/patch"; do
             gh api "repos/${GITHUB_REPOSITORY}/statuses/${VALUES_COMMIT}" \
               -f state=success \
               -f context="${ctx}" \
