@@ -13,10 +13,9 @@
   <a href="https://github.com/vavallee/bindery/actions/workflows/ci.yml"><img src="https://github.com/vavallee/bindery/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://codecov.io/gh/vavallee/bindery"><img src="https://img.shields.io/codecov/c/github/vavallee/bindery?logo=codecov&logoColor=white" alt="codecov" /></a>
   <a href="https://github.com/vavallee/bindery/releases"><img src="https://img.shields.io/github/v/release/vavallee/bindery" alt="Release" /></a>
-  <a href="https://github.com/vavallee/bindery/releases"><img src="https://img.shields.io/github/downloads/vavallee/bindery/total" alt="Downloads" /></a>
-  <a href="https://github.com/vavallee/bindery/pkgs/container/bindery"><img src="https://img.shields.io/badge/ghcr.io-vavallee%2Fbindery-blue?logo=github" alt="GitHub Container Registry" /></a>
   <a href="https://hub.docker.com/r/vavallee/bindery"><img src="https://img.shields.io/docker/pulls/vavallee/bindery?label=docker%20hub%20pulls&logo=docker&logoColor=white" alt="Docker Hub pulls" /></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/vavallee/bindery"><img src="https://img.shields.io/ossf-scorecard/github.com/vavallee/bindery?label=openssf%20scorecard" alt="OpenSSF Scorecard" /></a>
+  <a href="https://www.bestpractices.dev/projects/15228"><img src="https://www.bestpractices.dev/projects/15228/badge" alt="OpenSSF Best Practices" /></a>
   <a href="https://github.com/vavallee/bindery/blob/main/LICENSE"><img src="https://img.shields.io/github/license/vavallee/bindery" alt="License" /></a>
   <a href="https://discord.gg/RpuYYRM9cZ"><img src="https://img.shields.io/badge/Discord-BINDERY-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
 </p>
@@ -84,7 +83,7 @@ docker run -d \
 
 ### Other install methods
 
-The container image is built for amd64 and arm64. Release binaries cover Linux (amd64, arm64, armv7 and armv6, so a Raspberry Pi Zero works), macOS and Windows. Kubernetes users get a Helm chart in `charts/bindery/`, and Unraid has a Community Applications template. All of it, with UID and GID setup, path remapping and upgrade notes, is in **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. New to the *arr style of app? **[docs/QUICKSTART.md](docs/QUICKSTART.md)** goes from zero to a first download.
+The container image is built for amd64 and arm64. Release binaries cover Linux (amd64, arm64, armv7 and armv6, so a Raspberry Pi Zero works), macOS and Windows. Kubernetes users get a Helm chart in `charts/bindery/`, Unraid has a Community Applications template, and Arch users can install the community maintained [`bindery` AUR package](https://aur.archlinux.org/packages/bindery). Images are published to both [GitHub Container Registry](https://github.com/vavallee/bindery/pkgs/container/bindery) and [Docker Hub](https://hub.docker.com/r/vavallee/bindery). All of it, with UID and GID setup, path remapping and upgrade notes, is in **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. New to the *arr style of app? **[docs/QUICKSTART.md](docs/QUICKSTART.md)** goes from zero to a first download.
 
 ### Coming from Readarr
 
@@ -345,9 +344,6 @@ Please keep security reports out of Discord and public issues; [SECURITY.md](SEC
 
 <p>
   <a href="https://github.com/vavallee/bindery/security/code-scanning"><img src="https://img.shields.io/github/actions/workflow/status/vavallee/bindery/security.yml?branch=main&label=security%20scans&logo=github" alt="Security scans" /></a>
-  <a href="https://securityscorecards.dev/viewer/?uri=github.com/vavallee/bindery"><img src="https://api.securityscorecards.dev/projects/github.com/vavallee/bindery/badge" alt="OpenSSF Scorecard" /></a>
-  <a href="https://github.com/vavallee/bindery/security/dependabot"><img src="https://img.shields.io/badge/Dependabot-enabled-brightgreen?logo=dependabot" alt="Dependabot" /></a>
-  <a href="SECURITY.md"><img src="https://img.shields.io/badge/security-policy-blue" alt="Security policy" /></a>
 </p>
 
 Bindery holds API keys, reaches services on your network and writes to your disks, so it is built and checked with that in mind. Every push and a weekly run go through govulncheck, CodeQL, Semgrep, gitleaks, Hadolint, Checkov, Grype, Syft, a ZAP baseline and OpenSSF Scorecard, with gosec enforced in the blocking lint gate. Release binaries and the container image carry SLSA build provenance, which you can check with `gh attestation verify` ([how](docs/DEPLOYMENT.md)), and binaries ship with SBOMs. In the app: guards against server side request forgery on outbound URLs, strict response headers, and a distroless non root image with digest pinned bases. The Helm chart adds a read only root filesystem with every capability dropped.

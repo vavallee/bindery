@@ -51,6 +51,7 @@ const (
 // /setting, and everything else.
 var RequesterAllowList = []RequesterRoute{
 	{Method: http.MethodGet, Pattern: "/api/v1/health"},
+	{Method: http.MethodGet, Pattern: "/api/v1/health/ready"},
 
 	// Session plumbing. login, logout, status, csrf and the OIDC login and
 	// callback are also in AllowUnauthPath; they are listed here so a

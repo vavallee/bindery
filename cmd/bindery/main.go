@@ -897,6 +897,7 @@ func main() {
 	// require every scrape config to also carry the key, which is a
 	// worse default for the typical Helm-chart deployment.
 	metrics.SetBuildInfo(version, commit, date)
+	metrics.SetQueueCounter(downloadStateLabels(), downloadRepo.CountByStatus)
 	r.Handle("/metrics", metrics.Handler())
 
 	// Composite auth: session cookie (UI) OR API key (external apps) OR
@@ -932,10 +933,7 @@ func main() {
 		registerAPIErrorHandlers(r)
 
 		// System
-		r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"ok","version":"` + version + `"}`))
-		})
+		registerHealthRoutes(r, database)
 		r.Get("/system/status", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			cacheBytes, _ := imageProxyHandler.CacheSize()

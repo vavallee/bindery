@@ -224,6 +224,7 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 
 			qctx := newznab.WithQueryBudget(ctx, s.quotaBudget(idx))
 			hits, trace, err := client.BookSearchTraced(qctx, c.Title, c.Author, cats)
+			observeSearch(idx, start, err)
 			entry.NumberWordQuery, entry.NumberWordResults = trace.NumberWordQuery, trace.NumberWordResults
 			entry.NumberWordError = trace.NumberWordError
 			if trace.BudgetExhausted {
