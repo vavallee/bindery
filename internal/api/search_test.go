@@ -528,3 +528,59 @@ func TestLookupStampsLibraryBookID(t *testing.T) {
 		t.Errorf("bob lookup stamped with alice's book: %v", got["libraryBookId"])
 	}
 }
+
+// #3898: a requester must not see "In your library" on a book the library holds
+// without a file, since that badge leaves them nothing to click. A book with a
+// file keeps the stamp, and a non requester keeps it either way.
+func TestSearchBooksRequesterStampOnlyWhenCovered(t *testing.T) {
+	database, aliceID, _, author, _ := seedLibraryStampFixture(t)
+	ctx := context.Background()
+	repo := db.NewBookRepo(database)
+	metaOnly := &models.Book{
+		ForeignID: "OL-BOOK-METAONLY", Title: "Meta", SortTitle: "Meta", AuthorID: author.ID,
+		Status: models.BookStatusImported, Genres: []string{}, MetadataProvider: "openlibrary",
+		OwnerUserID: aliceID, MediaType: models.MediaTypeEbook,
+	}
+	if err := repo.Create(ctx, metaOnly); err != nil {
+		t.Fatal(err)
+	}
+	withFile := &models.Book{
+		ForeignID: "OL-BOOK-FILE", Title: "File", SortTitle: "File", AuthorID: author.ID,
+		Status: models.BookStatusImported, Genres: []string{}, MetadataProvider: "openlibrary",
+		OwnerUserID: aliceID, MediaType: models.MediaTypeEbook,
+	}
+	if err := repo.Create(ctx, withFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddBookFile(ctx, withFile.ID, models.MediaTypeEbook, "/books/file.epub"); err != nil {
+		t.Fatal(err)
+	}
+	p := &stubProvider{books: []models.Book{
+		{ForeignID: "OL-BOOK-METAONLY", Title: "Meta"},
+		{ForeignID: "OL-BOOK-FILE", Title: "File"},
+	}}
+	h := NewSearchHandler(metadata.NewAggregator(p), repo, db.NewAuthorRepo(database))
+
+	search := func(role string) []map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		c := auth.WithUserRole(auth.WithUserID(context.Background(), aliceID), role)
+		h.SearchBooks(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/book?term=x", nil).WithContext(c))
+		var got []map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&got); err != nil || len(got) != 2 {
+			t.Fatalf("decode: %v (%d rows)", err, len(got))
+		}
+		return got
+	}
+	req := search(auth.RoleRequester)
+	if _, present := req[0]["libraryBookId"]; present {
+		t.Errorf("requester: file-less book stamped in library: %v", req[0]["libraryBookId"])
+	}
+	if _, present := req[1]["libraryBookId"]; !present {
+		t.Errorf("requester: book with a file lost its in-library stamp")
+	}
+	usr := search(auth.RoleUser)
+	if _, present := usr[0]["libraryBookId"]; !present {
+		t.Errorf("user: file-less book should keep its stamp")
+	}
+}

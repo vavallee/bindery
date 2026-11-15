@@ -24,6 +24,16 @@ type SearchHandler struct {
 	// which case results are returned unstamped.
 	books   *db.BookRepo
 	authors *db.AuthorRepo
+	// settings supplies the default format a requester's search is judged
+	// against (#3898). Nil means ebook.
+	settings *db.SettingsRepo
+}
+
+// WithSettings wires the settings repo the requester stamp reads the default
+// media type from.
+func (h *SearchHandler) WithSettings(settings *db.SettingsRepo) *SearchHandler {
+	h.settings = settings
+	return h
 }
 
 // bookSearchResult exposes transient provider identifiers without adding them
@@ -71,6 +81,44 @@ func (h *SearchHandler) stampLibraryBooks(ctx context.Context, results []bookSea
 		if id, ok := found[results[i].ForeignID]; ok {
 			libraryID := id
 			results[i].LibraryBookID = &libraryID
+		}
+	}
+	h.unstampRequestableBooks(ctx, results)
+}
+
+// unstampRequestableBooks drops the stamp, for a requester, from a book the
+// library holds without the format they would ask for (#3898). The stamp reads
+// "In your library" and leaves a requester no action, so it is kept only where
+// a request would be refused: the book is covered (file on disk or monitored)
+// or belongs to another account. Admins and users keep the stamp, since they
+// get an Open link either way.
+func (h *SearchHandler) unstampRequestableBooks(ctx context.Context, results []bookSearchResult) {
+	if auth.UserRoleFromContext(ctx) != auth.RoleRequester {
+		return
+	}
+	var ids []string
+	for i := range results {
+		if results[i].LibraryBookID != nil {
+			ids = append(ids, results[i].ForeignID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	held, err := h.books.GetByForeignIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("search: requester library lookup failed, stamps kept", "error", err)
+		return
+	}
+	mediaType := defaultMediaTypeSetting(ctx, h.settings)
+	owner := auth.UserIDFromContext(ctx)
+	for i := range results {
+		book := held[results[i].ForeignID]
+		if book == nil || results[i].LibraryBookID == nil {
+			continue
+		}
+		if outcome, _, _ := existingBookOutcomeFor(book, owner, mediaType); outcome == outcomeWiden {
+			results[i].LibraryBookID = nil
 		}
 	}
 }

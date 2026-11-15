@@ -561,3 +561,32 @@ func TestMissingRequestFormats(t *testing.T) {
 		})
 	}
 }
+
+// #3898: a book the library holds as metadata only (no file, not monitored)
+// is not covered, so a requester can ask for it. A book with its file is.
+func TestRequestsCreate_BookWithoutFileCanBeRequested(t *testing.T) {
+	f := newRequestsFixture(t, wellsRequestStub(), nil)
+	author := seedWells(t, f.authors)
+	book := &models.Book{ForeignID: "OL27482W", AuthorID: author.ID, Title: "The War of the Worlds", SortTitle: "war of the worlds", Status: models.BookStatusImported, MediaType: models.MediaTypeEbook}
+	if err := f.books.Create(context.Background(), book); err != nil {
+		t.Fatal(err)
+	}
+	rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("file-less book request: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRequestsCreate_CoveredBookStillRefused(t *testing.T) {
+	f := newRequestsFixture(t, wellsRequestStub(), nil)
+	// Monitored for the default format: someone is already getting it.
+	author := seedWells(t, f.authors)
+	book := &models.Book{ForeignID: "OL27482W", AuthorID: author.ID, Title: "The War of the Worlds", SortTitle: "war of the worlds", Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeEbook}
+	if err := f.books.Create(context.Background(), book); err != nil {
+		t.Fatal(err)
+	}
+	rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W"}`)
+	if rec.Code != http.StatusConflict || requestErrorBody(rec) != "This book is already in the library." {
+		t.Fatalf("covered book: %d %q", rec.Code, requestErrorBody(rec))
+	}
+}

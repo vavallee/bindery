@@ -661,7 +661,7 @@ func main() {
 		WithLifetimeCtx(appCtx)
 	userMgmtHandler := api.NewUserManagementHandler(userRepo).
 		WithLocalAuthEnabled(cfg.LocalAuthEnabled)
-	searchHandler := api.NewSearchHandler(metaAgg, bookRepo, authorRepo)
+	searchHandler := api.NewSearchHandler(metaAgg, bookRepo, authorRepo).WithSettings(settingsRepo)
 	librarySearchHandler := api.NewLibrarySearchHandler(authorRepo, bookRepo, seriesRepo)
 	duplicateReviewHandler := api.NewDuplicateReviewHandler(bookRepo, seriesRepo)
 	// Library-root containment checker (Wave 1 / Bundle B): used by the book

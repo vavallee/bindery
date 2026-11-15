@@ -556,7 +556,7 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 		// left the library; the in library check below answers otherwise.
 		reopen = true
 	}
-	if msg, err := h.alreadyInLibrary(ctx, owner, body.Kind, body.ForeignID); err != nil {
+	if msg, err := h.alreadyInLibrary(ctx, owner, body.Kind, body.ForeignID, body.MediaType); err != nil {
 		writeServerError(w, r, err)
 		return
 	} else if msg != "" {
@@ -589,7 +589,7 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// The provider may answer with a canonical record whose id differs from
 	// the one asked for, and that record may be in the library already.
 	if req.resolvedID != "" && req.resolvedID != body.ForeignID {
-		if msg, err := h.alreadyInLibrary(ctx, owner, req.Kind, req.resolvedID); err != nil {
+		if msg, err := h.alreadyInLibrary(ctx, owner, req.Kind, req.resolvedID, body.MediaType); err != nil {
 			writeServerError(w, r, err)
 			return
 		} else if msg != "" {
@@ -816,15 +816,22 @@ func (h *RequestHandler) buildRequest(ctx context.Context, owner int64, kind, fo
 // off, and with tenancy on covers what owner can see (their own authors and
 // shared ones): each account holds its own row for an author (#3555), so
 // another account having the author does not stop owner getting it.
-func (h *RequestHandler) alreadyInLibrary(ctx context.Context, owner int64, kind, foreignID string) (string, error) {
+func (h *RequestHandler) alreadyInLibrary(ctx context.Context, owner int64, kind, foreignID, mediaType string) (string, error) {
 	switch kind {
 	case models.RequestKindBook:
 		b, err := h.books.GetByForeignID(ctx, foreignID)
 		if err != nil {
 			return "", err
 		}
+		// A book whose file is missing is not a dead end (#3898): when the
+		// library has it but not the requested format, and the book is not
+		// another account's, the request goes through and approval widens
+		// the row (#3835). Only a book that is covered or held elsewhere
+		// refuses.
 		if b != nil {
-			return "This book is already in the library.", nil
+			if outcome, _, _ := existingBookOutcomeFor(b, owner, h.effectiveMediaType(ctx, mediaType)); outcome != outcomeWiden {
+				return "This book is already in the library.", nil
+			}
 		}
 	case models.RequestKindAuthor:
 		scope := int64(0)
@@ -846,7 +853,7 @@ func (h *RequestHandler) alreadyInLibrary(ctx context.Context, owner int64, kind
 // than owner while tenancy is enforced. Approving must not widen that
 // account's row, so a request that needs a format added to it is refused (and
 // can be declined). With tenancy off the library is shared and nothing is held.
-func (h *RequestHandler) bookHeldByAnotherAccount(book *models.Book, owner int64) bool {
+func bookHeldByAnotherAccount(book *models.Book, owner int64) bool {
 	return auth.EnforceTenancy() && book.OwnerUserID != 0 && book.OwnerUserID != owner
 }
 
@@ -919,11 +926,17 @@ const (
 // rule shared by the approval and the queue badge, so the badge cannot claim
 // what approve then refuses.
 func (h *RequestHandler) existingBookPlan(book *models.Book, owner int64, mediaType string) (outcome existingBookOutcome, missingEbook, missingAudio bool) {
+	return existingBookOutcomeFor(book, owner, mediaType)
+}
+
+// existingBookOutcomeFor is existingBookPlan without the handler, so the
+// search stamp can ask the same question the request and approval do.
+func existingBookOutcomeFor(book *models.Book, owner int64, mediaType string) (outcome existingBookOutcome, missingEbook, missingAudio bool) {
 	missingEbook, missingAudio = missingRequestFormats(book, mediaType)
 	switch {
 	case !missingEbook && !missingAudio:
 		return outcomeCovered, false, false
-	case h.bookHeldByAnotherAccount(book, owner):
+	case bookHeldByAnotherAccount(book, owner):
 		return outcomeRefused, missingEbook, missingAudio
 	default:
 		return outcomeWiden, missingEbook, missingAudio
@@ -1327,7 +1340,7 @@ func (h *RequestHandler) runApproval(ctx context.Context, req *models.LibraryReq
 			authorID := existing.AuthorID
 			return &existing.ID, &authorID, runID, note, 0, "", nil
 		}
-	} else if inLib, lerr := h.alreadyInLibrary(ctx, req.OwnerUserID, p.Kind, p.ForeignID); lerr != nil {
+	} else if inLib, lerr := h.alreadyInLibrary(ctx, req.OwnerUserID, p.Kind, p.ForeignID, mediaType); lerr != nil {
 		return nil, nil, "", "", 0, "", lerr
 	} else if inLib != "" {
 		return nil, nil, "", "", http.StatusConflict, inLib, nil

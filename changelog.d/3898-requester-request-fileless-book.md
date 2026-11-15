@@ -1,0 +1,2 @@
+### Fixed
+- **Requesters can ask for a book Bindery knows but has no file for** (#3898, #3899), a search result showed "In your library" with nothing to click whenever the book only existed as metadata. Now the book shows a Select button and the request goes through, and approving it adds the missing format to the existing book. Books that really are covered, with a file or already monitored, or that belong to another account, still show as in the library. Thanks flaevers for the report.
