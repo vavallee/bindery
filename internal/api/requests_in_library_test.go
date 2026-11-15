@@ -405,13 +405,14 @@ func TestToRequestResponse_ApproverFieldsStayOffRequesterResponses(t *testing.T)
 	}
 }
 
-// An auto approval that meets a book already in the library resolves the
-// request, and the create response the requester gets carries no notice. Under
-// tenancy the create check lets this through (it only sees the requester's own
-// rows), so it is reachable through the real handler path.
-func TestRequestsCreate_AutoApproveInLibraryGivesTheRequesterNoNotice(t *testing.T) {
+// A book that reaches the library between the create check and the answer is
+// not auto approved either (#3898): only a brand new book skips the queue, so
+// the request stays pending, the existing row is not touched, and the create
+// response the requester gets carries no notice.
+func TestRequestsCreate_AutoApproveInLibraryStaysPendingWithNoNotice(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
-	f := newRequestsFixture(t, wellsRequestStub(), &fakeAdder{})
+	adder := &fakeAdder{}
+	f := newRequestsFixture(t, wellsRequestStub(), adder)
 	setAutoApprove(t, f, f.requester.ID, true)
 	ctx := context.Background()
 	author := seedWells(t, f.authors)
@@ -429,12 +430,15 @@ func TestRequestsCreate_AutoApproveInLibraryGivesTheRequesterNoNotice(t *testing
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	f.h.writeCreated(ctx, rec, req, f.requester.ID)
+	f.h.writeCreated(ctx, rec, req, f.requester.ID, "")
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
-	if got := decodeRequest(t, rec); got.Status != models.RequestStatusApproved {
-		t.Fatalf("status %q, want approved by the auto approval: %s", got.Status, rec.Body.String())
+	if got := decodeRequest(t, rec); got.Status != models.RequestStatusPending {
+		t.Fatalf("status %q, want pending for an existing book: %s", got.Status, rec.Body.String())
+	}
+	if n := adder.calls.Load() + adder.existingCalls.Load(); n != 0 {
+		t.Fatalf("the add ran %d times for a request that must wait", n)
 	}
 	if strings.Contains(rec.Body.String(), "notice") {
 		t.Fatalf("the requester's create response carries a notice: %s", rec.Body.String())
@@ -588,5 +592,78 @@ func TestRequestsCreate_CoveredBookStillRefused(t *testing.T) {
 	rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W"}`)
 	if rec.Code != http.StatusConflict || requestErrorBody(rec) != "This book is already in the library." {
 		t.Fatalf("covered book: %d %q", rec.Code, requestErrorBody(rec))
+	}
+}
+
+// A requester picks the format, so the in library check is judged against the
+// format named, not only the default (#3898).
+func TestRequestsCreate_ExplicitMediaTypeAgainstExistingBook(t *testing.T) {
+	const covered = "This book is already in the library."
+	cases := []struct {
+		name      string
+		book      models.Book
+		ebookFile bool
+		mediaType string
+		want      int
+	}{
+		{"ebook on disk, audiobook asked", models.Book{Status: models.BookStatusImported, MediaType: models.MediaTypeEbook}, true, "audiobook", http.StatusCreated},
+		{"ebook on disk, both asked", models.Book{Status: models.BookStatusImported, MediaType: models.MediaTypeEbook}, true, "both", http.StatusCreated},
+		{"ebook on disk, ebook asked", models.Book{Status: models.BookStatusImported, MediaType: models.MediaTypeEbook}, true, "ebook", http.StatusConflict},
+		{"ebook on disk, default asked", models.Book{Status: models.BookStatusImported, MediaType: models.MediaTypeEbook}, true, "", http.StatusConflict},
+		{"audiobook monitored, audiobook asked", models.Book{Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeAudiobook}, false, "audiobook", http.StatusConflict},
+		{"audiobook monitored, ebook asked", models.Book{Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeAudiobook}, false, "ebook", http.StatusCreated},
+		{"audiobook monitored, default asked", models.Book{Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeAudiobook}, false, "", http.StatusCreated},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRequestsFixture(t, wellsRequestStub(), nil)
+			ctx := context.Background()
+			author := seedWells(t, f.authors)
+			book := tc.book
+			book.ForeignID, book.AuthorID, book.Title, book.SortTitle = "OL27482W", author.ID, "The War of the Worlds", "war of the worlds"
+			if err := f.books.Create(ctx, &book); err != nil {
+				t.Fatal(err)
+			}
+			if tc.ebookFile {
+				if err := f.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, "/books/wotw.epub"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W","mediaType":"`+tc.mediaType+`"}`)
+			if rec.Code != tc.want {
+				t.Fatalf("create: %d %s, want %d", rec.Code, rec.Body.String(), tc.want)
+			}
+			if tc.want == http.StatusConflict && requestErrorBody(rec) != covered {
+				t.Fatalf("refusal sentence %q, want %q", requestErrorBody(rec), covered)
+			}
+		})
+	}
+}
+
+// Under tenancy a book another account holds without the requested format
+// refuses a create with the same status and sentence as a covered book, so the
+// answer does not tell the requester which of the two it is.
+func TestRequestsCreate_HeldElsewhereAnswersLikeCovered(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	f := newRequestsFixture(t, wellsRequestStub(), nil)
+	ctx := context.Background()
+	author := seedWells(t, f.authors)
+	held := &models.Book{ForeignID: "OL27482W", AuthorID: author.ID, Title: "The War of the Worlds", SortTitle: "war of the worlds", Status: models.BookStatusImported, MediaType: models.MediaTypeEbook, OwnerUserID: f.other.ID}
+	if err := f.books.Create(ctx, held); err != nil {
+		t.Fatal(err)
+	}
+	heldElsewhere := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W"}`)
+
+	// The same book once it is covered, asked for by its own account.
+	if err := f.books.AddBookFile(ctx, held.ID, models.MediaTypeEbook, "/books/wotw.epub"); err != nil {
+		t.Fatal(err)
+	}
+	covered := f.create(t, f.other, `{"kind":"book","foreignId":"OL27482W"}`)
+
+	if heldElsewhere.Code != http.StatusConflict || covered.Code != http.StatusConflict {
+		t.Fatalf("held elsewhere %d, covered %d, want 409 for both", heldElsewhere.Code, covered.Code)
+	}
+	if got, want := requestErrorBody(heldElsewhere), requestErrorBody(covered); got != want || got != "This book is already in the library." {
+		t.Fatalf("held elsewhere said %q, covered said %q", got, want)
 	}
 }

@@ -24,16 +24,6 @@ type SearchHandler struct {
 	// which case results are returned unstamped.
 	books   *db.BookRepo
 	authors *db.AuthorRepo
-	// settings supplies the default format a requester's search is judged
-	// against (#3898). Nil means ebook.
-	settings *db.SettingsRepo
-}
-
-// WithSettings wires the settings repo the requester stamp reads the default
-// media type from.
-func (h *SearchHandler) WithSettings(settings *db.SettingsRepo) *SearchHandler {
-	h.settings = settings
-	return h
 }
 
 // bookSearchResult exposes transient provider identifiers without adding them
@@ -48,6 +38,11 @@ type bookSearchResult struct {
 	models.Book
 	ISBNs         []string `json:"isbns,omitempty"`
 	LibraryBookID *int64   `json:"libraryBookId,omitempty"`
+	// RequestableFormats is set for a requester only, on a book they can see
+	// in the library that still lacks a format (#3898): the formats a request
+	// can ask for. It is never set for a book the stamp would not have
+	// covered, so it says nothing about another account's book.
+	RequestableFormats []string `json:"requestableFormats,omitempty"`
 }
 
 // authorSearchResult is the author counterpart of bookSearchResult.
@@ -87,11 +82,16 @@ func (h *SearchHandler) stampLibraryBooks(ctx context.Context, results []bookSea
 }
 
 // unstampRequestableBooks drops the stamp, for a requester, from a book the
-// library holds without the format they would ask for (#3898). The stamp reads
-// "In your library" and leaves a requester no action, so it is kept only where
-// a request would be refused: the book is covered (file on disk or monitored)
-// or belongs to another account. Admins and users keep the stamp, since they
-// get an Open link either way.
+// library holds without every format (#3898). The stamp reads "In your
+// library" and leaves a requester no action, so it is kept only when both
+// formats are covered (file on disk or monitored) and no request could be
+// accepted. A requester picks the format in the confirm step, so one missing
+// format is enough to offer the book, and RequestableFormats tells the dialog
+// which ones are left. Admins and users keep the stamp, since they get an Open
+// link either way.
+//
+// Only stamped rows are looked at, and the stamp is scoped to what the caller
+// may see, so a book held by another account is never described here.
 func (h *SearchHandler) unstampRequestableBooks(ctx context.Context, results []bookSearchResult) {
 	if auth.UserRoleFromContext(ctx) != auth.RoleRequester {
 		return
@@ -110,15 +110,21 @@ func (h *SearchHandler) unstampRequestableBooks(ctx context.Context, results []b
 		slog.Warn("search: requester library lookup failed, stamps kept", "error", err)
 		return
 	}
-	mediaType := defaultMediaTypeSetting(ctx, h.settings)
-	owner := auth.UserIDFromContext(ctx)
 	for i := range results {
 		book := held[results[i].ForeignID]
 		if book == nil || results[i].LibraryBookID == nil {
 			continue
 		}
-		if outcome, _, _ := existingBookOutcomeFor(book, owner, mediaType); outcome == outcomeWiden {
-			results[i].LibraryBookID = nil
+		missingEbook, missingAudio := missingRequestFormats(book, models.MediaTypeBoth)
+		if !missingEbook && !missingAudio {
+			continue
+		}
+		results[i].LibraryBookID = nil
+		if missingEbook {
+			results[i].RequestableFormats = append(results[i].RequestableFormats, models.MediaTypeEbook)
+		}
+		if missingAudio {
+			results[i].RequestableFormats = append(results[i].RequestableFormats, models.MediaTypeAudiobook)
 		}
 	}
 }

@@ -530,57 +530,100 @@ func TestLookupStampsLibraryBookID(t *testing.T) {
 }
 
 // #3898: a requester must not see "In your library" on a book the library holds
-// without a file, since that badge leaves them nothing to click. A book with a
-// file keeps the stamp, and a non requester keeps it either way.
+// without every format, since that badge leaves them nothing to click. They
+// pick the format in the confirm step, so one missing format is enough to
+// offer the book, and requestableFormats names what is left. A fully covered
+// book keeps the stamp, a non requester keeps it either way, and another
+// account's book is never described.
 func TestSearchBooksRequesterStampOnlyWhenCovered(t *testing.T) {
-	database, aliceID, _, author, _ := seedLibraryStampFixture(t)
+	database, aliceID, bobID, author, _ := seedLibraryStampFixture(t)
 	ctx := context.Background()
 	repo := db.NewBookRepo(database)
-	metaOnly := &models.Book{
-		ForeignID: "OL-BOOK-METAONLY", Title: "Meta", SortTitle: "Meta", AuthorID: author.ID,
-		Status: models.BookStatusImported, Genres: []string{}, MetadataProvider: "openlibrary",
-		OwnerUserID: aliceID, MediaType: models.MediaTypeEbook,
+	mk := func(foreignID string, monitored bool, status, mediaType string, files ...string) {
+		t.Helper()
+		b := &models.Book{
+			ForeignID: foreignID, Title: foreignID, SortTitle: foreignID, AuthorID: author.ID,
+			Status: status, Monitored: monitored, Genres: []string{}, MetadataProvider: "openlibrary",
+			OwnerUserID: aliceID, MediaType: mediaType,
+		}
+		if err := repo.Create(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+		for _, format := range files {
+			if err := repo.AddBookFile(ctx, b.ID, format, "/books/"+foreignID+"."+format); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
-	if err := repo.Create(ctx, metaOnly); err != nil {
-		t.Fatal(err)
+	mk("OL-META", false, models.BookStatusImported, models.MediaTypeEbook)
+	mk("OL-EBOOK-FILE", false, models.BookStatusImported, models.MediaTypeEbook, models.MediaTypeEbook)
+	mk("OL-AUDIO-MONITORED", true, models.BookStatusWanted, models.MediaTypeAudiobook)
+	mk("OL-BOTH-FILES", false, models.BookStatusImported, models.MediaTypeBoth, models.MediaTypeEbook, models.MediaTypeAudiobook)
+	order := []string{"OL-META", "OL-EBOOK-FILE", "OL-AUDIO-MONITORED", "OL-BOTH-FILES"}
+	var provided []models.Book
+	for _, id := range order {
+		provided = append(provided, models.Book{ForeignID: id, Title: id})
 	}
-	withFile := &models.Book{
-		ForeignID: "OL-BOOK-FILE", Title: "File", SortTitle: "File", AuthorID: author.ID,
-		Status: models.BookStatusImported, Genres: []string{}, MetadataProvider: "openlibrary",
-		OwnerUserID: aliceID, MediaType: models.MediaTypeEbook,
-	}
-	if err := repo.Create(ctx, withFile); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.AddBookFile(ctx, withFile.ID, models.MediaTypeEbook, "/books/file.epub"); err != nil {
-		t.Fatal(err)
-	}
-	p := &stubProvider{books: []models.Book{
-		{ForeignID: "OL-BOOK-METAONLY", Title: "Meta"},
-		{ForeignID: "OL-BOOK-FILE", Title: "File"},
-	}}
-	h := NewSearchHandler(metadata.NewAggregator(p), repo, db.NewAuthorRepo(database))
+	h := NewSearchHandler(metadata.NewAggregator(&stubProvider{books: provided}), repo, db.NewAuthorRepo(database))
 
-	search := func(role string) []map[string]any {
+	search := func(userID int64, role string) map[string]map[string]any {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		c := auth.WithUserRole(auth.WithUserID(context.Background(), aliceID), role)
+		c := auth.WithUserRole(auth.WithUserID(context.Background(), userID), role)
 		h.SearchBooks(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search/book?term=x", nil).WithContext(c))
 		var got []map[string]any
-		if err := json.NewDecoder(rec.Body).Decode(&got); err != nil || len(got) != 2 {
+		if err := json.NewDecoder(rec.Body).Decode(&got); err != nil || len(got) != len(order) {
 			t.Fatalf("decode: %v (%d rows)", err, len(got))
 		}
-		return got
+		out := map[string]map[string]any{}
+		for _, row := range got {
+			out[row["foreignBookId"].(string)] = row
+		}
+		return out
 	}
-	req := search(auth.RoleRequester)
-	if _, present := req[0]["libraryBookId"]; present {
-		t.Errorf("requester: file-less book stamped in library: %v", req[0]["libraryBookId"])
+	formats := func(row map[string]any) string {
+		raw, _ := json.Marshal(row["requestableFormats"])
+		return string(raw)
 	}
-	if _, present := req[1]["libraryBookId"]; !present {
-		t.Errorf("requester: book with a file lost its in-library stamp")
+
+	req := search(aliceID, auth.RoleRequester)
+	for id, want := range map[string]string{
+		"OL-META":            `["ebook","audiobook"]`,
+		"OL-EBOOK-FILE":      `["audiobook"]`,
+		"OL-AUDIO-MONITORED": `["ebook"]`,
+	} {
+		if _, stamped := req[id]["libraryBookId"]; stamped {
+			t.Errorf("requester: %s is stamped in library though a format can still be requested", id)
+		}
+		if got := formats(req[id]); got != want {
+			t.Errorf("requester: %s requestableFormats = %s, want %s", id, got, want)
+		}
 	}
-	usr := search(auth.RoleUser)
-	if _, present := usr[0]["libraryBookId"]; !present {
-		t.Errorf("user: file-less book should keep its stamp")
+	if _, stamped := req["OL-BOTH-FILES"]["libraryBookId"]; !stamped {
+		t.Errorf("requester: fully covered book lost its in-library stamp")
+	}
+	if _, present := req["OL-BOTH-FILES"]["requestableFormats"]; present {
+		t.Errorf("requester: fully covered book lists requestable formats")
+	}
+
+	usr := search(aliceID, auth.RoleUser)
+	for _, id := range order {
+		if _, stamped := usr[id]["libraryBookId"]; !stamped {
+			t.Errorf("user: %s should keep its stamp", id)
+		}
+		if _, present := usr[id]["requestableFormats"]; present {
+			t.Errorf("user: %s carries requestableFormats, a requester only field", id)
+		}
+	}
+
+	// Tenancy: bob sees nothing about alice's books, stamp or formats.
+	other := search(bobID, auth.RoleRequester)
+	for _, id := range order {
+		if _, stamped := other[id]["libraryBookId"]; stamped {
+			t.Errorf("bob: %s stamped with alice's book", id)
+		}
+		if _, present := other[id]["requestableFormats"]; present {
+			t.Errorf("bob: %s describes alice's book: %v", id, other[id]["requestableFormats"])
+		}
 	}
 }
