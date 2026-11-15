@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -421,21 +422,24 @@ func newTrailingRules(title string, bc bookContext, wanted ...[]string) *trailin
 	// isAuthorName reports whether v reads as the book's author (or an alias):
 	// "Octavia E. Butler: The Last Interview" has the primary title "Octavia E.
 	// Butler", and a release that names its author after the title ("Survivor by
-	// Octavia E Butler") is not naming another book (#3902).
+	// Octavia E Butler") is not naming another book (#3902). The words are
+	// compared in any order, so an author stored as "Butler, Octavia E." reads
+	// the same.
+	nameKey := func(v string) string {
+		ident := slices.Clone(titleIdentityKeywords(v))
+		slices.Sort(ident)
+		return strings.Join(ident, " ")
+	}
 	authorIdents := map[string]bool{}
 	for _, a := range bc.authorNames {
-		if ident := titleIdentityKeywords(newznab.NormalizeQueryTitle(a)); len(ident) > 0 {
-			authorIdents[strings.Join(ident, " ")] = true
-		}
+		authorIdents[nameKey(newznab.NormalizeQueryTitle(a))] = true
 	}
-	isAuthorName := func(v string) bool {
-		ident := titleIdentityKeywords(v)
-		return len(ident) > 0 && authorIdents[strings.Join(ident, " ")]
-	}
+	delete(authorIdents, "")
+	isAuthorName := func(v string) bool { return authorIdents[nameKey(v)] }
 
 	for _, raw := range bc.otherTitles {
 		cleaned := newznab.StripFormatQualifiers(newznab.NormalizeQueryTitle(raw))
-		if relatedToSeries(cleaned) || isAuthorName(cleaned) {
+		if relatedToSeries(cleaned) {
 			continue
 		}
 		if ident := titleIdentityKeywords(cleaned); len(ident) > 0 {
@@ -454,6 +458,14 @@ func newTrailingRules(title string, bc bookContext, wanted ...[]string) *trailin
 			continue
 		}
 		variants := []string{cleaned, primaryTitle(cleaned), newznab.SeriesPositionTitle(cleaned)}
+		if p := primaryTitle(cleaned); p != cleaned && isAuthorName(p) {
+			// The first segment is the author's name and is skipped below, so
+			// what follows it is the book's title ("The Last Interview: and
+			// Other Conversations", "The Last Interview"). Without these a
+			// release that carries only that part would name no other title.
+			rest := strings.TrimSpace(cleaned[strings.Index(cleaned, ":")+1:])
+			variants = append(variants, rest, primaryTitle(rest))
+		}
 		prefixedTail := ""
 		if !tr.posKnown && len(wanted) > 0 {
 			if n, tail, ok := siblingTail(cleaned, wanted[0]); ok {
