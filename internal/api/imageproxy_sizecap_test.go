@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // countingUpstream serves body as a jpeg and counts the requests it gets.
@@ -48,6 +49,9 @@ func TestImageProxy_FullCacheServesWithoutWriting(t *testing.T) {
 	}
 
 	h := newTestHandler(dir, upstream).WithMaxCacheBytes(64)
+	// This test is about the refusal alone. Mark the early sweep as just
+	// asked for so it does not run and make room behind the assertions.
+	h.fullSweepAt = time.Now()
 
 	for i := 1; i <= 2; i++ {
 		rr := serveImage(t, h, upstream.URL+"/new.jpg")
@@ -62,15 +66,15 @@ func TestImageProxy_FullCacheServesWithoutWriting(t *testing.T) {
 		}
 	}
 
-	if got := dirBytes(t, cacheDir); got != 100 {
-		t.Errorf("cache holds %d bytes after serving past the cap, want the original 100 (nothing written)", got)
+	if got := dirBytes(t, cacheDir); got != 4096 {
+		t.Errorf("cache holds %d bytes after serving past the cap, want the original 4096 (nothing written)", got)
 	}
 	// Not cached, so the second request went upstream again.
 	if got := hits.Load(); got != 2 {
 		t.Errorf("upstream hits = %d, want 2", got)
 	}
-	if size, _ := h.CacheSize(); size != 100 {
-		t.Errorf("CacheSize = %d, want 100", size)
+	if size, _ := h.CacheSize(); size != 4096 {
+		t.Errorf("CacheSize = %d, want 4096", size)
 	}
 }
 
@@ -85,7 +89,7 @@ func TestImageProxy_WritesContinueUnderCap(t *testing.T) {
 	dir := t.TempDir()
 	cacheDir := filepath.Join(dir, "image-cache")
 	h := newTestHandler(dir, upstream)
-	if h.maxBytes != DefaultImageCacheMaxBytes {
+	if h.maxBytes != DefaultImageCacheMaxBytes || h.MaxCacheBytes() != DefaultImageCacheMaxBytes {
 		t.Fatalf("default cap = %d, want %d", h.maxBytes, DefaultImageCacheMaxBytes)
 	}
 
@@ -99,6 +103,7 @@ func TestImageProxy_WritesContinueUnderCap(t *testing.T) {
 
 	// Room for exactly one more entry.
 	h.WithMaxCacheBytes(2 * entry)
+	h.fullSweepAt = time.Now() // no early sweep, see the test above
 	if rr := serveImage(t, h, upstream.URL+"/two.jpg"); rr.Code != http.StatusOK {
 		t.Fatalf("two.jpg: status = %d, want 200", rr.Code)
 	}

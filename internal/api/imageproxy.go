@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -50,7 +51,43 @@ const (
 
 	// imageCacheFullLogEvery spaces out the "cache is full" warning.
 	imageCacheFullLogEvery = time.Hour
+
+	// imageCacheBlock is the unit every cache file is charged in. A file takes
+	// whole filesystem blocks plus an inode whatever its length, so a body of
+	// a few bytes costs the volume about as much as a 4 KiB one. Counting
+	// apparent bytes let a cache of very small entries sit far under its cap
+	// while using many times the cap on disk. 4 KiB is the block size of
+	// ext4, XFS, Btrfs, APFS and NTFS at their defaults. A filesystem with
+	// larger blocks is undercounted by at most the ratio of the two.
+	//
+	// Each entry is two files (the image and its type sidecar), so an entry
+	// is charged at least two blocks. That also bounds the number of entries
+	// and inodes: the cap divided by 8 KiB, which is 262,144 entries at the
+	// 2 GiB default.
+	imageCacheBlock int64 = 4096
+
+	// imageCacheFirstSweepAfter is how long after startup the first sweep
+	// runs. The sweep used to fire only after a full interval (24 h), so an
+	// instance restarted every day never swept at all.
+	imageCacheFirstSweepAfter = time.Minute
+
+	// imageCacheFullSweepEvery spaces out the early sweep a refused write
+	// asks for, so a full cache is swept soon rather than at the next daily
+	// tick, but never more than once an hour.
+	imageCacheFullSweepEvery = time.Hour
 )
+
+// accountedFileBytes is what one cache file of the given length is charged
+// against the cap: its length rounded up to whole blocks, and one block for
+// an empty file, which still holds an inode. Every place that counts the
+// cache (the write path, the walk and the sweep) goes through here so they
+// cannot disagree.
+func accountedFileBytes(size int64) int64 {
+	if size <= 0 {
+		return imageCacheBlock
+	}
+	return (size + imageCacheBlock - 1) / imageCacheBlock * imageCacheBlock
+}
 
 // ImageProxyHandler serves GET /api/v1/images?url=<encoded>.
 // On first request it fetches the external image, validates it, writes it to a
@@ -77,13 +114,23 @@ type ImageProxyHandler struct {
 	// landing mid-walk can never be counted twice or dropped, and concurrent
 	// /system/status callers wait on one walk instead of starting their own.
 	sizeMu sync.Mutex
-	// sizeBytes is the last known total of the on-disk image cache.
+	// sizeBytes is the last known total of the on-disk image cache, in
+	// accounted bytes (see accountedFileBytes).
 	sizeBytes int64
+	// reservedBytes is room claimed by writes that are still in flight. It
+	// counts against the cap but is not part of the reported size.
+	reservedBytes int64
 	// sizeAt is when sizeBytes was last recomputed from a full walk. Zero
 	// means never, which forces the first CacheSize call to seed it.
 	sizeAt time.Time
 	// fullLoggedAt is when the cache-full warning was last logged.
 	fullLoggedAt time.Time
+	// fullSweepAt is when a refused write last asked for an early sweep.
+	fullSweepAt time.Time
+
+	// sweepMu keeps two sweeps from running at once. A sweep that finds one
+	// already running returns without doing anything.
+	sweepMu sync.Mutex
 }
 
 // NewImageProxyHandler creates a handler that caches images under
@@ -129,34 +176,72 @@ func (h *ImageProxyHandler) WithMaxCacheBytes(n int64) *ImageProxyHandler {
 	return h
 }
 
-// cacheHasRoom reports whether a write that grows the cache by delta bytes
-// keeps it within maxBytes. It reads the memoised total, so the cost is a
-// mutex and, at most once per imageCacheSizeTTL, the same walk /system/status
-// already triggers. Never a walk per request.
+// MaxCacheBytes is the ceiling on the on-disk cache.
+func (h *ImageProxyHandler) MaxCacheBytes() int64 { return h.maxBytes }
+
+// reserveCacheBytes claims room for a write that will grow the cache by n
+// accounted bytes, and reports whether the cache can take it. The check and
+// the claim happen under one lock, so writes in flight together cannot each
+// pass the check against the same total. The caller must hand the claim back
+// through settleCacheBytes once its write has finished or failed.
 //
-// The check and the write that follows are not one atomic step: requests
-// that pass together can overshoot the cap by what they hold in flight, each
-// at most imageMaxBytes. That is a bounded overshoot, and the next request
-// sees the new total.
-func (h *ImageProxyHandler) cacheHasRoom(delta int64) bool {
-	if delta <= 0 {
-		return true
-	}
-	size, _ := h.CacheSize()
-	if size+delta <= h.maxBytes {
+// It reads the memoised total, so the cost is a mutex and, at most once per
+// imageCacheSizeTTL, the same walk /system/status already triggers. Never a
+// walk per request. A write that does not grow the cache always passes.
+//
+// A refusal asks for an early sweep, at most once per
+// imageCacheFullSweepEvery, so a full cache gets room back without waiting
+// for the daily one.
+func (h *ImageProxyHandler) reserveCacheBytes(n int64) bool {
+	if n <= 0 {
 		return true
 	}
 	h.sizeMu.Lock()
-	warn := time.Since(h.fullLoggedAt) >= imageCacheFullLogEvery
+	size := h.sizeBytes
+	if h.sizeAt.IsZero() || time.Since(h.sizeAt) >= imageCacheSizeTTL {
+		size, _ = h.refreshCacheSizeLocked()
+	}
+	if size+h.reservedBytes+n <= h.maxBytes {
+		h.reservedBytes += n
+		h.sizeMu.Unlock()
+		return true
+	}
+	now := time.Now()
+	warn := now.Sub(h.fullLoggedAt) >= imageCacheFullLogEvery
 	if warn {
-		h.fullLoggedAt = time.Now()
+		h.fullLoggedAt = now
+	}
+	inFlight := h.reservedBytes
+	sweep := now.Sub(h.fullSweepAt) >= imageCacheFullSweepEvery
+	if sweep {
+		h.fullSweepAt = now
 	}
 	h.sizeMu.Unlock()
 	if warn {
-		slog.Warn("imageproxy: cache is at its size cap, serving images without caching them until old entries expire",
-			"cacheBytes", size, "maxBytes", h.maxBytes)
+		slog.Warn("imageproxy: cache is at its size cap, serving images without caching them until room is freed",
+			"cacheBytes", size, "inFlightBytes", inFlight, "maxBytes", h.maxBytes)
+	}
+	if sweep {
+		go h.sweep()
 	}
 	return false
+}
+
+// settleCacheBytes hands back a claim made by reserveCacheBytes and applies
+// what the write really changed on disk, which is nothing when it failed.
+func (h *ImageProxyHandler) settleCacheBytes(reserved, actual int64) {
+	h.sizeMu.Lock()
+	defer h.sizeMu.Unlock()
+	if reserved > 0 {
+		h.reservedBytes -= reserved
+		if h.reservedBytes < 0 {
+			h.reservedBytes = 0
+		}
+	}
+	h.sizeBytes += actual
+	if h.sizeBytes < 0 {
+		h.sizeBytes = 0
+	}
 }
 
 // imageProxyTransport returns the RoundTripper for the image-proxy client: a
@@ -399,9 +484,15 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	// The cache has a total size cap. An image that would take it past the
 	// cap is served exactly the same, it is just not stored, so the cache can
 	// never grow without bound on the volume it shares with the database.
-	// Entries leave by age only (the daily sweep), which frees room again.
+	// The room is claimed before the write and settled after it against what
+	// really landed on disk, so a failed write gives its claim back. The
+	// sweep frees room again, by age first and then oldest first.
 	priorBytes := cacheEntryBytes(imgFile, ctFile)
-	if !h.cacheHasRoom(int64(len(body)+len(ct)) - priorBytes) {
+	reserved := accountedFileBytes(int64(len(body))) + accountedFileBytes(int64(len(ct))) - priorBytes
+	if reserved < 0 {
+		reserved = 0
+	}
+	if !h.reserveCacheBytes(reserved) {
 		writeFetchedImage(w, ct, body)
 		return
 	}
@@ -427,7 +518,7 @@ func (h *ImageProxyHandler) Serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	h.addCacheBytes(cacheEntryBytes(imgFile, ctFile) - priorBytes)
+	h.settleCacheBytes(reserved, cacheEntryBytes(imgFile, ctFile)-priorBytes)
 
 	writeFetchedImage(w, ct, body)
 }
@@ -483,19 +574,41 @@ func (h *ImageProxyHandler) migrateFlatCache() {
 	}
 }
 
-// StartEviction launches a background goroutine that periodically removes
-// cached images older than imageCacheTTL.
+// StartEviction launches a background goroutine that sweeps the cache once
+// shortly after startup and then every interval. It returns at once, so the
+// first sweep never holds up boot.
 func (h *ImageProxyHandler) StartEviction(interval time.Duration) {
+	h.startEviction(imageCacheFirstSweepAfter, interval)
+}
+
+func (h *ImageProxyHandler) startEviction(first, interval time.Duration) {
 	go func() {
+		time.Sleep(first)
+		h.sweep()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
-			h.evictExpired()
+			h.sweep()
 		}
 	}()
 }
 
-func (h *ImageProxyHandler) evictExpired() {
+// imageCacheTrimTarget is how far a sweep brings a cache that is over it back
+// down: nine tenths of the cap, so the room freed lasts a while and the next
+// write is not refused again straight away.
+func (h *ImageProxyHandler) imageCacheTrimTarget() int64 {
+	return h.maxBytes / 10 * 9
+}
+
+// sweep removes entries older than imageCacheTTL, recounts the cache, and if
+// it is still above the trim target removes the oldest entries until it is
+// not. Age alone left a full cache full for up to thirty days.
+func (h *ImageProxyHandler) sweep() {
+	if !h.sweepMu.TryLock() {
+		return
+	}
+	defer h.sweepMu.Unlock()
+
 	now := time.Now()
 	_ = filepath.WalkDir(h.cacheDir, func(path string, d os.DirEntry, err error) error { // #nosec
 		if err != nil || d.IsDir() {
@@ -522,11 +635,52 @@ func (h *ImageProxyHandler) evictExpired() {
 	// parent, so the walk's own DirEntry for them is already gone by the time
 	// it gets there).
 	h.sizeMu.Lock()
-	defer h.sizeMu.Unlock()
-	_, _ = h.refreshCacheSizeLocked()
+	total, _ := h.refreshCacheSizeLocked()
+	h.sizeMu.Unlock()
+
+	if over := total - h.imageCacheTrimTarget(); over > 0 {
+		h.addCacheBytes(-h.removeOldest(over))
+	}
 }
 
-// CacheSize returns the total bytes used by the image cache directory.
+// removeOldest deletes cache entries, oldest write first, until at least need
+// accounted bytes are gone, and returns how many it freed. It walks the tree
+// and holds one small record per entry while it sorts, which is why it only
+// runs from the sweep and only when the cache is over its trim target.
+func (h *ImageProxyHandler) removeOldest(need int64) int64 {
+	type entry struct {
+		path  string
+		mod   time.Time
+		bytes int64
+	}
+	var entries []entry
+	_ = filepath.WalkDir(h.cacheDir, func(path string, d os.DirEntry, err error) error { // #nosec
+		if err != nil || d.IsDir() || strings.HasSuffix(d.Name(), ".ct") {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		entries = append(entries, entry{path, info.ModTime(), cacheEntryBytes(path, path+".ct")})
+		return nil
+	})
+	sort.Slice(entries, func(i, j int) bool { return entries[i].mod.Before(entries[j].mod) })
+	var freed int64
+	for _, e := range entries {
+		if freed >= need {
+			break
+		}
+		_ = os.Remove(e.path)         // #nosec
+		_ = os.Remove(e.path + ".ct") // #nosec
+		freed += e.bytes
+	}
+	return freed
+}
+
+// CacheSize returns the total bytes used by the image cache directory, counted
+// in whole blocks per file (see accountedFileBytes) so it tracks what the
+// cache takes on disk and is the same number the cap is checked against.
 //
 // The number is memoised (#2340). GET /system/status calls this on every
 // request and the frontend calls /system/status from the root shell plus four
@@ -560,7 +714,7 @@ func (h *ImageProxyHandler) refreshCacheSizeLocked() (int64, error) {
 		if err != nil {
 			return nil
 		}
-		total += info.Size()
+		total += accountedFileBytes(info.Size())
 		return nil
 	})
 	h.sizeBytes = total
@@ -568,9 +722,9 @@ func (h *ImageProxyHandler) refreshCacheSizeLocked() (int64, error) {
 	return total, err
 }
 
-// addCacheBytes applies a signed delta to the memoised cache total. Called by
-// Serve after a cache write with the exact on-disk change, so the memo stays
-// accurate between full recounts. A no-op before the total has ever been
+// addCacheBytes applies a signed delta to the memoised cache total. Called
+// when Serve drops a bad entry and when the sweep removes the oldest ones, so
+// the memo stays accurate between full recounts. A no-op before the total has ever been
 // seeded is harmless: the seeding walk replaces whatever accumulated here.
 func (h *ImageProxyHandler) addCacheBytes(delta int64) {
 	if delta == 0 {
@@ -584,18 +738,19 @@ func (h *ImageProxyHandler) addCacheBytes(delta int64) {
 	}
 }
 
-// cacheEntryBytes reports the bytes a single cache entry currently occupies on
-// disk (the image plus its .ct sidecar), and 0 when it is not cached. Two
+// cacheEntryBytes reports the accounted bytes a single cache entry currently
+// occupies on disk (the image plus its .ct sidecar, each rounded up to whole
+// blocks by accountedFileBytes), and 0 when it is not cached. Two
 // stats, taken only on the cache-miss path that is already doing a network
 // fetch, which is what lets Serve compute an exact delta even when it is
 // overwriting an expired entry rather than adding a new one.
 func cacheEntryBytes(imgFile, ctFile string) int64 {
 	var n int64
 	if fi, err := os.Stat(imgFile); err == nil { // #nosec -- path derived from sha256(url), not user input
-		n += fi.Size()
+		n += accountedFileBytes(fi.Size())
 	}
 	if fi, err := os.Stat(ctFile); err == nil { // #nosec -- path derived from sha256(url), not user input
-		n += fi.Size()
+		n += accountedFileBytes(fi.Size())
 	}
 	return n
 }

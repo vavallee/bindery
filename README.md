@@ -249,6 +249,7 @@ Almost everything is set in the web UI under **Settings**. A few bootstrap setti
 | `BINDERY_OUTBOUND_PROXY` | _(empty)_ | Send outbound HTTP through an `http`, `https` or `socks5` proxy; LAN destinations bypass it by default |
 | `BINDERY_ENFORCE_TENANCY` | `false` | Give each user a separate library; see [docs/multi-user.md](docs/multi-user.md) |
 | `BINDERY_DOWNLOAD_RETENTION_DAYS` | `90` | Days to keep a finished download row; `0` keeps them all. Read [DEPLOYMENT.md](docs/DEPLOYMENT.md#environment-variables) before changing it on a long running install |
+| `BINDERY_IMAGE_CACHE_MAX_MB` | `2048` | Ceiling, in megabytes, on the cover cache kept under the data dir; when it is full the oldest covers make way |
 | `BINDERY_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 | `BINDERY_PUID` / `BINDERY_PGID` | _(unset)_ | Assert the container UID and GID; set the UID itself with `--user` or Compose's `user:` |
 

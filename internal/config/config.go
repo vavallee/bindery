@@ -55,7 +55,8 @@ type Config struct {
 	DownloadRetentionDays int
 	// ImageCacheMaxMB caps the proxied cover cache under the data directory, in
 	// megabytes (BINDERY_IMAGE_CACHE_MAX_MB, default 2048). At the cap covers
-	// are still fetched and served, just not stored.
+	// are still fetched and served, just not stored. Never above
+	// MaxImageCacheMB.
 	ImageCacheMaxMB int
 	// Login rate limit (per-IP sliding window).
 	// BINDERY_RATE_LIMIT_MAX_FAILURES  (default: 5)
@@ -130,7 +131,7 @@ func Load() *Config {
 		OIDCGroupClaim:           envOr("BINDERY_OIDC_GROUP_CLAIM", "groups"),
 		LogRetentionDays:         envInt("BINDERY_LOG_RETENTION_DAYS", 14),
 		DownloadRetentionDays:    envIntAllowZero("BINDERY_DOWNLOAD_RETENTION_DAYS", 90),
-		ImageCacheMaxMB:          envInt("BINDERY_IMAGE_CACHE_MAX_MB", 2048),
+		ImageCacheMaxMB:          min(envInt("BINDERY_IMAGE_CACHE_MAX_MB", 2048), MaxImageCacheMB),
 		RateLimitMaxFailures:     envInt("BINDERY_RATE_LIMIT_MAX_FAILURES", 5),
 		RateLimitWindowMinutes:   envInt("BINDERY_RATE_LIMIT_WINDOW_MINUTES", 15),
 		URLBase:                  normalizeURLBase(envOr("BINDERY_URL_BASE", "")),
@@ -228,6 +229,11 @@ func envOr(key, fallback string) string {
 	}
 	return fallback
 }
+
+// MaxImageCacheMB is the most BINDERY_IMAGE_CACHE_MAX_MB can ask for: 1 TiB.
+// A larger value is brought down to it, which keeps the megabyte to byte
+// conversion well inside an int64 and is far beyond any cover cache.
+const MaxImageCacheMB = 1 << 20
 
 func envInt(key string, fallback int) int {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
