@@ -3,11 +3,11 @@ templates:
   - deployment.yaml
 
 tests:
-  - it: readiness stays on the static route until the release that ships the database route
+  - it: readiness checks the database route
     asserts:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
-          value: /api/v1/health
+          value: /api/v1/health/ready
       # The handler spends up to 2 s on the database; the kubelet's default
       # 1 s timeout would fail the probe before the handler answers.
       - equal:
